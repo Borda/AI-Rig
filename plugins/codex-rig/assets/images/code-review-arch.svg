@@ -216,7 +216,7 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <text x="56" y="1589" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">run_gates.py</tspan> in verified source</text>
 <text x="56" y="1605.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">PR: <tspan font-style="italic">git diff --check base...head</tspan></text>
 <text x="56" y="1622.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">close advice: detailed checks N/A</tspan></text>
-<text x="490" y="1589" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">last gate</tspan>: full test selection</text>
+<text x="490" y="1589" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">last gate</tspan>: full test selection · <tspan font-style="italic">docs-only: skipped</tspan></text>
 <text x="490" y="1605.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">import-bound pytest</tspan> proves source</text>
 <text x="490" y="1622.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">failed check does not cancel closure</tspan></text>
 </g>

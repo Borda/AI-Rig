@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from _hook_env import _bash_runs_posix_script, _symlinks_supported
+from _plugin_payload import install_foundry
 
 _PLUGIN = Path(__file__).resolve().parents[2]
 _CALIBRATE = _PLUGIN / "skills/calibrate"
@@ -40,7 +41,7 @@ def shell_env(tmp_path: Path) -> dict[str, str]:
         "HOME": str(tmp_path),
         "USERPROFILE": str(tmp_path),
         "TMPDIR": str(tmp_path),
-        "CLAUDE_PLUGIN_ROOT": str(_PLUGIN),
+        "CLAUDE_PLUGIN_ROOT": str(install_foundry(tmp_path)),
         "CLAUDE_CODE_SESSION_ID": "calibrate-safety",
         "PATH": os.pathsep.join([str(Path(sys.executable).parent), os.environ.get("PATH", "")]),
     }
@@ -412,7 +413,10 @@ def test_availability_preserves_diagnostics_and_exit_reason(
     tmp_path: Path, shell_env: dict[str, str], status: int, label: str
 ) -> None:
     """Resolver refusal is visible rather than being silently collapsed into an uninstalled plugin."""
-    script = f"python() {{ printf 'resolver diagnostic\\n' >&2; return {status}; }}\n"
+    script = (
+        f'python() {{ if [ "$3" = foundry ]; then "{Path(sys.executable).as_posix()}" "$@"; '
+        f"else printf 'resolver diagnostic\\n' >&2; return {status}; fi; }}\n"
+    )
     script += _block("SKILL.md", 'if [ "$LOCAL_MODE"')
     result = subprocess.run(
         ["bash", "-c", script], cwd=tmp_path, env=shell_env, capture_output=True, text=True, timeout=10

@@ -26,6 +26,8 @@ import tempfile
 from pathlib import Path
 from shutil import which
 
+from resolve_commit_hooks import commit_with_hooks
+
 #: Fixed commit message, including the co-author trailer, for the lint auto-fix commit.
 _COMMIT_MESSAGE = "lint: auto-fix violations after resolve cycle\n\n---\nCo-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>"
 #: Sentinel base name that holds the target branch the lint step diffed against.
@@ -178,14 +180,11 @@ def _commit_scoped(git: str, files: list[str]) -> int:
     # The bound exists only for a hook or signing prompt that waits on input for ever.
     # Matches commit_action_item.py; short timeouts stay only on cheap plumbing calls.
     try:
-        result = subprocess.run(  # noqa: S603
-            [git, "--literal-pathspecs", "commit", "-m", _COMMIT_MESSAGE, "--", *files],
-            check=False,
-            timeout=_COMMIT_TIMEOUT,
+        return commit_with_hooks(
+            git, ["--literal-pathspecs", "commit", "-m", _COMMIT_MESSAGE, "--", *files], files, _COMMIT_TIMEOUT
         )
     except subprocess.TimeoutExpired as exc:
         raise _CommitAbort(f"git commit timed out after {exc.timeout} s — no commit created") from exc
-    return result.returncode
 
 
 def main(argv: list[str] | None = None) -> int:

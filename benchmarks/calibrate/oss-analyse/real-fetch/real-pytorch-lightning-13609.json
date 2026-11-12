@@ -1,0 +1,508 @@
+{
+  "8509": {
+    "number": 8509,
+    "title": "Support Lightning Logging without Trainer",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n<!-- A clear and concise description of the feature proposal -->\r\n\r\n### Motivation\r\n\r\nTo ease conversion from pure PyTorch to Lightning, users might start by creating their LightningModule.\r\n\r\nHowever, their code would break if they try to log as the trainer isn't available.\r\n\r\nCurrently, we have 2 options: \r\n* make `self.log` in the absence of a Trainer\r\n* add support for logging without a trainer.\r\n\r\nHere is a pseudo code to explain how we could support it.\r\n\r\nThe `ResultCollection` object is pretty self contained and is used to store logged values.\r\n\r\n```py\r\nclass LightningModule:\r\n    def __init__(self):\r\n        self._lightning_results = ResultCollection\r\n        self.training_step = self._training_step_wrapper(self.training_step)\r\n\r\n    @property\r\n    def _results(self):\r\n        if getattr(self, \"trainer\", None) is not None:\r\n            return self.trainer._results\r\n        return self._lightning_results\r\n\r\n    def _training_step_wrapper(self, training_step_fn):\r\n        def wrapper(self, *args, **kwargs)\r\n            self._current_fx = \"training_step\"\r\n            output = training_step_fn(self, *args, **kwargs)\r\n            self._current_fx = None\r\n        return wrapper\r\n\r\n    def training_step():\r\n        self.log(...)\r\n\r\nclass Model(LightningModule):\r\n    ...\r\n\r\nmodel = Model()\r\n\r\nfor _ in range(epochs):\r\n    for batch in datalaoder:\r\n        loss = model.training_step(batch, batch_idx)\r\n        ...\r\n        logged_metrics = model.get_logged_metrics()\r\n\r\nreduced_metrics = model.get_callback_metrics(epoch=True)\r\n``` \r\n\r\nDrawback, every LightningModule hooks used for logging should be wrapped to set the `_current_fx` function.\r\n\r\n\r\n<!-- Please outline the motivation for the proposal. Is your feature request related to a problem? e.g., I'm always frustrated when [...]. If this is related to another GitHub issue, please link here too -->\r\n\r\n### Pitch\r\n\r\n<!-- A clear and concise description of what you want to happen. -->\r\n\r\n### Alternatives\r\n\r\n<!-- A clear and concise description of any alternative solutions or features you've considered, if any. -->\r\n\r\n### Additional context\r\n\r\n<!-- Add any other context or screenshots about the feature request here. -->\r\n\r\n\r\n#### If you enjoy PL, check out our other projects:\r\n\r\n- [Metrics](https://github.com/PyTorchLightning/metrics): Machine learning metrics for distributed, scalable PyTorch applications.\r\n- [Flash](https://github.com/PyTorchLightning/lightning-flash): The fastest way to get a Lightning baseline! A collection of tasks for fast prototyping, baselining, finetuning and solving problems with deep learning\r\n- [Bolts](https://github.com/PyTorchLightning/lightning-bolts): Pretrained SOTA Deep Learning models, callbacks and more for research and production with PyTorch Lightning and PyTorch\r\n- [Lightning Transformers](https://github.com/PyTorchLightning/lightning-transformers): Flexible interface for high performance research using SOTA Transformers leveraging Pytorch Lightning",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "I don't quite understand the motivation. Are you saying that new users would:\r\n\r\n1. Convert their `nn.Module` into a `LightningModule`\r\n2. Keep their training loop but use the `LightningModule` hooks manually\r\n3. Replace their training loop with the `Trainer`\r\n\r\nSo you want to be able to `self.log()` inside the `LightningModule` so step (2) works?\r\n\r\nAnother challenge associated is that the following `log()` arguments would not work.\r\n\r\n```python\r\n        prog_bar: bool = False,  # callbacks are managed by the trainer\r\n        logger: bool = True,  # loggers are managed by the trainer\r\n        sync_dist: bool = False,  # would require the user to handle the training type setup\r\n        sync_dist_group: Optional[Any] = None,\r\n        add_dataloader_idx: bool = True,  # not necessary without a trainer that would add it automatically\r\n        rank_zero_only: Optional[bool] = None,\r\n```\r\n\r\nAlso, the user would need to update their training loop with all the logic we currently encode in the"
+      },
+      {
+        "author": "user-10",
+        "body": "@user-2 - one idea is that the LightningModule directly owns the results as a buffer. We could offer an abstract interface for this. Some requirements:\r\n- This buffer must have a `state_dict`/`load_state_dict` style interface for checkpoint saving/loading. This would resolve the gap today where metric attributes are in the lightning module while the result collection is in the loop. we should consolidate all of this in the lightning module, and then populate this in the overall trainer checkpoint for saving & resuming.\r\n\r\nFor example, ResultsCollection could be considered one implementation of this interface, and perhaps its the default one the trainer uses in case the user doesn't provide their own.\r\n\r\nThen calling self.log(...) in the LightningModule simply populates this buffer. Log carries forward much of the assumptions around the prior Results struct, which itself was introduced in Lightning 0.7 or 0.8, before torchmetrics even existed. Since then, I think torchmetrics encapsulat"
+      },
+      {
+        "author": "user-11",
+        "body": "I have another use-case for this: unit-testing an existing LightningModule. In our code, we have some `LightningModule`s that effectively define our task. Previously, in Litghtning 1.3 we were able to test this by calling\r\n```\r\ndef test_my_module(...):\r\n     module = MyModule(...)\r\n     loss = module.training_step(...)\r\n     assert_something_about_the_loss(loss)\r\n```\r\n\r\nIn Lightning 1.4, this fails because the module isn't attached to a trainer."
+      },
+      {
+        "author": "user-2",
+        "body": "I guess for that case in particular, we could convert\r\n\r\nhttps://github.com/PyTorchLightning/pytorch-lightning/blob/2b2537d9a064cd437978b111360b904438452145/pytorch_lightning/core/lightning.py#L394-L397\r\n\r\nto a warning + early return"
+      },
+      {
+        "author": "user-12",
+        "body": "Hello, replying to https://github.com/PyTorchLightning/pytorch-lightning/issues/9716#issuecomment-927872310\r\n\r\nThat was a just mwe. My use case is to write unit tests for different methods of the model (`forward`, but also the `*step` and others).\r\n With Lightning `1.4` it is not possible to test the model without instantiating also the `Trainer` (which arguably wouldn't be a unit test)\r\n \r\nAnother use case I am having problems with is benchmarking the `training_step` speed (without the overhead introduced by other components). Before `1.4` I was monitoring the speed of \r\n \r\n ```python\r\n     def module_step_approximation(_):\r\n        module.zero_grad()\r\n        loss = module.training_step(batch, 0)\r\n        loss.backward()\r\n```"
+      },
+      {
+        "author": "user-9",
+        "body": "Dear @user-12,\n\nOne could patch the log function from the LightningModule to prevent the logging computation to be accounted for speed benchmarking.\n\nBest,\nT.C"
+      }
+    ]
+  },
+  "13378": {
+    "number": 13378,
+    "title": "Add `enable_device_summary` flag to disable device printout",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nAdd `enable_model_summary` boolean kwarg to `pl.Trainer()` to supress `_log_device_info()`'s output.\r\n\r\n### Motivation\r\n\r\nWhen calling predict within a surrogate model loop Trainer prints out the devices each time breaking apart intended tables etc or other outputs. Related to https://github.com/user-8/lightning/issues/13358 for cleaning-up/reducing stdout verbosity.\r\n```\r\nGPU available: False, used: False\r\nTPU available: False, using: 0 TPU cores\r\nIPU available: False, using: 0 IPUs\r\nHPU available: False, using: 0 HPUs\r\n=======================================================\r\nn_gen |  n_eval |  n_nds  |     eps      |  indicator  \r\n=======================================================\r\n    1 |     322 |       3 |            - |            -\r\nGPU available: False, used: False\r\nTPU available: False, using: 0 TPU cores\r\nIPU available: False, using: 0 IPUs\r\nHPU available: False, using: 0 HPUs\r\n    2 |    1322 |       4 |  0.625000000 |        ideal\r\n```\r\n\r\n### Pitch\r\n\r\nAdd `enable_model_summary` kwarg to `Trainer` that defaults to True\r\n\r\n### Alternatives\r\n\r\n<!-- A clear and concise description of any alternative solutions or features you've considered, if any. -->\r\nThe suggested solution is the simplest solution, any alternative would add more complexity.\r\n\r\n### Additional context\r\n\r\n<!-- Add any other context or screenshots about the feature request here. -->\r\nNone\r\n\r\n______________________________________________________________________\r\n\r\n#### If you enjoy Lightning, check out our other projects! ⚡\r\n\r\n- [**Metrics**](https://github.com/user-8/metrics): Machine learning metrics for distributed, scalable PyTorch applications.\r\n\r\n- [**Lite**](https://pytorch-lightning.readthedocs.io/en/latest/starter/lightning_lite.html): enables pure PyTorch users to scale their existing code on any kind of device while retaining full control over their own loops and optimization logic.\r\n\r\n- [**Flash**](https://github.com/user-8/lightning-flash): The fastest way to get a Lightning baseline! A collection of tasks for fast prototyping, baselining, fine-tuning, and solving problems with deep learning.\r\n\r\n- [**Bolts**](https://github.com/user-8/lightning-bolts): Pretrained SOTA Deep Learning models, callbacks, and more for research and production with PyTorch Lightning and PyTorch.\r\n\r\n- [**Lightning Transformers**](https://github.com/user-8/lightning-transformers): Flexible interface for high-performance research using SOTA Transformers leveraging Pytorch Lightning, Transformers, and Hydra.\r\n\n\ncc @user-4 @user-6 @user-10 @user-7 @maintainer-1 @user-5",
+    "comments": [
+      {
+        "author": "user-10",
+        "body": "I don't think another flag should be added. Why not move the print out to the Trainer constructor so it's only printed once?"
+      },
+      {
+        "author": "user-13",
+        "body": "> I don't think another flag should be added. Why not move the print out to the Trainer constructor so it's only printed once?\n\nIt already is. In linked issue (#13358) in order to reduce uncontrollable verbosity I was advised to create a secondary Trainer. There's no need to persist this trainer in the secondary optimisation loop so it gets deleted by the gc and reinitialised when needed.\n\nIn general afaik uncontrollable verbosity isn't ideal and in terms of unhelpful verbosity the number of TPUs, HPUs, and IPUs are less likely to be informative than the model summary which there is an option to suppress."
+      },
+      {
+        "author": "user-6",
+        "body": "I'm curious, is there a desire to have verbosity controlled on a more global level, not just the summary here?"
+      },
+      {
+        "author": "user-13",
+        "body": "> I'm curious, is there a desire to have verbosity controlled on a more global level, not just the summary here?\n\nI think that between the enable options for model summary and progress bars (making new trainer when needed to adjust) and the possibility to make things `PotentialUserWarnings` you can control pretty much anything apart from this device summary.\n\nA `verbose=int` setup c.f. `sklearn` could work but would be a much bigger change"
+      },
+      {
+        "author": "user-13",
+        "body": "Happy for me to change the associated PR to be reviewed?"
+      },
+      {
+        "author": "user-6",
+        "body": "@user-13 thanks for the PR. Since this is adding a flag to the core API in Trainer, we need to discuss it with the core team @user-8/core-lightning and get some more opinions. \r\n\r\nI think there are also a few options we haven't explored yet. \r\n\r\n1. Once could move the device logs to a configurable callback like the model summary or trainer summary. \r\n2. Let the messages be more easily filtered through `logging`\r\n3. Introduce a verbose flag to control messaging through Trainer more generally (e.g. fastdevrun infos)"
+      },
+      {
+        "author": "user-7",
+        "body": "> 2. Let the messages be more easily filtered through logging\r\n3. Introduce a verbose flag to control messaging through Trainer more generally (e.g. fastdevrun infos)\r\n\r\nthese 2 seem better sol. I'd prefer 3 if there are more logs we could configure."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "I'd prefer a combination of 1. and 2. \r\n\r\nIMO it really is not necessary to be able to have that baked into the core trainer (same as model summary was not necessary).\r\n\r\nAnd having it more easily filtered would also be great (I tried to forward the streams to something else to just avoid the prints and that also didn't work)."
+      },
+      {
+        "author": "user-2",
+        "body": "Today, it can be silenced by doing this:\r\n\r\n```python\r\nimport logging\r\n\r\ndef device_info_filter(record):\r\n    return \"PU available: \" not in record.getMessage()\r\n\r\nlogging.getLogger(\"pytorch_lightning.utilities.rank_zero\").addFilter(device_info_filter)\r\n```\r\n\r\nI find the callback idea (1) a bit overkill.\r\nWith (2) we can improve the above, maybe by using a Trainer logger instead of the rank zero logger.\r\n(3) seems like it has a larger scope. It would be interesting to see what are your concrete ideas. But for the device info message in particular, we've always agreed that it should be shown and not just when `fast_dev_run=True`"
+      },
+      {
+        "author": "user-2",
+        "body": "I changed my mind. I think the `callback` proposal is the simplest and most extensible option. This would also resolve https://github.com/user-8/lightning/issues/11014. And we could have flags in the callback to disable specific prints."
+      }
+    ]
+  },
+  "12119": {
+    "number": 12119,
+    "title": "Use :emphasize-lines: in sphinx docs to highlight code.",
+    "state": "open",
+    "body": "## 📚 Documentation\r\n\r\nFor typos and doc fixes, please go ahead and:\r\n\r\n```py\r\n.. code-block:: python\r\n   :emphasize-lines: 3,5\r\n\r\n   def some_function():\r\n       interesting = False\r\n       print 'This line is highlighted.'\r\n       print 'This one is not...'\r\n       print '...but this one is.'\r\n```\r\n\r\n<img width=\"553\" alt=\"Screenshot 2022-02-25 at 16 15 01\" src=\"https://user-images.githubusercontent.com/12861981/155749256-1020f263-7b96-422d-89ff-a9086d54963e.png\">\r\n\r\n______________________________________________________________________\r\n\r\n#### If you enjoy Lightning, check out our other projects! ⚡\r\n\r\n- [**Metrics**](https://github.com/PyTorchLightning/metrics): Machine learning metrics for distributed, scalable PyTorch applications.\r\n\r\n- [**Lite**](https://pytorch-lightning.readthedocs.io/en/latest/starter/lightning_lite.html): enables pure PyTorch users to scale their existing code on any kind of device while retaining full control over their own loops and optimization logic.\r\n\r\n- [**Flash**](https://github.com/PyTorchLightning/lightning-flash): The fastest way to get a Lightning baseline! A collection of tasks for fast prototyping, baselining, fine-tuning, and solving problems with deep learning.\r\n\r\n- [**Bolts**](https://github.com/PyTorchLightning/lightning-bolts): Pretrained SOTA Deep Learning models, callbacks, and more for research and production with PyTorch Lightning and PyTorch.\r\n\r\n- [**Lightning Transformers**](https://github.com/PyTorchLightning/lightning-transformers): Flexible interface for high-performance research using SOTA Transformers leveraging Pytorch Lightning, Transformers, and Hydra.\r\n\r\n\r\ncc @user-4 @user-7 @user-9 @user-3",
+    "comments": [
+      {
+        "author": "user-14",
+        "body": "@user-4 @user-9 I want to work on it"
+      },
+      {
+        "author": "user-3",
+        "body": "Hi @user-14! That'll be great! Thank you :)"
+      },
+      {
+        "author": "user-15",
+        "body": "@user-14 have you made any progress with this? Else I'm happy to take this on in the coming week. @user-3 @user-9 "
+      },
+      {
+        "author": "user-3",
+        "body": "@user-37 Are you still be interested in working on this? If yes, I'll assign this issue to you, and please create/submit a PR :)"
+      },
+      {
+        "author": "user-15",
+        "body": "@user-3 let's do it! Could you give me more context around the task pls? Not really sure what it's asking for in the PR desc"
+      }
+    ]
+  },
+  "14137": {
+    "number": 14137,
+    "title": "Add support for ClearML logging",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nGiven the popularity of [ClearML](https://clear.ml) it would be great to have integration with it for experiment tracking realized trough a logger.\r\n\r\n### Motivation\r\n\r\nAt the time being many MLOps platforms are appearing and gaining popularity. On the other side, the architecture of PyTorch Lightning, primarily through the abstractions enabling integrations with new platforms is easier mainly following the Open-Closed Principle.\r\n\r\n### Pitch\r\n\r\nIf this feature request proceeds forward there would be seamless integration with ClearML following the examples for WANDB and MLFlow.\r\n\r\n### Alternatives\r\n\r\nAlternative would be coupling the training code for calls to the API provided by the [`clearml`](https://pypi.org/project/clearml/) package for achieving experiment tracking.\n\ncc @user-4 @user-6 @user-24 @user-10 @user-7 @user-34 @user-35 @user-36",
+    "comments": [
+      {
+        "author": "user-6",
+        "body": "@user-16 Thanks for requesting the integration. FYI it was asked before to add this logger: #5921. \r\n\r\nIt was decided a while ago that we no longer add new experiment tracking frameworks to the core of Lightning due to maintenance overhead. We recommend to have the integration be part of the 3rd party library and potentially integrate testing with the [Ecosystem CI](https://pytorch-lightning.readthedocs.io/en/stable/ecosystem/ecosystem-ci.html). \r\n\r\ncc @user-4 @user-2 @user-17 "
+      },
+      {
+        "author": "user-17",
+        "body": "That is correct, the Ecosystem CI is the way to go here IMO.\r\n\r\nWhich poses another question, that is discoverability of these components in the Ecosystem.\r\n\r\nWe should think about automatically collecting all projects using the Ecosystem CI (and their passing status) on lightning.ai + docs, somewhere the community has easy access.\r\n\r\nWDYT @user-4 @user-2 @user-6 "
+      },
+      {
+        "author": "user-4",
+        "body": "> We should think about automatically collecting all projects using the Ecosystem CI (and their passing status) on lightning.ai + docs, somewhere the community has easy access.\r\n\r\nWe could think about adding a section to the EcoCI metadata with some description or logo, etc.\r\nSo then, if the integration is passing, we would automatically pull it to a special page on our docs... What do you think?"
+      },
+      {
+        "author": "user-17",
+        "body": "> > We should think about automatically collecting all projects using the Ecosystem CI (and their passing status) on lightning.ai + docs, somewhere the community has easy access.\r\n> \r\n> We could think about adding a section to the EcoCI metadata with some description or logo, etc. So then, if the integration is passing, we would automatically pull it to a special page on our docs... What do you think?\r\n\r\nI'm in favor"
+      },
+      {
+        "author": "user-6",
+        "body": "I like the idea of showing such integrations even if they are not maintained by us. With a small usage example and link to ecosystem/website. "
+      },
+      {
+        "author": "user-18",
+        "body": "FYI\r\nClearml is able to intercept logging in tensorboard in lightning\r\n\r\nhttps://clear.ml/docs/latest/docs/guides/frameworks/pytorch_lightning/pytorch_lightning_example\r\n\r\nhttps://github.com/allegroai/clearml/blob/master/examples/frameworks/pytorch-lightning/pytorch_lightning_example.py\r\n\r\n\r\nupd:\r\nIt is very convenient, you do not need to prescribe anything additionally"
+      }
+    ]
+  },
+  "6872": {
+    "number": 6872,
+    "title": "CI Testing ROCm",
+    "state": "open",
+    "body": "Since PyTorch now ships ROCm binaries for AMD GPUs we should test against it.\r\n\r\ncc @user-4 ",
+    "comments": [
+      {
+        "author": "user-4",
+        "body": "check out https://www.amd.com/en/processors/epyc-microsoft-azure"
+      }
+    ]
+  },
+  "15172": {
+    "number": 15172,
+    "title": "AWS Neuron support",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nhttps://awsdocs-neuron.readthedocs-hosted.com/en/latest/index.html\r\nhttps://aws.amazon.com/machine-learning/neuron/\r\n\r\n### Motivation\r\n\r\nhttps://aws.amazon.com/about-aws/whats-new/2022/10/ec2-trn1-instances-high-performance-cost-effective-deep-learning-training/\r\n\r\n### Pitch\r\n\r\nNeuron is XLA based, so it'll probably be an accelerator and strategy. Their marketing materials also advertise that it supports FSDP, and Megatron-LM. It's unclear at this point whether we would have specialized Neuron-based implementations for those.\r\n\r\nWe would also need access to hardware for testing.\r\n\r\n______________________________________________________________________\r\n\r\n#### If you enjoy Lightning, check out our other projects! ⚡\r\n\r\n- [**Metrics**](https://github.com/user-8/metrics): Machine learning metrics for distributed, scalable PyTorch applications.\r\n\r\n- [**Lite**](https://pytorch-lightning.readthedocs.io/en/latest/starter/lightning_lite.html): enables pure PyTorch users to scale their existing code on any kind of device while retaining full control over their own loops and optimization logic.\r\n\r\n- [**Flash**](https://github.com/user-8/lightning-flash): The fastest way to get a Lightning baseline! A collection of tasks for fast prototyping, baselining, fine-tuning, and solving problems with deep learning.\r\n\r\n- [**Bolts**](https://github.com/user-8/lightning-bolts): Pretrained SOTA Deep Learning models, callbacks, and more for research and production with PyTorch Lightning and PyTorch.\r\n\r\n- [**Lightning Transformers**](https://github.com/user-8/lightning-transformers): Flexible interface for high-performance research using SOTA Transformers leveraging PyTorch Lightning, Transformers, and Hydra.\r\n",
+    "comments": [
+      {
+        "author": "user-19",
+        "body": "Since Neuron is based on XLA, wouldn't the TPU accelerated work out of the box with Trn1? xla libraries are already included in their AMI"
+      },
+      {
+        "author": "user-2",
+        "body": "Possibly, but we would need to add testing and some glue code to advertise proper support."
+      }
+    ]
+  },
+  "5965": {
+    "number": 5965,
+    "title": "support len(datamodule)",
+    "state": "open",
+    "body": "Let's add support for len(datamodule) so we can get the following:\r\n\r\n```python\r\nlen(datamodule)\r\n\r\n# prints:  \r\n# train_dataloder_1:   200 samples\r\n# train_dataloader_2:  500 samples\r\n# tval_dataloder_1:    200 samples\r\n# val_dataloader_2:    500 samples\r\n# test_dataloder_1:    200 samples\r\n# test_dataloader_2:   500 samples\r\n```\r\ncc @user-38 ",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "I think this is better suited for `__str__`, `__len__` should aways return an int"
+      },
+      {
+        "author": "user-21",
+        "body": "@user-2 I'd like to work on this. Do I need to write tests for this method?"
+      },
+      {
+        "author": "user-2",
+        "body": "@user-21 Go for it! And yes, it needs to be tested.\r\n\r\nThe idea would be to iterate over all the dataloaders defined in the datamodule and sum all their individual lengths. Note that not all `*_dataloader` methods might be defined and that the dataloaders might not have `__len__` defined. In the latter case, I would suggest you count it as 0 and print a warning."
+      },
+      {
+        "author": "user-21",
+        "body": "> @user-21 Go for it! And yes, it needs to be tested.\r\n> \r\n> The idea would be to iterate over all the dataloaders defined in the datamodule and sum all their individual lengths. Note that not all `*_dataloader` methods might be defined and that the dataloaders might not have `__len__` defined. In the latter case, I would suggest you count it as 0 and print a warning.\r\n\r\nJust wanted to make sure, are we printing the number of batches (`len(dataloader)`) or number of samples (`len(dataloader.dataset)`)?"
+      },
+      {
+        "author": "user-9",
+        "body": "Dear @user-21,\r\n\r\nI would argue batch_size seems more intuitive for users.\r\n\r\nWe could print in the current structure of the dataloaders implemented by the users.\r\n\r\n```py\r\nMyDataModuleClass(\r\n    train_dataloader: {\"a\": DataLoaderClass(batch_size=8, num_batches=16, num_workers=2), \"b\":  DataLoaderClass(batch_size=2, num_batches=16, num_workers=2)]\r\n    val_dataloader: [ DataLoaderClass(batch_size=3, num_batches=14, num_workers=0), DataLoaderClass(batch_size=8, num_batches=4, num_workers=0)]\r\n    train_dataloader:DataLoaderClass(batch_size=4, num_batches=7, num_workers=2)\r\n)\r\n```\r\n\r\n"
+      },
+      {
+        "author": "user-2",
+        "body": "Note that it should not print anything but instead return an `int`. \r\n\r\nWe can explore overridding `__str__` for the actual structure etc"
+      },
+      {
+        "author": "user-21",
+        "body": "> Note that it should not print anything but instead return an `int`.\r\n> \r\n> We can explore overridding `__str__` for the actual structure etc\r\n\r\nGot it. I will make one PR for `__len__` and one PR for `__str__` later."
+      },
+      {
+        "author": "user-10",
+        "body": "we saw failures resulting from #9895 within FB. This issue should have more context to address these questions/concerns:\r\n\r\n1. IMO `__len__` being defined for a non-collection class doesn't make much sense. My guess based on @user-20 's initial pitch: the intention was to have some sort of datamodule summarization. but it's not clear to me how/when this would be used or what motivates this.\r\n\r\n2. the implementation for #9895 re-initializes the dataloaders for every `len` call. this can be really expensive in a way that's not obvious to users\r\n\r\n3. this is compounded by how truthiness checks work in python with their reliance on `len`. as a result, the behavior for `if datamodule` now changes to rely on the `__len__`, which under the hood tries instantiating all the dataloaders\r\n\r\n4. dataloader initialization is now unclear:\r\nWHEN: the datamodule has a `setup` hook, which users could leverage for defining their dataloaders. that is, they depend on `setup` being called before `train_data"
+      },
+      {
+        "author": "user-2",
+        "body": "The main motivation is to easily get the number of batches in your dataset, assuming you properly partitioned your splits. This can be useful as a quick sanity check before training starts.\r\n\r\nFor your point (5), I don't think it should as this is supposed to work independently of the `LightningModule` or `Trainer`.\r\n\r\nThe main blocker here is your point (3). We missed that use-case when reviewing the feature."
+      },
+      {
+        "author": "user-2",
+        "body": "I guess the only way to move this forward would be to do:\r\n\r\n```python\r\nclass LightningDataModule:\r\n    def __len__(self) -> int:\r\n        print(\"DeprecationWarning: Please update your code to use `if datamodule is None` instead of `if datamodule`\")\r\n        return 1  # ensure truthiness holds\r\n\r\n\r\ndm = LightningDataModule()\r\n\r\nif dm:\r\n    # shows deprecation\r\n    ...\r\n\r\nif dm is None:\r\n    # does not show deprecation\r\n    ...\r\n```"
+      }
+    ]
+  },
+  "12711": {
+    "number": 12711,
+    "title": "Support Apache TVM export",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\n<!-- A clear and concise description of the feature proposal -->\r\nhttps://tvm.apache.org/docs/how_to/compile_models/from_pytorch.html\r\n\r\n### Motivation\r\n\r\n<!-- Please outline the motivation for the proposal. Is your feature request related to a problem? e.g., I'm always frustrated when [...]. If this is related to another GitHub issue, please link it here -->\r\n\r\nSeems like the performance is better as compared to onnx runtime. Comparable to openvino.\r\n<img width=\"1535\" alt=\"Screenshot 2022-04-11 at 5 02 28 PM\" src=\"https://user-images.githubusercontent.com/30778939/162731174-8be54a73-3e28-430f-af14-72948a782ed4.png\">\r\n\r\n\r\n### Pitch\r\n\r\n<!-- A clear and concise description of what you want to happen. -->\r\n\r\nAdd `to_tvm` maybe.\r\n\r\n### Alternatives\r\n\r\n<!-- A clear and concise description of any alternative solutions or features you've considered, if any. -->\r\n\r\n### Additional context\r\n\r\n<!-- Add any other context or screenshots about the feature request here. -->\r\n\r\n______________________________________________________________________\r\n\r\n#### If you enjoy Lightning, check out our other projects! ⚡\r\n\r\n- [**Metrics**](https://github.com/PyTorchLightning/metrics): Machine learning metrics for distributed, scalable PyTorch applications.\r\n\r\n- [**Lite**](https://pytorch-lightning.readthedocs.io/en/latest/starter/lightning_lite.html): enables pure PyTorch users to scale their existing code on any kind of device while retaining full control over their own loops and optimization logic.\r\n\r\n- [**Flash**](https://github.com/PyTorchLightning/lightning-flash): The fastest way to get a Lightning baseline! A collection of tasks for fast prototyping, baselining, fine-tuning, and solving problems with deep learning.\r\n\r\n- [**Bolts**](https://github.com/PyTorchLightning/lightning-bolts): Pretrained SOTA Deep Learning models, callbacks, and more for research and production with PyTorch Lightning and PyTorch.\r\n\r\n- [**Lightning Transformers**](https://github.com/PyTorchLightning/lightning-transformers): Flexible interface for high-performance research using SOTA Transformers leveraging Pytorch Lightning, Transformers, and Hydra.\r\n\n\ncc @user-4",
+    "comments": []
+  },
+  "15175": {
+    "number": 15175,
+    "title": "Support channels_last",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nI'd like to try out some `channels_last` training to see if it improves performance (https://pytorch.org/tutorials/intermediate/memory_format_tutorial.html) \r\n\r\nI'm not entirely sure what the best way to do this with lightning is but I also think it should probably be one of those features that you set on the trainer and it just magically works.\r\n\r\n### Motivation\r\n\r\nUsing the `channels_last` memory format can improve performance in some cases\r\n\r\n### Pitch\r\n\r\nAdd a trainer flag that does whatever is needed for `channels_last` so\r\n\r\n```\r\ntrainer = pl.Trainer( ..., memory_format='channels_last')\r\n```\r\n\r\nor something like that and then before anything happens with training/testing you need to convert the module\r\n\r\n```\r\nif self.memory_format == 'channels_last':\r\n    lightning_module = lightning_module.to(memory_format=torch.channels_last)\r\n```\r\n\r\nand each batch in the train/test/val loops\r\n\r\n```\r\nif self.memory_format == 'channels_last':\r\n    batch = batch.to(memory_format=torch.channels_last)\r\nlightning_module(batch)\r\n```\r\n\r\n### Alternatives\r\n\r\nI have no idea but I assume I could do this without changing lightning although I'm not sure how yet\r\n\r\n### Additional context\r\n\r\nI am not sure I will be able to PR this one but I'm not opposed to trying\r\n",
+    "comments": [
+      {
+        "author": "user-7",
+        "body": "how about doing it manually?\r\n```py\r\nclass LitModel(LightningModule):\r\n    def __init__(self):\r\n        ...\r\n\r\n    def on_fit_start(self):\r\n        self = self.to(memory_format=torch.channels_last)\r\n```"
+      },
+      {
+        "author": "user-22",
+        "body": "I think it would probably work but: \r\n\r\n> I also think it should probably be one of those features that you set on the trainer and it just magically works."
+      },
+      {
+        "author": "user-7",
+        "body": "I think it's very domain specific plus just one linear so, I don't think this should be added to the trainer"
+      },
+      {
+        "author": "user-22",
+        "body": "How about a plugin? "
+      },
+      {
+        "author": "user-22",
+        "body": "Keep in mind you don't just call `to` on the model itself, you need to call it in all inputs too\r\n\r\n"
+      },
+      {
+        "author": "user-7",
+        "body": "```py\r\nclass LitModel(LightningModule):\r\n    def __init__(self):\r\n        ...\r\n\r\n    def on_fit_start(self):\r\n        self = self.to(memory_format=torch.channels_last)\r\n\r\n    def on_after_batch_transfer(self, batch, *args, **kwargs):\r\n        batch = batch.to(memory_format=torch.channels_last)\r\n        return batch\r\n```\r\n\r\nhaven't checked more in defail, but based on your info, I guess this should work"
+      },
+      {
+        "author": "user-22",
+        "body": "Yeah you could also write \r\n\r\n```\r\nclass LitModel(LightningModule):\r\n    def __init__(self):\r\n        ...\r\n\r\n    def train_step(batch):\r\n        with torch.amp.autocast(self.device):\r\n            ...\r\n```\r\nRight? That's not really the point though\r\n\r\nThis isn't some niche technology, huggingface used it to speed up stable diffusion inference by ~2.8x (https://huggingface.co/docs/diffusers/optimization/fp16) I assume that's a pie lightning wants a piece of\r\n\r\nSo does anyone besides you have opinions on this? "
+      }
+    ]
+  },
+  "8895": {
+    "number": 8895,
+    "title": "Runtime events with support for custom handlers",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\n<!-- A clear and concise description of the feature proposal -->\r\n\r\n### Motivation\r\n\r\nFor large scale Lightning deployments, it is very useful to collect certain types of trainer runtime event into an analytics system, so engineers can monitor the overall healthiness of the deployment, as well as obtain useful information for troubleshooting failed/stuck jobs.\r\n\r\nCurrently, Lightning mainly relies on logging for communicating trainer runtime information to the users. However, logging is not ideal for large scale deployments for the following reasons:\r\n- Many training jobs in large scale deployments are automated, long-running batch jobs. It is impractical to expect the users to notice certain warnings (e.g. API deprecation warning) in a timely fashion.\r\n- The desirable amount of events for debuggability purposes may be too verbose for logging.\r\n- Logging is generally less structured.\r\n\r\n### Pitch\r\n\r\n- Introduce the concept of runtime event in Lightning\r\n- Emit appropriate runtime events at appropriate places (e.g. deprecated API usage)\r\n- Provide a mechanism to register custom handlers for runtime events\r\n    - Ideally, we'd like a mechanism to transparently register default handlers (unlike `Plugin` which requires users to explicitly pass to `Trainer`) which don’t belong in the core trainer directly. This could make Lightning more attractive for larger organizations that relies on shared tooling.\r\n    - The backend registration mechanism of `fsspec` is an ideal candidate solution: https://filesystem-spec.readthedocs.io/en/latest/developer.html#implementing-a-backend\r\n\r\n### Alternatives\r\n\r\n### Additional context\r\nA similar prior feature request: https://github.com/PyTorchLightning/pytorch-lightning/issues/8186\r\n\r\n______________________________________________________________________\r\n\r\n#### If you enjoy Lightning, check out our other projects! ⚡\r\n\r\n<sub>\r\n\r\n- [**Metrics**](https://github.com/PyTorchLightning/metrics): Machine learning metrics for distributed, scalable PyTorch applications.\r\n\r\n- [**Flash**](https://github.com/PyTorchLightning/lightning-flash): The fastest way to get a Lightning baseline! A collection of tasks for fast prototyping, baselining, finetuning and solving problems with deep learning\r\n\r\n- [**Bolts**](https://github.com/PyTorchLightning/lightning-bolts): Pretrained SOTA Deep Learning models, callbacks and more for research and production with PyTorch Lightning and PyTorch\r\n\r\n- [**Lightning Transformers**](https://github.com/PyTorchLightning/lightning-transformers): Flexible interface for high performance research using SOTA Transformers leveraging Pytorch Lightning, Transformers, and Hydra.\r\n\r\n</sub>\r\n",
+    "comments": [
+      {
+        "author": "user-10",
+        "body": "I think this is a great proposal! Making the trainer easier to debug will tremendously benefit both users and developers. \r\n\r\nRegarding the event & event handlers, such a design was also employed for torchelastic here: https://pytorch.org/elastic/0.2.0rc1/events.html (since upstreamed to torch.distributed.elastic)\r\n\r\nWhile Lightning cannot assume the usage of torchelastic, this framing can be beneficial for how we design such a system in Lightning, especially since torchelastic is a mature system.\r\n\r\nThe idea of defining events (with names, types/priority levels, and metadata), event handlers that subscribe to these events, and a registration system like fsspec's to easily enable custom backends that don't belong in the core is very compelling.\r\n\r\nFrom the end user POV, I imagine we could do something like change the debug level and immediately have the full trace of execution across different ranks. This will make debugging issues like collective hangs so much easier, since we can tra"
+      },
+      {
+        "author": "user-2",
+        "body": "Some potential requirements for the events could be:\r\n- Supporting structured data: dataclasses/dictionaries/named tuples\r\n- Supporting text data: human-readable messages\r\n- Supporting handlers to files: JSON, plain text\r\n- Integrating with profilers\r\n- Supporting logging any byte data (artifacts): Either the events are able to serialize these or there's a mechanism to link saved data to an event\r\n\r\n> discussing the internal debugger and removing it from the trainer\r\n\r\nIMO the `InternalDebugger` should be fully removed. It's just there to avoid writting better tests / better structured code :P"
+      },
+      {
+        "author": "user-10",
+        "body": "> IMO the InternalDebugger should be fully removed. It's just there to avoid writting better tests / better structured code :P\r\n \r\n+1 "
+      },
+      {
+        "author": "user-9",
+        "body": "@user-2 Yes, the internal debugger should be fully removed. It caused more pain than helped :) "
+      },
+      {
+        "author": "user-24",
+        "body": "Quick update on this, I'm working on an internal prototype and will post a follow up with more detailed design."
+      },
+      {
+        "author": "user-23",
+        "body": "cc: @user-39 the exception collection feature you are looking into should most likely use the same plugin mechanism as described in the issue."
+      },
+      {
+        "author": "user-9",
+        "body": "Dear @user-24,\r\n\r\nCould you sync with @user-2 about your design (maybe a quick call) ?\r\nI would like to make sure we start to collaborate with proper pairing on both side.\r\n\r\nBest,\r\nT.C   "
+      },
+      {
+        "author": "user-24",
+        "body": "@user-9, sure will reach out to @user-2 when I have something to share :) "
+      },
+      {
+        "author": "user-24",
+        "body": "Hi all, here's the proposal doc for events: https://docs.google.com/document/d/1DwmkGODQRgx0-QQL5HsO_okHI3iRjl1dallyCy85QmE/edit#heading=h.6cp7sicq2fv. Please share your thoughts on the doc :) Thanks!"
+      }
+    ]
+  },
+  "12895": {
+    "number": 12895,
+    "title": "[RFC] \"auto\" precision support",
+    "state": "open",
+    "body": "## 🚀 Feature\r\nIntroducing the support for `precision=\"auto\"`, which enables AMP whenever available and falls back to fp32 otherwise.\r\n<!-- A clear and concise description of the feature proposal -->\r\n\r\n### Motivation\r\n\r\n<!-- Please outline the motivation for the proposal. Is your feature request related to a problem? e.g., I'm always frustrated when [...]. If this is related to another GitHub issue, please link it here -->\r\n\r\nAfter introducing `accelerator=\"auto\"` support, it is hard to determine the precision type to use.\r\nPersonally, I use AMP, whenever running on GPU and the GPU supports it. Otherwise I use fp32. Since precision has to be set at the same time, we specify the accelerator, with `accelerator=\"auto\"` we cannot easily at that time determine on which accelerator it will be running (well we could, but that would be kind of duplicating logic we use for accelerator-detection internally) without a larger amount of boilerplate.\r\n\r\n### Pitch\r\n\r\n<!-- A clear and concise description of what you want to happen. -->\r\nHave `precision=\"auto\"` to switch between AMP and fp32 depending on the accelerator and whether the accelerator on hand does support AMP.\r\n\r\n### Alternatives\r\n\r\n<!-- A clear and concise description of any alternative solutions or features you've considered, if any. -->\r\nManually write out all the boilerplate.\r\n\r\n\r\n______________________________________________________________________\r\n\r\n#### If you enjoy Lightning, check out our other projects! ⚡\r\n\r\n- [**Metrics**](https://github.com/PyTorchLightning/metrics): Machine learning metrics for distributed, scalable PyTorch applications.\r\n\r\n- [**Lite**](https://pytorch-lightning.readthedocs.io/en/latest/starter/lightning_lite.html): enables pure PyTorch users to scale their existing code on any kind of device while retaining full control over their own loops and optimization logic.\r\n\r\n- [**Flash**](https://github.com/PyTorchLightning/lightning-flash): The fastest way to get a Lightning baseline! A collection of tasks for fast prototyping, baselining, fine-tuning, and solving problems with deep learning.\r\n\r\n- [**Bolts**](https://github.com/PyTorchLightning/lightning-bolts): Pretrained SOTA Deep Learning models, callbacks, and more for research and production with PyTorch Lightning and PyTorch.\r\n\r\n- [**Lightning Transformers**](https://github.com/PyTorchLightning/lightning-transformers): Flexible interface for high-performance research using SOTA Transformers leveraging Pytorch Lightning, Transformers, and Hydra.\r\n\r\ncc @user-4 @user-9 @maintainer-1 @user-6 @user-2 @user-3 @user-7 @user-5 @user-10 \r\n",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "I see the usefulness of this in the general base case. However, it opens a can of worms in terms of unconventional accelerators, strategies, and your actual hardware (the precision choice depends on the hardware too).\r\n\r\nThere will be combinations of these where we won't be able to make an informed decision and we will likely need to default to regular precision. In those cases, setting `auto` for precision might be misleading."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-2 I think that we will still default to fp32 and users can set this. If not supported by hardware we can simply error out, I guess.\r\n\r\nHowever, I really think that we need a way to say \"use amp if on gpu and else use fp32\" :)"
+      }
+    ]
+  },
+  "14443": {
+    "number": 14443,
+    "title": "Support relative paths in ModelCheckpoint state",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\n<!-- A clear and concise description of the feature proposal -->\r\n\r\nIt would be great if `ModelCheckpoint` internal state supported relative paths.\r\n\r\n\r\n### Motivation\r\n\r\n<!-- Please outline the motivation for the proposal. Is your feature request related to a problem? e.g., I'm always frustrated when [...]. If this is related to another GitHub issue, please link it here -->\r\n\r\nCurrently, if you specify a relative path for `dirpath`, `ModelCheckpoint` converts it to an absolute path under the hood. This makes it hard to resume training if the log directory is moved, or if resuming training from a different server with a different directory structure. \r\n\r\nFor example, I specify the relative path `a/b/c`, and `ModelCheckpoint` converts it to `cwd()/a/b/c`. The model trains correctly for a while. Then, HTCondor reschedules my job on a different server. Now, the `cwd()` is different, even though the relative path `a/b/c` is still the same. The job is unable to resume from checkpoint and I get:\r\n\r\n> UserWarning: The dirpath has changed from <server 1 dirpath> to <server 2 dirpath>, therefore `best_model_score`, `kth_best_model_path`, `kth_value`, `last_model_path` and `best_k_models` won’t be reloaded.\r\n\r\n### Pitch\r\n\r\n<!-- A clear and concise description of what you want to happen. -->\r\n\r\nCreate an argument `relative_paths=True` that would allow `ModelCheckpoint` to use relative paths in its internal state. \r\n\r\n### Alternatives\r\n\r\n<!-- A clear and concise description of any alternative solutions or features you've considered, if any. -->\r\n\r\nUser can create their own checkpoint callback that supports relative paths. But, it would be much nicer if Lightning supported it :-)\r\n\r\n### Additional context\r\n\r\n<!-- Add any other context or screenshots about the feature request here. -->\r\n\r\n______________________________________________________________________\r\n\r\n#### If you enjoy Lightning, check out our other projects! ⚡\r\n\r\n- [**Metrics**](https://github.com/user-8/metrics): Machine learning metrics for distributed, scalable PyTorch applications.\r\n\r\n- [**Lite**](https://pytorch-lightning.readthedocs.io/en/latest/starter/lightning_lite.html): enables pure PyTorch users to scale their existing code on any kind of device while retaining full control over their own loops and optimization logic.\r\n\r\n- [**Flash**](https://github.com/user-8/lightning-flash): The fastest way to get a Lightning baseline! A collection of tasks for fast prototyping, baselining, fine-tuning, and solving problems with deep learning.\r\n\r\n- [**Bolts**](https://github.com/user-8/lightning-bolts): Pretrained SOTA Deep Learning models, callbacks, and more for research and production with PyTorch Lightning and PyTorch.\r\n\r\n- [**Lightning Transformers**](https://github.com/user-8/lightning-transformers): Flexible interface for high-performance research using SOTA Transformers leveraging PyTorch Lightning, Transformers, and Hydra.\r\n\n\ncc @user-4 @user-2 @user-6 @user-40 @user-41 @user-",
+    "comments": [
+      {
+        "author": "user-7",
+        "body": "wondering what'd be the issues of only using relative paths i.e not changing paths at all."
+      },
+      {
+        "author": "user-2",
+        "body": "I think we could change it. It started to use `realpath` in https://github.com/user-8/lightning/pull/2153 with the intent to fix a logic bug when `filepath=a_local_file` was passed. But `filepath` does not exist anymore.\r\n\r\nIt would still be a breaking change as it's possible somebody relies on it being a realpath."
+      }
+    ]
+  },
+  "11604": {
+    "number": 11604,
+    "title": "Support batch size scaling with dataloaders passed directly to `fit()`",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n*This was first suggested/reported in #4000 and addressed in #4006 but then reverted in #4040 due to some GPU testing failure.*\r\n\r\nCurrently, batch size scaling cannot be used with dataloaders passed directly to `trainer.fit()` as exception is raised at:\r\nhttps://github.com/PyTorchLightning/pytorch-lightning/blob/fe34bf2a653ebd50e6a3a00be829e3611f820c3c/pytorch_lightning/tuner/batch_size_scaling.py#L56-L58\r\n\r\nThe reason why this limitation was set is explained in #4006.\r\n> This limitation was set in place, to secure that the user had a field self.batch_size that we could alter.\r\nTo remove this limitation we instead replaces the dataloader with a newly instantiated dataloader with altered batch size.\r\n\r\n### Motivation\r\n\r\n\r\n### Pitch\r\n\r\n\r\n### Alternatives\r\n\r\n\r\n### Additional context\r\n- The limitation has been discovered in the current tuner revamp PR: https://github.com/PyTorchLightning/pytorch-lightning/pull/11089#discussion_r782849342.\r\n- TODO after #11089 lands.\r\n\r\n______________________________________________________________________\r\n\r\n#### If you enjoy Lightning, check out our other projects! ⚡\r\n\r\n- [**Metrics**](https://github.com/PyTorchLightning/metrics): Machine learning metrics for distributed, scalable PyTorch applications.\r\n\r\n- [**Lite**](https://pytorch-lightning.readthedocs.io/en/latest/starter/lightning_lite.html): enables pure PyTorch users to scale their existing code on any kind of device while retaining full control over their own loops and optimization logic.\r\n\r\n- [**Flash**](https://github.com/PyTorchLightning/lightning-flash): The fastest way to get a Lightning baseline! A collection of tasks for fast prototyping, baselining, fine-tuning, and solving problems with deep learning.\r\n\r\n- [**Bolts**](https://github.com/PyTorchLightning/lightning-bolts): Pretrained SOTA Deep Learning models, callbacks, and more for research and production with PyTorch Lightning and PyTorch.\r\n\r\n- [**Lightning Transformers**](https://github.com/PyTorchLightning/lightning-transformers): Flexible interface for high-performance research using SOTA Transformers leveraging Pytorch Lightning, Transformers, and Hydra.\r\n\n\ncc @user-4 @maintainer-1 @user-6 @user-40 @user-7 @user-27 @user-3",
+    "comments": [
+      {
+        "author": "user-7",
+        "body": "looking forward to this, on how it can be done!"
+      }
+    ]
+  },
+  "10759": {
+    "number": 10759,
+    "title": "Proper support for Pytorch SequentialLR Scheduler",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nCurrently there is a bug when a ReduceLROnPlateau is used inside SequentialLR due to no proper support for this scheduler in [Trainer._configure_schedulers](https://github.com/PyTorchLightning/pytorch-lightning/blob/b57feccbff57271144dae70a82b1948f7a4cf7af/pytorch_lightning/trainer/optimizers.py#L123-L193). An exception is raised since the monitor metric is not properly passed to the ReduceLROnPlateau scheduler in [TrainingEpochLoop._update_learning_rates](https://github.com/PyTorchLightning/pytorch-lightning/blob/b57feccbff57271144dae70a82b1948f7a4cf7af/pytorch_lightning/loops/epoch/training_epoch_loop.py#L447-L507)\r\n\r\nNote: Currently, there is a bug in SequentialLR missing an optimizer attribute, see https://github.com/pytorch/pytorch/pull/67406 and https://github.com/PyTorchLightning/pytorch-lightning/issues/10278. But that should not interfere here.\r\n\r\n### To Reproduce\r\nrun any lightning model with trainer with scheduler setup like:\r\n```python\r\ndef configure_optimizers(self):\r\n    optimizer = torch.optim.Adam(self.parameters(), lr=0.01)\r\n    s1= torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)\r\n    s2= torch.optim.lr_scheduler.ConstantLR(optimizer)\r\n    scheduler = torch.optim.lr_scheduler.SequentialLR(\r\n        optimizer,\r\n        schedulers=[s1, s2],\r\n        milestones=[2]\r\n    )\r\n    scheduler.optimizer = optimizer  # dirty fix for bug in SequentialLR\r\n    return {\"optimizer\": optimizer,\r\n            \"lr_scheduler\": scheduler,\r\n            \"monitor\": \"loss\"}\r\n```\r\n<!--\r\nPlease reproduce using the BoringModel!\r\n\r\nYou can use the following Colab link:\r\nhttps://colab.research.google.com/github/PytorchLightning/pytorch-lightning/blob/master/pl_examples/bug_report/bug_report_model.ipynb\r\nIMPORTANT: has to be public.\r\n\r\nor this simple template:\r\nhttps://github.com/PyTorchLightning/pytorch-lightning/blob/master/pl_examples/bug_report/bug_report_model.py\r\n\r\nIf you could not reproduce using the BoringModel and still think there's a bug, please post here\r\nbut remember, bugs with code are fixed faster!\r\n-->\r\n\r\n### Expected behavior\r\nThe monitor value should be passed to the underlying ReduceLROnPlateau scheduler. \r\n\r\nThis is defenitely tricky to achieve as the current way is assuming a fixed scheduler setup for the entire training time, e.g. allows for multiple scheduler but if scheduler1 is changing midway it only works if it is not ReduceLROnPlateau.\r\n\r\n### Environment\r\n- PyTorch Lightning Version (e.g., 1.5.0): 1.5.3\r\n- PyTorch Version (e.g., 1.10): 1.10\r\n- Python version (e.g., 3.9): 3.9\r\n- OS (e.g., Linux): Windows\r\n- CUDA/cuDNN version: 10.2\r\n- GPU models and configuration: -\r\n- How you installed PyTorch (`conda`, `pip`, source): pip\r\n- If compiling from source, the output of `torch.__config__.show()`: -\r\n- Any other relevant information: -\r\n\r\n### Additional context\r\n\r\n\n\ncc @user-9",
+    "comments": [
+      {
+        "author": "user-26",
+        "body": "Related to this but for another issue: There is no support for custom LRScheduler afaik unless they are inherited from _LRScheduler AND require no extra arguments when .step() is called.\r\n\r\nIn vanilla pytorch this is \"solved\" as the user is calling .step() directly.\r\n\r\nPerhaps the newly introduced customizable loops is a solution for this?"
+      },
+      {
+        "author": "user-6",
+        "body": "> Perhaps the newly introduced customizable loops is a solution for this?\r\n\r\nI would rather go with [\"Manual Optimization\"](https://pytorch-lightning.readthedocs.io/en/latest/common/optimizers.html?highlight=Manual%20Optimizuation#manual-optimization) before going for custom loops. \r\n\r\nIn manual optimization mode, the user calls the scheduler step manually, hence you can use a custom one and pass args to its step method. How does that sound for a (temporary?) workaround?"
+      },
+      {
+        "author": "user-26",
+        "body": "great idea, i forgot about that. I guess that solves the custom scheduler issue. But I still think the support for SequentialLR is necessary. I think there is a debate on Pytorch whether the schedule class needs a rewrite, so perhaps one waits for that?"
+      },
+      {
+        "author": "user-7",
+        "body": "For the main issue regarding `ReduceLROnPlateau`, `SequentialLR` doesn't support an additional argument inside `.step` so we really can't do anything from our side.\r\nhttps://github.com/pytorch/pytorch/blob/5fdcc20d8d96a6b42387f57c2ce331516ad94228/torch/optim/lr_scheduler.py#L628\r\n\r\n> Related to this but for another issue: There is no support for custom LRScheduler afaik unless they are inherited from _LRScheduler AND require no extra arguments when .step() is called.\r\n\r\nDo you have any scheduler that is inherited from `_LRScheduler` and requires an additional argument inside the `.step` method? I have a PR for it: https://github.com/PyTorchLightning/pytorch-lightning/pull/10249, that will solve the issue but seems to be blocked under the decision whether to support outside schedulers or not which are not inherited from PT `_LRScheduler`."
+      },
+      {
+        "author": "user-26",
+        "body": "Well, I wanted to use WarmStart (custom scheduler inherited from _LRScheduler) together with ReduceLROnPlateu. First try was using SequentialLR but as outlined above is impossible to use with ReduceLROnPlateu. Then I simply inherited from ReduceLROnPlateu and modified its step function to include the logic from WarmStart. See [here](https://gist.github.com/Nesqulck/48c562d358c5484db8362fdfe634dbd0) for the code. That works now with PytorchLightning as it is simply a ReduceLROnPlateu in disguise. Although it would be cleaner to use SequentialLR but is now a pytorch issue rather than PL. Maybe a separate issue can be opened there such that SequentialLR can accept arbitrary arguments in step?"
+      },
+      {
+        "author": "user-7",
+        "body": "yeah, I'd suggest opening an issue in PyTorch and linking it here. We won't close this issue. Once they support it, we will make adjustments here, if required, to make it compatible."
+      }
+    ]
+  },
+  "14035": {
+    "number": 14035,
+    "title": "Async checkpointing race conditions",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nWe've seen flakiness in the CI due to race conditions in the async checkpointing logic.\r\n\r\n\r\n### To Reproduce\r\n\r\nThe specific test in our code base: test_async_checkpoint_plugin\r\nA CI run where this occurred: https://github.com/user-8/lightning/runs/7672029478?check_suite_focus=true\r\nError:\r\n```\r\n\r\n>       trainer.fit(model)\r\n\r\nD:\\a\\lightning\\lightning\\tests\\tests_pytorch\\plugins\\test_checkpoint_io_plugin.py:127: \r\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\r\nd:\\a\\lightning\\lightning\\src\\pytorch_lightning\\trainer\\trainer.py:698: in fit\r\n    self._call_and_handle_interrupt(\r\nd:\\a\\lightning\\lightning\\src\\pytorch_lightning\\trainer\\trainer.py:650: in _call_and_handle_interrupt\r\n    return trainer_fn(*args, **kwargs)\r\nd:\\a\\lightning\\lightning\\src\\pytorch_lightning\\trainer\\trainer.py:739: in _fit_impl\r\n    results = self._run(model, ckpt_path=self.ckpt_path)\r\nd:\\a\\lightning\\lightning\\src\\pytorch_lightning\\trainer\\trainer.py:1179: in _run\r\n    results = self._run_stage()\r\nd:\\a\\lightning\\lightning\\src\\pytorch_lightning\\trainer\\trainer.py:1265: in _run_stage\r\n    return self._run_train()\r\nd:\\a\\lightning\\lightning\\src\\pytorch_lightning\\trainer\\trainer.py:1296: in _run_train\r\n    self.fit_loop.run()\r\nd:\\a\\lightning\\lightning\\src\\pytorch_lightning\\loops\\loop.py:201: in run\r\n    self.on_advance_end()\r\nd:\\a\\lightning\\lightning\\src\\pytorch_lightning\\loops\\fit_loop.py:298: in on_advance_end\r\n    self.trainer._call_callback_hooks(\"on_train_epoch_end\")\r\nd:\\a\\lightning\\lightning\\src\\pytorch_lightning\\trainer\\trainer.py:1610: in _call_callback_hooks\r\n    fn(self, self.lightning_module, *args, **kwargs)\r\nd:\\a\\lightning\\lightning\\src\\pytorch_lightning\\callbacks\\model_checkpoint.py:311: in on_train_epoch_end\r\n    self._save_topk_checkpoint(trainer, monitor_candidates)\r\nd:\\a\\lightning\\lightning\\src\\pytorch_lightning\\callbacks\\model_checkpoint.py:382: in _save_topk_checkpoint\r\n    self._save_monitor_checkpoint(trainer, monitor_candidates)\r\nd:\\a\\lightning\\lightning\\src\\pytorch_lightning\\callbacks\\model_checkpoint.py:662: in _save_monitor_checkpoint\r\n    self._update_best_and_save(current, trainer, monitor_candidates)\r\nd:\\a\\lightning\\lightning\\src\\pytorch_lightning\\callbacks\\model_checkpoint.py:716: in _update_best_and_save\r\n    trainer.strategy.remove_checkpoint(del_filepath)\r\nd:\\a\\lightning\\lightning\\src\\pytorch_lightning\\strategies\\strategy.py:460: in remove_checkpoint\r\n    self.checkpoint_io.remove_checkpoint(filepath)\r\nC:\\hostedtoolcache\\windows\\Python\\3.9.13\\x64\\lib\\unittest\\mock.py:1092: in __call__\r\n    return self._mock_call(*args, **kwargs)\r\nC:\\hostedtoolcache\\windows\\Python\\3.9.13\\x64\\lib\\unittest\\mock.py:1096: in _mock_call\r\n    return self._execute_mock_call(*args, **kwargs)\r\nC:\\hostedtoolcache\\windows\\Python\\3.9.13\\x64\\lib\\unittest\\mock.py:1166: in _execute_mock_call\r\n    return self._mock_wraps(*args, **kwargs)\r\nd:\\a\\lightning\\lightning\\src\\pytorch_lightning\\plugins\\io\\wrapper.py:61: in remove_checkpoint\r\n    s",
+    "comments": [
+      {
+        "author": "user-7",
+        "body": "I think, it's like a filepath is currently in the queue and being saved, but the main process is trying to delete it, which is causing the issue."
+      },
+      {
+        "author": "user-6",
+        "body": "Yes exactly. This is happening during fit, not after. The main process assumes the file has already been saved, and is so far ahead that a new best value is found, hence it is going to attempt to remove the oldest topk checkpoint. "
+      },
+      {
+        "author": "user-7",
+        "body": "> should we use save_top_k=-1 then in the test?\r\n\r\nso do you agree? I think there's no way to avoid this. We can add a note too about this."
+      },
+      {
+        "author": "user-6",
+        "body": "Yes, for now we can add the top_k=-1 to avoid the problem.\r\n\r\nThe larger issue can probably be solved by implementing the remove_checkpoint and using a lock, so only one of these operations can be carried out at a given time. "
+      },
+      {
+        "author": "user-7",
+        "body": "Do you mean a lock that ensures that the queue is empty and all the requested files are saved before anyone of them could be removed?"
+      },
+      {
+        "author": "user-27",
+        "body": "I think using a lock on a particular file (such as empty file with a special name, i.e. `f\".{filename}.lock\"`) is the best option here. Then all the operations (loading, deleting, etc.) could check for presence of such lock and wait until it's not there"
+      },
+      {
+        "author": "user-6",
+        "body": "> I think using a lock on a particular file (such as empty file with a special name, i.e. f\".{filename}.lock\") is the best option here.\r\n\r\nDefinitely not. Such a file I/O would experience the exact same race condition issue. I was talking about a [threading lock](https://docs.python.org/3/library/threading.html#lock-objects). \r\n\r\nWhile it is clear that we would use a threading lock to prevent simultaneous access to the file from different threads, it remains unclear how we would use it to resolve the queue. Our removal operation currently has no connection to the queue of files being processed by the thread. One has to come up with a smart way to decide what the thread is going to save. For example, removing a file that is in the queue could be interpreted as skipping to write that file. \r\n\r\n"
+      },
+      {
+        "author": "user-28",
+        "body": "Think I got into a horrible situation related to this where I deleted the best weights I had for the model we'd just deployed because I exited training (starting from that checkpoint) at exactly the wrong time. \r\n\r\nCaused a lot of unnecessary stress, and was very surprised by the behaviour."
+      },
+      {
+        "author": "user-7",
+        "body": "for async checkpointing it's recommended to set `save_top_k=-1`"
+      },
+      {
+        "author": "user-28",
+        "body": "Yeah just think I hit another similar problem? Thought it would be saving the best 5 models, but instead I've just ended up with the first 5. Thanks for this warning, really needed.\r\n\r\n<img width=\"516\" alt=\"image\" src=\"https://user-images.githubusercontent.com/47161914/193887942-1be438d1-3918-47a9-a769-4c854bb5deb2.png\">\r\n\r\nThat's my code, and the output is just the first 5 epochs, using DDP. \r\n\r\nPlease let me know if I'm posting on an unrelated thread.\r\n\r\n"
+      }
+    ]
+  },
+  "7315": {
+    "number": 7315,
+    "title": "Remove Trainer reference from lightning module and datamodule",
+    "state": "open",
+    "body": "Motivation: Remove trainer reference from LightningModule and LightningDataModule.\r\n\r\nBenefits:\r\n- Better backwards compatibility: it should be easier to use the LightningModule of one version of Lightning with the Trainer from another version\r\n- Better API clarity: users today who call Trainer functions like fit/validate/predict inside of the LightningModule will run into issues with state management. The Trainer assumes these top-level APIs are not called from within another trainer context.\r\n\r\n\r\nPossible solution: think about introducing a TrainerContext / TrainerState object to pass state and deprecate references to the trainer. This would be mostly read-only data that the LightningModule could leverage for various settings like progress (epoch/step count), distributed setting (global rank, local rank, data parallel/ddp/deepspeed/etc) and more.\r\n\r\nThe ambition is the lightning module has a tightly controlled view of the trainer, while the trainer has full insight into the module.\r\n\n\ncc @user-4 @user-9 @maintainer-1 @user-6",
+    "comments": [
+      {
+        "author": "user-30",
+        "body": "Hello, @user-29 @user-10 may I ask a question about this proposal and for your advice?\r\n\r\n**Context**\r\nMy organization happens to have a use case for `call Trainer functions like fit/validate/predict inside of the LightningModule` as per our algorithm. When doing so naively, it caused changes to the trainer state, leading to a totally different execution path, upon completing an inner top-level API call.\r\n\r\nMore concretely, **for algorithms that need to do inference during training (not validation, but to support training steps), I think PL doesn't have good support today**.  \r\n\r\nI implemented a thin wrapper (subclass) over `pl.Trainer` that implements a new API called `predict_in_fit` where a fresh Trainer instance is created with a model & a data module are passed to it. While this works well for our use case, It left me with a nagging feeling that we are __ working around __ the original design design for Trainer: \"The Trainer assumes these top-level APIs are not called from within "
+      },
+      {
+        "author": "user-10",
+        "body": "@user-30 \r\n\r\nMy apologies for the slow reply. \r\n\r\nBy Trainer Context, I do not mean a Python context manager. Rather, I mean a read-only view of the Trainer state. This would allow the LightningModule and DataModule to have access to information in a controlled manner without exposing the full Trainer object here.\r\n\r\n> More concretely, for algorithms that need to do inference during training (not validation, but to support training steps), I think PL doesn't have good support today.\r\n\r\nFundamentally, I think this should be solved at the loop level. Though I would like to better understand the constraints of your use case (e.g. why iterating over a dataloader inside the LightningModule is not feasible for you vs. needing to call trainer.predict).  This is a huge challenge for precisely the reasons you mentioned: it is very difficult to manage storing and resuming trainer states appropriately. I am also curious if there's another way to split up your use case into a pipeline rather than "
+      }
+    ]
+  },
+  "15008": {
+    "number": 15008,
+    "title": "pytorch lightning causes slurm nodes to drain",
+    "state": "open",
+    "body": "### Bug description\n\nHello! When I train with DDP strategy, any type of crashes like `Out Of Memory (OOM)` error or `scancel` slurm job results in slurm nodes to drain due to `Kill task failed` which means that the pytorch lightning process running on these nodes failed to clean up after termination. I was wondering how I could fix this?\n\n### How to reproduce the bug\n\n```python\ncallbacks_list = [\r\n        lr_monitor,\r\n        checkpoint_callback,\r\n        swa_ensemble,\r\n        PrintCallback(),\r\n        callbacks.ModelSummary(),\r\n        callbacks.DeviceStatsMonitor(cpu_stats=True),\r\n        ]\r\n\r\nlogger = [\r\n        loggers.tensorboard.TensorBoardLogger(save_dir=\"./logs\", version=slurm_job_id), \r\n        ]\r\n\r\ntrainer = pl.Trainer(\r\n            gpus=_cfg.slurm_job.gpus_per_node,\r\n            num_nodes=_cfg.slurm_job.number_of_nodes, \r\n            accelerator=\"gpu\",\r\n            strategy=DDPStrategy(find_unused_parameters=False),\r\n            plugins=pl.plugins.environments.SLURMEnvironment(auto_requeue=False),\r\n            max_epochs=_cfg.training.fit.epochs, \r\n            callbacks=callbacks_list,\r\n            logger=logger,\r\n            accumulate_grad_batches=_cfg.training.fit.accumulation_steps,\r\n            profiler=\"simple\",\r\n            )\r\ndata_module = DataModule(_cfg)\r\nmodel_module = LitModelModule(_cfg)\r\n\r\ntrainer.fit(\r\n            model=model_module, \r\n            datamodule=data_module,\r\n            ckpt_path=None\r\n        )\n```\n\n\n### Error messages and logs\n\n```\r\n\r\n# Error messages and logs here please\r\n\r\n```\r\n\n\n### Environment\n\n```\r\n\r\n- Lightning Component (e.g. Trainer, LightningModule, LightningApp, LightningWork, LightningFlow): Trainer, LightningModule\r\n- PyTorch Lightning Version (e.g., 1.5.0): 1.7.7\r\n- PyTorch Version (e.g., 1.10): 1.12.0\r\n- Python version (e.g., 3.9): 3.9.12\r\n- OS (e.g., Linux): Linux --RHEL7.4 \r\n- CUDA/cuDNN version: 11.7\r\n- GPU models and configuration: RTX 5000's\r\n- How you installed Lightning(`conda`, `pip`, source): pip\r\n- \r\n```\r\n\n\n### More info\n\n_No response_",
+    "comments": [
+      {
+        "author": "user-32",
+        "body": "This is with multi-node, 8 GPUs per node. Tried on 2,3,4,and 5 nodes and all cases cause the issue. Feels like the higher the nodes we try, the higher the probability that one or more will go into the drain state."
+      },
+      {
+        "author": "user-6",
+        "body": "What about single node training? The OOM should occur there too, and is likely not related to SLURM. Maybe there is a memory leak in the model?  "
+      },
+      {
+        "author": "user-32",
+        "body": "OOM ing is not the problem. Single node works fine. We figured it out by talking to the people that manage our cluster, and they increased the timeout limit on slurm and that fixed our issue. Sometimes it will take 5min or more though for a job to exit"
+      },
+      {
+        "author": "user-6",
+        "body": "> Sometimes it will take 5min or more though for a job to exit\r\n\r\nIs your script exiting normally? Can you check what happens at the end of training, are you saving big checkpoints? Can you check if it is also 5 mins on single node? \r\n"
+      }
+    ]
+  },
+  "10291": {
+    "number": 10291,
+    "title": "Support model size calculation for FSDP & DeepSpeed (stage-3)",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nCurrently `LightningModule.model_size` (deprecated) relies on:\r\nhttps://github.com/PyTorchLightning/pytorch-lightning/blob/45c45dc7b018f9a2db60f5df1a3f7dbbb45ccb36/pytorch_lightning/utilities/memory.py#L165-L179\r\n\r\nto calculate model size. Since we are going to keep `get_model_size_mb` utility function, we should have a way to calculate model_sizes for sharded models.\n\ncc @user-4 @user-42 @user-6 @user-7 @user-3",
+    "comments": []
+  },
+  "15254": {
+    "number": 15254,
+    "title": "\"MisconfigurationException: No supported gpu backend found!\" with multi gpu training in jupyter notebooks",
+    "state": "open",
+    "body": "### Bug description\n\nWhen trying to train on two GPUs in a jupyter notebooks environment on jarvislabs.ai with `ddp_notebooks` I get the following error \"MisconfigurationException: No supported gpu backend found!\". \r\n\r\nI'm trying to train on two RTX 5000 GPUs. On a Kaggle GPU the same code runs without any problem. \r\n\r\nAny ideas? \n\n### How to reproduce the bug\n\n```python\ntrainer = pl.Trainer(\r\n    max_epochs=2, \r\n    accelerator=\"gpu\",\r\n    devices=2,\r\n    precision=16,\r\n    accumulate_grad_batches=2\r\n)\r\ntrainer.fit(model, train_dl, val_dl)\n```\n\n\n### Error messages and logs\n\n\r\n\"MisconfigurationException: No supported gpu backend found!\"\r\n\n\n### Environment\n\n```\r\n\r\n#- Lightning Component (e.g. Trainer, LightningModule, LightningApp, LightningWork, LightningFlow):\r\n#- PyTorch Lightning Version (e.g., 1.5.0): 1.7.7\r\n#- Lightning App Version (e.g., 0.5.2):\r\n#- PyTorch Version (e.g., 1.10): 1.11\r\n#- Python version (e.g., 3.9):\r\n#- OS (e.g., Linux):\r\n#- CUDA/cuDNN version: V11.6.55\r\n#- GPU models and configuration: 2x RTX 5000\r\n#- How you installed Lightning(`conda`, `pip`, source): pip\r\n#- Running environment of LightningApp (e.g. local, cloud): jarvislabs.ai \r\n\r\n```\r\n\n\n### More info\n\n_No response_",
+    "comments": [
+      {
+        "author": "user-7",
+        "body": "cc: @user-6 "
+      },
+      {
+        "author": "user-6",
+        "body": "@user-33 Was your PyTorch installed with GPU support? I suspect that it was not. Please check what \r\n\r\n```py\r\nimport torch\r\nprint(torch.cuda.is_available())\r\n```\r\nreturns for you. If not, [please install it like so](https://pytorch.org/): `pip3 install torch --extra-index-url https://download.pytorch.org/whl/cu116`."
+      },
+      {
+        "author": "user-33",
+        "body": "It is installed with GPU support: `torch.cuda.is_available()` returns `True` and `torch.cuda.device_count()` returns `2`. But after I call these functions I can't start training anymore because of the \"process forking\" error. "
+      },
+      {
+        "author": "user-6",
+        "body": "@user-33 I cannot reproduce on our multi-GPU machine with Jupyter notebook. I haven't tried with jarvislabs.ai but I don't think it is related. There was some issue in 1.7.7 with precision=16 and the \"process forking\" error that you described that we fixed. \r\n\r\nWould you mind checking again by installing our development version from master to see if your GPUs get properly detected? To install from master, simply run:\r\n```\r\npip install https://github.com/user-8/lightning/archive/refs/heads/master.zip -U\r\n```"
+      },
+      {
+        "author": "user-33",
+        "body": "I suppose it has something to do with the GPU or the CUDA version, since on Kaggle the exact same code ran with no problem.\r\n\r\nI will install the development version of lightning and try again. Thank you!"
+      },
+      {
+        "author": "user-33",
+        "body": "Okay so I installed the dev version of lightning and I get a new error (with precision=32 or precision=16, doesn't matter):\r\n\r\n`RuntimeError: ProcessGroupNCCL is only supported with GPUs, no GPUs found!`\r\n\r\nWhats funny is that now starting the trainer logs the following: \r\n\r\n```\r\nGPU available: True (cuda), used: True\r\nTPU available: False, using: 0 TPU cores\r\nIPU available: False, using: 0 IPUs\r\nHPU available: False, using: 0 HPUs\r\nInitializing distributed: GLOBAL_RANK: 0, MEMBER: 1/2\r\nInitializing distributed: GLOBAL_RANK: 1, MEMBER: 2/2\r\n[W CUDAFunctions.cpp:112] Warning: CUDA initialization: CUDA driver initialization failed, you might not have a CUDA gpu. (function operator())\r\n```\r\n\r\nSo it seems to recognize the GPU but it still doesn't work.\r\n"
+      }
+    ]
+  }
+}

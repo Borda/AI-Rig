@@ -41,13 +41,7 @@ Comparing library versions (e.g. upgrade planning):
 
 1. Fetch CHANGELOG for version range
 2. Identify: breaking changes, new features, deprecations
-3. Produce migration table:
-
-```markdown
-| API | v1.x behavior | v2.x behavior | Migration action |
-|-----|--------------|--------------|-----------------|
-| ... | ...          | ...          | ...             |
-```
+3. Produce a migration table with API, old/new version behavior and migration action columns.
 
 ## Migration Guide Extraction
 
@@ -257,13 +251,15 @@ For ML/PyTorch ecosystem libraries:
 
 <pytorch-ecosystem-tracking>
 
-Load pytorch_tracking from `${CLAUDE_PLUGIN_ROOT}/skills/_shared/pytorch-tracking.md` in CI-maintainer mode only (when user requests PyTorch version tracking).
+Run `cat "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pytorch-tracking.md"` via the Bash tool in CI-maintainer mode only (when user requests PyTorch version tracking).
 
 </pytorch-ecosystem-tracking>
 
 <workflow>
 
-1. **Scope check** — before fetching, apply `<routing-boundaries>`, including its dependency-pin and external-README exceptions. If the primary ask is out of scope: "This task is outside web-explorer's scope — redirect to [agent]." **Stop — do not fetch any URLs or run searches.** Don't produce out-of-scope findings.
+Decline delivery: when the spawn prompt names a deliverable or output file, first write the bold line, any required redirect, and `status: unsupported`, `reason` and `owner` to that file — never skip a mandated file; when it demands an envelope (`Return ONLY:`), return only `"status": "unsupported"`, `"reason"` and `"owner"` (agent/skill or `"none"`), plus `"file"` when a deliverable was written; a demanded fixed closing line (e.g. `Wrote: <id>`) takes precedence over an envelope and is the whole reply. With neither envelope nor fixed closing line required, reply only with the bold line and any required redirect. A decline is not an analysis, so it carries no Confidence block. <!-- policy-sibling: plugins/cc_foundry/agents/challenger.md, plugins/cc_foundry/agents/doc-scribe.md, plugins/cc_foundry/agents/linting-expert.md, plugins/cc_foundry/agents/creator.md, plugins/cc_foundry/agents/qa-specialist.md, plugins/cc_foundry/agents/solution-architect.md, plugins/cc_foundry/agents/web-explorer.md, plugins/cc_foundry/agents/perf-optimizer.md, plugins/cc_foundry/skills/manage/SKILL.md — decline delivery -->
+
+1. **Scope check** — before fetching, apply `<routing-boundaries>`, including its dependency-pin and external-README exceptions. If the primary ask is out of scope, decline using `**! UNSUPPORTED — <reason>; owner: <agent/skill or none>**` and Decline delivery above. **Stop — do not fetch any URLs or run searches.** Don't produce out-of-scope findings.
 2. Identify best source: official docs site → GitHub (README/CHANGELOG/docs/) → PyPI → HuggingFace Hub
 3. Fetch specific page (not homepage); for long pages use "Long page — section headers" prompt from `<webfetch-prompts>` first, then re-fetch targeted subsections with specific extraction prompt
 4. Parse + extract: function signatures, parameters, return types, examples, deprecation notices
@@ -275,7 +271,7 @@ Load pytorch_tracking from `${CLAUDE_PLUGIN_ROOT}/skills/_shared/pytorch-trackin
    - Cross-check examples against library's test suite if available
    - Flag when docs sparse, outdated, or contradict source code
    - Note if feature experimental, beta, or subject to change
-9. Apply Internal Quality Loop, end with `## Confidence` block — see `.claude/rules/foundry-quality-gates.md`. In Gaps: note explicitly if absence-of-content checks weren't performed — omission gaps distinct from accuracy gaps, must be named separately.
+9. Apply Internal Quality Loop, end with `## Confidence` block — see `~/.claude/rules/foundry-quality-gates.md`. In Gaps: note explicitly if absence-of-content checks weren't performed — omission gaps distinct from accuracy gaps, must be named separately.
 
 </workflow>
 

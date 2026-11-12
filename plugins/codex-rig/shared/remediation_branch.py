@@ -50,7 +50,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from collect_pr import _github_remote_identity, _head_repository
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
+from collect_pr import _github_remote_identity, _head_repository  # noqa: E402
 
 
 def _git(*arguments: str, optional: bool = False) -> str:
@@ -118,7 +121,7 @@ def _destination(
         raise ValueError("pr-upstream-mismatch:stop-without-changing-tracking")
     remotes = _git("remote").splitlines()
     # gh can configure a fork URL directly instead of adding a named local remote.
-    urls = _git("remote", "get-url", "--all", remote).splitlines() if remote in remotes else [remote]
+    urls = _git("remote", "get-url", "--all", "--", remote).splitlines() if remote in remotes else [remote]
     if not urls or any(
         tuple(part.casefold() for part in (_github_remote_identity(url) or ()))
         != tuple(part.casefold() for part in expected)

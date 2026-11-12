@@ -21,8 +21,8 @@ flag and then never echoed it, so a resumed run gave no sign of which checkpoint
 
 Side effects:
     creates ``.experiments/kaggle/``, clears a stale ``.temp/state/skill-contract.md`` left by a
-    crashed prior run (compaction-contract.md §Lifecycle), and writes six sentinels:
-    ``kaggle-{competition-name,eda-only,inference-only,offline-setup,resume,keep-items}-${CSID}``.
+    crashed prior run (compaction-contract.md §Lifecycle), and writes seven sentinels:
+    ``kaggle-{competition-name,eda-only,inference-only,offline-setup,explicit-offline-setup,resume,keep-items}-${CSID}``.
     ``resume`` holds the ``--resume`` path (empty when absent) so Step 3 can tell the generating
     agent to extend that script instead of overwriting it.
     All paths are CWD-relative, matching the shell original — the contract and experiment dirs
@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -50,15 +51,6 @@ if _BIN_DIR not in sys.path:
     sys.path.insert(0, _BIN_DIR)
 
 from _sentinel_io import write_private_text  # noqa: E402
-
-#: Duplicated from ``extract-keep-flag.py`` rather than imported — that script's name is
-#: hyphenated and so not importable, and a shared module would add import machinery to a
-#: script five skills already depend on. Keep the two regexes in step.
-_KEEP_RE = re.compile(r'--keep[ \t\r\f\v]+"([^"]+)"')
-#: Matches a --type <lowercase word> option and captures the word.
-_TYPE_RE = re.compile(r"--type[ \t\r\f\v]+([a-z]+)")
-#: Matches a --resume <value> option and captures the value, which is the run to resume.
-_RESUME_RE = re.compile(r"--resume[ \t\r\f\v]+(\S+)")
 
 #: Compaction-contract file that is removed when the skill starts a fresh run.
 _CONTRACT = Path(".temp/state/skill-contract.md")
@@ -85,14 +77,33 @@ def parse_modes(arguments: str) -> tuple[bool, bool, bool]:
         >>> parse_modes("comp")
         (False, False, False)
     """
-    eda_only = "--eda-only" in arguments
-    inference_only = "--inference-only" in arguments
-    offline_setup = "--offline-setup" in arguments
+    options = _options(arguments)
+    eda_only = "--eda-only" in options
+    inference_only = "--inference-only" in options
+    offline_setup = "--offline-setup" in options
     if inference_only:
         offline_setup = True
     if eda_only:
         offline_setup = False
     return eda_only, inference_only, offline_setup
+
+
+def _options(arguments: str) -> dict[str, str]:
+    """Extract standalone options while preserving quoted descriptions as data."""
+    lexer = shlex.shlex(arguments, posix=False)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    tokens = iter(lexer)
+    options = {}
+    for argument in tokens:
+        if argument == "--":
+            break
+        if argument in {"--type", "--resume", "--keep"}:
+            value = next(tokens, "")
+            options[argument] = value[1:-1] if value[:1] in {"'", '"'} and value[-1:] == value[:1] else value
+        elif argument in {"--eda-only", "--inference-only", "--offline-setup"}:
+            options[argument] = "true"
+    return options
 
 
 def _first_token(arguments: str) -> str:
@@ -112,12 +123,6 @@ def _first_token(arguments: str) -> str:
     """
     parts = arguments.split()
     return parts[0] if parts else ""
-
-
-def _search(pattern: re.Pattern[str], arguments: str) -> str:
-    """Return the first capture group of ``pattern`` in ``arguments``, or an empty string."""
-    match = pattern.search(arguments)
-    return match.group(1) if match else ""
 
 
 def _sentinel_dir() -> Path:
@@ -160,15 +165,19 @@ def main(argv: list[str] | None = None) -> int:
         or ".." in competition
     ):
         parser.error("competition must be a name using letters, digits, '.', '_' or '-' without '..'")
-    eda_only, inference_only, offline_setup = parse_modes(raw)
-    problem_type = _search(_TYPE_RE, raw)
-    resume = _search(_RESUME_RE, raw)
+    try:
+        options = _options(raw)
+        eda_only, inference_only, offline_setup = parse_modes(raw)
+    except ValueError as exc:
+        parser.error(str(exc))
+    problem_type = options.get("--type", "")
+    resume = options.get("--resume", "")
     if resume:
         try:
             resume = Path(resume).expanduser().resolve().relative_to(Path.cwd().resolve()).as_posix()
         except (OSError, ValueError, RuntimeError):
             parser.error("--resume must stay within the project tree")
-    keep_items = _search(_KEEP_RE, raw)
+    keep_items = options.get("--keep", "")
 
     print(
         f"Competition: {competition}\n"
@@ -184,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         "eda-only": str(eda_only).lower(),
         "inference-only": str(inference_only).lower(),
         "offline-setup": str(offline_setup).lower(),
+        "explicit-offline-setup": str("--offline-setup" in options).lower(),
         "resume": resume,
         "keep-items": keep_items,
     }

@@ -32,6 +32,8 @@ Scope every review whitespace check to run-owned paths (`git diff --check -- <ow
 
 ## Required gate output
 
+A passing implementation result requires a passing `tests` gate or a retained user-approved skip; Code Remediate also accepts the approval-free documentation-only skip in [Sandboxed Test Runs](native-skill-contract.md#sandboxed-test-runs). Supply `run_gates.py --skip-tests <reason> --test-skip-approval <decision-file>` for an approved skip; the JSON decision contains `decision="skip-tests"`, the exact `reason`, and nonempty `evidence` identifying the user's decision. The runner retains and hashes that decision, and result validation rechecks its bytes and reason. A terminal closed review retains its review checks without requiring implementation tests.
+
 Each skill run must write:
 
 - `status`: `pass`, `fail`, or `timeout`
@@ -110,7 +112,7 @@ Every final chat is compact, outcome-coupled handoff in this order:
 4. `Remaining`: list every unresolved, deferred, skipped, externally owned, or environment-blocked obligation with its owner and next action. Write `None` only when evidence closes all obligations.
 5. `Confidence`: report score, material limits, and any unresolved confidence gap under shared confidence-band policy and [Confidence Deduction Accounting](#confidence-deduction-accounting).
 6. `Artifact`: link the canonical result artifact and any essential supporting report. An artifact is supplemental, never a substitute for the outcome, result rows, verification, remaining-work disclosure, or next steps.
-7. `Recommendations / next steps`: end with prioritized owner/action entries that move unresolved work or accepted recommendation forward. Reference result rows instead of repeating them; omit this section when no follow-up is justified or a terminal-close branch forbids it.
+7. `Recommendations / next steps`: end with prioritized owner/action entries that move unresolved work or accepted recommendation forward. Reference result rows instead of repeating them; when no follow-up is justified, explicitly state that no further action is required. Terminal-close and exact caller-contract branches retain their exceptions. Recommendations in result rows must reach this closing section even when the analysis itself is complete; keep authored actions and owners, never invent them.
 
 Keep headings and tables proportional to result. A single decision still uses one short result row; branch-heavy results use separate bullets or tables instead of one long paragraph. Tables and stable labels are human reading anchors across all skills and workflows, not optional decoration. Use `Owner | Issue | Action` for independent next actions and `Check | Status | Evidence` for verification records in current final handoffs; keep paths below tables. Keep sequential procedures in numbered steps, confidence explanations in bullets and cohesive summaries in prose. Terminal-close and unavailable outcomes use a compact status table without inventing assessed findings or recommendations. Exact caller output and immediate yields for accepted pending questions retain their existing contracts.
 

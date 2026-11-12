@@ -76,37 +76,43 @@ ______________________________________________________________________
 
 ## 🧰 bin/ Script Architecture
 
-### `${CLAUDE_PLUGIN_ROOT}` and the fallback pattern
+### `${CLAUDE_PLUGIN_ROOT}` and root resolution
 
-Every bin/ call uses `${CLAUDE_PLUGIN_ROOT:-plugins/<plugin>}`:
+Every executable Claude block resolves and exports `PLUGIN_ROOT` before invoking helpers:
 
-- **Installed** (normal use): `CLAUDE_PLUGIN_ROOT` set by Claude Code to plugin cache path (`~/.claude/plugins/cache/borda-ai-rig/<plugin>/<version>/`).
-- **Dev/testing** (local tree, `CLAUDE_PLUGIN_ROOT` unset): falls back to `plugins/<plugin>` — source tree location.
+- **Host-loaded skills and agents**: the host substitutes the plain `${CLAUDE_PLUGIN_ROOT}` bootstrap token; do not rely on a shell environment variable.
+- **Loaded fragments**: plugin loaders or `render_plugin_root.py` render that token to the validated owning-plugin root with shell-context escaping; raw `cat` is only suitable for token-free documents.
 
-Fallback exists so skills work from both installed cache and local dev tree, no configuration. Never use bare `plugins/<name>/` as primary path — Check C32 flags as violation.
+The shared resolver selects a usable install record first, validated non-orphaned cache versions in strict SemVer order second, and its own AI-Rig source checkout last, only with cwd inside that checkout. Never use a defaulted token or a cwd-relative bootstrap path. For development, explicitly select the source resolver or renderer by absolute path; installed resolution retains priority. Codex recipes keep their explicit portable-launcher convention.
 
 ### Two call patterns
 
 **Pattern A — Python scripts (`.py`) via subshell variable assignment:**
 
 ```bash
-_FS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null)  # timeout: 5000
-RUN_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/make_run_dir.py" "skill" ".reports" 2>/dev/null)         # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+_FS=$(python "$PLUGIN_ROOT/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null)  # timeout: 5000
 ```
 
-`VAR=$(...)` form = shell variable assignment — Claude Code permission matcher treats it as shell builtin construct. Inner script not separately matched against allow list. **Note**: observed behavior, not documented guarantee; Claude Code update could change it. ~48 call sites across all plugin SKILL.md files depend on this (see Known Limitations).
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
+RUN_DIR=$(python "$PLUGIN_ROOT/bin/make_run_dir.py" "skill" ".reports" 2>/dev/null)         # timeout: 5000
+```
+
+`VAR=$(...)` is a shell variable assignment; the inner script is not separately matched against the prefix allow list. The complete guarded block needs exact blueprint coverage to avoid the Contains expansion prompt (see Known Limitations).
 
 **Pattern B — Python scripts (`.py`) via direct call or subshell:**
 
 ```bash
 # Side-effect call (writes a file, prints findings) — direct invocation
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_tag_symmetry.py" .claude/agents/*.md  # timeout: 10000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/check_tag_symmetry.py" .claude/agents/*.md  # timeout: 10000
 
 # Value-producing call — subshell
-MEMORY_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_memory_dir.py" 2>/dev/null)  # timeout: 5000
+MEMORY_DIR=$(python "$PLUGIN_ROOT/bin/resolve_memory_dir.py" 2>/dev/null)  # timeout: 5000
 ```
 
-`Bash(python:*)` in allow list — both forms run without prompts.
+`Bash(python:*)` covers direct helper calls; resolver captures still encounter the Contains expansion gate unless the complete command exactly matches a blueprint entry. Standalone codemap-py has no blueprint hook and may prompt.
 
 ### What NOT to do
 
@@ -127,8 +133,9 @@ Use Claude Code `# timeout: N` annotation (N in milliseconds) on Bash block line
 
 ```bash
 # ✓ correct
-RESULT=$("${CLAUDE_PLUGIN_ROOT}/bin/script.sh" args 2>/dev/null || echo "fallback")  # timeout: 5000
-python "${CLAUDE_PLUGIN_ROOT}/bin/script.py" args                                     # timeout: 10000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name <plugin>) || exit $?; export PLUGIN_ROOT
+RESULT=$(python "$PLUGIN_ROOT/bin/script.py" args 2>/dev/null || echo "fallback")  # timeout: 5000
+python "$PLUGIN_ROOT/bin/script.py" args                                     # timeout: 10000
 ```
 
 ______________________________________________________________________

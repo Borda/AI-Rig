@@ -28,7 +28,8 @@ Before executing type-specific content-edit mode, determine approach:
 2. Resolve `_FS_VAL` (concrete path) before constructing spawn prompt — sub-agents do not inherit shell variables, so the prompt must contain a literal path, not a `$VAR` reference:
 
 ```bash
-_FS_VAL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+_FS_VAL=$(python "$PLUGIN_ROOT/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")  # timeout: 5000
 echo "Shared dir for curator prompt: $_FS_VAL"
 ```
 
@@ -41,7 +42,7 @@ Rules:
 - Preserve frontmatter fields (name, description, tools, model, color) unless the change explicitly targets them
 - Preserve XML tags (<role>, <workflow>, <notes>) — targeted edits only; do not rewrite unchanged sections
 - If the change modifies the agent's purpose: update the description: frontmatter field
-- Fenced code block added → run `cat "<_FS_VAL>/bin-authoring-guide.md"` (Bash tool), apply extraction gate (verdict MEDIUM/HIGH → bin/ script instead), §Prose over Code check, §Script Output Routing for multi-value bin/ scripts (all in guide just loaded)
+- Fenced code block added → run `PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT; python "$PLUGIN_ROOT/bin/load_shared_doc.py" foundry skills/_shared bin-authoring-guide.md` (Bash tool), apply extraction gate (verdict MEDIUM/HIGH → bin/ script instead), §Prose over Code check, §Script Output Routing for multi-value bin/ scripts (all in guide just loaded)
 - After editing: verify XML tag balance, step numbering, cross-ref validity
 Write all changes using the Edit tool.
 Return ONLY: {"status":"done","file":"<ENTITY_PATH>","edits":N,"description_changed":true|false,"confidence":0.N}
@@ -55,7 +56,8 @@ Use `description_changed` from returned JSON to decide whether Steps 5–7 need 
 2. Resolve `_FS_VAL` (concrete path) before constructing the spawn prompt:
 
 ```bash
-_FS_VAL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+_FS_VAL=$(python "$PLUGIN_ROOT/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")  # timeout: 5000
 echo "Shared dir for curator prompt: $_FS_VAL"
 ```
 
@@ -69,7 +71,7 @@ Rules:
 - Supporting Markdown edits preserve that file's existing structure; XML/frontmatter checks apply only where present
 - Preserve XML tags (<objective>, <inputs>, <workflow>, <notes>) — targeted edits only; do not rewrite unchanged sections
 - If the change modifies the skill's purpose: update the description: frontmatter field
-- Fenced code block added → run `cat "<_FS_VAL>/bin-authoring-guide.md"` (Bash tool), apply extraction gate (verdict MEDIUM/HIGH → bin/ script instead), §Prose over Code check, §Script Output Routing for multi-value bin/ scripts (all in guide just loaded)
+- Fenced code block added → run `PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT; python "$PLUGIN_ROOT/bin/load_shared_doc.py" foundry skills/_shared bin-authoring-guide.md` (Bash tool), apply extraction gate (verdict MEDIUM/HIGH → bin/ script instead), §Prose over Code check, §Script Output Routing for multi-value bin/ scripts (all in guide just loaded)
 - After editing: verify XML tag balance, step numbering, workflow gate completeness
 Write all changes using the Edit tool.
 Return ONLY: {"status":"done","file":"<ENTITY_PATH>","files_changed":["<concrete edited Markdown paths>"],"edits":N,"description_changed":true|false,"confidence":0.N}

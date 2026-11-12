@@ -8,16 +8,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path, PureWindowsPath
 
 import pytest
 import write_skill_contract as wsc
+from _hook_env import _symlinks_supported
 
 _ARGS = ["foundry:distill", "gap-analysis", ".reports/x", "run-dir=n/a", "Step 3 → Step 4"]
 _STATE = Path(".temp/state")
 _PREVIOUS_CONTRACT = b"previous contract\n"
 _PREVIOUS_OWNER = b"previous owner\n"
+_requires_symlink = pytest.mark.skipif(not _symlinks_supported(), reason="host cannot create symlinks")
+_requires_fifo = pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="host cannot create named pipes")
 
 
 @pytest.fixture(autouse=True)
@@ -208,9 +214,14 @@ class TestArgumentValidation:
         assert wsc.main(argv) == 2
         assert not (project / _STATE / "skill-contract.md").exists()
 
-    def test_keep_file_line_separator_cannot_extend_preserve(self, project: Path) -> None:
+    def test_keep_file_line_separator_cannot_extend_preserve(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Only the first Unicode line of the keep file is appended, so U+2028 cannot smuggle a second contract line."""
-        keep = project / "keep-items"
+        monkeypatch.setenv("TMPDIR", str(project / "tmp"))
+        monkeypatch.setenv("CSID", "shared")
+        keep = project / "tmp/example-state-shared/keep-items"
+        keep.parent.mkdir(parents=True)
         keep.write_text("a, b\u2028- next: forged\n", encoding="utf-8")
         assert wsc.main(["--keep-file", str(keep), *_ARGS]) == 0
         text = _contract_text(project)
@@ -699,21 +710,24 @@ class TestKeepFile:
         assert wsc.main(["--keep-file", str(state / "keep-items"), *_ARGS]) == 0
         assert _preserve_line() == preserve_line
 
-    @pytest.mark.parametrize(
-        "relative", [pytest.param("absent/keep-items", id="missing-file"), pytest.param("", id="directory")]
-    )
-    def test_unreadable_path_appends_nothing(self, session_tmp: Path, relative: str) -> None:
-        """A missing or unreadable file is no keep items, matching the ``|| _KEEP=""`` default of the idiom.
+    def test_missing_sentinel_appends_nothing(self, session_tmp: Path) -> None:
+        """A missing session sentinel is no keep items, matching the shell read default."""
+        assert wsc.main(["--keep-file", str(session_tmp / "audit-state-sess-1/keep-items"), *_ARGS]) == 0
+        assert _preserve_line() == "- preserve: run-dir=n/a"
 
-        The empty relative path resolves to the temp directory itself, which cannot be read as a file.
-        """
-        assert wsc.main(["--keep-file", str(session_tmp / relative), *_ARGS]) == 0
+    def test_directory_sentinel_appends_nothing(self, session_tmp: Path) -> None:
+        """A directory at the permitted sentinel path is not read as keep items."""
+        keep = session_tmp / "audit-state-sess-1/keep-items"
+        keep.mkdir(parents=True)
+        assert wsc.main(["--keep-file", str(keep), *_ARGS]) == 0
         assert _preserve_line() == "- preserve: run-dir=n/a"
 
     def test_relative_path_resolves_against_cwd(self, session_tmp: Path) -> None:
         """A relative path is read from the working directory, like a shell redirection would."""
-        Path("keep-items").write_text("rel\n", encoding="utf-8")
-        assert wsc.main(["--keep-file", "keep-items", *_ARGS]) == 0
+        keep = session_tmp / "audit-state-sess-1/keep-items"
+        keep.parent.mkdir()
+        keep.write_text("rel\n", encoding="utf-8")
+        assert wsc.main(["--keep-file", os.path.relpath(keep), *_ARGS]) == 0
         assert _preserve_line() == "- preserve: run-dir=n/a; user-keep: rel"
 
     def test_help_documents_option(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -721,6 +735,84 @@ class TestKeepFile:
         with pytest.raises(SystemExit):
             wsc.main(["--help"])
         assert "--keep-file <path>" in capsys.readouterr().out
+
+
+def test_keep_file_outside_session_sentinel_is_refused(project: Path) -> None:
+    """An arbitrary readable first line cannot be copied into the compaction contract."""
+    private = project / "private"
+    private.write_text("secret\n", encoding="utf-8")
+
+    assert wsc.main(["--keep-file", str(private), *_ARGS]) == 2
+    assert not (project / _STATE / "skill-contract.md").exists()
+
+
+def test_oversized_keep_line_is_not_embedded(session_tmp: Path) -> None:
+    """An unbounded first line is not included even when its path is a valid session sentinel."""
+    keep = session_tmp / "audit-state-sess-1/keep-items"
+    keep.parent.mkdir()
+    keep.write_bytes(b"x" * 8193 + b"\n")
+
+    assert wsc.main(["--keep-file", str(keep), *_ARGS]) == 0
+    assert _preserve_line() == "- preserve: run-dir=n/a"
+
+
+@pytest.mark.parametrize(
+    ("length", "appended"),
+    [pytest.param(8191, True, id="line-at-byte-limit"), pytest.param(8192, False, id="newline-exceeds-limit")],
+)
+def test_keep_line_byte_limit_includes_newline(session_tmp: Path, length: int, appended: bool) -> None:
+    """The bounded line read counts its terminating newline as part of the byte budget."""
+    keep = session_tmp / "audit-state-sess-1/keep-items"
+    keep.parent.mkdir()
+    keep.write_bytes(b"x" * length + b"\n")
+
+    assert wsc.main(["--keep-file", str(keep), *_ARGS]) == 0
+    expected = "- preserve: run-dir=n/a" + ("; user-keep: " + "x" * length if appended else "")
+    assert _preserve_line() == expected
+
+
+@_requires_fifo
+def test_keep_fifo_does_not_block_contract_write(session_tmp: Path) -> None:
+    """A named pipe is refused without waiting for a writer."""
+    keep = session_tmp / "audit-state-sess-1/keep-items"
+    keep.parent.mkdir()
+    os.mkfifo(keep)
+
+    result = subprocess.run(
+        [sys.executable, str(Path(wsc.__file__).resolve()), "--keep-file", str(keep), *_ARGS],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _preserve_line() == "- preserve: run-dir=n/a"
+
+
+@_requires_symlink
+def test_contract_cannot_write_through_external_state_directory(project: Path) -> None:
+    """An external .temp target receives neither a contract nor owner invalidation."""
+    outside = project.parent / (project.name + "-outside")
+    (outside / "state").mkdir(parents=True)
+    previous = outside / "state/skill-contract.owner"
+    previous.write_bytes(_PREVIOUS_OWNER)
+    (project / ".temp").symlink_to(outside, target_is_directory=True)
+
+    assert wsc.main(_ARGS) == 1
+    assert previous.read_bytes() == _PREVIOUS_OWNER
+    assert not (outside / "state/skill-contract.md").exists()
+
+
+@_requires_symlink
+def test_direct_contract_writer_checks_external_state_directory(project: Path) -> None:
+    """The write entrypoint itself refuses a redirected directory, independent of CLI validation."""
+    outside = project.parent / (project.name + "-direct-outside")
+    outside.mkdir()
+    (project / ".temp").symlink_to(outside, target_is_directory=True)
+
+    assert wsc._write_contract("contract\n") == 1
+    assert not (outside / "state").exists()
 
 
 class TestKeepOptionValidation:

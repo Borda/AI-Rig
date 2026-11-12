@@ -20,7 +20,7 @@ Long workflows keep contract-level `## Workflow` with `### NN:` ordered subheade
 
 ## Terminal Presentation
 
-Prefer structured terminal updates: one short introductory sentence, then concise bullets for parallel facts, numbered steps for ordered actions, and compact tables for comparisons. Show concrete counts and evidence links; separate completion status, verification, open work and next owner/action. Keep detailed explanations in the linked full report. Preserve exact-output contracts and native question ownership. <!-- policy-sibling: source-repository plugins/cc_foundry/rules/communication.md (§Progress and Transparency) -->
+Prefer structured terminal updates: one short introductory sentence, then concise bullets for parallel facts, numbered steps for ordered actions, and compact tables for comparisons. Show concrete counts and evidence links; separate completion status, verification, open work and next owner/action. Keep detailed explanations in the linked full report. Preserve exact-output contracts and native question ownership. <!-- policy-sibling: plugins/cc_foundry/rules/communication.md (§Progress and Transparency) -->
 
 ## Acceptance and recovery
 
@@ -38,11 +38,15 @@ Blocking depends on the protected outcome, not cosmetic preference or severity l
 
 ## Proportional Execution
 
+<!-- policy-sibling: skills/implement/SKILL.md, skills/manage/SKILL.md (Lightweight Local Work and Execution Route Selection) -->
+
 A specific, understood, bounded, reversible, low-risk task with clear acceptance uses the lightweight local path: define a concise plan with core acceptance and deferred scope; perform a brief parent self-challenge (not independent); accept the challenged plan within existing authority; assign execution to the parent for indivisible work or useful bounded disjoint owners; make the authorized change; consolidate the actual result and handoffs, obtain one bounded independent challenge, verify relevant acceptance, and report concise evidence. No standalone plan artifact or specialist bundle is required solely for size. A coherent fix plus its regression remains one task; file count, ordinary logs, factual queries, and optional tooling do not require orchestration. Investigate an unknown cause before editing. Pause further implementation and promote when evidence reveals unclear scope or acceptance, coupled domains, material risk, or consequential design choices. Preserve actual runtime permissions and protected decisions; when independent coverage is unavailable, continue permitted work and disclose the gap without claiming an independent clean review.
 
 Stay focused on the user's goal: investigate and fix what is necessary to complete it, but do not pursue incidental issues or hypothetical improvements without a user request. Briefly surface any material separate concern and ask before expanding scope; continue authorized work meanwhile.
 
 Code Remediate remains a single pass: collect findings, select authorized work before edits, apply concise planning, proportional challenge and parent acceptance within its resolution stage, resolve selected work, obtain the bounded independent implementation challenge, run verification, and report. Start a challenge/resolve loop only when the user explicitly requests it; normal remediation and its closure checks never imply that request or require convergence scoring.
+
+A request to repeat review and fix until a reviewer reports no findings or no security findings, or to resolve all findings; a second independent review round about to be dispatched for the same change; or a skill workflow repeating its review then fix cycle counts as an explicitly invoked loop from that moment: before the next reviewer dispatch, start ledger; follow packaged `shared/adversarial-loop.md` (helper output, stop/plateau rules, user's round budget).
 
 Medium/large or unexpectedly nontrivial implementation follows this default order:
 
@@ -214,7 +218,7 @@ Codex GitHub writes remain prohibited; no approval record, network grant or hook
 
 ### Local merge approval
 
-<!-- policy-sibling: assets/AGENTS.md (commit rules), shared/commit-response-template.md (Merge Commit Proof), skills/code-remediate/SKILL.md (target integration), skills/code-remediate/references/existing-conflict.md (Existing merge or conflict recovery) -->
+<!-- policy-sibling: assets/AGENTS.md (commit rules), shared/commit-response-template.md (Merge Commit Proof), skills/code-remediate/references/selection.md (step 03 target integration), skills/code-remediate/references/existing-conflict.md (Existing merge or conflict recovery); intentional divergence: this contract defines task-owned local merge authority, selection step 03 starts target integration, existing-conflict handles pre-existing operations, and the template specifies merge commit proof. -->
 
 A task-owned local merge that the current authorized write task needs and that is non-destructive to unrelated work proceeds without a question and without a grant check, including its local merge commit; so do a fast-forward and a cherry-pick that preserves existing work. Verify the task-owned branch, exact target, operation state and intended resolution; preserve unrelated changes and proceed automatically without a merge or commit confirmation. A merge is task-owned only when the current workflow run recorded starting it before `git merge`, with recorded pre-merge `HEAD` equal to current `HEAD` and recorded target equal to `MERGE_HEAD`; matching identities without that run record, such as a merge the user started, are not task-owned and need the missing decision. Review the entire merge index, including clean merged-in paths, then run relevant checks and the shared commit template's message, attribution and merge-specific verification.
 
@@ -306,9 +310,11 @@ Denial aborts the active tool call and may end the assistant turn. Do not issue 
 
 ## Sandboxed Test Runs
 
-This section governs pytest commands a workflow runs directly, outside the canonical `run_gates.py` test gate. The canonical gate keeps the project's configured test command, selection, and parallel options unchanged, and this section never edits them.
+This section governs pytest commands a workflow runs directly, outside the canonical `run_gates.py` test gate. The canonical gate keeps the project's configured test command, selection, and parallel options unchanged, and this section never edits them; its only exception is the documentation-only skip below.
 
 **Targeted selection.** Inside fix, challenge, reproduction, and acceptance loops, run only the tests that exercise the changed files. Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/test_targets.py --help` and run it once per change set: it unions codemap-py test impact when a launcher is available, falls back to test-name and import heuristics, and reports `targets`, `unmapped` sources, changed test configuration, and whether the sandbox-safe flag below applies, with ready `pytest_args`. Pass `--out <run-directory>/test-targets-<NN>.json` with a new two-digit counter per change set, so every targeted run records which tests were selected and why (`codemap`, `heuristic`, or `changed-test`) and stays auditable against a full run. Add a focused regression test for an `unmapped` source instead of widening the loop run. User-specified commands, such as an optimize `guard_cmd` or `metric_cmd`, run exactly as given. Never run the full suite per finding, per fix, or per loop iteration: the full suite runs once, at the workflow's canonical test gate, with the repository's own settings. Changed test configuration (`conftest.py`, `pyproject.toml`, `pytest.ini`, `setup.cfg`, `tox.ini`) is covered by that gate, not by a loop-time full run.
+
+**Documentation-only change.** In Code Review, Code Remediate and Challenge Resolve, a change is documentation-only when every changed path in scope is user documentation (README, `docs/`, `.md`, `.rst` or `.txt` prose) and none is code, tests, configuration, CI, or an instruction file such as a skill, agent, rule, prompt or `AGENTS.md`. Nothing executable changed, so the canonical gate skips the full suite with `run_gates.py --skip-tests "documentation-only change"`, which needs no skip approval; the other gates, including the project's documentation checks, still run, and no review or remediation round starts solely to validate tests. State the skip once in confidence gaps as `(-0.00) full test suite not run — documentation-only change`, with a `closed` closure citing the changed paths; it never lowers the score and is never a finding, remediation item, or authorization for another run. Any other changed path keeps the full gate unchanged.
 
 1. **Sandbox-safe targeted runs.** In fix, challenge, reproduction, and acceptance loops, add `-p no:xdist` to a targeted pytest command that needs no parallelism, so it runs inside the sandbox without escalation. Some plugins, such as `pytest-rerunfailures`, open a localhost socket whenever xdist is installed, even with `-n 0`, and the sandbox blocks that bind; disabling only the xdist plugin removes the socket and keeps reruns. A sandboxed targeted run that still fails on an observed sandbox restriction is environment evidence, not a test result; continue under step 2. Add the flag only when every condition below holds; otherwise keep the command unchanged:
    - The command has no `-n`, `--numprocesses`, `--dist`, or `-p xdist` option.
@@ -410,6 +416,8 @@ Attempts here mean attempts to resolve affected obstacle. Unaffected authorized 
 Only recurrence-lifecycle owners link this policy directly: the `implement`, `code-remediate`, and `investigate` skills plus the `delegation-lead` role. Other skills use their own linear or bounded iteration contracts, and leaf specialists leave recurrence counting to their caller. They must not duplicate this link.
 
 ## Reasoning-Progress Escalation
+
+The append operation admits at most three auxiliary cycles since the latest material primary progress; it rejects a fourth auxiliary append while still allowing a primary cycle. Validation of retained ledgers and historical archives does not apply that cap retroactively.
 
 Apply this separately to workstream whose decision process is stalled. It detects missing material progress, not agent's prose style, elapsed time, token count, or difficult task.
 

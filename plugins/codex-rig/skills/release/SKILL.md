@@ -28,7 +28,7 @@ Prepare substantial, source-grounded release communication and SemVer readiness 
 
 ## Workflow
 
-<!-- policy-sibling: skills/assess/SKILL.md, skills/code-remediate/SKILL.md, skills/code-review/SKILL.md -->
+<!-- policy-sibling: skills/assess/SKILL.md (Workflow: GitHub read permissions), skills/code-remediate/references/intake.md (GitHub read permissions), skills/code-review/references/source-and-scope.md (GitHub read permissions); intentional divergence: release uses the reader, assess permits reader or collector evidence, and review/remediation use the collector with their own PR preflight and recovery rules. -->
 
 For allowed GitHub reads, run the direct reader under current effective network and filesystem grants or request runtime approval for the complete owning command when required capability is unavailable. No separate workflow consent is needed. Apply [GitHub Read Execution](../../shared/native-skill-contract.md#github-read-execution); an explicit runtime denial or non-overridable restriction stops the attempt.
 
@@ -47,7 +47,7 @@ Select the release mode from the direct request. Local-only notes and checks rem
 - `audit [version]`: evidence and readiness verdict only; no product or release-document edits. Infer an omitted version only from verified project metadata.
 - `demo [range]`: write and execute a release demonstration using the project environment; a plan alone is incomplete. Never required for non-feature releases.
 
-Normalize `base->head` to `base..head`; retain both literal input and resolved commit IDs. Reject unknown flags, ambiguous ranges, symmetric `...` ranges, or incompatible mode/flag combinations before writing release docs. `--append` applies to notes only; other artifact flags apply to notes (prepare already includes them). A bare version supplies `target_version`, not a Git range. Read [release-evidence.md](release-evidence.md) for every mode; read [release-writing.md](release-writing.md) for notes, prepare, append, or demo.
+Normalize `base->head` to `base..head`; retain both literal input and resolved commit IDs. Reject unknown flags, ambiguous ranges, symmetric `...` ranges, or incompatible mode/flag combinations before writing release docs. `--append` applies to notes only; other artifact flags apply to notes only. Reject `prepare --changelog`, `prepare --summary`, and `prepare --migration` as incompatible; prepare already includes those artifacts. A bare version supplies `target_version`, not a Git range. Read [release-evidence.md](release-evidence.md) for every mode; read [release-writing.md](release-writing.md) for notes, prepare, append, or demo.
 
 Record mode, authorized output paths, target version, working-tree baseline, and acceptance in the run plan. Existing user content is input to preserve. Preparation does not independently authorize source/API/dependency edits or version stamping; change project version files only when requested or required by the user's authorized project release workflow.
 
@@ -87,7 +87,7 @@ Write `<run-directory>/release-readiness.md` with:
 
 Under `## Checks`, require a readiness table with exactly `Check | Status | Evidence | Blocker / next action`. Include rows `SemVer`, `Migration`, `Release scope`, `Contributors`, `Changelog`, `Documentation`, `Verification`, and `Artifacts`; add project-specific checks as needed. Status is `pass`, `fail`, `warning`, `not-applicable`, or `unavailable`. Every row needs concrete evidence and either `None` or the owner and closure action; not-applicable rows explain why. Missing required evidence is unavailable/blocked, never pass. Retain this table even in a failed run.
 
-For `prepare`/`audit`, read and apply `../../shared/specialist-orchestration.md` only for public API changes, CI/release automation, security/dependency changes, docs/migration work, or broad verification risk; otherwise do not load it. Write `<run-directory>/specialist-release-plan.md` with narrow context packs for:
+For `prepare`/`audit`, or `notes` when SemVer/migration impact is ambiguous, read and apply `../../shared/specialist-orchestration.md` only for public API changes, CI/release automation, security/dependency changes, docs/migration work, or broad verification risk; otherwise do not load it. Write `<run-directory>/specialist-release-plan.md` with narrow context packs for:
 
 - `oss-shepherd`: SemVer, deprecation policy, maintainer readiness.
 - `cicd-steward`: release workflow, publishing, CI status, artifact gates.

@@ -1295,7 +1295,8 @@ def scan(root: Path, coverage_path: Path | None = None) -> dict:
         "scanned_at": datetime.now(timezone.utc).isoformat(),
         "git_sha": get_git_sha(root),
         "project": root.name,
-        "scan_root": str(root.resolve()),
+        "scan_root": ".",
+        "scan_root_key": index_paths.root_key(root.resolve()),
         "src_layout": bool(src_root_rels),
         "src_roots": src_ctx.meta(root),
         "file_shas": file_shas,
@@ -1366,14 +1367,16 @@ def _apply_stub_keys(index: dict, shadowed_stubs: list[str], casefold_collisions
 def _carried_phase_reuse(old_index: dict, stored_modules: list[dict], root: Path) -> _PhaseReuse:
     """Describe the lookups the stored per-file results were resolved against.
 
-    A moved project root invalidates carried subprocess calls, whose recorded paths are absolute.
+    Only results carrying the current project's path-free identity can be reused.
 
     Args:
         old_index: previously written index.
         stored_modules: module entries of *old_index*, before this scan changed them.
         root: project root being scanned.
     """
-    same_root = old_index.get("scan_root") == str(root.resolve())
+    same_root = old_index.get("scan_root") == "." and old_index.get("scan_root_key") == index_paths.root_key(
+        root.resolve()
+    )
     return _PhaseReuse(
         indexed_files=_build_indexed_files(stored_modules) if same_root else None,
         conftest_exports=_collect_conftest_fixture_exports(stored_modules),
@@ -1390,9 +1393,14 @@ def incremental_scan(root: Path, old_index: dict, coverage_path: Path | None = N
             provided, the coverage stamp is compared so re-running tests alone
             forces re-annotation even when no source file changed (v5.4).
     """
+    # Rebuild legacy absolute coordinates together, including mock sites in otherwise unchanged modules.
     src_ctx = _resolve_src_roots(root)
-    if src_ctx.meta(root) != old_index.get("src_roots", []):
-        print("[codemap] Source roots changed — rebuilding module names with a full scan.", file=sys.stderr)
+    if (
+        src_ctx.meta(root) != old_index.get("src_roots", [])
+        or old_index.get("scan_root") != "."
+        or old_index.get("scan_root_key") != index_paths.root_key(root.resolve())
+    ):
+        print("[codemap] Source roots or coordinates changed — rebuilding with a full scan.", file=sys.stderr)
         return scan(root, coverage_path=coverage_path)
     exclusions = _load_exclusions(root)
     current_shas = get_file_hashes(root, exclusions)
@@ -1487,7 +1495,8 @@ def incremental_scan(root: Path, old_index: dict, coverage_path: Path | None = N
         "scanned_at": datetime.now(timezone.utc).isoformat(),
         "git_sha": get_git_sha(root),
         "project": root.name,
-        "scan_root": str(root.resolve()),
+        "scan_root": ".",
+        "scan_root_key": index_paths.root_key(root.resolve()),
         "src_layout": bool(src_root_rels),
         "src_roots": src_ctx.meta(root),
         "file_shas": current_shas,
@@ -1517,12 +1526,17 @@ def _build_index(args: argparse.Namespace, root: Path, out_path: Path) -> dict:
     """
     coverage_path = Path(args.with_coverage) if args.with_coverage else None
     if args.incremental and out_path.exists():
-        with out_path.open() as f:
-            old_index = json.load(f)
-        if int(old_index.get("scan_version", 0)) >= SCAN_VERSION and isinstance(old_index.get("file_shas"), dict):
+        old_index = rwgate._load_index(out_path)
+        if not isinstance(old_index, dict):
+            raise rwgate.IndexUnreadable(f"index must be a JSON object: {out_path}; rebuild with `codemap-py index`")
+        try:
+            version = int(old_index.get("scan_version", 0))
+        except (ValueError, TypeError, OverflowError) as exc:
+            raise rwgate.IndexUnreadable(f"invalid scan_version: {out_path}; rebuild with `codemap-py index`") from exc
+        if version >= SCAN_VERSION and isinstance(old_index.get("file_shas"), dict):
             print(f"[codemap] Incremental scan {root} ...", file=sys.stderr)
             return incremental_scan(root, old_index, coverage_path=coverage_path)
-        print("[codemap] pre-v13 index found — falling back to full scan ...", file=sys.stderr)
+        print(f"[codemap] pre-v{SCAN_VERSION} index found — falling back to full scan ...", file=sys.stderr)
         return scan(root, coverage_path=coverage_path)
     if args.incremental:
         print("[codemap] No existing index found — running full scan ...", file=sys.stderr)
@@ -1630,7 +1644,8 @@ def _mark_refresh_published() -> None:
     if not record or not fingerprint or not Path(record).name.startswith(_REFRESH_RECORD_PREFIX):
         return
     try:
-        Path(record).write_text(f"{fingerprint}\n{int(time.time() * 1000)}\npublished", encoding="utf-8")
+        # Replacing the leaf keeps a planted marker symlink from redirecting this acknowledgement.
+        rwgate.atomic_publish(Path(record), f"{fingerprint}\n{int(time.time() * 1000)}\npublished".encode())
     except OSError:
         pass  # best effort: a missing record only costs the hook one more refresh
 
@@ -1667,7 +1682,10 @@ def _resolve_out_path(root: Path) -> Path:
     identity = index_paths.resolve_index(root=root)
     if identity.override:
         return identity.index_path
-    return root / ".cache" / "codemap" / f"{root.name}.json"
+    target = root / ".cache" / "codemap" / f"{root.name}.json"
+    if not target.parent.resolve().is_relative_to(root.resolve()):
+        raise rwgate.CoordinationUnavailable(f"index directory escapes project root: {target.parent}")
+    return target
 
 
 def main() -> None:

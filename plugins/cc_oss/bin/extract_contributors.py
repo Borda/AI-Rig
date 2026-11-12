@@ -94,7 +94,8 @@ def dedupe_by_email(lines: list[str], include_bots: bool = False) -> list[str]:
     """Deduplicate contributor lines by email, optionally retaining bots.
 
     First occurrence of each email wins (preserves its display name). Lines
-    without a parseable ``<email>`` are kept and keyed on the whole line.
+    without a parseable ``<email>`` are kept and keyed on the whole line. Lines
+    longer than 500 characters use that fallback to bound parsing cost.
 
     Args:
         lines: Raw ``Name <email>`` lines (blank lines and bots may be present).
@@ -117,7 +118,7 @@ def dedupe_by_email(lines: list[str], include_bots: bool = False) -> list[str]:
         line = raw.strip()
         if not line or (not include_bots and is_bot(line)):
             continue
-        match = _LINE_RE.match(line)
+        match = _LINE_RE.match(line) if len(line) <= 500 else None
         key = match.group("email").lower() if match else line
         seen.setdefault(key, line)
     return sorted(seen.values(), key=str.casefold)

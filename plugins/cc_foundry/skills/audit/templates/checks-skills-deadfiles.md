@@ -100,16 +100,17 @@ Severity: **medium** — rule with non-matching paths is never applied; may repr
 
 ### Sub-check 32d — Orphaned bin/ scripts
 
-`bin/` scripts existing in the plugin source tree but not referenced by any `.md` file in that plugin (SKILL.md, agents, rules, modes, templates, \_shared) are unreachable at runtime. Common cause: script authored as scaffolding but never wired into its caller SKILL.md.
+`bin/` scripts existing in the plugin source tree but not referenced by any `.md` file in that plugin (SKILL.md, agents, rules, modes, templates, \_shared) are unreachable at runtime. Match each script basename in `$PLUGIN_ROOT/bin/<script>` callers after a guarded resolver prologue, loader-rendered absolute paths and prose references. Common cause: script authored as scaffolding but never wired into its caller SKILL.md.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 printf "=== Check 32d: Orphaned bin/ scripts ===\n"
 if [ "$LOCAL_MODE" != "true" ]; then
     printf "✓: Check 32d skipped in non-local mode (no plugin source tree)\n"
 else
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_orphaned_bin.py" --plugins-dir plugins  # timeout: 10000
+    python "$PLUGIN_ROOT/bin/check_orphaned_bin.py" --plugins-dir plugins  # timeout: 10000
 fi
 ```
 
@@ -160,9 +161,10 @@ Severity: **medium** — near-duplicate scripts = duplicated maintenance; a bug 
 Detects the "extraction done but inline twin survived" topology: `modes/<name>.md` is referenced from `SKILL.md` AND its body is also present inline in `SKILL.md`. Complements Check 32a (which catches unreferenced mode files — the inverse polarity).
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_skill_contracts.py" --check 32f $( [ "$LOCAL_MODE" = "true" ] && echo "--local" )  # timeout: 30000
+python "$PLUGIN_ROOT/bin/check_skill_contracts.py" --check 32f $( [ "$LOCAL_MODE" = "true" ] && echo "--local" )  # timeout: 30000
 ```
 
 Severity: **medium** — inline twin diverges silently from canonical mode file on every future edit. Auto-fix: delete inline block from SKILL.md; replace with bash+read pattern matching other modes.
@@ -192,4 +194,4 @@ else
 fi  # timeout: 10000
 ```
 
-Severity: **medium** — self-confessed sync = guaranteed future drift. Auto-fix: run `/distill memory` or extract to `modes/` + replace inline block with bash+read pattern.
+Severity: **medium** — self-confessed sync = guaranteed future drift. Auto-fix: run `/foundry:distill memory` or extract to `modes/` + replace inline block with bash+read pattern.

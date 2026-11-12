@@ -1,0 +1,509 @@
+{
+  "1604": {
+    "number": 1604,
+    "title": "`BinaryAccuracy()` sometimes gives incorrect answers due to non-deterministic sigmoiding ",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\n`torchmetrics.classification.BinaryAccuracy` will apply a sigmoid to some inputs but not others leading to incorrect behavior.\r\n\r\n## Details\r\nThe current behavior of BinaryAccuracy() is to apply a sigmoid transformation if the inputs are outside of [0, 1] before binarizing   \r\n\r\n> If preds is a floating point tensor with values outside [0,1] range we consider the input to be logits and will auto apply sigmoid per element. \r\n\r\ni.e. \r\ny_hat = 1(sigmoid(z) >= threshold) if z outside [0, 1] \r\ny_hat = 1(z >= threshold) if z inside [0, 1] \r\n\r\nI assume z inside [0, 1] is checked for then entire batch (i.e. if one element of the batch is outside [0, 1] then we apply the sigmoid to everyone).\r\n\r\nThis will cause silent errors. In particular, if the user inputs logits then they expect the logits to always be sigmoided. However, it is totally possible for all of the logits to lie in [0, 1] for some batches in which case the input will **not** be sigmoided which will cause incorrect thresholding.\r\n\r\n\r\n\r\n### To Reproduce\r\n\r\nHere is a simple example. Support our network outputs logits.\r\n\r\n```python\r\nfrom torchmetrics.classification import BinaryAccuracy\r\nfrom scipy.special import expit # expit = sigmoid\r\nimport numpy as np\r\nimport torch\r\n```\r\n\r\nThis example should lead to a correct prediction\r\n``` python\r\nprobability_thresh = 0.5 \r\nlogits = np.array([0.49]) # network output\r\ntarget = np.array([1])\r\n\r\n# logits of 0.49 give a probability of 0.62 indicating class 1, the correct prediction\r\nexpit(logits)\r\narray([0.62010643])\r\nint(expit(logits) >= probability_thresh) == target\r\nTrue\r\n```\r\n\r\n`BinaryAccuracy()` however thinks it's an incorrect prediction~\r\n``` python\r\n# torchmetrics, however, thinks we have the inccorect prediction because it does NOT sigmoid the logits\r\nba = BinaryAccuracy(threshold=probability_thresh) \r\nba.forward(preds=torch.tensor(logits), target=torch.tensor(target))\r\ntensor(0.)\r\n```\r\n\r\n\r\n### Suggested Fix\r\n\r\nI suggest adding an argument indicating whether or not the input predictions are sigmoided so the inputs are either always sigmoided or never sigmoided\r\n",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "Looks like a similar thing happens in MultilabelAccuracy (https://torchmetrics.readthedocs.io/en/stable/classification/accuracy.html)"
+      }
+    ]
+  },
+  "2685": {
+    "number": 2685,
+    "title": "Make `ignore_index` work when all batch elements are to be ignored",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nThe `ignore_index` argument in e.g. the `AUROC` metric allows one to specify a label that will be ignored. This works great when some batch elements are to be ignored. When calling the metric, and providing a tensor as input where all entries are the `ignore_index`, we get an `IndexError`.\r\n\r\n```\r\n    self.aucs[f\"val_label_{i}\"](label_logits[:, i].squeeze(-1), labels_target[:, i])\r\n  File \"lib/python3.10/site-packages/torch/nn/modules/module.py\", line 1553, in _wrapped_call_impl\r\n    return self._call_impl(*args, **kwargs)\r\n  File \"lib/python3.10/site-packages/torch/nn/modules/module.py\", line 1562, in _call_impl\r\n    return forward_call(*args, **kwargs)\r\n  File \"lib/python3.10/site-packages/torchmetrics/metric.py\", line 312, in forward\r\n    self._forward_cache = self._forward_reduce_state_update(*args, **kwargs)\r\n  File \"lib/python3.10/site-packages/torchmetrics/metric.py\", line 382, in _forward_reduce_state_update\r\n    batch_val = self.compute()\r\n  File \"/lib/python3.10/site-packages/torchmetrics/metric.py\", line 633, in wrapped_func\r\n    value = _squeeze_if_scalar(compute(*args, **kwargs))\r\n  File \"lib/python3.10/site-packages/torchmetrics/classification/auroc.py\", line 124, in compute\r\n    return _binary_auroc_compute(state, self.thresholds, self.max_fpr)\r\n  File \"lib/python3.10/site-packages/torchmetrics/functional/classification/auroc.py\", line 89, in _binary_auroc_compute\r\n    fpr, tpr, _ = _binary_roc_compute(state, thresholds, pos_label)\r\n  File \"lib/python3.10/site-packages/torchmetrics/functional/classification/roc.py\", line 54, in _binary_roc_compute\r\n    fps, tps, thres = _binary_clf_curve(preds=state[0], target=state[1], pos_label=pos_label)\r\n  File \"lib/python3.10/site-packages/torchmetrics/functional/classification/precision_recall_curve.py\", line 72, in _binary_clf_curve\r\n    tps = _cumsum(target * weight, dim=0)[threshold_idxs]\r\n```\r\n\r\n### Motivation\r\n\r\nHaving batches without labels may sound counterintuitive at first, but in multitask problems this can happen quite easily, when a metric only tracks a given subtask and batches are random.\r\n\r\n### Pitch\r\n\r\nIt would be helpful if this just worked (and maybe print a warning) - maybe return 0 or nan?\r\n\r\n### Alternatives\r\n\r\nRight now, this needs to be handled manually like\r\n```python\r\nif (target == -100).all():\r\n    pass\r\nelse:\r\n    self.auc(logits, target)\r\n```\r\n\r\nor, when calling `compute` after some `update` steps\r\n```python\r\nif all([len(x)==0 for x in self.auc.metric_state['preds']]):\r\n    pass\r\nelse:\r\n   self.auc.compute()\r\n```\r\n\r\n",
+    "comments": [
+      {
+        "author": "user-4",
+        "body": "When using `ignore_index`, if all targets in a batch are ignored, metrics like `AUROC` currently raise an `IndexError`.  \nThis is common in multitask setups where some batches may not contain valid labels.  \n\n**Proposal:** Instead of crashing, return `NaN` (with a warning) to indicate the metric is undefined.  \nI’d like to work on a PR to handle this case consistently across metrics.\n"
+      }
+    ]
+  },
+  "2819": {
+    "number": 2819,
+    "title": "`torchmetrics.functional.classification.binary_auroc` gives wrong results when logits are large",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\n`torchmetrics.functional.classification.binary_auroc` always gives 0.5 when all logits are large. This seems to be caused by a floating point precision error with sigmoid.\r\n\r\n### To Reproduce\r\n\r\n<!-- If you have a code sample, error messages, stack traces, please provide it here as well -->\r\n\r\n<details>\r\n  <summary>Code sample</summary>\r\n\r\n```python\r\nimport torch\r\nimport torchmetrics.functional.classification\r\n\r\npreds = torch.tensor([98.0950, 98.4612, 98.1145, 98.1506, 97.6037, 98.9425, 99.2644, 99.5014, 99.7280, 99.6595, 99.6931, 99.4667, 99.9623, 99.8949, 99.8768])\r\nlabels = torch.tensor([0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])\r\n\r\ntorchmetrics.functional.classification.binary_auroc(preds, labels)\r\n```\r\n\r\nOutput:\r\n\r\n```python\r\ntensor(0.5000)\r\n```\r\n\r\n</details>\r\n\r\n### Expected behavior\r\n\r\nAUROC of the above example should be 0.9286, as computed by `sklearn`.\r\n\r\n```python\r\nimport sklearn.metrics\r\n\r\nsklearn.metrics.roc_auc_score(labels, preds)\r\n```\r\n\r\nOutput:\r\n\r\n```\r\n0.9285714285714286\r\n```\r\n\r\n### Environment\r\n\r\n- Windows 11 24H2\r\n- Python version 3.10.11\r\n- TorchMetrics version 1.4.3\r\n- PyTorch version 2.4.1+cu124\r\n\r\n### Additional context\r\n\r\nThis appears to be a problem of floating point precision with sigmoid at line 185 in function `_binary_precision_recall_curve_format` in file `torchmetrics/src/torchmetrics/functional/classification/precision_recall_curve.py`.\r\n\r\nI extracted all the necessary functions and made a miniature `binary_auroc` function that uses exactly the same algorithm (works for the above example, did not test for other examples):\r\n\r\n```python\r\ndef binary_auroc(\r\n    preds: torch.Tensor,\r\n    target: torch.Tensor,\r\n) -> torch.Tensor:\r\n    preds = preds.sigmoid()\r\n    print(preds)\r\n\r\n    desc_score_indices = torch.argsort(preds, descending=True)\r\n    preds = preds[desc_score_indices]\r\n    target = target[desc_score_indices]\r\n    # print(preds, target)\r\n\r\n    # pred typically has many tied values. Here we extract\r\n    # the indices associated with the distinct values. We also\r\n    # concatenate a value for the end of the curve.\r\n    distinct_value_indices = torch.nonzero(preds[1:] - preds[:-1], as_tuple=True)[0]\r\n    # print(distinct_value_indices)\r\n    threshold_idxs = torch.nn.functional.pad(distinct_value_indices, [0, 1], value=target.size(0) - 1)\r\n    # print(threshold_idxs)\r\n    tps = torch.cumsum(target, dim=0)[threshold_idxs]\r\n    fps = 1 + threshold_idxs - tps\r\n    # print(tps, fps)\r\n\r\n    # Add an extra threshold position to make sure that the curve starts at (0, 0)\r\n    tps = torch.cat([torch.zeros(1, dtype=tps.dtype, device=tps.device), tps])\r\n    fps = torch.cat([torch.zeros(1, dtype=fps.dtype, device=fps.device), fps])\r\n    tpr = tps / tps[-1]\r\n    fpr = fps / fps[-1]\r\n    # print(fpr, tpr)\r\n    return torch.trapezoid(tpr, fpr, dim=-1)\r\n```\r\n\r\nOutput:\r\n\r\n```python\r\ntensor([1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.])\r\n\r\ntensor(0.5000)\r\n```\r\n\r\n`preds = preds.sigmoid()` converts all lo",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "> ### Suggested fix\n> It's probably a good idea to scale the raw logits before sigmoid, something like below:\n> ```py\n> preds /= torch.max(torch.abs(preds)) # scales max element to 1\n> preds = preds.sigmoid()\n> ```\n> All functions that applies sigmoid to raw ogits will need such a fix.\n\nThat sounds reasonable to me... @maintainer-3 your thoughts? 🤔 "
+      },
+      {
+        "author": "user-6",
+        "body": "Just my thoughts on this. Scaling the logits to [-1,1] would scale the range of outputs as well, as in the example below.\n> logits = torch.Tensor([-1.0, 1.0])\n> logits.sigmoid()\ntensor([0.2689, 0.7311])\n\nThe range of sigmoid should be [0,1] right?"
+      },
+      {
+        "author": "user-7",
+        "body": "Hello, if possible could I work on this issue? (If still available).\n\nI noticed PR #3283 has been in draft status for ~2 months with failing CI checks. Happy to submit a fresh implementation if that would help get this moved forward!\n\nI've traced through the code - _binary_precision_recall_curve_format in precision_recall_curve.py delegates to normalize_logits_if_needed() in utilities/compute.py, which is where the stabilisation needs to happen. \n\nMy fix approach: subtract max(logits) before applying sigmoid to prevent overflow while preserving ranking (since sigmoid is monotonic).\n\nLet me know if I can proceed or if there are additional details I should be aware of :)"
+      },
+      {
+        "author": "user-8",
+        "body": "Hi @maintainer-2 ,\nI noticed PR #3283 is still in draft with failing CI.\nI can work on a clean fix by stabilizing logits (subtracting max before sigmoid) in normalize_logits_if_needed, add regression tests, and ensure CI passes.\nPlease let me know if I may proceed. Thanks."
+      },
+      {
+        "author": "maintainer-2",
+        "body": "@user-8 thank you for reaching out, unfortunately you sould ping a lightning maintainer... Maybe @maintainer-1?"
+      },
+      {
+        "author": "user-8",
+        "body": "@maintainer-1\nHello, I’m interested in helping move this issue forward. I noticed the existing PR addressing sigmoid overflow has remained in draft with unresolved CI failures. I would like to propose a clean implementation that applies numerically stable logit normalization prior to sigmoid and includes targeted regression tests to prevent recurrence. Please let me know if this approach would be acceptable. Thank you."
+      }
+    ]
+  },
+  "3299": {
+    "number": 3299,
+    "title": "MulticlassPrecisionRecallCurve with thresholds=[integer] does not use constant memory on MPS",
+    "state": "open",
+    "body": "## 🐛 Bug\n\nAccording to the [MulticlassPrecisionRecallCurve documentation](https://lightning.ai/docs/torchmetrics/stable/classification/precision_recall_curve.html#multiclassprecisionrecallcurve), setting the `thresholds` argument should cause MulticlassPrecisionRecallCurve to use a constant amount of memory.\nWhen the metric is on MPS, this is not the case.\n\n### To Reproduce\n\nSample code and steps to reproduce the behavior with expected result...\n\n<!--\nCreate a new Lightning Studio with code that reproduces the issue and share the link.\nAlso include all the relevant files and data required to reproduce shared issue.\nIn case the code does not crash, please add assert statements to show what is the real and expected output.\nA simple guide on how to create such a studio can be found [here](\nhttps://www.youtube.com/watch?v=YcW-2Zt_bFg&ab_channel=LightningAI).\n-->\n\n<details>\n  <summary>Code sample</summary>\n\n```python\n# Correct behavior\nmetric = torchmetrics.classification.MulticlassPrecisionRecallCurve(num_classes=3, ignore_index=-1, thresholds=200).to('cpu')\npred = torch.randn(60000, 3).to('cpu')\ntarget = torch.randint(0, 3, (60000,)).to('cpu')\nmetric = metric(pred, target)\nprint(metric)\n\n\n# Crashes with OOM error\nmetric = torchmetrics.classification.MulticlassPrecisionRecallCurve(num_classes=3, ignore_index=-1, thresholds=200).to('mps')\npred = torch.randn(60000, 3).to('mps')\ntarget = torch.randint(0, 3, (60000,)).to('mps')\nmetric = metric(pred, target)\nprint(metric)\n```\n\n</details>\n\n<details>\n  <summary>Environment</summary>\n\n- TorchMetrics version (if build from source, add commit SHA): 1.8.1\n- Python & PyTorch Version (e.g., 1.0): 3.11.7\n- Any other relevant information such as OS (e.g., Linux): MacOS Tahoe 26.0.1 on Macbook Pro M4 Max\n\n</details>\n\n### Additional context\n\nHere's the error I get when I run the code on MPS. I can see that it does not use constant memory, because it attempts to allocate different amounts of memory when I vary the input size.\n\n<details>\n\n<summary>Traceback</summary>\n\n```\n---------------------------------------------------------------------------\nRuntimeError                              Traceback (most recent call last)\nCell In[15], [line 5](vscode-notebook-cell:?execution_count=15&line=5)\n      3 target = torch.randint(0, 3, (60000,)).to('mps')\n      4 print( pred.shape, target.shape)\n----> [5](vscode-notebook-cell:?execution_count=15&line=5) metric = metric(pred, target)\n      6 metric\n\nFile ~/Programs/marcos/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py:1773, in Module._wrapped_call_impl(self, *args, **kwargs)\n   1771     return self._compiled_call_impl(*args, **kwargs)  # type: ignore[misc]\n   1772 else:\n-> [1773](https://file+.vscode-resource.vscode-cdn.net/Users/pgq596/Programs/marcos/notebooks/~/Programs/marcos/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py:1773)     return self._call_impl(*args, **kwargs)\n\nFile ~/Programs/marcos/.venv/lib/python3.11/site-packages/torch/nn/modules",
+    "comments": []
+  },
+  "1526": {
+    "number": 1526,
+    "title": "Sigmoid function in PrecisionRecallCurve leads to information loss",
+    "state": "open",
+    "body": "## 🐛 Bug\r\nHello, first of all, thank you for the awesome library! I am a maintainer of the [Anomalib library](https://github.com/openvinotoolkit/anomalib), and we are using TorchMetrics extensively throughout our code base to evaluate our models.\r\n\r\nThe most recent version of TorchMetrics introduced some changes to the `PrecisionRecallCurve` metric, which are causing some problems in one of our components. The problems are related to the re-mapping of the prediction values to the [0,1] range by applying a sigmoid function.\r\n\r\n### Some context\r\nThe goal of the models in our library is to detect anomalous samples in a dataset that contains both normal and anomalous samples. The task is similar to a classical binary classification problem, but instead of generating a class label and a confidence score, our models generate an anomaly score, which quantifies the distance of the sample to the distribution of normal samples seen during training. The range of possible anomaly score values is unbounded and may differ widely between models and/or datasets, which makes it tricky to set a good threshold for mapping the raw anomaly scores to a binary class label (normal vs. anomalous). This is why we apply an adaptive thresholding mechanism as a post-processing step. The adaptive threshold mechanism returns the threshold value that maximizes the F1 score over the validation set.\r\n\r\nOur [adaptive thresholding class](https://github.com/openvinotoolkit/anomalib/blob/main/anomalib/utils/metrics/anomaly_score_threshold.py#L15) inherits from TorchMetrics' `PrecisionRecallCurve` class. After TorchMetrics computes the precision and recall values, our class computes the F1 scores for the range of precision and recall values, and finally returns the threshold value that corresponds to the highest observed F1 score.\r\n\r\n\r\n### The problem\r\nIn the latest version of the `PrecisionRecallCurve` metric, the `update` method now re-maps the predictions to the [0, 1] range by [applying a sigmoid function](https://github.com/Lightning-AI/metrics/blob/v0.11.1/src/torchmetrics/functional/classification/precision_recall_curve.py#L181). As a result, the `thresholds` variable returned by `compute` is now not in the same domain as the original predictions, and the values are not usable for our purpose of finding the optimal threshold value.\r\n\r\nIn addition, the sigmoid function squeezes the higher and lower values, which leads to lower resolution at the extremes of the input range, and in some cases even information loss.\r\n\r\n### To Reproduce\r\n\r\nHere's an example to illustrate the problem. Let's say we have a set of binary targets and a set of model predictions in the range [12, 17]. Previously, the `PrecisionRecallCurve` metric would return the values of precision and recall for the different thresholds that occur naturally in the data. \r\n\r\n#### v0.10.3\r\n```python\r\n>>> from torchmetrics import PrecisionRecallCurve\r\n>>> from torch import Tensor\r\n>>>\r\n>>> targets = Tensor([0, 0, 1, 0, 1, 1",
+    "comments": [
+      {
+        "author": "maintainer-3",
+        "body": "Hi @user-10, thanks for reporting this issue. Sorry for not getting back to you sooner.\r\nI open PR #1676 with the proposed solution to add a new `format_input=True/False` argument which essentially can be used to enable/disable the internal formatting:\r\n```python\r\n    if format_input:\r\n        if not torch.all((preds >= 0) * (preds <= 1)):\r\n            preds = preds.sigmoid()\r\n        target = target.long()\r\n```\r\nthus in your case simply added `format_input=False` when you initialize metrics should work.\r\n\r\nOn a note, you are completely right that we introduced this as our standard formatting of input to standardize all possible input for further processing. This was especially related to the inclusion of the new `thresholds` argument for precision recall curve, where `thresholds=100` means that we need to pre-set 100 thresholds before seeing the users input and in that the only solution is to standardize everything to one format."
+      },
+      {
+        "author": "user-10",
+        "body": "@maintainer-3 Thanks for clarifying. The proposed solution should solve our problem!"
+      }
+    ]
+  },
+  "2329": {
+    "number": 2329,
+    "title": "`BinaryPrecisionRecallCurve` computes wrong value if used with logits, even though the docstring says this is supported",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nThe object oriented `BinaryPrecisionRecallCurve` can compute substantially incorrect values if logits are passed as predictions instead of probabilities, even though the docstring says this is ok. The underlying functional version `binary_precision_recall_curve` seems to work correctly in both cases. Both versions attempt to convert the logits to probabilities by passing them through a sigmoid *if any values are outside of the range [0, 1]*. In the object oriented case this condition is incorrectly checked independently for each batch, rather than for the metric as a whole. Consequently some batches may have sigmoid applied to their scores, while others do not, resulting in an incorrect curve for the dataset as a whole.\r\n\r\n### To Reproduce\r\n\r\n\r\n```py\r\nimport torch\r\nimport torchmetrics\r\n\r\nb1 = torchmetrics.AUROC(task=\"binary\")\r\nb2 = torchmetrics.AUROC(task=\"binary\")\r\n\r\nscore = torch.tensor([-1.0, 0.0, 1.0])\r\nlabel = torch.tensor([1.0, 0.0, 1.0])\r\n\r\nb1.update(score, label)  # pass all three score/label pairs in as a single batch\r\n\r\nfor s, l in zip(score, label):\r\n    b2.update(torch.tensor([s]), torch.tensor([l]))  # pass score/label pairs in one at a time\r\n\r\nassert b1.compute().item() == 0.5\r\nassert b2.compute().item() == 1.0\r\n```\r\n\r\n### Expected behavior\r\n\r\nI would expect both AUCs to equal 0.5, as computed with scikit-learn using `sklearn.metrics.roc_auc_score(label, score)`.\r\n\r\n### Environment\r\n\r\n- TorchMetrics version (and how you installed TM, e.g. `conda`, `pip`, build from source): 1.3.0.post0\r\n- Python & PyTorch Version (e.g., 1.0): 3.10.13\r\n- Any other relevant information such as OS (e.g., Linux): MacOS\r\n\r\n### Additional context\r\n\r\nThe bug is on line https://github.com/Lightning-AI/torchmetrics/blob/master/src/torchmetrics/classification/precision_recall_curve.py#L165 -- as it is currently written the function `_binary_precision_recall_curve_format` should only be called on the full dataset, not on individual batches. Otherwise the behavior is wrong if some batches have all scores in the range [0, 1] but other batches do not.\r\n\r\nSome possible solutions are: (1) update the docs not to allow for logits in the object oriented interface, since the behavior is correct for probabilities; (2) don't try to automatically infer whether to apply sigmoid -- my choice, but would be a breaking change (3) refactor `_binary_precision_recall_curve_format` and accept that if any values are found which require sigmoid, then all values from past batches need to have sigmoid applied (this would be tricky in the case where thresholds are specified because the scores are not kept around).\r\n",
+    "comments": [
+      {
+        "author": "user-12",
+        "body": "Hi, I assume this has been fixed in this PR #3182 "
+      }
+    ]
+  },
+  "2489": {
+    "number": 2489,
+    "title": "Discrepancy in optimal threshold calculation between sklearn and torchmetrics ROC implementations",
+    "state": "open",
+    "body": "### Bug description\r\n\r\nThere's a noticeable difference in the calculated optimal thresholds when comparing the ROC curve implementations between `sklearn.metrics.roc_curve` and `torchmetrics.functional.roc`. Specifically, using the same input data for similarity scores and labels, `sklearn` produces a significantly lower optimal threshold value compared to `torchmetrics`. \r\n\r\n### What version are you seeing the problem on?\r\n\r\nv2.2\r\n\r\n### How to reproduce the bug\r\n\r\n```python\r\nimport numpy as np\r\nimport torch\r\nfrom sklearn.metrics import roc_curve\r\nimport torchmetrics.functional as tm\r\n\r\n# Given values\r\nsimilarities = torch.tensor([0.0938, 0.0041, -0.1011, 0.0182, 0.0932, -0.0269, -0.0266, -0.0298,\r\n                             -0.0200, 0.0816, -0.0122, -0.0026, 0.1237, -0.0149, 0.0840, -0.0192,\r\n                             -0.0488, 0.0114, -0.0076, -0.0583])\r\nis_kin_labels = torch.tensor([1, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0])\r\n\r\n# Ensure data is on CPU for sklearn compatibility\r\nsimilarities_ = similarities.cpu().numpy()\r\nis_kin_labels_ = is_kin_labels.cpu().numpy()\r\n\r\n# Sklearn calculation\r\nfpr_, tpr_, thresholds_ = roc_curve(is_kin_labels_, similarities_)\r\nmaxindex_ = (tpr_ - fpr_).argmax()\r\nbest_threshold_sklearn = thresholds_[maxindex_]\r\n\r\n# Torchmetrics calculation (assuming similarities and is_kin_labels are already on CPU or CUDA compatible)\r\nfpr, tpr, thresholds = tm.roc(similarities, is_kin_labels, task='binary')\r\nmaxindex = (tpr - fpr).argmax()\r\nbest_threshold_torchmetrics = thresholds[maxindex].item()\r\n\r\n# Output comparison\r\nprint(f\"Best threshold sklearn: {best_threshold_sklearn:.6f} @ {maxindex_} index of {len(thresholds_)} (fpr={fpr_[maxindex_]:.6f}, tpr={tpr_[maxindex_]:.6f})\")\r\nprint(f\"Best threshold torchmetrics: {best_threshold_torchmetrics:.6f} @ {maxindex} index of {len(thresholds)} (fpr={fpr[maxindex]:.6f}, tpr={tpr[maxindex]:.6f})\")\r\n\r\n# Best threshold sklearn: 0.093200 @ 2 index of 10 (fpr=0.000000, tpr=0.428571)\r\n# Best threshold torchmetrics: 0.523283 @ 3 index of 21 (fpr=0.000000, tpr=0.428571)\r\n```\r\n\r\n\r\n### Error messages and logs\r\n\r\n_No response_\r\n\r\n### Environment\r\n\r\n<details>\r\n  <summary>Current environment</summary>\r\n\r\n* CUDA:\r\n\t- GPU:\r\n\t\t- NVIDIA GeForce RTX 3070 Laptop GPU\r\n\t- available:         True\r\n\t- version:           12.1\r\n* Lightning:\r\n\t- lightning:         2.2.1\r\n\t- lightning-utilities: 0.10.1\r\n\t- pytorch-lightning: 2.2.1\r\n\t- torch:             2.2.1\r\n\t- torchmetrics:      1.3.1\r\n\t- torchvision:       0.17.1\r\n* Packages:\r\n\t- absl-py:           2.1.0\r\n\t- aiohttp:           3.9.3\r\n\t- aiosignal:         1.3.1\r\n\t- asttokens:         2.4.1\r\n\t- attrs:             23.2.0\r\n\t- beautifulsoup4:    4.12.3\r\n\t- certifi:           2024.2.2\r\n\t- cfgv:              3.4.0\r\n\t- chardet:           5.2.0\r\n\t- charset-normalizer: 3.3.2\r\n\t- click:             8.1.7\r\n\t- contourpy:         1.2.0\r\n\t- cycler:            0.12.1\r\n\t- daemonize:         2.5.0\r\n\t- debugpy:           1.8.1\r\n\t- decorator:         5.1.1",
+    "comments": [
+      {
+        "author": "user-13",
+        "body": "I think I found the problem. The returned thresholds are probabilities, because\r\n\r\n> preds (float tensor): (N, ...). Preds should be a tensor containing probabilities or logits for each observation. If preds has values outside [0,1] range we consider the input to be logits and will auto apply sigmoid per element.\r\n\r\nSo it makes sense. My fault... However, I didn't find it very clear at first.\r\n\r\n> thresholds: an 1d tensor of size (n_thresholds, ) with decreasing threshold values\r\n\r\n"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "> So it makes sense. My fault... However, I didn't find it very clear at first.\r\n\r\nCould you pls suggest how to clarify it in docs or examples?"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "@maintainer-3 mind having a look at it?"
+      },
+      {
+        "author": "user-14",
+        "body": "I recently encountered this problem as well.\nAfter digging into the code and manually removing [the sigmoid](https://github.com/Lightning-AI/torchmetrics/blob/a1bf5694bfc823d63d20a501a3f92309b703724d/src/torchmetrics/functional/classification/precision_recall_curve.py#L186), the results more closely matched the ones from sklearn's implementation.\n\nIs there actually any reason for the values to be sigmoided?\nIt doesn't seem to contribute to the calculation, after comparing the implementation with sklearn's implementation."
+      }
+    ]
+  },
+  "2441": {
+    "number": 2441,
+    "title": "Incorrect result in computing `MulticlassRecall` macro average when `ignore_index` is specified",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nSpecifying the `ignore_index` argument in `MulticlassRecall` leads to incorrect results when computing the macro average.\r\n\r\n### To Reproduce\r\n\r\n```python\r\nimport torch\r\nfrom torchmetrics.classification.precision_recall import MulticlassRecall\r\n\r\nmetric = MulticlassRecall(num_classes=2, ignore_index=0, average=\"macro\")\r\ny_true = torch.tensor([0, 0, 1, 1])\r\ny_pred = torch.tensor([\r\n    [0.9, 0.1],  # Correct\r\n    [0.9, 0.1],  # Correct\r\n    [0.9, 0.1],  # Incorrect\r\n    [0.1, 0.9],  # Correct\r\n])\r\nmetric.update(y_pred, y_true)\r\nprint(metric.compute())  # Prints 0.25, but I would expect the result to be 0.5\r\n```\r\n\r\n### Expected behavior\r\n\r\nIn the toy example above there are two classes (0 and 1) and two instances of each class. I want to ignore class 0 altogether (hence `ignore_index=0`), so I would expect the first two predictions to be ignored entirely (since they relate to class 0 instances). Of the remaining two predictions only one is correct, so I would expect the recall score to be `0.5`.\r\n\r\nHowever, the actual result is `0.25`. It looks as if the recall score for the `ignore_index` class is simply set to 0 before computing the average, causing the average to be computed as `(0 + 0.5) / 2` instead of `0.5 / 1`.\r\n\r\n### Environment\r\n\r\n- TorchMetrics version: 1.3.1 (installed via pip)\r\n- Python version: 3.10\r\n- PyTorch version: 2.2.1\r\n- OS: Ubuntu 22.04",
+    "comments": [
+      {
+        "author": "user-16",
+        "body": "This issue has been there for a while. After v0.9.3, `average=\"macro\"` does not work with `ignore_index`."
+      },
+      {
+        "author": "maintainer-2",
+        "body": "> This issue has been there for a while. After v0.9.3, `average=\"macro\"` does not work with `ignore_index`.\r\n\r\nthank you for the adjustment, would yo be interested in sending a PR?"
+      },
+      {
+        "author": "maintainer-4",
+        "body": "Pls assign it to me @maintainer-2 "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "> Pls assign it to me @maintainer-2\r\n\r\ncc: @maintainer-3 "
+      }
+    ]
+  },
+  "1224": {
+    "number": 1224,
+    "title": "Almost All Image Metrics Save All Images In a Buffer",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nCurrently the SSIM module seems to cache *all* of the predicted and reference images for the entire dataset, computing the metric only at the end of validation.\r\n\r\nThat's probably not a good idea for a couple of reasons:\r\n\r\n1. Images tend to be quite large, video frames make this even larger. This is a great way to run out of memory.\r\n2. The code crashes if the images are of different sizes. In other libraries this is solvable with a batch size of 1, but not in torchmetrics\r\n\r\nI think most people would compute SSIM over each image in the batch and sum the results over all batches and divide by the total number of images. As far as I can tell there is *no* advantage to keeping the entire prediction and reference sets in working memory.\r\n\r\nThis is also true for the following metrics\r\n\r\n* SpectralDistortionIndex\r\n* ErrorRelativeGlobalDimensionlessSynthesis\r\n* InceptionScore\r\n* KernelInceptionDistance\r\n* SpectralAngleMapper\r\n* SSIM\r\n* MS-SSIM\r\n* UniversalImageQualityIndex\r\n\r\nAdditionally a number of these modules have incorrect help that mentions the wrong metric, almost like someone was just blindly copying and pasting code when the implementing them (far be it from me to make that accusation though)\r\n\r\nThis module needs a lot of love\r\n\r\n### To Reproduce\r\n\r\n1. Take two images of different sizes\r\n3. Call update on them separately\r\n4. Call compute\r\n\r\n#### Code sample\r\n\r\n```py\r\nimport torch\r\nfrom torchmetrics import StructuralSimilarityIndexMeasure\r\n\r\nssim = StructuralSimilarityIndexMeasure()\r\n\r\na = torch.rand(5, 3, 10, 10)\r\nb = torch.rand(5, 3, 20, 20)\r\n\r\nssim.update(a, a)\r\nssim.update(b, b)\r\n\r\nprint(ssim.compute())\r\n```\r\n\r\noutput: \r\n\r\n```\r\nTraceback (most recent call last):\r\n  File \"repro.py\", line 12, in <module>\r\n    print(ssim.compute())\r\n  File \"/mnt/fsx-outputs-chipdesign/mehrlich/poetry_cache/metabit-wl5Ts0fA-py3.8/lib/python3.8/site-packages/torchmetrics/metric.py\", line 531, in wrapped_func\r\n    value = compute(*args, **kwargs)\r\n  File \"/mnt/fsx-outputs-chipdesign/mehrlich/poetry_cache/metabit-wl5Ts0fA-py3.8/lib/python3.8/site-packages/torchmetrics/image/ssim.py\", line 117, in compute\r\n    preds = dim_zero_cat(self.preds)\r\n  File \"/mnt/fsx-outputs-chipdesign/mehrlich/poetry_cache/metabit-wl5Ts0fA-py3.8/lib/python3.8/site-packages/torchmetrics/utilities/data.py\", line 42, in dim_zero_cat\r\n    return torch.cat(x, dim=0)\r\nRuntimeError: Sizes of tensors must match except in dimension 0. Expected size 10 but got size 20 for tensor number 1 in the list.\r\n```\r\n\r\n### Expected behavior\r\n\r\n<!-- A clear and concise description of what you expected to happen. -->\r\n\r\n### Environment\r\n\r\n- TorchMetrics version (and how you installed TM, e.g. `conda`, `pip`, build from source): git master, installed with pip\r\n- Python & PyTorch Version (e.g., 1.0): 3.8/1.12\r\n- Any other relevant information such as OS (e.g., Linux):\r\n\r\n",
+    "comments": [
+      {
+        "author": "user-17",
+        "body": "I'm curious if you have any testimonials from people who are using the image metrics in production code \r\n\r\nWith the current implementation I don't see how it's possible outside of some very specific circumstances"
+      },
+      {
+        "author": "maintainer-3",
+        "body": "We do not have such testimonials from people. We would like such feedback because it gives us some insight on how to improve.\r\n\r\nThat said, I think you list of metric where this kind of optimization can be made to is too broad. Both `InceptionScore` and `KernelInceptionDistance` comes to mind as metrics that requires access to the full distribution of extracted features to actually do the computations correctly. I need to look a further look at the rest of the metrics to have a opinion on those."
+      },
+      {
+        "author": "user-17",
+        "body": "That's definitively possible, I'm still scoping out what exactly is required for the other metrics"
+      },
+      {
+        "author": "maintainer-3",
+        "body": "Cool, lets take one metric at the time. If we can make due with only saving some intermediate state that would be wonderful as long as the tests are still passing for correctness. "
+      },
+      {
+        "author": "user-17",
+        "body": "BTW it looks like the \"none\" reduction is broken for MS-SSIM. If you pass anything larger than a batch size of 1 it crashes because the shapes of things aren't correct.\r\n\r\nnot sure what you want to do about that"
+      },
+      {
+        "author": "user-17",
+        "body": "Is there any particular objection to depending on pytorch-mssim instead of reimplementing this? \r\n\r\nThe current implementation seems to be very broken, pytorch-mssim supports everything that it needs and it is known to be correct, and reinventing this code seems like it's just inviting bugs for no reason.\r\n\r\nFor both SSIM and MS-SSIM I'm really not sure they were ever working right"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "> Is there any particular objection to depending on pytorch-mssim instead of reimplementing this?\r\n\r\nI would say that having our own implementation would be perfect; we just need to be careful not to copy their code for eventual licensing issues :otter: "
+      },
+      {
+        "author": "user-17",
+        "body": "Yes I was able to get a correct implementation of both without needing the extra dependency "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "@user-17, can we look forward to some more contributions? :rabbit: "
+      },
+      {
+        "author": "user-17",
+        "body": "Yes, CVPR deadline tomorrow after that I should have more time to work on the rest of these"
+      }
+    ]
+  },
+  "2728": {
+    "number": 2728,
+    "title": "BERT score: maximum at self-comparison, symmetry, invariance to additional items",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nI would be expecting the following properties of BERTscore:\r\n1) given a single list of sentences, and comparing all pairs as preds and targets, BERTscore should be maximum when the same sentence is given as pred[i] and target[i].\r\n2) for the F1 score, the score should be the same inverting the pred and the target.\r\n3) with `idf=False`, extending the list of pred and the list of target should not affect the previous input.\r\n\r\nThere are counterexamples for all of the properties above.\r\n\r\n### To Reproduce\r\n\r\nSteps to reproduce the behavior, run the test suite with the following tests added to test_bertscore.py.\r\n\r\n<!-- If you have a code sample, error messages, stack traces, please provide it here as well -->\r\n\r\n<details>\r\n  <summary>Proposed test suite</summary>\r\n\r\n```python\r\n@skip_on_connection_issues()\r\n@pytest.mark.skipif(not _TRANSFORMERS_GREATER_EQUAL_4_4, reason=\"test requires transformers>4.4\")\r\n@pytest.mark.parametrize(\r\n    [\"idf\", \"batch_size\"],\r\n    [(False, 1),\r\n     (False, 9),\r\n     (True, 1),\r\n     (True, 9)],\r\n)\r\ndef test_bertscore_most_similar(idf: bool, batch_size: int):\r\n    \"\"\"Tests that BERTScore actually gives the highest score to self-similarity.\"\"\"\r\n    short = \"hello there\"\r\n    long = \"master kenobi\"\r\n    longer = \"general kenobi\"\r\n    \r\n    sentences = [short, long, longer]\r\n    preds, targets = list(zip(*list(product(sentences,\r\n                                            sentences))))\r\n    score = bert_score(preds, targets, idf=idf, lang=\"en\",\r\n                       rescale_with_baseline=False, batch_size=batch_size)\r\n    for i in range(len(preds)):\r\n        max_pred = i%(len(sentences))*(1 + len(sentences))\r\n        max_target = int(i/(len(sentences)))*(1 + len(sentences))\r\n        assert score[\"f1\"][i] <= score[\"f1\"][max_pred], \\\r\n            f\"pair: {preds[i], targets[i]} does not have a lower score than {preds[max_pred], targets[max_pred]}\\n{i=}{max_pred=}\"\r\n        assert score[\"f1\"][i] <= score[\"f1\"][max_target], \\\r\n            f\"pair: {preds[i], targets[i]} does not have a lower score than {preds[max_target], targets[max_target]}\\n{i=}{max_target=}\"\r\n\r\n\r\n\r\n@skip_on_connection_issues()\r\n@pytest.mark.skipif(not _TRANSFORMERS_GREATER_EQUAL_4_4, reason=\"test requires transformers>4.4\")\r\n@pytest.mark.parametrize(\r\n    [\"idf\", \"batch_size\"],\r\n    [(False, 1),\r\n     (False, 9),\r\n     (True, 1),\r\n     (True, 9)],\r\n)\r\ndef test_bertscore_symmetry(idf: bool, batch_size: int):\r\n    \"\"\"Tests that BERTscore F1 score is symmetric between reference and prediction.\r\n    As F1 is symmetric, it should also be symmetric.\"\"\"\r\n\r\n    short = \"hello there\"\r\n    long = \"master kenobi\"\r\n    longer = \"general kenobi\"\r\n\r\n    sentences = [short, long, longer]\r\n    preds, targets = list(zip(*list(product(sentences,\r\n                                            sentences))))\r\n    score = bert_score(preds, targets, idf=idf, lang=\"en\",\r\n                       rescale_with_baseline=False, batch_size=batch_size)\r\n    for i in range(len",
+    "comments": [
+      {
+        "author": "maintainer-3",
+        "body": "cc: @user-38 opinions on this?"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "@user-19 what would be your opinion on this LLM case? 🤔 "
+      },
+      {
+        "author": "user-19",
+        "body": "As far as I know, it should be symmetrical for the F1 score. So things like \n\n```\nAssertionError: f1 score for ('hello there', 'general kenobi') is not the same as ('general kenobi', 'hello there').\n```\n\n```\n                   f\"f1 score for {(preds[i], targets[i])} is not the same as {(preds[j], targets[j])}.\"\nE                   AssertionError: f1 score for ('hello there', 'general kenobi') is not the same as ('general kenobi', 'hello there').\nE                   assert tensor(0.9672) == approx(0.9942...835 ± 9.9e-07)\nE                     \nE                     comparison failed. Mismatched elements: 1 / 1:\nE                     Max absolute difference: 0.027047932147979736\nE                     Max relative difference: 0.02796625947389248\nE                     Index | Obtained | Expected                   \nE                     ()    | 0.967163 | 0.994210958480835 ± 9.9e-07\n```\n\nseems unexpected. \n\n\nIt looks like there is a problem with the matching perhaps?"
+      },
+      {
+        "author": "user-20",
+        "body": "Hi Folks,\nIs this issue still open for a contribution?"
+      }
+    ]
+  },
+  "1727": {
+    "number": 1727,
+    "title": "`binary_auroc` has various bugs on MPS device",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nThe method `torchmetrics.functional.classification.binary_auroc` has at least two bugs when run on an MPS device. Bug 1 seems more serious than bug 2, and I suspect the bugs are related.\r\n\r\nTo demonstrate the two bugs we will use the following code.\r\n\r\n```python\r\nimport torch\r\nfrom torchmetrics.functional.classification import binary_auroc\r\n\r\ntorch.manual_seed(42)\r\n\r\ndevice_cpu = torch.device(\"cpu\")\r\ndevice_mps = torch.device(\"mps\")\r\n\r\ndef test_auroc(n, thresholds_cpu, thresholds_mps):\r\n    preds_cpu = torch.rand(n, device=device_cpu)\r\n    target_cpu = torch.rand(n, device=device_cpu).round().int()\r\n\r\n    preds_mps = preds_cpu.clone().to(device_mps)\r\n    target_mps = target_cpu.clone().to(device_mps)\r\n\r\n    auroc_cpu = binary_auroc(preds_cpu, target_cpu, thresholds=thresholds_cpu)\r\n    auroc_mps = binary_auroc(preds_mps, target_mps, thresholds=thresholds_mps)\r\n\r\n    print(\"CPU AUROC: \", auroc_cpu.item())\r\n    print(\"MPS AUROC: \", auroc_mps.item())\r\n```\r\n\r\n### Bug 1: using no thresholds and enough data always gives 0 AUROC score on MPS device\r\nCalling\r\n```python\r\ntest_auroc(2**16, None, None)\r\n```\r\nprints\r\n```\r\nCPU AUROC:  0.4983136057853699\r\nMPS AUROC:  0.4983136057853699\r\n```\r\nwhich seems reasonable. However, calling\r\n```python\r\ntest_auroc(2**17, None, None)\r\n```\r\nprints\r\n```\r\nCPU AUROC:  0.49919775128364563\r\nMPS AUROC:  0.0\r\n```\r\nwhich seems wrong. I would have expected the MPS AUROC score to be identical to the CPU AUROC score, and with even greater certainty I would have expected both AUROC scores to be much closer to 0.5 than to 0.\r\n\r\n### Bug 2: using thresholds and sufficiently small data gives inconsistent AUROC score on MPS device\r\nCalling\r\n```python\r\ntest_auroc(2**17, 128, 128)\r\n```\r\nprints\r\n```\r\nCPU AUROC:  0.4991825520992279\r\nMPS AUROC:  0.4991825520992279\r\n```\r\nwhich seems reasonable. However, calling\r\n```python\r\ntest_auroc(2**16, 128, 128)\r\n```\r\nprints\r\n```\r\nCPU AUROC:  0.4983268976211548\r\nMPS AUROC:  0.4983268678188324\r\n```\r\nwhich seems wrong. I would have expected the MPS AUROC score to be identical to the CPU AUROC score, but it deviates slightly. I am not sure whether or not to expect such a deviation, but I'm surprised it deviates for small inputs but not for large. This could be due to the deviations canceling out for sufficiently large input, but since this happens at exactly the same input size as the the one triggering bug 1, I suspect bug 2 is related to bug 1.\r\n\r\n### Bug 3: wrong type hint in return type in `binary_auroc`\r\nThe return type hint for `torchmetrics.functional.classification.binary_auroc` says it returns a `Tuple[Tensor, Tensor, Tensor]`, but as seen in the above code it really returns just a `Tensor`. I believe the type hint should be corrected to `Union[Tensor, Tuple[Tensor, Tensor, Tensor]]`?\r\n\r\n### Environment\r\n\r\n- TorchMetrics version (from `pip`): 0.11.4\r\n- Python version: 3.11.2\r\n- PyTorch Version: 2.0.0\r\n- OS: Mac\r\n",
+    "comments": [
+      {
+        "author": "maintainer-3",
+        "body": "Hi @user-21,\r\nThanks for reporting the issues. Sadly I do not have access to an MPS accelerated device, so I will have a hard time debugging the issue. Maybe @maintainer-1 you can help out debugging the issue 1 which seem to be most severe.\r\n\r\nHere are  some input for the rest:\r\n\r\n### Bug 1\r\nWhen you report:\r\n```python\r\ntest_auroc(2**16, None, None)\r\nCPU AUROC:  0.4983136057853699\r\ntest_auroc(2**17, 128, 128)\r\nCPU AUROC:  0.4991825520992279\r\n```\r\n\r\nI can confidently say that this is within the range of values you can expect, and that you should not necessarily expect a value of 0.5 even for very large random input. Just try adding the following code to your script:\r\n\r\n```python\r\nfrom sklearn.metrics import roc_auc_score\r\nprint(\"sklearn AUROC: \", roc_auc_score(target_cpu.cpu(), preds_cpu.cpu()))\r\n```\r\n\r\nand you will see that sklearn returns the exact same values as us. Calculating the area under the roc curve is an approximation and it is therefore never exact.\r\n\r\n### Bug 2\r\n\r\nYou repor"
+      },
+      {
+        "author": "user-21",
+        "body": "Hello @maintainer-3, thanks for looking into this. You misunderstand some of my remarks, I will attempt to clarify below.\r\n\r\nRegarding your remark to bug 1, the fact that AUROC on CPU returns different results for `n = 2**16` and `n = 2**17`, respectively, irregardless of the thresholds used, and that both results differ from 0.5, is not an issue at all, and it is to be expected, as you write. The sole issue here is that AUROC on MPS returns 0 for `n >= 2**17`.\r\n\r\nRegarding your remark to bug 2, I still think this is a bug, but you are right in that it is of no issue to me. The reason why I think it is a bug is, as explained in my original post, because the AUROC scores differ on CPU and MPS _only when_ `n <= 2**16`.  If they had also differed for `n >= 2**17` I would not believe it to be a bug. I have a feeling bug 2 is a direct consequence of bug 1, and it might be of help to track down bug 1."
+      },
+      {
+        "author": "maintainer-3",
+        "body": "> Hello @maintainer-3, thanks for looking into this. You misunderstand some of my remarks, I will attempt to clarify below.\r\n\r\nI am so sorry, never my intention to misunderstand your remarks :]\r\n\r\n> Regarding your remark to bug 1, the fact that AUROC on CPU returns different results for `n = 2**16` and `n = 2**17`, respectively, irregardless of the thresholds used, and that both results differ from 0.5, is not an issue at all, and it is to be expected, as you write. The sole issue here is that AUROC on MPS returns 0 for `n >= 2**17`.\r\n\r\nAlright, that we can completely agree is a issue and should be looked into. I wonder if it is something we do in torchmetrics or it is some `torch` operator that has a bug for large inputs (when `thresholds=None`)\r\n\r\n> Regarding your remark to bug 2, I still think this is a bug, but you are right in that it is of no issue to me. The reason why I think it is a bug is, as explained in my original post, because the AUROC scores differ on CPU and MPS _only "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "> Alright, I get your point. Lets try to get bug 1 solved first, and then see if bug 2 is also solved. If it still persist, I am not sure if we will look further into it when the difference is so small, but it need to be explored at least if there is a obvious problem.\r\n\r\n@maintainer-1 could you pls help here?"
+      },
+      {
+        "author": "user-22",
+        "body": "@maintainer-2 @maintainer-3 is there any plan to fix this?"
+      },
+      {
+        "author": "user-23",
+        "body": "I could reproduce the error on an Apple M3 Pro chip and `torch==2.2.1`. The issue boils down to an error in torch at [this line](https://github.com/Lightning-AI/torchmetrics/blob/master/src/torchmetrics/functional/classification/precision_recall_curve.py#L69).\r\n\r\nIt turns out that padding for large vector is not well supported on Silicon chips. The following snippet should summarise the issue:\r\n\r\n```python\r\nimport torch\r\nimport torch.nn.functional as F\r\n\r\nvec_cpu = F.pad(torch.arange(2**15, device=\"cpu\"), [0, 1], value=2)\r\nprint(vec_cpu)\r\n# tensor([    0,     1,     2,  ..., 65534, 65535,     2])\r\n\r\nvec_mps = F.pad(torch.arange(2**15, device=\"mps\"), [0, 1], value=2)\r\nprint(vec_mps)\r\n# tensor([    0,     1,     2,  ..., 32766, 32767,     2], device='mps:0')\r\n\r\nvec_cpu_large = F.pad(torch.arange(2**17, device=\"cpu\"), [0, 1], value=2)\r\nprint(vec_cpu_large)\r\n# tensor([    0,     1,     2,  ..., 65534, 65535,     2])\r\n\r\nvec_mps_large = F.pad(torch.arange(2**17, device=\"mps\"), [0, 1], value="
+      },
+      {
+        "author": "maintainer-2",
+        "body": "cc: @user-25 @user-45 "
+      }
+    ]
+  },
+  "2611": {
+    "number": 2611,
+    "title": "Retrieval metrics are misleading - here's how it should be done instead",
+    "state": "open",
+    "body": "## 🚀 Request\r\n\r\nRetrieval metrics should be more aligned with typical practices. Recommendation is below. \r\n\r\n### Explanation\r\n\r\nThe current best practice for calculating retrieval metrics follows this process:\r\n1. Calculate ground truth search labels. In the case of vector search, this would be via exact KNN search.\r\n2. Calculate predicted results. In the case of vector search, this would be retrieving ANN search results.\r\n3. Calculate score. The way a predicted result is determined to be relevant is determined by whether it appears in the ground truth list. Some implementations also consider the position. \r\n\r\n#### Example (vector search recall)\r\nIn the case of top k recall for vector search:\r\n1. obtain the top k exact KNN results for the given query\r\n2. obtain the top k ANN results for the given query\r\n3. Calculate the percentage of ANN results that appear in the KNN result list\r\n4. Repeat for every query in the test set\r\n\r\n\r\n### Current implementation\r\n\r\nThe current implementation in torchmetrics expects indexes (corresponding to queries), predictions (probabilities used to rank, which could be similarity scores), targets (which are supposed to be ground truth labels). \r\n\r\n### What's misleading:\r\n\r\nThe problem is that the current implementation assumes that a 1:1 mapping exists between predictions and ground truth labels, which does not align with the industry practice. \r\n\r\n### How it should work instead\r\n\r\nThe method signature should look more like this:\r\nquery/index (tensor), true_preds (tensor), true_targets (tensor), actual_preds (tensor), actual_targets (tensor), threshold (optional float), epsilon (optional float), similarity/distance (bool, defaults to distance)\r\n\r\nWith this data, the score calculation could be based on either:\r\n1. count. If the preds are distinct, then top k could be obtained by:\r\na. sorting (true_preds, true_targets) by true_preds and filtering to top k items, \r\nb. sorting (actual_preds, actual_targets) by actual_preds and filtering to top k items\r\nc. performing the computation between the lists for each given query/index\r\n\r\n2. threshold. If preds are not distinct, then we would take top values obtained by a threshold, t, obtained by:\r\na. sorting (true_preds, true_targets) by true_preds and filtering to top items where true_preds are <= t (if t is a distance) or >= t (if t is a similarity)\r\nb. sorting (actual_preds, actual_targets) by actual_preds and filtering to top items where actual_preds are <= (1 + epsilon) * t (if t is a distance) or >= (1 - epsilon) * t (if t is a similarity) where epsilon is a modifier to soften the filter on the actual side. \r\nc. performing the computation between the lists for each given query/index\r\n\r\nAn implementation like this would enable torchmetrics to calculate Recall, MAP, AUROC, NDCG, MRR, etc., based on industry-accepted practices. \r\n\r\n### Additional context\r\nThe well-known ANN-Benchmarks paper goes into detail on the recall calculation used in the example here. \r\n\r\n![image](https",
+    "comments": [
+      {
+        "author": "user-25",
+        "body": "Thanks for the report @user-24, I totally see where you're coming from.\r\n\r\n@maintainer-3 let's prioritize this issue. What's your thought on providing the additional signature?"
+      },
+      {
+        "author": "maintainer-3",
+        "body": "Hi @user-24, thanks for raising this issue.\r\nTagging @user-46 for opinions, because he has implemented most of the retrieval metrics.\r\nI am more than willing to change the implementation based on best practice in the industry. Have only worked shortly on retrieval problems, so not a expert. \r\n\r\nThe only problem in my view we have to solve is the backwards compatibility. I am going to assume that some of our user base are using the retrieval metrics as they are right now, as this is only raised as a issue now (the alternative is that non are using them). Thus, I would preferably support both cases. @user-24 does the new propose interface do this, or can we discuss how to make things backwards compatible. \r\n"
+      },
+      {
+        "author": "user-25",
+        "body": "They are definitely used: https://github.com/search?q=RetrievalMRR&type=code\r\n\r\nSo we need to come up with a backwards compatible design. We could add a new submodule, or a new set of classes in the retrieval submodule. Given the different signatures I wouldn't complicate the existing classes, but that's me.\r\n\r\n@maintainer-3 @user-46 @user-24 what would be a good name for the submodule that is not `retrieval`? Is `search` a good enough one?"
+      },
+      {
+        "author": "user-24",
+        "body": "I deeply appreciate all the attention on this!!\r\n \r\n@user-25 `search` is a good name. The implementation that I recommended above would definitely apply in search use cases.  "
+      },
+      {
+        "author": "maintainer-3",
+        "body": "@user-24 Is there any of the metrics from the retrieval domain you are particular interested in? Just to prioritize what to implement first"
+      },
+      {
+        "author": "user-24",
+        "body": "@maintainer-3 The first one would be recall. After that, MRR and then NDCG. Those the the most commonly used metrics in the industry and literature. "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "@user-24 how is it going, are you still interested in contributing? 🐿 "
+      }
+    ]
+  },
+  "1775": {
+    "number": 1775,
+    "title": "Add Precision-Recall-Gain curve, Area Under Precision Recall Gain curve, and FGain1 score",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nAdd Precision-Recall-Gain (PRG) curve as a new feature with the same interface as the Precision-Recall (PR) curve.\r\n\r\nAlong with PRG, the Area Under the Precision Recall Gain curve (AUPRG) can be calculated, like is done `AveragePrecision`.\r\n\r\nThe FGain1 score (FG1) is the F1 score, but transformed such that it is the minor diagonal in PRG-space. This could be added.\r\n\r\n### Motivation\r\n\r\nThe PR curve has some caveats as described in [1]. PRG aims to fix these problems:\r\n1. baselines are non-universal\r\n2. interpolation is non-linear\r\n3. F-isometrics are non-linear\r\n4. Pareto-front is non-convex\r\n5. Area under PR curve does not relate to the expected F + there is an unachievable region\r\n\r\nIn particular, the area under the PR curve is demonstrated to sometimes favour models that result in lower F1-scores. The PRG curve will ultimately result in better model selection.\r\n\r\n### Pitch\r\n\r\nA Torchmetrics implementation of the PRG curve that has the same interface as the PR curve would aid in better model selection.\r\n\r\n```python\r\n>>> pred = torch.tensor([0, 0.1, 0.8, 0.4])\r\n>>> target = torch.tensor([0, 1, 1, 0])\r\n>>> prg_curve = PrecisionRecallGainCurve(task=\"binary\")\r\n>>> precision_gain, recall_gain, thresholds = prg_curve(pred, target)\r\n>>> precision_gain\r\ntensor([1.0000, 0.0000, 0.5000, 0.0000])\r\n>>> recall_gain\r\ntensor([0.0000,   0.0000,   1.0000,   1.0000])\r\n>>> thresholds\r\n...\r\n```\r\n\r\nPrecision-Gain (PG) and Recall-Gain (RG) can be calculated as\r\n\r\n$$\r\nPG = 1 - \\frac{tp + fn}{fp + tn} \\cdot \\frac{fp}{tp},\r\n$$\r\n\r\nand \r\n\r\n$$\r\nRG = 1 - \\frac{tp + fn}{fp + tn} \\cdot \\frac{fn}{tp}.\r\n$$\r\n\r\nAUPRG can be calculated as done with `AveragePrecision`, but only accounting for the area in PR & RG $\\in [0, 1]$.\r\n\r\nFG1 can be calculated as\r\n\r\n$$\r\nFG_1 = \\frac{1}{2} PG + \\frac{1}{2} RG.\r\n$$\r\n\r\nIt would be even more awesome if PRG can be extended to the multiclass/multilabel case.\r\n\r\n### Alternatives\r\n\r\nThe original authors of [1] have developed a package, [pyprg](https://github.com/meeliskull/prg) (which is out-of-date with dependencies). \r\n```\r\npip instal pyprg\r\n```\r\nThen,\r\n```python\r\nfrom prg import prg\r\nprg_curve = prg.create_prg_curve(labels=targets, scores=prediction)\r\nprecision_gain = prg_curve[\"precision_gain\"]\r\nrecall_gain = prg_curve[\"recall_gain\"]\r\nauprg= prg.calc_auprg(prg_curve)\r\n```\r\n\r\n### Additional context\r\n\r\n[1] Flach & Kull. http://people.cs.bris.ac.uk/~flach/PRGcurves/PRcurves.pdf\r\n\r\n<!-- Add any other context or screenshots about the feature request here. -->\r\n",
+    "comments": [
+      {
+        "author": "maintainer-3",
+        "body": "Hi @user-26, thanks for raising this issue.\r\nA couple of questions maybe:\r\n* How commonly is this metric used? I have not heard or seen it before in any papers I read.\r\n* It is good that there is a package to compare against if we make our own implementation, but then I see issues like https://github.com/meeliskull/prg/issues/7 and wonder how stable the implementation is?"
+      },
+      {
+        "author": "user-26",
+        "body": "- The metric is not (yet) commonly used. Obvious reasons might be that 1) people simply do not know about it, 2) it takes an extra step to calculate the plot, 3) no good implementation is available.\r\n- I have not tested the implementation thoroughly, so I cannot make arguments on the stability of the official implementation.\r\n\r\nFor another writeup about gain metrics, see https://snorkel.ai/improving-upon-precision-recall-and-f1-with-gain-metrics/\r\n\r\nMaybe an interesting discussion on scikit-learn and gain metrics: https://github.com/scikit-learn/scikit-learn/pull/24121"
+      },
+      {
+        "author": "user-27",
+        "body": "Hi, can I contribute in this issue?"
+      },
+      {
+        "author": "maintainer-3",
+        "body": "Hi @user-27,\r\nFeel free to make a contribution on this topic :)\r\n"
+      },
+      {
+        "author": "user-28",
+        "body": "It might be of interest that I implemented these metrics (basically from scratch) in https://github.com/FraunhoferMEVIS/meval/tree/main, specifically here: https://github.com/FraunhoferMEVIS/meval/blob/6b166e9ec5b893a6f3b29fb82ffb679fe9d0b0fc/meval/metrics/_metrics.py#L290"
+      }
+    ]
+  },
+  "2320": {
+    "number": 2320,
+    "title": "Inconsistent default values for `average` argument in classification metrics",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nWhen instantiating the multiclass (or multilabel) accuracy metric through the `Accuracy` wrapper class (legacy), the default value for `average` is `micro`. When instantiating directly through `MulticlassAccuracy` (new way since 0.11 I believe), the default value is `macro`. This is inconsistent, which can lead to very unexpected results.\r\n\r\nThe same is true for all metrics that are subclasses of `MulticlassStatScores`, `BinaryStatScores` or `MultilabelStatScores` as well as their respective functional interfaces.\r\n\r\n### To Reproduce\r\n\r\n1. Instantiate the metrics directly as well as through the wrapper.\r\n2. Compare results.\r\n\r\n<details>\r\n  <summary>Code sample</summary>\r\n\r\n```\r\nclasses = {0: \"A\", 1: \"B\", 2: \"C\"}\r\nnum_classes = len(classes)\r\nnum_samples = 10\r\nmulticlass_preds = torch.randn(num_samples, num_classes)\r\nmulticlass_targets = torch.randint(0, num_classes, (num_samples,))\r\n\r\nlegacy_mc_acc = Accuracy(\"multiclass\", num_classes)\r\nnew_mc_acc = MulticlassAccuracy(num_classes)\r\n\r\nlegacy_result = legacy_mc_acc(multiclass_preds, multiclass_targets)\r\nnew_result = new_mc_acc(multiclass_preds, multiclass_targets)\r\n\r\nassert  new_result == legacy_result\r\n```\r\n\r\n</details>\r\n\r\n### Expected behavior\r\n\r\nConsistency between the different interfaces.\r\n\r\n### Environment\r\n\r\n- TorchMetrics version (and how you installed TM, e.g. `conda`, `pip`, build from source): >=0.11 (1.3 in my case)\r\n- Python & PyTorch Version (e.g., 1.0): irrelevant\r\n- Any other relevant information such as OS (e.g., Linux): irrelevant\r\n\r\n### Additional context\r\nI would argue that in the case of accuracy the default being `macro` in the task-specific classes is not only inconsistent with legacy but actually wrong. The common deinition of accuracy is \r\n\r\n$$ \\mathrm{Acc}(\\text{preds},\\text{targets}) = \\frac{1}{N}\\sum_{i = 1}^{N} \\left[ \\begin{cases}\r\n1 & \\text{if preds}_i = \\text{targets}_i \\\\\r\n0 & \\text{otherwise}\r\n\\end{cases} \\right] $$\r\n\r\nwhich is how accuracy is computed when setting `average=\"micro\"`.\r\n\r\nSetting `average=\"macro\"` can still be useful, as it is less prone to class imbalance. However, I think TorchMetrics should adhere to common definitions with the default settings, and would therefore argue for making `micro` the default.\r\n\r\nThe same is kind of true for precision and recall, which are also commonly defined as micro averages, if they are defined globally at all. Usually we encounter recall and precision as class-wise metrics.",
+    "comments": [
+      {
+        "author": "user-30",
+        "body": "To prevent potential confusion and misinterpretation of accuracy results, I strongly ask the torchmetrics package authors to implement a clear warning message when users utilize its accuracy functions or classes. The current lack of such a warning, coupled with the pre-set default behavior, can lead users to unknowingly conflate \"macro\" and \"micro\" averaging, as they may not even be aware of the existence of these options. This oversight can result in incorrect decision-making based on a misunderstanding of the accuracy metric being used."
+      },
+      {
+        "author": "user-31",
+        "body": "This just bit me, and wasted a substantial amount of time!"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "@maintainer-3 thoughts? 😺 "
+      },
+      {
+        "author": "user-32",
+        "body": "+1, this confused a lot of my students. I grepped the whole library and found:\n```console\n> git grep '\\baverage: ' | wc -l\n     133\n> git grep '\\baverage: .* = \"macro\",$' | wc -l\n      63\n> git grep '\\baverage: .* = \"micro\",$' | wc -l\n      24\n> git grep '\\baverage: .* = None,$' | wc -l\n      17\n```\nSo most of the time we default to macro, but there are plenty of cases where we default to micro or None or have no default (not just accuracy).\n\nSimilarly, there are a few places where the type hints could be made more consistent:\n```console\n> git grep '\\baverage: ' | wc -l\n     133\n> git grep '\\baverage: Optional\\[Literal' | wc -l\n     108\n> git grep '\\baverage: Literal' | wc -l\n       7\n> git grep '\\baverage: Optional\\[str' | wc -l\n       1\n> git grep '\\baverage: str' | wc -l\n       7\n```\nI would be happy to volunteer for this effort, but will first wait for guidance from above on whether we want break things to achieve consistency and what we want to default to."
+      }
+    ]
+  },
+  "3300": {
+    "number": 3300,
+    "title": "hausdorff_distance() throws IndexError for certain input shapes",
+    "state": "open",
+    "body": "## 🐛 Bug\n\nFor certain shapes of inputs the `torchmetrics.functional.segmentation.hausdorff_distance()` throws an index error. It works e.g. well for 10x10 and 10x11 images, but not for 11x10 images.\n\n### To Reproduce\n\n<details>\n  <summary>Code sample</summary>\n\n```python\nimport torchmetrics.functional.segmentation\nimport torch\nimport sys\nprint(torch.__version__)\nprint(torchmetrics.__version__)\nprint(sys.version)\n\ndef main(i):\n    if i == 0:\n        shape = (1, 1, 10, 10) # works\n    elif i == 1:\n        shape = (1, 1, 10, 11) # works\n    else:\n        shape = (1, 1, 11, 10) # throws error\n    a = torch.randint(0, 2, size=shape)\n    b = torch.randint(0, 2, size=shape)\n    return torchmetrics.functional.segmentation.hausdorff_distance(a, b, num_classes=1)\n\nprint(f'{main(0)=}')\nprint(f'{main(1)=}')\nprint(f'{main(2)=}')\n```\n\n</details>\n\n<details>\n<summary>Error</summary>\n\n```Traceback (most recent call last):\n  File \"/home/user/script.py\", line 21, in <module>\n    print(f'{main(2)=}')\n             ~~~~^^^\n  File \"/home/user/script.py\", line 17, in main\n    return torchmetrics.functional.segmentation.hausdorff_distance(a, b, num_classes=1)\n           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/user/miniforge3/envs/general/lib/python3.13/site-packages/torchmetrics/functional/segmentation/hausdorff_distance.py\", line 99, in hausdorff_distance\n    dist = edge_surface_distance(\n        preds=preds[b, c],\n    ...<3 lines>...\n        symmetric=not directed,\n    )\n  File \"/home/user/miniforge3/envs/general/lib/python3.13/site-packages/torchmetrics/functional/segmentation/utils.py\", line 499, in edge_surface_distance\n    surface_distance(edges_preds, edges_target, distance_metric=distance_metric, spacing=spacing),\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/user/miniforge3/envs/general/lib/python3.13/site-packages/torchmetrics/functional/segmentation/utils.py\", line 469, in surface_distance\n    dis = distance_transform(~target, sampling=spacing, metric=distance_metric)\n  File \"/home/user/miniforge3/envs/general/lib/python3.13/site-packages/torchmetrics/functional/segmentation/utils.py\", line 351, in distance_transform\n    z[i1 * h + j1] = mindis\n    ~^^^^^^^^^^^^^\nIndexError: index 156 is out of bounds for dimension 0 with size 156\n\nshell returned 1\n```\n</details>\n\n<details>\n  <summary>Environment</summary>\n\n- TorchMetrics version: 1.8.2\n- Python & PyTorch Version: 3.13.3 (conda-forge), 2.6.0\n- Any other relevant information such as OS (e.g., Linux): Ubuntu\n\n</details>\n\n\n",
+    "comments": [
+      {
+        "author": "user-6",
+        "body": "Hi @user-33 \nI just confirmed the bug. It basically happens in `line 351` in `/torchmetrics/functional/segmentation/utils.py`. \nThe correct calculation should be `z[i1 * w + j1] = mindis` instead of `z[i1 * h + j1] = mindis` where `h, w = x.shape`.\nSo the function will work without any errors as long as the `height <= width` in the input shape (samples, num_classes, height, width). The calculation will however be wrong since the inherent mapping is incorrect.\n@maintainer-1 can you confirm this? "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "yes, it looks like this is the source. @user-33 would you be willing to submit a fix?"
+      },
+      {
+        "author": "user-33",
+        "body": "Thank you for looking into it and reproducing it. At the moment I don't feel confident submitting a fix as I don't completely understand the underlying implementation yet, so I'm definitely not gonna be mad if someone more knowledgeable is gonna do it! \n\nMaybe to understand it better, a follow up question: Is it correct that the implementation with the pytorch engine (line 331 and following) is hardcoded for 2D images only? (As opposed to the scipy.ndimage implementation, that seems to work for any number of dimensions?) If this is the case, is this documented somewhere or would it maybe make sense to implement an algorithm that can deal with arbitrary number of dimensions also for the pytorch engine to make the behaviour consistent?"
+      },
+      {
+        "author": "user-6",
+        "body": "Yes, the distance_transform function is right now hardcoded to 2D images. I don't see this in the documentation anywhere. \nI guess, extending it to multiple dimensions is a good feature request."
+      }
+    ]
+  },
+  "3199": {
+    "number": 3199,
+    "title": "`MeanAveragePrecision(sync_on_compute=True)` hangs when using `LightningModule` with `ray`'s `TorchTrainer`",
+    "state": "open",
+    "body": "## 🐛 Bug\n\n`torchmetrics.detection.MeanAveragePrecision` (`mAP`) hangs when `sync_on_compute=True` under Distributed Data-Parallel (DDP). By changing this to `sync_on_compute=False`, the job finishes successfully, however, the metric computed on the global rank 0 worker (or any rank worker) is incorrect as no cross-worker state sync occurs before computation.\n\nCalling `metric.sync()` manually also causes the workers to hang; a similar symptom is also reported in #626\n\n### To Reproduce\n\nA full reproducible MRE will take some time to isolate, however, here lie the details of the execution environment.\n\nThe job runs distributed supervised 2D object detection training. Each `ray.train.torch.TorchTrainer` worker iterates through a `ray.data.Dataset`, passing data to a `lightning.pytorch.trainer.Trainer` which trains a `lightning.LightningModule` which contains logic to `update()` the `torchmetrics.detection.MeanAveragePrecision` in the `validation_step()`. Finally, in `on_validation_epoch_end()`, we `compute()` the metric, which exhibits the behavior outlined above.\n\n<details>\n\n<summary>Environment</summary>\n\n- TorchMetrics version : `1.6.1`\n- torchvision: `0.16.2+cu118`\n- OS : `ubuntu`\n- torch: `2.1.2+cu118`\n- ray: `2.47.1`\n- pytorch-lightning: `2.5.0.post0`\n\n</details>\n\n### Additional context\n\n- According to this [Stack Overflow comment](https://stackoverflow.com/a/66989632), one of the reasons this can occur is if different workers have a mis-matched number of batches/shards/samples to process - could this be true?\n- Switching between the available `coco` backend had no impact\n- One way we are considering working around this issue is by setting `sync_on_compute=False`\nand using `self.log(sync_dist=True)` in `on_validation_epoch_end()`. This way, the `lightning.LightningModule` handles the aggregation/mean computation on the distributed metric outputs. Mathematically, this is not ideal, but may _temporarily_ unblock work.\n- The issue seems to occur when we call `compute --> sync --> gather_all_tensors`\n",
+    "comments": [
+      {
+        "author": "maintainer-3",
+        "body": "Hi @user-34, thanks for reporting this issue. Could you kindly share:\n* Exactly how you initialize the `MeanAveragePrecision` e.g. args and kwargs\n* Have you tried if this work/fails with other metrics e.g. is it specific to only this metric or a general problem"
+      },
+      {
+        "author": "user-35",
+        "body": "Also, how do you initialize your dataset and data loader? Can you try the `drop_last` option in the `torch.utils.data.DataLoader` to confirm your theory?"
+      },
+      {
+        "author": "user-34",
+        "body": "Tagging @user-47 to help with some more contextual information"
+      }
+    ]
+  },
+  "2259": {
+    "number": 2259,
+    "title": "Option to return non-standardized AUC value when `max_fpr` is set for BinaryAUROC",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nAdding a simple keyword argument to control where McClish's standardization is applied over AUC or not. Alternatively, could return a pair of standardized and non-standardized AUCs when the argument is set. \r\n\r\n### Motivation\r\n\r\nCurrently, `BinaryAUROC` only returns the standardized AUC according to McClish's method. However sometimes the non-standardized version might be requested. In my specific case, when I set `max_fpr` to `0.2` I was not expecting `BinaryAUROC` to return values over `0.2` to me as I expected `0.2` to be the theoretical max pAUC.\r\n\r\n### Pitch\r\n\r\nInstead of offloading the process of de-standardizing the pAUC scores to the user, this can be done within `torchmetrics` with the addition of a simple keyword argument. Furthermore, the existence of this keyword argument and it's corresponding docstring entry makes it more concise to the user what kind of output they should be expecting from the method. Additionally, the docstring should explicitly explain what the *standard* AUC means by either providing an external link or preferably by providing the actual formulation of the standardization process.\r\n\r\n### Alternatives\r\n\r\nThe de-standardization process can be done out-of-the-box by the user by reverting the normalization process described by McClish, 1989. This has two immediate drawbacks:\r\n\r\n- Reverting the standardization can cause mildly significant and unnecessary precision error propagation.\r\n- The de-standardized score is already calculated and readily available in the current implementation, it simply needs to be returned per user's needs with minimal changes to the code and without introducing any breaking changes.\r\n\r\n### Additional context\r\n\r\nI would be happy to submit a PR for this myself if the pitch is approved",
+    "comments": [
+      {
+        "author": "maintainer-3",
+        "body": "Hi @user-36, thanks for raising this issue (and sorry for not getting back to you before now).\r\nI am not completly sure what you are proposing in this issue. The `max_fpr` feature was proposed a long time ago and is just implemented to be the exact same as in sklearn:\r\nhttps://scikit-learn.org/stable/modules/generated/sklearn.metrics.roc_auc_score.html\r\nyou are completely right that we should probably include a reference to the specific standardization being used.\r\n\r\nMaybe the problem is that I am no expert in the standardization process, so maybe you could either provide more details on what you are proposing and in particular what changes to the user interface you are proposing?"
+      },
+      {
+        "author": "user-36",
+        "body": "Hi @maintainer-3, sorry for the late response as I am just coming back from a vacation.\r\n\r\nI understand that most of the implementations in `torchmetrics` are meant to mirror their counterparts from existing libraries and a cornerstone of my proposal was maintaining this integrity while offering further functionality for users who might need it.\r\n\r\nI will attempt to describe a prototype of what I'm proposing as a reference. Here is the current implementation of the function `_binary_auroc_compute`, taken from [here](https://github.com/Lightning-AI/torchmetrics/blob/master/src/torchmetrics/functional/classification/auroc.py) verbatim:\r\n\r\n```python\r\ndef _binary_auroc_compute(\r\n    state: Union[Tensor, Tuple[Tensor, Tensor]],\r\n    thresholds: Optional[Tensor],\r\n    max_fpr: Optional[float] = None,\r\n    pos_label: int = 1,\r\n) -> Tensor:\r\n    fpr, tpr, _ = _binary_roc_compute(state, thresholds, pos_label)\r\n    if max_fpr is None or max_fpr == 1 or fpr.sum() == 0 or tpr.sum() == 0:\r\n        "
+      }
+    ]
+  },
+  "1158": {
+    "number": 1158,
+    "title": "Support sequence tagging evaluation metrics (NLP)",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nSupport for sequence tagging evaluation metrics _à la_ [`seqeval`](https://github.com/chakki-works/seqeval). That is, support the evaluation of the performance of chunking tasks such as named-entity recognition, part-of-speech tagging, semantic role labeling and so on.",
+    "comments": [
+      {
+        "author": "maintainer-3",
+        "body": "cc @user-38 opinion on this?"
+      },
+      {
+        "author": "user-38",
+        "body": "I'm not so familiar with this kind of metrics.. How much do these metrics differ from standard classification ones? :] @user-37 "
+      },
+      {
+        "author": "user-37",
+        "body": "Hi @user-38, \r\n\r\nI think it's not much different. The convenience of having sequence-level metrics already available is that \r\n\r\n- they can be fed sequences directly (without manual iteration)\r\n- can implement different evaluation \"policies\": \"strict\" vs non strict. For example\r\n```\r\npred: [A, A, B]\r\ntrue: [A, B, B]\r\n```\r\ncan be considered partially correct or incorrect. This, of course, has an effect on how results are aggregated. An practical example in the [README.md](https://github.com/chakki-works/seqeval). \r\n\r\n- it can be easier to enforce particular encodings for the NER or POS tags (for example)\r\n- last but not least, it would be nice to have it in torchmetrics for consistency (i.e., no need to resort to other libraries/frameworks)"
+      },
+      {
+        "author": "user-38",
+        "body": "Hi @user-37, I get the motivation and think this might be a nice contribution to `torchmetrics`. 👍 \r\n\r\nAs these metrics will be very likely inherited from the classification ones, I'd just wait a bit with this addition for the finalization of the classification refactor currently ongoing #1001 :]"
+      },
+      {
+        "author": "user-38",
+        "body": "Hi @user-37 -- I think I should be able to find some time in the near future to have a look at this class of metrics. However, I'm not fully familiar with the current state of tagging metrics. Do you think it will make more sense if our public API will accept something like `Sequence[Sequence[str]`, or it's better to use `torch.Tensor` here? (I think `transformers` models tend to output tensors, so it would make sense as well). Also, we can support both options and make sure everything is converted to tensors internally (considering this won't be too much confusing at our public api). What do you think? :]\r\ncc: @maintainer-2 @maintainer-3 "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "I think it would be good to explore this direction; also we can set a quick call with @user-37 to get more context, and maybe he could give us some intro... :rabbit: \r\n"
+      },
+      {
+        "author": "user-39",
+        "body": "I implemented custom Seqeval metric https://github.com/user-39/seqeval_torchmetrics"
+      }
+    ]
+  },
+  "2580": {
+    "number": 2580,
+    "title": "Classification Report, maybe with the option to select even more metrics",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\n<!-- A clear and concise description of the feature proposal -->\r\nClassification Report, maybe with the option to select even more metrics\r\n### Motivation\r\n\r\n<!-- Please outline the motivation for the proposal. Is your feature request related to a problem? e.g., I'm always frustrated when [...]. If this is related to another GitHub issue, please link here too -->\r\nLike in sklearn,  the feature of an classification report.\r\n\r\nhttps://scikit-learn.org/stable/modules/generated/sklearn.metrics.classification_report.html\r\n\r\n### Pitch\r\n\r\n<!-- A clear and concise description of what you want to happen. -->\r\nImplementation of an classification report like in Sklearn.\r\n\r\n",
+    "comments": [
+      {
+        "author": "maintainer-4",
+        "body": "One more thought — why not implement this as a wrapper around the existing torchmetrics classification metrics? It might help keep things more modular and aligned with standard usage.\n\ncc: @maintainer-2 "
+      },
+      {
+        "author": "user-41",
+        "body": "> One more thought — why not implement this as a wrapper around the existing torchmetrics classification metrics? It might help keep things more modular and aligned with standard usage.\n> \n> cc: [@maintainer-2](https://github.com/maintainer-2)\n\nYup, that sounds like the right way to go for me too. \n\nIn the PR i will do that. \n\nThanks a lot."
+      },
+      {
+        "author": "maintainer-2",
+        "body": "yeah, the formatted output look cool, and I wold second to @maintainer-4 that adding completely new class would be quite some overhead... I think create a mixture that would be do:\n\n- adding mixture that would have the formatting API and eventually some private tool so a relevant class will be extended with this mixing\n- adding the API to the base class with not implemented method but could be not nice to users as there would be API but not all metrics will have it implemented at once..."
+      },
+      {
+        "author": "maintainer-4",
+        "body": "> adding mixture that would have the formatting API and eventually some private tool so a relevant class will be extended with this mixing\n\nagreed , I think this is the best way to approach this..."
+      },
+      {
+        "author": "user-41",
+        "body": "The scikit learn implementation does the formatting within the function itself: https://github.com/scikit-learn/scikit-learn/blob/e78fce44f8a39c7f256fa9f9d92ee93cb69739ed/sklearn/metrics/_classification.py#L2828\n\nCurrently for the following tests (picked from: https://github.com/scikit-learn/scikit-learn/blob/e78fce44f8a39c7f256fa9f9d92ee93cb69739ed/sklearn/metrics/tests/test_classification.py#L1379)\n\n```python\nimport torch\nfrom sklearn import datasets, svm\nfrom sklearn.metrics import classification_report\nfrom sklearn.utils import check_random_state\nimport numpy as np\n\nfrom torchmetrics.classification import ClassificationReport\n\n#? Taken from: https://github.com/scikit-learn/scikit-learn/blob/e78fce44f8a39c7f256fa9f9d92ee93cb69739ed/sklearn/metrics/tests/test_classification.py#L58\ndef make_prediction(dataset=None, binary=False):\n    \"\"\"Make some classification predictions on a toy dataset using a SVC\n\n    If binary is True restrict to a binary classification problem instead of a\n    "
+      },
+      {
+        "author": "user-41",
+        "body": "Hi, just wanted to get an update on this, thanks! @maintainer-4 @maintainer-2 "
+      },
+      {
+        "author": "maintainer-4",
+        "body": "Hi, @user-41 apologies for late reply. Your implementation also looks good to me.... pls feel free to open a pr\n\nbut it may raise some potential issues like \n\n1. Nested Metrics Issue:\n\n```python \nself.precision = MulticlassPrecision(...)\nself.recall = MulticlassRecall(...)\nself.f1 = F1Score(...)\nself.accuracy = Accuracy(...)\n```\n\nas  per tm docs:\n\n> Due to specialized logic around metric states, we in general do not recommend that metrics are initialized inside other metrics (nested metrics), as this can lead to weird behaviour. Instead consider subclassing a metric or use torchmetrics.MetricCollection.\n\n2. State management complexity:\nThe implementation maintains its own states (self.preds, self.target) alongside nested metric states, it creates multiple sources of truth and potential synchronization issues in distributed settings.The docs recommends using MetricCollection for managing multiple metrics.\n\n3. Compute Inefficiency:\nIt doesn't leverage tm's `compute_groups` optimization.R"
+      },
+      {
+        "author": "user-41",
+        "body": "Thank you very much for linking all the docs and the information. I will start a PR this week keeping these in mind. "
+      },
+      {
+        "author": "user-41",
+        "body": "Hi, just wanted to say that I am still working on this. Setting up the unit tests and everything in accordance to the rest of the repo is eating up some time. I should hopefully start the PR soon :)"
+      },
+      {
+        "author": "maintainer-4",
+        "body": "Hi @user-41 let me know once the pr is ready for review\n"
+      }
+    ]
+  },
+  "2196": {
+    "number": 2196,
+    "title": "Implement the Brier score and it's decomposition into resolution, reliability and uncertainty.",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nI would like to contribute to torchmetrics, by implementing the Brier score and its associated decomposition. \r\n\r\n### Motivation\r\n\r\nThe Brier score is widely used when measuring the calibration of machine learning methods see:\r\n\r\nhttps://arxiv.org/abs/2302.04019  \r\nhttps://arxiv.org/abs/2002.06470\r\n\r\nIt is also a proper scoring rule as opposed to the Expected Calibration Error (ECE) and Thresholded Calibration Error (TACE). This means that the ECE and the TACE have trivial minima where the classifier has **zero** test accuracy **while being perfectly calibrated** (https://arxiv.org/abs/1906.02530). The Brier score being a proper scoring rule doesn't have this pathological behaviour.\r\n\r\nThe Brier score coincides with the mean squared error for common use cases. However, its decomposition into resolution, reliability and uncertainty see https://en.wikipedia.org/wiki/Brier_score is a unique and useful feature. Roughly speaking `resolution` captures a notion of accuracy and `reliability` a notion of calibration. Thus both have to be optimized for the Brier score to be low. \r\n\r\nFinally, no standard implementation in common packages exists to the best of my knowledge. \r\n\r\n### Pitch\r\n\r\nI plan to follow the original paper describing the decomposition of the Brier score into resolution, reliability and uncertainty\r\n\r\nhttps://journals.ametsoc.org/view/journals/apme/12/4/1520-0450_1973_012_0595_anvpot_2_0_co_2.xml\r\n\r\nand specifically the implementation found in \r\n\r\nhttps://github.com/google-research/google-research/blob/master/uq_benchmark_2019/metrics_lib.py\r\nand the paper\r\nhttps://arxiv.org/abs/1906.02530\r\n\r\nThe decomposition into uncertainty, resolution and reliability was originally formulated for predictions which take a finite set of values. This is in contrast with the output vectors of most deep neural network classifiers which output a vector of probabilities per class, which take continuous values. Thus we need to create bins for our output vectors. The specific bins in this implementation are with respect to the top most probable class for each input signal. Thus we create C bins where C is the number of classes. Then two prediction vectors [0 , 0.9, 0.1] and [0.2, 0.6, 0.2] fall in the same bin, the bin of class 2. The derivation of resolution, reliability and uncertainty is then relatively straighforward. \r\n\r\n\r\n\r\n\r\n\r\n",
+    "comments": [
+      {
+        "author": "maintainer-3",
+        "body": "Hi @user-42,\r\nThanks for proposing adding this metric to torchmetrics :)\r\nIt definitly sound like a good idea to have this metric and its decompositions. Feel free to send a pull request whenever you have something that seems to be working, then we can help you from there."
+      },
+      {
+        "author": "user-43",
+        "body": "Hi, is there any update on this? I would like to use brier's score for my current project"
+      },
+      {
+        "author": "user-44",
+        "body": "Hi, is there any update on this? I would like to use brier's score for my current project too"
+      },
+      {
+        "author": "user-42",
+        "body": "Hello! Check the above mentioned PR. I've done some basic checks and the metric should work for the Binary and Multiclass settings. Keep in mind this is still WIP. @user-44 "
+      },
+      {
+        "author": "user-44",
+        "body": "> Hello! Check the above mentioned PR. I've done some basic checks and the metric should work for the Binary and Multiclass settings. Keep in mind this is still WIP. [@user-44](https://github.com/user-44)\n\nGot it！Thanks very very very much！"
+      }
+    ]
+  }
+}

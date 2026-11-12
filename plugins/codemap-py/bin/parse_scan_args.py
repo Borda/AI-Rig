@@ -30,15 +30,8 @@ import shlex
 import sys
 from pathlib import Path
 
-#: ``--root <value>`` where value is one of:
-#:   - single-quoted: '...'  (no embedded single quotes)
-#:   - double-quoted: "..."  (no embedded double quotes)
-#:   - unquoted: any run of non-whitespace characters
-#: Matches first occurrence anywhere in the string. The three branches mirror
-#: the original sed pipeline's `t`-branch fallthrough semantics.
-_ROOT_RE = re.compile(
-    r"--root\s+(?:'([^']*)'|\"([^\"]*)\"|(\S+))",
-)
+#: Match the first root shell word, including adjacent quoted fragments emitted by ``shlex.quote`` for apostrophes.
+_ROOT_RE = re.compile(r"--root\s+((?:'[^']*'|\"(?:\\.|[^\"\\])*\"|\\.|[^\s'\"\\])+)")
 
 
 def _extract_root(arguments: str) -> str | None:
@@ -61,7 +54,7 @@ def _extract_root(arguments: str) -> str | None:
     match = _ROOT_RE.search(arguments)
     if match is None:
         return None
-    return next(group for group in match.groups() if group is not None)
+    return shlex.split(match.group(1))[0]
 
 
 #: Second line of every rejection message; ``scan-codebase`` prints the message verbatim.
@@ -273,11 +266,15 @@ def main(argv: list[str] | None = None) -> int:
         # Open the path that was just checked, not the caller's spelling: a symlink swapped in after the
         # check is refused (O_NOFOLLOW) instead of followed.
         try:
-            fd = os.open(_nul_resolved, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            fd = os.open(_nul_resolved, os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
         except OSError as exc:
             print(f"! cannot open --nul-output {nul_output}: {exc}", file=sys.stderr)
             return 1
         with os.fdopen(fd, "wb") as fh:
+            if hasattr(os, "getuid") and os.fstat(fh.fileno()).st_uid != os.getuid():
+                print(f"! refusing --nul-output owned by another user: {nul_output}", file=sys.stderr)
+                return 1
+            fh.truncate(0)
             for token in tokens:
                 fh.write(token.encode() + b"\x00")
         return 0

@@ -60,18 +60,17 @@ class TestUnenforcedTimeouts:
         [
             pytest.param(["gh pr view 1  # timeout: 5000"], 1, id="bare-comment-flagged"),
             pytest.param(["timeout 5 gh pr view 1  # timeout: 5000"], 0, id="shell-timeout-prefix-exempts"),
-            # Python scripts enforce internally via their own --timeout default.
-            pytest.param(['python "x/bin/y.py"  # timeout: 5000'], 0, id="python-line-exempt"),
+            pytest.param(['python "x/bin/y.py"  # timeout: 5000'], 1, id="python-needs-internal-evidence"),
             pytest.param(["# timeout: 5000 is the convention"], 0, id="comment-only-line-ignored"),
         ],
     )
     def test_timeout_comment_needs_real_enforcement(self, tmp_path: Path, lines: list[str], expected: int) -> None:
-        """A `# timeout:` comment is flagged unless a real `timeout S` prefix or a Python script enforces it.
+        """A standalone `# timeout:` comment is flagged unless a real deadline enforces it.
 
-        A command with only the comment beside it is reported; a ``timeout`` prefix and a Python invocation satisfy the
-        check, and a line that is entirely a comment is prose rather than a command.
+        A command with only the comment beside it is reported, including a Python invocation with no internal deadline
+        evidence. A ``timeout`` prefix enforces it; a comment-only line is prose rather than a command.
         """
-        assert len(csc.unenforced_timeouts(tmp_path / "a.md", lines)) == expected
+        assert len(csc.unenforced_timeouts(tmp_path / "a.md", lines, bash_tool=False)) == expected
 
 
 class TestUntimedSubprocess:
@@ -109,7 +108,7 @@ class TestMissingTimeoutFlag:
     @pytest.mark.parametrize(
         "text",
         [
-            pytest.param("subprocess.run(['ls'], timeout=5)", id="flag-never-declared"),
+            pytest.param("subprocess.run(['ls'])", id="flag-never-declared"),
             # Every script under audit documents `[--timeout SECS]` in its docstring, so a substring test would exempt
             # the whole population from the check.
             pytest.param(
@@ -281,5 +280,5 @@ class TestConfigFileDiscovery:
         claude = tmp_path / ".claude"
         (claude / "agents").mkdir(parents=True)
         (claude / "agents" / "a.md").write_text("gh pr view 1  # timeout: 5000\n", encoding="utf-8")
-        assert run_cli("--check", "23b", "--root", str(claude)) == 0
+        assert run_cli("--check", "23b", "--root", str(claude), "--standalone") == 0
         assert "a.md:1:" in capsys.readouterr().out

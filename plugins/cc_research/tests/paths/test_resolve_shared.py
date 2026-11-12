@@ -10,6 +10,7 @@ Output contract:
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -25,6 +26,16 @@ def _write_file(root: Path, relpath: str, text: str) -> None:
     target = root / relpath
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")
+
+
+def _install(home: Path, version: str) -> Path:
+    """Create an install with the identity and bootstrap files required for root validation."""
+    root = home / _CACHE / version
+    _write_file(root, ".claude-plugin/plugin.json", '{"name":"research"}')
+    _write_file(root, "bin/resolve_plugin_root.py", "# resolver\n")
+    shared = root / "skills/_shared"
+    shared.mkdir(parents=True)
+    return shared
 
 
 @pytest.fixture
@@ -52,15 +63,38 @@ class TestResolve:
         ``0.10.0`` as text), and a pair spanning a major bump (``0.20.0`` vs ``1.0.0``) show versions are compared as
         numbers.
         """
-        base = tmp_path / _CACHE
-        (base / older_version / "skills" / "_shared").mkdir(parents=True)
-        newer = base / newer_version / "skills" / "_shared"
-        newer.mkdir(parents=True)
+        _install(tmp_path, older_version)
+        newer = _install(tmp_path, newer_version)
 
         path, from_cache = resolve_shared.resolve(home=tmp_path)
 
         assert from_cache is True
         assert Path(path) == newer
+
+    def test_registry_beats_newer_cached_version(self, tmp_path: Path) -> None:
+        """The shared-document root follows the active install before scanning newer cache entries."""
+        active = tmp_path / _CACHE / "1.0.0"
+        newer = tmp_path / _CACHE / "2.0.0"
+        _write_file(active, ".claude-plugin/plugin.json", '{"name":"research"}')
+        _write_file(active, "bin/resolve_plugin_root.py", "# resolver\n")
+        (active / "skills/_shared").mkdir(parents=True)
+        _write_file(newer, ".claude-plugin/plugin.json", '{"name":"research"}')
+        _write_file(newer, "bin/resolve_plugin_root.py", "# resolver\n")
+        (newer / "skills/_shared").mkdir(parents=True)
+        registry = tmp_path / ".claude/plugins/installed_plugins.json"
+        registry.write_text(
+            json.dumps(
+                {
+                    "plugins": {
+                        "research@borda-ai-rig": [
+                            {"installPath": str(active), "installedAt": "2026-01-01T00:00:00Z"},
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert resolve_shared.resolve(home=tmp_path) == ((active / "skills/_shared").as_posix(), True)
 
     def test_skips_orphaned_version(self, tmp_path: Path) -> None:
         """An orphaned newest version is skipped in favour of the next candidate.
@@ -70,10 +104,9 @@ class TestResolve:
         """
         base = tmp_path / _CACHE
         orphaned = base / "0.20.0"
-        (orphaned / "skills" / "_shared").mkdir(parents=True)
+        _install(tmp_path, "0.20.0")
         (orphaned / ".orphaned_at").write_text("2026-01-01T00:00:00Z\n", encoding="utf-8")
-        older = base / "0.5.2" / "skills" / "_shared"
-        older.mkdir(parents=True)
+        older = _install(tmp_path, "0.5.2")
 
         path, from_cache = resolve_shared.resolve(home=tmp_path)
 
@@ -87,28 +120,58 @@ class TestResolve:
         assert from_cache is False
         assert path == "plugins/cc_research/skills/_shared"
 
+    @pytest.mark.parametrize("invalid", ["1999", "0.33.1.1", "01.0.0", "1.0.0-01", "v9.0.0"])
+    def test_non_version_directories_are_ignored(self, tmp_path: Path, invalid: str) -> None:
+        """Stray cache directories cannot outrank valid plugin versions."""
+        _install(tmp_path, invalid)
+        valid = _install(tmp_path, "0.33.1")
+        assert resolve_shared.resolve(home=tmp_path) == (valid.as_posix(), True)
+
+    @pytest.mark.parametrize(
+        ("older", "newer"),
+        [
+            pytest.param("1.0.0-rc.1", "1.0.0", id="release-after-prerelease"),
+            pytest.param("1.0.0-alpha.2", "1.0.0-alpha.10", id="numeric-prerelease"),
+            pytest.param("1.0.0-alpha.10", "1.0.0-beta", id="lexical-prerelease"),
+            pytest.param("1.0.0-2", "1.0.0-alpha", id="numeric-before-text"),
+            pytest.param("1.0.0+build.99", "1.0.1+build.1", id="build-does-not-change-precedence"),
+        ],
+    )
+    def test_semver_precedence(self, tmp_path: Path, older: str, newer: str) -> None:
+        """Cache ordering follows release and prerelease precedence, ignoring build metadata."""
+        _install(tmp_path, older)
+        latest = _install(tmp_path, newer)
+        assert resolve_shared.resolve(home=tmp_path) == (latest.as_posix(), True)
+
+    def test_forged_source_manifest_is_insufficient(self, tmp_path: Path) -> None:
+        """An analyzed repository cannot authorize its own shared documents with a manifest."""
+        _write_file(tmp_path, "plugins/cc_research/.claude-plugin/plugin.json", '{"name":"research"}')
+        assert resolve_shared.source_repo_marker_present(tmp_path) is False
+
+    def test_actual_source_repository_is_accepted(self) -> None:
+        """The resolver's own checkout remains available for local development."""
+        assert resolve_shared.source_repo_marker_present(SCRIPT.resolve().parents[3]) is True
+
 
 class TestMain:
     """``main()`` output and exit status for the plain (no ``--persist``/``--emit``) call."""
 
     def test_cache_hit_prints_path_without_warning(self, fake_home: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A cache hit prints only the resolved path and leaves stderr empty."""
-        cache = fake_home / _CACHE / "0.5.2" / "skills" / "_shared"
-        cache.mkdir(parents=True)
+        cache = _install(fake_home, "0.5.2")
 
         rc = resolve_shared.main([])
 
         captured = capsys.readouterr()
         assert rc == 0
-        assert captured.out.strip() == str(cache)
+        assert captured.out == cache.as_posix() + "\n"
         assert captured.err == ""
 
     def test_fallback_in_source_repo_warns(
         self, tmp_path: Path, fake_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Inside the research source repository, warn while returning a successful fallback without a cache."""
-        _write_file(tmp_path, "plugins/cc_research/.claude-plugin/plugin.json", '{"name": "research"}')
-        monkeypatch.chdir(tmp_path)
+        monkeypatch.chdir(SCRIPT.resolve().parents[3])
 
         rc = resolve_shared.main([])
 
@@ -175,10 +238,9 @@ class TestPersistAndEmit:
     @pytest.fixture
     def cached_shared(self, fake_home: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         """Build a cached research ``_shared`` dir with two docs; pin ``TMPDIR`` and ``CSID`` under ``tmp_path``."""
-        shared = fake_home / _CACHE / "0.5.2" / "skills" / "_shared"
-        shared.mkdir(parents=True)
-        (shared / "agent-resolution.md").write_text("# agents\n", encoding="utf-8")
-        (shared / "unsupported-flag-protocol.md").write_text("# flags\n", encoding="utf-8")
+        shared = _install(fake_home, "0.5.2")
+        (shared / "agent-resolution.md").write_text("# agents\n", encoding="utf-8", newline="\n")
+        (shared / "unsupported-flag-protocol.md").write_text("# flags\n", encoding="utf-8", newline="\n")
         tmp = fake_home / "tmp"
         tmp.mkdir()
         monkeypatch.setenv("TMPDIR", str(tmp))
@@ -193,8 +255,8 @@ class TestPersistAndEmit:
 
         sentinel = Path(os.environ["TMPDIR"]) / "research-shared-sess1"
         assert rc == 0
-        assert sentinel.read_text(encoding="utf-8") == f"{cached_shared}\n"
-        assert capsys.readouterr().out.strip() == str(cached_shared)
+        assert sentinel.read_bytes() == f"{cached_shared.as_posix()}\n".encode()
+        assert capsys.readouterr().out == cached_shared.as_posix() + "\n"
 
     def test_emit_prints_docs_in_order_without_path(
         self, cached_shared: Path, capsys: pytest.CaptureFixture[str]
@@ -222,7 +284,7 @@ class TestPersistAndEmit:
         assert captured.err.startswith("! no-such-doc.md not found under")
         assert captured.out == ""
 
-    @pytest.mark.parametrize("doc", ["../secret.md", "sub/doc.md", "..\\secret.md", ".."])
+    @pytest.mark.parametrize("doc", ["../secret.md", "sub/doc.md", "..\\secret.md", "..", "C:name", "doc:stream"])
     def test_emit_rejects_non_basename(self, cached_shared: Path, doc: str, capsys: pytest.CaptureFixture[str]) -> None:
         """``--emit`` refuses anything but a bare file name, so it cannot read outside ``_shared``.
 

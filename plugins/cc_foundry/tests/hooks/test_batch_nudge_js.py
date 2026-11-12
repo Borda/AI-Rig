@@ -38,7 +38,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
-from _hook_env import _hook_tmp_base
+from _hook_env import _hook_state_base
 
 NUDGE_THRESHOLD = 4
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -61,7 +61,7 @@ def _session_id(request: pytest.FixtureRequest) -> Iterator[str]:
 
 def _rm(sid: str) -> None:
     """Remove the batch-nudge state directory for one isolated session."""
-    shutil.rmtree(_hook_tmp_base() / f"claude-state-{sid}", ignore_errors=True)
+    shutil.rmtree(_hook_state_base() / f"claude-state-{sid}", ignore_errors=True)
 
 
 def _batch(sid: str, *calls: tuple[str, dict], agent_id: str | None = None) -> dict:
@@ -113,7 +113,7 @@ def _subagent_event(sid: str, event: str, agent_id: str | None) -> dict:
 
 def _state_dir(sid: str) -> Path:
     """Resolve the per-session batch state dir, tracking the hook's own ``getSentinelDir()``."""
-    return _hook_tmp_base() / f"claude-state-{sid}" / "batch"
+    return _hook_state_base() / f"claude-state-{sid}" / "batch"
 
 
 def _agent_file(sid: str, agent_id: str) -> Path:

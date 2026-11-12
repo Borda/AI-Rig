@@ -13,6 +13,7 @@
 **Skip entire section if `CODEMAP_ENABLED=false`** — sets `codemap_available=false` for downstream agent prompts; agents fall back to file reads.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 codemap_available=false
 IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/review-codemap-enabled-${CSID}" || CODEMAP_ENABLED="false"
@@ -29,7 +30,7 @@ if [ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py >/dev/null 2>&1; the
     codemap_available=true
     # module names from index's own `name` field, never sed transform: `pkg/__init__.py` is `pkg`, not `pkg.__init__` — old `grep -v '__init__$'` dropped it entirely, an __init__-only PR got zero structural context. Files index doesn't know resolve to nothing, not a guessed name.
     _CHANGED_PY=$(printf '%s\n' "$CHANGED_FILES" | grep '\.py$' | paste -sd, -)
-    CHANGED_MODS=$(codemap-py query --timeout 10 $_CODEMAP_NO_HEAL central --top 100000 2>/dev/null | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_centrality.py" --files "$_CHANGED_PY" --modules-only 2>/dev/null)
+    CHANGED_MODS=$(codemap-py query --timeout 10 $_CODEMAP_NO_HEAL central --top 100000 2>/dev/null | python "$PLUGIN_ROOT/bin/resolve_centrality.py" --files "$_CHANGED_PY" --modules-only 2>/dev/null)
     {
         echo "## Structural Context (codemap-py)"
         echo
@@ -42,12 +43,12 @@ if [ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py >/dev/null 2>&1; the
         _DIFF_IMPACT_JSON=$(codemap-py query --timeout 15 $_CODEMAP_NO_HEAL diff-impact --diff-file "$_SNAP_DIR/pr.diff" 2>/dev/null)
         printf '%s\n' "$_DIFF_IMPACT_JSON"
         # review depth from code path, not diff size — overrides Step 1's fail-safe FULL default; stdout to sentinel, not stage
-        printf '%s\n' "$_DIFF_IMPACT_JSON" | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/review_impact_tier.py" > "${TMPDIR:-/tmp}/oss-review-impact-${CLEAN_ARGS}-${CSID}" 2>/dev/null  # timeout: 300000 — whole battery: fn-rdeps/fn-blast loop + ≤12 tier fn-blast queries
+        printf '%s\n' "$_DIFF_IMPACT_JSON" | python "$PLUGIN_ROOT/bin/review_impact_tier.py" > "${TMPDIR:-/tmp}/oss-review-impact-${CLEAN_ARGS}-${CSID}" 2>/dev/null  # timeout: 300000 — whole battery: fn-rdeps/fn-blast loop + ≤12 tier fn-blast queries
         echo
         echo "### Changed-function callers (fn-rdeps/fn-blast)"
         # fn-rdeps/fn-blast need module::fn qnames — bare-module calls failed 100% in prod. diff-impact derives qnames but only exposes caller_count not list (0.177x tokens, e.g. enumerate subclass overrides pre-signature-edit).
         # reuse diff-impact's qname derivation via extract_diff_impact_qnames.py — no separate hunk-parsing
-        printf '%s\n' "$_DIFF_IMPACT_JSON" | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/extract_diff_impact_qnames.py" --cap 12 2>/dev/null | while IFS= read -r qn; do
+        printf '%s\n' "$_DIFF_IMPACT_JSON" | python "$PLUGIN_ROOT/bin/extract_diff_impact_qnames.py" --cap 12 2>/dev/null | while IFS= read -r qn; do
             [ -n "$qn" ] || continue
             echo "#### $qn"
             _FN_RDEPS_OUT=$(codemap-py query --timeout 5 $_CODEMAP_NO_HEAL fn-rdeps "$qn" 2>/dev/null)
@@ -85,6 +86,7 @@ These query families feed exactly one dimension each; under default `FANOUT_MAX`
 qa block (mock coverage v4.1 + test gaps v4.2):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/review-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
 if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
@@ -98,12 +100,13 @@ _MODS="${TMPDIR:-/tmp}/oss-review-changed-mods-${CLEAN_ARGS}-${CSID}"
 [ -n "$CODEMAP_CONTEXT_STAGE" ] && [ -f "$CODEMAP_CONTEXT_STAGE" ] && [ -s "$_MODS" ] || exit 0
 # one codemap-py process for every module x query; --timeout is a whole-process alarm, scaled 5 s x 2 queries x N modules. Alarm/failure → batch prints nothing → `render --fallback` reruns each unanswered query alone, --timeout 5 as before: one slow query loses only its own line
 _N=$(wc -l < "$_MODS")
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/codemap_batch.py" build qa "$_MODS" | codemap-py query --timeout $((_N * 10)) $_CODEMAP_NO_HEAL batch - 2>/dev/null | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/codemap_batch.py" render --fallback qa "$_MODS" >> "$CODEMAP_CONTEXT_STAGE"  # timeout: 330000 — per module ≤10 s batch alarm + ≤20 s fallback (2 queries x 10 s kill bound), 300 s at the 10-module cap
+python "$PLUGIN_ROOT/bin/codemap_batch.py" build qa "$_MODS" | codemap-py query --timeout $((_N * 10)) $_CODEMAP_NO_HEAL batch - 2>/dev/null | python "$PLUGIN_ROOT/bin/codemap_batch.py" render --fallback qa "$_MODS" >> "$CODEMAP_CONTEXT_STAGE"  # timeout: 330000 — per module ≤10 s batch alarm + ≤20 s fallback (2 queries x 10 s kill bound), 300 s at the 10-module cap
 ```
 
 docs block (stale doc refs v4.5 + doc coverage v4.4):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/review-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
 if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
@@ -116,7 +119,7 @@ IFS= read -r CODEMAP_CONTEXT_STAGE < "${TMPDIR:-/tmp}/oss-review-codemap-context
 _MODS="${TMPDIR:-/tmp}/oss-review-changed-mods-${CLEAN_ARGS}-${CSID}"
 [ -n "$CODEMAP_CONTEXT_STAGE" ] && [ -f "$CODEMAP_CONTEXT_STAGE" ] && [ -s "$_MODS" ] || exit 0
 _N=$(wc -l < "$_MODS")  # whole-process alarm and --fallback as in the qa block
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/codemap_batch.py" build docs "$_MODS" | codemap-py query --timeout $((_N * 10)) $_CODEMAP_NO_HEAL batch - 2>/dev/null | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/codemap_batch.py" render --fallback docs "$_MODS" >> "$CODEMAP_CONTEXT_STAGE"  # timeout: 330000 — per module ≤10 s batch alarm + ≤20 s fallback (2 queries x 10 s kill bound), 300 s at the 10-module cap
+python "$PLUGIN_ROOT/bin/codemap_batch.py" build docs "$_MODS" | codemap-py query --timeout $((_N * 10)) $_CODEMAP_NO_HEAL batch - 2>/dev/null | python "$PLUGIN_ROOT/bin/codemap_batch.py" render --fallback docs "$_MODS" >> "$CODEMAP_CONTEXT_STAGE"  # timeout: 330000 — per module ≤10 s batch alarm + ≤20 s fallback (2 queries x 10 s kill bound), 300 s at the 10-module cap
 ```
 
 `codemap_available=true`: Step 2 copies `$CODEMAP_CONTEXT_STAGE` to `$RUN_DIR/codemap-context.md` after `$RUN_DIR` created. Every dimension-agent spawn prompt in Step 2 must then include a literal block (substituted from `$RUN_DIR/codemap-context.md`):

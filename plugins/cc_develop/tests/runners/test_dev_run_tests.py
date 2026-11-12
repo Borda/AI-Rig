@@ -119,7 +119,7 @@ class TestCommandValidation:
         ``eval`` of a sentinel value.
         """
         source = (Path(__file__).parents[2] / "skills" / skill / "SKILL.md").read_text(encoding="utf-8")
-        runner = 'python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py"'
+        runner = 'python "$PLUGIN_ROOT/bin/dev_run_tests.py"'
         assert ('eval "$PYTEST_CMD' in source, 'eval "$TEST_CMD' in source, f"{runner} pytest" in source) == (
             False,
             False,
@@ -195,7 +195,7 @@ class TestLaunch:
         script = Path(dev_run_tests.__file__)
         env = {**os.environ, "TMPDIR": str(session), "CSID": "tests-runner", "PYTHONPATH": str(script.parent)}
         proc = subprocess.Popen(
-            [sys.executable, str(script), "pytest", "--", "-p", "no:cacheprovider", "test_fail.py"],
+            [sys.executable, str(script), "pytest", "--", "-p", "no:cacheprovider", "-p", "no:xdist", "test_fail.py"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=session,

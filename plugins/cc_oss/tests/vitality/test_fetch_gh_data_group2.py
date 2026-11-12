@@ -101,6 +101,27 @@ class TestInvalidArgs:
     """Main: bad command lines are refused before any ``gh`` call."""
 
     @pytest.mark.parametrize(
+        ("owner", "repo"),
+        [
+            pytest.param(".", "repo", id="owner-current-directory"),
+            pytest.param("..", "repo", id="owner-parent-directory"),
+            pytest.param("owner", ".", id="repo-current-directory"),
+            pytest.param("owner", "..", id="repo-parent-directory"),
+        ],
+    )
+    def test_dot_identifiers_rejected_before_fetch(
+        self, gh_run: mock.MagicMock, tmp_path: Path, owner: str, repo: str
+    ) -> None:
+        """Refuse dot segments in owner and repository names before they reach an API path."""
+        assert (
+            fgd.main(
+                ["--owner", owner, "--repo", repo, "--default-branch", "main", "--data-file", str(tmp_path / "out")]
+            )
+            == 1
+        )
+        gh_run.assert_not_called()
+
+    @pytest.mark.parametrize(
         ("argv", "needle"),
         [
             pytest.param(
@@ -489,3 +510,19 @@ class TestChangelogOutline:
         monkeypatch.setattr(fgd, "_CHANGELOG_HEADING_CAP", 2)
         outline, truncated = fgd.changelog_outline("## a\n## b\n## c\n")
         assert (outline["headings"], truncated) == (["## a", "## b"], True)
+
+
+@pytest.mark.parametrize("path", ["../README.md", "docs/../../README.md", "docs/./README.md"])
+def test_contents_file_dot_segments_never_requested(gh_run: mock.MagicMock, tmp_path: Path, path: str) -> None:
+    """Reject directory navigation in a remote file path before calling GitHub."""
+    ctx = fgd.FetchContext("gh", "owner/repo", tmp_path / "out", 1)
+    assert fgd._fetch_file_text(ctx, path) is None
+    gh_run.assert_not_called()
+
+
+@pytest.mark.parametrize("path", ["..", "docs/..", "docs/."])
+def test_contents_listing_dot_segments_never_requested(gh_run: mock.MagicMock, tmp_path: Path, path: str) -> None:
+    """Reject directory navigation in a listing path before calling GitHub."""
+    ctx = fgd.FetchContext("gh", "owner/repo", tmp_path / "out", 1)
+    assert fgd._list_names(ctx, path) is None
+    gh_run.assert_not_called()

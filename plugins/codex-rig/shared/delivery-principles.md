@@ -6,7 +6,7 @@ The default way work runs after installing this rig, and the five principles tha
 
 - **Plan.** Define the scope, the owned files, and the acceptance criteria before editing, and state what is still uncertain.
 - **Challenge.** Have a bounded, independent reviewer challenge the plan before implementation starts; a self-check is not a challenge.
-- **Delegate.** Give each bounded, disjoint piece one owner and run the pieces in parallel when they do not overlap; keep indivisible work in the current session. When the work decomposes into disjoint ownership, run the pieces in parallel as bounded subagents; serialise only what shares a path; each piece has exactly one owner; never hand two agents the same file.
+- **Delegate.** When the work decomposes into disjoint ownership, run the pieces in parallel as bounded subagents; serialise only what shares a path; each piece has exactly one owner; never hand two agents the same file; keep indivisible work in the current session.
 - **Verify.** Run the relevant checks, then consolidate the actual results, the source, and the handoffs against every acceptance criterion before declaring the work done.
 
 ## Design principles

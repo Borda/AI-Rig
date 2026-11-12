@@ -15,18 +15,19 @@
 Step 5 merged the target once; it keeps moving while Steps 6–8 run (an hour is common), so a run that skips this check pushes a branch already behind it. PR runs only — report mode with no PR branch merges nothing and skips straight to the QA block below.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""
 IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
 [ -n "$HEAD_REF" ] || { echo "BASE_FRESH=n/a (no PR branch — report mode)"; exit 0; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/check_base_fresh.py" --base-ref "$BASE_REF"  # timeout: 90000
+python "$PLUGIN_ROOT/bin/check_base_fresh.py" --base-ref "$BASE_REF"  # timeout: 90000
 ```
 
 Branch on the printed `BASE_FRESH`:
 
 - `yes` or `n/a` → continue to the QA block below.
 - `no` → the target advanced since the Step 5 merge; print `⚠ origin/<BASE_REF> advanced <BASE_BEHIND> commits since the last merge — re-merging before QA` with the listed subjects. Then re-sync, unattended, no question:
-  - a. Load `conflict-resolution.md` (`cat "$_OSS_RESOLVE/modes/conflict-resolution.md"`, reload `_OSS_RESOLVE` from its sentinel first) and run Step 5's Case B merge block unedited — it reloads its refs from the Step 4 sentinels, fetches again and merges `origin/$BASE_REF` with `--no-commit`.
+  - a. Load `conflict-resolution.md` (`python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_RESOLVE/modes/conflict-resolution.md"`, run the guarded resolver prologue and reload `_OSS_RESOLVE` from its sentinel first) and run Step 5's Case B merge block unedited — it reloads its refs from the Step 4 sentinels, fetches again and merges `origin/$BASE_REF` with `--no-commit`.
   - b. No conflicts → commit the merge there (Step 5 "No conflicts"). Conflicts → Step 5a tasks, Step 6 context, Step 7a agents, Step 7b verify-and-commit — the contribution motivation from Step 3b still applies; the more-than-20-conflicted-files abort gate still applies.
   - c. Restart Step 9 from 9.0, so QA covers the re-merged tree.
   - Cap: 2 re-syncs per run. A third `no` → print `⚠ origin/<BASE_REF> still moving — continuing; the push confirmation shows the drift` and continue to the QA block.
@@ -51,23 +52,33 @@ mkdir -p "$RUN_DIR" # timeout: 5000
 # merge-base for accurate diff range in agent prompts
 BASE_REF_MERGE=$(git merge-base HEAD "origin/$BASE_REF" 2>/dev/null)
 [ -n "$BASE_REF_MERGE" ] || { echo "! BLOCKED — Cannot establish a merge base with origin/$BASE_REF; refusing vacuous QA range"; exit 1; }
-echo "RUN_DIR=$RUN_DIR BASE_REF_MERGE=$BASE_REF_MERGE CHANGE_SCOPE=$CHANGE_SCOPE"  # literals the spawn prompts, agent-watch-qa.tsv and the CHANGE_SCOPE rules below need
+# docs-only = this run's own edits since the pre-implementation fingerprint, all .md/.rst user docs (review's DOC_FILES set) minus instruction files; fails closed on missing base, empty list, or a merge-commit base (this run's merge left the range)
+IFS= read -r IMPL_BASE < "${TMPDIR:-/tmp}/resolve-base-sha-${CSID}" 2>/dev/null || IMPL_BASE=""; case "$IMPL_BASE" in *[!0-9a-f]*) IMPL_BASE="" ;; esac; [ -z "$IMPL_BASE" ] || ! git rev-parse -q --verify "$IMPL_BASE^2" >/dev/null || IMPL_BASE=""
+DOCS_ONLY=false; _TOUCHED=$([ -n "$IMPL_BASE" ] && git diff --name-only "$IMPL_BASE" 2>/dev/null && git ls-files --others --exclude-standard -- ':!.reports' ':!.temp' ':!.cache' 2>/dev/null); [ -n "$_TOUCHED" ] && ! printf '%s\n' "$_TOUCHED" | grep -qvE '\.(md|rst)$' && ! printf '%s\n' "$_TOUCHED" | grep -qiE '(^|/)(skills|agents|rules|prompts|hooks|\.claude|\.codex|\.github)/|(^|/)commands/|(^|/)(CLAUDE|AGENTS|SKILL|GEMINI)\.md$' && DOCS_ONLY=true
+echo "RUN_DIR=$RUN_DIR BASE_REF_MERGE=$BASE_REF_MERGE CHANGE_SCOPE=$CHANGE_SCOPE DOCS_ONLY=$DOCS_ONLY"  # literals the spawn prompts, agent-watch-qa.tsv and the CHANGE_SCOPE/DOCS_ONLY rules below need
 ```
 
-When `$CHANGE_SCOPE=lint-only` (all selected items were typing/doc/formatting): skip `foundry:qa-specialist` — linting only. Otherwise spawn both in parallel:
+When `$CHANGE_SCOPE=lint-only` (all selected items were typing/doc/formatting) or `DOCS_ONLY=true` (this run edited only user documentation): skip `foundry:qa-specialist` — linting only. Otherwise spawn both in parallel:
 
 ```text
 Agent(subagent_type="foundry:linting-expert", name="qa-lint", description="Lint changed files", maxTurns=15, prompt="Lint and type-check all files changed in the current branch since $BASE_REF_MERGE (expand to literal SHA before spawning). List every lint/type violation. Apply inline fixes for any that are auto-fixable. Write your full findings to $RUN_DIR/linting-expert-step9.md using the Write tool, then return ONLY a compact JSON envelope: {fixed: N, remaining: N, files: [...]}.")
 
-Agent(subagent_type="foundry:qa-specialist", name="qa-review", description="QA review changed files", maxTurns=15, prompt="QA-check all files changed in the current branch since $BASE_REF_MERGE (expand to literal SHA before spawning) for correctness, edge cases, and regressions. Run only the targeted tests: CODEMAP_ENABLED=$(cat \"${TMPDIR:-/tmp}/resolve-codemap-enabled-${CSID}\" 2>/dev/null || printf false) python \"${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_test_plan.py\" targeted --base $BASE_REF_MERGE prints a JSON plan — run exactly its command (null = no targeted tests; say so). Never run the whole test suite: the orchestrator runs it at the end of this gate. Flag any blocking issues (bugs, broken contracts, missing test coverage for the changed logic). Write your full findings to $RUN_DIR/qa-specialist-step9.md using the Write tool, then return ONLY a compact JSON envelope: {blocking: N, warnings: N, issues: [...]}.")
+Agent(subagent_type="foundry:qa-specialist", name="qa-review", description="QA review changed files", maxTurns=15, prompt="QA-check all files changed in the current branch since $BASE_REF_MERGE (expand to literal SHA before spawning) for correctness, edge cases, and regressions. Run only the targeted tests: CODEMAP_ENABLED=$(cat \"${TMPDIR:-/tmp}/resolve-codemap-enabled-${CSID}\" 2>/dev/null || printf false) python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_test_plan.py\" targeted --base $BASE_REF_MERGE prints a JSON plan — run exactly its command (null = no targeted tests; say so). Never run the whole test suite: the orchestrator runs it at the end of this gate. Flag any blocking issues (bugs, broken contracts, missing test coverage for the changed logic). Write your full findings to $RUN_DIR/qa-specialist-step9.md using the Write tool, then return ONLY a compact JSON envelope: {blocking: N, warnings: N, issues: [...]}.")
 ```
 
 > **Health monitoring** — SKILL.md §Agent wait discipline: both spawns run in background. Issue them in one message together with the Write of `$IMPL_DIR/agent-watch-qa.tsv` (rows `linting-expert<TAB><RUN_DIR>/linting-expert-step9.md<TAB>900` and `qa-specialist<TAB><RUN_DIR>/qa-specialist-step9.md<TAB>900`, `RUN_DIR` expanded), then **end the turn** — the completion notification is the resume signal. Never hold the turn open with `Bash(true)`, a "waiting" line, a poll, `ScheduleWakeup`, `ListAgents` or a `Monitor` loop. At each wake-up run the watch check; `timed_out`, or a notification without its output file → surface partial results from `$RUN_DIR` with ⏱ now.
 
 - `foundry:linting-expert` made file changes → commit:
 
+Reuse this run's parent-owned hook approval (`dispatch-prelude.md`), with no separate specialist approval. The commit helper disables unapproved hooks and retries a rejecting formatter once only for selected lint files; a second failure or edits outside selection block completion. Preserve and report the tree rather than bypassing hooks or improvising another commit.
+
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_lint_fixes.py"  # timeout: 90000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+export RESOLVE_APPROVED_HOOKS=""
+[ -z "$IMPL_DIR" ] || IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" 2>/dev/null || RESOLVE_APPROVED_HOOKS=""
+python "$PLUGIN_ROOT/bin/commit_lint_fixes.py"  # timeout: 90000
 ```
 
 **Gate loop — QA gate** (max 3 iterations; every test run inside it is targeted, never the full suite):
@@ -77,13 +88,14 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_lint_fixes.py"  # timeo
 3. Re-run `foundry:qa-specialist` — clean → proceed; still blocking → loop
 4. Blocked after 3 iterations → **stop workflow** — do not push; surface all remaining blocking issues; print: `! BLOCKED — QA gate blocked push — review findings above, fix errors, then re-run /resolve or push manually after fixing.`
 
-**Full suite — once after the QA loop is clean, again only after a fix.** Skip it when `$CHANGE_SCOPE=lint-only` (no tests ran there before either). Otherwise resolve the repository's own command — its contributor docs (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`), then a Makefile `test` target, then `python -m pytest` — into a script:
+**Full suite — once after the QA loop is clean, again only after a fix.** Skip it when `$CHANGE_SCOPE=lint-only` (no tests ran there before either) or `DOCS_ONLY=true` and the `qa-lint` envelope reports `fixed: 0` or only `.md`/`.rst` `files` (a lint fix to any other path voids the skip); a `DOCS_ONLY=true` skip puts `- (-0.00) full test suite not run — documentation-only change` once in the final report's Confidence Gaps — weight 0, never a finding, remediation item or reason for another run. Otherwise resolve the repository's own command — its contributor docs (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`), then a Makefile `test` target, then `python -m pytest` — into a script:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; cannot stage the full-suite run"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_test_plan.py" full-command --script "$IMPL_DIR/full-suite.sh"  # timeout: 15000
+python "$PLUGIN_ROOT/bin/resolve_test_plan.py" full-command --script "$IMPL_DIR/full-suite.sh"  # timeout: 15000
 ```
 
 Then run it once, as a **background** Bash call (`run_in_background: true` — a large suite outlives the ~10 min foreground cap), and end the turn; its exit re-invokes the orchestrator, no polling:

@@ -15,16 +15,17 @@ Thresholds (from SKILL.md constants): `ROUTING_ACCURACY_THRESHOLD=0.90`, `ROUTIN
 Mark "Calibrate routing" in_progress. Load routing pipeline template via Bash (not Read tool — Bash grant is version-proof):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 if [ "$LOCAL_MODE" = "true" ]; then
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate templates routing-pipeline-prompt.md --local --fallback-source  # timeout: 5000
+    python "$PLUGIN_ROOT/bin/load_mode.py" calibrate templates routing-pipeline-prompt.md --local --fallback-source  # timeout: 5000
 else
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate templates routing-pipeline-prompt.md --fallback-source  # timeout: 5000
+    python "$PLUGIN_ROOT/bin/load_mode.py" calibrate templates routing-pipeline-prompt.md --fallback-source  # timeout: 5000
 fi
 ```
 
-Substitute `<N>` (5 fast, 10 full), `<TIMESTAMP>`, `<MODE>`, and `<CHILD_BATCH>` with `1`. Spawn **single** `general-purpose` pipeline subagent with substituted template — handles all phases internally. Proceed to Step 3.
+Substitute `<N>` (5 fast, 10 full), `<TIMESTAMP>`, `<MODE>`, and `<CHILD_BATCH>` with `1`. Spawn **single** `general-purpose` pipeline subagent with `model="sonnet"` within SKILL.md's session-wide spawn budget, using the substituted template — handles all phases internally. Proceed to Step 3.
 
 Run dir: `.reports/calibrate/<TIMESTAMP>/routing/`
 
@@ -50,6 +51,6 @@ Verdict `incomplete` with gap `resolver unavailable`: omit table and print `⚠ 
 
 ### Follow-up chain
 
-Routing accuracy < 0.90 or hard accuracy < 0.80: update descriptions for confused pairs, then `/calibrate routing` to verify. Max 3 re-run cycles; still below threshold after third: surface persistent confusion pairs to user for manual review.
+Routing accuracy < 0.90 or hard accuracy < 0.80: update descriptions for confused pairs, then `/foundry:calibrate routing` to verify. Max 3 re-run cycles; still below threshold after third: surface persistent confusion pairs to user for manual review.
 
 Proposals written to: `.reports/calibrate/<TIMESTAMP>/routing/benchmark-report.md` — Proposals section has targeted wording per confused pair.

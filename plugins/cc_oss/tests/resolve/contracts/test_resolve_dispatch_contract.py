@@ -19,6 +19,7 @@ from typing import NamedTuple
 from unittest import mock
 
 import pytest
+from _oss_shell_plugin import render_shell
 from _resolve_source import read_resolve_source
 from _text_io import bash_block_after, bash_path, dispatch_text
 from append_resolution import build_records, parse_challenge_log
@@ -77,6 +78,7 @@ _SPLIT_RULE = (
 )
 #: Post-Step-3d `AskUserQuestion` mentions that are error recovery, a user-elected gate, or an explicit "no ask" note.
 _POST_SELECTION_ASK_ALLOWLIST = (
+    "**Repository hook approval — parent-owned",  # explicitly approved execution boundary for PR-supplied hooks
     "No confirming commit found",  # straggler gate: unresolved item status
     "**Push confirmation — one `AskUserQuestion` call.**",  # Step 10: scope-bearing push confirmation (git-push)
     "**Drift question — its own `AskUserQuestion` call",  # Step 10: target moved since Step 9 (BASE_FRESH=no only)
@@ -190,7 +192,7 @@ def _run_shell(
 ) -> subprocess.CompletedProcess[str]:
     """Run one fenced block with ``<shell> -c`` (bash unless told otherwise) and capture its text output."""
     return subprocess.run(
-        [shell or _BASH, "-c", block],
+        [shell or _BASH, "-c", render_shell(block, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "oss")],
         cwd=cwd,
         env=env,
         capture_output=True,
@@ -664,7 +666,7 @@ class TestStep1Sentinels:
 
         The sentinel holds `push` from an earlier run; Step 1 must overwrite it with `unset` and clear the status.
         """
-        block = _step_1_block("# defence-in-depth")
+        block = _step_1_block("# NUL-delimited data")
         _seed(tmp_path, {"push-auth": "push"})
 
         result = _run_shell(block, tmp_path, _shell_env(tmp_path, ARGUMENTS="42"))
@@ -1692,11 +1694,48 @@ class TestPush:
         assert "Push question — multiSelect: FALSE" in selection
         assert "# substitute" not in selection
 
+    def test_step_3d_run_approval_is_the_git_push_run_question(self) -> None:
+        """In ``pr`` modes the Step 3d push question is the ``git-push-run`` question, which is the push authorization.
+
+        The hook records a token only from the exact header, the exact ``Approve`` / ``Deny`` options, one push span and
+        one full PR head id, so the question text must show all of them, and the answer must record ``push-run``. The
+        post-PR browser action has no slot there and stays ``skip``.
+        """
+        selection = _between(_resolve_text("SKILL.md"), "## Step 3d", "## Step 7b join")
+        form = _between(selection, "Run approval form —", "Unanswered or dismissed →")
+
+        assert "header `git-push-run`" in form
+        assert "options exactly `Approve` / `Deny`" in form
+        assert "Push: `git push <FORK_REMOTE> <HEAD_REF>`" in form
+        assert "PR head: `<PR_HEAD_OID>`" in form
+        assert "| run approval: Approve | push-run | skip |" in selection
+        assert "| run approval: Deny | skip | skip |" in selection
+        assert 'echo push-run > "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}"' in selection
+        assert "`PR_HEAD_OID`" in _resolve_text("modes/pr-intelligence.md")
+        assert "headRefOid" in _resolve_text("modes/pr-intelligence.md")
+
+    def test_step_10_run_approval_asks_no_push_question(self) -> None:
+        """With ``PUSH_AUTH=push-run`` Step 10 asks nothing and pushes with the remote and branch written out.
+
+        The guard covers a push that writes both out, so the run push never uses shell variables; the user is asked
+        about pushing at Step 10 only when the guard refuses that push.
+        """
+        push_step = _push_step(_resolve_text("SKILL.md"))
+        branch = next(line for line in push_step.splitlines() if line.startswith("- `push-run` →"))
+        refusal = next(line for line in push_step.splitlines() if "Blocked by a push guard on the run push" in line)
+
+        assert "never ask the user again to push" in branch
+        assert "Q1 is asked only if the guard refuses that push" in branch
+        assert "git push <FORK_REMOTE> <HEAD_REF> # timeout: 30000" in push_step
+        assert "ask the **push confirmation** (Q1, `git-push`) once" in refusal
+        assert "only path where a `push-run` run asks about pushing at Step 10" in refusal
+
     @_skip_no_bash
     @pytest.mark.parametrize(
         ("answers", "expected"),
         [
             pytest.param({"push-auth": "push"}, "push", id="authorized"),
+            pytest.param({"push-auth": "push-run"}, "push-run", id="run-approved"),
             pytest.param({"push-auth": "skip"}, "skip", id="declined"),
             pytest.param({}, "unset", id="lost-answer"),
         ],
@@ -2589,7 +2628,9 @@ class TestPerItemBlocks:
         from the manifest by the danger filter, so it prompts however invariant its text is.
         """
         block = _bash_block_containing(_resolve_text(relative), marker)
-        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": block}}
+        # The host substitutes the bootstrap token before the hook sees the command.
+        command = block.replace("${CLAUDE_PLUGIN_ROOT}", _PLUGIN.resolve().as_posix())
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": command}}
 
         proc = subprocess.run(
             ["node", str(_PLUGIN / "hooks" / "blueprint-allow.js")],

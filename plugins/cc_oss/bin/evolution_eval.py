@@ -43,13 +43,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from _evolution_common import RESIDUE_COLUMNS, column_kind, last_by_key, read_bounded_text, read_jsonl
+from _evolution_common import LINK_METHODS, RESIDUE_COLUMNS, column_kind, last_by_key, read_bounded_text, read_jsonl
 
 #: Phase 0 bars, fixed before any real-repo run.
 PRECISION_BAR: Final = 0.70
 RECALL_BAR: Final = 0.50
 RESIDUE_BAR: Final = 0.35
 CI_LOWER_BAR: Final = 0.55
+
+#: A repo is gated only with at least this many labelled (fix, column) pairs; below it the bars are not evidence.
+GOLD_FLOOR: Final = 15
+
+#: Links kept per fix, best raw score first. ``None`` keeps every link that passes the threshold. Measured on the
+#: labelled repos: any cap of 1-3 cost the best-scoring repo a true link (recall 0.50 to 0.46) for no precision gain
+#: that reaches the bar, so the default stays uncapped and ``--top-k`` is an experiment switch.
+DEFAULT_TOP_K: Final[int | None] = None
 
 #: Bootstrap defaults from the evaluation protocol.
 DEFAULT_RESAMPLES: Final = 2000
@@ -170,14 +178,27 @@ def _gold_by_fix(labels: Labels, aliases: dict[str, str]) -> dict[str, set[str]]
     return gold
 
 
-def _predicted(row: dict[str, Any], threshold: float | None) -> set[str]:
-    """Return the real columns a row associates: its binary view, or ``raw >= threshold`` when one is given."""
-    return {
-        cell["column_id"]
+def _predicted(row: dict[str, Any], threshold: float | None, top_k: int | None = None) -> set[str]:
+    """Return the real columns a row associates: its binary view, or ``raw >= threshold`` for link methods when given.
+
+    A re-decided threshold applies the scorer's rule, so only cells whose strongest signal is in ``LINK_METHODS`` link.
+    ``top_k`` then keeps only the k links with the highest raw score (ties by column ID), because one fix repairs few
+    features and every further link is far more likely wrong than right.
+    """
+    linked = [
+        cell
         for cell in row.get("cells", [])
         if column_kind(cell["column_id"]) == "real"
-        and (cell.get("binary") if threshold is None else float(cell.get("raw_score") or 0.0) >= threshold)
-    }
+        and (
+            cell.get("binary")
+            if threshold is None
+            else cell.get("method") in LINK_METHODS and float(cell.get("raw_score") or 0.0) >= threshold
+        )
+    ]
+    if top_k is not None:
+        linked.sort(key=lambda cell: (-float(cell.get("raw_score") or 0.0), cell["column_id"]))
+        linked = linked[:top_k]
+    return {cell["column_id"] for cell in linked}
 
 
 def _residue(row: dict[str, Any]) -> float:
@@ -188,13 +209,22 @@ def _residue(row: dict[str, Any]) -> float:
 
 
 def _fix_stats(
-    labels: Labels, rows_by_fix: dict[str, dict[str, Any]], repo: str, aliases: dict[str, str], threshold: float | None
+    labels: Labels,
+    rows_by_fix: dict[str, dict[str, Any]],
+    repo: str,
+    aliases: dict[str, str],
+    cut: tuple[float | None, int | None],
 ) -> list[_FixStat]:
-    """Return one stat per labelled fix, clustered by ``(repo, fix)`` and stratified by ``(repo, fix release)``."""
+    """Return one stat per labelled fix, clustered by ``(repo, fix)`` and stratified by ``(repo, fix release)``.
+
+    ``cut`` is ``(threshold, top_k)``: the re-decided raw threshold (None keeps the stored binary view) and the cap on
+    links per fix (None keeps all).
+    """
+    threshold, top_k = cut
     stats = []
     for fix_id, gold in sorted(_gold_by_fix(labels, aliases).items()):
         row = rows_by_fix.get(fix_id)
-        predicted = _predicted(row, threshold) if row else set()
+        predicted = _predicted(row, threshold, top_k) if row else set()
         release = str(row.get("fix_release")) if row else _MISSING_RELEASE
         residue = _residue(row) if row else 1.0
         stats.append(
@@ -258,7 +288,9 @@ def _bootstrap(stats: list[_FixStat], seed: int, resamples: int) -> dict[str, li
     return {name: _interval(values) for name, values in samples.items()}
 
 
-def _result(stats: list[_FixStat], repos: list[str], seed: int, resamples: int) -> dict[str, Any]:
+def _result(
+    stats: list[_FixStat], repos: list[str], seed: int, resamples: int, top_k: int | None = None
+) -> dict[str, Any]:
     """Assemble one evaluation result: point estimates, intervals and bootstrap settings."""
     if not 1 <= resamples <= MAX_RESAMPLES:
         raise ValueError(f"resamples must be between 1 and {MAX_RESAMPLES}, got {resamples}")
@@ -266,6 +298,7 @@ def _result(stats: list[_FixStat], repos: list[str], seed: int, resamples: int) 
     result.update(
         {
             "repos": repos,
+            "top_k": top_k,
             "ci": _bootstrap(stats, seed, resamples),
             "ci_level": _CI_LEVEL,
             "seed": seed,
@@ -284,6 +317,7 @@ def evaluate(
     seed: int = DEFAULT_SEED,
     resamples: int = DEFAULT_RESAMPLES,
     repo: str | None = None,
+    top_k: int | None = DEFAULT_TOP_K,
 ) -> dict[str, Any]:
     """Evaluate one repo's scored rows against its labels.
 
@@ -294,9 +328,10 @@ def evaluate(
         seed: Bootstrap seed; the same seed reproduces the same intervals.
         resamples: Bootstrap resamples.
         repo: Repo whose labels to use; required when labels span several repos.
+        top_k: Links kept per fix, best raw score first; None keeps all (see :func:`_predicted`).
 
     Returns:
-        ``{fixes, true_positive, predicted, gold, precision, recall, f1, residue, repos, ci, ci_level, seed,
+        ``{fixes, true_positive, predicted, gold, precision, recall, f1, residue, repos, top_k, ci, ci_level, seed,
         resamples, missing_rows}``; ``ci`` holds ``[low, high]`` for precision, recall and residue.
 
     Raises:
@@ -310,8 +345,8 @@ def evaluate(
         (1.0, 1.0, [1.0, 1.0])
     """
     repo_name, selected = _select_repo(_labels_of(labels), repo)
-    stats = _fix_stats(selected, _rows_by_fix(rows), repo_name, _aliases(columns), None)
-    return _result(stats, [repo_name], seed, resamples)
+    stats = _fix_stats(selected, _rows_by_fix(rows), repo_name, _aliases(columns), (None, top_k))
+    return _result(stats, [repo_name], seed, resamples, top_k)
 
 
 def pooled(
@@ -321,6 +356,7 @@ def pooled(
     *,
     seed: int = DEFAULT_SEED,
     resamples: int = DEFAULT_RESAMPLES,
+    top_k: int | None = DEFAULT_TOP_K,
 ) -> dict[str, Any]:
     """Evaluate several repos together (third-repo rule), clustering the bootstrap by ``(repo, fix)``.
 
@@ -343,8 +379,8 @@ def pooled(
     for repo in sorted(rows_by_repo):
         _, selected = _select_repo(label_list, repo)
         aliases = _aliases((columns_by_repo or {}).get(repo))
-        stats += _fix_stats(selected, _rows_by_fix(rows_by_repo[repo]), repo, aliases, None)
-    result = _result(stats, sorted(rows_by_repo), seed, resamples)
+        stats += _fix_stats(selected, _rows_by_fix(rows_by_repo[repo]), repo, aliases, (None, top_k))
+    result = _result(stats, sorted(rows_by_repo), seed, resamples, top_k)
     result["ignored_repos"] = sorted({label["repo"] for label in label_list} - set(rows_by_repo))
     return result
 
@@ -356,10 +392,15 @@ def gate(result: dict[str, Any], *, pooled_run: bool = False) -> dict[str, Any]:
     0.55. ``pass`` needs both. For a single repo, a failing ``ci_lower`` sets ``third_repo_required`` (label repo C,
     then run :func:`pooled`); for a pooled run there is no further repo, so ``pass`` is final.
 
+    A result with fewer than :data:`GOLD_FLOOR` labelled pairs is not gated: ``gated`` is False and ``pass`` is None,
+    because a handful of pairs moves precision by a whole fix and says nothing about the scorer.
+
     Examples:
         >>> flags = gate({"precision": 0.8, "recall": 0.6, "residue": 0.2, "ci": {"precision": [0.5, 0.9]}})
         >>> flags["bars_met"], flags["ci_lower"], flags["third_repo_required"], flags["pass"]
         (True, False, True, False)
+        >>> gate({"gold": 9, "precision": 1.0, "recall": 1.0, "residue": 0.0})["pass"] is None
+        True
     """
     precision, recall, residue = result.get("precision"), result.get("recall"), result.get("residue")
     lower = (result.get("ci") or {}).get("precision", [None, None])[0]
@@ -370,13 +411,22 @@ def gate(result: dict[str, Any], *, pooled_run: bool = False) -> dict[str, Any]:
         "ci_lower": lower is not None and lower >= CI_LOWER_BAR,
     }
     bars_met = flags["precision"] and flags["recall"] and flags["residue"]
+    gold = result.get("gold")
+    gated = gold is None or gold >= GOLD_FLOOR
     return {
         **flags,
         "bars_met": bars_met,
-        "pass": bars_met and flags["ci_lower"],
+        "gated": gated,
+        "pass": bars_met and flags["ci_lower"] if gated else None,
         "third_repo_required": not pooled_run and not flags["ci_lower"],
         "pooled": pooled_run,
-        "bars": {"precision": PRECISION_BAR, "recall": RECALL_BAR, "residue": RESIDUE_BAR, "ci_lower": CI_LOWER_BAR},
+        "bars": {
+            "precision": PRECISION_BAR,
+            "recall": RECALL_BAR,
+            "residue": RESIDUE_BAR,
+            "ci_lower": CI_LOWER_BAR,
+            "gold_floor": GOLD_FLOOR,
+        },
     }
 
 
@@ -387,6 +437,7 @@ def threshold_table(
     *,
     repo: str | None = None,
     columns: list[dict[str, Any]] | None = None,
+    top_k: int | None = DEFAULT_TOP_K,
 ) -> list[dict[str, Any]]:
     """Return precision, recall and F1 per candidate threshold, re-deciding binary links from raw scores.
 
@@ -400,7 +451,7 @@ def threshold_table(
     rows_by_fix, aliases = _rows_by_fix(rows_raw), _aliases(columns)
     table = []
     for value in values:
-        metrics = _metrics(_fix_stats(selected, rows_by_fix, repo_name, aliases, value))
+        metrics = _metrics(_fix_stats(selected, rows_by_fix, repo_name, aliases, (value, top_k)))
         table.append({"threshold": value, **{key: metrics[key] for key in ("precision", "recall", "f1")}})
     return table
 
@@ -412,6 +463,7 @@ def tune_threshold(
     *,
     repo: str | None = None,
     columns: list[dict[str, Any]] | None = None,
+    top_k: int | None = DEFAULT_TOP_K,
 ) -> float:
     """Choose the threshold maximising binary F1 on the tuning repo, subject to precision >= 0.70.
 
@@ -423,11 +475,12 @@ def tune_threshold(
 
     Examples:
         >>> labels = [{"repo": "A", "fix_id": "f", "column_id": "a"}]
-        >>> cells = [{"column_id": "a", "raw_score": 0.6}, {"column_id": "b", "raw_score": 0.3}]
+        >>> cells = [{"column_id": "a", "raw_score": 0.6, "method": "blame"},
+        ...          {"column_id": "b", "raw_score": 0.3, "method": "blame"}]
         >>> tune_threshold(labels, [{"fix_id": "f", "fix_release": "1.0", "cells": cells}], [0.2, 0.5])
         0.5
     """
-    table = threshold_table(labels, rows_raw, candidates, repo=repo, columns=columns)
+    table = threshold_table(labels, rows_raw, candidates, repo=repo, columns=columns, top_k=top_k)
     feasible = [entry for entry in table if entry["precision"] is not None and entry["precision"] >= PRECISION_BAR]
     if not feasible:
         best = max((entry["precision"] or 0.0 for entry in table), default=0.0)
@@ -477,17 +530,21 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     """Run the selected subcommand and return its JSON payload."""
     if not 1 <= args.resamples <= MAX_RESAMPLES:
         raise ValueError(f"resamples must be between 1 and {MAX_RESAMPLES}, got {args.resamples}")
+    if args.top_k is not None and args.top_k < 1:
+        raise ValueError(f"top-k must be at least 1, got {args.top_k}")
+    top_k = args.top_k if args.top_k is not None else DEFAULT_TOP_K
     labels = read_labels(args.labels)
     if args.command == "pooled":
-        result = pooled(labels, _repo_rows(args.rows), seed=args.seed, resamples=args.resamples)
+        result = pooled(labels, _repo_rows(args.rows), seed=args.seed, resamples=args.resamples, top_k=top_k)
         return {**result, "gate": gate(result, pooled_run=True)}
     rows = _read_records(args.rows)
     columns = _read_records(args.columns) if args.columns else None
     if args.command == "tune":
         candidates = [float(part) for part in args.candidates.split(",") if part.strip()]
-        table = threshold_table(labels, rows, candidates, repo=args.repo, columns=columns)
-        return {"threshold": tune_threshold(labels, rows, candidates, repo=args.repo, columns=columns), "table": table}
-    result = evaluate(labels, rows, columns, seed=args.seed, resamples=args.resamples, repo=args.repo)
+        table = threshold_table(labels, rows, candidates, repo=args.repo, columns=columns, top_k=top_k)
+        chosen = tune_threshold(labels, rows, candidates, repo=args.repo, columns=columns, top_k=top_k)
+        return {"threshold": chosen, "table": table}
+    result = evaluate(labels, rows, columns, seed=args.seed, resamples=args.resamples, repo=args.repo, top_k=top_k)
     return {**result, "gate": gate(result)}
 
 
@@ -510,6 +567,7 @@ def _build_parser() -> argparse.ArgumentParser:
         command.add_argument("--labels", type=Path, required=True, help="labels CSV: repo,fix_id,column_id")
         command.add_argument("--seed", type=int, default=DEFAULT_SEED, help="bootstrap seed")
         command.add_argument("--resamples", type=int, default=DEFAULT_RESAMPLES, help="bootstrap resamples (1-10000)")
+        command.add_argument("--top-k", type=int, help="links kept per fix, best raw score first (default: all)")
     return parser
 
 

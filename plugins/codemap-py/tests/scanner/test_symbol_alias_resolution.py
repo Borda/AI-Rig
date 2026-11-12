@@ -430,10 +430,10 @@ class TestIncrementalAliasScan:
         assert not any(module["path"].endswith(".md") for module in repaired["modules"])
 
     @IGNORE_RUNNER_THREAD_FORK_WARNING
-    def test_cli_rebuilds_v11_alias_index_to_v13(self, tmp_path: Path, scan_index: Path) -> None:
+    def test_cli_rebuilds_v11_alias_index_to_v14(self, tmp_path: Path, scan_index: Path) -> None:
         """The scan-index entrypoint fully rebuilds persisted v11 data before serving aliases.
 
-        A v11 index has no alias data, so ``--incremental`` must announce a fallback to a full scan and write a v13
+        A v11 index has no alias data, so ``--incremental`` must announce a fallback to a full scan and write a v14
         index whose alias map and limitations are populated.
         """
         _write_project(tmp_path, ambiguous=True)
@@ -449,8 +449,8 @@ class TestIncrementalAliasScan:
         )
 
         assert result.returncode == 0, result.stderr
-        assert "pre-v13 index found — falling back to full scan" in result.stderr
+        assert f"pre-v{SCAN_VERSION} index found — falling back to full scan" in result.stderr
         rebuilt = json.loads(index_path.read_text())
-        assert rebuilt["scan_version"] == SCAN_VERSION == 13
+        assert rebuilt["scan_version"] == SCAN_VERSION == 14
         assert rebuilt["symbol_aliases"]["pkg::target"] == "pkg.impl::target"
         assert rebuilt["symbol_alias_limitations"]

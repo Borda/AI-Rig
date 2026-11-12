@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 """Find deferred C1 files also touched by Phase 2 commits.
 
-Purpose: Preserve resolve's file-disjointness guard before merging specialist commits. Scope: Normalize two newline-
-delimited UTF-8 path lists with the host path rules; absolute paths become relative to the supplied repository root when
-it is nonempty. Usage: ``python compare_deferred_files.py ROOT DIFF_FILE DEFERRED_FILE``. Outputs: Print overlapping
-normalized deferred paths joined with spaces, in deferred order including duplicates. No overlap prints only a newline.
-No files are written. Failure: Read or UTF-8 decoding errors propagate with exit 1, so callers distinguish an unreadable
-list from no overlap. Invalid CLI arguments exit 2; success exits 0. Used by: ``skills/resolve/modes/dispatch-
-phase3.md`` before the merge fence.
+Purpose:
+    Preserve resolve's file-disjointness guard before merging specialist commits. Scope: Normalize two newline-
+    delimited UTF-8 path lists with the host path rules; absolute paths become relative to the supplied repository root
+    when it is nonempty. Usage: ``python compare_deferred_files.py ROOT DIFF_FILE DEFERRED_FILE``. Outputs: Print
+    overlapping normalized deferred paths joined with spaces, in deferred order including duplicates. No overlap prints
+    only a newline. No files are written. Failure: Read or UTF-8 decoding errors propagate with exit 1, so callers
+    distinguish an unreadable list from no overlap. Invalid CLI arguments exit 2; success exits 0. Used by:
+    ``skills/resolve/modes/dispatch- phase3.md`` before the merge fence.
 """
 
 from __future__ import annotations

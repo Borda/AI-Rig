@@ -4,6 +4,7 @@ import functools
 from pathlib import Path
 
 import pytest
+from _skill_source import read_skill_source
 
 _RELEASE = Path(__file__).resolve().parents[2] / "skills/release"
 
@@ -11,7 +12,7 @@ _RELEASE = Path(__file__).resolve().parents[2] / "skills/release"
 @functools.cache
 def _read(relative: str) -> str:
     """Return one shipped release-skill file as text."""
-    return (_RELEASE / relative).read_text(encoding="utf-8")
+    return read_skill_source(_RELEASE / relative)
 
 
 @pytest.mark.parametrize(

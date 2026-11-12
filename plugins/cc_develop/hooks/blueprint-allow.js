@@ -514,6 +514,12 @@ function commandHead(tokens) {
 
 /** True when a `git` segment mutates history, a remote, or the working tree. */
 function gitIsDangerous(tokens) {
+  for (let index = 1; index < tokens.length;) {
+    const token = tokens[index];
+    if (!token.startsWith("-") || token === "--") break;
+    if (token.startsWith("-c") || token === "--config-env" || token.startsWith("--config-env=")) return true;
+    index += ["-C", "--git-dir", "--work-tree", "--namespace", "--super-prefix"].includes(token) ? 2 : 1;
+  }
   for (const token of tokens) {
     if (GIT_DANGER_TOKENS.has(token) || GIT_FORCE_TOKENS.has(token)) return true;
   }
@@ -613,7 +619,8 @@ const INDIRECT_EXPANSION_RE = /\$\{(?:\([^)]*[Pe%#]|!)|\$\{[^}]*@P|\$\{?~/;
 const LOOKUP_VARIABLES =
   "PATH|path|CDPATH|cdpath|BASH_ENV|ENV|ZDOTDIR|SHELLOPTS|BASHOPTS|GLOBIGNORE|PROMPT_COMMAND" +
   "|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_[A-Z_]+|PS[0-4]|PROMPT[0-4]?|RPROMPT2?|RPS[12]|SPROMPT" +
-  "|(?:precmd|preexec|chpwd|periodic|zshexit|zshaddhistory)_functions|IFS|options";
+  "|(?:precmd|preexec|chpwd|periodic|zshexit|zshaddhistory)_functions|IFS|options" +
+  "|GIT_(?:SSH_COMMAND|SSH|PROXY_COMMAND|EXTERNAL_DIFF|PAGER|EDITOR|SEQUENCE_EDITOR|ASKPASS|EXEC_PATH|CONFIG_[A-Z0-9_]+|TEMPLATE_DIR)|NODE_OPTIONS|PYTHONPATH|LESSOPEN|LESSCLOSE|PAGER";
 // A word assigning a lookup variable (`PATH=…`, `path+=(…)`, `path[1]=…`), wherever it stands in a segment.
 const LOOKUP_VARIABLE_ASSIGNMENT_RE = new RegExp("^(?:" + LOOKUP_VARIABLES + ")(?:\\[[^\\]]*\\])?\\+?=[\\s\\S]*$");
 // A raw write is refused in every operand and quote state, before the existing position checks.
@@ -789,7 +796,25 @@ function maskSingleQuoted(text) {
 function writesCommandTable(command) {
   const [text, live, unterminated] = splitHeredocs(command);
   if (unterminated) return true;
-  const visible = maskSingleQuoted(text);
+  const masked = text.split("");
+  for (const [segment, offset] of lookupRegions(text)) {
+    const spans = shellWordSpans(segment);
+    const words = spans.map(([word]) => word);
+    const positions = lookupTextPositions(words, commandWordIndex(words), new Set());
+    for (const [index, [word, end]] of spans.entries()) {
+      if (
+        positions.has(index) &&
+        (/^'[^']*'$/.test(word.raw) ||
+          (word.quoted &&
+            /['"]/.test(word.raw) &&
+            !word.raw.includes("$'") &&
+            !word.raw.includes('$"') &&
+            literalWord(word)))
+      )
+        masked.fill(" ", offset + end - word.raw.length, offset + end);
+    }
+  }
+  const visible = maskSingleQuoted(masked.join(""));
   const unquoted = visible.replace(/[\\'"]/g, "");
   return (
     COMMAND_TABLE_USE_RE.test(visible) ||
@@ -1502,7 +1527,15 @@ function commandIsDangerous(segment) {
     base.includes("`") ||
     words.some(
       (word, index) =>
-        !(textPositions.has(index) && /^'[^']*'$/.test(word.raw)) && COMMAND_TABLE_USE_RE.test(word.value),
+        !(
+          textPositions.has(index) &&
+          (/^'[^']*'$/.test(word.raw) ||
+            (word.quoted &&
+              /['"]/.test(word.raw) &&
+              !word.raw.includes("$'") &&
+              !word.raw.includes('$"') &&
+              literalWord(word)))
+        ) && COMMAND_TABLE_USE_RE.test(word.value),
     )
   ) {
     return true;
@@ -2692,24 +2725,138 @@ function rebindsThroughWords(command) {
 
 // ── Manifest lookup ───────────────────────────────────────────────────────────
 
+/** Serialize absolute POSIX, drive or UNC shell coordinates without using the host's path flavour. */
+function serializeRoot(root) {
+  if (typeof root !== "string" || /[\x00\r\n]/.test(root)) throw new Error("invalid plugin root");
+  const windows = /^[A-Za-z]:[\\/]/.test(root) || /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/.test(root);
+  const coordinate = windows ? root.replace(/\\/g, "/") : root;
+  if (!windows && !coordinate.startsWith("/")) throw new Error("plugin root must be absolute");
+  const prefix =
+    coordinate.startsWith("//") && !coordinate.startsWith("///") ? "//" : coordinate.startsWith("/") ? "/" : "";
+  const value =
+    prefix +
+    coordinate
+      .split("/")
+      .filter((part) => part && part !== ".")
+      .join("/");
+  return /^[A-Za-z]:$/.test(value) ? value + "/" : value;
+}
+
+/** Escape one literal root in the shell's current quote context; document text is never evaluated. */
+function escapeRoot(root, quote) {
+  if (quote === '"') return root.replace(/[\\"$`]/g, (char) => "\\" + char);
+  if (quote === "'") return root.replace(/'/g, "'\\''");
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(root) ? root : "'" + root.replace(/'/g, "'\"'\"'") + "'";
+}
+
+/** Literal renderer matching render_plugin_root.render_document for normalized, unfenced shell templates. */
+function renderRootTemplate(text, root) {
+  const absolute = serializeRoot(root);
+  const token = "${CLAUDE_PLUGIN_ROOT}";
+  const substitutions = [];
+  let quote = "";
+  let escaped = false;
+  let comment = false;
+  let output = "";
+  let index = 0;
+  while (index < text.length) {
+    if (text.startsWith(token, index)) {
+      output += escapeRoot(absolute, quote);
+      index += token.length;
+      continue;
+    }
+    const char = text[index];
+    let end = index + 1;
+    if (comment) comment = char !== "\n";
+    else if (escaped) escaped = false;
+    else if (char === "\\" && quote !== "'") escaped = true;
+    else if (text.startsWith("$(", index) && quote !== "'") {
+      substitutions.push([quote, 1]);
+      quote = "";
+      end += 1;
+    } else if (char === "`" && quote !== "'") {
+      if (substitutions.length && substitutions[substitutions.length - 1][1] === -1) quote = substitutions.pop()[0];
+      else {
+        substitutions.push([quote, -1]);
+        quote = "";
+      }
+    } else if (char === "#" && !quote && (index === 0 || " \t\r\n;&|()".includes(text[index - 1]))) comment = true;
+    else if (char === quote) quote = "";
+    else if ((char === "'" || char === '"') && !quote) quote = char;
+    else if (substitutions.length && !quote) {
+      const current = substitutions[substitutions.length - 1];
+      if (current[1] !== -1) {
+        if (char === "(") current[1] += 1;
+        else if (char === ")" && --current[1] === 0) quote = substitutions.pop()[0];
+      }
+    }
+    output += text.slice(index, end);
+    index = end;
+  }
+  return output;
+}
+
+/** Locate an owning plugin file without following a symlink outside its independently trusted root. */
+function owningFile(root, relative) {
+  const filename = fs.realpathSync(path.join(root, relative));
+  const contained = path.relative(root, filename);
+  if (contained === ".." || contained.startsWith(".." + path.sep) || path.isAbsolute(contained)) {
+    throw new Error("plugin file escapes owning root");
+  }
+  return filename;
+}
+
+/** Check that schema-two entries belong to this hook's independently located plugin installation. */
+function owningPlugin(parsed, root) {
+  const metadata = JSON.parse(fs.readFileSync(owningFile(root, path.join(".claude-plugin", "plugin.json")), "utf8"));
+  const identity = typeof parsed.plugin === "string" ? /^([A-Za-z0-9_-]+)@([^@]+)$/.exec(parsed.plugin) : null;
+  if (!identity || !metadata || typeof metadata.name !== "string") return null;
+  const name = identity[1].replace(/^cc_/, "");
+  return metadata.name === name && metadata.version === identity[2] ? name : null;
+}
+
+/** Verify source-template hashes and index only the literal commands rendered for this owning root. */
+function renderedEntries(parsed, root) {
+  const plugin = owningPlugin(parsed, root);
+  if (!plugin) return null;
+  const entries = Object.create(null);
+  for (const [digest, record] of Object.entries(parsed.entries)) {
+    if (!record || typeof record !== "object" || Array.isArray(record)) continue;
+    if (!Object.prototype.hasOwnProperty.call(record, "template")) {
+      entries[digest] = record;
+      continue;
+    }
+    const template = record.template;
+    if (typeof template !== "string" || normalize(template) !== template || sha256Text(template) !== digest) continue;
+    if (!template.includes("${CLAUDE_PLUGIN_ROOT}")) continue;
+    const bootstrap =
+      /^PLUGIN_ROOT=\$\(python "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/resolve_plugin_root\.py" --plugin-name ([A-Za-z0-9_-]+)\) \|\| exit \$\?; export PLUGIN_ROOT(?:\n|$)/.exec(
+        template,
+      );
+    if (bootstrap && bootstrap[1] !== plugin) continue;
+    entries[sha256Text(normalize(renderRootTemplate(template, root)))] = record;
+  }
+  return entries;
+}
+
 /**
- * Load the `entries` map from the plugin's blueprint manifest.
- * The hook lives in `hooks/`, the manifest at the plugin root one level up;
- * `CLAUDE_PLUGIN_ROOT` is the fallback. Returns null when nothing is usable.
+ * Load this hook's manifest. Schema one is a historical digest-only reader while existing installs transition;
+ * it never accepts template fields. Schema two renders only the independently located owning installation.
  */
 function loadEntries() {
-  const candidates = [path.join(__dirname, "..", MANIFEST_NAME)];
-  if (process.env.CLAUDE_PLUGIN_ROOT) {
-    candidates.push(path.join(process.env.CLAUDE_PLUGIN_ROOT, MANIFEST_NAME));
-  }
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(candidate, "utf8"));
-      const entries = parsed && parsed.entries;
-      if (entries && typeof entries === "object" && !Array.isArray(entries)) return entries;
-    } catch (_) {
-      // Unreadable or malformed — try the next candidate, never throw.
+  try {
+    const root = fs.realpathSync(path.join(__dirname, ".."));
+    const parsed = JSON.parse(fs.readFileSync(owningFile(root, MANIFEST_NAME), "utf8"));
+    const entries = parsed && parsed.entries;
+    if (!entries || typeof entries !== "object" || Array.isArray(entries)) return null;
+    if (parsed.schema === 2) return renderedEntries(parsed, root);
+    if (parsed.schema === 1) {
+      return Object.fromEntries(
+        Object.entries(entries).filter(([, record]) => record && typeof record === "object" && !("template" in record)),
+      );
     }
+  } catch (_) {
+    // Unreadable or malformed owning files never supply an allow decision.
   }
   return null;
 }
@@ -2769,7 +2916,7 @@ function decide(raw) {
   } catch (_) {
     return null;
   }
-  if (!data || data.tool_name !== "Bash") return null;
+  if (!data || (data.tool_name !== "Bash" && data.tool_name !== "Monitor")) return null;
   const command = data.tool_input && data.tool_input.command;
   if (typeof command !== "string" || !command) return null;
   if (aliasesEscapedBlank(command) || isDangerous(normalize(command))) return null;
@@ -2807,7 +2954,7 @@ function evaluate(raw) {
   } catch (_) {
     return none("not-applicable");
   }
-  if (!data || data.tool_name !== "Bash") return none("not-applicable");
+  if (!data || (data.tool_name !== "Bash" && data.tool_name !== "Monitor")) return none("not-applicable");
   const command = data.tool_input && data.tool_input.command;
   if (typeof command !== "string" || !command) return none("not-applicable");
   const normalized = normalize(command);
@@ -2839,6 +2986,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  renderRootTemplate,
   INTEGER_ASSIGNMENT_RE,
   COMMAND_TABLE_USE_RE,
   commandWordIndex,

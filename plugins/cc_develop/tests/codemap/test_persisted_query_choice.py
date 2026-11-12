@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
+from _develop_shell_plugin import render_shell
 from _develop_text import bash_fences
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -158,12 +159,19 @@ def _wire_develop_plan(tmp_path: Path, env: dict[str, str], enabled: str):
 def _wire_develop_refactor(tmp_path: Path, env: dict[str, str], enabled: str):
     """Wire ``refactor``, pointing its ``find <target>`` at the project root."""
     block = _develop_block(tmp_path, "refactor", enabled, "REFACTOR_FILES=")
+    run_dir = tmp_path / "refactor-run"
+    run_dir.mkdir()
+    _write(tmp_path / "dev-refactor-dev-dir-choice", str(run_dir.resolve()) + "\n")
     return "cc_develop", "dev", block.replace("find <target>", "find .")
 
 
 def _wire_develop_review(tmp_path: Path, env: dict[str, str], enabled: str):
     """Wire ``review`` and extend its block with the nested impact and scan helpers a hydrated shell owns."""
     block = _develop_block(tmp_path, "review", enabled, "codemap_available=false")
+    run_dir = tmp_path / "project" / ".developments" / "review-run"
+    run_dir.mkdir(parents=True)
+    _write(tmp_path / "dev-review-run-dir-choice", run_dir.as_posix() + "\n")
+    _write(tmp_path / "dev-review-target-modules-choice", "leaf\n")
     block += '\nif [ "$CODEMAP_ENABLED" = true ]; then\n'
     payload = json.dumps({"changed_modules": [{"path": "leaf.py", "changed_symbols": ["leaf::_target"]}]})
     for owner in ("cc_oss", "cc_develop"):
@@ -295,7 +303,13 @@ def test_fresh_query_shell_retains_gate_choice(tmp_path, wire, route_check, enab
     env.update(extra_env)
     env["CLAUDE_PLUGIN_ROOT"] = str(ROOT / "plugins" / plugin)
 
-    result = subprocess.run([BASH, "-c", block], cwd=project, env=env, capture_output=True, text=True)
+    result = subprocess.run(
+        [BASH, "-c", render_shell(block, Path(env["CLAUDE_PLUGIN_ROOT"]), plugin.removeprefix("cc_"))],
+        cwd=project,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
 
     assert result.returncode == 0, result.stderr
     queries = [json.loads(line) for line in (tmp_path / "queries.jsonl").read_text(encoding="utf-8").splitlines()]

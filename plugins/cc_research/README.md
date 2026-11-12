@@ -61,7 +61,7 @@ Every step is explicit and reviewable. The chain is not a guarantee of scientifi
 Prerequisites:
 
 - Claude Code with plugin support.
-- `jq` on PATH. Setup, `run` and `fortify` use it, and each stops with `! MISSING` when it is absent.
+- `jq` on PATH. Setup, `run` and `fortify` use it, and each stops with `! MISSING` when it is absent. Shell recipes use `jq -b` to preserve LF output when native `jq.exe` runs under Git Bash on Windows.
 - Python 3.10+ available as the bare `python` command, which is the only interpreter setup probes.
 - Git for `/research:run`, which starts only from a clean worktree.
 - `curl`, permitted HTTPS network access to the source and its redirects, and Read support for PDF pages when `/research:verify` uses a remote PDF.
@@ -163,8 +163,9 @@ Searches AI/ML literature, compares methods, recommends an approach for the curr
 - `--team` runs competing method-family researchers in parallel and costs more context.
 - `--keep "<items>"` preserves named context through compaction.
 - `plan` consumes the most recent or supplied topic report and writes a plan report under `.reports/research/topic-<branch>-<date>.md`.
+- Literature search stays inline when `foundry:web-explorer` is unavailable or declines; plan analysis can use `general-purpose` when `foundry:solution-architect` is unavailable. Findings and teammate outputs are mechanically fenced before delegated reuse; each run records that boundary in `untrusted-content.md`.
 
-> The workflow follow-up question is blocked only until the report exists and its matching header table is shown in the current turn. Diagnostic and recovery questions remain available. Finish the producer, print the required current output, then retry the follow-up.
+> The workflow follow-up question is blocked until the saved report exists and the question text carries its matching path, Title and Outcome as a plain summary. The full header table appears once in the final reply after the answer. Diagnostic and recovery questions remain available.
 
 <a id="research-plan"></a>
 
@@ -172,7 +173,7 @@ Searches AI/ML literature, compares methods, recommends an approach for the curr
 
 #### Experiment wizard and profile-first mode
 
-Builds a `program.md` contract from a measurable goal. A runnable Python file can be supplied instead to run `cProfile` before the wizard asks what to optimize.
+Builds a `program.md` contract from a measurable goal. An existing runnable `*.py` file can be supplied instead: the wizard checks eligibility, then asks before `cProfile` executes it for up to 600 seconds. Enter a goal directly through Other to skip profiling; ineligible files use the goal-entry fallback.
 
 ```text
 /research:plan "reduce inference latency by 30%"
@@ -245,9 +246,9 @@ Runs the core loop. Each iteration:
 5. runs the metric and guard;
 6. keeps a guarded improvement, or reverts the change.
 
-A campaign defaults to 20 iterations and is capped at 50. Five consecutive discards trigger strategy escalation and then stop rather than looping blindly.
+A campaign defaults to 20 iterations and is capped at 50. Five consecutive discards trigger strategy escalation; when neither proposal produces a kept change, the run ends through reporting with `stop_reason: stuck`.
 
-A text goal must specify a measurable improvement target. A dry-run or walkthrough of a campaign is also supported: it traces the requested steps without executing commands or iterations. Unrelated requests stop with a redirect.
+Run requires an existing `program.md`, including on resume. A bare goal redirects to `/research:sweep`; missing programs stop before configuration or interrupted-iteration recovery. A dry-run or walkthrough traces the requested steps without executing commands or iterations.
 
 **Execution architecture** — animated diagram of fans, joins and gates.
 
@@ -279,23 +280,26 @@ Supported flags are `--resume`, `--team`, `--compute=local|colab|docker`, `--col
 | `arch`   | `foundry:solution-architect` | modularity, cohesion              |
 | `auto`   | inferred from keywords       | default when no explicit strategy |
 
+The `ml` and `arch` specialists propose changes without modifying source; `foundry:sw-engineer` applies the selected proposal. The same separation applies to team Phase C. Docker proposals are validated in the sandbox before source application.
+
 #### Compute and integration flags
 
 - Default execution is local.
 - `--compute=docker` requires a reachable Docker daemon and routes metric/guard verification through the sandbox.
 - `--colab` requires the `colab-mcp` runtime tool and a connected runtime; an optional hardware value is checked against the requested GPU.
-- `--codex` requires `bridge@borda-ai-rig` installed and enabled plus a working `claude` CLI.
+- `--codex` requires `bridge@borda-ai-rig` installed and enabled; the bridge availability probe does not require a `claude` CLI in the current host.
+- `--codex` co-pilot deliberately builds on Claude's uncommitted Phase 2 edit as a sanctioned exception to the clean-tree step of the Write-Delegation Checklist, so both passes are reviewed as one combined change set under the existing scope, snapshot, diff-review, and bridge no-commit safeguards.
 - Explicit integrations stop when unavailable rather than silently degrading.
 
 #### Hypothesis and resume flags
 
 - `--researcher` generates hypotheses with `research:scientist`; `--architect` adds architectural hypotheses from `foundry:solution-architect`. Both can run together, and every oracle annotates its own hypotheses' feasibility (no separate annotation pass).
 - `--hypothesis <path>` consumes a pre-built JSONL queue without spawning an oracle. One entry is popped per iteration, progress is checkpointed, the file is never modified, and normal ideation resumes when the queue is exhausted.
-- `--resume` continues only a run whose status is `running`. It restores saved flags, sandbox, Colab and clarification settings, reuses the existing hypothesis file, skips hypotheses already tried by id, and refuses a branch that no longer contains `best_commit`.
+- `--resume` continues only a run whose status is `running`. It restores saved flags, sandbox, Colab and clarification settings, reuses the existing hypothesis file, and skips hypotheses already tried by id. A branch that no longer contains `best_commit` requires an explicit continue-or-abort decision. Logged outcomes finish any pending ledger flush without replay; an unlogged interrupted experiment commit is reverted and recorded with no invented metric. Team recovery reconciles the persisted active iteration and queue position before advancing the cursor.
 - `--journal` requires one of the hypothesis flags and records every outcome.
 - `--team` uses the team mode for parallel hypothesis exploration; combined with `--hypothesis`, the supplied queue joins the team's axis hypotheses in the shared queue.
 - `--keep "<items>"` preserves named context through compaction.
-- Each iteration is checked by `bin/check_iteration_scope.py` after the agent returns: a change outside `scope_files` or to the metric or guard scripts is restored and recorded as `scope-violation`.
+- Each iteration and every guard rework are checked by `bin/check_iteration_scope.py` before committing or amending: a change outside `scope_files` or to the metric, guard or program is restored and recorded as `scope-violation`. Missing or unchecked scope results stop the run.
 
 #### Keep and revert logic
 
@@ -317,7 +321,7 @@ By default each iteration's metric is measured once and any measured gain is kep
 #### State and outputs
 
 - Run state lives under `.experiments/state/<run-id>/` with `state.json`, `experiments.jsonl`, diary, context, progress, scripts, and resume data.
-- `state.json` records the parsed contract under `config` — metric and guard commands, `metric.direction`, scope, compute, strategy, iteration ceiling, `metric_repeats`, and `min_delta_pct` — which `/research:fortify` and `/research:retro` read. A text goal records its auto-detected commands and an inferred, printed direction.
+- `state.json` records the parsed contract under `config` — metric and guard commands, `metric.direction`, scope, compute, strategy, iteration ceiling, `metric_repeats`, and `min_delta_pct` — which `/research:fortify` and `/research:retro` read. Raw signed step delta, signed step percentage and baseline percentage are separate fields; unavailable measurements or zero percentage denominators remain `null`.
 - With `metric_repeats` > 1 the individual runs are kept in `metric-runs.jsonl`.
 - Hypothesis queues, checkpoints, and optional journals live under `.experiments/<run-id>/`.
 - The final report is `.reports/research/run-<branch>-<date>.md`.
@@ -330,7 +334,7 @@ By default each iteration's metric is measured once and any measured gain is kep
 
 #### Plan → judge/refine → run pipeline
 
-Runs the plan → judge/refine → run pipeline from a goal, accepting planning defaults and retaining J4 per-command execution approval. It accepts the run's compute, team, Codex, researcher, architect, journal, and hypothesis options, plus `--skip-validation`, `--out <path>`, and `--keep "<items>"`. It asks before overwriting an existing contract. Within one sweep run, approval is reused across refine iterations only while command text, compute route and network setting are byte-identical; any change asks again, as does a script change. A standalone judge invocation always asks anew.
+Runs the plan → judge/refine → run pipeline from a goal, accepting planning defaults and retaining J4 per-command execution approval. A failed planning dry run stops before writing or running the contract and reports the command error for correction. It accepts the run's compute, team, Codex, researcher, architect, journal, and hypothesis options, plus `--skip-validation`, `--out <path>`, and `--keep "<items>"`. It asks before overwriting an existing contract. Within one sweep run, approval is reused across refine iterations only while command text, compute route and network setting are byte-identical; any change asks again, as does a script change. A standalone judge invocation always asks anew.
 
 ```text
 /research:sweep "increase validation F1 to 0.87"
@@ -407,7 +411,7 @@ Supported options:
 - `--skip-run` identifies candidates without executing ablations.
 - `--keep "<items>"`
 
-`--compute` and `--colab` are not implemented for fortify; metric and guard commands run locally in each worktree. Unrelated positional input is rejected before source-run lookup. Variant identifiers use ASCII lowercase letters, digits and hyphens; descriptive component labels may retain Unicode.
+Fortify executes only source campaigns whose persisted compute route is `local`; a Docker or Colab source stops unless `--skip-run` requests candidate discovery only. Each measurement verifies that cwd and HEAD identify the expected variant checkout (`best_commit` plus its selected reverts), binds that checkout evidence to the sample, and stops if executed project code cannot be established as belonging to the variant. Checkout guards compare physical directories and receipts use native Python paths, so Git Bash path spelling does not reject a matching Windows checkout. Absolute data paths may still reference the original repository. Unrelated positional input is rejected before source-run lookup. Variant identifiers use ASCII lowercase letters, digits and hyphens; descriptive component labels may retain Unicode.
 
 | Class         | Metric loss after component removal |
 | ------------- | ----------------------------------- |
@@ -446,6 +450,8 @@ Reads a completed run's JSONL and diary without changing code or experiment stat
 ```
 
 The report covers direction-aware significance, dead plateaus and churn, suspicious jumps above two standard deviations, strategy effectiveness, failure patterns, diminishing returns, and three to five next hypotheses compatible with `/research:run --hypothesis`.
+
+`bin/retro_scan.py` deterministically records dead windows and suspicious jumps in `dead-iters.json` and `suspicious-jumps.json`; null or timed-out measurements never enter jump arithmetic.
 
 - `--compare` requires matching program and metric and stops with `Cannot compare runs with different metrics` otherwise. A run started before `state.json` recorded its `config` has no metric command to compare, so retro only warns, and assumes `higher` when it has no recorded direction.
 - Both compared runs use the same truncation rule, and significance is computed over kept iterations only.
@@ -493,6 +499,8 @@ Supported options:
 - `--keep "<items>"`
 
 Generated notebooks use small single-purpose cells, a why for each meaningful cell, visual EDA, leakage-safe evaluation, PTL plus torchmetrics for DNN training, and separate checkpoint load/inference. Credentials are not written to the notebook. Output is `.experiments/kaggle/<competition-name>.py` or the inference suffix. An opt-in Step 4 gate can additionally distill notebook helpers into a tested `src/` package.
+
+Grounding selects the sample submission from the actual listing with a case-insensitive `sample.*submission` match, preserving its filename and casing; ambiguous matches require an explicit listed-file choice. Competition, competitor and other external findings are mechanically fenced before the notebook-generation prompt, with an `untrusted-content.md` record. Generation uses the shared 900-second Agent deadline; missing output or deadline expiry is reported as timed out.
 
 <a id="research-setup"></a>
 
@@ -548,18 +556,19 @@ compute: local
 ```
 ````
 
-| Field             | Values                               | Default  | Contract                                                            |
-| ----------------- | ------------------------------------ | -------- | ------------------------------------------------------------------- |
-| `max_iterations`  | 1–50                                 | 20       | Hard ceiling; set deliberately before a campaign.                   |
-| `agent_strategy`  | `auto`, `perf`, `code`, `ml`, `arch` | `auto`   | Auto infers from goal/metric keywords and warns on fallback.        |
-| `scope_files`     | paths or globs                       | required | Bounds what ideation may inspect and modify.                        |
-| `compute`         | `local`, `colab`, `docker`           | `local`  | Routes metric and guard execution.                                  |
-| `colab_hw`        | `H100`, `L4`, `T4`, `A100`           | none     | Hardware preference for Colab runs.                                 |
-| `sandbox_network` | `none`, `bridge`                     | `none`   | Network isolation for Docker sandbox execution.                     |
-| `metric_repeats`  | 1–10                                 | 1        | Metric runs per measurement; above 1, keep only gains beyond noise. |
-| `min_delta_pct`   | number ≥ 0                           | 0.1      | Smallest kept gain, percent of the best metric.                     |
+| Field                | Values                               | Default                     | Contract                                                                                             |
+| -------------------- | ------------------------------------ | --------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `max_iterations`     | 1–50                                 | 20                          | Hard ceiling; set deliberately before a campaign.                                                    |
+| `agent_strategy`     | `auto`, `perf`, `code`, `ml`, `arch` | `auto`                      | Auto infers from goal/metric keywords and warns on fallback.                                         |
+| `scope_files`        | paths or globs                       | required                    | Bounds what ideation may inspect and modify.                                                         |
+| `compute`            | `local`, `colab`, `docker`           | `local`                     | Routes metric and guard execution.                                                                   |
+| `colab_hw`           | `H100`, `L4`, `T4`, `A100`           | none                        | Hardware preference for Colab runs.                                                                  |
+| `sandbox_network`    | `none`, `bridge`                     | `none`                      | Network isolation for Docker sandbox execution.                                                      |
+| `metric_repeats`     | 1–10                                 | 1                           | Metric runs per measurement; above 1, keep only gains beyond noise.                                  |
+| `metric_timeout_sec` | positive integer seconds             | 120 local/Docker, 300 Colab | One per-measurement limit shared by plan, judge, run and fortify; `VERIFY_TIMEOUT_SEC` overrides it. |
+| `min_delta_pct`      | number ≥ 0                           | 0.1                         | Smallest kept gain, percent of the best metric.                                                      |
 
-The metric command must emit a numeric value, and the guard must exit successfully for a kept iteration. A target is recommended because running only to the iteration ceiling can waste compute. Scope files, direction, baseline, controls, and stopping criteria should be reviewable before `/research:run`.
+The metric command must exit zero and emit a finite numeric value, and the guard must exit successfully for a kept iteration. The effective metric timeout is persisted in `state.json` under `config.metric_timeout_sec`; the guard retains its separate timeout. A target is recommended because running only to the iteration ceiling can waste compute. Scope files, direction, baseline, controls, and stopping criteria should be reviewable before `/research:run`.
 
 ## 📊 Workflow outputs
 
@@ -663,7 +672,8 @@ The plugin ships exactly two manually invocable agents:
 | [`research:data-steward`](agents/data-steward.md) | Dataset acquisition, provenance, split integrity, leakage checks, and data-pipeline validation. | ML hypothesis design, throughput optimization, or undocumented web scraping. |
 
 - `research:scientist` expects a named paper, author, or arXiv anchor for paper implementation. It enforces one hypothesis per experiment, seed averaging, baselines, ablations, and mean ± standard deviation rather than best-run reporting.
-- `research:data-steward` audits pagination completeness, schema, boundaries, deduplication, split isolation, stateful transforms, augmentations, and DataLoader configuration. It delegates unknown URL discovery to `foundry:web-explorer` when Foundry is available.
+- Skill-dispatched scientist reviews keep source, experiment state and existing ledgers read-only and write only caller-requested artifacts. This is an instruction boundary, not a tool sandbox. Persistent scientist memory is disabled; independent reviews use current caller-authorized evidence. Paper acquisition uses raw PDF downloads plus bounded Read pages, rather than a WebFetch summary.
+- `research:data-steward` audits pagination completeness, schema, boundaries, deduplication, split isolation, stateful transforms, augmentations, and DataLoader configuration. It delegates unknown URL discovery to `foundry:web-explorer` when Foundry is available. Acquisition retains raw response bodies and pagination evidence through Bash; WebFetch provides HTML discovery only. External handoffs are mechanically fenced and recorded in `untrusted-content.md`.
 
 Optional integrations are capability-gated:
 
@@ -680,7 +690,11 @@ Optional integrations are capability-gated:
 
 ### Hooks
 
+The blueprint and sentinel classifiers treat command-table names inside fixed ordinary quoted search operands as inert data. Command substitutions, variable writes and existing arithmetic-expression refusals remain checked. JavaScript classifiers also reject executing Git configuration and environment overrides consistently with the Python manifest generator. The sentinel module retains its narrower command whitelist.
+
 Hooks register from `hooks/hooks.json` when the plugin is enabled; no settings edit is needed.
+
+Executable helper blocks resolve and export `PLUGIN_ROOT` before calling `python "$PLUGIN_ROOT/bin/<script>.py"`. Loaders render the plain bootstrap token in modes and templates to the validated owning-plugin path. The blueprint hook checks the bound source template and exact rendered command; altered commands still use normal permission checks, and deny rules remain effective. Run these examples from a host-substituted or loader-rendered copy; an ordinary shell does not supply the bootstrap token.
 
 - They run `node` from PATH, then `/opt/homebrew/bin/node` or `/usr/local/bin/node`. When none exists, hooks skip without blocking and one `SessionStart` check reports once per session that they are inactive.
 - The plugin's `bin/python` and native Windows `bin/python.cmd` probe candidate runtimes for Python 3.10+ before executing the workload once. An eligible system `python` takes precedence; missing eligible runtimes produce a clear diagnostic.
@@ -694,13 +708,19 @@ Hooks register from `hooks/hooks.json` when the plugin is enabled; no settings e
 | [`audit-close.js`](hooks/audit-close.js)                   | `PostToolUse(Bash)`, `PostToolUseFailure(Bash)`, `SessionStart`, `SessionEnd` | Appends one audit record when a Bash call completes and at session boundaries; writes nothing to stdout.                               |
 | [`write-guard.js`](hooks/write-guard.js)                   | `PreToolUse(Edit, Write, NotebookEdit)`                                       | Forces confirmation on writes to untracked protected files (agent instructions, permission config, pre-commit gate, package metadata). |
 | [`stale-plugin-check.js`](hooks/stale-plugin-check.js)     | `SessionStart`                                                                | Warns once per session and version when a replaced research version is running, and asks whether to restart or continue.               |
-| [`enforce-topic-header.js`](hooks/enforce-topic-header.js) | `PreToolUse(AskUserQuestion)`, `PostToolUse(AskUserQuestion)`, `Stop`         | Blocks only the topic workflow follow-up until the report exists and its header table is shown (see `/research:topic`).                |
+| [`enforce-topic-header.js`](hooks/enforce-topic-header.js) | `PreToolUse(AskUserQuestion)`, `PostToolUse(AskUserQuestion)`, `Stop`         | Requires a saved report and matching plain question summary; checks header-table delivery in the final reply (see `/research:topic`).  |
 | [`report-header-table.js`](hooks/report-header-table.js)   | shared module                                                                 | Verifies header-table delivery for `enforce-topic-header.js`.                                                                          |
 | [`lib/audit-log.js`](hooks/lib/audit-log.js)               | shared module                                                                 | Append-only audit record writer; never throws, never deletes. `RIG_AUDIT=0` disables writing only.                                     |
 
 The audit log holds one JSON line per Bash call under `~/.claude/logs/audit/`; command text is never written.
 
-`python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" verify` checks audit-log record hashes, and `... prune --older-than 30 --dry-run` previews deletion of old log files. Nothing schedules `prune`, and the log is an observation record, not tamper-evidence.
+After the guarded resolver prologue below, `verify` checks audit-log record hashes and `prune --older-than 30 --dry-run` previews deletion of old log files. Nothing schedules `prune`, and the log is an observation record, not tamper-evidence.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/verify_blueprint_audit.py" verify
+python "$PLUGIN_ROOT/bin/verify_blueprint_audit.py" prune --older-than 30 --dry-run
+```
 
 ### Rules
 
@@ -709,12 +729,16 @@ The audit log holds one JSON line per Bash call under `~/.claude/logs/audit/`; c
 | [`rules/quality-gates.md`](rules/quality-gates.md)             | Complete quality gates: confidence blocks, report/header format, adversarial review/fix loops. |
 | [`rules/quality-gates-delta.md`](rules/quality-gates-delta.md) | Scope and output-routing delta used when foundry already delivers the shared gates.            |
 
+Progress tables come only from the ledger helper and include reconciliation of previous dispositions and current carried, repeat-route and new findings for all tiers and security. Old means a known invariant, including closed history, rather than only previous-row carryover. Reviews run before a ledger are disclosed as pre-ledger prose, never invented table rows. Repeated review/fix requests, a second independent review of the same change, or a repeated skill review/fix cycle activate the full loop before the next reviewer dispatch, with its stop rules and user-set round budget.
+
 `rules/quality-gates.md` requires confidence blocks on analysis output, defines report-file and terminal-header formatting, and requires independent review/fix cycles to follow its local adversarial-loop procedure. Confidence describes the correctness of the delivered result and how it was checked; completion is reported separately, and a high score does not pass an unmet gate.
 
 `/research:setup` installs one variant at `research-quality-gates.md`:
 
 - When a foundry-owned `foundry-quality-gates.md` is already delivered, it links `rules/quality-gates-delta.md` — this plugin's scope and output-routing sections only.
 - Otherwise it links the complete `rules/quality-gates.md`, so a standalone install loses no rule.
+
+Before changing rule links, setup validates every source rule: a non-empty regular UTF-8 Markdown file of at most 1 MiB, with a heading, no control characters except tabs and line endings, and closed optional frontmatter. Invalid content aborts before any link is installed or removed.
 
 ### Permissions merge
 
@@ -730,7 +754,7 @@ Existing settings keep these four allow entries after an upgrade: `/research:set
 
 ### Bin tools
 
-Helper scripts live in `bin/` and are invoked by the skills; they are not user commands. User-visible ones referenced above: `bin/check_iteration_scope.py` (per-iteration scope check), `bin/fortify_metric_stats.py` (fortify noise model), `bin/fence_untrusted.py` (untrusted-content fences for `verify` paper text, metadata and claims, scope, codemap output, audits, reports and summaries), and `bin/verify_blueprint_audit.py` (audit-log verify and prune).
+Helper scripts live in `bin/` and are invoked by the skills; they are not user commands. User-visible ones referenced above: `bin/check_iteration_scope.py` (iteration and rework scope checks), `bin/fortify_metric_stats.py` (fortify noise model), `bin/fence_untrusted.py` (external content and derived handoffs in verify, topic, Kaggle and data-steward), and `bin/verify_blueprint_audit.py` (audit-log verify and prune).
 
 <a id="-current-boundaries"></a>
 

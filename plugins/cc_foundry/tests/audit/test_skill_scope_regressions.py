@@ -265,8 +265,29 @@ def test_crossplugin_dispatch_scan_reads_mode(tmp_path: Path) -> None:
 @_BASH_REQUIRED
 def test_orphan_script_check_has_source_fallback(tmp_path: Path) -> None:
     """An unset runtime plugin root still invokes the source-tree orphan checker."""
+    _write(tmp_path, "plugins/cc_foundry/.claude-plugin/plugin.json", '{"name":"foundry"}')
+    _write(tmp_path, ".claude-plugin/marketplace.json", '{"name":"borda-ai-rig"}')
+    resolver = TEMPLATES.parents[2] / "bin/resolve_plugin_root.py"
+    _write(tmp_path, "plugins/cc_foundry/bin/resolve_plugin_root.py", resolver.read_text(encoding="utf-8"))
     _write(tmp_path, "plugins/cc_foundry/bin/check_orphaned_bin.py", 'print("checker invoked")\n')
-    result = _run(tmp_path, "checks-skills-deadfiles.md", "### Sub-check 32d")
+    _write(tmp_path, "audit-state-fixture/local-mode", "true\n")
+    script = _block("checks-skills-deadfiles.md", "### Sub-check 32d").replace(
+        "${CLAUDE_PLUGIN_ROOT}", (tmp_path / "plugins/cc_foundry").as_posix()
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "HOME": str(tmp_path / "home"),
+            "USERPROFILE": str(tmp_path / "home"),
+            "TMPDIR": str(tmp_path),
+            "CLAUDE_CODE_SESSION_ID": "fixture",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert result.returncode == 0, result.stderr
     assert "checker invoked" in result.stdout
 

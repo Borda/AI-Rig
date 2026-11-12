@@ -239,10 +239,9 @@ class TestGatesWrapper:
         """
         text = _GATES.read_text(encoding="utf-8")
 
-        assert (
-            '"${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve_shared_path.py" codemap-py claude-skills/_shared'
-            in text
-        ), "provider contract is not resolved from the active install"
+        assert '"$PLUGIN_ROOT/bin/resolve_shared_path.py" codemap-py claude-skills/_shared' in text, (
+            "provider contract is not resolved from the active install"
+        )
         assert 'cat "$_CODEMAP_SHARED/codemap-gates.md"' in text, "contract is never loaded"
         assert "codemap-py--" not in text, "manifested copy reintroduced"
         assert "plugins/cache" not in text, "newest-version cache glob reintroduced"

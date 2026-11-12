@@ -5,7 +5,7 @@ The legacy ``avoidance_count`` and ``rate`` keys count module/time overlaps,
 not confirmed misuse, guard failures, or token savings. Source-body, test, and
 diff inspection can legitimately overlap an earlier structural answer.
 Version, project, runtime, and session must agree. Records without explicit
-absolute project coordinates or a verified successful CLI outcome are counted
+project identities (root digests or legacy absolute coordinates) or a verified successful CLI outcome are counted
 but excluded from joins. Log destinations never establish project identity.
 
 The module-match rule is ported from ``guard-redundant-scan.py``: split the module
@@ -34,7 +34,7 @@ Usage:
 
 Exit codes:
     0 — success (including "no avoidance events" and "no logs found")
-    2 — bad arguments (neither ``--logs`` nor a ``--cli``/``--tools`` pair given)
+    2 — bad arguments (neither ``--logs`` nor a ``--cli``/``--tools`` pair given), or aggregate shard input too large
 """
 
 from __future__ import annotations
@@ -52,8 +52,8 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 #: Minutes an answer may precede a re-deriving tool call and still count as an overlap; the CLI default.
 DEFAULT_WINDOW_MIN = 10
 #: 50 MB per shard, matching MAX_INDEX_SIZE in scan-stats.py / smoke_test_index.py (CWE-400: DoS guard).
-#: Per-file cap only — the aggregate across every globbed shard stays uncapped.
 MAX_LOG_SIZE = 50_000_000
+MAX_TOTAL_LOG_SIZE = 100_000_000
 #: Character-class body for identifier characters, spliced into regexes that match a name only as a whole token.
 _IDENT = "A-Za-z0-9_"
 #: Runtime labels accepted in shard filename prefixes; any other label is treated as unattributed.
@@ -518,7 +518,11 @@ def classify_overlap(module: str, tool: str, target: str, search_path: str = "",
 def _project_coordinate(record: dict) -> str | None:
     """Validate a serialized project coordinate without resolving it on the analysis host."""
     value = record.get("project")
-    if isinstance(value, str) and (PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute()):
+    if isinstance(value, str) and (
+        re.fullmatch(r"[0-9a-f]{64}", value)
+        or PurePosixPath(value).is_absolute()
+        or PureWindowsPath(value).is_absolute()
+    ):
         return value
     return None
 
@@ -620,7 +624,9 @@ def parse_tool_records(records: list[dict]) -> list[ToolEvent]:
     return events
 
 
-def _find_leaked_answer(event: ToolEvent, answers: list[CliAnswer], window_seconds: float) -> CliAnswer | None:
+def _find_leaked_answer(
+    event: ToolEvent, answers: list[CliAnswer], window_seconds: float, patterns: dict[str, re.Pattern[str]]
+) -> CliAnswer | None:
     """Return the most recent eligible answer whose module overlaps the tool target.
 
     An answer overlaps when it is in the same evidence cohort, its module matches the tool
@@ -648,7 +654,7 @@ def _find_leaked_answer(event: ToolEvent, answers: list[CliAnswer], window_secon
         gap = (event.ts - answer.ts).total_seconds()
         if gap < 0 or gap > window_seconds:
             continue
-        if not module_matches(answer.module, event.target):
+        if not patterns[answer.module].search(event.target):
             continue
         if best is None or answer.ts > best.ts:
             best = answer
@@ -672,9 +678,20 @@ def find_avoidance_events(
         One :class:`AvoidanceEvent` per matching target, in ``events`` order.
     """
     window_seconds = window_min * 60
+    buckets: dict[tuple, list[CliAnswer]] = {}
+    patterns: dict[str, re.Pattern[str]] = {}
+    for answer in answers:
+        if not answer.module:
+            continue
+        key = (answer.session, answer.runtime, answer.version, answer.project)
+        buckets.setdefault(key, []).append(answer)
+        if answer.module not in patterns:
+            escaped = "[./]".join(re.escape(seg) for seg in re.split(r"[./]", answer.module))
+            patterns[answer.module] = re.compile(rf"(^|[^{_IDENT}]){escaped}([^{_IDENT}]|$)")
     flagged: list[AvoidanceEvent] = []
     for event in events:
-        answer = _find_leaked_answer(event, answers, window_seconds)
+        key = (event.session, event.runtime, event.version, event.project)
+        answer = _find_leaked_answer(event, buckets.get(key, []), window_seconds, patterns)
         if answer is None:
             continue
         flagged.append(
@@ -819,7 +836,11 @@ def _read_jsonl(path: Path) -> list[dict]:
             msg = f"join_avoidance: skipping oversized shard: {path} ({size} bytes; max {MAX_LOG_SIZE})"
             print(msg, file=sys.stderr)
             return records
-        text = path.read_text()
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            text = handle.read(MAX_LOG_SIZE + 1)
+        if len(text.encode("utf-8")) > MAX_LOG_SIZE:
+            print(f"join_avoidance: skipping oversized shard: {path}", file=sys.stderr)
+            return records
     except OSError:
         return records
     for line in text.splitlines():
@@ -851,7 +872,14 @@ def _collect(paths: list[Path], log_dir: Path | None = None) -> list[dict]:
     derived from the shard's directory, never from record content.
     """
     records: list[dict] = []
+    total_size = 0
     for path in paths:
+        try:
+            total_size += path.stat().st_size
+        except OSError:
+            continue
+        if total_size > MAX_TOTAL_LOG_SIZE:
+            raise ValueError(f"aggregate shard input too large (max {MAX_TOTAL_LOG_SIZE} bytes)")
         runtime = _path_runtime(log_dir, path) if log_dir is not None else None
         for record in _read_jsonl(path):
             record.pop(_RUNTIME_KEY, None)
@@ -1061,7 +1089,7 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns:
         ``0`` on success, ``2`` when neither ``--logs`` nor a ``--cli``/``--tools``
-        input was given.
+        input was given, or aggregate shard input exceeded its ceiling.
     """
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -1069,7 +1097,11 @@ def main(argv: list[str] | None = None) -> int:
         print("join_avoidance: give --logs DIR or --cli FILE and/or --tools FILE", file=sys.stderr)
         return 2
 
-    cli_records, tool_records, session_skill = _resolve_inputs(args)
+    try:
+        cli_records, tool_records, session_skill = _resolve_inputs(args)
+    except ValueError as exc:
+        print(f"join_avoidance: {exc}", file=sys.stderr)
+        return 2
     answer_groups = [parse_cli_records([record]) for record in cli_records]
     answers = [answer for group in answer_groups for answer in group]
     events = parse_tool_records(tool_records)

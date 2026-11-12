@@ -56,7 +56,7 @@ Source rules:
 - Mark stale/unavailable source explicitly.
 - Never cite secondary summaries for high-impact claims unless independently corroborated.
 
-For `sota`, `paper`, `methodology`, or `code-fidelity`, read and apply `../../shared/specialist-orchestration.md` only when independent expertise improves correctness; otherwise never load it. Write `<run-directory>/specialist-research-plan.md` with context packs for the axes below; planning only here, dispatch is the end of step 04 once the codebase context exists:
+For `sota`, `paper`, `methodology`, or `code-fidelity`, read and apply `../../shared/specialist-orchestration.md` only when independent expertise improves correctness; otherwise never load it. Write `<run-directory>/specialist-research-plan.md` with context packs for the axes below; planning only here, dispatch is step 04b after codebase mapping when implementation is relevant:
 
 - `web-explorer`: current docs, release notes, API and dependency changes.
 - `scientist`: formulas, methodology, metrics, ablations, benchmark claims.
@@ -73,7 +73,9 @@ Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/collect_diff.py --help`; coll
 
 **Structural context (optional)**: for `sota`/`code-fidelity` questions naming Python module/symbol, also probe codemap-py once: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category analysis [--target <qname>] --out <run-directory>/codemap-context.json`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with codebase mapping above. Persist result once here; any specialist context pack planned in step 03 includes `<run-directory>/codemap-context.json`, with added queries only under the contract's bounded `Specialist follow-up queries` rule.
 
-When step 03 planned specialists, dispatch that single approved wave now, before step 05, and join all handoffs before writing `research.md`.
+### 04b: Dispatch planned specialists
+
+When step 03 planned specialists, dispatch that single approved wave now, before step 05, even when step 04 is inapplicable, and join all handoffs before writing `research.md`.
 
 ### 05: Produce `<run-directory>/research.md` with:
 

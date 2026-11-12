@@ -7,7 +7,8 @@ Checks validate post-install state in `~/.claude/`. Operate on home dir, not pro
 Verify foundry plugin installed, cache dir accessible.
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_install_state.py" --check I1  # timeout: 10000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/check_install_state.py" --check I1  # timeout: 10000
 ```
 
 **Severity**: missing/broken cache → **high** (plugin non-functional).
@@ -17,7 +18,8 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_install_state.py" --
 Verify `foundry:setup` ran: `~/.claude/settings.json` has required entries, no stale hooks block.
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_install_state.py" --check I2  # timeout: 10000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/check_install_state.py" --check I2  # timeout: 10000
 ```
 
 **Severity**: missing entry or stale hooks block → **medium** per sub-check (non-blocking, degrades functionality). Fix: re-run `/foundry:setup` — idempotent.
@@ -30,25 +32,27 @@ Two distinct expectations, both asserted here:
 - `~/.claude/rules/` and `~/.claude/TEAM_PROTOCOL.md` **are** symlinked, so checked for staleness — they break silently when a version upgrade moves the cache path.
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_install_state.py" --check I3  # timeout: 10000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/check_install_state.py" --check I3  # timeout: 10000
 ```
 
 **Severity**: both → **high**. A foundry symlink under `agents/` or `skills/` shadows namespaced dispatch; a broken `rules/` symlink silently drops a rule file. Fix for either: re-run `/foundry:setup` (no `link` subcommand exists — `argument-hint` is `[--approve]`).
 
 ## Check R1 — Computed path resolution (local + installed duality)
 
-Root cause guard for `adversarial.md` / `upgrade.md` silent-deletion bug class. Skill `.md` files construct paths via variable substitution (`$AUDIT_TPL/../modes/upgrade.md`, `$_FS/file-handoff-protocol.md`, `${CLAUDE_PLUGIN_ROOT:-plugins/<x>}/bin/<script>`). Those paths exist as literal strings only if target filename is grep-visible. File existing locally but never copied to installed plugin cache silently fails for users who install plugin.
+Root cause guard for `adversarial.md` / `upgrade.md` silent-deletion bug class. Skill `.md` files construct paths via variable substitution (`$AUDIT_TPL/../modes/upgrade.md`, `$_FS/file-handoff-protocol.md`, `$PLUGIN_ROOT/bin/<script>` after the guarded resolver prologue). Loaders render the prologue's plain bootstrap token to the validated absolute owning-plugin root. Those paths exist as literal strings only if target filename is grep-visible. File existing locally but never copied to installed plugin cache silently fails for users who install plugin.
 
 **What it checks**: for every computed-path reference in `plugins/*/skills/*/SKILL.md`, `plugins/*/skills/*/modes/*.md`, `plugins/*/agents/*.md` — verify resolved target exists both locally (`plugins/<plugin>/...`) and in installed cache (`~/.claude/plugins/cache/borda-ai-rig/<plugin>/*/<path>`). Skip if `LOCAL_MODE != true` (no plugin source tree to scan).
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 printf "=== Checks R1–R3: computed paths, grep-visible refs, bin/ scripts ===\n"
 if [ "$LOCAL_MODE" != "true" ]; then
     printf "✓: Checks R1–R3 skipped in non-local mode (no plugin source tree)\n"
 else
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_routing_links.py" \
+    python "$PLUGIN_ROOT/bin/check_routing_links.py" \
         --plugins-dir plugins \
         --installed-plugins-json ~/.claude/plugins/installed_plugins.json  # timeout: 20000
 fi
@@ -86,7 +90,7 @@ This single-line comment costs ~5 tokens, permanently protects file from grep-ba
 
 ## Check R3 — bin/ script reference integrity (reverse of Check 32d)
 
-Check 32d walks `bin/` scripts, flags those unreferenced by any `.md` file (orphaned scripts). R3 is the reverse: for every `${CLAUDE_PLUGIN_ROOT:-plugins/<x>}/bin/<script>` reference in any plugin `.md` file, verify script exists locally — catches typos, deleted scripts, refactor leftovers leaving dangling references.
+Check 32d walks `bin/` scripts and flags those whose basenames are unreferenced by any `.md` file, including `$PLUGIN_ROOT/bin/<script>` and loader-rendered absolute paths. R3 is the reverse: for every `$PLUGIN_ROOT/bin/<script>` reference after a guarded resolver prologue, or equivalent loader-rendered absolute reference, verify the script exists in the owning plugin — catches typos, deleted scripts, refactor leftovers leaving dangling references. Keep recognizing plain bootstrap references and literal source paths.
 
 Skip if `LOCAL_MODE != true`. Run by the R1 block above.
 
@@ -111,9 +115,10 @@ Fix: create missing script locally (FAIL) or re-install plugin to sync (WARN).
 For every `plugins/<plugin>/bin/<script>.py`, verify corresponding `plugins/<plugin>/tests/test_<script>.py` exists and non-empty. Skip if `LOCAL_MODE != true`.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_bin_test_coverage.py" $( [ "$LOCAL_MODE" = "true" ] && echo "--local" )  # timeout: 30000
+python "$PLUGIN_ROOT/bin/check_bin_test_coverage.py" $( [ "$LOCAL_MODE" = "true" ] && echo "--local" )  # timeout: 30000
 ```
 
 **Severity**:

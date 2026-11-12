@@ -7,13 +7,14 @@
 ## Step 11: Final report
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # boundary3: pre-final-report write (compaction-contract.md §Lifecycle)
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
 IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR="n/a"
 IFS= read -r PUSH_STATUS < "${TMPDIR:-/tmp}/resolve-push-status-${CSID}" 2>/dev/null || PUSH_STATUS="none"
 _PRESERVE="pr=${_PR_NUMBER}, final-report=pending-write, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv, push-status=${PUSH_STATUS}, push-unblock=${_IMPL_DIR}/push-unblock.txt"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" --keep-sentinel resolve-keep-items "oss:resolve" "final-report (after push)" "$_IMPL_DIR" "${_PRESERVE}" "write final report → post-PR action gate"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" --keep-sentinel resolve-keep-items "oss:resolve" "final-report (after push)" "$_IMPL_DIR" "${_PRESERVE}" "write final report → post-PR action gate"  # timeout: 5000
 echo "PUSH_STATUS=$PUSH_STATUS"
 case "$PUSH_STATUS" in blocked-guard|blocked-permission|blocked-needs-manual-push) echo "PUSH_UNBLOCK=$_IMPL_DIR/push-unblock.txt"; cat "$_IMPL_DIR/push-unblock.txt" 2>/dev/null || echo "⚠ push-unblock.txt missing" ;; esac
 IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_DEGRADED=""
@@ -27,12 +28,13 @@ Report template (loaded above) — use for section structure. Its `### Push` sec
 **Tell the review what happened.** When this run consumed a review report, append one outcome per review-sourced item (`fixed` / `self-resolved` / `rejected` / `skipped` / `pending`, finding title and location, commit hash, reason) to `resolution.jsonl` beside that report. `fixed` and `self-resolved` need an implementation record (Phase 2 commit, Codex-direct record, or a `[resolve No.<id>]` commit after this run's base head); an accepted but unmerged item stays `pending`. The next `/oss:review` of this PR reads the ledger, confirms earlier fixes at the new head and re-checks rejected findings before deciding whether to report them again. Append-only and idempotent per run; the script builds records from this run's own files, never from recollection:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 IFS= read -r BASE_SHA < "${TMPDIR:-/tmp}/resolve-base-sha-${CSID}" 2>/dev/null || BASE_SHA=""
 if [ -n "$REPORT_FILE" ] && [ -f "$REPORT_FILE" ] && [ -f "$IMPL_DIR/action-items.jsonl" ]; then
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/append_resolution.py" --impl-dir "$IMPL_DIR" --review-dir "$(dirname "$REPORT_FILE")" --base-sha "$BASE_SHA"  # timeout: 30000
+    python "$PLUGIN_ROOT/bin/append_resolution.py" --impl-dir "$IMPL_DIR" --review-dir "$(dirname "$REPORT_FILE")" --base-sha "$BASE_SHA"  # timeout: 30000
 else
     echo "→ no review report consumed — resolution ledger skipped"
 fi
@@ -90,7 +92,7 @@ fi
 
 **Worktree exit** — if `WT_ENABLED=true` and a worktree was entered at Step 4: when pushed, the commits are on the fork (the deliverable is remote); when not pushed, they exist only in that worktree, so keep it. Follow `worktree-isolation.md` §Exit — `git branch --show-current`, then `ExitWorktree(action="keep")` to return the session to the main tree, and append the `Worktree` block noting the local worktree is disposable (`git worktree remove` when done). The `SAVED_BRANCH` restore above was a no-op — the main tree was never switched. Never auto-merge.
 
-Post-PR action — already answered by the Step 3d push question; no new `AskUserQuestion` here:
+Post-PR action — already answered by the Step 3d push question; no new `AskUserQuestion` here (after a run approval it stays `skip`; the report's **Link** line is the way to the PR):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"

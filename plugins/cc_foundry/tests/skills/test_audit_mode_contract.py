@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from _hook_env import _bash_runs_posix_script
 from _hook_io import CSID, run_hook_json
+from _plugin_payload import install_foundry
 from audit_preflight import write_state
 
 _AUDIT = Path(__file__).resolve().parents[2] / "skills" / "audit"
@@ -60,6 +61,7 @@ def test_adversarial_staging_reaches_the_real_follow_up_gate(tmp_path: Path, fin
     )
     run_dir = tmp_path / "repo/.reports/audit/current"
     run_dir.mkdir(parents=True)
+    (tmp_path / "repo/.git").mkdir()
     staged = Path(staged_name.replace("<RUN_DIR>", str(run_dir)))
     row = {"file": "agents/helper.md", "sev": "high", "one_line": "Missing reference", "auto_fixable": True}
     staged.write_text((json.dumps(row) + "\n") * finding_count, encoding="utf-8")
@@ -240,14 +242,38 @@ def test_local_only_install_reference_is_advisory() -> None:
     assert not any("foundry:setup link" in line or "lacks `--check-tests`" in line for line in lines)
 
 
-def test_inventory_and_shell_state_classes_have_canonical_severity() -> None:
-    """The scoring rubric does not claim roster drift proves a runtime failure."""
+def test_shell_state_class_has_canonical_severity_without_memory_roster_drift() -> None:
+    """The rubric scores shell-state defects without requiring a maintained memory roster."""
     lines = _lines("severity-table.md")
-    roster = next(line for line in lines if line.startswith("| MEMORY.md inventory drift"))
     shell = next(line for line in lines if line.startswith("| Cross-call shell state"))
-    assert [cell.strip() for cell in roster.split("|")[1:-1]][1] == "medium"
     assert [cell.strip() for cell in shell.split("|")[1:-1]][1] == "medium"
-    assert not any("stale roster fails at runtime" in line for line in lines)
+    assert not any("inventory drift" in line.lower() for line in lines)
+
+
+@pytest.mark.parametrize("relative", ["modes/fix.md", "templates/audit-fix-prompt.md", "templates/fix-prompt.md"])
+def test_fix_dispatch_does_not_repair_a_memory_roster(relative: str) -> None:
+    """Fix agents cannot recreate retired roster lines through dependency or repair instructions."""
+    lines = _lines(relative)
+    assert not any("inventory-drift" in line or "inventory drift" in line.lower() for line in lines)
+    assert not any("MEMORY.md" in line for line in lines)
+
+
+@pytest.mark.parametrize(
+    ("relative", "start", "end"),
+    [
+        pytest.param("templates/checks-setup.md", "## Check 1 —", "## Check 2 —", id="agents-and-skills"),
+        pytest.param("templates/checks-shared.md", "**18a —", "**18b —", id="rules"),
+    ],
+)
+def test_inventory_discovery_reads_disk_without_a_memory_roster(relative: str, start: str, end: str) -> None:
+    """Setup and rule inventories remain discoverable when auto-memory has no roster."""
+    lines = _lines(relative)
+    begin = next(index for index, line in enumerate(lines) if line.startswith(start))
+    finish = next(index for index, line in enumerate(lines) if line.startswith(end))
+    section = lines[begin:finish]
+    assert not any("MEMORY.md" in line for line in section)
+    assert any("Glob" in line or line.startswith("find ") for line in section)
+    assert any("sort" in line for line in section)
 
 
 @pytest.mark.parametrize("relative", ["modes/steps-4-5-7.md", "modes/fix.md", "templates/audit-fix-prompt.md"])
@@ -366,7 +392,9 @@ def test_remediation_merge_keeps_existing_report_and_source_files(tmp_path: Path
             **os.environ,
             "TMPDIR": str(tmp_path),
             "CLAUDE_CODE_SESSION_ID": "test",
-            "CLAUDE_PLUGIN_ROOT": str(_AUDIT.parents[1]),
+            "CLAUDE_PLUGIN_ROOT": str(install_foundry(tmp_path)),
+            "HOME": str(tmp_path),
+            "USERPROFILE": str(tmp_path),
         },
         capture_output=True,
         text=True,

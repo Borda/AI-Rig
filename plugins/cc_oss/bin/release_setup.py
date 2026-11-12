@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -53,6 +54,14 @@ _EXCLUDE_FLAGS: tuple[str, ...] = (
     "--exclude=*alpha*",
     "--exclude=*beta*",
 )
+#: Keep baseline inputs within the same SemVer/SHA allow-list as run_audit_checks.py.
+_TAG_OR_SHA_RE = re.compile(r"^(?:v?[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:-[a-zA-Z0-9.]+)?|[0-9a-f]{7,40})$")
+
+
+def _validate_baseline(ref: str) -> None:
+    """Refuse a baseline outside the release audit's SemVer or hexadecimal SHA allow-list."""
+    if ref.startswith("-") or not _TAG_OR_SHA_RE.fullmatch(ref):
+        raise ValueError(f"invalid release baseline (must be SemVer or 7-40 hex SHA): {ref!r}")
 
 
 def _resolve(cmd: str) -> str:
@@ -168,7 +177,7 @@ def _shipped_elsewhere_tags(git: str, last_tag: str) -> list[str]:
         for tag in newer
         if tag in unmerged
         and not _is_prerelease_tag(tag)
-        and _git_ok(git, "merge-base", "--is-ancestor", last_tag, tag)
+        and _git_ok(git, "merge-base", "--is-ancestor", "--end-of-options", last_tag, tag)
     ]
 
 
@@ -203,14 +212,19 @@ def _resolve_skill_dir() -> str:
     Cache layout is ``<marketplace>/oss/<version>/skills/release``.
 
     Returns:
-        Path to the active ``oss/<version>/skills/release`` directory, or the source-tree fallback
-        ``"plugins/cc_oss/skills/release"`` when not installed.
+        Path to the active ``oss/<version>/skills/release`` directory, or its verified source-tree fallback.
+
+    Raises:
+        ValueError: No trusted release skill directory is available.
 
     Examples:
         >>> isinstance(_resolve_skill_dir(), str)
         True
     """
-    return resolve_plugin_dir("oss", "skills/release")[0]
+    path, tier = resolve_plugin_dir("oss", "skills/release")
+    if tier == -1:
+        raise ValueError("release skill directory not found in registry, cache, or source tree")
+    return path
 
 
 def _resolve_stable_baseline(git: str) -> tuple[str, str, str]:
@@ -235,20 +249,24 @@ def _resolve_stable_baseline(git: str) -> tuple[str, str, str]:
             file=sys.stderr,
         )
 
-    source_commit_raw = _git(git, "rev-list", "-n1", f"refs/tags/{source_tag}")
+    _validate_baseline(source_tag)
+    source_commit_raw = _git(git, "rev-list", "-n1", "--end-of-options", f"refs/tags/{source_tag}")
     source_commit = source_commit_raw or source_tag
 
-    common_commit = _git(git, "merge-base", "HEAD", source_commit)
+    common_commit = _git(git, "merge-base", "--end-of-options", "HEAD", source_commit)
     if not common_commit:
         print("Warning: no common ancestor found — range may span full history", file=sys.stderr)
         initial_out = _git(git, "rev-list", "--max-parents=0", "HEAD")
         common_commit = initial_out.splitlines()[0] if initial_out else ""
 
-    last_tag = _git(git, "describe", "--tags", "--abbrev=0", *_EXCLUDE_FLAGS, common_commit)
+    last_tag = _git(git, "describe", "--tags", "--abbrev=0", *_EXCLUDE_FLAGS, "--end-of-options", common_commit)
     if not last_tag:
         last_tag = common_commit
 
-    cherry_pick_subjects = _git(git, "log", f"{last_tag}..{source_tag}", "--no-merges", "--format=%s")
+    _validate_baseline(last_tag)
+    cherry_pick_subjects = _git(
+        git, "log", "--no-merges", "--format=%s", "--end-of-options", f"{last_tag}..{source_tag}"
+    )
     source_tag_ref = source_tag
     print(f"ℹ Stable-branch mode: base={last_tag}  source={source_tag}", file=sys.stderr)
 
@@ -319,13 +337,13 @@ def _write_setup_outputs(out_dir: Path, values: dict[str, str]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point — writes resolved vars to ${TMPDIR:-/tmp}/release-setup-${CSID}/<KEY> files.
+    """Resolve release setup values and publish them for later steps.
 
     Args:
         argv: Optional argument list (defaults to ``sys.argv[1:]``); no flags.
 
     Returns:
-        Zero after setup; one on detached HEAD; argparse exits 2 on bad args.
+        Zero after setup; one on detached HEAD or an unresolved skill directory; argparse exits 2 on bad args.
 
     Examples:
         No doctest — subprocess-dependent; covered by pytest.
@@ -338,7 +356,11 @@ def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
     git = _resolve("git")
 
-    skill_dir = _resolve_skill_dir()
+    try:
+        skill_dir = _resolve_skill_dir()
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
     repo_root = _git(git, "rev-parse", "--show-toplevel") or "."
     raw_branch = _git(git, "branch", "--show-current")
     if not raw_branch:
@@ -353,17 +375,22 @@ def main(argv: list[str] | None = None) -> int:
     source_tag_ref = ""
     shipped_elsewhere: list[str] = []
 
-    if branch_tag:
-        last_tag = branch_tag
-        shipped_elsewhere = _shipped_elsewhere_tags(git, last_tag)
-        if shipped_elsewhere:
-            print(
-                f"ℹ Newer stable tags off this branch's ancestry: {' '.join(shipped_elsewhere)} - "
-                "range commits they already shipped are excluded at Gather",
-                file=sys.stderr,
-            )
-    else:
-        last_tag, cherry_pick_subjects, source_tag_ref = _resolve_stable_baseline(git)
+    try:
+        if branch_tag:
+            last_tag = branch_tag
+            _validate_baseline(last_tag)
+            shipped_elsewhere = _shipped_elsewhere_tags(git, last_tag)
+            if shipped_elsewhere:
+                print(
+                    f"ℹ Newer stable tags off this branch's ancestry: {' '.join(shipped_elsewhere)} - "
+                    "range commits they already shipped are excluded at Gather",
+                    file=sys.stderr,
+                )
+        else:
+            last_tag, cherry_pick_subjects, source_tag_ref = _resolve_stable_baseline(git)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
     out_dir = _native_temp_dir() / f"release-setup-{csid}"

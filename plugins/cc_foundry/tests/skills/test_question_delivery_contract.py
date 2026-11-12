@@ -163,8 +163,8 @@ def test_rich_decision_content_is_saved_printed_once_and_summarized(
 ) -> None:
     """Each gate saves its rich content, prints it once before asking, and keeps a bounded plain question summary.
 
-    Each section must name its own artifact and delivery. Limits and option placement must be stated locally or
-    resolved through its explicit reference to the named shared rule.
+    Each section must name its own artifact and delivery. Limits and option placement must be stated locally or resolved
+    through its explicit reference to the named shared rule.
     """
     text = (_SKILLS / relative).read_text(encoding="utf-8")
     section = text.split(start, 1)[1].split(end, 1)[0]

@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _skill_source import read_skill_source
 from _text_io import bash_block_after, bash_blocks, bash_path, write_lf
 
 _RESOLVE = Path(__file__).resolve().parents[3] / "skills/resolve"
@@ -19,7 +20,7 @@ _requires_shell = pytest.mark.skipif(_BASH is None or _GIT is None, reason="Reso
 
 def _doc(relative: str) -> str:
     """Read a shipped resolve instruction file without changing its line structure."""
-    return (_RESOLVE / relative).read_text(encoding="utf-8")
+    return read_skill_source(_RESOLVE / relative)
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -55,7 +56,7 @@ def _run(block: str, repo: Path, tmp_path: Path, **extra: str) -> subprocess.Com
         cwd=repo,
         env=env,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=30,
     )
 

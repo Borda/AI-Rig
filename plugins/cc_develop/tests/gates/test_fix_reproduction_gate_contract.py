@@ -19,6 +19,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from _develop_shell_plugin import render_shell
 from _develop_text import bash_blocks
 
 _PLUGIN = Path(__file__).resolve().parents[2]
@@ -75,11 +76,17 @@ def _run(
         "TMPDIR": tmp_path.as_posix(),
         "CLAUDE_CODE_SESSION_ID": _CSID,
         "CLAUDE_PLUGIN_ROOT": _PLUGIN.as_posix(),
+        "PYTHONIOENCODING": "utf-8",
         "PATH": os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", ""),
         **(extra_env or {}),
     }
     return subprocess.run(
-        [_BASH, "-c", block], capture_output=True, encoding="utf-8", env=env, cwd=tmp_path, check=False
+        [_BASH, "-c", render_shell(block, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "develop")],
+        capture_output=True,
+        encoding="utf-8",
+        env=env,
+        cwd=tmp_path,
+        check=False,
     )
 
 
@@ -119,21 +126,21 @@ class TestPartBReproductionGate:
     )
     def test_skip_applies_only_to_path_one(self, tmp_path: Path, path_one: str, path_two: str, expected: int) -> None:
         """The documented internal-only exception never permits a missing or skipped targeted reproduction."""
-        (tmp_path / f"dev-fix-gate-p1-{_CSID}").write_text(path_one + "\n", encoding="utf-8")
-        (tmp_path / f"dev-fix-gate-p2-{_CSID}").write_text(path_two + "\n", encoding="utf-8")
-        (tmp_path / f"dev-fix-dev-dir-{_CSID}").write_text(tmp_path.as_posix() + "\n", encoding="utf-8")
+        (tmp_path / f"dev-fix-gate-p1-{_CSID}").write_text(path_one + "\n", encoding="utf-8", newline="\n")
+        (tmp_path / f"dev-fix-gate-p2-{_CSID}").write_text(path_two + "\n", encoding="utf-8", newline="\n")
+        (tmp_path / f"dev-fix-dev-dir-{_CSID}").write_text(tmp_path.as_posix() + "\n", encoding="utf-8", newline="\n")
         (tmp_path / "path-1-skip-reason.txt").write_text("No user-facing flow exists.\n", encoding="utf-8")
         result = _run(_block(*_STOP_GATE), tmp_path, None)
         assert result.returncode == expected, result.stdout
 
     def test_checkpoint_init_invalidates_previous_run_results(self, tmp_path: Path) -> None:
         """Starting a new fix in the same session prevents old Path 1 evidence from satisfying its stop gate."""
-        (tmp_path / f"dev-fix-gate-p1-{_CSID}").write_text("1\n", encoding="utf-8")
-        (tmp_path / f"dev-fix-gate-p2-{_CSID}").write_text("1\n", encoding="utf-8")
+        (tmp_path / f"dev-fix-gate-p1-{_CSID}").write_text("1\n", encoding="utf-8", newline="\n")
+        (tmp_path / f"dev-fix-gate-p2-{_CSID}").write_text("1\n", encoding="utf-8", newline="\n")
         init = _run("python() { echo private-run; }\n" + _block("dev_run_dir.py"), tmp_path, None)
         assert init.returncode == 0, init.stderr
         assert _gate_sentinels(tmp_path) == ("missing", "missing")
-        (tmp_path / f"dev-fix-gate-p2-{_CSID}").write_text("1\n", encoding="utf-8")
+        (tmp_path / f"dev-fix-gate-p2-{_CSID}").write_text("1\n", encoding="utf-8", newline="\n")
         stop = _run(_block(*_STOP_GATE), tmp_path, None)
         assert stop.returncode == 1, stop.stdout
 
@@ -141,8 +148,8 @@ class TestPartBReproductionGate:
     def test_skip_cannot_overwrite_a_run_result(self, tmp_path: Path, previous: str) -> None:
         """A later skip attempt preserves an executed Path 1 verdict, including an uncaptured bug or runner error."""
         sentinel = tmp_path / f"dev-fix-gate-p1-{_CSID}"
-        sentinel.write_text(previous + "\n", encoding="utf-8")
-        (tmp_path / f"dev-fix-dev-dir-{_CSID}").write_text(tmp_path.as_posix() + "\n", encoding="utf-8")
+        sentinel.write_text(previous + "\n", encoding="utf-8", newline="\n")
+        (tmp_path / f"dev-fix-dev-dir-{_CSID}").write_text(tmp_path.as_posix() + "\n", encoding="utf-8", newline="\n")
         block = _block("echo skipped >").replace("<why no user-facing flow exists>", "Purely internal calculation.")
         result = _run(block, tmp_path, None)
         assert result.returncode == 1, result.stdout
@@ -150,8 +157,8 @@ class TestPartBReproductionGate:
 
     def test_skip_persists_reason_for_stop_gate(self, tmp_path: Path) -> None:
         """The explicit skip route records its reason in the run directory and still requires Path 2 evidence."""
-        (tmp_path / f"dev-fix-gate-p1-{_CSID}").write_text("missing\n", encoding="utf-8")
-        (tmp_path / f"dev-fix-dev-dir-{_CSID}").write_text(tmp_path.as_posix() + "\n", encoding="utf-8")
+        (tmp_path / f"dev-fix-gate-p1-{_CSID}").write_text("missing\n", encoding="utf-8", newline="\n")
+        (tmp_path / f"dev-fix-dev-dir-{_CSID}").write_text(tmp_path.as_posix() + "\n", encoding="utf-8", newline="\n")
         block = _block("echo skipped >").replace("<why no user-facing flow exists>", "Purely internal calculation.")
         skipped = _run(block, tmp_path, None)
         assert skipped.returncode == 0, skipped.stdout
@@ -161,16 +168,16 @@ class TestPartBReproductionGate:
         assert _gate_sentinels(tmp_path) == ("skipped", "missing")
         stopped = _run(_block(*_STOP_GATE), tmp_path, None)
         assert stopped.returncode == 1, stopped.stdout
-        (tmp_path / f"dev-fix-gate-p2-{_CSID}").write_text("1\n", encoding="utf-8")
+        (tmp_path / f"dev-fix-gate-p2-{_CSID}").write_text("1\n", encoding="utf-8", newline="\n")
         allowed = _run(_block(*_STOP_GATE), tmp_path, None)
         assert allowed.returncode == 0, allowed.stdout
 
     @pytest.mark.parametrize("record_name", ["unrelated.txt", "path-1-skip-reason.txt"])
     def test_stop_gate_rejects_skip_without_reason(self, tmp_path: Path, record_name: str) -> None:
         """A fabricated skipped sentinel cannot bypass the required record of why the flow is inapplicable."""
-        (tmp_path / f"dev-fix-gate-p1-{_CSID}").write_text("skipped\n", encoding="utf-8")
-        (tmp_path / f"dev-fix-gate-p2-{_CSID}").write_text("1\n", encoding="utf-8")
-        (tmp_path / f"dev-fix-dev-dir-{_CSID}").write_text(tmp_path.as_posix() + "\n", encoding="utf-8")
+        (tmp_path / f"dev-fix-gate-p1-{_CSID}").write_text("skipped\n", encoding="utf-8", newline="\n")
+        (tmp_path / f"dev-fix-gate-p2-{_CSID}").write_text("1\n", encoding="utf-8", newline="\n")
+        (tmp_path / f"dev-fix-dev-dir-{_CSID}").write_text(tmp_path.as_posix() + "\n", encoding="utf-8", newline="\n")
         (tmp_path / record_name).write_text("", encoding="utf-8")
         result = _run(_block(*_STOP_GATE), tmp_path, None)
         assert result.returncode == 1, result.stdout
@@ -222,7 +229,7 @@ class TestPartBReproductionGate:
         ``PYTHONHOME`` pointing nowhere makes the interpreter abort during start-up with status 1, the same status as a
         failing test. A ``failed`` verdict left by an earlier run must not vouch for it either.
         """
-        (tmp_path / f"dev-tests-verdict-{_CSID}").write_text(f"{stale}\n", encoding="utf-8")
+        (tmp_path / f"dev-tests-verdict-{_CSID}").write_text(f"{stale}\n", encoding="utf-8", newline="\n")
         result = _run(_block(*_REPRODUCTION), tmp_path, 1, _BROKEN_PYTHON)
         stop = _run(_block(*_STOP_GATE), tmp_path, None)
         assert ("GATE OK" in result.stdout, _gate_sentinels(tmp_path)) == (False, ("70", "70"))

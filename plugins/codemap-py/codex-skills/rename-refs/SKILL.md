@@ -53,9 +53,10 @@ PLUGIN_ROOT/bin/codemap-py query fn-rdeps "<module>::<qualified_name>"
 
 It returns `{qname, called_by:[{caller, module, path}], count, index:{query_complete,...}}`, plus `hint` for a method or constructor with zero static callers; Step 3 resolves caller ranges from `symbols <module>` by exact `qualified_name`. Read completeness forward-first: `index.query_complete`, then legacy `index.exhaustive` only if absent; not complete belongs in the report. A `hint` means zero static callers is not zero callers — instance calls (`obj.method()`), overrides, subclass constructors, and implicit protocol (dunder) calls such as `len(x)` or `x == y` are never resolved statically; print it in the report. Also print `index.hint`, the search for references outside the static AST such as hook-registered callers; it never blocks the rename on its own.
 
-`called_by` holds call edges only: a subclass base, `isinstance` target, callback value, plain import or ancestor `__init__.py` re-export never appears in it. Save the narrowed `find-symbol` answer and the `fn-rdeps` answer as `find-symbol.json` and `fn-rdeps.json` in a private temporary directory (`mktemp -d`). Write `batch-in.json` there holding `{"cmd":"list","args":["--limit","0"]}` plus one `{"cmd":"rdeps","args":["<pkg>"]}` for the symbol's module and for each ancestor package (`a.b.c` → `a.b.c`, `a.b`, `a`): a re-export lives in an ancestor `__init__.py`, and its users import the package. Then list every whole-word old name in the files that call, define or import it:
+`called_by` holds call edges only: a subclass base, `isinstance` target, callback value, plain import or ancestor `__init__.py` re-export never appears in it. Save the narrowed `find-symbol` answer and the `fn-rdeps` answer as `find-symbol.json` and `fn-rdeps.json` in a private temporary directory (`mktemp -d`). Write `batch-in.json` there holding `{"cmd":"list","args":["--limit","0"]}` plus one `{"cmd":"rdeps","args":["<pkg>"]}` for the symbol's module and for each ancestor package (`a.b.c` → `a.b.c`, `a.b`, `a`): a re-export lives in an ancestor `__init__.py`, and its users import the package. Resolve the repository root once (`git rev-parse --show-toplevel`, current directory outside Git). Run every reference helper and grep from that root so repository-relative saved paths resolve correctly. Then list every whole-word old name in the files that call, define or import it:
 
 ```bash
+cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 PLUGIN_ROOT/bin/codemap-py query batch "<tmp>/batch-in.json" > "<tmp>/batch.json"
 "PLUGIN_ROOT/bin/python" "PLUGIN_ROOT/bin/find_module_refs.py" --kind name --name "<old_name>" --files-from-json "<tmp>/fn-rdeps.json" --files-from-json "<tmp>/find-symbol.json" --files-from-json "<tmp>/batch.json"
 ```
@@ -79,7 +80,7 @@ Caller count alone never blocks a complete migration. Enumerate and preflight ev
 For `--remove-if-no-callers`, before edits: callers found → report count and stop (remove callers first or drop the flag); incomplete/missing completeness → report `$codemap-py:scan-codebase` required and stop; zero with a `hint` → report that zero static callers is not proof for a method or constructor, print the hint's search, and stop (delete manually only if it finds no reference); a protocol-method (dunder) hint names no search — Python calls it implicitly, so report it is never deleted on zero callers and stop; complete zero without a `hint` → first run the non-call reference check, also under `--dry-run`. `fn-rdeps` counts call edges only: imports, base classes, `isinstance`, callback values and re-exports never appear in it. Search every `.py`/`.pyi` file outside `.git`, `.venv` and `node_modules` for `<old_name>` (last dotted part of `<old_qname>`) as a whole word, at most 50 hits:
 
 ```bash
-grep -rnw --include='*.py' --include='*.pyi' --exclude-dir=.git --exclude-dir=.venv --exclude-dir=node_modules -- "<old_name>" . | head -50
+grep -rnw --include='*.py' --include='*.pyi' --exclude-dir=.git --exclude-dir=.venv --exclude-dir=node_modules -- "<old_name>" "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | head -50
 ```
 
 Any hit other than the definition's own `def`/`class` line → report `<N> non-call reference(s) to <old_name> — delete would leave ImportError/NameError` and stop. No such hit → ask delete/abort; under `--dry-run`, record "would delete `<old_qname>` — no callers, exhaustive" in the dry-run report instead, with no question and no edit. Before deletion, verify `start_line` names the expected symbol; mismatch aborts. Delete definition plus preceding decorators, skip Step 4, and continue at Step 6.
@@ -117,6 +118,7 @@ PLUGIN_ROOT/bin/codemap-py query rdeps "<old_ref>"                     # module
 For `symbol`, `find-symbol` sees definitions only, never references. Count every whole-word old name still in `*.py`/`*.pyi` files: the whole tree for a function or class; for a method, add the three Step 2 `--files-from-json` arguments, since a bare method name recurs across unrelated classes. With `--deprecate`, add `--alias-in "<definition path>"` so the alias stub's own `def`/`class` line is not counted:
 
 ```bash
+cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
 "PLUGIN_ROOT/bin/python" "PLUGIN_ROOT/bin/find_module_refs.py" --kind name --name "<old_name>"
 ```
 

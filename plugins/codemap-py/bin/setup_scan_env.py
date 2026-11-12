@@ -36,10 +36,13 @@ and avoids POSIX-only tooling (``hostname -s``, ``tr``, ``mktemp``, ``stat``).
 from __future__ import annotations
 
 import contextlib
+import getpass
+import hashlib
 import importlib.util
 import os
 import re
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -332,7 +335,8 @@ def _resolve_tmpdir() -> Path:
     current user, and not replaceable by others: no group/other write without the
     sticky bit, no symlink on its path owned by another user (shared check in
     ``resolve_index_env._tmpdir_unsafe_reason``). A rejected value falls back to the
-    platform temp dir.
+    platform temp dir. All state then lives in a real, current-user-owned child directory with POSIX mode 0700;
+    invalid pre-existing children are refused rather than repaired or followed.
 
     Returns:
         Directory in which every tmpfile and the state file are created.
@@ -348,7 +352,18 @@ def _resolve_tmpdir() -> Path:
         # Owner alone is not enough: others may replace files in a writable non-sticky dir or re-point their symlink.
         _reject_tmpdir(f"{_PROG}: TMPDIR is {unsafe} — ignoring: {raw}")
         raw = ""
-    return Path(raw) if raw else Path(tempfile.gettempdir())
+    base = Path(raw) if raw else Path(tempfile.gettempdir())
+    user = str(os.getuid()) if hasattr(os, "getuid") else hashlib.sha256(getpass.getuser().encode()).hexdigest()[:16]
+    directory = base / f"codemap-scan-{user}"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode):
+        raise OSError(f"scan temp path is not a real directory: {directory}")
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise OSError(f"scan temp directory is owned by another user: {directory}")
+    if os.name != "nt" and stat.S_IMODE(info.st_mode) != 0o700:
+        raise OSError(f"scan temp directory must have mode 0700: {directory}")
+    return directory
 
 
 def _reject_foreign_owner(raw: str) -> str:
@@ -405,7 +420,9 @@ def _touch_nofollow(target: Path) -> None:
     """Create an empty marker file without following a symlink at ``target``.
 
     ``Path.touch`` opens through a planted symlink, creating or touching whatever it points at.
-    ``O_NOFOLLOW`` makes the open fail instead (a no-op flag where the platform has none).
+    Reject planted symlinks before exclusive creation, which can follow dangling links on Windows.
+    Existing-file opens validate identity even without ``O_NOFOLLOW``.
+    Existing markers must be regular files owned by the current user when UID checks are available.
 
     Args:
         target: Marker path to create.
@@ -413,8 +430,24 @@ def _touch_nofollow(target: Path) -> None:
     Raises:
         OSError: When ``target`` is a symlink or cannot be created.
     """
-    fd = os.open(target, os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    os.close(fd)
+    if target.is_symlink():
+        raise OSError(f"scan marker is not a regular file: {target}")
+    previous = None
+    try:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        previous = target.lstat()
+        if not stat.S_ISREG(previous.st_mode):
+            raise OSError(f"scan marker is not a regular file: {target}") from None
+        fd = os.open(target, os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or (previous is not None and not os.path.samestat(previous, info)):
+            raise OSError(f"scan marker changed while opening: {target}")
+        if hasattr(os, "getuid") and info.st_uid != os.getuid():
+            raise OSError(f"scan marker is owned by another user: {target}")
+    finally:
+        os.close(fd)
 
 
 def _write_handoff_tmpfiles(tmpdir: Path, csid: str, state: dict[str, str]) -> None:
@@ -600,7 +633,6 @@ def main(argv: list[str] | None = None) -> int:
         return _EXIT_PARSE_FAILED
     scan_args_raw, proj_slug, proj_name = identity
 
-    tmpdir = _resolve_tmpdir()
     csid = _resolve_csid()
 
     state = {
@@ -609,7 +641,9 @@ def main(argv: list[str] | None = None) -> int:
         "SCAN_ARGS_RAW": scan_args_raw,
         "PROJ_NAME": proj_name,
     }
+    tmpdir = Path(tempfile.gettempdir())
     try:
+        tmpdir = _resolve_tmpdir()
         _write_handoff_tmpfiles(tmpdir, csid, state)
         _mark_incremental_noop(arguments, tmpdir, csid, state)
         state_file = _write_state_file(tmpdir, state)

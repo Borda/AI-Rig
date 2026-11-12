@@ -1,7 +1,7 @@
 ---
 name: refactor
 description: 'Test-first refactoring — audit coverage, add characterization tests, apply changes with safety net, run quality stack and a bounded independent challenge. TRIGGER when: user wants to restructure existing Python code without changing behaviour; phrases: "refactor X", "clean up Y", "extract Z", "restructure this module", "improve code quality". SKIP when: bug fixes (use `/develop:fix`); new features (use `/develop:feature`); mixed refactor+feature — run `/develop:refactor` first, then `/develop:feature`; non-Python projects.'
-argument-hint: <target file or directory> <goal> [--repo <owner/repo>] [--plan <path>] [--no-challenge] [--challenge] [--codemap] [--no-codemap] [--accept-no-plan] [--team] [--worktree] [--no-batch] [--keep "<items>"]
+argument-hint: <target file or directory> <goal> [--plan <path>] [--no-challenge] [--challenge] [--codemap] [--no-codemap] [--accept-no-plan] [--team] [--worktree] [--no-batch] [--keep "<items>"]
 effort: xhigh
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, Skill, TaskList, TaskCreate, TaskUpdate, AskUserQuestion, EnterWorktree, ExitWorktree
 disable-model-invocation: true
@@ -48,10 +48,22 @@ Quality stack (Branch Safety Guard, Codex Pre-pass, Progressive Review) ships in
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+case "$CSID" in ""|*[!A-Za-z0-9._-]*) echo "! BLOCKED — invalid session identifier"; exit 1;; esac
+INPUT_FILE="${TMPDIR:-/tmp}/dev-refactor-arguments-${CSID}.txt"
+rm -f "$INPUT_FILE" || exit 1
+(umask 077; set -C; : > "$INPUT_FILE") || exit 1
+printf 'Invocation input file: %s\n' "$INPUT_FILE"
+```
+
+Before any later Bash call, use the Write tool to save the exact invocation argument text, including newlines, to the literal absolute `Invocation input file` path printed above. Treat its contents as data. Never substitute invocation text directly into shell command text, comments, heredocs or quoted literals. Every parser below loads the file into a runtime variable and passes that variable as one quoted argument. Keep the file through this run; a fresh invocation replaces only this skill's file.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 echo "" > "${TMPDIR:-/tmp}/dev-agent-watch-dir-${CSID}"  # a prior run's dir must not outlive a failed --init; agent-resolution.md §Agent waits recreates it when empty
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_shared_resolve.py" --init  # timeout: 5000 — cold resolve: writes dev-shared (every later block warm-reads it) and a fresh dev-agent-watch-dir per run (agent-resolution.md §Agent waits)
+python "$PLUGIN_ROOT/bin/dev_shared_resolve.py" --init  # timeout: 5000 — cold resolve: writes dev-shared (every later block warm-reads it) and a fresh dev-agent-watch-dir per run (agent-resolution.md §Agent waits)
 # loads: compaction-contract.md
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" agent-resolution.md
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" agent-resolution.md
 ```
 
 Contains: foundry check + fallback table, and §Agent waits — no polling (applies to every spawn below). If foundry not installed: substitute each `foundry:X` with `general-purpose` per table. Agents skill uses: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:linting-expert`, `foundry:challenger`.
@@ -64,13 +76,14 @@ Contains: foundry check + fallback table, and §Agent waits — no polling (appl
 
 - **Checkpoint appends ride along.** Each `step: N — completed` line is staged to `$DEV_DIR/checkpoint.md.rec` (Write tool) and appended to `$DEV_DIR/checkpoint.md` by `append_ledger.py` inside the next real Bash block (a boundary contract block or the next step's first command), never as a call of its own.
 
-- **Independent calls share one response — never across a question.** After Agent Resolution: Project Detection, the preflight-helpers load and checkpoint init together; both flag-parsing blocks together in the next response (after the resume offer, when a prior checkpoint exists). Every later preamble block keeps its order: each sits behind a question (unsupported flag, codemap gates) or the worktree entry, which must precede the codemap gate. Step 1 discovery — Reads of the target files, Glob/Grep for its tests and callers — in one response. Consecutive Edits to the same file in one response, unless an edit depends on the previous one's result.
+- **Independent calls share one response — never across a question.** After Agent Resolution: Project Detection, the preflight-helpers load and checkpoint init together; both flag-parsing blocks together in the next response. Every later preamble block keeps its order: each sits behind a question (unsupported flag, codemap gates) or the worktree entry, which must precede the codemap gate. Step 1 discovery — Reads of the target files, Glob/Grep for its tests and callers — in one response. Consecutive Edits to the same file in one response, unless an edit depends on the previous one's result.
 
 ## Project Detection
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" runner-detection.md  # timeout: 5000
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" runner-detection.md  # timeout: 5000
 ```
 
 Sets `$TEST_CMD` (full suite) and `$PYTEST_CMD` (pytest flags). Run at skill start.
@@ -78,18 +91,20 @@ Sets `$TEST_CMD` (full suite) and `$PYTEST_CMD` (pytest flags). Run at skill sta
 **Optional `--plan <path>`**: `$ARGUMENTS` contains `--plan <path>` (any position) → read plan file first. Extract `Affected files`, `Risks`, `Suggested approach` — informs Step 1 scope analysis. Skip redundant codebase exploration for already-classified files. Store plan path as `PLAN_FILE`. The extraction block also records the plan's hash (`.plans/` is gitignored, so edits leave no diff); Final Report re-checks it.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" preflight-helpers.md  # timeout: 5000
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" preflight-helpers.md  # timeout: 5000
 ```
 
 Execute --plan path extraction; sets `$PLAN_FILE`.
 
-**Checkpoint init**: create `.developments/<TS>/` run directory, capture path in `$DEV_DIR` (assigned below). Write `checkpoint.md` inside `$DEV_DIR`. After each major step (1, 2, 3, 4, 5), stage `step: N — completed` as a record in `$DEV_DIR/checkpoint.md.rec` (Write tool) and append it with `append_ledger.py` (Growing Ledgers `.rec` staging). On skill start, check for existing `.developments/*/checkpoint.md` — offer resume from last completed step if found.
+**Checkpoint init**: create `.developments/<TS>/` run directory, capture path in `$DEV_DIR` (assigned below). Write `checkpoint.md` inside `$DEV_DIR`. After each major step (1, 2, 3, 4, 5), stage `step: N — completed` as a record in `$DEV_DIR/checkpoint.md.rec` (Write tool) and append it with `append_ledger.py` (Growing Ledgers `.rec` staging). Checkpoints preserve run status; do not infer a resumable refactor run from another skill's checkpoint.
 
 ```bash
 # persist DEV_DIR for compaction recovery — bash resets between calls
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-DEV_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_dir.py" --persist refactor)  # timeout: 5000 — also writes the dev-refactor-dev-dir sentinel
+DEV_DIR=$(python "$PLUGIN_ROOT/bin/dev_run_dir.py" --persist refactor)  # timeout: 5000 — also writes the dev-refactor-dev-dir sentinel
 : > "${TMPDIR:-/tmp}/dev-start-time-${CSID}"  # fresh wall clock per run; Step 4 init keeps it across Step 5→4 returns
 ```
 
@@ -98,21 +113,32 @@ DEV_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_dir.py" 
 Parse flags into shell variables (not prose) so downstream blocks see correct values. Persist to temp files for cross-block access (bash resets between calls):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/extract-keep-flag.py" dev-refactor "$ARGUMENTS"  # timeout: 5000 — parses --keep, clears stale contract
+INPUT_FILE="${TMPDIR:-/tmp}/dev-refactor-arguments-${CSID}.txt"
+[ -f "$INPUT_FILE" ] && [ ! -L "$INPUT_FILE" ] && [ -O "$INPUT_FILE" ] || { echo "! BLOCKED — invocation input missing or untrusted; Write the arguments to the printed Invocation input file first"; exit 1; }
+ARGUMENT_BLOB=$(cat "$INPUT_FILE" && printf x) || exit 1
+ARGUMENT_BLOB=${ARGUMENT_BLOB%x}  # preserve trailing newlines without evaluating the text
+python "$PLUGIN_ROOT/bin/extract-keep-flag.py" dev-refactor "$ARGUMENT_BLOB"  # timeout: 5000 — parses --keep, clears stale contract
 ```
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+INPUT_FILE="${TMPDIR:-/tmp}/dev-refactor-arguments-${CSID}.txt"
+[ -f "$INPUT_FILE" ] && [ ! -L "$INPUT_FILE" ] && [ -O "$INPUT_FILE" ] || { echo "! BLOCKED — invocation input missing or untrusted; Write the arguments to the printed Invocation input file first"; exit 1; }
+ARGUMENT_BLOB=$(cat "$INPUT_FILE" && printf x) || exit 1
+ARGUMENT_BLOB=${ARGUMENT_BLOB%x}  # preserve trailing newlines without evaluating the text
 # timeout: 10000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_parse_args.py" \
-    --skill refactor --write-files "$ARGUMENTS"
+python "$PLUGIN_ROOT/bin/dev_parse_args.py" \
+    --skill refactor --write-files "$ARGUMENT_BLOB"
 ```
 
 Downstream blocks read back, e.g. `IFS= read -r TEAM_MODE < "${TMPDIR:-/tmp}/dev-team-mode-${CSID}" 2>/dev/null || TEAM_MODE=false`.
 
 **Codemap flag parsing** — no separate step: `dev_parse_args.py` above already resolves `--codemap`/`--no-codemap` into `dev-refactor-codemap-${CSID}`, the skill-specific file `dev_codemap_gate.py` reads (same as feature/fix/debug) — stale values from a prior run of another skill can't leak in.
 
-**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--plan`, `--team`, `--worktree`, `--no-batch`, `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--accept-no-plan`, `--repo`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--plan`, `--team`, `--worktree`, `--no-batch`, `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--accept-no-plan`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Worktree isolation
 
@@ -122,21 +148,45 @@ Downstream blocks read back, e.g. `IFS= read -r TEAM_MODE < "${TMPDIR:-/tmp}/dev
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-refactor-worktree-${CSID}" 2>/dev/null; [ "$WORKTREE_ENABLED" = "true" ] || WORKTREE_ENABLED=false
-if [ "$WORKTREE_ENABLED" = "true" ]; then python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" worktree-isolation.md; fi
+printf '%s\n' refactor > "${TMPDIR:-/tmp}/dev-worktree-skill-${CSID}"
+if [ "$WORKTREE_ENABLED" = "true" ]; then python "$PLUGIN_ROOT/bin/dev_load_shared.py" worktree-isolation.md; fi
 ```
 
 `WORKTREE_ENABLED=true` → follow §Enter (call `EnterWorktree`, warm-start codemap). Else skip — run in main tree (doc not loaded). Remember the branch for §Exit at Final Report.
+
+**Branch Safety Guard** — run after optional worktree entry, before any source edit or teammate dispatch; retain the quality stack's later recheck:
+
+```bash
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)                                                         # timeout: 3000
+DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@') # timeout: 3000
+if [ "$CURRENT_BRANCH" = "$DEFAULT_BRANCH" ] || [ "$CURRENT_BRANCH" = "main" ] || [ "$CURRENT_BRANCH" = "master" ]; then
+    echo "⚠ On default branch ($CURRENT_BRANCH) — create a feature branch before running /develop"
+    exit 1
+fi
+```
+
+Guard fires: stop, report branch name, ask user create feature branch.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" semver-rules.md  # timeout: 5000
+```
+
+Before any public-surface edit, including teammate edits, apply `semver-rules.md`'s Breaking Change Escalation Protocol. A surprise incompatibility requires `AskUserQuestion` and explicit intentional-change confirmation before editing; state what worked before, what breaks and why. One question per atomic breaking change. The team lead owns this gate before dispatch.
 
 **Codemap auto-detection** — run after flag parsing. Behaviour differs by mode: `strict` (user explicitly passed `--codemap`) hard-fails when codemap unavailable; `auto` and `off` soft-degrade to `false` (don't abort skill):
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-CODEMAP_ENABLED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_codemap_gate.py" refactor) || exit 1
+CODEMAP_ENABLED=$(python "$PLUGIN_ROOT/bin/dev_codemap_gate.py" refactor) || exit 1
 # codemap: integrated-via-shared
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" codemap-gates.md
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" codemap-gates.md
 ```
 
 > loads: codemap-gates.md
@@ -158,9 +208,10 @@ find <target> -name '*.py' -exec wc -l {} + 2>/dev/null | tail -1
 **If `CODEMAP_ENABLED=true`**:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/dev-refactor-codemap-enabled-${CSID}" || CODEMAP_ENABLED="false"
-if [ "$CODEMAP_ENABLED" = "true" ]; then python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" codemap-context.md; fi  # timeout: 5000
+if [ "$CODEMAP_ENABLED" = "true" ]; then python "$PLUGIN_ROOT/bin/dev_load_shared.py" codemap-context.md; fi  # timeout: 5000
 ```
 
 Follow the codemap block. Flag false → nothing loaded; skip.
@@ -168,6 +219,7 @@ Follow the codemap block. Flag false → nothing loaded; skip.
 **Multi-file / API-change scope — extended codemap scan** (only when `CODEMAP_ENABLED=true`): target is directory, spans multiple files, or goal mentions renaming/restructuring public API (i.e. refactoring NOT limited to internals of a single function/class with unchanged public interface):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
 if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
@@ -175,14 +227,15 @@ IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/dev-refactor-codema
 [ "$CODEMAP_ENABLED" = "true" ] || exit 0
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null); [ -n "$_ROOT" ] || _ROOT="$PWD"  # timeout: 3000
 PROJ=$(basename "$_ROOT")   # raw basename — scanner writes it verbatim, never sanitized
-REFACTOR_FILES=$(find <target> -name '*.py' -type f 2>/dev/null)
-AFFECTED_MODULES=$(echo "$REFACTOR_FILES" | sed 's|^\./||;s|^src/||;s|\.py$||;s|/|.|g' | grep . || echo "")
+REFACTOR_FILES=$(find "$(python -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' '<target>')" -name '*.py' -type f 2>/dev/null)
 _IDX="${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}"   # root-anchored: skill may run from a subdir
-if command -v codemap-py >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ] && [ -n "$AFFECTED_MODULES" ]; then
+if command -v codemap-py >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ]; then
     # one batch process for all module rdeps — a per-module query loop pays process spawn + coverage cost N times
-    _BATCH_REQ="${TMPDIR:-/tmp}/dev-refactor-rdeps-batch-${CSID:-$PPID}.json"
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/build_codemap_batch.py" "$_BATCH_REQ" --modules "$(echo $AFFECTED_MODULES)" --queries rdeps
-    codemap-py query batch "$_BATCH_REQ" 2>/dev/null
+    IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
+    [ -n "$DEV_DIR" ] || { echo "! BLOCKED — refactor run directory missing; re-run Checkpoint init"; exit 1; }
+    _BATCH_REQ="$DEV_DIR/codemap-rdeps-batch.json"
+    AFFECTED_MODULES=$(python "$PLUGIN_ROOT/bin/build_codemap_batch.py" "$_BATCH_REQ" --files "$REFACTOR_FILES" --repository "$_ROOT" --queries rdeps) || exit $?
+    if [ -n "$AFFECTED_MODULES" ]; then codemap-py query batch "$_BATCH_REQ" 2>/dev/null; fi
     codemap-py query coupled --top 10
 fi
 ```
@@ -198,8 +251,9 @@ Spawn **foundry:sw-engineer** agent to analyze code and identify — Arm batch `
 - **Complexity smell**: directory or cross-module scope — flag it; consider team mode
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" premise-grounding.md  # timeout: 5000
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" premise-grounding.md  # timeout: 5000
 ```
 
 §Premise Grounding Gate. Apply using **refactor** context from Skill contexts table.
@@ -211,8 +265,9 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" premis
 Both gates evaluate after the same sw-engineer analysis — when BOTH fire, invoke `AskUserQuestion` ONCE with both questions in the same call (menus stay distinct verbatim; a second sequential window costs another human-idle round trip). Only one fires → single-question call as usual.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" plan-inline.md  # timeout: 5000
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" plan-inline.md  # timeout: 5000
 ```
 
 §Inline Plan Generation Protocol. Apply using **refactor** context from Skill contexts table. On proceed: set `PLAN_FILE=<path>`; continue through the challenger gate before Step 2. On small complexity or `ACCEPT_NO_PLAN=true`: skip the standalone artifact, retain a concise plan, and continue through the proportional challenger gate before Step 2.
@@ -234,10 +289,11 @@ Parse result:
 **Authorized plan revisions**: The hash commands below apply only when a plan artifact exists; a concise inline plan does not require creating one. Before editing a recorded plan, run `plan_hash.py check` and stop for unexplained drift; verify the intended edits are limited to authorized findings. After those revisions and before implementation, record the revised plan's hash using the block below. Never re-record an unexplained or unauthorized change: retain the drift evidence and resolve it first. No plan revision → do not re-record.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLAN_FILE < "${TMPDIR:-/tmp}/dev-plan-file-${CSID}" 2>/dev/null || PLAN_FILE=""
 [ -f "$PLAN_FILE" ] || { echo "! BLOCKED — revised plan missing"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/plan_hash.py" record "$PLAN_FILE"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/plan_hash.py" record "$PLAN_FILE"  # timeout: 5000
 ```
 
 ## Step 2: Audit test coverage
@@ -252,23 +308,24 @@ Use Glob tool (pattern `**/test_*.py` or `**/*_test.py`), then Grep tool (patter
 
 ```bash
 # timeout: 600000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
 [ -n "$PYTEST_CMD" ] || { echo "! BLOCKED — PYTEST_CMD unresolved; re-run Project Detection (an empty runner would classify every function uncovered)"; exit 1; }
 # ONE collection pass feeds head-5 sanity print, cov-plugin probe, and module grep — three separate --co runs re-collect the whole suite each time
-_CO_OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --co -q --cov=. 2>&1)
+_CO_OUT=$(python "$PLUGIN_ROOT/bin/dev_run_tests.py" pytest -- --co -q --cov=. 2>&1)
 [ $? -ne 64 ] || { echo "! BLOCKED — test runner refused to start (exit 64): $_CO_OUT"; exit 1; }  # 64 = no test command ran, never "No tests found"
 SKIP_COV=0
 if echo "$_CO_OUT" | grep -q "ModuleNotFoundError\|No module named.*cov\|unrecognized arguments.*--cov"; then
     echo "⚠ coverage tool not found — coverage gate skipped"
     SKIP_COV=1
-    _CO_OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --co -q 2>&1)   # cov-less re-collect — the probe run errored before listing tests
+    _CO_OUT=$(python "$PLUGIN_ROOT/bin/dev_run_tests.py" pytest -- --co -q 2>&1)   # cov-less re-collect — the probe run errored before listing tests
     [ $? -ne 64 ] || { echo "! BLOCKED — test runner refused to start (exit 64): $_CO_OUT"; exit 1; }
 fi
 echo "$_CO_OUT" | head -5
 echo "$_CO_OUT" | grep -i "<module_name>" || echo "No tests found for <module_name>"
 
-[ "${SKIP_COV}" -eq 0 ] && { python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --cov=<target_module> -q --cov-report=term-missing || true; }
+[ "${SKIP_COV}" -eq 0 ] && { python "$PLUGIN_ROOT/bin/dev_run_tests.py" pytest -- --cov=<target_module> -q --cov-report=term-missing || true; }
 ```
 
 `SKIP_COV=1` → skip coverage classification entirely — don't classify any function as UNCOVERED; note "coverage tool absent — coverage audit skipped" in audit output. **Step 3 qa-specialist spawn behavior when `SKIP_COV=1`**: spawn qa-specialist with all public functions listed as `coverage: unknown`, instructed to write characterization tests for every public function (can't prioritize uncovered functions when coverage unknown — test all for safety net). Proceed to Step 3 with unknown coverage state.
@@ -298,21 +355,26 @@ Audit incomplete → re-examine before Step 3. Gaps found mid-refactoring (Step 
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r TEAM_MODE < "${TMPDIR:-/tmp}/dev-team-mode-${CSID}" 2>/dev/null || TEAM_MODE=false
-[ "$TEAM_MODE" = "true" ] && cat "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/refactor/modes/team-mode.md"
+[ "$TEAM_MODE" = "true" ] && python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$PLUGIN_ROOT/skills/refactor/modes/team-mode.md"
 ```
 
 Continue to Step 3 only when `TEAM_MODE=false`.
 
 ```bash
 # boundary 1: after coverage audit, before characterization tests (compaction-contract.md)
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/null || _DEV_DIR=""
 IFS= read -r _PLAN_FILE < "${TMPDIR:-/tmp}/dev-plan-file-${CSID}" 2>/dev/null || _PLAN_FILE=""
 IFS= read -r _PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || _PYTEST_CMD=""
 _PRESERVE="dev-dir=$_DEV_DIR, plan-file=${_PLAN_FILE:-none}, pytest-cmd=$_PYTEST_CMD"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" --keep-sentinel dev-refactor-keep-items "develop:refactor" "characterize+edit (after coverage audit)" "$_DEV_DIR" "$_PRESERVE" "add characterization tests (Step 3) → refactor with safety net (Step 4)"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" --keep-sentinel dev-refactor-keep-items "develop:refactor" "characterize+edit (after coverage audit)" "$_DEV_DIR" "$_PRESERVE" "add characterization tests (Step 3) → refactor with safety net (Step 4)" -- calls_ahead=30 "drop=scope exploration and coverage analysis"  # timeout: 5000
+IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
+[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
+python "$PLUGIN_ROOT/bin/compaction_boundary.py" "$_DEV_SHARED"
 ```
 
 ## Step 3: Add characterization tests (if needed)
@@ -334,8 +396,9 @@ Spawn with context:
 
 ```bash
 # timeout: 600000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- <test_file> -v; GATE_EXIT=$?
+python "$PLUGIN_ROOT/bin/dev_run_tests.py" pytest -- <test_file> -v; GATE_EXIT=$?
 echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-refactor-gate-exit-${CSID}
 # Gate: all characterization tests must pass before proceeding — verdict in the same call as the run
 if [ "${GATE_EXIT}" -eq 5 ]; then
@@ -359,6 +422,7 @@ On accepted (b) after a red characterization run, use the Write tool to save its
 
 ```bash
 # timeout: 600000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
 [ -n "$DEV_DIR" ] || { echo "! BLOCKED — refactor run directory missing; re-run Checkpoint init"; exit 1; }
@@ -367,9 +431,10 @@ case "$*" in *'<'*'>'*|"") echo "! BLOCKED — scoped file list contains an unre
 IFS= read -r CODEMAP_CURRENCY < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" 2>/dev/null || CODEMAP_CURRENCY="no_index"
 if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
 IFS= read -r ACCEPTED_RED_CHAR 2>/dev/null < "$DEV_DIR/accepted-red-characterization.txt" || ACCEPTED_RED_CHAR=""
+ACCEPTED_RED_CHAR=${ACCEPTED_RED_CHAR%$'\r'}
 if [ -n "$ACCEPTED_RED_CHAR" ]; then
     echo "BASELINE: accepted-red characterization test excluded: $ACCEPTED_RED_CHAR; remaining source tests must pass"
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill refactor --files "$@" > "$DEV_DIR/baseline-selection.json" || { echo "! BLOCKED — baseline selection failed; recover the runner before editing"; exit 1; }
+    python "$PLUGIN_ROOT/bin/dev_test_targets.py" --skill refactor --files "$@" > "$DEV_DIR/baseline-selection.json" || { echo "! BLOCKED — baseline selection failed; recover the runner before editing"; exit 1; }
     python - "$DEV_DIR/baseline-selection.json" "$ACCEPTED_RED_CHAR" "$DEV_DIR/baseline-tests.json" <<'PY' || { echo "! BLOCKED — baseline filtering failed; recover test selection before editing"; exit 1; }
 import json
 import sys
@@ -380,14 +445,14 @@ tests = json.loads(Path(selection).read_text(encoding="utf-8"))["tests"]
 remaining = [test for test in tests if Path(test).resolve() != Path(excluded).resolve()]
 Path(output).write_text(json.dumps(remaining) + "\n", encoding="utf-8")
 PY
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill refactor --tests-from "$DEV_DIR/baseline-tests.json" --record-dir "$DEV_DIR" --run
+    python "$PLUGIN_ROOT/bin/dev_test_targets.py" --skill refactor --tests-from "$DEV_DIR/baseline-tests.json" --record-dir "$DEV_DIR" --run
 else
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill refactor --files "$@" --record-dir "$DEV_DIR" --run
+    python "$PLUGIN_ROOT/bin/dev_test_targets.py" --skill refactor --files "$@" --record-dir "$DEV_DIR" --run
 fi
 BASELINE_EXIT=$?
 case "$BASELINE_EXIT" in
-    0) python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --check-record "$DEV_DIR/test-targets.jsonl" --expect-exit 0 || { echo "! BLOCKED — no completed nonempty baseline; resolve test selection before editing"; exit 1; } ;;
-    1) python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --check-record "$DEV_DIR/test-targets.jsonl" --expect-exit 1 || { echo "! BLOCKED — baseline runner failed without a completed red run; recover the runner before editing"; exit 1; }
+    0) python "$PLUGIN_ROOT/bin/dev_test_targets.py" --check-record "$DEV_DIR/test-targets.jsonl" --expect-exit 0 || { echo "! BLOCKED — no completed nonempty baseline; resolve test selection before editing"; exit 1; } ;;
+    1) python "$PLUGIN_ROOT/bin/dev_test_targets.py" --check-record "$DEV_DIR/test-targets.jsonl" --expect-exit 1 || { echo "! BLOCKED — baseline runner failed without a completed red run; recover the runner before editing"; exit 1; }
        echo "! BLOCKED — pre-existing test failure in the remaining scoped tests; stop refactoring and recommend /develop:fix before any source edit"; exit 1 ;;
     *) echo "! BLOCKED — baseline runner or collection failed (exit $BASELINE_EXIT); recover the runner before editing"; exit "$BASELINE_EXIT" ;;
 esac
@@ -401,8 +466,9 @@ Any `! BLOCKED` result → stop before source edits or the implementation teamma
 **Batch mode gate** — default on, `--no-batch` opts out; groups non-overlapping change-test edits into fewer test runs (`_shared/batch-mode.md` §Batch mode: non-overlap predicate, per-edit snapshot/bisect design, cap accounting):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-if python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_batch_gate.py" refactor; then python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" batch-mode.md; fi  # timeout: 5000 — batch mode on: writes dev-batch-skill, which batch-mode.md's own fences read back (never a literal <skill> placeholder); off: prints the verdict, loads nothing — gate exits 1, `if` keeps the call at 0 so the opt-out never renders as an error
+if python "$PLUGIN_ROOT/bin/dev_batch_gate.py" refactor; then python "$PLUGIN_ROOT/bin/dev_load_shared.py" batch-mode.md; fi  # timeout: 5000 — batch mode on: writes dev-batch-skill, which batch-mode.md's own fences read back (never a literal <skill> placeholder); off: prints the verdict, loads nothing — gate exits 1, `if` keeps the call at 0 so the opt-out never renders as an error
 echo "0"             > ${TMPDIR:-/tmp}/dev-inner-cycle-${CSID}
 [ -s "${TMPDIR:-/tmp}/dev-start-time-${CSID}" ] || echo "$(date +%s)"   > ${TMPDIR:-/tmp}/dev-start-time-${CSID}  # once per run (Flag parsing truncates); cycle count resets per Step 4 pass
 echo 5    > ${TMPDIR:-/tmp}/dev-max-inner-cycles-${CSID}
@@ -417,10 +483,11 @@ For each change (or, in batch mode, per non-overlapping batch member):
 2. Run the tests this change touches — targeted only (Test-run policy):
    ```bash
    # timeout: 600000
+   PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
    IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
    if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill refactor --run
+   python "$PLUGIN_ROOT/bin/dev_test_targets.py" --skill refactor --run
    ```
    - Selects per changed module via `codemap-py query test-impact` when available, path heuristics otherwise (name-matched tests plus tests importing the module); Step 3's characterization tests are selected as changed files. The first output line is the selection JSON — surface any `codemap.partial`/`codemap.fell_back` count and every `not_covered` entry (`⚠ not_covered — some changed code has no mapped test`) as a coverage caveat; the selection and full log are recorded under `$DEV_DIR/test-targets.jsonl`.
    - Empty selection (`note` set) → nothing ran; say so (Test-run policy).
@@ -446,10 +513,12 @@ IFS= read -r MAX_INNER_CYCLES < "${TMPDIR:-/tmp}/dev-max-inner-cycles-${CSID}" 2
 IFS= read -r MAX_WALL_SECONDS < "${TMPDIR:-/tmp}/dev-max-wall-seconds-${CSID}" 2>/dev/null || MAX_WALL_SECONDS=1800
 if [ "$INNER_CYCLE" -gt $MAX_INNER_CYCLES ]; then
     echo "⚠ MAX_INNER_CYCLES ($MAX_INNER_CYCLES) reached — stopping refactor loop; report what succeeded, what broke, what remains"
+    exit 1
 fi
 ELAPSED=$(( $(date +%s) - START_TIME ))
 if [ "$ELAPSED" -ge $MAX_WALL_SECONDS ]; then
     echo "⚠ wall-time cap reached (30 min) — stopping refactor loop"
+    exit 1
 fi
 ```
 
@@ -465,16 +534,22 @@ The block above is the only increment site — run it once per change-test pair 
 
 ```bash
 # boundary 2: after refactor edits, before review stack (compaction-contract.md)
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/null || _DEV_DIR=""
 IFS= read -r _PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || _PYTEST_CMD=""
-_CHANGED=$(git diff --name-only HEAD 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:refactor" "review+quality (after refactor edits applied)" "$_DEV_DIR" "dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD" "review and close gaps (Step 5) → Final Report"  # timeout: 5000
+_CHANGED=$({ git diff --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard; } | sort -u | tr '\n' ' ' | sed 's/ *$//')
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" "develop:refactor" "review+quality (after refactor edits applied)" "$_DEV_DIR" "dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD" "review and close gaps (Step 5) → Final Report" -- calls_ahead=40 "drop=refactor exploration and intermediate test output"  # timeout: 5000
+IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
+[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
+python "$PLUGIN_ROOT/bin/compaction_boundary.py" "$_DEV_SHARED"
 ```
 
 ## Step 5: Review and close gaps
 
 Review the refactored code once and resolve feasible gaps. Only an explicitly requested iterative review-and-fix loop may repeat the steps below, up to 3 outer cycles. (Step 4's "max 5 change-test cycles" bound applies within each pass through Step 4, independent of outer loop.)
+
+A request to repeat review and fix until a reviewer reports no findings or no security findings, or to resolve all findings; a second independent review round about to be dispatched for the same change; or a skill workflow repeating its review then fix cycle counts as an explicitly invoked loop from that moment: before the next reviewer dispatch, start ledger; follow `../../rules/_full/adversarial-loop.md` (helper output, stop/plateau rules, user's round budget).
 
 **First pass (repeat only for an explicitly requested iterative loop):**
 
@@ -492,10 +567,11 @@ Review the refactored code once and resolve feasible gaps. Only an explicitly re
 
    ```bash
    # timeout: 600000
+   PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
    IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
    if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill refactor --run
+   python "$PLUGIN_ROOT/bin/dev_test_targets.py" --skill refactor --run
    ```
 
 4. **Objective convergence check**: findings this cycle identical to previous (same locations, same issues) → declare convergence, exit — further cycles won't resolve; surface to user.
@@ -510,14 +586,9 @@ Review the refactored code once and resolve feasible gaps. Only an explicitly re
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
-if [ ! -d "$_DEV_SHARED" ]; then
-    _DEV_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_shared_resolve.py") || { echo "! BLOCKED — shared directory unresolved; repair the installation before continuing"; exit 1; }
-fi
-_SHARED="$_DEV_SHARED"  # foundry--quality-stack.md loads its siblings from $_SHARED — this plugin's own _shared
-echo "$_SHARED" > "${TMPDIR:-/tmp}/qs-shared-dir-${CSID}"  # quality-stack fences reload it; missing = BLOCKED
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" foundry--quality-stack.md  # timeout: 5000
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" --qs-dir foundry--quality-stack.md  # timeout: 5000
 ```
 
 **Bounded independent implementation challenge**: After implementation and before the final gate, unless the user explicitly passed `--no-challenge`, dispatch one independent reviewer through the permitted `foundry:challenger` or available `bridge:review` route; never fork the implementation conversation. Supply only the current scoped diff, task acceptance and relevant evidence, allowing targeted source inspection. Reuse still-valid independent coverage for this exact result instead of dispatching again. Validate findings, apply feasible authorized fixes, rerun affected checks and report unresolved findings or missing independent coverage. Do not start another challenge or convergence loop automatically; after fixes, honestly report that the revised result lacks independent coverage. If no independent route is available, report the gap and do not claim the challenge passed.
@@ -528,8 +599,9 @@ Execute Branch Safety Guard, Quality Stack, the bounded implementation challenge
 
 ```bash
 # timeout: 600000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" suite
+python "$PLUGIN_ROOT/bin/dev_run_tests.py" suite
 ```
 
 ## Final Report
@@ -537,7 +609,9 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" suite
 **Plan drift check** — run first; any output means lead the report with that `! BLOCKED` line and let the user decide (detection only, never auto-revert):
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/plan_hash.py" check  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "$PLUGIN_ROOT/bin/plan_hash.py" check  # timeout: 5000
 ```
 
 ```markdown
@@ -571,11 +645,13 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/plan_hash.py" check  # tim
 **Refinements**: N passes.
 ```
 
-**Worktree exit** — if `WORKTREE_ENABLED=true`: follow `worktree-isolation.md` §Exit — capture branch, call `ExitWorktree(action="keep")`, append the `Worktree` block (path · branch · merge hint) to the report. Never auto-merge, never `remove`.
+Clear the contract in the current worktree before calling `ExitWorktree`. The contract reader in `rule-inject.js` resolves `.temp/state` from `process.cwd()`.
 
 ```bash
 rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
 ```
+
+**Worktree exit** — if `WORKTREE_ENABLED=true`: follow `worktree-isolation.md` §Exit — capture branch, call `ExitWorktree(action="keep")`, append the `Worktree` block (path · branch · merge hint) to the report. Never auto-merge, never `remove`.
 
 </workflow>
 

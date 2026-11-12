@@ -2,7 +2,7 @@
 
 <!-- Variables available: $SKILL_DIR, $_OSS_SHARED, $LAST_TAG, $BRANCH, $DATE, $RANGE, $VERSION, $REPO_ROOT, $GATHER_FILE, $CHANGELOG_FILE -->
 
-**Trigger**: `/release prepare <version>` (e.g., `prepare v1.3.0` or `prepare 1.3.0`)
+**Trigger**: `/oss:release prepare <version>` (e.g., `prepare v1.3.0` or `prepare 1.3.0`)
 
 **Purpose**: Full release pipeline — audit first, generate all artifacts. Use when cutting release; individual modes for drafting.
 
@@ -12,7 +12,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r REST < "${TMPDIR:-/tmp}/release-rest-${CSID}" 2>/dev/null || REST=""
 IFS= read -r LAST_TAG < "${TMPDIR:-/tmp}/release-setup-${CSID}/LAST_TAG" 2>/dev/null || LAST_TAG=""
 VERSION="${REST%% *}"; VERSION="${VERSION#v}"
-case "$VERSION" in ""|-*|*/*) echo "! BLOCKED — prepare needs a release version, e.g. /release prepare v1.3.0" >&2; exit 1;; esac
+case "$VERSION" in ""|-*|*/*) echo "! BLOCKED — prepare needs a release version, e.g. /oss:release prepare v1.3.0" >&2; exit 1;; esac
 VERSION="v$VERSION"
 RANGE="${RANGE:-$LAST_TAG..HEAD}"
 echo "$VERSION" > "${TMPDIR:-/tmp}/release-prepare-version-${CSID}"  # persist for later blocks (Check 41)
@@ -25,7 +25,7 @@ echo "range: $RANGE"
 
 Run all checks from **Mode: audit** with `$VERSION` as target. `| Check | Status | Detail |` readiness table must appear in prepare's final reply, after the last tool call — audit-checks.md requires this even in sub-phase context, and a copy printed before further tool calls can arrive as an empty progress update. If table absent from the final reply, re-execute terminal output step from audit-checks.md before ending.
 
-**If verdict is BLOCKED**: stop. List blockers, tell user to resolve before re-running `/release prepare $VERSION`. Write no artifacts.
+**If verdict is BLOCKED**: stop. List blockers, tell user to resolve before re-running `/oss:release prepare $VERSION`. Write no artifacts.
 
 **If verdict is READY or NEEDS_ATTENTION**: surface warnings, continue to Phase 2.
 
@@ -36,32 +36,48 @@ Run all checks from **Mode: audit** with `$VERSION` as target. `| Check | Status
 **b. Audit changelog** — Agent A must preflight its selected changelog path before its first read or write, as specified in `modes/changelog-audit-prompt.md`. Recheck the resolved `$CHANGELOG_FILE` and every existing release artifact path before this inline edit; a failure stops this phase without further artifact writes:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r VERSION < "${TMPDIR:-/tmp}/release-prepare-version-${CSID}" 2>/dev/null || VERSION=""
 IFS= read -r CHANGELOG_FILE < "${TMPDIR:-/tmp}/release-changelog-file-${CSID}" 2>/dev/null || CHANGELOG_FILE=""
 [ -n "$VERSION" ] && [ -n "$CHANGELOG_FILE" ] || { echo "Error: release version or changelog path missing" >&2; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/setup_release_dir.py" --validate-only "releases/$VERSION" "$CHANGELOG_FILE" || exit 1
+python "$PLUGIN_ROOT/bin/setup_release_dir.py" --validate-only "releases/$VERSION" "$CHANGELOG_FILE" || exit 1
 ```
 
-Then apply **Audit changelog** logic inline: cross-check classified changes from `$GATHER_FILE`, add missing entries, stamp unreleased section as `## [$VERSION] — $DATE`. Report: "N items added, M flagged."
+Then apply **Audit changelog** logic inline: cross-check classified changes from `$GATHER_FILE`, add missing entries to the target section (declared Unreleased; none declared and the top section a released version, tagged or named by `$LAST_TAG` → a new `## [Unreleased]` above it, never the top released section or an older one), then stamp that section as `## [$VERSION] — $DATE`. Report: "N items added, M flagged."
 
 Persist the resolved `$CHANGELOG_FILE` through the Audit changelog path sentinel in `SKILL.md` before the next shell; do not assume the path remains in memory.
+
+**c. Unreleased-leftover gate** — runs once the changelog is finalized (version heading stamped), so a still-filled Unreleased section now counts:
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r VERSION < "${TMPDIR:-/tmp}/release-prepare-version-${CSID}" 2>/dev/null || VERSION=""
+IFS= read -r CHANGELOG_FILE < "${TMPDIR:-/tmp}/release-changelog-file-${CSID}" 2>/dev/null || CHANGELOG_FILE=""
+IFS= read -r REPO_ROOT < "${TMPDIR:-/tmp}/release-setup-${CSID}/REPO_ROOT" 2>/dev/null || REPO_ROOT="."
+[ -n "$VERSION" ] || { echo "! BLOCKED — release version missing; cannot run the unreleased-leftover gate" >&2; exit 1; }
+python "$PLUGIN_ROOT/bin/scan_unreleased_leftovers.py" --repo-root "$REPO_ROOT" --version "$VERSION" ${CHANGELOG_FILE:+--changelog "$CHANGELOG_FILE"}  # timeout: 60000
+```
+
+Exit 0 → continue. Exit 1 → stop the pipeline before Phase 3: print each `path:line: <marker>` row as a `high` blocker, write no further artifacts, never mark the release ready, never auto-edit the docs; tell the user to fix the docs and rerun `/oss:release prepare $VERSION`. Exit 2 → stop with the scanner's error line.
 
 ### Phase 3: Highlights and migration
 
 Set up release directory, back up existing artifacts:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r VERSION < "${TMPDIR:-/tmp}/release-prepare-version-${CSID}" 2>/dev/null || VERSION=""  # reload (Check 41)
 IFS= read -r CHANGELOG_FILE < "${TMPDIR:-/tmp}/release-changelog-file-${CSID}" 2>/dev/null || CHANGELOG_FILE=""  # written by Phase 2b's changelog-audit envelope
 IFS= read -r REPO_ROOT < "${TMPDIR:-/tmp}/release-setup-${CSID}/REPO_ROOT" 2>/dev/null || REPO_ROOT="."
-[ -n "$CHANGELOG_FILE" ] || CHANGELOG_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_changelog_file.py" --repo-root "$REPO_ROOT")  # same resolver as notes and audit
+[ -n "$CHANGELOG_FILE" ] || CHANGELOG_FILE=$(python "$PLUGIN_ROOT/bin/resolve_changelog_file.py" --repo-root "$REPO_ROOT")  # same resolver as notes and audit
 RELEASE_DIR="releases/$VERSION"
 # Hard-fail: this script's .bak backup loop is the only thing standing between a re-run and silent
 # loss of hand-edited HIGHLIGHTS/MIGRATION/SUMMARY/DRAFT, which Phases 3a-5 overwrite unconditionally.
 # The helper refuses release-directory symlink traversal before unlinking or backing up files.
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/setup_release_dir.py" "$RELEASE_DIR" "$CHANGELOG_FILE" \
+python "$PLUGIN_ROOT/bin/setup_release_dir.py" "$RELEASE_DIR" "$CHANGELOG_FILE" \
     || { echo "! BLOCKED — setup_release_dir failed (RELEASE_DIR='$RELEASE_DIR' CHANGELOG_FILE='$CHANGELOG_FILE'); artifact backups did not run — refusing to continue into the overwriting Write phases"; exit 1; }  # timeout: 5000
 ```
 
@@ -133,7 +149,7 @@ echo "→ wrote $OUT"
 ## Release prepare: $VERSION
 
 ### Audit
-Reproduce the full Phase-1 readiness table verbatim — the `| Check | Status | Detail |` markdown table from audit-checks.md with ALL check rows (Working tree, CI, Blocking issues, Open PRs, README aligned, CHANGELOG entry, Version consistent, Dependency CVEs, Scheduled removals, Doc proportionality) and their Status glyphs (`✓`/`⚠`/`✗`). "Condensed" applies to the Detail column only (trim verbose detail) — never to row count. Do NOT replace this table with a finding-bullet digest, and do NOT substitute a different table (e.g. a `File | Status` artifacts box).
+Reproduce the full Phase-1 readiness table verbatim — the `| Check | Status | Detail |` markdown table from audit-checks.md with ALL check rows (Working tree, CI, Blocking issues, Open PRs, README aligned, CHANGELOG entry, Version consistent, Unreleased leftovers, Dependency CVEs, Scheduled removals, Doc proportionality) and their Status glyphs (`✓`/`⚠`/`✗`). "Condensed" applies to the Detail column only (trim verbose detail) — never to row count. Do NOT replace this table with a finding-bullet digest, and do NOT substitute a different table (e.g. a `File | Status` artifacts box).
 [any warnings carried forward]
 
 ### Written (documentation artifacts — complementary to the release, not the release itself)

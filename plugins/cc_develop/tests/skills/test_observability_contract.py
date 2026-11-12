@@ -50,8 +50,25 @@ _IMPLEMENT_BLOCKER_EQUIVALENTS = {
 }
 
 _REVIEW_VISIBLE_EQUIVALENTS = {
+    "Note: `bridge:review` is a foreground, read-only skill with no Write tool — it returns findings": (
+        "with `--timeout-seconds 230`, `bridge:review` uses its synchronous foreground route",
+        "Its Write tool is limited to its own scratch task file",
+        "the orchestrator itself writes `$RUN_DIR/codex.md`",
+    ),
     "> - Add `Reviewers:` after `Agents:` in the report header, using readable `Role (rating)` or `Role:": (
-        "> - Add `Reviewers:` after `Agents:` in the report header, using readable role names only and square-bracketed scores: `Role [rating]`, for example `Software engineer [2]`.",
+        "> - Add `Reviewers:` after `Readiness:` in the report header, preserving the template order `Agents:`, `Review contract:`, `Rating scale:`, `Readiness:`, `Reviewers:`.",
+        "Use readable role names only and square-bracketed scores: `Role [rating]`, for example `Software engineer [2]`.",
+    ),
+    "STEMS=$(printf '%s\\n' $CHANGED | sed -E 's#.*/##; s#\\.py$##; s#^test_##' | sort -u | grep -v": (
+        "Match only exact repository-relative paths listed in the plan's **Affected files** section against the review target's files;",
+        "never match stems or free-text mentions.",
+    ),
+    'PLAN=""; for f in .plans/active/*.md; do [ -f "$f" ] || continue; for s in $STEMS; do grep -qi --': (
+        "Exactly one matching plan → use the Write tool to persist its resolved path",
+        'IFS= read -r PLAN < "${TMPDIR:-/tmp}/dev-review-plan-${CSID}"',
+    ),
+    "echo \"blind-solve: skipped — no .plans/active/*.md mentions a changed module ($(printf '%s '": (
+        'echo "blind-solve: skipped — no unambiguous .plans/active/*.md Affected files match"',
     ),
     "`Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence": (
         "Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.",
@@ -179,7 +196,7 @@ def _batch_gate_equivalents(skill: str) -> dict[str, tuple[str, ...]]:
     """Map the retired per-skill ``dev-batch-skill`` echo to the ``dev_batch_gate.py`` call that now writes it."""
     return {
         f'echo "{skill}" > "${{TMPDIR:-/tmp}}/dev-batch-skill-${{CSID}}"  # batch-mode.md\'s own fences read this': (
-            f'bin/dev_batch_gate.py" {skill}; then python "${{CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}}/bin/dev_load_shared.py" batch-mode.md; fi',
+            f'bin/dev_batch_gate.py" {skill}; then python "$PLUGIN_ROOT/bin/dev_load_shared.py" batch-mode.md; fi',
             "writes dev-batch-skill",
         ),
     }
@@ -188,7 +205,7 @@ def _batch_gate_equivalents(skill: str) -> dict[str, tuple[str, ...]]:
 def _keep_sentinel_equivalents(skill: str) -> dict[str, tuple[str, ...]]:
     """Map the plain contract-write call to the ``--keep-sentinel`` form that now carries the user's ``--keep`` text."""
     return {
-        f'python "${{CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}}/bin/write_skill_contract.py" "develop:{skill}"': (
+        f'python "$PLUGIN_ROOT/bin/write_skill_contract.py" "develop:{skill}"': (
             f'bin/write_skill_contract.py" --keep-sentinel dev-{skill}-keep-items "develop:{skill}"',
         ),
     }
@@ -211,28 +228,56 @@ _VISIBLE_EQUIVALENTS = {
     # The plan lifecycle now makes separate feasibility opt-in and routes unknown causes to debug before planning.
     # Preserve the plan artifact and terminal summary for implementation work, plus the explicit diagnostic handoff.
     "README.md": {
+        "Plan -> .plans/active/plan_extract-data-loading-dataloader.md": (
+            "Plan -> .plans/active/plan-extract-data-loading-dataloader-<ts>.md",
+        ),
+        "Plan -> .plans/active/plan_<slug>.md": ("Plan -> .plans/active/plan-<slug>-<ts>.md",),
+        '/develop:refactor "extract data loading into a dedicated DataLoader class" --plan': (
+            '/develop:refactor <target> "extract data loading into a dedicated DataLoader class" --plan',
+        ),
+        '/develop:refactor "extract request parsing into a dedicated middleware layer" --plan': (
+            '/develop:refactor src/gateway/ "extract request parsing into a dedicated middleware layer" --plan',
+        ),
+        "| `.developments/<timestamp>/`   | Checkpoint files for resumable feature/fix/refactor sessions": (
+            "| `.developments/<timestamp>/` | Feature/fix/refactor checkpoint evidence;",
+        ),
+        "**Checkpoint and resume**: creates `.developments/<timestamp>/checkpoint.md` after each step.": (
+            "**Checkpoint**: creates `.developments/<timestamp>/checkpoint.md` after each step as run evidence.",
+            "A new invocation starts fresh; it does not resume from an untagged checkpoint.",
+        ),
+        "4. **Hand off to fix**: writes diagnosis file to `.plans/active/debug_<slug>.md`, emits `->": (
+            "writes diagnosis file to `.plans/active/debug_<slug>.md`, adding `-2`, `-3`, etc.",
+            "emits `-> /develop:fix --diagnosis <path>`",
+            "fix still verifies the regression gate",
+        ),
+        "`feature`, `fix`, `refactor` write checkpoint file to `.developments/<timestamp>/checkpoint.md`": (
+            "`feature`, `fix`, `refactor` write `.developments/<timestamp>/checkpoint.md` after each major step as run evidence.",
+            "A new invocation starts fresh; stale untagged checkpoints do not trigger a resume offer.",
+        ),
         "`plan` reads codebase, classifies task, identifies affected files, estimates complexity, runs": (
             "`plan` reads the codebase, classifies the task, identifies affected files and estimates complexity.",
             "For feature, fix and refactor work it writes a structured plan to `.plans/active/`",
             "challenges its feasibility unless `--no-challenge` is passed.",
             "A separate feasibility review runs only on explicit request.",
             "Unknown root cause routes to `/develop:debug` first without an implementation plan.",
-            "Plan -> .plans/active/plan_extract-data-loading-dataloader.md",
+            "Plan -> .plans/active/plan-extract-data-loading-dataloader-<ts>.md",
             "Classification : refactor",
             "Complexity     : medium",
             "Affected files : 4 files across 2 modules",
             "Key risks      : Public API changes in dataset.py — 3 callers",
             "Agent review   : plan challenge completed; separate feasibility review not requested",
-            '-> /develop:refactor "extract data loading into a dedicated DataLoader class" when ready',
+            '-> /develop:refactor <target> "extract data loading into a dedicated DataLoader class" --plan .plans/active/plan-extract-data-loading-dataloader-<ts>.md when ready',
         ),
         "2. Writes structured plan to `.plans/active/<slug>.md`": (
-            "Otherwise write a structured plan to `.plans/active/<slug>.md`.",
-            "Unknown root cause: after the depth checkpoint and any applicable breaking-change gate, recommend `/develop:debug <goal>`",
+            "Otherwise write a structured plan to `.plans/active/plan-<slug>-<ts>.md`.",
+            "Unknown root cause: recommend `/develop:debug <goal>`",
             "stop without writing or challenging an implementation plan.",
-            "At the depth cap, explicitly choosing **Write the plan anyway** continues with the unconfirmed cause recorded as a risk",
-            "Write a brief summary and the appropriate downstream handoff.",
-            "Plan -> .plans/active/plan_<slug>.md",
-            '-> /develop:feature|fix|refactor "<goal>" when ready',
+            "no automatic plan/debug loop or depth counter runs",
+            "Save the brief before capturing the revision for challenge.",
+            "Print the brief summary and the appropriate downstream handoff",
+            "Plan -> .plans/active/plan-<slug>-<ts>.md",
+            '-> /develop:feature|fix "<goal>" --plan <PLAN_FILE> when ready',
+            '-> /develop:refactor <target> "<goal>" --plan <PLAN_FILE> when ready',
         ),
     },
     "skills/review/SKILL.md": {
@@ -241,6 +286,11 @@ _VISIBLE_EQUIVALENTS = {
         **_keep_sentinel_equivalents("review"),
     },
     "skills/debug/SKILL.md": {
+        'echo "<!-- reused by /develop:fix Step 3 when index_scanned_at still matches the live index and': (
+            "reused by /develop:fix Step 3 only for a bare module qname",
+            "all changed files in that module",
+            "matching live index_scanned_at and stale != true",
+        ),
         **_DEBUG_VISIBLE_EQUIVALENTS,
         **_SHARED_INIT_EQUIVALENTS,
         **_keep_sentinel_equivalents("debug"),
@@ -295,6 +345,9 @@ _VISIBLE_EQUIVALENTS = {
         ),
     },
     "skills/fix/SKILL.md": {
+        'DIAG_FILE=$(python "$PLUGIN_ROOT/bin/diagnosis_parse.py" "$ARGUMENTS"': (
+            'DIAG_FILE=$(python "$PLUGIN_ROOT/bin/diagnosis_parse.py" "$ARGUMENT_BLOB"',
+        ),
         **_IMPLEMENT_BLOCKER_EQUIVALENTS,
         "DERIVED_FN=$(grep -oE '[A-Za-z_][A-Za-z0-9_.]*::[A-Za-z_][A-Za-z0-9_]*' \"$DEV_DIR/checkpoint.md\"": (
             "DERIVED_FN=$(grep -E '^suspect: [A-Za-z_][A-Za-z0-9_.]*::[A-Za-z_][A-Za-z0-9_]*$' \"$DEV_DIR/checkpoint.md\"",
@@ -322,7 +375,7 @@ _VISIBLE_EQUIVALENTS = {
             'echo "! Cannot run reproduction: TEST_PATH unresolved — resolve TEST_PATH from',
         ),
         'eval "$PYTEST_CMD --tb=long \\"\\$TEST_PATH\\" -v" >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1;': (
-            'python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=long "$TEST_PATH" -v >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1 PYTEST_EXIT=$?',
+            'python "$PLUGIN_ROOT/bin/dev_run_tests.py" pytest -- --tb=long "$TEST_PATH" -v >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1 PYTEST_EXIT=$?',
         ),
         **_run_dir_persist_equivalents("fix"),
         **_FIX_GATE_EQUIVALENTS,
@@ -330,8 +383,11 @@ _VISIBLE_EQUIVALENTS = {
         **_keep_sentinel_equivalents("fix"),
     },
     "skills/refactor/SKILL.md": {
+        "AFFECTED_MODULES=$(echo \"$REFACTOR_FILES\" | sed 's|^\\./||;s|^src/||;s|\\.py$||;s|/|.|g' | grep . ||": (
+            'bin/build_codemap_batch.py" "$_BATCH_REQ" --files "$REFACTOR_FILES" --repository "$_ROOT" --queries rdeps',
+        ),
         '[ -f "$_DEV_SHARED/foundry--quality-stack.md" ] || echo "⚠ foundry--quality-stack.md missing from': (
-            'bin/dev_load_shared.py" foundry--quality-stack.md',
+            'bin/dev_load_shared.py" --qs-dir foundry--quality-stack.md',
             "absence means a broken install — stop when Step 5's shared loader fails visibly",
             "Missing file → stop the skill",
         ),

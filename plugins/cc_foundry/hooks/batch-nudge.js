@@ -52,11 +52,31 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const crypto = require("crypto");
 
 const NUDGE_THRESHOLD = 4; // consecutive single-call read-only batches before nudging
 
 function getSentinelDir() {
-  return process.platform === "win32" ? os.tmpdir() : "/tmp";
+  const user =
+    typeof process.getuid === "function"
+      ? process.getuid()
+      : crypto.createHash("sha256").update(os.userInfo().username).digest("hex");
+  const dir = path.join(process.env.TMPDIR || os.tmpdir(), `claude-state-user-${user}`);
+  privateDirectory(dir);
+  return dir;
+}
+
+/** Refuse linked or foreign directories and keep owned state private. */
+function privateDirectory(dir) {
+  try {
+    fs.mkdirSync(dir, { mode: 0o700 });
+  } catch (err) {
+    if (err.code !== "EEXIST") throw err;
+  }
+  const stat = fs.lstatSync(dir);
+  if (!stat.isDirectory() || (typeof process.getuid === "function" && stat.uid !== process.getuid()))
+    throw new Error("unsafe state directory");
+  if (process.platform !== "win32") fs.chmodSync(dir, 0o700);
 }
 
 const sanitize = (s) => String(s).replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -93,14 +113,17 @@ process.stdin.on("data", (d) => (raw += d));
 process.stdin.on("end", () => {
   try {
     const { hook_event_name, session_id, agent_id, tool_calls } = JSON.parse(raw);
-    const tmpDir = path.join(getSentinelDir(), `claude-state-${sanitize(session_id || "default")}`, "batch");
+    if (typeof session_id !== "string" || !/^[a-zA-Z0-9_-]+$/.test(session_id)) process.exit(0);
+    const sessionDir = path.join(getSentinelDir(), `claude-state-${session_id}`);
+    privateDirectory(sessionDir);
+    const tmpDir = path.join(sessionDir, "batch");
+    privateDirectory(tmpDir);
     const streakFile = path.join(tmpDir, agent_id ? `agent-${sanitize(agent_id)}.json` : "main.json");
 
     const writeStreak = (count) => {
-      const tmp = `${streakFile}.${process.pid}.tmp`;
+      const tmp = `${streakFile}.${crypto.randomBytes(16).toString("hex")}.tmp`;
       try {
-        fs.mkdirSync(tmpDir, { recursive: true });
-        fs.writeFileSync(tmp, JSON.stringify({ count }));
+        fs.writeFileSync(tmp, JSON.stringify({ count }), { flag: "wx", mode: 0o600 });
         fs.renameSync(tmp, streakFile);
       } catch (_) {
         try {
@@ -138,7 +161,15 @@ process.stdin.on("end", () => {
 
     let streak = 0;
     try {
-      streak = JSON.parse(fs.readFileSync(streakFile, "utf8")).count || 0;
+      const stat = fs.lstatSync(streakFile);
+      if (!stat.isFile() || stat.nlink !== 1 || (typeof process.getuid === "function" && stat.uid !== process.getuid()))
+        throw new Error("unsafe streak file");
+      const fd = fs.openSync(streakFile, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+      try {
+        streak = JSON.parse(fs.readFileSync(fd, "utf8")).count || 0;
+      } finally {
+        fs.closeSync(fd);
+      }
     } catch (_) {}
     streak += 1;
 

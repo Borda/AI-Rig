@@ -86,14 +86,20 @@ def _merge_block() -> str:
 def _run_block(clone: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     """Execute the merge block on the PR branch; by default the skill's ref variables are bound in the environment."""
     assert _BASH is not None
-    env = env or {**_ENV, "BASE_REF": "main", "HEAD_REF": "feature", "FORK_REMOTE": "origin"}
+    env = env or {
+        **_ENV,
+        "BASE_REF": "main",
+        "HEAD_REF": "feature",
+        "REMOTE_HEAD_REF": "feature",
+        "FORK_REMOTE": "origin",
+    }
     return subprocess.run([_BASH, "-c", _merge_block()], cwd=clone, env=env, capture_output=True, text=True)
 
 
 def _fresh_shell_env(tmp_path: Path, refs: dict[str, str]) -> dict[str, str]:
     """Build a fresh-shell environment: no bound ref variables, Step 4 sentinels written under TMPDIR."""
     session = "target-update-fresh-shell"
-    for name, value in refs.items():
+    for name, value in ({"remote-head-ref": refs.get("head-ref", "")} | refs).items():
         (tmp_path / f"resolve-{name}-{session}").write_text(f"{value}\n", encoding="utf-8", newline="\n")
     unbound = {key: value for key, value in _ENV.items() if key not in {"BASE_REF", "HEAD_REF", "FORK_REMOTE"}}
     return {**unbound, "CLAUDE_CODE_SESSION_ID": session, "TMPDIR": str(tmp_path)}

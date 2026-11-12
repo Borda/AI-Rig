@@ -7,7 +7,6 @@ Fix issues in `<file path>`. Listed fixes only — no other changes.
 Fix type reference:
 
 - Broken cross-reference "foo" → replace with correct name (verify exists on disk)
-- Inventory drift → update line to match disk state exactly
 - Hardcoded user path (`/Users/<name>/…`, `/home/<name>/…`) → `~/…` in prose and unquoted shell, `$HOME/…` inside double quotes
 - Missing Confidence block → add `End your response with a ## Confidence block per CLAUDE.md output standards.` before closing `</workflow>` tag
 - Broken bash block → fix syntax per description (add missing opening fence, fix 4-backtick closer, unescape angle brackets)

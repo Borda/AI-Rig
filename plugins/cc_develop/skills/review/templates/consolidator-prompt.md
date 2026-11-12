@@ -2,7 +2,7 @@
 
 **Reviewer attribution (additive):** Preserve the aggregate prose summary, existing metadata fields, overall verdict, confidence and detailed sections.
 
-- Add `Reviewers:` immediately after `Agents:`, listing actual readable role names and their scoped rating, for example `Software engineer [3], QA specialist [2], Documentation reviewer [1].`
+- Add `Reviewers:` immediately after `Readiness:`, preserving template order `Agents:`, `Review contract:`, `Rating scale:`, `Readiness:`, `Reviewers:`, `CI:`. List actual readable role names and their scoped rating, for example `Software engineer [3], QA specialist [2], Documentation reviewer [1].`
 - Use square brackets for each score: `Role [rating]`; a null rating renders as `Role [no source judgment]`.
 - Ratings: 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient, but a good initiative, 5 Block (source-5-v1); null means no source judgment, never rejection.
 - Use each reviewer's explicit source-5-v1 rating and rationale. Completed undecidable output has null judgment/rating with blocked readiness and inspected coverage; missing output remains a distinct coverage obligation in review-validation.json.
@@ -42,7 +42,7 @@ The parent supplies these resolved literal input bindings in the compact Agent p
 - `$RUN_DIR/cross-validation.md` contains `Cross-Validation: SKIPPED`: prepend `Cross-validation: skipped` to the YAML header and executive summary. Required validation remains incomplete; the note never authorizes unconditional approval or unvalidated findings.
 - Precision gate: include only findings with a concrete actionable location (function, line range, or variable name).
 - Finding density: modules under 100 lines → aim ≤10 total findings. Rank by impact: blocking > critical > high > medium > low.
-- Root-cause merge: candidates sharing one root cause and one fix (e.g. a missing cleanup step that surfaces as both a wrong count and a capacity leak) → the report shows one finding that lists every symptom `file:line`; split only when the fixes differ. The surviving candidate is the highest-severity one (ties → first in report order). Each merged CONFIRMED candidate keeps its own `findings.jsonl` row, placed right after the survivor's row, carrying `merged_into: <surviving row's candidate_id>` with its own validated `severity` and `section`; it keeps its own `full_text` (where the row schema has one) as the symptom bullet the surviving finding lists. The surviving row has no `merged_into`. Resolve's surviving item takes the group's highest severity and becomes `[report][req]` when any member alone would be; an annotated GitHub item keeps its existing `type`. Report and envelope finding counts exclude `merged_into` rows — merging deduplicates the report, never discards a confirmed candidate. Consumers: `/oss:resolve` (requires `oss` plugin) folds `merged_into` rows into the survivor's action item; a Prior resolution ledger, when the prompt carries one, matches a `merged_into` row through its survivor.
+- Root-cause merge: candidates sharing one root cause and one fix (e.g. a missing cleanup step that surfaces as both a wrong count and a capacity leak) → the report shows one finding that lists every symptom `file:line`; split only when the fixes differ. The surviving candidate is the highest-severity one (ties → first in report order). Each merged CONFIRMED candidate keeps its own `findings.jsonl` row, placed right after the survivor's row, carrying `merged_into: <surviving row's candidate_id>` with its own validated `severity` and `section`; it keeps its own `full_text` (where the row schema has one) as the symptom bullet the surviving finding lists. The surviving row has no `merged_into`. Report and envelope finding counts exclude `merged_into` rows — merging deduplicates the report, never discards a confirmed candidate.
 - Every finding carries an explicit inline severity: `[cosmetic]`, `[low]`, `[medium]`, `[high]`, `[critical]`. Put cosmetic findings in `### Cosmetic / Style`.
 
 ## Challenger and design comparison
@@ -60,13 +60,13 @@ Never drop challenger candidates from validation. Publish only parent-CONFIRMED 
 When `blind-solve.md` exists:
 
 - Compare its blueprint against the diff and other agents' findings.
-- Add `### Design Divergence`, listing differences from the PR's approach ranked by impact.
+- Add `### Design Divergence`, listing differences from the change's approach ranked by impact.
 - For each divergence distinguish a genuine miss from context the blind-solve agent may have lacked: prior decision, incident, constraint.
 - Cross-reference divergences already covered by another finding; do not duplicate them.
 
 No `blind-solve.md` (skipped or FIX/REFACTOR/CHORE): omit the section entirely, with no placeholder note.
 
-Intended behavior (always): the `Summary:` field opens with `Intended behavior: <verdict> — <basis>` copied from the first line of `sw-engineer.md`. Verdict `no` or `partly` → its `intent:` findings stay at least HIGH. Line missing (agent skipped or failed) → `undetermined` plus a Review Confidence note naming the gap. Never infer `yes` from a plan or description.
+Intended behavior (always): the `Summary:` field opens with `Intended behavior: <verdict>` from the first line of `sw-engineer.md`; copy the full `Intended behavior: <verdict> — <basis>` into the body's opening aggregate review summary. Verdict `no` or `partly` → only `intent: contradicts` and `intent: undeclared/unimplemented behavior` findings stay at least HIGH; `intent: outside project scope` remains MEDIUM unless independently evidenced consequences justify higher severity. Line missing (agent skipped or failed) → `undetermined` plus a Review Confidence note naming the gap. Never infer `yes` from a plan or description.
 
 ## Report header
 
@@ -77,18 +77,18 @@ The file MUST begin with the template's `---`-delimited YAML metadata block: ope
 | `develop-review:` | Target: file / dir / working-tree diff. |
 | `Title:` | `develop-review — <target>`; required by the report-delivery hook. |
 | `Date:` | `<DATE>` |
-| `Commit SHA:` | Literal `<REVIEWED_COMMIT_SHA>` plus `<REVIEWED_COMMIT_KIND>`. A path/diff review identifies the working-tree base, including dirty changes; never describe it as clean committed source. An unavailable identity remains explicit. |
+| `Commit SHA:` | Literal `<REVIEWED_COMMIT_SHA>` plus `<REVIEWED_COMMIT_KIND>`. A path/diff review identifies the working-tree base, including dirty changes; an implicit `--worktree` diff uses the frozen `committed worktree source; reviewed range HEAD~1..HEAD` label. Never relabel a working-tree target as clean committed source. An unavailable identity remains explicit. |
 | `Change Type:` | Classify change INTENT from the diff; never file-count heuristics or commit-message prefix. Fix and feat can touch the same files. |
 | `Scope:` | Comma-separated key changed py files; cap ~5. |
 | `Focus:` | Scope-label em-dash one-line description of what the change does, from the diff, not commit message. |
 | `Agents:` | Comma-separated agent names with output in `$RUN_DIR/`. |
-| `Reviewers:` | Actual scoped assessments per the additive attribution rules above. |
-| `CI:` | Fixed `N/A (develop:review is read-only — runs no tests)`; never fabricate pass/fail. |
 | `Review contract:` / `Rating scale:` | `1` / `source-5-v1` |
 | `Readiness:` | `complete`, `blocked`, or `incomplete`, matching the envelope. |
+| `Reviewers:` | Actual scoped assessments per the additive attribution rules above. |
+| `CI:` | Actual CI evidence supplied by the parent, otherwise `N/A (no CI evidence supplied)`. Identify static checks and any authorized parent validation separately in the body; never fabricate a CI result or treat static analysis as a test run. |
 | `Gate:` | `REVIEW_V1_PASS`, `REVIEW_V1_BLOCK`, or an evidenced `REVIEW_V1_REJECT_<GROUND> @<sha>`. |
 | `Outcome:` | APPROVE / MINOR_EDITS / NEEDS_WORK / INSUFFICIENT_BUT_PROMISING / REJECT / literal null. |
-| `Summary:` | Opens `Intended behavior: <yes/partly/no/undetermined>`, then 1–2 sentence overview. |
+| `Summary:` | One line, at most 100 characters: `Intended behavior: <yes/partly/no/undetermined>` plus a brief overview when space permits; full basis and 1–2 sentence overview belong in the body. |
 | `Confidence:` | Aggregate score — key gaps. |
 | `Next steps:` | Comma-separated blockers + high-priority actions, max 5. |
 | `Path:` | `→ <REPORT_DIR_LITERAL>/review-report.md` |
@@ -98,12 +98,12 @@ The file MUST begin with the template's `---`-delimited YAML metadata block: ope
 ## Codex and missing packages
 
 - For `codex.md`, put unique findings under `### Codex Co-Review`. Same file:line → keep the agent version and mark `also flagged by Codex`. Codex has fixed confidence 0.75.
-- develop:review executes no code. A claim blocked by a Python package absent or installed outside the declared spec stays a Confidence gap — state `not run: develop:review is read-only`, the package, and the declaring spec `file:line`; never close it by installing anything, and name the targeted test run that would close it under `Next steps`.
+- Review agents do not execute reviewed code, examples or tests. They may run installed static analyzers and dependency audits without fixes, with caches and temporary output under `$RUN_DIR`, within existing authorization. A claim blocked by a Python package absent or installed outside the declared spec stays a Confidence gap — state the unavailable check, package and declaring spec `file:line`; never close it by installing anything, and name the targeted check that would close it under `Next steps`.
 - Exhaust allowed static checks. A child inspection-only restriction does not prove the parent lacks an authorized runtime check; record the actual authorization/capability boundary. Feasible undone parent work means incomplete.
 
 ## Publication validation
 
-Preserve a supported source judgment when unavailable tooling, runtime evidence or independent verification blocks readiness. Such limits do not alone force source_outcome/source_rating to null; null requires source evidence insufficient to judge. Record missing independence as an open validation obligation, never a confirmed finding. Keep missing reviewer coverage, feasible undone checks, actual failed gates and required checks visible; complete feasible authorized work before delivery, and never claim unconditional approval or merge readiness while blocked/incomplete. The develop review remains read-only and runs no tests.
+Preserve a supported source judgment when unavailable tooling, runtime evidence or independent verification blocks readiness. Such limits do not alone force source_outcome/source_rating to null; null requires source evidence insufficient to judge. Record missing independence as an open validation obligation, never a confirmed finding. Keep missing reviewer coverage, feasible undone checks, actual failed gates and required checks visible; complete feasible authorized work before delivery, and never claim unconditional approval or merge readiness while blocked/incomplete. The develop review remains read-only; report actual parent validation evidence separately from child static checks and unavailable runtime checks.
 
 1. Follow the loaded candidate-validation protocol. Do not infer confirmation from confidence or severity. A claim you add or materially strengthen beyond the parent's `cross-validation.md` is not published as confirmed: record it in `review-validation.json` as a candidate with null disposition and one `open_concerns` entry (owner: parent, next_check: validate the claim), keep it out of `findings.jsonl`, and list its candidate IDs in the envelope's `new_claims` array (empty when none) so the parent validates them before delivery.
 2. Write `<REPORT_DIR_LITERAL>/review-validation.json`: contract_version=1, rating_scale=source-5-v1, aggregate source_outcome/source_rating/readiness/readiness_reason, returned/missing assessments, all candidates, and durable open_concerns. Aggregate readiness=complete only when every assessment is complete and open_concerns is empty. A missing required role (presence=missing) has readiness=incomplete; it, like any null candidate, makes the aggregate incomplete, overriding blocked, also under a null aggregate outcome. Header fields mirror the envelope.

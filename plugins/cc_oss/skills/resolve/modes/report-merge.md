@@ -28,6 +28,7 @@ Use the report already resolved by **Report source resolution** (Step 1) — `IF
 Step 1 — choose the findings file and list same-file pairs that did not match exactly:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
@@ -36,12 +37,13 @@ IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null |
 IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_DEGRADED=""
 # the script picks findings.jsonl beside the report (else mints the parsed $IMPL_DIR copy) and persists its path;
 # --intake-accepted admits only the report accepted at Gap triage, compared by file identity (relative vs absolute spelling)
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --report-file "$REPORT_FILE" --impl-dir "$IMPL_DIR" --persist-findings "${TMPDIR:-/tmp}/resolve-findings-file-${CSID}" --intake-accepted "$INTAKE_DEGRADED" --candidates  # timeout: 5000
+python "$PLUGIN_ROOT/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --report-file "$REPORT_FILE" --impl-dir "$IMPL_DIR" --persist-findings "${TMPDIR:-/tmp}/resolve-findings-file-${CSID}" --intake-accepted "$INTAKE_DEGRADED" --candidates  # timeout: 5000
 ```
 
 Step 2 — for each printed pair, decide whether the finding and the GitHub item describe the same problem (similar description, not merely the same file). Write the accepted pairs with the Write tool to `$IMPL_DIR/report-links.jsonl`, one `{"finding_id": "<id>", "item_id": <N>}` per line; write an empty file when none match. Then merge:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 IFS= read -r FINDINGS < "${TMPDIR:-/tmp}/resolve-findings-file-${CSID}" 2>/dev/null || FINDINGS=""
@@ -49,7 +51,7 @@ IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/
 IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_DEGRADED=""
 [ -f "$IMPL_DIR/report-links.jsonl" ] || { echo "! BLOCKED — write report-links.jsonl (empty when no semantic match) before merging"; exit 1; }
 [ -n "$INTAKE_DEGRADED" ] && [ "$INTAKE_DEGRADED" -ef "$REPORT_FILE" ] && ACCEPT_DEGRADED="--accept-degraded" || ACCEPT_DEGRADED=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --findings "$FINDINGS" --links "$IMPL_DIR/report-links.jsonl" ${ACCEPT_DEGRADED:+"$ACCEPT_DEGRADED"}  # timeout: 5000
+python "$PLUGIN_ROOT/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --findings "$FINDINGS" --links "$IMPL_DIR/report-links.jsonl" ${ACCEPT_DEGRADED:+"$ACCEPT_DEGRADED"}  # timeout: 5000
 ```
 
 - The printed summary's `deduped_exact + deduped_semantic` is the `<M>` and `appended` is the `<K>` of the merge summary line below. These count survivor and standalone items, not folded rows: `findings = already_merged + <M> + <K> + folded`. `fold_orphans` rows remain included in `<M>` or `<K>`, never in `folded`.

@@ -21,12 +21,13 @@ TaskCreate(
 Publish the run state the lint/QA gate (12c) and the 12a watch file reload in their own shells — this entry point skips Steps 3–4, which write it for PR and report runs:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IMPL_DIR=$(mktemp -d)  # timeout: 3000
 printf '%s\n' "$IMPL_DIR" > "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}"
 : > "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}"  # no PR branch: Step 9.0 takes its n/a path
 echo targeted > "${TMPDIR:-/tmp}/resolve-change-scope-${CSID}"  # no per-item effort classification here
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_pr_refs.py" --local-base  # timeout: 15000
+python "$PLUGIN_ROOT/bin/resolve_pr_refs.py" --local-base  # timeout: 15000
 ```
 
 Exit 1 → surface the printed message and stop before 12a: the gate cannot run without a base. `$IMPL_DIR` is the directory 12a's `agent-watch-comment.tsv` lives in.
@@ -47,7 +48,7 @@ Print `⚠ bridge@borda-ai-rig is absent or disabled — falling back to <agent>
 
 > **Agent waits** — SKILL.md §Agent wait discipline: arm `$IMPL_DIR/agent-watch-comment.tsv` (one row per spawned agent) in each batch's spawn response and resume on completion notifications; never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop.
 
-**BATCH_SIZE=3** — dispatch at most 3 `Agent()` calls per response turn; wait for all to return before next batch. More comment items than that (multi-comment dispatch) → process first 3, wait, continue with next 3. Prevents rate-limit hits and unbounded parallel spawn. Lowered from 5 on cost evidence: each spawn carries ~120,851 tok fixed overhead regardless of item size, so a wide batch of small comments pays far more in overhead than the work is worth — batching narrower costs wall-clock, not tokens.
+**BATCH_SIZE=3** — dispatch at most 3 `Agent()` calls per response turn; wait for all to return before next batch. More comment items than that (multi-comment dispatch) → process first 3, wait, continue with next 3. Prevents rate-limit hits and unbounded parallel spawn. Lowered from 5 on cost evidence: each spawn carries the fixed overhead in `agent-resolution.md` §Agent budget regardless of item size, so a wide batch of small comments pays far more in overhead than the work is worth — batching narrower costs wall-clock, not tokens.
 
 Two dispatch forms, not one call with a swappable name: bridge is a Skill, every fallback in Step 12 table is a subagent type — branch picks the tool, not just the target. These are Claude Code tool calls, not shell commands.
 
@@ -110,9 +111,10 @@ if REVIEW_PASS == 5 and ISSUES_FOUND > 0:
 If code changed, delegate to the gate (it reads `resolve-change-scope`, set to `targeted` at Step 12 entry, and `resolve-base-ref`):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
-cat "$_OSS_RESOLVE/modes/lint-qa-gate.md"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_RESOLVE/modes/lint-qa-gate.md"  # timeout: 5000
 ```
 
 Execute its steps (loaded above).

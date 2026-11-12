@@ -109,18 +109,21 @@ class TestIsSafeNodeId:
         "node_id",
         [
             "",
-            "tests/test_foo.py::test_bar; rm -rf /",
+            "tests/test_foo.py::test_bar;command",
             "tests/$(whoami).py::test_bar",
-            "tests/test_foo.py::test_bar | cat /etc/passwd",
+            "tests/test_foo.py::test_bar|command",
+            "tests/test_foo.py::test bar",
             "tests/test_foo.py::test_bar`id`",
             "tests/test_foo.py::test_bar\necho injected",
             "tests/test_foo.py::test_bar\t",
+            "tests/test_foo.py::test_bar\r",
+            "tests/test_foo.py::test_bar\x00",
             "tests/test_foo.py::test_bar<file",
             "tests/test_foo.py::test_bar>file",
-            "tests/test_foo.py::test_bar\\path",
             'tests/test_foo.py::test_bar"quoted"',
             "tests/test_foo.py::test_bar'quoted'",
-            "tests/test_foo.py::test_bar(call)",
+            "tests/test_foo.py::test_bar(call",
+            "tests/test_foo.py::test_bar)call",
             "tests/test_foo.py::test_bar&background",
             "tests/test_foo.py::test_bar$VAR",
             "-pplugin::test_bar",
@@ -128,13 +131,32 @@ class TestIsSafeNodeId:
             "@args.txt::test_bar",
         ],
     )
-    def test_unsafe_ids_rejected(self, node_id: str) -> None:
+    @pytest.mark.parametrize("backslash_is_separator", [False, True])
+    def test_unsafe_ids_rejected(
+        self, monkeypatch: pytest.MonkeyPatch, node_id: str, backslash_is_separator: bool
+    ) -> None:
         """Node IDs containing shell metacharacters, option-shaped or args-from-file IDs, or empty string are rejected.
 
         A leading ``-`` (``-pplugin`` imports a module from the working directory) or ``@`` (recursive args-from-file)
         contains no metacharacter yet still changes what pytest does with the argument.
         """
+        monkeypatch.setattr(find_polluter, "_BACKSLASH_IS_SEPARATOR", backslash_is_separator, raising=False)
         assert find_polluter._is_safe_node_id(node_id) is False
+
+    @pytest.mark.parametrize(
+        ("node_id", "backslash_is_separator", "expected"),
+        [
+            pytest.param(r"C:\project\test_case.py::test_case", True, True, id="windows-absolute"),
+            pytest.param(r"tests\test_case.py::test_case", True, True, id="windows-relative"),
+            pytest.param(r"tests\test_case.py::test_case", False, False, id="posix-backslash"),
+        ],
+    )
+    def test_backslash_follows_native_separator_contract(
+        self, monkeypatch: pytest.MonkeyPatch, node_id: str, backslash_is_separator: bool, expected: bool
+    ) -> None:
+        """Native Windows separators pass validation while POSIX backslashes remain rejected."""
+        monkeypatch.setattr(find_polluter, "_BACKSLASH_IS_SEPARATOR", backslash_is_separator, raising=False)
+        assert find_polluter._is_safe_node_id(node_id) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +252,18 @@ class TestPassesIsolation:
 
 class TestCollectCandidates:
     """collect_candidates: filtering rules and unsafe-node-ID drop."""
+
+    @pytest.mark.parametrize(
+        ("backslash_is_separator", "expected"),
+        [pytest.param(True, [r"tests\test_case.py::test_case"], id="windows"), pytest.param(False, [], id="posix")],
+    )
+    def test_native_separator_policy_applies_to_collection(
+        self, monkeypatch: pytest.MonkeyPatch, backslash_is_separator: bool, expected: list[str]
+    ) -> None:
+        """Collected Windows IDs survive filtering only where backslashes are native separators."""
+        monkeypatch.setattr(find_polluter, "_BACKSLASH_IS_SEPARATOR", backslash_is_separator)
+        _patch_run(monkeypatch, lambda *_args, **_kwargs: _FakeResult(stdout="tests\\test_case.py::test_case\n"))
+        assert find_polluter.collect_candidates("tests", "victim.py::test_case", ["pytest"]) == expected
 
     @pytest.mark.parametrize(
         ("stdout", "failing", "expected"),

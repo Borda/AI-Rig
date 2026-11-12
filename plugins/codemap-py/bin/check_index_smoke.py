@@ -29,10 +29,15 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+_BIN_DIR = str(Path(__file__).resolve().parent)
+if _BIN_DIR not in sys.path:
+    sys.path.insert(0, _BIN_DIR)
+
+from smoke_test_index import _validate_index_path as _safe_index_path  # noqa: E402
 
 #: Index age in hours above which the smoke check flags the index as stale; default of ``--max-age-hours``.
 DEFAULT_MAX_AGE_HOURS = 24
@@ -280,9 +285,8 @@ def run_smoke(
 def _validate_index_path(index_path: str) -> tuple[bool, str]:
     """Validate that ``index_path`` resolves within allowed roots (CWE-22).
 
-    Allowed roots are the user home directory and the current working directory.
-    An index path resolving outside both (e.g. ``/etc/passwd``) is rejected before
-    it can be forwarded to the smoke-test subprocess.
+    Allowed roots and temporary-file ownership checks come from ``smoke_test_index``.
+    Invalid paths are rejected before they can be forwarded to the smoke-test subprocess.
 
     Args:
         index_path: The raw ``--index-path`` string from the caller.
@@ -291,25 +295,15 @@ def _validate_index_path(index_path: str) -> tuple[bool, str]:
         ``(True, "")`` when the path is within an allowed root; ``(False, reason)`` otherwise.
 
     Examples:
-        >>> ok, _ = _validate_index_path(os.path.join(os.path.expanduser("~"), "foo.json"))
-        >>> ok
-        True
         >>> ok, reason = _validate_index_path("/etc/passwd")
         >>> ok
         False
         >>> "outside allowed roots" in reason
         True
     """
-    resolved = Path(os.path.abspath(index_path)).resolve()
-    allowed_roots = [
-        Path(os.path.expanduser("~")).resolve(),
-        Path.cwd().resolve(),
-        Path(tempfile.gettempdir()).resolve(),  # pytest / CI temp dirs
-        Path("/tmp").resolve(),  # macOS: /tmp → /private/tmp  # noqa: S108
-    ]
-    if any(resolved.is_relative_to(root) for root in allowed_roots):
+    if _safe_index_path(index_path) is not None:
         return True, ""
-    return False, f"--index-path resolves outside allowed roots (home dir, cwd, tmp): {resolved}"
+    return False, "--index-path not found, not owned, or outside allowed roots (cwd, ~/.claude, tempdir)"
 
 
 def main(argv: list[str] | None = None) -> int:

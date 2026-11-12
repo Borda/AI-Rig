@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from _develop_shell_plugin import render_shell
 from _develop_text import bash_blocks
 
 _PLUGIN = Path(__file__).resolve().parents[2]
@@ -57,7 +58,11 @@ class _Recipe:
     def run(self) -> subprocess.CompletedProcess[str]:
         """Execute the preparation block in bash against the temp install."""
         return subprocess.run(
-            [_BASH, "-c", self.block], capture_output=True, encoding="utf-8", env=self.env, check=False
+            [_BASH, "-c", render_shell(self.block, Path(self.env["CLAUDE_PLUGIN_ROOT"]), "develop")],
+            capture_output=True,
+            encoding="utf-8",
+            env=self.env,
+            check=False,
         )
 
 

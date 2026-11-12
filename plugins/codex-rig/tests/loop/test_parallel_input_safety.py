@@ -41,7 +41,13 @@ def test_git_read_disables_command_hooks_and_diff_transforms(tmp_path: Path, bin
     """Prevent parent reads from invoking child-configured commands."""
     lifecycle = load_module("worktree_input_safety", SHARED / "parallel_worktrees.py")
     result = subprocess.CompletedProcess([], 0, stdout=b"" if binary else "")
-    with mock.patch.object(lifecycle.subprocess, "run", autospec=True, return_value=result) as run:
+    probe = subprocess.CompletedProcess([], 1, stdout=b"")
+
+    def fake_run(argv: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess:
+        # The executable-filter probe always captures bytes; only the requested read honors text mode.
+        return probe if "--get-regexp" in argv else result
+
+    with mock.patch.object(lifecycle.subprocess, "run", autospec=True, side_effect=fake_run) as run:
         reader = lifecycle._git_bytes if binary else lifecycle._git
         reader(tmp_path, "diff", "--binary", "HEAD", "--", "owned.txt")
     argv = run.call_args.args[0]

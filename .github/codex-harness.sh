@@ -99,14 +99,27 @@ done
 cat >"$TMP_BIN/git" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+# The collector prepends two hardening prefixes; admit each by exact tokens and forward it intact. Any other -c stays blocked.
+LEAD=()
+if [[ "\${1:-}" == -c && "\${2:-}" == core.fsmonitor=false ]]; then
+  LEAD+=("\$1" "\$2")
+  shift 2
+fi
+if [[ "\${1:-}" == -c && "\${2:-}" == core.hooksPath=/dev/null && "\${3:-}" == --no-pager ]]; then
+  LEAD+=("\$1" "\$2" "\$3")
+  shift 3
+fi
+real_git() {
+  exec "$REAL_GIT" \${LEAD[@]+"\${LEAD[@]}"} "\$@"
+}
 case "\${1:-}" in
   status|diff|ls-files|ls-tree|rev-parse|show|init|config|add|commit)
-    exec "$REAL_GIT" "\$@"
+    real_git "\$@"
     ;;
   remote)
     case "\${2:-}" in
       ""|get-url)
-        exec "$REAL_GIT" "\$@"
+        real_git "\$@"
         ;;
       *)
         echo "blocked by offline Codex harness: git \$*" >&2
@@ -117,7 +130,7 @@ case "\${1:-}" in
   -c)
     # The collector pins patch formatting without enabling arbitrary Git configuration.
     if [[ "\${2:-}" == core.quotePath=true && "\${3:-}" == diff ]]; then
-      exec "$REAL_GIT" "\$@"
+      real_git "\$@"
     fi
     echo "blocked by offline Codex harness: git \$*" >&2
     exit 125
@@ -125,11 +138,48 @@ case "\${1:-}" in
   -C)
     case "\${3:-}" in
       ls-files)
-        exec "$REAL_GIT" "\$@"
+        real_git "\$@"
+        ;;
+      # The collector's executable-filter scan: read-only, exact argument shapes.
+      config)
+        if [[ "\${4:-}" == --null && "\${5:-}" == --get-regexp && "\$#" -eq 6 ]]; then
+          real_git "\$@"
+        fi
+        echo "blocked by offline Codex harness: git \$*" >&2
+        exit 125
+        ;;
+      check-attr)
+        if [[ "\$#" -eq 6 && "\${4:-}" == --stdin && "\${5:-}" == -z && "\${6:-}" == filter ]] ||
+          [[ "\$#" -eq 7 && "\${4:-}" == --cached && "\${5:-}" == --stdin && "\${6:-}" == -z && "\${7:-}" == filter ]]; then
+          real_git "\$@"
+        fi
+        echo "blocked by offline Codex harness: git \$*" >&2
+        exit 125
+        ;;
+      rev-parse)
+        if [[ "\$#" -eq 6 && "\${4:-}" == --verify && "\${5:-}" == --quiet && "\${6:-}" == HEAD ]]; then
+          real_git "\$@"
+        fi
+        echo "blocked by offline Codex harness: git \$*" >&2
+        exit 125
+        ;;
+      ls-tree)
+        if [[ "\$#" -eq 7 && "\${4:-}" == -r && "\${5:-}" == --name-only && "\${6:-}" == -z && "\${7:-}" == HEAD ]]; then
+          real_git "\$@"
+        fi
+        echo "blocked by offline Codex harness: git \$*" >&2
+        exit 125
+        ;;
+      read-tree)
+        if [[ "\$#" -eq 4 && "\${4:-}" == HEAD ]]; then
+          real_git "\$@"
+        fi
+        echo "blocked by offline Codex harness: git \$*" >&2
+        exit 125
         ;;
       --literal-pathspecs)
         if [[ "\${4:-}" == rev-parse ]]; then
-          exec "$REAL_GIT" "\$@"
+          real_git "\$@"
         fi
         echo "blocked by offline Codex harness: git \$*" >&2
         exit 125
@@ -137,7 +187,7 @@ case "\${1:-}" in
       remote)
         case "\${4:-}" in
           add|get-url|"")
-            exec "$REAL_GIT" "\$@"
+            real_git "\$@"
             ;;
           *)
             echo "blocked by offline Codex harness: git \$*" >&2

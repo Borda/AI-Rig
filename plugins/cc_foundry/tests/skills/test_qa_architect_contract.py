@@ -9,7 +9,14 @@ _AGENTS = Path(__file__).resolve().parents[2] / "agents"
 
 def _section(agent: str, start: str, end: str) -> list[str]:
     """Return one section as lines so checks do not depend on prose wrapping."""
-    lines = (_AGENTS / f"{agent}.md").read_text(encoding="utf-8").splitlines()
+    source = (_AGENTS / f"{agent}.md").read_text(encoding="utf-8").splitlines()
+    lines = []
+    for line in source:
+        lines.append(line)
+        marker = f'cat "${{CLAUDE_PLUGIN_ROOT}}/references/{agent}/'
+        if marker in line:
+            relative = line.split('cat "${CLAUDE_PLUGIN_ROOT}/', 1)[1].split('"', 1)[0]
+            lines.extend((_AGENTS.parent / relative).read_text(encoding="utf-8").splitlines())
     first = next(index for index, line in enumerate(lines) if line.startswith(start))
     last = next(index for index in range(first + 1, len(lines)) if lines[index].startswith(end))
     return lines[first:last]

@@ -219,9 +219,10 @@ def _install_recorded_codemap(tmp_path: Path, wrapper_path: Path, recorded_contr
     ``installed_plugins.json`` points at the recorded (older) version.
     """
     plugin_path = wrapper_path.parents[2]
-    consumer_root = tmp_path / "consumer-plugin"
+    plugin_name = plugin_path.name.removeprefix("cc_")
+    consumer_root = tmp_path / ".claude/plugins/cache/borda-ai-rig" / plugin_name / "1.0.0"
     (consumer_root / "bin").mkdir(parents=True)
-    for helper in ("resolve_shared_path.py", "get_plugin_install_path.py"):
+    for helper in ("resolve_shared_path.py", "get_plugin_install_path.py", "resolve_plugin_root.py"):
         (consumer_root / "bin" / helper).write_bytes((plugin_path / "bin" / helper).read_bytes())
     (consumer_root / ".claude-plugin").mkdir()
     (consumer_root / ".claude-plugin" / "plugin.json").write_text(

@@ -129,7 +129,7 @@ def test_codemap_gate_asks_only_for_the_lazy_preference(skill: str) -> None:
     prepares the index itself, so a plain run never gains a new question.
     """
     gates = (_SHARED / "codemap-gates.md").read_text(encoding="utf-8")
-    assert 'cat "$_OSS_SHARED/codemap-gates.md"' in skill
+    assert 'python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_SHARED/codemap-gates.md"' in skill
     assert "Gate A prepares automatically by default" in gates
     assert "`LAZY_CODEMAP` is the explicit confirm-first preference" in gates
     assert "SCAN_NO_AUTOBUILD=1" in gates

@@ -281,6 +281,24 @@ def test_module_doctests_pass() -> None:
 class TestCli:
     """Main() through a real child process: exit codes and the eval-facing stdout."""
 
+    @pytest.mark.parametrize("blob", ["--flags=quick", "--out-file=chosen", "--keep-state=chosen", "--inlined"])
+    def test_delimited_blob_cannot_replace_parser_options(self, blob: str) -> None:
+        """An explicit option terminator preserves even a blob named like a parser option."""
+        result = _run_script("--flags", "reply", "--", blob)
+        assert result.returncode == 0
+        assignments = dict(token.split("=", 1) for token in shlex.split(result.stdout))
+        assert assignments == {"FLAG_REPLY": "false", "KEEP_ITEMS": "", "CLEAN_ARGS": blob}
+
+    def test_delimited_out_file_blob_cannot_redirect_state(self, state_session: Path) -> None:
+        """A user blob cannot write a chosen file through the parser's out-file option."""
+        victim = state_session / "victim"
+        victim.write_text("precious", encoding="utf-8")
+        blob = f"--out-file={victim}"
+        result = _run_script("--flags", "reply", "--keep-state", "safe", "--", blob)
+        assert result.returncode == 0
+        assert victim.read_text(encoding="utf-8") == "precious"
+        assert (state_session / "safe-clean-args-sess1").read_text(encoding="utf-8") == blob + "\n"
+
     @pytest.mark.parametrize(
         ("argv", "fragment"),
         [

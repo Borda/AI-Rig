@@ -24,14 +24,15 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import TracebackType
 
-from codemap_py.index_paths import canonical_root
+from codemap_py.index_paths import canonical_root, root_key
 from codemap_py.runtime_log import invocation_id, log_dir_for, resolve_runtime
 from codemap_py.runtime_log import plugin_version as runtime_plugin_version
 
@@ -125,6 +126,42 @@ def _rotate(path: Path) -> None:
         path.rename(path.parent / f"{path.name}.1")
 
 
+def _relative_argument(argument: str, root: Path) -> str:
+    """Keep local absolute argv paths relative and redact external cross-host coordinates."""
+    prefix, separator, value = argument.partition("=") if argument.startswith("-") else ("", "", argument)
+    if not (PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute()):
+        return argument
+    # A foreign host's absolute path must not be resolved through this host's filesystem.
+    if Path(value).is_absolute():
+        try:
+            value = Path(value).resolve().relative_to(root).as_posix()
+        except (OSError, ValueError):
+            value = "<external-path>"
+    else:
+        value = "<external-path>"
+    return prefix + separator + value
+
+
+def _append_record(path: Path, record: dict) -> None:
+    """Append a complete record only to an owned, identity-checked regular log file."""
+    previous = None
+    flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        previous = path.lstat()
+        if not stat.S_ISREG(previous.st_mode):
+            raise OSError("telemetry log is not a regular file") from None
+        descriptor = os.open(path, flags)
+    with os.fdopen(descriptor, "a", encoding="utf-8", newline="\n") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or (previous is not None and not os.path.samestat(previous, info)):
+            raise OSError("telemetry log changed while opening")
+        if hasattr(os, "getuid") and info.st_uid != os.getuid():
+            raise OSError("telemetry log is owned by another user")
+        stream.write(json.dumps(record, separators=(",", ":")) + "\n")
+
+
 def log_cli(
     cmd: str,
     argv: list[str],
@@ -153,6 +190,12 @@ def log_cli(
         scoped_log_dir = log_dir if log_dir is not None else log_dir_for(runtime, root=project_root)
         sid = session_id(project_root) if log_dir is not None else runtime_session(runtime, root=project_root)
         log_file = log_path_for(sid, scoped_log_dir)
+        if (
+            log_dir is None
+            and not os.environ.get("CODEMAP_LOG_DIR")
+            and not log_file.parent.resolve().is_relative_to(project_root)
+        ):
+            raise OSError("default telemetry directory escapes project root")
         log_file.parent.mkdir(parents=True, exist_ok=True)
         if log_file.exists() and log_file.stat().st_size > LOG_MAX_BYTES:
             _rotate(log_file)
@@ -163,8 +206,8 @@ def log_cli(
             "v": plugin_version(),
             "cmd": cmd,
             "session": sid,
-            "project": project_root.as_posix(),
-            "argv": argv,
+            "project": root_key(project_root),
+            "argv": [_relative_argument(argument, project_root) for argument in argv],
             "timing_ms": max(0, int((time.time() - t0) * 1000)),
             "result": result if isinstance(result, dict) else {},
             "exit_code": exit_code,
@@ -175,8 +218,7 @@ def log_cli(
         source = os.environ.get("CODEMAP_TELEMETRY_SOURCE")
         if source:
             record["source"] = source
-        with log_file.open("a") as fh:
-            fh.write(json.dumps(record, separators=(",", ":")) + "\n")
+        _append_record(log_file, record)
     except Exception:  # noqa: S110 - best-effort diagnostics; failure ignored
         pass
 

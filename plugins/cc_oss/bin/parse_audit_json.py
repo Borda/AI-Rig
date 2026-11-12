@@ -7,9 +7,11 @@ Usage:
 Reads a pip-audit JSON document from stdin and prints a single-line summary of
 the form ``N deps, M vulns``.  With ``--introduced a,b`` (dependency names whose
 declaration or lock entry changed inside the release range) the line gains the
-scope split ``| new: K [pkgs] | pre-existing: P [pkgs]``.  With ``--runtime-from pyproject.toml``
-only packages the built distribution ships (runtime dependencies, non-dev extras, and their transitive
-closure) are counted; vulnerable test/docs/dev-only packages are listed as ``not shipped``.
+scope split ``| new: K [pkgs] | pre-existing: P [pkgs]``.  Dependencies pip-audit could not audit (URL or
+local requirements) are left out of ``N`` and listed as ``| skipped: K [pkgs]``.
+
+The module also reads the shipped dependency set from ``pyproject.toml`` for the release CVE scan
+(:func:`shipped_extra_groups`, :func:`shipped_requirements`).
 
 Extracted from run_audit_checks.sh inline ``python -c`` block (as noted in the security audit)
 to satisfy the project Check 23e policy prohibiting inline ``python -c`` snippets.
@@ -25,9 +27,28 @@ import argparse
 import json
 import re
 import sys
-from importlib import metadata
 from pathlib import Path
 from typing import Any
+
+
+def _skipped(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the dependency entries pip-audit reported as not audited (they carry a ``skip_reason``)."""
+    return [dep for dep in payload.get("dependencies", []) if dep.get("skip_reason")]
+
+
+def _skipped_suffix(payload: dict[str, Any]) -> str:
+    """Render ``| skipped: K [pkgs]`` for unaudited dependencies, or an empty string when none were skipped.
+
+    Examples:
+        >>> _skipped_suffix({"dependencies": [{"name": "local-pkg", "skip_reason": "not on PyPI"}]})
+        ' | skipped: 1 [local-pkg]'
+        >>> _skipped_suffix({"dependencies": [{"name": "a", "vulns": []}]})
+        ''
+    """
+    skipped = _skipped(payload)
+    if not skipped:
+        return ""
+    return f" | skipped: {len(skipped)} [{', '.join(str(dep.get('name', '?')) for dep in skipped)}]"
 
 
 def summarize(payload: dict[str, Any]) -> str:
@@ -35,7 +56,8 @@ def summarize(payload: dict[str, Any]) -> str:
 
     Args:
         payload: Parsed pip-audit JSON; expects a top-level ``dependencies``
-            list, each entry containing a ``vulns`` list.
+            list, each entry containing a ``vulns`` list. Entries with a ``skip_reason`` were not audited and do
+            not count as dependencies.
 
     Returns:
         Single-line summary string.
@@ -47,11 +69,12 @@ def summarize(payload: dict[str, Any]) -> str:
         '2 deps, 2 vulns'
         >>> summarize({"dependencies": [{"vulns": [{}]}]})
         '1 deps, 1 vulns'
+        >>> summarize({"dependencies": [{"vulns": []}, {"name": "x", "skip_reason": "not on PyPI"}]})
+        '1 deps, 0 vulns'
     """
-    deps = payload.get("dependencies", [])
-    n_deps = len(deps)
+    deps = [dep for dep in payload.get("dependencies", []) if not dep.get("skip_reason")]
     n_vulns = sum(len(dep.get("vulns", [])) for dep in deps)
-    return f"{n_deps} deps, {n_vulns} vulns"
+    return f"{len(deps)} deps, {n_vulns} vulns"
 
 
 def _normalize(name: str) -> str:
@@ -70,7 +93,8 @@ def summarize_scoped(payload: dict[str, Any], introduced: set[str]) -> str:
         introduced: Normalized names of dependencies touched inside the release range.
 
     Returns:
-        ``N deps, M vulns | new: K [pkgs] | pre-existing: P [pkgs]``.
+        ``N deps, M vulns | new: K [pkgs] | pre-existing: P [pkgs]``, followed by ``| skipped: K [pkgs]`` when
+        pip-audit could not audit some dependencies.
 
     Examples:
         >>> payload = {"dependencies": [{"name": "Foo_Bar", "vulns": [{}]}, {"name": "baz", "vulns": [{}, {}]}]}
@@ -90,13 +114,12 @@ def summarize_scoped(payload: dict[str, Any], introduced: set[str]) -> str:
         bucket[name] = count
     return (
         f"{summarize(payload)} | new: {sum(new.values())} [{', '.join(new)}]"
-        f" | pre-existing: {sum(old.values())} [{', '.join(old)}]"
+        f" | pre-existing: {sum(old.values())} [{', '.join(old)}]{_skipped_suffix(payload)}"
     )
 
 
 #: Optional-dependency group names that hold tooling, never shipped behaviour.
 DEV_EXTRAS = frozenset({"dev", "test", "tests", "testing", "doc", "docs", "lint", "typing", "bench", "benchmark"})
-_REQ_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
 
 def _load_toml(path: Path) -> dict[str, Any] | None:
@@ -112,84 +135,63 @@ def _load_toml(path: Path) -> dict[str, Any] | None:
         return tomllib.load(fh)
 
 
-def runtime_closure(pyproject: Path) -> set[str] | None:
-    """Return normalized names of every package the built distribution ships, or ``None`` if unknowable.
+def _project_table(pyproject: Path) -> dict[str, Any] | None:
+    """Return the ``[project]`` table of a ``pyproject.toml``, or ``None`` when it is missing, empty or unreadable."""
+    try:
+        data = _load_toml(pyproject)
+    except (OSError, ValueError):
+        return None
+    return (data or {}).get("project") or None
 
-    Roots are ``[project].dependencies`` plus ``[project.optional-dependencies]`` groups not named in
-    :data:`DEV_EXTRAS`; ``[dependency-groups]`` (PEP 735) is never shipped and is ignored. The closure follows
-    installed-package metadata, skipping ``extra ==`` requirements. ``None`` (callers then scan everything) when
-    the file is missing, unparsable, lists ``dependencies`` as dynamic, or a root without an environment marker is
-    not installed, because a partial closure would hide real vulnerabilities.
+
+def shipped_extra_groups(pyproject: Path) -> list[str] | None:
+    """Return the optional-dependency groups the distribution ships, or ``None`` without a readable ``[project]``.
+
+    Groups named in :data:`DEV_EXTRAS` are development tooling and are left out. Callers use ``None`` to decide that
+    no shipped dependency set exists to scan.
 
     Args:
         pyproject: Path to the repository ``pyproject.toml``.
 
     Returns:
-        Normalized package names, or ``None`` when the shipped set cannot be established.
+        Sorted group names exactly as spelled in the file, or ``None`` when the file is missing, unparsable, or has no
+        ``[project]`` table.
 
     Examples:
-        >>> runtime_closure(Path("/nonexistent/pyproject.toml")) is None
+        >>> shipped_extra_groups(Path("/nonexistent/pyproject.toml")) is None
         True
     """
-    try:
-        data = _load_toml(pyproject)
-    except (OSError, ValueError):
+    project = _project_table(pyproject)
+    if project is None:
         return None
-    project = (data or {}).get("project")
-    if not project or "dependencies" in project.get("dynamic", []):
-        return None
-    roots = list(project.get("dependencies", []))
-    for group, reqs in project.get("optional-dependencies", {}).items():
-        if _normalize(group) not in DEV_EXTRAS:
-            roots.extend(reqs)
-    seen: set[str] = set()
-    queue = [(r, True) for r in roots]
-    while queue:
-        req, is_root = queue.pop()
-        match = _REQ_NAME.match(req)
-        if not match:
-            continue
-        name = _normalize(match.group(1))
-        if name in seen:
-            continue
-        marker = req.partition(";")[2]
-        try:
-            requires = metadata.distribution(name).requires or []
-        except metadata.PackageNotFoundError:
-            if is_root and not marker.strip():
-                return None
-            continue
-        seen.add(name)
-        queue.extend((r, False) for r in requires if "extra" not in r.partition(";")[2])
-    return seen
+    return sorted(g for g in project.get("optional-dependencies", {}) if _normalize(g) not in DEV_EXTRAS)
 
 
-def summarize_shipped(payload: dict[str, Any], shipped: set[str] | None, introduced: set[str]) -> str:
-    """Render the scoped summary for the packages the release ships plus the excluded remainder.
+def shipped_requirements(pyproject: Path) -> list[str] | None:
+    """Return the requirements the distribution declares to ship, or ``None`` when they cannot be read statically.
+
+    The list holds ``[project].dependencies`` plus the requirements of every optional-dependency group not named in
+    :data:`DEV_EXTRAS`. ``None`` means the shipped set is unknowable from the file: no readable ``[project]`` table,
+    or ``dependencies`` listed as dynamic (filled in by the build backend).
 
     Args:
-        payload: Parsed pip-audit JSON.
-        shipped: Normalized shipped names from :func:`runtime_closure`; ``None`` scans every package.
-        introduced: Normalized names touched inside the release range.
+        pyproject: Path to the repository ``pyproject.toml``.
 
     Returns:
-        :func:`summarize_scoped` line for shipped packages, then ``| not shipped: P [pkgs]`` for vulnerable
-        test/docs/dev-only packages, or ``| scope: unknown`` when ``shipped`` is ``None``.
+        Requirement strings in file order, or ``None`` when the set cannot be established.
 
     Examples:
-        >>> payload = {"dependencies": [{"name": "a", "vulns": [{}]}, {"name": "pytest", "vulns": [{}]}]}
-        >>> summarize_shipped(payload, {"a"}, set())
-        '1 deps, 1 vulns | new: 0 [] | pre-existing: 1 [a] | not shipped: 1 [pytest]'
-        >>> summarize_shipped(payload, None, set())
-        '2 deps, 2 vulns | new: 0 [] | pre-existing: 2 [a, pytest] | scope: unknown'
+        >>> shipped_requirements(Path("/nonexistent/pyproject.toml")) is None
+        True
     """
-    if shipped is None:
-        return f"{summarize_scoped(payload, introduced)} | scope: unknown"
-    deps = payload.get("dependencies", [])
-    kept = [d for d in deps if _normalize(str(d.get("name", ""))) in shipped]
-    dropped = {str(d.get("name", "?")): len(d.get("vulns", [])) for d in deps if d not in kept and d.get("vulns")}
-    line = summarize_scoped({"dependencies": kept}, introduced)
-    return f"{line} | not shipped: {sum(dropped.values())} [{', '.join(dropped)}]"
+    project = _project_table(pyproject)
+    if project is None or "dependencies" in project.get("dynamic", []):
+        return None
+    reqs = list(project.get("dependencies", []))
+    for group, group_reqs in project.get("optional-dependencies", {}).items():
+        if _normalize(group) not in DEV_EXTRAS:
+            reqs.extend(group_reqs)
+    return reqs
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -216,12 +218,6 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Comma-separated dependency names changed in the release range; adds the new/pre-existing split.",
     )
-    parser.add_argument(
-        "--runtime-from",
-        default=None,
-        metavar="PYPROJECT",
-        help="pyproject.toml defining what the built distribution ships; limits the count to those packages.",
-    )
     # Unknown argv stays ignored (legacy stdin-only contract); only the known options are honoured.
     args, _ = parser.parse_known_args(effective_argv)
     try:
@@ -233,13 +229,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"parse_audit_json: stdin read error: {e}", file=sys.stderr)
         return 1
 
-    names = {_normalize(n) for n in (args.introduced or "").split(",") if n.strip()}
-    if args.runtime_from is not None:
-        print(summarize_shipped(payload, runtime_closure(Path(args.runtime_from)), names))
-    elif args.introduced is not None:
+    if args.introduced is not None:
+        names = {_normalize(n) for n in args.introduced.split(",") if n.strip()}
         print(summarize_scoped(payload, names))
     else:
-        print(summarize(payload))
+        print(summarize(payload) + _skipped_suffix(payload))
     return 0
 
 

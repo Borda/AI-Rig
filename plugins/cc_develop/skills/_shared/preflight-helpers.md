@@ -10,10 +10,14 @@ Shared preflight protocols for develop skills. Read + run relevant section(s) pe
 
 Run when skill accepts `--plan <path>` flag. Sets `$PLAN_FILE`.
 
+In the same Bash call, first run the calling skill's invocation-input read block to load `ARGUMENT_BLOB` from its printed `Invocation input file` path. Do not run the parser with a shell-substituted invocation or rely on a variable from an earlier Bash call.
+
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+[ "${ARGUMENT_BLOB+x}" = x ] || { echo "! BLOCKED — invocation input not loaded; run the calling skill's input-file read block in this Bash call first"; exit 1; }
 # --keep-state: no eval; --inlined: runs mid-skill, the calling skill's contract stays
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags worktree --value-flags plan --keep-state dev-preflight --inlined "$ARGUMENTS" >/dev/null  # timeout: 5000 — both --plan spellings
+python "$PLUGIN_ROOT/bin/parse-skill-flags.py" --flags worktree --value-flags plan --keep-state dev-preflight --inlined -- "$ARGUMENT_BLOB" >/dev/null  # timeout: 5000 — both --plan spellings
 IFS= read -r PLAN_FILE < "${TMPDIR:-/tmp}/dev-preflight-plan-${CSID}" 2>/dev/null || PLAN_FILE=""
 if [ -n "$PLAN_FILE" ] && [ ! -f "$PLAN_FILE" ]; then
   echo "! BREAKING — plan file not found: $PLAN_FILE"
@@ -22,7 +26,7 @@ if [ -n "$PLAN_FILE" ] && [ ! -f "$PLAN_FILE" ]; then
 fi
 # persist so later cross-Bash-call reads (compaction-contract boundaries in feature/fix/refactor) resolve it — shell var is lost between Bash() calls
 echo "$PLAN_FILE" > "${TMPDIR:-/tmp}/dev-plan-file-${CSID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/plan_hash.py" record "$PLAN_FILE"  # timeout: 5000 — .plans/ is gitignored; hash lets Final Report detect mid-build edits (empty path clears a stale hash)
+python "$PLUGIN_ROOT/bin/plan_hash.py" record "$PLAN_FILE"  # timeout: 5000 — .plans/ is gitignored; hash lets Final Report detect mid-build edits (empty path clears a stale hash)
 ```
 
 ## Team Spawn Template

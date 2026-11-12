@@ -315,8 +315,6 @@ def scan_mkdocs_xrefs(md_path: Path, root: Path) -> list[dict]:
     results: list[dict] = []
     seen: set[tuple[str, int]] = set()  # (target, line) — backtick form is also matched by named regex
     for lineno, line in enumerate(text.splitlines(), start=1):
-        if len(line) > 4096:
-            continue
         for match in _MKDOCS_BACKTICK_RE.finditer(line):
             identifier = match.group(1)
             target = _resolve_mkdocs_identifier(identifier)

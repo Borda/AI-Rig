@@ -152,31 +152,39 @@ class TestCompactGateSessionId:
 class TestAppendLedgerLiteralName:
     """The ledger name is matched literally when sweeping parallel writers' staged files."""
 
-    def test_glob_characters_in_ledger_name_do_not_widen_the_match(self, tmp_path: Path) -> None:
+    def test_glob_characters_in_ledger_name_do_not_widen_the_match(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A ledger named ``log[1].jsonl`` sweeps its own writer file and leaves ``log1.jsonl``'s alone.
 
         Scenario: unescaped, ``[1]`` is a character class that matches `log1.jsonl.w.rec` and misses the ledger's own
         `log[1].jsonl.w.rec`, so one ledger would consume another's staged record.
         """
-        ledger = tmp_path / "log[1].jsonl"
+        monkeypatch.chdir(tmp_path)
+        artifact = tmp_path / ".reports"
+        artifact.mkdir()
+        ledger = artifact / "log[1].jsonl"
         ledger.write_bytes(b"old\n")
-        (tmp_path / "log[1].jsonl.w.rec").write_bytes(b"mine\n")
-        other = tmp_path / "log1.jsonl.w.rec"
+        (artifact / "log[1].jsonl.w.rec").write_bytes(b"mine\n")
+        other = artifact / "log1.jsonl.w.rec"
         other.write_bytes(b"theirs\n")
-        code = append_ledger.main([str(ledger)])
+        code = append_ledger.main([str(ledger), "--run-root", str(artifact)])
         assert (code, ledger.read_bytes(), other.read_bytes()) == (0, b"old\nmine\n", b"theirs\n")
 
     @_skip_without_symlinks
-    def test_symlinked_staged_file_is_not_appended(self, tmp_path: Path) -> None:
+    def test_symlinked_staged_file_is_not_appended(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A ``.rec`` that is a symlink is skipped, so it cannot copy another file's content into the ledger.
 
         The staged file points at a secret outside the ledger; the flush must neither append it nor create the ledger.
         """
+        monkeypatch.chdir(tmp_path)
+        artifact = tmp_path / ".reports"
+        artifact.mkdir()
         secret = tmp_path / "secret.txt"
         secret.write_bytes(b"secret\n")
-        ledger = tmp_path / "log.jsonl"
-        (tmp_path / "log.jsonl.rec").symlink_to(secret)
-        assert (append_ledger.main([str(ledger)]), ledger.exists()) == (0, False)
+        ledger = artifact / "log.jsonl"
+        (artifact / "log.jsonl.rec").symlink_to(secret)
+        assert (append_ledger.main([str(ledger), "--run-root", str(artifact)]), ledger.exists()) == (0, False)
 
 
 class TestExtractKeepFlagNames:

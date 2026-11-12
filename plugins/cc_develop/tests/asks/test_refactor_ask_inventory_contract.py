@@ -44,13 +44,6 @@ _TOOL_ASKS = [
     pytest.param("modes/team-mode.md", "**Gate T1", "**Step T2", "proceed without safety net", id="team-gate-t1"),
 ]
 
-#: Asks the baseline phrased in prose, not as a tool call; kept in that form, never upgraded or dropped.
-_PROSE_ASKS = [
-    pytest.param(
-        "SKILL.md", "**Checkpoint init**", "## Flag parsing", "offer resume from last completed step", id="resume-offer"
-    )
-]
-
 #: Shared docs whose own questions this skill reaches only by loading them.
 _SHARED_ASKS = [
     pytest.param(
@@ -84,13 +77,11 @@ def test_baseline_tool_ask_still_happens(relative: str, section_start: str, sect
     assert "AskUserQuestion" in section
 
 
-@pytest.mark.parametrize(("relative", "section_start", "section_end", "marker"), _PROSE_ASKS)
-def test_baseline_prose_ask_still_happens(relative: str, section_start: str, section_end: str, marker: str) -> None:
-    """A question the baseline put to the user in prose is still put there.
-
-    The resume offer was never a tool call at baseline; it must stay a prose offer in its original section.
-    """
-    assert marker in _section(relative, section_start, section_end)
+def test_checkpoint_does_not_offer_unscoped_resume() -> None:
+    """An untagged checkpoint cannot authorize resuming another skill's work or skipping its gates."""
+    section = _section("SKILL.md", "**Checkpoint init**", "## Flag parsing")
+    assert "do not infer a resumable refactor run from another skill's checkpoint" in section
+    assert "offer resume" not in section
 
 
 @pytest.mark.parametrize(("doc", "marker"), _SHARED_ASKS)
@@ -100,7 +91,7 @@ def test_shared_doc_ask_is_still_loaded(doc: str, marker: str) -> None:
     Some questions live only in shared docs the skill pulls in via ``dev_load_shared.py``; dropping the load or the
     marker silently removes the ask from the refactor flow.
     """
-    assert f'bin/dev_load_shared.py" {doc}' in _read_skill()
+    assert any('bin/dev_load_shared.py"' in line and doc in line.split() for line in _read_skill().splitlines())
     assert marker in (_SHARED / doc).read_text(encoding="utf-8")
 
 

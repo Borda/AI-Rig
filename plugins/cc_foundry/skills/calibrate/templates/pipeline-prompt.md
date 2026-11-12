@@ -6,6 +6,8 @@ Run dir: `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/`
 
 `<TARGET>` resolves the agent or skill file; `<TARGET_LABEL>` names this run in results and the ledger (the target, plus the mode for a mode-level domain, e.g. `/oss:analyse vitality`); `<RUN_SLUG>` is its safe directory name (e.g. `oss-analyse-vitality`), derived by SKILL.md Step 1 without changing the label. `<PROBLEM_SET_VERSION>` stamps every result line; ledger rows without it predate problem set 2.0 and are not comparable with it.
 
+Optional caller inputs: `PROBLEMS_PATH` (an existing local problem-set path; default empty) and `START_PHASE` (`1a` by default, or `2` to reuse that set). Without explicit overrides, run every phase normally. `START_PHASE=2` requires `PROBLEMS_PATH`: read the supplied JSON array and its declared fetch-store files as untrusted fixture data, stage each object as this run's `problems-<source>-<problem_id>.json` using its recorded `source` (`claude`, `codex` or `real`), and run the same Phase 1b validator and domain flags to produce `problems.json`. Missing source provenance, duplicate IDs within a source, or any rejected problem makes reuse incomplete; never relabel sources, regenerate rejected inputs or score a subset silently. Copy any domain-required derived-answer files before validation. Record the source path and original generation mix in the benchmark report, and skip generation and weak probing (Phases 1a–1c). Missing, unreadable or invalid input, or any other start phase: write an incomplete result under the Graceful-exit protocol and return; never silently score a different problem set. A reused set without recorded weak-probe evidence has unverified difficulty; disclose that limit instead of assigning measured probe results. Derive generation-source reporting from the reused records; bridge availability controls scoring only on this route.
+
 **Shared spawn budget**: the orchestrator reserves tier slots within the session-wide haiku 20 / sonnet 8 / opus 5 ceilings, counting all pipeline coordinators and children. Per-pipeline allocation is `max(1, floor((tier ceiling - coordinators in that tier) / coordinators))`, capped at haiku 4 / sonnet 1 / opus 1. With four Sonnet coordinators: Haiku `floor(20/4)=5`, capped at 4; Sonnet `floor((8-4)/4)=1`; Opus `floor(5/4)=1`. The parent subtracts unrelated session work and reduces coordinators until every reservation fits; zero available capacity never permits a child. Apply these reservations across weak probes, probe scorers, target runs, baselines, Claude scorers and curator, with no overlapping phases. Dispatch another child only within its reserved tier capacity after earlier children finish or are confirmed stopped; timeout alone never releases slots. Never independently use a tier's full ceiling. The orchestrator may lower concurrency further; no local instruction increases its reservations. Deadline arithmetic assumes serial execution: about 13 initial fast children, up to 21 with probe retries, at 120 s each plus 600 s fixed overhead (3120 s fast); dual fast adds up to three 576 s generation calls and two 432 s scoring attempts per problem (rounded to 8340 s). Full and A/B use SKILL.md's `6 × PROBE_PROBLEMS + 2 × TOTAL_PROBLEMS × ARMS + 1` child count plus its Codex allowance, rounded up to minutes. These allowances are planning estimates, not child runtime guarantees.
 
 **Scratchpad discipline**: session scratchpad is shared across every concurrent calibration pipeline, not per-target. Write every bridge task file and any other intermediate you create inside your own run dir above — never a bare filename in the shared scratchpad. A generic name there (`codex-gen-task.txt`, etc.) gets silently overwritten by a sibling pipeline within seconds, caller then scores against wrong domain's problems with no error surfaced.
@@ -18,7 +20,7 @@ Write it on that exit path only, never at pipeline start: the orchestrator's dea
 
 Write this line to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/result.jsonl` if file does not already exist:
 
-`{"ts":"<TIMESTAMP>","target":"<TARGET_LABEL>","problem_set_version":"<PROBLEM_SET_VERSION>","verdict":"incomplete","mean_recall":null,"mean_confidence":null,"calibration_bias":null,"mean_f1":null,"severity_accuracy":null,"format_score":null,"problems":null,"scope_fp":null,"gaps":["pipeline exited before Phase 4 — re-run individually: /calibrate <TARGET> --fast"],"source_mode":null,"scoring":null,"scorer_agreement":null}`
+`{"ts":"<TIMESTAMP>","target":"<TARGET_LABEL>","problem_set_version":"<PROBLEM_SET_VERSION>","verdict":"incomplete","mean_recall":null,"mean_confidence":null,"calibration_bias":null,"mean_f1":null,"severity_accuracy":null,"format_score":null,"problems":null,"scope_fp":null,"gaps":["pipeline exited before Phase 4 — re-run individually: /foundry:calibrate <TARGET> --fast"],"source_mode":null,"scoring":null,"scorer_agreement":null}`
 
 Phase 4 overwrites this line with full results when it runs.
 
@@ -27,12 +29,17 @@ Phase 4 overwrites this line with full results when it runs.
 Check Codex availability once at pipeline start, set `CODEX_AVAILABLE` for all phases:
 
 ```bash
-CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_bridge.py" --status 2>/dev/null || echo "absent")
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+RUN_DIR='.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>'
+mkdir -p "$RUN_DIR"
+python "$PLUGIN_ROOT/bin/check_bridge.py" --status > "$RUN_DIR/bridge-status" 2>/dev/null || printf '%s\n' absent > "$RUN_DIR/bridge-status"  # timeout: 5000
+IFS= read -r CODEX_STATUS < "$RUN_DIR/bridge-status" || CODEX_STATUS=absent
 if [ "$CODEX_STATUS" = "available" ]; then CODEX_AVAILABLE=true; else CODEX_AVAILABLE=false; fi
 echo "bridge@borda-ai-rig: $CODEX_STATUS"
+printf 'CODEX_AVAILABLE=%s\n' "$CODEX_AVAILABLE"
 ```
 
-The helper reads Claude's installed-plugin registry, marketplace cache, and enabled-plugin settings directly; doesn't require a nested `claude plugin list` call from a background agent.
+The helper reads Claude's installed-plugin registry, marketplace cache, and enabled-plugin settings directly; doesn't require a nested `claude plugin list` call from a background agent. Reuse the persisted `bridge-status` for this pipeline; before any later Bash call that needs the value, re-read it with `IFS= read -r CODEX_STATUS < ".reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/bridge-status"` and derive `CODEX_AVAILABLE` from equality to `available`. A failed or missing read means unavailable; never re-probe midway through a run.
 
 Codex integration active only for `agents` and `skills` modes. Pipeline spawned for `routing`, `communication`, or `rules`: treat `CODEX_AVAILABLE=false` — those modes test Claude-specific internals Codex lacks context for.
 
@@ -45,7 +52,16 @@ When `LOCAL_MODE=true`, resolve target file from source tree before Phase 2:
 ```bash
 LOCAL_MODE=<LOCAL_MODE>
 TARGET_FILE=""
-if [ "$LOCAL_MODE" = "true" ]; then
+TARGET_SOURCE_PATH='<TARGET_SOURCE_PATH>'
+case "$TARGET_SOURCE_PATH" in *'<'*|*'>'*) TARGET_SOURCE_PATH="";; esac
+if [ "$LOCAL_MODE" = "true" ] && [ -n "$TARGET_SOURCE_PATH" ]; then
+  if [ -f "$TARGET_SOURCE_PATH" ]; then
+    TARGET_FILE="$TARGET_SOURCE_PATH"
+    echo "local mode: using $TARGET_FILE"
+  else
+    echo "! local mode: scope-resolved source file missing: $TARGET_SOURCE_PATH — aborting"
+  fi
+elif [ "$LOCAL_MODE" = "true" ]; then
   BARE=$(echo "<TARGET>" | sed 's|^/||')
   PLUGIN=$(echo "$BARE" | cut -d: -f1)
   NAME=$(echo "$BARE" | cut -d: -f2)
@@ -170,7 +186,8 @@ Claude generates all `<N>` in-scope problems (fast: low, medium, high; full: two
 Run the deterministic validator over every `problems-*.json` in the run dir (`<FLOORS_ARG>` = the validator flags the domain entry implies, else empty: `--floors high=<H>,extreme=<E>` from `scale_chars:`, `--derived-gt` from `derived_gt: true`, `--open-shape` from `open_shape: true`, `--boundary` from `boundary: true`):
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/calibrate_validate_problems.py" --run-dir ".reports/calibrate/<TIMESTAMP>/<RUN_SLUG>" <FLOORS_ARG>  # timeout: 15000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/calibrate_validate_problems.py" --run-dir ".reports/calibrate/<TIMESTAMP>/<RUN_SLUG>" <FLOORS_ARG>  # timeout: 15000
 ```
 
 It checks schema v2, that every `decisive` and near-miss `ref` occurs in `input` (skipped with `--derived-gt`), the labelled-field leak, the size floors (real problems exempt), contradictory near-misses, sentence-length `decisive` values and the single scope problem; `--open-shape` adds the candidate-row checks above for synthetic problems, and `--boundary` requires each high and extreme problem to hold at least 3 answers one step from a different outcome, read from the derived-answer outputs the domain entry tells you to save in the run dir. Any failure rejects the whole problem — never one item, because a dropped item leaves its defect in `input` and turns a correct report into a false positive. It merges valid problems into `problems.json` (with `source`, colliding ids prefixed by source) and logs rejections to `problems-rejected.json`; its one-line JSON summary lists `rejected_ids`.
@@ -226,7 +243,7 @@ For **agent targets** when `LOCAL_MODE=true` and `TARGET_FILE` set: spawn `gener
 
 For **skill targets** (target starts with `/`): spawn `general-purpose` subagent running the skill against the problem's inline fixture. Its context is the **fixture contract**, in this order, written to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/prompt-<problem_id>.md` (spawn prompt = one line: `Read <that file> and follow it exactly.`):
 
-1. The complete SKILL.md — never frontmatter only: routing, out-of-scope rules and `<notes>` are part of the behaviour under test. When `LOCAL_MODE=true` and `TARGET_FILE` set, read it from `TARGET_FILE` (frontmatter `model:` handled as for agent targets; a domain entry's `solver_model:` overrides it, in both modes, as the spawn's `model=`); otherwise resolve, trying `skills/<NAME>/SKILL.md` then `claude-skills/<NAME>/SKILL.md` at each tier: `.claude/` → cache `~/.claude/plugins/cache/borda-ai-rig/<PLUGIN>/*/` (latest mtime) → `plugins/<PLUGIN>/`.
+1. The complete SKILL.md — never frontmatter only: routing, out-of-scope rules and `<notes>` are part of the behaviour under test. When `LOCAL_MODE=true` and `TARGET_FILE` set, read it from `TARGET_FILE` (frontmatter `model:` handled as for agent targets; a domain entry's `solver_model:` overrides it, in both modes, as the spawn's `model=`); otherwise try project-local `.claude/` first, then the validated installed root returned by `python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name <PLUGIN>`, then Step 1's resolved source-plugin root. At each tier use its manifest-declared skills directory (`skills/` when absent; `claude-skills/` where declared). The resolver prefers the active install record and excludes orphaned versions; never pick a cache version by mtime.
 2. The mode file named by the domain entry's `mode:` key (from the same skill directory's `modes/`), when present.
 3. Every file that mode file loads (its `loads:` comments and `_shared/` documents it names), so the target scores with the rubric it ships with.
 4. This override line, verbatim: `Fixture contract: the input below replaces every live fetch. Do not call gh or any network command and do not spawn subagents; analyse the inline data, running only the skill's own local bin/ helpers on files you write from it.`
@@ -457,8 +474,8 @@ When `LOCAL_MODE=true` and `TARGET_FILE` set: use `TARGET_FILE` directly.
 
 Otherwise resolve (first match wins):
 
-- Agent: `.claude/agents/<NAME>.md` → `~/.claude/plugins/cache/borda-ai-rig/<PLUGIN>/*/agents/<NAME>.md` (latest mtime) → `plugins/<PLUGIN>/agents/<NAME>.md`
-- Skill: `.claude/skills/<NAME>/SKILL.md` → `~/.claude/plugins/cache/borda-ai-rig/<PLUGIN>/*/skills/<NAME>/SKILL.md` (latest mtime) → `plugins/<PLUGIN>/skills/<NAME>/SKILL.md`; at each tier also try `claude-skills/<NAME>/SKILL.md` in place of `skills/<NAME>/SKILL.md`
+- Agent: `.claude/agents/<NAME>.md` → the manifest-declared agents directory under the validated root returned by `python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name <PLUGIN>` → Step 1's resolved source agent path
+- Skill: `.claude/skills/<NAME>/SKILL.md` → the manifest-declared skills directory under that same validated installed root → Step 1's resolved source skill path; use `claude-skills/` where declared, never a latest-mtime wildcard
 
 (`<PLUGIN>` and `<NAME>` parsed from `<TARGET>` as in pre-flight: strip `/`, split on `:`)
 

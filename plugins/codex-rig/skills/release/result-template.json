@@ -82,5 +82,5 @@
     ]
   },
   "schema_version": 2,
-  "status": "pass|fail"
+  "status": "pass|fail|timeout"
 }

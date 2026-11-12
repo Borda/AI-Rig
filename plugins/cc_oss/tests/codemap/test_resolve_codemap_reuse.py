@@ -23,6 +23,7 @@ from pathlib import Path
 
 import codemap_cache
 import pytest
+from _oss_shell_plugin import render_shell
 
 _PLUGIN = Path(__file__).resolve().parents[2]
 _SESSION = "test-session"
@@ -194,7 +195,7 @@ codemap-py() {{
     between = '\nprintf "%s" "$BLAST_RADIUS_CONTEXT"\n' + refresh * refresh_step
     # A file avoids Windows command-line quoting of the entire multi-line shell program.
     script = tmp_path / "preloop.sh"
-    _write_lf(script, prelude + preloop + between + structural)
+    _write_lf(script, render_shell(prelude + preloop + between + structural, _PLUGIN, "oss"))
     return script
 
 

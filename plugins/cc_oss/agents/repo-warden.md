@@ -169,10 +169,10 @@ Contains only assigned group's axis rubrics (not full 13-axis file) — the defi
 
 **Group A** signal sources:
 
-1. Axis 1 (`axes.1`): `median_issue_response_days`, `median_pr_response_days`, `pct_responded_7d`, `pct_unresponded`, sample counts, `issues_too_young`, `issues_eligible` (the percentages' denominator). `prs_sampled` = 0 → `median_pr_response_days = "N/A"` in signal
-2. Axis 2 (`axes.2`): `days_since_last_commit`, `commits_30d`, `commits_90d`, release recency/cadence; `override` = ⛔ abandonment (`archived` flag, `null` when not fetched; or a statement that the repository itself is discontinued in `abandonment_keywords`; `description_checked: false` → README only); commits missing without an override → ⚪
-3. Axis 5 (`axes.5`): `met`, `ci_pass_rate_pct`; `workflow_files_read` of `workflow_files_listed` explains content gaps; `runs_scope` + `runs_event_excluded` (runs of any event but push, schedule, workflow_dispatch, merge_group) say which runs the pass rate covers (older data: every branch → say so in notes); `runs_sampled` \<20 with `runs_fetched` 100 → notes say older counted runs sat past the one fetched page (never `conf`)
-4. Axis 6 (`axes.6`): `met`; `contributing_source` names which CONTRIBUTING was read
+- Axis 1 (`axes.1`): `median_issue_response_days`, `median_pr_response_days`, `pct_responded_7d`, `pct_unresponded`, sample counts, `issues_too_young`, `issues_eligible` (the percentages' denominator). `prs_sampled` = 0 → `median_pr_response_days = "N/A"` in signal
+- Axis 2 (`axes.2`): `days_since_last_commit`, `commits_30d`, `commits_90d`, release recency/cadence; `override` = ⛔ abandonment (`archived` flag, `null` when not fetched; or a statement that the repository itself is discontinued in `abandonment_keywords`; `description_checked: false` → README only); commits missing without an override → ⚪
+- Axis 5 (`axes.5`): `met`, `ci_pass_rate_pct`; `workflow_files_read` of `workflow_files_listed` explains content gaps; `runs_scope` + `runs_event_excluded` (runs of any event but push, schedule, workflow_dispatch, merge_group) say which runs the pass rate covers (older data: every branch → say so in notes); `runs_sampled` \<20 with `runs_fetched` 100 → notes say older counted runs sat past the one fetched page (never `conf`)
+- Axis 6 (`axes.6`): `met`; `contributing_source` names which CONTRIBUTING was read
 
 **Checkpoint scoring** (Axes 5, 6, 7 and Axis 8 secondary signals) — <!-- policy-sibling: plugins/cc_oss/skills/_shared/vitality-scoring.md (canonical), plugins/cc_oss/skills/_shared/vitality-scoring-group-a.md, plugins/cc_oss/skills/_shared/vitality-scoring-group-b.md, plugins/cc_oss/agents/repo-warden.md -->
 
@@ -188,15 +188,15 @@ Contains only assigned group's axis rubrics (not full 13-axis file) — the defi
 
 **Group B** signal sources:
 
-1. Axis 4 (`axes.4`): `issues.stale_pct`, `issues.close_rate`, `review_coverage.coverage_pct`; `stalebot_signal` + close_rate ≥2.0 → stalebot flag in notes. `prs.bot_filter` not `applied` (older data, no PR author) → say so in notes
-2. Axis 7 (`axes.7`): `met`, `applicable` (checkpoint 7 `not_applicable` → 6), `active_maintainers` / `listed_maintainers`
-3. Axis 8 (`axes.8`): `secondary.dep_config`, `dependabot.by_severity`; Dependabot `403`/`absent` → partial score (`conf_fixed`; `partial_score_strict` points capped at the label's band max, 🟡 6), note `partial_score_upper` when it differs. Each open secret-scanning alert counts as one high alert (`high_alerts_incl_secret`)
+- Axis 4 (`axes.4`): `issues.stale_pct`, `issues.close_rate`, `review_coverage.coverage_pct`; `stalebot_signal` + close_rate ≥2.0 → stalebot flag in notes. `prs.bot_filter` not `applied` (older data, no PR author) → say so in notes
+- Axis 7 (`axes.7`): `met`, `applicable` (checkpoint 7 `not_applicable` → 6), `active_maintainers` / `listed_maintainers`
+- Axis 8 (`axes.8`): `secondary.dep_config`, `dependabot.by_severity`; Dependabot `403`/`absent` → partial score (`conf_fixed`; `partial_score_strict` points capped at the label's band max, 🟡 6), note `partial_score_upper` when it differs. Each open secret-scanning alert counts as one high alert (`high_alerts_incl_secret`)
 
 **Group C** signal sources — Axis 3 then Axis 9:
 
-1. Axis 3 (`axes.3`): `bus_factor`, `retention_pct` (fallback: `fallback.approx_bus_factor`, `conf_fixed`, add "⚠ bus factor estimated from commit authors (stats API computing)"); `axis2_band` decides the bus-factor-1 🔴 clause
-2. Axis 9 (`axes.9`): `score` = sub-signal mean, capped at band max in 🟡/🔴 (🟡 6 · 🔴 3) — copy it; `sub_scores` (9A/9B/9C/9D; `null` = ⚪), `9A_pool_drift.shrinkage_ratio`, `9B_merge_trend.median_30d_days` / `median_90d_days`, `9C_queue_depth.p90_age_days`, `9D_automation.auto_ratio`
-   - **star velocity**: `star_velocity.available` is always false (gh-scraper collects no per-star timestamps) → N/A, note "star data unavailable"; never estimate from total star count. Trajectory sub-signal (Axis 9), not security (Axis 8)
+- Axis 3 (`axes.3`): `bus_factor`, `retention_pct` (fallback: `fallback.approx_bus_factor`, `conf_fixed`, add "⚠ bus factor estimated from commit authors (stats API computing)"); `axis2_band` decides the bus-factor-1 🔴 clause
+- Axis 9 (`axes.9`): `score` = sub-signal mean, capped at band max in 🟡/🔴 (🟡 6 · 🔴 3) — copy it; `sub_scores` (9A/9B/9C/9D; `null` = ⚪), `9A_pool_drift.shrinkage_ratio`, `9B_merge_trend.median_30d_days` / `median_90d_days`, `9C_queue_depth.p90_age_days`, `9D_automation.auto_ratio`
+  - **star velocity**: `star_velocity.available` is always false (gh-scraper collects no per-star timestamps) → N/A, note "star data unavailable"; never estimate from total star count. Trajectory sub-signal (Axis 9), not security (Axis 8)
 
 Per axis, produce result object:
 

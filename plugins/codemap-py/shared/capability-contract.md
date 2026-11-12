@@ -27,7 +27,7 @@ Every `scan-query` result JSON carries an `index` block; all six skills interpre
 - `index.method` — technique used (`static-ast`, `import-graph`, `index-lookup`, `ast-flags`).
 - `index.not_covered` — list of what the method structurally misses; non-empty → surface as a scope caveat, never fill the gap by re-querying codemap.
 - `index.hint` — actionable alternative when deeper coverage is needed.
-- `index.confidence: "exact"` — result authoritative; skip verification caveats.
+- `index.confidence: "exact"` — exact within the reported method and scope; does not override freshness, completeness or truncation limits.
 - `index.degraded` — count of modules that failed to parse; `>0` → some edges may be missing.
 - `query_complete` (forward field) / `exhaustive` (legacy alias, one deprecation cycle) — direction-scoped completeness: `true` → result authoritative for that query's direction, stop querying/grepping; `false` → check `degraded_files`, `untracked_py`, `stale` before filling gaps.
 - `stale` — index older than source; skills that self-heal (bounded inline `scan-index --incremental`) report whether the heal ran or was skipped (change set over cap, git unavailable).
@@ -129,7 +129,7 @@ Complete-query paths are caller-repo-relative, never Skill-relative; do not re-q
 
 **Inputs**: one mode — `audit [--runtime {claude,codex,both}] [--json] [--since YYYY-MM-DD]` / `plan [--runtime ...] [--consumers <csv>] [--source {local-candidate,release}] [--out <artifact>]` / `apply --plan <artifact> --approve <sha256>` / `sync --source {local-candidate,release} --plan <artifact> --approve <sha256> [--runtime ...]` / `demo [--runtime ...]`.
 
-**Outputs**: `audit` → schema-versioned evidence report (provider/consumer versions, roots, managed blocks, shared-index identity, runtime logs, usage, findings, and non-executable remediation); `plan` → a report artifact (never mutates); `apply`/`sync` → mutation + verification result + journal entry; `demo` → check output + representative plain-vs-structural-context evidence.
+**Outputs**: `audit` → schema-versioned evidence report (provider/consumer versions, roots, managed blocks, shared-index identity, runtime logs, usage, findings, and non-executable remediation); `plan` → a report artifact (never mutates); `apply`/`sync` → mutation + verification result + journal entry; `demo` → audit output + one representative structural smoke query, recording protocol/version/evidence; never claims a plain-vs-structural comparison, token savings, or current-session activation.
 
 **Exit codes**: `audit` exits `0` for completed `pass` or `warn`, `1` for completed `fail` or a required runtime/filesystem probe failure, and `2` for invalid syntax, runtime, date, or selection. `plan` remains zero-write and uses `0` for a completed artifact or `2` for bad syntax.
 
@@ -145,9 +145,9 @@ Complete-query paths are caller-repo-relative, never Skill-relative; do not re-q
 
 **Inputs**: `[--since <YYYY-MM-DD>] [--session <id>] [--anonymize] [--output <path>]`.
 
-**Outputs**: a markdown report, default `.reports/codemap/debrief-<YYYY-MM-DD>.md`; with `--anonymize`, pseudonymized copies under `.cache/codemap/export/` are read instead of raw logs; directory input preserves `claude/`, `codex/`, and `direct/` topology and the report never includes the reversibility salt.
+**Outputs**: a markdown report, default `.reports/codemap/debrief-<YYYY-MM-DD>.md`; explicit and default report paths stay within the project root, resolve relative paths from that root, and append `-2`, `-3`, … when occupied; with `--anonymize`, pseudonymized copies under `.cache/codemap/export/` are read instead of raw logs; directory input preserves `claude/`, `codex/`, and `direct/` topology and the report never includes the reversibility salt.
 
-**Exit codes**: `0` report written (including a report over zero matching records after a filter narrows to nothing); `1` no telemetry found at all (nothing to report), anonymize requested with no source logs present, or report-write failure.
+**Exit codes** (statistics helper): `0` one JSON object on stdout (including zero matching records after filtering); `1` no telemetry only when stderr starts with `No codemap telemetry found`, otherwise a helper crash; `2` bad flag, missing value, invalid `--since` date, output outside the project, or oversized telemetry; `3` `anonymize.py` or `join_avoidance.py` exceeded its time cap, with the scratch copy already removed; `4` requested anonymization failed, so debrief stopped without a report. Report writing is a later skill step, outside the helper's exit codes.
 
 **Completeness metadata**: not index-completeness in the query sense — this skill reports its own data-completeness caveats explicitly: "session not found in `<file>`" when a `--session` filter matches zero records in one log layer (expected when that layer never logged the session, not a data-loss condition); "scripted/polluted records excluded: N" when benchmark/test-suite noise is filtered from organic-usage stats.
 

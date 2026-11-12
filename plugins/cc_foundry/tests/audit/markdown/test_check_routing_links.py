@@ -245,6 +245,62 @@ class TestExtractBinRefs:
                 False,
                 id="no-fallback-infers-owning-plugin",
             ),
+            pytest.param(
+                'python "$PLUGIN_ROOT/bin/health_sentinel.py" start foo\n',
+                "foundry",
+                "health_sentinel.py",
+                True,
+                id="resolved-root-infers-owning-plugin",
+            ),
+            pytest.param(
+                'python "${PLUGIN_ROOT}/bin/health_sentinel.py" start foo\n',
+                "foundry",
+                "health_sentinel.py",
+                True,
+                id="braced-resolved-root-infers-owning-plugin",
+            ),
+            pytest.param(
+                'python "/home/user/.claude/plugins/cache/borda-ai-rig/foundry/1.0.0/bin/health_sentinel.py"\n',
+                "foundry",
+                "health_sentinel.py",
+                True,
+                id="rendered-posix-root",
+            ),
+            pytest.param(
+                'python "C:/Users/user/.claude/plugins/cache/borda-ai-rig/foundry/1.0.0/bin/health_sentinel.py"\n',
+                "foundry",
+                "health_sentinel.py",
+                True,
+                id="rendered-windows-root",
+            ),
+            pytest.param(
+                'python "/home/apostrophe\'/.claude/plugins/cache/borda-ai-rig/foundry/1.0.0/bin/helper.py"\n',
+                "foundry",
+                "helper.py",
+                True,
+                id="rendered-apostrophe-in-home",
+            ),
+            pytest.param(
+                'python "/home/escaped\\"quote/.claude/plugins/cache/borda-ai-rig/foundry/1.0.0/bin/helper.py"\n',
+                "foundry",
+                "helper.py",
+                True,
+                id="rendered-escaped-quote-in-home",
+            ),
+            pytest.param(
+                'python "/checkout/plugins/cc_develop/bin/helper.py"\n',
+                "develop",
+                "helper.py",
+                True,
+                id="rendered-source-root-names-target-plugin",
+            ),
+            pytest.param(
+                'python "/home/user/.claude/plugins/cache/borda-ai-rig/develop/1.0.0/bin/helper.py"\n',
+                "develop",
+                "helper.py",
+                True,
+                id="rendered-cache-root-names-target-plugin",
+            ),
         ],
     )
     def test_single_reference_names_plugin_and_script(
@@ -264,6 +320,13 @@ class TestExtractBinRefs:
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
+            pytest.param('python "/usr/bin/python"\n', [], id="system-interpreter-is-not-a-plugin-helper"),
+            pytest.param('python "$OTHER_ROOT/bin/tool.py"\n', [], id="unknown-root-is-not-the-owning-plugin"),
+            pytest.param(
+                "find ~/.claude/plugins/cache/borda-ai-rig/*/*/bin/tool.py\n",
+                [],
+                id="cache-glob-does-not-name-an-owning-plugin",
+            ),
             pytest.param(
                 '"${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/foo.py"\n'
                 '"${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/bar.sh"\n',
@@ -489,6 +552,18 @@ class TestRunR3:
                 _FOUNDRY_BIN % "missing_script.py",
                 [(Severity.FAIL, "missing_script.py")],
                 id="missing-locally-fails",
+            ),
+            pytest.param(
+                (),
+                'python "$PLUGIN_ROOT/bin/missing_script.py"\n',
+                [(Severity.FAIL, "missing_script.py")],
+                id="resolved-missing-locally-fails",
+            ),
+            pytest.param(
+                (),
+                'python "/home/user/.claude/plugins/cache/borda-ai-rig/foundry/1.0.0/bin/missing_script.py"\n',
+                [(Severity.FAIL, "missing_script.py")],
+                id="rendered-missing-locally-fails",
             ),
             # Present locally but not yet in the installed cache: advisory only.
             pytest.param(

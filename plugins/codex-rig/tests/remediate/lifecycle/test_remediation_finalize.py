@@ -191,7 +191,7 @@ class TestHandoffDerivation:
 
     @pytest.mark.parametrize(
         ("selection_version", "handoff_version"),
-        [pytest.param(4, 14, id="historical-selection-new-handoff"), pytest.param(5, 14, id="current")],
+        [pytest.param(4, 15, id="historical-selection-new-handoff"), pytest.param(5, 15, id="current")],
     )
     def test_marks_selection_independently_of_outcome(
         self, valid_run: tuple[Path, dict[str, object]], selection_version: int, handoff_version: int
@@ -400,7 +400,7 @@ def _assert_promoted_for_owner(run: Path, exit_code: int, summary: dict[str, obj
     assert [step["step"] for step in summary["steps"]] == ["derive", "render", "write-result", "validate"]
     VALIDATOR.validate("code-remediate", run, run / "result.json")
     final_text = (run / "final.md").read_text(encoding="utf-8")
-    assert final_text.index("**Artifact**") < final_text.index("**Next steps**")
+    assert final_text.index("**Artifact**") < final_text.index("**Recommendations / next steps**")
     assert final_text.endswith(f"| {owner} | A verification step remains. | Run the required check. |\n")
 
 
@@ -671,7 +671,7 @@ class TestReviewFinalize:
             "validate",
         ]
         assert finished.returncode == 0, finished.stderr.decode()
-        assert json.loads((run / "final-handoff.json").read_text())["presentation_version"] == 14
+        assert json.loads((run / "final-handoff.json").read_text())["presentation_version"] == 15
         assert (run / "review-notes.md").read_bytes().startswith(full_report)
         reviewed_head = json.loads((run / "pr-routing.json").read_text())["head_oid"]
         assert f"Reviewed commit: {reviewed_head}" in (run / "review-notes.md").read_text()
@@ -969,8 +969,8 @@ class TestFinalizePromotion:
     ) -> None:
         """Promote judgement-only drafts on a current selection and require the latest handoff presentation.
 
-        The run uses a version-five selection with resolution proposals; finalize must emit presentation version 12,
-        render the proposal link target in the scope document, and a version-six handoff must be refused as stale.
+        The run uses a version-five selection with resolution proposals; finalize must emit the current presentation
+        version and render the proposal link target; a version-six handoff must be refused as stale.
         """
         run, result = valid_run
         _close_items_for_current_selection(run, result)
@@ -979,7 +979,7 @@ class TestFinalizePromotion:
 
         _assert_promoted_for_owner(run, exit_code, summary, owner)
         handoff = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
-        assert handoff["presentation_version"] == 14
+        assert handoff["presentation_version"] == 15
         assert ": src/package/parser.py" in (run / "resolution-scope.md").read_text(encoding="utf-8")
         handoff["presentation_version"] = 6
         promoted = json.loads((run / "result.json").read_text(encoding="utf-8"))
@@ -1053,5 +1053,5 @@ class TestFinalizePromotion:
         assert (code, summary["status"], summary["promoted"]) == (0, "pass", True), summary
         VALIDATOR.validate("code-remediate", run, run / "result.json")
         final = (run / "final.md").read_text()
-        assert final.index("**Artifact**") < final.index("**Next steps**")
+        assert final.index("**Artifact**") < final.index("**Recommendations / next steps**")
         assert final.endswith(f"| {owner} | Boundary guard | Fix the regression. |\n")

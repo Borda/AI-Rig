@@ -13,25 +13,26 @@ Use Read tool on `.notes/lessons.md` (skip if not found). Enumerate all project 
 ```bash
 # timeout: 15000
 # same resolver as prune.md (slug-divergence guard) — marks the working directory's memory as `current`
-CUR_MEM=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_memory_dir.py" 2>/dev/null)
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+CUR_MEM=$(python "$PLUGIN_ROOT/bin/resolve_memory_dir.py" 2>/dev/null)
 # -print0/read -d '' handles spaces in paths
 while IFS= read -r -d '' d; do
     slug=$(echo "$d" | sed 's|.*/projects/||;s|/memory$||')
-    fb_count=$(find "$d" -maxdepth 1 -name "feedback_*.md" 2>/dev/null | wc -l | tr -d ' ')
+    file_count=$(find "$d" -maxdepth 1 -name '*.md' ! -name MEMORY.md 2>/dev/null | wc -l | tr -d ' ')
     mem_file="$d/MEMORY.md"
     mem_tokens=$([ -f "$mem_file" ] && echo $(( $(wc -c < "$mem_file") / 3 )) || echo 0)
     # project root = cwd recorded in that project's transcripts; the slug is lossy (`/` and `.` both became `-`), never reverse it
     root=$(find "${d%/memory}" -maxdepth 1 -name '*.jsonl' -exec grep -m1 -ho '"cwd":"[^"]*"' {} + 2>/dev/null | head -1 | sed 's/^"cwd":"//;s/"$//')
     scope=other; [ -n "$CUR_MEM" ] && [ "$d" -ef "$CUR_MEM" ] && scope=current
-    echo "MEM_DIR: $slug | ${mem_tokens} tokens | ${fb_count} feedback files | $scope | root=${root:-not_found} | $d"
+    echo "MEM_DIR: $slug | ${mem_tokens} tokens | ${file_count} memory files | $scope | root=${root:-not_found} | $d"
 done < <(find "$HOME/.claude/projects" -maxdepth 3 -name "memory" -type d -print0 2>/dev/null | sort -z)
 ```
 
-**If `PROJECT_FLAG == true`** (check model context from SKILL.md bash output): call `AskUserQuestion` with `multiSelect: true`. Build options from `MEM_DIR:` lines — label = `<slug> (tokens=<N>)`, description = `<M> feedback files`. Max 3 project options plus `Skip` (4-option cap): more than 3 projects found, take the `current` entry plus the largest others by token count up to 3, note in question text that remaining projects were omitted (user can re-run). Always add final option label `Skip`, description `exit without changes`. Checked slugs: extract matching directory paths as working set.
+**If `PROJECT_FLAG == true`** (check model context from SKILL.md bash output): call `AskUserQuestion` with `multiSelect: true`. Build options from `MEM_DIR:` lines — label = `<slug> (tokens=<N>)`, description = `<M> memory files (feedback selected after reading frontmatter)`. Max 3 project options plus `Skip` (4-option cap): more than 3 projects found, take the `current` entry plus the largest others by token count up to 3, note in question text that remaining projects were omitted (user can re-run). Always add final option label `Skip`, description `exit without changes`. Checked slugs: extract matching directory paths as working set.
 
 **If `PROJECT_FLAG == false`**: working set = the `current` `MEM_DIR:` line only — memory of the project in the working directory. No `current` line: this project has no memory dir — continue with `.notes/lessons.md` alone and say so in the report; never fall back to other projects' memory.
 
-For each selected directory, use Glob tool with pattern `feedback_*.md` in that directory to list feedback files; read each with Read tool. Label each cluster of findings with its project slug. Also read what's already captured as rule, from both layers: project rules (Glob `rules/*.md`, path `.claude/`) and installed rules (Glob `*.md`, path `~/.claude/rules/` — setup links foundry's rules there as `foundry-*.md`). A lesson already stated in either layer is `→ already covered`.
+For each selected directory, use Glob tool with pattern `*.md`, excluding `MEMORY.md`; Read each file's YAML frontmatter and select `type: feedback` regardless of filename, then read each selected body in full. A filename prefix never establishes type; missing or malformed frontmatter is reported as unclassified and excluded from feedback clustering. Label each cluster of findings with its project slug. Also read what's already captured as rule, from both layers: project rules (Glob `rules/*.md`, path `.claude/`) and installed rules (Glob `*.md`, path `~/.claude/rules/` — setup links foundry's rules there as `foundry-*.md`). A lesson already stated in either layer is `→ already covered`.
 
 ## Step L1b: Enrich with project context
 
@@ -51,7 +52,7 @@ If `PROJ_ROOT` not resolved: note `[Project grounding: <slug> — path not resol
 
 ## Step L2: Cluster and classify
 
-**Scope check**: material collected in Step L1 contains no lesson/feedback-shaped entries (no `.notes/lessons.md` findings, no `feedback_*.md` content resembling a correction, confirmation, or recurring pattern): report zero clusters, stop — don't force a disposition (e.g. `→ too narrow`) onto non-lesson input.
+**Scope check**: material collected in Step L1 contains no lesson/feedback-shaped entries (no `.notes/lessons.md` findings, no selected feedback body resembling a correction, confirmation, or recurring pattern): report zero clusters, stop — don't force a disposition (e.g. `→ too narrow`) onto non-lesson input.
 
 Group all lessons/feedback entries by domain. Use model reasoning to identify clusters of related items:
 
@@ -139,15 +140,16 @@ Build the structured proposal table and drafts below. Do not apply anything yet 
 - L5: [lesson] → one-off, not generalizable
 ````
 
-**Agent/skill name verification**: for each → agent update and → skill update row, verify: (1) proposed target file/agent name matches lesson content — lesson mentions foundry:qa-specialist, target must be qa-specialist.md, not a different agent; (2) agent name is plugin-prefixed, exists in roster from Step 1.
+**Agent/skill name verification**: for each → agent update and → skill update row, verify: (1) proposed target file/agent name matches lesson content — lesson mentions foundry:qa-specialist, target must be qa-specialist.md, not a different agent; (2) agent name is plugin-prefixed and the concrete target exists. Use Glob and Read on project-local targets; for plugin targets, use SKILL.md Step 1's installed-root resolution block for the owning plugin, then Read its named agent/skill file. Mode dispatch skipped the default roster inventory; never assume it was collected. Unresolved targets remain proposals, never writes.
 
 ## Step L4: Apply (with confirmation)
 
 Set up run directory before conflict checks:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-RUN_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/make_run_dir.py" .reports/distill 2>/dev/null)  # timeout: 5000
+RUN_DIR=$(python "$PLUGIN_ROOT/bin/make_run_dir.py" .reports/distill 2>/dev/null)  # timeout: 5000
 [ -n "$RUN_DIR" ] || { echo "! BLOCKED — make_run_dir.py returned no run dir; nothing applied"; exit 1; }
 echo "$RUN_DIR" > "${TMPDIR:-/tmp}/distill-memory-run-dir-${CSID}"
 echo "RUN_DIR=$RUN_DIR"  # bash vars don't persist; later blocks reload the sentinel, L5 prompt substitutes this value
@@ -174,7 +176,9 @@ Call `AskUserQuestion` tool with the (annotated) proposal table saved to `$RUN_D
 - (b) label: `Review first` — description: show diff of each proposed change before writing
 - (c) label: `Skip` — description: discard proposals and exit without changes
 
-User selects (a), apply changes. **Snapshot first** — before any Write or Edit, Write `$RUN_DIR/targets.txt` listing every file the chosen proposals will create or edit (one repo-relative or absolute path per line, no `~`), then run:
+User selects (b): show the proposed diff for each proposal, including conflicts, and request explicit approval or skip for that proposal. Resolve conflicting proposals into one compatible final edit before approval; unresolved conflicts stay unapplied. Collect the approved proposals, then use the same snapshot, apply steps, and diff gate below; do not write targets during the review loop. User selects (c): exit without target changes.
+
+For either (a) or (b), apply only the chosen proposals. **Snapshot first** — before any target Write or Edit, Write `$RUN_DIR/targets.txt` listing every file the chosen proposals will create or edit, including any cross-reference files needed below (one repo-relative or absolute path per line, no `~`), then run:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -254,7 +258,7 @@ After applying changes, dispatch curator to audit created and modified config fi
 Agent(subagent_type="foundry:curator", name="review-memory-distill", description="Audit distilled rule files", prompt="Review the following Claude config files just created or modified by /distill:memory: <list new rule files and updated agent/skill files from Step L4>. Check: (1) quality — rules are concrete, not vague; (2) duplication — no overlap with existing files; (3) NOT-for boundary clarity; (4) structural consistency. Write your full findings to <RUN_DIR>/curator-review.md using the Write tool. Return ONLY a compact JSON envelope: {\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"file\":\"<RUN_DIR>/curator-review.md\",\"issues\":N,\"confidence\":0.N,\"summary\":\"<one-line>\"}")
 ```
 
-Deadline (`_shared/agent-spawn-protocol.md` §Deadlines): in the spawn response Write `$RUN_DIR/agent-watch-review.tsv` = `curator\t-\t900`, end the turn — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On its notification run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR"` once; no envelope → ⏱ `timed_out`, say the review did not complete.
+Deadline (`_shared/agent-spawn-protocol.md` §Deadlines): in the spawn response Write `$RUN_DIR/agent-watch-review.tsv` = `curator\t-\t900`, end the turn — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On its notification run `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/distill-memory-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""; [ -n "$RUN_DIR" ] && python "${CLAUDE_PLUGIN_ROOT}/bin/agent_watch.py" --state-dir "$RUN_DIR"` once; missing sentinel → stop with `! BLOCKED — re-run L4 setup`; no envelope → ⏱ `timed_out`, say the review did not complete.
 
 Surface curator findings as advisory block in terminal output. Don't block on curator findings — quality recommendations, not release gates.
 

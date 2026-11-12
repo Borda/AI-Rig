@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from _codemap_shell_plugin import render_shell
 from _host_skips import needs_git_and_bash
 
 _PLUGIN = Path(__file__).resolve().parents[2]
@@ -64,7 +65,14 @@ def _save(sentinels: Path, values: dict[str, object], project: str = "proj") -> 
 def _run(recipe: str, env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[str]:
     """Supply only Git's root lookup while keeping query and reference helpers real."""
     recipe = recipe.replace("git rev-parse --show-toplevel", "printf '%s\\n' \"$RENAME_TEST_ROOT\"")
-    return subprocess.run(["bash", "-c", recipe], cwd=cwd, env=env, capture_output=True, text=True, timeout=60)
+    return subprocess.run(
+        ["bash", "-c", render_shell(recipe, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "codemap-py")],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
 
 
 @needs_git_and_bash
@@ -302,7 +310,15 @@ def test_symbol_residual_preserves_non_git_project_support(recipe_env) -> None:
     root, sentinels, env = recipe_env
     (root / "consumer.py").write_text("callback = old\n", encoding="utf-8")
     project = subprocess.run(
-        ["bash", "-c", "git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo cm"],
+        [
+            "bash",
+            "-c",
+            render_shell(
+                "git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo cm",
+                _PLUGIN,
+                "codemap-py",
+            ),
+        ],
         cwd=root,
         capture_output=True,
         text=True,
@@ -311,7 +327,15 @@ def test_symbol_residual_preserves_non_git_project_support(recipe_env) -> None:
     _save(sentinels, {"rename-SUBCOMMAND": "symbol", "rename-OLD_NAME": "old", "sym-type": "function"}, project=project)
 
     result = subprocess.run(
-        ["bash", "-c", _block(_SKILL, "printf 'RESIDUAL_COUNT=")],
+        [
+            "bash",
+            "-c",
+            render_shell(
+                _block(_SKILL, "printf 'RESIDUAL_COUNT="),
+                Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))),
+                "codemap-py",
+            ),
+        ],
         cwd=root,
         env=env,
         capture_output=True,

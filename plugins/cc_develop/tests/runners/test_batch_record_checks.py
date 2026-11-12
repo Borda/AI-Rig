@@ -8,8 +8,18 @@ import sys
 from pathlib import Path
 
 import pytest
+from dev_run_dir import write_sentinel
 
 _BIN = Path(__file__).resolve().parents[2] / "bin"
+
+
+@pytest.fixture(autouse=True)
+def _run_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep all evidence in a declared session run directory inherited by the helper process."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("CSID", "batch-records")
+    write_sentinel("dev-fix-dev-dir", str(tmp_path))
 
 
 @pytest.mark.parametrize(

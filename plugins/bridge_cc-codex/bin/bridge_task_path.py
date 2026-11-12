@@ -1,11 +1,12 @@
 """Choose a temporary task-file path and safely remove consumed scratch files.
 
-Purpose: Resolve an absolute path for the Claude Write tool without constructing task text in Bash.
-Scope: Use TMPDIR or the platform temporary directory; never allocate inside the selected workspace.
-Usage: Run with --workspace PATH to print a fresh path, or --cleanup PATH to remove a matching scratch file.
-Outputs: Allocation prints one path without creating it; cleanup removes only a regular matching temporary file.
-Failure: Invalid session names, workspace-contained paths, unsafe cleanup targets and filesystem errors exit nonzero.
-Used by: Claude Bridge advise, implement and review skills; caller-supplied task files remain caller-owned.
+Purpose:
+    Resolve an absolute path for the Claude Write tool without constructing task text in Bash. Scope: Use TMPDIR or the
+    platform temporary directory; never allocate inside the selected workspace. Usage: Run with --workspace PATH to
+    print a fresh path, or --cleanup PATH to remove a matching scratch file. Outputs: Allocation prints one path without
+    creating it; cleanup removes only a regular matching temporary file. Failure: Invalid session names, workspace-
+    contained paths, unsafe cleanup targets and filesystem errors exit nonzero. Used by: Claude Bridge advise, implement
+    and review skills; caller-supplied task files remain caller-owned.
 """
 
 from __future__ import annotations

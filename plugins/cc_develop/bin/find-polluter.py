@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -44,6 +45,7 @@ _UNSAFE_NODE_ID_CHARS = frozenset(";&|$`()\n\r\t<>\\\"' \x00")
 #: Leading characters pytest does not read as a path: ``-`` starts an option (``-pmodule`` imports a module from the
 #: working directory) and ``@`` expands an args-from-file, recursively. A node ID or directory never starts with either.
 _OPTION_LEAD = ("-", "@")
+_BACKSLASH_IS_SEPARATOR = os.name == "nt"
 
 
 def _is_safe_node_id(node_id: str) -> bool:
@@ -54,6 +56,7 @@ def _is_safe_node_id(node_id: str) -> bool:
     carriage return, tab, redirection, quote, space, or NUL characters is rejected
     as hostile pytest collection output, and so is an ID starting with ``-`` or ``@``
     because pytest would read it as an option or an args-from-file.
+    Backslashes are accepted only when they are native Windows path separators.
 
     Args:
         node_id: candidate pytest node identifier.
@@ -79,6 +82,8 @@ def _is_safe_node_id(node_id: str) -> bool:
     """
     if not node_id or node_id.startswith(_OPTION_LEAD):
         return False
+    if _BACKSLASH_IS_SEPARATOR:
+        node_id = node_id.replace("\\", "/")
     return not any(ch in _UNSAFE_NODE_ID_CHARS for ch in node_id)
 
 

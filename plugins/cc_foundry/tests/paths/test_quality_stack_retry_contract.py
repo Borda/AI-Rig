@@ -106,11 +106,12 @@ class TestFlakyRetryRedesign:
         swallowed the reason's own dash into the id. The id is structurally a whitespace-free prefix plus at most one
         bracket group that may hold one nested level (``path::name[params]`` or ``name[[a] b]`` — only ``params`` may
         contain spaces/dashes); anchoring there is correct regardless of what the free-text reason contains, including
-        a reason that itself has brackets. ``[^[:space:]]`` not ``\\S`` — BSD sed (macOS) has no ``\\S``.
+        a reason that itself has brackets. The prefix class ``[^[:space:][]`` stops at the first ``[`` so the bracket
+        group always starts the parameters, and it is ``[:space:]`` not ``\\S`` — BSD sed (macOS) has no ``\\S``.
         """
         assert "| awk '{print $2}'" not in text
         assert "(.*) - .*$/\\2/" not in text  # the rejected greedy-dash-search form
-        assert "sed -E 's/^(FAILED|ERROR) ([^[:space:]]+(\\[([^][]|\\[[^]]*\\])*\\])?).*$/\\2/'" in text
+        assert "sed -E 's/^(FAILED|ERROR) ([^[:space:][]+(\\[([^][]|\\[[^]]*\\])*\\])?).*$/\\2/'" in text
 
     def test_error_lines_retried_alongside_failed(self, text: str) -> None:
         """Fixture/collection ``ERROR`` lines feed the same retry path as ``FAILED`` lines.
@@ -168,13 +169,13 @@ class TestFlakyRetryRedesign:
 
         A bare word-split of the id list would re-parse each id as a fresh glob pattern under zsh — every parametrized
         node-id contains ``[...]``, so ``NOMATCH`` aborts the command and the failure is misread as GENUINE FAILURE
-        (pytest never runs). Array elements expand quoted, so no id is split or globbed. The loop reads through process
-        substitution because a piped ``while`` runs in a subshell and would lose the array.
+        (pytest never runs). Array elements expand quoted, so no id is split or globbed. The loop reads the saved ID
+        file directly because a piped ``while`` runs in a subshell and would lose the array.
         """
         retry_a_block = _retry_a_block(text)
         assert '"${R[@]}" pytest --tb=short -v "${RETRY[@]}"' in retry_a_block
         assert 'RETRY+=("$_id")' in retry_a_block
-        assert "done < <(printf '%s\\n' \"$FAILED_IDS\")" in retry_a_block
+        assert 'done < "${TMPDIR:-/tmp}/quality-stack-failed-ids-${CSID}"' in retry_a_block
         assert "eval" not in retry_a_block
 
     def test_runner_invocations_use_the_closed_case_array(
@@ -213,7 +214,7 @@ class TestFlakyRetryRedesign:
         next line runs. The async form survives only as an explanatory comment, never as a live code line.
         """
         wide_run = (
-            '"${R[@]}" pytest <test_dir> "${_QS_DOCTEST_ARGS[@]}" -v --tb=short -rfE "${XDIST[@]}" > "$_QS_LOG" 2>&1'
+            '"${R[@]}" pytest "$TEST_DIR" "${_QS_DOCTEST_ARGS[@]}" -v --tb=short -rfE "${XDIST[@]}" > "$_QS_LOG" 2>&1'
         )
         assert wide_run in text
         assert not any("> >(tee" in line and not line.strip().startswith("#") for line in text.splitlines())
@@ -340,16 +341,17 @@ class TestDoctestFold:
         merge_flag_idx = text.index("_QS_DOCTEST_ARGS=(--doctest-modules")
         assert check_idx < merge_flag_idx
 
-    def test_failed_collection_degrades_to_not_merged_not_a_halt(self, text: str, runner_case_line: str) -> None:
+    def test_failed_collection_degrades_to_not_merged_not_a_halt(self, text: str) -> None:
         """A failed collection check degrades gracefully — it never exits the stack.
 
-        Scenario: the closed runner ``case`` legitimately exits 1 on a planted runner, so that line is removed from the
-        collection-check block before asserting that nothing else in it can halt the stack.
+        Scenario: target and runner validation may halt before collection. Once targets are valid, a failed collection
+        must still leave the merge flag false without halting the stack.
         """
-        check_block_start = text.index("DOCTEST_MERGED=false")
-        check_block_end = text.index("_QS_DOCTEST_ARGS=()")
-        check_block = text[check_block_start:check_block_end].replace(runner_case_line, "")
+        check_block_start = text.index("_QS_COLLECT_LOG=")
+        check_block_end = text.index("\n```", check_block_start)
+        check_block = text[check_block_start:check_block_end]
         assert "exit 1" not in check_block
+        assert 'echo "$DOCTEST_MERGED"' in check_block
 
     def test_doctest_failure_never_enters_flaky_retry(self, text: str) -> None:
         """A doctest node-id among the failures is a genuine failure, never flaky-eligible.

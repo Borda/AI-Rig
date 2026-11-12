@@ -71,7 +71,7 @@ Rules (applied by `assemble_vitality_data.py`):
     "9": {"score": <AXIS9_SCORE>, "status": "<AXIS9_STATUS>", "conf": <AXIS9_CONF>, "signal": "<AXIS9_SIGNAL>"}
   },
   "overall_confidence": <OVERALL_CONFIDENCE float>,
-  "health_score_pct": <HEALTH_SCORE_PCT integer>,
+  "health_score_pct": <HEALTH_SCORE_PCT integer; -1 when every axis is unavailable>,
   "axis3_202_pending": <AXIS3_202_PENDING boolean>,
   "total_passes": <TOTAL_PASSES integer>,
   "confidence_history": "<CONFIDENCE_HISTORY string>"

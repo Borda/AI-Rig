@@ -49,6 +49,7 @@ Technical detail for contributors, maintainers and agents. User-facing material 
 - Anything else — deleting a remote branch, `--prune`, `--all`, `--tags`, another branch or ref, a URL, path or variable destination, `cd`, `send-pack`, `http-push`, `subtree push` — no Approve can cover: the agent gives you the command to run yourself.
 - A dry run (`--dry-run`) needs no approval.
 - Force pushes stay forbidden even with a token.
+- One exception to a question per push: `/oss:resolve` asks once at its start, `git-push-run` (**Approve** / **Deny**), naming one `git push <remote> <branch>` and the PR head commit id. Approve records `claude-push-run-approval.json`: that remote, branch and head, valid 12 hours. `commit-guard.js` lets one push of that branch to that remote run while HEAD descends from that head, after the exact-HEAD token has not allowed it; every other rule above still holds.
 - A new session or `/clear` deletes a pending token — per project, so a second session in the same project clears the first one's.
 - The former `! touch /tmp/claude-push-auth-…` sentinel no longer authorizes anything.
 
@@ -154,7 +155,7 @@ Technical detail for contributors, maintainers and agents. User-facing material 
 - Full-sweep quality audit of the project's `.claude/` config by default, or of all `plugins/*/` agent and skill files with `--local` (plugin source checkout).
 - Installed plugins in `~/.claude/plugins/cache/` are not audited
 - a default run that finds no `.claude/` agents or skills reports them as `⚠ UNSCANNED` instead of a clean sweep.
-- Catches broken cross-references, inventory drift, model-tier mismatches, description overlap, doc staleness.
+- Catches broken cross-references, model-tier mismatches, description overlap, doc staleness.
 - Reports findings by severity; fix level chosen from always-fire follow-up gate after report.
 - Adversarial mode challenges every claim via `foundry:challenger` + Codex.
 - `/foundry:audit`'s fix dispatch (`audit/modes/fix.md`, `audit/templates/audit-fix-prompt.md`) overrides per-call to `haiku` for `PARALLEL_SAFE_CATEGORIES` findings (pure transcription of an already-known replacement) regardless of the spawned agent's own frontmatter tier — judgment-bearing and cross-file fixes keep the agent's default.
@@ -225,9 +226,9 @@ Every hook under `hooks/`, as originally documented. `hooks.json` registers them
 
 ### `task-log.js`
 
-- SubagentStart/Stop tracking to /tmp/claude-state-<session>/
+- SubagentStart/Stop tracking to the owner-private `claude-state-user-<uid>/claude-state-<session>/` directory under TMPDIR (or the OS temp directory); no session ID means no activity state
 - PreCompact/PostCompact append metadata to ~/.claude/logs/compactions.jsonl (no instruction or summary text)
-- PreCompact writes the session's edited-file list from `timings.jsonl` (Write/Edit/MultiEdit/NotebookEdit, whole session) into session-context.md and saves skill-contract.md verbatim with verified/unverified status from the writer's session + raw-byte SHA-256 owner stamp, skipping matching foreign-session stamps
+- PreCompact writes the session's edited-file list from `timings.jsonl` (Write/Edit/MultiEdit/NotebookEdit, whole session) into session-context.md and saves only an owner-verified skill-contract.md verbatim using the writer's session + raw-byte SHA-256 owner stamp; unverified and foreign-session contracts are not saved
 - SessionEnd sweeps idle, clean, registered agent-*/oss-* worktrees (2 h) and keeps dev-\*, dirty or output-holding trees
 
 ### `statusline.js`
@@ -240,7 +241,7 @@ Every hook under `hooks/`, as originally documented. `hooks.json` registers them
 
 ### `lint-on-save.js`
 
-- runs pre-commit after every Write/Edit
+- runs pre-commit after Write/Edit only when the user set absolute `FOUNDRY_LINT_CONFIG` before launch; a repository config alone is not consent
 - async + cross-session lock; 15s timeout
 - skips .temp/
 
@@ -257,6 +258,7 @@ Every hook under `hooks/`, as originally documented. `hooks.json` registers them
 ### `agent-router.js`
 
 - PreToolUse Agent hook; 3-tier routing fallback (worktree → cache → local)
+- External embeddings and Anthropic API routing require user-set `AGENT_ROUTER_ALLOW_EXTERNAL=1`; caches are private per-user temp state and missing session IDs skip indexing
 
 ### `commit-guard.js`
 
@@ -372,7 +374,7 @@ Every hook under `hooks/`, as originally documented. `hooks.json` registers them
 
 ### `lib/approval-grants.js`
 
-- approval-record scope table (`local-git-non-destructive`, `push-once` and `gh-write-once`, each written), record store, branch and HEAD reader (`gitHead`, shared by the writer and the spend), single-use spend shared by every loaded Foundry copy (`spendToken`, `removeRecord`) and guard logic behind `approval-guard.js`, read by `commit-guard.js` (`--check-grant`, push token spend, token wipe) and `gh-write-guard.js` (gh write token spend)
+- approval-record scope table (`local-git-non-destructive`, `push-once`, `push-run` and `gh-write-once`, each written; `push-run` reads its remote, branch and PR head from the question text, `questionPushRun`, and the spend checks `isAncestor`), record store, branch and HEAD reader (`gitHead`, shared by the writer and the spend), single-use spend shared by every loaded Foundry copy (`spendToken`, `removeRecord`) and guard logic behind `approval-guard.js`, read by `commit-guard.js` (`--check-grant`, push token spend, token wipe) and `gh-write-guard.js` (gh write token spend)
 - one `approval-record` family at version 1, one file per scope in the git common dir, resolved with `GIT_DIR`/`GIT_COMMON_DIR`/`GIT_WORK_TREE`/`GIT_CEILING_DIRECTORIES`/`GIT_DISCOVERY_ACROSS_FILESYSTEM`/`GIT_INDEX_FILE` removed and `-c safe.bareRepository=explicit`, refusing a bare repository, a missing work tree, a common dir not named `.git` or not linked back from its work tree, and one other than `CLAUDE_PROJECT_DIR`'s
 - a reader rejects an unknown record version or scope, so copies of different releases fail closed
 - mirrored as prose in codex-rig's `native-skill-contract.md`
@@ -411,7 +413,7 @@ Every hook under `hooks/`, as originally documented. `hooks.json` registers them
 
 ### `md-compress.js`
 
-- normalizes markdown whitespace/table-padding in place on Edit
+- PostToolUse Edit normalizes Markdown whitespace/table-padding only for regular, in-project documents; it refuses symlinked targets, never rewrites tool input and emits no allow decision
 
 ### `batch-nudge.js`
 
@@ -463,7 +465,7 @@ These Python helpers are installed workflow support and maintainer surfaces, not
 | `check_bin_test_coverage.py` | Require every bin/ script to have a real test file (audit Check R4). |
 | `check_cli_flag_drift.py` | Detect drift between documented flags and `argparse` options. |
 | `check_codemap_guard.py` | Detect unmanaged codemap index-guard copies. |
-| `check_agent_plugin_root.py` | Flag agent Markdown that writes `${CLAUDE_PLUGIN_ROOT:-…}` (audit Layer-1 `agent-plugin-root`; exit 1 on a finding, `plugin-root-check: allow` exempts a line). |
+| `check_agent_plugin_root.py` | Flag defaulted plugin-root tokens in skills, agents, modes, templates and sidecars (audit Layer-1 `agent-plugin-root`; exit 1 on a finding, historical fixtures excluded, `plugin-root-check: allow` exempts a line). |
 | `check_bridge.py` | Detect whether the bridge plugin is installed and enabled (marketplace allowlist). |
 | `check_fence_symmetry.py` | Validate Markdown code-fence pairing and nesting. |
 | `check_gitignored_refs.py` | Reject tracked-file references to this repo's gitignored documents. |
@@ -506,10 +508,11 @@ These Python helpers are installed workflow support and maintainer surfaces, not
 | `compact_gate.py` | Decide if boundary compaction pays: `continue`, non-blocking `advise`, or opt-in `stop`. |
 | `compaction_boundary.py` | Print a skill's compaction Boundary step, then run the optional foundry `compact_gate.py`; `continue` when the provider is missing. Propagated to oss and develop. |
 | `get_plugin_install_path.py` | Resolve the active plugin path from Claude's registry. |
-| `heal_git_artifacts.py` | Reclaim stale skill locks and orphaned git worktrees; `locks --pattern` must be a bare file-name glob, and a worktree whose status cannot be read is never removable; unregistered dirs are removed only with `--include-orphans` after a fresh re-check, symlinks are never followed, and `--managed-prefix` rejects `*`. |
+| `heal_git_artifacts.py` | Reclaim stale skill locks and orphaned git worktrees; `locks --pattern` must be a bare file-name glob ending in `.lock`. Managed prefixes are `agent-`, `oss-` and `variant-`, never `*`. Unreadable/dirty worktrees, non-empty orphans and standalone repositories are protected. Only empty, freshly rechecked unregistered dirs are removable with `--include-orphans`; symlinks are never followed. |
 | `jq_write.py` | Apply an atomic `jq` JSON edit (`--arg`, `--slurpfile`); cwd, TMPDIR, `~/.claude/*.json`; an unlisted flag exits 3. |
 | `load_mode.py` | Resolve a skill mode/template directory and emit one file. |
 | `load_shared_doc.py` | Resolve the plugin shared-doc directory and emit one file; `--optional` turns a missing plugin, directory or file into one `⚠ WARNING` line with exit 0 (warn-and-skip, used by the Codex pre-pass and audit cross-validation loads). |
+| `render_plugin_root.py` | Emit a document with only its plain bootstrap token rendered to the validated owning-plugin root, escaped for its shell context; loaders use the same implementation. |
 | `make_run_dir.py` | Create a UTC-timestamped run directory. |
 | `merge_settings_permissions.py` | Merge shipped `permissions-{allow,deny}.json` into `~/.claude/settings.json` atomically. |
 | `settings_json.py` | Python-only setup JSON probes and atomic writes for hooks, statusLine, enabledPlugins, env defaults and advisorModel. |
@@ -518,7 +521,7 @@ These Python helpers are installed workflow support and maintainer surfaces, not
 | `remove_hook_from_registry.py` | Remove matching hook commands from a JSON registry. |
 | `resolve_agent_file.py` | Locate the source file for a calibration target. |
 | `resolve_memory_dir.py` | Resolve the project-scoped Claude memory directory. |
-| `resolve_plugin_root.py` | Resolve and validate the current installed plugin root. |
+| `resolve_plugin_root.py` | Select and validate the install record before strict-SemVer cache fallback, then its own AI-Rig source checkout only with cwd inside that checkout. |
 | `resolve_shared_path.py` | Resolve a plugin's shared directory portably (own, or the active `codemap-py` install); the cwd source-tree fallback is used only inside that plugin's own source repository, elsewhere it exits 1. |
 | `resolve_skill_subdir.py` | Resolve a skill `modes/` or `templates/` subdirectory; the project-local `.claude/skills` tier applies only with `--local`. |
 | `state.py` | Persist small shell values across Bash tool-call boundaries. |
@@ -653,7 +656,7 @@ Each test spawns `node <hook>.js` with JSON payload on stdin, asserts filesystem
 | `test_write_skill_contract.py` | `write_skill_contract.py` | 93 | Five-field contract write, optional seven-field form appending a labelled ledger list (empty items omit the block, blank lines dropped), keep-file first line only (cut at bare CR and other line separators, newline-less file adds nothing), parent-dir creation, overwrite of previous contract, cwd-relative path, verbatim placeholder survival, wrong-arity/empty-skill exit codes, `--help` usage, no file written on usage error |
 | `test_compaction_boundary.py` | `compaction_boundary.py` | 19 | Boundary-step excerpt cases and byte-equality with the replaced `sed` range, contract lookup (caller dir, own plugin, none), gate pass-through, resolver failure, gate failure, missing resolver and contract, `-h` |
 | `test_plugin_layout.py` | `plugin_layout.py` | 7 | Manifest-declared skills/agents directory per host manifest, defaults when a manifest is invalid or declares neither, `PLUGIN_LAYOUT:` lines, missing plugins directory tolerated |
-| `test_check_agent_plugin_root.py` | `check_agent_plugin_root.py` | 9 | Only the `${CLAUDE_PLUGIN_ROOT:-…}` form is flagged, per-line findings over `--scan-dir`, clean-scan pass line, non-Markdown file ignored, repo-wide gate that no foundry agent defaults the plugin root |
+| `test_check_agent_plugin_root.py` | `check_agent_plugin_root.py` | 19 | Defaulted tokens flagged in skills, agents and loaded fragments, per-line findings over `--scan-dir` including direct scope selection, historical fixtures and non-Markdown files ignored, clean-scan pass line, foundry agent gate |
 | `test_extract_keep_flag.py` | `extract-keep-flag.py` | 23 | Option-value reading, keep value written and printed, stale contract cleared only when owned and not inlined, missing slug / session id exit 2, `--out` confined to allowed roots, symlink at the sentinel replaced not followed, venue persisted |
 | `test_merge_settings_permissions.py` | `merge_settings_permissions.py` | 43 | Output matches the replaced `jq` merge, user rule order kept, write through a symlinked `settings.json`, idempotent second run, file mode kept, `$HOME` before `Path.home()` (and the fallback), paths outside the write root refused, bad input leaves settings unchanged |
 | `test_settings_json.py` | `settings_json.py`, setup skill | 43 | Every subcommand, exact probes, atomic replacement and failure cleanup, preserved env values, idempotent shipped setup blocks with jq forced to fail. |

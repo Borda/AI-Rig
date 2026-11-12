@@ -78,7 +78,7 @@ Or if limit hit:
 
 ### Code Block Similarity
 
-Include when any `$RUN_DIR/efficiency-check33-*.md` file exists (`--efficiency` mode), or when `$RUN_DIR/similarity-check33.md` exists (non-efficiency Check 33 output written by `checks-skills-duplication.md`). When per-plugin efficiency files exist they take precedence over `similarity-check33.md` so tables are not embedded twice. Read each matching file from the selected output set and embed both tables verbatim, grouped by plugin for per-plugin reports — do NOT summarize. Label:
+Include when any `$RUN_DIR/efficiency/efficiency-check33-*.md` file exists (`--efficiency` mode; also accept run-root `$RUN_DIR/efficiency-check33-*.md` reports), or when `$RUN_DIR/similarity-check33.md` exists (non-efficiency Check 33 output written by `checks-skills-duplication.md`). When per-plugin efficiency files exist they take precedence over `similarity-check33.md` so tables are not embedded twice. Read each matching file from the selected output set and embed both tables verbatim, grouped by plugin for per-plugin reports — do NOT summarize. Label:
 
 ```markdown
 #### Purpose-based similarity clusters — Check 33 / --efficiency only

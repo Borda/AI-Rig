@@ -1,10 +1,10 @@
 # Upgrade Mode — foundry:audit
 
-Triggered by `/audit --upgrade`. Read+executed by `/audit` when `--upgrade` flag present.
+Triggered by `/foundry:audit --upgrade`. Read+executed by `/foundry:audit` when `--upgrade` flag present.
 
 ## Mode: upgrade
 
-**Trigger**: `/audit --upgrade`
+**Trigger**: `/foundry:audit --upgrade`
 
 **Purpose**: apply documented Claude Code improvements that passed genuine-value filter. Config changes applied + correctness-checked immediately. Capability changes A/B tested via mini calibrate pipeline against source files (`--local` only) — accepted only if neither delta is negative and at least one clears the noise floor (Phase 4 Step d).
 
@@ -14,7 +14,7 @@ Triggered by `/audit --upgrade`. Read+executed by `/audit` when `--upgrade` flag
 
 Verify no unresolved blocking findings before applying anything.
 
-Use the most recent completed same-project audit's `summary.jsonl` and re-audit/fix results as the gate source; record its exact run path. It is fresh only within 4 hours and when none of its audited sources changed after that verification. Missing, incomplete or stale evidence → run a fresh scoped `/audit` before applying proposals. Any unresolved security/critical/high issues: stop, print "⚠ Resolve blocking findings first (run `/audit` and pick fix level from gate), then re-run `/audit --upgrade`." Never treat historical ledger rows already verified resolved as unresolved findings.
+Use the most recent completed same-project audit's `summary.jsonl` and re-audit/fix results as the gate source; record its exact run path. It is fresh only within 4 hours and when none of its audited sources changed after that verification. Missing, incomplete or stale evidence → run a fresh scoped `/foundry:audit` before applying proposals. Any unresolved security/critical/high issues: stop, print "⚠ Resolve blocking findings first (run `/foundry:audit` and pick fix level from gate), then re-run `/foundry:audit --upgrade`." Never treat historical ledger rows already verified resolved as unresolved findings.
 
 Select the latest completed audit in the current project's report root with this block. Its printed path is a candidate, not gate approval: verify the audited-source inventory and freshness, including zero-finding sources, and current unresolved findings against its report and fix evidence. Missing inventory/provenance → run a fresh scoped audit and retain its inventory and verification evidence; never infer unchanged sources from an empty ledger. Upgrade completion markers are not audit evidence.
 
@@ -51,8 +51,9 @@ PY
 After the gate passes, allocate a fresh upgrade run for snapshots and proposal evidence; do not replace the audit's `run-dir` sentinel. Before later shell calls, re-read `RUN_DIR` from `upgrade-run-dir`; substitute its printed literal path into sub-agent prompts and Write destinations.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-RUN_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/make_run_dir.py" .reports/audit)  # timeout: 5000
+RUN_DIR=$(python "$PLUGIN_ROOT/bin/make_run_dir.py" .reports/audit)  # timeout: 5000
 [ -n "$RUN_DIR" ] || { echo "! BLOCKED — upgrade run directory unavailable"; exit 1; }
 mkdir -p "$RUN_DIR/upgrade"
 echo "$RUN_DIR" > "${TMPDIR:-/tmp}/audit-state-${CSID}/upgrade-run-dir"
@@ -167,7 +168,7 @@ Mark "Apply config proposals" completed.
 
 Mark "A/B test capability proposals" in_progress.
 
-**Source-only gate**: `LOCAL_MODE` not `true` → skip this phase; report each capability proposal as `skipped — re-run /audit --upgrade --local to A/B test against plugins/*/ source`. Without `--local` the target agent file is the installed cache copy — an edit there is overwritten by the next plugin update and never reaches source.
+**Source-only gate**: `LOCAL_MODE` not `true` → skip this phase; report each capability proposal as `skipped — re-run /foundry:audit --upgrade --local to A/B test against plugins/*/ source`. Without `--local` the target agent file is the installed cache copy — an edit there is overwritten by the next plugin update and never reaches source.
 
 Each **capability** proposal (max 3), in sequence:
 
@@ -176,7 +177,8 @@ Resolve `TARGET_FILE` to the existing agent source under `plugins/` before calib
 **Step a — Baseline calibration**: Load the calibrate pipeline template via Bash (not the Read tool — Bash grant is version-proof):
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate templates pipeline-prompt.md --fallback-source  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/load_mode.py" calibrate templates pipeline-prompt.md --fallback-source  # timeout: 5000
 ```
 
 Spawn `general-purpose` subagent with that template, target agent name, domain, N=3, MODE=fast, AB_MODE=false, LOCAL_MODE=true, explicit TIMESTAMP, TARGET_LABEL and PROBLEM_SET_VERSION from the current calibrate template, and RUN_SLUG=`upgrade-<proposal>-before`. Require its resolved TARGET_FILE to equal the proposal's source path and record the path and source digest in the run evidence. A missing target, incomplete verdict or nonnumeric recall/F1 rejects the proposal before editing. Capture `recall_before` and `f1_before` from returned JSON.
@@ -240,10 +242,10 @@ Mark "A/B test capability proposals" completed.
 
 ### Next Steps
 - Accepted plugin-source edits reach `~/.claude/` only via plugin update/reinstall; `/foundry:setup` afterwards re-merges plugin settings/rules only
-- `/audit` — confirm clean baseline after upgrades
-- Reverted items: run `/calibrate <agent> full` for deeper A/B signal (N=10 vs N=3 used here)
+- `/foundry:audit` — confirm clean baseline after upgrades
+- Reverted items: run `/foundry:calibrate <agent> full` for deeper A/B signal (N=10 vs N=3 used here)
 ```
 
 Propose reinstall after upgrade completes — no auto-execute. Print: `` → Update/reinstall the plugin to deliver accepted changes to ~/.claude/, then run `/foundry:setup` to re-merge plugin settings/rules ``
 
-On successful completion, including no proposals, Write `<RUN_DIR>/result.jsonl.upgrade.rec` containing one JSON object with `status:"complete"`, `mode:"upgrade"`, the gate audit path and proposal outcomes; run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/append_ledger.py" "<RUN_DIR>/result.jsonl"` to persist the completion marker for TTL cleanup. On abort/error leave result.jsonl absent, preserving incomplete evidence. An upgrade result is never a clean-audit gate source.
+On successful completion, including no proposals, Write `<RUN_DIR>/result.jsonl.upgrade.rec` containing one JSON object with `status:"complete"`, `mode:"upgrade"`, the gate audit path and proposal outcomes; run `python "${CLAUDE_PLUGIN_ROOT}/bin/append_ledger.py" "<RUN_DIR>/result.jsonl" --run-root "<RUN_DIR>"` to persist the completion marker for TTL cleanup. On abort/error leave result.jsonl absent, preserving incomplete evidence. An upgrade result is never a clean-audit gate source.

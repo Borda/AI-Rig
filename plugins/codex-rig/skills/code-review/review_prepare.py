@@ -64,6 +64,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
 #: Keep sibling modules importable when pytest collects this file by path.
 SKILL_DIRECTORY = Path(__file__).resolve().parent
 if str(SKILL_DIRECTORY) not in sys.path:
@@ -193,11 +196,14 @@ def _dispatch_message(plan_path: Path, role: str, attempt: int = 1, *, provenanc
         if len(calls) != 1 or attempt != 1:
             raise ValueError("review-prepared-reader-recipe-invalid")
         return calls[0]["arguments"]["message"]
-    message = review_context.dispatch_message(plan_path, role, attempt, provenance_header=provenance_header)
     plan = validator._load_json(plan_path)
     entries = [entry for entry in plan["contexts"] if entry["role_id"] == role]
     if len(entries) != 1:
         raise ValueError("review-context-role-count")
+    context_path = (plan_path.parent / entries[0]["context_path"]).resolve()
+    if not context_path.is_relative_to(plan_path.parent.resolve()):
+        raise ValueError("review-context-outside-plan")
+    message = review_context.dispatch_message(plan_path, role, attempt, provenance_header=provenance_header)
     return _compact_dispatch_message(
         message,
         entries[0]["context_sha256"],

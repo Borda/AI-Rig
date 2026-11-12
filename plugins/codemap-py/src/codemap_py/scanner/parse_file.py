@@ -119,7 +119,7 @@ def _parse_file(filepath: Path, root: Path, src_root: Path) -> dict:
         if dynamic_imports:
             entry["dynamic_imports"] = dynamic_imports
         if is_test:
-            entry["mock_patches"] = extract_mock_patches(tree, filepath)
+            entry["mock_patches"] = extract_mock_patches(tree, rel_path)
         return entry
     except SyntaxError as exc:
         return {"name": name, "path": rel_path.as_posix(), "status": "degraded", "reason": f"SyntaxError: {exc}"}

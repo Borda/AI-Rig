@@ -21,7 +21,6 @@ Use one severity per class across checks; these entries take precedence over che
 
 | Defect class | Severity | Checks and evidence boundary |
 | -- | -- | -- |
-| MEMORY.md inventory drift | medium | Checks 1 and 18a: documented roster differs from disk; drift alone does not demonstrate failed dispatch |
 | Cross-call shell state | medium | Checks 23d and 43: a later Bash call reads an assignment that was not persisted; prove any additional runtime failure separately |
 
 ## Antipatterns (severity under-classification — common calibration failures)
@@ -34,7 +33,7 @@ Use one severity per class across checks; these entries take precedence over che
 
 - Hardcoded credentials (even "test" or "example" tokens with real format) → always **security**
 
-- For inventory drift and cross-call shell state, apply §Canonical defect classes consistently; never promote severity solely from an untested runtime premise.
+- For cross-call shell state, apply §Canonical defect classes consistently; never promote severity solely from an untested runtime premise.
 
 - `deep-reasoning` agent on `sonnet` → **high**, not "possibly underpowered" (medium) — tier table is authority
 

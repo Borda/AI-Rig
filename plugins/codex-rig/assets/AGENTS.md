@@ -22,6 +22,8 @@ Docs, deps, CI/CD, releases, security, deprecations → prefer current primary s
 
 ## Execution Discipline
 
+A request to repeat review and fix until a reviewer reports no findings or no security findings, or to resolve all findings; a second independent review round about to be dispatched for the same change; or a skill workflow repeating its review then fix cycle counts as an explicitly invoked loop from that moment: before the next reviewer dispatch, start ledger; follow packaged `shared/adversarial-loop.md` (helper output, stop/plateau rules, user's round budget).
+
 - Specific, understood, bounded, reversible, low-risk work with clear acceptance: concise plan → brief parent self-challenge (not independent) → accept within existing authority → assign parent execution or useful bounded owners → implement → consolidate with one bounded independent result challenge and relevant verification; a coherent fix plus its regression stays one task. Unknown cause → investigate first. Unclear scope/acceptance, coupled domains, material risk or consequential design choices → pause further implementation and promote. Nontrivial work defines scope, owned files and acceptance before editing. Medium/large or unexpectedly nontrivial implementation: one scoped plan → independent plan challenge → bounded higher-capability advice if material uncertainty remains → approve challenged plan within existing authority → delegate useful bounded disjoint work or retain indivisible parent execution → implement → consolidate actual source/handoffs, independent implementation challenge, verification against all criteria and outcome. Approval creates no routine user prompt; ask only for actual missing authority or protected decisions. Establish core acceptance first; expand only for proven current need, reuse valid evidence, and stop or re-scope waste. Delegate disjoint work in parallel when useful; serialize coupled work. When the work decomposes into disjoint ownership, run the pieces in parallel as bounded subagents; serialise only what shares a path; each piece has exactly one owner; never hand two agents the same file. Reuse still-current parent-scoped plans and challenges for bounded children; no recursive planning. One challenge is not an automatic multi-round convergence loop; invoke that loop only when explicitly requested. File count, ordinary logs, factual queries and optional tooling do not force orchestration. Read-only analysis uses planning suited to uncertainty without inventing implementation. Preserve actual runtime permissions, protected decisions, independent coverage and project checks; instruction bounds never prove enforced isolation.
 - Prefer smallest reversible change solving actual problem. Fix feels speculative → stop, re-scope before widening blast radius.
 - Stay focused on the user's goal; necessary root-cause work stays in scope. Ask before pursuing separate incidental concerns.
@@ -236,6 +238,8 @@ Choose specialist teams (architecture and public API, security, data pipeline, t
 ______________________________________________________________________
 
 ## Commit Authorization
+
+<!-- policy-sibling: skills/code-remediate/references/existing-conflict.md (Existing merge or conflict recovery), shared/native-skill-contract.md (Local merge approval) -->
 
 Every local commit created by Codex must end with:
 

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from _hook_env import _bash_runs_posix_script
+from _plugin_payload import install_foundry
 
 _SKILLS = Path(__file__).resolve().parents[2] / "skills"
 _BASH = pytest.mark.skipif(not _bash_runs_posix_script(), reason="POSIX Bash execution unavailable")
@@ -34,7 +35,7 @@ def probe_env(tmp_path: Path) -> dict[str, str]:
         for key in ("PATH", "SystemRoot", "SYSTEMROOT", "COMSPEC", "PATHEXT", "TEMP", "TMP")
         if key in os.environ
     }
-    env.update(TMPDIR=str(tmp_path), HOME=str(tmp_path), CLAUDE_CODE_SESSION_ID="probe-test")
+    env.update(TMPDIR=str(tmp_path), HOME=str(tmp_path), USERPROFILE=str(tmp_path), CLAUDE_CODE_SESSION_ID="probe-test")
     return env
 
 
@@ -212,10 +213,12 @@ def test_humanizer_check_mode_closes_with_confidence() -> None:
 @_BASH
 def test_hook_probe_reads_installed_plugin_hooks(tmp_path: Path, probe_env: dict[str, str]) -> None:
     """The hook diagnostic lists the active plugin rather than a retired user directory."""
-    plugin = tmp_path / "plugin cache"
+    plugin = install_foundry(tmp_path)
     (plugin / "hooks").mkdir(parents=True)
     (plugin / "hooks/registered.js").write_text("", encoding="utf-8")
-    command = next(line for line in _section("investigate", "## Step 5: Probe top hypotheses") if "ls -la" in line)
+    section = _section("investigate", "## Step 5: Probe top hypotheses")
+    prologue = next(line for line in section if line.startswith("PLUGIN_ROOT=$(") and "resolve_plugin_root.py" in line)
+    command = prologue + "\n" + next(line for line in section if "ls -la" in line)
     result = subprocess.run(
         ["bash", "-c", command],
         env={**probe_env, "CLAUDE_PLUGIN_ROOT": str(plugin)},

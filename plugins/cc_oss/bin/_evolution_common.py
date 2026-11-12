@@ -32,6 +32,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,10 +45,10 @@ SCHEMA_VERSION: Final = 1
 #: Per-stage algorithm versions; each is folded into that stage's fingerprint.
 ALGO_VERSIONS: Final = {
     "index": 1,
-    "entries": 1,
+    "entries": 2,
     "evidence": 1,
     "column_map": 1,
-    "scores": 1,
+    "scores": 2,
     "adjudication_prompt": 2,
 }
 
@@ -64,6 +65,11 @@ REAL_KINDS: Final = frozenset({KIND_FEATURE, KIND_CHANGE})
 
 #: Cell methods, in ascending precedence for conflicts (manual wins).
 METHODS: Final = ("file", "heuristic", "blame-context", "text", "symbol", "blame", "inherited", "llm", "manual")
+
+#: Cell methods that may carry a binary link: the strongest signal must be blamed lines, a validated text reference
+#: or a verdict. Symbol overlap, file overlap and inherited shares stay in the soft view only, because on labelled
+#: repositories they produced most of the false links (see the Phase 0 evaluation in ``evolution_eval.py``).
+LINK_METHODS: Final = frozenset({"blame", "blame-context", "text", "llm", "manual"})
 
 #: Entry sources.
 SOURCE_CHANGELOG: Final = "changelog"
@@ -479,12 +485,16 @@ def append_jsonl(path: Path, records: list[dict[str, Any]]) -> list[str]:
 def atomic_write_json(path: Path, obj: Any) -> None:
     """Write JSON through a temp file in the same directory and an atomic rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with tmp.open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps(obj, sort_keys=True, indent=2, ensure_ascii=False) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(obj, sort_keys=True, indent=2, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 _SAFE_COMPONENT = re.compile(r"^[A-Za-z0-9._-]+$")

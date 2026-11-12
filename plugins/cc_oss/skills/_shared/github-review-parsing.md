@@ -6,12 +6,15 @@ Applies whenever a PR's existing bot/human reviews are read for triage. Three ru
 
 ## 1. Fetch completeness
 
-Both endpoints mandatory — one alone misses content only the other has.
+All three conversation sources are mandatory — none substitutes for the others.
 
 - `gh api repos/<owner>/<repo>/pulls/<n>/reviews --paginate` — review-level bodies, authoritative. Carries embedded collapsed findings (rule 2). `gh pr view --json reviews` is a convenience alternative (GraphQL-backed, no `--paginate`) — its cap on PRs with many review rounds unverified; prefer the REST endpoint above when completeness matters, never treat the two as interchangeable without checking.
+
 - `gh api repos/<owner>/<repo>/pulls/<n>/comments --paginate` — inline per-line review comments. No review-body substitute exists; skipping this endpoint makes every inline thread invisible.
 
-**Cache note**: both calls are per-review-round data — never serve from a cache keyed before the latest push. A consumer skipping its "primary fetch" block on a cache hit must still run these two, or a same-day re-run reproduces exactly the under-reporting this file exists to prevent.
+- `gh api repos/<owner>/<repo>/issues/<n>/comments --paginate` — general PR conversation, including maintainer decisions and contributor replies. `gh pr view --json comments` is an alternative only after its completeness is checked; never silently treat a failed or capped fetch as an empty conversation.
+
+**Cache note**: all three calls are per-review-round data — never serve from a cache keyed before the latest push. A consumer skipping its "primary fetch" block on a cache hit must still fetch all three sources, or a same-day re-run reproduces exactly the under-reporting this file exists to prevent.
 
 ## 2. Collapsed-block expansion
 

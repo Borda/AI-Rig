@@ -23,7 +23,9 @@ ROOT = Path(__file__).resolve().parents[4]
 BASH = shutil.which("bash")
 
 _TEST_IMPACT = '{"test_files": ["tests/test_leaf.py"], "index": {"query_complete": true}}'
-_CONSUMER_COMMAND = re.compile(r'CODEMAP_ENABLED=\$\(cat .*?\) python "[^"\n]+/resolve_test_plan.py" targeted')
+_CONSUMER_COMMAND = re.compile(
+    r'(?:IFS= read -r CODEMAP_ENABLED < .*?; export CODEMAP_ENABLED;|CODEMAP_ENABLED=\$\(cat .*?\)) python "[^"\n]+/resolve_test_plan.py" targeted'
+)
 
 
 @dataclass(frozen=True)

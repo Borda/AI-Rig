@@ -129,12 +129,12 @@ class TestScanVersion:
         """Version must be a positive number (≥1)."""
         assert SCAN_VERSION >= 1
 
-    def test_value_is_thirteen(self) -> None:
-        """v5.7 bumps SCAN_VERSION for resolved static submodule imports.
+    def test_value_is_fourteen(self) -> None:
+        """Relative persisted coordinates and source fingerprints require a new generation.
 
         A deliberate pin: changing the schema version must update this test together with the index-staleness logic.
         """
-        assert SCAN_VERSION == 13
+        assert SCAN_VERSION == 14
 
 
 class TestPerFeatureVersionConstants:

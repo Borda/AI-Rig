@@ -50,7 +50,7 @@ Inspect the managed `github-read` config state without writing: report absent, c
 
 ### 02b: Global instruction health
 
-At explicit check or after an approved refresh, run the active installed package's `scripts/install_global_agents.py --check --source <installed-package>/assets/AGENTS.md --codex-home <home>`, where `<installed-package>` is the selected cache path from step 02. The block renders the plugin root, so a marketplace-checkout `--source` needs `--plugin-root <installed-package>` or reports a current block as `stale-managed-template`. A nonzero result is degraded instruction composition even when package hashes pass. Report overlapping or stale global policy and the bounded recognizable legacy skill signatures; do not declare healthy or delete user skills automatically. For a verified old duplicate prefix, prepare its exact digest and review the prefix before offering the separate `--migrate-legacy-prefix-sha256` lifecycle action. That action backs up the entire file and preserves the custom suffix; it does not remove legacy skills. Source checkout edits do not update an active installation.
+At explicit check or after an approved refresh, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/scripts/install_global_agents.py --check --source <installed-package>/assets/AGENTS.md --codex-home <home>`, where `PLUGIN_ROOT` and `<installed-package>` are the selected cache path from step 02. On native Windows use `PLUGIN_ROOT/bin/python.cmd` instead of `PLUGIN_ROOT/bin/python`. The block renders the plugin root, so a marketplace-checkout `--source` needs `--plugin-root <installed-package>` or reports a current block as `stale-managed-template`. A nonzero result is degraded instruction composition even when package hashes pass. Report overlapping or stale global policy and the bounded recognizable legacy skill signatures; do not declare healthy or delete user skills automatically. For a verified old duplicate prefix, prepare its exact digest and review the prefix before offering the separate `--migrate-legacy-prefix-sha256` lifecycle action. That action backs up the entire file and preserves the custom suffix; it does not remove legacy skills. Source checkout edits do not update an active installation.
 
 ### 03: Report external-agent residue without touching it
 
@@ -83,8 +83,13 @@ The native sync wrapper registers the catalog and all three managed plugin trees
 After successful managed-plugin installation, resolve active installed Codex Rig cache root and invoke the packaged profile helper:
 
 ```bash
-<installed-codex-rig-cache-root>/bin/python <installed-codex-rig-cache-root>/scripts/install_github_read_rules.py \
-  --plugin-root <installed-codex-rig-cache-root> --codex-home <CODEX_HOME>
+"<installed-codex-rig-cache-root>/bin/python" "<installed-codex-rig-cache-root>/scripts/install_github_read_rules.py" --plugin-root "<installed-codex-rig-cache-root>" --codex-home "<CODEX_HOME>"
+```
+
+On native Windows, use PowerShell:
+
+```powershell
+& "<installed-codex-rig-cache-root>/bin/python.cmd" "<installed-codex-rig-cache-root>/scripts/install_github_read_rules.py" --plugin-root "<installed-codex-rig-cache-root>" --codex-home "<CODEX_HOME>"
 ```
 
 The helper has no positional install verb:
@@ -117,7 +122,7 @@ Follow `../../shared/helper-cli-contract.md`. Write `SYNC_METADATA`, gate logs, 
 
 ## Quality Gates
 
-Required: CLI-help evidence, before-state identity, complete package hash validation, external-agent residue summary, clean diff review, profile ownership/integrity and backup evidence, and validated result JSON. Refresh also requires explicit approval evidence, exact command/exit logs, after-state identity, and confirmation that existing sessions must restart to observe synchronized permissions.
+Required: CLI-help evidence, before-state identity, complete package hash validation, external-agent residue summary, clean diff review under the [shared whitespace-scoping rule](../../shared/quality-gates.md#required-checks), profile ownership/integrity and backup evidence, and validated result JSON. Refresh also requires explicit approval evidence, exact command/exit logs, after-state identity, and confirmation that existing sessions must restart to observe synchronized permissions.
 
 ## Calibration Hooks
 

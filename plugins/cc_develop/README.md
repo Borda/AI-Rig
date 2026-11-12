@@ -43,6 +43,8 @@ ______________________________________________________________________
 
 `develop` is a Claude Code plugin for validate-first Python development: scope work, pin a feature contract, reproduce a bug, preserve behavior during refactoring, investigate failures, and review local Python changes with explicit evidence and handoff artifacts.
 
+Refactor safety gates accept LF and CRLF characterization markers; explicit targeted-test file paths accept native Windows separators. Review report sentinels use native Windows spelling under Git Bash so report hooks can find the active directory.
+
 Each workflow has gates that pause when the contract, reproduction, evidence, or safety net is missing.
 
 > Current boundaries: code-changing and review workflows target Python projects with pytest-style tooling; `/develop:plan` can analyze a broader task, but downstream implementation still assumes pytest. Dependency migrations, data migrations, codebase onboarding, and Python-free changes remain outside this plugin's current scope; use the project's native workflow or another tool. Broader language support could be added later, but is not promised here.
@@ -51,6 +53,7 @@ Each workflow has gates that pause when the contract, reproduction, evidence, or
 
 - Small implementation uses a concise plan, brief parent self-challenge (not independent), acceptance within existing authority, useful bounded execution ownership or indivisible parent execution, and consolidation with independent result challenge and relevant verification.
 - Medium/large work retains independent plan challenge before acceptance.
+- When foundry is absent, a separately spawned `general-purpose` reviewer with the challenger role prompt supplies independent coverage and is labelled as the fallback in the final report; a parent self-challenge never supplies that coverage.
 - Approval prompts only for actual missing authority or protected decisions; reuse accepted parent plans and establish core acceptance before optional expansion.
 - Validate a coherent bounded outcome or split it into smaller outcomes, then complete the active branch depth-first using a compact task map and context limited to the active piece, dependencies, and interfaces.
 - Complete required leaf challenge and verification before dependent work; dependency-ready siblings with agreed stable interfaces and disjoint owners may proceed.
@@ -59,10 +62,12 @@ Each workflow has gates that pause when the contract, reproduction, evidence, or
 
 ### Review and challenge loops
 
+Progress tables come only from the ledger helper and include reconciliation of previous dispositions and current carried, repeat-route and new findings for all tiers and security. Old means a known invariant, including closed history, rather than only previous-row carryover. Reviews run before a ledger are disclosed as pre-ledger prose, never invented table rows. Repeated review/fix requests, a second independent review of the same change, or a repeated skill review/fix cycle activate the full loop before the next reviewer dispatch, with its stop rules and user-set round budget.
+
 - Review loops fix feasible authorized findings, investigate repeated signatures, and continue whenever the weighted score decreases; structural labels alone do not stop remediation.
 - Completion prompts ask only for a missing decision or authorization, regardless of report length, and already-authorized next steps continue. Concrete gates for fresh scope, paid execution, sensitive or destructive actions, and remote changes remain in force.
 - Each round challenges and collects findings, reports the cumulative old/new table, resolves feasible authorized findings, escalates unfixable `security`/`critical`/`high` findings, then repeats until clean or plateau/non-convergence, subject to authority, evidence, recurrence and stricter caller budgets.
-- The table is `Iteration | Security | Critical | High | Medium | Low | Nits | Weighted score`; open and fixed-pending-verification signatures split into old and new, while verified-fixed and rejected findings stay excluded. Security and critical have separate columns; score weights remain `20/10/6/4/2/1`. Empty rounds print no progress table.
+- The table is `Iteration | Security | Critical | High | Medium | Low | Nits | Weighted score`; open and fixed-pending-verification signatures split into old and new, while verified-fixed and rejected findings stay excluded. Security and critical have separate columns; score weights remain `20/10/6/4/2/1`. Before any completed round, no progress table is printed.
 - The cumulative table is shown once after each newly validated challenge, before fixes or another review. Pending reviews and unrelated status updates do not repeat it; final handoffs retain their canonical Results table.
 - Each open finding needs a recorded fix, escalation, or justified deferral; chat table timing has no machine-readable delivery receipt.
 - A 1,500-output-token reviewer target is hard only when the runtime supports it; findings are never dropped to meet it.
@@ -76,6 +81,9 @@ Each workflow has gates that pause when the contract, reproduction, evidence, or
 - Feature, review, fix, refactor, diagnosis, and plan report examples use short descriptive fields. Writing requirements are separate notes; completed reports replace fields with observed values and omit the notes.
 - Optional Codemap context and index-gate guidance ship with develop, so loading them does not depend on another plugin's private shared directory. The host-provided active installation takes precedence over other cached versions. Structural queries still require the `codemap-py` plugin; an unavailable CLI or local contract retains the file-read fallback.
 - Codemap review batches retain each child's success, freshness and scope metadata; failures are not empty answers. Package initializer changes stay in the affected-module scan.
+- CI log extraction uses `dev_ci_log_fence.py` to label the full saved log and bounded preview as untrusted evidence, with complete fresh-token fences; log text never becomes workflow instructions.
+- Batch recovery keeps a fixed failed-test list with `dev_test_targets.py --check-record <record> --expect-exit 1 --save-failures <list>` and reruns that list through `--tests-from <list>`. The green check validates a completed nonempty run with `--check-record <record> --expect-exit 0`, so new edits cannot silently change the tests used to attribute a batch failure.
+- Invocation arguments in all six development workflows are staged as data before parsing, keeping quotes, newlines and shell metacharacters literal. Shared plan extraction loads the same input within its own Bash call.
 - Codemap reuse requires the same project/index/query, including flags; review-to-resolve cache stamps include the canonical index path. Static test links and mocks are not measured coverage, and source/test-quality reads remain available.
 
 ______________________________________________________________________
@@ -156,7 +164,7 @@ Fastest value: scope next task before starting.
 `plan` reads the codebase, classifies the task, identifies affected files and estimates complexity. For feature, fix and refactor work it writes a structured plan to `.plans/active/` and challenges its feasibility unless `--no-challenge` is passed. A separate feasibility review runs only on explicit request. Unknown root cause routes to `/develop:debug` first without an implementation plan.
 
 ```text
-Plan -> .plans/active/plan_extract-data-loading-dataloader.md
+Plan -> .plans/active/plan-extract-data-loading-dataloader-<ts>.md
 
 Classification : refactor
 Complexity     : medium
@@ -164,7 +172,7 @@ Affected files : 4 files across 2 modules
 Key risks      : Public API changes in dataset.py — 3 callers
 Agent review   : plan challenge completed; separate feasibility review not requested
 
--> /develop:refactor "extract data loading into a dedicated DataLoader class" when ready
+-> /develop:refactor <target> "extract data loading into a dedicated DataLoader class" --plan .plans/active/plan-extract-data-loading-dataloader-<ts>.md when ready
 ```
 
 ______________________________________________________________________
@@ -198,20 +206,20 @@ ______________________________________________________________________
 | `--no-challenge`  | Skip challenger adversarial gate                    |
 | `--codemap`       | Require Codemap and an index; stop when unavailable |
 | `--no-codemap`    | Disable Codemap even if available                   |
-| `--max-depth <N>` | Limit plan → debug → plan cycles (default: `3`)     |
+| `--max-depth <N>` | Accepted for compatibility; no effect               |
 
 **What happens**:
 
 1. Spawns `foundry:sw-engineer` to classify task (feature / fix / refactor / debug), map affected files, estimate complexity (small / medium / large), list risks. With codemap: effort sizing structural, not file-count-based — reverse-dependency counts per affected module set blast tier (≥5 rdeps HIGH, 1–4 MODERATE, 0 LOW), co-change coupled pairs surface as risks. HIGH module or 3+ affected modules push complexity to `large`.
-2. Unknown root cause: after the depth checkpoint and any applicable breaking-change gate, recommend `/develop:debug <goal>` and stop without writing or challenging an implementation plan. At the depth cap, explicitly choosing **Write the plan anyway** continues with the unconfirmed cause recorded as a risk; resetting the cap recommends debug, and abort stops.
-3. Otherwise write a structured plan to `.plans/active/<slug>.md`. Skip separate feasibility review by default; run it only on explicit request.
-4. Challenge the plan once for design, feasibility and testability unless `--no-challenge` is passed; resolve feasible authorized findings and escalate unresolved blockers or protected decisions.
-5. Write a brief summary and the appropriate downstream handoff.
+2. Unknown root cause: recommend `/develop:debug <goal>` and stop without writing or challenging an implementation plan. Debug hands off to fix; no automatic plan/debug loop or depth counter runs.
+3. Otherwise write a structured plan to `.plans/active/plan-<slug>-<ts>.md`. The UTC timestamp uses `%Y-%m-%dT%H-%M-%SZ`; append `-2`, `-3`, etc. if that path exists. Skip separate feasibility review by default; run it only on explicit request. Save the brief before capturing the revision for challenge.
+4. Challenge the plan once for design, feasibility and testability unless `--no-challenge` is passed; resolve feasible authorized findings and escalate unresolved blockers or protected decisions. Record its status and challenged-text SHA-256 in `Challenge:`; downstream skills reuse the challenge only when its status is passed and its digest still matches.
+5. Print the brief summary and the appropriate downstream handoff; any final plan edits invalidate reuse of the earlier challenge digest.
 
 **Output to terminal**:
 
 ```markdown
-Plan -> .plans/active/plan_<slug>.md
+Plan -> .plans/active/plan-<slug>-<ts>.md
 
 Classification : feature | fix | refactor
 Complexity     : small | medium | large
@@ -219,7 +227,8 @@ Affected files : N files across M modules
 Key risks      : <one-liner>
 Agent review   : challenge and optional feasibility review status, including skipped or unavailable coverage
 
--> /develop:feature|fix|refactor "<goal>" when ready
+-> /develop:feature|fix "<goal>" --plan <PLAN_FILE> when ready
+-> /develop:refactor <target> "<goal>" --plan <PLAN_FILE> when ready
 ```
 
 **Passing plan to downstream skills**: `feature`, `fix` and `refactor` accept `--plan <path>`.
@@ -231,7 +240,7 @@ Agent review   : challenge and optional feasibility review status, including ski
 
 ```text
 /develop:plan "add streaming response support"
-/develop:feature "add streaming response support" --plan .plans/active/plan_add-streaming-response-support.md
+/develop:feature "add streaming response support" --plan .plans/active/plan-add-streaming-response-support-<ts>.md
 ```
 
 **What plan does NOT do**: write code or tests. Analysis-only.
@@ -248,7 +257,7 @@ ______________________________________________________________________
 
 **When to use**: adding new behavior.
 
-**Not for**: bug fixes — use `/develop:fix`.
+**Not for**: bug fixes — use `/develop:fix`; non-Python projects or non-Python changes within Python projects — use the project's language-native toolchain.
 
 **Invocation**:
 
@@ -292,7 +301,7 @@ ______________________________________________________________________
 
 ```text
 /develop:plan "add CSV export to the results API"
-/develop:feature "add CSV export to the results API" --plan .plans/active/plan_add-csv-export-results-api.md
+/develop:feature "add CSV export to the results API" --plan .plans/active/plan-add-csv-export-results-api-<ts>.md
 ```
 
 **Team mode coordination**: two serialized waves.
@@ -314,7 +323,7 @@ ______________________________________________________________________
 
 **When to use**: fixing known bug with traceback, failing test, or GitHub issue.
 
-**Not for**: CI-only failures — use `/develop:debug --ci-run <run-id>` first; production incidents without CI run or traceback — use `/foundry:investigate` (requires `foundry` plugin); `.claude/` config issues — use `/foundry:audit` (requires `foundry` plugin).
+**Not for**: CI-only failures — use `/develop:debug --ci-run <run-id>` first; production incidents without CI run or traceback — use `/foundry:investigate` (requires `foundry` plugin); performance optimization — use `foundry:perf-optimizer` (requires `foundry` plugin); `.claude/` config issues — use `/foundry:audit` (requires `foundry` plugin).
 
 **Invocation**:
 
@@ -333,7 +342,7 @@ ______________________________________________________________________
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--repo <owner/repo>` | Route issue fetch to upstream repo. Use when working in fork and issue on original repo (e.g. `--repo owner/my-project`).                                                                                                                                                  |
 | `--plan <path>`       | Read scope and approach from existing plan file                                                                                                                                                                                                                            |
-| `--diagnosis <path>`  | Read confirmed root cause from `/develop:debug` output file; skips Step 1 analysis entirely                                                                                                                                                                                |
+| `--diagnosis <path>`  | Read confirmed root cause and reproduction fields from `/develop:debug`; skip only Step 1's root-cause analysis, retaining its premise, scope, planning and challenge gates. Reuse an existing reproduction test after confirming its failure.                             |
 | `--team`              | Spawn 2-3 `foundry:sw-engineer` teammates, each investigating distinct root-cause hypothesis independently (read-only: they share your working tree, so no tracked-file edits or `git stash`/`checkout`/`reset`/`restore`; probes run in a temp copy or the run directory) |
 | `--worktree`          | Run the whole skill in an isolated git worktree (`.claude/worktrees/`) on a new branch — you review + merge (never auto-merged). Codemap index is per-worktree, so parallel runs never race one index. Composes with `--team`.                                             |
 | `--no-challenge`      | Skip challenger adversarial gate entirely                                                                                                                                                                                                                                  |
@@ -343,7 +352,7 @@ ______________________________________________________________________
 **Workflow**:
 
 1. **Understand the problem** (`foundry:sw-engineer`): reads full traceback, searches failing code path, traces call graph, identifies root cause, state mutation, blast radius. Argument = positive integer → fetches GitHub issue (upstream if `--repo`).
-2. **Reproduce the bug** (`foundry:qa-specialist`): writes regression test failing on unfixed code. Gate: test must exit non-zero before proceeding.
+2. **Reproduce the bug** (`foundry:qa-specialist`): reuses an existing reproduction test or writes one failing on unfixed code. Gate: only pytest exit 1 counts as reproduced; collection, usage and runner failures stop for correction.
 3. **Apply the fix** (`foundry:sw-engineer`): minimal change — only what makes regression test pass. Then runs only the tests the change touches (`dev_test_targets.py`: Codemap test-impact, or name/import heuristics without Codemap).
 4. **Review and close gaps**: quality scan → fix feasible gaps and run targeted tests. Adjacent bugs documented as observations, handled in separate session — never fixed same pass.
 5. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available) — the final gate after the loop, rerun in full after any later fix, max 3 gate iterations; a green full suite is the last test evidence → optional Codemap blast-radius check → one bounded independent implementation challenge; iterative review only when explicitly requested.
@@ -382,33 +391,31 @@ ______________________________________________________________________
 **Invocation**:
 
 ```text
-/develop:refactor "<target file or directory> <goal>"
-/develop:refactor "<goal>" --plan <path>
-/develop:refactor "<goal>" --repo owner/upstream-repo   # context from upstream issue (fork workflow)
-/develop:refactor "<goal>" --team                       # parallel: foundry:sw-engineer refactors + foundry:qa-specialist writes tests simultaneously
+/develop:refactor "<target file or directory>" "<goal>"
+/develop:refactor "<target file or directory>" "<goal>" --plan <path>
+/develop:refactor "<target file or directory>" "<goal>" --team  # characterization tests first, then source refactoring
 ```
 
 **Flags**:
 
-| Flag                  | Description                                                                                                                                                                                                                    |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--repo <owner/repo>` | Route issue fetch to upstream repo. Use when refactor context tied to upstream issue in fork. Parsed for consistency; refactor has no issue-fetch step by default.                                                             |
-| `--plan <path>`       | Read scope and approach from existing plan file                                                                                                                                                                                |
-| `--team`              | Spawn `foundry:sw-engineer` (refactoring) + `foundry:qa-specialist` (characterization tests) parallel. Use when target is directory or spans multiple modules                                                                  |
-| `--worktree`          | Run the whole skill in an isolated git worktree (`.claude/worktrees/`) on a new branch — you review + merge (never auto-merged). Codemap index is per-worktree, so parallel runs never race one index. Composes with `--team`. |
-| `--no-batch`          | Default on, opt out with this flag. Step 4 groups non-overlapping focused changes into fewer test runs instead of one run per change; bisects per-edit on batch failure to preserve attribution.                               |
-| `--no-codemap`        | Disable codemap even if available                                                                                                                                                                                              |
-| `--codemap`           | Require Codemap and an index; stop when unavailable                                                                                                                                                                            |
-| `--accept-no-plan`    | Skip inline plan generation for medium/large scope                                                                                                                                                                             |
-| `--no-challenge`      | Skip challenger adversarial gate                                                                                                                                                                                               |
-| `--challenge`         | Accepted for compatibility; no effect, since the challenger runs at every size unless `--no-challenge`                                                                                                                         |
-| `--keep "<items>"`    | Append items to compaction contract preserve field — keeps key context if auto-compaction fires mid-skill                                                                                                                      |
+| Flag               | Description                                                                                                                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--plan <path>`    | Read scope and approach from existing plan file                                                                                                                                                                                |
+| `--team`           | Run `foundry:qa-specialist` characterization first, then `foundry:sw-engineer` refactoring against that green baseline. Use when target is a directory or spans multiple modules.                                              |
+| `--worktree`       | Run the whole skill in an isolated git worktree (`.claude/worktrees/`) on a new branch — you review + merge (never auto-merged). Codemap index is per-worktree, so parallel runs never race one index. Composes with `--team`. |
+| `--no-batch`       | Default on, opt out with this flag. Step 4 groups non-overlapping focused changes into fewer test runs instead of one run per change; bisects per-edit on batch failure to preserve attribution.                               |
+| `--no-codemap`     | Disable codemap even if available                                                                                                                                                                                              |
+| `--codemap`        | Require Codemap and an index; stop when unavailable                                                                                                                                                                            |
+| `--accept-no-plan` | Skip inline plan generation for medium/large scope                                                                                                                                                                             |
+| `--no-challenge`   | Skip challenger adversarial gate                                                                                                                                                                                               |
+| `--challenge`      | Accepted for compatibility; no effect, since the challenger runs at every size unless `--no-challenge`                                                                                                                         |
+| `--keep "<items>"` | Append items to compaction contract preserve field — keeps key context if auto-compaction fires mid-skill                                                                                                                      |
 
 **Workflow**:
 
 1. **Scope and understand** (`foundry:sw-engineer`): reads target code, maps public API surface, identifies complexity hotspots + coupling. Codemap for blast-radius when available. Scope gate: target spans 3+ modules, 5+ files, or any public-API rename → asks narrow or proceed.
 2. **Audit test coverage**: classifies each public function covered / partially covered / uncovered. No `pytest-cov` installed → falls back to "all uncovered" conservatively.
-3. **Add characterization tests** (`foundry:qa-specialist`): every uncovered/partial public API gets tests asserting *current* behavior (not desired). Gate: all characterization tests must pass on unmodified code before proceeding.
+3. **Add characterization tests** (`foundry:qa-specialist`): every uncovered/partial public API gets tests asserting *current* behavior (not desired). Gate: characterization tests pass on unmodified code, or the user explicitly accepts the documented red characterization gap. Before source edits, run a nonempty selection for the scoped Python files and new characterization tests; exclude only the explicitly accepted red characterization file. The remaining baseline must be green in solo and team mode; coverage output is insufficient.
 4. **Refactor with safety net**: focused changes run in non-overlapping groups by default (`--no-batch` for one focused change per cycle), with only the tests each change touches after each (`dev_test_targets.py`: Codemap test-impact, or name/import heuristics without Codemap) — never the full suite inside the loop. Safety break: max 5 change-test cycles per inner session (edits, not cycles, unless `--no-batch` is set); max 10 total across all outer review cycles.
 5. **Review and close gaps**: behavior preservation, goal achievement, no new smells, no unintended API surface changes; rerun targeted tests after fixes.
 6. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available) — the final gate after the loop (the repository's own test command when the quality stack is unavailable), rerun in full after any later fix, max 3 gate iterations; a green full suite is the last test evidence → optional Codemap blast-radius check → one bounded independent implementation challenge; iterative review only when explicitly requested.
@@ -425,10 +432,10 @@ ______________________________________________________________________
 
 ```text
 /develop:plan "extract data loading into a dedicated DataLoader class"
-/develop:refactor "extract data loading into a dedicated DataLoader class" --plan .plans/active/plan_extract-data-loading-dataloader.md
+/develop:refactor <target> "extract data loading into a dedicated DataLoader class" --plan .plans/active/plan-extract-data-loading-dataloader-<ts>.md
 ```
 
-**Checkpoint and resume**: creates `.developments/<timestamp>/checkpoint.md` after each step. Session interrupted → re-run offers resume from last completed step.
+**Checkpoint**: creates `.developments/<timestamp>/checkpoint.md` after each step as run evidence. A new invocation starts fresh; it does not resume from an untagged checkpoint.
 
 ______________________________________________________________________
 
@@ -469,11 +476,13 @@ ______________________________________________________________________
 **Workflow**:
 
 1. **Understand the symptom** (`foundry:sw-engineer`): reads full tracebacks, recent git changes near failing code, traces call path entry point → failure site. GitHub issue number → fetches full issue + comments (upstream if `--repo`).
-2. **Pattern analysis**: finds 2-3 similar working code paths, compares exhaustively against broken path — input, environment, call order, conditional branches, None/empty guards.
+2. **Pattern analysis**: finds 2-3 similar working code paths, compares exhaustively against broken path — input, environment, call order, conditional branches, None/empty guards. Appends hypothesis events to the session-scoped temp ledger with `append_ledger.py --run-root "${TMPDIR:-/tmp}"` to authorize its location explicitly.
 3. **Hypothesis and gate**: states root cause explicitly with supporting + contradicting evidence and confidence (high / medium / low). Presents hypothesis, waits for confirmation before proceeding. Low confidence → targeted probe (minimal script, added assertion) for missing signal. Codemap enabled → one-time `test-impact` query on confirmed suspect module/function.
-4. **Hand off to fix**: writes diagnosis file to `.plans/active/debug_<slug>.md`, emits `-> /develop:fix --diagnosis <path>`. Fix's Step 1 pre-answered by diagnosis. Test-impact result (with index timestamp) written under `## Test Impact (codemap-py)` section — `/develop:fix` reuses it (test-impact runs once across debug→fix flow), re-queries only if index moved or result stale.
+4. **Hand off to fix**: writes diagnosis file to `.plans/active/debug_<slug>.md`, adding `-2`, `-3`, etc. when the name exists, and emits `-> /develop:fix --diagnosis <path>`. The `## Reproduction` section carries the exact test node/path, runner exit, issue ref, repository override and issue/symptom mode so fix can reuse an existing reproduction test. The diagnosis pre-answers root-cause analysis; fix still verifies the regression gate. `## Test Impact (codemap-py)` carries raw results and the index timestamp: fix reuses them only for a module-level target with changes confined to that module and a matching fresh index; other scopes query again.
 
 **Debug is investigation-only** — no code changes. Fix happens in separate auditable session with own regression test gate.
+
+Debug prints its hypothesis-ledger and staging paths, preserves the evidence report across compaction, and keeps the chosen diagnosis path when Step 4 resumes. A missing staged record or evidence report stops the handoff for recovery.
 
 **Realistic example**:
 
@@ -489,6 +498,8 @@ ______________________________________________________________________
 <a id="develop-review"></a>
 
 ### `/develop:review`
+
+Reviews assess material improvement claims against revision-bound tests or measurements, distinguish supplied evidence from independent reproduction, and treat unresolved shared-hardware noise as inconclusive rather than proof of a gain or regression.
 
 **Execution architecture** — animated diagram of fans, joins and gates.
 
@@ -514,6 +525,7 @@ ______________________________________________________________________
 
 - The saved header retains `develop-review` and includes `Title` so the report-delivery hook accepts the shipped template.
 - Review output preserves its aggregate prose summary, verdict, confidence and detailed findings.
+- Each reviewer's compact handoff includes its scoped source rating, rationale, readiness reason and inspected coverage, so consolidation retains the basis for the judgment.
 - The header table adds `Reviewers: Software engineer [3], QA specialist [2], Documentation reviewer [1].` Each rating appears in square brackets after the role name (`Software engineer [3]`). Its legend appears immediately below: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.
 - Ratings describe actual reviewers' scoped judgments, never an averaged verdict. Reviewer names and finding authors show roles only, without execution-origin labels; skipped roles are omitted.
 - The findings overview adds an `Author` column retaining all contributors to deduplicated findings.
@@ -543,11 +555,12 @@ ______________________________________________________________________
 
 1. **Identify scope**: collects Python files from path or `git diff HEAD`. Classifies diff FIX / REFACTOR / FEATURE / CHORE / MIXED.
    - Review depth follows the code path, not the diff size: with Codemap, every changed function's transitive callers set an `Impact:` tier.
-   - `FULL` means the change reaches a public function outside tests and leaf modules (visualization, plotting, examples, docs); `LIGHT` means it stays off that path; untraceable impact counts as `FULL`.
+   - `FULL` means the change reaches a public function outside tests and leaf modules (visualization, plotting, examples, docs); `LIGHT` means it stays off that path; untraceable impact counts as `FULL`. `conftest.py`, `docs/conf.py`, setup/release/build entrypoints and `scripts/` always receive `FULL`.
    - A FIX skips `foundry:perf-optimizer` + `foundry:solution-architect` only at `LIGHT`; CHORE skips `foundry:qa-specialist`, `foundry:perf-optimizer`, `foundry:solution-architect`.
    - `foundry:challenger` runs at every diff size, and the review never collapses to the orchestrator alone.
-2. **Codex co-review** (if `bridge@borda-ai-rig` is installed and enabled): adversarial diff review seeds pre-flagged issues list for specialist agents.
-3. **Selected parallel agents** (file-based handoff — each writes handover files to `.temp/review/<timestamp>/`; the default cap is three spawn units, `--full` removes that cap; merged units write one findings file per dimension):
+2. **Codex co-review** (if `bridge@borda-ai-rig` is installed and enabled): synchronous foreground adversarial review with `--timeout-seconds 230` seeds pre-flagged issues for specialist agents. Bridge may write its own scratch task file; the parent saves the returned findings in `codex.md`.
+3. **Selected parallel agents** (file-based handoff — each writes handover files to `$RUN_DIR`, created before pre-flight under the active development run or `.developments/review/<timestamp>/` for standalone reviews; the default cap is three spawn units, `--full` removes that cap; merged units write one findings file per dimension):
+   - Agent 1's intended-behavior review is reserved within that cap for every target. Plan claims match exact paths in **Affected files**, rather than stems or free-text mentions; ambiguous matches supply no plan claim.
    - `foundry:sw-engineer`: architecture, SOLID, type safety, error handling, Python anti-patterns, security for touched auth/input/data paths
    - `foundry:qa-specialist`: test coverage gaps, missing edge cases, ML non-determinism, seed pinning, boundary conditions
    - `foundry:perf-optimizer`: algorithmic complexity, loops that should be NumPy/torch ops, unnecessary I/O, ML DataLoader config (skipped for FIX diffs)
@@ -555,14 +568,14 @@ ______________________________________________________________________
    - `foundry:linting-expert`: ruff violations, mypy errors, type annotation gaps on public API, suppressed violations
    - `foundry:solution-architect`: API design quality, coupling, backward compatibility (only for public API boundary changes; skipped for REFACTOR and FIX)
 4. **Cross-validate** critical + blocking findings using same agent type that raised each finding.
-5. **Consolidate** (`foundry:sw-engineer`): reads all findings, deduplicates, ranks by impact, writes full report to `.reports/review/<timestamp>/review-report.md`. Signal-to-noise gate: small modules not padded with low-severity findings.
+5. **Consolidate** (`foundry:sw-engineer`): reads all findings, deduplicates, ranks by impact, writes full report to `.reports/develop-review/<timestamp>/review-report.md`. Signal-to-noise gate: small modules not padded with low-severity findings.
 6. **Codex-eligible findings** (optional): mechanical tasks — docstrings, missing tests for concrete scenarios, consistent renames — are listed under Recommended Next Steps as Codex candidates. The review names them and never edits code itself; implementation stays with the fix workflow or the user.
 
 **Validation**: `/develop:review` validates every candidate against allowed source evidence before publication and retains capped independent critical verification.
 
 - Version-one `review-validation.json` separates five source judgments, nullable completed assessments, missing reviewer coverage and verification readiness; unresolved concerns retain owner/next check/closure.
 - Minor changes include bounded, low-impact correctness, test and compatibility fixes with localized repair and verification. Major revision requires evidenced material behavioral impact or substantial repair, even if a serious defect needs only a small patch. The verdict cites final finding IDs, impact and repair scope; finding counts, CI status and reviewer votes do not set it automatically. Required fixes remain actionable under Minor, and no unresolved required source change normally means source approval with readiness reported separately. Documentation-only corrections and missing or additional tests normally remain Minor unless concrete material consequences or a substantially incomplete required deliverable justify more; missing tests alone do not establish a production bug. These factors inform one combined judgment: high-impact findings can control the verdict and are never diluted by minor items. Use the strongest confirmed consequence as the baseline, account for proven joint effects, and keep severity, source disposition and verification separate. Missing tests no longer receive an automatic High rating; numeric topic discounts require independent calibration before they can determine verdicts.
-- The workflow remains read-only: actual runtime authorization/capability boundaries are recorded, and feasible unfinished parent checks mean incomplete.
+- Review agents cannot edit source, run fixers, install dependencies or execute reviewed code, examples or tests. Installed static analyzers and dependency audits may run within existing authorization with caches and temporary files confined to the run directory. The CI field reports actual parent-supplied CI evidence, otherwise `N/A (no CI evidence supplied)`; static checks and any authorized parent validation are identified separately. Actual runtime authorization/capability boundaries are recorded, and feasible unfinished parent checks mean incomplete.
 
 **Report structure**:
 
@@ -602,7 +615,7 @@ ______________________________________________________________________
 
 **Purpose**: Deliver this plugin's `rules/*.md` into Claude's user-level rule namespace. Maintenance command, not part of any development workflow.
 
-Setup probes the bare `python` command only (no `python3` or `py -3` fallback), because every later step runs bare `python`.
+Invoke `/develop:setup` explicitly: it is a user-only maintenance command, never an automatically selected development step. Setup probes the bare `python` command only (no `python3` or `py -3` fallback), because every later step runs bare `python`.
 
 **When to use**: after installing develop on a new machine, or after upgrading it. `make sync-claude` runs it automatically for every installed managed plugin that ships a setup skill, so a normal sync needs no manual step.
 
@@ -610,7 +623,7 @@ Setup probes the bare `python` command only (no `python3` or `py -3` fallback), 
 
 ```text
 /develop:setup            # interactive — asks before replacing anything it does not own
-/develop:setup --approve  # non-interactive — used by make sync-claude
+/develop:setup --approve  # non-interactive — replaces conflicting links, preserves real user files; used by make sync-claude
 ```
 
 Each rule installs as a symlink at `~/.claude/rules/develop-<source-name>.md`. The `develop-` prefix keeps the flat rule namespace collision-free — four plugins ship a `rules/quality-gates.md`. Because all four then load into every session, setup installs only one variant at `develop-quality-gates.md`:
@@ -624,13 +637,14 @@ A filename prefix does not change how Claude loads a rule or how its `paths:` fr
 How rules are delivered:
 
 - Rules are symlinked, not copied: Claude loads rules at session start, so a symlink serves the installed version after every upgrade, while a copy would silently serve stale content forever.
+- Before installing any link, setup checks every source rule: at most 1 MiB, valid UTF-8, no ASCII control characters except tabs and line endings, a `#` Markdown heading, and closed frontmatter when present. Invalid content returns a coded `RULE_*` error with exit 1; no rule is installed or pruned. This structural check does not authenticate arbitrary prose.
 - Setup delivers only this plugin's own rules — each plugin installs independently, and shipping a sibling's rules would break standalone installation and couple releases. The delta variant keeps that true: it only points at foundry's copy for the shared obligations rather than delivering it.
 - Loading all four complete `quality-gates.md` copies at once cost 51,274 B of context on every turn.
-- Only links this plugin provably owns are replaced or removed: the existing target must resolve under the current plugin root or under the same install-cache lineage. A real file, a link into another marketplace, a source checkout, or a dotfiles tree is reported as a conflict and left alone unless you approve replacing it.
+- Links this plugin provably owns are refreshed or removed: the existing target must resolve under the current plugin root or under the same install-cache lineage. Conflicting links into another marketplace, a source checkout, or a dotfiles tree are reported and left alone unless you approve replacing them; `--approve` replaces these links non-interactively. Real user files are preserved even with `--approve`; replacing one requires an explicit choice, passed as `--replace-user-files`, and creates a sibling `<destination>.bak-<timestamp>` backup first.
 
 What the shipped quality-gates rule requires:
 
-- For explicitly requested iterative independent review/fix loops, the quality-gates rule requires the local `_full/adversarial-loop.md` procedure, including first-pass coverage, invariant and sibling-route closure checks, and separate carried/new finding weight. One bounded independent challenge does not automatically start that loop.
+- For explicitly requested iterative independent review/fix loops, the quality-gates rule requires the local `_full/adversarial-loop.md` procedure, including first-pass coverage, invariant and sibling-route closure checks, and separate known-invariant/new finding weight. One bounded independent challenge does not automatically start that loop.
 - Confidence describes the correctness of the delivered result and how it was produced and checked within scope. Report completion separately; a high score does not pass an unmet gate.
 
 ______________________________________________________________________
@@ -648,7 +662,7 @@ Skills chain naturally. Typical session:
 /develop:plan "add rate limiting to the API gateway"
 
 # 2. Implement — TDD contract pins the API, then implementation follows tests
-/develop:feature "add rate limiting to the API gateway" --plan .plans/active/plan_add-rate-limiting-api-gateway.md
+/develop:feature "add rate limiting to the API gateway" --plan .plans/active/plan-add-rate-limiting-api-gateway-<ts>.md
 
 # 3. Review before committing (optional — quality stack already ran, but useful for a final check)
 /develop:review src/gateway/
@@ -670,7 +684,7 @@ Skills chain naturally. Typical session:
 
 ```text
 /develop:plan "extract request parsing into a dedicated middleware layer"
-/develop:refactor "extract request parsing into a dedicated middleware layer" --plan .plans/active/plan_extract-request-parsing-middleware.md
+/develop:refactor src/gateway/ "extract request parsing into a dedicated middleware layer" --plan .plans/active/plan-extract-request-parsing-middleware-<ts>.md
 ```
 
 ### Review before a PR
@@ -694,7 +708,7 @@ Forked repo, want to fix/implement issue reported on original upstream. Pass `--
 /develop:feature 123 --repo owner/my-project
 ```
 
-`--repo` accepted by `fix`, `feature`, `debug`, `refactor`. Affects only `gh issue view` call fetching issue body + comments — rest of workflow operates on local fork as normal.
+`--repo` accepted by `fix`, `feature`, `debug`. Affects only `gh issue view` call fetching issue body + comments — rest of workflow operates on local fork as normal.
 
 ### Complex or high-stakes work
 
@@ -717,6 +731,7 @@ Add `--worktree` to run the **entire** skill inside a fresh git worktree under `
 
 - The main working tree is never touched; on completion the skill leaves the worktree + branch on disk and reports the path/branch — **you** review and merge (never auto-merged).
 - Uncommitted working-tree changes do not transfer into a worktree — commit or stash first if the run must see them.
+- A default `review --worktree` refuses a dirty tree before entry so it cannot silently omit the changes being reviewed; an explicit path selects committed files.
 - Available on `feature`, `fix`, `refactor` (all work stays in the worktree); opt-in on the read-only `debug` + `review` (isolation guards sources, but the diagnosis/report deliverable is written to the **main tree** so downstream skills + your review can reach it). Not on `plan` (analysis-only, never edits).
 
 ```text
@@ -728,6 +743,7 @@ Add `--worktree` to run the **entire** skill inside a fresh git worktree under `
   - Each run owns its own ephemeral index, so any number of parallel `--worktree` runs never share or race one index; `.cache/` is gitignored so a worktree index never merges back.
   - After you merge the branch, the main index is flagged stale on the next prompt and refreshes once.
 - **Composes with `--team`** — the orchestrator worktree is the integration point; `--team` teammates run inside it without their own worktrees, so their edits and handoff files land there directly with no merge step.
+- **Merge handoff** — keep the isolated branch and worktree. To integrate it, use a separate checkout with a clean index and working tree, review the recorded branch, then merge there; the skill never performs this integration automatically.
 
 **Worktree cleanup**:
 
@@ -780,6 +796,8 @@ The quality stack is shipped by `develop` and auto-detects the project's runner 
 
 ### Hooks
 
+The blueprint and sentinel classifiers treat command-table names inside fixed ordinary quoted search operands as inert data. Command substitutions, variable writes and existing arithmetic-expression refusals remain checked. JavaScript classifiers also reject executing Git configuration and environment overrides consistently with the Python manifest generator. The sentinel module retains its narrower command whitelist.
+
 Hooks register automatically from `hooks/hooks.json` when the plugin is enabled — no `settings.json` edits needed.
 
 - Each hook runs `node` from PATH, then `/opt/homebrew/bin/node` or `/usr/local/bin/node`; when none exists, the hooks skip without blocking and one `SessionStart` check reports once per session that they are inactive.
@@ -801,16 +819,18 @@ Hooks register automatically from `hooks/hooks.json` when the plugin is enabled 
 
 Hook decisions are logged: `allow-dispatch.js` and `audit-close.js` append one JSON line per Bash call to `~/.claude/logs/audit/` (see [Auto-allow audit log](#auto-allow-audit-log)).
 
+Executable helper blocks resolve and export `PLUGIN_ROOT` before calling `python "$PLUGIN_ROOT/bin/<script>.py"`. Loaders render the plain bootstrap token in modes and templates to the validated owning-plugin path. The blueprint hook checks the bound source template and exact rendered command; altered commands still use normal permission checks, and deny rules remain effective. Run these examples from a host-substituted or loader-rendered copy; an ordinary shell does not supply the bootstrap token.
+
 ### Artifact directories
 
 Skills write to these dirs at project root (all gitignored):
 
-| Directory                      | Contents                                                                                                                     |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `.plans/active/`               | Plan files from `/develop:plan`, diagnosis files from `/develop:debug`                                                       |
-| `.developments/<timestamp>/`   | Checkpoint files for resumable feature/fix/refactor sessions; targeted-test records (`test-targets.jsonl`) and full run logs |
-| `.temp/review/<timestamp>/`    | Per-agent handover files (intermediate) from `/develop:review`                                                               |
-| `.reports/review/<timestamp>/` | Consolidated final report from `/develop:review`                                                                             |
+| Directory                              | Contents                                                                                                                            |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `.plans/active/`                       | Plan files from `/develop:plan`, diagnosis files from `/develop:debug`                                                              |
+| `.developments/<timestamp>/`           | Feature/fix/refactor checkpoint evidence; targeted-test records (`test-targets.jsonl`) and full run logs                            |
+| `.developments/review/<timestamp>/`    | Standalone review batch requests and per-agent handover files; reviews within a development session use `<run>/review/<timestamp>/` |
+| `.reports/develop-review/<timestamp>/` | Consolidated final report from `/develop:review`, separate from OSS PR-review intake                                                |
 
 Completed runs cleaned after 30 days. Interrupted runs (no `result.jsonl`) kept for debugging.
 
@@ -846,7 +866,7 @@ Skills never poll a background agent; they resume on its completion notification
 
 ### Session interrupted mid-skill
 
-`feature`, `fix`, `refactor` write checkpoint file to `.developments/<timestamp>/checkpoint.md` after each major step. Re-running same skill command offers resume from last completed step.
+`feature`, `fix`, `refactor` write `.developments/<timestamp>/checkpoint.md` after each major step as run evidence. A new invocation starts fresh; stale untagged checkpoints do not trigger a resume offer.
 
 ### codemap-py query warnings appearing in output
 
@@ -960,8 +980,9 @@ The [`bin/`](bin/) directory holds 40 deterministic helpers; this table lists on
 - `RIG_AUDIT=0` disables audit writing without changing any permission decision.
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" verify
-python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" prune --older-than 30 --dry-run
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/verify_blueprint_audit.py" verify
+python "$PLUGIN_ROOT/bin/verify_blueprint_audit.py" prune --older-than 30 --dry-run
 ```
 
 - `verify` exits 1 only when a record's own hash fails to verify; torn framing from concurrent appends and every classification are warnings. `record_hash` detects a record that changed after it was written — it is not tamper-evidence, because the same user owns the log, the hooks and the checker.

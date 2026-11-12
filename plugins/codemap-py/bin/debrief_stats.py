@@ -16,8 +16,8 @@ Pipeline, in order:
    longer match a raw ``--session`` UUID.
 3. With ``--anonymize``, run ``anonymize.py`` on that filtered copy into a fresh run-scoped directory
    ``.cache/codemap/export/<UTC stamp>/``. A run-scoped directory keeps earlier exports out of this report. Anonymized
-   mode is active only when ``anonymize.py`` exits 0 and wrote at least one ``-anon.jsonl`` file; otherwise the filtered
-   raw copy is used and the JSON says so.
+   mode is active only when ``anonymize.py`` exits 0 and wrote at least one ``-anon.jsonl`` file; otherwise the helper
+   stops with exit 4 without producing statistics or a report path.
 4. Aggregate the selected dataset. ``source: "bench"`` records and CLI records with an empty ``cmd`` are excluded and
    counted. Records without ``v`` join no version cohort and are counted separately. Every remaining record is
    grouped by version; the newest version is named ``primary_cohort``, and older cohorts are reported separately,
@@ -31,9 +31,10 @@ Usage:
 Exit codes:
     0 — statistics printed as one JSON object on stdout
     1 — no codemap telemetry under the resolved log root
-    2 — bad arguments (unknown flag, missing value, malformed ``--since``)
+    2 — bad arguments (unknown flag, missing value, malformed ``--since``), or telemetry above its size/record limit
     3 — ``anonymize.py`` or ``join_avoidance.py`` ran past ``HELPER_TIMEOUT_SECONDS``; the helper was killed and the
         scratch copy removed (an interrupted ``anonymize.py`` may leave a partial, already pseudonymized export)
+    4 — requested anonymization failed; no statistics or report path printed
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ import subprocess
 import sys
 import tempfile
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -87,6 +88,9 @@ EXIT_NO_TELEMETRY = 1
 
 #: Exit status when a sibling helper runs past :data:`HELPER_TIMEOUT_SECONDS`.
 EXIT_HELPER_TIMEOUT = 3
+EXIT_ANONYMIZE_FAILED = 4
+MAX_RECORDS = 100_000
+MAX_DATASET_BYTES = 100_000_000
 
 #: Wall-clock cap for each sibling helper run. ``anonymize.py`` and ``join_avoidance.py`` run one after the other and
 #: the skill's Bash call is killed at 120 s, so two 50 s caps stop a hung helper here first, while the ``with`` block in
@@ -226,6 +230,25 @@ def _keep(record: dict, options: DebriefOptions, report: StageReport) -> bool:
     return record_day >= options.since
 
 
+def _bounded_lines(root: Path, shards: Iterable[tuple[str, Path]]) -> Iterator[tuple[str, Path, str]]:
+    """Stream shard lines under a shared byte and record ceiling, excluding symlinks."""
+    count = size = 0
+    for layer, shard in shards:
+        if any(path.is_symlink() for path in (shard, *shard.parents) if path != root and path.is_relative_to(root)):
+            continue
+        if not shard.resolve().is_relative_to(root.resolve()):
+            continue
+        with shard.open(encoding="utf-8", errors="replace") as handle:
+            for line in iter(lambda: handle.readline(MAX_DATASET_BYTES + 1), ""):
+                count += 1
+                size += len(line.encode("utf-8"))
+                if count > MAX_RECORDS:
+                    raise OptionsError(f"telemetry record limit exceeded ({MAX_RECORDS})")
+                if size > MAX_DATASET_BYTES:
+                    raise OptionsError(f"telemetry byte limit exceeded ({MAX_DATASET_BYTES})")
+                yield layer, shard, line
+
+
 def stage_filtered_copy(log_root: Path, dest: Path, options: DebriefOptions) -> StageReport:
     """Copy every kept telemetry line into *dest*, preserving each shard's path below the log root.
 
@@ -238,22 +261,19 @@ def stage_filtered_copy(log_root: Path, dest: Path, options: DebriefOptions) -> 
         Shard, kept-record and malformed-line counts.
     """
     report = StageReport()
-    for layer in LAYERS:
-        for shard in _shard_paths(log_root, layer):
-            report.shards[layer] += 1
-            kept_lines = []
-            with shard.open(encoding="utf-8", errors="replace") as handle:
-                for line in handle:
-                    record = _parse_line(line)
-                    if record is None:
-                        report.malformed_lines += bool(line.strip())
-                    elif _keep(record, options, report):
-                        kept_lines.append(line.rstrip("\r\n"))
-            if kept_lines:
-                target = dest / shard.relative_to(log_root)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text("\n".join(kept_lines) + "\n", encoding="utf-8", newline="\n")
-                report.kept[layer] += len(kept_lines)
+    shards = [(layer, shard) for layer in LAYERS for shard in _shard_paths(log_root, layer) if not shard.is_symlink()]
+    for layer, _shard in shards:
+        report.shards[layer] += 1
+    for layer, shard, line in _bounded_lines(log_root, shards):
+        record = _parse_line(line)
+        if record is None:
+            report.malformed_lines += bool(line.strip())
+        elif _keep(record, options, report):
+            target = dest / shard.relative_to(log_root)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(line.rstrip("\r\n") + "\n")
+            report.kept[layer] += 1
     return report
 
 
@@ -286,12 +306,12 @@ def load_dataset(root: Path) -> dict[str, list[dict]]:
         Records per layer; each carries ``_runtime`` (``claude``/``codex``/``direct``/``unattributed``).
     """
     dataset: dict[str, list[dict]] = {layer: [] for layer in LAYERS}
-    for layer in LAYERS:
-        for shard in _dataset_shards(root, layer):
+    shards = ((layer, shard) for layer in LAYERS for shard in _dataset_shards(root, layer))
+    for layer, shard, line in _bounded_lines(root, shards):
+        record = _parse_line(line)
+        if record is not None:
             runtime = _path_runtime(root, shard) or UNATTRIBUTED
-            with shard.open(encoding="utf-8", errors="replace") as handle:
-                records = (_parse_line(line) for line in handle)
-                dataset[layer].extend(record | {"_runtime": runtime} for record in records if record is not None)
+            dataset[layer].append(record | {"_runtime": runtime})
     return dataset
 
 
@@ -490,6 +510,10 @@ class HelperTimeoutError(RuntimeError):
     """A sibling helper ran past :data:`HELPER_TIMEOUT_SECONDS`; ``str(exc)`` is the message shown to the user."""
 
 
+class AnonymizationError(RuntimeError):
+    """Requested anonymization produced no usable export."""
+
+
 def _run_helper(script: str, args: Iterable[str]) -> subprocess.CompletedProcess[str]:
     """Run a sibling ``bin/`` helper with this interpreter and capture its output.
 
@@ -541,7 +565,7 @@ def module_overlap(dataset_root: Path) -> dict:
 
 
 def report_path(project_root: Path, options: DebriefOptions, today: date) -> Path:
-    """Return the report path: ``--output`` verbatim, else the first free dated default.
+    """Return the first free report path inside the project for either explicit or default output.
 
     Args:
         project_root: Canonical project root.
@@ -549,15 +573,19 @@ def report_path(project_root: Path, options: DebriefOptions, today: date) -> Pat
         today: Date stamped into the default name.
 
     Returns:
-        The path to write; the default never names an existing file.
+        The path to write; existing files are never selected.
     """
     if options.output:
-        return Path(options.output)
-    base = project_root / ".reports" / "codemap" / f"debrief-{today.isoformat()}"
-    candidate, counter = base.with_suffix(".md"), 1
-    while candidate.exists():
+        raw = Path(options.output).expanduser()
+        target = raw if raw.is_absolute() else project_root / raw
+    else:
+        target = project_root / ".reports" / "codemap" / f"debrief-{today.isoformat()}.md"
+    if not target.resolve().is_relative_to(project_root.resolve()):
+        raise OptionsError("--output resolves outside the project root")
+    candidate, counter = target, 1
+    while candidate.exists() or candidate.is_symlink():
         counter += 1
-        candidate = base.parent / f"{base.name}-{counter}.md"
+        candidate = target.with_name(f"{target.stem}-{counter}{target.suffix}")
     return candidate
 
 
@@ -579,13 +607,17 @@ def build_report(log_root: Path, project_root: Path, options: DebriefOptions, sc
     dataset_root = scratch
     if options.anonymize:
         export_dir = project_root / ".cache" / "codemap" / "export" / now.strftime("%Y-%m-%dT%H-%M-%SZ")
-        anonymize |= anonymize_copy(scratch, export_dir, log_root) | {"export_dir": str(export_dir)}
-        dataset_root = export_dir if anonymize["ok"] else scratch
+        anonymize |= anonymize_copy(scratch, export_dir, log_root)
+        if not anonymize["ok"]:
+            raise AnonymizationError("anonymization failed; debrief stopped without a report")
+        anonymize.pop("message", None)
+        anonymize["export_dir"] = export_dir.relative_to(project_root).as_posix()
+        dataset_root = export_dir
     dataset = load_dataset(dataset_root)
     target = report_path(project_root, options, now.date())
     return {
         "schema": "debrief_stats_v1",
-        "log_root": str(log_root),
+        "log_root": "(local telemetry)" if anonymize["ok"] else str(log_root),
         "dataset": "anonymized" if anonymize["ok"] else "raw",
         "anonymize": anonymize,
         "filters": {
@@ -613,8 +645,8 @@ def main(argv: list[str] | None = None) -> int:
         argv: Override ``sys.argv[1:]`` (mainly for testing).
 
     Returns:
-        ``0`` on success, ``1`` when no telemetry exists, ``2`` on bad arguments, ``3`` when a sibling helper timed
-        out.
+        ``0`` on success, ``1`` when no telemetry exists, ``2`` on bad arguments or oversized telemetry, ``3`` when a
+        sibling helper timed out, and ``4`` when requested anonymization failed.
     """
     try:
         options = parse_options(tokens_from_argv(sys.argv[1:] if argv is None else argv))
@@ -637,6 +669,12 @@ def main(argv: list[str] | None = None) -> int:
             # returning inside the ``with`` still deletes the raw scratch copy on the way out
             print(f"! {exc} — helper killed, debrief stopped; the filtered scratch copy was removed", file=sys.stderr)
             return EXIT_HELPER_TIMEOUT
+        except AnonymizationError as exc:
+            print(f"! {exc}", file=sys.stderr)
+            return EXIT_ANONYMIZE_FAILED
+        except OptionsError as exc:
+            print(f"! {exc}", file=sys.stderr)
+            return EXIT_BAD_INPUT
     Path(stats["report_path"]).parent.mkdir(parents=True, exist_ok=True)
     print(json.dumps(stats, indent=1, default=str))
     return 0

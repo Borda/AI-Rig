@@ -1,1 +1,3 @@
 **Agent 3 — foundry:perf-optimizer** (merged spawn with Agent 6 — see §Merged spawn units): Analyze performance issues. Algorithmic complexity, Python loops that should be NumPy/torch ops, repeated computation, unnecessary I/O. ML code: check DataLoader config, mixed precision. Prioritize by impact; per finding state current behavior vs expected improvement. Findings to `$RUN_DIR/perf-optimizer.md`.
+
+Read the owning review skill's `Improvement claim evidence` section in `../SKILL.md` (resolved relative to this brief), and apply it to the supplied claims. Assess unsupported claims too. Report claim dispositions and noisy or unavailable measurement limits alongside findings; only the parent runs checks when this reviewer is inspection-only.

@@ -2405,8 +2405,8 @@ fi
     def test_unreadable_reason_is_empty_for_readable_quoting(self, command: str) -> None:
         """A completely readable command carries no unreadable reason.
 
-        A plain call and a decodable escape leave the reason text empty. A guard that prints a
-        reason for a readable command would mislead the user.
+        A plain call and a decodable escape leave the reason text empty. A guard that prints a reason for a readable
+        command would mislead the user.
         """
         assert _unreadable_reason(command) == ""
 

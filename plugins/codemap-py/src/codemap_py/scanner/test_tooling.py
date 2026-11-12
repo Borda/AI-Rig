@@ -381,7 +381,7 @@ def extract_subprocess_calls(
     if indexed_files is None:
         return []
     caller_dir = filepath.parent
-    file_str = str(filepath)
+    file_str = filepath.relative_to(root).as_posix()
     results: list[dict] = []
 
     for node in ast.walk(tree):

@@ -189,6 +189,8 @@ def _list_names(ctx: FetchContext, sub_path: str) -> list[str] | None:
     Returns:
         Names in API order, or ``None`` when the listing failed or was not a JSON array.
     """
+    if any(part in {".", ".."} for part in sub_path.split("/")):
+        return None
     api_path = f"repos/{ctx.owner_repo}/contents" + (f"/{quote(sub_path)}" if sub_path else "")
     rc, stdout = _gh_call(ctx.gh, api_path, "[.[] | .name]", ctx.timeout)
     if rc != 0 or not stdout:
@@ -202,6 +204,8 @@ def _list_names(ctx: FetchContext, sub_path: str) -> list[str] | None:
 
 def _fetch_file_text(ctx: FetchContext, path: str) -> str | None:
     """Fetch and decode one repository file; ``None`` when absent or undecodable."""
+    if any(part in {".", ".."} for part in path.split("/")):
+        return None
     # path segments come from remote directory listings: quote so a name with ?, # or % cannot rewrite the API request
     rc, raw = _gh_call(ctx.gh, f"repos/{ctx.owner_repo}/contents/{quote(path)}", ".content", ctx.timeout)
     if rc != 0 or not raw:
@@ -517,15 +521,15 @@ def _validate_args(owner: str, repo: str, default_branch: str, data_file: str) -
     """
     if not owner:
         return "--owner required"
-    if not _NAME_RE.match(owner):
+    if not _NAME_RE.fullmatch(owner) or owner in {".", ".."}:
         return f"--owner must match '[A-Za-z0-9._-]+', got: {owner!r}"
     if not repo:
         return "--repo required"
-    if not _NAME_RE.match(repo):
+    if not _NAME_RE.fullmatch(repo) or repo in {".", ".."}:
         return f"--repo must match '[A-Za-z0-9._-]+', got: {repo!r}"
     if not default_branch:
         return "--default-branch required"
-    if not _BRANCH_RE.match(default_branch) or ".." in default_branch:
+    if not _BRANCH_RE.fullmatch(default_branch) or ".." in default_branch:
         return f"--default-branch must match '[A-Za-z0-9._/-]+', got: {default_branch!r}"
     if not data_file:
         return "--data-file required"

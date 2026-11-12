@@ -10,10 +10,11 @@ Resolution order, identical in local and installed mode — the source tree is t
 only place a calibration target may come from, and the installed cache is never
 a fallback:
 
-1. ``plugins/cc_<plugin>/<rel>``
-2. ``plugins/<plugin>/<rel>``
-3. a single ``plugins/*/<rel>`` match; with several, the one whose plugin
-   directory name starts with the prefix
+Manifest names identify plugins and manifest ``agents``/``skills`` fields select
+their source directories. ``.claude-plugin/plugin.json`` takes precedence over
+``.codex-plugin/plugin.json``. Resolved files must stay inside the plugin root.
+Without a manifest, legacy lookup prefers ``plugins/cc_<plugin>/<rel>``, then
+``plugins/<plugin>/<rel>``, then a single match or a matching directory prefix.
 
 stdout is two lines the caller reads back:
 
@@ -40,9 +41,12 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
+
+from plugin_layout import declared_dir
 
 #: Default source-tree directory that contains the plugin folders searched for an agent file.
 PLUGINS_ROOT = Path("plugins")
@@ -67,12 +71,34 @@ def split_target(name: str) -> tuple[str, str, str]:
     return plugin, rest, rel
 
 
-def resolve(plugin: str, rel: str, *, root: Path = PLUGINS_ROOT) -> Path | None:
-    """Return the source file for a plugin-relative path, or None."""
-    for candidate in (root / f"cc_{plugin}" / rel, root / plugin / rel):
-        if candidate.is_file():
+def _source_candidate(plugin_root: Path, plugin: str, namespace: str, suffix: str) -> tuple[Path | None, bool]:
+    """Classify a confined candidate and preserve a known manifest identity even when its target is missing."""
+    manifest_path = plugin_root / ".claude-plugin/plugin.json"
+    if not manifest_path.exists():
+        manifest_path = plugin_root / ".codex-plugin/plugin.json"
+    directory = namespace
+    identified = False
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(manifest, dict) or manifest.get("name") != plugin:
+                return None, False
+            identified = True
+            directory = declared_dir(manifest, namespace, namespace)
+        except (OSError, ValueError):
+            return None, identified
+    candidate = plugin_root / directory / suffix
+    if not candidate.is_file() or not candidate.resolve().is_relative_to(plugin_root.resolve()):
+        return None, identified
+    return candidate, identified
+
+
+def _legacy_source(matches: list[Path], root: Path, plugin: str, rel: str) -> Path | None:
+    """Choose among manifest-free source candidates using the historical folder precedence."""
+    for directory in (f"cc_{plugin}", plugin):
+        candidate = root / directory / rel
+        if candidate in matches:
             return candidate
-    matches = sorted(p for p in root.glob(f"*/{rel}") if p.is_file())
     if len(matches) == 1:
         return matches[0]
     prefixed = [p for p in matches if p.relative_to(root).parts[0].startswith(plugin)]
@@ -81,6 +107,29 @@ def resolve(plugin: str, rel: str, *, root: Path = PLUGINS_ROOT) -> Path | None:
     # `cc_`-prefixed directories are the repo convention; match them too before giving up.
     prefixed = [p for p in matches if p.relative_to(root).parts[0].startswith(f"cc_{plugin}")]
     return prefixed[0] if prefixed else None
+
+
+def resolve(plugin: str, rel: str, *, root: Path = PLUGINS_ROOT) -> Path | None:
+    """Resolve manifest identities and directories, retaining lookup for manifest-free source trees."""
+    if not root.is_dir():
+        return None
+    namespace, separator, suffix = rel.partition("/")
+    if not separator or namespace not in {"agents", "skills"}:
+        return None
+    matches = []
+    manifested = []
+    known_identity = False
+    for plugin_root in sorted(p for p in root.iterdir() if p.is_dir()):
+        if not plugin_root.resolve().is_relative_to(root.resolve()):
+            continue
+        candidate, identified = _source_candidate(plugin_root, plugin, namespace, suffix)
+        known_identity = known_identity or identified
+        if candidate is not None:
+            (manifested if identified else matches).append(candidate)
+    # Manifest identity outranks legacy folder guesses even when its requested target is unavailable.
+    if known_identity:
+        return manifested[0] if manifested else None
+    return _legacy_source(matches, root, plugin, rel)
 
 
 def main() -> int:

@@ -4,7 +4,7 @@
 
 | # | Name | Severity | Scope | Notes |
 | -- | -- | -- | -- | -- |
-| 1 | Inventory drift (MEMORY.md vs disk) | medium | setup | Agents + skills on disk vs MEMORY.md roster |
+| 1 | Inventory discovery | — | setup | Agents + skills discovered on disk for cross-reference and README checks |
 | 2 | README vs disk | medium | setup | Agent/skill table rows in README vs disk |
 | 3 | settings.json permissions | medium | setup | Bash commands in skills vs allow list |
 | 4 | permissions-guide.md drift | medium | setup | Every allow entry needs a guide row, and vice versa |
@@ -24,7 +24,7 @@
 | 15 | Hardcoded user paths | high | agents/skills | /Users/ and /home/ in config files + settings.json |
 | 16 | Example value vs. token cost | low | agents/skills | Inline examples: high-value vs. low-value (prose restatement) |
 | 17 | Cross-file code block inventory | low | agents/skills | Block count table across all .md files (skills, modes, \_shared, templates, agents, rules); flag files with ≥10 blocks for `--efficiency` run. NxN similarity analysis moved to `--efficiency` Phase B2 (expensive) |
-| 18 | Rules integrity | high/medium | rules | 18a inventory, 18b frontmatter, 18c redundancy, 18d cross-ref integrity |
+| 18 | Rules integrity | high/medium | rules | 18a disk discovery (no severity), 18b frontmatter, 18c redundancy, 18d cross-ref integrity |
 | 19 | Model tier + effort appropriateness | medium/high | agents | Tier policy: fable/opus/sonnet/haiku aliases only — flag a pinned model ID (freezes the version) and `opusplan` (as subagent frontmatter it runs `sonnet`, since subagents never enter plan mode); effort low/medium/high/xhigh/max (Haiku 5.5 accepts it) — report only. Flag any tier downgrade with no A/B evidence |
 | 20 | Agent description routing | medium/low | agents | 20a overlap pairs, 20b NOT-for coverage, 20c trigger specificity, 20d keep/sharpen/prune |
 | 22 | Calibration coverage gap | medium/low | agents/skills | Unregistered calibratable skills/agents; stale domain table entries |
@@ -55,6 +55,6 @@
 | R5 | Consumer→template orphan | medium | plugins (LOCAL_MODE only) | `<!-- loads: X -->` or `# loads: X` comment points to non-existent template file — reverse of R2 |
 | 41 | LLM-first formatting | low/medium | all .md excl. README | 41a list-marker uniformity (`-` only); 41b numbering-intent clarity (`1.`=steps, `(a)`=choices); 41c table-vs-prose preference (3+ items × 2+ attrs → table); 41d legacy phase/step numbering (`Phase A.5`/`Step 1.5` instead of canonical `1b`) |
 | 42 | CLI flag drift vs. spawn-prompt vars (number collision) | medium/critical | plugins | Two unrelated checks both claim `42`: index/Step-1b use it for CLI flag drift (`check_cli_flag_drift.py`, SKILL.md flags vs argparse, medium); `checks-skills-sweep.md` separately defines `Check 42` as "Unexpanded variables in agent spawn prompts" (`check_spawn_prompt_vars.py`, critical). Pre-existing, predates Check 45 — not resolved here; needs a deliberate renumber pass (touches severity tables + dispatch lists in `steps-4-5-7.md`), not a drive-by fix |
-| 43 | Shell variable persistence across Bash calls | critical | plugins/skills | `check_bash_persistence.py` — `$VAR` referenced in bash block N, assigned only in earlier block M — each Bash call is a fresh shell, silently expands to empty string |
+| 43 | Shell variable persistence across Bash calls | medium | plugins/skills | `check_bash_persistence.py` — cross-call shell state per `severity-table.md` §Canonical defect classes; prove additional runtime failures separately |
 | 44 | Sub-check naming symmetry vs. TMPDIR sentinel scoping (number collision) | low/high | agents/skills/rules | Two unrelated checks both claim `44`: `checks-shared.md` defines it as "Sub-check naming symmetry" (`Check Nb` without `Check Na`, low); `checks-skills-sweep.md` separately defines it as "TMPDIR sentinel session scoping" (bare `/tmp` sentinel names collide across sessions, critical). Pre-existing, predates Check 45 — not resolved here |
 | 45 | Policy-sibling marker symmetry | high/medium | all .md | 45-BROKEN: `<!-- policy-sibling: ... -->` lists a path not on disk; 45-ASYMMETRIC: listed sibling has no marker pointing back — reference-graph completeness for policies restated (not cross-ref'd) across files |

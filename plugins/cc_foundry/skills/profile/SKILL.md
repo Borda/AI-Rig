@@ -40,19 +40,22 @@ If $ARGUMENTS empty, default window is 24h.
 
 **Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
-**Task tracking**: TaskCreate two tasks up front — 1 "Run analyzers + render report" (Steps 1–3), 2 "Step 4b: Print report header" (Step 4). Mark each `in_progress` before its first tool call; 1 completed once `report.md` exists, 2 completed right after the header and path are printed, before the executive summary.
+**Task tracking**: TaskCreate two tasks up front — 1 "Run analyzers + render report" (Steps 1–3), 2 "Step 4: Print report header" (Step 4). Mark each `in_progress` before its first tool call; 1 completed once `report.md` exists, 2 completed right after the header and path are printed, before the executive summary.
 
 ## Step 1: Parse args + create run dir
+
+**Unsupported flag check** — before executing Step 2, scan `$ARGUMENTS` for `--<token>` patterns. Supported: `--since`, `--session-id`, `--top-n` (space-separated or `=` values). Any other flag, including `--noop` (an internal parser placeholder, not a supported profile flag): invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--since`, `--session-id`, `--top-n`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (remove unknown flags before passing `$ARGUMENTS` to Step 2). On Abort: stop.
 
 The first part of the Step 2 block below does this step (one Bash call with the clock-time analyzer): argument text is parsed in `bin/` and validated against closed patterns before use, then persisted as `KEY=VALUE` lines to `${TMPDIR:-/tmp}/foundry-profile-state-${CSID}`; Steps 2b–3 read it back key by key, never sourcing it (bash state doesn't persist across Bash calls, and `REPORT_DIR` carries a per-shell timestamp that can't be re-derived).
 
 ## Step 2: Run analyzers — clock time, then tokens/cost
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # timeout: 60000
 # --flags is mandatory for the helper; profile has no boolean flags. --keep-state: no eval; --inlined: profile keeps no compaction contract, so it clears none
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags noop --value-flags since,session-id,top-n --keep-state profile --inlined "$ARGUMENTS" >/dev/null
+python "$PLUGIN_ROOT/bin/parse-skill-flags.py" --flags noop --value-flags since,session-id,top-n --keep-state profile --inlined -- "$ARGUMENTS" >/dev/null
 IFS= read -r SINCE < "${TMPDIR:-/tmp}/profile-since-${CSID}" 2>/dev/null; SINCE="${SINCE:-24h}"
 IFS= read -r TOP_N < "${TMPDIR:-/tmp}/profile-top-n-${CSID}" 2>/dev/null; TOP_N="${TOP_N:-5}"
 IFS= read -r SESSION_ID < "${TMPDIR:-/tmp}/profile-session-id-${CSID}" 2>/dev/null || SESSION_ID=""
@@ -67,14 +70,15 @@ mkdir -p "$REPORT_DIR"
   echo "TOP_N=$TOP_N"
 } | tee "${TMPDIR:-/tmp}/foundry-profile-state-${CSID}"
 set --; [ -n "$SESSION_ID" ] && set -- --session-id "$SESSION_ID"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/timing_analyzer.py" \
+python "$PLUGIN_ROOT/bin/timing_analyzer.py" \
     --since "$SINCE" \
     --top-n "$TOP_N" \
     --output "$REPORT_DIR/report.md" \
     "$@" 2>"$REPORT_DIR/warnings.log"
 TIME_EXIT=$?
 echo "time_exit=$TIME_EXIT"
-[ "$TIME_EXIT" -lt 2 ] || echo "! BLOCKED — timing_analyzer exit $TIME_EXIT; see $REPORT_DIR/warnings.log"
+[ "$TIME_EXIT" -lt 2 ] || { echo "! BLOCKED — timing_analyzer exit $TIME_EXIT; see $REPORT_DIR/warnings.log"; exit 1; }
+[ "$TIME_EXIT" -eq 0 ] || { echo "No sessions in window; stopping."; exit 1; }
 ```
 
 `set --` array form passes `--session-id` and its value as separate arguments only when set (shell-portable; an unquoted `"--session-id $SESSION_ID"` string is one argument under zsh). Exit code 1: no sessions in window — surface that, stop; nothing in Step 2b can rescue a missing clock report, since `enforce-profile-header.js` keys on `report.md` specifically. Exit code 2 or higher: analyzer error (bad arguments, crash) — surface the `! BLOCKED` line with the tail of `warnings.log`, stop; do not run Step 2b.
@@ -82,11 +86,12 @@ echo "time_exit=$TIME_EXIT"
 ## Step 2b: Run analyzer — tokens/cost (best-effort, appended)
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # timeout: 60000
 while IFS== read -r K V; do case "$K" in REPORT_DIR) REPORT_DIR=$V;; SINCE) SINCE=$V;; SESSION_ID) SESSION_ID=$V;; TOP_N) TOP_N=$V;; esac; done < "${TMPDIR:-/tmp}/foundry-profile-state-${CSID}"
 set --; [ -n "$SESSION_ID" ] && set -- --session-id "$SESSION_ID"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/cost_analyzer.py" \
+python "$PLUGIN_ROOT/bin/cost_analyzer.py" \
     --since "$SINCE" \
     --top-n "$TOP_N" \
     --output "$REPORT_DIR/cost.md" \
@@ -97,14 +102,16 @@ if [ "$COST_EXIT" -eq 0 ] && [ -s "$REPORT_DIR/report.md" ]; then
   cat "$REPORT_DIR/cost.md" >> "$REPORT_DIR/report.md"
 fi
 echo "cost_exit=$COST_EXIT"
-echo '{"status":"complete","since":"'"$SINCE"'","session_id":"'"$SESSION_ID"'","top_n":'"$TOP_N"'}' > "$REPORT_DIR/result.jsonl"
+STATUS=complete
+[ "$COST_EXIT" -lt 2 ] || STATUS=partial
+echo '{"status":"'"$STATUS"'","cost_exit":'"$COST_EXIT"',"since":"'"$SINCE"'","session_id":"'"$SESSION_ID"'","top_n":'"$TOP_N"'}' > "$REPORT_DIR/result.jsonl"
 ```
 
 Separate data source (transcripts under `~/.claude/projects/**`, not `timings.jsonl`), separate script, same `--since`/`--session-id`/`--top-n` scoping. `cost_exit=1` means no transcripts fell in window (or no match for `--session-id`) — not fatal: clock report still ships without a `## Tokens & cost` section. The two analyzers never share a report path write; only `report.md` is append-target, only after `cost_exit=0`, so a cost-side failure can't corrupt or block the clock report.
 
 ## Step 3: Mark run complete
 
-The last line of the Step 2b block writes `$REPORT_DIR/result.jsonl` (`status: complete`, `since`, `session_id`, `top_n`) — it runs only after Step 2's stop branches passed, exactly as this step did.
+The last line of the Step 2b block writes `$REPORT_DIR/result.jsonl` (`status: complete` for `cost_exit` 0 or 1, `status: partial` for a cost analyzer error, plus `cost_exit`, `since`, `session_id`, `top_n`) — it runs only after Step 2's stop branches passed, exactly as this step did. Surface a cost analyzer error with `warnings.log` while delivering the clock report.
 
 ## Step 4: Emit terminal output
 
@@ -112,7 +119,7 @@ Build the delivery block: read YAML header from `$REPORT_DIR/report.md` (first b
 
 > **Output-Routing exemption**: this report-header follow-up carries a plain summary in the question and the full delivery block in the final reply after the answer. Quality-gates.md §Report File Format's table-first-in-reply rule and Output Routing step 2a do not require a table before the question; the full dump below still goes to `.temp/`.
 
-Also Write the long-output dump per quality-gates rule:
+Also Write the long-output dump per quality-gates rule — never overwrite an existing dump; if the path exists, append the first unused counter suffix (`-2.md`, `-3.md`, …) before calling Write:
 
 ```text
 Write(file_path=".temp/output-profile-<branch>-<YYYY-MM-DD>.md", content=<full report contents>)

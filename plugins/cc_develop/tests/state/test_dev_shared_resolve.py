@@ -16,6 +16,7 @@ second line) was removed — see ``plugins/CLAUDE.md`` §Self-Contained ``_share
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
@@ -38,6 +39,9 @@ def _install(home: Path, version: str) -> Path:
     """Create a cached develop install at ``version`` under ``home`` and return its ``skills/_shared`` directory."""
     shared = home / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "develop" / version / "skills" / "_shared"
     shared.mkdir(parents=True)
+    root = shared.parent.parent
+    _write_file(root, ".claude-plugin/plugin.json", '{"name":"develop"}')
+    _write_file(root, "bin/resolve_plugin_root.py", "# resolver\n")
     return shared
 
 
@@ -54,6 +58,8 @@ def source_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_home: Path
     """Enter a working directory that is the develop source repository, with an empty plugin cache."""
     repo = tmp_path / "repo"
     _write_file(repo, "plugins/cc_develop/.claude-plugin/plugin.json", '{"name": "develop"}')
+    _write_file(repo, "plugins/cc_develop/bin/resolve_plugin_root.py", "# resolver\n")
+    monkeypatch.setattr(dev_shared_resolve, "__file__", str(repo / "plugins/cc_develop/bin/dev_shared_resolve.py"))
     monkeypatch.chdir(repo)
     return repo
 
@@ -84,7 +90,26 @@ class TestDevelopOnly:
         """
         _install(tmp_path, older_version)
         newer = _install(tmp_path, newer_version)
-        assert dev_shared_resolve.resolve_shared_path(home=tmp_path) == str(newer)
+        assert Path(dev_shared_resolve.resolve_shared_path(home=tmp_path)) == newer
+
+    def test_registry_beats_newer_cached_version(self, tmp_path: Path) -> None:
+        """Shared documents follow the active record rather than a newer cached version."""
+        active = _install(tmp_path, "0.1.0")
+        _install(tmp_path, "0.6.2")
+        registry = tmp_path / ".claude/plugins/installed_plugins.json"
+        registry.write_text(
+            json.dumps(
+                {
+                    "plugins": {
+                        "develop@borda-ai-rig": [
+                            {"installPath": str(active.parent.parent), "installedAt": "2026-01-01T00:00:00Z"},
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert Path(dev_shared_resolve.resolve_shared_path(home=tmp_path)) == active
 
     def test_skips_orphaned_newest_version(self, tmp_path: Path) -> None:
         """Skip an orphaned newest version in favor of the previous release.
@@ -95,7 +120,7 @@ class TestDevelopOnly:
         orphaned = _install(tmp_path, "0.20.0")
         (orphaned.parent.parent / ".orphaned_at").write_text("2026-01-01T00:00:00Z\n", encoding="utf-8")
         older = _install(tmp_path, "0.6.2")
-        assert dev_shared_resolve.resolve_shared_path(home=tmp_path) == str(older)
+        assert Path(dev_shared_resolve.resolve_shared_path(home=tmp_path)) == older
 
     def test_falls_back_to_source_tree_path(self, tmp_path: Path) -> None:
         """An empty cache resolves to the source-tree fallback path string."""

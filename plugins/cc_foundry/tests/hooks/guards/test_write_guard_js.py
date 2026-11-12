@@ -44,6 +44,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from _hook_env import _symlinks_supported
 
 HOOK = Path(__file__).resolve().parents[3] / "hooks" / "write-guard.js"
 
@@ -331,6 +332,17 @@ class TestVersionControlled:
         review it gets. ``settings.local.json`` is the case that matters most: it is gitignored by convention.
         """
         assert _asks(run_guard(path, cwd=git_repo))
+
+
+@_skip_node_unavailable
+@pytest.mark.skipif(GIT_UNAVAILABLE, reason="requires git to build a repository")
+@pytest.mark.skipif(not _symlinks_supported(), reason="requires symbolic links")
+def test_tracked_alias_does_not_vouch_for_untracked_target(run_guard: Callable[..., dict], git_repo: Path) -> None:
+    """Tracking the alias does not make a write to its untracked instruction target revertible."""
+    alias = git_repo / "pyproject.toml"
+    alias.unlink()
+    alias.symlink_to(Path("docs") / "AGENTS.md")
+    assert _asks(run_guard(str(alias), cwd=git_repo))
 
 
 # ── Files the running session created ─────────────────────────────────────────

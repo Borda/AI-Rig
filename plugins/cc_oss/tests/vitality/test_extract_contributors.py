@@ -8,6 +8,7 @@ path are covered through ``main(argv)`` calls.
 from __future__ import annotations
 
 import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
@@ -63,6 +64,25 @@ class TestIsBot:
 
 class TestDedupeByEmail:
     """Collapsing a raw ``git log`` identity list into one entry per email."""
+
+    def test_oversized_author_finishes_with_whole_line_fallback(self) -> None:
+        """Keep a malformed long identity without quadratic regular-expression matching."""
+        program = (
+            "import sys; sys.path.insert(0, sys.argv[1]); "
+            "from extract_contributors import dedupe_by_email; "
+            "text = sys.stdin.read(); result = dedupe_by_email([text]); "
+            "print(len(result)); print(result == [text])"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", program, str(Path(ec.__file__).parent)],
+            input="Author" + " " * 256_000 + "missing-email",
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        assert result.returncode == 0
+        assert result.stdout == "1\nTrue\n"
 
     def test_keeps_first_name_drops_bots_sorted(self) -> None:
         """Dedup by email, drop bots, keep first display name, sort case-folded.

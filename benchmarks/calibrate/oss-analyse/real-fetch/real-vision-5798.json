@@ -1,0 +1,557 @@
+{
+  "5737": {
+    "number": 5737,
+    "title": "Caltech download is broken",
+    "state": "open",
+    "body": "Oh no, something went wrong in the scheduled workflow tests/download. \nPlease look into it:\n\nhttps://github.com/pytorch/vision/actions/runs/2095101012\n\nFeel free to close this if this was just a one-off error.\n\n\ncc @user-2 @user-3",
+    "comments": []
+  },
+  "5290": {
+    "number": 5290,
+    "title": "Automate closing of scheduled workflows",
+    "state": "open",
+    "body": "### 🚀 The feature\r\n\r\nWe need to currently close the Issues raised by our automated tests for datasets manually.\r\n\r\nhttps://github.com/pytorch/vision/issues?q=is%3Aissue+is%3Aopen+Scheduled+workflow+failed ? \r\n\r\nSometimes they get bunched up or we forget to close them.\r\n\r\n### Motivation\r\n\r\nThe cronjob runs *daily*. So ideally we should be closing the issue the next day if it doesn't fail. (If it does fail anyway another issue is created).\r\n\r\nI propose a simple GitHub action that closes *only this issue* once the issue gets stale by 3 days. The logic is that if the issue is open for 3 days.\r\n1. Everything is working fine and hence we don't have a problem to close it. (It was one off error)\r\n2. There is another issue which is newer that supersedes this old issue.\r\n\r\nSo we should be fine closing it.\r\n\r\n### Pitch\r\n\r\nI think a simple GitHub action can do this job. Would need to investigate but think that technically it's very much possible.\r\n\r\n### Additional context\r\n\r\nI don't propose to extend this functionality to close all stale issues. An issue is well documented user feedback which is very valuable indeed. An old issue can be gem of resource for someone and keeping it open doesn't harm. \r\n\r\nBut for bot issues :( It isn't nice to be flooded with them being open :( \r\n\r\nSome references\r\n\r\nhttps://github.com/marketplace/actions/close-stale-issues\r\n\r\ncc @user-2 @maintainer-3 ",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "This seems like a cool idea. Given that they currently only spamming me, I don't think this is urgent. But if you (or someone else) wants to look into this, I would be happy to review a PR."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Good idea, thanks @user-4 \r\n\r\nAlternatively, if we have a lot of one-off, we can also decide to only open an issue if the download fails twice (or thrice) in a row"
+      },
+      {
+        "author": "user-4",
+        "body": "It's actually rare to have lot of one-off. Also, while downloading and testing we do 5 retries I think?\r\n\r\nI will work on this over the weekend, It's little interesting topic and been a while since I configured CI for something."
+      }
+    ]
+  },
+  "1830": {
+    "number": 1830,
+    "title": "Windows nightly wheels build failed",
+    "state": "open",
+    "body": "Error text:\r\n```powershell\r\n  C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\BuildTools\\VC\\Tools\\MSVC\\14.11.25503\\bin\\HostX64\\x64\\cl.exe /c /nologo /Ox /W3 /GL /DNDEBUG /MT -ID:\\_work\\1\\s\\packaging\\windows\\vision\\torchvision\\csrc\\cpu\\decoder -ID:\\_work\\1\\s\\packaging\\windows\\conda\\envs\\py35\\Library\\include -ID:\\_work\\1\\s\\packaging\\windows\\vision\\torchvision\\csrc -ID:\\_work\\1\\s\\packaging\\windows\\conda\\envs\\py35\\lib\\site-packages\\torch\\include -ID:\\_work\\1\\s\\packaging\\windows\\conda\\envs\\py35\\lib\\site-packages\\torch\\include\\torch\\csrc\\api\\include -ID:\\_work\\1\\s\\packaging\\windows\\conda\\envs\\py35\\lib\\site-packages\\torch\\include\\TH -ID:\\_work\\1\\s\\packaging\\windows\\conda\\envs\\py35\\lib\\site-packages\\torch\\include\\THC -ID:\\_work\\1\\s\\packaging\\windows\\conda\\envs\\py35\\include -ID:\\_work\\1\\s\\packaging\\windows\\conda\\envs\\py35\\include \"-IC:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\BuildTools\\VC\\Tools\\MSVC\\14.11.25503\\ATLMFC\\include\" \"-IC:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\BuildTools\\VC\\Tools\\MSVC\\14.11.25503\\include\" \"-IC:\\Program Files (x86)\\Windows Kits\\10\\include\\10.0.10240.0\\ucrt\" \"-IC:\\Program Files (x86)\\Windows Kits\\8.1\\include\\\\shared\" \"-IC:\\Program Files (x86)\\Windows Kits\\8.1\\include\\\\um\" \"-IC:\\Program Files (x86)\\Windows Kits\\8.1\\include\\\\winrt\" \"-IC:\\Program Files (x86)\\Windows Kits\\8.1\\include\\\\cppwinrt\" -ID:\\_work\\1\\s\\packaging\\windows\\conda\\envs\\py35\\Library\\include /EHsc /TpD:\\_work\\1\\s\\packaging\\windows\\vision\\torchvision\\csrc\\cpu\\decoder\\audio_sampler.cpp /Fobuild\\temp.win-amd64-3.5\\Release\\_work\\1\\s\\packaging\\windows\\vision\\torchvision\\csrc\\cpu\\decoder\\audio_sampler.obj /MD /wd4819 /EHsc -std=c++14 -DTORCH_API_INCLUDE_EXTENSION_H -DTORCH_EXTENSION_NAME=base_decoder -D_GLIBCXX_USE_CXX11_ABI=0\r\n  cl : Command line warning D9025 : overriding '/MT' with '/MD'\r\n  cl : Command line warning D9002 : ignoring unknown option '-std=c++14'\r\n  audio_sampler.cpp\r\n  d:\\_work\\1\\s\\packaging\\windows\\vision\\torchvision\\csrc\\cpu\\decoder\\defs.h(30): error C3646: 'format': unknown override specifier\r\n  d:\\_work\\1\\s\\packaging\\windows\\vision\\torchvision\\csrc\\cpu\\decoder\\defs.h(30): error C2059: syntax error: '{'\r\n  d:\\_work\\1\\s\\packaging\\windows\\vision\\torchvision\\csrc\\cpu\\decoder\\defs.h(30): error C2334: unexpected token(s) preceding '{'; skipping apparent function body\r\n  d:\\_work\\1\\s\\packaging\\windows\\vision\\torchvision\\csrc\\cpu\\decoder\\defs.h(25): error C2039: 'format': is not a member of 'ffmpeg::AudioFormat'\r\n  d:\\_work\\1\\s\\packaging\\windows\\vision\\torchvision\\csrc\\cpu\\decoder\\defs.h(21): note: see declaration of 'ffmpeg::AudioFormat'\r\n  d:\\_work\\1\\s\\packaging\\windows\\vision\\torchvision\\csrc\\cpu\\decoder\\defs.h(25): error C2065: 'format': undeclared identifier\r\n  d:\\_work\\1\\s\\packaging\\windows\\vision\\torchvision\\csrc\\cpu\\decoder\\defs.h(45): error C3646: 'format': unknown override specifier\r\n  d:\\_work\\1\\s\\packaging\\windows\\vision\\torchvision\\csrc\\cpu\\decoder\\defs.h(45): error C2059: syntax error: '{'\r\n  d:\\_work\\1\\s\\packaging\\windows",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Thanks for the heads up @user-5 , I need to enable the builds of video_reader in the Windows CI machines as well.\r\n\r\n@user-5 can you us which version of ffmpeg is being used by the build machines for torchvision?\r\n\r\ncc @user-59 "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Temporarily reverting the offending PR in OSS master in https://github.com/pytorch/vision/pull/1833 in order to unbreak Windows builds.\r\n\r\nWill get it merged again once we fix Windows issues"
+      },
+      {
+        "author": "user-5",
+        "body": "> can you us which version of ffmpeg is being used by the build machines for torchvision?\r\n\r\nIt uses the ffmpeg 4.1.3 package in the conda-forge channel.\r\n\r\n> Will get it merged again once we fix Windows issues\r\n\r\nYou can test that by adding `av` to the host section of  the conda receipt."
+      }
+    ]
+  },
+  "5311": {
+    "number": 5311,
+    "title": "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1122)",
+    "state": "open",
+    "body": "### 🐛 Describe the bug\n\nWhen downloading weights data from the PyTorch hub we get the following:\r\n```\r\n[stdlog] 2022-01-27 14:41:18,434 client           L0864 INFO | Traceback (most recent call last):\r\n[stdlog] 2022-01-27 14:41:18,435 client           L0864 INFO |   File \"C:\\Program Files\\Python39\\lib\\site-packages\\torchvision\\models\\detection\\faster_rcnn.py\", line 369, in fasterrcnn_resnet50_fpn\r\n[stdlog] 2022-01-27 14:41:18,435 client           L0864 INFO |     state_dict = load_state_dict_from_url(model_urls['fasterrcnn_resnet50_fpn_coco'],\r\n[stdlog] 2022-01-27 14:41:18,435 client           L0864 INFO |   File \"C:\\Program Files\\Python39\\lib\\site-packages\\torch\\hub.py\", line 524, in load_state_dict_from_url\r\n[stdlog] 2022-01-27 14:41:18,435 client           L0864 INFO |     download_url_to_file(url, cached_file, hash_prefix, progress=progress)\r\n[stdlog] 2022-01-27 14:41:18,435 client           L0864 INFO |   File \"C:\\Program Files\\Python39\\lib\\site-packages\\torch\\hub.py\", line 394, in download_url_to_file\r\n[stdlog] 2022-01-27 14:41:18,435 client           L0864 INFO |     u = urlopen(req)\r\n[stdlog] 2022-01-27 14:41:18,435 client           L0864 INFO |   File \"C:\\Program Files\\Python39\\lib\\urllib\\request.py\", line 214, in urlopen\r\n[stdlog] 2022-01-27 14:41:18,435 client           L0864 INFO |     return opener.open(url, data, timeout)\r\n[stdlog] 2022-01-27 14:41:18,435 client           L0864 INFO |   File \"C:\\Program Files\\Python39\\lib\\urllib\\request.py\", line 517, in open\r\n[stdlog] 2022-01-27 14:41:18,435 client           L0864 INFO |     response = self._open(req, data)\r\n[stdlog] 2022-01-27 14:41:18,435 client           L0864 INFO |   File \"C:\\Program Files\\Python39\\lib\\urllib\\request.py\", line 534, in _open\r\n[stdlog] 2022-01-27 14:41:18,436 client           L0864 INFO |     result = self._call_chain(self.handle_open, protocol, protocol +\r\n[stdlog] 2022-01-27 14:41:18,436 client           L0864 INFO |   File \"C:\\Program Files\\Python39\\lib\\urllib\\request.py\", line 494, in _call_chain\r\n[stdlog] 2022-01-27 14:41:18,436 client           L0864 INFO |     result = func(*args)\r\n[stdlog] 2022-01-27 14:41:18,436 client           L0864 INFO |   File \"C:\\Program Files\\Python39\\lib\\urllib\\request.py\", line 1385, in https_open\r\n[stdlog] 2022-01-27 14:41:18,436 client           L0864 INFO |     return self.do_open(http.client.HTTPSConnection, req,\r\n[stdlog] 2022-01-27 14:41:18,436 client           L0864 INFO |   File \"C:\\Program Files\\Python39\\lib\\urllib\\request.py\", line 1345, in do_open\r\n[stdlog] 2022-01-27 14:41:18,436 client           L0864 INFO |     raise URLError(err)\r\n[stdlog] 2022-01-27 14:41:18,436 client           L0864 INFO | urllib.error.URLError: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1122)>\r\n```\r\nwhereby checks of the certificate validity passed and this issue only happens on Windows (tested the same code on Linux without any problem). Downloading the same data ",
+    "comments": [
+      {
+        "author": "user-7",
+        "body": "Similar SSL verification problems have been popping up for a while now. Unfortunately that is not related to TorchVision but rather caused by issues on the S3 side where we store the weights. It's also something we can reproduce consistently as it depends on the region from which you try to access the weights. \r\n\r\nI suspect that if you test this again a few hours later the issue might be resolved. Let me know if that's the case."
+      },
+      {
+        "author": "user-6",
+        "body": "The surprising thing is that I don't have this problem on Linux from the same region, only on a Windows machine."
+      }
+    ]
+  },
+  "4857": {
+    "number": 4857,
+    "title": "RuntimeError: INTERNAL ASSERT FAILED in F.rotate",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nI get an assertion error from native code when trying to run `torchvision.RandomRotate` on a fairly large image (2000x2000)\r\n\r\n## To Reproduce\r\n\r\nThe snippet below *does not* reproduce the bug, but it is the best I could do without delivering the entire code base to you.\r\n\r\n```python\r\nimport time\r\n\r\nimport torch\r\nimport torchvision\r\nfrom torch.utils.data import Dataset\r\n\r\n\r\nclass MyDataset(Dataset):\r\n    def __init__(self, transforms):\r\n        self._transforms = transforms\r\n\r\n    def __getitem__(self, item):\r\n        loaded_image = torch.load('c0d28963-01c4-4b91-add6-3a8edb782610.pt')\r\n        return self._transforms(loaded_image)\r\n\r\n    def __len__(self):\r\n        return 1000\r\n\r\n\r\ntransforms = torch.nn.Sequential(\r\n    torchvision.transforms.RandomRotation(degrees=180, expand=True, fill=0.),\r\n    torchvision.transforms.Resize(size=(224, 224)),\r\n)\r\nstart_time = time.monotonic()\r\n\r\ndataset = MyDataset(transforms)\r\nbatch_size = 32\r\ndataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=6, prefetch_factor=2)\r\n\r\nfor i, image in enumerate(dataloader):\r\n    estimated_total_time = (time.monotonic() - start_time) * len(dataset) / batch_size / (i + 1)\r\n    print(f\"processing batch {i + 1}/{len(dataset) / batch_size} in \"\r\n          f\"{time.monotonic() - start_time:.0f}/{estimated_total_time:.0f}s\")\r\n```\r\n[saved image tensor](https://github.com/pytorch/pytorch/files/7465134/c0d28963-01c4-4b91-add6-3a8edb782610.pt.zip)\r\n\r\ntraceback (not from the snippet):\r\n```\r\nTraceback (most recent call last):\r\n  File \"/home/ian.pegg/projects/shining_software/src/shining_research/map_divergence_detection/dataset.py\", line 241, in <module>\r\n    print(dataset.get_dataset_stats())\r\n  File \"/home/ian.pegg/projects/shining_software/src/shining_research/map_divergence_detection/dataset.py\", line 212, in get_dataset_stats\r\n    for i, entry in enumerate(self):\r\n  File \"/home/ian.pegg/projects/shining_software/src/shining_research/map_divergence_detection/dataset.py\", line 150, in __getitem__\r\n    transformed_image = self._transforms(image)\r\n  File \"/home/ian.pegg/miniconda3/envs/torch-nightly/lib/python3.9/site-packages/torch/nn/modules/module.py\", line 1110, in _call_impl\r\n    return forward_call(*input, **kwargs)\r\n  File \"/home/ian.pegg/miniconda3/envs/torch-nightly/lib/python3.9/site-packages/torch/nn/modules/container.py\", line 141, in forward\r\n    input = module(input)\r\n  File \"/home/ian.pegg/miniconda3/envs/torch-nightly/lib/python3.9/site-packages/torch/nn/modules/module.py\", line 1110, in _call_impl\r\n    return forward_call(*input, **kwargs)\r\n  File \"/home/ian.pegg/miniconda3/envs/torch-nightly/lib/python3.9/site-packages/torchvision/transforms/transforms.py\", line 1351, in forward\r\n    return F.rotate(img, angle, self.resample, self.expand, self.center, fill)\r\n  File \"/home/ian.pegg/miniconda3/envs/torch-nightly/lib/python3.9/site-packages/torchvision/transforms/functional.py\", line 1028, in rotate\r\n    return F_t.",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Hi,\r\n\r\nThanks for the report. We would need a repro to be able to pinpoint and fix the issue. As of now it hints to a problem within advanced indexing in PyTorch, although to be sure we would need an example that reproduces the results."
+      },
+      {
+        "author": "user-9",
+        "body": "I can try to repro from our side.\r\n=> I couldn't repro the issue from my side neither."
+      }
+    ]
+  },
+  "2480": {
+    "number": 2480,
+    "title": "Install failing from the master:  Failed building wheel",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\n<!-- A clear and concise description of what the bug is. -->\r\n\r\n## To Reproduce\r\n\r\nSteps to reproduce the behavior:\r\n\r\n1.`pip install -q git+https://github.com/pytorch/vision.git`\r\n\r\n<!-- If you have a code sample, error messages, stack traces, please provide it here as well -->\r\n\r\n## Expected behavior\r\nBuild successfully without any error message\r\n<!-- A clear and concise description of what you expected to happen. -->\r\n\r\n## Environment\r\n\r\n - PyTorch / torchvision Version (e.g., 1.0 / 0.4.0): master\r\n - OS (e.g., Linux): ubuntu16.04\r\n - How you installed PyTorch / torchvision (`conda`, `pip`, source): pip\r\n - Build command you used (if compiling from source): `pip install -q git+https://github.com/pytorch/vision.git`\r\n - Python version: 3.6\r\n - CUDA/cuDNN version:\r\n - GPU models and configuration:\r\n - Any other relevant information: clang7\r\n\r\n## Additional context\r\n\r\nIt occurs a week ago and keeps failing. The error message is as follows:\r\n```\r\n+ pip install -q git+https://github.com/pytorch/vision.git\r\n  Failed building wheel for torchvision\r\nCommand \"/tmp/venv/bin/python3.6 -u -c \"import setuptools, tokenize;__file__='/tmp/pip-req-build-7wrzlist/setup.py';f=getattr(tokenize, 'open', open)(__file__);code=f.read().replace('\\r\\n', '\\n');f.close();exec(compile(code, __file__, 'exec'))\" install --record /tmp/pip-record-bbtn3535/install-record.txt --single-version-externally-managed --compile --install-headers /tmp/venv/include/site/python3.6/torchvision\" failed with error code 1 in /tmp/pip-req-build-7wrzlist/\r\n```\r\n\r\nI suppose it's a bug from the master branch? If so, when can it be fixed?\r\nIf not, how can I fix this?\r\nThanks.\r\n\r\n<!-- Add any other context about the problem here. -->\r\n",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "@user-10 this error message is not helpful. This minimal output happens because you use the `-q` (quiet) flag. For the purpose of debugging, please replace it with `-vvv` (extra extra verbose)."
+      },
+      {
+        "author": "user-10",
+        "body": "Error message is here:\r\n```\r\n [2/3] c++ -MMD -MF /tmp/pip-req-build-x6pynt8j/build/temp.linux-x86_64-3.6/tmp/pip-req-build-x6pynt8j/torchvision/csrc/cpu/image/readpng_cpu.o.d -pthread -DNDEBUG -g -fwrapv -O2 -Wall -g -fstack-protector-strong -Wformat -Werror=format-security -Wdate-time -D_FORTIFY_SOURCE=2 -fPIC -DPNG_FOUND=1 -DJPEG_FOUND=1 -I/tmp/pip-req-build-x6pynt8j/torchvision/csrc -I/tmp/pip-req-build-x6pynt8j/torchvision/csrc -I/tmp/pytorch/torch/include -I/tmp/pytorch/torch/include/torch/csrc/api/include -I/tmp/pytorch/torch/include/TH -I/tmp/pytorch/torch/include/THC -I/tmp/pip-req-build-x6pynt8j/torchvision/csrc/cpu/image -I/tmp/pytorch/torch/include -I/tmp/pytorch/torch/include/torch/csrc/api/include -I/tmp/pytorch/torch/include/TH -I/tmp/pytorch/torch/include/THC -I/usr/include/python3.6m -I/tmp/venv/include/python3.6m -c -c /tmp/pip-req-build-x6pynt8j/torchvision/csrc/cpu/image/readpng_cpu.cpp -o /tmp/pip-req-build-x6pynt8j/build/temp.linux-x86_64-3.6/tmp/pip-req-build-x6py"
+      },
+      {
+        "author": "user-11",
+        "body": "@user-10, what happens if you install the latest master version?"
+      },
+      {
+        "author": "user-10",
+        "body": "I just built one from the latest master version, but it still encountered the same error as my previous comment. "
+      },
+      {
+        "author": "user-10",
+        "body": "Hi @user-2 and @user-11,\r\nAfter ` apt install libturbojpeg`, `pip install git+https://github.com/pytorch/vision.git` can be built successfully. \r\nThank you for your assistance."
+      },
+      {
+        "author": "user-2",
+        "body": "@user-10 glad it worked out for you, but I think we should still debug the cause of this. The README states that `libjpeg-turbo` can be used as a replacement of `libjpeg`, but this shouldn't be required. \r\n\r\n@user-11 Could it be that we need a minimum requirement for `libjpeg` as well? It seems the previously installed versions\r\n\r\n```\r\nlibjpeg-dev/now 8c-2ubuntu8 amd64 [installed,local]\r\nlibjpeg-turbo8/now 1.4.2-0ubuntu3.1 amd64 [installed,local]\r\nlibjpeg-turbo8-dev/now 1.4.2-0ubuntu3.1 amd64 [installed,local]\r\nlibjpeg8/now 8c-2ubuntu8 amd64 [installed,local]\r\nlibjpeg8-dev/now 8c-2ubuntu8 amd64 [installed,local]\r\n```\r\n\r\nwere not enough and they [had to install](https://github.com/onnx/onnx/pull/2915/files#diff-c2691085730cadd2c047409baf70d16dR8-R9) `libjpeg-turbo>2`."
+      },
+      {
+        "author": "user-12",
+        "body": "Any update on this I am also facing the same issue. Even after installing libjpeg-turbo-2.0.5 from source error is sill present.\r\n"
+      },
+      {
+        "author": "user-11",
+        "body": "@user-12 does your error is related to libpng"
+      },
+      {
+        "author": "user-12",
+        "body": "Yes error was related to libpng. However after re-installing  libpng16-dev resolved it. "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "@user-11 do you think we might be missing some extra checks during compilation to validate that the user has the right versions of libjpeg / libpng?"
+      }
+    ]
+  },
+  "4140": {
+    "number": 4140,
+    "title": "compile c++ failed of the version release/0.9",
+    "state": "open",
+    "body": "Hello,\r\nI met an error when compile the torchvision of c++ in linux. \r\n\r\n**The enviroment as belows:**\r\ncmake version 3.14.5\r\ntorch version 1.8.1+cpu\r\n\r\n**the command i excute:**\r\n- git clone https://github.com/pytorch/vision.git\r\n- cd vision\r\n- git checkout release/0.9\r\n- mkdir build && cd build\r\n- make -j4\r\n- sudo make install\r\n\r\n\r\n**the error log as belows:**\r\n\r\n\r\n> -- The C compiler identification is GNU 7.5.0\r\n> -- The CXX compiler identification is GNU 7.5.0\r\n> -- Check for working C compiler: /usr/bin/cc\r\n> -- Check for working C compiler: /usr/bin/cc -- works\r\n> -- Detecting C compiler ABI info\r\n> -- Detecting C compiler ABI info - done\r\n> -- Detecting C compile features\r\n> -- Detecting C compile features - done\r\n> -- Check for working CXX compiler: /usr/bin/c++\r\n> -- Check for working CXX compiler: /usr/bin/c++ -- works\r\n> -- Detecting CXX compiler ABI info\r\n> -- Detecting CXX compiler ABI info - done\r\n> -- Detecting CXX compile features\r\n> -- Detecting CXX compile features - done\r\n> -- Found Python3: /environment/python/versions/miniconda3-4.7.12/lib/libpython3.7m.so (found version \"3.7.4\") found components:  Development \r\n> -- Looking for pthread.h\r\n> -- Looking for pthread.h - found\r\n> -- Looking for pthread_create\r\n> -- Looking for pthread_create - not found\r\n> -- Looking for pthread_create in pthreads\r\n> -- Looking for pthread_create in pthreads - not found\r\n> -- Looking for pthread_create in pthread\r\n> -- Looking for pthread_create in pthread - found\r\n> -- Found Threads: TRUE  \r\n> -- Found Torch: /environment/python/versions/miniconda3-4.7.12/lib/python3.7/site-packages/torch/lib/libtorch.so  \r\n> -- Found ZLIB: /usr/lib/x86_64-linux-gnu/libz.so (found version \"1.2.11\") \r\n> -- Found PNG: /usr/lib/x86_64-linux-gnu/libpng.so (found version \"1.6.34\") \r\n> -- Found JPEG: /usr/lib/x86_64-linux-gnu/libjpeg.so (found version \"80\") \r\n> -- Configuring done\r\n> CMake Warning at CMakeLists.txt:73 (add_library):\r\n>   Cannot generate a safe runtime search path for target torchvision because\r\n>   files in some directories may conflict with libraries in implicit\r\n>   directories:\r\n> \r\n>     runtime library [libpng16.so.16] in /usr/lib/x86_64-linux-gnu may be hidden by files in:\r\n>       /environment/python/versions/miniconda3-4.7.12/lib\r\n> \r\n>   Some of these libraries may not be found correctly.\r\n\r\n\r\n> -- Generating done\r\n> -- Build files have been written to: /home/featurize/work/yolov5-rt-stack/deployment/vision/build\r\n> make: Warning: File 'Makefile' has modification time 79 s in the future\r\n> make[1]: Warning: File 'CMakeFiles/Makefile2' has modification time 79 s in the future\r\n> make[2]: Warning: File 'CMakeFiles/torchvision.dir/flags.make' has modification time 79 s in the future\r\n> Scanning dependencies of target torchvision\r\n> make[2]: warning:  Clock skew detected.  Your build may be incomplete.\r\n> make[2]: Warning: File 'CMakeFiles/torchvision.dir/flags.make' has modification time 78 s in the future\r\n> [  2%] Building CXX object CMakeFil",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Hum, you seem to have gotten an internal compiler error, which is very weird.\r\n\r\nCan you check that you are not running out of memory when compiling torchvision with `-j 4`?"
+      },
+      {
+        "author": "user-13",
+        "body": "hello,  I rerun and excute make  instead of make -j4. also gets error :\r\n\r\n> (base) ➜  build git:(release/0.9) make   \r\n> Scanning dependencies of target torchvision\r\n> make[2]: Warning: File 'CMakeFiles/torchvision.dir/depend.make' has modification time 79 s in the future\r\n> [  2%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/io/image/cpu/common_jpeg.cpp.o\r\n> [  5%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/io/image/cpu/decode_image.cpp.o\r\n> [  8%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/io/image/cpu/decode_jpeg.cpp.o\r\n> [ 10%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/io/image/cpu/decode_png.cpp.o\r\n> [ 13%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/io/image/cpu/encode_jpeg.cpp.o\r\n> [ 16%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/io/image/cpu/encode_png.cpp.o\r\n> [ 18%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/io/image/cpu/read_write"
+      }
+    ]
+  },
+  "2001": {
+    "number": 2001,
+    "title": "nvcc fatal : unknown option 'Wall' during 'make' torchvision with -DWITH_CUDA=ON",
+    "state": "open",
+    "body": "Hey!\r\n\r\nI try to make vision with CUDA but I get error during make procedure:\r\nMy cuda compilation tools: realease 10.0, V10.0.130\r\n\r\nMake error output:\r\n[ 25%] Building CUDA object CMakeFiles/torchvision.dir/torchvision/csrc/cuda/ROIAlign_cuda.cu.o\r\nCMakeFiles/torchvision.dir/build.make:296: recipe for target 'CMakeFiles/torchvision.dir/torchvision/csrc/cuda/PSROIPool_cuda.cu.o' failed\r\nmake[2]: *** [CMakeFiles/torchvision.dir/torchvision/csrc/cuda/PSROIPool_cuda.cu.o] Error 1\r\nmake[2]: *** Waiting for unfinished jobs....\r\nnvcc fatal   : Unknown option 'Wall'\r\nnvcc fatal   : Unknown option 'Wall'\r\nnvcc fatal   : Unknown option 'Wall'\r\nCMakeFiles/torchvision.dir/build.make:270: recipe for target 'CMakeFiles/torchvision.dir/torchvision/csrc/cuda/DeformConv_cuda.cu.o' failed\r\nmake[2]: *** [CMakeFiles/torchvision.dir/torchvision/csrc/cuda/DeformConv_cuda.cu.o] Error 1\r\nCMakeFiles/torchvision.dir/build.make:322: recipe for target 'CMakeFiles/torchvision.dir/torchvision/csrc/cuda/ROIPool_cuda.cu.o' failed\r\nmake[2]: *** [CMakeFiles/torchvision.dir/torchvision/csrc/cuda/ROIPool_cuda.cu.o] Error 1\r\nCMakeFiles/torchvision.dir/build.make:335: recipe for target 'CMakeFiles/torchvision.dir/torchvision/csrc/cuda/nms_cuda.cu.o' failed\r\nmake[2]: *** [CMakeFiles/torchvision.dir/torchvision/csrc/cuda/nms_cuda.cu.o] Error 1\r\nnvcc fatal   : Unknown option 'Wall'\r\nCMakeFiles/torchvision.dir/build.make:283: recipe for target 'CMakeFiles/torchvision.dir/torchvision/csrc/cuda/PSROIAlign_cuda.cu.o' failed\r\nmake[2]: *** [CMakeFiles/torchvision.dir/torchvision/csrc/cuda/PSROIAlign_cuda.cu.o] Error 1\r\nnvcc fatal   : Unknown option 'Wall'\r\nCMakeFiles/torchvision.dir/build.make:309: recipe for target 'CMakeFiles/torchvision.dir/torchvision/csrc/cuda/ROIAlign_cuda.cu.o' failed\r\nmake[2]: *** [CMakeFiles/torchvision.dir/torchvision/csrc/cuda/ROIAlign_cuda.cu.o] Error 1\r\nCMakeFiles/Makefile2:75: recipe for target 'CMakeFiles/torchvision.dir/all' failed\r\nmake[1]: *** [CMakeFiles/torchvision.dir/all] Error 2\r\nMakefile:129: recipe for target 'all' failed\r\nmake: *** [all] Error 2\r\n\r\nP.S.\r\nI was able to fix this error after remove \"-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wno-write-strings -Wno-unknown-pragmas -Wno-missing-braces -fopenmp\" params in flags.make",
+    "comments": [
+      {
+        "author": "user-16",
+        "body": "Did you build pytorch yourself or are you using a nightly build? The latest stable is 1.4.\r\nIt seems that the only supported prebuilt versions of cuda are 9.2 and 10.1, but you are using 10.0. I have never tried compiling on anything other than 10.1, so maybe try to switch to cuda 10.1."
+      },
+      {
+        "author": "user-15",
+        "body": "@user-14 The CMakelists works.\r\n@user-16 Yes, 1.4 is stable, but to use torch::index, we have to build nightly build.\r\nAnyway, thanks for your all patience and enthusiasm."
+      },
+      {
+        "author": "user-16",
+        "body": "@user-15 Which CMakeLists works? Master's or the one posted by @user-14 ?\r\nHappy to help :)"
+      },
+      {
+        "author": "user-15",
+        "body": "@user-16 tow-names works.\r\njust add these lines to the end of the CMakeLists.txt\r\n```\r\nset_property(TARGET torch_cuda PROPERTY INTERFACE_COMPILE_OPTIONS \"\")  \r\nset_property(TARGET torch_cpu PROPERTY INTERFACE_COMPILE_OPTIONS \"\")\r\n```"
+      },
+      {
+        "author": "user-16",
+        "body": "That is not a proper fix though. I am not sure where those two targets (torch_cuda and torch_cpu) are coming from. Indeed, if I try to add those two lines at the end of my CMakeLists.txt I get the following error:\r\n```\r\nCMake Error at CMakeLists.txt:80 (set_property):\r\n  set_property could not find TARGET torch_cuda.  Perhaps it has not yet been\r\n  created.\r\n\r\n\r\nCMake Error at CMakeLists.txt:81 (set_property):\r\n  set_property could not find TARGET torch_cpu.  Perhaps it has not yet been\r\n  created.\r\n```\r\nIt could be that master pytorch is broken, I would try to open an issue there...\r\n"
+      },
+      {
+        "author": "user-15",
+        "body": "@user-16 I am using https://download.pytorch.org/libtorch/nightly/cu92/libtorch-cxx11-abi-shared-with-deps-latest.zip to build vison. You can have a try. Cmake 3.13.2."
+      },
+      {
+        "author": "user-16",
+        "body": "Yep. Confirmed also with 1.6.0.dev20200409+cu101\r\nI will open an issue on pytorch."
+      },
+      {
+        "author": "user-16",
+        "body": "Hey @user-14 and @user-15, I have opened a pr against pytorch: https://github.com/pytorch/pytorch/pull/36945\r\n\r\nCould you let me know if that indeed fixes the problem?"
+      },
+      {
+        "author": "user-17",
+        "body": "I got the same issue too. Is there a PR yet ?"
+      },
+      {
+        "author": "user-14",
+        "body": "@user-17 Actually I don't know.\r\nI just removed the flags -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wno-write-strings -Wno-unknown-pragmas -Wno-missing-braces -fopenmp from flags.make"
+      }
+    ]
+  },
+  "5167": {
+    "number": 5167,
+    "title": "Split autoformatters and linters into different workflows and CI jobs",
+    "state": "open",
+    "body": "## Status quo\r\n\r\nCurrently we mix formatters and linters with `pre-commit`:\r\n\r\n### formatters\r\n\r\nhttps://github.com/pytorch/vision/blob/578c1546c328c68e601bfd2e2309ed175ee343d9/.pre-commit-config.yaml#L9-L11\r\n\r\nhttps://github.com/pytorch/vision/blob/578c1546c328c68e601bfd2e2309ed175ee343d9/.pre-commit-config.yaml#L23-L26\r\n\r\n### linters\r\n\r\nhttps://github.com/pytorch/vision/blob/578c1546c328c68e601bfd2e2309ed175ee343d9/.pre-commit-config.yaml#L5-L8\r\n\r\nhttps://github.com/pytorch/vision/blob/578c1546c328c68e601bfd2e2309ed175ee343d9/.pre-commit-config.yaml#L31-L32\r\n\r\nhttps://github.com/pytorch/vision/blob/578c1546c328c68e601bfd2e2309ed175ee343d9/.pre-commit-config.yaml#L37\r\n\r\nIn addition we have a separate CI job that lints with `mypy`\r\n\r\nhttps://github.com/pytorch/vision/blob/578c1546c328c68e601bfd2e2309ed175ee343d9/.circleci/config.yml#L298\r\n\r\n## Proposal\r\n\r\nI propose we change the rationale from the two CI jobs from `pre-commit` and `mypy` to code format and lint. That means, we would only keep autoformatters in our `pre-commit` configuration and move all linters to what is currently the `mypy` job. \r\n\r\n### Pros\r\n\r\n- We could use `pre-commit` as \"single source of truth\" for formatting code. Currently they mentioned as \"purely optional\" in our contribution guide. Since `pre-commit` supports running the hooks manually, we can simply treat it as our way to bundle all autoformatters while the user does not need to know or care what exactly is run.\r\n- We could simply add new autoformatters if they are available through `pre-commit`, e.g. #5158. If anyone applies code formatting through `pre-commit` anyway, that won't break any workflow.\r\n\r\n### Cons\r\n\r\n- We would loose the ability to run linters in a bundled manner. I don't think this is a strong con, since linters such as `flake8` or `pydocstyle` trigger very seldom anyway due to the auto-formatting. Plus, we already need to run `mypy` separately.\n\ncc @maintainer-3",
+    "comments": [
+      {
+        "author": "user-7",
+        "body": "Does it mean that the linters will run only via pre-commit instead of manually? \r\n\r\nWhat I liked in the original proposal when you introduced formatting was the fact that you didn't force upon users a specific workflow aka using pre-commit. I personally prefer submitting these commands manually, after I'm done and committed my code changes and then review independently any automatic changes done by flake8, black etc. "
+      },
+      {
+        "author": "user-2",
+        "body": "> Does it mean that the linters will run only via pre-commit instead of manually?\r\n\r\nPartially yes, but this is already true today. The following hooks cannot be run without `pre-commit`:\r\n\r\nhttps://github.com/pytorch/vision/blob/8c546f60612b7e25dc62e0cc658036ae4774e2bc/.pre-commit-config.yaml#L2-L11\r\n\r\nFor everything else, you can of course also run manually. It gets a little trickier if you have formatters that cannot be installed by `pip`. For example `prettier` in #5158 needs a JS environment. So you would need to set it up manually. `pre-commit` handles this automatically.\r\n\r\n> I personally prefer submitting these commands manually, after I'm done and committed my code changes and then review independently any automatic changes done by flake8, black etc.\r\n\r\n`flake8` is a linter and as proposed above it will be removed from our `pre-commit` config. \r\n\r\nRegarding `black` I'm not sure what there is to review. It guarantees AST equality, so there should never be a situation where a ma"
+      },
+      {
+        "author": "user-7",
+        "body": "`flake8` often picks up import problems that `black` doesnt. I'm pretty use there are other things that are not covered by black, but don't remember specifics. \r\n\r\nI'm skeptical about forcing upon developers `pre-commit`. I personally don't use it and I don't like the idea of having changes automatically done on my code silently without the ability to review them. We had issues in the past with tools that rewrote the python code that their outcome conflicted with JIT. If those rewrites are done on-commit, it's going to be a hell to figure out what happened and where."
+      },
+      {
+        "author": "user-2",
+        "body": "> `flake8` often picks up import problems that `black` doesnt.\r\n\r\n~That is not true~ (EDIT: I missed the word \"import\" in @user-7's statement. I agree, unused imports is one of the few things that `ufmt` will not handle). Especially in combination with `usort`, there are very few things that are left for it to pick up. Quoting from our [contribution guidelines](https://github.com/pytorch/vision/blob/main/CONTRIBUTING.md#formatting):\r\n\r\n> Similarly, you can check for `flake8` errors with `flake8 torchvision`, although they should be fairly rare considering that most of the errors are automatically taken care of by `ufmt` already.\r\n\r\nIt basically comes down to stuff that cannot be fixed automatically, e.g. `from foo import *`.\r\n\r\n> I personally don't use it and I don't like the idea of having changes automatically done on my code silently without the ability to review them.\r\n\r\nThat can't happen. If you have the hooks installed, `git commit` something, and hook fails, it is as if the `git"
+      },
+      {
+        "author": "maintainer-1",
+        "body": ">>  flake8 often picks up import problems that black doesnt.\r\n\r\n> That is not true.\r\n\r\nFrom personal experience the one thing that black doesn't pick up is `xyz imported but not used`. This happens often  when refactoring (or just writing) code. \r\n\r\n\r\nI see value in allowing pre-commits, but I wouldn't make this mandatory either. It's just sugar on top of the more low-level tools, and I think it's important to keep them. To answer a question from @user-2 from another thread  https://github.com/pytorch/vision/issues/5168#issuecomment-1007263427\r\n\r\n> Does a contributor need to know for example how to run all linters manually?\r\n\r\nIMHO yes, if only for educational purpose. It's important that they know what's happening under the hood, for example to resolve errors more efficiently."
+      }
+    ]
+  },
+  "5039": {
+    "number": 5039,
+    "title": "Trying to CIFAR-10 from torchvision.datasets and receiving URLError: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: certificate has expired (_ssl.c:1129)>",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nTrying to download CIFAR-10 from torchvision.datasets and receiving `URLError:<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: certificate has expired (_ssl.c:1129)> when downloading` Download fails\r\n\r\n## To Reproduce\r\n\r\nSteps to reproduce the behavior:\r\n\r\n`dataset = torchvision.datasets.CIFAR10(root='dataset/',train=True,transform=transform,download=True)`\r\n\r\n## Expected behavior\r\nPre-trained models should be downloaded without certificate failures\r\n\r\n## Environment\r\n\r\nPyTorch version: 1.9.1+cu111\r\nIs debug build: False\r\nCUDA used to build PyTorch: 11.1\r\nROCM used to build PyTorch: N/A\r\n\r\nOS: Microsoft Windows 10 Pro\r\nGCC version: Could not collect\r\nClang version: Could not collect\r\nCMake version: Could not collect\r\nLibc version: N/A\r\n\r\nPython version: 3.9.5 (tags/v3.9.5:0a7dcbd, May  3 2021, 17:27:52) [MSC v.1928 64 bit (AMD64)] (64-bit runtime)\r\nPython platform: Windows-10-10.0.19044-SP0\r\nIs CUDA available: True\r\nCUDA runtime version: 11.2.67\r\n\r\nGPU models and configuration: GPU 0: NVIDIA GeForce GT 1030\r\nNvidia driver version: 465.89\r\ncuDNN version: C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.2\\bin\\cudnn_ops_train64_8.dll\r\nHIP runtime version: N/A\r\nMIOpen runtime version: N/A\r\n\r\nVersions of relevant libraries:\r\n[pip3] numpy==1.19.5\r\n\r\n[pip3] pytorch-lightning==1.5.1\r\n\r\n[pip3] torch==1.9.1+cu111\r\n\r\n[pip3] torch-tb-profiler==0.2.1\r\n\r\n[pip3] torchaudio==0.9.1\r\n\r\n[pip3] torchmetrics==0.6.0\r\n\r\n[pip3] torchvision==0.10.1+cu111\r\n\r\n\n\ncc @maintainer-2 @user-9 @user-2",
+    "comments": [
+      {
+        "author": "user-18",
+        "body": "I found turning off SSL verification solved this for me\r\n\r\n`import ssl`\r\n`ssl._create_default_https_context = ssl._create_unverified_context`"
+      },
+      {
+        "author": "user-19",
+        "body": "Moving issue to https://github.com/pytorch/vision"
+      }
+    ]
+  },
+  "3658": {
+    "number": 3658,
+    "title": "Failed to compile torchvision for ROCm as documented in pytorch.org",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nFailed to compile torchvision for ROCm as documented in pytorch.org/get-started\r\n\r\n## To Reproduce\r\n\r\nSteps to reproduce the behavior:\r\n\r\nas in: https://pytorch.org/get-started/locally/\r\n1. python -m venv ptamd; source ptamd/bin/activate\r\n1. pip install torch -f https://download.pytorch.org/whl/rocm4.0.1/torch_stable.html\r\n1. pip install ninja && pip install 'git+https://github.com/pytorch/vision.git@v0.9.1'\r\n\r\nsame with v0.9.0\r\n\r\n## Error\r\n\r\nptamd/lib/python3.8/site-packages/torch/include/c10/util/complex.h:9:10: fatal error: 'thrust/complex.h' file not found\r\n#include <thrust/complex.h>\r\n       ^~~~~~~~~~~~~~~~~~\r\n1 error generated when compiling for gfx803.\r\n\r\n## Environment\r\n\r\n```\r\nPyTorch version: 1.8.1+rocm4.0.1\r\nIs debug build: False\r\nROCM used to build PyTorch: 4.0.20496-4f163c68\r\n\r\nOS: CentOS Linux 8 (x86_64)\r\nGCC version: (GCC) 8.3.1 20191121 (Red Hat 8.3.1-5)   # same on GCC 10\r\n\r\nPython version: 3.8 (64-bit runtime)\r\nIs CUDA available: True\r\nGPU models and configuration: Vega 20\r\nHIP runtime version: 3.21.2\r\nMIOpen runtime version: 2.9.0\r\n\r\nVersions of relevant libraries:\r\n[pip3] numpy==1.20.2\r\n[pip3] torch==1.8.1+rocm4.0.1\r\n```\r\n\r\n\r\n",
+    "comments": [
+      {
+        "author": "user-20",
+        "body": "actually, it seems to run fine with the regular vision wheel:\r\n`pip install torch torchvision -f https://download.pytorch.org/whl/rocm4.0.1/torch_stable.html`\r\nat least, it looks like I can train a CNN without any major issue, but I wonder why the instructions recommend the source build (?)\r\n\r\nThanks for the great work anyway\r\nCheers"
+      },
+      {
+        "author": "user-21",
+        "body": "> actually, it seems to run fine with the regular vision wheel:\r\n> `pip install torch torchvision -f https://download.pytorch.org/whl/rocm4.0.1/torch_stable.html`\r\n> at least, it looks like I can train a CNN without any major issue, but I wonder why the instructions recommend the source build (?)\r\n> \r\n> Thanks for the great work anyway\r\n> Cheers\r\n\r\nSame for me, the regular vision wheel worked. Package versions and environment are a bit different though. "
+      }
+    ]
+  },
+  "4829": {
+    "number": 4829,
+    "title": "FashionMNIST Download issue",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nUnable to download MNIST Dataset as per pytorch Documentation\r\n\r\nhttps://pytorch.org/tutorials/beginner/basics/quickstart_tutorial.html\r\n\r\n\r\n## To Reproduce\r\n\r\n```python\r\nimport torch\r\nfrom torch import nn\r\nfrom torch.utils.data import DataLoader\r\nfrom torchvision import datasets\r\nfrom torchvision.transforms import ToTensor, Lambda, Compose\r\nimport matplotlib.pyplot as plt\r\n\r\ntraining_data = datasets.FashionMNIST(\r\n    root=\"data\",\r\n    train=True,\r\n    download=True,\r\n    transform=ToTensor(),\r\n)\r\n```\r\n\r\n**Error message is below**\r\n\r\n```\r\nDownloading http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/train-images-idx3-ubyte.gz\r\nFailed to download (trying next):\r\n<urlopen error [WinError 10060] A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond>\r\n```\r\n```\r\nRuntimeError                              Traceback (most recent call last)\r\n~\\AppData\\Local\\Temp/ipykernel_8408/1648373759.py in <module>\r\n      6 import matplotlib.pyplot as plt\r\n      7 \r\n----> 8 training_data = datasets.FashionMNIST(\r\n      9     root=\"data\",\r\n     10     train=True,\r\n\r\nG:\\ineuronai\\o\\envs\\odtf\\lib\\site-packages\\torchvision\\datasets\\mnist.py in __init__(self, root, train, transform, target_transform, download)\r\n     83 \r\n     84         if download:\r\n---> 85             self.download()\r\n     86 \r\n     87         if not self._check_exists():\r\n\r\nG:\\ineuronai\\o\\envs\\odtf\\lib\\site-packages\\torchvision\\datasets\\mnist.py in download(self)\r\n    167                 break\r\n    168             else:\r\n--> 169                 raise RuntimeError(\"Error downloading {}\".format(filename))\r\n    170 \r\n    171         # process and save as torch files\r\n\r\nRuntimeError: Error downloading train-images-idx3-ubyte.gz\r\n```\r\n\r\n\r\n## Expected behavior\r\n\r\n- Downloading http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/train-images-idx3-ubyte.gz to `data/FashionMNIST/raw/train-images-idx3-ubyte.gz`\r\n- Extracting `data/FashionMNIST/raw/train-images-idx3-ubyte.gz` to `data/FashionMNIST/raw`\r\n\r\n\r\ncc @maintainer-2 @user-9 @user-2 @user-24 @user-23",
+    "comments": [
+      {
+        "author": "user-23",
+        "body": "@maintainer-2 -- maybe a transient networking issue? \r\n\r\nShould this be moved to the torchvision repo? "
+      },
+      {
+        "author": "user-2",
+        "body": "Hey @user-22, I'm unable to reproduce this locally. Our download tests also succeeded today. Maybe it was just a fluke? Could you retry if it works for you now?"
+      },
+      {
+        "author": "user-24",
+        "body": "@user-22 Running this on colab seems to succeed without issues. Is this the same for you? \r\n\r\nhttps://colab.research.google.com/github/pytorch/tutorials/blob/gh-pages/_downloads/c30c1dcf2bc20119bcda7e734ce0eb42/quickstart_tutorial.ipynb. \r\n\r\nIf it is, I would suspect a local issue. "
+      }
+    ]
+  },
+  "690": {
+    "number": 690,
+    "title": "Squeezenet model ONNX export",
+    "state": "open",
+    "body": "Hi,\r\nI have some questions regarding the squeeznet model.\r\n\r\nI failed at exporting the model to ONNX with the following error \"ONNX export failed : Couldn't export operator aten:max_pool2d_with_indices\".\r\nI noticed that in /torch/onnx/symbolic.py , the use of \"ceil_mode\" is not supported in max_pool2d_with_indices.\r\nAfter setting \"ceil_mode\" to False for all occurrences of \"MaxPool2d\", the export succeeds.\r\n\r\nI also noticed that, when using the exported model mentioned above, the Pytorch results do not match the ONNX results, the reason being the use of \"nn.Dropout(0.5)\".\r\n\r\n\r\nMy questions are :\r\n\r\n     1- Is there a particular reason \"ceil_mode\" is being used? and would there be a concern with setting it to False for the export to be possible? I could submit a PR with this change if no concern is noted.\r\n\r\n     2- Why is \"Dropout\" used in the model outside of training? Could we remove it? \r\n \r\n Thanks\r\n\r\n",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Hi,\r\n\r\nAbout your questions:\r\n\r\n1 - I believe SqueezeNet was originally developed in Caffe, for which the implementation of `MaxPool2d` only supports `ceil_mode=True`. If we change it to `True`, it would most certainly crash if we were not using `AdaptiveAvgPool2d` in the end, and now that we are using it, we might still obtain different results (but I'm not sure by how much).\r\n2 - Dropout behaves differently during training and during testing. I'm not 100% sure that Dropout fully works with ONNX exported models, and might need to be removed before exporting it to ONNX."
+      },
+      {
+        "author": "user-25",
+        "body": "Hey @maintainer-2, \r\n\r\n1- To check if I understood well, now that AdaptiveAvgPool2d is used, it would be ok to set ceil_mode=False.\r\n\r\nIf the above statement is correct, here is the PR with modifications from 1- and 2- that will allow exporting the model in ONNX : https://github.com/pytorch/vision/pull/709\r\n\r\n\r\n\r\n"
+      },
+      {
+        "author": "user-26",
+        "body": "@user-25 what francisco is saying is that #709 will change the outputs of the model, so it's not really something we should do."
+      },
+      {
+        "author": "user-27",
+        "body": "@user-25  Hi  how you convert it?  Can you give an instruction?  I meet the error that    \r\n\r\n> RuntimeError: ONNX export failed: Couldn't export operator aten::adaptive_avg_pool2d  \r\n\r\n"
+      },
+      {
+        "author": "user-25",
+        "body": "@user-27, what version of pytorch are you using?\r\nExporting adaptive_avg_pool2d is supported with the params (1,1) since https://github.com/pytorch/pytorch/pull/9711. \r\nAlso the issue with the ceil pooling discussed above should be fixed with https://github.com/pytorch/pytorch/pull/16769.\r\n"
+      },
+      {
+        "author": "user-27",
+        "body": "@user-25  Thanks for the link, very helpful! "
+      },
+      {
+        "author": "user-28",
+        "body": "Hi, I cloned and built the latest PyTorch master from GitHub and I exported the pretrained SqueezeNet model to ONNX with it. I didn't have any trouble doing that. I then exported the model with Caffe 2 mobile exporter to an init_net.pb and a predict_net.pb file, in order to use it with the AI Camera example :https://github.com/cedrickchee/pytorch-android. I executed the exported files using \"predictor\" in Python and it worked perfectly.\r\n\r\nHowever, when I try to execute the model with predictor in Android, the app crashes. It doesn't happen with other models (e.g. MobileNet V2) or with the SqueezeNet protobuf files included in the AI Camera example.\r\n\r\nObviously, I also built/updated the Caffe 2 libraries for Android using the build_android.sh script from PyTorch master before trying to execute the model.\r\n\r\nI provide some more detail in here: https://github.com/cedrickchee/pytorch-android/issues/6\r\n\r\nThanks."
+      }
+    ]
+  },
+  "2565": {
+    "number": 2565,
+    "title": "cmake torchvision出现的问题",
+    "state": "open",
+    "body": "/home/ts/Downloads/vision-master/torchvision/csrc/ROIAlign.h: In function ‘at::Tensor roi_align(const at::Tensor&, const at::Tensor&, double, int64_t, int64_t, int64_t, bool)’:\r\n/home/ts/Downloads/vision-master/torchvision/csrc/ROIAlign.h:29:25: error: ‘class c10::OperatorHandle’ has no member named ‘typed’\r\n                        .typed<decltype(roi_align)>();\r\n                         ^~~~~\r\n/home/ts/Downloads/vision-master/torchvision/csrc/ROIAlign.h:29:31: error: expected primary-expression before ‘decltype’\r\n                        .typed<decltype(roi_align)>();\r\n                               ^~~~~~~~\r\n/home/ts/Downloads/vision-master/torchvision/csrc/ROIAlign.h: In function ‘at::Tensor _roi_align_backward(const at::Tensor&, const at::Tensor&, double, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, bool)’:\r\n/home/ts/Downloads/vision-master/torchvision/csrc/ROIAlign.h:77:12: error: ‘class c10::OperatorHandle’ has no member named ‘typed’\r\n           .typed<decltype(_roi_align_backward)>();\r\n            ^~~~~\r\n/home/ts/Downloads/vision-master/torchvision/csrc/ROIAlign.h:77:18: error: expected primary-expression before ‘decltype’\r\n           .typed<decltype(_roi_align_backward)>();\r\n                  ^~~~~~~~\r\nIn file included from /home/ts/Downloads/vision-master/torchvision/csrc/vision.cpp:17:0:\r\n/home/ts/Downloads/vision-master/torchvision/csrc/nms.h: In function ‘at::Tensor nms(const at::Tensor&, const at::Tensor&, double)’:\r\n/home/ts/Downloads/vision-master/torchvision/csrc/nms.h:19:25: error: ‘class c10::OperatorHandle’ has no member named ‘typed’\r\n                        .typed<decltype(nms)>();\r\n                         ^~~~~\r\n/home/ts/Downloads/vision-master/torchvision/csrc/nms.h:19:31: error: expected primary-expression before ‘decltype’\r\n                        .typed<decltype(nms)>();\r\n                               ^~~~~~~~\r\n/home/ts/Downloads/vision-master/torchvision/csrc/vision.cpp: At global scope:\r\n/home/ts/Downloads/vision-master/torchvision/csrc/vision.cpp:45:14: error: expected constructor, destructor, or type conversion before ‘(’ token\r\n TORCH_LIBRARY(torchvision, m) {\r\n              ^\r\n/home/ts/Downloads/vision-master/torchvision/csrc/vision.cpp:59:19: error: expected constructor, destructor, or type conversion before ‘(’ token\r\n TORCH_LIBRARY_IMPL(torchvision, CPU, m) {\r\n                   ^\r\n/home/ts/Downloads/vision-master/torchvision/csrc/vision.cpp:82:19: error: expected constructor, destructor, or type conversion before ‘(’ token\r\n TORCH_LIBRARY_IMPL(torchvision, Autograd, m) {\r\n                   ^\r\nCMakeFiles/torchvision.dir/build.make:518: recipe for target 'CMakeFiles/torchvision.dir/torchvision/csrc/vision.cpp.o' failed\r\nmake[2]: *** [CMakeFiles/torchvision.dir/torchvision/csrc/vision.cpp.o] Error 1\r\nCMakeFiles/Makefile2:67: recipe for target 'CMakeFiles/torchvision.dir/all' failed\r\nmake[1]: *** [CMakeFiles/torchvision.dir/all] Error 2\r\nMakefile:129: recipe for target 'all' failed\r\nmake: *** [",
+    "comments": [
+      {
+        "author": "user-29",
+        "body": "没有解决，我还是面临这\r\n1.git clone https://github.com/pytorch/vision.git\r\n2 cd vision\r\n3 mkdir build && cd build\r\n4 cmake -DCMAKE_PREFIX_PATH=/path/to/libtorch -DCMAKE_INSTALL_PREFIX=/where/to/install/torchvision -DCMAKE_BUILD_TYPE=Release ..\r\n5.make\r\n在进行第5步的时候make时候出现错误\r\nts@ts:~/opt/vision-master/build$ make\r\n[  4%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/vision.cpp.o\r\nIn file included from /home/ts/opt/vision-master/torchvision/csrc/vision.cpp:14:0:\r\n/home/ts/opt/vision-master/torchvision/csrc/ROIAlign.h: In function ‘at::Tensor roi_align(const at::Tensor&, const at::Tensor&, double, int64_t, int64_t, int64_t, bool)’:\r\n/home/ts/opt/vision-master/torchvision/csrc/ROIAlign.h:29:25: error: ‘class c10::OperatorHandle’ has no member named ‘typed’\r\n                        .typed<decltype(roi_align)>();\r\n                         ^~~~~\r\n/home/ts/opt/vision-master/torchvision/csrc/ROIAlign.h:29:31: error: expected primary-expression before ‘decltype’\r\n                        .ty"
+      },
+      {
+        "author": "user-2",
+        "body": "@user-29 You need to clarify what you want to do:\r\n\r\n- If you want to install `torchvision==0.6.0` the `pip` command from [my previous comment](https://github.com/pytorch/vision/issues/2565#issuecomment-671188793) is enough.\r\n- If you want to install `torchvision` from source you will **not** get `0.6.0`, but rather the current development version (`>= 0.8`)"
+      },
+      {
+        "author": "user-29",
+        "body": "-- Caffe2: CUDA detected: 10.2\r\n-- Caffe2: CUDA nvcc is: /usr/local/cuda/bin/nvcc\r\n-- Caffe2: CUDA toolkit directory: /usr/local/cuda\r\n-- Caffe2: Header version is: 10.2\r\n-- Found cuDNN: v7.6.5  (include: /usr/local/cuda/include, library: /usr/local/cuda/lib64/libcudnn.so)\r\n-- Autodetected CUDA architecture(s):  6.1\r\n-- Added CUDA NVCC flags for: -gencode;arch=compute_61,code=sm_61\r\nCMake Error at CMakeLists.txt:7 (find_package):\r\n  By not providing \"FindTorchVision.cmake\" in CMAKE_MODULE_PATH this project\r\n  has asked CMake to find a package configuration file provided by\r\n  \"TorchVision\", but CMake did not find one.\r\n\r\n  Could not find a package configuration file provided by \"TorchVision\" with\r\n  any of the following names:\r\n\r\n    TorchVisionConfig.cmake\r\n    torchvision-config.cmake\r\n\r\n  Add the installation prefix of \"TorchVision\" to CMAKE_PREFIX_PATH or set\r\n  \"TorchVision_DIR\" to a directory containing one of the above files.  If\r\n  \"TorchVision\" provides a separate development "
+      },
+      {
+        "author": "user-29",
+        "body": "但是我在源码编译安装之前，已经通过pip install torchvision-0.6.0-cp36-cp36m-linux_x86_64.whl这种方式安装过了torchvision"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Hi,\r\n\r\nIt's very difficult for someone like @user-2 or myself who doesn't speak chinese to understand what you want to achieve.\r\n\r\nDo you want to use the C++ API, or just the Python bindings? If it's just the Python bindings, you can install via `setup.py`.\r\n\r\nIf you want to use the C++ API, what exactly do you want to do, use an operator in C++, run one of the example models, or something else?\r\n\r\nOne of the errors you got seemed to be indicating that either you were not using a compatible PyTorch version, or you were not compiling with C++14."
+      },
+      {
+        "author": "user-30",
+        "body": "> 但是我在源码编译安装之前，已经通过pip install torchvision-0.6.0-cp36-cp36m-linux_x86_64.whl这种方式安装过了torchvision\r\n\r\n@user-29 Could you ask questions in English? For this question, I can translate: Before installed from source code, I have installed torchvision with pip."
+      },
+      {
+        "author": "user-31",
+        "body": "I got the same error,when I install c++ API in torchvision,\r\nas follows:\r\n(py36) root@d48e90e40b2b:/workspace/vision/build# cmake --build . -j 20\r\nScanning dependencies of target torchvision\r\n[  4%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/models/alexnet.cpp.o\r\n[  9%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/models/densenet.cpp.o\r\n[ 14%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/models/googlenet.cpp.o\r\n[ 19%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/models/inception.cpp.o\r\n[ 23%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/models/resnet.cpp.o\r\n[ 28%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/models/mnasnet.cpp.o\r\n[ 33%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/models/squeezenet.cpp.o\r\n[ 38%] Building CXX object CMakeFiles/torchvision.dir/torchvision/csrc/models/shufflenetv2.cpp.o\r\n[ 42%] Building CXX object CMakeFiles/torchvision.di"
+      },
+      {
+        "author": "user-29",
+        "body": "When i cmake -DCMAKE_PREFIX_PATH=\"/opt/libtorch-cxx11-abi-shared-with-deps-1.5.0/libtorch;/home/ts/opt/torchvision\" -DCMAKE_BUILD_TYPE=Release .., I have this problem\r\nCMake Warning at CMakeLists.txt:12 (find_package):\r\n  By not providing \"FindPython3.cmake\" in CMAKE_MODULE_PATH this project has\r\n  asked CMake to find a package configuration file provided by \"Python3\", but\r\n  CMake did not find one.\r\n\r\n  Could not find a package configuration file provided by \"Python3\" with any\r\n  of the following names:\r\n\r\n    Python3Config.cmake\r\n    python3-config.cmake\r\n\r\n  Add the installation prefix of \"Python3\" to CMAKE_PREFIX_PATH or set\r\n  \"Python3_DIR\" to a directory containing one of the above files.  If\r\n  \"Python3\" provides a separate development package or SDK, be sure it has\r\n  been installed.\r\n\r\n\r\n-- Looking for pthread.h\r\n-- Looking for pthread.h - found\r\n-- Looking for pthread_create\r\n-- Looking for pthread_create - not found\r\n-- Looking for pthread_create in pthreads\r\n-- Looking for "
+      },
+      {
+        "author": "user-16",
+        "body": "Last error seems to be due to an old cmake version that doesn't have the Python3 module"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "@user-11 is working on adding CMake tests to CI in https://github.com/pytorch/vision/pull/2577, which will hopefully make it easier to catch bugs and will give some hints to user on how to use our CMake."
+      }
+    ]
+  },
+  "2709": {
+    "number": 2709,
+    "title": "Installing torchvision for ppc64le IBM architecture",
+    "state": "open",
+    "body": "I am in a weird scenario were I am forced to use torch `1.3.1` (due to hardware see: https://public.dhe.ibm.com/ibmdl/export/pub/software/server/ibm-ai/conda/#/). I read from the pytorch docs that it's corresponding version of torchvision is `0.4.1` (https://pypi.org/project/torchvision/):\r\n\r\n> ## Installation\r\n> \r\n> We recommend Anaconda as Python package management system. Please refer to [pytorch.org](https://pytorch.org/) for the detail of PyTorch (torch) installation. The following is the corresponding torchvision versions and supported Python versions.\r\n> \r\n> ```\r\n> Installation\r\n> We recommend Anaconda as Python package management system. Please refer to pytorch.org for the detail of PyTorch (torch) installation. The following is the corresponding torchvision versions and supported Python versions.\r\n> \r\n> torch\ttorchvision\tpython\r\n> master / nightly\tmaster / nightly\t>=3.6\r\n> 1.5.0\t0.6.0\t>=3.5\r\n> 1.4.0\t0.5.0\t==2.7, >=3.5, <=3.8\r\n> 1.3.1\t0.4.2\t==2.7, >=3.5, <=3.7\r\n> 1.3.0\t0.4.1\t==2.7, >=3.5, <=3.7\r\n> 1.2.0\t0.4.0\t==2.7, >=3.5, <=3.7\r\n> 1.1.0\t0.3.0\t==2.7, >=3.5, <=3.7\r\n> <=1.0.1\t0.2.2\t==2.7, >=3.5, <=3.7\r\n> ```\r\n\r\nbut for some reason I have the wrong version of it:\r\n\r\n```\r\ntorchvision 0.2.2 pypi_0 pypi\r\n```\r\n\r\nis there a way to install the right version of torchvision?\r\n\r\n-----\r\n\r\nWhat I've tried:\r\n\r\nFirst I tried force installing the right version with conda. Conda couldn't find the version of torchvision that I need:\r\n\r\n```\r\n$ conda install torchvision==0.4.2\r\nCollecting package metadata (current_repodata.json): done\r\nSolving environment: failed with initial frozen solve. Retrying with flexible solve.\r\nCollecting package metadata (repodata.json): done\r\nSolving environment: failed with initial frozen solve. Retrying with flexible solve.\r\n\r\nPackagesNotFoundError: The following packages are not available from current channels:\r\n\r\n  - torchvision==0.4.2\r\n\r\nCurrent channels:\r\n\r\n  - https://repo.anaconda.com/pkgs/main/linux-ppc64le\r\n  - https://repo.anaconda.com/pkgs/main/noarch\r\n  - https://repo.anaconda.com/pkgs/r/linux-ppc64le\r\n  - https://repo.anaconda.com/pkgs/r/noarch\r\n\r\nTo search for alternate channels that may provide the conda package you're\r\nlooking for, navigate to\r\n\r\n    https://anaconda.org\r\n\r\nand use the search bar at the top of the page.\r\n\r\n```\r\n\r\nThen I proceeded to try to install it regardless with pip\r\n\r\n```\r\n$ pip install torchvision==0.4.2\r\nDefaulting to user installation because normal site-packages is not writeable\r\nERROR: Could not find a version that satisfies the requirement torchvision==0.4.2 (from versions: 0.1.6, 0.1.7, 0.1.8, 0.1.9, 0.2.0, 0.2.1, 0.2.2, 0.2.2.post2, 0.2.2.post3)\r\nERROR: No matching distribution found for torchvision==0.4.2\r\n```\r\n\r\ngot an error too.\r\n\r\nIs there anything else to try?\r\n\r\n----\r\n\r\nI tried but it failed:\r\n\r\n```\r\nconda install torchvision==0.4.2 -c pytorch\r\n\r\nCollecting package metadata (current_repodata.json): done\r\nSolving environment: failed with initial frozen solve. Retrying with flexibl",
+    "comments": [
+      {
+        "author": "user-32",
+        "body": "https://github.com/IBM/powerai/issues/268"
+      },
+      {
+        "author": "user-33",
+        "body": "The torchvision issue tracker might be a better place for this: https://github.com/pytorch/vision/issues"
+      },
+      {
+        "author": "user-9",
+        "body": "@user-32 interesting issue. I just tried in a clean conda env (x86 linux) to install both pytorch and torchvision : \r\n```\r\nconda install pytorch=1.3.1 torchvision -c pytorch\r\n```\r\nand it proposes to install the correct version:\r\n```\r\nThe following packages will be downloaded:\r\n\r\n    package                    |            build\r\n    ---------------------------|-----------------\r\n    cffi-1.14.3                |   py36he30daa8_0         222 KB\r\n    intel-openmp-2020.2        |              254         786 KB\r\n    mkl-2020.2                 |              256       138.3 MB\r\n    mkl_fft-1.2.0              |   py36h23d657b_0         149 KB\r\n    ninja-1.10.1               |   py36hfd86e86_0         1.4 MB\r\n    numpy-1.19.1               |   py36hbc911f0_0          21 KB\r\n    numpy-base-1.19.1          |   py36hfa32c7d_0         4.1 MB\r\n    olefile-0.46               |           py36_0          48 KB\r\n    pillow-7.2.0               |   py36hb39fc2d_0         619 KB\r\n    pycparser-2.20      "
+      },
+      {
+        "author": "user-2",
+        "body": "@user-9 Your hunch is correct. As of `torchvision==0.3` the provided binaries are precompiled for a few selected platforms. Thus, if you try to install with an unsupported platform it falls back to the last version without platform requirements, i. e. `torchvision==0.2.2`."
+      }
+    ]
+  },
+  "5413": {
+    "number": 5413,
+    "title": "image.so on Apple Silicon can't load libpng16.16.dylib and libjpeg.9.dylib",
+    "state": "open",
+    "body": "### 🐛 Describe the bug\r\n\r\ncode:\r\n```python\r\nimport torchvision\r\n```\r\nUserWarning:\r\n```\r\n/Users/alanyoung/Documents/Codes/Kaggle/ClassifyLeaves/venv/lib/python3.9/site-packages/torchvision/io/image.py:11: UserWarning: Failed to load image Python extension: dlopen(/Users/alanyoung/Documents/Codes/Kaggle/ClassifyLeaves/venv/lib/python3.9/site-packages/torchvision/image.so, 0x0006): Library not loaded: @rpath/libpng16.16.dylib\r\n  Referenced from: /Users/alanyoung/Documents/Codes/Kaggle/ClassifyLeaves/venv/lib/python3.9/site-packages/torchvision/image.so\r\n  Reason: tried: '/Users/user-19/miniforge3/envs/py_39_torch-1.10.2/lib/libpng16.16.dylib' (no such file), '/Users/user-19/miniforge3/envs/py_39_torch-1.10.2/lib/libpng16.16.dylib' (no such file), '/Users/user-19/miniforge3/envs/py_39_torch-1.10.2/lib/libpng16.16.dylib' (no such file), '/Users/user-19/miniforge3/envs/py_39_torch-1.10.2/lib/libpng16.16.dylib' (no such file), '/opt/homebrew/Caskroom/miniforge/base/lib/libpng16.16.dylib' (no such file), '/opt/homebrew/Caskroom/miniforge/base/lib/libpng16.16.dylib' (no such file), '/opt/homebrew/Caskroom/miniforge/base/lib/python3.9/lib-dynload/../../libpng16.16.dylib' (no such file), '/opt/homebrew/Caskroom/miniforge/base/lib/libpng16.16.dylib' (no such file), '/opt/homebrew/Caskroom/miniforge/base/bin/../lib/libpng16.16.dylib' (no such file), '/usr/local/lib/libpng16.16.dylib' (no such file), '/usr/lib/libpng16.16.dylib' (no such file)\r\n  warn(f\"Failed to load image Python extension: {e}\")\r\n```\r\non M1 Max.\r\nIn https://github.com/pytorch/vision/issues/5137#issuecomment-1023708994, it is said to be fixed but I don't think so.\r\n\r\nTherefore you can't use torchvision.io.read_img().\r\n```python\r\nimport torchvision\r\nimg = torchvision.io.read_img('./1.jpg')\r\n```\r\n\r\n```\r\nRuntimeError: No such operator image::read_file\r\n```\r\nIn https://discuss.pytorch.org/t/failed-to-load-image-python-extension-could-not-find-module/140278/20, Andrade has the same problem.\r\n\r\n### Versions\r\n\r\nCollecting environment information...\r\nPyTorch version: 1.10.2\r\nIs debug build: False\r\nCUDA used to build PyTorch: None\r\nROCM used to build PyTorch: N/A\r\n\r\nOS: macOS 12.1 (arm64)\r\nGCC version: Could not collect\r\nClang version: 13.0.0 (clang-1300.0.29.30)\r\nCMake version: version 3.22.0\r\nLibc version: N/A\r\n\r\nPython version: 3.9.7 (default, Sep 16 2021, 23:53:23)  [Clang 12.0.0 ] (64-bit runtime)\r\nPython platform: macOS-12.1-arm64-arm-64bit\r\nIs CUDA available: False\r\nCUDA runtime version: No CUDA\r\nGPU models and configuration: No CUDA\r\nNvidia driver version: No CUDA\r\ncuDNN version: No CUDA\r\nHIP runtime version: N/A\r\nMIOpen runtime version: N/A\r\n\r\nVersions of relevant libraries:\r\n[pip3] mypy-extensions==0.4.3\r\n[pip3] numpy==1.22.2\r\n[pip3] torch==1.10.2\r\n[pip3] torchaudio==0.10.2\r\n[pip3] torchvision==0.11.3\r\n[conda] Could not collect\r\n\r\ncc @maintainer-3 @user-19 ",
+    "comments": [
+      {
+        "author": "user-34",
+        "body": "BTW, I use pip to install the packages above. I didn't try conda."
+      },
+      {
+        "author": "user-35",
+        "body": "Same here, I also used pip, I cannot use conda at work"
+      },
+      {
+        "author": "user-36",
+        "body": "I've tried Miniconda on M1, but failed with `UnsatisfiableError`\r\n\r\n```\r\nUnsatisfiableError: The following specifications were found to be incompatible with each other:\r\n\r\nOutput in format: Requested package -> Available versions\r\n```"
+      },
+      {
+        "author": "user-34",
+        "body": "> \r\n\r\n@user-36 \r\nYou can try reinstalling pillow==6.1(6.x could be okay), which is mentioned at https://github.com/python-pillow/Pillow/issues/4130#issuecomment-570452778. Installing torchvision by conda will automatically use the latest pillow(7.0). I met this problem when I used conda to install torch. But `UnsatisfiableError` is weird."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Pinging @user-37: we should try to triple check with the release engineers that M1 will be properly supported in the upcoming release."
+      },
+      {
+        "author": "user-37",
+        "body": "@user-34 would you be able to try the latest RC build (torchvision==0.12 and pytorch=1.11) for the upcoming release? \r\n\r\n`conda install -c pytorch-test torchvision pytorch`\r\n\r\nor\r\n\r\n`pip install --pre torch torchvision -f https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html`"
+      },
+      {
+        "author": "user-34",
+        "body": "@user-37  @user-19 cc plz\r\nAfter thinking it for a long while, I find the key is `libpng` and `libjpeg`.\r\n\r\nThe `image.so` is indeed in `torchvision/` even when torchvision=0.11.3, I only checked the `torchvision/io/` folder before. So sorry for the previous title.\r\n\r\nThen I take a deep look at the warning(same as the top):\r\n```\r\n/Users/alanyoung/Documents/Codes/Kaggle/ClassifyLeaves/venv/lib/python3.9/site-packages/torchvision/io/image.py:11: UserWarning: Failed to load image Python extension: dlopen(/Users/alanyoung/Documents/Codes/Kaggle/ClassifyLeaves/venv/lib/python3.9/site-packages/torchvision/image.so, 0x0006): Library not loaded: @rpath/libpng16.16.dylib\r\n  Referenced from: /Users/alanyoung/Documents/Codes/Kaggle/ClassifyLeaves/venv/lib/python3.9/site-packages/torchvision/image.so\r\n  Reason: tried: '/Users/user-19/miniforge3/envs/py_39_torch-1.10.2/lib/libpng16.16.dylib' (no such file), '/Users/user-19/miniforge3/envs/py_39_torch-1.10.2/lib/libpng16.16.dylib' (no such file), '/"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "\r\n> ```\r\n> /Users/alanyoung/Documents/Codes/Kaggle/ClassifyLeaves/venv/lib/python3.9/site-packages/torchvision/io/image.py:11: UserWarning: Failed to load image Python extension: dlopen(/Users/alanyoung/Documents/Codes/Kaggle/ClassifyLeaves/venv/lib/python3.9/site-packages/torchvision/image.so, 0x0006): Library not loaded: @rpath/libpng16.16.dylib\r\n>   Referenced from: /Users/alanyoung/Documents/Codes/Kaggle/ClassifyLeaves/venv/lib/python3.9/site-packages/torchvision/image.so\r\n>   Reason: tried: '/Users/user-19/miniforge3/envs/py_39_torch-1.10.2/lib/libpng16.16.dylib' (no such file), '/Users/user-19/miniforge3/envs/py_39_torch-1.10.2/lib/libpng16.16.dylib' (no such file), '/Users/user-19/miniforge3/envs/py_39_torch-1.10.2/lib/libpng16.16.dylib' (no such file), '/Users/user-19/miniforge3/envs/py_39_torch-1.10.2/lib/libpng16.16.dylib' (no such file), '/opt/homebrew/Caskroom/miniforge/base/lib/libpng16.16.dylib' (no such file), '/opt/homebrew/Caskroom/miniforge/base/lib/libpng16.16.dylib'"
+      },
+      {
+        "author": "maintainer-3",
+        "body": "I think this would probably be resolved if we were building these in CI rather than on a local laptop. Maybe related to https://github.com/pytorch/vision/issues/5171 ?"
+      }
+    ]
+  },
+  "4492": {
+    "number": 4492,
+    "title": "can  torchvision build from source  on windows?",
+    "state": "open",
+    "body": "I have got the pt model of mask rcnn, and now I want to use it on C++, does libtoch seem to not support it? This seems to require torchvison build from source, but I failed. Does torchvison build support window? Or do I need to pay attention to something?\r\n\r\n\r\n\r\n`git clone https://github.com/pytorch/vision.git\r\n\r\n cd vision\r\n \r\nmkdir build\r\n \r\ncd build\r\n \r\ncmake -DCMAKE_PREFIX_PATH=\"D:\\libtorch;D:\\pybind11\" ..`",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Building on Windows shouhld be possible.\r\n\r\nCould you provide the full list of commands that you ran, with the errors that you're getting? It's almost impossible to help otherwise."
+      },
+      {
+        "author": "user-38",
+        "body": "> Building on Windows shouhld be possible.\r\n> \r\n> Could you provide the full list of commands that you ran, with the errors that you're getting? It's almost impossible to help otherwise.\r\n\r\nWhen i run this command\r\n`cmake -DCMAKE_PREFIX_PATH=\"E:\\libtorch\\libtorch;E:\\pybind11-master\\pybind11-master\\build\" ..`\r\nI get this error\r\n`-- Selecting Windows SDK version 10.0.19041.0 to target Windows 10.0.19042.\r\n-- Caffe2: CUDA detected: 11.1\r\n-- Caffe2: CUDA nvcc is: C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.1/bin/nvcc.exe\r\n-- Caffe2: CUDA toolkit directory: C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.1\r\n-- Caffe2: Header version is: 11.1\r\n-- Found cuDNN: v8.0.5  (include: C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.1/include, library: C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.1/lib/x64/cudnn.lib)\r\nCMake Warning at E:/libtorch/libtorch/share/cmake/Caffe2/public/cuda.cmake:203 (message):\r\n  Failed to compute shorthash for libnvrtc.so\r\nCall Stack ("
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Sorry I'm not very familiar with windows builds, but I would encourage you to google the error messages like this one\r\n\r\n> Unable to open include file: “pthread.h”: No such file or directory\r\n\r\nwhich will hopefully help you resolve the issues eventually. "
+      },
+      {
+        "author": "user-39",
+        "body": "@user-38 Surely it can be built on Windows.\r\n\r\n1. `git clone https://github.com/pytorch/vision.git`\r\n2.  install pytorch nighlty `conda install pytorch torchvision torchaudio cudatoolkit=11.1 -c pytorch-nightly -c conda-forge`\r\n3. `\"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community\\VC\\Auxiliary\\Build\\vcvarsall.bat\" x64 -vcvars_ver=14.29`\r\n4. `python setup.py install`  (if it's not a clean directory, you might need to run python setup.py clean first)\r\n\r\nYou don't need to run cmake command directly. \r\n\r\nOne windows build log on CI is\r\nhttps://circleci.com/api/v1.1/project/github/pytorch/vision/811597/output/109/0?file=true&allocation-id=614b095b8f7ffa2557e17ff2-0-build%2F2B279300"
+      },
+      {
+        "author": "user-38",
+        "body": "   @user-39 Do you mean that I only need to run the command python setup.py install instead of the cmake command?\r\n\r\n I ran python setup.py install and got this result\r\n`Using d:\\programdata\\anaconda3\\envs\\pytorch11.1\\lib\\site-packages\r\nFinished processing dependencies for torchvision==0.9.0a0`\r\n\r\nIf this indicates success, where is the compiled torchvision installed, and how should I include it in C++"
+      },
+      {
+        "author": "user-39",
+        "body": "@user-38 \r\nI know your question now. \r\nBefore running `cmake -DCMAKE_PREFIX_PATH=\"E:\\libtorch\\libtorch;E:\\pybind11-master\\pybind11-master\\build\" ..`\r\nTry to run \r\n`conda install -c conda-forge libjpeg-turbo`\r\nand \r\n`conda install -c anaconda zlib`\r\n\r\nI think you've referred to https://discuss.pytorch.org/t/building-torchvision-c-api-from-source/68281"
+      }
+    ]
+  },
+  "5303": {
+    "number": 5303,
+    "title": "Segfault after tracing quantized mobilenet v3 using nightly version",
+    "state": "open",
+    "body": "### 🐛 Describe the bug\n\nSample code to reproduce:\r\n\r\n```python\r\nimport torch\r\nimport torchvision\r\nfrom torchvision import transforms\r\nfrom PIL import Image\r\n\r\ndef download_file(url, filename):\r\n    import urllib\r\n    try:\r\n        urllib.URLopener().retrieve(url, filename)\r\n    except:\r\n        urllib.request.urlretrieve(url, filename)\r\n\r\n\r\ndef download_data():\r\n    download_file(\"https://github.com/pytorch/hub/raw/master/images/dog.jpg\", \"dog.jpg\")\r\n\r\ndef trace_mobilenet():\r\n    model = torchvision.models.quantization.mobilenet_v3_large(pretrained=True, progress=True, quantize=True)\r\n    model.eval()\r\n\r\n    # validate that model runs\r\n    input_image = Image.open(\"dog.jpg\")\r\n    preprocess = transforms.Compose([\r\n        transforms.Resize(256),\r\n        transforms.CenterCrop(224),\r\n        transforms.ToTensor(),\r\n        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),\r\n    ])\r\n    input_tensor = preprocess(input_image)\r\n    input_batch = input_tensor.unsqueeze(0)  # create a mini-batch as expected by the model\r\n\r\n    print('start tracing...')\r\n    export_model = torch.jit.trace(model, input_batch)\r\n    print('end tracing...')\r\n    print(model)\r\n    print(export_model)\r\n\r\ndownload_data()\r\ntrace_mobilenet()\r\n```\r\n\r\nOutput:\r\n```\r\n/anaconda3/envs/torch37/lib/python3.7/site-packages/torch/ao/quantization/utils.py:175: UserWarning: must run observer before calling calculate_qparams. Returning default values.\r\n  \"must run observer before calling calculate_qparams. \" +\r\nstart tracing...\r\nend tracing...\r\nSegmentation fault (core dumped)\r\n```\r\n\r\nThe segfault happens randomly. When I tried to debug using pdb, the segfault happens at different lines each time (original code tried to do other stuff after tracing, the above `print` code seems to be the simplest repro I could create), and they all happen after `torch.jit.trace` is called.\n\n### Versions\n\nCollecting environment information...\r\nPyTorch version: 1.11.0.dev20220127+cpu\r\nIs debug build: False\r\nCUDA used to build PyTorch: Could not collect\r\nROCM used to build PyTorch: N/A\r\n\r\nOS: Ubuntu 20.04.3 LTS (x86_64)\r\nGCC version: (Ubuntu 9.3.0-17ubuntu1~20.04) 9.3.0\r\nClang version: Could not collect\r\nCMake version: version 3.22.2\r\nLibc version: glibc-2.9\r\n\r\nPython version: 3.7.0 (default, Oct  9 2018, 10:31:47)  [GCC 7.3.0] (64-bit runtime)\r\nPython platform: Linux-5.13.0-27-generic-x86_64-with-debian-bullseye-sid\r\nIs CUDA available: False\r\nCUDA runtime version: Could not collect\r\nGPU models and configuration: GPU 0: NVIDIA GeForce GTX 1080\r\nNvidia driver version: 510.39.01\r\ncuDNN version: Probably one of the following:\r\n/usr/lib/x86_64-linux-gnu/libcudnn.so.8.3.2\r\n/usr/lib/x86_64-linux-gnu/libcudnn_adv_infer.so.8.3.2\r\n/usr/lib/x86_64-linux-gnu/libcudnn_adv_train.so.8.3.2\r\n/usr/lib/x86_64-linux-gnu/libcudnn_cnn_infer.so.8.3.2\r\n/usr/lib/x86_64-linux-gnu/libcudnn_cnn_train.so.8.3.2\r\n/usr/lib/x86_64-linux-gnu/libcudnn_ops_infer.so.8.3.2\r\n/usr/lib/x86_64-linux-gnu/libcudnn_ops_train.so.",
+    "comments": [
+      {
+        "author": "user-7",
+        "body": "I am unable to reproduce on my side. How long have you been facing this? I wonder if this could be related to the rework at https://github.com/pytorch/pytorch/pull/70009. There is an outstanding PR https://github.com/pytorch/vision/pull/5299 to address the changes."
+      },
+      {
+        "author": "user-40",
+        "body": "hi @user-7, I'm seeing this most recently with both master/main branch on pytorch and vision. Just now I tried again with both latest branch, pytorch @ 31b348411afa608639a2f7353060974c849829dd and vision @ 435eddf7a8200cc26338036a0a5f7db067ac7b0c. The below short script results in segfault:\r\n```python\r\n    import torch\r\n    import torchvision\r\n    model = torchvision.models.quantization.mobilenet_v3_large(pretrained=True, quantize=True)\r\n    print(model)\r\n    print(model.state_dict())\r\n```\r\n\r\nRemoving `print(model)`, I would get arbitrary results of the following\r\n```\r\nvision/torchvision/io/image.py:13: UserWarning: Failed to load image Python extension:\r\n  warn(f\"Failed to load image Python extension: {e}\")\r\npytorch/torch/ao/quantization/utils.py:211: UserWarning: must run observer before calling calculate_qparams. Returning default values.\r\n  \"must run observer before calling calculate_qparams. \" +\r\nTraceback (most recent call last):\r\n  File \"export_pt_mobilenet_v3_quant.py\", line 49"
+      },
+      {
+        "author": "user-7",
+        "body": "@user-40 Thanks for keep looking at it.\r\n\r\n@user-41 this might be related to the changes done at https://github.com/pytorch/pytorch/pull/71956\r\n\r\nUnfortunately I still can not reproduce the problem using the latest TorchVision main and `pytorch                   1.11.0.dev20220202 py3.9_cuda11.1_cudnn8.0.5_0    pytorch-nightly`. Running the above script on a linux dev-server yields the results as expected.\r\n\r\nThe other crazy thing is that on the same nightly on macOSX `pytorch                   1.11.0.dev20220202         py3.8_0    pytorch-nightly`, it seems we are missing the new Quantization API. Here is the error:\r\n```\r\n    method = torch.ao.quantization.fuse_modules_qat if is_qat else torch.ao.quantization.fuse_modules\r\nAttributeError: module 'torch.ao.quantization' has no attribute 'fuse_modules_qat'\r\n```\r\n\r\nJerry any thoughts?"
+      },
+      {
+        "author": "user-41",
+        "body": "looks like a problem with version control, fuse_modules_qat is introduced in the most recent master, maybe it's not picked up by the nightlies yet? It is in master right now: https://github.com/pytorch/pytorch/blob/master/torch/ao/quantization/__init__.py#L5"
+      },
+      {
+        "author": "user-40",
+        "body": "@user-7 created a fresh conda environment and tried similar nightly branch, I could still repro ...\r\n\r\nCould it be due to different pretrained model checkpoint?\r\n\r\nEdit: nvm different checkpoint, could repro with `pretrained=False` too .. But it is very random. If I comment out the image loading part, and use a random tensor as input, `pretrained=False` would succeed in the initial repro code. `pretrained=True` still segfaults. \r\n\r\nLogs\r\n```\r\nDownloading: \"https://download.pytorch.org/models/quantized/mobilenet_v3_large_qnnpack-5bcacf28.pth\" to /home/bowbao/.cache/torch/hub/checkpoints/mobilenet_v3_large_qnnpack-5bcacf28.pth\r\n100.0%\r\n/home/bowbao/anaconda3/envs/torch39/lib/python3.9/site-packages/torch/ao/quantization/utils.py:210: UserWarning: must run observer before calling calculate_qparams. Returning default values.\r\n  warnings.warn(\r\nstart tracing...\r\nend tracing...\r\nSegmentation fault (core dumped)\r\n```\r\n\r\nEnv:\r\n```\r\nPackage            Version\r\n------------------ ---------------"
+      },
+      {
+        "author": "user-41",
+        "body": "the api change won't cause segfault I think, could you wait one day to make sure the change is in nightlies? or can we check now?"
+      }
+    ]
+  },
+  "1943": {
+    "number": 1943,
+    "title": " Attempted to read a PyTorch file with version 3, but the maximum supported version for reading is 2. Your PyTorch installation may be too old. (init at ../caffe2/serialize/inline_container.cc:132)",
+    "state": "open",
+    "body": "I have created .pt file of keypoint_rcnn using torch=1.5 and vision=0.6.0 now trying to integrate it with my android app. The error I am getting is as below. \r\n\r\n> E/AndroidRuntime: FATAL EXCEPTION: main\r\n    Process: org.pytorch.helloworld, PID: 15691\r\n    java.lang.RuntimeException: Unable to start activity ComponentInfo{org.pytorch.helloworld/org.pytorch.helloworld.MainActivity}: com.facebook.jni.CppException: version_ <= kMaxSupportedFileFormatVersion INTERNAL ASSERT FAILED at ../caffe2/serialize/inline_container.cc:132, please report a bug to PyTorch. Attempted to read a PyTorch file with version 3, but the maximum supported version for reading is 2. Your PyTorch installation may be too old. (init at ../caffe2/serialize/inline_container.cc:132)\r\n    (no backtrace available)\r\n        at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:3122)\r\n        at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:3261)\r\n        at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:78)\r\n        at android.app.servertransaction.TransactionExecutor.executeCallbacks(TransactionExecutor.java:108)\r\n        at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:68)\r\n        at android.app.ActivityThread$H.handleMessage(ActivityThread.java:1977)\r\n        at android.os.Handler.dispatchMessage(Handler.java:106)\r\n        at android.os.Looper.loop(Looper.java:193)\r\n        at android.app.ActivityThread.main(ActivityThread.java:6923)\r\n        at java.lang.reflect.Method.invoke(Native Method)\r\n        at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:493)\r\n        at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:870)\r\n     Caused by: com.facebook.jni.CppException: version_ <= kMaxSupportedFileFormatVersion INTERNAL ASSERT FAILED at ../caffe2/serialize/inline_container.cc:132, please report a bug to PyTorch. Attempted to read a PyTorch file with version 3, but the maximum supported version for reading is 2. Your PyTorch installation may be too old. (init at ../caffe2/serialize/inline_container.cc:132)\r\n    (no backtrace available)\r\n        at org.pytorch.NativePeer.initHybrid(Native Method)\r\n        at org.pytorch.NativePeer.<init>(NativePeer.java:18)\r\n        at org.pytorch.Module.load(Module.java:23)\r\n        at org.pytorch.helloworld.MainActivity.onCreate(MainActivity.java:41)\r\n        at android.app.Activity.performCreate(Activity.java:7148)\r\n        at android.app.Activity.performCreate(Activity.java:7139)\r\n        at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1293)\r\n        at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:3102)\r\n        \t... 11 more",
+    "comments": [
+      {
+        "author": "user-47",
+        "body": "I'm having the same issues on `torch=1.4.0` and torchvision=`0.5.0`. Here's my error message:\r\n\r\n> Traceback (most recent call last):\r\n  File \"train.py\", line 15, in <module>\r\n    model.setup(opt)\r\n  File \"/home/cchoi/n2d/models/base_model.py\", line 29, in setup\r\n    self.load_networks(opt.epoch)\r\n  File \"/home/cchoi/n2d/models/base_model.py\", line 129, in load_networks\r\n    state_dict = torch.load(load_path, map_location=str(self.device))\r\n  File \"/home/cchoi/anaconda3/lib/python3.8/site-packages/torch/serialization.py\", line 527, in load\r\n    with _open_zipfile_reader(f) as opened_zipfile:\r\n  File \"/home/cchoi/anaconda3/lib/python3.8/site-packages/torch/serialization.py\", line 224, in __init__\r\n    super(_open_zipfile_reader, self).__init__(torch._C.PyTorchFileReader(name_or_buffer))\r\nRuntimeError: version_ <= kMaxSupportedFileFormatVersion INTERNAL ASSERT FAILED at /opt/conda/conda-bld/pytorch_1579022027550/work/caffe2/serialize/inline_container.cc:132, please report a bug to PyTorc"
+      },
+      {
+        "author": "user-48",
+        "body": "I ran into the same problem with pytorch 1.4"
+      },
+      {
+        "author": "user-49",
+        "body": "The model you are trying to load is trained on PyTorch V1.6 or above. Upgrade your PyTorch version to 1.6. \r\n"
+      },
+      {
+        "author": "user-50",
+        "body": "Does anyone know how I can reshape Tensor object on android?"
+      },
+      {
+        "author": "user-51",
+        "body": "The model trained with PyTorch 1.7 and  the backbone is resnet50 ,  but PyTorch version 1.4 loading the model occurred the same error"
+      },
+      {
+        "author": "user-52",
+        "body": "Update pytorch latest versions. Follow this link; https://pytorch.org/mobile/android/#using-the-nightly-pytorch-android-libraries\r\n"
+      },
+      {
+        "author": "user-53",
+        "body": "Make sure both Python version and Android version of PyTorch is the same. "
+      },
+      {
+        "author": "user-54",
+        "body": "> I'm having the same issues on `torch=1.4.0` and torchvision=`0.5.0`. Here's my error message:\n> \n> \n> \n> > Traceback (most recent call last):\n> \n>   File \"train.py\", line 15, in <module>\n> \n>     model.setup(opt)\n> \n>   File \"/home/cchoi/n2d/models/base_model.py\", line 29, in setup\n> \n>     self.load_networks(opt.epoch)\n> \n>   File \"/home/cchoi/n2d/models/base_model.py\", line 129, in load_networks\n> \n>     state_dict = torch.load(load_path, map_location=str(self.device))\n> \n>   File \"/home/cchoi/anaconda3/lib/python3.8/site-packages/torch/serialization.py\", line 527, in load\n> \n>     with _open_zipfile_reader(f) as opened_zipfile:\n> \n>   File \"/home/cchoi/anaconda3/lib/python3.8/site-packages/torch/serialization.py\", line 224, in __init__\n> \n>     super(_open_zipfile_reader, self).__init__(torch._C.PyTorchFileReader(name_or_buffer))\n> \n> RuntimeError: version_ <= kMaxSupportedFileFormatVersion INTERNAL ASSERT FAILED at /opt/conda/conda-bld/pytorch_1579022027550/work/caffe2/serialize/"
+      },
+      {
+        "author": "user-55",
+        "body": "I had the same problem when using the `from_pretrained` method from Huggingface transformers and installing latest transformers (4.12.4) and torch (1.10.0) seems to have worked for me."
+      },
+      {
+        "author": "user-46",
+        "body": "Use PyTorch 1.4 and torchvision 0.5.0, it solves some cases."
+      }
+    ]
+  },
+  "2066": {
+    "number": 2066,
+    "title": "does deformable conv support export to onnx?",
+    "state": "open",
+    "body": "Does deformable conv support export to onnx or not?",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Not at the moment. Contributions welcome"
+      },
+      {
+        "author": "user-57",
+        "body": "> Not at the moment. Contributions welcome\r\n\r\n@maintainer-2 \r\nI implemented ONNX exporter for `deform_conv2d` with *pure* ONNX operators, i.e. no custom layers, in my repository [`deform_conv2d_onnx_exporter`](https://github.com/user-57/deform_conv2d_onnx_exporter).\r\n\r\nMy module, `deform_conv2d_onnx_exporter`, registers ONNX operator for `torchvision::deform_conv2d`.\r\nBecause the latest version of ONNX does not support `deform_conv2d` natively, I had to implement my module using `GatherND` and other operators.\r\nTherefore, the performance of my module is not very good, but good enough for me.\r\nIt requires opset version 12 and later because it uses version 12 `GatherND` and `Clip` operators.\r\n\r\nIs this helpful for this project?\r\nIf yes, I would like to create a pull request to this project.\r\n\r\nRegards,\r\nMurase"
+      },
+      {
+        "author": "user-58",
+        "body": "> > Not at the moment. Contributions welcome\r\n> \r\n> @maintainer-2 I implemented ONNX exporter for `deform_conv2d` with _pure_ ONNX operators, i.e. no custom layers, in my repository [`deform_conv2d_onnx_exporter`](https://github.com/user-57/deform_conv2d_onnx_exporter).\r\n> \r\n> My module, `deform_conv2d_onnx_exporter`, registers ONNX operator for `torchvision::deform_conv2d`. Because the latest version of ONNX does not support `deform_conv2d` natively, I had to implement my module using `GatherND` and other operators. Therefore, the performance of my module is not very good, but good enough for me. It requires opset version 12 and later because it uses version 12 `GatherND` and `Clip` operators.\r\n> \r\n> Is this helpful for this project? If yes, I would like to create a pull request to this project.\r\n> \r\n> Regards, Murase\r\n\r\nHi @user-57,\r\n\r\nThanks for the contribution. I do not see the repository. Is the link broken? \r\n\r\nThanks"
+      }
+    ]
+  }
+}

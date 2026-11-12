@@ -1,17 +1,17 @@
 ---
 name: manage
-description: 'Create, update, or delete agents, skills, and rules; content-edit or delete hooks (hook creation and rename not implemented). Full cross-reference propagation. Trivial Markdown edits (typos, small fixes ≤10 words) applied inline without agent; agent/skill Markdown content-edits delegated to foundry:curator; hook JavaScript edits always delegated to foundry:sw-engineer; large cross-ref fan-outs (> 3 files) also delegate. Use --local for plugin-source Markdown content-edits. The parent orchestrates MEMORY.md, README, audit, calibration, and the final report. Also manages settings.json permissions atomically with permissions-guide.md. NOT for: validation/quality audit of existing agents/skills (use /foundry:audit); implementing application source code changes (use develop:feature or develop:fix — requires `develop` plugin).'
+description: 'Create, update, or delete agents, skills, and rules; content-edit or delete hooks (hook creation and rename not implemented). Full cross-reference propagation. Trivial Markdown edits (typos, small fixes ≤10 words) applied inline without agent; agent/skill Markdown content-edits delegated to foundry:curator; hook JavaScript edits always delegated to foundry:sw-engineer; large cross-ref fan-outs (> 3 files) also delegate. Use --local for plugin-source Markdown content-edits. The parent orchestrates README, audit, calibration, and the final report. Also manages settings.json permissions atomically with permissions-guide.md. NOT for: validation/quality audit of existing agents/skills (use /foundry:audit); implementing application source code changes (use develop:feature or develop:fix — requires `develop` plugin).'
 argument-hint: create <agent|skill|rule> <name> "desc" | update <name> [new-name|"change"|spec.md] [--local] | delete <name> | add perm <rule> "desc" "use-case" | remove perm <rule>
 effort: medium
 disable-model-invocation: true
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskList, TaskCreate, TaskUpdate, AskUserQuestion
 ---
 
-> **Note:** `disable-model-invocation: true` — `/manage` user-invoked only, no `Skill()` chaining from orchestrators. When suggesting `/manage` as follow-up, invoking skill must present as user-run command, not auto step.
+> **Note:** `disable-model-invocation: true` — `/foundry:manage` user-invoked only, no `Skill()` chaining from orchestrators. When suggesting `/foundry:manage` as follow-up, invoking skill must present as user-run command, not auto step.
 
 <objective>
 
-Manage lifecycle of agents, skills, rules, hooks in `.claude/`; plugin-source Markdown content-edits with `--local`. Handles creation with rich domain content, atomic renames with cross-ref propagation, content editing (routed by file type — Step 4), clean deletion with broken-ref cleanup. Keeps MEMORY.md inventory in sync with disk.
+Manage lifecycle of agents, skills, rules, hooks in `.claude/`; plugin-source Markdown content-edits with `--local`. Handles creation with rich domain content, atomic renames with cross-ref propagation, content editing (routed by file type — Step 4), clean deletion with broken-ref cleanup.
 
 </objective>
 
@@ -35,7 +35,7 @@ Manage lifecycle of agents, skills, rules, hooks in `.claude/`; plugin-source Ma
 
 - Permission rules use Claude Code format: `WebSearch`, `Bash(cmd:*)`, `WebFetch(domain:example.com)`
 
-- `--skip-audit` — optional flag: skip Step 9 `/audit` validation (use inside `audit fix` loop to avoid recursion)
+- `--skip-audit` — optional flag: skip Step 9 `/foundry:audit` validation (use inside `audit fix` loop to avoid recursion)
 
 - `--local` — resolve plugin-source agents, skills or rules for `update` content-edit only; use a quoted directive or spec file. Creation, rename, deletion, hooks and permission operations reject this flag. `foundry:curator` owns source agent/skill Markdown edits; the parent owns rule Markdown edits. The installed cache is never an edit target.
 
@@ -80,7 +80,8 @@ Manage lifecycle of agents, skills, rules, hooks in `.claude/`; plugin-source Ma
 Every spawn in this skill (Step 4 mode files, Step 5 cross-ref curator, Step 9 targeted curator, challenger gate) follows `_shared/agent-spawn-protocol.md` §Deadlines. Spawns here are sequential, one agent in flight at a time, so every spawn response **overwrites** `.temp/manage/agent-watch-manage.tsv` with that one agent's row (`<name>\t<deliverable or ->\t<deadline>`) via the Write tool — never a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`), probe, or sleep. On its completion notification run the check block once, before reading its output:
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir ".temp/manage"  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/agent_watch.py" --state-dir ".temp/manage"  # timeout: 5000
 ```
 
 `done` → continue · notification arrived but row not `done` (deliverable empty/missing, or idle without its envelope) → ⏱ `timed_out` now: surface it in the Step 10 report; a web-explorer ⏱ means default frontmatter fields (the existing missing-schema fallback). A ⏱ never answers, skips or defaults any question or gate below.
@@ -102,9 +103,10 @@ Colors in use are read from live Grep in Step 3 (authoritative) — no static us
 Extract operation, type, name, optional arguments from `$ARGUMENTS`.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # --keep-state: no eval, persists manage-skip-audit-${CSID} (Check 43) + clean-args; --inlined: manage keeps no compaction contract, so it clears none
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags skip-audit,local --keep-state manage --inlined "$ARGUMENTS" >/dev/null  # timeout: 5000
+python "$PLUGIN_ROOT/bin/parse-skill-flags.py" --flags skip-audit,local --keep-state manage --inlined -- "$ARGUMENTS" >/dev/null  # timeout: 5000
 IFS= read -r ARGUMENTS < "${TMPDIR:-/tmp}/manage-clean-args-${CSID}" 2>/dev/null || ARGUMENTS=""
 IFS= read -r LOCAL < "${TMPDIR:-/tmp}/manage-local-${CSID}" 2>/dev/null || LOCAL="false"
 printf "Local source mode: %s\n" "$LOCAL"
@@ -115,7 +117,7 @@ echo "${TMPDIR:-/tmp}/manage-skip-audit-${CSID}" > "${TMPDIR:-/tmp}/manage-skip-
 
 **Unsupported flag check** — after all supported flags extracted (`--skip-audit`, `--local`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--skip-audit`, `--local`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
-**Out-of-scope guard** — fires before validation when either holds: (a) first command word(s) in `$ARGUMENTS` are not `create`, `update`, `delete`, `add perm`, or `remove perm` (shape errors on recognized command words go to validation, not here); (b) request targets application source, a bug, or a feature outside agents/skills/rules/hooks/permissions. Deliver per Decline delivery below: `**! UNSUPPORTED — /foundry:manage manages agents, skills, rules, hooks, permissions only**` plus one redirect line (`/develop:fix` or `/develop:feature` (requires `develop` plugin)), then stop. Block + redirect = entire decline content: no diagnosis, root cause, patch, code snippet, test, or Step 2 onward. Decline delivery: when the spawn prompt names a deliverable or output file, first write the bold line, any required redirect, and `status: unsupported`, `reason` and `owner` to that file — never skip a mandated file; when it demands an envelope (`Return ONLY:`), return only `"status": "unsupported"`, `"reason"` and `"owner"` (agent/skill or `"none"`), plus `"file"` when a deliverable was written; a demanded fixed closing line (e.g. `Wrote: <id>`) takes precedence over an envelope and is the whole reply. With neither envelope nor fixed closing line required, reply only with the bold line and any required redirect. A decline is not an analysis, so it carries no Confidence block. <!-- policy-sibling: plugins/cc_foundry/agents/challenger.md, plugins/cc_foundry/agents/doc-scribe.md, plugins/cc_foundry/agents/linting-expert.md, plugins/cc_foundry/agents/creator.md, plugins/cc_foundry/skills/manage/SKILL.md — decline delivery -->
+**Out-of-scope guard** — fires before validation when either holds: (a) first command word(s) in `$ARGUMENTS` are not `create`, `update`, `delete`, `add perm`, or `remove perm` (shape errors on recognized command words go to validation, not here); (b) request targets application source, a bug, or a feature outside agents/skills/rules/hooks/permissions. Deliver per Decline delivery below: `**! UNSUPPORTED — /foundry:manage manages agents, skills, rules, hooks, permissions only**` plus one redirect line (`/develop:fix` or `/develop:feature` (requires `develop` plugin)), then stop. Block + redirect = entire decline content: no diagnosis, root cause, patch, code snippet, test, or Step 2 onward. Decline delivery: when the spawn prompt names a deliverable or output file, first write the bold line, any required redirect, and `status: unsupported`, `reason` and `owner` to that file — never skip a mandated file; when it demands an envelope (`Return ONLY:`), return only `"status": "unsupported"`, `"reason"` and `"owner"` (agent/skill or `"none"`), plus `"file"` when a deliverable was written; a demanded fixed closing line (e.g. `Wrote: <id>`) takes precedence over an envelope and is the whole reply. With neither envelope nor fixed closing line required, reply only with the bold line and any required redirect. A decline is not an analysis, so it carries no Confidence block. <!-- policy-sibling: plugins/cc_foundry/agents/challenger.md, plugins/cc_foundry/agents/doc-scribe.md, plugins/cc_foundry/agents/linting-expert.md, plugins/cc_foundry/agents/creator.md, plugins/cc_foundry/agents/qa-specialist.md, plugins/cc_foundry/agents/solution-architect.md, plugins/cc_foundry/agents/web-explorer.md, plugins/cc_foundry/agents/perf-optimizer.md, plugins/cc_foundry/skills/manage/SKILL.md — decline delivery -->
 
 **Validation rules:**
 
@@ -189,9 +191,9 @@ Both must hold — either failing: **substantive**. Trivial edits: apply inline 
 **Step skip rules**:
 
 - **Perm operations**: skip Steps 2, 3, 5, 6, 7, 8, 9 — go Step 1 → Step 4 → Step 10
-- **Plugin-source content-edits (`--local`)**: skip Steps 2, 3 and 6; Steps 5 and 8 use `SOURCE_ROOT` and its README, Step 7 updates only that plugin README when description/model changed. Never update the project's auto-memory roster for a source edit.
-- **Hook operations**: skip Steps 2, 3, 6 (no color inventory, no MEMORY.md roster entry, no README table row); in Steps 5 and 7 skip cross-ref propagation (hook filenames not referenced from agent/skill markdown) — go Step 1 → Step 4 → Step 9 → Step 10
-- **Content-edit operations**: skip Step 2 (entity already exists); skip Step 3 color inventory (no create); in Steps 5–7 only update cross-refs and README if name or description changed. Step 6 count: only update if name added or removed — content-only edits do not change agent/skill count.
+- **Plugin-source content-edits (`--local`)**: skip Steps 2, 3 and 6; Steps 5 and 8 use `SOURCE_ROOT` and its README, Step 7 updates only that plugin README when description/model changed.
+- **Hook operations**: skip Steps 2, 3, 6 (no color inventory, no README table row); in Steps 5 and 7 skip cross-ref propagation (hook filenames not referenced from agent/skill markdown) — go Step 1 → Step 4 → Step 9 → Step 10
+- **Content-edit operations**: skip Step 2 (entity already exists); skip Step 3 color inventory (no create); in Steps 5 and 7 only update cross-refs and README if name or description changed. Step 6 inventory: only refresh if name added or removed — content-only edits do not change agent/skill count.
 - **Trivial content-edits**: additionally skip Steps 6–7 (no roster/description change possible); proceed Step 1 → Step 4 → Step 8 → Step 10
 
 ## Step 2: Overlap review (create only)
@@ -228,9 +230,10 @@ Load the mode file for `MODE` (`<MODE_FILE>` from the table), then execute the `
 | `add-perm`, `remove-perm` | `perm.md` |
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 MODE_FILE='<MODE_FILE>'
 case "$MODE_FILE" in *'<'*'>'*|"") echo "! BLOCKED — <MODE_FILE> not substituted (create.md | rename.md | content-edit.md | delete.md | perm.md)"; exit 1;; esac
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" manage modes "$MODE_FILE" --fallback-source  # timeout: 5000
+python "$PLUGIN_ROOT/bin/load_mode.py" manage modes "$MODE_FILE" --fallback-source  # timeout: 5000
 ```
 
 ## Step 5: Propagate cross-references
@@ -264,7 +267,7 @@ Return ONLY: {"status":"done","files_updated":N}
 
 **For create:** No cross-ref propagation needed.
 
-**For content-edit:** Run propagation only if entity's `description:` frontmatter changed — propagate new description to any MEMORY.md or README summary lines that quote it. Skip if only internal content changed.
+**For content-edit:** Run propagation only if entity's `description:` frontmatter changed — propagate new description to any README summary lines that quote it. Skip if only internal content changed.
 
 **Severity/priority labeling** — for every cross-reference decision above (rename fix, delete flag, content-edit propagate-or-skip), state a priority: **high** (genuine reference — invocation, routing, or discovery breaks if missed) or **low** (cosmetic/consistency-only, e.g. mention inside a code example or an unrelated similarly-named entity). Carry priority into Step 10 report (Files Changed table / Rename Occurrence Validation buckets).
 
@@ -272,31 +275,17 @@ Return ONLY: {"status":"done","files_updated":N}
 
 ```bash
 # loads: rename-validation.md
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" manage modes rename-validation.md --fallback-source  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/load_mode.py" manage modes rename-validation.md --fallback-source  # timeout: 5000
 ```
 
 Execute the mode loaded above.
 
-## Step 6: Update MEMORY.md roster (auto-memory)
+## Step 6: Refresh current roster
 
-MEMORY.md is Claude Code's auto-memory file — **not** stored under `.claude/`. Injected into conversation context at session start. Absolute path appears near top of system prompt (e.g. `~/.claude/projects/.../memory/MEMORY.md`). Use that absolute path with Edit tool. System prompt parsing fails or path absent: fall back to:
-
-```bash
-MEMORY_FALLBACK="$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_memory_dir.py" "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" 2>/dev/null)/MEMORY.md"
-[ -f "$MEMORY_FALLBACK" ] && echo "Fallback MEMORY.md: $MEMORY_FALLBACK" || echo "MEMORY.md not found at fallback path — skip roster update"  # timeout: 5000
-```
-
-Regenerate inventory lines from disk:
+Refresh inventory from disk for the Step 10 report:
 
 Use Glob (`agents/*.md`, path `.claude/`) for agents, Glob (`skills/*/`, path `.claude/`) for skills, Glob (`rules/*.md`, path `.claude/`) for rules. Extract names inline from returned paths (strip path prefix and `.md`/trailing-`/` suffix), join as comma-separated string.
-
-Use Edit tool with **absolute auto-memory path** to update these roster lines in MEMORY.md:
-
-- `- Agents: doc-scribe, foundry:sw-engineer, ...`
-- `- Skills: review, research, ...`
-- `- Rules (N): artifact-lifecycle, ...` (update count N when rules created or deleted)
-
-**For content-edit:** Skip if only internal content changed; update only if description changed.
 
 ## Step 7: Update README.md
 
@@ -399,7 +388,7 @@ On **(b)**: spawn `foundry:challenger` — background like every spawn; in the s
 Agent(subagent_type="foundry:challenger", name="challenge-manage-edits", description="Challenge manage edits", prompt="Adversarially review the changes just made to <list modified file paths>. Challenge: correctness of design decisions, completeness, potential regressions, and whether the stated goal was achieved. Read-only. Write full findings to .temp/manage-challenger-<YYYY-MM-DD>.md using the Write tool. Return ONLY: {\"status\":\"done\",\"file\":\".temp/manage-challenger-<YYYY-MM-DD>.md\",\"findings\":N,\"confidence\":0.N}")
 ```
 
-Print challenger's `findings` count and confidence; note any HIGH findings warranting a follow-up `/manage update` pass. On **(a)**: print `→ Done.`, stop.
+Print challenger's `findings` count and confidence; note any HIGH findings warranting a follow-up `/foundry:manage update` pass. On **(a)**: print `→ Done.`, stop.
 
 **Cycle guard**: this challenger dispatch is from orchestrator (manage skill itself), not from a sub-agent — cycle detection in `<notes>` doesn't apply here. Do NOT spawn challenger from inside foundry:curator or foundry:sw-engineer sub-agents spawned by manage.
 

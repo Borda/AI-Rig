@@ -2593,7 +2593,7 @@ def load_records(text: str) -> dict[str, dict[str, Any]]:
         2
     """
     records: dict[str, dict[str, Any]] = {}
-    for lineno, line in enumerate(text.splitlines(), start=1):
+    for lineno, line in enumerate(text.split("\n"), start=1):
         if not line.strip():
             continue
         try:

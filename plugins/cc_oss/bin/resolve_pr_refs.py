@@ -330,14 +330,22 @@ def _collect_ref_metadata(args: argparse.Namespace) -> dict[str, str] | None:
                 f"⛔ PR {label} ref {ref!r} is not a valid git branch name — refusing to persist it for later git commands"
             )
             return None
+    remote_head_ref = head_ref
+    if head_ref == base_default and cross_repo == "true":
+        number = str(meta.get("url") or args.pr).rsplit("/", 1)[-1].removeprefix("#")
+        if not re.fullmatch(r"[0-9]+", number):
+            print("! BLOCKED — cannot determine PR number for safe fork checkout alias")
+            return None
+        head_ref = f"pr-{number}-{head_ref}"
     if head_ref == base_default:
         print(f"⛔ PR HEAD ref ({head_ref}) equals default branch — refusing to check out and commit on default branch")
         return None
 
-    saved_branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], args.timeout)
+    saved_branch = _run(["git", "branch", "--show-current"], args.timeout)
     local_sha = _run(["git", "rev-parse", "HEAD"], args.timeout)
     return {
         "resolve-head-ref": head_ref,
+        "resolve-remote-head-ref": remote_head_ref,
         "resolve-base-ref": base_ref,
         "resolve-is-cross-repo": cross_repo,
         "resolve-head-repo-owner": head_repo_owner(meta),

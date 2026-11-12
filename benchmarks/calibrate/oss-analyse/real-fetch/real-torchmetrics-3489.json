@@ -1,0 +1,396 @@
+{
+  "3066": {
+    "number": 3066,
+    "title": "Unified `Metrics` class for multiple metrics",
+    "state": "open",
+    "body": "## 🚀 Feature\n\nUnified `Metrics` class for multiple metrics. \n\n### Motivation\n\nWe often need to compute multiple metrics for the same `preds` and `targets`. \n\nFor example, we want to record both AUROC and AUPRC (AP) for a task. \n\nWhile torchmetrics have implemented the distributed communication backend to support distributed training, for metrics like AUROC and AUPRC, current implementation requires syncing the entire process group multiple times for each metrics. This can take a significant amount of time when training on large clusters. \n\n### Pitch\n\n```python\nfrom __future__ import annotations\n\nfrom collections.abc import Mapping, Sequence\nfrom math import nan\nfrom typing import Callable, Iterable\n\nimport torch\nfrom chanfig import DefaultDict, FlatDict\nfrom torch import Tensor\nfrom torch import distributed as dist\nfrom torcheval.metrics import Metric\n\nfrom danling.tensor import NestedTensor\nfrom danling.utils import flist, get_world_size\n\nfrom .preprocess import base_preprocess\nfrom .utils import RoundDict\n\ntry:\n    from typing import Self  # type: ignore[attr-defined]\nexcept ImportError:\n    from typing_extensions import Self\n\n\nclass Metrics(Metric):\n    r\"\"\"\n    A comprehensive metric tracking system that maintains the complete history of predictions and labels.\n\n    Metrics is designed for computing evaluations that require access to the entire dataset history,\n    such as AUROC, Pearson correlation, or other metrics that cannot be meaningfully averaged batch-by-batch.\n\n    Attributes:\n        metrics: A dictionary of metric functions to be computed\n        preprocess: Optional preprocessing function to apply to inputs and targets\n        val: Metrics computed on the current batch only\n        avg: Metrics computed on all accumulated data\n        input: The input tensor from the latest batch\n        target: The target tensor from the latest batch\n        inputs: Concatenation of all input tensors seen so far\n        targets: Concatenation of all target tensors seen so far\n\n    Args:\n        *args: A single mapping of metrics or callable metric functions\n        device: Device to store tensors on\n        preprocess: Function to preprocess inputs before computing metrics\n        **metrics: Named metric functions to compute\n\n    Examples:\n        >>> from danling.metric.functional import auroc, auprc\n        >>> from danling.metric.preprocess import preprocess_binary\n        >>> metrics = Metrics(auroc=auroc, auprc=auprc)\n        >>> metrics\n        Metrics('auroc', 'auprc')\n        >>> metrics.update([0.2, 0.3, 0.5, 0.7], [0, 1, 0, 1])\n        >>> metrics.input  # predicted values of current batch\n        tensor([0.2000, 0.3000, 0.5000, 0.7000])\n        >>> metrics.target  # ground truth of current batch\n        tensor([0, 1, 0, 1])\n        >>> metrics.inputs  # predicted values of all data\n        tensor([0.2000, 0.3000, 0.5000, 0.7000])\n        >>> metrics.targets  # ground truth of all data\n        tensor([0, 1, 0, 1])\n        >>> metrics.va",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "> While torchmetrics have implemented the distributed communication backend to support distributed training, for metrics like AUROC and AUPRC, current implementation requires syncing the entire process group multiple times for each metrics. This can take a significant amount of time when training on large clusters.\n\nHello, thank you for your suggestion. Could you please elaborate more what this metric shall do, except preserving all history of preds and targets?"
+      },
+      {
+        "author": "user-2",
+        "body": "> Hello, thank you for your suggestion. Could you please elaborate more what this metric shall do, except preserving all history of preds and targets?\n\n\nThe primary goal is to optimize performance by synchronizing shared metric states only once. Many of our metrics rely on the same underlying data (preds, targets, etc.), but each currently manages its own state. This results in redundant synchronization operations, one for every metric.\n\nMy proposal is to decouple the metric states from the functional interface. We could introduce a state manager that handles the synchronization of shared states once per step. Individual metric instances would then access these synchronized states to compute their scores. This would streamline the process and limit costly synchronization to a single operation."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "> My proposal is to decouple the metric states from the functional interface. We could introduce a state manager that handles the synchronization of shared states once per step. Individual metric instances would then access these synchronized states to compute their scores. This would streamline the process and limit costly synchronization to a single operation.\n\nThat sounds very interesting! Could you make a minimal demo?"
+      },
+      {
+        "author": "user-2",
+        "body": "> That sounds very interesting! Could you make a minimal demo?\n\nSure thing! I'm busy finalizing my paper this month, I'll work on it right after I finished it. \n"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@maintainer-2, what are your thoughts? 🐿️ "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "This seems very close to what `MetricCollection` but with a bit more narrow scope (metrics that requires the full set of preds and targets at compute time) which then has the benefit that some optimization can be done for sync across devices. I wonder if the feature could be incorporated into `MetricCollection` instead of having a similar separate class."
+      },
+      {
+        "author": "user-2",
+        "body": "I've never heard about `MetricCollection` before, and I just looked at their documents, they look nice. \n\nI'll need to look into it to see if and how we can improve `MetricCollection` with my current implementation. \n\n> with a bit more narrow scope (metrics that requires the full set of preds and targets at compute time) which then has the benefit that some optimization can be done for sync across devices. \n\nThat is the current implementation. But it should be able to be expandable with registry mechanism: we can let the metric object tells the state manager what states do they require, and state manager will maintain a state for them. \nI think the `MetricCollection` may have implemented something similar to this, I'll need to check it. \n\nAnd I believe there are a few things we can work on with `MetricCollection`. \n\nFirst is the distributed syncing. Currently it pads outputs & targets to the same length across devices which may incur some noises. My `_sync` implementation above handles"
+      }
+    ]
+  },
+  "2273": {
+    "number": 2273,
+    "title": "add optional ignore_index in all metrics",
+    "state": "open",
+    "body": "## 🚀 Feature\r\nCould you please consider incorporating a systematically optional ignore_index argument in all metrics?\r\n\r\nFor instance, in classification tasks, we currently have the ability to use ignore_index as follows:\r\n\r\n\r\n```python\r\ntorchmetrics.classification.MulticlassJaccardIndex(num_classes=15, ignore_index=255)\r\n```\r\nHowever, in the case of regression, there is currently no mechanism to utilize ignore_index when computing metrics such as MSE or MAE.\r\n### Motivation\r\n\r\nThere is a plethora of datasets for regression tasks (but not limited to regression) that contain pixel values representing missing data. It is crucial to have the capability to ignore these values when computing metric statistics.\r\n\r\n### Pitch\r\n\r\nI suggest that all metrics be updated to implement an optional ignore_index argument.\r\n\r\n### Alternatives\r\n\r\nIs it feasible to incorporate the ignore_index functionality in advanced metric settings? For example, as shown in https://lightning.ai/docs/torchmetrics/stable/pages/overview.html#metric-kwargs\r\n\r\n### Additional context\r\n\r\nFor instance, in the context of depth maps, ground truth data may contain missing values replaced with an arbitrary ignore_index, and the training loss is already designed to ignore them. This feature would provide consistency and flexibility across various metrics.\r\n",
+    "comments": []
+  },
+  "3233": {
+    "number": 3233,
+    "title": "Add Vendi Score and Memorization metrics for generative model evaluation",
+    "state": "open",
+    "body": "## 🚀 Feature\n\nI would like to add the Vendi Score (https://arxiv.org/abs/2210.02410, https://arxiv.org/abs/2310.12952) and the L2-memorization percentage (https://arxiv.org/abs/2301.13188) for evaluating the performance of generative image models.\n\n### Motivation\n\nThese are useful metrics for evaluating the holistic performance of generative models that go beyond the simple FID metric.\n\n### Pitch\n\nI would like to implement these metrics and contribute them to this library.\n\n### Additional context\n\nThere are existing implementations of the Vendi Score (https://github.com/vertaix/Vendi-Score) and L2-memorization percentage (https://github.com/layer6ai-labs/dgm-eval) but they aren't incorporated into the torchmetrics API.\n",
+    "comments": [
+      {
+        "author": "maintainer-3",
+        "body": "Hi @user-4  sounds good to me. Thanks..."
+      }
+    ]
+  },
+  "3026": {
+    "number": 3026,
+    "title": "Pose estimation metrics",
+    "state": "open",
+    "body": "## 🚀 Feature\n\n<!-- A clear and concise description of the feature proposal -->\n\n### Motivation\n\nCurrently torchmetrics doesn't support any metrics for pose estimation, example AP for pose estimation which is used for COCO and reported in all pose estimation code/papers such as:\nhttps://github.com/facebookresearch/sapiens\nhttps://github.com/Tau-J/rtmlib\n\n<!-- Please outline the motivation for the proposal. Is your feature request related to a problem? e.g., I'm always frustrated when [...]. If this is related to another GitHub issue, please link here too -->\n\n### Pitch\nLet's add pose estimation metrics to torchmetrics to make it more feature rich\n\n<!-- A clear and concise description of what you want to happen. -->\n\n### Alternatives\n\nOne alternative for users is to write the metric themselves\n<!-- A clear and concise description of any alternative solutions or features you've considered, if any. -->\n\n\nI can work on this if agreed",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "@user-5 good idea, do you know of any good reference implementations that we can base our implementation on?"
+      },
+      {
+        "author": "user-5",
+        "body": "Probably we can use xtcocotools for it.\nhttps://github.com/jin-s13/xtcocoapi\n\nBut I'll look more into it once I start working on it"
+      }
+    ]
+  },
+  "2509": {
+    "number": 2509,
+    "title": "Ordinal classification metrics",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nHi I would like to contribute some basic ordinal classification metrics like \"accuracy within\"\r\n\r\n### Motivation\r\n\r\nI recently discovered that my problem is an instance of ordinal classification problem. Which means that classes with labels that are close, are also semantically close (like star rating 1 and 2 start are not really far apart). And I realized that `torchmatrics` doesn't implement for example \"accuracy within k\" (or off-by k), which is stricter version of top-k accuracy. More on that can be found here: https://link.springer.com/chapter/10.1007/978-3-642-01818-3_25\r\n\r\n### Pitch\r\n\r\nI would like to contribute at least Accuracy/Recall/Precision in \"within k\" version, but I am not sure if I should disrupt original classification metrics by adding more parameter. It seems like logical solution, but I am not sure how much you would be open to disrupting core metrics implementations.\r\n\r\nEssentially, e.g. true positive definition would change from `(pred == label).sum()` to `(torch.abs(pred - label) <= within)sum()`\r\n\r\n### Alternatives\r\n\r\nI can also implement them separately or just do it for my project :)\r\n\r\n### Additional context\r\n\r\nIn my context I am doing IVF image stage classification and stages are visually very similar, because some of the stages differ only by single cell, which might be actually hidden, since its a 2d top projection of a 3d object.\r\n",
+    "comments": []
+  },
+  "3163": {
+    "number": 3163,
+    "title": "Robust instance segmentation metrics",
+    "state": "open",
+    "body": "## 🚀 SortedAP and Aggregated Jacard Index metrics\n\n<!-- A clear and concise description of the feature proposal -->\n\n### Motivation\n\nInstance segmentation is a critical task in biomedical image analysis, where accurate evaluation of predicted object masks is essential. While TorchMetrics currently supports common metrics such as IoU, Dice, PQ, mPQ and mAP, which often are not recommended for biomedical instance segmentation, there is no implementation for robust metrics such as SortedAP and AJI.\n\n### Pitch\nImplement these metrics and offer additional options\n\n",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "@user-7 are you interested in implementing it? 🐿 "
+      },
+      {
+        "author": "user-7",
+        "body": "I would be happy to implement these. Mainly based on this [paper](https://openaccess.thecvf.com/content/ICCV2023W/BIC/papers/Chen_SortedAP_Rethinking_Evaluation_Metrics_for_Instance_Segmentation_ICCVW_2023_paper.pdf) "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "> I would be happy to implement these. Mainly based on this [paper](https://openaccess.thecvf.com/content/ICCV2023W/BIC/papers/Chen_SortedAP_Rethinking_Evaluation_Metrics_for_Instance_Segmentation_ICCVW_2023_paper.pdf)\n\nPerfect, please feel free to open a PR"
+      },
+      {
+        "author": "user-8",
+        "body": "@user-7 I want to help you work on this."
+      },
+      {
+        "author": "user-7",
+        "body": "@user-8 . Thanks for offering the help.  I really appreciate it. I have some ideas in place. Do you have any specific ideas?"
+      },
+      {
+        "author": "user-9",
+        "body": "Hi @user-7,\n\nis there any progress done yet? I'm also intrested in a proper implementation of especially sortedAP. Is there a branch created yet for testing? Maybe I could also contribute to it. Just let me know"
+      },
+      {
+        "author": "user-7",
+        "body": "Hi @user-9 ,\nI am actually on it know. I have a version of the matching algorithm but I am trying to improve it as it is very computationally expensive. "
+      }
+    ]
+  },
+  "3475": {
+    "number": 3475,
+    "title": "Missing objects.inv in docs",
+    "state": "open",
+    "body": "## 📚 Documentation\n\nTorchGeo links to the TorchMetrics docs via `sphinx.ext.intersphinx`, which looks for an `objects.inv` at https://lightning.ai/docs/torchmetrics/stable. This appears to have broken all of a sudden, requiring JavaScript in order to render. As a result, all of our CI is down until this is resolved. Did the objects.inv move, or is this an unintended change?",
+    "comments": []
+  },
+  "3446": {
+    "number": 3446,
+    "title": "Functional nominal metrics fail for non-zero-based category labels",
+    "state": "open",
+    "body": "## Bug description\n\nThe functional nominal association metrics infer the number of categories from the count of unique values, but pass the original category IDs directly to the confusion-matrix implementation. As a result, valid categorical labels that are not zero-based and contiguous can raise a reshape error.\n\nNominal association should be invariant to renaming categories.\n\n## Reproduction\n\n```python\nimport torch\n\nfrom torchmetrics.functional.nominal import (\n    cramers_v,\n    pearsons_contingency_coefficient,\n    theils_u,\n    tschuprows_t,\n)\n\nbase = torch.tensor([0, 0, 1, 1])\nshifted = base + 1\n\nmetrics = [\n    (cramers_v, {\"bias_correction\": False}),\n    (pearsons_contingency_coefficient, {}),\n    (theils_u, {}),\n    (tschuprows_t, {\"bias_correction\": False}),\n]\n\nfor metric, kwargs in metrics:\n    print(metric(base, base, **kwargs))\n    print(metric(shifted, shifted, **kwargs))\n```\n\nThe first call succeeds for each metric. The relabeled input raises:\n\n```text\nRuntimeError: shape '[2, 2]' is invalid for input of size 7\n```\n\nThe corresponding matrix APIs are affected as well when columns contain sparse or independently labeled categories.\n\n## Expected behavior\n\nThe shifted input describes the same two categories and should produce the same association value as the zero-based input. For example, Cramer's V should be `tensor(1.)` in both cases.\n\n## Root cause\n\nThe functional paths derive `num_classes` using the number of unique values, while the classification confusion-matrix updater uses the raw label values as bin indices. With labels `1` and `2`, the inferred class count is two, but label `2` creates a bin outside the expected `2 x 2` range.\n\nNormalizing the observed categories to contiguous IDs after logits and NaN preprocessing avoids that mismatch. Stateful metrics that receive an explicit `num_classes` should keep their existing stable encoding behavior across updates.\n\n## Environment\n\n- TorchMetrics: 1.9.0 / current `master` at `37a80809`\n- PyTorch: 2.13.0+cpu\n- Python: 3.11.9\n- OS: Windows\n\nAI disclosure: I used Codex to help identify and reproduce the behavior, search for existing reports, and draft this issue. I reviewed the reproduction and diagnosis.\r\n",
+    "comments": []
+  },
+  "3366": {
+    "number": 3366,
+    "title": "NTA-IoU and NTL-IoU metrics",
+    "state": "open",
+    "body": "## 🚀 Feature\n\nI would like to request the implementation of Novel Trajectory Agent Intersection over Union (NTA-IoU) and Novel Trajectory Lane Intersection over Union (NTL-IoU) metrics (see definitions below in Additional Context). \n\n### Motivation\n\nBoth these metrics are used in autonomous vehicle research to measure the spatiotemporal accuracy of vehicles in the foreground (NTA-IoU) and geometric fidelity and spatiotemporal coherence of the road lanes in the background (NTL-IoU). \n\n### Pitch\n\nAn implementation of this exists in the [DriveDreamer4D](https://github.com/GigaAI-research/DriveDreamer4D) repo and can be implemented to fit the codebase here. \n\n### Alternatives\n\nDo not know any \n\n### Additional context\n\n(From https://arxiv.org/pdf/2511.21113)\n\n**Novel Trajectory Agent IoU (NTA-IoU)**: Measures the spatiotemporal accuracy of foreground dynamic agents (vehicles). Its computation involves detecting 2D bounding boxes on the rendered frames and comparing them to the projected ground-truth 3D bounding boxes. High NTA-IoU ensures accurate agent placement and adherence to the underlying 3D structure, leading to precise\ncorrections in under-constrained regions.\n\n**Novel Trajectory Lane IoU (NTL-IoU)**: Measures the geometric fidelity and spatiotemporal coherence of background lane lines. By comparing lane lines detected in the synthesized image against projected ground truth (often derived from the HDMap), it specifically verifies the integrity of the environment’s static geometry. This metric reflects minimal disturbance to the original scene structure and guarantees environmental consistency.\n\nA few popular papers that implement this in their own codebases:\n\nFaithFusion: https://arxiv.org/pdf/2511.21113\nDriveDreamer4d: https://arxiv.org/pdf/2410.13571",
+    "comments": []
+  },
+  "3274": {
+    "number": 3274,
+    "title": "BinaryAccuracy supports weight parameter",
+    "state": "open",
+    "body": "## 🚀 Feature\n\n### Motivation\nTensorFlow `tf.metrics.auc` allows providing `weight` parameter for weighted calculation, which is missing in torchmetrics as there is no place to specify the weight param.",
+    "comments": [
+      {
+        "author": "user-14",
+        "body": "Hi @user-13 ! I'd like to work on this issue. \n\nI noticed something I wanted to clarify: the issue title mentions \"BinaryAccuracy\" but the description references `tf.metrics.auc` (Area Under the Curve). \n\nCould you confirm which metric you'd like to add weight support for:\n1. **BinaryAccuracy** (as the title suggests)\n2. **BinaryAUC** (as the description suggests with `tf.metrics.auc`)\n3. **Both** (or all binary metrics)?\n\nThis will help me focus on the right files and implementation approach. Happy to discuss further!\n\nThanks!"
+      }
+    ]
+  },
+  "2598": {
+    "number": 2598,
+    "title": "Need higher level RAG metrics",
+    "state": "open",
+    "body": "### Problem & Motivation\r\n\r\nThere is a huge wave of interest around high accuracy Q&A, such as via Retrieval Augmented Generation (RAG). RAG accuracy is largely driven by how well vector search is able to retrieve the correct context to answer questions via an LLM. When evaluating embedding models, vector search retrieval metrics are helpful but insufficient because they don't reveal how well the retrieved content actually answers the target questions. \r\n\r\n### Pitch\r\n\r\nI'd love to see an integration with a tool like our new ragulate library (Apache 2 licensed) that would simplify model evaluation on RAG Q&A: https://github.com/epinzur/ragulate/tree/main\r\n\r\n\r\n### Additional context\r\n\r\nI was going to suggest that you integrate with trulens, but then I discovered that we built ragulate to automate much of the process of using trulens, and we'd love feedback on it. ",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "@user-15, thank you for your suggestion. Indeed, it would be nice to have such meters available in TM. Said so, I would love to see your PR adding them as complete code not referring to an external package...  :flamingo: "
+      }
+    ]
+  },
+  "1735": {
+    "number": 1735,
+    "title": "Support masks in audio metrics",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nIt would be great if [ScaleInvariantSignalDistortionRatio](https://torchmetrics.readthedocs.io/en/stable/audio/scale_invariant_signal_distortion_ratio.html#scale-invariant-signal-to-distortion-ratio-si-sdr) and  [ScaleInvariantSignalNoiseRatio](https://torchmetrics.readthedocs.io/en/stable/audio/scale_invariant_signal_noise_ratio.html) allowed an extra argument `mask` when computing a metric on a batch of audio frames which have been zero-padded to fit the batch. Allowing to pass a mask would only compute the metric on valid audio frames across the batch.\r\n\r\n### Alternatives\r\n\r\nIn the TorchAudio [tutorial](https://github.com/pytorch/audio/blob/main/examples/source_separation/utils/metrics.py) they have manually computed the metrics to account for this.\r\nWould be call if torchmetrics did this.",
+    "comments": [
+      {
+        "author": "user-17",
+        "body": "Thank you for your suggestion.\r\n\r\nYou can manually mask the predictions before giving them to the metric functions. Putting this need to the metric function will introduce some unnecessary complexity. ^_^"
+      }
+    ]
+  },
+  "3460": {
+    "number": 3460,
+    "title": "Functional nominal metrics raise RuntimeError when category labels do not start at 0",
+    "state": "open",
+    "body": "## 🐛 Bug\n\nFunctional nominal metrics (`cramers_v`, `pearsons_contingency_coefficient`, `theils_u`, `tschuprows_t`) raise a `RuntimeError` during confusion matrix calculation when categorical inputs contain non-zero-based or non-contiguous category labels (e.g., labels `[1, 2]` or `[5, 6]`).\n\n### To Reproduce\n\n<details>\n  <summary>Code sample</summary>\n\n```python\nimport torch\nfrom torchmetrics.functional.nominal import cramers_v\n\npreds = torch.tensor([5, 6, 5, 6, 5, 6, 5, 6])\ntarget = torch.tensor([5, 6, 5, 5, 6, 6, 5, 6])\n\n# Raises RuntimeError: shape '[2, 2]' is invalid for input of size 19\ncramers_v(preds, target)\n```\n\n</details>\n\n<details>\n  <summary>Environment</summary>\n\n- TorchMetrics version: 1.9.0 (latest master)\n- Python & PyTorch Version: Python 3.10+, PyTorch 2.x\n- Any other relevant information such as OS: All platforms (Linux, macOS, Windows)\n\n</details>\n\n### Additional context\n\nThe functional API infers `num_classes = len(torch.cat([preds, target]).unique())` but passes the unmapped raw values to `_multiclass_confusion_matrix_update`, which expects values strictly in `[0, num_classes - 1]`. Any values outside this range cause invalid bin indexing and reshape failures. Additionally, `_compute_chi_squared` performs in-place float addition on integer `confmat` tensors, causing type cast issues. Remapping categorical labels to contiguous 0-based indices before updating the confusion matrix resolves this issue.",
+    "comments": [
+      {
+        "author": "user-19",
+        "body": "I'd like to take this one.\n\nPlan: remap the categorical labels to contiguous 0-based indices in `_nominal_input_validation`/the shared preprocessing path before the confusion matrix update, so `num_classes` and the bin indices agree, and fix the in-place float accumulation on the integer `confmat` in `_compute_chi_squared` by not mutating an integer tensor in place.\n\nI'll add regression tests covering non-zero-based labels (e.g. `[5, 6]`), non-contiguous labels (e.g. `[0, 2, 7]`), and negative labels across all four functional metrics (`cramers_v`, `pearsons_contingency_coefficient`, `theils_u`, `tschuprows_t`), and verify the values match the current behaviour for already-0-based inputs so nothing regresses.\n\nWill confirm whether the class-based (module) versions share the same path and need the same treatment.\n"
+      }
+    ]
+  },
+  "3084": {
+    "number": 3084,
+    "title": "Request metrics for time series forecasting.",
+    "state": "open",
+    "body": "## 🚀 Feature\n\nImplement time series forecasting evaluation metrics (e.g. SoftDTW) \n\n### Motivation\n\nCurrent time series evaluation relies primarily on point-wise metrics (MAE, RMSE) which don't capture temporal alignment quality. Dynamic Time Warping (DTW) based metrics better assess forecast shape accuracy but aren't differentiable. SoftDTW (Cuturi & Blondel 2017) provides a differentiable alternative - implementing these would enable better optimization and evaluation for neural forecasting models.\n\n### Pitch\n\n1. Add SoftDTW and related time series metrics (`soft_dtw_loss`, etc)\n2. Include gradient-computation support for training\n3. Add benchmark comparison against traditional metrics\n4. Document usage examples for both evaluation and training\n\n### Alternatives\n\n- [tslearn](https://tslearn.readthedocs.io/en/stable/index.html), which seems to be unmaintained.\n\n### Additional context\n\nN/A\n",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "@user-20 good suggestions, would you be interested in contributing these metrics? 🐰 "
+      },
+      {
+        "author": "user-21",
+        "body": "@maintainer-1 I can give it a shot if it’s still open."
+      }
+    ]
+  },
+  "1158": {
+    "number": 1158,
+    "title": "Support sequence tagging evaluation metrics (NLP)",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nSupport for sequence tagging evaluation metrics _à la_ [`seqeval`](https://github.com/chakki-works/seqeval). That is, support the evaluation of the performance of chunking tasks such as named-entity recognition, part-of-speech tagging, semantic role labeling and so on.",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "cc @user-23 opinion on this?"
+      },
+      {
+        "author": "user-23",
+        "body": "I'm not so familiar with this kind of metrics.. How much do these metrics differ from standard classification ones? :] @user-22 "
+      },
+      {
+        "author": "user-22",
+        "body": "Hi @user-23, \r\n\r\nI think it's not much different. The convenience of having sequence-level metrics already available is that \r\n\r\n- they can be fed sequences directly (without manual iteration)\r\n- can implement different evaluation \"policies\": \"strict\" vs non strict. For example\r\n```\r\npred: [A, A, B]\r\ntrue: [A, B, B]\r\n```\r\ncan be considered partially correct or incorrect. This, of course, has an effect on how results are aggregated. An practical example in the [README.md](https://github.com/chakki-works/seqeval). \r\n\r\n- it can be easier to enforce particular encodings for the NER or POS tags (for example)\r\n- last but not least, it would be nice to have it in torchmetrics for consistency (i.e., no need to resort to other libraries/frameworks)"
+      },
+      {
+        "author": "user-23",
+        "body": "Hi @user-22, I get the motivation and think this might be a nice contribution to `torchmetrics`. 👍 \r\n\r\nAs these metrics will be very likely inherited from the classification ones, I'd just wait a bit with this addition for the finalization of the classification refactor currently ongoing #1001 :]"
+      },
+      {
+        "author": "user-23",
+        "body": "Hi @user-22 -- I think I should be able to find some time in the near future to have a look at this class of metrics. However, I'm not fully familiar with the current state of tagging metrics. Do you think it will make more sense if our public API will accept something like `Sequence[Sequence[str]`, or it's better to use `torch.Tensor` here? (I think `transformers` models tend to output tensors, so it would make sense as well). Also, we can support both options and make sure everything is converted to tensors internally (considering this won't be too much confusing at our public api). What do you think? :]\r\ncc: @maintainer-1 @maintainer-2 "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "I think it would be good to explore this direction; also we can set a quick call with @user-22 to get more context, and maybe he could give us some intro... :rabbit: \r\n"
+      },
+      {
+        "author": "user-24",
+        "body": "I implemented custom Seqeval metric https://github.com/user-24/seqeval_torchmetrics"
+      }
+    ]
+  },
+  "1483": {
+    "number": 1483,
+    "title": "Supporting advanced metrics for image generation",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nProposal to include advanced metrics for image generation that helps to evaluate related models more completely. By completeness, I mean the following factors (as laid out in [here](https://arxiv.org/pdf/2103.01209.pdf)):\r\n\r\n* Transparency and compositionality \r\n* Disentanglement\r\n* Image diversity\r\n\r\n### Motivation\r\n\r\nImage generation models often only use FID, IS, and KID for evaluating quality. While this has been helpful but it has shortcomings: \r\n\r\n* FID, KID, IS tend to work better for class-conditional generation (especially where there's an alignment between classes during training the generative model and the classes on which the underlying Inception model was pre-trained) \r\n* Therefore, these metrics might not present a complete picture of the evaluation, especially when the generation is unconditional or use free-from natural language queries (Stable Diffusion, for example).\r\n\r\n### Pitch\r\n\r\nTherefore, it might be helpful to approach the evaluation from many different aspects as laid out above. Here are some snapshots for each of those aspects:\r\n\r\n#### Image diversity\r\n \r\n<img width=\"484\" alt=\"image\" src=\"https://user-images.githubusercontent.com/22957388/216923254-c170eebe-597e-4643-ae63-c2aa7aa9c5a8.png\">\r\n\r\n#### Disentanglement \r\n\r\n<img width=\"512\" alt=\"image\" src=\"https://user-images.githubusercontent.com/22957388/216923777-02495aba-5fbc-481b-bf4c-54061a2c8204.png\">\r\n\r\nI am currently unsure how to best support these as far as API design is concerned. \r\n\r\n### Alternatives\r\n\r\n<!-- A clear and concise description of any alternative solutions or features you've considered, if any. -->\r\n\r\n### Additional context\r\n\r\n<!-- Add any other context or screenshots about the feature request here. -->\r\n",
+    "comments": []
+  },
+  "2477": {
+    "number": 2477,
+    "title": "No backend type associated with device type cpu",
+    "state": "open",
+    "body": "## 🐛 Bug\r\nMetrics (predefined in library and custom implementations) using concatenation `dist_reduce_fx=\"cat\"` and CPU computation `compute_on_cpu=True` raise an error when training in multiple GPUs (`ddp`). The concrete error is `RuntimeError: No backend type associated with device type cpu`. \r\n\r\n### To Reproduce\r\n\r\n<!-- If you have a code sample, error messages, stack traces, please provide it here as well -->\r\n\r\n**Code sample:**\r\n\r\n```py\r\nimport torch\r\nfrom lightning import Trainer, LightningModule\r\nfrom torch.utils.data import DataLoader\r\nfrom torchmetrics import AUROC\r\n\r\n\r\nclass LitModel(LightningModule):\r\n    def __init__(self) -> None:\r\n        super().__init__()\r\n        self.layer = torch.nn.Linear(1, 1)\r\n        self.auroc = AUROC(task=\"binary\", compute_on_cpu=True)\r\n\r\n    def training_step(self, x):\r\n        preds = torch.tensor([0.13, 0.26, 0.08, 0.19, 0.34]).cuda()\r\n        target = torch.tensor([0, 0, 1, 1, 1]).cuda()\r\n        self.auroc(preds, target)\r\n        self.log(\"train_auroc\", self.auroc, on_step=True, on_epoch=True)\r\n        loss = self.layer(x).mean()\r\n        return loss\r\n\r\n    def configure_optimizers(self):\r\n        return torch.optim.SGD(self.parameters(), lr=0.1)\r\n\r\n    def train_dataloader(self):\r\n        return DataLoader(torch.randn(32, 1), batch_size=1)\r\n```\r\n\r\n**Stacktrace**\r\n\r\n```\r\nTraceback (most recent call last):\r\n  File \"/home/ruben/Documents/PhD/Research/Topological Deep Learning/lightning/pythonProject/main.py\", line 35, in <module>\r\n    main()\r\n  File \"/home/ruben/Documents/PhD/Research/Topological Deep Learning/lightning/pythonProject/main.py\", line 31, in main\r\n    trainer.fit(model)\r\n  File \"/home/ruben/miniconda3/envs/sct/lib/python3.11/site-packages/lightning/pytorch/trainer/trainer.py\", line 544, in fit\r\n    call._call_and_handle_interrupt(\r\n  File \"/home/ruben/miniconda3/envs/sct/lib/python3.11/site-packages/lightning/pytorch/trainer/call.py\", line 43, in _call_and_handle_interrupt\r\n    return trainer.strategy.launcher.launch(trainer_fn, *args, trainer=trainer, **kwargs)\r\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\r\n  File \"/home/ruben/miniconda3/envs/sct/lib/python3.11/site-packages/lightning/pytorch/strategies/launchers/subprocess_script.py\", line 105, in launch\r\n    return function(*args, **kwargs)\r\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\r\n  File \"/home/ruben/miniconda3/envs/sct/lib/python3.11/site-packages/lightning/pytorch/trainer/trainer.py\", line 580, in _fit_impl\r\n    self._run(model, ckpt_path=ckpt_path)\r\n  File \"/home/ruben/miniconda3/envs/sct/lib/python3.11/site-packages/lightning/pytorch/trainer/trainer.py\", line 987, in _run\r\n    results = self._run_stage()\r\n              ^^^^^^^^^^^^^^^^^\r\n  File \"/home/ruben/miniconda3/envs/sct/lib/python3.11/site-packages/lightning/pytorch/trainer/trainer.py\", line 1033, in _run_stage\r\n    self.fit_loop.run()\r\n  File \"/home/ruben/miniconda3/envs/sct/lib/python3.11/site-packages/lightning/pytorch/loops/fit_",
+    "comments": [
+      {
+        "author": "user-36",
+        "body": "Any updates? Same issue"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-45 or @user-5 mind have look, pls ^^"
+      },
+      {
+        "author": "user-5",
+        "body": "@maintainer-1 This is outdated package issue, with the latest lightning and torchmetrics it doesn't reproduce. I tried with `lightning==2.1.0` and got this error however with latest lightning and torchmetrics(lightning package was the issue here) this bug is gone so we can close this issue"
+      },
+      {
+        "author": "user-37",
+        "body": "@user-5 \nFacing same issue\nI'm using `torchmetrics==1.7.3`\nAnd getting error `No backend type associated with device type cpu`\nWhen I'm trying to use `MeanAveragePrecision` from `torchmetrics.detection.mean_ap` in DDP training setup "
+      },
+      {
+        "author": "user-5",
+        "body": "Which lightning version are you using? I suggest to update it to the latest version"
+      },
+      {
+        "author": "user-37",
+        "body": "I'm not using lightning at all. Just `torchmetrics` and `torch`"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "> I'm not using lightning at all. Just `torchmetrics` and `torch`\n\n@user-37 could you pls share your sample code to reproduce?"
+      },
+      {
+        "author": "user-5",
+        "body": "And the `pip list` as well please. "
+      },
+      {
+        "author": "user-38",
+        "body": "I'm getting the same error. Using `Lightning` and `torchmetric` with:\n```\naccelerator: auto \ndevices: 1  \nstrategy: ddp_find_unused_parameters_true\n```\n\nHere's the `pip list`:\n\n```\npytorchvideo                             0.1.5\ntorch                                    2.7.1+cu118\ntorchmetrics                             1.7.3\ntorchvision                              0.22.1+cu118\nlightning                                2.5.2\nlightning-utilities                      0.14.3\n\n```"
+      },
+      {
+        "author": "user-37",
+        "body": "@maintainer-1 @user-26 \nSorry for delay with response\n\n\n### my pip list \nBy running: `pip list | grep -e torch -e ligthning`\nI got:\n```\ntorch                              2.6.0\ntorchmetrics                       1.7.3\ntorchvision                        0.21.0\n```\n\n### 1. Here's code to reproduce:\n```py\nimport os\n\nimport torch\nimport torch.distributed as dist\nfrom torchmetrics.detection.mean_ap import MeanAveragePrecision\n\n# ===============================================================================\n# DDP Boilerplate Setup\n# ===============================================================================\n\n\ndef ddp_setup():\n    \"\"\"\n    Initializes the DDP process group and sets the device for the current process.\n    \"\"\"\n    dist.init_process_group(backend=\"nccl\")\n    # torchrun sets the LOCAL_RANK environment variable.\n    local_rank = int(os.environ[\"LOCAL_RANK\"])\n    torch.cuda.set_device(local_rank)\n    print(f\"Rank {dist.get_rank()}: Initialized on device: cuda:{local_rank}\")\n   "
+      }
+    ]
+  },
+  "2320": {
+    "number": 2320,
+    "title": "Inconsistent default values for `average` argument in classification metrics",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nWhen instantiating the multiclass (or multilabel) accuracy metric through the `Accuracy` wrapper class (legacy), the default value for `average` is `micro`. When instantiating directly through `MulticlassAccuracy` (new way since 0.11 I believe), the default value is `macro`. This is inconsistent, which can lead to very unexpected results.\r\n\r\nThe same is true for all metrics that are subclasses of `MulticlassStatScores`, `BinaryStatScores` or `MultilabelStatScores` as well as their respective functional interfaces.\r\n\r\n### To Reproduce\r\n\r\n1. Instantiate the metrics directly as well as through the wrapper.\r\n2. Compare results.\r\n\r\n<details>\r\n  <summary>Code sample</summary>\r\n\r\n```\r\nclasses = {0: \"A\", 1: \"B\", 2: \"C\"}\r\nnum_classes = len(classes)\r\nnum_samples = 10\r\nmulticlass_preds = torch.randn(num_samples, num_classes)\r\nmulticlass_targets = torch.randint(0, num_classes, (num_samples,))\r\n\r\nlegacy_mc_acc = Accuracy(\"multiclass\", num_classes)\r\nnew_mc_acc = MulticlassAccuracy(num_classes)\r\n\r\nlegacy_result = legacy_mc_acc(multiclass_preds, multiclass_targets)\r\nnew_result = new_mc_acc(multiclass_preds, multiclass_targets)\r\n\r\nassert  new_result == legacy_result\r\n```\r\n\r\n</details>\r\n\r\n### Expected behavior\r\n\r\nConsistency between the different interfaces.\r\n\r\n### Environment\r\n\r\n- TorchMetrics version (and how you installed TM, e.g. `conda`, `pip`, build from source): >=0.11 (1.3 in my case)\r\n- Python & PyTorch Version (e.g., 1.0): irrelevant\r\n- Any other relevant information such as OS (e.g., Linux): irrelevant\r\n\r\n### Additional context\r\nI would argue that in the case of accuracy the default being `macro` in the task-specific classes is not only inconsistent with legacy but actually wrong. The common deinition of accuracy is \r\n\r\n$$ \\mathrm{Acc}(\\text{preds},\\text{targets}) = \\frac{1}{N}\\sum_{i = 1}^{N} \\left[ \\begin{cases}\r\n1 & \\text{if preds}_i = \\text{targets}_i \\\\\r\n0 & \\text{otherwise}\r\n\\end{cases} \\right] $$\r\n\r\nwhich is how accuracy is computed when setting `average=\"micro\"`.\r\n\r\nSetting `average=\"macro\"` can still be useful, as it is less prone to class imbalance. However, I think TorchMetrics should adhere to common definitions with the default settings, and would therefore argue for making `micro` the default.\r\n\r\nThe same is kind of true for precision and recall, which are also commonly defined as micro averages, if they are defined globally at all. Usually we encounter recall and precision as class-wise metrics.",
+    "comments": [
+      {
+        "author": "user-40",
+        "body": "To prevent potential confusion and misinterpretation of accuracy results, I strongly ask the torchmetrics package authors to implement a clear warning message when users utilize its accuracy functions or classes. The current lack of such a warning, coupled with the pre-set default behavior, can lead users to unknowingly conflate \"macro\" and \"micro\" averaging, as they may not even be aware of the existence of these options. This oversight can result in incorrect decision-making based on a misunderstanding of the accuracy metric being used."
+      },
+      {
+        "author": "user-41",
+        "body": "This just bit me, and wasted a substantial amount of time!"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@maintainer-2 thoughts? 😺 "
+      },
+      {
+        "author": "user-10",
+        "body": "+1, this confused a lot of my students. I grepped the whole library and found:\n```console\n> git grep '\\baverage: ' | wc -l\n     133\n> git grep '\\baverage: .* = \"macro\",$' | wc -l\n      63\n> git grep '\\baverage: .* = \"micro\",$' | wc -l\n      24\n> git grep '\\baverage: .* = None,$' | wc -l\n      17\n```\nSo most of the time we default to macro, but there are plenty of cases where we default to micro or None or have no default (not just accuracy).\n\nSimilarly, there are a few places where the type hints could be made more consistent:\n```console\n> git grep '\\baverage: ' | wc -l\n     133\n> git grep '\\baverage: Optional\\[Literal' | wc -l\n     108\n> git grep '\\baverage: Literal' | wc -l\n       7\n> git grep '\\baverage: Optional\\[str' | wc -l\n       1\n> git grep '\\baverage: str' | wc -l\n       7\n```\nI would be happy to volunteer for this effort, but will first wait for guidance from above on whether we want break things to achieve consistency and what we want to default to."
+      }
+    ]
+  },
+  "2464": {
+    "number": 2464,
+    "title": "Contribution: Add new audio/speech metrics for generative audio",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nAdd new audio metrics for generative audio processing\r\n\r\n### Motivation\r\n\r\nThe evaluation of speech processing  (denoising, dereverberation and in general enhancement) highly depends on audio metrics. Nowadays, generative AI is heavily used for speech/audio enhancement, becoming the new SOTA. However, the performance evaluation of speech enhancement with generative AI needs of **reference/target less** metrics that highly correlate with MOS (Mean Opinion Score). Currently implemented metrics do not allow for the correct assessment of generative speech enhancement algorithms (e.g. those based on diffusion or GANs) because they heavily rely on reference/target audio.\r\n\r\nNewer metrics, such as DNSMOS, NISQA, CDPAM, WARPQ allow for a fundamented assessment of the performance of such algorithms (they are either reference-less or designed for generative methods). In addition, they have shown outperformance over traditional metrics (PESQ, STOI...) regarding MOS correlation.\r\n\r\n### Pitch\r\n\r\nIt would be great to have these metrics included, as they are currently available in scattered repositories\r\n[WARPQ](https://github.com/wjassim/WARP-Q)\r\n[DNSMOS](https://github.com/microsoft/DNS-Challenge/tree/master/DNSMOS)\r\n[CDPAM](https://github.com/pranaymanocha/PerceptualAudio/tree/master/cdpam)\r\n[NISQA](https://github.com/gabrielmittag/NISQA)\r\n\r\n### Alternatives\r\n\r\nI cannot think of any \r\n",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Hi @user-42,\r\nThanks for wanting to contribute to torchmetrics. Feel free to contribute any metric within the audio domain that you can :)\r\nIn general we are looking to add any metric that is used by researches or companies on a regular basis.\r\nWe welcome both parts of a implementation and full implementations and we will of cause help you with specific implementation details to get the metric into the torchmetrics library."
+      },
+      {
+        "author": "user-42",
+        "body": "Hi @maintainer-2 \r\n\r\nCool. Should I just work on my branch and go for pull request afterwards?"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "> Cool. Should I just work on my branch and go for pull request afterwards?\r\n\r\nyes, as soon you feel you want to share your work or need some guidance, please open a draft PR :)"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "hello @user-42 still interested in contributing? do you need some more guidance?"
+      },
+      {
+        "author": "user-42",
+        "body": "Hi yes, I would like to. Actually I have what I think it is a functional WARPQ in my local torchmetrics, but I would need a bit more guidance yes :)"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "> but I would need a bit more guidance yes :)\r\n\r\nsure, just ping me on slack or Discord :flamingo: "
+      }
+    ]
+  },
+  "854": {
+    "number": 854,
+    "title": "Add `DepthScore`",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nAdd `DepthScore` \r\n\r\n### Sources:\r\n- Paper: [A Pseudo-Metric between Probability Distributions based on Depth-Trimmed Regions\r\n](https://arxiv.org/pdf/2103.12711.pdf)\r\n- [Repo](https://github.com/PierreColombo/nlg_eval_via_simi_measures/)\r\n\r\n### Motivation\r\n\r\nThe recent NLG metrics are more often based on BERT (or related) embeddings. As such, I believe, we should also start adding such metrics into `TorchMetrics` with an extra dependency on `transformers` if a user wants to use any of these metrics. The `DepthScore` metric is from a family of untrained metrics (i.e. the model is not fine-tuned on any specific task) so it should be easier for us to begin with it.\r\n\r\n### Abstract:\r\nThe design of a metric between probability distributions is a longstanding problem motivated by numerous applications in Machine Learning. Focusing on continuous probability distributions on the Euclidean space ℝ^d, we introduce a novel pseudo-metric between probability distributions by leveraging the extension of univariate quantiles to multivariate spaces. Data depth is a nonparametric statistical tool that measures the centrality of any element x∈ℝ^d with respect to (w.r.t.) a probability distribution or a data set. It is a natural median-oriented extension of the cumulative distribution function (cdf) to the multivariate case. Thus, its upper-level sets -- the depth-trimmed regions -- give rise to a definition of multivariate quantiles. The new pseudo-metric relies on the average of the Hausdorff distance between the depth-based quantile regions w.r.t. each distribution. Its good behavior w.r.t. major transformation groups, as well as its ability to factor out translations, are depicted. Robustness, an appealing feature of this pseudo-metric, is studied through the finite sample breakdown point. Moreover, we propose an efficient approximation method with linear time complexity w.r.t. the size of the data set and its dimension. The quality of this approximation as well as the performance of the proposed approach are illustrated in numerical experiments.",
+    "comments": [
+      {
+        "author": "user-43",
+        "body": "Hi. Can I work on this?"
+      },
+      {
+        "author": "user-23",
+        "body": "Hi @user-43, yes you can take this one! But please give us some extra time to finish #849 first as there will be some common dependencies. I'll ping you once #849 is ready."
+      },
+      {
+        "author": "user-43",
+        "body": "Sure!"
+      },
+      {
+        "author": "user-23",
+        "body": "Hi @user-43 - I'd like to apologize for my delay here. I've been quite busy and unable to complete my part yet. Gonna try to proceed this weekend as much as possible."
+      },
+      {
+        "author": "user-43",
+        "body": "> Hi @user-43 - I'd like to apologize for my delay here. I've been quite busy and unable to complete my part yet. Gonna try to proceed this weekend as much as possible.\r\n\r\nThat's totally fine! @user-23 :]"
+      },
+      {
+        "author": "user-23",
+        "body": "Hello @user-43 , very sorry for my really huge delay, last months have been pretty turbulent for me. Let me know if you're still interested in contributing this metric to `torchmetrics`. If so, I believe you can checkout branch [`metric/InfoLM`](https://github.com/Lightning-AI/metrics/tree/metric/InfoLM) and start working on `DepthScore` metric implementation. One thing is that the reference metrics are still not possible to install as a package. We are thus enforced to hardcode the results in our tests. If you want to generate test results for your metric, I really recommend you to use my repo [infolm-docker](https://github.com/user-23/infolm-docker). Would be also happy if you send a PR there to contain all reference results on one place."
+      },
+      {
+        "author": "user-43",
+        "body": "> Hello @user-43 , very sorry for my really huge delay, last months have been pretty turbulent for me. Let me know if you're still interested in contributing this metric to `torchmetrics`. If so, I believe you can checkout branch [`metric/InfoLM`](https://github.com/Lightning-AI/metrics/tree/metric/InfoLM) and start working on `DepthScore` metric implementation. One thing is that the reference metrics are still not possible to install as a package. We are thus enforced to hardcode the results in our tests. If you want to generate test results for your metric, I really recommend you to use my repo [infolm-docker](https://github.com/user-23/infolm-docker). Would be also happy if you send a PR there to contain all reference results on one place.\r\n\r\n@user-23 will start working on this."
+      },
+      {
+        "author": "user-23",
+        "body": "@user-43 Great! Definitely let me know if you need any help :]"
+      },
+      {
+        "author": "user-23",
+        "body": "Hello @user-43, any updates here? O:]\r\n"
+      },
+      {
+        "author": "user-44",
+        "body": "@user-23 @user-46 I've started work on this issue, kindly assign me this."
+      }
+    ]
+  }
+}

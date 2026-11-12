@@ -32,8 +32,7 @@ const AGGREGATE_FILENAME = "summary.jsonl";
 // keeps the hook from acting on a sentinel holding anything else.
 const RUN_DIR_PARTS = [".reports", "audit"];
 // Enforcement window measured from the sentinel's mtime (see KNOWN LIMITATION).
-// 4h, matching the skill's own preflight-cache TTL (SKILL.md `preflight_ok`,
-// 14400s) — a full sweep plus a 5-pass fix-convergence loop legitimately runs
+// 4h — a full sweep plus a 5-pass fix-convergence loop legitimately runs
 // far longer than a single-PR review, so oss:review's 2h would under-cover it.
 const STALE_MS = 4 * 60 * 60 * 1000;
 // Verbatim option labels the follow-up gate is required to use (SKILL.md
@@ -120,11 +119,20 @@ function resolveRunDir(value, cwd) {
  */
 function activeRunDir(sentinelPath, cwd, now) {
   let content;
+  let fd;
   try {
-    if (now - fs.statSync(sentinelPath).mtimeMs > STALE_MS) return null;
-    content = fs.readFileSync(sentinelPath, "utf8");
+    const stat = fs.lstatSync(sentinelPath);
+    if (!stat.isFile() || stat.nlink !== 1 || (typeof process.getuid === "function" && stat.uid !== process.getuid()))
+      return null;
+    if (now - stat.mtimeMs > STALE_MS || stat.mtimeMs > now) return null;
+    fd = fs.openSync(sentinelPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const opened = fs.fstatSync(fd);
+    if (opened.dev !== stat.dev || opened.ino !== stat.ino) return null;
+    content = fs.readFileSync(fd, "utf8");
   } catch (_) {
     return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
   const runDir = resolveRunDir(content.split("\n")[0].trim(), cwd);
   if (!runDir) return null;

@@ -442,25 +442,24 @@ class TestDeliveryViaQuestion:
         assert _call("questionDeliveryProblem", str(header_report), _asked(_summary(header_report) + suffix)) is None
 
     def test_stale_summary_is_denied_and_names_the_summary_fix(self, header_report: Path) -> None:
-        """A stale outcome is denied with the required value and first-question remedy.
+        """A stale outcome is denied with a first-question remedy without echoing the saved value.
 
-        The summary claims FAIL while the file says PASS; the remedy names the expected value and where it belongs, and
-        the corrected summary then passes.
+        The summary claims FAIL while the file says PASS; the remedy names the required headline evidence and its
+        location. The corrected summary then passes.
         """
         problem = _call("questionDeliveryProblem", str(header_report), _asked(_summary(header_report, outcome="FAIL")))
-        assert "Outcome: PASS" in problem
+        assert "include each report headline value verbatim" in problem
         assert "first question's `question` text" in problem
         assert _call("questionDeliveryProblem", str(header_report), _asked(_summary(header_report))) is None
 
     def test_call_without_summary_names_fixed_lines(self, header_report: Path) -> None:
         """Missing summary evidence yields a bounded, concrete remedy.
 
-        A question carrying no summary at all is told the exact fixed lines to add: the headline values and the path.
+        A question carrying no summary is told to copy the headline values from the report and name its path.
         """
         problem = _call("questionDeliveryProblem", str(header_report), _question(None))
         assert all(
-            fragment in problem
-            for fragment in ("Title: Current review", "Outcome: PASS", str(header_report), "fixed lines")
+            fragment in problem for fragment in ("report headline value verbatim", str(header_report), "fixed lines")
         )
 
     def test_reply_text_table_is_denied_and_the_summary_fix_passes(
@@ -640,14 +639,14 @@ class TestInlineMarkdownCells:
         ("mismatched", "named"),
         [
             pytest.param(
-                _path_table(outcome="**FAIL**"), "`Outcome` reads `**FAIL**` but the file has `PASS`", id="value"
+                _path_table(outcome="**FAIL**"), "header field 2 has a different value from the report", id="value"
             ),
             pytest.param(
                 "| Field | Value |\n| --- | --- |\n| Title | Current review |\n| Outcome | PASS |",
-                "no `Path` row",
+                "no row for header field 3",
                 id="row",
             ),
-            pytest.param(_path_table(path=".reports/x|report.md"), "the `Path` row splits into 3 cells", id="pipe"),
+            pytest.param(_path_table(path=".reports/x|report.md"), "header field 3 splits into 3 cells", id="pipe"),
         ],
     )
     def test_near_match_names_the_difference_and_the_corrected_retry_passes(
@@ -677,7 +676,7 @@ class TestInlineMarkdownCells:
 
         assert isinstance(problem, str)
         assert problem.startswith("current report header was not delivered; print every header field as a table")
-        assert "`Outcome` reads `FAIL` but the file has `PASS`" in problem
+        assert "header field 2 has a different value from the report" in problem
 
     def test_audit_near_match_names_the_missing_lines(self, audit_single: Path) -> None:
         """An Audit Report with a wrong total is named, instead of "no field holds it".
@@ -868,7 +867,9 @@ class TestNamedSummaryDelivery:
         ("question", "preview", "fragment"),
         [
             pytest.param("What next?", "{summary}", "name the report file", id="path-only-in-previews"),
-            pytest.param("Report: {report}", "Outcome: PASS", "Title: Current review", id="path-only-in-question"),
+            pytest.param(
+                "Report: {report}", "Outcome: PASS", "report headline value verbatim", id="path-only-in-question"
+            ),
             pytest.param(
                 "Title: Current review\nOutcome: PASS\nReport: {missing}",
                 "Outcome: PASS → {missing}",
@@ -890,10 +891,10 @@ class TestNamedSummaryDelivery:
             pytest.param(
                 "Title: Current review\nOutcome: FAIL\n→ {report}",
                 "{summary}",
-                "Outcome: PASS",
+                "report headline value verbatim",
                 id="summary-contradicts-file",
             ),
-            pytest.param("{report}", "{report}", "Title: Current review", id="path-without-summary"),
+            pytest.param("{report}", "{report}", "report headline value verbatim", id="path-without-summary"),
         ],
     )
     def test_incomplete_summary_is_denied(self, long_report: Path, question: str, preview: str, fragment: str) -> None:

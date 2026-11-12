@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 import dev_load_shared
+import dev_shared_resolve
 import pytest
 from dev_run_dir import write_sentinel
 
@@ -38,6 +39,7 @@ def _shared_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     shared = tmp_path / "warm" / "skills" / "_shared"
     shared.mkdir(parents=True)
     assert write_sentinel("dev-shared", str(shared)) is not None
+    monkeypatch.setattr(dev_load_shared, "resolve_shared_path", lambda: str(shared))
     return shared
 
 
@@ -69,19 +71,16 @@ class TestOutput:
 class TestResolution:
     """The directory follows the cold start's sentinel, falling back to a cold resolve only when it is unusable."""
 
-    def test_warm_sentinel_wins_over_cold_resolve(
+    def test_warm_sentinel_must_match_cold_resolve(
         self, shared: Path, cold: Path, capsysbinary: pytest.CaptureFixture[bytes]
     ) -> None:
-        """A migrated block reads the same directory as blocks that still hand ``$_DEV_SHARED`` to other tools.
-
-        Both tiers hold a ``doc.md``; the warm one must be the one printed.
-        """
+        """A stale existing-directory sentinel cannot override the currently selected install."""
         (shared / "doc.md").write_bytes(b"warm\n")
         (cold / "doc.md").write_bytes(b"cold\n")
 
         assert dev_load_shared.main(["doc.md"]) == 0
 
-        assert capsysbinary.readouterr().out == b"warm\n"
+        assert capsysbinary.readouterr().out == b"cold\n"
 
     def test_missing_sentinel_falls_back_to_cold_resolve(
         self, session_env: Path, cold: Path, capsysbinary: pytest.CaptureFixture[bytes]
@@ -125,11 +124,17 @@ class TestResolution:
     ) -> None:
         """Inside the develop source repository, with no sentinel or install, the directory is the literal fallback.
 
-        The cwd holds develop's own plugin manifest, which is what marks it as the genuine source tree.
+        The cwd plugin root matches the executing resolver and holds develop's own manifest.
         """
         manifest = session_env / "plugins" / "cc_develop" / ".claude-plugin" / "plugin.json"
         manifest.parent.mkdir(parents=True)
         manifest.write_text('{"name": "develop"}', encoding="utf-8")
+        script = session_env / "plugins/cc_develop/bin/resolve_plugin_root.py"
+        script.parent.mkdir()
+        script.write_text("# resolver\n", encoding="utf-8")
+        monkeypatch.setattr(
+            dev_shared_resolve, "__file__", str(session_env / "plugins/cc_develop/bin/dev_shared_resolve.py")
+        )
         monkeypatch.chdir(session_env)
 
         assert dev_load_shared.shared_dir() == Path("plugins") / "cc_develop" / "skills" / "_shared"

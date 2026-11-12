@@ -12,6 +12,10 @@
 
 **Commit authorization — entire Step 8**: `COMMIT_MODE` from Step 3d governs all commits; never re-ask regardless of mode or item count. Multiple resolve flows per session each honor own Step 3d choice.
 
+**Repository hook approval — parent-owned, once per run before execution.** Commit permission does not approve repository hook code. Reuse this run's `$IMPL_DIR/approved-hooks.txt` if an earlier resolve step already showed the hooks and recorded the user's choice; never inherit an approval from an earlier run. If no choice is recorded, run `python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_commit_hooks.py"` from the checkout root, save its complete JSON output to `$IMPL_DIR/hooks-inspection.json`, and show the user its exact hook commands, file contents and configuration before the first execution. Identify PR-supplied hook/configuration changes explicitly. The parent calls `AskUserQuestion` with **Run these hooks** / **Keep hooks disabled**; approving commits or tests alone never approves PR-supplied hooks. Only **Run these hooks** permits the Write tool to save the displayed `sha256` as the sole line of `$IMPL_DIR/approved-hooks.txt`; otherwise write an empty file. Missing approval disables hooks through a temporary empty `core.hooksPath`. Never use `--no-verify`. Inspection failure keeps hooks disabled and is reported; never manufacture a digest. Before each commit, reload the recorded digest into `RESOLVE_APPROVED_HOOKS`, clearing any inherited value first. A changed fingerprint requires the parent to show the new commands/configuration and obtain a new approval before running them; specialists report the mismatch to the parent and never ask or approve on its behalf.
+
+**Formatter recovery — all resolve commit helpers.** Approved hooks that reject a commit after changing only selected paths cause the helper to restage only those changed paths and retry once. A second failure, changes outside selection (including new untracked files or deletions), or a rejection without formatter edits is reported without further retry. Preserve the tree and failure evidence; keep the item incomplete. Never improvise another commit or bypass the hook. The same recovery applies to C1, specialist, grouped, bulk and lint commits.
+
 Determine implementation agent, set up file-handoff dir, and load the Step 3d commit mode before the loop:
 
 `bridge:implement` is a Skill routing marker, never a value passed to `Agent(subagent_type=)`, whether selected by default or explicitly with `--agent bridge:implement`. C1 dispatches it as `Skill(skill="bridge:implement")` for C1 candidates. Items that fall through C1 use the `change` → specialist table below, whose values are real subagent types. Other explicit `--agent <name>` values override that table and reach `Agent(subagent_type=)`.
@@ -56,6 +60,7 @@ CHALLENGE_LOG="$IMPL_DIR/challenge-log.txt"; [ -e "$CHALLENGE_LOG" ] || : > "$CH
 **Concurrency guard — mutex + HEAD fingerprint** (Phase 2 holds worktrees open for the slowest specialist's whole runtime — minutes — so an external write to the branch, or a second resolve run, is far likelier to land mid-flight than under the old per-item design). The lock path is deterministic (recompute anytime from the git-common-dir + branch); the base SHA is a point-in-time value, so persist it to a tmpfile — shell vars don't survive between Step 8's separate bash calls:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
 IFS= read -r PR_REF < "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}" 2>/dev/null || PR_REF=""
@@ -69,7 +74,7 @@ _GITDIR=$(git rev-parse --git-common-dir 2>/dev/null || echo ".git")  # timeout:
 _BRANCH=$(git symbolic-ref --quiet HEAD 2>/dev/null) || _BRANCH="detached"  # timeout: 3000
 _BRANCH_KEY=$(printf '%s\n' "$_BRANCH" | git hash-object --stdin) || { echo "! BLOCKED — cannot derive branch mutex key"; exit 1; }  # timeout: 3000
 RESOLVE_LOCK="$_GITDIR/oss-resolve-${_BRANCH_KEY}.lock"  # shared across worktrees (git-common-dir)
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/heal_git_artifacts.py" locks --pattern 'oss-resolve-*.lock' --apply  # timeout: 30000
+python "$PLUGIN_ROOT/bin/heal_git_artifacts.py" locks --pattern 'oss-resolve-*.lock' --apply  # timeout: 30000
 if [ -f "$RESOLVE_LOCK" ]; then
     IFS=' ' read -r _ _ _HOLDER_CSID < "$RESOLVE_LOCK" 2>/dev/null || _HOLDER_CSID=""
     # same session = this orchestrator's own earlier run (BLOCKED exit, retry, resume): one session never runs two resolves at once, so its PID being alive proves nothing
@@ -159,10 +164,11 @@ echo full > "${TMPDIR:-/tmp}/resolve-change-scope-${CSID}"
 **Per action item** — loop over `SELECTED_ITEMS` in priority order. Read every selected item's full details once, from `$IMPL_DIR/action-items.jsonl` (written by Step 3b pr-intelligence subagent) — the authoritative source for `full_comment_text`, `file`, `line`, `change`, `severity`, `author`. The block prints one record per selected item, taking the ids from the persisted `selected-items.txt`, so it runs unedited:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/filter_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --ids-file "$IMPL_DIR/selected-items.txt" --hint "run the Step 8 prelude first"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/filter_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --ids-file "$IMPL_DIR/selected-items.txt" --hint "run the Step 8 prelude first"  # timeout: 5000
 ```
 
 Use `.full_comment_text` for `IMPL_PROMPT`, `.file`/`.line` for commit scope and blast-radius lookup, `.change`/`.severity` for effort classification and agent routing.
@@ -172,6 +178,7 @@ Use `.full_comment_text` for `IMPL_PROMPT`, `.file`/`.line` for commit scope and
 Group selected items by canonical module before querying: one `rdeps` answer per module per pre-loop, shared with every matching item. Read the **review pre-flight cache** first (materialized in SKILL.md Step 8; contract in the `bin/codemap_cache.py` module docstring). `codemap_cache.py read` validates index freshness; reuse requires an actual `rdeps` answer, including a valid empty caller list. Cache miss → one live query. Never use empty rendered text as a cache-miss signal. Reused hits retain their `delta.notes` marker for the existing health report.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/resolve-codemap-enabled-${CSID}" || CODEMAP_ENABLED="false"
 IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/resolve-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
@@ -186,7 +193,7 @@ BLAST_RADIUS_CONTEXT=""
 # index dir anchors at git root, not cwd; raw basename, no `tr -cd` — the scanner writes the name unsanitized, so stripping would seek a file it never wrote
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null); [ -n "$_ROOT" ] || _ROOT="$PWD"
 _IDX_FILE="${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}/$(basename "$_ROOT").json"
-_CACHE_BIN="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/codemap_cache.py"
+_CACHE_BIN="$PLUGIN_ROOT/bin/codemap_cache.py"
 if [ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py >/dev/null 2>&1 && [ -f "$IMPL_DIR/action-items.jsonl" ]; then
     echo "→ Codemap pre-scan — caller context for selected action items:"
     # file→module from the index's own `name` field (same source as §Structural prep, and as the cache keys). A sed transform names pkg/__init__.py `pkg.__init__` while codemap calls it `pkg` — every package-init item then missed its cache entry AND errored on the live query.
@@ -195,7 +202,7 @@ if [ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py >/dev/null 2>&1 && [
     # Native Windows jq must emit LF: CR would become part of shell IDs, paths, and module names.
     _ALL_PY=$(jq -b -r '.file // empty' "$IMPL_DIR/action-items.jsonl" | grep '\.py$' | paste -sd, -)  # timeout: 5000
     codemap-py query --timeout 15 $_CODEMAP_NO_HEAL central --top 100000 2>/dev/null \
-        | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_centrality.py" --files "$_ALL_PY" > "$_MODMAP" 2>/dev/null || : > "$_MODMAP"  # timeout: 20000
+        | python "$PLUGIN_ROOT/bin/resolve_centrality.py" --files "$_ALL_PY" > "$_MODMAP" 2>/dev/null || : > "$_MODMAP"  # timeout: 20000
     printf '%s\n' "$_MAP_STAMP" > "$IMPL_DIR/codemap-maps.stamp"
     _MODULE_ITEMS=$(jq -s --arg ids "$SELECTED_ITEMS" --slurpfile maps "$_MODMAP" '
         ($ids | split(" ")) as $selected |
@@ -245,12 +252,13 @@ Per item before impl dispatch, take its caller context from the scan's printed `
 **C1 evidence freshness — one batch check after the Step 7b join, before the first C1 brief.** Reuse the existing publication/head/candidate/evidence recheck helper against the checkout that C1 will edit, not a stale remote PR-head sentinel. This is one batch check, never a new reviewer wave or a repeated proof check for each item. Phase 1 retains its own recheck after C1 mutations for items that fall through. The brief compares its existing Git HEAD record with the consumed report head, disabling confirmation after any intervening commit or lost report without rerunning validation per item. Each C1 implementer still checks source/contract/environment applicability before reusing retained proof; a prior C1 edit or commit cannot confirm another item's changed claim.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing before C1 evidence recheck"; exit 1; }
 if [ -f "$REPORT_FILE" ]; then
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --recheck-verdicts --review-dir "$(dirname "$REPORT_FILE")" --current-head "" || exit 1  # timeout: 15000
+    python "$PLUGIN_ROOT/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --recheck-verdicts --review-dir "$(dirname "$REPORT_FILE")" --current-head "" || exit 1  # timeout: 15000
 else
     echo "→ no review report consumed — no C1 proof shortcuts"
 fi
@@ -269,6 +277,7 @@ For `bridge:implement`, Step 3d's recorded user decision naming the selected tas
 The item id is never typed into the block either: first create `$IMPL_DIR/c1-item-now.txt` with the Write tool, holding this C1 item's numeric id, then run the block. It consumes that file and records the id in `c1-item-current.txt`, which the commit fence below reads, so both blocks run unedited (blueprint-manifest hits in unattended Run 2) and the fence always acts on the item briefed last:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
@@ -292,7 +301,7 @@ printf '%s\n' \
 cat "$_C1_APPROVAL" >> "$_BRIEF" || { echo "! BLOCKED — recorded user approval unreadable"; exit 1; }
 # helper writes the item line (comment fenced untrusted); child has no network, so it also fetches any linked CodeQL alert here (free read)
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/fetch_alert_context.py" --items "$IMPL_DIR/action-items.jsonl" --id "$_BATCH_TAG" --pr "$_PR_NUMBER" --brief "$_BRIEF" || { echo "! BLOCKED — C1 item/alert context failed (item missing, unreadable, or with an unsafe file/line value); route this item through Phase 1+2"; exit 1; }  # timeout: 90000
+python "$PLUGIN_ROOT/bin/fetch_alert_context.py" --items "$IMPL_DIR/action-items.jsonl" --id "$_BATCH_TAG" --pr "$_PR_NUMBER" --brief "$_BRIEF" || { echo "! BLOCKED — C1 item/alert context failed (item missing, unreadable, or with an unsafe file/line value); route this item through Phase 1+2"; exit 1; }  # timeout: 90000
 IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
 _C1_REVIEW_HEAD=""
 if [ -f "$REPORT_FILE" ]; then
@@ -351,6 +360,7 @@ Parse the bridge public object, using the dispatched `_BATCH_TAG` as the item id
 **SECURITY — every field below comes from `jq`-extracting `action-items.jsonl`/`c1-reply-<batch_tag>.json`, never from the orchestrator retyping the reviewer's comment or Codex's reply text.** `$(jq ...)` captures a command's stdout as opaque data — bash never re-parses that value for further expansion — so this is safe regardless of what characters the source text contains; the vulnerability existed only when the untrusted text was typed as literal source in a quoted string, which this block never does:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
@@ -429,7 +439,9 @@ while IFS= read -r _ID; do
     while IFS= read -r _f; do [ -n "$_f" ] && _FILES+=("$_f"); done < <(jq -b -r '.[]' "$IMPL_DIR/c1-actual-files-${_BATCH_TAG}.json")
     [ "${#_FILES[@]}" -gt 0 ] || { echo "! BLOCKED — no Git changed files for item $_ID"; exit 1; }
     if [ "$COMMIT_MODE" = "each" ]; then
-        python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_action_item.py" --build --summary "$_SUMMARY" \
+        export RESOLVE_APPROVED_HOOKS=""
+        IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" 2>/dev/null || RESOLVE_APPROVED_HOOKS=""
+        python "$PLUGIN_ROOT/bin/commit_action_item.py" --build --summary "$_SUMMARY" \
             --item-id "$_ID" --author "$_AUTHOR" --pr "$PR_REF" --comment "$_COMMENT" \
             --challenge "evidence=VALID suggestion=VALID resolution=codex-direct" \
             --files "${_FILES[@]}" --codex || { echo "! BLOCKED — C1 per-item commit failed; no completed item record was written"; exit 1; }  # timeout: 10000
@@ -450,11 +462,11 @@ When `CODEX_AVAILABLE=false` OR the item is not a C1 candidate: skip Codex routi
 > **Agent budget** — Phase 1 spawns at least `Σ ceil(n_d/12)` challengers over the 3 challenger domains (≤3 spawns up to 12 items per domain; whole-file packing can add a chunk, never an item past 12); `comment-dispatch` batches at `BATCH_SIZE`.
 >
 > - Phase 1 chunks and Phase 2 sub-groups both pace in pool-capped waves (`dispatch-phase1.md`; Phase 2: §Spawn wave cap in `dispatch-phase2.md`); each arms its deadline per SKILL.md §Agent wait discipline.
-> - What always applies regardless of grouping: each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call.
+> - What always applies regardless of grouping: follow `agent-resolution.md` §Agent budget (loaded by SKILL.md).
 > - **The ~73-call inline threshold applies only to optional work-displacement spawns. Phase 1 challengers and Phase 2 worktree specialists always spawn regardless of size** when their phase has work; `--no-challenge` still skips Phase 1 and C1-completed items still bypass Phase 1/2.
 > - Merge a single-item group into the nearest domain rather than giving it its own agent.
 > - `DISPATCH_MODE` (Step 3d) never overrides that optional inline threshold and never suppresses the required Phase 1/2 spawns; it tunes their grouping and wave width.
-> - Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk — so every spawn prompt must require an envelope even on exhaustion (`partial: true` plus the items finished).
+> - Apply that shared budget's per-agent ceiling and exhaustion envelope to every spawn.
 
 ### Challenge-log append (shared — every Step 8 producer calls this block: C1 above, Phase 1 in `dispatch-phase1.md`)
 

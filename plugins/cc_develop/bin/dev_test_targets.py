@@ -34,7 +34,8 @@ Usage:
 
 ``--skill NAME`` replaces ``--pytest-cmd`` and ``--record-dir`` for the three loop skills: the script reads the
 ``dev-pytest-cmd`` sentinel (runner detection) and records into the directory the ``dev-NAME-dev-dir`` sentinel holds,
-else ``.developments`` — what each skill's shell block used to read and pass. An explicit ``--record-dir`` still wins.
+else ``.developments`` — what each skill's shell block used to read and pass. An explicit ``--record-dir`` must stay
+inside an active run directory, or ``.developments`` when no run is persisted.
 
 Outputs: One JSON object on stdout — ``changed``, ``tests``, ``sources`` (test → codemap/heuristic/changed),
 ``codemap`` usage counts, ``command`` (``$PYTEST_CMD`` plus the selected tests, or ``null``) and ``note``. With
@@ -83,6 +84,8 @@ from dev_run_dir import read_sentinel  # sibling bin/ script; session-scoped sen
 SKILLS = ("feature", "fix", "refactor")
 #: Run-record directory when a skill has no ``dev-<skill>-dev-dir`` sentinel — the shell blocks' old default.
 _DEFAULT_RECORD_DIR = ".developments"
+#: Largest test file scanned for imports; larger files still participate in name-based selection.
+_MAX_TEST_BYTES = 1_000_000
 
 #: Matches a Python test file name: test_*.py or *_test.py.
 _TEST_NAME = re.compile(r"(^test_.*|.*_test)\.py$")
@@ -238,6 +241,8 @@ def codemap_tests(module: str, repo: Path) -> CodemapAnswer | None:
     Returns:
         The parsed answer, or ``None`` when codemap is not installed, fails, or prints no usable payload.
     """
+    if module.startswith("-"):
+        return None
     executable = shutil.which("codemap-py")
     if executable is None:
         return None
@@ -263,10 +268,14 @@ class SuiteFiles:
         self._texts: dict[str, str] = {}
 
     def text(self, test: str) -> str:
-        """Return one test file's contents, empty when unreadable."""
+        """Return one complete test file's contents, empty when unreadable or over the size limit."""
         if test not in self._texts:
             try:
-                self._texts[test] = (self._repo / test).read_text(encoding="utf-8", errors="replace")
+                with (self._repo / test).open("rb") as handle:
+                    contents = handle.read(_MAX_TEST_BYTES + 1)
+                self._texts[test] = (
+                    contents.decode("utf-8", errors="replace") if len(contents) <= _MAX_TEST_BYTES else ""
+                )
             except OSError:
                 self._texts[test] = ""
         return self._texts[test]
@@ -287,7 +296,8 @@ def heuristic_tests(path: str, corpus: SuiteFiles) -> list[str]:
     leaf = dotted.rsplit(".", 1)[-1] if dotted else stem
     named = {f"test_{stem}.py", f"{stem}_test.py"}
     importer = re.compile(
-        rf"^\s*(from\s+{re.escape(dotted)}\b|import\s+{re.escape(dotted)}\b|from\s+\S+\s+import\s+.*\b{re.escape(leaf)}\b)",
+        rf"^[ \t]*(from[ \t]+{re.escape(dotted)}\b|import[ \t]+{re.escape(dotted)}\b|"
+        rf"from[ \t]+\S+[ \t]+import[ \t]+.*\b{re.escape(leaf)}\b)",
         re.MULTILINE,
     )
     return [
@@ -368,6 +378,8 @@ def record(record_dir: Path, payload: dict[str, object], exit_code: int | None, 
         exit_code: Runner exit code, or ``None`` when nothing ran.
         log: Full runner output file, or ``None`` when nothing ran.
     """
+    if not run_pytest_short.within_run_directory(str(record_dir / "test-targets.jsonl")):
+        raise ValueError("selection record resolves outside the active run directory")
     record_dir.mkdir(parents=True, exist_ok=True)
     entry = {
         "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -446,8 +458,8 @@ def _check_record(path: str, expected: int | None, save_failures: str | None) ->
         if expected not in (0, 1) or not isinstance(tests, list) or not tests or entry.get("exit") != expected:
             raise ValueError("last record is not a nonempty completed run with the expected exit")
         if save_failures:
-            if expected != 1 or not run_pytest_short.within_workspace(save_failures):
-                raise ValueError("saving failed targets requires exit 1 and a project or temp output path")
+            if expected != 1 or not run_pytest_short.within_run_directory(save_failures):
+                raise ValueError("saving failed targets requires exit 1 and an active run directory output path")
             nodes = _failed_nodes(entry["log"])
             Path(save_failures).write_text(json.dumps(nodes) + "\n", encoding="utf-8", newline="\n")
     except (OSError, ValueError, IndexError, KeyError, TypeError, AttributeError) as exc:
@@ -496,8 +508,8 @@ def _validate_inputs(args: argparse.Namespace) -> int:
     # Plan mode only prints the command, but a caller may run it verbatim, so it faces the runner's own allowlist.
     if not run_pytest_short.is_allowed_pytest_cmd(args.pytest_cmd.strip()):
         return _error(f"--pytest-cmd is not an allowlisted pytest runner: {args.pytest_cmd.strip()!r}")
-    if args.record_dir and not run_pytest_short.within_workspace(args.record_dir):
-        return _error("--record-dir resolves outside the project and temp directories")
+    if args.record_dir and not run_pytest_short.within_run_directory(args.record_dir):
+        return _error("--record-dir resolves outside the active run directory")
     values = [args.base] if args.base else list(args.files or [])
     if any(value.startswith("-") for value in values):
         return _error("a ref or file argument starts with '-'")
@@ -508,7 +520,11 @@ def _select_plan(args: argparse.Namespace, repo: Path, codemap_enabled: bool) ->
     """Reuse frozen bisect nodes or select tests for the current changed files."""
     if args.tests_from:
         return TargetPlan(changed=[], sources=dict.fromkeys(_read_targets(args.tests_from), "fixed"))
-    files = sorted({Path(f).as_posix() for f in args.files}) if args.files else changed_files(repo, args.base)
+    files = (
+        sorted({Path(f.replace("\\", "/")).as_posix() for f in args.files})
+        if args.files
+        else changed_files(repo, args.base)
+    )
     return plan_targeted(repo, files, codemap_enabled=codemap_enabled)
 
 

@@ -69,6 +69,12 @@ ROLE_IDS = (
 )
 #: Role runtime settings that card and manifest must agree on.
 RUNTIME_KEYS = ("model_reasoning_effort", "approval_policy", "sandbox_mode")
+#: Runtime settings supported by the shipped role execution boundary.
+RUNTIME_VALUES = {
+    "model_reasoning_effort": frozenset({"low", "medium", "high", "xhigh", "max"}),
+    "approval_policy": frozenset({"untrusted", "on-request", "on-failure"}),
+    "sandbox_mode": frozenset({"read-only", "workspace-write"}),
+}
 #: Exact key set allowed in a role card's frontmatter.
 FRONTMATTER_KEYS = frozenset({"role_id", "name", *RUNTIME_KEYS, "fallback_modes"})
 #: Exact top-level key set required in the plugin manifest (plus mcpServers when native questions are enabled).
@@ -315,7 +321,7 @@ def _contained_file(root_fd: int, relative: str, maximum: int, label: str) -> tu
             directory_fd = next_fd
         file_fd = os.open(
             path_parts[-1],
-            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
             dir_fd=directory_fd,
         )
         try:
@@ -479,6 +485,8 @@ def _validated_roles(
         if not isinstance(runtime, dict) or set(runtime) != expected_runtime:
             raise ValueError(f"role runtime mismatch: {role_id}")
         runtime_values = {key: _require_text(value, f"role runtime {key}: {role_id}") for key, value in runtime.items()}
+        if any(runtime_values[key] not in RUNTIME_VALUES[key] for key in RUNTIME_KEYS):
+            raise ValueError(f"invalid role runtime value: {role_id}")
         role_bytes = _require_file_record(root_fd, relative, records, MAX_ROLE_BYTES, f"role card: {role_id}")
         if digest_bytes(role_bytes) != role_hash:
             raise ValueError(f"role hash mismatch: {role_id}")

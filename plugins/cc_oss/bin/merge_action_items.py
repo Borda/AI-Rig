@@ -104,6 +104,7 @@ if _BIN_DIR not in sys.path:
 #: vocabulary ``FINDING_SEVERITIES`` and the row-set check ``findings_problem`` live in ``find_review_report``, so
 #: ``oss:review``'s producer gate refuses exactly the rows this merge would refuse. ``FINDING_FIELDS`` stays importable
 #: from this module, where it used to be defined.
+from _sentinel_io import write_private_text  # noqa: E402
 from find_review_report import (  # noqa: E402
     FINDING_FIELDS,  # noqa: F401 - re-exported: the merge's required-field list, now owned by find_review_report
     FINDING_SEVERITIES,
@@ -759,7 +760,7 @@ def _select_findings(args: argparse.Namespace) -> int:
         if mint_ids([str(chosen)]):
             return 1
     if args.persist_findings:
-        Path(args.persist_findings).write_text(f"{chosen.as_posix()}\n", encoding="utf-8", newline="\n")
+        write_private_text(Path(args.persist_findings), f"{chosen.as_posix()}\n")
     args.findings = str(chosen)
     args.accept_degraded = args.accept_degraded or _same_file(args.intake_accepted, report)
     return 0

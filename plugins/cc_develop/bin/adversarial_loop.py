@@ -63,7 +63,9 @@ The CLI prints one JSON object. A valid ledger yields its deterministic summary 
 yields ``status=invalid``, error names, and exit status one. ``--require-clean`` preserves the valid JSON summary but
 exits one unless its reason is ``clean`` and its schema is current. Optional progress cells split old and new open
 findings, with security and critical in separate columns and their distinct weights; no table is printed before a
-completed round. Action validation checks record consistency, not whether a claimed fix or cause is true. Only
+completed round. After the legend, reconciliation lines separate previous dispositions and current carried, repeat-route
+and new counts for all tiers and security. Inconsistent sums exit one without a table or valid summary. Action
+validation checks record consistency, not whether a claimed fix or cause is true. Only
 ``--append`` and ``--append-metrics`` modify files: each adds one line to its log (round log, cost log) and removes its
 staged record; a rejected round is kept for inspection and nothing is appended, and a rejected cost record is kept the
 same way.
@@ -81,14 +83,13 @@ Review lifecycle owners and their tests use this small helper before deciding wh
 separately scoped review run. It deliberately contains no resume override, dispatch mechanism, or provenance API.
 """
 
-from __future__ import annotations
-
 import argparse
 import hashlib
 import json
 import math
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -512,7 +513,7 @@ def _validate_finding(value: object, round_index: int, errors: list[str]) -> dic
 
 
 def _validate_rounds(payload: dict[str, Any], errors: list[str]) -> list[dict[str, Any]]:
-    """Validate review-round shape, independence claims, and carried finding history."""
+    """Validate review-round shape, independence claims, and retained finding history."""
     value = payload.get("rounds")
     if not isinstance(value, list):
         errors.append("rounds-list-required")
@@ -628,8 +629,8 @@ def _score(round_record: dict[str, Any]) -> int:
 def _summary_from_valid(payload: dict[str, Any]) -> dict[str, object]:
     """Infer a status from a structurally valid ledger without rerunning validation.
 
-    A clean decision trusts the declared reviewer identity, independence, report path and recorded findings. It does
-    not authenticate a reviewer or read and bind a report's contents; the accepting workflow must verify that evidence.
+    A clean decision trusts the declared reviewer identity, independence, report path and recorded findings. It does not
+    authenticate a reviewer or read and bind a report's contents; the accepting workflow must verify that evidence.
     """
     rounds = payload["rounds"]
     if not isinstance(rounds, list):
@@ -879,7 +880,7 @@ def _recurrence_errors(
     """Return the repeat and third-occurrence errors for one action against every earlier round.
 
     The earlier occurrences are the rounds holding any key transitively connected to the action's keys by findings of
-    earlier rounds. A ``fix`` of a repeat needs root-cause evidence; a ``fix`` once two earlier rounds carried the
+    earlier rounds. A ``fix`` of a repeat needs root-cause evidence; a ``fix`` once two earlier rounds recorded the
     invariant is its third occurrence and must stop instead. Other decisions already stop or defer the fix.
     """
     if action.get("decision") != "fix":
@@ -930,8 +931,8 @@ def _history_keys(round_record: dict[str, Any]) -> list[set[str]]:
 def plateau_kind(payload: dict[str, Any]) -> str | None:
     """Name why the latest round did not lower the score, or ``None`` when it did (or none ran).
 
-    ``stuck`` means every open finding was already seen in an earlier round (carried or reopened), so the fix did not
-    land and needs a different approach. ``whack-a-mole`` means every open finding is new, so the fix closed its target
+    ``stuck`` means every open finding repeats an invariant seen in any earlier round, including closed findings and
+    new routes to known invariants. ``whack-a-mole`` means every open finding is new, so the fix closed its target
     but the touched area still hides siblings. ``mixed`` is both. The result is informational and never changes the
     ledger's decision.
 
@@ -950,11 +951,77 @@ def plateau_kind(payload: dict[str, Any]) -> str | None:
         for keys in _history_keys(round_record):
             seen |= keys
     open_findings = [finding for finding in rounds[-1]["findings"] if finding["disposition"] in _OPEN_DISPOSITIONS]
-    carried = sum(1 for finding in open_findings if _identity_keys(finding["signature"], finding["evidence"]) & seen)
-    fresh = len(open_findings) - carried
-    if carried and not fresh:
+    repeated = sum(1 for finding in open_findings if _identity_keys(finding["signature"], finding["evidence"]) & seen)
+    fresh = len(open_findings) - repeated
+    if repeated and not fresh:
         return "stuck"
-    return "whack-a-mole" if fresh and not carried else "mixed"
+    return "whack-a-mole" if fresh and not repeated else "mixed"
+
+
+@dataclass(frozen=True)
+class _ProgressReconciliation:
+    """Account for previous dispositions and partition current findings without conflating routes with survivors."""
+
+    previous_open: int
+    verified_fixed: int
+    rejected: int
+    still_open: int
+    carried: int
+    repeat_route: int
+    new: int
+    open_now: int
+
+    def render(self, old: int, new: int) -> str:
+        """Reject inconsistent arithmetic before describing either side of the transition."""
+        if (
+            self.previous_open != self.verified_fixed + self.rejected + self.still_open
+            or self.carried + self.repeat_route + self.new != self.open_now
+            or self.carried + self.repeat_route != old
+            or self.new != new
+        ):
+            raise ValueError(
+                "progress-reconciliation-invalid: previous dispositions or carried + repeat route + new sum"
+            )
+        return (
+            f"previous open {self.previous_open} -> verified-fixed {self.verified_fixed}, rejected {self.rejected}, "
+            f"still open {self.still_open}; carried {self.carried} + repeat route {self.repeat_route} + new {self.new} "
+            f"= open now {self.open_now}"
+        )
+
+
+def _reconciliation_counts(
+    previous: dict[str, Any], current: dict[str, Any], seen: set[str], tier: str | None = None
+) -> _ProgressReconciliation:
+    """Count surviving signatures separately from current routes matching previous open identity keys."""
+    previous_open = [finding for finding in previous["findings"] if finding["disposition"] in _OPEN_DISPOSITIONS]
+    previous_keys = set().union(*(_identity_keys(item["signature"], item["evidence"]) for item in previous_open))
+    current_by_signature = {finding["signature"]: finding for finding in current["findings"]}
+    prior = [finding for finding in previous_open if tier is None or finding["tier"] == tier]
+    current_open = [
+        finding
+        for finding in current["findings"]
+        if finding["disposition"] in _OPEN_DISPOSITIONS and (tier is None or finding["tier"] == tier)
+    ]
+    dispositions = [current_by_signature[item["signature"]]["disposition"] for item in prior]
+    carried = repeat_route = new = 0
+    for finding in current_open:
+        keys = _identity_keys(finding["signature"], finding["evidence"])
+        if keys & previous_keys:
+            carried += 1
+        elif keys & seen:
+            repeat_route += 1
+        else:
+            new += 1
+    return _ProgressReconciliation(
+        previous_open=len(prior),
+        verified_fixed=dispositions.count("verified-fixed"),
+        rejected=dispositions.count("rejected"),
+        still_open=sum(disposition in _OPEN_DISPOSITIONS for disposition in dispositions),
+        carried=carried,
+        repeat_route=repeat_route,
+        new=new,
+        open_now=len(current_open),
+    )
 
 
 def _render_progress(payload: dict[str, Any], completed_rounds: int) -> str:
@@ -966,7 +1033,9 @@ def _render_progress(payload: dict[str, Any], completed_rounds: int) -> str:
         "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     seen: set[str] = set()
-    for round_record in payload["rounds"][:completed_rounds]:
+    reconciliation: list[str] = []
+    rounds = payload["rounds"][:completed_rounds]
+    for position, round_record in enumerate(rounds):
         counts = {tier: [0, 0] for tier in ("security", "critical", "high", "medium", "low", "nit")}
         weighted = [0, 0]
         for finding in round_record["findings"]:
@@ -978,14 +1047,28 @@ def _render_progress(payload: dict[str, Any], completed_rounds: int) -> str:
             weighted[bucket] += _TIERS[tier]
         cells = [str(round_record["index"]), *(f"{old} + {new}" for old, new in [*counts.values(), weighted])]
         lines.append("| " + " | ".join(cells) + " |")
+        if position:
+            total = [sum(split[bucket] for split in counts.values()) for bucket in (0, 1)]
+            all_tiers = _reconciliation_counts(rounds[position - 1], round_record, seen).render(*total)
+            security = _reconciliation_counts(rounds[position - 1], round_record, seen, "security").render(
+                *counts["security"]
+            )
+            reconciliation.append(
+                f"Reconciliation round {round_record['index']}: all tiers: {all_tiers}; security: {security}. "
+                "old = repeat of a known invariant, not necessarily carried from the previous row; "
+                "carried + repeat route + new = open now."
+            )
         for keys in _history_keys(round_record):
             seen |= keys
     lines.append("")
     lines.append(
-        "Cells: old + new open findings (including pending verification); old = signature or `invariant:` evidence seen "
-        "in any prior completed round. Security and Critical count their own tiers; weights: security 20, critical 10, "
+        "Cells: old + new open findings (including pending verification); old = repeat of a known invariant "
+        "(signature or `invariant:` evidence seen in any prior completed round, including closed findings), "
+        "not necessarily carried from the previous row. Security and Critical count their own tiers; "
+        "weights: security 20, critical 10, "
         "high 6, medium 4, low 2, nit 1. Weighted score: old weighted + new weighted."
     )
+    lines.extend(reconciliation)
     return "\n".join(lines)
 
 
@@ -1074,7 +1157,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     summary = summarize_ledger(payload)
     if args.progress and summary["rounds"]:
-        print(_render_progress(payload, len(summary["rounds"])), file=sys.stderr)
+        try:
+            progress = _render_progress(payload, len(summary["rounds"]))
+        except ValueError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        print(progress, file=sys.stderr)
     if args.plateau_kind:
         stopped_on_score = summary["reason"] in ("plateau", "nonconverging")
         print(f"plateau-kind: {(stopped_on_score and plateau_kind(payload)) or 'none'}", file=sys.stderr)

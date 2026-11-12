@@ -197,7 +197,7 @@ class TestDirectoryInput:
 
 
 class TestFreeTextScrubbing:
-    """Qualified names inside ``error`` / ``stderr`` prose are pseudonymized while the prose survives."""
+    """Identifying tokens inside ``error`` / ``stderr`` prose are pseudonymized."""
 
     @pytest.mark.parametrize(
         ("record", "path", "hidden", "prefix", "suffix"),
@@ -206,8 +206,8 @@ class TestFreeTextScrubbing:
                 {"cmd": "rdeps", "result": {"error": "module pkg.auth.core not indexed"}},
                 ("result", "error"),
                 "pkg.auth.core",
-                "module sym_",
-                " not indexed",
+                anonymize._pseudo("module", _SALT) + " sym_",
+                " " + anonymize._pseudo("not", _SALT) + " " + anonymize._pseudo("indexed", _SALT),
                 id="error-module-name",
             ),
             pytest.param(
@@ -215,14 +215,14 @@ class TestFreeTextScrubbing:
                 ("result", "error"),
                 "pkg.auth::login",
                 "",
-                " failed at line 3",
+                " " + anonymize._pseudo("failed", _SALT) + " at " + anonymize._pseudo("line", _SALT) + " 3",
                 id="error-double-colon-qualname",
             ),
             pytest.param(
                 {"stderr": "Traceback: pkg.auth.core.login raised ValueError"},
                 ("stderr",),
                 "pkg.auth.core.login",
-                "Traceback: sym_",
+                anonymize._pseudo("Traceback", _SALT) + ": sym_",
                 "",
                 id="top-level-stderr",
             ),
@@ -236,13 +236,13 @@ class TestFreeTextScrubbing:
             ),
         ],
     )
-    def test_qualified_token_replaced_and_prose_kept(
+    def test_qualified_token_and_surrounding_identifiers_replaced(
         self, record: dict, path: tuple[str, ...], hidden: str, prefix: str, suffix: str
     ) -> None:
-        """A qualified name in an error or stderr field is pseudonymized; the words around it survive.
+        """Qualified names and surrounding identifying tokens are pseudonymized with punctuation preserved.
 
         Covers dotted names, ``module::symbol`` tokens, and both the top-level and ``result``-nested ``stderr``: the
-        original token must vanish, a ``sym_`` pseudonym must take its place, and the leading and trailing prose stays.
+        original token must vanish and leading and trailing tokens must receive their expected stable pseudonyms.
         """
         scrubbed = _dig(anonymize.anonymize_record(record, _SALT), path)
 
@@ -262,13 +262,19 @@ class TestFreeTextScrubbing:
 
         first = anonymize._pseudo("pkg.a.b", _SALT)
         second = anonymize._pseudo("pkg.c.d", _SALT)
-        assert scrubbed == f"{first} calls {second} but {second} is missing"
+        calls = anonymize._pseudo("calls", _SALT)
+        but = anonymize._pseudo("but", _SALT)
+        missing = anonymize._pseudo("missing", _SALT)
+        assert scrubbed == f"{first} {calls} {second} {but} {second} is {missing}"
 
-    def test_text_without_qualname_unchanged(self) -> None:
-        """Free text with no qualified names passes through verbatim."""
+    def test_text_without_qualname_scrubbed(self) -> None:
+        """Bare diagnostic words receive stable pseudonyms even without qualified names."""
         record = {"result": {"error": "index is not valid json"}}
 
-        assert anonymize.anonymize_record(record, _SALT)["result"]["error"] == "index is not valid json"
+        expected = " ".join(
+            anonymize._pseudo(word, _SALT) if word != "is" else word for word in "index is not valid json".split()
+        )
+        assert anonymize.anonymize_record(record, _SALT)["result"]["error"] == expected
 
     def test_non_string_error_left_alone(self) -> None:
         """A non-string ``error`` value (e.g. bool/None) is not treated as free text.

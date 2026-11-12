@@ -103,7 +103,10 @@ def git(root: Path, *arguments: str) -> bytes:
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     command = ["git", "-c", "core.fsmonitor=false", "-C", str(root), *arguments]
     # Repository clean/process filters may still execute when Git re-hashes working-tree files.
-    return subprocess.check_output(command, env=env, stderr=subprocess.PIPE)  # noqa: S603 - fixed local read-only Git recipes, no shell
+    try:
+        return subprocess.check_output(command, env=env, stderr=subprocess.PIPE, timeout=30)  # noqa: S603 - fixed local read-only Git recipes, no shell
+    except subprocess.TimeoutExpired as error:
+        raise ValueError("git-timeout") from error
 
 
 def file_identity(root: Path, name: str) -> dict[str, Any] | None:

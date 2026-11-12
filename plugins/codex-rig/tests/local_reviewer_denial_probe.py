@@ -607,14 +607,25 @@ def terminate_process(process: subprocess.Popen[str], platform: str | None = Non
     """Terminate and prove cleanup of one local reviewer wave process boundary."""
     active_platform = sys.platform if platform is None else platform
     if active_platform == "win32":
-        completed = subprocess.run(
-            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        try:
+            completed = subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+                timeout=2,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise ProtocolViolation(
+                "windows-process-tree-cleanup-unproven: "
+                f"returncode=unavailable timeout={error.timeout} "
+                f"stdout={(error.stdout or b'')[:256]!r} stderr={(error.stderr or b'')[:256]!r}"
+            ) from error
         if completed.returncode != 0:
-            raise ProtocolViolation("windows-process-tree-cleanup-unproven")
+            raise ProtocolViolation(
+                "windows-process-tree-cleanup-unproven: "
+                f"returncode={completed.returncode} "
+                f"stdout={(completed.stdout or b'')[:256]!r} stderr={(completed.stderr or b'')[:256]!r}"
+            )
         try:
             process.wait(timeout=2)
         except subprocess.TimeoutExpired as error:
@@ -1216,6 +1227,8 @@ def _safe_failure_code(error: Exception) -> str:
     if not isinstance(error, ProtocolViolation):
         return "unexpected-probe-failure"
     code = str(error)
+    if code.startswith("windows-process-tree-cleanup-unproven:"):
+        return "windows-process-tree-cleanup-unproven"
     if code in SAFE_FAILURE_CODES:
         return code
     if code in {

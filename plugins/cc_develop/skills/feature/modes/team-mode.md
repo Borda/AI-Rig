@@ -16,8 +16,9 @@ Run Step 1 scope analysis inline (same as solo Step 1, including its Source Veri
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" preflight-helpers.md
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" preflight-helpers.md
 ```
 
 §Team Spawn Template to get spawn prompt template. Replace `[ROLE_PHRASE]` with feature description, `[FILE_SLUG]` with `feature`. Drop the template's `Your hypothesis: …` line — writer teammates investigate no root cause.
@@ -25,8 +26,9 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" prefli
 Compute run directory:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_setup_worktree_wrap.py" feature  # timeout: 5000
+python "$PLUGIN_ROOT/bin/dev_setup_worktree_wrap.py" feature  # timeout: 5000
 ```
 
 **IMPORTANT**: in spawn prompts below, substitute `$_SPAWN_TS` and `$_SPAWN_TEAM_DIR` with actual computed values from bash block above — literal resolved strings, not shell variable references. Bare `$TS`/`$TEAM_DIR` inside a quoted Agent prompt string will NOT expand; spawned agent receives literal dollar-sign text — path mismatches, false health-monitoring timeouts.
@@ -39,9 +41,15 @@ IFS= read -r TS < "${TMPDIR:-/tmp}/dev-feature-team-ts-${CSID}" 2>/dev/null || T
 IFS= read -r TEAM_DIR < "${TMPDIR:-/tmp}/dev-feature-team-dir-${CSID}" 2>/dev/null || TEAM_DIR=""
 _SPAWN_TS="$TS"
 _SPAWN_TEAM_DIR="$TEAM_DIR"
+[ -d "$TEAM_DIR" ] || { echo "! BLOCKED — team run directory missing"; exit 1; }
+DEMO_TEAM_NONCE="$$.$RANDOM.$RANDOM"
+printf '%s\n' "$DEMO_TEAM_NONCE" > "$TEAM_DIR/demo-red-nonce"
+echo "DEMO_TEAM_NONCE=$DEMO_TEAM_NONCE"
 ```
 
 Use `$_SPAWN_TS` (resolved to literal before prompt construction) inside spawn prompt strings — never bare `$TS`.
+
+Resolve the feature skill's absolute `skills/feature/SKILL.md` path from this plugin root and pass it as `<FEATURE_SKILL>` in Teammate 1's prompt. Pass the generated nonce and the absolute `$TEAM_DIR/demo-red-proof` path as resolved literals too; the teammate exports them as `DEMO_TEAM_NONCE` and `DEMO_TEAM_PROOF` only for Step 2's gate. Do not reuse a nonce or regenerate it while waiting for Wave 1.
 
 > **Agent budget** — each teammate costs ~120,851 tok fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing — work-displacement only; an isolation-motivated spawn (adversarial reviewer, distinct specialist role, model tier, worktree) runs regardless of size. Keep each teammate near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt requires an envelope even on exhaustion — `partial: true` plus what was finished.
 
@@ -55,7 +63,8 @@ Spawn teammates in **two serialized waves** — qa-specialist and doc-scribe can
 Spawn prompts: load full prompt text per teammate via `cat` (not the Read tool — `Bash(cat:*)` grant is version-proof):
 
 ```bash
-cat "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/feature/templates/team-spawn-prompts.md"  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+cat "$PLUGIN_ROOT/skills/feature/templates/team-spawn-prompts.md"  # timeout: 5000
 ```
 
 Summary below:
@@ -81,6 +90,11 @@ if [ ! -f "$WAVE1_FILE" ]; then
 fi
 echo "✓ Wave 1 output verified: $WAVE1_FILE"
 grep -q '"demo_red_exit"[[:space:]]*:[[:space:]]*[1-9]' "$WAVE1_FILE" || { echo "! Wave 1 gate: demo_red_exit missing or zero — demo passed pre-implementation, or sw-engineer returned status: blocked. Aborting Wave 2."; exit 1; }
+DEMO_TEAM_DIR=".temp/develop/$TS"
+IFS= read -r DEMO_TEAM_NONCE < "$DEMO_TEAM_DIR/demo-red-nonce" 2>/dev/null || DEMO_TEAM_NONCE=""
+DEMO_TEAM_VERDICT=""
+[ -f "$DEMO_TEAM_DIR/demo-red-proof" ] && [ ! -L "$DEMO_TEAM_DIR/demo-red-proof" ] && [ -O "$DEMO_TEAM_DIR/demo-red-proof" ] && IFS= read -r DEMO_TEAM_VERDICT < "$DEMO_TEAM_DIR/demo-red-proof"
+[ -n "$DEMO_TEAM_NONCE" ] && [ "$DEMO_TEAM_VERDICT" = "failed $DEMO_TEAM_NONCE" ] || { echo "! Wave 1 gate: fresh demo proof missing or nonce mismatch — aborting Wave 2"; exit 1; }
 ```
 
 **Coordination order**: QA is spawned only in Wave 2, so it never challenges SW's API design before implementation — the Challenger gate above covers the approach. QA receives SW's implementation file path from Wave 1's output so tests stay accurate.

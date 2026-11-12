@@ -47,9 +47,13 @@ import logging
 import os
 import re
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
+
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
 
 _DIFF_SPEC = importlib.util.spec_from_file_location(
     "codex_rig_worktree_diff", Path(__file__).with_name("collect_diff.py")
@@ -123,6 +127,11 @@ def _git_environment() -> dict[str, str]:
 
 def _git(repository: Path, *arguments: str) -> str:
     """Run Git without a shell or inherited Git redirection overrides."""
+    if arguments and arguments[0] in {"status", "diff", "hash-object", "worktree", "restore", "apply"}:
+        try:
+            _DIFF_MODULE.reject_executable_filters(repository, environment=_git_environment())
+        except RuntimeError as error:
+            raise PilotError(str(error)) from error
     completed = subprocess.run(  # noqa: S603 - argv list, no shell
         ["git", "-C", str(repository), *_safe_git_arguments(arguments)],  # noqa: S607 - explicit local tool
         check=False,
@@ -139,6 +148,11 @@ def _git(repository: Path, *arguments: str) -> str:
 
 def _git_bytes(repository: Path, *arguments: str) -> bytes:
     """Run Git and return exact stdout bytes for patch hashing."""
+    if arguments and arguments[0] in {"status", "diff", "hash-object"}:
+        try:
+            _DIFF_MODULE.reject_executable_filters(repository, environment=_git_environment())
+        except RuntimeError as error:
+            raise PilotError(str(error)) from error
     completed = subprocess.run(  # noqa: S603 - argv list, no shell
         ["git", "-C", str(repository), *_safe_git_arguments(arguments)],  # noqa: S607 - explicit local tool
         check=False,

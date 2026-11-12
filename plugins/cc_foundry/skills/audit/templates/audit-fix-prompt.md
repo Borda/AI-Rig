@@ -19,11 +19,12 @@ Use repo-relative source paths as file keys and the caller's SKILL.md Step 3 plu
 On each child completion notification, re-read the persisted pass count and run the watch check for this sub-agent's children:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" || exit 1
 [ -n "$RUN_DIR" ] || exit 1
 IFS= read -r PASS_COUNT < "$RUN_DIR/fix-passes.txt"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR/fix-pass-$PASS_COUNT"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/agent_watch.py" --state-dir "$RUN_DIR/fix-pass-$PASS_COUNT"  # timeout: 5000
 ```
 
 **Dependency classification**: (1) Coalesce all same-file findings into one group first. (2) Classify each coalesced group: parallel-safe = category in PARALLEL_SAFE_CATEGORIES {hardcoded-path, missing-confidence-block, typo, heading-hierarchy, duplicate-lines, broken-bash-fence, stale-version-ref, missing-frontmatter-field, verbose-bash-block} AND fix writes only to its own file AND no other group writes to a file this group reads. All others sequential.
@@ -49,7 +50,7 @@ After gate verdicts received: **Phase 1 — Parallel basket**: issue all paralle
 
 - Bounded direct read — narrows the "do NOT inline-read — orchestration contract" rule rather than dropping it: run `wc -l` over the dependency-input set first; at ≤10 files AND ≤2000 lines total, read them yourself with the Read tool, because this prompt already runs inside a disposable fix sub-agent whose context ends with the pipeline, so paying a ~120K-token spawn to avoid ~5–10K tokens of reads is inverted.
 - Above either bound, keep the original contract: spawn a foundry:curator mini-agent to do the re-read, and do not inline-read.
-- Use category→dependency rules: broken-cross-ref reads target agent/skill file; inventory-drift reads MEMORY.md; README-sync reads agent/skill source files; orphaned-ref reads the disk agent/skill inventory.
+- Use category→dependency rules: broken-cross-ref reads target agent/skill file; README-sync reads agent/skill source files; orphaned-ref reads the disk agent/skill inventory.
 - Serialize groups where group A output is group B input; parallel within independent groups.
 
 For each file that passed the gate or qualified for the fast path, spawn one fix agent (foundry:curator for .md files, foundry:sw-engineer for .js/.py files) with all approved findings batched into a single prompt — pass `model:` per the Model tiering rule above (parallel-safe/mechanical findings → `haiku`, override the agent's own opus-class default; placement/phrasing judgment → `sonnet`; never spend a fix-spawn on `opus`, reserved for the gate).
@@ -70,7 +71,7 @@ PASS_COUNT=$((PASS_COUNT + 1)); echo "$PASS_COUNT" > "$RUN_DIR/fix-passes.txt"
 mkdir -p "$RUN_DIR/fix-pass-$PASS_COUNT"
 ```
 
-Run gates, Phase 1/2, the Step 9 Codex cross-file check from fix.md (when more than one file changed), R1 and R2. Before judging clean, delegate the applicable fix.md Step 10 cross-file re-validation checks (1, 2, 14a, 14b, 17, 25, 27 under their stated file-change conditions), writing `<RUN_DIR>/crossfile-revalidation-pass<N>.md`. Merge their findings with R1/R2/Codex results and filter through the unchanged selection contract. Stage net-new rows in `<RUN_DIR>/summary.jsonl.fix-pass-<N>.rec`, then run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/append_ledger.py" "<RUN_DIR>/summary.jsonl"`; retain the current unresolved set separately so resolved historical ledger rows are not fixed again.
+Run gates, Phase 1/2, the Step 9 Codex cross-file check from fix.md (when more than one file changed), R1 and R2. Before judging clean, delegate the applicable fix.md Step 10 cross-file re-validation checks (1, 2, 14a, 14b, 17, 25, 27 under their stated file-change conditions), writing `<RUN_DIR>/crossfile-revalidation-pass<N>.md`. Merge their findings with R1/R2/Codex results and filter through the unchanged selection contract. Stage net-new rows in `<RUN_DIR>/summary.jsonl.fix-pass-<N>.rec`, then run `python "${CLAUDE_PLUGIN_ROOT}/bin/append_ledger.py" "<RUN_DIR>/summary.jsonl" --run-root "<RUN_DIR>"`; retain the current unresolved set separately so resolved historical ledger rows are not fixed again.
 
 Set `re_audit_clean: true` only when all changed files were re-audited, all fixes held, residual_criticals = 0, all applicable cross-file checks completed, and no eligible fixable findings remain. On `re_audit_clean: false`, repeat the fix/gate/re-audit pass only for unresolved eligible findings, up to **5 total fix passes** including the initial pass. Compute W_n with severity-table.md weights on the unresolved findings under the same selected scope; it must strictly decrease after the first pass, otherwise stop with `⚠ NOT CONVERGING`. At pass 5 stop with `⚠ CONVERGENCE LIMIT`; unavailable verification or only blocked/excluded findings stops with those gaps, never retries them without new authority. Never suppress findings to declare clean. Return to the parent only after clean or a stated stop; the parent proceeds to Step 11 without rerunning Steps 8–10.
 

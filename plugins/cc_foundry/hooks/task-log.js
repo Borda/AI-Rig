@@ -218,7 +218,13 @@ function skillContract(dir, sessionId) {
 }
 
 function getSentinelDir() {
-  return process.platform === "win32" ? os.tmpdir() : "/tmp";
+  const user =
+    typeof process.getuid === "function"
+      ? process.getuid()
+      : crypto.createHash("sha256").update(os.userInfo().username).digest("hex");
+  const dir = path.join(process.env.TMPDIR || os.tmpdir(), `claude-state-user-${user}`);
+  privateDirectory(dir);
+  return dir;
 }
 
 /** Create or validate one owned directory without following a planted link. */
@@ -364,11 +370,30 @@ function pruneArtifacts(root) {
         encoding: "utf8",
         timeout: 1500,
         maxBuffer: 8 * 1024 * 1024,
-        stdio: ["ignore", "pipe", "ignore"],
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, LC_ALL: "C" },
       },
     );
   } catch (err) {
-    if (err.status !== 128 || err.code || err.signal) throw err;
+    // Damaged HEAD/objects can produce the nonrepository diagnostic too; any Git marker keeps cleanup closed.
+    if (
+      err.status !== 128 ||
+      err.code ||
+      err.signal ||
+      String(err.stderr || "").trim() !== "fatal: not a git repository (or any of the parent directories): .git"
+    )
+      throw err;
+    for (let directory = path.resolve(root); ; directory = path.dirname(directory)) {
+      let marker = false;
+      try {
+        fs.lstatSync(path.join(directory, ".git"));
+        marker = true;
+      } catch (markerError) {
+        if (markerError.code !== "ENOENT") throw markerError;
+      }
+      if (marker) throw err;
+      if (path.dirname(directory) === directory) break;
+    }
   }
   const tracked = new Set(
     files
@@ -551,11 +576,11 @@ process.stdin.on("end", () => {
     // Project slug used to tag log entries so they can be filtered by project
     const projectSlug = root.replace(/[/.]/g, "-");
 
-    // Ephemeral per-session state lives in /tmp scoped by session_id.
+    // Ephemeral per-session state lives in private temporary storage scoped by session_id.
     // This prevents cross-session contamination when multiple Claude Code instances run
     // concurrently — each session owns its own subtree and cannot see another session's state.
-    // Fallback to 'default' if session_id is missing (older Claude Code versions).
-    const sid = (session_id || "default").replace(/[^a-zA-Z0-9_-]/g, "_");
+    if (typeof session_id !== "string" || !/^[a-zA-Z0-9_-]+$/.test(session_id)) process.exit(0);
+    const sid = session_id;
     const tmpDir = path.join(getSentinelDir(), `claude-state-${sid}`);
     const agentsDir = path.join(tmpDir, "agents");
     const toolsDir = path.join(tmpDir, "tools");

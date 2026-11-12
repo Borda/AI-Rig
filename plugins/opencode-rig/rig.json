@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "name": "opencode-rig",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Evidence-first workflows, independent review, quality gates, and Git guardrails for OpenCode.",
   "entrypoint": "./src/index.ts",
   "license": "Apache-2.0",
   "repository": "https://github.com/Borda/AI-Rig",
   "opencode": {
     "minimum": "2.1.0",
-    "tested": "2.1.4"
+    "tested": "2.2.0"
   },
   "skills": [
     "rig-plan",

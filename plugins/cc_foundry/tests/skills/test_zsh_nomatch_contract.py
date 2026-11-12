@@ -214,6 +214,15 @@ class TestCheck23e:
         ("mode_text", "flagged"),
         [
             pytest.param(
+                "```bash\ngrep -E '(^|/)(skills|commands|hooks)/' paths.txt\n"
+                "'hash' -p /bin/echo probe\ntypeset 'commands[probe]=/bin/echo'\n"
+                "set -Acommands probe /bin/echo\ngrep -E 'commands'\"[probe]=/bin/echo\"\n"
+                "grep -E $'commands'\ntypeset prefix=\"| grep -E \" 'commands[probe]=/bin/echo'\n"
+                "grep -E 'commands'(e:'PATH=/tmp':)\n```\n",
+                [3, 4, 5, 6, 7, 8, 9],
+                id="quoted-grep-data-preserves-live-and-concatenated-operands",
+            ),
+            pytest.param(
                 "```bash\nset -Acommands ruff /bin/echo\nx=1; hash -p /bin/rm ruff\n: ${(P)n::=/bin/rm}\n"
                 "typeset -A aliases\necho hi  # hash later\ncommand -v uv\nls docs/commands.md\n```\n"
                 "```text\nfunctions to change\n```\n"

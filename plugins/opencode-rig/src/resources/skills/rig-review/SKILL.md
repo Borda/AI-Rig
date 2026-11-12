@@ -1,11 +1,11 @@
 ---
 name: Rig Review
-description: Review the current diff, a commit, or a path with independent read-only reviewers and a validated findings artifact.
+description: Review the current diff, a commit, or a path with independent read-only reviewers and a validated findings artifact requiring the mandatory correctness axis. Use before merge or after a large change. NOT for applying fixes; use rig-remediate.
 ---
 
 # Rig Review
 
-> Read [Evidence rules](../../references/evidence.md). This workflow is read-only with the sole PR preparation exception of one new dedicated local ref and the objects `git fetch` stores; it never writes to GitHub.
+> Read [Evidence rules](../../references/evidence.md). This workflow is read-only with the sole PR preparation exception of one new dedicated local ref and the objects `git fetch` stores; it never writes to GitHub. Follow [Role dispatch](../../references/evidence.md#role-dispatch) for native-agent fallback and stop on reported scope violations; use the shared [Optional command compression](../../references/evidence.md#optional-command-compression) guidance for read-heavy commands.
 
 ## Input
 
@@ -32,6 +32,16 @@ description: Review the current diff, a commit, or a path with independent read-
 6. **Validate findings.** Reject any finding without a concrete file and observed evidence. De-duplicate by signature (file + invariant), not by wording. Use `rig_findings` with `action: "write"`, the axes, the coverage, and `reviewer` naming the independent reviewer(s). That write records the review evidence bound to the scope digest.
 7. **Report.** Order by severity. State the axes that ran, the axes that did not, and why. An honest partial review beats a fabricated complete one.
 8. **Finalize.** `rig_evidence` with `action: "finalize"`. Open findings are a valid review outcome; they are not a completion failure. Source drift is: start a new review instead of certifying changed bytes.
+
+## Improvement claim evidence
+
+Assess every material improvement claimed in the request, PR title/body or reviewed documentation, including claims without supplied benchmarks. Record each claim, its scope and evidence in the existing review report. Include the relevant claims, supplied evidence and this measurement protocol in reviewer context; the parent reconciles claim dispositions in the final report even when a specialist is omitted. Route performance claims to the performance dimension when admitted by the existing selection rules; the parent retains claim coverage when that dimension is not selected. Preserve existing scope, fan-out limits and execution permissions; inspection-only reviewers hand feasible reproduction checks to the parent. Behavioral claims need targeted tests; correctness tests alone do not prove performance or model-quality gains.
+
+Bind numerical comparisons to exact baseline/candidate revisions, commands, representative workload/data, software, relevant hardware and settings. Attribute supplied results separately from independent reproduction. Use a predefined practical tolerance, appropriate warmup and accelerator timing, repeated measurements, raw samples, sample counts, summary statistic and variability. Check correctness and material tradeoffs. Explain hardware relevance and limit conclusions to measured workloads/devices.
+
+Shared local CPU/GPU, memory pressure or swapping, I/O contention and thermal/power changes can confound measurements. Record relevant observable contention and unavailable observations; never assume isolation. Run comparable baseline/candidate samples sequentially in paired, alternating or randomized order; avoid concurrent competing benchmarks or agent-owned heavy checks. Bound reruns and retain noisy attempts and exclusion criteria. More samples do not remove systematic bias. Never stop unrelated processes or change system resource controls without existing authorization. If noise or unequal contention could explain the effect, label measurements inconclusive and name the quieter or representative-hardware check needed; do not confirm or refute the claim from that run.
+
+Conclude supported, contradicted or unverified per claim, with provenance, tested scope and whether independent reproduction succeeded. Missing hardware or unresolved noise leaves the claim unverified with prerequisite, owner and next check; feasible unperformed checks remain incomplete. Reliable counterevidence is required for contradiction. Missing verification alone is a coverage limit, not a source defect or grounds for rejection. Preserve each workflow's existing readiness and confidence contract.
 
 ## Rules
 

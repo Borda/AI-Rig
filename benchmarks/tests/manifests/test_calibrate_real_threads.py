@@ -312,6 +312,15 @@ class TestFindVerdict:
             pytest.param({"events": [rt.DuplicateEvent(CUTOFF, None)]}, "pull request", id="pull-request-canonical"),
             pytest.param(
                 {
+                    "comments": [
+                        _comment("ONNX export is tracked in #12. Closing as a duplicate of #12.", CUTOFF, "MEMBER")
+                    ]
+                },
+                "tracking issue",
+                id="consolidated-into-tracker",
+            ),
+            pytest.param(
+                {
                     "events": [rt.DuplicateEvent(CUTOFF, 12)],
                     "unmark_events": [rt.DuplicateEvent("2026-01-06T00:00:00Z", 12)],
                 },
@@ -329,7 +338,8 @@ class TestFindVerdict:
         """A verdict naming another repository or a pull request, withdrawn later, or given by the reporter is unusable.
 
         A cross-repo canonical cannot appear in a same-repository haystack, an unmarked verdict is one the maintainers
-        retracted, and a reporter closing their own issue as a duplicate is not a maintainer decision.
+        retracted, and a reporter closing their own issue as a duplicate is not a maintainer decision. A comment that
+        routes the report into a tracking issue labels where the discussion should continue, not a shared failure.
         """
         with pytest.raises(rt.Skip, match=reason):
             rt.find_verdict(_thread(**fields))
@@ -888,3 +898,57 @@ class TestNegativeControl:
             False,
             [],
         )
+
+
+class TestFetchStore:
+    """The fetch store shows each pool candidate as a verification fetch at the cutoff would have returned it."""
+
+    @pytest.fixture
+    def store(self, duplicate_world: _FakeGitHub) -> dict[str, dict[str, Any]]:
+        """Return the store for issue #50, whose canonical #12 has comments before and after the cutoff.
+
+        One pool candidate (#60) answers as a pull request; the canonical's body names #50 only since a later edit.
+        """
+        problem = rt.build_problem("acme/lib", 50, size=8, seed=0, run_query=duplicate_world).problem
+        duplicate_world.threads.update(
+            {number: _issue_payload(number, f"Title {number}", f"Body of {number}.") for number in (62, 63, 64, 65, 72)}
+        )
+        duplicate_world.threads[60] = {"repository": {"issue": None}}
+        comments = [
+            _comment_node("Confirmed by @rita-r, bisected to reset()", "2026-01-01T06:00:00Z", "dave-d", "MEMBER"),
+            _comment_node("Triage note", "2026-01-01T07:00:00Z", "stalebot", bot=True),
+            _comment_node("Same crash as #50", "2026-01-02T06:00:00Z", "bob-b"),
+            _comment_node("Fixed by the reset patch", "2026-02-01T00:00:00Z", "dave-d", "MEMBER"),
+        ]
+        duplicate_world.threads[12] = _issue_payload(
+            12,
+            "Empty input crash in Accuracy",
+            "Original report. Also see #50",
+            author=_actor("dave-d"),
+            authorAssociation="MEMBER",
+            lastEditedAt="2026-03-01T00:00:00Z",
+            userContentEdits=duplicate_world.candidates[12]["userContentEdits"],
+            comments={"pageInfo": {"hasNextPage": False}, "nodes": comments},
+        )
+        return rt.build_fetch_store(problem, run_query=duplicate_world)
+
+    def test_holds_every_fetchable_pool_candidate(self, store: dict[str, dict[str, Any]]) -> None:
+        """Each issue of the pool has an entry; a pull request among the candidates has none.
+
+        The skill's fetch falls back to another command for pull requests, which the store does not emulate.
+        """
+        assert sorted(store) == ["12", "62", "63", "64", "65", "72"]
+
+    def test_canonical_entry_is_cut_at_the_verdict(self, store: dict[str, dict[str, Any]]) -> None:
+        """The canonical reads as it did before the verdict, without bots, logins or any pointer to the thread.
+
+        Its later edit and its pre-cutoff comment naming #50 would hand the solver the answer; the comment written after
+        the verdict describes a fix the solver could not have seen.
+        """
+        assert store["12"] == {
+            "number": 12,
+            "title": "Empty input crash in Accuracy",
+            "state": "open",
+            "body": "Original report.",
+            "comments": [{"author": "maintainer-1", "body": "Confirmed by @user-1, bisected to reset()"}],
+        }

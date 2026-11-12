@@ -8,6 +8,7 @@
 - **Class-body bound** (methods only — `OLD_REF` dotted): resolve the enclosing class's line range before the descriptor/overload greps below, so they scope to this class, not the whole file:
   ```bash
   # timeout: 25000
+  PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
   _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
   IFS= read -r OLD_REF < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_REF-${CSID}" 2>/dev/null || OLD_REF=""
@@ -16,7 +17,7 @@
   printf '{}\n' > "$_CLS_FILE"
   # find-symbol is unanchored re.IGNORECASE (query.py) — matches[0] may be a method or sibling class; cm_json keeps the exact class
   [ "$CLS" != "$OLD_REF" ] && codemap-py query --timeout 20 find-symbol "$CLS" --limit 0 > "$_CLS_FILE"
-  python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/cm_json.py" class-range --input "$_CLS_FILE" --qualified-name "$CLS" --output-prefix "codemap-${_CM_PROJ}" --name cls-range
+  python "$PLUGIN_ROOT/bin/cm_json.py" class-range --input "$_CLS_FILE" --qualified-name "$CLS" --output-prefix "codemap-${_CM_PROJ}" --name cls-range
   IFS= read -r CLS_RANGE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-cls-range-${CSID}" 2>/dev/null || CLS_RANGE=""
   [ -n "$CLS_RANGE" ] || printf "⚠ could not bound to class body — verify each hit\n"
   ```
@@ -57,6 +58,7 @@
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${CSID}" 2>/dev/null || OLD_NAME=""
@@ -67,7 +69,7 @@ PKG_DIR=$(dirname "${OLD_FILE_PATH:-.}")
 printf '%s\n' "$PKG_DIR" > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-pkg-dir-${CSID}"
 # init 4c import-dedup tracker before the caller loop
 printf '' > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-processed-import-files-${CSID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind all-exports --name "$OLD_NAME" --scope "$_CM_ROOT/${PKG_DIR:-.}"
+python "$PLUGIN_ROOT/bin/find_module_refs.py" --kind all-exports --name "$OLD_NAME" --scope "$_CM_ROOT/${PKG_DIR:-.}"
 ```
 
 For each `__all__` hit, Edit `"old_name"` → `"new_name"`.
@@ -136,6 +138,7 @@ Edit matched import lines only after verifying `from <module>` references expect
 
 ```bash
 # timeout: 10000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${CSID}" 2>/dev/null || OLD_NAME=""
@@ -143,7 +146,7 @@ IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${C
 IFS= read -r OLD_MODULE_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_MODULE_PATH-${CSID}" 2>/dev/null || OLD_MODULE_PATH=""
 # matches bare name anywhere — verify module before edit
 _CM_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind sphinx-symbol --name "$OLD_NAME" --scope "$_CM_ROOT"
+python "$PLUGIN_ROOT/bin/find_module_refs.py" --kind sphinx-symbol --name "$OLD_NAME" --scope "$_CM_ROOT"
 ```
 
 For each match, replace `old_name`/`OldName` inside backtick-delimited role only after verifying expected module path (`${OLD_MODULE_PATH}` or qualified form); avoid same-name unrelated package refs.
@@ -158,6 +161,7 @@ Use `gen_deprecation_wrapper.py` to produce Python string; insert immediately af
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r DEPRECATE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-DEPRECATE-${CSID}" 2>/dev/null || DEPRECATE="false"
@@ -171,12 +175,12 @@ IFS= read -r DEPRECATE_DECORATOR < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-D
 IFS= read -r SINCE_VER < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-SINCE_VER-${CSID}" 2>/dev/null || SINCE_VER=""
 IFS= read -r REMOVED_IN_VER < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-REMOVED_IN_VER-${CSID}" 2>/dev/null || REMOVED_IN_VER=""
 if [ -n "$DEPRECATE_DECORATOR" ]; then
-    DEPRECATION_CODE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/gen_deprecation_wrapper.py" \
+    DEPRECATION_CODE=$(python "$PLUGIN_ROOT/bin/gen_deprecation_wrapper.py" \
         --decorator "$DEPRECATE_DECORATOR" \
         --old-name "$OLD_NAME" \
         ${REMOVED_IN_VER:+--removed-in "$REMOVED_IN_VER"}) || { echo "! gen_deprecation_wrapper failed — check symbol type and names"; exit 1; }
 else
-    DEPRECATION_CODE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/gen_deprecation_wrapper.py" \
+    DEPRECATION_CODE=$(python "$PLUGIN_ROOT/bin/gen_deprecation_wrapper.py" \
         --type "$SYMBOL_TYPE" \
         --old-name "$OLD_NAME" \
         --new-name "$NEW_NAME" \

@@ -163,3 +163,27 @@ def test_nested_state_is_unusable(approval: Path) -> None:
     state.write_text("[" * 10000 + "]" * 10000, encoding="utf-8")
 
     assert judge.state_program_file(state) == ""
+
+
+def test_hash_program_prints_digest_without_resolving_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Digest-only mode works without a run, reports, writable sentinels or a valid session identity."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CSID", "invalid/session")
+    program = tmp_path / "program.md"
+    program.write_bytes(b"program\r\n")
+
+    assert judge.main(["--hash-program", str(program)]) == 0
+    output = capsys.readouterr()
+    assert output.out == hashlib.sha256(b"program\r\n").hexdigest() + "\n"
+    assert output.err == ""
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["program.md"]
+
+
+def test_hash_program_reports_missing_input_without_digest(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A missing program is an input error and cannot produce a misleading digest."""
+    assert judge.main(["--hash-program", str(tmp_path / "missing.md")]) == 1
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "cannot hash program" in output.err

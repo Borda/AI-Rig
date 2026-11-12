@@ -59,7 +59,7 @@ _DISPATCH_RE = re.compile(
 )
 
 #: Header: ## Mode: <Name> or ### Mode: <Name>, optional trailing "— <qualifier>".
-_HEADER_RE = re.compile(r"^#{2,3}\s+Mode:\s*(.+?)\s*$", re.MULTILINE)
+_HEADER_RE = re.compile(r"^#{2,3}[ \t]+Mode:([^\r\n]+)", re.MULTILINE)
 
 #: Files larger than this many bytes (10 MiB) are skipped rather than read into memory.
 _MAX_FILE_SIZE = 10 * 1024 * 1024

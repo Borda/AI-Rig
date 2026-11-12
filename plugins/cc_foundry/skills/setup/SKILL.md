@@ -48,9 +48,9 @@ NOT for: editing project `.claude/settings.json` (Step 8 READS it to offer advis
 
 ## Flag detection
 
-`--approve` (case-insensitive) sets `APPROVE_ALL=true`; else `APPROVE_ALL=false`. The setup block below parses it in-bash, persists it to a sentinel and prints `APPROVE_ALL=<value>` — carry that stdout value as model context for every gate below.
+`--approve` (case-insensitive, unquoted standalone token) sets `APPROVE_ALL=true`; else `APPROVE_ALL=false`. Quoted text is data; a standalone `--` ends flag detection. The setup block below hands the raw blob to `parse-skill-flags.py` after a literal `--`, reads its `foundry-setup-approve-${CSID}` sentinel and prints `APPROVE_ALL=<value>` — carry that stdout value as model context for every gate below. A parser or sentinel-read failure stops setup before settings are changed.
 
-**Unsupported flag check** — run before the setup block: scan `$ARGUMENTS` for `--<token>` tokens other than `--approve`. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--approve`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — run before the setup block: scan `$ARGUMENTS` for unquoted standalone `--<token>` tokens other than `--approve`, comparing case-insensitively and stopping at a standalone `--`. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--approve`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 `APPROVE_ALL=true`: every `AskUserQuestion` below **skipped** — ★ recommended option applied automatically. Print `[--approve] auto-accepting recommended option` in place of question.
 
@@ -71,15 +71,10 @@ else
     printf "! Python 3.10+ not found — install Python 3.10+ and re-run /foundry:setup\n"
     exit 1
 fi
-python --version 2>/dev/null | grep -qE "Python 3\.(1[0-9]|[2-9][0-9])" || { printf "! BLOCKED — later steps call bare python; %s works but python does not — install python 3.10+ on PATH (bin/python py -3 fallback pending)\n" "$PYTHON_CMD"; exit 1; }
+python --version 2>/dev/null | grep -qE "Python 3\.(1[0-9]|[2-9][0-9])" || { printf "! BLOCKED — later steps call bare python; %s works but python does not — make the shipped bin/python launcher or Python 3.10+ available as python on PATH\n" "$PYTHON_CMD"; exit 1; }
 printf "  Python: %s\n" "$PYTHON_CMD"
 
-APPROVE_ALL=false
-printf '%s\n' "$ARGUMENTS" | grep -qiE '(^|[[:space:]])--approve([[:space:]]|$)' && APPROVE_ALL=true
-echo "$APPROVE_ALL" > "${TMPDIR:-/tmp}/foundry-setup-approve-${CSID}"
-echo "APPROVE_ALL=$APPROVE_ALL"
-
-PLUGIN_ROOT=$($PYTHON_CMD "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_plugin_root.py" --plugin-name foundry 2>/dev/null)  # timeout: 15000
+PLUGIN_ROOT=$($PYTHON_CMD "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry 2>/dev/null)  # timeout: 15000
 case $? in
     0) ;;
     2) echo "! SECURITY: resolve_plugin_root.py rejected the candidate root — aborting setup"; exit 1 ;;
@@ -89,6 +84,10 @@ echo "$PLUGIN_ROOT" > "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}"  # persist for
 [ -n "$PLUGIN_ROOT" ] || { printf "! foundry plugin not found — install it first with: claude plugin marketplace add Borda/AI-Rig && claude plugin install foundry@borda-ai-rig\n"; exit 1; }
 [ -f "$PLUGIN_ROOT/hooks/statusline.js" ] || { printf "! %s/hooks/statusline.js missing — aborting setup\n" "$PLUGIN_ROOT"; exit 1; }
 echo "PLUGIN_ROOT=$PLUGIN_ROOT"
+
+$PYTHON_CMD "$PLUGIN_ROOT/bin/parse-skill-flags.py" --flags approve --keep-state foundry-setup -- "$ARGUMENTS" >/dev/null || exit 1  # timeout: 15000
+IFS= read -r APPROVE_ALL < "${TMPDIR:-/tmp}/foundry-setup-approve-${CSID}" || { printf "! Approval sentinel missing — aborting setup\n"; exit 1; }
+echo "APPROVE_ALL=$APPROVE_ALL"
 
 SETUP_BAK_TS=$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p "$HOME/.claude" || exit 1
@@ -116,7 +115,9 @@ Runs inside the setup block above. Report: "Backed up ~/.claude/settings.json �
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 echo --dry-run > "${TMPDIR:-/tmp}/foundry-setup-hooks-mode-${CSID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" has-hooks ~/.claude/settings.json >/dev/null 2>&1  # timeout: 5000
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""
+[ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
+python "$PLUGIN_ROOT/bin/settings_json.py" has-hooks ~/.claude/settings.json >/dev/null 2>&1  # timeout: 5000
 ```
 
 `hooks` key exists: run the classifier below in `--dry-run` mode before the gate; it prints `foundry: N, user: M` without writing settings. Only commands executing a shipped foundry hook from the current plugin root, its installed-cache lineage, `${CLAUDE_PLUGIN_ROOT}/hooks/`, or the legacy `~/.claude/hooks/` directory (expanding `$HOME` and `~`) are stale foundry entries. Other commands are user-owned; the mere presence of `hooks` does not establish stale configuration. Unrecognized settings shapes are preserved and reported as user-owned.
@@ -126,98 +127,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""
 [ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
 IFS= read -r HOOK_FILTER_MODE < "${TMPDIR:-/tmp}/foundry-setup-hooks-mode-${CSID}" 2>/dev/null || HOOK_FILTER_MODE=--dry-run
-python - "$PLUGIN_ROOT" "$HOOK_FILTER_MODE" <<'PY' || { printf "! failed stripping hooks — settings.json unchanged\n"; exit 1; }  # timeout: 5000
-import json
-import os
-import shlex
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1])
-mode = sys.argv[2]
-if mode not in {"--dry-run", "--apply"}:
-    raise SystemExit("invalid hook filter mode")
-sys.path.insert(0, str(root / "bin"))
-from settings_json import _atomic_write, _load
-
-target = (Path(os.environ["HOME"]) / ".claude/settings.json").resolve()
-settings = _load(target)
-names = {path.name for path in (root / "hooks").glob("*.js")}
-manifest = json.loads((root / "hooks/hooks.json").read_text(encoding="utf-8"))
-shipped_commands = {
-    hook["command"]
-    for groups in manifest["hooks"].values()
-    for group in groups
-    for hook in group.get("hooks", [])
-    if "command" in hook
-}
-cache = Path(os.environ["HOME"]) / ".claude/plugins/cache"
-lineage = root.parent if root.parent.name == "foundry" and root.parent.parent.parent == cache else None
-
-
-def foundry_hook(hook: object) -> bool:
-    """Identify an executed hook with a shipped basename and foundry-owned path."""
-    if not isinstance(hook, dict):
-        return False
-    command = hook.get("command", "")
-    if not isinstance(command, str):
-        return False
-    if command in shipped_commands:
-        return True
-    try:
-        tokens = shlex.split(command.replace("\\", "/"))
-    except ValueError:
-        return False
-    if tokens[:1] == ["exec"]:
-        tokens = tokens[1:]
-    if len(tokens) < 2 or tokens[0].rsplit("/", 1)[-1] not in {"node", "node.exe", "python", "python3"}:
-        return False
-    path = Path(os.path.expandvars(os.path.expanduser(tokens[1])))
-    owned_paths = {root / "hooks", Path.home() / ".claude/hooks"}
-    if lineage is not None:
-        owned_paths.add(lineage / path.parent.parent.name / "hooks")
-    owned = path.parent in owned_paths or tokens[1] == "${CLAUDE_PLUGIN_ROOT}/hooks/" + path.name
-    return owned and path.name in names
-
-
-events = settings.get("hooks", {})
-if not isinstance(events, dict):
-    print("hooks: skipped (expected an object; kept user-owned value)")
-    print("foundry: 0, user: 1" if mode == "--dry-run" else "removed: 0, kept: 1")
-    raise SystemExit(0)
-foundry_count = user_count = 0
-for event, groups in list(events.items()):
-    if not isinstance(groups, list):
-        user_count += 1
-        continue
-    kept = []
-    for group in groups:
-        if not isinstance(group, dict):
-            user_count += 1
-            kept.append(group)
-            continue
-        hooks = group.get("hooks")
-        if not isinstance(hooks, list):
-            user_count += 1
-            kept.append(group)
-            continue
-        filtered = [hook for hook in hooks if not foundry_hook(hook)]
-        foundry_count += len(hooks) - len(filtered)
-        user_count += len(filtered)
-        if filtered or not hooks:
-            kept.append({**group, "hooks": filtered})
-    if kept:
-        events[event] = kept
-    else:
-        del events[event]
-if not events:
-    settings.pop("hooks", None)
-if mode == "--dry-run":
-    print(f"foundry: {foundry_count}, user: {user_count}")
-else:
-    _atomic_write(target, settings)
-    print(f"removed: {foundry_count}, kept: {user_count}")
-PY
+python "$PLUGIN_ROOT/bin/settings_json.py" filter-foundry-hooks ~/.claude/settings.json --root "$PLUGIN_ROOT" "$HOOK_FILTER_MODE" || { printf "! failed stripping hooks — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
 `APPROVE_ALL=true`: when the dry-run output reports `user: M` with M > 0, print `[--approve] auto-accepting: keep existing hooks`, apply option (b). Otherwise remove only stale foundry entries (option a); report the printed counts and choice.
@@ -243,10 +153,22 @@ Check if statusLine already points to the **current** plugin's statusline.js (fi
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload (Check 43)
 [ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }  # empty root makes contains("") true → stale entry kept
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" statusline-current ~/.claude/settings.json --root "$PLUGIN_ROOT" >/dev/null 2>&1  # timeout: 5000
+python "$PLUGIN_ROOT/bin/settings_json.py" statusline-current ~/.claude/settings.json --root "$PLUGIN_ROOT" >/dev/null 2>&1  # timeout: 5000
 ```
 
 Already set to current `$PLUGIN_ROOT`: report "statusLine already set to current plugin version — skipping." Otherwise Read the existing `statusLine`. An absent entry or a stale foundry command whose path proves the same installed-cache lineage may be updated below. A command executing a shipped hook basename from the legacy `~/.claude/hooks/` directory (expanding `$HOME` and `~`) is also stale foundry. A filename match alone does not prove ownership; treat any other existing value as custom.
+
+For an existing entry, run the ownership probe below. Exit 0 proves a shipped foundry hook path; exit 1 means custom and reaches the preservation gate below. Any other exit stops setup before writing settings.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""
+[ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
+python "$PLUGIN_ROOT/bin/settings_json.py" statusline-owned ~/.claude/settings.json --root "$PLUGIN_ROOT" >/dev/null 2>&1  # timeout: 5000
+STATUSLINE_OWNED=$?
+[ "$STATUSLINE_OWNED" -le 1 ] || { printf "! statusLine ownership probe failed — aborting setup\n"; exit 1; }
+printf 'STATUSLINE_OWNED=%s\n' "$STATUSLINE_OWNED"
+```
 
 `APPROVE_ALL=true`: keep a custom statusLine and report `[--approve] keeping custom statusLine`. In interactive mode use `AskUserQuestion`: (a) **Keep mine** ★ recommended · (b) **Replace with foundry statusLine**. Only explicit option (b) permits replacing a custom value.
 
@@ -256,7 +178,7 @@ Writes `statusLine` key to `~/.claude/settings.json`:
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 43)
 [ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" set-statusline ~/.claude/settings.json --command "node \"$PLUGIN_ROOT/hooks/statusline.js\"" || { printf "! failed updating statusLine — settings.json unchanged\n"; exit 1; }  # timeout: 5000
+python "$PLUGIN_ROOT/bin/settings_json.py" set-statusline ~/.claude/settings.json --command "node \"$PLUGIN_ROOT/hooks/statusline.js\"" || { printf "! failed updating statusLine — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
 Writeback happens in-bash above (`settings_json.py` atomic rename — no Write-tool permission prompt, headless-safe). Report: `  statusLine: set to current plugin version`.
@@ -284,7 +206,7 @@ Writeback happens in-bash above (atomic rename). Report from the script's two ou
 
 This step writes to `.claude/permissions-guide.md` relative to current working directory only at a git repository root. Outside a repository root, skip this project-local copy with a note and continue global setup.
 
-Copy `$PLUGIN_ROOT/permissions-guide.md` to `.claude/permissions-guide.md` — only if destination absent (preserves project-local edits via `/manage`):
+Copy `$PLUGIN_ROOT/permissions-guide.md` to `.claude/permissions-guide.md` — only if destination absent (preserves project-local edits via `/foundry:manage`):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -304,9 +226,10 @@ fi
 Bridge is optional. Resolve its installed path from the registry before offering enablement; an absent installation skips only bridge enablement, then continues to env defaults:
 
 ```bash
-BRIDGE_ROOT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/get_plugin_install_path.py" borda-ai-rig bridge 2>/dev/null) || BRIDGE_ROOT=""  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+BRIDGE_ROOT=$(python "$PLUGIN_ROOT/bin/get_plugin_install_path.py" borda-ai-rig bridge 2>/dev/null) || BRIDGE_ROOT=""  # timeout: 5000
 [ -n "$BRIDGE_ROOT" ] && [ -d "$BRIDGE_ROOT" ] || { printf "  bridge: skipped (not installed)\n"; exit 0; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" plugin-enabled ~/.claude/settings.json --name "bridge@borda-ai-rig" >/dev/null 2>&1  # timeout: 5000
+python "$PLUGIN_ROOT/bin/settings_json.py" plugin-enabled ~/.claude/settings.json --name "bridge@borda-ai-rig" >/dev/null 2>&1  # timeout: 5000
 ```
 
 Printed `bridge: skipped (not installed)`: report skipped, continue to env defaults. Otherwise rc 0: report "enabledPlugins already set — skipping." Installed but not enabled: use `AskUserQuestion`: (a) **Skip bridge enablement** ★ recommended · (b) **Enable installed bridge plugin**. Only explicit option (b) runs the write below.
@@ -316,9 +239,10 @@ Printed `bridge: skipped (not installed)`: report skipped, continue to env defau
 Writes `enabledPlugins["bridge@borda-ai-rig"]` key:
 
 ```bash
-BRIDGE_ROOT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/get_plugin_install_path.py" borda-ai-rig bridge 2>/dev/null) || BRIDGE_ROOT=""  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+BRIDGE_ROOT=$(python "$PLUGIN_ROOT/bin/get_plugin_install_path.py" borda-ai-rig bridge 2>/dev/null) || BRIDGE_ROOT=""  # timeout: 5000
 [ -n "$BRIDGE_ROOT" ] && [ -d "$BRIDGE_ROOT" ] || { printf "  bridge: skipped (not installed)\n"; exit 0; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" enable-plugin ~/.claude/settings.json --name "bridge@borda-ai-rig" || { printf "! failed updating enabledPlugins — settings.json unchanged\n"; exit 1; }  # timeout: 5000
+python "$PLUGIN_ROOT/bin/settings_json.py" enable-plugin ~/.claude/settings.json --name "bridge@borda-ai-rig" || { printf "! failed updating enabledPlugins — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
 Writeback happens in-bash above (`settings_json.py` atomic rename).
@@ -330,7 +254,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 43)
 [ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
 # A user who deliberately set "0" keeps it; only absent keys get the shipped default
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" merge-env ~/.claude/settings.json --defaults "$PLUGIN_ROOT/.claude-plugin/env-defaults.json" || { printf "! failed merging env defaults — settings.json unchanged\n"; exit 1; }  # timeout: 5000
+python "$PLUGIN_ROOT/bin/settings_json.py" merge-env ~/.claude/settings.json --defaults "$PLUGIN_ROOT/.claude-plugin/env-defaults.json" || { printf "! failed merging env defaults — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
 Writeback happens in-bash above (`settings_json.py` atomic rename). Report: `  env: N default(s) added (M already set)`. Existing values never overwritten — a key already present keeps user's value, including a deliberate `"0"`.
@@ -340,8 +264,10 @@ Writeback happens in-bash above (`settings_json.py` atomic rename). Report: `  e
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 ADV=""
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""
+[ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
 if [ -f ".claude/settings.json" ]; then
-    ADV=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" advisor-model .claude/settings.json 2>/dev/null)  # timeout: 5000
+    ADV=$(python "$PLUGIN_ROOT/bin/settings_json.py" advisor-model .claude/settings.json 2>/dev/null)  # timeout: 5000
 fi
 echo "$ADV" > "${TMPDIR:-/tmp}/foundry-setup-adv-${CSID}"
 echo "ADV=$ADV"
@@ -354,7 +280,9 @@ Check if global already equals it:
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r ADV < "${TMPDIR:-/tmp}/foundry-setup-adv-${CSID}" 2>/dev/null || ADV=""  # reload: fresh shell
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" advisor-matches ~/.claude/settings.json --model "$ADV" >/dev/null 2>&1  # timeout: 5000
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""
+[ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
+python "$PLUGIN_ROOT/bin/settings_json.py" advisor-matches ~/.claude/settings.json --model "$ADV" >/dev/null 2>&1  # timeout: 5000
 ```
 
 Already equal: report `  advisorModel already set to <value> — skipping.`
@@ -367,7 +295,9 @@ Otherwise use `AskUserQuestion` before promoting a project value to global setti
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r ADV < "${TMPDIR:-/tmp}/foundry-setup-adv-${CSID}" 2>/dev/null || ADV=""  # reload: fresh shell
 [ -n "$ADV" ] || { printf "! advisorModel sentinel empty — settings.json unchanged\n"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" set-advisor ~/.claude/settings.json --model "$ADV" || { printf "! failed updating advisorModel — settings.json unchanged\n"; exit 1; }  # timeout: 5000
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""
+[ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
+python "$PLUGIN_ROOT/bin/settings_json.py" set-advisor ~/.claude/settings.json --model "$ADV" || { printf "! failed updating advisorModel — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
 Writeback happens in-bash above (`settings_json.py` atomic rename — no Write-tool permission prompt). Report `  advisorModel: set to <value>`.
@@ -394,7 +324,7 @@ mkdir -p ~/.claude/rules  # timeout: 5000
 
 ```bash
 # re-resolve — state doesn't persist across steps; use installed cache path, not local fallback
-PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_plugin_root.py" --plugin-name foundry 2>/dev/null)  # timeout: 15000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry 2>/dev/null)  # timeout: 15000
 [ -z "$PLUGIN_ROOT" ] && { printf "! setup Phase 1 — could not resolve PLUGIN_ROOT; run claude plugin install foundry@borda-ai-rig first\n"; exit 1; }
 python "$PLUGIN_ROOT/bin/symlink_with_guard.py" cleanup --plugin-root "$PLUGIN_ROOT"  # timeout: 15000
 ```
@@ -545,7 +475,7 @@ Report first — deletes nothing:
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 43)
 [ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
-python "$PLUGIN_ROOT/bin/purge_plugin_cache.py" --protect "$PLUGIN_ROOT" --protect "${CLAUDE_PLUGIN_ROOT:-}"  # timeout: 30000
+python "$PLUGIN_ROOT/bin/purge_plugin_cache.py" --protect "$PLUGIN_ROOT" --protect "${CLAUDE_PLUGIN_ROOT}"  # timeout: 30000
 ```
 
 Output `nothing to purge …`: print it, skip to Step 12 (no prompt).
@@ -564,7 +494,7 @@ IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/nu
 [ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
 EXPECT_COUNT='<N>'
 case "$EXPECT_COUNT" in ''|*[!0-9]*) printf "! BLOCKED — cache count placeholder must be replaced with the reported integer\n"; exit 1 ;; esac
-python "$PLUGIN_ROOT/bin/purge_plugin_cache.py" --apply --expect-count "$EXPECT_COUNT" --protect "$PLUGIN_ROOT" --protect "${CLAUDE_PLUGIN_ROOT:-}"  # timeout: 60000
+python "$PLUGIN_ROOT/bin/purge_plugin_cache.py" --apply --expect-count "$EXPECT_COUNT" --protect "$PLUGIN_ROOT" --protect "${CLAUDE_PLUGIN_ROOT}"  # timeout: 60000
 ```
 
 Substitute `<N>` with count from report line before running. Versions newer than age floor are deferred by design, clear on a later run — that's not a failure.

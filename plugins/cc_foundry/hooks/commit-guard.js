@@ -215,6 +215,7 @@ function getSentinelDir() {
 
 const LOCAL_GIT_SCOPE = "local-git-non-destructive";
 const PUSH_SCOPE = "push-once";
+const PUSH_RUN_SCOPE = "push-run";
 const GH_WRITE_SCOPE = "gh-write-once";
 
 // The lexer's coarse operator split (lib/shell-git.js `coarseSegments`): an operator inside quotes
@@ -431,12 +432,12 @@ function wipeLegacySentinels(cwd) {
   } catch {}
 }
 
-// Delete the push token and the gh write token with the claims their spent copies left, in the session project's
+// Delete the push tokens and the gh write token with the claims their spent copies left, in the session project's
 // common dir, so an approval never outlives its session or a /clear. Only foundry ships this hook; in an install
-// without foundry each token's 15-minute expiry bounds it.
+// without foundry each token's expiry (15 minutes, a run push token 12 hours) bounds it.
 function wipeTokens(cwd) {
   const grants = loadGrants();
-  for (const scope of [PUSH_SCOPE, GH_WRITE_SCOPE]) {
+  for (const scope of [PUSH_SCOPE, PUSH_RUN_SCOPE, GH_WRITE_SCOPE]) {
     try {
       if (grants) grants.removeRecord(scope, { cwd });
     } catch {}
@@ -681,7 +682,7 @@ function configuredRemotes(cwd, grants) {
 // Why the push token does not allow this call, or null after spending it: a token of the session project, valid, on
 // the current branch at the current HEAD, claimed once for this call's tool_use_id with the approving answer proved
 // in the transcript (lib/approval-grants.js `spendToken`: of concurrent calls exactly one claims it).
-function tokenProblem(grants, here, data) {
+function onceTokenProblem(grants, here, data) {
   const status = grants.recordStatus(PUSH_SCOPE, { cwd: data.cwd });
   if (!status.ok) {
     if (status.expired) fs.rmSync(status.file, { force: true });
@@ -701,6 +702,64 @@ function tokenProblem(grants, here, data) {
   return spent.ok ? null : spent.reason;
 }
 
+// Why the one push reading is not literally `git push <remote> <branch>` as the run question showed it, or null: the
+// plain `push` program (not `git lfs push`), no option at all, and exactly the two operands the question named, so
+// no push.default, `remote.*.push` setting, `-u` or refspec decides what goes.
+function runPushShapeProblem(pushReadings, record) {
+  const reading = pushReadings[0];
+  if (!reading || reading[0].toLowerCase() !== "push") {
+    return "the run's push approval covers only `git push <remote> <branch>`, not another push program";
+  }
+  const words = cleanWords(reading.slice(1));
+  if (words.some((word) => word.startsWith("-"))) {
+    return "the run's push approval covers `git push <remote> <branch>` with no option";
+  }
+  if (words.length !== 2 || words[0] !== record.remote || words[1] !== record.branch) {
+    return "the push is not exactly the `git push <remote> <branch>` the run's question showed";
+  }
+  return null;
+}
+
+// Why a run push token (`git-push-run`) does not allow this call, or null after spending it: the checkout is on the
+// branch the question named, the push is literally the one it showed, and HEAD descends from the PR head it named (the
+// run's own commits sit on top of it), claimed once like the exact-HEAD token. A call that already spent the exact-HEAD
+// token (a second copy of the same hook call) never spends this one too.
+function runTokenProblem(grants, here, data, pushReadings, record) {
+  if (here.branch !== record.branch) return "the current branch is not the one the run's push was approved on";
+  if (grants.holdsClaim(PUSH_SCOPE, { cwd: data.cwd, callId: data.tool_use_id })) {
+    return "this call already spent the exact-HEAD push approval";
+  }
+  const shape = runPushShapeProblem(pushReadings, record);
+  if (shape) return shape;
+  const remote = record.remote;
+  if (!grants.isAncestor(data.cwd, record.base_head, here.head)) {
+    return "HEAD is not on the line of the PR head the run's push was approved from";
+  }
+  if (typeof data.tool_use_id !== "string" || data.tool_use_id === "") {
+    return "the payload carries no tool_use_id to spend the push approval with";
+  }
+  const spent = grants.spendToken(PUSH_RUN_SCOPE, {
+    cwd: data.cwd,
+    callId: data.tool_use_id,
+    expected: { branch: here.branch, remote },
+    transcriptPath: data.transcript_path,
+  });
+  return spent.ok ? null : spent.reason;
+}
+
+// Why no push token allows this call, or null after spending one. The exact-HEAD token (`git-push`) goes first; when it
+// does not allow the call and a valid run token (`git-push-run`) is on record, that token decides and names the reason.
+function tokenProblem(grants, here, data, pushReadings) {
+  const once = onceTokenProblem(grants, here, data);
+  if (once === null) return null;
+  const run = grants.recordStatus(PUSH_RUN_SCOPE, { cwd: data.cwd });
+  if (!run.ok) {
+    if (run.expired) fs.rmSync(run.file, { force: true });
+    return once;
+  }
+  return runTokenProblem(grants, here, data, pushReadings, run.record);
+}
+
 // The verdict on a non-force push, or null after spending the token. `kind` picks the advice: `ask` (the git-push
 // question can cover it), `byHand` (no approval can: the user runs it), `agent` (a spawned agent's call). Order:
 // the library, the caller, the checkout, the command's shape, its scope, git beside it, then the token. Reasons never
@@ -715,18 +774,20 @@ function pushVerdict(command, data, inspection) {
   const here = grants.gitHead(data.cwd);
   if (here.reason) return { kind: "ask", reason: here.reason };
   const scoped = PLAIN_BRANCH.test(here.branch) ? command.replace(BRANCH_SUBSTITUTION, here.branch) : command;
-  const info = scoped === command ? inspection : { ...inspection };
+  // Git discovery can outlast the text budget; substituted text gets its own bounded inspection phase.
+  const info = scoped === command ? inspection : { ...inspection, deadline: Date.now() + 1000 };
   const all = scoped === command ? inspection.readings : gitSubcommandArgs(scoped, info);
   const readings = info.unreadable ? info.exactReadings || [] : all;
   const pushReadings = readings.filter((args) => asPush(args) !== null);
   const repeated = repeatProblem(scoped, pushReadings);
   if (repeated) return { kind: "ask", reason: repeated };
   const scope = { branch: here.branch, remotes: configuredRemotes(data.cwd, grants) };
-  const uncovered = uncoveredProblem(scoped, pushReadings, scope, inspection.deadline);
+  // Remote discovery is subprocess time, so scope inspection starts a fresh text-only budget.
+  const uncovered = uncoveredProblem(scoped, pushReadings, scope, Date.now() + 1000);
   if (uncovered) return { kind: "byHand", reason: uncovered };
   const moving = movingGitProblem(readings.filter((args) => asPush(args) === null));
   if (moving) return { kind: "ask", reason: moving };
-  const token = tokenProblem(grants, here, data);
+  const token = tokenProblem(grants, here, data, pushReadings);
   return token ? { kind: "ask", reason: token } : null;
 }
 
@@ -737,7 +798,9 @@ const PUSH_ADVICE = {
     "you will run. The user's `Approve` records a single-use token (claude-push-approval.json in the git common dir, " +
     "15 min) for one push of this branch at this HEAD to a configured remote — `git push [-u] [<remote>] " +
     "[HEAD|<branch>][:<branch>]`, remote and branch written out — run from this checkout as the only push in its Bash " +
-    "command, beside no git that moves HEAD. Never create, copy or edit the token yourself.",
+    "command, beside no git that moves HEAD. A resolve run may instead ask once at its start with header " +
+    "`git-push-run` (a `git push <remote> <branch>` span and the PR head commit id in the question); that token " +
+    "allows one such push while HEAD descends from that head. Never create, copy or edit a token yourself.",
   byHand:
     "A push approval covers only one push of the current branch at the approved HEAD to a configured remote name — " +
     "`git push [-u] [<remote>] [HEAD|<branch>][:<branch>]`, remote and branch written out, run from this checkout — " +
@@ -804,7 +867,7 @@ function handlePayload() {
   }
 
   // --- PreToolUse: guard git push (git commit is prompt-discipline only) ---
-  if (tool_name !== "Bash") process.exit(0);
+  if (tool_name !== "Bash" && tool_name !== "Monitor") process.exit(0);
 
   const command = (tool_input && tool_input.command) || "";
   if (typeof command !== "string") process.exit(0);

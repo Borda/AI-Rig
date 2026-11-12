@@ -22,8 +22,9 @@ CsvPair = tuple[Path, Path]
 
 
 @pytest.fixture
-def write_csvs(tmp_path: Path) -> Callable[[str, str], CsvPair]:
+def write_csvs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[str, str], CsvPair]:
     """Return a factory that writes ``train.csv`` and ``test.csv`` under ``tmp_path`` and returns both paths."""
+    monkeypatch.chdir(tmp_path)
 
     def write(train_text: str, test_text: str) -> CsvPair:
         """Write both split CSVs from the given text."""
@@ -80,7 +81,6 @@ class TestComputeOverlap:
                 1,
                 id="shared-patient-counted-once",
             ),
-            pytest.param("patient_id,label\n", "patient_id,label\n", {}, 0, id="empty-splits-zero"),
             pytest.param(
                 "patient_id\n1\n2\n3\n4\n", "patient_id\n3\n4\n5\n", {}, 2, id="multiple-overlapping-patients"
             ),
@@ -103,9 +103,9 @@ class TestComputeOverlap:
     ) -> None:
         """The overlap count is the number of distinct patient ids present in both CSVs.
 
-        Disjoint ids and header-only files have zero overlap. A patient appearing several times in one CSV counts once
-        (patient 2 appears twice in train and once in test → 1). Two distinct shared patients count 2. A nondefault
-        patient identifier column is selected via ``column=``.
+        Disjoint ids have zero overlap. A patient appearing several times in one CSV counts once (patient 2 appears
+        twice in train and once in test → 1). Two distinct shared patients count 2. A nondefault patient identifier
+        column is selected via ``column=``.
         """
         train, test = write_csvs(train_text, test_text)
         assert vps.compute_overlap(train, test, **kwargs) == expected
@@ -164,22 +164,25 @@ class TestMainCLI:
 
     @_skip_pandas_unavailable
     @pytest.mark.parametrize(
-        ("train_text", "test_text", "extra_args", "expected_out"),
+        ("train_text", "test_text", "extra_args", "expected_out", "expected_exit"),
         [
-            pytest.param("patient_id\n1\n2\n", "patient_id\n3\n4\n", [], "No patient overlap\n", id="disjoint-splits"),
             pytest.param(
-                "patient_id\n1\n2\n3\n", "patient_id\n2\n3\n4\n", [], "Overlap: 2 patients\n", id="overlap-detected"
+                "patient_id\n1\n2\n", "patient_id\n3\n4\n", [], "No patient overlap\n", 0, id="disjoint-splits"
+            ),
+            pytest.param(
+                "patient_id\n1\n2\n3\n", "patient_id\n2\n3\n4\n", [], "Overlap: 2 patients\n", 1, id="overlap-detected"
             ),
             pytest.param(
                 "subject_id\nA\nB\n",
                 "subject_id\nB\nC\n",
                 ["--column", "subject_id"],
                 "Overlap: 1 patients\n",
+                1,
                 id="custom-column-via-cli",
             ),
         ],
     )
-    def test_prints_verdict_and_exits_zero(
+    def test_prints_verdict_and_returns_overlap_status(
         self,
         write_csvs: Callable[[str, str], CsvPair],
         capsys: pytest.CaptureFixture[str],
@@ -187,8 +190,9 @@ class TestMainCLI:
         test_text: str,
         extra_args: list[str],
         expected_out: str,
+        expected_exit: int,
     ) -> None:
-        """A readable train/test pair exits 0 with the inline block's verdict on stdout and an empty stderr.
+        """Readable splits exit zero when disjoint and one on overlap, with a verdict and no stderr.
 
         Disjoint splits print the clean verdict, overlap prints the count, and ``--column`` overrides the default
         patient identifier column from the command line.
@@ -196,7 +200,7 @@ class TestMainCLI:
         train, test = write_csvs(train_text, test_text)
         exit_code = vps.main(["--train", str(train), "--test", str(test), *extra_args])
         captured = capsys.readouterr()
-        assert (exit_code, captured.out, captured.err) == (0, expected_out, "")
+        assert (exit_code, captured.out, captured.err) == (expected_exit, expected_out, "")
 
     @pytest.mark.parametrize(
         ("missing", "message"),

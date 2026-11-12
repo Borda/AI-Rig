@@ -917,6 +917,53 @@ class TestApiFailsClosed:
 
 
 @_skip_node_unavailable
+class TestApiEscapeSequenceDisplay:
+    """Displaying escape sequences changes neither request classification nor approval."""
+
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            pytest.param("--allow-escape-sequences", id="bare-display-flag"),
+            pytest.param("--allow-escape-sequences=true", id="display-enabled"),
+            pytest.param("--allow-escape-sequences=false", id="display-disabled"),
+        ],
+    )
+    def test_log_read_passes_without_a_write_decision(self, run_hook, flag: str) -> None:
+        """Bare and equals-valued display flags leave a log read outside the write gate."""
+        result = run_hook("gh-write-guard.js", _bash(f"gh api repos/o/r/actions/jobs/1/logs {flag}"))
+
+        assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
+
+    @pytest.mark.parametrize(
+        ("command", "reason"),
+        [
+            pytest.param("gh api repos/o/r/issues -X POST", "-X POST", id="explicit-post"),
+            pytest.param("gh api repos/o/r/issues -f title=x", "POST", id="fields-imply-post"),
+            pytest.param("gh api repos/o/r --input body.json", "--input", id="input-body"),
+            pytest.param("gh api graphql -f 'query=mutation { addStar { x } }'", "mutation", id="graphql-mutation"),
+            pytest.param(
+                "gh api repos/o/r -X GET -H 'X-HTTP-Method-Override: POST'",
+                "method-override header",
+                id="method-override-header",
+            ),
+            pytest.param("gh api repos/o/r --unrelated-option", "--unrelated-option", id="unknown-option"),
+            pytest.param(
+                "gh api repos/o/r --allow-escape-sequences false", "2 endpoints", id="space-value-is-positional"
+            ),
+        ],
+    )
+    def test_display_flag_preserves_block_reason(self, run_hook, command: str, reason: str) -> None:
+        """Writes, unknown options and extra positionals retain their original rejection reason."""
+        baseline = run_hook("gh-write-guard.js", _bash(command))
+        displayed = run_hook("gh-write-guard.js", _bash(f"{command} --allow-escape-sequences"))
+
+        assert baseline.returncode == displayed.returncode == 2
+        assert reason in baseline.stderr
+        assert reason in displayed.stderr
+        assert baseline.stdout == displayed.stdout == ""
+
+
+@_skip_node_unavailable
 class TestReadsPass:
     """Reads, and gh commands the guard does not know, reach normal permission handling (exit 0)."""
 
@@ -1195,6 +1242,26 @@ class TestOneTimeApproval:
     @pytest.mark.parametrize(
         "command",
         [
+            pytest.param("gh api repos/o/r/issues -X POST", id="explicit-post"),
+            pytest.param("gh api repos/o/r/issues -f title=x", id="fields-imply-post"),
+            pytest.param("gh api repos/o/r --input body.json", id="input-body"),
+            pytest.param("gh api graphql -f 'query=mutation { addStar { x } }'", id="graphql-mutation"),
+        ],
+    )
+    def test_display_flag_write_still_spends_exact_approval(
+        self, guard, gh_write_token, checkout: Path, command: str
+    ) -> None:
+        """The display flag leaves ordinary API writes subject to the same single-use approval."""
+        command = f"{command} --allow-escape-sequences"
+        token = gh_write_token(checkout, command)
+        result = guard(_call(command, checkout))
+
+        assert (result.returncode, json.loads(result.stdout)) == (0, SPENT_ALLOW)
+        assert not token.exists()
+
+    @pytest.mark.parametrize(
+        "command",
+        [
             pytest.param(f"{APPROVED} --draft", id="extra-argument"),
             pytest.param(APPROVED.replace(" ", "  ", 1), id="inner-whitespace"),
             pytest.param(f"{APPROVED}; gh pr merge 1", id="second-command"),
@@ -1342,6 +1409,10 @@ class TestForceUpdateNeverApproved:
             pytest.param("gh repo sync --force=true", id="repo-sync-force-value"),
             pytest.param("gh pr update-branch 7 --rebase", id="pr-update-branch-rebase"),
             pytest.param("gh api -X PATCH repos/o/r/git/refs/heads/main -F force=true -f sha=abc", id="api-field"),
+            pytest.param(
+                "gh api -X PATCH repos/o/r/git/refs/heads/main -F force=true -f sha=abc --allow-escape-sequences",
+                id="api-force-with-escape-display",
+            ),
             pytest.param("gh api -X PATCH repos/o/r/git/refs/heads/main -f force=1 -f sha=abc", id="api-field-one"),
             pytest.param("gh api -X PATCH repos/o/r/git/refs/heads/main --input body.json", id="api-input-ref"),
             pytest.param(
@@ -1620,7 +1691,7 @@ class TestShippedInFoundry:
             if hook["command"].endswith('/hooks/gh-write-guard.js"; done; exit 0')
         ]
 
-        assert matchers == ["Bash"]
+        assert matchers == ["Bash|Monitor" if plugin == "cc_foundry" else "Bash"]
 
     def test_copy_blocks_a_write_from_its_own_tree(self, plugin: str) -> None:
         """The plugin's own copy loads its own lexer: a write through it is a hard deny.

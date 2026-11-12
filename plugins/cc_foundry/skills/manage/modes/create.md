@@ -32,7 +32,8 @@
 4. Resolve the template directory through `resolve_skill_subdir.py manage templates`; use its returned concrete path and stop if resolution fails:
 
 ```bash
-MANAGE_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" manage templates) || { printf "! BREAKING: manage templates not found — run /foundry:setup first\n"; exit 1; }  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+MANAGE_TPL=$(python "$PLUGIN_ROOT/bin/resolve_skill_subdir.py" manage templates) || { printf "! BREAKING: manage templates not found — run /foundry:setup first\n"; exit 1; }  # timeout: 5000
 echo "Template dir: $MANAGE_TPL"
 ```
 
@@ -79,7 +80,8 @@ Spawn passes no `isolation` (`agents/sw-engineer.md` §Worktree isolation), so t
 3. Resolve `$_FOUNDRY_SHARED` before spawning — sub-agents do not inherit shell variables:
 
 ```bash
-_FOUNDRY_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+_FOUNDRY_SHARED=$(python "$PLUGIN_ROOT/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")  # timeout: 5000
 echo "Shared dir: $_FOUNDRY_SHARED"
 ```
 
@@ -89,7 +91,7 @@ Spawn **foundry:sw-engineer** subagent to create directory and scaffold the skil
 Run: `mkdir -p .claude/skills/<name>` using the Bash tool.
 Run `cat "<MANAGE_TPL>/skill-scaffold.md"` via the Bash tool (substitute resolved path from bash block above — do not pass literal `$MANAGE_TPL` to the agent).
 Also read the validated resolved schema file `<MANAGE_SKILL_SCHEMA_FILE>` to incorporate any new frontmatter fields (substitute its concrete path on either branch; if unavailable, omit this read and use the scaffold's default frontmatter).
-Run `cat "<_FOUNDRY_SHARED>/bin-authoring-guide.md"` (Bash tool; substitute resolved `$_FOUNDRY_SHARED`, echoed as `"Shared dir: <path>"`) and follow it — before any fenced code block in the new SKILL.md: extraction gate (verdict MEDIUM/HIGH → bin/ script instead), §Prose over Code check, §Script Output Routing for multi-value bin/ scripts.
+Run `PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT; python "$PLUGIN_ROOT/bin/load_shared_doc.py" foundry skills/_shared bin-authoring-guide.md` (Bash tool) and follow it — before any fenced code block in the new SKILL.md: extraction gate (verdict MEDIUM/HIGH → bin/ script instead), §Prose over Code check, §Script Output Routing for multi-value bin/ scripts.
 Scaffold `.claude/skills/<name>/SKILL.md` with:
 - Frontmatter: name=<name>, description=<description>; add other fields per schema and scaffold guidance
 - Body: rich workflow scaffold derived from the description, following all content rules in the scaffold template

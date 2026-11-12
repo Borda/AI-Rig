@@ -374,6 +374,11 @@ _NOT_COVERED_GENERAL = [
     pytest.param("gh pr view 1 ;; gh pr view 2", "not-gh-only", id="double-semicolon"),
     pytest.param("gh api repos/o/r -- x", "not-a-read", id="api-end-of-options"),
     pytest.param("gh api repos/o/r --slurp=true", "not-a-read", id="api-flag-with-value"),
+    pytest.param(
+        "gh api repos/o/r/actions/jobs/1/logs --allow-escape-sequences",
+        "not-a-read",
+        id="escape-sequence-output-requires-permission",
+    ),
     pytest.param("gh api repos/o/r -iq .x", "not-a-read", id="api-short-cluster"),
     pytest.param("gh pr view 1 =x", "not-gh-only", id="zsh-equals-word"),
     pytest.param("gh pr view 1#x", "not-gh-only", id="mid-word-hash"),

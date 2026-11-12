@@ -45,6 +45,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from get_plugin_install_path import resolve_install_path
+
 TOOL_LABEL = "codemap-py"  # binary name, warn prefix, and plugin name — all one label
 #: Fallback basename prefix of the index-currency sentinel when the caller passes no --currency-prefix.
 DEFAULT_CURRENCY_PREFIX = "codemap-currency"
@@ -160,11 +162,15 @@ def _currency(cic: str, index: Path) -> tuple[str, str]:
 
 def _record_currency(prefix: str, index: Path) -> None:
     """Probe index currency and record it, warning on stderr when the index is stale."""
-    cic = shutil.which("check-index-currency")
-    if not cic:
+    config = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    install = resolve_install_path(config / "plugins" / "installed_plugins.json", "borda-ai-rig", TOOL_LABEL)
+    if install and not Path(install).is_absolute():
+        install = None
+    cic = Path(install) / "bin" / "check-index-currency" if install else None
+    if cic is None or not cic.is_file():
         _write_currency(prefix, "current")
         return
-    currency, reason = _currency(cic, index)
+    currency, reason = _currency(str(cic), index)
     _write_currency(prefix, currency)
     if currency == "stale":
         print(

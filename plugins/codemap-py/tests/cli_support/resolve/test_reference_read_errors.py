@@ -9,8 +9,9 @@ import pytest
 
 
 @pytest.mark.parametrize("path_kind", ["missing", "directory"])
-def test_explicit_unreadable_path_fails_closed(tmp_path: Path, capsys, path_kind: str) -> None:
+def test_explicit_unreadable_path_fails_closed(tmp_path: Path, capsys, path_kind: str, monkeypatch) -> None:
     """Missing files and directory paths cannot silently shrink an indexed reference set."""
+    monkeypatch.chdir(tmp_path)
     target = tmp_path if path_kind == "directory" else tmp_path / "gone.py"
     answer = tmp_path / "answer.json"
     answer.write_text(json.dumps({"called_by": [{"path": str(target)}]}), encoding="utf-8")
@@ -23,8 +24,9 @@ def test_explicit_unreadable_path_fails_closed(tmp_path: Path, capsys, path_kind
     assert captured.out == ""
 
 
-def test_explicit_permission_failure_discards_partial_hits(tmp_path: Path, capsys) -> None:
+def test_explicit_permission_failure_discards_partial_hits(tmp_path: Path, capsys, monkeypatch) -> None:
     """An open failure after an earlier hit still fails without emitting a partial reference list."""
+    monkeypatch.chdir(tmp_path)
     good = tmp_path / "a.py"
     denied = tmp_path / "b.py"
     good.write_text("old()\n", encoding="utf-8")

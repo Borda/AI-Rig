@@ -63,6 +63,9 @@ benchmarks/manifests/
 # Documentation build artifacts
 site/
 
+# Node.js dependencies
+node_modules/
+
 #__pycache__
 __pycache__/
 *.py[cod]

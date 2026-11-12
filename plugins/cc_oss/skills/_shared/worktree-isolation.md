@@ -1,6 +1,6 @@
-<!-- file: worktree-isolation.md — consumers: plugins/cc_oss/skills/{review,resolve}/SKILL.md -->
+<!-- file: worktree-isolation.md — consumers: plugins/cc_oss/skills/resolve/SKILL.md -->
 
-# Worktree isolation (`--worktree`) — oss
+# Worktree isolation (`--worktree`) — /oss:resolve
 
 Opt-in. Offload the run into an isolated git worktree so the caller's working tree + branch are never touched. Gated on `WT_ENABLED=true`; flag absent → run in main tree as today.
 
@@ -36,23 +36,25 @@ echo "$WT" > "${TMPDIR:-/tmp}/oss-<skill>-wt-${CSID}"   # final path, read by En
 
 ```bash
 # timeout: 30000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/heal_git_artifacts.py" worktrees --include-orphans
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/heal_git_artifacts.py" worktrees --include-orphans
 ```
 
 > Exit 0 (nothing reclaimable) or exit 2 (environment error) → leftovers aren't the cause; print the `git worktree add` error, stop. Exit 1 but the `add` error names none of the listed paths or branches → leftovers aren't the cause; print the error, stop. Exit 1 and the error names a listed path or branch → Write the full list and the `add` error to `.temp/worktree-leftovers.md` first; print them once as the last reply text before invoking `AskUserQuestion`, as normal Markdown. The question text carries the leftover count, the `add` error headline and `→ .temp/worktree-leftovers.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Both options carry a label and a one-line description, no `preview` — never offer removal of an unseen list: (a) **Stop** — keep everything, end the run · (b) **Remove them and retry** — run the block below in this turn, retry the create once. That retry fails too → print the error, stop; never loop back to the report. Removing a worktree deletes a directory tree, so never run the `--apply` form without that answer.
 
 ```bash
 # timeout: 30000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/heal_git_artifacts.py" worktrees --include-orphans --apply
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/heal_git_artifacts.py" worktrees --include-orphans --apply
 ```
 
 > Candidates are only clean, registered-or-orphaned, ≥14-day-old `agent-*`/`oss-*` trees. Both calls pass `--include-orphans`, so the approved list and the removal cover the same unregistered dirs; symlinks are never followed or removed. Uncommitted work is reported and kept at any age; `dev-*` and hand-made names are never candidates. Lock healing (`oss:resolve` Step 8) is unconditional and unaffected.
 
 4. `EnterWorktree(path=<final $WT from `${TMPDIR:-/tmp}/oss-<skill>-wt-${CSID}`>)` — the possibly disambiguated path, never the original slug — session CWD now the worktree.
 
-## §review — read-only, report to main tree
+## Historical review entry — superseded
 
-`oss:review` produces a report; write the **final** report under the main tree so its printed path + follow-up gate stay valid:
+The branch-based review entry below is historical and must not be executed. `/oss:review` uses its SKILL.md §Worktree isolation contract: a detached PR-head worktree, final report path and detached SHA, and `ExitWorktree(action="keep")` before follow-up.
 
 ```bash
 # timeout: 5000
@@ -81,7 +83,7 @@ End of run, after gates/push:
 
 1. `git branch --show-current` (from worktree CWD).
 2. `ExitWorktree(action="keep")` — returns session to original dir, leaves worktree + branch on disk. Never `remove`, never auto-merge. (`path`-entered worktrees are never auto-removed.)
-3. Surface a `Worktree` block: `path` · `branch` · note (review: `merge if you want the report's companion edits`; resolve: `` commits already pushed to the fork — worktree is disposable, remove with `git worktree remove` when done ``).
+3. Surface a `Worktree` block: `path` · `branch` · note: `` commits already pushed to the fork — worktree is disposable, remove with `git worktree remove` when done ``. If the push was skipped or blocked, state that outcome instead and preserve the unpushed commits.
 
 ## §Isolated spawns
 

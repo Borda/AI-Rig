@@ -61,7 +61,8 @@ Follow above (if present). If absent, proceed without style guidelines.
 Dispatch shepherd for public-facing voice/tone review before writing to disk. Check availability first:
 
 ```bash
-SHEPHERD_AVAILABLE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/check_agent.py" oss shepherd 2>/dev/null)  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+SHEPHERD_AVAILABLE=$(python "$PLUGIN_ROOT/bin/check_agent.py" oss shepherd 2>/dev/null)  # timeout: 5000
 # expand to literal value before spawning
 SHEPHERD_DIR=".temp/release-shepherd-$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')-$(date +%Y-%m-%d)"
 mkdir -p "$SHEPHERD_DIR"  # timeout: 5000
@@ -97,6 +98,7 @@ Shepherd review policy (applies when `$SHEPHERD_AVAILABLE == true`):
   - **Append merge** — gate computed once, folding all three preconditions (`--append` set, DRAFT.md present, marker valid) into `$MARKER_VALID`:
 
     ```bash
+    PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
     export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
     # Reload raw branch ref, DO_APPEND, LAST_TAG (Check 41: fresh shell)
     IFS= read -r BRANCH_REF < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH_REF" 2>/dev/null || BRANCH_REF=""
@@ -105,7 +107,7 @@ Shepherd review policy (applies when `$SHEPHERD_AVAILABLE == true`):
     if [ "$DO_APPEND" = "true" ] && [ -s DRAFT.md ]; then
         # is-valid also rejects a marker superseded by a later release tag (see release_append_marker.py) —
         # keeps this gate in agreement with what Gather changes' `resolve` actually used for $RANGE
-        MARKER_VALID=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/release_append_marker.py" is-valid --branch "$BRANCH_REF" --last-tag "$LAST_TAG")  # timeout: 5000
+        MARKER_VALID=$(python "$PLUGIN_ROOT/bin/release_append_marker.py" is-valid --branch "$BRANCH_REF" --last-tag "$LAST_TAG")  # timeout: 5000
     else
         MARKER_VALID=false
     fi
@@ -178,6 +180,7 @@ Shepherd review policy (applies when `$SHEPHERD_AVAILABLE == true`):
 
     ```bash
     # Recheck source immediately before fallback draft write.
+    PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
     export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
     IFS= read -r DO_APPEND < "${TMPDIR:-/tmp}/release-do-append-${CSID}" 2>/dev/null || DO_APPEND="false"
     IFS= read -r RELEASE_MODE < "${TMPDIR:-/tmp}/release-mode-${CSID}" 2>/dev/null || RELEASE_MODE="notes"
@@ -189,7 +192,7 @@ Shepherd review policy (applies when `$SHEPHERD_AVAILABLE == true`):
         IFS= read -r FROZEN_BRANCH < "${TMPDIR:-/tmp}/release-append-branch-${CSID}" 2>/dev/null || FROZEN_BRANCH=""
         FROZEN_TAGS_FILE="${TMPDIR:-/tmp}/release-append-tags-${CSID}"
         [ -n "$BRANCH" ] && [ -n "$FROZEN_HEAD" ] && [ -n "$FROZEN_BRANCH" ] && [ -f "$FROZEN_TAGS_FILE" ] || { echo "Error: frozen append source missing before draft write" >&2; exit 1; }
-        python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/release_append_publish.py" check --branch "$BRANCH" --head-sha "$FROZEN_HEAD" --branch-ref "$FROZEN_BRANCH" --tag-state-file "$FROZEN_TAGS_FILE" || exit 1
+        python "$PLUGIN_ROOT/bin/release_append_publish.py" check --branch "$BRANCH" --head-sha "$FROZEN_HEAD" --branch-ref "$FROZEN_BRANCH" --tag-state-file "$FROZEN_TAGS_FILE" || exit 1
     fi
     ```
 
@@ -288,6 +291,7 @@ Tripped (block exits 1 naming the artifact) → restore that artifact to the exa
 - **Provenance record**: for every bullet/block just written or merged this cycle that traces to specific commit(s) — DRAFT.md's Notable-changes subsections, Spotlights, Migration guide; `$CHANGELOG_FILE`'s Unreleased entries; standalone `MIGRATION.md` blocks — record its provenance. **Excluded from patch-id provenance**: Summary content (DRAFT.md's own `## 📋 Summary` section and standalone `SUMMARY.md`), because their blended prose has no reliable one-commit anchor; routine appends preserve earlier SUMMARY.md paragraphs and re-fold DRAFT.md's Summary, while the final truth gate above may correct stale claims using source evidence. Contributors remain excluded because credit is per person, not per commit revert.
 
   ```bash
+  PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
   IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH" 2>/dev/null || BRANCH=""
   IFS= read -r BRANCH_REF < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH_REF" 2>/dev/null || BRANCH_REF=""
@@ -297,7 +301,7 @@ Tripped (block exits 1 naming the artifact) → restore that artifact to the exa
   IFS= read -r RELEASE_MODE < "${TMPDIR:-/tmp}/release-mode-${CSID}" 2>/dev/null || RELEASE_MODE="notes"
   IFS= read -r APPEND_STAGE < "${TMPDIR:-/tmp}/release-append-stage-${CSID}" 2>/dev/null || APPEND_STAGE=""
   [ "$RELEASE_MODE" != notes ] || { [ -n "$APPEND_STAGE" ] && [ -f "$APPEND_STAGE/candidate.json" ]; } || { echo "Error: notes candidate missing before provenance write" >&2; exit 1; }
-  python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/release_append_marker.py" guard --branch "$BRANCH_REF" || exit 1
+  python "$PLUGIN_ROOT/bin/release_append_marker.py" guard --branch "$BRANCH_REF" || exit 1
   PROVENANCE_FILE=".temp/release-state-v2/$BRANCH_KEY/provenance.jsonl"
   [ "$RELEASE_MODE" != notes ] || PROVENANCE_FILE="$APPEND_STAGE/$PROVENANCE_FILE"
   mkdir -p "$(dirname "$PROVENANCE_FILE")" || exit 1
@@ -316,18 +320,20 @@ Tripped (block exits 1 naming the artifact) → restore that artifact to the exa
   `{"schema_version": 1, "patch_id": "<40-hex patch-id, or null>", "sha": "<full 40-char sha — debug metadata only, never a matching key>", "subject": "<original commit subject — human debugging only, never a matching key>", "artifact": "DRAFT.md"|"CHANGELOG.md"|"MIGRATION.md", "anchor_text": "<exact text just written, verbatim>", "written_at": "$DATE"}`. Write every new record of this cycle, one compact JSON object per line, to the `PROVENANCE_REC` path printed above with the Write tool, then append the staged `.rec` file with the fixed block below; it adds the trailing newline and deletes the `.rec`. A `CROSS_CYCLE_MATCH`-struck bullet from THIS cycle is never re-recorded — it was removed, not written.
 
   ```bash
+  PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
   IFS= read -r BRANCH_KEY < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH_KEY" 2>/dev/null || BRANCH_KEY=""
   IFS= read -r RELEASE_MODE < "${TMPDIR:-/tmp}/release-mode-${CSID}" 2>/dev/null || RELEASE_MODE="notes"
   IFS= read -r APPEND_STAGE < "${TMPDIR:-/tmp}/release-append-stage-${CSID}" 2>/dev/null || APPEND_STAGE=""
   PROVENANCE_FILE=".temp/release-state-v2/$BRANCH_KEY/provenance.jsonl"
   [ "$RELEASE_MODE" != notes ] || PROVENANCE_FILE="$APPEND_STAGE/$PROVENANCE_FILE"
-  python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/append_ledger.py" "$PROVENANCE_FILE"  # timeout: 5000
+  python "$PLUGIN_ROOT/bin/append_ledger.py" "$PROVENANCE_FILE"  # timeout: 5000
   ```
 
 - **Marker refresh**: persists the baseline for future `--append` runs.
 
   ```bash
+  PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
   IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH" 2>/dev/null || BRANCH=""
   IFS= read -r BRANCH_REF < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH_REF" 2>/dev/null || BRANCH_REF=""
@@ -343,7 +349,7 @@ Tripped (block exits 1 naming the artifact) → restore that artifact to the exa
   if [ "$RELEASE_MODE" = notes ]; then
       [ -n "$FROZEN_HEAD" ] && [ "$HEAD_SHA" = "$FROZEN_HEAD" ] || { echo "Error: HEAD changed after append gather; refusing marker advancement" >&2; exit 1; }
       [ -n "$FROZEN_BRANCH" ] && [ -f "$FROZEN_TAGS_FILE" ] || { echo "Error: frozen append source missing before marker refresh" >&2; exit 1; }
-      python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/release_append_publish.py" check --branch "$BRANCH" --head-sha "$FROZEN_HEAD" --branch-ref "$FROZEN_BRANCH" --tag-state-file "$FROZEN_TAGS_FILE" || exit 1
+      python "$PLUGIN_ROOT/bin/release_append_publish.py" check --branch "$BRANCH" --head-sha "$FROZEN_HEAD" --branch-ref "$FROZEN_BRANCH" --tag-state-file "$FROZEN_TAGS_FILE" || exit 1
   fi
   case "$COMPLETED_RANGE" in *...*|*..*..*) echo "Error: completed notes range must have one two-dot endpoint" >&2; exit 1;; *..*) ;; *) echo "Error: completed notes range missing" >&2; exit 1;; esac
   RANGE_END="${COMPLETED_RANGE##*..}"
@@ -356,9 +362,9 @@ Tripped (block exits 1 naming the artifact) → restore that artifact to the exa
   [ "$RELEASE_MODE" != notes ] || { [ -n "$APPEND_STAGE" ] && [ -f "$APPEND_STAGE/candidate.json" ]; } || { echo "Error: notes candidate missing before marker refresh" >&2; exit 1; }
   RECEIPT_FILE=$(mktemp "${TMPDIR:-/tmp}/release-completed-notes-${CSID}-XXXXXXXX") || exit 1
   if [ -n "$MARKER_SHA" ] && [ "$RELEASE_MODE" = notes ]; then
-      python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/release_append_marker.py" receipt --branch "$BRANCH_REF" --last-tag "$LAST_TAG" --range-file "${TMPDIR:-/tmp}/release-range-${CSID}" --draft "$APPEND_STAGE/DRAFT.md" --output "$RECEIPT_FILE" || exit 1
-      python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/release_append_marker.py" write --branch "$BRANCH_REF" --last-tag "$LAST_TAG" --sha "$MARKER_SHA" --receipt "$RECEIPT_FILE" --draft "$APPEND_STAGE/DRAFT.md" --marker-dir "$APPEND_STAGE/.temp" || exit 1
-      python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/release_append_publish.py" seal --branch "$BRANCH" --stage "$APPEND_STAGE" || exit 1
+      python "$PLUGIN_ROOT/bin/release_append_marker.py" receipt --branch "$BRANCH_REF" --last-tag "$LAST_TAG" --range-file "${TMPDIR:-/tmp}/release-range-${CSID}" --draft "$APPEND_STAGE/DRAFT.md" --output "$RECEIPT_FILE" || exit 1
+      python "$PLUGIN_ROOT/bin/release_append_marker.py" write --branch "$BRANCH_REF" --last-tag "$LAST_TAG" --sha "$MARKER_SHA" --receipt "$RECEIPT_FILE" --draft "$APPEND_STAGE/DRAFT.md" --marker-dir "$APPEND_STAGE/.temp" || exit 1
+      python "$PLUGIN_ROOT/bin/release_append_publish.py" seal --branch "$BRANCH" --stage "$APPEND_STAGE" || exit 1
   fi  # timeout: 5000
   ```
 
@@ -367,6 +373,7 @@ For all notes, independently repeat the **Final cross-artifact truth gate** on e
 After the sealed candidate passes the full truth gate, publish it:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH" 2>/dev/null || BRANCH=""
 IFS= read -r DO_APPEND < "${TMPDIR:-/tmp}/release-do-append-${CSID}" 2>/dev/null || DO_APPEND="false"
@@ -375,7 +382,7 @@ IFS= read -r APPEND_STAGE < "${TMPDIR:-/tmp}/release-append-stage-${CSID}" 2>/de
 [ "$RELEASE_MODE" != notes ] || [ -n "$APPEND_STAGE" ] || { echo "Error: append stage missing — nothing published" >&2; exit 1; }
 if [ -n "$APPEND_STAGE" ]; then
     [ -f "$APPEND_STAGE/candidate.json" ] || { echo "Error: sealed append candidate missing" >&2; exit 1; }
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/release_append_publish.py" publish --branch "$BRANCH" --stage "$APPEND_STAGE" || exit 1
+    python "$PLUGIN_ROOT/bin/release_append_publish.py" publish --branch "$BRANCH" --stage "$APPEND_STAGE" || exit 1
 fi
 ```
 

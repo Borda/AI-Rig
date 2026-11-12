@@ -22,6 +22,8 @@ from urllib.parse import quote
 
 import pytest
 import release_append_marker as marker_api
+from _oss_shell_plugin import render_shell
+from _skill_source import read_skill_source
 from _text_io import bash_blocks, bash_path, write_lf
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -81,7 +83,7 @@ def _native_path(shell_path: str) -> Path:
 
 def _read(path: Path) -> str:
     """Read UTF-8 text."""
-    return path.read_text(encoding="utf-8")
+    return read_skill_source(path)
 
 
 def _write_files(directory: Path, files: dict[str, str] | dict[str, bytes]) -> None:
@@ -337,7 +339,7 @@ def _block_env(root: Path, session: str = "test", **extra: str) -> dict[str, str
 def _run_block(root: Path, script: str, session: str = "test", **extra: str) -> subprocess.CompletedProcess[str]:
     """Run shell ``script`` in ``root`` with the release session environment."""
     return subprocess.run(
-        [shutil.which("bash"), "-c", script],
+        [shutil.which("bash"), "-c", render_shell(script, _PLUGIN_ROOT, "oss")],
         cwd=root,
         env=_block_env(root, session, **extra),
         capture_output=True,
@@ -349,7 +351,7 @@ def _run_block(root: Path, script: str, session: str = "test", **extra: str) -> 
 
 def _block(document: Path, needle: str) -> str:
     """Return the first ``bash`` fence of ``document`` containing ``needle``."""
-    found = next((block for block in bash_blocks(document.read_text(encoding="utf-8")) if needle in block), None)
+    found = next((block for block in bash_blocks(read_skill_source(document)) if needle in block), None)
     assert found is not None, f"no bash block in {document.name} contains {needle!r}"
     return found
 

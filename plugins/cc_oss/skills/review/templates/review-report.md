@@ -1,6 +1,7 @@
 ---
 Title:       oss-review — [PR #N title]
 PR:          #[N]
+Link:        [full PR URL]
 Date:        [YYYY-MM-DD]
 Commit SHA:  [full frozen reviewed PR head, or explicit unavailable reason]
 PR Type:     [type]

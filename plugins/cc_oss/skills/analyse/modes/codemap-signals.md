@@ -9,11 +9,12 @@ Consumers: `modes/thread.md` (issue triage — stale-symbol check), `modes/vital
 Reuse oss shared detector — same helper review/resolve use. codemap-py query on PATH AND index for this project both required.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # Resolve analyse skill dir if caller did not (sentinel cold-resolved by analyse/SKILL.md, then source fallback)
 [ -n "$_OSS_ANALYSE" ] || IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev/null || _OSS_ANALYSE=""
 [ -z "$_OSS_ANALYSE" ] && _OSS_ANALYSE="plugins/cc_oss/skills/analyse"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/detect_codemap.py" --prefix analyse 2>&1  # timeout: 5000
+python "$PLUGIN_ROOT/bin/detect_codemap.py" --prefix analyse 2>&1  # timeout: 5000
 IFS= read -r CM_ENABLED < "${TMPDIR:-/tmp}/analyse-codemap-enabled-${CSID}" 2>/dev/null || CM_ENABLED="false"
 IFS= read -r CM_CURRENCY < "${TMPDIR:-/tmp}/analyse-codemap-currency-${CSID}" 2>/dev/null || CM_CURRENCY="no_index"
 ```
@@ -31,13 +32,14 @@ Thread names symbols/modules that may no longer exist. Extract candidate identif
 **Existence-check** — write the extracted candidates one-per-line to `${TMPDIR:-/tmp}/analyse-triage-candidates-${CSID}.txt` (bash arrays do not survive a fresh shell — use a file), then build a batch of one query per candidate: module-shaped (`a.b.c`, has a dot) → `rdeps`; bare symbol → `find-symbol`. Run once:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # Caller wrote candidates (one identifier per line) to this file before this fence.
 IFS= read -r CM_ENABLED < "${TMPDIR:-/tmp}/analyse-codemap-enabled-${CSID}" 2>/dev/null || CM_ENABLED="false"
 _CAND="${TMPDIR:-/tmp}/analyse-triage-candidates-${CSID}.txt"
 _BATCH="${TMPDIR:-/tmp}/analyse-triage-batch-${CSID}.json"
 if [ "$CM_ENABLED" = "true" ] && [ -s "$_CAND" ]; then
-    _BATCH_LEN=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/build_triage_batch.py" "$_CAND" "$_BATCH" 2>/dev/null || echo 0)  # timeout: 5000
+    _BATCH_LEN=$(python "$PLUGIN_ROOT/bin/build_triage_batch.py" "$_CAND" "$_BATCH" 2>/dev/null || echo 0)  # timeout: 5000
     [ "${_BATCH_LEN:-0}" -gt 0 ] && codemap-py query batch "$_BATCH" 2>/dev/null  # timeout: 15000
 fi
 ```
@@ -62,6 +64,7 @@ Open PRs touching overlapping code are merge-conflict or duplicate-effort risks.
 **Bounded fetch** — `open_prs` from gh-scraper carries no `files` field; fetch changed-file name-lists here, but only when the open-PR count is small enough to stay within rate limits:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # Cap: skip when > PR_FILES_CAP open PRs (file lists grow with PR count).
 IFS= read -r GH_OWNER < "${TMPDIR:-/tmp}/analyse-gh-owner-${CSID}" 2>/dev/null || GH_OWNER=""
@@ -73,7 +76,7 @@ _OPEN_PR_COUNT=$(printf '%s\n' "$_OPEN_PR_NUMS" | grep -c . 2>/dev/null) || _OPE
 _PRSET="${TMPDIR:-/tmp}/analyse-prset-files-${CSID}.jsonl"
 : > "$_PRSET"
 if [ "$_OPEN_PR_COUNT" -gt 0 ] && [ "$_OPEN_PR_COUNT" -le "$PR_FILES_CAP" ]; then
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/gh_batch_query.py" pr-files --repo "$GH_OWNER/$GH_REPO" $_OPEN_PR_NUMS > "$_PRSET" || { echo "⚠ PR-set overlap skipped — batched changed-file fetch failed"; : > "$_PRSET"; }  # timeout: 30000
+    python "$PLUGIN_ROOT/bin/gh_batch_query.py" pr-files --repo "$GH_OWNER/$GH_REPO" $_OPEN_PR_NUMS > "$_PRSET" || { echo "⚠ PR-set overlap skipped — batched changed-file fetch failed"; : > "$_PRSET"; }  # timeout: 30000
 fi
 ```
 

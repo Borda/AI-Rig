@@ -86,6 +86,18 @@ def _denial_reason(result: dict) -> str | None:
     return hook_output.get("permissionDecisionReason", "")
 
 
+@_skip_node_unavailable
+def test_develop_report_namespace_blocks_followup_before_report_exists(tmp_path: Path) -> None:
+    """A relocated develop review retains its delivery gate instead of silently falling through."""
+    report_dir = tmp_path / "repo/.reports/develop-review/2026-11-12T00-00-00Z"
+    report_dir.mkdir(parents=True)
+    (tmp_path / SENTINEL_NAME).write_text(str(report_dir) + "\n", encoding="utf-8")
+    result = _run(tmp_path, _ask_payload())
+    reason = _denial_reason(result)
+    assert reason is not None
+    assert str(report_dir / "review-report.md") in reason
+
+
 def _call_export(name: str, *args: object) -> object:
     """Call one test-only hook export in a separate Node process."""
     script = "const hook = require(process.argv[1]); process.stdout.write(JSON.stringify(hook[process.argv[2]](...JSON.parse(process.argv[3]))));"

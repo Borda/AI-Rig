@@ -71,6 +71,10 @@ class TestProjectCoordinates:
             pytest.param("C:\\work\\first", "/work/other", [], id="windows-foreign-tool-project"),
             pytest.param("/work/first", "/work/first", ["/work/first"], id="posix-matching-tool-project"),
             pytest.param("C:\\work\\first", "C:\\work\\first", ["C:\\work\\first"], id="windows-matching-tool-project"),
+            pytest.param("a" * 64, "a" * 64, ["a" * 64], id="matching-project-digests"),
+            pytest.param("a" * 64, "b" * 64, [], id="different-project-digests"),
+            pytest.param("a" * 63, "a" * 63, [], id="truncated-project-digest"),
+            pytest.param("A" * 64, "A" * 64, [], id="malformed-uppercase-project-digest"),
         ],
     )
     def test_shared_log_root_joins_only_same_project(

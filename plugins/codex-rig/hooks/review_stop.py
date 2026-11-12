@@ -13,10 +13,14 @@ Read only the bounded host transcript supplied with the Stop event. Bind success
 the current session and turn, including run promotion and same-run completion. Creation may precede a bounded literal
 read-only suffix batch; completion requires its own successful direct command. This is an advisory recovery prompt, not
 an authorization or security boundary. Unknown lifecycle shapes, visible controlling stops and already-continued turns
-produce no continuation. Known native Continue answers resolve only outstanding question invocations with distinct
-host receipts and matching decision/scope identities; discovery text is not a question. Occurrence accounting does not
-prove exact outer JavaScript call correlation. Transcript compatibility is deliberately narrow because the host format
-is unstable.
+produce no continuation. Known native Continue answers resolve only outstanding question invocations with distinct host
+receipts and matching decision/scope identities; discovery text is not a question. Occurrence accounting does not prove
+exact outer JavaScript call correlation. Transcript compatibility is deliberately narrow because the host format is
+unstable.
+
+Pause recognition also searches the assistant's own final prose, so it is model-controllable: ordinary or injected words
+such as ``awaiting`` or ``denied`` can suppress continuation without host evidence of a stop. This conservative tradeoff
+avoids unwanted turns but means the advisory cannot enforce completion against model-controlled text.
 
 ## Usage
 
@@ -45,6 +49,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from urllib.parse import unquote, urlsplit
@@ -463,6 +468,20 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
     }
 
 
+def _open_transcript(path: str, flags: int) -> int:
+    """Open a regular transcript without waiting for a FIFO writer, including after a path replacement."""
+    if not Path(path).is_file():
+        raise ValueError("transcript is not a regular file")
+    descriptor = os.open(path, flags | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("transcript is not a regular file")
+    except Exception:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
 def main() -> int:
     """Read bounded host evidence and always emit valid nonblocking or continuation JSON."""
     response: dict = {}
@@ -476,7 +495,7 @@ def main() -> int:
         transcript = payload.get("transcript_path")
         if not isinstance(transcript, str):
             raise ValueError("missing transcript")
-        with Path(transcript).open("rb") as stream:
+        with open(transcript, "rb", opener=_open_transcript) as stream:
             before = os.fstat(stream.fileno())
             size = before.st_size
             if size <= MAX_TRANSCRIPT_BYTES:

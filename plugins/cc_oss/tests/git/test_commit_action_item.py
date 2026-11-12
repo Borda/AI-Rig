@@ -35,6 +35,7 @@ _BUILD_ARGV = [
 
 def _subcommand(cmd: list[str]) -> str:
     """Return the git sub-command of a recorded argv, skipping global ``--`` options such as ``--literal-pathspecs``."""
+    cmd = [cmd[0], *cmd[3:]] if cmd[1:2] == ["-c"] else cmd
     return next((arg for arg in cmd[1:] if not arg.startswith("--")), "")
 
 
@@ -72,6 +73,7 @@ def install_git(monkeypatch: pytest.MonkeyPatch) -> Callable[..., list[list[str]
 
         def fake_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
             """Record the argv and answer with the scripted exit code for its sub-command."""
+            cmd = [cmd[0], *cmd[3:]] if cmd[1:2] == ["-c"] else cmd
             calls.append(list(cmd))
             return subprocess.CompletedProcess(cmd, codes.get(_subcommand(cmd), 0), stdout="")
 

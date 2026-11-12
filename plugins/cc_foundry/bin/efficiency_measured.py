@@ -81,6 +81,7 @@ import argparse
 import glob
 import json
 import math
+import os
 import re
 import shutil
 import statistics
@@ -94,6 +95,7 @@ from itertools import pairwise
 from pathlib import Path, PurePosixPath
 
 import cost_analyzer as ca
+from _report_io import prepare_parent, write_report
 
 #: Gap between consecutive main-chain calls, in seconds, that counts as the session sitting idle.
 IDLE_GAP_S = 120
@@ -760,9 +762,12 @@ def normalise_label(label: str) -> str:
 
 def append_record(ledger: Path, label: str, summary: dict, extra: dict | None = None) -> None:
     """Append one record to the baseline ledger, creating its directory and restoring a missing final newline."""
-    ledger.parent.mkdir(parents=True, exist_ok=True)
+    prepare_parent(ledger)
+    if ledger.is_symlink():
+        raise OSError(f"refusing symlinked baseline ledger: {ledger}")
     try:
-        with ledger.open("rb") as existing:
+        fd = os.open(ledger, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as existing:
             existing.seek(-1, 2)
             joiner = "" if existing.read(1) == b"\n" else "\n"
     except OSError:
@@ -773,7 +778,8 @@ def append_record(ledger: Path, label: str, summary: dict, extra: dict | None = 
         **summary,
         **(extra or {}),
     }
-    with ledger.open("a", encoding="utf-8", newline="\n") as handle:
+    fd = os.open(ledger, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8", newline="\n") as handle:
         handle.write(joiner + json.dumps(record, sort_keys=True) + "\n")
 
 
@@ -1363,7 +1369,7 @@ def _run(args: argparse.Namespace) -> int:
         return 1
     report = "\n".join(line for section in sections for line in section) + "\n"
     if args.output:
-        Path(args.output).expanduser().write_text(report, encoding="utf-8", errors="replace")
+        write_report(Path(args.output).expanduser(), report, errors="replace")
     else:
         sys.stdout.write(report)
     return 0

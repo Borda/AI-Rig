@@ -1136,6 +1136,9 @@ def render_result_rows(
         legacy_windows=False if force_color else None,
         width=presentation.BENCHMARK_OUTPUT_WIDTH,
     )
+    if console.width != presentation.BENCHMARK_OUTPUT_WIDTH:
+        # Preserve the fixed width through Rich's dumb-terminal fallback and legacy-Windows margin.
+        console.size = (presentation.BENCHMARK_OUTPUT_WIDTH + console.legacy_windows, console.height)
     legend_lines: list[str] | None = None
 
     def flush_legend() -> None:

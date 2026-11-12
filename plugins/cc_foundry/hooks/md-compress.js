@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// md-compress.js — PreToolUse hook (Edit only)
+// md-compress.js — PostToolUse hook (Edit only)
 //
 // PURPOSE
 //   MD files (config, reports, plans, handover, skills) are dense with
 //   pipe-table column padding that wastes tokens without adding meaning.
-//   On Edit, this hook normalizes the file at its real on-disk path before
-//   the edit runs, and normalizes old_string the same way, so a padded
-//   old_string still matches.
+//   After a completed Edit, normalize the authorized document at its real
+//   on-disk project path. Never mutate files before permission checks or grant
+//   tool permission, and never rewrite tool input.
 //
 //   NOTE — two prior designs were tried and rejected here, both on Read:
 //   1. Serve Read from a session-scoped temp file, redirecting file_path,
@@ -27,8 +27,8 @@
 //   which is what actually fixes the "File has not been read yet" bug —
 //   no Read-time mutation is needed for that fix.
 //
-//   Post-edit (lint-on-save.js): runs pre-commit after every Write/Edit,
-//     applying mdformat + trailing-whitespace. File stays normalized.
+//   Post-edit (lint-on-save.js): runs explicitly configured trusted pre-commit
+//     hooks after Write/Edit, applying the user's selected formatters.
 //
 // COMPRESSIONS (outside fenced code blocks only)
 //     1. Table column padding: collapses 2+ spaces on pipe-table lines to 1.
@@ -36,21 +36,21 @@
 //     3. Trailing whitespace: strips trailing spaces on every non-fence line.
 //
 // HOW IT WORKS — Edit path (the only path)
-//   1. Skip non-Edit tools or non-.md/.markdown files (exit 0).
-//   2. Read source file; if unreadable or empty, exit 0.
+//   1. Skip events other than PostToolUse/Edit or non-.md/.markdown files.
+//   2. Require a regular project file with no symlink components; read its content.
 //   3. Run compressMarkdown; if unchanged, skip disk write.
-//   4. Write normalized content back to source file in place, atomically
-//      (write-then-rename), so old_string matches.
-//   5. Emit updatedInput with old_string = compressMarkdown(old_string) if present,
-//      plus all other Edit fields unchanged.
+//   4. Preserve permissions and write normalized content atomically through an
+//      exclusively created temporary file, rechecking source identity before rename.
+//   5. Emit no permission decision or updatedInput: the Edit has already completed.
 //
 // EXIT CODES
-//   0  passthrough (non-Edit tool, non-.md file, read error, no-op, or successful rewrite)
+//   0  passthrough (other event/tool, non-.md file, unsafe path, read error, no-op, or successful rewrite)
 
 "use strict";
 
 const fs = require("fs");
 const path = require("path");
+const { randomBytes } = require("crypto");
 
 /**
  * Compress markdown content:
@@ -125,40 +125,68 @@ function compressMarkdown(content) {
   return out.join("\n");
 }
 
-/**
- * Read a markdown file, normalize it, and write the result back in place
- * if it changed. Returns the normalized content, or null if the file
- * could not be read.
- *
- * @param {string} absPath
- * @returns {string | null}
- */
-function normalizeFileInPlace(absPath) {
-  let content;
-  try {
-    content = fs.readFileSync(absPath, "utf8");
-  } catch (_) {
-    return null;
+/** Validate containment and reject every symlink component before touching a document. */
+function documentStat(root, absPath) {
+  const rel = path.relative(root, absPath);
+  if (!rel || rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) return null;
+  let current = root;
+  let stat;
+  for (const component of rel.split(path.sep)) {
+    current = path.join(current, component);
+    stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink()) return null;
   }
-  if (!content) return null;
+  return stat.isFile() && fs.realpathSync(absPath) === absPath ? stat : null;
+}
 
+/**
+ * Read a project markdown file, normalize it, and write the result back in place
+ * if it changed. Refuse symlinks and source changes; preserve file permissions.
+ *
+ * @param {string} root
+ * @param {string} absPath
+ * @returns {void}
+ */
+function normalizeFileInPlace(root, absPath) {
+  const original = documentStat(root, absPath);
+  if (!original) return;
+  const content = fs.readFileSync(absPath, "utf8");
   const normalized = compressMarkdown(content);
-  if (normalized !== content) {
+  if (normalized === content) return;
+
+  const tmpPath = `${absPath}.md-compress-${randomBytes(12).toString("hex")}.tmp`;
+  let created = false;
+  try {
     // Write-then-rename: atomic on the same filesystem, so a crash or a
-    // concurrent read mid-write never sees a truncated file.
-    const tmpPath = `${absPath}.md-compress-${process.pid}.tmp`;
+    // concurrent read mid-write never sees a truncated file. Exclusive creation
+    // refuses a planted temp path rather than following or overwriting it.
+    const fd = fs.openSync(tmpPath, "wx", original.mode & 0o777);
+    created = true;
     try {
-      fs.writeFileSync(tmpPath, normalized, "utf8");
-      fs.renameSync(tmpPath, absPath);
-    } catch (_) {
+      fs.writeFileSync(fd, normalized, "utf8");
+      // Creation respects umask; restore the original mode on POSIX explicitly.
+      if (process.platform !== "win32") fs.fchmodSync(fd, original.mode & 0o777);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const current = documentStat(root, absPath);
+    if (
+      !current ||
+      current.dev !== original.dev ||
+      current.ino !== original.ino ||
+      current.mtimeMs !== original.mtimeMs ||
+      current.size !== original.size
+    )
+      return;
+    fs.renameSync(tmpPath, absPath);
+    created = false;
+  } finally {
+    if (created) {
       try {
         fs.unlinkSync(tmpPath);
       } catch (_) {}
-      // Can't write — caller falls back to the on-disk (unnormalized) content.
-      return content;
     }
   }
-  return normalized;
 }
 
 let raw = "";
@@ -167,42 +195,13 @@ process.stdin.on("data", (d) => (raw += d));
 process.stdin.on("end", () => {
   try {
     const data = JSON.parse(raw);
-
-    // Only Edit is handled — see NOTE above for why Read is a pure no-op.
-    if (data.tool_name !== "Edit") {
-      process.exit(0);
-    }
-
-    // Normalize file in-place before Edit runs so old_string matches.
-    // Also emit updatedInput with old_string normalized so padded old_string
-    // from a pre-normalization read still finds its match in the now-normalized file.
-    const editInput = data.tool_input || {};
-    const editPath = editInput.file_path || "";
-    if (!/\.(?:md|markdown)$/i.test(editPath)) process.exit(0);
-    const editAbs = path.resolve(editPath);
-    if (normalizeFileInPlace(editAbs) === null) process.exit(0);
-
-    // Emit updatedInput with normalized old_string (if present) so that
-    // padded old_string constructed from a pre-normalization read still matches.
-    const oldString = editInput.old_string;
-    if (typeof oldString === "string" && oldString.length > 0) {
-      const normalizedOld = compressMarkdown(oldString);
-      process.stdout.write(
-        JSON.stringify({
-          hookSpecificOutput: {
-            hookEventName: "PreToolUse",
-            permissionDecision: "allow",
-            updatedInput: {
-              ...editInput,
-              old_string: normalizedOld,
-            },
-          },
-        }),
-      );
-    }
-    process.exit(0);
+    if (data.hook_event_name !== "PostToolUse" || data.tool_name !== "Edit") process.exit(0);
+    const editPath = data.tool_input?.file_path;
+    if (typeof editPath !== "string" || !/\.(?:md|markdown)$/i.test(editPath)) process.exit(0);
+    const root = fs.realpathSync(process.cwd());
+    normalizeFileInPlace(root, path.resolve(editPath));
   } catch (_) {
-    // Never crash or block Claude due to a hook bug
-    process.exit(0);
+    // Failed validation or I/O leaves the authorized edit untouched.
   }
+  process.exit(0);
 });

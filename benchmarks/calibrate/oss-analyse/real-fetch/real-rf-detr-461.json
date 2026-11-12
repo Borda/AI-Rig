@@ -1,0 +1,497 @@
+{
+  "170": {
+    "number": 170,
+    "title": "Slow inference time",
+    "state": "open",
+    "body": "Hi, I am testing the latency of the model RFDETRBase at different platform. (Quadro GV100 and A800), the latency of inference time are 0.25s and 0.14s. which is much slower then the reported speed. Is that normal speed of rf-detr?\n\nthe timer is calcuated as follows:\n\n```\nimage = Image.open(\"/vepfs-sf/wtp2/R-Human/images_resized/video3_frame_00068_204.00s.jpg\")\ntime1 = time.time()\nfor _ in range(10):\n    detections = model.predict(image, threshold=0.5)\nprint(\"Inference time:\", (time.time() - time1) / 10)\n```\n",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-4! That would be amazing — really appreciate it! 🔥\n\nHere’s what I’m thinking: we should start breaking out the documentation into separate `.md` files. Tutorials like this are super valuable, but I’d prefer not to put them directly into the `README.md`.\n\nCould you open a PR that creates a `docs/` directory at the root of the project, and add a new file called export.md where you walk through:\n\n- Exporting to ONNX\n- Converting to TensorRT\n- Deploying on Jetson\n\nSomething like this for structure:\n\n```\nrf-detr /\n├── docs /\n│   └── export.md\n├── README.md\n...\n```\n\nLater, we’ll link to `docs/export.md` from the `README.md` to keep things clean and easy to navigate.\n\nLet me know what you think!"
+      },
+      {
+        "author": "user-4",
+        "body": "Good evening @maintainer-1,\n\nThat sounds like a solid plan!\nI'll be working on that documentation and will create a PR once I believe it is good enough.\nIs there a \"deadline\" indication? (E.g., in one to two weeks)\n"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-4 the sooner the better. It can be really rough. I can help you out with structuring it properly. I mostly care about the steps to follow. "
+      },
+      {
+        "author": "user-4",
+        "body": "Good afternoon @maintainer-1,\n\nI have quite a busy weekend. \nSo, I'll most likely start working on it Sunday evening/Monday morning.\nI expect the rough draft to be done Monday morning."
+      },
+      {
+        "author": "user-5",
+        "body": "Hi @user-4 , how has the real-time performance (in FPS) been for the base and large models on your Jetson so far?\n\n"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-4 that sounds perfect! Thank you! 🙏🏻  "
+      },
+      {
+        "author": "user-6",
+        "body": "Did anyone also have such a poor inference speed on ONNX? On my macbook m2 max I'm getting ~300ms using Base and testing test.jpg (5 inferences with some warmup). \n\nI'm using CoreML provider:\n`CoreMLExecutionProvider::GetCapability, number of partitions supported by CoreML: 90 number of nodes in the graph: 913 number of nodes supported by CoreML: 737`. \n\nIt's slower than on CPUExecutionProvider (~200ms). With pytorch MPS is ok (~80ms) but still like 8x slower than official yolov9-m. \n\n"
+      },
+      {
+        "author": "user-4",
+        "body": "Good afternoon @user-51,\n\n> [!IMPORTANT]\n> The custom models mentioned below have been trained on an `resolution` of 1120! (e.g., `model = RFDETRBase(resolution=1120)`). This significantly \n> reduces the FPS. (Might be a factor 3-4)\n\nOn the Jetson Orin Nano (8 GB developer kit) TensorRT optimized:\nFPS with RF-DETR-B is 5.5 FPS and with RF-DETR-L it is 2.4 FPS."
+      },
+      {
+        "author": "user-4",
+        "body": "Good afternoon @user-6,\n\nDid have the issue of running out of VRAM when using the `CUDAExecutionProvider` on a Jetson Orin Nano 8GB device.\n(RF-DETR-B and RF-DETR-L with resolution=1120).\n\nDid you use the `CUDAExecutionProvider` on your m2 max?"
+      },
+      {
+        "author": "user-7",
+        "body": "@user-6 we've done no work to optimize the ONNX graph for apple silicon and we've also noticed slower than expected times. Addressing that is on our list!"
+      }
+    ]
+  },
+  "173": {
+    "number": 173,
+    "title": "Cannot Export to Tesnorflow or Tflite to run on mobile",
+    "state": "open",
+    "body": "ONNX-TF only supports up to opset 13 for some operators (like Where), but\nYour model uses operators (like aten::scaled_dot_product_attention) that are only supported in ONNX opset 14 or higher.\nSummary of your situation:\n\nIf you export with opset 13: PyTorch cannot export your model because it uses newer operators.\nIf you export with opset 16: ONNX-TF cannot convert your model because it does not support some ops at that version.",
+    "comments": [
+      {
+        "author": "user-9",
+        "body": "@user-8 have you tried this PR for tflite conversion: [https://github.com/roboflow/rf-detr/pull/45](url)"
+      },
+      {
+        "author": "user-10",
+        "body": "seems to work for me, will test on device and update.\nthanks !"
+      },
+      {
+        "author": "user-9",
+        "body": "> seems to work for me, will test on device and update. thanks !\n\nhow is the performance of the tflite model in mobile device?"
+      },
+      {
+        "author": "user-8",
+        "body": "Awesome thank you!"
+      },
+      {
+        "author": "user-11",
+        "body": "@user-10 do you have any update for us, how it performs on Android with tflite format? Would be very interesting. \nThx"
+      },
+      {
+        "author": "user-10",
+        "body": "Guys, im also very curious, but the latest tests shows that we are lost accuracy during double converting from pytorch to tflite via onnx especially for quantized variant. Tested on qnx and performance is not much bigger then yolov5 with fp16 in compare.\nNot tested on Android, but here a plenty of work to do before real benchmarking which i have no time for now."
+      },
+      {
+        "author": "user-12",
+        "body": "Hi guys, Im also very interested in this, do anyone have an update on this?"
+      }
+    ]
+  },
+  "172": {
+    "number": 172,
+    "title": "export to CoreML",
+    "state": "open",
+    "body": "I did try to export to CoreML to try to run on edge devices but failed (most likely on model tracing)\n\nThe reason I want CoreML rather than ONNXRuntime is that ONNXRuntime 1.21.0 doesn't have MPS provider and current support for CoreML (NPU) provider is not finished and slow (`\"number of partitions supported by CoreML: 90 number of nodes in the graph: 913 number of nodes supported by CoreML: 737\"`). On my macbook m2 max original version with MPS is not bad (`~70ms` per inference on test.jpg) but on ONNXRuntime with CoreML provider `~290ms` (I guess too many not supported OPs and too many partitions).\n\n\nFailed model tracing output:\n\n```\nTracing the PyTorch model ...\n`loss_type=None` was set in the config but it is unrecognised.Using the default loss: `ForCausalLMLoss`.\nTracerWarning: Iterating over a tensor might cause the trace to be incorrect. Passing a tensor of different shape won't change the number of iterations executed (and might lead to errors or silently give incorrect results).\nTracerWarning: Iterating over a tensor might cause the trace to be incorrect. Passing a tensor of different shape won't change the number of iterations executed (and might lead to errors or silently give incorrect results).\nTracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!\nTracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!\nTracerWarning: torch.as_tensor results are registered as constants in the trace. You can safely ignore this warning if you use this function to create tensors out of constant variables that would be the same every time you call this function. In any other case, this might cause the trace to be incorrect.\nTracerWarning: Iterating over a tensor might cause the trace to be incorrect. Passing a tensor of different shape won't change the number of iterations executed (and might lead to errors or silently give incorrect results).\nUserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument. (Triggered internally at /Users/runner/work/pytorch/pytorch/pytorch/aten/src/ATen/native/TensorShape.cpp:3638.)\nTracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!\nTracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might",
+    "comments": [
+      {
+        "author": "user-13",
+        "body": "Hello @user-6, FYI, recently @user-52 created a draft/PR: https://github.com/roboflow/rf-detr/pull/257"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "The CoreMLExecutionProvider is [included in the default `onnxruntime` wheels](https://github.com/microsoft/onnxruntime/pull/17844) for MacOS since the 1.17 release last year. You should get MPS acceleration by enabling it in the settings. We do this [by default in `inference` here](https://github.com/roboflow/inference/blob/main/inference/core/env.py#L350C55-L350C67).\n\nNote that [you cannot pass the MPS through to Docker on MacOS](https://github.com/pytorch/pytorch/issues/81224) so need to run outside of a container to get the speedup."
+      },
+      {
+        "author": "user-6",
+        "body": "@maintainer-2 I haven't tested yet this export to CoreML but overall even though having `CoreMLExecutionProvider` in onnxruntime as delegate is nice to have from my experience with playing with different vision models onnxruntime with CoreML delegate was never as fast when model converted directly to CoreML.\n\nI guess onnxruntime don't implement all supported ANE operators / conversions. Even when using onnxruntime tool (https://onnxruntime.ai/docs/tutorials/mobile/helpers/model-usability-checker.html) most of the time its showed some operators were not supported or there was too many partitions. \n\nFor this reason I think it is still worth to have support for native CoreML models. And I think the end goal is to execute not just on MPS but on ANE (Apple neural engine) as many graph part as possible. I'm mostly interested on inference on smartphones that don't have many GPU cores but e.g. my old iphone 13 mini have still very fast NPU the same as my macbook m2 max."
+      },
+      {
+        "author": "user-14",
+        "body": "in case you're still interested, I made it work for me. Have a look at my fork (https://github.com/user-14/rf-detr).\nI didn't use the repository environment so you might have to play around a bit until you get the imports of coremltools right but other than that it seems to work.\n\nA big issue was that it didn't allow to convert to CoreML if there is a 6 dimensional tensor as CoreML only supports up to rank 5.\nThat's why I had to refactor the deformable attention.\n\nAlso, for some reason it failed to compile in swift when I exported it to FP16, so try with FP32 first."
+      }
+    ]
+  },
+  "434": {
+    "number": 434,
+    "title": "Finetuned RFDETR-small model outputs detection with high IOU",
+    "state": "open",
+    "body": "Hi! We have finetuned a RFDETR-small model for object detection of a single custom class. In most cases it works very well, but there's an environment in which the model frequently outputs two detections for a single ground truth object in the image that have a very high IOU (>0.9). Our use case involves object counting so this is a breaking issue.\n\nSpecifically, We have trained a RFDETR-small model (with `rfdetr=1.3.0`) exported the model to onnx (opset 16) and are doing inference via a [Triton inference server (v2.49)](https://github.com/triton-inference-server/server/releases/tag/v2.49.0) with `onnxruntime=1.18`.\n\nThe obvious answer is to apply NMS postprocessing to resolve this, but since not requiring NMS (and the inference speed gain is brings) is one of the selling points of using RFDETR over YOLO I was wondering to what degree this is expected behavior or not! The expected number of detections per image for our use case is limited (<20) so the the NMS overhead would be minimal as well.",
+    "comments": [
+      {
+        "author": "user-7",
+        "body": "That can happen if it doesn't finish training. How long are you training it for?\n\nAlso, I highly recommend using opset 17 or later so you get explicit representation of the layernorm. This is important for fp16 but may just be more stable in general. "
+      },
+      {
+        "author": "user-15",
+        "body": "Aha interesting. We indeed only trained it for 20 epochs because the dataset is not that challenging and we're already having a near-perfect score after 20 epochs. I'll try training for longer and see if the behavior still occurs. \n\nCan I assume that once the loss curves converge we are done training and this should no longer happen? \n\n(Opset 16 was used because it has to run on an older device as well where we currently cannot upgrade the triton server to a more recent version)"
+      },
+      {
+        "author": "user-7",
+        "body": "Loss will be minimized when this behavior doesn't occur, so ideally once it converges it is in that minimal state such that it won't. But hard to say a priori of course"
+      },
+      {
+        "author": "user-7",
+        "body": "If the issue continues, I'd recommend trying the medium model at the small resolution. Impact to runtime will be slight, and it may have an easier time with this case for some interesting theoretical reasons. If you try that experiment please let me know the result!!"
+      },
+      {
+        "author": "user-15",
+        "body": "We have trained the small model for longer now (85 epochs until loss converged and early stopping kicked in). We have also bumped to opset 17 where we possible. Over the past two week we have definitely seen a decrease in the occurrence of this behavior, but it sporadically still happens. Just to be safe we will be implementing NMS as an additional postprocessing step.\n\nWe have yet to try the medium model at 512x512 resolution. I'm curious what the impact is of the training the models at their non-native, documented resolution in terms of accuracy and performance? Would you expect finetuning the medium model at resolutions different from 576x576 to be on par with finetuning with a preprocessing step that resizes to the native resolution?"
+      },
+      {
+        "author": "user-7",
+        "body": "These models were all discovered with NAS and finetuned (see the newly released paper for details) so other resolutions were very much within domain until the final stage. I don't have specific numbers but it's probably safe, just not Pareto optimal on COCO. But we show that running NAS directly on other datasets is better than transferring optimal COCO architectures so this may be one of those cases. \n\nAre the boxes exactly the same but with different labels? Or do they just have very high overlap but not exactly the same "
+      }
+    ]
+  },
+  "103": {
+    "number": 103,
+    "title": "Request: torch.load with weights_only=True",
+    "state": "open",
+    "body": "Would it be possible to have a weights-only version of the checkpoint loading?  For fine-tuning it would be nice to not have some other global variables inserted from the .pt file for safety reasons.",
+    "comments": [
+      {
+        "author": "user-7",
+        "body": "weights-only is a pain because a lot of older code doesn't play nicely with it. the only place I can think of malicious code being inserted into the checkpoint is from the .pt file that we provide for the coco checkpoint. otherwise, all the code is visible so you can confirm for yourself that there's no malicious stuff inserted during fine tune. are you concerned specifically about our providing malicious .pt files?"
+      },
+      {
+        "author": "user-16",
+        "body": "Yeah that's the checkpoint that I'm loading so it would be nice to disallow arbitrary code execution in our training scripts from your repo"
+      },
+      {
+        "author": "user-7",
+        "body": "understood. will look into it but won't prioritize it. @maintainer-1 does the safetensors implementation from huggingface make this easier?"
+      }
+    ]
+  },
+  "376": {
+    "number": 376,
+    "title": "Official ONNX Export Script for Dynamic Batching",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR [issues](https://github.com/roboflow/rf-detr/issues) and found no similar feature requests.\n\n\n### Description\n\nDear RF-DETR Team,\n\nFirst off, thank you for creating and maintaining this fantastic project. The RF-DETR Nano model is incredibly efficient and i am looking to use it in a multi-stream video analytics pipeline.\n\n**The Goal:**\n\nThe goal is to convert the RF-DETR Nano model to a TensorRT engine that supports dynamic batch sizes. This is critical for maximizing GPU throughput in a real-time application that processes frames from multiple camera streams simultaneously.\n\n**The Problem:**\n\nThe current default export method (model.export()) produces a static ONNX file with a hardcoded batch size of 1. When i tried to convert this to a TensorRT engine with dynamic shapes, trtexec fails as expected.\n\nI spent considerable time trying to create a custom export script to produce a valid, dynamic ONNX file, but have run into a series of issues that suggest the model's architecture contains patterns that are incompatible with the standard torch.onnx.export tracing process when dynamic axes are used.\n\n**Summary of Attempts and Findings:**\n\n**Initial Attempt (Dynamic Axes)**: I created a custom export script using torch.onnx.export with dynamic_axes set for the batch dimension. This failed during trtexec conversion with a reshape would change volume error, indicating an internal Reshape operation was using a hardcoded shape based on the trace-time batch size of 1.\n\n**Input Type Mismatch**: We then discovered the model's forward pass expects a custom NestedTensor object, not a raw tensor. The tracer was failing because it was providing the wrong input type.\n\n**Wrapper Approach**: I implemented the standard \"ONNX Export Wrapper\" pattern. This correctly constructs the NestedTensor from raw tensor inputs, satisfying the model's API. This successfully resolved the input type errors.\n\n**Unsupported Operator**: The wrapper allowed the tracer to go deeper, where it found an unsupported operator aten::_upsample_bicubic2d_aa. I solved this by registering a custom symbolic function to map it to the standard ONNX Resize operator.\n\n**Final trtexec Error**: Even with a seemingly perfect ONNX file, trtexec ultimately fails during parsing with an INVALID_NODE error on a ConvTranspose layer, stating that the number of input channels cannot be dynamic. We have also seen Concat layer errors where a cls_token with a static batch size of 1 is concatenated with feature maps that have a dynamic batch size.\n\n**Conclusion:**\n\nThese findings strongly suggest that the RF-DETR architecture contains several operations (like ConvTranspose with dynamic channels or hardcoded constants like cls_token) that make it fundamentally incompatible with a straightforward dynamic batch export. \n\n**Feature Request:**\n\nWould it be possible for the development team to provide an official, supported Python script for exporting the RF-DETR",
+    "comments": [
+      {
+        "author": "user-7",
+        "body": "Not easy due to some internals of the model. Not impossible though. May need to implement anyway for some internal stuff\n\nBtw the bicubic should not make it to the ONNX graph. There's some logic that happens in the optimize_for_inference that gets rid of it. Via the official export method it shouldn't be there either. Can you try those tools and see if it persists?"
+      },
+      {
+        "author": "user-18",
+        "body": "> **Unsupported Operator**: The wrapper allowed the tracer to go deeper, where it found an unsupported operator aten::_upsample_bicubic2d_aa. I solved this by registering a custom symbolic function to map it to the standard ONNX Resize operator.\n\nJust adding on top of that, I have tried exporting to onnx but have similar issue, solved it by changing it to \"bilinear\" as below:\n```\n        patch_pos_embed = nn.functional.interpolate(\n            patch_pos_embed.to(dtype=torch.float32),\n            size=(torch_int(height), torch_int(width)),  # Explicit size instead of scale_factor\n            mode=\"bilinear\",\n            align_corners=False,\n            # antialias=True,\n        ).to(dtype=target_dtype)\n```\nin the following directory: .venv\\Lib\\site-packages\\rfdetr\\models\\backbone\\dinov2_with_windowed_attn.py  and .venv\\Lib\\site-packages\\rfdetr\\models\\backbone\\dinov2.py\n\nnot sure if that helps, just want to provide more information on this matter \n\n\n"
+      },
+      {
+        "author": "user-7",
+        "body": "Again, that layer shouldn't even be in the exported graph. It's only there to resize the positional embedding for different images resolutions, which is fixed at export time. Are you exporting the official way and seeing this layer present?"
+      },
+      {
+        "author": "user-18",
+        "body": "Thanks for the clarification. I tried to recreate the export using what I believe is the official method, do please let me know if I’ve misunderstood anything, I’m sharing only the relevant part of the code here:\n```\n        print(f\" Loading model from {checkpoint}\")\n        model = RFDETRNano(pretrain_weights=checkpoint)\n\n        # Run export\n        print(f\"Exporting to ONNX...\")\n        model.export(\n            output_dir=MODEL_FOLDER,\n            simplify=SIMPLIFY,\n            shape=EXPORT_SHAPE,\n            verbose=True\n        )\n```\nHowever, I still ran into the following error:\n`Failed to export xxx : Exporting the operator 'aten::_upsample_bicubic2d_aa' to ONNX opset version 17 is not supported\n`\nJust wanted to check if this matches what you mean by the official export path, or if I may be missing a step."
+      },
+      {
+        "author": "user-18",
+        "body": "Just a quick update, the export works fine after commenting the \"antialias=True,\" or changing it to False.\n#\n> ```\n>         patch_pos_embed = nn.functional.interpolate(\n>             patch_pos_embed.to(dtype=torch.float32),\n>             size=(torch_int(height), torch_int(width)),  # Explicit size instead of scale_factor\n>             mode=\"bicubic\",\n>             align_corners=False,\n>             # antialias=True,\n>         ).to(dtype=target_dtype)\n> ```\n\nHope this helps\n"
+      },
+      {
+        "author": "user-17",
+        "body": "> Not easy due to some internals of the model. Not impossible though. May need to implement anyway for some internal stuff\n> \n> Btw the bicubic should not make it to the ONNX graph. There's some logic that happens in the optimize_for_inference that gets rid of it. Via the official export method it shouldn't be there either. Can you try those tools and see if it persists?\n\nThanks for the prompt reply. optimize_for_inference seems to get rid of the bicubic in the graph but still could not export out to trt with dynamic batches. As i read more and more about DETRs, i can see that architectural limitations do not allow a straight-forward dynamic batch export.\n\nI hope we will see RF-DETR supporting dynamic batch export officially someday. Congrats on launching Segmentation models, good to see RF-DETR evolving into a proper computer vision suite. \n"
+      },
+      {
+        "author": "user-19",
+        "body": "If appropriate, is there a proper way to bump this issue for properly running RF-DETR with TensorRT? If anyone has any resources I should look at please let me know."
+      }
+    ]
+  },
+  "181": {
+    "number": 181,
+    "title": "Rf_detr Huawei Ascend 310P compatibility issue",
+    "state": "open",
+    "body": "The current pt weight of rf_detr can only be converted to onnx file with ops et=16. However, after converting to om file on Ascend 310P, the detection results showed confusion (completely inconsistent with the original results)",
+    "comments": []
+  },
+  "56": {
+    "number": 56,
+    "title": "Rotated Bounding Boxes",
+    "state": "open",
+    "body": "Is there a plan to support oriented bounding boxes in a future version? It would be extremely beneficial for applications in aerial imaging.\n\nThank you very much for your excellent work!",
+    "comments": [
+      {
+        "author": "user-22",
+        "body": "@user-7  I'm guessing here, but I think the main reason is if you want a minimal bounding box vs a truly oriented bounding box. 180° (edit: or 90? or maybe even 45°)  will get you a minimal one, 360 will get you a truly oriented one. Useful in different scenarios, could hurt performance if there isn't an option, but most users might not be concerned with this.\n\nEDIT: its possible it was actually the data pre-processing the frameworks apply, maybe they were sorting the points instead of respecting point order -- It would increase performance on some datasets.\n\nEDIT2: in @user-23's image, the OBB boxes probably are all just the minimal ones, but what if you actually also want to predict which way's the trucks are facing -- heuristics like aspect ratio aren't reliable.\n"
+      },
+      {
+        "author": "user-22",
+        "body": "Thinking more about this, I definitely still think an `xyxyxyxy` (4 corners) implementation of OBB would be more useful than `xywhr` -- all cases in my previous comment could be covered with the former, with the latter being a subset. It then just becomes a dataset preparation task to handle truly oriented OBB vs minimal OBB, and in different input formats too, can easily convert between them.\n\nFurthermore, xyxyxyxy is akin to a 4 point version of instance segmentation, so if you actually implement segmentation you've effectively generalised the training pipeline over OBB too, if you just limit the inputs to 4 points."
+      },
+      {
+        "author": "user-24",
+        "body": "@user-7 have there been updates internally about if and when you’ll ship OBB?"
+      },
+      {
+        "author": "user-25",
+        "body": "@user-7 any updates on an ETA for when you will ship with OBB?  "
+      },
+      {
+        "author": "user-26",
+        "body": "@user-7 Any updates on supporting OBB?\n"
+      },
+      {
+        "author": "user-27",
+        "body": "@user-7  Any updates on supporting OBB?"
+      },
+      {
+        "author": "user-7",
+        "body": "Hi! We'll ship it once Roboflow supports OBB natively. It's not on our timeline right now. "
+      },
+      {
+        "author": "user-28",
+        "body": "I have been redirected to this issue from a keypoint detection question -- how about keypoints? Roboflow supports those already in other contexts. Any plans for this? Thanks!"
+      },
+      {
+        "author": "user-7",
+        "body": "We do plan on supporting keypoints :) on the list but we have some bigger surprises coming soon"
+      },
+      {
+        "author": "user-29",
+        "body": "+1 for keypoints!"
+      }
+    ]
+  },
+  "346": {
+    "number": 346,
+    "title": "Video/rtsp stream cuda inference, but cpu usage is very high",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR issues and found no similar bug report.\n\n\n### Bug\n\n![Image](https://github.com/user-attachments/assets/d8483fc1-74ef-481e-b99d-4ddb1ae4b59e)\n\n### Environment\n\nexample:\nRF-DETR version: 1.2.1\nOS (Ubuntu 18.04/20.04, Windows 10/11)\nPython version:3.8, 3.9, 3.10\nPyTorch version:2.8.0+cu126\nCUDA/cuDNN version:CUDA 12.6\nGPU/CPU hardware: RTX 1080TI,RTX4060TI\n\n### Minimal Reproducible Example\n\n```\nimport cv2\nimport supervision as sv\nfrom rfdetr import RFDETRBase\nfrom rfdetr.util.coco_classes import COCO_CLASSES\n\nmodel = RFDETRBase()\n\ncap = cv2.VideoCapture(0)\nwhile True:\n    success, frame = cap.read()\n    if not success:\n        break\n\n    detections = model.predict(frame[:, :, ::-1], threshold=0.5)\n\n    labels = [\n        f\"{COCO_CLASSES[class_id]} {confidence:.2f}\"\n        for class_id, confidence\n        in zip(detections.class_id, detections.confidence)\n    ]\n\n    annotated_frame = frame.copy()\n    annotated_frame = sv.BoxAnnotator().annotate(annotated_frame, detections)\n    annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)\n\n    cv2.imshow(\"Webcam\", annotated_frame)\n\n    if cv2.waitKey(1) & 0xFF == ord('q'):\n        break\n\ncap.release()\ncv2.destroyAllWindows()\n```\n\n### Additional\n\n_No response_\n\n### Are you willing to submit a PR?\n\n- [x] Yes, I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "user-30",
+        "body": "![Image](https://github.com/user-attachments/assets/7e0bf8a1-13a2-4ab7-9912-9910fe69a000)"
+      },
+      {
+        "author": "user-7",
+        "body": "Decoding video can be expensive for CPU. Is this usage higher than it is for other model repos?"
+      },
+      {
+        "author": "user-30",
+        "body": "Video decoding does not consume CPU resources. When using other models such as YOLOX, there is no issue of high CPU usage. The problem lies specifically in the inference process of RF-DETR. Although limiting the number of CPU cores can reduce the usage, it remains significantly higher compared to other models."
+      },
+      {
+        "author": "user-7",
+        "body": "So when you use the predict method of a different model in this exact code, you don't see high CPU use? How's GPU utilization?"
+      },
+      {
+        "author": "user-31",
+        "body": "> So when you use the predict method of a different model in this exact code, you don't see high CPU use? How's GPU utilization?\n\nHi, I have a similar problem.\nI have a program where I can choose between two detectors: one based on YOLO ( from ultralytics ), the other on rf-detr. When I select YOLO, the CPU load is around 20–30%, but when I select rf-detr, the CPU immediately runs at 100%.\n\nMy program runs as a single process with several threads, i use rfdetr_medium custom trained (no any tune) model, model.optimize_for_inference() - also use.\n\nHere’s the interesting part — I tested it on different CPU and GPU architectures. On Windows 11 with the latest Intel Core i9 and an RTX 4090, everything works fine: the CPU load stays around 30%, and the GPU load averages 60–90%. Both YOLO and rf-detr models (custom in both cases) work as expected good.\n\nOn Windows 11 with an Intel Xeon Silver and an A2000 GPU, YOLO behaves as expected, with low CPU load and high GPU load (which makes sense). "
+      },
+      {
+        "author": "user-32",
+        "body": "The difference lies in the preprocessing approach. YOLO (ultralytics) resizes frames on CPU before transferring to GPU, while RF-DETR transfers to GPU first, then resizes. This means RF-DETR transfers larger images between CPU and GPU, which creates memory transfer overhead - the CPU spends more time managing and coordinating these larger data transfers. Try resizing with cv2 before calling `model.predict()` - this reduces the transfer size and should lower CPU usage by minimizing memory transfer overhead"
+      },
+      {
+        "author": "user-31",
+        "body": "> The difference lies in the preprocessing approach. YOLO (ultralytics) resizes frames on CPU before transferring to GPU, while RF-DETR transfers to GPU first, then resizes. This means RF-DETR transfers larger images between CPU and GPU, which creates memory transfer overhead - the CPU spends more time managing and coordinating these larger data transfers. Try resizing with cv2 before calling `model.predict()` - this reduces the transfer size and should lower CPU usage by minimizing memory transfer overhead\n\nThank you for the help! I’ll make the changes in the code and give it a try. After that, I’ll provide you with feedback."
+      },
+      {
+        "author": "user-31",
+        "body": "> The difference lies in the preprocessing approach. YOLO (ultralytics) resizes frames on CPU before transferring to GPU, while RF-DETR transfers to GPU first, then resizes. This means RF-DETR transfers larger images between CPU and GPU, which creates memory transfer overhead - the CPU spends more time managing and coordinating these larger data transfers. Try resizing with cv2 before calling `model.predict()` - this reduces the transfer size and should lower CPU usage by minimizing memory transfer overhead\n\nso, i tried to resize the images before prediction, tried different variations with the size, in different variations before and after the optimizer and still the cpu is loaded at 100 percent.\ni suspect that this is some kind of under-the-hood implementation specifically for intel xeon proc. "
+      },
+      {
+        "author": "user-32",
+        "body": "another possible scenario that causes high cpu usage is if you transfer the image to gpu in float32 instead of uint8. "
+      },
+      {
+        "author": "user-31",
+        "body": "> another possible scenario that causes high cpu usage is if you transfer the image to gpu in float32 instead of uint8.\n\ni'm going to test, thanks. \n\nupd. After many tests i have next - RF‑DETR on Intel Xeon Silver + RTX A2000 still pins CPU at 100% (GPU ~90%), while YOLO11 runs with low CPU(50%). I work with 2 thermal RTSP stream, ~2–3 objects max per frame (for video decode i use av lib, good for real-time and fine-tune). On a Core i9 + RTX 4090 the same code keeps CPU ~30% (expected).\n\nwhat i do - Limited CPU threads: OMP/MKL/OPENBLAS/NUMEXPR=4, torch.set_num_threads(4), torch.set_num_interop_threads(1), cv2.setNumThreads(2)(for nano tracking).\nswitched RF‑DETR input pipeline to GPU‑first - send frame to GPU as HWC uint8, do BGR→RGB, thermal 1→3 channel replicate, CHW, float32/255, normalization, and resize on GPU.\n\n\nwhat else to do - for now I will continue to experiment, because so far it looks like a bad server for my application.\n"
+      }
+    ]
+  },
+  "318": {
+    "number": 318,
+    "title": "Explicit CoreML Conversion Pipeline",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR [issues](https://github.com/roboflow/rf-detr/issues) and found no similar feature requests.\n\n\n### Description\n\nI am interested in converting the PyTorch models into CoreML. I know there are several titled issues related to this matter, but those have all either led to no resolution or link to now unavailable PRs. I have tried a number of approaches, converting directly from PyTorch and using ONNX as an intermediary but to no avail.\n\nIt would seem that the issue lies in the bicubic upsampling function not having a direct conversion between PyTorch and CoreML amongst a number of other incompatibilities.\n\nI saw in the docs that there is a pipeline running on the backend of Roboflow Universe, that converts the models to CoreML for iOS inference, so I assume it is indeed possible.\n\nIs this a planned feature on the roadmap for this repo? If not, is there something that must be modified with the model layers or inference code to make it compatible?\n\nI'd be willing to write the PR for it if necessary!\n\n### Use case\n\n_No response_\n\n### Additional\n\n_No response_\n\n### Are you willing to submit a PR?\n\n- [x] Yes I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "user-7",
+        "body": "this is available via the roboflow platform plus roboflow-swift package. we're unlikely to do work to support that pipeline here since our clients already have a pipeline that works"
+      },
+      {
+        "author": "user-14",
+        "body": "in case you're still interested, I made it work for me. Have a look at my fork (https://github.com/user-14/rf-detr).\nI didn't use the repository environment so you might have to play around a bit until you get the imports of coremltools right but other than that it seems to work.\n\nA big issue was that it didn't allow to convert to CoreML if there is a 6 dimensional tensor as CoreML only supports up to rank 5.\nThat's why I had to refactor the deformable attention.\n\nAlso, for some reason it failed to compile in swift when I exported it to FP16 so try with FP32 first."
+      }
+    ]
+  },
+  "367": {
+    "number": 367,
+    "title": "training errors",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR issues and found no similar bug report.\n\n\n### Bug\n\ndef main():\n\n\n    MODEL_PATH = \"F:/code/rf-detr/rf-detr-base.pth\"\n    \n\n    model = RFDETRBase(\n        config_path=None,\n        checkpoint_path=MODEL_PATH,\n        \n    )\n    # model = RFDETRBase()\n\n\n    # model.train()\n    model.train(\n            dataset_dir=\"F:/res/data\",\n            epochs=10,\n            batch_size=4, \n            grad_accum_steps=4, \n            lr=1e-4,\n            output_dir=\"F:/res/data\",\n            num_workers=0, \n        )\n    \n\nif __name__ == '__main__':\n\n    main()\n  File \"E:\\users\\MaXY05\\AppData\\Local\\miniforge3\\envs\\t221\\Lib\\site-packages\\torch\\nn\\modules\\conv.py\", line 549, in _conv_forward\n    return F.conv2d(\n           ^^^^^^^^^\nRuntimeError: Inference tensors cannot be saved for backward. To work around you can make a clone to get a normal tensor and use it in autograd.\n\nERROR conda.cli.main_run:execute(124): `conda run python f:/code/rfdetr/train.py` failed. how to deal with above  error)\n\n### Environment\n\ndef main():\n\n\n    MODEL_PATH = \"F:/code/rf-detr/rf-detr-base.pth\"\n    \n\n    model = RFDETRBase(\n        config_path=None,\n        checkpoint_path=MODEL_PATH,\n        \n    )\n    # model = RFDETRBase()\n\n\n    # model.train()\n    model.train(\n            dataset_dir=\"F:/res/data\",\n            epochs=10,\n            batch_size=4, \n            grad_accum_steps=4, \n            lr=1e-4,\n            output_dir=\"F:/res/data\",\n            num_workers=0, \n        )\n    \n\n\n### Minimal Reproducible Example\n\nwindows cu118+torch2.7.1\n\n### Additional\n\n_No response_\n\n### Are you willing to submit a PR?\n\n- [ ] Yes, I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "user-1",
+        "body": "i am also facing the same issue \ncan you share way to solve this \n"
+      },
+      {
+        "author": "user-7",
+        "body": "This issue happens when training on CPU"
+      }
+    ]
+  },
+  "89": {
+    "number": 89,
+    "title": "Support arbitrary optimizer from pytorch-optimizer",
+    "state": "open",
+    "body": "pytorch-optimizer implements 100+ optimizers: https://pytorch-optimizers.readthedocs.io/en/latest/\n\nWould be great to have native support to all.",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-35 👋🏻 thanks a lot for your interest in RF-DETR. \n\nTotally agree. That change is on our radar. Any chance you'd like to help us implement it?"
+      }
+    ]
+  },
+  "383": {
+    "number": 383,
+    "title": "optimize_for_inference RuntimeError",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR issues and found no similar bug report.\n\n\n### Bug\n\nAfter updating from rfdetr 1.2.1 to 1.3 I started to get this error for `optimize_for_inference`:\n```\n% uv run python scripts/setup-checks/rfdetr_check.py \nrf-detr-nano.pth: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 349M/349M [00:14<00:00, 26.1MiB/s]\nUsing a different number of positional encodings than DINOv2, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model.\nUsing patch size 16 instead of 14, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model.\nLoading pretrain weights\n`loss_type=None` was set in the config but it is unrecognized. Using the default loss: `ForCausalLMLoss`.\nTracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!\nTracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!\nTracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!\nTracerWarning: torch.as_tensor results are registered as constants in the trace. You can safely ignore this warning if you use this function to create tensors out of constant variables that would be the same every time you call this function. In any other case, this might cause the trace to be incorrect.\nTracerWarning: Iterating over a tensor might cause the trace to be incorrect. Passing a tensor of different shape won't change the number of iterations executed (and might lead to errors or silently give incorrect results).\nTracerWarning: torch.tensor results are registered as constants in the trace. You can safely ignore this warning if you use this function to create tensors out of constant variables that would be the same every time you call this function. In any other case, this might cause the trace to be incorrect.\nTracerWarning: torch.tensor results are registered as constants in the trace. You can safely ignore this warning if you use this function to create tensors out of constant variables that would be the same every time you call this function. In any other case, this might cause the trace to be incorrect.\nUserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument.",
+    "comments": [
+      {
+        "author": "user-7",
+        "body": "can you double check your torch version?"
+      },
+      {
+        "author": "user-37",
+        "body": "I can confirm this issue with 1.3.0\n\n#### Environment\n* rfdetr 1.3.0\n* torch 2.8.0+cu129\n* torchvision 0.23.0+cu129\n* python 3.11.9\n* Windows 11"
+      },
+      {
+        "author": "user-7",
+        "body": "replicated. we only tested the new segmentation model with optimize_for_inference for this release, that works but it appears the object detector is broken. fixing. thanks for the flag "
+      },
+      {
+        "author": "user-7",
+        "body": "fix here https://github.com/roboflow/rf-detr/pull/384"
+      },
+      {
+        "author": "user-38",
+        "body": "Using torch 2.8.0 and 2.9.1, and trying to run the example on the home page results in the same error:\n\n```python\nimport io\nimport requests\nimport supervision as sv\nfrom PIL import Image\nfrom rfdetr import RFDETRBase\nfrom rfdetr.util.coco_classes import COCO_CLASSES\n\nmodel = RFDETRBase()\n\nmodel.optimize_for_inference()\n\nurl = \"https://media.roboflow.com/notebooks/examples/dog-2.jpeg\"\n\nimage = Image.open(io.BytesIO(requests.get(url).content))\ndetections = model.predict(image, threshold=0.5)\n\nlabels = [\n    f\"{COCO_CLASSES[class_id]} {confidence:.2f}\"\n    for class_id, confidence in zip(detections.class_id, detections.confidence)\n]\n\nannotated_image = image.copy()\nannotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)\nannotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)\n\nsv.plot_image(annotated_image)\n```\n\n```\nLoading pretrain weights\n`loss_type=None` was set in the config but it is unrecognized. Using the default loss: `ForCausalLMLoss`.\n"
+      },
+      {
+        "author": "user-39",
+        "body": "Life saver."
+      },
+      {
+        "author": "user-40",
+        "body": "With rf-detr version 1.3.0 I still get the same issue.\nHowever @user-38 proposed workaround with compile=False works.\n\nAdditional environment info:\nPython 3.12\ntorch                    2.5.1+cu121\nroboflow                 1.2.11\n\n`Only tensors, lists, tuples of tensors, or dictionary of tensors can be output from traced functions\n`\n"
+      }
+    ]
+  },
+  "427": {
+    "number": 427,
+    "title": "Fine-tuned model runs on CPU instead of GPU with CoreML on Apple Silicon",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR issues and found no similar bug report.\n\n\n### Bug\n\n**Description:**\nWhen running inference with my **fine-tuned RF-DETR model** (`player-and-handball-detection-3z9xf/1`) on Apple Silicon, the model only uses CPU despite CoreML being configured. The **base RF-DETR model** (e.g., `rfdetr-small`) runs on GPU as expected when loaded via `RFDETRSmall()`, but **not** when loaded via `get_model(\"rfdetr-small\")`.\n\n---\n\n**Key Observations:**\n- Fine-tuned model (`get_model(\"player-and-handball-detection-3z9xf/1\")`) → **CPU only**.\n- Base model (`RFDETRSmall()`) → **GPU works**.\n- Base model via `get_model(\"rfdetr-small\")` → **CPU only** (same as fine-tuned model).\n- GPU utilization remains at **0%** during inference for `get_model()` cases.\n\n\n\n### Environment\n\n- **Roboflow Inference Version:** `0.59.0`\n- **OS:** macOS 26.0.1\n- **Python Version:** `3.12.11`\n- **ONNX Runtime Version:** `1.21.1`\n- **Hardware:** MacBook Pro M1 Max (64GB RAM)\n\n\n### Minimal Reproducible Example\n\n```python\nimport os\nimport time\nimport cv2\nimport supervision as sv\nfrom inference import get_model\nimport onnxruntime as ort\n\n# Configure CoreML\nos.environ[\"INFERENCE_LOG_LEVEL\"] = \"DEBUG\"\nos.environ[\"ONNXRUNTIME_EXECUTION_PROVIDERS\"] = \"[CoreMLExecutionProvider]\"\nos.environ[\"ORT_LOG_SEVERITY_LEVEL\"] = \"0\"      # VERBOSE\nos.environ[\"ORT_LOG_VERBOSITY_LEVEL\"] = \"1\"     # Extra detail\nprint(\"[ONNX Runtime] Available providers:\", ort.get_available_providers())\n\n# Load API key and model\nAPI_KEY = os.getenv(\"ROBOFLOW_API_KEY\")\nMODEL_ID = \"player-and-handball-detection-3z9xf/1\"\nVIDEO_IN = \"https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4\"\nVIDEO_OUT = \"Clip_annotated_coreml.mp4\"\n\nprint(\"[Inference] Loading model…\")\nmodel = get_model(MODEL_ID, api_key=API_KEY)\n\n# Process video\ncap = cv2.VideoCapture(VIDEO_IN)\nassert cap.isOpened(), f\"Cannot open {VIDEO_IN}\"\nw, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))\nfps_in = cap.get(cv2.CAP_PROP_FPS) or 25.0\nvw = cv2.VideoWriter(VIDEO_OUT, cv2.VideoWriter_fourcc(*\"mp4v\"), fps_in, (w, h))\nbox_annot = sv.BoxAnnotator(thickness=2)\nfont = cv2.FONT_HERSHEY_SIMPLEX\nt0_all = time.time()\nn = 0\n\nprint(\"[Inference] Started…\")\nwhile True:\n    ok, frame = cap.read()\n    if not ok:\n        break\n\n    t0 = time.time()\n    n += 1\n    res = model.infer(frame, confidence=0.25, iou=0.5)[0]\n    dets = sv.Detections.from_inference(res)\n    annotated = box_annot.annotate(scene=frame.copy(), detections=dets)\n\n    # Draw labels\n    names = dets.data.get(\"class_name\", [str(i) for i in dets.class_id])\n    labels = [f\"{n_} {c:.2f}\" for n_, c in zip(names, dets.confidence)]\n    for (x1, y1, x2, y2), text in zip(dets.xyxy, labels):\n        cv2.putText(annotated, text, (int(x1), max(0, int(y1) - 4)), font, 0.5, (0, 255, 0), 1, cv2.LINE_AA)\n\n    # Calculate FPS\n    dt = time.time() - t0\n    fps_inst = 1.0 / dt if dt > 0 else 0.0\n    fps_avg = n / (time.ti",
+    "comments": [
+      {
+        "author": "user-42",
+        "body": "I tried converting the model to CoreML for better hardware acceleration on Apple Silicon, but it's not supported because some tensors are 6D and CoreML only supports up to 5D tensors:\n```\nWARNING:coremltools:Model is not in eval mode. Consider calling '.eval()' on your model prior to conversion\nWARNING:coremltools:Tuple detected at graph output. This will be flattened in the converted model.\nConverting PyTorch Frontend ==> MIL Ops:  34%|████████████████████▎                                      | 609/1766 [00:00<00:00, 6066.76 ops/s]WARNING:coremltools:Saving value type of int64 into a builtin type of int32, might lose precision!\nWARNING:coremltools:Saving value type of float64 into a builtin type of fp32, might lose precision!\nConverting PyTorch Frontend ==> MIL Ops: 100%|█████████████████████████████████████████████████████████▉| 1764/1766 [00:00<00:00, 5618.28 ops/s]\nRunning MIL frontend_pytorch pipeline: 100%|████████████████████████████████████████████████████████████████| 5/5 [00"
+      },
+      {
+        "author": "user-43",
+        "body": "@user-42 For CoreML conversion, you can refer to this comment https://github.com/roboflow/rf-detr/issues/318#issuecomment-3276939712. I could get CoreML model using this custom repository."
+      }
+    ]
+  },
+  "301": {
+    "number": 301,
+    "title": "RF-DETR 1.1.0 vs 1.2.1 : same train parameters doesn't work after updating",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR issues and found no similar bug report.\n\n\n### Bug\n\nHello ! \n\nI'm about to start a new training session for my custom model. However, I encounter a problem when I use the latest version (1.2.1) vs when I used the older 1.1.0 version. Here are my parameters, please note that I'm exploring on cpu and system memory for now as I want to be sure everything works before renting a server :\n\n```\nmodel.train(dataset_dir=data_dir,\n            device='cpu',\n            num_workers=1,\n            epochs=num_epochs, \n            batch_size=1, \n            grad_accum_steps=16,\n            lr=learn, \n            output_dir=output_path, \n            resolution=1008, \n            weight_decay=1e-8, \n            checkpoint_interval=cp_interval, \n            resume=cp_resume,\n            early_stopping=True,\n            early_stopping_patience=15,\n            num_queries=300, \n            num_select=300, \n            dec_layers=6\n            )\n```\n\nI don't have any problem when training wit these parameters in the old version (I managed to start my epoch, even if it was very long on cpu) but the latest version returns the following error : `RuntimeError: Inference tensors cannot be saved for backward. To work around you can make a clone to get a normal tensor and use it in autograd.`\n\nI don't know where it comes from, and the [full errors output](https://pastebin.com/PnjxtBNg) doesn't really help to know how to fix. Any idea what's happening ?\n\nThank you for reading !\n\n\n### Environment\n\nRF-DETR : 1.1.0/1.2.1\nOS : ZorinOS 17.3 core (equivalent Ubuntu LTE 22.\nPython : 3.10 \nPyTorch : 2.6.0 version\nCPU :  core i5 11400H\n\n\n### Minimal Reproducible Example\n```\n#run this with rf-detr 1.1.0 the 1.2.1 to see the difference\n\ndevice = torch.device('cpu')\ndata_dir = os.path.join(args.path)\noutput_path = os.path.join(args.output)\nmodel = RFDETRLarge(pretrained=True)\nnum_epochs = args.epochs\nlearn = args.learning_rate\ncp_interval = args.checkpoint_interval\nmodel.train(dataset_dir=data_dir,\n                device='cpu',\n                num_workers=1,\n                epochs=num_epochs, \n                batch_size=1, \n                grad_accum_steps=16,\n                lr=learn, \n                output_dir=output_path, \n                resolution=1008, \n                weight_decay=1e-8, \n                checkpoint_interval=cp_interval, \n                resume=cp_resume,\n                early_stopping=True,\n                early_stopping_patience=15,\n                num_queries=300, \n                num_select=300, \n                dec_layers=6 \n                )\n```\n\n### Additional\n\n_No response_\n\n### Are you willing to submit a PR?\n\n- [ ] Yes, I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "user-7",
+        "body": "looks like the same issue as https://github.com/roboflow/rf-detr/issues/297 I am wondering if that issue wasn't using the GPU properly or there was an issue with the AMD drivers\n\nwe never tested CPU-only training, I buy that there could be a new bug \n\nit's not letting me view the full stacktrace without installing an extension for their website which I'm not going to do. can you paste it in a comment?"
+      },
+      {
+        "author": "user-7",
+        "body": "have you tried training in colab for a free gpu?"
+      },
+      {
+        "author": "user-44",
+        "body": "Sorry, I didn't know it needed an extension ! I use it without one, it's weird. Anyway, here it is : \n```\n File \"/home/user/miniforge3/envs/rfdetr/lib/python3.10/site-packages/rfdetr/detr.py\", line 81, in train\n    self.train_from_config(config, **kwargs)\n  File \"/home/user/miniforge3/envs/rfdetr/lib/python3.10/site-packages/rfdetr/detr.py\", line 187, in train_from_config\n    self.model.train(\n  File \"/home/user/miniforge3/envs/rfdetr/lib/python3.10/site-packages/rfdetr/main.py\", line 341, in train\n    train_stats = train_one_epoch(\n  File \"/home/user/miniforge3/envs/rfdetr/lib/python3.10/site-packages/rfdetr/engine.py\", line 129, in train_one_epoch\n    outputs = model(new_samples, new_targets)\n  File \"/home/user/miniforge3/envs/rfdetr/lib/python3.10/site-packages/torch/nn/modules/module.py\", line 1739, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n  File \"/home/user/miniforge3/envs/rfdetr/lib/python3.10/site-packages/torch/nn/modules/module.py\", line 1750, in _call"
+      },
+      {
+        "author": "user-44",
+        "body": "I'll also gonna try again with the last version of pytorch, I'm just waiting for it to be downloaded (my internet is very slow)"
+      },
+      {
+        "author": "user-44",
+        "body": "Update : i tried again on cpu with the latest version of pytorch / torchvision and it returned basically the same thing : \n\n```\n  File \"/home/user/miniforge3/envs/rfdetr/lib/python3.10/site-packages/rfdetr/detr.py\", line 81, in train\n    self.train_from_config(config, **kwargs)\n  File \"/home/user/miniforge3/envs/rfdetr/lib/python3.10/site-packages/rfdetr/detr.py\", line 187, in train_from_config\n    self.model.train(\n  File \"/home/user/miniforge3/envs/rfdetr/lib/python3.10/site-packages/rfdetr/main.py\", line 341, in train\n    train_stats = train_one_epoch(\n  File \"/home/user/miniforge3/envs/rfdetr/lib/python3.10/site-packages/rfdetr/engine.py\", line 129, in train_one_epoch\n    outputs = model(new_samples, new_targets)\n  File \"/home/user/miniforge3/envs/rfdetr/lib/python3.10/site-packages/torch/nn/modules/module.py\", line 1751, in _wrapped_call_impl\n    return self._call_impl(*args, **kwargs)\n  File \"/home/user/miniforge3/envs/rfdetr/lib/python3.10/site-packages/torch/nn/modules/module.p"
+      },
+      {
+        "author": "user-7",
+        "body": "Ok. I think I know what the problem is. Annoying little PyTorch issue :) \n\nDon't have much bandwidth right now (expect some exciting things in the near future 😏) and since we don't recommend training on CPU and you're not blocked I think this is somewhat low priority. Will fix as I have time :) "
+      },
+      {
+        "author": "user-44",
+        "body": "Considering the time it takes to pass just a single epoch on CPU I understand why it's low priority 😆 I'll update when I manage to try on cuda, hopefully it will work !"
+      }
+    ]
+  },
+  "406": {
+    "number": 406,
+    "title": "RF-DETR incompatible with `torch.export.export`",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR issues and found no similar bug report.\n\n\n### Bug\n\n`torch.export.export` is the recommended way to export models to other inference frameworks (CoreML, LiteRT, etc), but it breaks:\n\n```py\nfrom rfdetr import RFDETRBase\nfrom torch import randn\nfrom torch.export import export\nfrom torch.nn import Module\n\n# Create model\nrf_detr = RFDETRBase()\nmodel: Module = rf_detr.model.model.cpu()\nmodel.export()\ninput_size: int = rf_detr.model.resolution\n\n# Export\nexported_program = export(\n    model,\n    args=(randn(1, 3, input_size, input_size),)\n)\n```\n\nException:\n```\n.venv/lib/python3.12/site-packages/torch/export/__init__.py:319: in export\n    raise e\n.venv/lib/python3.12/site-packages/torch/export/__init__.py:286: in export\n    return _export(\n.venv/lib/python3.12/site-packages/torch/export/_trace.py:1164: in wrapper\n    raise e\n.venv/lib/python3.12/site-packages/torch/export/_trace.py:1130: in wrapper\n    ep = fn(*args, **kwargs)\n         ^^^^^^^^^^^^^^^^^^^\n.venv/lib/python3.12/site-packages/torch/export/exported_program.py:123: in wrapper\n    return fn(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^\n.venv/lib/python3.12/site-packages/torch/export/_trace.py:2176: in _export\n    ep = _export_for_training(\n.venv/lib/python3.12/site-packages/torch/export/_trace.py:1164: in wrapper\n    raise e\n.venv/lib/python3.12/site-packages/torch/export/_trace.py:1130: in wrapper\n    ep = fn(*args, **kwargs)\n         ^^^^^^^^^^^^^^^^^^^\n.venv/lib/python3.12/site-packages/torch/export/exported_program.py:123: in wrapper\n    return fn(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^\n.venv/lib/python3.12/site-packages/torch/export/_trace.py:2037: in _export_for_training\n    export_artifact = export_func(\n.venv/lib/python3.12/site-packages/torch/export/_trace.py:1979: in _non_strict_export\n    aten_export_artifact = _to_aten_func(  # type: ignore[operator]\n.venv/lib/python3.12/site-packages/torch/export/_trace.py:1770: in _export_to_aten_ir_make_fx\n    gm, graph_signature = transform(_make_fx_helper)(\n.venv/lib/python3.12/site-packages/torch/export/_trace.py:1900: in _aot_export_non_strict\n    gm, sig = aot_export(wrapped_mod, args, kwargs=kwargs, **flags)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n.venv/lib/python3.12/site-packages/torch/export/_trace.py:1685: in _make_fx_helper\n    gm = make_fx(\n.venv/lib/python3.12/site-packages/torch/fx/experimental/proxy_tensor.py:2318: in wrapped\n    return make_fx_tracer.trace(f, *args)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n.venv/lib/python3.12/site-packages/torch/fx/experimental/proxy_tensor.py:2250: in trace\n    return self._trace_inner(f, *args)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n.venv/lib/python3.12/site-packages/torch/fx/experimental/proxy_tensor.py:2221: in _trace_inner\n    t = dispatch_trace(\n.venv/lib/python3.12/site-packages/torch/_compile.py:53: in inner\n    return disable_fn(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n.venv/",
+    "comments": [
+      {
+        "author": "user-42",
+        "body": "`RFDETRBase().export(...)` uses the legacy exporter, not the `torch.export` exporter."
+      },
+      {
+        "author": "user-46",
+        "body": "This is occurring for me if I call `.export()` on the loaded `RFDETRMedium()`, i.e. I'm doing nothing special, just the regular exporter. 🤔 "
+      },
+      {
+        "author": "user-47",
+        "body": "@user-46 I had the same issue with `RFDETRBase().export(...)` for RF-DETR 1.3.0 on Windows. I downgraded torch to 2.6.0 and dependent torchvision to 0.21.0 and it helped.\n```\ntorch==2.6.0+cu126\ntorchvision==0.21.0\n```"
+      },
+      {
+        "author": "user-42",
+        "body": "@user-47 to confirm, were you able to export RF-DETR using `torch.export.export`? I'm referring specifically to the Dynamo-based exporter, which doesn't seem to be supported by RF-DETR."
+      },
+      {
+        "author": "user-47",
+        "body": "> [@user-47](https://github.com/user-47) to confirm, were you able to export RF-DETR using `torch.export.export`? I'm referring specifically to the Dynamo-based exporter, which doesn't seem to be supported by RF-DETR.\n\nNo, sorry. I was referring to iasac comment on `RFDETRBase().export(...)`, not the torch exporter. I just edited my previous comment for clarification. "
+      },
+      {
+        "author": "user-42",
+        "body": "> No, sorry. I was referring to iasac comment on RFDETRBase().export(...), not the torch exporter. I just edited my previous comment for clarification.\n\nAh, thanks for clarifying. We also decided to use the TorchScript ONNX export since Dynamo doesn't work. We managed to get it [running in the browser](https://www.muna.ai/@roboflow/rf-detr)."
+      },
+      {
+        "author": "user-48",
+        "body": "> > No, sorry. I was referring to iasac comment on RFDETRBase().export(...), not the torch exporter. I just edited my previous comment for clarification.\n> \n> Ah, thanks for clarifying. We also decided to use the TorchScript ONNX export since Dynamo doesn't work. We managed to get it [running in the browser](https://www.muna.ai/@roboflow/rf-detr).\n\nCould you share how to export using TorchScript ONNX? Specifically, when dynamo=false?"
+      },
+      {
+        "author": "user-42",
+        "body": "> Could you share how to export using TorchScript ONNX? Specifically, when dynamo=false?\n\nSure:\n\n```py\nfrom rfdetr import RFDETRBase\nfrom torch import randn\n\n# Load model\nrf_detr = RFDETRBase()\nmodel = rf_detr.model.model.cpu().eval()\ninput_size: int = rf_detr.model.resolution\n\n# Prepare for export\nmodel.export()\n\n# Export\nexport_onnx(\n    model,\n    (randn(1, 3, input_size, input_size))\n    \"rf_detr.onnx\",\n    input_names=[\"input0\"],\n    dynamic_axes=None,\n    dynamo=False,\n    optimize=True,\n    do_constant_folding=True\n)\n```\n\n___\n\nShameless plug: if you want to run RF-DETR anywhere, you're better off using the platform I'm building, [Muna](https://www.muna.ai/@roboflow/rf-detr).\n\nInstead of reimplementing all the pre- and post-processing in your downstream framework/language; we wrote a Python function that runs the model, then used Muna to compile it to run on Linux, macOS, Windows, iOS, Android, and the browser. \n\n[We compiled RF-DETR from just 160 lines of Python](https://github."
+      },
+      {
+        "author": "user-31",
+        "body": "Hi guys, I tried updating, and after training a custom network once again (which I’ve done multiple times before), I attempted to convert the model to ONNX — and got the same errors.\nAfter spending a lot of time dealing with version issues and reinstalling the virtual environment, it turned out that there’s likely a bug in the file rf-detr/rfdetr/models/transformer.py.\nThe problem is in gen_encoder_output_proposals: creating a tensor from a list isn’t supported during export.\n\nA possible fix is to replace\n\ntorch.tensor([H_ for _ in range(N_)], device=memory.device)\n\nwith\n\ntorch.full((N_,), H_, dtype=torch.long, device=memory.device) — which is compatible with torch.export.\n\nbecause for now i can`t convert to onnx and have : \n\nUserWarning: Please use the new API settings to control TF32 behavior, such as torch.backends.cudnn.conv.fp32_precision = 'tf32' or torch.backends.cuda.matmul.fp32_precision = 'ieee'. Old settings, e.g, torch.backends.cuda.matmul.allow_tf32 = True, torch.backends."
+      },
+      {
+        "author": "user-49",
+        "body": "Hi, I had the same issue with @user-31 \n\nConfirm this is about Torch version.\n\nMy environment \ntorch 2.9\nGPU RTX Pro 6000 Blackwell  (Which is force me to use torch version 2.7+)\n\n\nI have to train model with torch 2.9\n\nand then downgrade to torch 2.6 for onnx export.\n\nhope this helps"
+      }
+    ]
+  },
+  "416": {
+    "number": 416,
+    "title": "RFDETRSegPreview validation calls are extremely slow. Can we speed up?",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR [issues](https://github.com/roboflow/rf-detr/issues) and found no similar feature requests.\n\n\n### Description\n\nI have a dummy dataset of train:val = 1500 : 200 size. On this dataset, with a batch size of 16 on a A100-80GB GPU,\n1 epoch (1500 images) of training takes a total time: 0:06:20 (**3.9606 s / it**)  \n1 epoch (200 images) of validation takes a total time: 0:07:34 (**34.9950 s / it**) \nThat is nearly 10x slower compared to training.    \n\nThis is complicated by RFDETR running two validation calls. Once with the base model. Another time with the EMA model. So I spend 6 minutes training one epoch. Then I wait for another 15 minutes to finish the validation calls and resume training again. This makes the training process extremely slow.  \n\nTo compare with YOLOv8sSeg, on the same GPU, the validation call on 2800 images takes 34 seconds or less. With a batch size of 160.\n\nI noticed that during validation calls, the postprocessor upsamples masks to the original input image size of the dataset. Is that really necessary? But even with that turned off, I believe there is something wrong with the validation call. It is way too slow.\n\nCan we please optimize validation calls?\n\n### Use case\n\n_No response_\n\n### Additional\n\n_No response_\n\n### Are you willing to submit a PR?\n\n- [x] Yes I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "user-50",
+        "body": "I’m facing the same problem on my setup (RTX 4060 8 GB).\n\nTraining runs relatively smoothly, but evaluation is dramatically slower — often several times longer than training itself. This happens even on small validation sets, and it becomes a major bottleneck when the EMA model is also evaluated each epoch.\n\nIn addition, the --run_test parameter doesn’t seem to work properly — it either doesn’t trigger the evaluation or hangs during initialization."
+      },
+      {
+        "author": "user-45",
+        "body": "I was able to reduce the time per epoch (training + validation) from 21 minutes to ~3 minutes. About 7 times speedup.\n\nRealized that this delay is due to the old cocoAPI being slow:  \nhttps://github.com/facebookresearch/maskrcnn-benchmark/issues/522\nhttps://github.com/DeNA/PyTorch_YOLOv3/issues/56\nhttps://github.com/facebookresearch/detectron2/discussions/5221   \n\n\nEasy things that worked great:  \n* Set `num_select=100` in training config and model config. It cuts down computation by half. For COCO, a single image can contain max 100 annotations anyway. So there is no point in going for 200 detections per image. My application allowed for 100 detections per image, luckily.\n* I edited the code to use the flag `use_ema` differently. If `use_ema==True`, I run validation only using the EMA model and don't run the same using the regular model. This again cuts down the total validation compute by half. From my tests, the EMA model always outperforms the regular model. So running evaluations "
+      }
+    ]
+  }
+}

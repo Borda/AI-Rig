@@ -53,35 +53,7 @@ Use for writing new pytest tests, analyzing public-API coverage gaps, building e
 - **Doctest discipline**: never `# doctest: +SKIP` — skipped doctest = dead documentation, zero CI signal; use the alternatives in Doctest Patterns
 - **Security embedding (all modes)**: when task scope includes authentication or authorization logic, payment flows or financial data handling, or user PII or sensitive data (storage, transmission, access control) — embed OWASP Top 10 review automatically; applies in solo mode and team mode alike; not gated on team invocation
 
-## Multi-level Test Validation
-
-Every test must pass three levels, in sequence, before it's complete:
-
-**Level 1 — Name/Scenario Clarity** Test function name must unambiguously declare what's tested. Format: `test_<unit>_<condition>_<expected>` or `test_<behavior>_when_<condition>`. If name alone is insufficient (complex scenario, multi-step flow, stateful sequence), add a one-line docstring: `"""Scenario: user does X with Y under Z, expects W."""` Criterion: reviewer understands the test's purpose without reading the body.
-
-**Level 2 — Contract Validation (implementation-blind)** Apply **Black-box first** (see Core Principles): validate test purpose against SW goals/blueprints BEFORE inspecting test code. Ask: "Does this scenario represent real user behavior? Is the expected outcome derivable from the documented contract alone?" A scenario that can't be justified from docs without reading implementation asserts implementation detail — rewrite from contract.
-
-**Level 3 — Coverage Completeness** Confirm test code is faithful to its declared scenario, covering all documented parameter variants, boundary values, and error paths named in it. Each parametrize case must map to a distinct documented sub-scenario — no duplicate under different framing, no declared variation missing from the list.
-
-## Edge Case Matrix
-
-For every public API entry point (function, class method, CLI flag, endpoint parameter), apply checklist:
-
-- **Documented happy path**: test primary example from docs/docstring verbatim — baseline user expectation
-- **Empty/null**: empty list, None, empty string, zero — only for parameters docs say are optional or nullable
-- **Boundary values**: min, max, min±1, max±1 — derived from documented constraints (type hints, `Raises:` guards, `Args:` ranges)
-- **Type mismatches**: wrong type, subtype, protocol-compatible alternative — only where docs specify accepted types
-- **Size extremes**: single element, very large collection — for sequence parameters
-- **State edge cases**: uninitialized state, double-initialization, use-after-close — only for stateful public classes
-- **Concurrency**: shared state accessed from multiple threads — only when class/function documented as thread-safe
-- **Error paths**: for each `Raises:` in docstring, verify test exercises that exception branch; missing `Raises:` coverage always primary finding
-- **Adversarial inputs**: syntactically valid but semantically hostile inputs (negative lengths, NaN floats, control characters in strings) — applied to every parameter lacking explicit range restriction in docs
-
-## Test Organization
-
-Mirror `src/` layout in `tests/unit/`: `src/foo/bar.py` → `tests/unit/foo/test_bar.py`.
-
-`tests/unit/` no I/O; `tests/integration/` real deps/I/O; `tests/e2e/` full system; `tests/smoke/` deploy sanity.
+Before applying the validation levels, edge-case matrix or test-organization checks, run `cat "${CLAUDE_PLUGIN_ROOT}/references/qa-specialist/test-validation.md"` via the Bash tool and follow its complete contract.
 
 </core-principles>
 
@@ -95,33 +67,7 @@ When scaffolding a new test suite, run `cat "${CLAUDE_PLUGIN_ROOT}/skills/_share
 
 <test-patterns>
 
-## Parametrized Tests
-
-Apply **Parametrization**: one `pytest.param(..., id=...)` per case and a comment naming the edge it covers (all-zero input → zero, not nan; single element). Float results via `pytest.approx(expected, abs=...)`. For Test Structure style rules, run `cat ~/.claude/rules/foundry-python-testing.md` via Bash; if absent, run `cat "${CLAUDE_PLUGIN_ROOT}/rules/python-testing.md"`.
-
-## Error Path Testing
-
-Assert the exception type **and** a `match=` on the message (`pytest.raises(ValueError, match="must be positive")`). Deprecations: `pytest.warns(DeprecationWarning, match=...)`, then assert the old and new call return the same result.
-
-## Doctest Patterns
-
-| Situation | Solution |
-| -- | -- |
-| Optional dep missing | `# doctest: +REQUIRES(module:torch)` via pytest-doctestplus plugin (PyPI: pytest-doctestplus) |
-| Abstraction not public yet | `__doctest_skip__ = ["ClassName.method"]` at module level |
-
-```toml
-# pyproject.toml
-addopts = ["--doctest-modules", "--doctest-plus"]
-```
-
-## Integration Test with Real Dependencies
-
-Integration tests cover full roundtrip (create, persist, retrieve) and verify side effects — not just happy-path return value.
-
-## Fixture Design
-
-Fixtures return minimal valid object needed for test scope — only fields test actually exercises, nothing more.
+Before writing, reviewing or changing tests, run `cat "${CLAUDE_PLUGIN_ROOT}/references/qa-specialist/test-patterns.md"` via the Bash tool and follow its complete contract.
 
 </test-patterns>
 
@@ -154,35 +100,7 @@ Use Hypothesis for data-transformation invariants such as normalization idempote
 
 <code-review-assertions>
 
-## Verify Before Asserting
-
-Never claim a pattern exists without confirming via Grep/Glob first — applies to all findings referencing codebase-wide patterns.
-
-**Occurrence thresholds** — when asserting established pattern:
-
-- > 10 occurrences → Established (flag new code that deviates as finding)
-- 3–10 occurrences → Emerging (list whether intentional under `Contract questions:` for the caller — not blocking finding)
-- < 3 occurrences → Not established (skip pattern claims entirely)
-
-**Conditional context loading** — load extra context based on diff or target contents:
-
-| Diff Contains | Context to Load |
-| -- | -- |
-| DB queries (`SELECT`, `.filter(`, `session.query`) | Check schema; look for N+1 patterns *[perf-optimizer domain — observation only, not a qa defect]* |
-| Auth logic (`password`, `token`, `jwt`, `session`, `bcrypt`) | Grep for token storage patterns; verify no secrets in logs |
-| File uploads or `open()` calls | Check for size limits and path traversal prevention |
-| External API calls (`requests.`, `httpx.`, `aiohttp.`) | Check timeout, retry, error handling *[sw-engineer domain — observation only]* |
-| New `import`/`from` packages | Verify package exists in `pyproject.toml` / `requirements*.txt` |
-| `os.system(`, `subprocess.*`, `shlex` | Check shell-injection: verify `shell=False` (or kwarg absent); args must be list, not f-string or concatenated string; `shlex.quote()` only valid when `shell=True` strictly unavoidable |
-
-**Domain-boundary rule**: rows tagged `[perf-optimizer domain]` or `[sw-engineer domain]` surface as observations, not qa defects. Don't count in coverage-gap totals; redirect substantive findings to owning agent — file under Style/Quality Observations (see `<reporting-format>` below).
-
-**Uncertainty markers** — display-only aliases for `[critical]/[high]/[medium]/[low]`; use in prose annotations only, never as primary severity label in coverage-gap findings. Scope: QA report prose only — distinct from terminal-output severity markers (`!` = critical, `⚠` = warning, `✓` = pass) in `communication.md`:
-
-- `🔴 Must fix:` (alias: `[critical]`) — critical finding, verified via Grep/Read
-- `⚠️ High risk:` (alias: `[high]`) — likely runtime failure or persistent flakiness; no emoji alias in bracket notation, use `[high]` directly
-- `❓ To verify:` (alias: `[medium]`) — pattern claim needing maintainer confirmation
-- `💡 Consider:` (alias: `[low]`) — optional improvement, non-blocking
+Before reading target code or reporting findings, run `cat "${CLAUDE_PLUGIN_ROOT}/references/qa-specialist/review-assertions.md"` via the Bash tool and follow its complete contract.
 
 </code-review-assertions>
 
@@ -271,7 +189,7 @@ fi
     - 3 iterations exhausted with failures still open → stop, report residue under Coverage Gaps, do not mark task complete
     - The caller's scope and turn budget override the retry maximum; stop earlier with unresolved failures in the mandated file/envelope rather than starting a run or iteration that would prevent delivery.
 13. Report findings using two-section structure defined in `<reporting-format>` above.
-14. Apply Internal Quality Loop, end with `## Confidence` block — see `.claude/rules/foundry-quality-gates.md`. Domain calibration:
+14. Apply Internal Quality Loop, end with `## Confidence` block — see `~/.claude/rules/foundry-quality-gates.md`. Domain calibration:
     - Score against completeness of public-API surface coverage, not idealized standard requiring runtime execution
     - Thresholds: 0.95+ = all public API symbols covered + all `Raises:` paths verified + no ambiguous documented behaviour; below 0.90 = named gap could plausibly reverse a finding
     - List only gaps that could change a finding — omit theoretical gaps (e.g. "mutation testing not run") unless specific reason to expect they'd surface issues
@@ -281,51 +199,13 @@ fi
 
 <teammate-mode>
 
-## Operating as Teammate (Agent Teams)
-
-When spawned as Agent Teams teammate (e.g., via `/develop:fix --team`, `/develop:feature --team` — requires `develop` plugin):
-
-Follow AgentSpeak v2 protocol: run `cat ~/.claude/TEAM_PROTOCOL.md` via Bash (symlinked by `/foundry:setup` — requires `foundry` plugin). If absent, run `cat "${CLAUDE_PLUGIN_ROOT}/TEAM_PROTOCOL.md"`; if the file is unavailable, ask the orchestrator to provide TEAM_PROTOCOL content directly.
-
-**Challenging sw-engineer's API design (in `/develop:feature --team` — requires `develop` plugin)**: when qa-specialist spawned alongside sw-engineer, review proposed API BEFORE implementation starts. Challenge:
-
-- Missing input validation or error cases
-- Auth/permission assumptions not explicit in type signature
-- Type safety gaps that generate flaky test noise
-- Missing edge cases in proposed interface
-
-Report design challenges to lead with epsilon + specific concern. SW adjusts design; QA then writes tests against finalized API.
+When operating as an Agent Teams teammate, run `cat "${CLAUDE_PLUGIN_ROOT}/references/qa-specialist/teammate-protocol.md"` via the Bash tool and follow its complete contract.
 
 </teammate-mode>
 
 <antipatterns-to-flag>
 
-- **Out-of-scope items to skip (not flag)**: syntactic issues (dead imports, unused variables, naming conventions, import ordering) — exclude silently rather than routing to "secondary observations"
-- **Scenario-opaque test name with no docstring**: name gives no scenario clue AND no docstring — `[medium]`; rename to `test_<unit>_<condition>_<expected>` or add `"""Scenario: ..."""`; every test needs a docstring regardless of its name (Ruff `D102`/`D103`), so a descriptive name never waives it
-- **Scenario declared but not fully covered**: name/docstring declares scenario but parametrize/assertions omit variations, boundary values, or error paths — `[medium]`; extend parametrize list
-- Tests with no assertions
-- Test names that describe implementation, not behavior (e.g. `test_function_1`)
-- No test for error/failure path
-- Tests sharing mutable state between test cases
-- Integration tests disguised as unit tests — missing `@pytest.mark.integration` marker
-- ML tests without fixed random seed — flaky tests worse than no tests; flag as primary coverage gap any test calling `np.random`, `random`, or `torch` random APIs with no preceding seed; note when multiple RNG sources (e.g. `random` + `np.random`) need dual-seeding
-- Using `assert torch.equal(a, b)` instead of `torch.testing.assert_close` (float comparison needs tolerance)
-- **Testing implementation details or observed behavior** (including asserting call order as primary): apply **Black-box first** and **Public API surface by default**
-- **Mocking internals or concealing failures**: apply **Mocking discipline**
-- **Missing public symbol in inventory**: public function/class (no `_` prefix, not excluded from `__all__`) with zero coverage and no `# pragma: no cover` — always primary finding
-- **N nearly-identical test functions**: apply **Parametrization**
-- **Repeated inline fixture scaffold**: 3+ tests each repeat the same N-field dict (≥6 fields) changing only 1–2 fields — extract a module-level factory function using **Factory default = most common shape**
-- **Verbatim fixture duplicate**: two or more test functions copy-paste identical inline dict — extract to a module-level constant and reference it; copy-paste creates silent divergence when one copy is updated
-- **New test when existing could expand**: apply **Expand-first**
-- **Dead-code detection out of scope**: unreachable functions, unused public API, missing `__all__` exports → use `foundry:linting-expert` or `foundry:solution-architect`; qa-specialist NOT-for excludes dead-code analysis
-- **`if`/`for`/`while` logic in test bodies**: control flow = doing too much — split into parametrized cases; `if`/`else` inside parametrize value generation OK when \<30% of cases
-- **Thread-safety assertion missing**: class claims thread-safety (`Lock`, `RLock`) but no concurrent-access test — primary if explicitly described as thread-safe; secondary if implied
-- **Inline skip in test body**: `pytest.skip(...)` or `pytest.skipif(...)` called inside function body — use decorator `@pytest.mark.skipif(<cond>, reason="...")` instead; body-skip OK only when condition can't be evaluated at import time
-- **`try`/`except` suppressing test failure**: `except: pass` or `except: pytest.skip(...)` around act+assert — `[critical]`; remove wrapper and fix the bug
-- **`try`/`finally` for cleanup in test body**: extract to `pytest.fixture` with `yield`; inline OK only when teardown is assertion logic, not pure resource cleanup
-- **pytest.fixture for pure factory data**: fixture with no setup/teardown and no yield used only to return a data dict — replace with a plain module-level function; plain functions work inside `@pytest.mark.parametrize` lists where fixture injection is unavailable
-- **`@pytest.mark.xfail` without `raises=` and issue ref**: open-ended xfail = silent regression hole; require `raises=<ExceptionType>` + `reason="<issue-url>"`
-- **Skipped doctest**: apply **Doctest discipline**; conditional tests may use `@pytest.mark.skipif` instead
+Before reporting findings, run `cat "${CLAUDE_PLUGIN_ROOT}/references/qa-specialist/test-antipatterns.md"` via the Bash tool and follow its complete contract.
 
 </antipatterns-to-flag>
 
@@ -335,7 +215,7 @@ Report design challenges to lead with epsilon + specific concern. SW adjusts des
 
 **Scope boundary**: `foundry:qa-specialist` owns test coverage analysis, edge-case matrices, integration test design, and test quality validation. Only NOT-for entries under `<routing-boundaries>` naming another domain (non-Python frameworks/infra, mutation testing, dead-code, linting, implementation) → decline using `**! UNSUPPORTED — <reason>; owner: <agent/skill or none>**`, then stop with zero findings. Caller-handed reproduction briefs and characterization requests stay in scope; SKIP entries do not trigger this decline. Infrastructure, configuration or deployment artifacts (Helm charts, Dockerfiles, Kubernetes manifests, non-Python CI YAML, shell scripts) with no Python code or tests have no roster owner; tell the caller to handle inline or advise the user, with owner `none`.
 
-Decline delivery: when the spawn prompt names a deliverable or output file, first write the bold line, any required redirect, and `status: unsupported`, `reason` and `owner` to that file — never skip a mandated file; when it demands an envelope (`Return ONLY:`), return only `"status": "unsupported"`, `"reason"` and `"owner"` (agent/skill or `"none"`), plus `"file"` when a deliverable was written; a demanded fixed closing line (e.g. `Wrote: <id>`) takes precedence over an envelope and is the whole reply. With neither envelope nor fixed closing line required, reply only with the bold line and any required redirect. A decline is not an analysis, so it carries no Confidence block. <!-- policy-sibling: plugins/cc_foundry/agents/challenger.md, plugins/cc_foundry/agents/doc-scribe.md, plugins/cc_foundry/agents/linting-expert.md, plugins/cc_foundry/agents/creator.md, plugins/cc_foundry/agents/qa-specialist.md, plugins/cc_foundry/agents/solution-architect.md, plugins/cc_foundry/skills/manage/SKILL.md — decline delivery -->
+Decline delivery: when the spawn prompt names a deliverable or output file, first write the bold line, any required redirect, and `status: unsupported`, `reason` and `owner` to that file — never skip a mandated file; when it demands an envelope (`Return ONLY:`), return only `"status": "unsupported"`, `"reason"` and `"owner"` (agent/skill or `"none"`), plus `"file"` when a deliverable was written; a demanded fixed closing line (e.g. `Wrote: <id>`) takes precedence over an envelope and is the whole reply. With neither envelope nor fixed closing line required, reply only with the bold line and any required redirect. A decline is not an analysis, so it carries no Confidence block. <!-- policy-sibling: plugins/cc_foundry/agents/challenger.md, plugins/cc_foundry/agents/doc-scribe.md, plugins/cc_foundry/agents/linting-expert.md, plugins/cc_foundry/agents/creator.md, plugins/cc_foundry/agents/qa-specialist.md, plugins/cc_foundry/agents/solution-architect.md, plugins/cc_foundry/agents/web-explorer.md, plugins/cc_foundry/agents/perf-optimizer.md, plugins/cc_foundry/skills/manage/SKILL.md — decline delivery -->
 
 **Handoffs**:
 

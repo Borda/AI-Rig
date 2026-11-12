@@ -42,9 +42,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
+from gate_test_approval import validate_pass  # noqa: E402
 
 #: Schema revision stamped into a standard result.json; current-format review results use revision 3 instead.
 RESULT_SCHEMA_VERSION = 2
@@ -304,6 +310,8 @@ def validate_gate_evidence(args: argparse.Namespace, checks_run: list[str], chec
         raise SystemExit("pass-with-failed-gates")
     if gate_status == ResultStatus.TIMEOUT and args.status != ResultStatus.TIMEOUT:
         raise SystemExit("result-status-timeout-mismatch")
+    if args.status == ResultStatus.PASS:
+        validate_pass(gates, args.gates.parent)
 
 
 def validate_result_invariants(args: argparse.Namespace, checks_run: list[str], checks_failed: list[str]) -> None:

@@ -48,6 +48,18 @@ MAINTAINER_ROLES = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 #: Comment phrasing that records a duplicate verdict, capturing the canonical issue number.
 DUPLICATE_PATTERN = re.compile(r"(?i)\b(?:duplicate|dupe|dup)\b\W{0,3}(?:of\W{0,3})?#(\d+)")
 
+#: Wording by which a maintainer routes a report into a tracking issue ("tracked in #N", "consolidated in #N",
+#: "discussed in #N"). Such a comment closes the thread as a duplicate, yet the two issues need not share a failure, and
+#: the thread is cut before the comment, so nothing in the input can lead a solver to that tracker.
+CONSOLIDATION_PATTERN = re.compile(r"(?i)\b(?:tracked|consolidat\w*|discussed)\b[^.\n]{0,40}?\bin\W{0,3}#\d+")
+
+#: Cuts the thread mode's candidate-verification fetch applies; the fetch store mirrors them.
+FETCH_BODY_CHARS = 3000
+FETCH_COMMENT_CHARS = 1000
+FETCH_COMMENTS = 10
+#: One candidate row of a rendered problem input, capturing its issue number.
+_POOL_ROW = re.compile(r"(?m)^#(\d+) \| state: ")
+
 #: Any word starting with "duplicate"; its presence in pre-cutoff text would hint at the verdict.
 DUPLICATE_WORD = re.compile(r"(?i)\bduplicat")
 
@@ -556,7 +568,8 @@ def find_verdict(thread: Thread) -> Verdict:
     someone other than the issue author (only a maintainer can close another user's issue; a reporter closing their own
     issue is not a maintainer verdict). The canonical must be an issue in the same repository. Without a structured
     record, the first comment from a trusted author (see :func:`_trusted_author`) matching :data:`DUPLICATE_PATTERN`
-    counts. A verdict naming the thread itself is ignored (GitHub records some self-referencing events).
+    counts. A verdict naming the thread itself is ignored (GitHub records some self-referencing events). A thread whose
+    duplicate comment consolidates it into a tracking issue is skipped even when a structured record exists.
 
     The cutoff is the earliest moment the canonical was named by a maintainer: a trusted "duplicate of #N" comment
     posted before the structured record naming the same issue moves the cutoff back to that comment, which would
@@ -600,12 +613,19 @@ def _structured_verdict(thread: Thread) -> Verdict | None:
 
 
 def _comment_verdict(thread: Thread) -> Verdict | None:
-    """Return the first trusted "duplicate of #N" comment as a verdict, or ``None``."""
+    """Return the first trusted "duplicate of #N" comment as a verdict, or ``None``.
+
+    Raises:
+        Skip: that comment consolidates the report into a tracking issue (see :data:`CONSOLIDATION_PATTERN`). Its
+            label records where the maintainer wanted the discussion, which the pre-verdict text cannot reveal.
+    """
     for comment in sorted(thread.comments, key=lambda c: c.created_at):
         if not _trusted_author(comment, thread):
             continue
         match = DUPLICATE_PATTERN.search(comment.body)
         if match and int(match.group(1)) != thread.number:
+            if CONSOLIDATION_PATTERN.search(comment.body):
+                raise Skip("maintainer consolidated the report into a tracking issue, not a same-failure duplicate")
             return Verdict(canonical=int(match.group(1)), at=comment.created_at, source="maintainer_comment")
     return None
 
@@ -879,6 +899,90 @@ def render_input(thread: Thread, haystack: list[dict[str, Any]], fetched: str) -
         "\n".join(cand_lines), f"repository search results for {thread.repo}, fetched {fetched}"
     )
     return f"{thread_block}\n\nCANDIDATE ITEMS (repository search on the title terms)\n{cand_block}"
+
+
+def candidate_detail(candidate: Thread, cutoff: str, thread_number: int, pseudo: Pseudonymizer) -> dict[str, Any]:
+    """Show one candidate thread as a verification fetch made just before ``cutoff`` would have returned it.
+
+    The shape and the cuts mirror the candidate-verification step of ``/oss:analyse`` thread mode: title, state, the
+    first :data:`FETCH_BODY_CHARS` characters of the body and the last :data:`FETCH_COMMENTS` comments, each cut to
+    :data:`FETCH_COMMENT_CHARS`. Everything is rolled back to the cutoff. A body or comment naming the thread is blanked
+    or dropped, as in :meth:`Candidate.view`: a canonical later pointing at its duplicate would give the answer away.
+    Bot comments and comments whose pre-cutoff text is unknown are dropped.
+
+    ``pseudo`` must already know every participant whose login may appear in the text.
+    """
+    body = text_as_of(candidate.body, candidate.last_edited_at, candidate.revisions, cutoff) or ""
+    if mentions(body, thread_number):
+        body = ""
+    comments = []
+    for comment in sorted(candidate.comments, key=lambda c: c.created_at):
+        if comment.created_at >= cutoff or comment.is_bot:
+            continue
+        text = text_as_of(comment.body, comment.last_edited_at, comment.revisions, cutoff)
+        if text is None or mentions(text, thread_number):
+            continue
+        comments.append(
+            {
+                "author": pseudo.alias(comment.author, comment.association),
+                "body": pseudo.scrub(text)[:FETCH_COMMENT_CHARS],
+            }
+        )
+    return {
+        "number": candidate.number,
+        "title": pseudo.scrub(title_as_of(candidate.title, candidate.renames, cutoff)),
+        "state": state_as_of(candidate.state, candidate.closed_at, cutoff),
+        "body": pseudo.scrub(body)[:FETCH_BODY_CHARS],
+        "comments": comments[-FETCH_COMMENTS:],
+    }
+
+
+def _fetchable_threads(repo: str, numbers: list[int], run_query: RunQuery) -> list[Thread]:
+    """Fetch every candidate that is an issue of usable length; the others are left out of the store."""
+    threads = []
+    for number in numbers:
+        try:
+            threads.append(fetch_thread(repo, number, run_query))
+        except (Skip, TypeError):
+            # Skip: over 100 comments or timeline events. TypeError: the number is a pull request, so ``issue`` is null.
+            continue
+    return threads
+
+
+def build_fetch_store(problem: dict[str, Any], run_query: RunQuery = gh_graphql) -> dict[str, dict[str, Any]]:
+    """Build the offline stand-in for the candidate-verification fetch of one frozen problem.
+
+    A frozen problem shows each candidate as a short snippet. The skill under test would then fetch the full body and
+    comments of the candidates it suspects; a fixture run cannot, so every verdict stays snippet-only and reported
+    confidence cannot separate hits from misses. The store holds, per candidate number in the problem's pool, what that
+    fetch would have returned at the problem's cutoff (see :func:`candidate_detail`), so the solver reads the entries
+    it would have fetched.
+
+    Logins follow the problem's own aliases: the thread's participants and the accounts its text mentions are registered
+    first, in the order :func:`render_input` used, then every candidate thread's participants, before any store text
+    is scrubbed. An account mentioned only inside a candidate may get a different alias than in the problem's snippet.
+
+    Raises:
+        Skip: the thread can no longer be cut at its recorded cutoff (for example its body was edited since).
+    """
+    prov = problem["provenance"]
+    repo, cutoff, canonical = prov["repo"], prov["verdict_at"], prov["canonical"]
+    thread = fetch_thread(repo, prov["number"], run_query)
+    clean = snapshot(thread, cutoff, forbidden=(canonical,) if canonical else ())
+    pseudo = Pseudonymizer()
+    pseudo.alias(clean.author, clean.author_association)
+    for comment in clean.comments:
+        pseudo.alias(comment.author, comment.association)
+    for text in (clean.title, clean.body.strip(), *(comment.body.strip() for comment in clean.comments)):
+        pseudo.scrub(text)
+    numbers = [int(match) for match in _POOL_ROW.findall(problem["input"])]
+    candidates = _fetchable_threads(repo, numbers, run_query)
+    for candidate in candidates:
+        pseudo.alias(candidate.author, candidate.author_association)
+        for comment in candidate.comments:
+            if comment.created_at < cutoff and not comment.is_bot:
+                pseudo.alias(comment.author, comment.association)
+    return {str(c.number): candidate_detail(c, cutoff, thread.number, pseudo) for c in candidates}
 
 
 def _gt_item(claim: str, decisive: str) -> dict[str, Any]:

@@ -277,6 +277,27 @@ function deliveredMarkerPath(sentinelPath) {
   return path.join(path.dirname(sentinelPath), "report-delivered-" + path.basename(sentinelPath));
 }
 
+/** Only regular, singly linked state owned by this user may activate the guard. */
+function ownedStateFile(file) {
+  const st = fs.lstatSync(file);
+  if (!st.isFile() || st.nlink !== 1 || (typeof process.getuid === "function" && st.uid !== process.getuid()))
+    throw new Error("unsafe report state");
+  return st;
+}
+
+/** Read the checked marker itself rather than a swapped symlink destination. */
+function readMarker(file) {
+  const st = ownedStateFile(file);
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  try {
+    const opened = fs.fstatSync(fd);
+    if (opened.dev !== st.dev || opened.ino !== st.ino) throw new Error("report state changed");
+    return fs.readFileSync(fd, "utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /** Version stamp (path, mtime, size) of a written report, or null while it is missing or empty. */
 function reportStamp(reportFile) {
   try {
@@ -289,7 +310,12 @@ function reportStamp(reportFile) {
 }
 
 /** PreToolUse checks the first question's summary without settling final-reply delivery. */
-function followUpProblem(_sentinelPath, reportFile, payload) {
+function followUpProblem(sentinelPath, reportFile, payload) {
+  try {
+    ownedStateFile(sentinelPath);
+  } catch (_) {
+    return null;
+  }
   return questionDeliveryProblem(reportFile, payload && payload.tool_input, payload && payload.cwd);
 }
 
@@ -307,17 +333,28 @@ function recordFollowUpShown(_sentinelPath, _reportFile, _payload) {
  */
 function stopBlockReason(sentinelPath, reportFile, payload, skillLabel) {
   if (!sentinelPath || !reportFile || !payload) return null;
+  try {
+    ownedStateFile(sentinelPath);
+  } catch (_) {
+    return null;
+  }
   const stamp = reportStamp(reportFile);
   if (!stamp) return null;
   const marker = deliveredMarkerPath(sentinelPath);
+  let stale = false;
   try {
-    if (fs.readFileSync(marker, "utf8") === stamp) return null;
-  } catch (_) {
-    // no marker yet — first Stop for this report version
+    if (readMarker(marker) === stamp) return null;
+    stale = true;
+  } catch (e) {
+    if (e.code !== "ENOENT") return null;
   }
   const problem = deliveryProblem(reportFile, payload.transcript_path, payload.last_assistant_message);
   try {
-    fs.writeFileSync(marker, stamp);
+    if (stale) {
+      ownedStateFile(marker);
+      fs.unlinkSync(marker);
+    }
+    fs.writeFileSync(marker, stamp, { flag: "wx", mode: 0o600 });
   } catch (_) {
     if (problem) return null; // cannot record the nudge — never risk re-blocking every turn
   }
@@ -399,8 +436,8 @@ function questionDeliveryProblem(reportFile, toolInput, cwd) {
   if (!bareName && !namedFiles(text, cwd, [reportFile]).some((entry) => entry.file === reportReal)) {
     problems.push(`name the report file \`${reportFile}\` in the first question's text`);
   }
-  for (const [name, value] of check.headlines) {
-    if (!summaryContains(text, value)) problems.push(`include \`${name}: ${quoted(value)}\` verbatim`);
+  for (const [, value] of check.headlines) {
+    if (!summaryContains(text, value)) problems.push("include each report headline value verbatim");
   }
   for (const [questionIndex, question] of callQuestions(toolInput).entries()) {
     if (!question) continue;
@@ -463,16 +500,8 @@ function normalize(value) {
   return value.replace(/\s+/g, " ").trim();
 }
 
-/** Longest value quoted back in a remedy; a long Summary would otherwise bury the fix. */
-const QUOTE_CHARS = 80;
-
 /** At most this many mismatches are listed in one remedy; the rest are counted. */
 const MAX_LISTED = 3;
-
-/** `value` shortened for a remedy sentence. */
-function quoted(value) {
-  return value.length > QUOTE_CHARS ? `${value.slice(0, QUOTE_CHARS)}…` : value;
-}
 
 /** `problems` as one remedy clause: the first `MAX_LISTED`, then how many more. */
 function listed(problems) {
@@ -533,7 +562,19 @@ function cellMatches(cell, expected) {
 
 /** Markdown pipe-table blocks (consecutive `|`-bordered lines) in `text`. */
 function tableBlocks(text) {
-  return text.match(/(?:^\s*\|[^\n]+\|\s*$\n?)+/gm) || [];
+  const blocks = [];
+  let lines = [];
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.length > 2 && trimmed.startsWith("|") && trimmed.endsWith("|")) {
+      lines.push(line);
+    } else if (lines.length) {
+      blocks.push(lines.join("\n"));
+      lines = [];
+    }
+  }
+  if (lines.length) blocks.push(lines.join("\n"));
+  return blocks;
 }
 
 /** Normalized cells of each data row of one table block, or null when its second line is no header separator. */
@@ -597,10 +638,10 @@ function auditDeliveryCheck(content) {
       const problems = new RegExp(`\\bTotal: ${findings.length}\\b`).test(delivered)
         ? []
         : [`no \`Total: ${findings.length}\` line`];
-      for (const finding of findings) {
+      for (const [index, finding] of findings.entries()) {
         const line = normalize(finding.one_line);
         if (!delivered.includes(line) && !delivered.includes(line.replace(/\|/g, "\\|"))) {
-          problems.push(`finding \`${quoted(line)}\` is missing`);
+          problems.push(`finding ${index + 1} is missing`);
         }
       }
       if (problems.length && (!fewest || problems.length < fewest.length)) fewest = problems;
@@ -668,13 +709,15 @@ function headerDeliveryCheck(content) {
     }
     if (!best) return "";
     const problems = [];
-    for (const [name, value] of entries) {
+    for (const [index, [name, value]] of entries.entries()) {
       const row = best.rows.find((cells) => cellMatches(cells[0], name));
-      if (!row) problems.push(`no \`${name}\` row`);
+      if (!row) problems.push(`no row for header field ${index + 1}`);
       else if (row.length !== 2)
-        problems.push(`the \`${name}\` row splits into ${row.length} cells (write a \`|\` inside a value as \`\\|\`)`);
+        problems.push(
+          `header field ${index + 1} splits into ${row.length} cells (write a \`|\` inside a value as \`\\|\`)`,
+        );
       else if (!cellMatches(row[1], value))
-        problems.push(`\`${name}\` reads \`${quoted(row[1])}\` but the file has \`${quoted(value)}\``);
+        problems.push(`header field ${index + 1} has a different value from the report`);
     }
     if (problems.length === 0) return "";
     return (

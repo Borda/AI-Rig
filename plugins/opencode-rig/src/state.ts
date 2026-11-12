@@ -8,9 +8,9 @@
  */
 
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { writeJsonAtomic } from "./util/fsx.ts"
-import { SCHEMA_VERSION } from "./version.ts"
+import { validateRunRecord } from "./run.ts"
 
 export interface SessionRun {
   readonly runId: string
@@ -26,6 +26,16 @@ export interface RigState {
 const EMPTY = (): RigState => ({ schema: 1, runs: {}, sessions: {} })
 const SKILL = /^[a-z0-9]+(-[a-z0-9]+)*$/
 const RUN_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/
+
+/** Refuse linked state locations before reads, recovery, or terminal-session cleanup. */
+function statePath(artifactRoot: string): string {
+  const root = resolve(artifactRoot)
+  const path = join(root, "state.json")
+  if ([root, path].some((part) => lstatSync(part, { throwIfNoEntry: false })?.isSymbolicLink())) {
+    throw new Error("symbolic state path; choose an unlinked artifact directory and state.json")
+  }
+  return path
+}
 
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -58,33 +68,8 @@ function recordedStatus(artifactRoot: string, skill: string, runId: string): str
   if ([join(artifactRoot, "runs"), skillPath, directory, path].some((part) => lstatSync(part).isSymbolicLink())) {
     throw new Error("symbolic run record")
   }
-  const run: unknown = JSON.parse(readFileSync(path, "utf8"))
-  if (
-    !object(run) ||
-    run.schema !== SCHEMA_VERSION ||
-    run.run_id !== runId ||
-    run.skill !== skill ||
-    typeof run.status !== "string" ||
-    !["in_progress", "completed", "blocked", "failed", "stale"].includes(run.status) ||
-    typeof run.created_at !== "string" ||
-    typeof run.updated_at !== "string" ||
-    typeof run.plugin_version !== "string" ||
-    !object(run.scope) ||
-    !Array.isArray(run.scope.paths) ||
-    !run.scope.paths.every((path) => typeof path === "string") ||
-    !Array.isArray(run.scope.entries) ||
-    typeof run.scope.digest !== "string" ||
-    typeof run.scope.dirty !== "boolean" ||
-    !(run.scope.base === null || typeof run.scope.base === "string") ||
-    !Array.isArray(run.inputs) ||
-    !Array.isArray(run.outputs) ||
-    !Array.isArray(run.gates) ||
-    !Array.isArray(run.limits) ||
-    !run.limits.every((limit) => typeof limit === "string") ||
-    typeof run.confidence !== "number" ||
-    !Number.isFinite(run.confidence)
-  )
-    throw new Error("invalid run record")
+  const run = validateRunRecord(JSON.parse(readFileSync(path, "utf8")))
+  if (run.run_id !== runId || run.skill !== skill) throw new Error("run record identity does not match its directory")
   return run.status
 }
 
@@ -113,7 +98,7 @@ function recoverState(artifactRoot: string): RigState {
 
 /** Read validated session state or recover its run index without changing damaged evidence. */
 export function loadState(artifactRoot: string): RigState {
-  const path = join(artifactRoot, "state.json")
+  const path = statePath(artifactRoot)
   if (!existsSync(path)) return recoverState(artifactRoot)
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"))
@@ -127,7 +112,7 @@ export function loadState(artifactRoot: string): RigState {
 /** Persist valid state while preserving any existing corrupt index for diagnosis. */
 export function saveState(artifactRoot: string, state: RigState): void {
   if (!validState(state)) throw new Error("invalid state schema or run identifiers")
-  const path = join(artifactRoot, "state.json")
+  const path = statePath(artifactRoot)
   if (existsSync(path)) {
     let existing: unknown
     try {
@@ -155,7 +140,7 @@ export function rememberRun(artifactRoot: string, sessionID: string, entry: Sess
 
 /** Resolve a session pointer and remove it only after validating terminal run evidence. */
 export function activeRun(artifactRoot: string, sessionID: string): SessionRun | undefined {
-  const path = join(artifactRoot, "state.json")
+  const path = statePath(artifactRoot)
   if (!existsSync(path)) return undefined
   let state: unknown
   try {

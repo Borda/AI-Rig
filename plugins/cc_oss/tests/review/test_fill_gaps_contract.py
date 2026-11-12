@@ -20,7 +20,9 @@ import fill_gaps_scope as fgs
 import find_review_report as frr
 import mint_finding_ids as mfi
 import pytest
+from _oss_shell_plugin import render_shell
 from _review_fixtures import assessment, concern, without
+from _skill_source import read_skill_source
 
 _concern = functools.partial(concern, closure="assert")
 _BASH = shutil.which("bash")
@@ -43,7 +45,7 @@ _PRELUDE_SENTINELS = {
 
 def _block(path: Path, anchor: str) -> str:
     """Return the shipped bash block of ``path`` that contains ``anchor``."""
-    blocks = re.findall(r"```bash\n(.*?)```", path.read_text(encoding="utf-8"), re.DOTALL)
+    blocks = re.findall(r"```bash\n(.*?)```", read_skill_source(path), re.DOTALL)
     return next(block for block in blocks if anchor in block)
 
 
@@ -59,7 +61,13 @@ def _run(block: str, cwd: Path, sentinels: dict[str, str], arguments: str = "") 
         "ARGUMENTS": arguments,
     }
     return subprocess.run(
-        [_BASH, "-c", block], cwd=cwd, env=env, encoding="utf-8", capture_output=True, check=False, timeout=30
+        [_BASH, "-c", render_shell(block, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "oss")],
+        cwd=cwd,
+        env=env,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+        timeout=30,
     )
 
 

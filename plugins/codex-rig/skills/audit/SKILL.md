@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Audit Codex configuration, workflow contracts and prompt efficiency; optionally discover overlapping instruction intent and propose advisory consolidation with preserved obligations and loading scope.
+description: Audit Codex configuration, workflow contracts and prompt efficiency; optionally discover overlapping instruction intent and propose advisory consolidation with preserved obligations and loading scope. Skip measured skill/role recall, precision and confidence-accuracy scoring owned by calibrate.
 ---
 
 > Before asking, read [User Questions](../../shared/codex-user-questions.md). Waits, plan updates, and test runs follow [Agent Waits](../../shared/native-skill-contract.md#agent-waits), [Plan Updates](../../shared/native-skill-contract.md#plan-updates), and [Sandboxed Test Runs](../../shared/native-skill-contract.md#sandboxed-test-runs).
@@ -41,6 +41,10 @@ Scopes:
 - `skills`: repository/user-authored `.agents/skills/**` plus declared calibration coverage.
 - `roles`: role-routing instructions and explicitly supplied plugin/package role-card root.
 - `all`: every applicable surface above. Missing optional local skills or roles is `not-configured`, not drift.
+
+`mode=upgrade` runs the ordinary read-only audit steps to identify drift and recommend upgrades; it does not apply them. `mode=adversarial` runs those same steps with step 05's specialist routing, including its narrow-scope single-agent exceptions. The `axis=consolidate` branch below takes precedence over either mode.
+
+Prerequisite: `rg` (ripgrep) must be available on PATH for the inventory and reference scans. If unavailable, record the missing prerequisite and affected scans; ask the user to install it before resuming those scans. Do not treat unavailable scans as empty results.
 
 Run `rg --files` with the `AGENTS.md`, `.codex/config.toml`, `.agents/skills/**` globs as argv. When `target` is supplied and exists, enumerate regular files under it to depth four with platform-native filesystem walk. Sort and deduplicate both result sets into `<run-directory>/inventory.txt`; record unavailable inputs or collection failures.
 
@@ -98,7 +102,7 @@ Report tested transitions separately from untested coverage. A passing inventory
 
 ### 03c: Instruction composition and productivity regressions
 
-Review effective instruction composition, not only each file separately: user overrides, global managed and unmanaged blocks, project siblings, installed skill names, role cards, runtime defaults, and historical evidence consumed by launchers. Distinguish source readiness from active installation. Use `scripts/install_global_agents.py --check --source <installed-package>/assets/AGENTS.md --codex-home <home>` for read-only global-state diagnosis during explicit setup/audit; never add a per-task setup gate or automatically delete custom instructions.
+Review effective instruction composition, not only each file separately: user overrides, global managed and unmanaged blocks, project siblings, installed skill names, role cards, runtime defaults, and historical evidence consumed by launchers. Distinguish source readiness from active installation. Use `PLUGIN_ROOT/bin/python PLUGIN_ROOT/scripts/install_global_agents.py --check --source <installed-package>/assets/AGENTS.md --codex-home <home>` for read-only global-state diagnosis during explicit setup/audit; never add a per-task setup gate or automatically delete custom instructions. Invoke packaged helpers through `PLUGIN_ROOT/bin/python`; on native Windows use `PLUGIN_ROOT/bin/python.cmd`.
 
 Use the map to select applicable positive and negative outcome probes for a small parent-only change, authorized serial fallback without redundant consent, productive multi-step investigation, useful unfinished recovery, a feasible structural fix, gradual review-score improvement, and GPT 6+ launch selection. Record why other listed cases are outside the audited composition instead of running unrelated workflows. Where delegation or runtime permissions apply, confirm actual delegated-write and runtime permission denials still reject. A test that only checks prescribed wording or reproduces an implementation choice cannot establish workflow quality. Record each tested invariant, the check that would fail on its counterexample, and residual untested behavior. Review added obligations for current necessity; remove superseded active rules instead of layering another exception over them. Preserve explicitly labeled historical records without treating them as executable routing authority.
 
@@ -177,7 +181,7 @@ Classify overlap as `keep`, `sharpen`, `merge-prune`:
 
 Use shared lifecycle/authoritative help. Write `AUDIT_METADATA`, validate `audit`, promote only validated candidate.
 
-## Fail-fast Rules
+## Fail-Fast Rules
 
 01. Requested target missing or escaping consuming project/approved external scope => fail.
 02. Shared gate script missing => fail.
@@ -197,8 +201,8 @@ Use shared lifecycle/authoritative help. Write `AUDIT_METADATA`, validate `audit
 
 Required checks:
 
-- `review`: inventory, contract ledger, workflow-exploration map and transitions, focused counterexamples, evidence-triggered context rechecks and final coverage reconciliation (or explicit inapplicability), prompt-efficiency evidence, reference scan, overlap decisions, `git diff --check`.
-- `calibration`: audit is read-only and changes no workflow behavior, so run owning project's declared calibration command only when evaluating a candidate that changes audited behavior (step 04 Value Guards); otherwise list it under `Recommendations` for the fix owner. For Codex Rig source, use `runtime/calibration/run.py --layout plugin`.
+- `review`: inventory, contract ledger, workflow-exploration map and transitions, focused counterexamples, evidence-triggered context rechecks and final coverage reconciliation (or explicit inapplicability), prompt-efficiency evidence, reference scan, overlap decisions, `git diff --check -- <run-owned paths>` under the [shared whitespace-scoping rule](../../shared/quality-gates.md#required-checks). Outside a Git repository, record `not-a-git-repository` and scan run-owned files by path for trailing whitespace and conflict markers; retain the other review checks. Report subject whitespace defects as findings.
+- `calibration`: audit is read-only and changes no workflow behavior, so run owning project's declared calibration command only when evaluating a candidate that changes audited behavior (step 04 Value Guards); otherwise list it under `Recommendations` for the fix owner. For Codex Rig source, use `PLUGIN_ROOT/bin/python PLUGIN_ROOT/runtime/calibration/run.py --layout plugin`.
 
 Conditional checks:
 
@@ -224,6 +228,8 @@ Use `../../shared/quality-gates.md`.
 ### Final chat
 
 Final chat follows shared frame with `Next steps`. `Outcome`: `accepted|rejected|insufficient-evidence`. `Results`: exactly `Item | Severity / impact | Decision | Evidence | Next action`, one row/material item. `Remaining`: owner and closure action.
+
+For `axis=standard`, `accepted` means the assessment completed with its required gates passing, even when findings remain; it does not certify the audited target as defect-free. Use `rejected` when required assessment gates fail and `insufficient-evidence` when the target cannot be assessed from available evidence. For `axis=value-per-token`, the outcome reports the candidate decision under step 04; consolidation uses the assessment meaning below.
 
 `AUDIT_METADATA.value_per_token` records schema version 2, status (`not-run|insufficient-evidence|rejected|accepted`), scope roots, baseline/candidate hashes, static measurements, conditional-load trace, obligation-map path, static gates, behavioral/live comparisons, decision, and residual limits.
 

@@ -224,7 +224,11 @@ export function checkAssets(resourcesRoot: string): AssetCheck {
     } else {
       const name = /^name: (.+)$/m.exec(frontmatter)?.[1]?.trim()
       if (!name) failures.push(`assets: ${skill}/SKILL.md has no frontmatter name`)
-      if (!/^description: .+/m.test(frontmatter)) failures.push(`assets: ${skill}/SKILL.md has no description`)
+      const description = /^description: (.+)$/m.exec(frontmatter)?.[1]?.trim()
+      if (!description) failures.push(`assets: ${skill}/SKILL.md has no description`)
+      else if (SKILLS.find((definition) => definition.id === skill)?.description !== description) {
+        failures.push(`assets: ${skill}/SKILL.md description differs from the skill manifest`)
+      }
       if (name && !new RegExp(`^# ${name}$`, "m").test(text)) {
         failures.push(`assets: ${skill}/SKILL.md heading does not match '${name}'`)
       }

@@ -46,6 +46,7 @@ from pathlib import Path, PurePosixPath
 MAX_PATH_BYTES = 16_384
 #: Size, in bytes, of each chunk requested when reading a file descriptor in bounded pieces.
 _READ_CHUNK_BYTES = 65_536
+_MAX_INVENTORY_DEPTH = 128
 #: Windows file-attribute bit that marks a reparse point (link or junction), which package reads must reject.
 _REPARSE_POINT = 0x400
 
@@ -148,7 +149,7 @@ def _read_posix(root: Path, relative: str, maximum: int) -> SafeFile:
             )
             os.close(directory)
             directory = next_directory
-        descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
+        descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=directory)
         try:
             return _read_descriptor(descriptor, maximum, relative)
         finally:
@@ -171,9 +172,11 @@ def _inventory_posix(
     discovered: list[str] = []
 
     def walk(directory: int, prefix: tuple[str, ...]) -> None:
+        if len(prefix) > _MAX_INVENTORY_DEPTH:
+            raise SafePackageIOError("package inventory depth exceeded")
         for name in sorted(os.listdir(directory)):
             relative_parts = (*prefix, name)
-            if name in excluded_files or any(part in excluded_parts for part in relative_parts):
+            if PurePosixPath(*relative_parts).as_posix() in excluded_files or relative_parts[0] in excluded_parts:
                 continue
             relative = PurePosixPath(*relative_parts).as_posix()
             metadata = os.stat(name, dir_fd=directory, follow_symlinks=False)
@@ -390,10 +393,12 @@ def _inventory_windows(
     discovered: list[str] = []
 
     def walk(directory: Path, prefix: tuple[str, ...]) -> None:
+        if len(prefix) > _MAX_INVENTORY_DEPTH:
+            raise SafePackageIOError("package inventory depth exceeded")
         with os.scandir(directory) as entries:
             for entry in sorted(entries, key=lambda item: item.name):
                 relative_parts = (*prefix, entry.name)
-                if entry.name in excluded_files or any(part in excluded_parts for part in relative_parts):
+                if PurePosixPath(*relative_parts).as_posix() in excluded_files or relative_parts[0] in excluded_parts:
                     continue
                 relative = PurePosixPath(*relative_parts).as_posix()
                 metadata = entry.stat(follow_symlinks=False)
@@ -435,6 +440,9 @@ def inventory_package_files(
 ) -> tuple[str, ...]:
     """Return the sorted ordinary package payload paths from a stable native scan."""
     package_root = Path(root)
-    if os.name == "nt":
-        return _inventory_windows(package_root, excluded_parts, excluded_files)
-    return _inventory_posix(package_root, excluded_parts, excluded_files)
+    try:
+        if os.name == "nt":
+            return _inventory_windows(package_root, excluded_parts, excluded_files)
+        return _inventory_posix(package_root, excluded_parts, excluded_files)
+    except RecursionError as error:
+        raise SafePackageIOError("package inventory depth exceeded") from error

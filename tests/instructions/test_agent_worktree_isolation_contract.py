@@ -177,7 +177,7 @@ READ_ONLY_INVESTIGATOR_SITES = (
     pytest.param("plugins/cc_develop/skills/_shared/preflight-helpers.md", 1, id="team-spawn-template"),
     pytest.param("plugins/cc_develop/skills/fix/modes/team-mode.md", 2, id="fix-team-hypotheses-a-b"),
     pytest.param("plugins/cc_develop/skills/debug/SKILL.md", 1, id="debug-team-hypotheses"),
-    pytest.param("plugins/cc_oss/skills/review/SKILL.md", 1, id="oss-review-issue-hypotheses"),
+    pytest.param("plugins/cc_oss/skills/review/modes/scope-context.md", 1, id="oss-review-issue-hypotheses"),
 )
 
 

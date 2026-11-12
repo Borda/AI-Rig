@@ -4,7 +4,7 @@
 
 ## What
 
-`.temp/state/skill-contract.md` — terse block skill (re)writes at expanding-phase boundaries through `write_skill_contract.py`, which stamps `.temp/state/skill-contract.owner` with the writer session and a SHA-256 digest of the raw contract bytes when `CLAUDE_CODE_SESSION_ID` is nonempty. PreCompact (`task-log.js`) saves the contract **verbatim** under `## Skill Compaction Contract`; SessionStart compact (`rule-inject.js`) restores it as verified only when both bytes and session match. Missing, malformed or mismatched stamps produce an unverified advisory block requiring user confirmation; matching bytes stamped by another session are skipped. The owner stamp binds bytes produced by the session writer; it does not authenticate the contract against a writer with workspace access. No age bound applies; confirm the skill is still active even for a verified block.
+`.temp/state/skill-contract.md` — terse block skill (re)writes at expanding-phase boundaries through `write_skill_contract.py`, which stamps `.temp/state/skill-contract.owner` with the writer session and a SHA-256 digest of the raw contract bytes when `CLAUDE_CODE_SESSION_ID` is nonempty. PreCompact (`task-log.js`) saves only the owner-verified contract **verbatim** under `## Skill Compaction Contract`; SessionStart compact (`rule-inject.js`) reads the live contract and restores it as verified only when both bytes and session match. Missing, malformed or mismatched stamps produce an unverified advisory block requiring user confirmation at restoration, never a PreCompact snapshot; matching bytes stamped by another session are skipped. The owner stamp binds bytes produced by the session writer; it does not authenticate the contract against a writer with workspace access. No age bound applies; confirm the skill is still active even for a verified block.
 
 ## Block format (emit this template exactly)
 
@@ -63,6 +63,6 @@ Explain once per skill run, with the first hint: send the `/compact` line as typ
 | Step | Action |
 | -- | -- |
 | Boundary reached | `write_skill_contract.py` → `.temp/state/skill-contract.md` and optional owner stamp |
-| Compaction fires (auto or typed `/compact`) | PreCompact saves verified or unverified block verbatim to `session-context.md`; skips a matching foreign-session stamp |
+| Compaction fires (auto or typed `/compact`) | PreCompact saves only the owner-verified block verbatim to `session-context.md`; skips missing, unreadable, unverified and matching foreign-session contracts |
 | Post-compaction | SessionStart compact injects contract: only the verified block is authoritative after the Boundary step's confirmation rule; everything else, including `session-context.md`, is advisory and needs user confirmation before resuming |
 | Skill completes | Delete `.temp/state/skill-contract.md` — prevents stale leak; a leftover owner file is harmless because the SHA rule makes it inert without matching contract bytes, and the next write unlinks it |

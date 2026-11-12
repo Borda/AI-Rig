@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 """Compare a scheduled API removal version with a release target.
 
-Purpose: Preserve the release audit's dependency-free numeric version comparison. Scope: Strip non-digit, non-dot
-characters and compare the resulting integer tuples; this deliberately retains the inline implementation's behavior
-rather than adopting SemVer. Usage: ``python compare_removal_version.py REMOVE_IN TARGET``. Outputs: Print exactly
-``OVERDUE`` when the removal tuple is at most the target tuple, otherwise ``FUTURE``, followed by a newline. No files or
-session state are written. Failure: Invalid CLI arguments exit 2; a successful comparison exits 0. Used by:
-``skills/release/modes/audit.md`` when checking scheduled API removals.
+Purpose:
+    Preserve the release audit's dependency-free numeric version comparison. Scope: Strip non-digit, non-dot characters
+    and compare the resulting integer tuples; this deliberately retains the inline implementation's behavior rather than
+    adopting SemVer. Usage: ``python compare_removal_version.py REMOVE_IN TARGET``. Outputs: Print exactly ``OVERDUE``
+    when the removal tuple is at most the target tuple, otherwise ``FUTURE``, followed by a newline. No files or session
+    state are written. Failure: Invalid CLI arguments exit 2; a successful comparison exits 0. Used by:
+    ``skills/release/modes/audit.md`` when checking scheduled API removals.
 """
 
 from __future__ import annotations

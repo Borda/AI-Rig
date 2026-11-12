@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from _develop_shell_plugin import render_shell
 from _develop_text import bash_fences
 
 _PLUGIN = Path(__file__).resolve().parents[2]
@@ -20,12 +22,20 @@ _NEEDS_BASH = pytest.mark.skipif(_BASH is None, reason="shared recipes require B
 
 def _block(name: str, marker: str) -> str:
     """Select the shipped executable block containing the requested command."""
-    return next(block for block in bash_fences((_SHARED / name).read_text()) if marker in block)
+    return next(block for block in bash_fences((_SHARED / name).read_text(encoding="utf-8")) if marker in block)
 
 
 def _run(block: str, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """Run a recipe in a fresh shell so persistence depends on its sentinels."""
-    return subprocess.run([_BASH, "-c", block], cwd=cwd, env=env, capture_output=True, text=True, check=False)
+    return subprocess.run(
+        [_BASH, "-c", render_shell(block, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "develop")],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
 
 
 def _sentinel(env: dict[str, str], name: str, value: str) -> Path:
@@ -46,7 +56,7 @@ def shell_env(tmp_path: Path) -> dict[str, str]:
     """Provide fresh session sentinels and controlled external commands."""
     commands = tmp_path / "commands"
     commands.mkdir()
-    env = dict(os.environ, TMPDIR=str(tmp_path), CLAUDE_CODE_SESSION_ID="protocol-test")
+    env = dict(os.environ, TMPDIR=str(tmp_path), CLAUDE_CODE_SESSION_ID="protocol-test", PYTHONIOENCODING="utf-8")
     env["PATH"] = str(commands) + os.pathsep + env.get("PATH", "")
     env["CLAUDE_PLUGIN_ROOT"] = str(_PLUGIN)
     _executable(commands / "uv", "raise SystemExit('uv must not execute during runner detection')\n")
@@ -60,9 +70,26 @@ def shell_env(tmp_path: Path) -> dict[str, str]:
         "    (directory / 'test-targets.jsonl').write_text(json.dumps({'tests': [] if os.environ.get('EMPTY_SELECTION') else ['tests/test_example.py::test_behavior'], 'exit': int(os.environ.get('TEST_EXIT', '1'))}))\n"
         "    print('FAILED tests/test_example.py::test_behavior')\n"
         "    raise SystemExit(int(os.environ.get('TEST_EXIT', '1')))\n"
-        f"os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])\n",
+        f"import subprocess\nraise SystemExit(subprocess.call([{sys.executable!r}, *sys.argv[1:]]))\n",
     )
     return env
+
+
+@_NEEDS_BASH
+@pytest.mark.parametrize("status", [0, 7])
+def test_python_boundary_preserves_child_status_and_streams(
+    tmp_path: Path, shell_env: dict[str, str], status: int
+) -> None:
+    """The command double waits for its child and preserves UTF-8 output and failure status."""
+    program = (
+        'import sys; print("child stdout — evidence"); '
+        'print("child stderr — evidence", file=sys.stderr); '
+        f"raise SystemExit({status})"
+    )
+    result = _run(f"python -c {shlex.quote(program)}", tmp_path, shell_env)
+    assert result.returncode == status
+    assert result.stdout == "child stdout — evidence\n"
+    assert result.stderr == "child stderr — evidence\n"
 
 
 @_NEEDS_BASH
@@ -105,7 +132,7 @@ def test_foundry_probe_uses_active_install_record(tmp_path: Path, shell_env: dic
         "import os, sys\n"
         "if sys.argv[1].endswith('get_plugin_install_path.py'):\n"
         "    sys.argv += ['--registry', os.path.join(os.environ['TMPDIR'], 'registry.json')]\n"
-        f"os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])\n",
+        f"import subprocess\nraise SystemExit(subprocess.call([{sys.executable!r}, *sys.argv[1:]]))\n",
     )
     probe = _block("agent-resolution.md", "get_plugin_install_path.py")
     result = _run(probe, tmp_path, shell_env)
@@ -150,7 +177,7 @@ def test_ci_fetch_preserves_target_repository(
     assert normalized.returncode == 0, normalized.stderr
     fetched = _run(_block("ci-log-extract.md", "CI_RAW="), tmp_path, ci_env)
     assert fetched.returncode == 0, fetched.stderr
-    calls = [json.loads(line) for line in (tmp_path / "gh-argv.jsonl").read_text().splitlines()]
+    calls = [json.loads(line) for line in (tmp_path / "gh-argv.jsonl").read_text(encoding="utf-8").splitlines()]
     assert calls == [
         ["run", "view", "42", "--repo", expected, "--log-failed"],
         ["run", "view", "42", "--repo", expected, "--log"],
@@ -166,7 +193,7 @@ def test_ci_evidence_cannot_close_its_data_fence(tmp_path: Path, ci_env: dict[st
     normalized = _run(_block("ci-log-extract.md", "_RAW_CI="), tmp_path, ci_env)
     assert normalized.returncode == 0, normalized.stderr
     result = _run(_block("ci-log-extract.md", "CI_RAW="), tmp_path, ci_env)
-    saved = (tmp_path / "dev-ci-log-protocol-test").read_text()
+    saved = (tmp_path / "dev-ci-log-protocol-test").read_text(encoding="utf-8")
     assert result.returncode == 0, result.stderr
     assert "<!-- untrusted:" in result.stdout
     assert result.stdout.count("<!-- end untrusted:") == 1
@@ -184,7 +211,7 @@ def test_ci_fetch_passes_attempt_on_both_requests(tmp_path: Path, ci_env: dict[s
     normalized = _run(_block("ci-log-extract.md", "_RAW_CI="), tmp_path, ci_env)
     result = _run(_block("ci-log-extract.md", "CI_RAW="), tmp_path, ci_env)
     assert normalized.returncode == result.returncode == 0, normalized.stderr + result.stderr
-    calls = [json.loads(line) for line in (tmp_path / "gh-argv.jsonl").read_text().splitlines()]
+    calls = [json.loads(line) for line in (tmp_path / "gh-argv.jsonl").read_text(encoding="utf-8").splitlines()]
     assert calls == [
         ["run", "view", "42", "--repo", "fork/project", "--attempt", "3", "--log-failed"],
         ["run", "view", "42", "--repo", "fork/project", "--attempt", "3", "--log"],
@@ -230,7 +257,7 @@ def test_ci_url_normalization_can_resume(tmp_path: Path, ci_env: dict[str, str])
     assert second.returncode == 0, second.stderr
     result = _run(_block("ci-log-extract.md", "CI_RAW="), tmp_path, ci_env)
     assert result.returncode == 0, result.stderr
-    assert json.loads((tmp_path / "gh-argv.jsonl").read_text()) == [
+    assert json.loads((tmp_path / "gh-argv.jsonl").read_text(encoding="utf-8")) == [
         "run",
         "view",
         "42",
@@ -252,7 +279,7 @@ def test_long_ci_preview_keeps_complete_delimiters(tmp_path: Path, ci_env: dict[
     assert "ERROR later job" not in result.stdout
     assert result.stdout.rstrip().endswith("-->")
     assert result.stdout.count("<!-- end untrusted:") == 1
-    saved = (tmp_path / "dev-ci-log-protocol-test").read_text()
+    saved = (tmp_path / "dev-ci-log-protocol-test").read_text(encoding="utf-8")
     assert "ERROR later job" in saved
     assert saved.count("<!-- end untrusted:") == 1
 
@@ -317,7 +344,8 @@ def test_worktree_merge_hint_requires_verified_ahead_branch(
         "elif sys.argv[1] == 'branch': print('dev-example')\n"
         f"elif sys.argv[1] == 'rev-list': print({ahead})\n",
     )
-    _sentinel(shell_env, "dev-<skill>-wt-base", "base-commit\n")
+    _sentinel(shell_env, "dev-worktree-skill", "feature\n")
+    _sentinel(shell_env, "dev-feature-wt-base", "base-commit\n")
     result = _run(_block("worktree-isolation.md", "git status --porcelain --untracked-files=all"), tmp_path, shell_env)
     assert result.returncode == 0, result.stderr
     assert "Worktree branch: dev-example" in result.stdout
@@ -364,7 +392,7 @@ def bisect_env(shell_env: dict[str, str]) -> dict[str, str]:
         "    with (directory / 'test-targets.jsonl').open('a') as stream:\n"
         "        stream.write(json.dumps({'tests': tests, 'exit': code if tests else None}) + '\\n')\n"
         "    raise SystemExit(code)\n"
-        f"os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])\n",
+        f"import subprocess\nraise SystemExit(subprocess.call([{sys.executable!r}, *sys.argv[1:]]))\n",
     )
     _sentinel(shell_env, "dev-batch-id", "batch\n")
     _sentinel(shell_env, "dev-batch-edits-batch", "4\n")

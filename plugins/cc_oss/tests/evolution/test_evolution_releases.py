@@ -226,6 +226,43 @@ class TestVersionTags:
             "main": ["0.9.0", "1.0.0rc1", "1.0.0rc2", "1.0.0", "1.0.0.post1", "1.1.0.dev3", "2024.1.15"]
         }
 
+    def test_tag_prefix_keeps_one_package_of_a_monorepo(self, evo_repo: RepoBuilder) -> None:
+        """With ``tag_prefix`` only that package's tags are releases, read after the prefix, and others vanish.
+
+        Two packages tag independently (``pkg-a-v1.0.0``, ``pkg-b-v2.5.0``, ``pkg-a-v1.1.0``). Reading package A must
+        not report package B's tags as unparsable or as releases, and must keep the full tag name for later git calls.
+        """
+        _commit(evo_repo, "one", 1)
+        evo_repo.tag("pkg-a-v1.0.0", day=1)
+        evo_repo.tag("pkg-b-v2.5.0", day=1)
+        _commit(evo_repo, "two", 2)
+        evo_repo.tag("pkg-a-v1.1.0", day=2)
+        index = build_release_index(evo_repo.path, "pkg-a-v")
+        assert (
+            [(rel["tag"], rel["version"]) for rel in index["releases"]],
+            index["unparsable_tags"],
+            index["tag_prefix"],
+        ) == ([("pkg-a-v1.0.0", "1.0.0"), ("pkg-a-v1.1.0", "1.1.0")], [], "pkg-a-v")
+
+    def test_tag_prefix_changes_the_fingerprint(self, evo_repo: RepoBuilder) -> None:
+        """The index fingerprint differs per prefix, so a store of one package is never reused for another.
+
+        The tag map is identical; only the prefix differs, and the entries and scores stages key on the fingerprint.
+        """
+        _commit(evo_repo, "one", 1)
+        evo_repo.tag("pkg-a-v1.0.0", day=1)
+        assert (
+            build_release_index(evo_repo.path, "pkg-a-v")["fingerprint"]
+            != build_release_index(evo_repo.path)["fingerprint"]
+        )
+
+    def test_without_prefix_package_tags_are_unparsable(self, evo_repo: RepoBuilder) -> None:
+        """Without a prefix a package tag is no version and is reported, as before, with no ``tag_prefix`` key."""
+        _commit(evo_repo, "one", 1)
+        evo_repo.tag("pkg-a-v1.0.0", day=1)
+        index = build_release_index(evo_repo.path)
+        assert (index["releases"], index["unparsable_tags"], "tag_prefix" in index) == ([], ["pkg-a-v1.0.0"], False)
+
 
 class TestPeeling:
     """Tags of tags are peeled through every level to their commit."""

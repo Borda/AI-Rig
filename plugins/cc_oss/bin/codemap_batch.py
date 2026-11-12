@@ -92,7 +92,7 @@ def _valid_module(name: str) -> bool:
         >>> _valid_module("--flag"), _valid_module("a..b"), _valid_module("a b")
         (False, False, False)
     """
-    return bool(_MODULE_RE.match(name)) and ".." not in name and not name.startswith("-")
+    return bool(_MODULE_RE.fullmatch(name)) and ".." not in name and not name.startswith("-")
 
 
 def load_modules(path: Path) -> list[str]:

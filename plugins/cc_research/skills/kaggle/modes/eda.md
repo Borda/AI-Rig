@@ -48,7 +48,8 @@ Every check ends with a printed finding and explicit design implication. Do not 
 Load `modality-dispatch.md`:
 
 ```bash
-_KAGGLE_MODES="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/skills/kaggle/modes"
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
+_KAGGLE_MODES="$PLUGIN_ROOT/skills/kaggle/modes"
 cat "$_KAGGLE_MODES/modality-dispatch.md"  # timeout: 5000
 ```
 

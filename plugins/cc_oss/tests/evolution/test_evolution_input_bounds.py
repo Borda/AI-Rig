@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
+import os
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from unittest import mock
 
@@ -12,9 +15,13 @@ import _evolution_common as common
 import check_oss_pr_signals as signals
 import evolution_changelog as changelog
 import evolution_releases as releases
+import evolution_scan as scan
+import evolution_score as score
+import evolution_store as store
 import pytest
 from evolution_changelog import discover_changelog, parse_changelog
 from evolution_eval import main
+from evolution_store import StoreTrackedError, paths_from_root
 
 
 def test_entry_normalization_truncates_oversized_line() -> None:
@@ -221,3 +228,155 @@ def test_release_index_refuses_excessive_release_count(evo_repo, monkeypatch: py
     monkeypatch.setattr(releases, "MAX_RELEASES", 1, raising=False)
     with pytest.raises(common.EvolutionError, match=r"release.*limit"):
         releases.build_release_index(evo_repo.path)
+
+
+@pytest.mark.integration
+def test_scope_refuses_tracked_store_before_mutating(evo_repo, tmp_sentinels: Path) -> None:
+    """A repository-owned store cannot supply scope state or have its old scope removed."""
+    evo_repo.write("app.py", "value = 1\n")
+    evo_repo.commit("initial", day=0)
+    evo_repo.tag("1.0.0", day=1)
+    info = releases.resolve_target(None, evo_repo.path)
+    paths = common.resolve_store_root(evo_repo.path / ".evolution", info["parts"])
+    paths.root.mkdir(parents=True, exist_ok=True)
+    scope = paths.root / scan.SCOPE_FILE
+    scope.write_text("keep", encoding="utf-8")
+    evo_repo.commit("track store", day=2)
+    assert scan.main(["scope", "--args", "evolution", "--project-root", str(evo_repo.path)]) == 2
+    assert scope.read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.integration
+def test_execute_refuses_tracked_store_before_reading(evo_repo) -> None:
+    """Direct execution refuses repository-owned state before parsing even its target JSON."""
+    evo_repo.write(".evolution/local/store/target.json", "invalid JSON")
+    evo_repo.commit("track store", day=0)
+    paths = paths_from_root(evo_repo.path / ".evolution/local/store")
+    with pytest.raises(StoreTrackedError, match="tracks store files"):
+        scan.execute_run(paths, evo_repo.path, {})
+
+
+def test_scope_estimate_refuses_oversized_changelog(tmp_path: Path) -> None:
+    """Scope estimation shares the same ten-MiB ceiling as the changelog pipeline."""
+    with (tmp_path / "CHANGELOG.md").open("wb") as handle:
+        handle.truncate(common.MAX_INPUT_BYTES + 1)
+    with pytest.raises(ValueError, match="size limit"):
+        scan._estimate_fixes(tmp_path, {"releases": []})
+
+
+def test_cache_digest_refuses_oversized_changelog(tmp_path: Path) -> None:
+    """Run-time cache fingerprinting cannot bypass the changelog parser's byte ceiling."""
+    with (tmp_path / "CHANGELOG.md").open("wb") as handle:
+        handle.truncate(common.MAX_INPUT_BYTES + 1)
+    with pytest.raises(ValueError, match="size limit"):
+        scan._changelog_state(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("reader", "name"),
+    [
+        pytest.param(store._read_lock_raw, "lock", id="store-lock"),
+        pytest.param(
+            lambda p: store.read_manifest(paths_from_root(p.parent.parent)), "store/manifest.json", id="store-manifest"
+        ),
+        pytest.param(store._read_override_rows, "overrides.csv", id="store-overrides"),
+        pytest.param(score.read_overrides_file, "overrides.csv", id="score-overrides"),
+        pytest.param(lambda p: scan._load_target(paths_from_root(p.parent)), scan.TARGET_FILE, id="scan-target"),
+        pytest.param(
+            lambda p: scan.ingest_verdicts(paths_from_root(p.parent)), scan.ADJ_REQUEST_FILE, id="scan-verdicts"
+        ),
+        pytest.param(
+            lambda p: store._cmd_adjudication_key(argparse.Namespace(prompt_file=str(p), model="m", effort="e")),
+            "prompt.txt",
+            id="store-prompt",
+        ),
+        pytest.param(
+            lambda p: store._cmd_overrides_check(argparse.Namespace(known=str(p))), "known.json", id="store-known"
+        ),
+    ],
+)
+def test_evolution_readers_bound_input(tmp_path: Path, reader: Callable[[Path], object], name: str) -> None:
+    """Store and CLI input readers share the byte ceiling before parsing their contents."""
+    path = tmp_path / ".evolution/local/fixture" / name
+    path.parent.mkdir(parents=True)
+    with path.open("wb") as handle:
+        handle.truncate(common.MAX_INPUT_BYTES + 1)
+    with pytest.raises(ValueError, match="size limit"):
+        reader(path)
+
+
+def test_store_weights_ignore_oversized_document(tmp_path: Path) -> None:
+    """An oversized evaluated-weights document cannot replace provisional defaults."""
+    paths = common.resolve_store_root(tmp_path / ".evolution", ["local", "fixture"])
+    paths.root.mkdir(parents=True)
+    (paths.root / scan.WEIGHTS_FILE).write_text(
+        '{"evaluated":true,"weights":{}}' + " " * common.MAX_INPUT_BYTES, encoding="utf-8"
+    )
+    assert scan._weights(paths)[2] is True
+
+
+def test_entries_cache_ignores_oversized_document(tmp_path: Path) -> None:
+    """An oversized cache entry is discarded instead of trusted as the previous inventory."""
+    paths = common.resolve_store_root(tmp_path / ".evolution", ["local", "fixture"])
+    paths.store.mkdir(parents=True)
+    paths.index.write_text(
+        json.dumps({"schema_version": common.SCHEMA_VERSION, "entries_key": "key", "entries": {}})
+        + " " * common.MAX_INPUT_BYTES,
+        encoding="utf-8",
+    )
+    assert scan._cached_entries(paths, "key") is None
+
+
+def test_atomic_json_ignores_predictable_temp(tmp_path: Path) -> None:
+    """Atomic store publication never opens a planted old-style temporary entry."""
+    output = tmp_path / "state.json"
+    original = tmp_path / "original"
+    original.write_text("keep", encoding="utf-8")
+    os.link(original, output.with_name(f".{output.name}.{os.getpid()}.tmp"))
+    common.atomic_write_json(output, {"value": 1})
+    assert original.read_text(encoding="utf-8") == "keep"
+    assert json.loads(output.read_text(encoding="utf-8")) == {"value": 1}
+
+
+def test_matrix_csv_ignores_predictable_temp(tmp_path: Path) -> None:
+    """Matrix publication never writes through a planted old-style temporary entry."""
+    paths = common.resolve_store_root(tmp_path / ".evolution", ["local", "fixture"])
+    paths.store.mkdir(parents=True)
+    original = tmp_path / "original"
+    original.write_text("keep", encoding="utf-8")
+    os.link(original, paths.matrix_csv.with_name(f".{paths.matrix_csv.name}.{os.getpid()}.tmp"))
+    store.write_matrix_csv(paths, [], [])
+    assert original.read_text(encoding="utf-8") == "keep"
+    assert paths.matrix_csv.read_bytes() == b"fix_id,fix_release\n"
+
+
+@pytest.mark.integration
+def test_scope_reports_oversized_input_as_blocked(evo_repo, tmp_sentinels: Path, capsys: pytest.CaptureFixture) -> None:
+    """The scope CLI reports rejected input through its blocked result instead of a traceback."""
+    evo_repo.write("app.py", "value = 1\n")
+    evo_repo.commit("initial", day=0)
+    evo_repo.tag("1.0.0", day=1)
+    with (evo_repo.path / "CHANGELOG.md").open("wb") as handle:
+        handle.truncate(common.MAX_INPUT_BYTES + 1)
+    assert scan.main(["scope", "--args", "evolution", "--project-root", str(evo_repo.path)]) == 2
+    assert "exceeds size limit" in capsys.readouterr().out
+
+
+@pytest.mark.integration
+def test_ingest_refuses_tracked_store_before_reading(evo_repo, capsys: pytest.CaptureFixture) -> None:
+    """Ingest refuses repository-owned verdict requests before reading or appending their data."""
+    evo_repo.write(".evolution/local/fixture/" + scan.ADJ_REQUEST_FILE, "invalid JSON")
+    evo_repo.commit("track store", day=0)
+    root = evo_repo.path / ".evolution/local/fixture"
+    assert (
+        scan.main(["ingest", "--root", str(root), "--project-root", str(evo_repo.path), "--today", "2024-02-01"]) == 2
+    )
+    assert "tracks store files" in capsys.readouterr().out
+    assert not (root / "adjudications.jsonl").exists()
+
+
+def test_score_accepts_json_at_exact_byte_ceiling(tmp_path: Path) -> None:
+    """The shared ceiling is inclusive for ordinary valid JSON input."""
+    source = tmp_path / "input.json"
+    source.write_bytes(b"{}" + b" " * (common.MAX_INPUT_BYTES - 2))
+    assert score._read_json(source) == {}

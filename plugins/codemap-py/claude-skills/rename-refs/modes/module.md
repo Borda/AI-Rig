@@ -4,6 +4,7 @@
 
 ```bash
 # timeout: 3000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 git rev-parse --is-inside-work-tree 2>/dev/null || { printf "⚠ non-git source — tracked-file module moves require Git tracking; stop before edits\n" >&2; exit 1; }
@@ -12,7 +13,7 @@ IFS= read -r OLD_MODULE_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_M
 IFS= read -r SMOKE_INDEX < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-index-${CSID}" 2>/dev/null || SMOKE_INDEX=""
 INDEX_PATH=""
 if [ -n "$SMOKE_INDEX" ]; then
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/cm_json.py" index-path --input "$SMOKE_INDEX" --module "$OLD_MODULE_PATH" --name old-index-path --output-prefix "codemap-${_CM_PROJ}"
+    python "$PLUGIN_ROOT/bin/cm_json.py" index-path --input "$SMOKE_INDEX" --module "$OLD_MODULE_PATH" --name old-index-path --output-prefix "codemap-${_CM_PROJ}"
     IFS= read -r INDEX_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-old-index-path-${CSID}" 2>/dev/null || INDEX_PATH=""
 fi
 if [ -n "$INDEX_PATH" ]; then
@@ -45,6 +46,7 @@ git status --porcelain -- "$old_file_path"
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r old_file_path < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-old-file-path-${CSID}" 2>/dev/null || old_file_path=""
@@ -54,7 +56,7 @@ IFS= read -r OLD_MODULE_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_M
 IFS= read -r SMOKE_INDEX < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-index-${CSID}" 2>/dev/null || SMOKE_INDEX=""
 new_file_path=""
 if [ -n "$SMOKE_INDEX" ]; then
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/cm_json.py" index-path --input "$SMOKE_INDEX" --module "$NEW_MODULE_PATH" --name new-index-path --output-prefix "codemap-${_CM_PROJ}"
+    python "$PLUGIN_ROOT/bin/cm_json.py" index-path --input "$SMOKE_INDEX" --module "$NEW_MODULE_PATH" --name new-index-path --output-prefix "codemap-${_CM_PROJ}"
     IFS= read -r new_file_path < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-new-index-path-${CSID}" 2>/dev/null || new_file_path=""
 fi
 if [ -z "$new_file_path" ]; then
@@ -87,12 +89,13 @@ git mv -- "$old_file_path" "$new_file_path" || { printf "! git mv failed: %s -> 
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r OLD_MODULE_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_MODULE_PATH-${CSID}" 2>/dev/null || OLD_MODULE_PATH=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind import --module "$OLD_MODULE_PATH"
+python "$PLUGIN_ROOT/bin/find_module_refs.py" --kind import --module "$OLD_MODULE_PATH"
 # attribute uses after a parent import (`import mypackage` then `mypackage.old_name.func()`) carry no import line naming the module
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind attribute --module "$OLD_MODULE_PATH"
+python "$PLUGIN_ROOT/bin/find_module_refs.py" --kind attribute --module "$OLD_MODULE_PATH"
 ```
 
 Edit each `import mypackage.old_name` → `import mypackage.new_name`, indented ones inside functions, `try` or `if TYPE_CHECKING:` blocks included, and each attribute use `mypackage.old_name.<attr>` → `mypackage.new_name.<attr>`. Cross-check that every Step 2 `imported_by` importer has at least one hit here or in 5c; an importer with none needs a whole-file read before you move on.
@@ -101,10 +104,11 @@ Edit each `import mypackage.old_name` → `import mypackage.new_name`, indented 
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r OLD_MODULE_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_MODULE_PATH-${CSID}" 2>/dev/null || OLD_MODULE_PATH=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind from-import --module "$OLD_MODULE_PATH"
+python "$PLUGIN_ROOT/bin/find_module_refs.py" --kind from-import --module "$OLD_MODULE_PATH"
 ```
 
 Edit each `from mypackage.old_name import` → `from mypackage.new_name import`, indented ones included.
@@ -113,13 +117,14 @@ Edit each `from mypackage.old_name import` → `from mypackage.new_name import`,
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r OLD_MODULE_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_MODULE_PATH-${CSID}" 2>/dev/null || OLD_MODULE_PATH=""
 IFS= read -r old_file_path < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-old-file-path-${CSID}" 2>/dev/null || old_file_path=""
 # restrict to the real pkg dir from 5a's old_file_path — helper's dotted default misses src/ layouts
 case "$old_file_path" in */*) _PKG_SCOPE="${old_file_path%/*}" ;; *) _PKG_SCOPE="." ;; esac
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind relative --module "$OLD_MODULE_PATH" --scope "$_PKG_SCOPE"
+python "$PLUGIN_ROOT/bin/find_module_refs.py" --kind relative --module "$OLD_MODULE_PATH" --scope "$_PKG_SCOPE"
 ```
 
 Edit each `from .old_name import` → `from .new_name import`, only in expected package directory; skip unrelated packages.
@@ -128,11 +133,12 @@ Edit each `from .old_name import` → `from .new_name import`, only in expected 
 
 ```bash
 # timeout: 3000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r OLD_MODULE_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_MODULE_PATH-${CSID}" 2>/dev/null || OLD_MODULE_PATH=""
 # full path, not OLD_BASENAME — avoids false positives on names like 'utils'
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind config --module "$OLD_MODULE_PATH"
+python "$PLUGIN_ROOT/bin/find_module_refs.py" --kind config --module "$OLD_MODULE_PATH"
 ```
 
 Edit matching old-module-path `packages` / `install_requires`. Never grep bare `OLD_BASENAME`; too broad.
@@ -141,11 +147,12 @@ Edit matching old-module-path `packages` / `install_requires`. Never grep bare `
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r OLD_MODULE_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_MODULE_PATH-${CSID}" 2>/dev/null || OLD_MODULE_PATH=""
 # full path first to narrow scope, fallback to basename if no match (helper says so on stderr)
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind sphinx-mod --module "$OLD_MODULE_PATH"
+python "$PLUGIN_ROOT/bin/find_module_refs.py" --kind sphinx-mod --module "$OLD_MODULE_PATH"
 ```
 
 Edit each `:mod:` ref to new module path. Basename-only matches require surrounding expected-package context.

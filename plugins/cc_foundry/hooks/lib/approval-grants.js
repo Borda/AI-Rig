@@ -35,6 +35,17 @@
 //   it; commit-guard.js header decides). A force push is never allowed: the force ban runs before
 //   any token lookup.
 //
+// PUSH RUN TOKEN — scope `push-run`: one non-force push of a named branch at any HEAD on a named PR head's line
+//   An `oss:resolve` run asks once at its start (header `git-push-run`, `Approve` / `Deny`), hours before it pushes, so
+//   the exact-HEAD token cannot serve: the PR branch is not checked out yet, HEAD moves with every commit the run
+//   adds, and 15 minutes pass. The question shows one inline span `git push <remote> <branch>` (plain names, no
+//   option) and one span holding the PR head commit id; `Approve` writes the approving call's id, `remote`,
+//   `branch`, `base_head` — all read from that text (`questionPushRun`), never from the checkout — and `expires_at` =
+//   `created_at` + 12 h. commit-guard.js spends it when the exact-HEAD token does not allow the push: the checkout is on
+//   `branch`, the push names `remote`, and `base_head` is an ancestor of HEAD (`isAncestor`); the force ban, the push
+//   shape rules, the lead-session rule and the transcript proof are the same as for `push-once`. The proof also
+//   re-reads the question: it must still name the token's remote, branch and head.
+//
 // GH WRITE TOKEN — scope `gh-write-once`: one run of the exact gh command the question named
 //   The `gh-write` question names the command once, as an inline code span whose content starts
 //   with `gh ` (a double-backtick span carries a command holding a backtick; CommonMark's one
@@ -231,8 +242,10 @@ const COMMON_FIELDS = Object.freeze(["version", "scope", "created_at", "question
 // Record fields set from the writer's clock; two records differing only here hold the same answer.
 const TIME_FIELDS = new Set(["created_at", "expires_at"]);
 // Scope fields a reader compares as text: each must be a non-empty string.
-const TEXT_FIELDS = new Set(["question_id", "branch", "head", "command", "files_sha256"]);
+const TEXT_FIELDS = new Set(["question_id", "branch", "head", "remote", "base_head", "command", "files_sha256"]);
 const PUSH_TOKEN_TTL_MS = 15 * 60 * 1000;
+// A resolve run asks once at its start and may push hours later (idle windows measured up to 11 h).
+const PUSH_RUN_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 const GH_WRITE_TOKEN_TTL_MS = 15 * 60 * 1000;
 
 /**
@@ -289,6 +302,32 @@ const SCOPES = Object.freeze([
     discloseFile: false,
   }),
   frozenRow({
+    id: "push-run",
+    header: "git-push-run",
+    options: ["Approve", "Deny"],
+    recordAnswer: "Approve",
+    file: "claude-push-run-approval.json",
+    covers: [
+      "one non-force push of the named branch to the named configured remote, from a HEAD that descends from the " +
+        "named PR head, within the token lifetime",
+    ],
+    neverCovers: [
+      "force push",
+      "a second push",
+      "another branch or remote",
+      "a HEAD that does not descend from the named PR head",
+      "a delete, prune, --all, --tags or mirror push",
+      "a URL or path destination",
+      "a push from another checkout or after cd/pushd",
+      "a spawned agent's call",
+    ],
+    revokeAnswer: "Deny",
+    fields: ["question_id", "remote", "branch", "base_head", "expires_at"],
+    singleUse: true,
+    ttlMs: PUSH_RUN_TOKEN_TTL_MS,
+    discloseFile: false,
+  }),
+  frozenRow({
     id: "gh-write-once",
     header: "gh-write",
     options: ["Approve", "Deny"],
@@ -318,6 +357,7 @@ const SCOPES = Object.freeze([
 const RECORD_BUILDERS = Object.freeze({
   "local-git-non-destructive": () => ({ fields: {} }),
   "push-once": pushTokenFields,
+  "push-run": pushRunTokenFields,
   "gh-write-once": ghWriteTokenFields,
 });
 
@@ -527,6 +567,32 @@ function gitHead(cwd, env = process.env) {
   return COMMIT_ID.test(head) && branch ? { branch, head } : { reason: "git printed no branch or commit id" };
 }
 
+/**
+ * True when commit `ancestor` is reachable from `descendant` (or equal), in the checkout at `cwd`.
+ *
+ * Fails closed: an unknown object, a malformed id or any git error is false. Runs with git's discovery variables removed.
+ *
+ * @param {string|undefined} cwd Session directory.
+ * @param {string} ancestor Full commit id.
+ * @param {string} descendant Full commit id.
+ * @param {object} [env] Environment.
+ * @returns {boolean}
+ */
+function isAncestor(cwd, ancestor, descendant, env = process.env) {
+  if (!COMMIT_ID.test(String(ancestor)) || !COMMIT_ID.test(String(descendant))) return false;
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", ancestor, descendant], {
+      cwd: cwd || process.cwd(),
+      env: discoveryEnv(env),
+      stdio: ["ignore", "ignore", "ignore"],
+      timeout: GIT_TIMEOUT_MS,
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 // ── Push token ────────────────────────────────────────────────────────────────
 
 /**
@@ -551,6 +617,82 @@ function pushTokenFields(data, verdict, { now, env }) {
   }
   const expires = new Date(now.getTime() + PUSH_TOKEN_TTL_MS).toISOString();
   return { fields: { question_id: data.tool_use_id, branch: here.branch, head: here.head, expires_at: expires } };
+}
+
+// ── Push run token ────────────────────────────────────────────────────────────
+
+// A push named in an inline code span, and the plain remote and branch words it may hold.
+const PUSH_COMMAND = /^git push /;
+// Any span that reads as a push in spelling (extra or tab spaces, a leading space): a second one makes the question ambiguous.
+const PUSH_LIKE = /^\s*git\s+push\b/i;
+const RUN_REMOTE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const RUN_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+// Branch words the guard can never spend: `HEAD` and a full ref name are not a plain branch name.
+const RUN_BRANCH_UNSPENDABLE = /^(HEAD|refs\/.*)$/;
+
+/**
+ * The push a `git-push-run` question names, or why it names none it can approve.
+ *
+ * The question must show exactly one push as an inline code span, `git push <remote> <branch>` with plain names and no
+ * option, and exactly one PR head commit as a full commit id in another inline code span. The writer takes the remote,
+ * branch and head from that text, never from the checkout: the PR branch is not checked out when the question is asked.
+ *
+ * @param {string} question Question text the user answered.
+ * @returns {{remote: string, branch: string, baseHead: string}|{reason: string}}
+ */
+function questionPushRun(question) {
+  if (HIDDEN_IN_QUESTION.test(question)) return { reason: HIDDEN_REASON };
+  if (FENCE.test(question)) {
+    return { reason: "the question shows a fenced block; name the push and the PR head in inline code spans" };
+  }
+  const spans = inlineCodeSpans(question);
+  const pushes = spans.filter((span) => PUSH_COMMAND.test(span.content));
+  const heads = spans.filter((span) => COMMIT_ID.test(span.content));
+  if (pushes.length !== 1 || spans.filter((span) => PUSH_LIKE.test(span.content)).length !== 1) {
+    return { reason: "the question must name exactly one push in an inline code span (`git push <remote> <branch>`)" };
+  }
+  if (heads.length !== 1) {
+    return { reason: "the question must name the PR head commit once, as a full commit id in an inline code span" };
+  }
+  if (pushes[0].multiline) return { reason: "the push spans lines; name it on one line" };
+  const command = pushes[0].content.trim();
+  if (HIDDEN_IN_COMMAND.test(command)) return { reason: HIDDEN_REASON };
+  const parsed = plainCommandWords(command);
+  if (parsed.reason) return parsed;
+  const [git, push, remote = "", branch = "", ...rest] = parsed.words;
+  const plainBranch =
+    RUN_BRANCH.test(branch) &&
+    !RUN_BRANCH_UNSPENDABLE.test(branch) &&
+    !branch.includes("..") &&
+    !branch.endsWith("/") &&
+    !branch.endsWith(".lock");
+  if (git !== "git" || push !== "push" || rest.length > 0 || !RUN_REMOTE.test(remote) || !plainBranch) {
+    return { reason: "the push must be exactly `git push <remote> <branch>` with plain names and no option" };
+  }
+  return { remote, branch, baseHead: heads[0].content };
+}
+
+/**
+ * The run push token's own fields for an approved `git-push-run` question (a RECORD_BUILDERS entry).
+ *
+ * @param {object} data Parsed hook payload: `tool_use_id` names the approving call.
+ * @param {{question: string}} verdict The write verdict, holding the question text the user answered.
+ * @param {{now: Date}} options Creation time.
+ * @returns {{fields: object}|{reason: string}}
+ */
+function pushRunTokenFields(data, verdict, { now }) {
+  const named = questionPushRun(verdict.question);
+  if (named.reason) return named;
+  const expires = new Date(now.getTime() + PUSH_RUN_TOKEN_TTL_MS).toISOString();
+  return {
+    fields: {
+      question_id: data.tool_use_id,
+      remote: named.remote,
+      branch: named.branch,
+      base_head: named.baseHead,
+      expires_at: expires,
+    },
+  };
 }
 
 // ── gh write token ────────────────────────────────────────────────────────────
@@ -1402,6 +1544,14 @@ function recordedMessage(row, record, target) {
       `text, a changed file, a second run or a spawned agent's call needs a new ${row.header} question; ${never}`
     );
   }
+  if (row.id === "push-run") {
+    return (
+      `${written}One non-force push of branch ${record.branch} to remote ${record.remote} may run once, until ` +
+      `${record.expires_at}, from this checkout while HEAD descends from ${record.base_head.slice(0, 12)}, as the ` +
+      `only push in its Bash command; a second push, another branch or remote, or a HEAD off that line needs a new ` +
+      `${row.header} or git-push question; ${never}`
+    );
+  }
   if (row.id === "push-once") {
     return (
       `${written}One non-force push of branch ${record.branch} at ${record.head.slice(0, 12)} to a configured ` +
@@ -1727,6 +1877,12 @@ function approvalProofProblem(row, record, { transcriptPath, now }) {
   if (row.id === "push-once" && !record.question.includes(record.branch)) {
     return "the approving question does not name the token's branch";
   }
+  if (row.id === "push-run") {
+    const named = questionPushRun(record.question);
+    const same =
+      named.remote === record.remote && named.branch === record.branch && named.baseHead === record.base_head;
+    if (named.reason || !same) return "the approving question names another push than the token";
+  }
   return null;
 }
 
@@ -1810,6 +1966,22 @@ function spendUnguarded(scopeId, { cwd, env = process.env, now = new Date(), cal
 }
 
 /**
+ * True when this tool call already holds a claim of the scope: its own call spent that scope's token.
+ *
+ * A second copy of the same call finds no token (the first copy renamed it) and must not fall back to a different scope.
+ *
+ * @param {string} scopeId A single-use scope id.
+ * @param {{cwd?: string, env?: object, callId?: string}} options Session directory, environment and the call's id.
+ * @returns {boolean} False for an unknown scope, an unreadable dir or a missing call id.
+ */
+function holdsClaim(scopeId, { cwd, env = process.env, callId } = {}) {
+  const row = scopeById(scopeId);
+  const where = row ? recordDirectory(cwd, env) : { reason: "unknown approval scope" };
+  if (where.reason || typeof callId !== "string" || callId === "") return false;
+  return claimRecord(claimPath(where.dir, row, callId), row) !== null;
+}
+
+/**
  * Delete a scope's record and the claims its spent tokens left, in the session project's common dir.
  *
  * @param {string} scopeId Scope id.
@@ -1865,7 +2037,7 @@ const GIT_DIR_QUERY =
 const RECORD_HOME = ".git";
 // An output redirection and the word it writes: `>`, `>>`, `>|`, `&>`, `&>>`, `<>`, after an optional fd number.
 // fd duplication (`2>&1`, `>&-`) names no file.
-const REDIRECT_TARGET = /(?:&>>?|\d*>>?\|?|\d*<>)\s*([^\s&;|<>()][^\s;&|<>()]*)/g;
+const REDIRECT_TARGET = /(?:&>>?|>>?\|?|<>)\s*([^\s&;|<>()][^\s;&|<>()]*)/g;
 const GLOB_META = /[*?[{]/;
 // A glob character that still matches against existing files after brace expansion.
 const WILDCARD = /[*?[]/;
@@ -2218,6 +2390,33 @@ function braceAlternatives(body) {
 }
 
 /**
+ * Regex source for one shell bracket expression body.
+ *
+ * A reversed range (`i-1`, `z-a`) selects no character in a shell, so it is dropped before compiling — JavaScript
+ * rejects it, and a word like the Python slice `t[i-1:]` would otherwise count as a glob that can reach any name.
+ * What remains still matches as written; a class left empty matches nothing, a negated one any character but `/`.
+ *
+ * @param {string} body Text between `[` and its closing `]`.
+ * @returns {string}
+ */
+function bracketSource(body) {
+  const negated = /^[!^]/.test(body);
+  const members = negated ? body.slice(1) : body;
+  let kept = "";
+  for (let index = 0; index < members.length; index++) {
+    const isRange = members[index + 1] === "-" && index + 2 < members.length;
+    if (isRange && members.charCodeAt(index) > members.charCodeAt(index + 2)) {
+      index += 2;
+    } else if (isRange) {
+      kept += members.slice(index, index + 3);
+      index += 2;
+    } else kept += members[index];
+  }
+  if (kept === "") return negated ? "[^/]" : "(?!)";
+  return `[${negated ? "^" : ""}${kept.replace(/\]/g, "\\]")}]`;
+}
+
+/**
  * Regex source matching every name one shell glob word can expand to: `*`, `?`, `[…]`, and brace alternatives or
  * sequences (`{json,js}`, `{a..z}`).
  *
@@ -2235,7 +2434,7 @@ function globSource(glob) {
     else if (char === "?") source += "[^/]";
     else if (char === "[" && close > 0) {
       const body = glob.slice(index + 1, close);
-      source += /\[:|\\/.test(body) ? "[^/]" : `[${body.replace(/^[!^]/, "^").replace(/\]/g, "\\]")}]`;
+      source += /\[:|\\/.test(body) ? "[^/]" : bracketSource(body);
       index = close;
     } else if (char === "{" && close > 0 && braceAlternatives(glob.slice(index + 1, close)).length > 1) {
       source += `(?:${braceAlternatives(glob.slice(index + 1, close))
@@ -2372,9 +2571,10 @@ function namesRecord(word) {
  * `.g*t`, `.git*`, `[.]git`); a bare `*` or `?git` skips it. Brace alternatives count one by one.
  *
  * @param {string} word One shell word, folded.
+ * @param {boolean} [includeGlobs] Whether the word occupies a path operand position.
  * @returns {boolean}
  */
-function namesGitDir(word) {
+function namesGitDir(word, includeGlobs = true) {
   const alternatives = braceExpansions(word);
   if (!alternatives) return true;
   return alternatives.some((alternative) => {
@@ -2387,7 +2587,7 @@ function namesGitDir(word) {
     const bracket = base.startsWith("[") ? bracketEnd(base, 0) : -1;
     const reachesDotName =
       base.startsWith(".") || (bracket > 0 && /^\[[^!^]/.test(base) && base.slice(1, bracket).includes("."));
-    return WILDCARD.test(base) && reachesDotName && globMatches(base, RECORD_HOME);
+    return includeGlobs && WILDCARD.test(base) && reachesDotName && globMatches(base, RECORD_HOME);
   });
 }
 
@@ -2505,7 +2705,7 @@ function segmentReading(segment) {
     ...command,
     recordTarget: words.some(namesRecord) && (!writesNothing(command) || redirected.some(namesRecord)),
     transcriptTarget: redirected.some(namesTranscript) || transcriptWriteWords(command, words).some(namesTranscript),
-    gitDirRedirect: redirected.some(namesGitDir),
+    gitDirRedirect: redirected.some((word) => namesGitDir(word)),
     gitDirTarget: plain.some(gitDirWritten),
     writer:
       texts.some((text) => WRITER_NAME.test(text)) ||
@@ -2525,7 +2725,10 @@ function gitDirWritten(form) {
   const words = targetTokens(all, segmentCommand(all).argv0);
   const command = segmentCommand(words);
   // Destinations are tested, not the words: a value glued to a short option (`-d.git`, `-t.git`) is no word of its own.
-  return !writesNothing(command) && gitDirDestinations(command, words).some((word) => namesGitDir(folded(word)));
+  return (
+    !writesNothing(command) &&
+    gitDirDestinations(command, words).some((word) => namesGitDir(folded(word), command.rest.includes(word)))
+  );
 }
 
 /**
@@ -2672,7 +2875,7 @@ function writesNothing({ argv0, rest, assigned }) {
 function writerSegmentSafe({ argv0, rest, assigns }) {
   if (assigns) return false;
   if (argv0 === "node") return NODE_CHECK_OPTIONS.has(rest[0]) && !rest.slice(1).some((t) => t.startsWith("-"));
-  return WRITER_SAFE_COMMANDS.has(argv0);
+  return WRITER_SAFE_COMMANDS.has(argv0) || PRINT_COMMANDS.has(argv0);
 }
 
 /**
@@ -2729,7 +2932,7 @@ function selfGrantProblem(data) {
     ? folded(path.posix.dirname(String(data.transcript_path).replace(/\\/g, "/")))
     : "";
   if (FILE_TOOLS.has(data.tool_name)) return filePathProblem(data.tool_name, input.file_path || input.notebook_path);
-  return data.tool_name === "Bash" ? bashRecordProblem(input.command) : null;
+  return data.tool_name === "Bash" || data.tool_name === "Monitor" ? bashRecordProblem(input.command) : null;
 }
 
 /**
@@ -2771,6 +2974,9 @@ module.exports = {
   filePathProblem,
   findToolUse,
   gitHead,
+  holdsClaim,
+  isAncestor,
+  questionPushRun,
   questionScope,
   recordAnswers,
   recordDirectory,

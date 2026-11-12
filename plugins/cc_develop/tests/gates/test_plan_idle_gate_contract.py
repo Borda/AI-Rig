@@ -117,7 +117,7 @@ def test_contract_is_cleared_at_start_and_end() -> None:
     The end-of-skill removal has to come after the final-output step, or a late compaction would resume a finished run.
     """
     text = _text()
-    assert 'bin/extract-keep-flag.py" dev-plan "$ARGUMENTS"' in text
+    assert 'bin/extract-keep-flag.py" dev-plan "$ARGUMENT_BLOB"' in text
     assert text.index("rm -f .temp/state/skill-contract.md") > text.index("## Step 5: Final output")
 
 

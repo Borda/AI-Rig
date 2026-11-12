@@ -206,3 +206,39 @@ def test_manage_objective_includes_plugin_source_edits() -> None:
     lines = _lines("SKILL.md")
     objective = lines[lines.index("<objective>") + 1 : lines.index("</objective>")]
     assert any("plugin-source Markdown content-edits with `--local`" in line for line in objective)
+
+
+def test_roster_refresh_reads_disk_without_memory_writes() -> None:
+    """The summary roster is refreshed from disk without editing the session's memory index."""
+    lines = _lines("SKILL.md")
+    start = next(index for index, line in enumerate(lines) if line.startswith("## Step 6:"))
+    end = next(index for index, line in enumerate(lines) if line.startswith("## Step 7:"))
+    section = lines[start:end]
+    assert not any("MEMORY.md" in line or "resolve_memory_dir.py" in line for line in section)
+    assert not any("Edit tool" in line or "Write tool" in line for line in section)
+    inventory = next(line for line in section if line.startswith("Use Glob"))
+    assert "agents/*.md" in inventory
+    assert "skills/*/" in inventory
+    assert "rules/*.md" in inventory
+    assert any(line.startswith("- **Current Roster**:") for line in lines)
+
+
+def test_description_propagation_does_not_edit_memory_summaries() -> None:
+    """Changing an entity description cannot write roster summaries into auto-memory."""
+    lines = _lines("SKILL.md")
+    start = lines.index("## Step 5: Propagate cross-references")
+    end = next(index for index, line in enumerate(lines) if line.startswith("## Step 6:"))
+    propagation = next(line for line in lines[start:end] if line.startswith("**For content-edit:**"))
+    assert "README" in propagation
+    assert "MEMORY.md" not in propagation
+
+
+def test_post_change_rule_does_not_require_memory_roster_writes() -> None:
+    """The shared config checklist cannot reintroduce memory writes after manage completes."""
+    lines = (_MANAGE.parents[1] / "rules/foundry-config.md").read_text(encoding="utf-8").splitlines()
+    start = lines.index("## After Any Change")
+    end = lines.index("## Path Rules (foundry-infra)")
+    section = lines[start:end]
+    assert not any("MEMORY.md" in line or "resolve_memory_dir.py" in line for line in section)
+    assert any("**`README.md`**" in line for line in section)
+    assert any("**`settings.json` permissions**" in line for line in section)

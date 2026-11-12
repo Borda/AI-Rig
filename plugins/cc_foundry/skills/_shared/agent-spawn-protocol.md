@@ -3,7 +3,8 @@
 Reference for any spawning skill — resolve `$_FOUNDRY_SHARED`, load in same bash block:
 
 ```bash
-cat "$_FOUNDRY_SHARED/agent-spawn-protocol.md"
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_FOUNDRY_SHARED/agent-spawn-protocol.md"
 ```
 
 Apply monitoring for `<skill-name>` run.
@@ -33,7 +34,8 @@ One deadline per agent, armed in the spawn response, checked at each wake-up —
 - **Check**: on each wake-up, re-read the run dir from the skill's own sentinel and run once, in the same block:
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR"  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/agent_watch.py" --state-dir "$RUN_DIR"  # timeout: 5000
 ```
 
 - **Exit codes**: 0 report printed · 1 state dir missing · 2 zero rows (batch file not written or run dir lost) → treat as lost deadlines, re-arm before waiting further.

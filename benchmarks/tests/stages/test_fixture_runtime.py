@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import ntpath
+import shutil
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from _bench_codex import fixture_runtime
 from _bench_codex import runtime as codex_runtime
+from _bench_codex.structural import diff_impact
 from _bench_common import change_impact_contracts as contracts
+from _bench_common import change_impact_stage as stage
 
 _QUOTA_SOURCE = "def quota(limit: int) -> int:\n    return limit\n"
 _DRIFTED_QUOTA_SOURCE = "def quota(limit: int) -> int:\n    return limit + 1\n"
@@ -21,11 +26,12 @@ _COMPLETED_STREAM = json.dumps(
 
 def _fixture_runtime_coordinate(source_root: Path, index_path: Path) -> dict[str, object]:
     """Return one complete immutable coordinate for a minimal copied fixture."""
+    metadata = json.loads(index_path.read_bytes())
     return {
         "source_fingerprint": contracts.source_fingerprint(source_root),
         "raw_index_sha256": hashlib.sha256(index_path.read_bytes()).hexdigest(),
-        "scan_version": 13,
-        "index_scan_root": str(source_root),
+        "scan_version": metadata["scan_version"],
+        "index_scan_root": metadata["scan_root"],
     }
 
 
@@ -124,6 +130,17 @@ def files(tmp_path: Path) -> SimpleNamespace:
     )
 
 
+@pytest.fixture
+def scanned_files() -> Iterator[SimpleNamespace]:
+    """Scan the real source fixture in a fresh disposable checkout."""
+    with stage._fixture_workspace() as (source_root, index_path):
+        yield SimpleNamespace(
+            source_root=source_root,
+            index_path=index_path,
+            coordinate=_fixture_runtime_coordinate(source_root, index_path),
+        )
+
+
 class TestFixtureRuntime:
     """Admission and cell execution of the copied change-impact fixture runtime."""
 
@@ -136,6 +153,121 @@ class TestFixtureRuntime:
         admitted = fixture_runtime.validate_fixture_runtime(files.source_root, files.index_path, files.coordinate)
 
         assert admitted.source_fingerprint == files.coordinate["source_fingerprint"]
+        assert admitted.scan_version == 13
+        assert admitted.index_scan_root == str(files.source_root)
+
+    @pytest.mark.integration
+    def test_admits_fresh_scans_at_distinct_roots(self, scanned_files: SimpleNamespace) -> None:
+        """Admit schema-14 indexes scanned at two distinct roots with their own root identities."""
+        first = fixture_runtime.validate_fixture_runtime(
+            scanned_files.source_root, scanned_files.index_path, scanned_files.coordinate
+        )
+        with stage._fixture_workspace() as (second_root, second_index):
+            second_coordinate = _fixture_runtime_coordinate(second_root, second_index)
+            second = fixture_runtime.validate_fixture_runtime(second_root, second_index, second_coordinate)
+
+            assert scanned_files.source_root != second_root
+            assert first.scan_version == second.scan_version == 14
+            assert first.index_scan_root == second.index_scan_root == "."
+            assert first.source_fingerprint == second.source_fingerprint
+            assert first.raw_index_sha256 != second.raw_index_sha256
+
+    @pytest.mark.integration
+    def test_rejects_copied_index_with_foreign_root_key(self, scanned_files: SimpleNamespace) -> None:
+        """Refuse another checkout's index even when source and relocked byte coordinates match."""
+        with stage._fixture_workspace() as (second_root, second_index):
+            second_index.write_bytes(scanned_files.index_path.read_bytes())
+            coordinate = _fixture_runtime_coordinate(second_root, second_index)
+            assert coordinate["source_fingerprint"] == scanned_files.coordinate["source_fingerprint"]
+            assert coordinate["raw_index_sha256"] == scanned_files.coordinate["raw_index_sha256"]
+            assert second_root != scanned_files.source_root
+
+            with pytest.raises(ValueError, match="fixture runtime index scan root drifted"):
+                fixture_runtime.validate_fixture_runtime(second_root, second_index, coordinate)
+
+    @pytest.mark.integration
+    def test_rejects_missing_root_key(self, scanned_files: SimpleNamespace) -> None:
+        """Relative root metadata requires the root key even when index bytes are relocked."""
+        payload = json.loads(scanned_files.index_path.read_bytes())
+        del payload["scan_root_key"]
+        scanned_files.index_path.write_bytes(json.dumps(payload).encode("utf-8"))
+        coordinate = _fixture_runtime_coordinate(scanned_files.source_root, scanned_files.index_path)
+
+        with pytest.raises(ValueError, match="fixture runtime index scan root drifted"):
+            fixture_runtime.validate_fixture_runtime(scanned_files.source_root, scanned_files.index_path, coordinate)
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("root_key", [None, "", "a" * 63, "A" * 64, "0" * 64])
+    def test_rejects_invalid_root_key(self, scanned_files: SimpleNamespace, root_key: str | None) -> None:
+        """Relative indexes admit only the exact lowercase root digest."""
+        payload = json.loads(scanned_files.index_path.read_bytes())
+        payload["scan_root_key"] = root_key
+        scanned_files.index_path.write_bytes(json.dumps(payload).encode("utf-8"))
+        coordinate = _fixture_runtime_coordinate(scanned_files.source_root, scanned_files.index_path)
+
+        with pytest.raises(ValueError, match="fixture runtime index scan root drifted"):
+            fixture_runtime.validate_fixture_runtime(scanned_files.source_root, scanned_files.index_path, coordinate)
+
+    @pytest.mark.integration
+    def test_rejects_relative_index_root_drift(self, scanned_files: SimpleNamespace) -> None:
+        """A matching root key never admits a different index root even with relocked bytes."""
+        payload = json.loads(scanned_files.index_path.read_bytes())
+        payload["scan_root"] = "other"
+        scanned_files.index_path.write_bytes(json.dumps(payload).encode("utf-8"))
+        coordinate = _fixture_runtime_coordinate(scanned_files.source_root, scanned_files.index_path)
+
+        with pytest.raises(ValueError, match="fixture runtime index scan root drifted"):
+            fixture_runtime.validate_fixture_runtime(scanned_files.source_root, scanned_files.index_path, coordinate)
+
+    @pytest.mark.integration
+    def test_rejects_relative_coordinate_root_drift(self, scanned_files: SimpleNamespace) -> None:
+        """A matching root key never admits a coordinate whose root differs from the index."""
+        coordinate = {**scanned_files.coordinate, "index_scan_root": "other"}
+
+        with pytest.raises(ValueError, match="fixture runtime index scan root drifted"):
+            fixture_runtime.validate_fixture_runtime(scanned_files.source_root, scanned_files.index_path, coordinate)
+
+    @pytest.mark.integration
+    def test_admits_windows_normalized_root_key(
+        self, scanned_files: SimpleNamespace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Use Codemap's Windows separator and case normalization for resolved root digests."""
+        root = tmp_path / "MiXeD-Straße"
+        shutil.copytree(scanned_files.source_root, root)
+        index_path = root / ".cache" / "codemap" / f"{root.name}.json"
+        payload = json.loads(scanned_files.index_path.read_bytes())
+        identity = ntpath.normcase(str(root.resolve())).casefold()
+        payload["scan_root_key"] = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        index_path.write_bytes(json.dumps(payload).encode("utf-8"))
+        coordinate = _fixture_runtime_coordinate(root, index_path)
+        monkeypatch.setattr(fixture_runtime, "os", SimpleNamespace(name="nt"), raising=False)
+
+        admitted = fixture_runtime.validate_fixture_runtime(root, index_path, coordinate)
+
+        assert admitted.index_scan_root == "."
+        assert admitted.raw_index_sha256 == coordinate["raw_index_sha256"]
+
+    @pytest.mark.integration
+    def test_structural_admission_accepts_fresh_scanned_fixture(self, scanned_files: SimpleNamespace) -> None:
+        """Admit a fresh relative-root index through the native structural runtime gate."""
+        diff_impact._validate_locked_runtime(
+            scanned_files.source_root,
+            scanned_files.index_path,
+            "C_strict",
+            fixture_runtime_coordinate=scanned_files.coordinate,
+        )
+
+    @pytest.mark.integration
+    def test_cell_admits_fresh_scanned_fixture(self, tmp_path: Path, scanned_files: SimpleNamespace) -> None:
+        """Run a freshly scanned fixture through the adapter with a stubbed runner and transport."""
+        home = _Home(tmp_path / "gate")
+        runner = _Runner(home)
+
+        row = _runtime_for(runner, scanned_files).run_cell({"id": "CI-01"}, "A_plain", "report only")
+
+        assert row["success"] is True
+        assert runner.prepared == [{"fixture_runtime_coordinate": scanned_files.coordinate}]
+        assert home.cleaned == [tmp_path / "gate"]
 
     def test_rejects_source_drift(self, files: SimpleNamespace) -> None:
         """Admission fails once the copied source bytes differ from the coordinate fingerprint.

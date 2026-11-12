@@ -7,12 +7,20 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from _evolution_common import check_record, commit_id, entry_ids, parse_version
 from _evolution_repos import ChangelogSection, RepoBuilder
-from evolution_changelog import GhItem, build_entries, discover_changelog, main, parse_changelog
+from evolution_changelog import (
+    GhItem,
+    GitHubUnavailable,
+    _GhCli,
+    build_entries,
+    discover_changelog,
+    main,
+    parse_changelog,
+)
 from evolution_releases import build_release_index
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -476,14 +484,55 @@ class TestParseChangelog:
         """
         assert list(parse_changelog(_RST_CHANGELOG, "txt")) == ["1.2.0", "1.1.0"]
 
-    def test_bullets_outside_a_subsection_are_dropped(self) -> None:
-        """Bullets directly under a version heading, with no Added/Changed/Fixed subsection, are not entries.
+    def test_bullets_under_an_unrecognised_subsection_are_dropped(self) -> None:
+        """Bullets under a subsection that is none of Added, Changed or Fixed (Documentation, Internal) are not entries.
 
         Such a release then counts as uncovered and falls back to the heuristic classification.
         """
-        assert parse_changelog("## 1.0.0\n\n- Something\n", "md") == {
+        assert parse_changelog("## 1.0.0\n\n### Documentation\n\n- Fix a typo in the guide\n", "md") == {
             "1.0.0": {"added": [], "changed": [], "fixed": []}
         }
+
+    @pytest.mark.parametrize(
+        ("bullet", "bucket"),
+        [
+            pytest.param("Fix crash on empty input", "fixed", id="leading-fix"),
+            pytest.param("Fixes a race when two writers meet", "fixed", id="leading-fixes"),
+            pytest.param("The parser no longer drops the last row", "fixed", id="no-longer"),
+            pytest.param("Add a streaming reader", "added", id="leading-add"),
+            pytest.param("Support for Python 3.13", "added", id="leading-support"),
+            pytest.param("Rename the retry flag to `--attempts`", "changed", id="leading-rename"),
+            pytest.param("Router external calls are now opt-in", "changed", id="now"),
+            pytest.param("Use the shared resolver instead of a literal path", "changed", id="instead-of"),
+        ],
+    )
+    def test_flat_bullets_are_classified_by_leading_words(self, bullet: str, bucket: str) -> None:
+        """A bullet directly under a version heading, with no subsection, lands in the bucket its wording names.
+
+        Changelogs written as one flat list per release are common; without this every such release would fall back to
+        commit-prefix guesses although the maintainers described each change.
+        """
+        entries = parse_changelog(f"## 1.0.0\n\n- {bullet}\n", "md")["1.0.0"]
+        assert {name: texts for name, texts in entries.items() if texts} == {bucket: [bullet]}
+
+    def test_unclassifiable_flat_bullet_is_left_out_and_reported(self) -> None:
+        """A flat bullet with no verb or phrase that names its kind is left out, and the count is reported.
+
+        Guessing a kind for it would create feature columns or fixes the maintainers never described.
+        """
+        warnings: list[str] = []
+        parsed = parse_changelog("## 1.0.0\n\n- Fix a crash\n- Documentation overhaul\n", "md", warnings=warnings)
+        assert (parsed["1.0.0"]["fixed"], parsed["1.0.0"]["added"], warnings) == (
+            ["Fix a crash"],
+            [],
+            ["changelog: 2 bullet(s) outside Added/Changed/Fixed sections; 1 classified by leading words, 1 left out"],
+        )
+
+    def test_subsection_bullets_are_never_reclassified(self) -> None:
+        """A bullet under ``### Added`` stays added whatever its wording, and raises no flat-bullet warning."""
+        warnings: list[str] = []
+        parsed = parse_changelog("## 1.0.0\n\n### Added\n\n- Fix helper for retries\n", "md", warnings=warnings)
+        assert (parsed["1.0.0"]["added"], warnings) == (["Fix helper for retries"], [])
 
     def test_unknown_format_raises(self) -> None:
         """An unsupported format name raises ``ValueError`` naming the accepted formats.
@@ -570,14 +619,15 @@ class TestLinkageLadder:
     def test_every_rung(self, linked: _Linked) -> None:
         """Each entry is linked by the first rung that finds commits.
 
-        A cited SHA resolves directly; ``(#5)`` finds the squash commit and ``(#7)`` the merge commit (kept as the
-        merge, not its branch commit); an entry sharing most words with a commit subject is text-matched; the rest are
-        unlinked with no commits.
+        A cited SHA resolves directly; ``(#5)`` finds the squash commit and ``(#7)`` the merge commit together with its
+        branch commit (blame lands on the branch commit); an entry sharing most words with a commit subject is text-
+        matched; the rest are unlinked with no commits.
         """
+        branch = linked.repo.git("rev-parse", f"{linked.merge}^2").strip()
         assert _links(_linked_result(linked)) == {
             linked.sha_entry: ("sha", [linked.fixed]),
             _LINKED_ADDED[0]: ("pr", [linked.squash]),
-            _LINKED_ADDED[1]: ("pr", [linked.merge]),
+            _LINKED_ADDED[1]: ("pr", sorted([linked.merge, branch])),
             _LINKED_TEXT: ("text", [linked.text]),
             _LINKED_UNLINKED: ("unlinked", []),
         }
@@ -658,6 +708,168 @@ class TestLinkageLadder:
         assert result["warnings"] == []
 
 
+_RELEASE_NOTES = """## What's Changed
+* Fix parser crash on empty input by @dev in https://github.com/acme/widget/pull/4
+* Add CSV exporter by @dev in https://github.com/acme/widget/pull/5
+* Bump actions/checkout from 3 to 4 by @bot in https://github.com/acme/widget/pull/6
+
+## New Contributors
+* @dev made their first contribution in https://github.com/acme/widget/pull/4
+
+**Full Changelog**: https://github.com/acme/widget/compare/v1.0.0...v1.1.0
+"""
+
+
+class _ReleaseNotesGitHub:
+    """GitHub double that serves Release notes only: v1.1.0 has generated notes, v1.0.0 has none."""
+
+    def items(self, numbers: list[int]) -> dict[int, GhItem]:
+        """Know no issue or pull request."""
+        return {}
+
+    def commit_prs(self, shas: list[str]) -> dict[str, list[int]]:
+        """Associate no commit with a pull request."""
+        return {}
+
+    def release_bodies(self) -> dict[str, str]:
+        """Return the notes of release ``v1.1.0`` and an empty body for ``v1.0.0``."""
+        return {"v1.1.0": _RELEASE_NOTES, "v1.0.0": ""}
+
+
+class TestGitHubReleaseNotes:
+    """A release without a changelog section reads its entries from its GitHub Release notes."""
+
+    @pytest.fixture
+    def result(self, evo_repo: RepoBuilder) -> dict[str, Any]:
+        """Build two releases, the changelog covering only v1.0.0, and read entries with Release notes available."""
+        repo = evo_repo
+        repo.write("src/core.py", "x = 1\n")
+        repo.commit("feat: add core", day=1)
+        repo.tag("v1.0.0", day=1)
+        repo.write("src/csv_export.py", "def export():\n    return 1\n")
+        repo.commit("Add CSV exporter", day=2)
+        repo.tag("v1.1.0", day=3)
+        repo.write_changelog([ChangelogSection("1.0.0", day=1, added=["Core"])])
+        index = _index(repo, [("v1.0.0", "main", None), ("v1.1.0", "main", "1.0.0")])
+        return build_entries(repo.path, index, gh_available=True, github=_ReleaseNotesGitHub())
+
+    def test_notes_become_entries_of_the_release(self, result: dict[str, Any]) -> None:
+        """The generated list yields a fix and a feature for v1.1.0; the dependency bump and contributor list do not.
+
+        ``What's Changed`` mixes every kind of change, so each bullet is classified by its own leading words, and a
+        bullet that names no kind (the bump) is left out instead of guessed.
+        """
+        entries = {
+            (entry["kind"], entry["release"]): entry["text"].split(" by @")[0]
+            for entry in [*result["fixes"], *result["columns"]]
+            if entry["release"] == "1.1.0"
+        }
+        assert entries == {
+            ("fix", "1.1.0"): "Fix parser crash on empty input",
+            ("feature", "1.1.0"): "Add CSV exporter",
+        }
+
+    def test_entries_name_their_pull_requests_from_the_notes(self, result: dict[str, Any]) -> None:
+        """A pull request URL in a bullet is read as that bullet's reference, so the linkage ladder can use it."""
+        refs = {entry["text"].split(" by @")[0]: entry["refs"]["prs"] for entry in result["fixes"]}
+        assert refs["Fix parser crash on empty input"] == [4]
+
+    def test_use_is_reported(self, result: dict[str, Any]) -> None:
+        """The run says which releases were read from Release notes, so a reader knows the source."""
+        assert "1 release(s) without a changelog section read from GitHub Release notes: 1.1.0" in result["warnings"]
+
+    def test_release_with_a_changelog_section_keeps_it(self, result: dict[str, Any]) -> None:
+        """v1.0.0 has a changelog section, so its empty Release notes change nothing and no GitHub text replaces it."""
+        assert [(col["text"], col["release"]) for col in result["columns"] if col["release"] == "1.0.0"] == [
+            ("Core", "1.0.0")
+        ]
+
+    def test_without_github_the_release_stays_heuristic(self, evo_repo: RepoBuilder) -> None:
+        """With GitHub off the notes are never read: v1.1.0 is classified from its commit prefix, as before."""
+        repo = evo_repo
+        repo.write("src/core.py", "x = 1\n")
+        repo.commit("feat: add core", day=1)
+        repo.tag("v1.0.0", day=1)
+        repo.write("src/csv_export.py", "def export():\n    return 1\n")
+        repo.commit("feat: add CSV exporter", day=2)
+        repo.tag("v1.1.0", day=3)
+        repo.write_changelog([ChangelogSection("1.0.0", day=1, added=["Core"])])
+        index = _index(repo, [("v1.0.0", "main", None), ("v1.1.0", "main", "1.0.0")])
+        result = build_entries(repo.path, index, gh_available=False)
+        assert [col["source"] for col in result["columns"] if col["release"] == "1.1.0"] == ["heuristic"]
+
+
+class _RebaseGitHub:
+    """GitHub double for a rebase-merged PR #8: the merge commit is the last rebased commit, the rest map per commit."""
+
+    def __init__(self, rebased: list[str]) -> None:
+        """Remember the rebased commits, oldest first; the PR's own (pre-rebase) commits are not in the clone."""
+        self.rebased = rebased
+        self.asked: list[str] = []
+
+    def items(self, numbers: list[int]) -> dict[int, GhItem]:
+        """Return PR #8 with the last rebased commit as merge commit and two commits absent from the clone."""
+        pr = GhItem("pr", merge_commit=self.rebased[-1], commits=("a" * 40, "b" * 40))
+        return {number: pr for number in numbers if number == 8}
+
+    def commit_prs(self, shas: list[str]) -> dict[str, list[int]]:
+        """Report PR #8 for every rebased commit asked about and record the question."""
+        self.asked += shas
+        return {sha: [8] for sha in shas if sha in self.rebased}
+
+
+class TestRebaseMergedPullRequest:
+    """A rebase-merged PR leaves one commit per original commit, none naming the PR number."""
+
+    @pytest.fixture
+    def rebased(self, evo_repo: RepoBuilder) -> tuple[RepoBuilder, list[str]]:
+        """Build v1.0.0 and v1.1.0 with a two-commit PR landed linearly, plus an unrelated commit before it."""
+        repo = evo_repo
+        repo.write("src/core.py", "x = 1\n")
+        repo.commit("Initial import", day=1)
+        repo.tag("v1.0.0", day=1)
+        repo.write("src/misc.py", "y = 1\n")
+        repo.commit("Tidy misc module", day=2)
+        repo.write("src/parser.py", "def parse(text):\n    return text.split()\n")
+        first = repo.commit("Add parser", day=3)
+        repo.write("src/app.py", "from parser import parse\n")
+        second = repo.commit("Use parser in app", day=4)
+        repo.tag("v1.1.0", day=5)
+        repo.write_changelog([ChangelogSection("1.1.0", day=5, added=["Parser support (#8)"])])
+        return repo, [first, second]
+
+    def test_every_rebased_commit_joins_the_feature_column(self, rebased: tuple[RepoBuilder, list[str]]) -> None:
+        """The entry links to both rebased commits through the PR rung, not only to GitHub's merge commit.
+
+        Blame of a later fix lands on whichever rebased commit last touched the line. Linking only the last one leaves
+        fixes of the first one with no feature to repair.
+        """
+        repo, commits = rebased
+        index = _index(repo, [("v1.0.0", "main", None), ("v1.1.0", "main", "1.0.0")])
+        result = build_entries(repo.path, index, gh_available=True, github=_RebaseGitHub(commits))
+        column = result["columns"][0]
+        assert (column["link_method"], column["commits"]) == ("pr", sorted(commits))
+
+    def test_squash_merged_pr_is_not_looked_up_by_commit(self, evo_repo: RepoBuilder) -> None:
+        """A PR whose squash commit names it is linked locally, so GitHub is not asked about that commit.
+
+        A history of squash merges names every PR in its subjects; the per-commit lookup must cost it nothing. The first
+        release has no changelog section, so its own commit is still asked about for the heuristic classification.
+        """
+        repo = evo_repo
+        repo.write("src/core.py", "x = 1\n")
+        repo.commit("Initial import", day=1)
+        repo.tag("v1.0.0", day=1)
+        repo.write("src/parser.py", "def parse(text):\n    return text.split()\n")
+        squash = repo.commit("Add parser (#8)", day=2)
+        repo.tag("v1.1.0", day=3)
+        repo.write_changelog([ChangelogSection("1.1.0", day=3, added=["Parser support (#8)"])])
+        github = _RebaseGitHub([squash])
+        index = _index(repo, [("v1.0.0", "main", None), ("v1.1.0", "main", "1.0.0")])
+        result = build_entries(repo.path, index, gh_available=True, github=github)
+        assert (squash in github.asked, result["columns"][0]["commits"]) == (False, [squash])
+
+
 class TestHeuristicFallback:
     """Releases without a changelog section are classified from conventional-commit prefixes."""
 
@@ -700,6 +912,153 @@ class TestHeuristicFallback:
         assert capsys.readouterr().out.startswith("entries: 1 fixes, 2 columns, 0 aliases")
 
 
+class _LabelledGitHub:
+    """GitHub lookup double that reports fixed labels for pull requests 9 to 11."""
+
+    _LABELS: ClassVar[dict[int, tuple[str, ...]]] = {
+        9: ("enhancement",),
+        10: ("enhancement",),
+        11: ("enhancement", "refactor"),
+    }
+
+    def items(self, numbers: list[int]) -> dict[int, GhItem]:
+        """Return the labelled pull requests that were asked for."""
+        return {n: GhItem("pr", labels=self._LABELS[n]) for n in numbers if n in self._LABELS}
+
+    def commit_prs(self, shas: list[str]) -> dict[str, list[int]]:
+        """Report no extra associations: the PR numbers come from the commit subjects."""
+        return {}
+
+
+class TestGitHubRetry:
+    """A transient ``gh`` failure is retried before GitHub is given up for the whole run."""
+
+    @staticmethod
+    def _client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failures: list[str]) -> tuple[_GhCli, list[int]]:
+        """Return a client whose GraphQL call raises each message in ``failures`` first, then succeeds."""
+        import gh_batch_query as ghq
+
+        calls: list[int] = []
+        queue = list(failures)
+
+        def _run(*_args: object, **_kwargs: object) -> dict[str, object]:
+            """Fail with the next queued message, else report no items."""
+            calls.append(1)
+            if queue:
+                raise ghq.QueryError(queue.pop(0))
+            return {}
+
+        monkeypatch.setattr(ghq, "resolve_repo", lambda *_a, **_k: ("owner", "name"))
+        monkeypatch.setattr(ghq, "run_graphql", _run)
+        monkeypatch.setattr("evolution_changelog.time.sleep", lambda _seconds: None)
+        return _GhCli(tmp_path), calls
+
+    def test_transient_failure_is_retried(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Two network failures followed by a success return the result after three attempts.
+
+        The failures look like the ``HTTP 499`` and TLS timeout that cut real runs off from GitHub.
+        """
+        client, calls = self._client(monkeypatch, tmp_path, ["gh api graphql exited 1: HTTP 499"] * 2)
+        assert client.items([5]) == {}
+        assert len(calls) == 3
+
+    def test_persistent_failure_gives_up_after_three_attempts(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A failure that never clears raises ``GitHubUnavailable`` after the third attempt, not an endless loop."""
+        client, calls = self._client(monkeypatch, tmp_path, ["gh api graphql exited 1: TLS handshake timeout"] * 5)
+        with pytest.raises(GitHubUnavailable):
+            client.items([5])
+        assert len(calls) == 3
+
+    def test_graphql_error_is_not_retried(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """An error the API itself returned is final: repeating the same query cannot change the answer."""
+        client, calls = self._client(monkeypatch, tmp_path, ['GraphQL failed (exit 1): [{"type": "FORBIDDEN"}]'])
+        with pytest.raises(GitHubUnavailable):
+            client.items([5])
+        assert len(calls) == 1
+
+
+class TestRefactorColumns:
+    """A pull request labelled as a feature is not a feature column when its title or labels say refactor."""
+
+    @pytest.fixture
+    def kinds(self, evo_repo: RepoBuilder) -> dict[str, str]:
+        """Return ``{title: kind}`` of the columns built for three unprefixed enhancement-labelled commits."""
+        repo = evo_repo
+        repo.write("src/app.py", "def run():\n    return 1\n")
+        repo.commit("Initial skeleton", day=1)
+        repo.tag("v1.0.0", day=1)
+        repo.write("src/metrics.py", "def emit():\n    return []\n")
+        repo.commit("Add metrics endpoint (#9)", day=2)
+        repo.write("src/log.py", "import logging\nlog = logging.getLogger(__name__)\n")
+        repo.commit("Replace print with logger calls (#10)", day=3)
+        repo.write("src/util.py", "def helper():\n    return 2\n")
+        repo.commit("Tidy helpers (#11)", day=4)
+        repo.tag("v1.1.0", day=5)
+        repo.write_changelog([ChangelogSection("1.0.0", day=1, added=["Initial skeleton"])])
+        index = _index(repo, [("v1.0.0", "main", None), ("v1.1.0", "main", "1.0.0")])
+        result = build_entries(repo.path, index, gh_available=True, github=_LabelledGitHub())
+        return {entry["text"]: entry["kind"] for entry in result["columns"] if entry["source"] == "heuristic"}
+
+    def test_only_the_real_feature_stays_a_column(self, kinds: dict[str, str]) -> None:
+        """The metrics commit stays a feature; the print-to-logger commit and the refactor-labelled one are dropped.
+
+        All three PRs carry the ``enhancement`` label. The title of one reads as a refactor and the label of the other
+        says so; neither adds a capability, so neither may become a column that fixes could be linked to.
+        """
+        assert kinds == {"Add metrics endpoint (#9)": "feature"}
+
+
+class TestMergedBranchCommits:
+    """A merge-commit pull request keeps its branch commits in the feature column, so blame on them reaches it."""
+
+    @pytest.fixture
+    def merged(self, evo_repo: RepoBuilder) -> tuple[RepoBuilder, dict, str, list[str]]:
+        """Build v1.1.0 holding one pull request merged with a merge commit from a two-commit branch."""
+        repo = evo_repo
+        repo.write("src/app.py", "def run():\n    return 1\n")
+        repo.commit("Initial skeleton", day=1)
+        repo.tag("v1.0.0", day=1)
+        repo.branch("feat-cache")
+        repo.checkout("feat-cache")
+        repo.write("src/cache.py", "def get():\n    return None\n")
+        first = repo.commit("wip cache", day=2)
+        repo.write("src/cache.py", "def get():\n    return {}\n")
+        second = repo.commit("ready for final tests", day=3)
+        repo.checkout("main")
+        merge = repo.merge("feat-cache", "Merge pull request #9 from fork/feat-cache\n\nfeat: add cache layer", day=4)
+        repo.tag("v1.1.0", day=5)
+        repo.write_changelog([ChangelogSection("1.0.0", day=1, added=["Initial skeleton"])])
+        index = _index(repo, [("v1.0.0", "main", None), ("v1.1.0", "main", "1.0.0")])
+        return repo, index, merge, [first, second]
+
+    def test_column_holds_the_merge_and_its_branch_commits(
+        self, merged: tuple[RepoBuilder, dict, str, list[str]]
+    ) -> None:
+        """The feature column lists the merge commit and both branch commits; its files stay those of the merge diff.
+
+        Blame on the fix of such a feature lands on a branch commit, which a merge-only column would not contain.
+        """
+        repo, index, merge, branch = merged
+        result = build_entries(repo.path, index, gh_available=False)
+        column = next(entry for entry in result["columns"] if entry["source"] == "heuristic")
+        assert (sorted(column["commits"]), column["files"]) == (sorted([merge, *branch]), ["src/cache.py"])
+
+    def test_long_side_branch_is_not_added(
+        self, merged: tuple[RepoBuilder, dict, str, list[str]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A side branch longer than the limit is a branch merge, so the column keeps only the merge commit.
+
+        Without the limit a release-branch merge would hand every commit it carries to one feature.
+        """
+        monkeypatch.setattr("evolution_changelog._MERGED_LIMIT", 1)
+        repo, index, merge, _ = merged
+        result = build_entries(repo.path, index, gh_available=False)
+        column = next(entry for entry in result["columns"] if entry["source"] == "heuristic")
+        assert column["commits"] == [merge]
+
+
 class TestBackportAliases:
     """Entries of one kind with equal patch-id sets in different releases fold into the earliest release's entry."""
 
@@ -719,6 +1078,62 @@ class TestBackportAliases:
         )
         assert columns[0]["commits"] == sorted([backport.main_sha, backport.cherry_sha])
         assert backport.result["aliases"] == {alias: canonical}
+
+
+class TestCoveredHeuristicColumns:
+    """A heuristic column whose commit a changelog entry of the same kind also links is one column, not two."""
+
+    @staticmethod
+    def _scenario(repo: RepoBuilder, second_entry: str | None = None) -> tuple[dict, str]:
+        """Ship ``feat: add cache (#9)`` plus a follow-up citing PR 9 in uncovered v1.1.0; v1.2.0's changelog cites it.
+
+        The changelog entry links both commits, the heuristic column only the first, so their patch-id sets differ.
+        """
+        repo.write("src/app.py", "def run():\n    return 1\n")
+        repo.commit("Initial skeleton", day=1)
+        repo.tag("v1.0.0", day=1)
+        repo.write("src/cache.py", "def get():\n    return None\n")
+        sha = repo.commit("feat: add cache (#9)", day=2)
+        repo.write("src/cache.py", "def get():\n    return {}\n")
+        repo.commit("Tweak cache defaults (#9)", day=2)
+        repo.tag("v1.1.0", day=3)
+        repo.write("src/other.py", "x = 1\n")
+        repo.commit("chore: tidy", day=4)
+        repo.tag("v1.2.0", day=5)
+        added = ["Added a cache layer (#9)", *([second_entry] if second_entry else [])]
+        repo.write_changelog(
+            [
+                ChangelogSection("1.0.0", day=1, added=["Initial skeleton"]),
+                ChangelogSection("1.2.0", day=5, added=added),
+            ]
+        )
+        releases = [("v1.0.0", "main", None), ("v1.1.0", "main", "1.0.0"), ("v1.2.0", "main", "1.1.0")]
+        return build_entries(repo.path, _index(repo, releases), gh_available=False), sha
+
+    def test_changelog_entry_becomes_alias_of_earlier_commit_column(self, evo_repo: RepoBuilder) -> None:
+        """The v1.1.0 commit column stays canonical and the v1.2.0 entry of the same work aliases to it.
+
+        Both describe one feature shipped once; two columns would score the same fixes against each and leave one of
+        them a false link whichever the labeller chose. The column keeps the earlier release and lists v1.2.0 as
+        secondary.
+        """
+        result, sha = self._scenario(evo_repo)
+        columns = [column for column in result["columns"] if column["kind"] == "feature" and sha in column["commits"]]
+        entry = entry_ids("1.2.0", ["Added a cache layer (#9)"])[0]
+        assert [(c["entry_id"], c["release"], c["aliases"], c["secondary_releases"]) for c in columns] == [
+            (commit_id(_patch_id(evo_repo, sha)), "1.1.0", [entry], ["1.2.0"])
+        ]
+        assert result["aliases"][entry] == columns[0]["entry_id"]
+
+    def test_two_entries_citing_one_commit_stay_separate(self, evo_repo: RepoBuilder) -> None:
+        """When two changelog entries link the same commit the fold is ambiguous, so nothing is folded.
+
+        Picking either entry would be a guess; the heuristic column and both entries stay as they were.
+        """
+        result, sha = self._scenario(evo_repo, second_entry="Cache invalidation hooks (#9)")
+        columns = [column for column in result["columns"] if sha in column["commits"]]
+        assert len(columns) == 3
+        assert not result["aliases"]
 
 
 class TestTextRefs:

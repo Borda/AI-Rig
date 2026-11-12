@@ -12,7 +12,7 @@
    - Approach: ordered steps with clear checkpoints
    - Write to `.plans/active/plan-<slug>-$(date -u +%Y-%m-%dT%H-%M-%SZ).md` where slug = first 4 words of task/goal
 3. Build and share a short plan summary, including the path to the complete plan. Reuse the user's existing authorization to proceed with the calling skill; do not ask for routine plan approval. If the user requested plan-only, wait, or explicit plan approval, honor that instruction. Ask only for a genuinely missing protected decision or authority, preserving architecture, security, data and other applicable permission boundaries.
-4. Set `PLAN_FILE=<path>`, persist it (`echo "$PLAN_FILE" > "${TMPDIR:-/tmp}/dev-plan-file-${CSID}"`) so compaction-contract boundaries resolve it, then record its hash (`python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/plan_hash.py" record "$PLAN_FILE"  # timeout: 5000`) for the Final Report drift check; continue to the calling skill's plan challenge.
+4. Set `PLAN_FILE=<path>`, persist it (`echo "$PLAN_FILE" > "${TMPDIR:-/tmp}/dev-plan-file-${CSID}"`) so compaction-contract boundaries resolve it, then record its hash (`python "${CLAUDE_PLUGIN_ROOT}/bin/plan_hash.py" record "$PLAN_FILE"  # timeout: 5000`) for the Final Report drift check; continue to the calling skill's plan challenge.
 
 ### Skill contexts (substitute when calling this protocol)
 

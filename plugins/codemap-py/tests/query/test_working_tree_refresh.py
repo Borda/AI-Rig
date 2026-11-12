@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-from codemap_py import rwgate
+from codemap_py import index_paths, rwgate
 from codemap_py.scanner.discovery import fingerprint_file_hashes
 
 # Same file kinds the index writer records, so a legacy blob map can be rebuilt from git.
@@ -242,7 +242,8 @@ def test_nested_worktree_bootstraps_its_own_index(working_tree, scan_query: Path
     own_index = nested / ".cache" / "codemap" / "review.json"
     assert result["imported_by"] == ["caller"]
     assert result["index"]["root_mismatch"] is False
-    assert _load(own_index)["scan_root"] == str(nested.resolve())
+    assert _load(own_index)["scan_root"] == "."
+    assert _load(own_index)["scan_root_key"] == index_paths.root_key(nested.resolve())
     assert parent_index.read_bytes() == before
 
 

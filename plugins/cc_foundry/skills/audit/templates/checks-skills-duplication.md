@@ -60,6 +60,8 @@ done
 printf "✓: Check 33b Phase 1 complete\n"  # timeout: 5000
 ```
 
+Before either Check 33 spawn, reload the run directory from `${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir` using `IFS= read -r`, abort if absent, and substitute that computed value for every `$RUN_DIR` in the prompt’s output paths and returned `file` field; the child cannot expand its parent’s variables.
+
 **Phase 2 — Curator NxN delegation**: run when Phase 1 finds any known pattern in ≥3 files OR any language marker appears in ≥5 .md files. Spawn **foundry:curator** with all flagged files:
 
 > "Perform Check 33b cross-file code block analysis on: \<list all .md files that contain flagged language markers from Phase 1>. For each file, extract every fenced code block (any language) ≥ 5 lines. Skip: blocks marked `# audit-skip: resilience-replication` (first line) or prose annotation matching 'intentional resilience replication'.
@@ -91,7 +93,7 @@ Severity: **medium** for actionable extraction candidates (mode-dispatch, \_shar
 
 Auto-fix guidance:
 
-- **Bin/ script**: any self-contained block (stdout output, no function defs, no shell state mutation) → `plugins/<plugin>/bin/<name>.py`; callers: `python "${CLAUDE_PLUGIN_ROOT:-plugins/<plugin>}/bin/<name>.py"`. Python only — never `.sh`, which does not execute on native Windows (`plugins/CLAUDE.md` §Installability). Prefer the bare invocation over a `$(...)` capture: the bare form is covered by each plugin's `Bash(python:*)` allow entry, while a capture needs an exact-text entry in that plugin's `blueprint-manifest.json`.
+- **Bin/ script**: any self-contained block (stdout output, no function defs, no shell state mutation) → `plugins/<plugin>/bin/<name>.py`; callers add the consuming plugin's guarded resolver prologue once per executable block, then use `python "$PLUGIN_ROOT/bin/<name>.py"`. Loaders render the prologue's plain bootstrap token before delivering fragments. Python only — never `.sh`, which does not execute on native Windows (`plugins/CLAUDE.md` §Installability). Prefer the bare helper invocation over an additional `$(...)` capture: the bare form is covered by each plugin's `Bash(python:*)` allow entry, while captures, including the guarded resolver prologue, need an exact-text entry in that plugin's `blueprint-manifest.json`.
 - **Inline function**: for within-skill bash duplication where block uses caller shell state → define bash function once in pre-flight, call at each site
 - **Never extract**: blocks explicitly marked as resilience replications (unsupported-flag-check, health-monitoring constants)
 

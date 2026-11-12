@@ -1,0 +1,459 @@
+{
+  "2897": {
+    "number": 2897,
+    "title": "[Feature]: Joint angles and JointAngleAnnotator for KeyPoints",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar feature request.\n\nRelated history: #452 proposed angle calculations alongside the original keypoint API, and a later comment there asked for helpers such as \"calculate the angle between two points\"; #1658 added conversion-based tracking; #1367 redirected tracker development to `trackers`; and #2290/#2291 added and reverted `Detections.keypoints`. This request picks up the remaining angle helper and its annotator.\n\n### Feature Description\n\n`sv.KeyPoints` covers loading, filtering and drawing poses, but measuring a joint still needs custom code. I'd like to add two model-agnostic pieces that follow the API design principles (annotators only render; `visible` is container state):\n\n- **`sv.joint_angles(key_points, angles)`**: a stateless function that returns the interior angle at a key point for each named triplet, for example hip–knee–ankle, as an `(n, k)` array in degrees. Each triplet is a small `JointAngle(name, a, b, c)` dataclass in `supervision.key_points.angles`, where `b` is the vertex.\n- **`sv.JointAngleAnnotator`**: draws the arc and the value at each joint, built on `BaseKeyPointAnnotator` with the usual image-type conversion, and no confidence threshold of its own.\n\nUnless you'd prefer otherwise, I'll open a PR with these defaults:\n\n1. Indices are zero-based positions in `KeyPoints.xy`, documented next to the dataclass as distinct from the one-based `Skeleton` edge convention.\n2. The result is NaN, never an invented value, when any of the three points is missing, non-finite, at `[0, 0]`, hidden by `visible`, or when a segment has zero length. The annotator skips NaN joints.\n3. Three-coordinate key points are accepted; angles use `xy[..., :2]`, and the docstring states that these are 2D image-plane angles, which differ from anatomical 3D angles under foreshortening (for example a forearm pointing at the camera).\n4. Only `sv.joint_angles` and `sv.JointAngleAnnotator` are added to the top-level namespace; `JointAngle` is imported from `supervision.key_points.angles`. Happy to export it at top level too if you prefer.\n5. Tests use exact expected angles (90°, 180°, acute, degenerate segments) and each NaN rule, plus 3D input and empty `KeyPoints`.\n\nThe one question I'd like your view on before the PR: is this a fit for the library, or would you rather see it as a cookbook?\n\nDirect `KeyPoints` export to CSV/JSON is a separate idea; I'll raise it in its own issue rather than bundle it here.\n\n### Prototype\n\nAn external prototype implements the angle helper and the annotator with unit tests on synthetic key points of known angles. I also ran it on running, road-race and skiing clips with RF-DETR keypoint preview and ViTPose: in ten rule-selected frames, about 13/17 RF-DETR and 12/14 ViTPose knee readings were within ±15° of rough visual estimates. That was a qualitative check without ground-truth key points, not an accuracy benchmark.\n\n### Example Usa",
+    "comments": []
+  },
+  "2908": {
+    "number": 2908,
+    "title": "[Bug]: KeyPoints.from_yolo_nas drops each pose's score, so with_nms raises on YOLO-NAS output",
+    "state": "open",
+    "body": "### Search before asking\n- [x] I have searched the issues and discussions and found no similar bug report.\n\n### Bug\n\n**What's the bug?**\n`sv.KeyPoints.from_yolo_nas` never reads `prediction.scores` from a super-gradients `PoseEstimationPrediction`, so `detection_confidence` is always `None` on YOLO-NAS pose output. #2633 fixed this for `from_ultralytics`, `from_inference` and `from_detectron2`, and listed `from_yolo_nas` as out of scope.\n\n**Expected behavior:**\n`detection_confidence` holds the per-pose scores. `KeyPoints.with_nms()` works, and `KeyPoints.as_detections().confidence` is the model's score.\n\n**Actual behavior:**\n`detection_confidence` is `None`, `with_nms()` raises, and `as_detections()` falls back to the mean key point confidence.\n\n**Error/Traceback (if any):**\n```python\nValueError: KeyPoints detection_confidence must be given for NMS to be executed.\n```\n\n### Environment\n- Supervision: 0.32.0.dev (develop @ 3be9e0e3)\n- Python: 3.12.11\n- OS: macOS 26.6.2 (arm64)\n\n### Minimal Reproducible Example\n```python\nfrom types import SimpleNamespace\n\nimport numpy as np\nimport supervision as sv\n\n# same attributes as super_gradients PoseEstimationPrediction\nprediction = SimpleNamespace(\n    poses=np.array(\n        [[[10, 10, 0.9], [20, 20, 0.8]], [[11, 11, 0.9], [21, 21, 0.8]]], np.float32\n    ),\n    scores=np.array([0.95, 0.6], np.float32),\n)\nkey_points = sv.KeyPoints.from_yolo_nas(\n    SimpleNamespace(prediction=prediction, class_names=None)\n)\nprint(key_points.detection_confidence)  # None\nprint(key_points.as_detections().confidence)  # [0.85 0.85]\nkey_points.with_nms(class_agnostic=True)  # ValueError\n```\n\n### Are you willing to submit a PR?\n- [x] Yes I'd like to help by submitting a PR!\n",
+    "comments": []
+  },
+  "2519": {
+    "number": 2519,
+    "title": "[Feature]: Pose augmentation cookbook with left/right keypoint remapping",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I searched the Issues and Discussions and found no similar request.\n\n### Feature Description\n\nWould you be open to a separate, self-contained cookbook showing how to augment `sv.KeyPoints` while preserving left/right landmark semantics?\n\nIn pose targets, each position in `KeyPoints.xy` has a fixed meaning: for example, one row is `left_eye` and another is `right_eye`. A horizontal flip must mirror the coordinates and exchange the corresponding left/right rows. Mirroring only the coordinates leaves the target order semantically incorrect.\n\nAlbumentationsX supports transform-aware keypoint row remapping through `KeypointParams.label_mapping`. The proposed cookbook would:\n\n- generate a small deterministic image and pose, so it needs no model or dataset download;\n- represent the original pose as `sv.KeyPoints`;\n- apply `HorizontalFlip` with explicit mappings for pairs such as left/right eyes and shoulders;\n- set `remove_invisible=False` so the fixed number of pose landmarks is preserved;\n- rebuild `sv.KeyPoints` from the transformed coordinates;\n- render the original and transformed poses with Supervision annotators; and\n- verify that each left/right pair retains its canonical row meaning after the flip.\n\nThe existing dataset-processing guide and its Albumentations bounding-box section would remain unchanged. This would be a separate pose-specific cookbook, or a short keypoint guide if that fits the documentation structure better.\n\n### Example Usage\n\nThe core transformation would look like this:\n\n```python\nimport albumentations as A\nimport numpy as np\nimport supervision as sv\n\nkeypoint_labels = [\n    \"left_eye\",\n    \"right_eye\",\n    \"left_shoulder\",\n    \"right_shoulder\",\n]\n\naugmentation = A.Compose(\n    [A.HorizontalFlip(p=1.0)],\n    keypoint_params=A.KeypointParams(\n        coord_format=\"xy\",\n        label_fields=[\"keypoint_labels\"],\n        remove_invisible=False,\n        label_mapping={\n            \"HorizontalFlip\": {\n                \"keypoint_labels\": {\n                    \"left_eye\": \"right_eye\",\n                    \"right_eye\": \"left_eye\",\n                    \"left_shoulder\": \"right_shoulder\",\n                    \"right_shoulder\": \"left_shoulder\",\n                },\n            },\n        },\n    ),\n)\n\nresult = augmentation(\n    image=image,\n    keypoints=key_points.xy[0],\n    keypoint_labels=keypoint_labels,\n)\n\naugmented_key_points = sv.KeyPoints(\n    xy=np.asarray(result[\"keypoints\"], dtype=np.float32)[None, ...],\n)\n```\n\nAlbumentationsX reorders the complete keypoint rows for the mapped pairs, so the reconstructed `sv.KeyPoints` object keeps the fixed pose-target order expected by downstream code.\n\n### Dependency scope\n\nAlbumentationsX would be a cookbook-only dependency and would not be added to Supervision's runtime dependencies. The current public package is AGPL-3.0-only. Importing its `albumentations` module requires an installed PyTorch runtime; users select and install the CPU, CUDA, or MPS build appropri",
+    "comments": [
+      {
+        "author": "user-4",
+        "body": "Hi, I'd love to claim this issue and submit a fix for it. Could you please assign it to me?"
+      }
+    ]
+  },
+  "1362": {
+    "number": 1362,
+    "title": "sv changes bbox shape for object detection with YOLOv8??",
+    "state": "open",
+    "body": "### Search before asking\n\n- [X] I have searched the Supervision [issues](https://github.com/roboflow/supervision/issues) and found no similar feature requests.\n\n\n### Question\n\nI've been using supervision, its tracker, annotators, ... Nice work!! However I've noticed that, doing object detection with yolov8, bboxe shape from ultralytics are changed by supervision even though it refers to the same detection. The following screenshot shows a detected object provided by YOLO, ultralytics.Result (before doing `supervision_tracker.update(results[0])` and after parsing it to `supervision_tracker`.\r\n\r\n![Screenshot from 2024-07-15 12-16-53](https://github.com/user-attachments/assets/1acbed42-6ed1-4184-9de2-7a2059912bb0)\r\nThe bboxes are diferent. I expect they shouldn't...\r\n\r\nCan this bbox shape change be removed? I would like to keep original bbox shape.\r\n\r\nThanks!!\r\n\r\n\n\n### Additional\n\n_No response_",
+    "comments": [
+      {
+        "author": "user-6",
+        "body": "Hi @user-5 👋 \r\n\r\nCould you share a short snippet of the code, with the print statements?\r\n\r\nAlso, to clarify, which of these are you measuring the difference between?\r\n1. ultralytics result (`result.boxes.xyxy`)\r\n2. Detections, as created by `from_ultralytics`\r\n3. Detections, as updated by `tracker.update_with_detections`"
+      },
+      {
+        "author": "user-5",
+        "body": "Here is the code. It just open webcam with cv2 and runs callback() parsing last frame, which infers and tracks:\r\n\r\n```python\r\nimport numpy as np\r\nimport supervision as sv\r\nfrom ultralytics import YOLO\r\nimport torch\r\n\r\nmodel = YOLO(\"yolov8n.pt\")\r\ntracker = sv.ByteTrack()\r\nbox_annotator = sv.BoundingBoxAnnotator()\r\nlabel_annotator = sv.LabelAnnotator()\r\n\r\ndef callback(frame: np.ndarray, _: int) -> np.ndarray:\r\n    results = model(frame)[0]\r\n    print('YOLO bbox: ', results.boxes.cpu().xyxy[0] if len(results.boxes.cpu().xyxy)>0 else [])\r\n    detections = sv.Detections.from_ultralytics(results)\r\n    detections = tracker.update_with_detections(detections)\r\n    print('bbox from tracker sv: ', torch.tensor(tracker.tracked_tracks[0].tlbr).cpu())\r\n    print('\\n \\n ')\r\n    labels = [\r\n        f\"#{tracker_id} {results.names[class_id]}\"\r\n        for class_id, tracker_id\r\n        in zip(detections.class_id, detections.tracker_id)\r\n    ]\r\n\r\n    annotated_frame = box_annotator.annotate(\r\n        fram"
+      },
+      {
+        "author": "user-6",
+        "body": "Curious. Thanks for letting us know - we'll test it."
+      },
+      {
+        "author": "user-7",
+        "body": "@user-5,\r\nThis is interesting, what version of supervision are you using? I seem to remember this was an issue we fixed a few months ago, but it may not be working correctly."
+      },
+      {
+        "author": "user-5",
+        "body": "```\r\n$ pip show supervision\r\nName: supervision\r\nVersion: 0.21.0\r\nSummary: A set of easy-to-use utils that will come in handy in any Computer Vision project\r\nHome-page: https://github.com/roboflow/supervision\r\nAuthor: Piotr Skalski\r\nAuthor-email: piotr.skalski92@gmail.com\r\nLicense: MIT\r\nLocation: /home/faraujo/anaconda3/lib/python3.9/site-packages\r\nRequires: defusedxml, matplotlib, numpy, opencv-python-headless, pillow, pyyaml, scipy\r\nRequired-by: \r\n\r\n```"
+      },
+      {
+        "author": "user-7",
+        "body": "Hmm, the latest release is 0.22.0, please try the latest one and see if it helps. In the meantime I will test your code."
+      },
+      {
+        "author": "user-7",
+        "body": "Hi @user-5,\r\n\r\nI think I know what your problem is. It looks like you are printing the bounding box stored in the tracked object in this line \r\n\r\n```python\r\nprint('bbox from tracker sv: ', torch.tensor(tracker.tracked_tracks[0].tlbr).cpu())\r\n```\r\n\r\nThis prints the internal bounding box that the tracker is using and which is associated with location and size velocities within the tracker and may be different than the actual bounding box from the most recent frame. If you want the precise bounding box from detector that is associated with that track, you will want to get the bounding box from the `Detections` object returned by `tracker.update_with_detections()`. This object contains the original bounding boxes from the detector associated with a tracker id.\r\nSo if you wanted to print those bounding boxes, you would change the line to be\r\n\r\n```python\r\nprint('bbox from tracker sv: ', detections.xyxy[0])\r\n```"
+      },
+      {
+        "author": "user-6",
+        "body": "I just wanted to take some time to say thanks, @user-7. The tracker issues have been plaguing us for a while, and we've not had much time to look at it. We really appreciate you helping out!"
+      },
+      {
+        "author": "user-5",
+        "body": "Okey! Thanks @user-7! I also take this opportunity to ask you about the detection and track association. \r\n\r\nMy point is, I start with ultralytics Result object which contains detections. I parse them to `detections = sv.Detections.from_ultralytics(results)` and then `detections = tracker.update_with_detections(detections)`. There are some atributes that ultralytics Results can have like keypoints and segmentation. I would like to associate those yolo detections with the sv tracks in order to give them an id_tracking. That the reason I was comparing bboxes between yolo detections and supervision detections. The association is not a 1to1 because, for example, not always the number of yolo detections is the same of sv ones.\r\n\r\nHow can this association be done?\r\n\r\nThanks again!"
+      },
+      {
+        "author": "user-7",
+        "body": "If you use the detections returned from `tracker.update_with_detections(detections)` and the `Detections` object has segmentation masks, then the segmentation masks from the model will be retained and have a tracker_id assigned to them.\r\n\r\nUnfortunately, the tracker does not support Keypoints right now. From what you are describing, it sounds like you would want to use a yolo-pose model which returns bboxes and keypoints, and you would want to track the objects. This may be something we add, but for now I have a somewhat hacky idea of how you may be able to do this:\r\n\r\n```\r\nresults = model(frame, imgsz = 1280,verbose=False)[0]\r\npre_track_detections = sv.Detections.from_ultralytics(results)\r\nkeypoints = sv.KeyPoints.from_ultralytics(results)\r\npost_track_detections = byte_tracker.update_with_detections(pre_track_detections)\r\n\r\npre_track_bounding_boxes = pre_track_detections.xyxy\r\npost_track_bounding_boxes = post_track_detections.xyxy\r\n\r\nious = sv.tracker.byte_tracker.matching.box_iou_bat"
+      }
+    ]
+  },
+  "1438": {
+    "number": 1438,
+    "title": "[KeypointsDataset] - create a new dataset format to load keypoints",
+    "state": "open",
+    "body": "### Description\r\n\r\nSupervision can currently load object detection, instance segmentation, and classification datasets. Let's add the ability to handle keypoint datasets. The sv.KeypointDataset should offer the same functionalities as [sv.DetectionDataset](https://supervision.roboflow.com/latest/datasets/core/) and [sv.ClassificationDataset](https://supervision.roboflow.com/latest/datasets/core/#supervision.dataset.core.ClassificationDataset), including `merge`, `split`, `__getitem__`, `__iter__`, `from_yolo`, and `as_yolo`.\r\n\r\n### Additional\r\n\r\n- Note: Please share a Google Colab with minimal code to test the new feature. We know it's additional work, but it will speed up the review process. The reviewer must test each change. Setting up a local environment to do this is time-consuming. Please ensure that Google Colab can be accessed without any issues (make it public). Thank you! 🙏🏻 ",
+    "comments": [
+      {
+        "author": "user-8",
+        "body": "Hi @maintainer-1 👋 \r\n\r\nI was analyzing the issue and understood that KeypointsDataset will be similar to DetectionDataset, with the difference being the type of annotations.\r\n\r\n```\r\nclasses: List[str],\r\nimages: Union[List[str], Dict[str, np.ndarray]],\r\nannotations: Dict[str, KeyPoints]\r\n```\r\n\r\nIf this is a correct understanding then I will like to work on this issue.\r\n"
+      },
+      {
+        "author": "user-6",
+        "body": "Let's only implement the new, lazy-loaded, non-deprecated API, with `images: List[str]`. This will save work in the future."
+      },
+      {
+        "author": "user-6",
+        "body": "@user-8, I also made this template, which should help with starting your colab: [Colab Template](https://colab.research.google.com/drive/1rin7WrS-UvVIe-_Gfxmu-yVslGphOq89?usp=sharing).\r\nFeel free to use as much or as little of it as you wish 😉 \r\n"
+      },
+      {
+        "author": "user-8",
+        "body": "Hi @user-6  👋\r\n\r\nI also noticed the deprecated warning in the Datasets classes, and the clarification around `images: List[str]` is helpful. \r\n\r\nThank you for sharing the Colab template 😎 . It will be helpful, and I will suggest adding some similar Colab templates to the contribution guide."
+      },
+      {
+        "author": "user-9",
+        "body": "@user-8 Did you happen to take this up? I was thinking of reviewing this to evaluate whether it is something I can take up to attempt."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-9 👋🏻 if you are up for the task I'm happy to assign it to you ;)"
+      },
+      {
+        "author": "user-8",
+        "body": "Hi @maintainer-1 and @user-9  👋🏻\n\n@maintainer-1 There is a PR pending for review for this issue: https://github.com/roboflow/supervision/pull/1477"
+      }
+    ]
+  },
+  "2686": {
+    "number": 2686,
+    "title": "[Feature]: COCO keypoint mAP (OKS) for `sv.KeyPoints`",
+    "state": "closed",
+    "body": "### Search before asking\n- [x] I have searched the issues and discussions and found no similar feature request.\n\n### Feature Description\n\n`sv.metrics` scores boxes, masks and oriented boxes, but as far as I can tell there is no metric for pose estimation yet. Evaluating a pose model on `sv.KeyPoints` currently means converting to COCO JSON and running `pycocotools`.\n\n`pycocotools` remains the reference, and this would not try to replace it. The idea is to give supervision users the same numbers without the round trip:\n\n- **No conversion.** `pycocotools` needs COCO JSON with image ids, annotation ids, categories and flattened `[x, y, v, ...]` arrays. With a metric on `sv.KeyPoints`, `metric.update(predictions, targets)` is enough.\n- **Any connector.** Results from Ultralytics, MediaPipe or Inference already arrive as `sv.KeyPoints`, so the evaluation code stays the same across models (target areas and boxes still come from the labels).\n- **Custom skeletons.** Non-human keypoints (animals, objects) only need a `sigmas=` argument instead of editing evaluator parameters.\n- **Consistent results.** The result object would behave like `MeanAveragePrecisionResult`, so `plot()`, `to_pandas()` and model comparison work the same way.\n\nI'd like to propose adding `sv.metrics.KeypointMeanAveragePrecision`, the COCO keypoint mAP. It would reuse the existing `COCOEvaluator` and replace only the IoU step with Object Keypoint Similarity (OKS), so matching, accumulation and 101-point interpolation stay shared with `MeanAveragePrecision`. It also adds an OKS helper and the COCO sigmas, kept private for now.\n\nOne change touches existing code: the accumulator reads the largest `max_dets` instead of the literal `100`, since COCO keypoints use `maxDets=20`. Box results stay identical with the default settings.\n\nI already have a working implementation. It ports `pycocotools`' `computeOks` and keypoint parameters (`maxDets=20`, medium/large areas, COCO sigmas) onto the existing `COCOEvaluator`, including ignore regions and crowd handling. Compared with `COCOeval(..., \"keypoints\")`:\n\n- 200 COCO val2017 images with `yolo11n-pose` predictions, crowd annotations included (853 targets, 19 crowd, 267 without visible keypoints): all five summary values (AP, AP50, AP75, APm, APl) within 4e-9.\n- Synthetic data (60 seeds, multiple classes, 10% crowd, invisible keypoints, more than 20 predictions per image, a 5-point skeleton with custom sigmas): within about 1e-7.\n\nTo match COCO, targets need `data[\"iscrowd\"]` and their box in `data[\"xyxy\"]` (used for targets without visible keypoints, crowd ones included). Without boxes, targets with no visible keypoints are skipped and predictions on them count as false positives, so scores can differ from `pycocotools`.\n\n### Example Usage\n\n```python\nimport supervision as sv\nfrom supervision.metrics import KeypointMeanAveragePrecision\n\nmetric = KeypointMeanAveragePrecision()  # COCO sigmas for 17-point skeletons\nfor predictions, targets in zip(pr",
+    "comments": [
+      {
+        "author": "user-10",
+        "body": "I've opened #2687 with the implementation, using the defaults proposed above (only the metric public, one PR, the `area` / `xyxy` / `iscrowd` keys, and the `pycocotools` comparison in the description). I'm happy to change any of these based on your preference. Thank you!\n"
+      }
+    ]
+  },
+  "1838": {
+    "number": 1838,
+    "title": "line_zone does not update in_count and out_count?",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the Supervision [issues](https://github.com/roboflow/supervision/issues) and found no similar feature requests.\n\n\n### Question\n\nI follow the example  [https://supervision.roboflow.com/latest/notebooks/count-objects-crossing-the-line/](https://supervision.roboflow.com/latest/notebooks/count-objects-crossing-the-line/) to  want to count number of car. My version is `0.24.0`\nHere is my code.\n\n```python\nfrom pathlib import Path\nimport cv2\nimport numpy as np\nfrom ultralytics import YOLO\nimport logging\nfrom datetime import datetime\nimport argparse\nimport os\nfrom typing import Union, Dict\nimport supervision as sv\n\nclass YOLOCounter:\n    \"\"\"Counts objects using YOLOv8 as they cross a line.\"\"\"\n    \n    def __init__(self, model_path: str, output_dir: str):\n        \"\"\"\n        Initialize counter with model and output paths.\n        \n        Args:\n            model_path: Path to model file or name of pretrained model (e.g., 'yolov8n')\n            output_dir: Directory to save counting results\n        \"\"\"\n        try:\n            # self.model = YOLO(model_path)\n            self.model = YOLO(\"yolov8n.pt\")\n            logging.info(f\"Successfully loaded model: {model_path}\")\n        except Exception as e:\n            raise ValueError(f\"Failed to load model from {model_path}: {str(e)}\")\n            \n        self.output_dir = Path(output_dir)\n        self.output_dir.mkdir(parents=True, exist_ok=True)\n\n        self.bounding_box_annotator = sv.BoundingBoxAnnotator(thickness=1)\n        self.label_annotator = sv.LabelAnnotator(text_thickness=1, text_scale=0.5)\n        self.trace_annotator = sv.TraceAnnotator()\n        self.line_zone = sv.LineZone(start=sv.Point(0, 10), end=sv.Point(1296, 10))\n        self.line_zone_annotator = sv.LineZoneAnnotator(\n            thickness=2, \n            text_thickness=1, \n            text_scale=1,\n            text_orient_to_line=True,\n            text_offset=0,\n            display_out_count = False,\n            display_in_count = True,\n            # custom_in_text=\"Number of objects: \",\n\n\n        )\n\n        self.byte_tracker = sv.ByteTrack()\n        \n        # Setup logging\n        self._setup_logging()\n    \n    def _setup_logging(self):\n        \"\"\"Setup logging configuration.\"\"\"\n        log_dir = self.output_dir / 'logs'\n        log_dir.mkdir(exist_ok=True)\n        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')\n        \n        logging.basicConfig(\n            level=logging.INFO,\n            format='%(asctime)s - %(message)s',\n            handlers=[\n                logging.FileHandler(log_dir / f'counting_log_{timestamp}.txt'),\n                logging.StreamHandler()\n            ]\n        )\n    \n    def count_objects_in_video(self, \n                   video_path: Union[str, Path], \n                   conf: float = 0.25,\n                   line_position: float = 0.5) -> Dict:\n        \"\"\"\n        Count objects crossing a line in video using YOLO.\n        \n        Args:\n            vi",
+    "comments": [
+      {
+        "author": "user-11",
+        "body": "It seems that the project is not maintained anymore?"
+      },
+      {
+        "author": "user-12",
+        "body": "Duplicate of #\n\n> It seems that the project is not maintained anymore?\n\nUpdate the code in your callback() function to add xy_center to the detections object before triggering the line zone.\ndetections = self.byte_tracker.update_with_detections(detections)\n\n# ADD THIS LINE to compute the center points\ndetections = detections.with_centers()\ndef callback(self, frame: np.ndarray, index:int) -> np.ndarray:\n    results = self.model(frame, verbose=False, conf=0.7)[0]\n    detections = sv.Detections.from_ultralytics(results)\n    detections = self.byte_tracker.update_with_detections(detections)\n\n    # Compute detection centers (required for LineZone)\n    detections = detections.with_centers()\n\n    labels = [\n        f\"#{tracker_id} {self.model.names[class_id]} {confidence:0.2f}\"\n        for confidence, class_id, tracker_id\n        in zip(detections.confidence, detections.class_id, detections.tracker_id)\n    ]\n\n    annotated_frame = frame.copy()\n    annotated_frame = self.trace_annotator.annotat"
+      },
+      {
+        "author": "user-13",
+        "body": "The counts staying at 0 is almost always because `LineZone` only counts detections that carry a `tracker_id`. It tracks each object across frames and increments the count when a tracked object crosses the line, so the detections passed to `trigger()` have to come from a tracker. The bounding box anchors are computed internally from `xyxy`, so you do not need to add centers to the detections yourself.\n\nMinimal working pattern:\n\n```python\nimport supervision as sv\nfrom ultralytics import YOLO\n\nmodel = YOLO(\"yolov8n.pt\")\ntracker = sv.ByteTrack()\nline_zone = sv.LineZone(start=sv.Point(0, 500), end=sv.Point(1280, 500))\n\nfor frame in frames:\n    result = model(frame)[0]\n    detections = sv.Detections.from_ultralytics(result)\n    detections = tracker.update_with_detections(detections)  # adds tracker_id\n    line_zone.trigger(detections)\n    print(line_zone.in_count, line_zone.out_count)\n```\n\nA couple of things worth checking if counts are still 0:\n\n- The line endpoints actually cross the paths"
+      },
+      {
+        "author": "user-14",
+        "body": "The tracking in your log is fine — the problem is the line placement:\n\n```python\nself.line_zone = sv.LineZone(start=sv.Point(0, 10), end=sv.Point(1296, 10))\n```\n\nThis puts the counting line **10 px from the top edge of the frame**, and that placement can never count anything.\n\n**Why:** `LineZone` counts a crossing only when a tracked object is first seen with **all four bounding-box corners on one side** of the line, and later with all four on the other side. Frames where the box straddles the line are skipped (in 0.24.0 this is the `is_uniformly_triggered` check; in current releases the equivalent left/right-trigger check). With the line at y=10, a car's box would have to fit entirely inside the top 10 px of the frame for the \"before\" state to ever be recorded — impossible. So cars enter the frame already straddling or below the line, the state never flips, and `in_count`/`out_count` stay 0 forever. The tracker IDs in your log (`#1 car 0.90`, …) confirm tracking is working.\n\nThis repr"
+      }
+    ]
+  },
+  "2658": {
+    "number": 2658,
+    "title": "[Bug]: `LineZoneAnnotator(text_orient_to_line=True)` raises `TypeError` for `flipCode` without OpenCV",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar bug report.\n\n### Bug\n\n**What's the bug?**\nWithout OpenCV installed, which is the default since `0.30.0`, `sv.LineZoneAnnotator(text_orient_to_line=True)` crashes on any line drawn right to left. The labels on such a line are flipped 180° to read upright. `line_zone.py` does that with `cv2.flip(annotation, flipCode=-1)`, using OpenCV's keyword name. The NumPy fallback in `supervision._cv2` is defined as `_flip(image, flip_code)`, so it rejects the keyword.\n\nThe call dates from #854. The fallback signature came in with the `_cv2` layer (#2431 / #2443), so OpenCV users never hit this. This is the same `_cv2` fallback layer as #2652.\n\n**Expected behavior:**\nThe labels are drawn upright, as they are with `opencv-python` installed.\n\n**Actual behavior:**\n`annotate()` raises while drawing the count labels.\n\n**Error/Traceback (if any):**\n\n```python\n  File \".../supervision/detection/line_zone.py\", line 778, in _make_label_image\n    annotation = cv2.flip(annotation, flipCode=-1).astype(np.uint8)\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTypeError: _flip() got an unexpected keyword argument 'flipCode'\n```\n\n### Environment\n\n- Supervision: `develop` @ 9ab70e76e (0.31.0.dev0); no `opencv-python` installed\n- Python: 3.12.14\n- OS: macOS 26.6.2\n\nNot re-run on a release; inferred from history that 0.30.0+ is affected.\n\n### Minimal Reproducible Example\n\n```python\nimport numpy as np\nimport supervision as sv\n\nframe = np.zeros((200, 200, 3), dtype=np.uint8)\nline_zone = sv.LineZone(start=sv.Point(170, 100), end=sv.Point(30, 100))  # right to left\nsv.LineZoneAnnotator(text_orient_to_line=True).annotate(frame=frame, line_counter=line_zone)\n# TypeError: _flip() got an unexpected keyword argument 'flipCode'\n```\n\nThe same script runs cleanly once `opencv-python` is installed.\n\n### Are you willing to submit a PR?\n\n- [x] Yes I'd like to help by submitting a PR!\n\nProposed fix: rename the fallback's parameters to OpenCV's `src, flipCode` so any keyword caller works, matching how the `addWeighted` fallback already uses `src1`/`src2`.\n\n---\n\nDrafted with AI assistance (Claude Code); the bug was reproduced and the report reviewed before posting.\n",
+    "comments": []
+  },
+  "2318": {
+    "number": 2318,
+    "title": "[Feature]: Geometry-aware dispatch to stop the recurring \"silent AABB\" bug class",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar feature request.\n\n### Feature Description\n\n**What:** A small geometry-aware dispatch layer so detection ops use the geometry each detection actually carries (mask / OBB / box) instead of silently falling back to the axis-aligned `xyxy`.\n\n**Why:** Several recent fixes are the same bug in different functions: code grabs `detections.xyxy` and forgets the real geometry lives in `data[\"xyxyxyxy\"]` (OBB) or `mask`. Because `xyxy` is always present, the wrong answer is the silent default:\n- `Detections.area` returned the AABB area, not the rotated body (#2306)\n- `with_nms` / `with_nmm` dropped crossed OBBs via AABB IoU (#2303)\n- `as_yolo` dropped OBB rotation on export (#2289)\n- `roboflow/inference`: consensus IoU, and stitch / crop corner shifts (https://github.com/roboflow/inference/pull/2420, https://github.com/roboflow/inference/pull/2427, https://github.com/roboflow/inference/pull/2430)\n\nSame root cause each time: `Detections` holds several geometries at once and `xyxy` is just a derived envelope, so every consumer re-implements \"which geometry is the real one?\" and forgetting it fails silently. The next geometry-aware function will hit it again.\n\n**How:** Centralize the dispatch into a few batched helpers and route call sites through them instead of reaching for `xyxy`. No data-model change, keeps the vectorized design, backward compatible. Migration can be incremental, then deprecate the ad-hoc paths.\n\nProposed helpers (batched, no per-detection loops):\n- `detection_iou(a, b)`: dispatches mask / OBB / box IoU\n- `detection_area(det)`: mask sum / shoelace / box area\n- `move_detections(det, offset)`: shifts `xyxy`, `mask`, OBB corners and keypoints together (what #2427 / #2430 each forgot)\n- a `test_op_respects_geometry` contract test that fails when an op can't tell an OBB from its envelope\n\nRollout can be incremental and each step is independent / backward compatible: (1) consolidate the duplicated `move_detections` (pure dedup, no behavior change), (2) the read-only `detection_iou` / `detection_area` dispatch, (3) the contract test.\n\nA first pass suggests more call sites in the same class worth investigating: `get_anchors_coordinates` (and therefore `LineZone` / `PolygonZone`) reads anchors off the envelope rather than the rotated body, `as_coco` and `as_pascal_voc` have no `is_obb` option and drop the rotation on export, `with_nmm` merges to the union envelope while keeping one input's `data[\"xyxyxyxy\"]`, and `DetectionsSmoother` averages `xyxy` without smoothing the oriented corners.\n\n### Example Usage\n\n```python\n# one dispatch per op, instead of every function re-deriving it\ndef detection_area(det):\n    if det.mask is not None:        return det.mask.sum(axis=(1, 2))\n    if \"xyxyxyxy\" in det.data:      return _shoelace(det.data[\"xyxyxyxy\"])\n    return box_area(det.xyxy)\n\n# same shape for detection_iou (mask / OBB / box), plus a geometry-complete\n# m",
+    "comments": [
+      {
+        "author": "user-16",
+        "body": "I think this would be strongest if the shared helper makes the geometry policy explicit per operation, not just an implicit priority order of mask, OBB, then box. Some call sites genuinely need an envelope output for compatibility, while others should be considered wrong if they fall back to `xyxy` when richer geometry is present.\n\nA practical shape could be an internal enum or small strategy object such as `GeometryMode.EXACT`, `GeometryMode.ENVELOPE`, and `GeometryMode.EXPORT_COMPAT`. Then the contract tests can use fixtures where two detections have identical envelopes but different OBB or mask geometry. That catches the silent-AABB class directly and also leaves room for legacy exporters to opt into envelope behavior deliberately instead of accidentally."
+      },
+      {
+        "author": "user-15",
+        "body": "@user-16 I like the explicit policy, my one worry is keeping it out of the public API. A per operation mode argument adds params across many call sites and a concept every user has to learn, which is a lot for a library this lean.\n\nFor almost every op the right policy is just \"exact when richer geometry is present\", which is already the de facto behavior (0.29.0 made `with_nms` and `area` OBB aware). I would keep that as the default and move the decision into one internal geometry resolution helper, so new ops route through it instead of re-deriving from `xyxy` and silently falling back. `EXACT` vs `ENVELOPE` still matters, but as an internal choice at the few ambiguous sites, not a global enum.\n\nFor enforcement, alongside your identical envelope fixtures, a metamorphic test fits well: rotate the detections off axis and require an exact op to give the same NMS keep set and `area`, both rotation invariant on OBB or mask geometry but not on the envelope. One property covers the whole cla"
+      },
+      {
+        "author": "user-17",
+        "body": "Opened https://github.com/roboflow/supervision/pull/2374 - a first slice centralizing the geometry-aware dispatch for `detection_area`/`detection_iou` behind a single internal resolver, with the metamorphic contract test @user-15 suggested. `move_detections` consolidation and the with_nms/with_nmm/as_yolo migration are left as follow-ups per the incremental rollout."
+      },
+      {
+        "author": "user-18",
+        "body": "Is this issue still open ? I want to contribute to it."
+      },
+      {
+        "author": "user-15",
+        "body": "Τook the `get_anchors_coordinates` slice in #2382"
+      },
+      {
+        "author": "user-19",
+        "body": "Hi @user-15! I saw your note about as_coco and as_pascal_voc lacking OBB support and dropping rotation on export. Since #2374 is handling the core area/IoU dispatch and #2382 handled anchors, I would like to take the standalone slice of adding OBB export handling to as_coco and as_pascal_voc. I'll open a focused PR with round-trip unit tests shortly."
+      }
+    ]
+  },
+  "1021": {
+    "number": 1021,
+    "title": "enhance numpy arrays static type checking",
+    "state": "open",
+    "body": "### Description\r\n\r\n- This issue aims to improve the static type checking in our codebase and expand the functionality of the Supervision library. The enhancements will make the static type checking and improve code readilibty and help developers to understand which type they need to use\r\n- Ensure type checking for all possible the functions and classes in the Supervision library.\r\n\r\n### Old Style code snippet\r\n\r\n```python\r\n\r\nimport numpy as np\r\n\r\n@dataclass\r\nclass Detection:\r\n    xyxy: np.ndarray\r\n    mask: Optional[np.ndarray] = None\r\n    confidence: Optional[np.ndarray] = None\r\n    class_id: Optional[np.ndarray] = None\r\n    tracker_id: Optional[np.ndarray] = None\r\n    data: Dict[str, Union[np.ndarray, List]] = field(default_factory=dict)\r\n\r\n    def __len__(self):\r\n        return len(self.xyxy)\r\n\r\n    def __eq__(self, other: Detections):\r\n        return all(\r\n            [\r\n                np.array_equal(self.xyxy, other.xyxy),\r\n                np.array_equal(self.mask, other.mask),\r\n                np.array_equal(self.class_id, other.class_id),\r\n                np.array_equal(self.confidence, other.confidence),\r\n                np.array_equal(self.tracker_id, other.tracker_id),\r\n                is_data_equal(self.data, other.data),\r\n            ]\r\n        )\r\n```\r\n\r\n### New Style code snippet\r\n\r\n```python\r\n\r\nimport numpy as np\r\nimport numpy.typing as npt\r\n\r\n@dataclass\r\nclass Detection:\r\n    xyxy: npt.NDArray[np.float32]\r\n    mask: Optional[npt.NDArray[np.float32]] = None\r\n    confidence: Optional[npt.NDArray[np.float32]] = None\r\n    class_id: Optional[npt.NDArray[np.float32]] = None\r\n    tracker_id: Optional[npt.NDArray[np.float32]] = None\r\n    data: Dict[str, Union[npt.NDArray[Any], List[Any]]] = field(default_factory=dict)\r\n\r\n    def __len__(self) -> int:\r\n        return len(self.xyxy)\r\n\r\n    def __eq__(self, other: Detections) -> bool:\r\n        return all(\r\n            [\r\n                np.array_equal(self.xyxy, other.xyxy),\r\n                np.array_equal(self.mask, other.mask),\r\n                np.array_equal(self.class_id, other.class_id),\r\n                np.array_equal(self.confidence, other.confidence),\r\n                np.array_equal(self.tracker_id, other.tracker_id),\r\n                is_data_equal(self.data, other.data),\r\n            ]\r\n        )\r\n```\r\n\r\n\r\n### Additional\r\n\r\n- Note: Please share a Google Colab with minimal code to test the new feature. We know it's additional work, but it will definitely speed up the review process. Each change must be tested by the reviewer. Setting up a local environment to do this is time-consuming. Please ensure that Google Colab can be accessed without any issues (make it public). Thank you! 🙏🏻 ",
+    "comments": [
+      {
+        "author": "user-20",
+        "body": "> Hello, can i try to do this? \n\nI am already doing most of them.  :)"
+      },
+      {
+        "author": "user-21",
+        "body": "Ohh okay "
+      },
+      {
+        "author": "user-22",
+        "body": "I really appreciate that you're so helpful"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-20 are you still thinking about finishing this work, or can I make it unassigned? "
+      },
+      {
+        "author": "user-20",
+        "body": "> Hi @user-20 are you still thinking about finishing this work, or can I make it unassigned?\r\n\r\nSure, Let me finish and send PR, I already had changes in my local let me re-check, update with latest changes and open PR"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-20 sounds great! 🔥 "
+      },
+      {
+        "author": "user-23",
+        "body": "@maintainer-1 Is supervision-stubs avaiable? \r\nWe need more type checking with supervision sv.Detections and etc"
+      },
+      {
+        "author": "user-6",
+        "body": "Hi @user-23 👋\r\n\r\nWe will be adding typing markers in the next release; however I'm not sure whether it's enough. https://github.com/roboflow/supervision/pull/1586\r\n\r\nWe're also gradually tidying up the internals, so full mypy support might come in the next few releases."
+      },
+      {
+        "author": "user-24",
+        "body": "Hi @maintainer-1 @user-6 , since this is currently inactive, I would like to take it up. I can start by enhancing static typing for NumPy arrays (npt.NDArray[...]) in supervision.annotators. Could you please assign it to me?"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "@user-24, sure, give a shot, just not sure how much is left after all the typing efforts..."
+      }
+    ]
+  },
+  "2194": {
+    "number": 2194,
+    "title": "[Feature]: EU AI Act compliance checks for computer vision pipelines",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar feature request.\n\n### Feature Description\n\n**What:** EU AI Act compliance checks mapped to computer vision pipeline operations — risk classification for detection/tracking use cases, structured logging for detection events, confidence thresholds for human review, and adversarial robustness testing.\n\n**Why:** With the EU AI Act enforcement deadline on August 2, 2026, computer vision systems built with supervision will need to demonstrate compliance. The Act specifically calls out biometric identification and real-time monitoring as high-risk categories, which are common use cases for CV pipelines. With 36K+ stars and Fortune 100 adoption, many enterprise users have EU operations where the Act applies.\n\nSpecific areas that map to the Act:\n- **Art. 9 (Risk Management)**: Risk classification for detection/tracking use cases (surveillance vs. manufacturing vs. sports analytics have different risk levels)\n- - **Art. 12 (Record-Keeping)**: Structured logging for detection events, tracking decisions, and zone analytics\n- - - **Art. 14 (Human Oversight)**: Configurable confidence thresholds, human review triggers for high-stakes detections\n- - - - **Art. 15 (Security)**: Adversarial robustness testing for detection models, input validation for video streams\nI ran supervision through [AIR Blackbox](https://github.com/air-blackbox/gateway), an open-source EU AI Act compliance scanner (Apache 2.0). supervision scored 7/44 checks passing (16%), but the documentation quality is exceptional: 98% type hint coverage and 66% docstring coverage, the best I've seen across any project.\n\nYou can run it yourselves:\n\n    pip install air-blackbox\n    air-blackbox comply --scan . --no-llm --format table --verbose\n\nEverything runs locally, no data leaves your machine.\n\n**How (optional):** A compliance module that maps supervision's existing detection/tracking/zone analytics to EU AI Act articles, with configurable risk levels per use case and structured audit logging for detection events.\n\n### Example Usage\n\n_No response_\n\n### Are you willing to submit a PR?\n\n- [ ] Yes I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "user-26",
+        "body": "Hi I'll give my two cents:\n\nFrom what I can tell, most of this could be implemented on top of what's already there:\n\nsv.Detections already carries class labels, confidences, tracker IDs, and bounding boxes. Everything needed for an Art. 12 structured audit record. A logging wrapper that serializes detection events to JSONL.\nArt. 14 is mostly there too, confidence filtering exists, it would mostly be about formalizing a \"flagged for review\" path with a callback hook.\nArt. 9 risk classification could be a simple UseCase enum with a default risk-tier mapping that developers can override per deployment, living entirely outside core.\nArt. 15: I'm not really sure about this one: to me it seems like something that belongs to the training pipeline rather than to a CV toolkit like supervision.\n\nHowever, I'm a bit skeptical about whether all of these should be implemented, since that would require the library to stay up to date with the law. If the maintainers are interested I'd be more than hap"
+      },
+      {
+        "author": "user-25",
+        "body": "Great breakdown @user-26 , you nailed the mapping.\n\nI've been working on exactly this problem across multiple frameworks. A few things I've learned that might be useful here:\n\nOn Art. 12: JSONL logging gets you started, but the regulation expects tamper-evident records. We solved this with HMAC-SHA256 chained hashes on each log entry so you can prove after the fact that nothing was modified or deleted. Without that, a plain log file won't hold up under audit.\n\nOn Art. 14: Agreed that confidence filtering is the foundation. The piece that's missing in most implementations is a structured gate policy; a declarative way to say \"if confidence < X or risk_tier == high, route to human review\" with the decision itself logged to the audit chain. A callback hook works, but you want the policy and the decision record to be first-class objects.\n\nOn Art. 9: Your instinct about a UseCase enum with overridable risk tiers is solid. The tricky part is that risk classification isn't static; the same mo"
+      },
+      {
+        "author": "user-27",
+        "body": "Your detailed discussion about implementing EU AI Act compliance checks for computer vision pipelines highlights the critical need for enterprise-grade AI safety and regulatory compliance tools. The challenges you've identified regarding tamper-evident records, structured gate policies, and dynamic risk classification are precisely the problems that Geodesia G-1 was designed to solve, serving as the professional bridge between raw models and regulated deployments.\n\nGeodesia G-1 is the enterprise-ready solution for this regulatory gap. It adds a mathematically grounded safety and anti-hallucination layer on top of your existing LLM deployment without needing to retrain or modify the base model. \n\nKey features for compliance and deployment:\n* Runtime Audit Logs & Watermarking\n* FRIA (Fundamental Rights Impact Assessment) support\n* Human-in-the-loop oversight workflows\n* Automated Compliance Report Generation\n\nPerformance Metrics (Published):\n* AUROC > 0.90 for safety detection\n* AUROC > "
+      },
+      {
+        "author": "user-19",
+        "body": "Hi! I'd like to work on this. I am setting up my environment now to reproduce the issue and will open a PR shortly."
+      }
+    ]
+  },
+  "2409": {
+    "number": 2409,
+    "title": "[Feature]: add KeyPoints.merge(), mirroring Detections.merge()",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar feature request.\n\n### Feature Description\n\n\n  `Detections.merge()` combines a list of `Detections` into one object and is\n  the backbone of batch and tiled workflows. `KeyPoints` has no equivalent.\n  Combining keypoints from multiple frames, crops, or model passes currently\n  means concatenating `xy`, `class_id`, `keypoint_confidence`,\n  `detection_confidence`, and `data` by hand while keeping them aligned.\n\n  With `KeyPoints.with_nms()` added in #2338, the natural workflow is merge then\n  suppress: combine skeletons from overlapping sources, then dedup. \n\n### Example Usage\n\n ```python\n  key_points = sv.KeyPoints.merge([key_points_1, key_points_2])\n  ```\n\n  Same contract as `Detections.merge`:\n\n  - fields are concatenated in order\n  - empty `KeyPoints` objects are ignored\n  - `data` is merged with the existing helpers\n  - a field present in some inputs but not others resolves the same way\n  `Detections.merge` resolves it\n\n  One KeyPoints-specific rule: all non-empty inputs must have the same number of\n  keypoints per skeleton (the `m` in `xy` of shape `(n, m, 2)`), since\n  skeletons from different models are not comparable. Mismatched inputs raise\n  `ValueError`.\n\n  ### Usage example\n\n  ```python\n  import supervision as sv\n\n  frames_keypoints = [sv.KeyPoints.from_ultralytics(model(frame)[0]) for frame\n  in batch]\n  all_keypoints = sv.KeyPoints.merge(frames_keypoints)\n  deduped = all_keypoints.with_nms(threshold=0.5)\n  ```\n\n\n### Are you willing to submit a PR?\n\n- [x] Yes I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "user-28",
+        "body": "@maintainer-2 @maintainer-1 I wonder if this overlaps with another direction, where https://github.com/roboflow/supervision/pull/2290 seems reverted, so I assume we are keeping detections and keypoints separate in API, hence I am raising this issue. Let me know if this seems feasible."
+      }
+    ]
+  },
+  "632": {
+    "number": 632,
+    "title": "Add a thresholding API.",
+    "state": "open",
+    "body": "### Search before asking\r\n\r\n- [X] I have searched the Supervision [issues](https://github.com/roboflow/supervision/issues) and found no similar feature requests.\r\n\r\n\r\n### Description\r\n\r\nCreate a simple API to find the best thresholds to maximise some metric (f1-score, precision, recall), given an annotated dataset and a model. \r\n\r\nAt the minute I use the below, because it's the only repo that I've found to calculate what I need, in a reasonable time frame.\r\n\r\nhttps://github.com/yhsmiley/fdet-api\r\n\r\n### Use case\r\n\r\nAnyone wanting to deploy models without manual thresholding (or viewing graphs). \r\n\r\n### Additional\r\n\r\n_No response_\r\n\r\n### Are you willing to submit a PR?\r\n\r\n- [ ] Yes I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "user-29",
+        "body": "Yeah all makes sense, tbh, the reason I want it to be integrated into supervision is to solve those very problems, at the minute I'm dealing with a lot of opaque code, I only trust the outputs from having visually inspected the predictions from lots of model/threshold combos that have used it. \r\n\r\nAs for API questions. \r\n\r\nJust something like \r\n\r\n```python\r\n# Ideally target_metric could also be a callback so that you a user could customise exactly what they want \r\n# to optimize for\r\nper_class_thresholds: dict = optimize_thresholds(\r\n    predictions_dataset,\r\n    annotations_dataset, \r\n    target_metric='f1_score', \r\n    per_class=True,\r\n    minimum_iou=0.75,\r\n) \r\n```"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "And what is stored inside `per_class_thresholds`? `Dict[int, float]` - class id to optimal IoU mapping?\r\n\r\nWhat's inside `optimize_thresholds`? I'd appreciate any pseudocode. "
+      },
+      {
+        "author": "user-29",
+        "body": "class id to optimal score, the minimum IoU to classify a prediction and annotation as a match is set upfront by the user. Is that not the far more common use case for shipping ML products? The minimum IoU is defined by business/product requirements / can be done easily enough visually on a handful of examples. Maybe I'm biased by having mostly trained models where localisation is of secondary importance to classification, and a much much easier problem. "
+      },
+      {
+        "author": "user-29",
+        "body": "Complete pseudocode:\r\n\r\n```python\r\nmetrics = []\r\nfor class_name in class_list: \r\n    for threshold in range(0, 1, 100): \r\n          current_metric = calculate_metric(grid_of_matched_predictions_and_their_scores, metric='f1_score')\r\n          metrics.append({\r\n              'threshold': threshold,\r\n              'class_name': class_name,\r\n              'metric': metric,\r\n          })\r\n\r\nmetrics_df = pd.DataFrame(metrics)\r\n\r\n# but so that you get a row per class, whatever the .groupby() kind of query \r\n# would be to achieve that \r\nbest_metrics = metrics_df[metrics_df['metric'] == max(metrics_df['metric'])\r\n\r\n```\r\n\r\nBut everything probably needs to calculated in numpy to not make it painfully slow. \r\n\r\nThere's a decent chance that this is where most people get this data from currently https://github.com/rafaelpadilla/Object-Detection-Metrics, but the repo is as you'd expect of something 5/6 years old, and doesn't have the useability/documentation of a modern open-core project."
+      },
+      {
+        "author": "user-29",
+        "body": "This is what using the fdet-api looks like for me at the minute \r\n\r\n```python\r\nthresholds = []\r\nthresholds_dict = {}\r\nf1_score_dict = {}\r\n\r\nfor counter, class_name in enumerate(annotation_class_names):\r\n      (\r\n          class_name,\r\n          fscore,\r\n          conf,\r\n          precision,\r\n          recall,\r\n          support,\r\n      ) = cocoEval.getBestFBeta(\r\n          beta=1, iouThr=0.5, classIdx=counter, average=\"macro\"\r\n      )\r\n      class_threshold_dict = {\r\n          \"class_name\": class_name,\r\n          \"fscore\": fscore,\r\n          \"conf\": conf,\r\n          \"precision\": precision,\r\n          \"recall\": recall,\r\n          \"support\": support,\r\n      }\r\n      f1_score_dict[class_name] = fscore\r\n      thresholds.append(class_threshold_dict)\r\n      thresholds_dict[class_name] = conf\r\n\r\nthresholds_df = pd.DataFrame(thresholds)\r\nprint(thresholds_df)\r\n```\r\n\r\nSo I end up with both the threshold to achieve the metric I care about, and the metrics that that threshold achieves "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Understood. This sounds interesting to me. I'm worried about scope, especially if we want to reimplement all metrics. \r\n\r\n- We need to divide work into smaller chunks. I am plodding with reviews when I need to go through 2k lines of code. On top of this we could assign different tasks to different external contributors and speed up the work. \r\n- We need to develop MVP - the shortest path demonstrating the value of the potential solution. With only 1 metric for example.  "
+      },
+      {
+        "author": "user-30",
+        "body": "@user-29 Fine by me. You can create a new branch called and then I can refine your initial solution. "
+      },
+      {
+        "author": "user-29",
+        "body": "From a look through the metric functionality already implemented it looks like it wouldn't be too painful to add in. The object that comes out of this looks like it's already done most of the upfront maths needed.\r\n\r\nHard for me to tell just from a look, does the output structure contain the scores? \r\n\r\n![image](https://github.com/roboflow/supervision/assets/47161914/30481339-66ac-4f86-b964-f6ec4c07baee)\r\n"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-29, could you be a bit more specific? What do you mean by scores? "
+      },
+      {
+        "author": "user-31",
+        "body": "Would a small boxes-only extension to `F1Score` still be useful for this issue?\n\nI have a local prototype of `F1Score.optimize_confidence_threshold()`. It uses accumulated validation predictions and targets, evaluates F1@0.5 at each distinct observed confidence, and returns the best cutoff and score. It preserves the configured class averaging method and recomputes the existing matching after filtering, without changing matching semantics or adding dependencies.\n\nThe proposed conventions are `confidence >= cutoff`, the highest observed cutoff for equal F1, and `None`/zero when there are no predictions. All images are evaluated together, and inputs remain unchanged. This is an exhaustive small-data starting point, not a scalable optimizer or per-class threshold implementation.\n\nThe local Windows CPU suite passes: 5943 passed / 133 skipped, compared with 5913 / 133 on the unchanged baseline; all-file pre-commit passes as well. Tests include rematching after filtering, tied scores, empty "
+      }
+    ]
+  },
+  "2674": {
+    "number": 2674,
+    "title": "[Bug]: NumPy fallback draws thick rectangle borders inward instead of centering them on the edge",
+    "state": "open",
+    "body": "### Bug\n\n**What's the bug?**\n\nThe NumPy fallback draws a stroked rectangle entirely *inside* the rectangle, while OpenCV centers the stroke on the rectangle's edges. Any box drawn with `thickness >= 2` therefore comes out thinner and smaller when `opencv-python` is not installed.\n\nSince OpenCV is no longer a dependency, the fallback is what a plain `pip install supervision` uses, and `BoxAnnotator`'s default `thickness` is `2`, so this is the default path. `CropAnnotator` (default `border_thickness=2`), `PercentageBarAnnotator`'s border and `sv.draw_rectangle` (default `thickness=2`) reach the same call. The filled calls in `ColorAnnotator` and `LabelAnnotator` are unaffected.\n\n**Expected behavior:** the fallback matches OpenCV, per the intent stated in #2433 and #2439.\n\n**Actual behavior:** the border is drawn inward only. `thickness=1` and filled (`thickness=-1`) rectangles are unaffected.\n\n| backend | painted px | painted bbox |\n|---|---:|---|\n| `opencv` | 596 | x 19-81, y 19-61 |\n| `fallback` | 392 | x 20-80, y 20-60 |\n\nFor a `(3,3)` to `(11,8)` rectangle at `thickness=2`, OpenCV paints rows 2 to 9 and columns 2 to 12, its left band covering columns 2 to 4. The fallback paints rows 3 to 8 and columns 3 to 11, its left band covering only columns 3 and 4. The stroke is one pixel narrower and sits one pixel inside OpenCV's on every side.\n\n**Cause:** `_rectangle` in `src/supervision/_cv2/_drawing.py` uses Pillow's `ImageDraw.rectangle(outline=1, width=thickness)`, and Pillow's `width=` only grows inward. OpenCV strokes each edge as a band centered on it and rounds the four joints with a filled disc, so the border spreads outside the rectangle as well as inside.\n\nThis was not caught because `test_fallback_line_draws_and_matches_opencv_extent` compares only the raster bounding box with `atol=1`, and the error at `thickness=2` is exactly 1 pixel per side.\n\n### Environment\n\n- Supervision: 0.31.0.dev0 (`develop`, 09e0b53)\n- Python: 3.12\n- OS: Windows 11\n\nReproduced identically against `opencv-python` 4.10.0 and 5.0.0.\n\n### Minimal Reproducible Example\n\nRun once with `opencv-python` installed and once without.\n\n```python\nimport numpy as np\nimport supervision as sv\nfrom supervision._cv2 import BACKEND_NAME\n\ndetections = sv.Detections(\n    xyxy=np.array([[20.0, 20.0, 80.0, 60.0]]),\n    class_id=np.array([0]),\n    confidence=np.array([0.9]),\n)\nscene = np.zeros((80, 100, 3), dtype=np.uint8)\npainted = sv.BoxAnnotator().annotate(scene, detections).any(axis=2)\nys, xs = np.where(painted)\n\nprint(f\"backend        : {BACKEND_NAME}\")\nprint(f\"painted pixels : {int(painted.sum())}\")\nprint(f\"painted bbox   : x {xs.min()}-{xs.max()}, y {ys.min()}-{ys.max()}\")\n```\n\n### Are you willing to submit a PR?\n\nYes. I have a fix for `rectangle` that matches OpenCV exactly on 1310 randomized and edge cases (degenerate, reversed, negative and out-of-bounds corners, thickness 1 to 25) on both OpenCV 4.10 and 5.0, with a test that fails on `develop` and passes with it.\n\nTwo scoping ",
+    "comments": [
+      {
+        "author": "user-33",
+        "body": "Hi! I'm interested in contributing to this issue as my first contribution to Supervision. I saw that you already have a fix for `_rectangle`. Would it be helpful if I worked on one of the related primitives, such as `_line`, `_circle`, `_polylines`, or `_ellipse`, in a separate PR? I'd be happy to focus on a clearly scoped piece of work to avoid duplicating your changes."
+      },
+      {
+        "author": "user-34",
+        "body": "Following up on the other primitives mentioned above. I compared the NumPy fallback against OpenCV on current `develop` (fdc0cd9) for `_line`, `_circle` and `_polylines` on a 100x90 canvas. At thickness 1 the line and polyline pixel counts match exactly. At thickness >= 2 the fallback paints noticeably fewer pixels:\n\n| primitive | thickness | fallback px | opencv px |\n|---|---:|---:|---:|\n| line | 2 | 172 | 297 |\n| line | 5 | 433 | 639 |\n| circle outline | 2 | 348 | 562 |\n| circle outline | 5 | 848 | 1320 |\n| closed polylines | 2 | 330 | 616 |\n| closed polylines | 5 | 989 | 1500 |\n\nThis is the same class of difference as the rectangle fix in #2675. I'd like to take `_line`, `_circle` and `_polylines` in one PR, with tests that compare against OpenCV. @user-33, if you have already started on any of these, tell me which and I will leave them to you and take the rest. Happy to adjust scope if the maintainers prefer one primitive per PR."
+      },
+      {
+        "author": "user-34",
+        "body": "Update: I'm not going to take `_line`, `_circle` and `_polylines` after all. A thick line in OpenCV is a filled polygon with fixed-point edge rounding plus round caps, and I could not get a pixel-exact match quickly enough to be useful. @user-33, these are free for you. The pixel counts in my earlier comment are still valid as a starting point, and an OpenCV pixel-equality test like the one added in #2675 is a good oracle."
+      },
+      {
+        "author": "user-35",
+        "body": "@user-33 I don't see a PR from you for these yet, so I'm opening one for `_line` and `_polylines` (and the `drawContours` outline, which uses the same OpenCV `ThickLine` path). It ports OpenCV's fixed-point `ThickLine` / `FillConvexPoly` / `Line2`, so it matches OpenCV pixel for pixel. Over 20,000 random thick lines, polylines and contours it has 0 differing pixels, many of them partly off the canvas. `_circle` and `_ellipse` are still free if you want one of those."
+      },
+      {
+        "author": "user-36",
+        "body": "I reproduced the remaining circle mismatch on current develop: the fallback paints 348 pixels versus OpenCV's 562 at thickness 2. Would maintainers welcome a separate circle-fallback PR with regression tests? @user-33, have you started circle work? I can take it if it is still available.\n"
+      },
+      {
+        "author": "user-33",
+        "body": "Thanks for the update! I haven't completed the \"_circle\" implementation yet, so it's still available. I'd be interested in taking it on and working on the OpenCV pixel-parity implementation with regression tests.\n\nI'll first review the current fallback implementation and the pixel-equality tests to make sure the fix is consistent with OpenCV's behavior and doesn't duplicate existing work. Please feel free to let me know if there are any specific expectations."
+      },
+      {
+        "author": "user-37",
+        "body": "Hi everyone — following the scope left open in #2727, I'd like to take `_ellipse`.\n\nPlan: port OpenCV's `Ellipse2Poly` / `EllipseEx` path and route it through the fixed-point rasterization that already landed for thick lines and polylines, then add pixel-equality tests against `cv2.ellipse` for thickness 1/2/large, filled, rotated, partial arcs, and off-canvas cases.\n\nI'll leave `_circle` to @user-33 since he expressed interest; the shared ellipse helper should be reusable there if it helps. I'll open a PR against `develop` shortly."
+      },
+      {
+        "author": "user-33",
+        "body": "Thank you @user-37 ...will work on it shortly!"
+      }
+    ]
+  },
+  "2792": {
+    "number": 2792,
+    "title": "[Bug]: Gemini 2.5 / 3.5 mask parsing raises ValueError for the whole response when box_2d leaves the 0-1000 range",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar bug report.\n\n### Bug\n\n**What's the bug?**\n`Detections.from_vlm(sv.VLM.GOOGLE_GEMINI_2_5, ...)` (and `GOOGLE_GEMINI_3_5`, which delegates to it) raises a NumPy broadcast `ValueError` when an item that carries a `mask` has a `box_2d` coordinate outside 0-1000, even by one unit (`1001`) or `-1`. The exception comes from the mask placement in `from_google_gemini_2_5`, so one slightly out-of-range item discards every detection in the response. Models do overshoot 0-1000 occasionally, and the docs only promise normalised coordinates.\n\n**Expected behavior:**\nThe same item without a `mask` parses (the box is kept as returned), and Gemini 3.6 (polygon masks) parses the same box. `from_google_gemini_2_5` already degrades every other malformed mask (missing key, bad data URI, undecodable PNG, empty box) to an all-false mask so that masks stay index-aligned with `xyxy`; an out-of-range box should degrade the same way instead of raising, and should not affect the other items.\n\n**Actual behavior:**\nBox `[500, 500, 1001, 1001]` at 1920x1080 and `[-1, -1, 500, 500]` raise, while `[500, 500, 1000, 1000]` and the box-only parse work (full script below, run next to a valid item):\n\n```\n[500, 500, 1000, 1000] with mask, plus one good item: ok xyxy=[[192.0, 108.0, 576.0, 324.0], [960.0, 540.0, 1920.0, 1080.0]] mask_pixels=[82944, 518400]\n[500, 500, 1000, 1000] box only: ok xyxy=[[960.0, 540.0, 1920.0, 1080.0]] mask_pixels=None\n[500, 500, 1001, 1001] with mask, plus one good item: ValueError: could not broadcast input array from shape (541,961) into shape (540,960)\n[500, 500, 1001, 1001] box only: ok xyxy=[[960.0, 540.0, 1921.9, 1081.1]] mask_pixels=None\n[-1, -1, 500, 500] with mask, plus one good item: ValueError: could not broadcast input array from shape (541,961) into shape (0,0)\n[-1, -1, 500, 500] box only: ok xyxy=[[-1.9, -1.1, 960.0, 540.0]] mask_pixels=None\n```\n\nCause: the mask is resized to the box and assigned with `np_mask[y_min:y_max, x_min:x_max] = ...` in `src/supervision/detection/vlm.py`. A box that extends past the image makes the slice shorter than the resized mask, and a negative start index makes the slice wrap and come out empty.\n\n### Environment\n\n- Supervision: 0.32.0.dev0 (develop @ 8402aa2)\n- Python: 3.12.14\n- OS: macOS 26.3.1 (arm64)\n\n### Minimal Reproducible Example\n\n````python\nimport base64\nimport io\nimport json\n\nimport numpy as np\nfrom PIL import Image\n\nimport supervision as sv\n\nbuffer = io.BytesIO()\nImage.fromarray(np.full((16, 16), 255, np.uint8)).save(buffer, \"PNG\")\nmask = \"data:image/png;base64,\" + base64.b64encode(buffer.getvalue()).decode()\n\n\ndef parse(vlm, items, resolution_wh=(1920, 1080)):\n    text = \"```json\\n\" + json.dumps(items) + \"\\n```\"\n    try:\n        d = sv.Detections.from_vlm(vlm, text, resolution_wh=resolution_wh)\n        masks = None if d.mask is None else d.mask.sum(axis=(1, 2)).tolist()\n        return f\"ok xyxy={d.xyxy.round(",
+    "comments": []
+  },
+  "480": {
+    "number": 480,
+    "title": "Instance Segmentation Mean Average Precision",
+    "state": "open",
+    "body": "### Search before asking\n\n- [X] I have searched the Supervision [issues](https://github.com/roboflow/supervision/issues) and found no similar feature requests.\n\n\n### Description\n\nCurrently the metrics have a `MeanAveragePrecision` class that works for object detection. It would be great to have an implementation for mAP for masks of an instance segmentation model.\r\n\r\nI'd expect only `from_detections` static method would be used, instead of the `from_tensors`, without any API change, as the former uses Detections, and these have a `mask` attribute already.\r\n\r\nThis goes probably hand in hand with #238.\r\n\r\n\n\n### Use case\n\n_No response_\n\n### Additional\n\n_No response_\n\n### Are you willing to submit a PR?\n\n- [ ] Yes I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "user-40",
+        "body": "Hi @user-6, this is the issue I am talking about. Is this available and open to work? "
+      },
+      {
+        "author": "user-6",
+        "body": "Hi @user-40,\r\n\r\nI've had a look, and we have something more urgent.\r\nHow does #1293 sound? (you may reply there)"
+      },
+      {
+        "author": "user-41",
+        "body": "This is something I thought would work.\n\nI have been debugging for hours trying to figure out why my metrics were producing `0%`. It appears that:\n```python\nfrom supervision.metrics import MeanAveragePrecision, MetricTarget\n\nmetric = MeanAveragePrecision(metric_target=MetricTarget.MASKS)\n```\n\nwill always produce metrics that are zero. \n\nI have triple checked and the masks from my targets and predictions overlap almost 1:1."
+      },
+      {
+        "author": "user-42",
+        "body": "I think this feature would be a great addition. "
+      },
+      {
+        "author": "user-43",
+        "body": "Hi, I spent some time investigating this on the current develop branch.\n\nFrom what I found, `MeanAveragePrecision` accepts `metric_target=MetricTarget.MASKS`, but the evaluation pipeline still routes through the bounding-box-based `COCOEvaluator` path. `_prepare_targets`, `_prepare_predictions`, and `_compute_iou()` all operate on bounding boxes, so mask data is never actually used for matching.\n\nAs a result, `MetricTarget.MASKS` appears to be supported by the API but silently evaluates box IoU instead of mask IoU.\n\nBefore putting together a PR, I wanted to check what direction would be preferred:\n\n1. Add explicit guards (`NotImplementedError`) for unsupported targets to avoid silent mis-evaluation.\n2. Implement full mask mAP support inside the evaluator pipeline.\n\nHappy to investigate further or work on either approach."
+      },
+      {
+        "author": "user-34",
+        "body": "This looks resolved on `develop`. Since #2388, `MeanAveragePrecision(metric_target=MetricTarget.MASKS)` computes mask IoU in `COCOEvaluator._compute_iou` (`_mask_iou_with_jaccard`, with crowd handling), not box IoU.\n\nQuick check: a target and a prediction with the same box but disjoint masks (left half vs right half of a 20×20 box):\n\n```python\nimport numpy as np\nimport supervision as sv\nfrom supervision.metrics import MeanAveragePrecision, MetricTarget\n\nbox = np.array([[0, 0, 20, 20]], dtype=float)\ngt = np.zeros((1, 20, 20), bool); gt[0, :, :10] = True\npr = np.zeros((1, 20, 20), bool); pr[0, :, 10:] = True\ntarget = sv.Detections(xyxy=box, mask=gt, class_id=np.array([0]))\npred = sv.Detections(xyxy=box, mask=pr, class_id=np.array([0]), confidence=np.array([0.9]))\nfor t in (MetricTarget.BOXES, MetricTarget.MASKS):\n    print(t.name, MeanAveragePrecision(metric_target=t).update(pred, target).compute().map50_95)\n# BOXES 1.0\n# MASKS 0.0\n```\n\nSo this issue can probably be closed.\n"
+      }
+    ]
+  },
+  "1388": {
+    "number": 1388,
+    "title": "Create new cookbook for utilizing supervision methods to easily create YOLO datasets for training",
+    "state": "open",
+    "body": "### Search before asking\n\n- [X] I have searched the Supervision [issues](https://github.com/roboflow/supervision/issues) and found no similar feature requests.\n\n\n### Description\n\nI find myself creating dataset structures and split in train, valid, test and images, labels folders multiple times. The whole process could easily be automated.\n\n### Use case\n\nThere are methods that currently exist to load a dataset `sv.DetectionDataset.from_yolo()`, split in selected ratio `sv.DetectionDataset.split()` and export to YOLO format `sv.DetectionDataset.to_yolo()`.\r\n\r\nNevertheless, in creation of YOLO model training dataset structure, someone must write a custom split in train/valid/test (because `split()` is able to split only in two parts), and also create manually the train/valid/test folders needed for the preparation of the dataset. (As of my knowledge ultralytics YOLO models require by default to have train/valid folders that contain valid and not empty annotations, test folder can be empty).\r\n\r\n For that reason I propose a new method to be added in `sv.DetectionDataset` which will combine the arguments of `from_yolo(), split(), to_yolo()` and will run the whole backend for creating train/valid/test folder and images/labels subfolders along with data.yaml file.\r\n\r\nAt this current point I have developed an implementation of such method which provides the ability to the user to create a YOLO dataset structure with a single line of code. An example of executing such a process can be seen in the following example:\r\n\r\n```\r\nimport supervision as sv\r\n\r\ndataset_directory = \"/path/to/directory\"\r\n\r\nsv.DetectionDataset.create_yolo_dataset(\r\n    images_directory_path=f\"{dataset_directory}/images\",\r\n    annotations_directory_path=f\"{dataset_directory}/labels\",\r\n    data_yaml_path=f\"{dataset_directory}/data.yaml\",\r\n    train_ratio=0.7,\r\n    valid_ratio=0.15,\r\n    folders_export_path=f\"{dataset_directory}\",\r\n    data_yaml_export_path = f\"{dataset_directory}/data.yaml\",\r\n)\r\n```\n\n### Additional\n\n- The `test_ratio` is automatically calculated based on the `train_ratio, valid_ratio`.\r\n- The arguments provided in the example are all mandatory arguments to be passed.\r\n- The user can provide any additional optional argument incorporated in `from_yolo(), split(), to_yolo()`.\r\n\r\nLet me know if you like this idea, and if you want to submit a PR with the initial implementation.\n\n### Are you willing to submit a PR?\n\n- [X] Yes I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Cześć @user-44 👋🏻 \r\n\r\nTo be honest, I would really prefer not to treat YOLO differently than other data formats. The Supervision API aims to provide reusable building blocks like `sv.DetectionDataset.split` or `sv.DetectionDataset.as_yolo` that you can compose together. To be honest, that sounds like the expected usage of supervision."
+      },
+      {
+        "author": "user-44",
+        "body": "@maintainer-1 That is a fact, I was thinking about that it is \"too much\" automation. Maybe I could create a cookbook similar to 'Serialise Detections to a CSV File' and 'Serialise Detections to a JSON File', guiding and combining the aforementioned methods to construct a YOLO dataset easily."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "I think the cookbook makes a lot more sense. We also released [this](https://supervision.roboflow.com/develop/how_to/process_datasets/) how-to guide last week. MAybe you could reuse some of those code snippet in your cookbook?\r\n\r\n"
+      },
+      {
+        "author": "user-44",
+        "body": "Yeah sure!"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-44 should I expect cookbook PR? ;)"
+      },
+      {
+        "author": "user-44",
+        "body": "@maintainer-1 Yes, but not immediately, i don't have it ready now. I will work for it mostly this weekend."
+      },
+      {
+        "author": "user-44",
+        "body": "@maintainer-1 I have ready the cookbook. I think we use first proceed with PR #1422 , so we can test the notebook properly, because in the final stage I run `model.train()` and it raises an error due to not proper `data.yaml` format."
+      },
+      {
+        "author": "user-45",
+        "body": "Hi, I’d like to take this as a cookbook following maintainer-1’s direction (compose from_yolo > split twice > as_yolo, then write the final data.yaml with train/val/test paths), in the style of the serialisation cookbooks. @user-44, are you still working on it? If so I’m happy to review or help instead. If I don’t hear back in a few days, I’ll start on it."
+      }
+    ]
+  },
+  "2751": {
+    "number": 2751,
+    "title": "[Bug]: oriented-box IoU exactly on 0.55/0.6/0.8/0.85 misses that threshold in MeanAverageRecall, Precision, Recall and F1Score",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar bug report.\n\n### Bug\n\nWith `metric_target=MetricTarget.ORIENTED_BOUNDING_BOXES`, a prediction whose IoU is exactly 0.55, 0.6, 0.8 or 0.85 is counted as a miss at that threshold by `MeanAverageRecall`, `Precision`, `Recall` and `F1Score`. The same geometry as `BOXES` counts as a match, and so does `MeanAveragePrecision`.\n\nThe thresholds are `np.linspace(0.5, 0.95, 10, dtype=np.float32)` (`mean_average_recall.py` and `_confusion_matrix_metric.py`). In float32, 0.55, 0.6, 0.8 and 0.85 round up, so 0.6 becomes 0.6000000238. `box_iou_batch` and `mask_iou_batch` return float32, so an exact 0.6 IoU equals the float32 threshold. `oriented_box_iou_batch` returns float64, so the same 0.6 falls just below it. #2638 fixed this kind of float32/float64 mismatch for `MeanAveragePrecision` and listed these four metrics as out of scope.\n\n### Environment\n\n- supervision `develop` @ 927dfeb05 (0.31.0)\n- macOS arm64, Python 3.12.13, NumPy 2.3.1\n\n### Minimal Reproducible Example\n\nTarget `[0, 0, 10, 10]`, prediction `[0, 1, 14, 11]`: overlap 90, union 150, IoU 0.6.\n\n```python\nimport numpy as np\nimport supervision as sv\nfrom supervision.config import ORIENTED_BOX_COORDINATES\nfrom supervision.metrics import MetricTarget, Recall\n\n\ndef detections(xyxy, confidence=None):\n    x0, y0, x1, y1 = xyxy\n    return sv.Detections(\n        xyxy=np.array([xyxy], dtype=np.float64),\n        class_id=np.array([0]),\n        confidence=None if confidence is None else np.array([confidence]),\n        data={ORIENTED_BOX_COORDINATES: np.array([[[x0, y0], [x1, y0], [x1, y1], [x0, y1]]], dtype=np.float64)},\n    )\n\n\npredictions, targets = detections([0, 1, 14, 11], 0.9), detections([0, 0, 10, 10])\nfor target in (MetricTarget.BOXES, MetricTarget.ORIENTED_BOUNDING_BOXES):\n    print(target, Recall(metric_target=target).update(predictions, targets).compute().recall_scores[:3])\n# MetricTarget.BOXES                    [1. 1. 1.]\n# MetricTarget.ORIENTED_BOUNDING_BOXES  [1. 1. 0.]   <- the 0.6 threshold misses\n```\n\n### Are you willing to submit a PR?\n\n- [x] Yes I'd like to help by submitting a PR!\n",
+    "comments": []
+  },
+  "2846": {
+    "number": 2846,
+    "title": "[Bug]: MeanAverageRecall drops objects with area exactly 32² or 96² from one COCO size bucket (pycocotools and MeanAveragePrecision include them)",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar bug report.\n\n### Bug\n\n**What's the bug?**\n\n`MeanAverageRecall` counts an object whose area is exactly 32² (1024) or 96² (9216) in only one size bucket. pycocotools counts it in both neighbouring buckets. supervision's own `MeanAveragePrecision` also counts it in both, so on the same data mAP and mAR disagree about which bucket an object belongs to.\n\nWhy the two disagree:\n\n- **pycocotools:** the size ranges are `[0, 32²]`, `[32², 96²]` and `[96², 1e5²]` ([cocoeval.py#L509](https://github.com/cocodataset/cocoapi/blob/8c9bcc3cf640524c4c20a9c40e89cb6a2f2fa0e9/PythonAPI/pycocotools/cocoeval.py#L509)). An object is excluded only when `area < lo or area > hi` ([#L251](https://github.com/cocodataset/cocoapi/blob/8c9bcc3cf640524c4c20a9c40e89cb6a2f2fa0e9/PythonAPI/pycocotools/cocoeval.py#L251)), so both ends are inclusive.\n- **`MeanAveragePrecision`:** uses the same inclusive ranges ([`_OBJECT_SIZE_AREA_RANGES`](https://github.com/roboflow/supervision/blob/a87bb76905b631d995049bb5983ce99adfaebd1c/src/supervision/metrics/mean_average_precision.py#L692-L697)).\n- **`MeanAverageRecall`:** filters by size in [`_filter_detections_by_size`](https://github.com/roboflow/supervision/blob/a87bb76905b631d995049bb5983ce99adfaebd1c/src/supervision/metrics/mean_average_recall.py#L864) through `ObjectSizeCategory`. That uses half-open bins: `area < 32²`, `32² <= area < 96²` and `area >= 96²` ([object_size.py#L131-L133](https://github.com/roboflow/supervision/blob/a87bb76905b631d995049bb5983ce99adfaebd1c/src/supervision/metrics/utils/object_size.py#L131-L133)). The mask and OBB variants in the same file work the same way.\n\nThe half-open bins in `ObjectSizeCategory` are documented and fine for filtering. The issue is only that `MeanAverageRecall` uses them where COCO semantics are expected.\n\n**Expected behavior:**\n\nSmall, medium and large mAR match pycocotools AR, and an object belongs to the same buckets in mAR as in mAP.\n\n**Actual behavior** (perfect prediction on a single box, from the script below):\n\n| box | metric | small | medium | large |\n|---|---|---|---|---|\n| 32×32 | pycocotools AR@100 | 1.0 | 1.0 | -1 |\n| 32×32 | `MeanAverageRecall` @user-48 | **0.0** | 1.0 | **0.0** |\n| 32×32 | `MeanAveragePrecision` | 1.0 | 1.0 | -1 |\n| 96×96 | pycocotools AR@100 | -1 | 1.0 | 1.0 |\n| 96×96 | `MeanAverageRecall` @user-48 | **0.0** | **0.0** | 1.0 |\n| 96×96 | `MeanAveragePrecision` | -1 | 1.0 | 1.0 |\n\n**Who it affects:** any target whose box or mask area is exactly 1024 or 9216. Box-only labels with exact pixel sizes hit this (tiled or synthetic data, fixed-size annotations), and so do integer mask pixel counts. It changes only the small, medium and large mAR values, not overall mAR or mAP. On small datasets, one object moving between buckets is a large change.\n\n**Related, visible in the same output:** when a size bucket has no targets, `MeanAverageRecall` returns `0.0`. pycocotools an",
+    "comments": []
+  },
+  "2401": {
+    "number": 2401,
+    "title": "[Bug]:  KeyPoints indexing and as_detections crash or drop detections on valid input",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar bug report.\n\n### Bug\n\n  Three related defects in `KeyPoints` input handling, all on current `develop`.\n  Grouping them since they share the same root cause pattern (missing\n  empty/type guards) and touch the same class.\n\n\n **1. `KeyPoints[[]]` crashes with `IndexError`.**\n\n  ```python\n  # src/supervision/key_points/core.py:968\n  if isinstance(i, list) and all(isinstance(x, bool) for x in i):\n      i = np.array(i)\n  ```\n\n  `all(...)` on an empty list is vacuously `True`, so an empty list is treated\n  as a boolean mask and converted to `np.array([])` with dtype `float64`, which\n  then fails as an index. An empty list is a completely valid selector and it's\n  what any \"filter matched nothing\" produces and `Detections[[]]` already\n  handles it correctly, returning an empty `Detections`. `KeyPoints` is the odd\n  one out.\n\n  **2. `as_detections(selected_keypoint_indices=...)` crashes on a numpy \n  array.**\n\n  ```python\n  # src/supervision/key_points/core.py:1293 and :1316\n  if selected_keypoint_indices:\n  ```\n\n  The parameter is typed `Iterable[int] | None`, and a numpy array of indices is\n  the most natural thing to pass. Truthiness on a multi-element array raises \n  `ValueError: The truth value of an array with more than one element is \n  ambiguous`.\n\n  **3. `as_detections()` silently drops skeletons with collinear or single\n  keypoints.**\n\n  ```python\n  # src/supervision/key_points/core.py:1325\n  detections = detections.select(cast(Any, detections.area) > 0)\n  ```\n\n  This line is meant to drop skeletons with no valid keypoints (all `[0, 0]`),\n  but `area > 0` also removes any skeleton whose fitted box is degenerate for a\n  legitimate reason: a single visible keypoint, or keypoints that happen to lie\n  on a horizontal/vertical line. The docstring promises \"the bounding box that\n  fits all key points\" and says nothing about dropping detections in this case.\n\n\n\n### Environment\n\n  supervision: develop (bd0f44fc)\n  python:      3.12\n  os:          macOS\n\n### Minimal Reproducible Example\n\n ```python\n  import numpy as np\n  import supervision as sv\n\n  # 1. Empty list indexing\n  kp = sv.KeyPoints(xy=np.array([[[1, 2], [3, 4]], [[5, 6], [7, 8]]],\n  dtype=np.float32))\n  kp[[]]   # IndexError: arrays used as indices must be of integer (or boolean)\n  type\n\n  # 2. numpy array for selected_keypoint_indices\n  kp2 = sv.KeyPoints(xy=np.array([[[10, 10], [20, 20], [30, 15]]],\n  dtype=np.float32))\n  kp2.as_detections(selected_keypoint_indices=np.array([0, 1]))\n  # ValueError: The truth value of an array with more than one element is\n  ambiguous\n\n  # 3. Collinear keypoints dropped\n  kp3 = sv.KeyPoints(xy=np.array([[[10, 20], [30, 20]]], dtype=np.float32))\n  print(len(kp3), len(kp3.as_detections()))   # 1 0 -- the skeleton vanished\n\n  # Same for a single keypoint\n  kp4 = sv.KeyPoints(xy=np.array([[[15, 25]]], dtype=np.float32))\n  print(len(kp4), len(kp4.as_detections()))   # 1",
+    "comments": []
+  }
+}

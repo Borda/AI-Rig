@@ -115,6 +115,72 @@ def _edit(root: Path, relative: str, old: str, new: str) -> None:
     path.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
 
 
+@pytest.fixture
+def bound_tree(tree: Path) -> Path:
+    """Return a tree with two bound foundry sections and one unbound section in the full rule file."""
+    _edit(
+        tree,
+        _RULE_PATH.format("cc_foundry"),
+        "- **Beta one**: text\n- **Beta two**: text",
+        "> Before applying this section, resolve + Read `_full/quality-gates.md` §Beta (required on analysis). "
+        "Every instruction there is binding as if inline here. If it cannot be read, stop the affected activity.",
+    )
+    _edit(
+        tree,
+        _RULE_PATH.format("cc_foundry"),
+        "- **Gamma one**: text\n- **Gamma two**: text",
+        "> Before applying this section, resolve + Read `_full/quality-gates.md` §Gamma. "
+        "Every instruction there is binding as if inline here. If it cannot be read, stop the affected activity.",
+    )
+    _edit(
+        tree,
+        f"plugins/cc_foundry/rules/_full/{_NS['QUALITY_RULE']}",
+        "- **Plan first**: text",
+        "- **Plan first**: text\n\n"
+        "## Beta (required on analysis)\n\n- **Beta one**: text\n- **Beta two**: text\n\n"
+        "## Gamma\n\n- **Gamma one**: text\n- **Gamma two**: text\n\n"
+        "## Alpha\n\n- **Unbound extra**: text",
+    )
+    return tree
+
+
+class TestBoundQualitySections:
+    """Bound full sections contribute rules, while missing targets fail the comparison explicitly."""
+
+    def test_bound_sections_supply_named_rules(self, bound_tree: Path) -> None:
+        """All bound sections supply their rules without including unbound full-file content."""
+        result = _run(bound_tree)
+
+        assert (result.returncode, result.stdout) == (0, "")
+
+    def test_bound_section_missing_rule_reports_drift(self, bound_tree: Path) -> None:
+        """A rule omitted from a bound full section still reports the differing plugin set."""
+        _edit(bound_tree, f"plugins/cc_foundry/rules/_full/{_NS['QUALITY_RULE']}", "- **Beta two**: text\n", "")
+
+        result = _run(bound_tree)
+
+        assert result.returncode == 1
+        assert result.stdout == (
+            "plugins/cc_develop/rules/quality-gates.md: [quality gates] §beta states 'beta two' only in "
+            "['cc_develop', 'cc_oss', 'cc_research']; propagate it to every plugin in "
+            "['cc_develop', 'cc_foundry', 'cc_oss', 'cc_research'], or exempt the section with a reason\n"
+        )
+
+    @pytest.mark.parametrize("heading", ["Beta (required on analysis)", "Proportional Execution"])
+    def test_missing_bound_heading_reports_parity_error(self, bound_tree: Path, heading: str) -> None:
+        """A missing target heading reports a parity error instead of silently ignoring the binding."""
+        relative = f"plugins/cc_foundry/rules/_full/{_NS['QUALITY_RULE']}"
+        _edit(bound_tree, relative, f"## {heading}\n", "## Missing target\n")
+
+        result = _run(bound_tree)
+
+        assert result.returncode == 1
+        assert result.stdout == (
+            "plugins/cc_foundry/rules/quality-gates.md: [quality gates] "
+            f"bound section §{heading} not found in {relative}\n"
+        )
+
+
 class TestCleanTrees:
     """The hook starts clean on the repository and on a consistent synthetic tree."""
 

@@ -82,7 +82,7 @@ def build_commit_query(shas: list[str]) -> str:
         ValueError: A value is not a full hexadecimal commit hash (guards against query injection).
     """
     for sha in shas:
-        if not _SHA_RE.match(sha):
+        if not _SHA_RE.fullmatch(sha):
             raise ValueError(f"not a full commit hash: {sha!r}")
     fields = (
         f"associatedPullRequests(first:{_PAGE}){{pageInfo{{hasNextPage}} nodes{{number title merged baseRefName "
@@ -188,7 +188,7 @@ def resolve_repo(repo: str | None, cwd: Path) -> tuple[str, str]:
         QueryError: ``gh repo view`` failed.
     """
     slug = repo or _run(["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], cwd).strip()
-    if not _REPO_RE.match(slug):
+    if not _REPO_RE.fullmatch(slug):
         raise ValueError(f"repository is not OWNER/NAME: {slug!r}")
     owner, name = slug.split("/", 1)
     return owner, name
@@ -254,7 +254,8 @@ def commit_prs(args: argparse.Namespace) -> int:
     owner, name = resolve_repo(args.repo, root)
     everything = _run(["git", "rev-list", args.range], root).split()
     if args.exclude_file:
-        everything = [sha for sha in everything if sha not in _load_excluded(Path(args.exclude_file))]
+        excluded = _load_excluded(Path(args.exclude_file))
+        everything = [sha for sha in everything if sha not in excluded]
     window = everything[offset : offset + args.limit]
     print(f"PR associations: commits {offset + 1}-{offset + len(window)} of {len(everything)}", file=sys.stderr)
     for batch in _batches(window, args.batch_size):

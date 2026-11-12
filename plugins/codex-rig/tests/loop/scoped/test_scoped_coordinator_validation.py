@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, NamedTuple
+from unittest.mock import Mock
 
 import pytest
 from _final_handoff_support import load_shared_validator
@@ -217,6 +218,39 @@ def schema_three_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SchemaT
 
 class TestScopedCoordinator:
     """Promotion of scoped coordinator results against real retained child evidence."""
+
+    @pytest.mark.integration
+    def test_validates_registered_mirror_from_origin_checkout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Parent finalization can check its registered detached review mirror from the original checkout."""
+        validator, manifest, context = _scoped_fixture(tmp_path, monkeypatch, pinned=True)
+        monkeypatch.chdir(manifest["origin_repository"])
+
+        summary = validator._validate_challenge_scope({"challenge_scope": context["scope"]}, tmp_path, summary=True)
+
+        assert summary["schema_version"] == 2
+        assert len(summary["runs"]) == 2
+
+    @pytest.mark.integration
+    def test_rejects_redirected_mirror_before_git_execution(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A matching declared origin cannot authorize Git reads through a redirected mirror gitfile."""
+        _validator, manifest, _context = _scoped_fixture(tmp_path, monkeypatch, pinned=True)
+        origin = Path(manifest["origin_repository"])
+        # Git for Windows hides this file; opening the existing file avoids CREATE_ALWAYS's hidden-file refusal.
+        with (Path(manifest["repository"]) / ".git").open("r+", encoding="utf-8", newline="\n") as stream:
+            stream.write(f"gitdir: {origin / '.git'}\n")
+            stream.truncate()
+        checker = _module(CHECKER)
+        git = Mock(side_effect=AssertionError("unexpected Git execution"))
+        monkeypatch.setattr(checker, "_git", git)
+
+        with pytest.raises(ValueError, match="chunk-source-repository-mismatch"):
+            checker.check(tmp_path / "chunks/chunks.json", repository=origin)
+
+        git.assert_not_called()
 
     def test_promotes_only_after_authenticated_checker(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Scoped coverage is promoted after real reviewer and audit checks, and a forged summary is rejected.

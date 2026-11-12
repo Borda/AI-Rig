@@ -14,8 +14,8 @@ Read-only performance specialist for throughput, latency, memory, GPU utilizatio
 ## Trigger and skip boundaries
 
 - Trigger: throughput, latency, memory, GPU utilization, algorithmic complexity, or profiling evidence is central.
-- Skip: generic implementation, docs-only, CI-only, architecture-only, or test coverage without performance metrics.
-- Not for: unmeasured speedup claims, production edits, benchmark-file edits, or behavior changes justified only by theoretical performance.
+- Skip: generic implementation, documentation, CI, architecture, or test coverage without a material performance claim or performance metrics.
+- Not for: endorsing unmeasured speedup claims, production edits, benchmark-file edits, or behavior changes justified only by theoretical performance. Assess unsupported performance claims rather than skipping them.
 
 ## Evidence ownership
 
@@ -24,6 +24,7 @@ Read-only performance specialist for throughput, latency, memory, GPU utilizatio
 - Choose earliest measured intervention: algorithm, data structure, I/O, memory, caching, then micro-optimization.
 - Recommend one change at a time. Accept a win only when the same workload shows improvement above the agreed threshold and correctness still passes; otherwise recommend rollback or further profiling.
 - If profiling cannot run, label every optimization recommendation as hypothesis.
+- For review claims, bind baseline/after evidence to exact revisions and relevant hardware; distinguish supplied results from independent reproduction. Use repeated comparable measurements with an explicit tolerance and variability. Record shared CPU/GPU load, memory pressure, I/O contention and thermal/power limits when observable; unresolved noise or unequal contention makes the result inconclusive, not proof for or against the claim. Bound reruns, retain raw samples, avoid competing benchmark runs, and never stop unrelated processes without authorization. Hand execution to the parent when the review route permits inspection only.
 
 ## Execution constraints
 

@@ -33,7 +33,7 @@ NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `
 <inputs>
 
 - **No arguments** — interactive; prompts before replacing a conflicting destination.
-- **`--approve`** — non-interactive; replaces conflicting destinations without asking. Used by `make sync-claude`.
+- **`--approve`** — non-interactive; replaces conflicting links without asking and preserves real user files. Used by `make sync-claude`.
 
 </inputs>
 
@@ -56,7 +56,7 @@ printf "  Python: %s\n" "$(python --version 2>&1)"
 `$CLAUDE_PLUGIN_ROOT` is the installed plugin version. `sync_rules.py` re-validates it (manifest exists, parses, declares `oss`; `rules/` is a real directory holding at least one non-empty regular `*.md`) and aborts before touching anything if any check fails.
 
 ```bash
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}"
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name oss --plugin-root "$PLUGIN_ROOT" --dry-run  # timeout: 15000
 ```
 
@@ -64,14 +64,21 @@ Non-zero exit → print stderr verbatim and stop; nothing was modified.
 
 ## Step 3: Apply
 
-Run without `--dry-run`. Add `--approve` only when `APPROVE_ALL=true`:
+Run without `--dry-run`. When `APPROVE_ALL=false`, run this fixed block:
 
 ```bash
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}"
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name oss --plugin-root "$PLUGIN_ROOT"  # timeout: 15000
 ```
 
-Output lines, one per destination: `linked:` · `unchanged:` · `replaced (--approve):` · `removed obsolete:` · `conflict, kept as-is:` · `FAILED:`.
+When `APPROVE_ALL=true`, run this fixed block instead:
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name oss --plugin-root "$PLUGIN_ROOT" --approve  # timeout: 15000
+```
+
+Output lines, one per destination: `linked:` · `unchanged:` · `replaced (explicit approval):` · `removed obsolete:` · `conflict, kept as-is:` · `FAILED:`.
 
 Ownership proved before any replace or remove: existing link must resolve under current plugin root, or under same `~/.claude/plugins/cache/<marketplace>/oss/` lineage as current install. A link into another marketplace, another plugin, a source checkout, or a dotfiles tree is never adopted — path substrings are not evidence of ownership.
 
@@ -79,15 +86,20 @@ Ownership proved before any replace or remove: existing link must resolve under 
 
 No `conflict, kept as-is:` lines → skip to Step 5.
 
-`APPROVE_ALL=true` → conflicts were already replaced in Step 3; skip to Step 5.
+`APPROVE_ALL=true` with remaining conflicts → report them as undelivered and stop; do not assume replacement succeeded.
 
 Otherwise invoke `AskUserQuestion`, listing each conflicting destination and its current state:
 
 - (a) **Keep them** — those rules stay undelivered
-- (b) **Replace all with plugin links** ★ recommended — existing content is overwritten
+- (b) **Replace all with plugin links** ★ recommended — real user files are backed up beside the destination before replacement
 - (c) **Abort** — leave everything as it is
 
-On **(b)**, re-run Step 3's command with `--approve` appended and report the resulting `replaced (--approve):` lines. On (a) or (c), report which rules remain undelivered.
+On **(b)**, run this fixed replacement block only after the user explicitly chooses replacement, then report the resulting `replaced (explicit approval):` lines and sibling `<destination>.bak-<timestamp>` backups. `--approve` alone preserves real user files. On (a) or (c), report which rules remain undelivered.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name oss --plugin-root "$PLUGIN_ROOT" --approve --replace-user-files  # timeout: 15000
+```
 
 ## Step 5: Merge permissions.allow and permissions.deny
 
@@ -102,23 +114,20 @@ The merge removes exactly the retired allow entries listed in `permissions-allow
 - The broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)` shell grants — nothing replaces them.
 - The `Bash(sed -nE '…' "$REVIEW_FILE")` PR-number grep — its regex `*` characters read as wildcards, so it approved other `sed` commands; `bin/extract_review_pr.py` replaces it.
 
-Preserve every other user allow entry, all deny entries, and unrelated settings.
+Retirement matches the rule text exactly, without tracking who added it. An identical user-authored entry, such as `Bash(find:*)`, is removed too. Preserve every other user allow entry, all deny entries, and unrelated settings.
 
 Deny wins over allow in Claude Code, so merging both in either order yields the same effective policy.
 
-One block runs the whole step: create the file on first install (a standalone install may reach this step with no `~/.claude/settings.json` at all), back it up before any write, merge, then validate. `merge_settings_permissions.py` writes the merged `permissions.allow` and `permissions.deny` arrays in one atomic write, so allow never lands without deny; a missing or invalid shipped file aborts the block with settings unchanged. settings.json that no longer parses is restored from the backup taken at the top of the block:
+One block runs the whole step: create the file on first install (a standalone install may reach this step with no `~/.claude/settings.json` at all), merge, then validate. Under its settings lock, `merge_settings_permissions.py` skips unchanged writes and backups; before a changed write it saves the original bytes in a private sibling backup and retains the newest five helper backups. It writes the merged `permissions.allow` and `permissions.deny` arrays in one atomic write, so allow never lands without deny; a missing or invalid shipped file aborts the block with settings unchanged.
 
 ```bash
-SETUP_BAK_TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 [ -f ~/.claude/settings.json ] || printf '{}\n' > ~/.claude/settings.json  # created in-bash — no Write-tool prompt, headless-safe
-cp ~/.claude/settings.json "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}"  # timeout: 5000
-printf "Backed up ~/.claude/settings.json → ~/.claude/settings.json.bak-%s\n" "$SETUP_BAK_TS"
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow-file "$PLUGIN_ROOT/.claude-plugin/permissions-allow-retired.json" --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
-python -m json.tool ~/.claude/settings.json > /dev/null || { cp "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}" ~/.claude/settings.json; printf "! settings.json no longer parses — restored from backup\n"; exit 1; }  # timeout: 5000 — Step 1 guarantees python; jq may be absent (native Windows), and its exit 127 would restore the backup over a good merge
+python "$PLUGIN_ROOT/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow-file "$PLUGIN_ROOT/.claude-plugin/permissions-allow-retired.json" --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
+python -m json.tool ~/.claude/settings.json > /dev/null || { printf "! settings.json no longer parses — stop and inspect the reported helper backup\n"; exit 1; }  # timeout: 5000 — Step 1 guarantees python; jq may be absent (native Windows)
 ```
 
-Report the backup path the block printed. From the script's two output lines report "Added N new permissions.allow entries (M already present)." plus the total retired allow entries removed (`dropped`), and "Added N new permissions.deny entries (M already present)." Zero exit → continue to Step 6. Non-zero exit → the block already restored (validation failure) or left settings unchanged (merge failure); report the failure and stop.
+Report the helper's `settings: unchanged` status or the backup path it printed for a changed merge. From the script's permission-count lines report "Added N new permissions.allow entries (M already present)." plus the total retired allow entries removed (`dropped`), and "Added N new permissions.deny entries (M already present)." Zero exit → continue to Step 6. Non-zero exit → report the failure and stop; merge failures leave settings unchanged, and validation failures require inspecting the reported helper backup before recovery.
 
 ## Step 6: Report
 

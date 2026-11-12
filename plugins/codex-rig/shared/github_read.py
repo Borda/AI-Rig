@@ -401,8 +401,8 @@ def run_bounded_command(
 
     Complete local preservation inventories may opt out of the stdout bound; stderr is always bounded. Input is sent
     concurrently with output reads so a patch consumer cannot deadlock on full pipes. One deadline covers the process
-    and inherited output handles; raw pipes and daemon readers let timeout cleanup close local handles without waiting
-    for a descendant to release its inherited copies.
+    and inherited output handles. On Windows, failed commands hand pipe closing to daemon workers so the caller never
+    waits for a blocked reader's descriptor lock while a descendant retains inherited handles.
     """
     oversized = Event()
     stopped = Event()
@@ -441,6 +441,14 @@ def run_bounded_command(
             return subprocess.CompletedProcess(argv, process.returncode, stdout.result(), stderr.result())
         except BaseException:
             stopped.set()
+            if sys.platform == "win32":
+                # Popen.__exit__ closes pipes on this thread; Windows close can wait for a blocked read or write.
+                # Detach first so only daemon workers wait for descendants to release their inherited handles.
+                for name in ("stdout", "stderr", "stdin"):
+                    stream = getattr(process, name)
+                    if stream is not None:
+                        setattr(process, name, None)
+                        _start_command_io(stream.close)
             process.kill()
             process.wait()
             raise

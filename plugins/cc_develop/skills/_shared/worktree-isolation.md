@@ -17,48 +17,57 @@ Run right after flag parse, **before** codemap detection + Step 1. Steps:
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-<skill>-worktree-${CSID}" 2>/dev/null; [ "$WORKTREE_ENABLED" = "true" ] || WORKTREE_ENABLED=false
+IFS= read -r WT_SKILL < "${TMPDIR:-/tmp}/dev-worktree-skill-${CSID}" 2>/dev/null || WT_SKILL=""
+case "$WT_SKILL" in feature|fix|refactor|debug|review) ;; *) echo "! BLOCKED — calling skill missing; re-run Worktree isolation"; exit 1;; esac
+IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-${WT_SKILL}-worktree-${CSID}" 2>/dev/null; [ "$WORKTREE_ENABLED" = "true" ] || WORKTREE_ENABLED=false
 ```
 
 `WORKTREE_ENABLED` != `true` → skip rest of file, run in main tree.
 
 1. Guard — already in a worktree (`git rev-parse --git-common-dir` ≠ `.git`)? → skip Enter, warn `⚠ already in worktree — --worktree no-op`, continue in current tree.
-2. Create + enter (deterministic HEAD base). Slug = first ~4 words of goal, lowercased, non-`[A-Za-z0-9._-]`→`-`, ≤48 chars; empty goal → `dev-<skill>`. Persist `_ORIG_ROOT` (main tree) for §Deliverable + §Exit — capture **before** entering:
+2. Create + enter (deterministic HEAD base). Derive a lowercase goal slug with only `[a-z0-9._-]`, ≤48 chars; empty goal → `dev-$WT_SKILL`. Persist `_ORIG_ROOT` (main tree) for §Deliverable + §Exit — capture **before** entering:
 
 ```bash
 # timeout: 15000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-git rev-parse --show-toplevel > "${TMPDIR:-/tmp}/dev-<skill>-orig-root-${CSID}"   # main-tree root, read later
-git rev-parse HEAD > "${TMPDIR:-/tmp}/dev-<skill>-wt-base-${CSID}"   # exact base for the final ahead check
+IFS= read -r WT_SKILL < "${TMPDIR:-/tmp}/dev-worktree-skill-${CSID}" 2>/dev/null || WT_SKILL=""
+case "$WT_SKILL" in feature|fix|refactor|debug|review) ;; *) echo "! BLOCKED — calling skill missing; re-run Worktree isolation"; exit 1;; esac
+WT_SLUG=$(printf '%s\n' "$ARGUMENTS" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-' | cut -c1-48)
+[ -n "$WT_SLUG" ] || WT_SLUG="dev-$WT_SKILL"
+git rev-parse --show-toplevel > "${TMPDIR:-/tmp}/dev-${WT_SKILL}-orig-root-${CSID}"   # main-tree root, read later
+git rev-parse HEAD > "${TMPDIR:-/tmp}/dev-${WT_SKILL}-wt-base-${CSID}"   # exact base for the final ahead check
 git status --porcelain 2>/dev/null | head -1 | grep -q . && echo "⚠ uncommitted changes will NOT appear in the worktree — commit/stash first if needed"
-WT=".claude/worktrees/dev-<skill>-<slug>"
-git worktree add -b "dev-<skill>-<slug>" "$WT" HEAD   # branch off current HEAD, not origin/default
-echo "$WT" > "${TMPDIR:-/tmp}/dev-<skill>-wt-${CSID}"   # final path, read by EnterWorktree below
+WT=".claude/worktrees/dev-${WT_SKILL}-${WT_SLUG}"
+git worktree add -b "dev-${WT_SKILL}-${WT_SLUG}" "$WT" HEAD || exit $?   # branch off current HEAD, not origin/default
+echo "$WT" > "${TMPDIR:-/tmp}/dev-${WT_SKILL}-wt-${CSID}"   # final path, read by EnterWorktree below
 ```
 
-> Branch/path name collision (`add` fails `already exists`) → append a short disambiguator to `<slug>` (changes branch **and** path) and retry once. Never check or ask about other worktrees up front — they don't block this run. **Only if the retry still fails**, run the report (deletes nothing):
+> Branch/path name collision (`add` fails `already exists`) → append a short disambiguator to `WT_SLUG` (changes branch **and** path) and retry once, persisting the successful final path in the same `dev-${WT_SKILL}-wt-${CSID}` sentinel. Never check or ask about other worktrees up front — they don't block this run. **Only if the retry still fails**, run the report (deletes nothing):
 
 ```bash
 # timeout: 30000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/heal_git_artifacts.py" worktrees --include-orphans
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/heal_git_artifacts.py" worktrees --include-orphans
 ```
 
 > Exit 0 (nothing reclaimable) or exit 2 (environment error) → leftovers aren't the cause; print the `git worktree add` error, stop. Exit 1 but the `add` error names none of the listed paths or branches → leftovers aren't the cause; print the error, stop. Exit 1 and the error names a listed path or branch → Write the full list and the `add` error to `.temp/worktree-leftovers.md` first; print them once as the last reply text before invoking `AskUserQuestion`, as normal Markdown. The question text carries the leftover count, the `add` error headline and `→ .temp/worktree-leftovers.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Both options carry a label and a one-line description, no `preview` — never offer removal of an unseen list: (a) **Stop** — keep everything, end the run · (b) **Remove them and retry** — run the block below in this turn, retry the create once. That retry fails too → print the error, stop; never loop back to the report. Removing a worktree deletes a directory tree, so never run the `--apply` form without that answer.
 
 ```bash
 # timeout: 30000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/heal_git_artifacts.py" worktrees --include-orphans --apply
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/heal_git_artifacts.py" worktrees --include-orphans --apply
 ```
 
 > Candidates are only clean, registered-or-orphaned, ≥14-day-old `agent-*`/`oss-*` trees — subagent-isolation and oss-skill trees, not yours. Both calls pass `--include-orphans`, so the approved list and the removal cover the same unregistered dirs; symlinks are never followed or removed. **`dev-*` is never a candidate** — §Exit contracts those as deliverables you review and merge yourself. Uncommitted work is reported, kept at any age.
 
-3. `EnterWorktree(path=<final $WT from `${TMPDIR:-/tmp}/dev-<skill>-wt-${CSID}`>)` — the possibly disambiguated path, never the original slug — switches session CWD into the worktree. All later edits, tests, codemap scans land there.
+3. Reload `WT_SKILL` from `dev-worktree-skill-${CSID}` and the final `WT` from `${TMPDIR:-/tmp}/dev-${WT_SKILL}-wt-${CSID}`, then call `EnterWorktree(path=<the resolved WT>)` — the possibly disambiguated path, never the original slug — switches session CWD into the worktree. All later edits, tests, codemap scans land there.
 4. Warm-start codemap (optional, cheap) — copy main index in so first query is `current`, not cold scan:
 
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _ORIG < "${TMPDIR:-/tmp}/dev-<skill>-orig-root-${CSID}" 2>/dev/null || _ORIG=""
+IFS= read -r WT_SKILL < "${TMPDIR:-/tmp}/dev-worktree-skill-${CSID}" 2>/dev/null || WT_SKILL=""
+IFS= read -r _ORIG < "${TMPDIR:-/tmp}/dev-${WT_SKILL}-orig-root-${CSID}" 2>/dev/null || _ORIG=""
 _PROJ="$(basename "$(pwd)")"
 [ -n "$_ORIG" ] && [ -f "$_ORIG/.cache/codemap/$_PROJ.json" ] && { mkdir -p .cache/codemap && cp "$_ORIG/.cache/codemap/$_PROJ.json" ".cache/codemap/$_PROJ.json" 2>/dev/null; } || true
 ```
@@ -78,7 +87,8 @@ Code-editing skills (feature, fix, refactor) want everything in the worktree —
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _ORIG_ROOT < "${TMPDIR:-/tmp}/dev-<skill>-orig-root-${CSID}" 2>/dev/null || _ORIG_ROOT="$(pwd)"
+IFS= read -r WT_SKILL < "${TMPDIR:-/tmp}/dev-worktree-skill-${CSID}" 2>/dev/null || WT_SKILL=""
+IFS= read -r _ORIG_ROOT < "${TMPDIR:-/tmp}/dev-${WT_SKILL}-orig-root-${CSID}" 2>/dev/null || _ORIG_ROOT="$(pwd)"
 ```
 
 Prefix final report/diagnosis path with `$_ORIG_ROOT` (absolute). Intermediate `.temp/` handoffs may stay in the worktree (ephemeral). Report main-tree deliverable path to user.
@@ -92,6 +102,7 @@ For code-editing skills, report uncommitted changes as a normal labelled handoff
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r WT_SKILL < "${TMPDIR:-/tmp}/dev-worktree-skill-${CSID}" 2>/dev/null || WT_SKILL=""
 _WORKTREE_KNOWN=true
 _WORKTREE_DIRTY=$(git status --porcelain --untracked-files=all -- ':/' ':(top,exclude).developments' ':(top,exclude).temp') || _WORKTREE_KNOWN=false
 _WORKTREE_BRANCH=$(git branch --show-current)
@@ -103,7 +114,7 @@ elif [ -n "$_WORKTREE_DIRTY" ]; then
     printf '%s\n' "$_WORKTREE_DIRTY"
     echo "Review changes; commit inside the worktree first, then merge its branch from the original checkout"
 else
-    IFS= read -r _WORKTREE_BASE < "${TMPDIR:-/tmp}/dev-<skill>-wt-base-${CSID}" 2>/dev/null || _WORKTREE_BASE=""
+    IFS= read -r _WORKTREE_BASE < "${TMPDIR:-/tmp}/dev-${WT_SKILL}-wt-base-${CSID}" 2>/dev/null || _WORKTREE_BASE=""
     _WORKTREE_AHEAD=0
     [ -z "$_WORKTREE_BASE" ] || _WORKTREE_AHEAD=$(git rev-list --count "${_WORKTREE_BASE}..HEAD")
     case "$_WORKTREE_AHEAD" in ''|*[!0-9]*) _WORKTREE_AHEAD=0;; esac
@@ -121,7 +132,7 @@ fi
 
 ```
 Worktree — isolated run (base: HEAD)
-  path:   <final $WT from ${TMPDIR:-/tmp}/dev-<skill>-wt-${CSID}>/
+  path:   <final $WT from ${TMPDIR:-/tmp}/dev-${WT_SKILL}-wt-${CSID}>/
   branch: <branch>
   status: <uncommitted changes / clean and ahead / no verified commits / inspection unavailable>
   next:   <the matching recipe printed above; direct merge only when clean and ahead>

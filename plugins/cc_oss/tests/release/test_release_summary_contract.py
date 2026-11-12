@@ -7,13 +7,14 @@ read with whitespace collapsed, so a reflowed paragraph cannot break a phrase as
 from pathlib import Path
 
 import pytest
+from _skill_source import read_skill_source
 
 _RELEASE = Path(__file__).resolve().parents[2] / "skills/release"
 
 
 def _read(relative: str) -> str:
     """Return one shipped release-skill file as text with every whitespace run collapsed to a single space."""
-    return " ".join((_RELEASE / relative).read_text(encoding="utf-8").split())
+    return " ".join(read_skill_source(_RELEASE / relative).split())
 
 
 class TestSummaryContract:

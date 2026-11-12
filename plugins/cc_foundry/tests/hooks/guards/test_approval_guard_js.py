@@ -380,6 +380,16 @@ class TestScopeTable:
                 15 * 60 * 1000,
             ],
             [
+                "push-run",
+                "git-push-run",
+                ["Approve", "Deny"],
+                "Approve",
+                "claude-push-run-approval.json",
+                ["question_id", "remote", "branch", "base_head", "expires_at"],
+                True,
+                12 * 60 * 60 * 1000,
+            ],
+            [
                 "gh-write-once",
                 "gh-write",
                 ["Approve", "Deny"],
@@ -412,6 +422,7 @@ class TestScopeTable:
         assert _node_lib("Object.keys(g.RECORD_BUILDERS)") == [
             "local-git-non-destructive",
             "push-once",
+            "push-run",
             "gh-write-once",
         ]
 
@@ -424,6 +435,7 @@ class TestScopeTable:
         assert _node_lib("g.SCOPES.map(r => [r.id, r.revokeAnswer])") == [
             ["local-git-non-destructive", None],
             ["push-once", "Deny"],
+            ["push-run", "Deny"],
             ["gh-write-once", "Deny"],
         ]
 
@@ -1109,6 +1121,7 @@ class TestSelfGrantGuard:
             pytest.param("Write", {"file_path": "notes/codex-git-approval.json"}, id="codex-grant"),
             pytest.param("Write", {"file_path": ".claude/local/git-approval.json"}, id="former-grant-name"),
             pytest.param("Write", {"file_path": "notes/claude-push-approval.json"}, id="push-token"),
+            pytest.param("Write", {"file_path": "notes/claude-push-run-approval.json"}, id="push-run-token"),
             pytest.param("Write", {"file_path": "notes/claude-gh-write-approval.json"}, id="gh-write-token"),
             pytest.param("Write", {"file_path": f"notes/claude-git-approval.j{LONG_S}on"}, id="long-s-case-fold"),
             pytest.param("Write", {"file_path": f"notes/claude-{FULLWIDTH_G}it-approval.json"}, id="fullwidth-letter"),
@@ -1234,6 +1247,7 @@ class TestSelfGrantGuard:
             pytest.param(f"printf '{{}}' > \"`git rev-parse --git-common-dir`/{GRANT_NAME}\"", id="backtick-subst"),
             pytest.param("cp grant.json .git/codex-git-approval.json", id="codex-grant"),
             pytest.param("cp token.json .git/claude-push-approval.json", id="push-token"),
+            pytest.param("cp token.json .git/claude-push-run-approval.json", id="push-run-token"),
             pytest.param("cp token.json .git/claude-gh-write-approval.json", id="gh-write-token"),
             pytest.param("printf '{}' > .git/claude-gh-write-approval.json", id="gh-write-token-redirect"),
             pytest.param("cp token.json .git/claude-gh-write-ap*", id="gh-write-token-glob"),
@@ -1267,6 +1281,8 @@ class TestSelfGrantGuard:
             pytest.param("cp x.json .git/claude-git-approval.{json,bak}", id="brace-expansion"),
             pytest.param("cp x.json .git/[[:alpha:]]laude-git-approval.json", id="glob-posix-class"),
             pytest.param("cp x.json .git/[!x]laude-git-approval.json", id="glob-negated-bracket"),
+            pytest.param("cp x.json .git/[ci-1]laude-git-approval.json", id="glob-reversed-range-keeps-member"),
+            pytest.param("cp x.json .git/[!z-a]laude-git-approval.json", id="glob-negated-reversed-range"),
             pytest.param("cp x.json .gi?/claude-git-ap*", id="glob-in-git-dir-glob"),
             pytest.param("cp x.json .git/*", id="wildcard-in-grant-directory"),
             pytest.param(f"cp x.json .git/claude-git-approval.j{LONG_S}on", id="long-s-case-fold"),
@@ -1404,6 +1420,10 @@ class TestSelfGrantGuard:
                 'case "$IDS" in *[!0-9\\ ]*) echo "! BLOCKED — bad id"; exit 1 ;; esac', id="unclosed-bracket-word"
             ),
             pytest.param("jq -r '.items[] | .name' out.json", id="jq-array-iterator"),
+            pytest.param(
+                "python3 -I - <<'EOF'\nline=t[i-1:].split('\\n')[0]\nEOF", id="heredoc-python-reversed-range-slice"
+            ),
+            pytest.param("ls .git/[z-a]laude-git-approval.json", id="reversed-range-matches-nothing"),
             pytest.param("mv git-* out/", id="git-prefix-glob-misses-former-name"),
             pytest.param(
                 'DOC=$(find "$ROOT" -maxdepth 3 \\( \\\n  -iname "MIGRATION*" -o -iname "CHANGELOG*" \\\n'
@@ -1598,6 +1618,38 @@ def _push_token(checkout: Path) -> Path:
     return checkout / ".git" / PUSH_RECORD
 
 
+PUSH_RUN_RECORD = "claude-push-run-approval.json"
+#: Fields of a run push token, in the order the writer serializes them.
+PUSH_RUN_FIELDS = [
+    "version",
+    "scope",
+    "created_at",
+    "question",
+    "answer",
+    "question_id",
+    "remote",
+    "branch",
+    "base_head",
+    "expires_at",
+]
+#: A full commit id no repository holds: the writer takes the PR head from the question text and never resolves it.
+UNKNOWN_HEAD = "c0ffee" + "0" * 34
+
+
+def _push_run_question(
+    head: str = UNKNOWN_HEAD, command: str = "git push origin main", text: str | None = None
+) -> dict:
+    """Build the ``git-push-run`` question naming ``command`` and the PR ``head``, or with question ``text`` as
+    given."""
+    asked = text if text is not None else f"Push PR 7 when the run finishes: `{command}`, from PR head `{head}`?"
+    return _question(header="git-push-run", options=PUSH_OPTIONS, text=asked)
+
+
+def _push_run_token(checkout: Path) -> Path:
+    """Return the run push token path of a main checkout."""
+    return checkout / ".git" / PUSH_RUN_RECORD
+
+
 def _rev(checkout: Path, ref: str = "HEAD") -> str:
     """Return the commit id ``ref`` names in ``checkout``, or an empty string when it names none."""
     proc = subprocess.run(
@@ -1619,6 +1671,7 @@ def _instant(stamp: str) -> datetime:
 #: The two single-use token questions, each paired with the path of the token its ``Approve`` writes.
 TOKEN_KINDS = [
     pytest.param(_push_question, _push_token, id="push"),
+    pytest.param(_push_run_question, _push_run_token, id="push-run"),
     pytest.param(_gh_write_question, _gh_write_token, id="gh-write"),
 ]
 
@@ -2025,18 +2078,20 @@ class TestGhWriteTokenRecording:
 # ── Push token real case (writer → commit-guard → git push to a local bare remote) ──
 
 
-def _guard_push(checkout: Path, command: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+def _guard_push(
+    checkout: Path, command: str, cwd: Path | None = None, call_id: str | None = None
+) -> subprocess.CompletedProcess:
     """Run commit-guard on one Bash command the way the harness does, in session project ``checkout``.
 
-    Each run is a new tool call with its own ``tool_use_id`` and the session transcript the ``answered`` fixture records
-    answers in, as the harness sends both with every call.
+    Each run is a new tool call with its own ``tool_use_id`` (or the given ``call_id``, to replay one call) and the
+    session transcript the ``answered`` fixture records answers in, as the harness sends both with every call.
     """
     here = cwd or checkout
     payload = {
         "hook_event_name": "PreToolUse",
         "tool_name": "Bash",
         "tool_input": {"command": command},
-        "tool_use_id": f"toolu_{uuid.uuid4().hex[:24]}",
+        "tool_use_id": call_id or f"toolu_{uuid.uuid4().hex[:24]}",
         "transcript_path": str(_session_transcript(checkout)),
     }
     return subprocess.run(
@@ -2153,6 +2208,321 @@ class TestPushTokenRealCase:
         assert blocked.returncode == 2
         assert "force-push is forbidden" in blocked.stderr
         assert _rev(remote, "main") == ""
+
+
+# ── Run push token (git-push-run: one answer at the start of a run covers its later push) ──
+
+
+@_skip_node_or_git_unavailable
+class TestPushRunTokenRecording:
+    """``git-push-run`` answered ``Approve`` writes a 12-hour single-use token naming the remote, branch and PR head."""
+
+    def test_approve_writes_the_token(self, run_hook: Callable, answered: Callable, checkout: Path) -> None:
+        """The token holds the remote, branch and PR head the question named, not the checkout's HEAD.
+
+        The PR branch is not checked out when the question is asked, so the writer reads the push from the question
+        text; the exact-HEAD push token stays unwritten.
+        """
+        proc = run_hook(answered(checkout, "Approve", _push_run_question()))
+        token = _load(_push_run_token(checkout))
+        assert list(token) == PUSH_RUN_FIELDS
+        assert {k: token[k] for k in ("scope", "answer", "remote", "branch", "base_head")} == {
+            "scope": "push-run",
+            "answer": "Approve",
+            "remote": "origin",
+            "branch": "main",
+            "base_head": UNKNOWN_HEAD,
+        }
+        assert _instant(token["expires_at"]) - _instant(token["created_at"]) == timedelta(hours=12)
+        assert "One non-force push of branch main to remote origin" in _context(proc)
+        assert not _push_token(checkout).exists()
+
+    @pytest.mark.parametrize(
+        ("text", "reason"),
+        [
+            pytest.param(f"Push when done, PR head `{UNKNOWN_HEAD}`?", "exactly one push", id="no-push-span"),
+            pytest.param(
+                f"`git push origin main` or `git push origin dev`, PR head `{UNKNOWN_HEAD}`?",
+                "exactly one push",
+                id="two-pushes",
+            ),
+            pytest.param("Push `git push origin main` when done?", "PR head commit", id="no-head"),
+            pytest.param("Push `git push origin main`, PR head `abc1234`?", "PR head commit", id="short-head"),
+            pytest.param(
+                f"`git push origin main`, heads `{UNKNOWN_HEAD}` and `{'a' * 40}`?", "PR head commit", id="two-heads"
+            ),
+            pytest.param(
+                f"Push `git push -u origin main`, PR head `{UNKNOWN_HEAD}`?", "plain names and no option", id="option"
+            ),
+            pytest.param(f"Push `git push`, PR head `{UNKNOWN_HEAD}`?", "exactly one push", id="no-remote-or-branch"),
+            pytest.param(
+                f"Push `git push origin`, PR head `{UNKNOWN_HEAD}`?", "plain names and no option", id="no-branch"
+            ),
+            pytest.param(
+                f"Push `git push origin main:other`, PR head `{UNKNOWN_HEAD}`?",
+                "plain names and no option",
+                id="refspec-colon",
+            ),
+            pytest.param(
+                f"Push `git push origin a..b`, PR head `{UNKNOWN_HEAD}`?", "plain names and no option", id="dotdot"
+            ),
+            pytest.param(
+                f"Push `git push origin $BRANCH`, PR head `{UNKNOWN_HEAD}`?", "variable or substitution", id="variable"
+            ),
+            pytest.param(
+                f"Push `git push origin main‮`, PR head `{UNKNOWN_HEAD}`?", "invisible or control", id="hidden"
+            ),
+            pytest.param(
+                f"Push:\n```\ngit push origin main\n```\nPR head `{UNKNOWN_HEAD}`", "fenced block", id="fenced-block"
+            ),
+            pytest.param(
+                f"`git push origin main` or `git  push origin dev`, PR head `{UNKNOWN_HEAD}`?",
+                "exactly one push",
+                id="second-push-double-space",
+            ),
+            pytest.param(
+                f"`git push origin main` or `git\tpush origin dev`, PR head `{UNKNOWN_HEAD}`?",
+                "exactly one push",
+                id="second-push-tab",
+            ),
+            pytest.param(
+                f"`git push origin main` or ` git push origin dev`, PR head `{UNKNOWN_HEAD}`?",
+                "exactly one push",
+                id="second-push-leading-space",
+            ),
+            pytest.param(
+                f"Push `git push origin HEAD`, PR head `{UNKNOWN_HEAD}`?", "plain names and no option", id="head-word"
+            ),
+            pytest.param(
+                f"Push `git push origin refs/heads/main`, PR head `{UNKNOWN_HEAD}`?",
+                "plain names and no option",
+                id="full-ref",
+            ),
+        ],
+    )
+    def test_question_without_one_exact_push_and_head_records_nothing(
+        self, run_hook: Callable, answered: Callable, checkout: Path, text: str, reason: str
+    ) -> None:
+        """Anything but one plain ``git push <remote> <branch>`` span and one full PR head id is refused.
+
+        The user approves exactly what the question shows; a second push, an option, a refspec, a variable, a hidden
+        character, a fence or a missing head would let the recorded push differ from the one read.
+        """
+        proc = run_hook(answered(checkout, "Approve", _push_run_question(text=text)))
+        assert not _push_run_token(checkout).exists()
+        assert reason in _context(proc)
+
+    def test_deny_leaves_the_exact_head_token_alone(
+        self, run_hook: Callable, answered: Callable, checkout: Path
+    ) -> None:
+        """Denying the run question removes only the run token: the two push scopes are independent records.
+
+        Starting state: a pending exact-HEAD token and a pending run token; a ``Deny`` to the run question.
+        """
+        run_hook(answered(checkout, "Approve", _push_question()))
+        run_hook(answered(checkout, "Approve", _push_run_question()))
+        run_hook(answered(checkout, "Deny", _push_run_question()))
+        assert _push_token(checkout).exists()
+        assert not _push_run_token(checkout).exists()
+
+
+@pytest.fixture(name="approve_run")
+def _approve_run(run_hook: Callable, answered: Callable, checkout: Path) -> Callable[..., subprocess.CompletedProcess]:
+    """Return a callable recording the user's ``Approve`` to the ``git-push-run`` question, HEAD as the PR head."""
+
+    def _run(head: str | None = None, command: str = "git push origin main") -> subprocess.CompletedProcess:
+        """Run the writer as the harness does after the user picked ``Approve``."""
+        question = _push_run_question(head or _rev(checkout), command)
+        return run_hook(answered(checkout, "Approve", question), CLAUDE_PROJECT_DIR=str(checkout))
+
+    return _run
+
+
+@_skip_node_or_git_unavailable
+class TestPushRunTokenRealCase:
+    """The whole path on real git: one answer at the start, commits later, the guard, and a push to a bare remote."""
+
+    def test_commits_after_the_answer_still_land_one_push(
+        self, approve_run: Callable, checkout: Path, remote: Path
+    ) -> None:
+        """Approve → the run adds commits → the guard spends the token on the push → the same push again is blocked.
+
+        The PR head named in the question is HEAD when the user answered; two later commits sit on top of it, so the
+        token still allows the one push and nothing after it.
+        """
+        approve_run()
+        _git("commit", "--allow-empty", "-m", "item one", cwd=checkout)
+        _git("commit", "--allow-empty", "-m", "item two", cwd=checkout)
+        allowed = _guard_push(checkout, PUSH_COMMAND)
+        _git("push", "origin", "main", cwd=checkout)
+        repeated = _guard_push(checkout, PUSH_COMMAND)
+        assert allowed.returncode == 0, allowed.stderr
+        assert _rev(remote, "main") == _rev(checkout)
+        assert (repeated.returncode, "git-push" in repeated.stderr) == (2, True)
+        assert not _push_run_token(checkout).exists()
+
+    def test_head_off_the_named_pr_head_is_blocked(self, approve_run: Callable, checkout: Path, remote: Path) -> None:
+        """A HEAD that does not descend from the PR head the user saw is refused and the token stays.
+
+        Starting state: the question named a commit this repository does not hold, so HEAD cannot descend from it.
+        """
+        approve_run(head=UNKNOWN_HEAD)
+        blocked = _guard_push(checkout, PUSH_COMMAND)
+        assert blocked.returncode == 2
+        assert "line of the PR head" in blocked.stderr
+        assert _push_run_token(checkout).exists()
+        assert _rev(remote, "main") == ""
+
+    def test_another_remote_is_blocked(
+        self, approve_run: Callable, checkout: Path, remote: Path, tmp_path: Path
+    ) -> None:
+        """A push to a configured remote the question did not name is refused.
+
+        Starting state: ``origin`` approved; ``upstream`` is also configured, so only the run token's remote differs.
+        """
+        _git("remote", "add", "upstream", str(remote), cwd=checkout)
+        approve_run()
+        blocked = _guard_push(checkout, "git push upstream main")
+        assert blocked.returncode == 2
+        assert "the run's question showed" in blocked.stderr
+        assert _rev(remote, "main") == ""
+
+    def test_push_without_a_named_remote_is_blocked(self, approve_run: Callable, checkout: Path, remote: Path) -> None:
+        """The token covers a push that names its remote; a bare ``git push`` lets git pick one and is refused."""
+        approve_run()
+        blocked = _guard_push(checkout, "git push")
+        assert blocked.returncode == 2
+        assert "the run's question showed" in blocked.stderr
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git push origin", id="no-refspec"),
+            pytest.param("git push -u origin main", id="upstream-flag"),
+            pytest.param("git push origin HEAD", id="head-word"),
+            pytest.param("git push origin main:main", id="explicit-destination"),
+            pytest.param("git push origin refs/heads/main", id="full-ref"),
+            pytest.param("git lfs push origin main", id="lfs-push"),
+        ],
+    )
+    def test_push_other_than_the_shown_words_is_blocked(
+        self, approve_run: Callable, checkout: Path, remote: Path, command: str
+    ) -> None:
+        """Only the literal ``git push <remote> <branch>`` the question showed spends the token.
+
+        Starting state: a run approval for ``origin main`` and a push that the exact-HEAD token would cover, but whose
+        spelling leaves git (push.default, ``remote.*.push``) or another program (git-lfs) to decide what goes.
+        """
+        approve_run()
+        blocked = _guard_push(checkout, command)
+        assert blocked.returncode == 2
+        assert "git push <remote> <branch>" in blocked.stderr
+        assert _push_run_token(checkout).exists()
+        assert _rev(remote, "main") == ""
+
+    def test_replayed_call_that_spent_the_exact_token_never_spends_the_run_token(
+        self, approve: Callable, approve_run: Callable, checkout: Path, remote: Path
+    ) -> None:
+        """A second hook copy of one call, finding the exact-HEAD token gone, must not fall back to the run token.
+
+        Starting state: both tokens recorded for the same HEAD; the call spends the exact-HEAD token, then the same
+        ``tool_use_id`` is checked again, as a second loaded copy of the hook would.
+        """
+        approve(PUSH_COMMAND)
+        approve_run()
+        first = _guard_push(checkout, PUSH_COMMAND, call_id="toolu_replayed")
+        replay = _guard_push(checkout, PUSH_COMMAND, call_id="toolu_replayed")
+        assert first.returncode == 0, first.stderr
+        assert replay.returncode == 2
+        assert "already spent the exact-HEAD push approval" in replay.stderr
+        assert _push_run_token(checkout).exists()
+
+    def test_another_branch_is_blocked(self, approve_run: Callable, checkout: Path, remote: Path) -> None:
+        """HEAD on the named line but on another branch is refused: the token names the branch it covers.
+
+        Starting state: a new branch ``other`` at the same HEAD, so ancestry holds and only the branch differs.
+        """
+        approve_run()
+        _git("switch", "-c", "other", cwd=checkout)
+        blocked = _guard_push(checkout, "git push origin other")
+        assert blocked.returncode == 2
+        assert "not the one the run's push was approved on" in blocked.stderr
+        assert _rev(remote, "other") == ""
+
+    def test_force_push_is_blocked_with_the_run_approval(
+        self, approve_run: Callable, checkout: Path, remote: Path
+    ) -> None:
+        """The force ban runs before any token lookup, so a run approval never covers a force push."""
+        approve_run()
+        blocked = _guard_push(checkout, "git push --force origin main")
+        assert blocked.returncode == 2
+        assert "force-push is forbidden" in blocked.stderr
+        assert _rev(remote, "main") == ""
+
+    def test_expired_token_is_blocked_and_removed(self, approve_run: Callable, checkout: Path, remote: Path) -> None:
+        """A token past its 12 hours allows nothing and is deleted on the next check.
+
+        Starting state: the token's ``expires_at`` is rewritten to an hour ago, as a run idle past the lifetime would
+        leave it.
+        """
+        approve_run()
+        token = _push_run_token(checkout)
+        record = _load(token)
+        record["expires_at"] = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+        token.write_text(json.dumps(record), encoding="utf-8")
+        blocked = _guard_push(checkout, PUSH_COMMAND)
+        assert blocked.returncode == 2
+        assert not token.exists()
+        assert _rev(remote, "main") == ""
+
+    def test_forged_token_without_the_users_answer_is_blocked(self, checkout: Path, remote: Path) -> None:
+        """A token file the transcript does not back with the user's answer is refused and nothing is pushed.
+
+        Starting state: a well-formed token naming a call no transcript holds; the spend proves the approval in the
+        transcript, so a planted record alone allows nothing.
+        """
+        forged = {
+            "version": 1,
+            "scope": "push-run",
+            "created_at": "2099-01-01T00:00:00.000Z",
+            "question": _push_run_question(_rev(checkout))["question"],
+            "answer": "Approve",
+            "question_id": "toolu_forged",
+            "remote": "origin",
+            "branch": "main",
+            "base_head": _rev(checkout),
+            "expires_at": "2099-01-01T12:00:00.000Z",
+        }
+        _push_run_token(checkout).write_text(json.dumps(forged), encoding="utf-8")
+        blocked = _guard_push(checkout, PUSH_COMMAND)
+        assert blocked.returncode == 2
+        assert _rev(remote, "main") == ""
+
+    def test_exact_head_token_is_spent_first(
+        self, approve: Callable, approve_run: Callable, checkout: Path, remote: Path
+    ) -> None:
+        """With both tokens on record, a push at the exact approved HEAD spends the exact-HEAD token and keeps the
+        run's.
+
+        Starting state: a ``git-push`` approval and a ``git-push-run`` approval for the same HEAD.
+        """
+        approve(PUSH_COMMAND)
+        approve_run()
+        allowed = _guard_push(checkout, PUSH_COMMAND)
+        assert allowed.returncode == 0, allowed.stderr
+        assert not _push_token(checkout).exists()
+        assert _push_run_token(checkout).exists()
+
+    def test_session_start_wipes_the_run_token(self, approve_run: Callable, checkout: Path) -> None:
+        """A new session never inherits a run approval: SessionStart deletes the token.
+
+        Starting state: a recorded run token and a SessionStart event from the commit guard.
+        """
+        approve_run()
+        payload = {"hook_event_name": "SessionStart", "cwd": str(checkout)}
+        proc = _run_hook(payload, hook=COMMIT_GUARD, CLAUDE_PROJECT_DIR=str(checkout))
+        assert proc.returncode == 0, proc.stderr
+        assert not _push_run_token(checkout).exists()
 
 
 # ── gh write token real case (writer → gh-write-guard, fake gh first on PATH) ──
@@ -2497,7 +2867,8 @@ class TestShippedInFoundry:
         Starting state: the plugin's ``hooks.json``; a missing or duplicated registration leaves the writer or the
         guard unattached.
         """
-        assert _registered_matchers(plugin, event) == [matcher]
+        expected = matcher.replace("Bash", "Bash|Monitor", 1) if plugin == "cc_foundry" else matcher
+        assert _registered_matchers(plugin, event) == [expected]
 
     @_skip_node_or_git_unavailable
     def test_copy_blocks_a_record_write_from_its_own_tree(self, plugin: str) -> None:

@@ -36,7 +36,7 @@ _APPROVAL_LIB = _HOOKS_DIR / "lib" / "approval-grants.js"
 #: Option labels of the single-use token questions (``git-push``, ``gh-write``).
 _TOKEN_OPTIONS = ("Approve", "Deny")
 
-from _hook_env import _hook_tmp_base, _session_transcript  # noqa: E402  (sys.path set above)
+from _hook_env import _hook_state_base, _session_transcript  # noqa: E402  (sys.path set above)
 
 
 def _load_bin_modules() -> None:
@@ -100,13 +100,13 @@ def _run_hook(tmp_path: Path) -> Callable[..., subprocess.CompletedProcess]:
 def _state_dir() -> Callable[[str], Path]:
     """Return callable that maps a session id to its ``claude-state-<sid>`` path.
 
-    Base comes from :func:`_hook_tmp_base`, so the path tracks the hook's own ``getSentinelDir()`` on every platform
+    Base comes from :func:`_hook_state_base`, so the path tracks the hook's own ``getSentinelDir()`` on every platform
     instead of assuming ``/tmp``.
     """
 
     def _state_dir(sid: str) -> Path:
         """Return the hook state directory for one session id."""
-        return _hook_tmp_base() / f"claude-state-{sid}"
+        return _hook_state_base() / f"claude-state-{sid}"
 
     return _state_dir
 

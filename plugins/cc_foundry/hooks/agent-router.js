@@ -7,7 +7,7 @@
 //   Tier 2: No match → semantic similarity against session-cached agent index → reroute
 //   Tier 3: No fit → reroute to general-purpose with routing context in prompt
 //
-// TIER 2 STRATEGIES (in priority order):
+// TIER 2 STRATEGIES (AGENT_ROUTER_ALLOW_EXTERNAL=1 required, in priority order):
 //   A. OpenAI cosine (OPENAI_API_KEY set):
 //      SessionStart: embed each local agent description via text-embedding-3-small
 //      PreToolUse:   embed query → cosine similarity → best agent above threshold
@@ -24,8 +24,8 @@
 //   SessionStart:
 //     1. Enumerate plugin agents (full cache) → tier-1 presence set
 //     2. Enumerate local agents (~/.claude/agents/, .claude/agents/)
-//     3. Embed descriptions if OPENAI_API_KEY present; store in session index
-//     4. Merge into /tmp/claude-state-<session_id>/agent-router-index.json
+//     3. Embed descriptions only with explicit external-routing opt-in and OPENAI_API_KEY
+//     4. Merge into an owner-validated, private per-user temporary cache
 //        (additive — never overwrites existing entries)
 //
 //   PreToolUse(Agent):
@@ -44,9 +44,47 @@ const fs = require("fs");
 const https = require("https");
 const os = require("os");
 const path = require("path");
+const crypto = require("crypto");
 
-function getSentinelDir() {
-  return process.platform === "win32" ? os.tmpdir() : "/tmp";
+/** Keep routing state outside project-controlled directories and other users' temp state. */
+function privateCacheDir(env) {
+  const user =
+    typeof process.getuid === "function"
+      ? String(process.getuid())
+      : crypto.createHash("sha256").update(os.homedir()).digest("hex").slice(0, 16);
+  return path.join(env.TMPDIR || os.tmpdir(), `agent-router-${user}`);
+}
+
+/** Refuse symlinks, non-owner state and non-private POSIX cache directories. */
+function ensureCacheDir(dir) {
+  try {
+    fs.mkdirSync(dir, { mode: 0o700 });
+  } catch (e) {
+    if (e.code !== "EEXIST") throw e;
+  }
+  const st = fs.lstatSync(dir);
+  if (
+    !st.isDirectory() ||
+    (typeof process.getuid === "function" && (st.uid !== process.getuid() || (st.mode & 0o777) !== 0o700))
+  ) {
+    throw new Error("unsafe routing cache directory");
+  }
+}
+
+/** Read regular owner-held files without following a final symlink. */
+function readCache(filePath) {
+  ensureCacheDir(path.dirname(filePath));
+  const st = fs.lstatSync(filePath);
+  if (!st.isFile() || st.nlink !== 1 || (typeof process.getuid === "function" && st.uid !== process.getuid()))
+    throw new Error("unsafe routing cache file");
+  const fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  try {
+    const opened = fs.fstatSync(fd);
+    if (opened.dev !== st.dev || opened.ino !== st.ino) throw new Error("routing cache changed");
+    return fs.readFileSync(fd, "utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -73,9 +111,16 @@ const LLM_TIMEOUT_MS = 5000;
 // ── Atomic write ──────────────────────────────────────────────────────────────
 
 function atomicWrite(filePath, data) {
-  const tmp = filePath + ".tmp." + process.pid;
-  fs.writeFileSync(tmp, data);
-  fs.renameSync(tmp, filePath);
+  ensureCacheDir(path.dirname(filePath));
+  const tmp = filePath + ".tmp." + crypto.randomBytes(12).toString("hex");
+  try {
+    fs.writeFileSync(tmp, data, { flag: "wx", mode: 0o600 });
+    fs.renameSync(tmp, filePath);
+  } finally {
+    try {
+      fs.unlinkSync(tmp);
+    } catch (_) {}
+  }
 }
 
 // ── File helpers ──────────────────────────────────────────────────────────────
@@ -266,13 +311,14 @@ function anthropicRequest(apiKey, { timeoutMs, ...options }, payload) {
 function haikuModelCachePath(env) {
   const token = env.CSID || env.CLAUDE_CODE_SESSION_ID || "shared";
   const safe = /^[A-Za-z0-9_-]+$/.test(token) ? token : "shared";
-  return path.join(env.TMPDIR || os.tmpdir(), `agent-router-haiku-model-${safe}`);
+  return path.join(privateCacheDir(env), `agent-router-haiku-model-${safe}`);
 }
 
 function readCachedModel(cachePath, nowMs) {
   try {
-    if (nowMs - fs.statSync(cachePath).mtimeMs > HAIKU_MODEL_CACHE_TTL_MS) return null;
-    const id = fs.readFileSync(cachePath, "utf8").trim();
+    const content = readCache(cachePath);
+    if (nowMs - fs.lstatSync(cachePath).mtimeMs > HAIKU_MODEL_CACHE_TTL_MS) return null;
+    const id = content.trim();
     return MODEL_ID_PATTERN.test(id) ? id : null;
   } catch (_) {
     return null;
@@ -396,6 +442,7 @@ if (typeof module !== "undefined" && module.exports) {
     cosine,
     findBestCosine,
     haikuModelCachePath,
+    privateCacheDir,
     parseLlmResponse,
     pickHaikuFromModels,
     readDescription,
@@ -413,22 +460,23 @@ if (require.main === module) {
     try {
       const data = JSON.parse(raw);
       const event = data.hook_event_name;
-      const sessionId = data.session_id || "unknown";
+      const sessionId = typeof data.session_id === "string" ? data.session_id : "";
       if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) process.exit(0);
-      const stateDir = `${getSentinelDir()}/claude-state-${sessionId}`;
-      const indexPath = path.join(stateDir, "agent-router-index.json");
+      const stateDir = privateCacheDir(process.env);
+      const indexPath = path.join(stateDir, `agent-router-index-${sessionId}.json`);
       const cwd = process.cwd();
-      const openaiKey = process.env.OPENAI_API_KEY || null;
-      const anthropicKey = process.env.ANTHROPIC_API_KEY || null;
+      const externalRouting = process.env.AGENT_ROUTER_ALLOW_EXTERNAL === "1";
+      const openaiKey = externalRouting ? process.env.OPENAI_API_KEY || null : null;
+      const anthropicKey = externalRouting ? process.env.ANTHROPIC_API_KEY || null : null;
 
       // ── SessionStart: build or merge into shared routing index ───────────────
       if (event === "SessionStart") {
         try {
-          fs.mkdirSync(stateDir, { recursive: true });
+          ensureCacheDir(stateDir);
           const fresh = await buildIndex(cwd, openaiKey);
           let index;
           if (fs.existsSync(indexPath)) {
-            index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+            index = JSON.parse(readCache(indexPath));
             const knownPlugins = new Set(index.plugin_agents);
             for (const a of fresh.plugin_agents) {
               if (!knownPlugins.has(a)) index.plugin_agents.push(a);
@@ -457,7 +505,7 @@ if (require.main === module) {
       // Load or build index on-demand
       let index;
       try {
-        index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+        index = JSON.parse(readCache(indexPath));
       } catch (_) {
         index = await buildIndex(cwd, openaiKey);
       }
@@ -508,8 +556,8 @@ if (require.main === module) {
         JSON.stringify({
           hookSpecificOutput: {
             hookEventName: "PreToolUse",
-            permissionDecision: "allow",
             updatedInput: {
+              ...data.tool_input,
               description: (data.tool_input && data.tool_input.description) || prompt.slice(0, 100),
               subagent_type: target,
               prompt: prompt + " " + routingNote,

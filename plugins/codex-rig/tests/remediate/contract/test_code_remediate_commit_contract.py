@@ -234,8 +234,8 @@ class TestConvergenceAuthorization:
     def test_review_needs_explicit_authorization_for_a_loop(self) -> None:
         """Keep ordinary Code Review invocation from silently starting an extra review-and-fix loop.
 
-        A review grants no loop or unsolicited approval question. Reuse explicit same-scope approval and load the
-        shared loop contract only for an explicitly requested loop.
+        A review grants no loop or unsolicited approval question. Reuse explicit same-scope approval and load the shared
+        loop contract only for an explicitly requested loop.
         """
         review = _read("skills", "code-review", "SKILL.md")
 
@@ -427,7 +427,7 @@ class TestCommitDisposition:
         The skill and commit step must record a baseline, stage named paths only, forbid blanket staging, compare the
         committed paths with the plan as a set, and name the fail-fast codes for unsafe scope and grouping.
         """
-        fail_fast = _between(skill, "## Fail-fast Rules", "## Quality Gates")
+        fail_fast = _between(skill, "## Fail-Fast Rules", "## Quality Gates")
 
         assert absent_phrases(skill, "commit-baseline.json", "including a lockfile such as `uv.lock`") == []
         assert (
@@ -550,7 +550,7 @@ class TestCommitDisposition:
         then return with actual hashes to finish validation, while step 11 readiness rules still apply.
         """
         handoff = _read("shared", "final-handoff-code-remediate.md")
-        commit = _between(skill, "### 12:", "## Fail-fast Rules")
+        commit = _between(skill, "### 12:", "## Fail-Fast Rules")
 
         assert (
             absent_phrases(

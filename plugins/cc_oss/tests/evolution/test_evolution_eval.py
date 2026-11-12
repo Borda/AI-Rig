@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from evolution_eval import evaluate, gate, main, parse_labels, pooled, threshold_table, tune_threshold
+from evolution_eval import GOLD_FLOOR, evaluate, gate, main, parse_labels, pooled, threshold_table, tune_threshold
 
 
 def _row(fix_id: str, release: str, cells: list[tuple[str, bool, float, float]]) -> dict:
@@ -20,7 +20,7 @@ def _row(fix_id: str, release: str, cells: list[tuple[str, bool, float, float]])
         "fix_release": release,
         "line": "1",
         "cells": [
-            {"column_id": cid, "binary": binary, "raw_score": raw, "soft_share": soft}
+            {"column_id": cid, "binary": binary, "raw_score": raw, "soft_share": soft, "method": "blame"}
             for cid, binary, raw, soft in cells
         ],
     }
@@ -103,6 +103,35 @@ class TestPooled:
         assert (result["fixes"], result["repos"], result["ignored_repos"]) == (2, ["B", "C"], ["A"])
 
 
+class TestTopK:
+    """The per-fix cap keeps the best-scored links, so extra weak links stop costing precision."""
+
+    #: One fix repairs A; the scorer also linked B (0.8) and C (0.4), whose score ties are broken by column ID.
+    _ROW = _row("f1", "1.1", [("1.0/A", True, 0.8, 0.4), ("1.0/B", True, 0.8, 0.4), ("1.0/C", True, 0.4, 0.2)])
+
+    @pytest.mark.parametrize(
+        ("top_k", "predicted", "precision"),
+        [
+            pytest.param(None, 3, 1 / 3, id="uncapped"),
+            pytest.param(2, 2, 1 / 2, id="two-best-tie-broken-by-id"),
+            pytest.param(1, 1, 1.0, id="single-best"),
+        ],
+    )
+    def test_cap_keeps_the_highest_raw_scores(self, top_k: int | None, predicted: int, precision: float) -> None:
+        """A cap of k keeps the k highest raw scores; the tie at 0.8 resolves to the smaller column ID, A before B."""
+        result = evaluate([_label("f1", "1.0/A")], [self._ROW], resamples=5, top_k=top_k)
+        assert (result["predicted"], result["precision"], result["top_k"]) == (
+            predicted,
+            pytest.approx(precision),
+            top_k,
+        )
+
+    def test_cap_applies_to_a_threshold_sweep(self) -> None:
+        """A sweep re-decides links from raw scores and then caps them, so the table matches ``evaluate``."""
+        table = threshold_table([_label("f1", "1.0/A", repo="A")], [self._ROW], [0.3], top_k=1)
+        assert table[0]["precision"] == 1.0
+
+
 class TestGate:
     """Phase 0 bars: precision >= 0.70, recall >= 0.50, residue <= 0.35, precision CI lower bound >= 0.55."""
 
@@ -158,6 +187,23 @@ _TUNE_ROWS = [
 ]
 
 
+class TestGoldFloor:
+    """A repo with fewer than ``GOLD_FLOOR`` labelled pairs is reported, never passed or failed."""
+
+    @pytest.mark.parametrize(
+        ("gold", "gated", "passed"),
+        [
+            pytest.param(GOLD_FLOOR - 1, False, None, id="below-floor-not-gated"),
+            pytest.param(GOLD_FLOOR, True, True, id="at-floor-gated"),
+        ],
+    )
+    def test_floor_decides_whether_bars_gate(self, gold: int, gated: bool, passed: bool | None) -> None:
+        """Perfect scores gate only once the sample reaches the floor; below it ``pass`` is None."""
+        result = {"gold": gold, "precision": 1.0, "recall": 1.0, "residue": 0.0, "ci": {"precision": [0.9, 1.0]}}
+        flags = gate(result)
+        assert (flags["gated"], flags["pass"], flags["bars"]["gold_floor"]) == (gated, passed, GOLD_FLOOR)
+
+
 class TestTuneThreshold:
     """Threshold choice: maximise F1 subject to precision >= 0.70 on the tuning repo."""
 
@@ -170,6 +216,41 @@ class TestTuneThreshold:
         assert [(entry["precision"], entry["recall"]) for entry in table] == [
             pytest.approx((2 / 3, 1.0)),
             pytest.approx((1.0, 0.5)),
+        ]
+
+    @pytest.mark.parametrize(
+        ("method", "linked"),
+        [
+            pytest.param("blame", True, id="blame-links"),
+            pytest.param("text", True, id="text-links"),
+            pytest.param("symbol", False, id="symbol-overlap-does-not-link"),
+            pytest.param("file", False, id="file-overlap-does-not-link"),
+            pytest.param("inherited", False, id="inherited-share-does-not-link"),
+        ],
+    )
+    def test_threshold_links_only_blame_backed_methods(self, method: str, linked: bool) -> None:
+        """A cell above the candidate threshold counts as a link only when its strongest signal is a link method.
+
+        The scorer applies the same rule to the stored binary flag, so a sweep must not re-admit cells the scorer
+        refused: on labelled repositories symbol, file and inherited cells were nearly all false links.
+        """
+        row = _row("f1", "1.1", [("1.0/A", True, 0.6, 1.0)])
+        row["cells"][0]["method"] = method
+        table = threshold_table([_label("f1", "1.0/A", repo="A")], [row], [0.3], repo="A")
+        assert table[0]["recall"] == (1.0 if linked else 0.0)
+
+    def test_threshold_sweep_excludes_non_link_cells_and_includes_link_score_boundary(self) -> None:
+        """Non-link evidence stays excluded throughout a sweep, while a link includes its exact score boundary."""
+        row = _row("f1", "1.1", [("1.0/A", False, 0.6, 0.5), ("1.0/B", True, 1.0, 0.5)])
+        row["cells"][1]["method"] = "symbol"
+
+        table = threshold_table([_label("f1", "1.0/A", repo="A")], [row], [0.01, 0.6, 0.61, 1.0])
+
+        assert table == [
+            {"threshold": 0.01, "precision": 1.0, "recall": 1.0, "f1": 1.0},
+            {"threshold": 0.6, "precision": 1.0, "recall": 1.0, "f1": 1.0},
+            {"threshold": 0.61, "precision": None, "recall": 0.0, "f1": None},
+            {"threshold": 1.0, "precision": None, "recall": 0.0, "f1": None},
         ]
 
     def test_picks_highest_f1_meeting_precision(self) -> None:
@@ -213,12 +294,30 @@ class TestCli:
     def test_evaluate_prints_result_with_gate(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """``evaluate`` prints precision, recall and the gate flags as one JSON line.
 
-        The sample's precision of 0.5 misses the 0.70 bar.
+        The sample's precision of 0.5 misses the 0.70 bar, but its two labelled pairs sit below the gold floor, so the
+        gate reports the repo as not gated instead of failed.
         """
         labels, rows = self._write(tmp_path, _LABELS, _ROWS)
         assert main(["evaluate", "--labels", labels, "--rows", rows, "--resamples", "20"]) == 0
         payload = json.loads(capsys.readouterr().out)
-        assert (payload["precision"], payload["gate"]["pass"]) == (0.5, False)
+        assert (payload["precision"], payload["gate"]["gated"], payload["gate"]["pass"]) == (0.5, False, None)
+
+    def test_top_k_flag_caps_links_per_fix(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """``--top-k 1`` keeps only the best-scored link of a fix and reports the cap in the payload.
+
+        The fix has a true link at 0.5 and a decoy at 0.9; the cap keeps the decoy, so precision falls to 0.
+        """
+        rows = [_row("f1", "1.1", [("1.0/A", True, 0.5, 0.5), ("1.0/B", True, 0.9, 0.5)])]
+        labels, rows_path = self._write(tmp_path, [_label("f1", "1.0/A")], rows)
+        assert main(["evaluate", "--labels", labels, "--rows", rows_path, "--resamples", "5", "--top-k", "1"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert (payload["top_k"], payload["predicted"], payload["precision"]) == (1, 1, 0.0)
+
+    def test_top_k_below_one_is_rejected(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """A ``--top-k`` of zero or less exits 2 with a message instead of silently predicting nothing."""
+        labels, rows = self._write(tmp_path, _LABELS, _ROWS)
+        assert main(["evaluate", "--labels", labels, "--rows", rows, "--top-k", "0"]) == 2
+        assert "top-k" in capsys.readouterr().err
 
     def test_tune_prints_threshold(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """``tune`` prints the chosen threshold and the per-candidate table.

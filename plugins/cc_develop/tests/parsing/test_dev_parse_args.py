@@ -393,13 +393,17 @@ class TestWriteSkillFiles:
         A plain goal with no flags must still leave readable sentinels (``false`` for bools, empty for strings).
         """
         write_skill_files("refactor", "tidy module", tmp_dir=tmp_path)
-        names = ["dev-refactor-team-shared", "dev-team-mode-shared", "dev-refactor-repo-shared", "dev-upstream-shared"]
+        names = ["dev-refactor-team-shared", "dev-team-mode-shared"]
         assert _read_files(tmp_path, names) == {
             "dev-refactor-team-shared": "false\n",
             "dev-team-mode-shared": "false\n",
-            "dev-refactor-repo-shared": "\n",
-            "dev-upstream-shared": "\n",
         }
+
+    def test_refactor_does_not_persist_unused_repository_flag(self, tmp_path: Path):
+        """Refactor has no issue fetch and must not advertise or persist an unused repository override."""
+        write_skill_files("refactor", "--repo owner/project tidy module", tmp_dir=tmp_path)
+        assert not (tmp_path / "dev-refactor-repo-shared").exists()
+        assert not (tmp_path / "dev-upstream-shared").exists()
 
     @pytest.mark.parametrize("skill", sorted(SKILL_SPECS))
     def test_terminates_every_file_with_newline(self, skill: str, tmp_path: Path):

@@ -30,6 +30,7 @@ Side effects: clears a stale .temp/state/skill-contract.md left by a crashed pri
   owner stamp names a different session than CLAUDE_CODE_SESSION_ID: concurrent sessions in one
   working directory share that path, and the hooks already ignore a foreign-stamped contract.
   No stamp, an unreadable stamp or an unset CLAUDE_CODE_SESSION_ID still clears.
+  Linked or out-of-project contract state directories are refused before the owner stamp is read or a contract cleared.
 Requires: CSID exported by the caller — a child's own parent process id is the calling shell,
   not the Claude Code process, so deriving it here would name a different sentinel.
 Exit codes: 0 = ok · 1 = state cleanup or sentinel write failed · 2 = missing or malformed slug,
@@ -37,9 +38,8 @@ Exit codes: 0 = ok · 1 = state cleanup or sentinel write failed · 2 = missing 
   and working directory
 Most call sites do not check the exit code: every one of them exports CSID on the preceding
   line, so the exit-2 identity paths are unreachable from a skill. Only those two identity
-  checks return before the contract is cleared; every later non-zero exit — bad --out-file,
-  failed sentinel write, invalid --venue — happens after the clear, so the caller owes no
-  cleanup on them.
+  checks and the contract-directory guard return before the contract is cleared; every later non-zero exit — bad
+  --out-file, failed sentinel write, invalid --venue — happens after the clear, so the caller owes no cleanup on them.
 """
 
 from __future__ import annotations
@@ -279,6 +279,27 @@ def _write_keep_sentinel(sentinel: Path, keep_items: str) -> int | None:
     return None
 
 
+def _identity_error(slug: str, csid: str) -> str | None:
+    """Validate the identity used for state filenames before touching contract state."""
+    if not slug:
+        return "missing <sentinel-slug> argument"
+    if not csid:
+        return "CSID not exported by caller"
+    if any(not _NAME_RE.fullmatch(value) or ".." in value for value in (slug, csid)):
+        return "slug and CSID must use letters, digits, '.', '_' or '-' and must not contain '..'"
+    return None
+
+
+def _clear_contract() -> None:
+    """Clear an eligible contract only after its state directory passes confinement checks."""
+    if any(parent.is_symlink() for parent in _CONTRACT.parents) or not _CONTRACT.parent.resolve().is_relative_to(
+        Path.cwd().resolve()
+    ):
+        raise PermissionError("refusing linked or out-of-project contract state directory")
+    if not _stamped_by_other_session():
+        _CONTRACT.unlink(missing_ok=True)
+
+
 def main(argv: list[str]) -> int:
     """Persist the first quoted keep value after clearing stale compaction state.
 
@@ -291,28 +312,20 @@ def main(argv: list[str]) -> int:
     args = argv[2] if len(argv) > 2 else ""
     venue_choices = option_value(argv[3:], "--venue-choices")
     out_file = option_value(argv[3:], "--out-file")
-    if not slug:
-        print("extract-keep-flag: missing <sentinel-slug> argument", file=sys.stderr)
-        return 2
     # No "shared" fallback here, unlike the other bin/ scripts: this script's contract is
     # that an unset CSID is a caller bug, and its callers gate on the exit-2.
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
-    if not csid:
-        print("extract-keep-flag: CSID not exported by caller", file=sys.stderr)
-        return 2
-    if any(not _NAME_RE.fullmatch(value) or ".." in value for value in (slug, csid)):
-        print(
-            "extract-keep-flag: slug and CSID must use letters, digits, '.', '_' or '-' and must not contain '..'",
-            file=sys.stderr,
-        )
+    error = _identity_error(slug, csid)
+    if error:
+        print(f"extract-keep-flag: {error}", file=sys.stderr)
         return 2
 
     match = _KEEP_RE.search(args)
     keep_items = match.group(1) if match else ""
 
-    if "--inlined" not in argv[3:] and not _stamped_by_other_session():
+    if "--inlined" not in argv[3:]:
         try:
-            _CONTRACT.unlink(missing_ok=True)
+            _clear_contract()
         except OSError as exc:
             print(f"extract-keep-flag: cannot clear {_CONTRACT}: {exc}", file=sys.stderr)
             return 1

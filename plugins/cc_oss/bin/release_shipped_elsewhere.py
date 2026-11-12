@@ -38,7 +38,7 @@ from shutil import which
 #: Seconds allowed per git call; ``git cherry`` over a long range is the slowest.
 _GIT_TIMEOUT = 60
 _PR_NUMBER = re.compile(r"\(#(\d+)\)\s*$")
-_REVERT_SUBJECT = re.compile(r'^revert\W+"?(?P<subject>.+?)"?\s*$', re.IGNORECASE)
+_REVERT_SUBJECT = re.compile(r'^revert\W+"?(?P<subject>.+?)"?$', re.IGNORECASE)
 
 
 class GitError(RuntimeError):
@@ -92,7 +92,7 @@ def _reverted_subjects(released: dict[str, str]) -> set[str]:
     """Return the subjects that the release side reverted (``Revert "<subject>"``)."""
     reverted: set[str] = set()
     for subject in released.values():
-        match = _REVERT_SUBJECT.match(subject)
+        match = _REVERT_SUBJECT.match(subject.strip())
         if match:
             reverted.add(match.group("subject").strip())
     return reverted

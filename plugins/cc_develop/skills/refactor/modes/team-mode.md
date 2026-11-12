@@ -10,22 +10,24 @@ Compute run directory — its first line is the team-protocol guard shared by ev
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 [ -f ~/.claude/TEAM_PROTOCOL.md ] || { echo "! BLOCKED — --team needs ~/.claude/TEAM_PROTOCOL.md, written by /foundry:setup (requires foundry plugin); run /foundry:setup, or re-run without --team"; exit 1; }
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_setup_worktree_wrap.py" refactor
+python "$PLUGIN_ROOT/bin/dev_setup_worktree_wrap.py" refactor
 IFS= read -r TS < "${TMPDIR:-/tmp}/dev-refactor-team-ts-${CSID}" 2>/dev/null || TS=""
 IFS= read -r RUN_DIR_LITERAL < "${TMPDIR:-/tmp}/dev-refactor-run-dir-${CSID}" 2>/dev/null || RUN_DIR_LITERAL=""
 [ -n "$TS" ] && [ -n "$RUN_DIR_LITERAL" ] || { echo "! dev-refactor-team-ts or dev-refactor-run-dir missing — cannot build teammate output paths; aborting team mode"; exit 1; }
 : > "${TMPDIR:-/tmp}/dev-refactor-char-test-${CSID}"
 ```
 
-**IMPORTANT**: in spawn prompts below, substitute `$RUN_DIR_LITERAL` with actual resolved path before constructing each Agent call — agents receive literal resolved strings, not shell variable references. Same for `$TS` and `<REFACTOR_SKILL>`: resolve the latter to this plugin's installed `skills/refactor/SKILL.md` using `${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}` before spawning.
+**IMPORTANT**: in spawn prompts below, substitute `$RUN_DIR_LITERAL` with actual resolved path before constructing each Agent call — agents receive literal resolved strings, not shell variable references. Same for `$TS` and `<REFACTOR_SKILL>`: resolve the latter to this plugin's installed `skills/refactor/SKILL.md` using `${CLAUDE_PLUGIN_ROOT}` before spawning.
 
 ```bash
 # timeout: 5000
-REFACTOR_SKILL="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/refactor/SKILL.md"
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+REFACTOR_SKILL="$PLUGIN_ROOT/skills/refactor/SKILL.md"
 [ -f "$REFACTOR_SKILL" ] || { echo "! BLOCKED — refactor skill missing; repair the installation before spawning teammates"; exit 1; }
-REFACTOR_SKILL=$(cd "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/refactor" && printf '%s/SKILL.md\n' "$PWD") || exit 1
+REFACTOR_SKILL=$(cd "$PLUGIN_ROOT/skills/refactor" && printf '%s/SKILL.md\n' "$PWD") || exit 1
 printf '%s\n' "$REFACTOR_SKILL"
 ```
 
@@ -51,11 +53,12 @@ printf '%s\n' "$CHAR_TEST_FILE" > "${TMPDIR:-/tmp}/dev-refactor-char-test-${CSID
 
 ```bash
 # Gate T1  # timeout: 600000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CHAR_TEST_FILE < "${TMPDIR:-/tmp}/dev-refactor-char-test-${CSID}" 2>/dev/null || CHAR_TEST_FILE=""
 case "$CHAR_TEST_FILE" in *'<'*'>'*|*/../*|*/..) echo "! BLOCKED — unresolved or invalid characterization path"; exit 1 ;; tests/*) ;; *) echo "! BLOCKED — characterization path must be under tests/"; exit 1 ;; esac
 [ -n "$CHAR_TEST_FILE" ] && [ -f "$CHAR_TEST_FILE" ] || { echo "! BLOCKED — characterization test file missing; recover the qa-specialist path before T1"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- "$CHAR_TEST_FILE" -v
+python "$PLUGIN_ROOT/bin/dev_run_tests.py" pytest -- "$CHAR_TEST_FILE" -v
 GATE_EXIT=$?
 case "$GATE_EXIT" in
     0) echo "GATE OK: characterization tests pass on unmodified code" ;;
@@ -79,18 +82,20 @@ You are a foundry:sw-engineer teammate refactoring: [target]. Read ~/.claude/TEA
 
 ```bash
 # Gate T2  # timeout: 600000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CHAR_TEST_FILE < "${TMPDIR:-/tmp}/dev-refactor-char-test-${CSID}" 2>/dev/null || CHAR_TEST_FILE=""
 case "$CHAR_TEST_FILE" in *'<'*'>'*|*/../*|*/..) echo "! BLOCKED — unresolved or invalid characterization path"; exit 1 ;; tests/*) ;; *) echo "! BLOCKED — characterization path must be under tests/"; exit 1 ;; esac
 IFS= read -r DEV_DIR 2>/dev/null < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" || DEV_DIR=""
 ACCEPTED_RED_CHAR=""
 if [ -n "$DEV_DIR" ]; then IFS= read -r ACCEPTED_RED_CHAR 2>/dev/null < "$DEV_DIR/accepted-red-characterization.txt" || ACCEPTED_RED_CHAR=""; fi
+ACCEPTED_RED_CHAR=${ACCEPTED_RED_CHAR%$'\r'}
 if [ "$CHAR_TEST_FILE" = "$ACCEPTED_RED_CHAR" ]; then
     echo "GATE T2: accepted-red characterization test excluded: $CHAR_TEST_FILE; no characterization proof"
     exit 0
 fi
 [ -n "$CHAR_TEST_FILE" ] && [ -f "$CHAR_TEST_FILE" ] || { echo "! BLOCKED — characterization test file missing; recover the T1 path before T2"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- "$CHAR_TEST_FILE" -v
+python "$PLUGIN_ROOT/bin/dev_run_tests.py" pytest -- "$CHAR_TEST_FILE" -v
 GATE_EXIT=$?
 case "$GATE_EXIT" in
     0) echo "GATE OK: characterization tests pass after refactor" ;;

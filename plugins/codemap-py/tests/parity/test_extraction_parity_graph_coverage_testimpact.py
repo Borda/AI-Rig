@@ -227,7 +227,13 @@ def test_coverage_annotation_identical_old_vs_new(tmp_path: Path, old_scan_index
 
 def _mock_patches_by_module(index: dict) -> dict:
     """Map indexed module names to their recorded mock-patch metadata."""
-    return {m["name"]: m.get("mock_patches") for m in index["modules"]}
+    root = Path(index["scan_root"])
+    return {
+        m["name"]: [
+            {**patch, "file": Path(patch["file"]).relative_to(root).as_posix()} for patch in m.get("mock_patches", [])
+        ]
+        for m in index["modules"]
+    }
 
 
 def test_fixture_graph_and_mock_patch_data_identical(scan_pair: ScanPair) -> None:

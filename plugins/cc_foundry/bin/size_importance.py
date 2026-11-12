@@ -83,6 +83,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _report_io import write_report
+
 # The inventory's own line and fence readers (private by name, same plugin): one reader keeps line numbers in step.
 from consolidate_inventory import (
     _FENCE,
@@ -730,7 +732,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     report = score(inventory, root, args.min_tokens, args.factor)
     if args.json:
-        Path(args.json).write_text(json.dumps(report, indent=1), encoding="utf-8")
+        write_report(Path(args.json), json.dumps(report, indent=1))
     print(render(report))
     return 0
 

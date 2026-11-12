@@ -25,6 +25,13 @@ def test_untrusted_task_transport_grants_write_and_forbids_shell_construction(sk
     assert "`--task-file <path>` instead of `--task`" in transport
 
 
+def test_windows_task_text_never_reaches_batch_argument_expansion(skill_lines: list[str]) -> None:
+    """Windows callers must keep task text out of the batch launcher's raw argument expansion."""
+    transport = next(line for line in skill_lines if "On native Windows, always use `--task-file`" in line)
+    assert "including when invoking `bin/python.cmd`" in transport
+    assert "never pass free text through that launcher's `%*`" in transport
+
+
 def test_task_scratch_stays_outside_peer_workspace(skill_lines: list[str]) -> None:
     """The peer must not own its input brief or report scratch creation as a project edit."""
     resolver = next(line for line in skill_lines if "Run this fixed resolver block" in line)

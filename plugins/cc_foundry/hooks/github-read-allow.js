@@ -90,6 +90,8 @@
 //     (never `@file` or `@-`: `-F` reads those from disk or stdin), opening with `query` or `{`, no
 //     `mutation` or `subscription` word anywhere; other fields are plain variables. Only the `gh api`
 //     options listed in API_OPTIONS, spelled `--name=value`, `--name value` or `-x value`.
+//   * `gh api --allow-escape-sequences` is intentionally outside API_OPTIONS: displaying terminal
+//     escape sequences requires normal permission handling for each use, even on a read.
 //   * `-q/--jq` never names `env` (case ignored): gh compiles jq with the process environment loaded
 //     (go-gh pkg/jq `gojq.WithEnvironLoader`), so `env.GH_TOKEN` or `$ENV` would print a secret.
 //     `--template` functions (go-gh pkg/template) read no environment, file or process.
@@ -993,7 +995,7 @@ function bashCall(raw) {
   } catch (_) {
     return null;
   }
-  if (!data || data.tool_name !== "Bash") return null;
+  if (!data || (data.tool_name !== "Bash" && data.tool_name !== "Monitor")) return null;
   const command = data.tool_input && data.tool_input.command;
   if (typeof command !== "string" || !command.trim()) return null;
   return { data, command: command.trim() };

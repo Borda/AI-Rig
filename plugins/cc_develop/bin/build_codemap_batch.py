@@ -19,6 +19,9 @@ Flags:
     ``--modules`` — space-separated dotted module names; skips git-diff
     derivation entirely (caller already knows its scope, e.g. the refactor
     skill's AFFECTED_MODULES list).
+    ``--files`` — newline-separated scoped Python paths, mutually exclusive with ``--modules``; derives module
+    names relative to ``--repository`` (default cwd), normalizes separators and package initializers, and warns on
+    dropped paths. Absolute paths outside that repository and invalid module names are omitted.
     ``--queries`` — comma-separated subset of the per-module query families
     (``rdeps``, ``mock-rdeps``, ``uncovered``, ``xrefs``, ``undocumented``).
     When given, the ``central`` baseline item is omitted too — the caller asked
@@ -38,12 +41,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 # Sibling import: resolved by Python's script-dir sys.path entry on direct execution,
 # and by plugins/cc_develop/conftest.py during pytest --doctest-modules collection.
-from codemap_scan import _git_diff_files, derive_modules_from_diff, is_valid_module
-from run_pytest_short import within_workspace  # same output-path fence as --log/--record-dir
+from codemap_scan import _git_diff_files, derive_module_from_path, derive_modules_from_diff, is_valid_module
+from run_pytest_short import within_run_directory  # same output-path fence as --log/--record-dir
 
 #: Most modules taken from the git diff when the caller passes no explicit --modules list.
 FALLBACK_LIMIT = 10
@@ -132,6 +135,29 @@ def build_filtered_request(modules: list[str], queries: list[str]) -> list[dict[
     return items
 
 
+def derive_scoped_modules(files: str, repository: Path) -> list[str]:
+    """Map newline-separated scoped Python paths to unique modules and warn about dropped coverage."""
+    root = repository.resolve()
+    modules: list[str] = []
+    for file in files.splitlines():
+        if not file:
+            continue
+        normalized = Path(file.replace("\\", "/"))
+        try:
+            if PureWindowsPath(file).is_absolute() and not normalized.is_absolute():
+                raise ValueError("foreign absolute path")
+            relative = (root / normalized).resolve().relative_to(root)
+            module = derive_module_from_path(relative.as_posix())
+            if relative.suffix != ".py" or not is_valid_module(module):
+                raise ValueError("not a Python module path")
+        except ValueError as exc:
+            print(f"build_codemap_batch: dropped scoped file {file!r}: {exc}", file=sys.stderr)
+            continue
+        if module not in modules:
+            modules.append(module)
+    return modules
+
+
 def main(argv: list[str] | None = None) -> int:
     """Derive changed modules, write the batch request JSON, print the module list.
 
@@ -150,10 +176,13 @@ def main(argv: list[str] | None = None) -> int:
     # nargs="?" (not a plain required positional) so a missing path returns exit 1 — argparse's
     # own missing-required exit is 2, but callers and tests rely on the legacy exit-1 contract.
     parser.add_argument("out_json", nargs="?", help="Output path for the batch request JSON.")
-    parser.add_argument(
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument(
         "--modules",
         help="Space-separated dotted module names; skips git-diff derivation.",
     )
+    scope.add_argument("--files", help="Newline-separated scoped Python file paths; skips git-diff derivation.")
+    parser.add_argument("--repository", type=Path, default=Path.cwd(), help="Repository root for --files paths.")
     parser.add_argument(
         "--queries",
         help="Comma-separated per-module query families; omits the central baseline item.",
@@ -164,6 +193,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if args.modules is not None:
         modules = args.modules.split()
+    elif args.files is not None:
+        modules = derive_scoped_modules(args.files, args.repository)
     else:
         modules = derive_modules_from_diff(_git_diff_files(), limit=FALLBACK_LIMIT)
     # Argument-injection guard: reject anything that isn't a plain dotted Python
@@ -177,8 +208,8 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     else:
         request = build_batch_request(modules)
-    if not within_workspace(args.out_json):
-        print(f"build_codemap_batch: output path outside the workspace and temp dir: {args.out_json}", file=sys.stderr)
+    if not within_run_directory(args.out_json):
+        print(f"build_codemap_batch: output path outside the run directory: {args.out_json}", file=sys.stderr)
         return 1
     Path(args.out_json).write_text(json.dumps(request), encoding="utf-8")
     print(" ".join(modules))

@@ -10,7 +10,7 @@ inside the ``result`` subtree, also ``source``, ``imports``, ``name``, ``resolve
 ``file``, ``pattern``, ``hint``, and the ``unique_qualified_names``/``untracked_py``/
 ``suggestions`` lists (result-scoped because these bare key names collide with unrelated
 top-level record fields, e.g. ``record["source"] == "bench"``); qualified names embedded
-in ``error``/``stderr`` prose; the ``session``/``hook_session`` join keys; and the session
+and bare identifying tokens in ``error``/``stderr`` prose; the ``session``/``hook_session`` join keys; and the session
 id embedded in the output filename. Kept: timestamps, counts, flags, tool names, and the
 command shape itself.
 
@@ -83,9 +83,9 @@ _EXIT_DIRECTORY_OUTPUT = 2
 #: token-by-token without swallowing the surrounding words or punctuation.
 _QUALIFIED_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:(?:\.|::)[A-Za-z_][A-Za-z0-9_]*)+")
 
-#: Record fields whose string values are free-text that may embed qualified names
+#: Record fields whose string values are free-text that may embed identifying names and paths
 #: inline (error messages, captured ``stderr``/tracebacks). Scrubbed per-token,
-#: preserving surrounding prose, rather than replaced wholesale.
+#: preserving punctuation and the command-field vocabulary, rather than replaced wholesale.
 _FREE_TEXT_FIELDS = ("error", "stderr")
 
 #: Fields holding a command line, a file path, a project root, or a qualified name:
@@ -461,7 +461,7 @@ def _scrub_field(key: str, val: object, salt: bytes, *, in_result: bool = False)
 
     Examples:
         >>> s = b'x' * 32
-        >>> _scrub_field("error", "boom in pkg.auth", s).startswith("boom in sym_")
+        >>> _scrub_field("error", "boom in pkg.auth", s) == f"{_pseudo('boom', s)} in {_pseudo('pkg.auth', s)}"
         True
         >>> _scrub_field("session", "abc-123", s).startswith("sym_")
         True
@@ -482,7 +482,7 @@ def _scrub_field(key: str, val: object, salt: bytes, *, in_result: bool = False)
     # for lists), so the in_result-gated result-only rule folds into its sibling instead
     # of adding its own return.
     if key in _FREE_TEXT_FIELDS and isinstance(val, str):
-        return _anonymize_text(val, salt)
+        return _anonymize_command(val, salt)
     if isinstance(val, str) and (key in _COMMAND_FIELDS or (in_result and key in _RESULT_FIELDS)):
         return _anonymize_command(val, salt)
     if isinstance(val, list) and (key in _COMMAND_LIST_FIELDS or (in_result and key in _RESULT_LIST_FIELDS)):
@@ -498,9 +498,9 @@ def _scrub_special_fields(v: object, salt: bytes, *, in_result: bool = False) ->
     """Recursively scrub the free-text, command, session, result, and ``not_covered`` fields.
 
     Walks any nested dict/list structure and applies :func:`_scrub_field` to every key.
-    Qualified names embedded in ``error``/``stderr`` prose are pseudonymized while the
-    surrounding words survive; ``intent``/``target``/``search_path``/``project`` and the
-    identity-bearing keys in :data:`_COMMAND_FIELDS` additionally lose their bare
+    Qualified names and bare identifying tokens embedded in ``error``/``stderr`` prose are pseudonymized;
+    ``intent``/``target``/``search_path``/``project`` and the
+    identity-bearing keys in :data:`_COMMAND_FIELDS` also lose their bare
     identifiers, at any nesting depth; once recursion enters the ``result`` subtree the
     :data:`_RESULT_FIELDS`/:data:`_RESULT_LIST_FIELDS` rules also apply, at any depth
     below that point; ``session``/``hook_session`` become stable pseudonyms; each element
@@ -525,7 +525,7 @@ def _scrub_special_fields(v: object, salt: bytes, *, in_result: bool = False) ->
     Examples:
         >>> s = b'x' * 32
         >>> out = _scrub_special_fields({"error": "boom in pkg.auth"}, s)
-        >>> out["error"].startswith("boom in sym_")
+        >>> out["error"] == f"{_pseudo('boom', s)} in {_pseudo('pkg.auth', s)}"
         True
         >>> nc = _scrub_special_fields({"not_covered": ["a.b", "lazy-loading"]}, s)
         >>> nc["not_covered"][0].startswith("sym_"), nc["not_covered"][1]

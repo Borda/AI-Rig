@@ -150,7 +150,9 @@ REGISTRY: dict[str, Guard] = {
     "plugins/cc_oss/bin/detect_codemap.py": Guard(
         "python-local", "oss-owned detector with its own --prefix/--strict CLI; resolves in Python, not bash"
     ),
-    "plugins/cc_oss/skills/resolve/SKILL.md": Guard("bash-preamble", "skill-local pre-flight; fragment"),
+    "plugins/cc_oss/skills/resolve/modes/dispatch-closeout.md": Guard(
+        "bash-preamble", "skill-local pre-flight; fragment"
+    ),
     "plugins/cc_oss/skills/resolve/modes/dispatch-prelude.md": Guard(
         "inline-index-path", "index file path built inline for the codemap_cache.py read call"
     ),

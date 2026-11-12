@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _research_shell_plugin import render_shell
 from _research_text import flat
 
 _PLUGIN = Path(__file__).resolve().parents[2]
@@ -80,7 +81,7 @@ def _run_bash(script: str, home: Path) -> subprocess.CompletedProcess[str]:
     """Run ``script`` in the PATH Bash (a bare name lets Windows pick System32's WSL launcher first)."""
     assert _BASH is not None
     return subprocess.run(
-        [_BASH, "-c", script],
+        [_BASH, "-c", render_shell(script, _PLUGIN, "research")],
         env=_setup_env(home),
         capture_output=True,
         encoding="utf-8",

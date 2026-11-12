@@ -3,7 +3,7 @@ name: agent-shims
 description: 'Safely manage Codex Rig role-agent shims: doctor, status, or remove; install only reports its platform block. One action only.'
 ---
 
-> Before asking, read [User Questions](../../shared/codex-user-questions.md).
+> Before asking, read [User Questions](../../shared/codex-user-questions.md). Waits, plan updates, and test runs follow [Agent Waits](../../shared/native-skill-contract.md#agent-waits), [Plan Updates](../../shared/native-skill-contract.md#plan-updates), and [Sandboxed Test Runs](../../shared/native-skill-contract.md#sandboxed-test-runs).
 
 # Agent Shims
 
@@ -13,14 +13,14 @@ This is experimental lifecycle tool. Installing authenticated standalone agent T
 
 Accept exactly one action: `doctor`, `status`, `install`, or `remove`. Reject missing, extra, or unknown arguments without writes.
 
-Any follow-up question follows [User Questions](../../shared/native-skill-contract.md#user-questions): put accepted action names or required input format in the permitted native control after showing context; use plain chat only when no permitted native control is suitable. Preserve the manager's exact-digest removal confirmation syntax; never substitute a generic yes/no response for that digest-bound input. The blocked `install` action still requires no approval prompt.
+Any follow-up question follows [User Questions](../../shared/codex-user-questions.md): put accepted action names or required input format in the permitted native control after showing context; use plain chat only when no permitted native control is suitable. Preserve the manager's exact-digest removal confirmation syntax; never substitute a generic yes/no response for that digest-bound input. The blocked `install` action still requires no approval prompt.
 
-Locate `../../scripts/manage_role_agents.py` relative to this installed `SKILL.md`. Run it with current Python 3.10+ interpreter and selected action. Never copy manager, resolve it through source checkout, or edit generated agent files directly.
+Resolve `PLUGIN_ROOT` two levels above this installed skill directory. Run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/scripts/manage_role_agents.py <action>` with the selected action; on native Windows use `PLUGIN_ROOT/bin/python.cmd`. Never copy manager, resolve it through source checkout, or edit generated agent files directly.
 
 - `doctor`: run read-only live prerequisite check, render its JSON result for person.
 - `status`: run read-only health and installed-roster summary, render its JSON result for person.
 - `install`: report stable platform block. Never request approval; no new shim plan or write is allowed.
-- `remove`: use same exact-digest flow to remove every intact managed shim. Never delete by filename prefix or marker alone. On failure, apply the same per-failure-category recovery guidance in item 4 below for `doctor` and `status` — it applies to `remove`'s failure modes too.
+- `remove`: use the manager's exact-digest removal confirmation to remove every intact managed shim. Never delete by filename prefix or marker alone. On failure, apply the same per-failure-category recovery guidance in item 4 below for `doctor` and `status` — it applies to `remove`'s failure modes too.
 
 Preserve manager's exit contract: `0` success/converged, `2` usage, `3` cancelled, `4` drift/conflict, `5` prerequisite blocked, `6` untrusted state, `7` internal/recovery failure. Never retry mutating action after codes `4`, `6`, or `7`; report evidence, keep files untouched.
 
@@ -33,7 +33,7 @@ For `doctor` and `status`, never return only raw JSON or generic safety label:
 
 Never recommend recursive `chmod`, `chown`, deletion, or link replacement from diagnostic alone. On POSIX systems, a protected agent target may be readable by other users, but it must be owned by current user, have no group/world write or special permission bits; private lifecycle state remains exact mode `0700`. Not applicable on Windows, where `remove` is platform-blocked.
 
-After successful install or removal, tell user to start fresh Codex session. Thin shims intentionally depend on installed plugin cache; uninstalling plugin makes remaining shims unavailable until safely removed or reinstalled.
+After successful removal, tell user to start fresh Codex session. Thin shims intentionally depend on installed plugin cache; uninstalling plugin makes remaining shims unavailable until safely removed or reinstalled.
 
 ## Output Contract
 

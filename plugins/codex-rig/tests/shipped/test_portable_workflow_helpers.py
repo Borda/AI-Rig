@@ -12,9 +12,10 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import pytest
-from _modules import load_module
+from _modules import load_module, load_module_scoped
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 COLLECT_DIFF = PLUGIN_ROOT / "shared" / "collect_diff.py"
@@ -208,7 +209,7 @@ def test_collect_diff_uses_only_git_argv(tmp_path: Path, monkeypatch: pytest.Mon
         "--no-relative",
         "--ignore-submodules=none",
     ]
-    assert calls == [
+    assert [call for call in calls if "--no-pager" not in call] == [
         ["git", "-c", "core.fsmonitor=false", "status", "--short"],
         *[
             [
@@ -295,21 +296,31 @@ def test_windows_gate_preserves_native_and_shell_status(command: str, expected: 
     assert completed.returncode == expected, completed.stderr
 
 
-def test_terminate_process_uses_taskkill_for_simulated_windows_trees(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "module_path",
+    [
+        pytest.param(RUN_GATES, id="gate-runner"),
+        pytest.param(PLUGIN_ROOT / "tests" / "local_reviewer_denial_probe.py", id="reviewer-probe"),
+    ],
+)
+def test_terminate_process_uses_taskkill_for_simulated_windows_trees(
+    monkeypatch: pytest.MonkeyPatch, module_path: Path
+) -> None:
     """Use the native Windows process-tree terminator before the kill fallback.
 
     A fake still-running process is terminated with the simulated Windows platform; the single recorded command must be
     `taskkill /T /F` on its pid, with the follow-up wait bounded to two seconds.
     """
-    module = _load_module(RUN_GATES, "codex_rig_portable_windows_termination")
+    monkeypatch.syspath_prepend(str(module_path.parent))
+    module = load_module_scoped("codex_rig_portable_windows_termination", module_path, monkeypatch)
     calls: list[list[str]] = []
 
     class Process:
         pid = 42
 
-        def poll(self) -> None:
-            """Report a still-running fake process to exercise termination."""
-            return None
+        def poll(self) -> int:
+            """Report the terminated process after the bounded wait."""
+            return 0
 
         def wait(self, timeout: int | None = None) -> int:
             """Return successful termination after checking the bounded wait timeout."""
@@ -326,6 +337,62 @@ def test_terminate_process_uses_taskkill_for_simulated_windows_trees(monkeypatch
     module.terminate_process(Process(), "win32")
 
     assert calls == [["taskkill", "/PID", "42", "/T", "/F"]]
+
+
+@pytest.mark.parametrize(
+    "module_path",
+    [
+        pytest.param(RUN_GATES, id="gate-runner"),
+        pytest.param(PLUGIN_ROOT / "tests" / "local_reviewer_denial_probe.py", id="reviewer-probe"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        pytest.param(
+            subprocess.CompletedProcess([], 5, stdout=b"partial output", stderr=b"Access denied"),
+            "returncode=5 stdout=b'partial output' stderr=b'Access denied'",
+            id="nonzero-exit",
+        ),
+        pytest.param(
+            subprocess.TimeoutExpired("taskkill", 2, output=b"partial output", stderr=b"still waiting"),
+            "timeout=2 stdout=b'partial output' stderr=b'still waiting'",
+            id="taskkill-timeout",
+        ),
+        pytest.param(
+            subprocess.CompletedProcess([], 5, stdout=b"x" * 1000, stderr=b"y" * 1000),
+            "returncode=5",
+            id="bounded-output",
+        ),
+    ],
+)
+def test_windows_cleanup_failure_preserves_taskkill_diagnostics(
+    monkeypatch: pytest.MonkeyPatch, module_path: Path, result: Any, expected: str
+) -> None:
+    """Failed or timed-out taskkill reports bounded diagnostics without claiming cleanup succeeded."""
+    monkeypatch.syspath_prepend(str(module_path.parent))
+    module = load_module_scoped("codex_rig_cleanup_diagnostics", module_path, monkeypatch)
+    process = mock.Mock(spec=subprocess.Popen, pid=42)
+    run = mock.Mock(side_effect=[result])
+    monkeypatch.setattr(module.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="windows-process-tree-cleanup-unproven") as caught:
+        module.terminate_process(process, "win32")
+    assert expected in str(caught.value)
+    assert len(str(caught.value)) < 2200
+    assert "x" * 257 not in str(caught.value)
+    assert "y" * 257 not in str(caught.value)
+    process.wait.assert_not_called()
+    assert run.call_args.kwargs["capture_output"] is True
+    assert run.call_args.kwargs["timeout"] == 2
+
+
+def test_reviewer_cleanup_diagnostics_keep_safe_failure_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reviewer evidence retains the cleanup token while excluding raw taskkill diagnostics."""
+    module = load_module_scoped(
+        "codex_rig_reviewer_cleanup_code", PLUGIN_ROOT / "tests" / "local_reviewer_denial_probe.py", monkeypatch
+    )
+    error = module.ProtocolViolation("windows-process-tree-cleanup-unproven: returncode=5 stderr=b'private path'")
+    assert module._safe_failure_code(error) == "windows-process-tree-cleanup-unproven"
 
 
 @pytest.mark.parametrize(

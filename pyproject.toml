@@ -21,7 +21,9 @@ dev = [
 # Test tooling + benchmark runtime deps (benchmark tests import the run-codemap scripts).
 test = [
   "mkdocs>=1.6",
-  "pytest>=9",
+  # pytest 9.2 ignores xdist 3.8's group node IDs, duplicating shared fixture setup.
+  # Remove the upper bound after https://github.com/pytest-dev/pytest/issues/15303 is resolved.
+  "pytest>=9,<9.2",
   "pytest-cov",
   # "pytest-randomly",
   "pytest-rerunfailures",

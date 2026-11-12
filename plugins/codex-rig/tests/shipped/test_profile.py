@@ -9,7 +9,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, BinaryIO
+from unittest.mock import Mock
 
 import pytest
 from _modules import load_module
@@ -812,3 +813,101 @@ def test_profile_unavailable_report_does_not_invent_a_session_or_zero(tmp_path: 
         "observed": False,
         "rows": [["Unavailable", "Unavailable", "Unavailable", "Unavailable", "No selected telemetry"]],
     }
+
+
+@pytest.mark.parametrize("ending", ['"}\n', ""])
+@pytest.mark.installed_plugin
+def test_profile_rejects_rows_larger_than_eight_mebibytes(tmp_path: Path, ending: str) -> None:
+    """Oversized complete rows and incomplete live tails fail without retaining private content."""
+    source = tmp_path / "oversized.jsonl"
+    source.write_bytes(
+        b'{"type":"future_event","private":"PRIVATE-SENTINEL' + b"x" * (8 * 1024 * 1024) + ending.encode()
+    )
+
+    result = invoke("--input", str(source))
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == "profile: json-row-too-large\n"
+
+
+@pytest.mark.installed_plugin
+def test_profile_accepts_a_row_at_the_size_limit(tmp_path: Path) -> None:
+    """A complete row at the limit remains measurable and its full captured bytes are hashed."""
+    source = usage_source(tmp_path)
+    envelope = b'{"type":"future_event","private":""}\n'
+    row = envelope[:-3] + b"x" * (8 * 1024 * 1024 - len(envelope)) + envelope[-3:]
+    with source.open("ab") as handle:
+        handle.write(row)
+
+    result = invoke("--input", str(source))
+
+    assert result.returncode == 0, result.stderr
+    session = json.loads(result.stdout)["sessions"][0]
+    assert session["tokens"]["usage"] == usage(100)
+    assert session["capture"]["sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert "incomplete-final-row" not in session["limits"]
+
+
+@pytest.mark.installed_plugin
+def test_profile_emits_only_the_source_basename(tmp_path: Path) -> None:
+    """Reports omit private parent directories while preserving source identity through the capture hash."""
+    private = tmp_path / "PRIVATE-SENTINEL"
+    private.mkdir()
+    source = usage_source(private, name="selected.jsonl")
+
+    result = invoke("--input", str(source))
+
+    assert result.returncode == 0, result.stderr
+    session = json.loads(result.stdout)["sessions"][0]
+    assert session["source"] == "selected.jsonl"
+    assert session["capture"]["sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert "PRIVATE-SENTINEL" not in result.stdout + result.stderr
+
+
+@pytest.mark.installed_plugin
+def test_profile_checker_accepts_a_sanitized_basename_without_source_access(tmp_path: Path) -> None:
+    """Retained sanitized reports validate after their private source has been removed."""
+    source = usage_source(tmp_path)
+    report = json.loads(invoke("--input", str(source)).stdout)
+    report["sessions"][0]["source"] = source.name
+    retained = tmp_path / "sanitized.json"
+    retained.write_text(json.dumps(report), encoding="utf-8")
+    source.unlink()
+
+    checked = invoke("--check-report", str(retained))
+
+    assert checked.returncode == 0, checked.stderr
+    assert json.loads(checked.stdout)["rows"][0][1] == "100 total"
+
+
+@pytest.mark.parametrize(
+    "coordinate", ["", ".", "..", "../selected.jsonl", "private/selected.jsonl", "C:selected.jsonl"]
+)
+@pytest.mark.installed_plugin
+def test_profile_checker_rejects_non_basename_relative_sources(tmp_path: Path, coordinate: str) -> None:
+    """Sanitized source labels cannot carry relative directory traversal or drive-relative paths."""
+    source = usage_source(tmp_path)
+    report = json.loads(invoke("--input", str(source)).stdout)
+    report["sessions"][0]["source"] = coordinate
+    retained = tmp_path / "invalid-source.json"
+    retained.write_text(json.dumps(report), encoding="utf-8")
+
+    checked = invoke("--check-report", str(retained))
+
+    assert checked.returncode == 1
+    assert checked.stderr == "profile: invalid-profile-source\n"
+
+
+@pytest.mark.installed_plugin
+def test_profile_bounds_the_read_before_allocating_a_large_row(profile_module: ModuleType) -> None:
+    """A huge captured prefix cannot turn the next line read into an unbounded allocation."""
+    reader = Mock(spec=BinaryIO)
+    reader.readline.return_value = b'{"type":"future_event"}\n'
+
+    row = profile_module.read_row(reader, 1024**4)
+
+    assert row == b'{"type":"future_event"}\n'
+    reader.readline.assert_called_once()
+    assert 0 < reader.readline.call_args.args[0] <= 8 * 1024 * 1024 + 1
+    reader.read.assert_not_called()

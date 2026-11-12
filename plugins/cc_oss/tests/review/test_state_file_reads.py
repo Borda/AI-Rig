@@ -16,6 +16,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _oss_shell_plugin import render_shell
+from _skill_source import read_skill_source
 
 _PLUGIN = Path(__file__).resolve().parents[2]
 _REVIEW_SKILL = _PLUGIN / "skills" / "review" / "SKILL.md"
@@ -24,7 +26,7 @@ _PAYLOAD = 'x; touch "$MARK"; $(touch "$MARK") `touch "$MARK"` y'
 
 def _consumer_line(path: Path, marker: str) -> str:
     """Return the first shipped line in ``path`` that contains ``marker``."""
-    return next(line for line in path.read_text(encoding="utf-8").splitlines() if marker in line)
+    return next(line for line in read_skill_source(path).splitlines() if marker in line)
 
 
 def _read_back(tmp_path: Path, line: str, prelude: str, variable: str) -> tuple[subprocess.CompletedProcess[str], Path]:
@@ -34,7 +36,16 @@ def _read_back(tmp_path: Path, line: str, prelude: str, variable: str) -> tuple[
     environment.update({"TMPDIR": str(tmp_path), "CSID": "test", "MARK": str(mark)})
     script = f'{prelude}\n{line}\nprintf "%s" "${variable}"'
     completed = subprocess.run(
-        [shutil.which("bash"), "-c", script], cwd=tmp_path, env=environment, capture_output=True, text=True, check=False
+        [
+            shutil.which("bash"),
+            "-c",
+            render_shell(script, Path(environment.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "oss"),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     return completed, mark
 

@@ -31,13 +31,12 @@ NOT for: running experiments (use `/research:run`); designing hypotheses (use `r
 
 ```bash
 # loads: compaction-contract.md
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve_shared.py" --persist research-shared --emit agent-resolution.md || exit 1  # timeout: 5000 — cold resolve; every later site reads the research-shared sentinel instead of re-running python
+python "$PLUGIN_ROOT/bin/resolve_shared.py" --persist research-shared --emit agent-resolution.md || exit 1  # timeout: 5000 — cold resolve; every later site reads the research-shared sentinel instead of re-running python
 ```
 
 ## Judge Mode (Steps J1–J6)
-
-Triggered by `judge` or `judge <file.md>`.
 
 **Task tracking**: create tasks for J1, J2, J3, J4, J5a, J5b, J6 at start, all in the same response as the first real tool call. Every later `TaskUpdate` rides with the next real tool call — never a bookkeeping-only turn; the one standalone call is a `completed` right before a long report. (J5a = Codex adversarial review; J5b = resolve rating source.)
 
@@ -46,9 +45,13 @@ Triggered by `judge` or `judge <file.md>`.
 **Flag parsing** (first):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-[ -f "${TMPDIR:-/tmp}/sweep-out-path-${CSID}" ] && _INL=--inlined || _INL=""  # sweep S1 sentinel present = inlined in sweep: sweep's live contract must survive
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags skip-validation --keep-state judge $_INL "$ARGUMENTS" >/dev/null  # timeout: 5000 — no eval; judge-{skip-validation,clean-args,keep-items}-${CSID} (J3 note block reads skip-validation in a fresh shell), clears a stale contract (not when --inlined)
+_SWEEP_TOKEN='<active-sweep-token>'
+case "$_SWEEP_TOKEN" in '<'*) _SWEEP_TOKEN="";; esac
+IFS= read -r _ACTIVE_SWEEP < "${TMPDIR:-/tmp}/sweep-active-token-${CSID}" 2>/dev/null || _ACTIVE_SWEEP=""
+_INL=""; [ -n "$_SWEEP_TOKEN" ] && [ "$_SWEEP_TOKEN" = "$_ACTIVE_SWEEP" ] && _INL=--inlined
+python "$PLUGIN_ROOT/bin/parse-skill-flags.py" --flags skip-validation --keep-state judge $_INL -- "$ARGUMENTS" >/dev/null  # timeout: 5000 — no eval; judge-{skip-validation,clean-args,keep-items}-${CSID} (J3 note block reads skip-validation in a fresh shell), clears a stale contract (not when --inlined)
 IFS= read -r SKIP_VALIDATION < "${TMPDIR:-/tmp}/judge-skip-validation-${CSID}" 2>/dev/null || SKIP_VALIDATION=false
 IFS= read -r ARGUMENTS < "${TMPDIR:-/tmp}/judge-clean-args-${CSID}" 2>/dev/null || ARGUMENTS=""
 echo "SKIP_VALIDATION=${SKIP_VALIDATION:-false}"
@@ -141,14 +144,16 @@ Goodhart findings are `critical` (not just methodology notes) — broken metric 
 The J3 pre-spawn block pre-computes the run dir, program path, validation note and complexity gate, then prints the prompt templates — no decision sits between them, so they ride one call. Expand every printed value into concrete paths before constructing prompts — never pass literal `<path_to_program.md>` or `<RUN_DIR>` placeholders to agents; the `${PROGRAM_PATH}` / `${RUN_DIR}` tokens in the templates are substituted from the `PROGRAM_PATH=… RUN_DIR=…` line:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-RUN_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/make_run_dir.py" "judge" ".experiments" 2>/dev/null)  # timeout: 5000
+RUN_DIR=$(python "$PLUGIN_ROOT/bin/make_run_dir.py" "judge" ".experiments" 2>/dev/null)  # timeout: 5000
 [ -n "$RUN_DIR" ] || { echo "! BLOCKED — make_run_dir.py returned empty; check research plugin install"; exit 1; }
 echo "$RUN_DIR" > "${TMPDIR:-/tmp}/judge-run-dir-${CSID}"  # persist for J3 block (Check 41)
 IFS= read -r PROGRAM_FILE < "${TMPDIR:-/tmp}/judge-program-file-${CSID}" 2>/dev/null || PROGRAM_FILE=""  # J1 persist block (fresh shell per call)
 [ -n "$PROGRAM_FILE" ] || { echo "! BLOCKED — judge-program-file sentinel missing; run the J1 persist-program-path block first"; exit 1; }
 PROGRAM_PATH=$(realpath "$PROGRAM_FILE" 2>/dev/null || echo "$PROGRAM_FILE")
 echo "$PROGRAM_PATH" > "${TMPDIR:-/tmp}/judge-program-path-${CSID}"  # persist for J3 gate and J5a gate (Check 41)
+python "$PLUGIN_ROOT/bin/find_judge_verdict.py" --hash-program "$PROGRAM_PATH" > "$RUN_DIR/program.sha256" || exit 1  # timeout: 5000
 echo "PROGRAM_PATH=$PROGRAM_PATH RUN_DIR=$RUN_DIR"  # values must reach the transcript: prose substitutes them into prompts and paths
 IFS= read -r SKIP_VALIDATION < "${TMPDIR:-/tmp}/judge-skip-validation-${CSID}" 2>/dev/null || SKIP_VALIDATION="false"
 if [ "${SKIP_VALIDATION:-false}" = "true" ]; then
@@ -157,7 +162,7 @@ else
     SKIP_VALIDATION_NOTE="Local validation will run after this review (J4)."
 fi
 echo "SKIP_VALIDATION_NOTE: $SKIP_VALIDATION_NOTE"
-SPAWN_ARCHITECT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/detect-complexity.py" "$PROGRAM_PATH")  # timeout: 5000
+SPAWN_ARCHITECT=$(python "$PLUGIN_ROOT/bin/detect-complexity.py" "$PROGRAM_PATH")  # timeout: 5000
 case "$SPAWN_ARCHITECT" in true|false) ;; *) SPAWN_ARCHITECT=true;; esac  # fail closed: any other output runs the full review
 echo "SPAWN_ARCHITECT=$SPAWN_ARCHITECT"
 IFS= read -r _RESEARCH_SHARED < "${TMPDIR:-/tmp}/research-shared-${CSID}" 2>/dev/null || _RESEARCH_SHARED=""  # warm read (Check 41)
@@ -180,7 +185,7 @@ When `SPAWN_ARCHITECT=false`: skip architect spawn; J5b precedence step 0 sets `
 
 Reviews are static: do not execute program commands or repository hooks; execution is reserved for J4 after user approval.
 
-When `SPAWN_ARCHITECT=true`: spawn ONE merged reviewer via `Agent(subagent_type="research:scientist", prompt=<merged prompt>)` (opus) — build the merged prompt exactly per `judge-j3-prompts.md` §Merged spawn — envelope override (both templates with individual `Return ONLY:` lines stripped, joined by `---`, closed with the override's single array-envelope instruction). The single spawn executes BOTH templates in order, writes `${RUN_DIR}/methodology.md` AND `${RUN_DIR}/scientific-review.md`, each with its own Confidence block. Full prompt templates (expand `${PROGRAM_PATH}` and `${RUN_DIR}` before passing):
+When `SPAWN_ARCHITECT=true`: spawn ONE merged reviewer via `Agent(subagent_type="research:scientist", name="review-protocol", description="Check experimental validity", prompt=<merged prompt>)` (opus) — build the merged prompt exactly per `judge-j3-prompts.md` §Merged spawn — envelope override (both templates with individual `Return ONLY:` lines stripped, joined by `---`, closed with the override's single array-envelope instruction). The single spawn executes BOTH templates in order, writes `${RUN_DIR}/methodology.md` AND `${RUN_DIR}/scientific-review.md`, each with its own Confidence block. Full prompt templates (expand `${PROGRAM_PATH}` and `${RUN_DIR}` before passing):
 
 > `$J3_ARCH_PROMPT` template externalized — follow `judge-j3-prompts.md` § J3_ARCH_PROMPT, printed by the J3 pre-spawn block above (one load supplies both J3 templates).
 
@@ -196,7 +201,7 @@ Use `methodology_rating` resolved by J5b (file first, envelope fallback) for ver
 - `needs-refinement` → supports NEEDS-REVISION
 - `fundamentally-flawed` → supports BLOCKED
 
-When `SPAWN_ARCHITECT=false`: spawn `research:scientist` alone for scientific rigor. Expand `${PROGRAM_PATH}` and `${RUN_DIR}` before passing — construct `$J3_SCI_PROMPT` per the template (same variable substitution pattern). Spawn: `Agent(subagent_type="research:scientist", prompt=$J3_SCI_PROMPT)`. (When `SPAWN_ARCHITECT=true` the scientist dimension already ran inside the merged spawn above — do NOT spawn a second agent.)
+When `SPAWN_ARCHITECT=false`: spawn `research:scientist` alone for scientific rigor. Expand `${PROGRAM_PATH}` and `${RUN_DIR}` before passing — construct `$J3_SCI_PROMPT` per the template (same variable substitution pattern). Spawn: `Agent(subagent_type="research:scientist", name="review-protocol", description="Check experimental validity", prompt=$J3_SCI_PROMPT)`. (When `SPAWN_ARCHITECT=true` the scientist dimension already ran inside the merged spawn above — do NOT spawn a second agent.)
 
 > `$J3_SCI_PROMPT` template: `judge-j3-prompts.md` § J3_SCI_PROMPT (already printed by the J3 pre-spawn block).
 
@@ -205,13 +210,17 @@ Use `scientific_rating` as **advisory** in J6 report under **Scientific Rigor** 
 **Source precedence** for `scientific_rating` and `methodology_rating` (file-parsed authoritative, envelope fallback only when file missing or unparsable): mandatory — resolved in J5b.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # boundary: after J3 agents complete, before J4 validation (compaction-contract.md)
-[ -f "${TMPDIR:-/tmp}/sweep-out-path-${CSID}" ] && { echo "judge boundary: skipped — inlined in sweep, whose contract stays live"; exit 0; }  # judge write would replace sweep's contract identity and keep-items
+_SWEEP_TOKEN='<active-sweep-token>'
+case "$_SWEEP_TOKEN" in '<'*) _SWEEP_TOKEN="";; esac
+IFS= read -r _ACTIVE_SWEEP < "${TMPDIR:-/tmp}/sweep-active-token-${CSID}" 2>/dev/null || _ACTIVE_SWEEP=""
+[ -n "$_SWEEP_TOKEN" ] && [ "$_SWEEP_TOKEN" = "$_ACTIVE_SWEEP" ] && { echo "judge boundary: skipped — inlined in sweep, whose contract stays live"; exit 0; }  # judge write would replace sweep's contract identity and keep-items
 IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/judge-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
 IFS= read -r _PROG_PATH < "${TMPDIR:-/tmp}/judge-program-path-${CSID}" 2>/dev/null || _PROG_PATH=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" --keep-sentinel judge-keep-items "research:judge" "validation-verdict (after J3 review agents complete)" "${_RUN_DIR}" "run-dir=${_RUN_DIR}, program=${_PROG_PATH}, methodology=${_RUN_DIR}/methodology.md, scientific-review=${_RUN_DIR}/scientific-review.md" "J4 local validation → J5 Codex review → J6 verdict and report" -- calls_ahead=25 "drop=J3 review prompts and agent output"  # timeout: 5000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/compaction_boundary.py"  # timeout: 60000 — prints the Boundary step, then the foundry gate decision; follow it
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" --keep-sentinel judge-keep-items "research:judge" "validation-verdict (after J3 review agents complete)" "${_RUN_DIR}" "run-dir=${_RUN_DIR}, program=${_PROG_PATH}, methodology=${_RUN_DIR}/methodology.md, scientific-review=${_RUN_DIR}/scientific-review.md" "J4 local validation → J5 Codex review → J6 verdict and report" -- calls_ahead=25 "drop=J3 review prompts and agent output"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/compaction_boundary.py"  # timeout: 60000 — prints the Boundary step, then the foundry gate decision; follow it
 ```
 
 ## Step J4: Local validation
@@ -230,33 +239,39 @@ Execute each command once. **Non-blocking** — program failures become `critica
 
 **Execution approval** — before the first execution of each command in each judge run, print the resolved program path, both exact commands as inert text, the compute route, network setting and timeout. Read and display only the directly invoked entry-point file for a repository script before requesting approval with `AskUserQuestion` for each command: (a) execute the displayed command through the displayed route, (b) skip this command, or (c) abort validation. A standalone judge invocation always asks; never infer approval from auto-detection, a prior standalone judge run, or approval of the other command. Within one sweep run, reuse an explicit approval across refine iterations only while the command text, compute route and network setting are byte-identical. If a command, script, route or network setting changes, show it and ask again. Keep repository and PR-supplied hooks disabled; running any such hook requires separate explicit approval. Judge never commits. Approval does not grant unavailable host capabilities or relax sandbox restrictions. Skipping one command leaves the other eligible for its own approval; abort skips all remaining commands. Record the user's decision and continue to J5 after the eligible commands are handled.
 
-**Timeout** — use run's local/Docker default and environment override. Run this preparation before displaying the approval request; use the printed milliseconds as the Bash tool `timeout: $VERIFY_TIMEOUT_MS` for each local command separately (not shell `timeout`). For Docker use `timeout: $DOCKER_TOOL_TIMEOUT_MS`, which is `(VERIFY_TIMEOUT_SEC + 30) * 1000`, leaving cleanup time beyond the wrapper's cap. Substitute the printed seconds into the Docker backstop below; its fixed timeout marker is a floor, and the actual tool timeout must use the printed Docker value:
+**Timeout** — resolve `metric_timeout_sec` from the parsed program Config, default 120 local/Docker or 300 Colab. Substitute the resolved integer below before execution. Run this preparation before displaying the approval request; use the printed milliseconds as the metric's Bash tool `timeout: $VERIFY_TIMEOUT_MS` (not shell `timeout`); keep the guard's separate timeout. For Docker metrics use `timeout: $DOCKER_TOOL_TIMEOUT_MS`, which is `(VERIFY_TIMEOUT_SEC + 30) * 1000`, leaving cleanup time beyond the wrapper's cap. Substitute the printed seconds into the Docker backstop below; its fixed timeout marker is a floor, and the actual tool timeout must use the printed Docker value:
 
 ```bash
-VERIFY_TIMEOUT_SEC="${VERIFY_TIMEOUT_SEC:-120}"
+_PROGRAM_TIMEOUT='<resolved metric_timeout_sec>'
+VERIFY_TIMEOUT_SEC="${VERIFY_TIMEOUT_SEC:-$_PROGRAM_TIMEOUT}"
+case "$VERIFY_TIMEOUT_SEC" in ''|*[!0-9]*|0) echo "! BLOCKED — metric timeout must be resolved positive integer seconds"; exit 1;; esac
 VERIFY_TIMEOUT_MS=$((VERIFY_TIMEOUT_SEC * 1000))
 DOCKER_TOOL_TIMEOUT_MS=$(((VERIFY_TIMEOUT_SEC + 30) * 1000))
 echo "VERIFY_TIMEOUT_SEC=$VERIFY_TIMEOUT_SEC VERIFY_TIMEOUT_MS=$VERIFY_TIMEOUT_MS DOCKER_TOOL_TIMEOUT_MS=$DOCKER_TOOL_TIMEOUT_MS"  # timeout: 5000
 ```
 
+When `## Config` supplies `metric_timeout_sec`, use that positive integer instead of the 120-second fallback above, with ambient `VERIFY_TIMEOUT_SEC` taking precedence. The metric's approval display and actual executor must use this effective value, matching plan/run/fortify; guard timeout remains separate. A non-zero metric exit fails even when stdout contains a finite float.
+
 Snapshot the working tree first — the commands are the program's own and may write files. After approval and immediately before execution, run this fixed `before` block once. It saves status, index object IDs/modes and content hashes for staged, unstaged and untracked dirty files, nested repository HEAD/status, and `.experiments/state/**` outside this run dir, excluding this judge run's artifacts; other ignored files are not checked. Files are hashed in chunks. An existing `dirty-before.json` is an error, never overwritten. A snapshot error means execute neither command: record the non-program failure and each command as not run, then continue to J5.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/judge-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
 [ -n "$RUN_DIR" ] || { echo "! BLOCKED — judge-run-dir sentinel missing; J3 run dir not persisted"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/judge_tree_snapshot.py" "$RUN_DIR" before || exit 1
+python "$PLUGIN_ROOT/bin/judge_tree_snapshot.py" "$RUN_DIR" before || exit 1
 # timeout: 10000
 ```
 
 **Compute route** — `compute: docker` must use `docker_sandbox_run.py --mode verify`, exactly as run R2/Phase 5. Resolve network before approval as in `run/modes/phase5-metric.md`: honour ambient `SANDBOX_NETWORK` over parsed `sandbox_network`, default `none`; accept only the closed set `none|bridge`, mapping any unknown value to `none`. Substitute the approved command, resolved network and printed timeout seconds, quoting embedded single quotes as `'\''`. Preserve the command as one literal argument; never interpolate its contents as host shell code:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 COMMAND='<command>'
 SANDBOX_NETWORK='<resolved sandbox_network>'
 SECONDS_CAP='<VERIFY_TIMEOUT_SEC>'
 case "$COMMAND|$SANDBOX_NETWORK|$SECONDS_CAP" in *'<'*'>'*|'') echo "! BLOCKED — Docker placeholders not substituted"; exit 1;; esac
-SANDBOX_NETWORK="$SANDBOX_NETWORK" SANDBOX_TIMEOUT_SEC="$SECONDS_CAP" python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/docker_sandbox_run.py" --mode verify "$COMMAND"  # timeout: 120000
+SANDBOX_NETWORK="$SANDBOX_NETWORK" SANDBOX_TIMEOUT_SEC="$SECONDS_CAP" python "$PLUGIN_ROOT/bin/docker_sandbox_run.py" --mode verify "$COMMAND"  # timeout: 120000
 ```
 
 Run that block once for the approved metric and once for the approved guard, each in its own call. The wrapper uses `python:3.11-slim` without project dependencies, a read-only project mount and writable `.experiments`, preserving the configured network isolation. Apply the failure classes above to wrapper rejection, unavailable Docker, missing dependencies or timeout; never fall back to host execution. Parse only the command's stdout as the metric, retaining stderr separately for diagnostics.
@@ -280,10 +295,11 @@ If the executed guard exits non-zero: add critical finding: "Guard command exite
 Drift check — after each executed command, including failure or timeout, run this fixed `after` block. Compare against the original baseline; never overwrite `dirty-before.json`. A status or content change adds a `medium` finding naming affected paths, even when Git's dirty status is unchanged. On metric drift, keep running the separately approved guard, then stop further command execution after the guard's drift check. A snapshot failure stops remaining commands and adds a `medium` non-program finding because side effects remain unverified; report each remaining command as not run. Preserve all files and report what changed; never restore or discard user content.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/judge-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
 [ -n "$RUN_DIR" ] || { echo "! BLOCKED — judge-run-dir sentinel missing; J3 run dir not persisted"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/judge_tree_snapshot.py" "$RUN_DIR" after || exit 1
+python "$PLUGIN_ROOT/bin/judge_tree_snapshot.py" "$RUN_DIR" after || exit 1
 # timeout: 10000
 ```
 
@@ -296,10 +312,11 @@ Record validation results for J6 report.
 **Complexity gate** — simple programs skip the Codex pass (J2 completeness, scientist review, and J4 dry-run still apply):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PROGRAM_PATH < "${TMPDIR:-/tmp}/judge-program-path-${CSID}" 2>/dev/null || PROGRAM_PATH=""  # re-hydrate (Check 41: fresh shell)
 [ -n "$PROGRAM_PATH" ] || { echo "! BLOCKED — judge-program-path sentinel missing; run the J3 pre-spawn block first"; exit 1; }
-J5A_COMPLEX=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/detect-complexity.py" "$PROGRAM_PATH")  # timeout: 5000 — same gate as J3; must stay identical, hence the shared script
+J5A_COMPLEX=$(python "$PLUGIN_ROOT/bin/detect-complexity.py" "$PROGRAM_PATH")  # timeout: 5000 — same gate as J3; must stay identical, hence the shared script
 case "$J5A_COMPLEX" in true|false) ;; *) J5A_COMPLEX=true;; esac  # fail closed: any other output runs the Codex pass
 echo "J5A_COMPLEX=$J5A_COMPLEX"
 ```
@@ -309,7 +326,8 @@ echo "J5A_COMPLEX=$J5A_COMPLEX"
 Check Codex availability through the installed-and-enabled bridge probe; the `claude` CLI is not required:
 
 ```bash
-if [ "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/check_bridge.py" --status 2>/dev/null || echo absent)" = "available" ]; then
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
+if [ "$(python "$PLUGIN_ROOT/bin/check_bridge.py" --status 2>/dev/null || echo absent)" = "available" ]; then
     CODEX_STATUS="available"
 else
     CODEX_STATUS="plugin-missing"
@@ -375,10 +393,13 @@ Top-to-bottom; **first match wins**. BLOCKED takes precedence — stop at first 
 
 **Write full report** (never overwrite — the helper appends a counter suffix when the file exists):
 
+Before finalizing the verdict, reload the J3 program path and run directory, re-run `find_judge_verdict.py --hash-program "$PROGRAM_PATH"`, and compare its output with `$RUN_DIR/program.sha256`. A mismatch or unreadable hash → stop with `! BLOCKED — program changed during judge; rerun judge on the current file`; never publish an approval for changed bytes. Emit the original digest in the report's **Program SHA256** metadata below.
+
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 mkdir -p .reports/research  # timeout: 3000
 BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')  # timeout: 3000
-OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve-anti-overwrite-path.py" .reports/research "judge-$BRANCH-$(date +%Y-%m-%d)")  # timeout: 5000
+OUT=$(python "$PLUGIN_ROOT/bin/resolve-anti-overwrite-path.py" .reports/research "judge-$BRANCH-$(date +%Y-%m-%d)")  # timeout: 5000
 echo "OUT=$OUT"
 ```
 
@@ -406,6 +427,7 @@ Path:          → .reports/research/judge-<branch>-<date>.md
 ## Judge Report: <program_title>
 
 **Program**: <path to program.md>
+**Program SHA256**: <64 hexadecimal characters captured in J3 and verified unchanged in J6>
 **Date**: <date>
 **Verdict**: APPROVED | NEEDS-REVISION | BLOCKED
 

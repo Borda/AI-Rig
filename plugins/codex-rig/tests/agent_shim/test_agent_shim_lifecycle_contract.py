@@ -1100,7 +1100,7 @@ class TestShimAndDoctorContract:
         assert contract["thin_link"]["stale_after_plugin_version_or_cache_change"] is True
         assert "does not natively enforce" in contract["thin_link"]["behavioral_limit"]
 
-    @pytest.mark.parametrize("home_prefix", ["/Users/", "/home/"])
+    @pytest.mark.parametrize("home_prefix", ["/Us" + "ers/", "/ho" + "me/"])
     def test_contains_no_machine_local_path(self, home_prefix: str) -> None:
         """The tracked lifecycle contract names no user-home absolute path.
 

@@ -63,6 +63,9 @@ def _changelog(repo: RepoBuilder, shas: dict[str, str], extra: ChangelogSection 
 def scanned(evo_repo: RepoBuilder, tmp_sentinels: Path) -> dict[str, object]:
     """Return a fixture repo with its first full scan already run (scope: all)."""
     shas = _history(evo_repo)
+    # Later fixture commits stage the whole tree; generated scan state must remain untracked for resumed runs.
+    with (evo_repo.path / ".git/info/exclude").open("a", encoding="utf-8") as handle:
+        handle.write("\n.evolution/\n.reports/\n")
     assert (
         evolution_scan.main(["scope", "--args", "evolution v0.1.0->v0.3.0", "--project-root", str(evo_repo.path)]) == 0
     )
@@ -169,6 +172,34 @@ class TestStoreEquivalence:
         before = _cells(scanned["root"])
         assert _run(scanned["root"], scanned["repo"].path) == 0
         assert _cells(scanned["root"]) == before
+
+    def test_entries_from_a_failed_github_lookup_are_rebuilt(
+        self, scanned: dict[str, object], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Entries built while a GitHub lookup failed are not reused by the next run.
+
+        A transient timeout makes the builder fall back to local commit messages and warn; caching that result under the
+        usual key would keep the degraded fixes and links until ``--full``, although nothing local had changed.
+        """
+        real = evolution_scan.build_entries
+        calls: list[object] = []
+
+        def _degraded(*args: object, **kwargs: object) -> dict[str, object]:
+            """Build the real entries, then report a failed GitHub lookup."""
+            entries = real(*args, **kwargs)
+            entries["warnings"] = [*entries["warnings"], "gh lookup failed (HTTP 499); continuing with local only"]
+            return entries
+
+        def _spy(*args: object, **kwargs: object) -> dict[str, object]:
+            """Record the call and delegate to the real builder."""
+            calls.append(args)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(evolution_scan, "build_entries", _degraded)
+        assert _run(scanned["root"], scanned["repo"].path, "--full", "true") == 0
+        monkeypatch.setattr(evolution_scan, "build_entries", _spy)
+        assert _run(scanned["root"], scanned["repo"].path) == 0
+        assert len(calls) == 1
 
     def test_uncommitted_changelog_edit_rebuilds_entries(
         self, scanned: dict[str, object], monkeypatch: pytest.MonkeyPatch
@@ -433,3 +464,104 @@ class TestEntriesKey:
         before = evolution_scan._entries_key(tmp_path, self._INDEX, gh_available=False)
         monkeypatch.setitem(evolution_scan.ALGO_VERSIONS, "entries", evolution_scan.ALGO_VERSIONS["entries"] + 1)
         assert evolution_scan._entries_key(tmp_path, self._INDEX, gh_available=False) != before
+
+
+class TestPackageOfAMonorepo:
+    """``--tag-prefix`` scans one package of a monorepo in a store of its own."""
+
+    @pytest.fixture
+    def monorepo(self, evo_repo: RepoBuilder) -> RepoBuilder:
+        """Build a repository whose packages tag independently: ``core-v0.1.0``, ``web-v0.1.0``, ``core-v0.2.0``."""
+        repo = evo_repo
+        repo.write("core/app.py", "def core():\n    return 1\n")
+        repo.commit("feat: add core", day=0)
+        repo.tag("core-v0.1.0", day=0)
+        repo.tag("web-v0.1.0", day=0)
+        repo.write("core/parse.py", "def parse(text):\n    return text.split(',')\n")
+        added = repo.commit("feat: add parser", day=1)
+        repo.write_changelog(
+            [
+                ChangelogSection("0.2.0", day=2, added=[f"Parser ({repo.short(added)})"]),
+                ChangelogSection("0.1.0", day=0, added=["Core"]),
+            ]
+        )
+        repo.commit("docs: changelog", day=2)
+        repo.tag("core-v0.2.0", day=2)
+        with (repo.path / ".git/info/exclude").open("a", encoding="utf-8") as handle:
+            handle.write("\n.evolution/\n.reports/\n")
+        return repo
+
+    def test_package_scan_has_its_own_store_and_manifest_prefix(
+        self, monorepo: RepoBuilder, tmp_sentinels: Path
+    ) -> None:
+        """The scan reads only ``core-`` tags, names its store after the package, and records the prefix.
+
+        A store shared between packages would mix scopes and rows; a missing prefix in the manifest would leave a reader
+        unable to tell which package the store holds.
+        """
+        scope = ["scope", "--args", "evolution 0.1.0->0.2.0", "--project-root", str(monorepo.path)]
+        assert evolution_scan.main([*scope, "--tag-prefix", "core-v"]) == 0
+        root = Path(_sentinel_value(tmp_sentinels, "analyse-evo-root"))
+        assert _run(root, monorepo.path) == 0
+        manifest = json.loads((root / "store" / "manifest.json").read_text(encoding="utf-8"))
+        assert (root.name.endswith(".pkg-core-v"), manifest["tag_prefix"], manifest["scope"]["scanned"]) == (
+            True,
+            "core-v",
+            ["0.1.0", "0.2.0"],
+        )
+
+    @pytest.mark.parametrize("prefix", [pytest.param("../x", id="parent-dir"), pytest.param("a b", id="space")])
+    def test_unsafe_prefix_blocks(
+        self, monorepo: RepoBuilder, tmp_sentinels: Path, capsys: pytest.CaptureFixture[str], prefix: str
+    ) -> None:
+        """A prefix with path separators tricks or spaces is refused before any store path is built."""
+        scope = ["scope", "--args", "evolution", "--project-root", str(monorepo.path), "--tag-prefix", prefix]
+        assert evolution_scan.main(scope) == _BLOCKED
+        assert "! BLOCKED" in capsys.readouterr().out
+
+
+class TestRevertedAndReappliedFeature:
+    """A feature that was merged, reverted and merged again still owns its reapplied lines."""
+
+    @pytest.fixture
+    def scanned_reapply(self, evo_repo: RepoBuilder, tmp_sentinels: Path) -> Path:
+        """Scan a history where the exporter is added (#6), reverted, reapplied, then fixed in the next release.
+
+        Blame of the fix lands on the reapply commit, not on the original squash commit, so the feature column must
+        include the reapply commit for the fix to find it.
+        """
+        repo = evo_repo
+        repo.write("src/app.py", "def core():\n    return 1\n")
+        repo.commit("feat: add core", day=0)
+        repo.tag("v0.1.0", day=0)
+        repo.write("src/export.py", "def export(rows):\n    total = sum(rows)\n    return round(total)\n")
+        added = repo.commit("Add exporter (#6)", day=1)
+        repo.revert(added, day=2)
+        repo.write("src/export.py", "def export(rows):\n    total = sum(rows)\n    return round(total)\n")
+        repo.commit('Reapply "Add exporter (#6)"', day=3)
+        repo.tag("v0.2.0", day=4)
+        repo.write("src/export.py", "def export(rows):\n    total = sum(rows)\n    return round(total, 2)\n")
+        fixed = repo.commit("fix: keep two decimals in export", day=5)
+        repo.write_changelog(
+            [
+                ChangelogSection("0.3.0", day=6, fixed=[f"Export rounding ({repo.short(fixed)})"]),
+                ChangelogSection("0.2.0", day=4, added=["Exporter (#6)"]),
+                ChangelogSection("0.1.0", day=0, added=["Core"]),
+            ]
+        )
+        repo.commit("docs: changelog", day=6)
+        repo.tag("v0.3.0", day=6)
+        with (repo.path / ".git/info/exclude").open("a", encoding="utf-8") as handle:
+            handle.write("\n.evolution/\n.reports/\n")
+        spec = ["scope", "--args", "evolution v0.1.0->v0.3.0", "--project-root", str(repo.path)]
+        assert evolution_scan.main(spec) == 0
+        root = Path(_sentinel_value(tmp_sentinels, "analyse-evo-root"))
+        assert _run(root, repo.path) == 0
+        return root
+
+    def test_fix_links_to_the_reapplied_feature(self, scanned_reapply: Path) -> None:
+        """The exporter fix links to the "Exporter" column, the one feature both commits belong to."""
+        root = scanned_reapply
+        columns = {rec["column_id"]: rec for rec in read_jsonl(root / "store" / "columns.jsonl")[0]}
+        titles = {columns[col]["title"].split(" (")[0] for col in _binary_columns(root)}
+        assert titles == {"Exporter"}

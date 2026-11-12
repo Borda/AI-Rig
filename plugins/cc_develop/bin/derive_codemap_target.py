@@ -28,7 +28,7 @@ Replaces an inline ``[[ =~ ]]`` + ``${BASH_REMATCH[1]}`` pair duplicated in ``pl
 
 Exit codes:
     0 — assignments emitted or state written; an unrecognised goal is not an error.
-    1 — invalid state identity or state write failure.
+    1 — oversized goal, invalid state identity or state write failure.
     2 — missing option value (argparse usage error).
 """
 
@@ -46,13 +46,16 @@ from dev_run_dir import sentinel_path, write_atomic
 # A dotted Python-ish path, then `::`, then a bare function name. The module half allows
 # dots so `pkg.mod::fn` keeps `pkg.mod` together; the function half does not, so a trailing
 # `.` in prose cannot be pulled into the name.
-#: Matches a qualified function reference of the form module.path::function in free-text goal text.
-_QUALIFIED: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*::[A-Za-z_][A-Za-z0-9_]*")
+#: Scans complete module candidates; the following delimiter and function are checked once per candidate.
+_QUALIFIED: Final = re.compile(r"[A-Za-z0-9_.]+")
+_FUNCTION: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 # Two or more dot-joined identifier segments. Requiring the second segment keeps ordinary
 # prose ending in a period from reading as a module path.
-#: Matches a dotted module path of two or more identifier segments in free-text goal text.
-_DOTTED: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+")
+#: Scans identifier candidates; extraction requires a dot after the first valid identifier start.
+_DOTTED: Final = re.compile(r"[A-Za-z0-9_]+(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
+
+MAX_ARGUMENT_CHARS: Final = 65536
 
 
 def derive_target(goal: str) -> tuple[str, str]:
@@ -64,6 +67,9 @@ def derive_target(goal: str) -> tuple[str, str]:
     Returns:
         Tuple of module path and bare function name; either may be empty.
 
+    Raises:
+        ValueError: When the goal exceeds 65536 characters.
+
     Examples:
         >>> derive_target("extend auth.tokens::refresh for rotation")
         ('auth.tokens', 'refresh')
@@ -74,13 +80,22 @@ def derive_target(goal: str) -> tuple[str, str]:
         >>> derive_target("rewrite this. and that.")
         ('', '')
     """
-    qualified = _QUALIFIED.search(goal)
-    if qualified:
-        module, _, function = qualified.group(0).partition("::")
-        return module, function
-
-    dotted = _DOTTED.search(goal)
-    return (dotted.group(0), "") if dotted else ("", "")
+    if len(goal) > MAX_ARGUMENT_CHARS:
+        raise ValueError(f"goal exceeds {MAX_ARGUMENT_CHARS} characters")
+    # Consume entire candidate runs so a missing delimiter cannot retry at every suffix.
+    for candidate in _QUALIFIED.finditer(goal):
+        module = candidate.group(0)
+        start = re.search(r"[A-Za-z_]", module)
+        if start and goal.startswith("::", candidate.end()):
+            function = _FUNCTION.match(goal, candidate.end() + 2)
+            if function:
+                return module[start.start() :], function.group(0)
+    for candidate in _DOTTED.finditer(goal):
+        start = re.search(r"[A-Za-z_]", candidate.group(0))
+        module = candidate.group(0)[start.start() :] if start else ""
+        if "." in module:
+            return module, ""
+    return "", ""
 
 
 def main(argv: list[str]) -> int:
@@ -107,7 +122,11 @@ def main(argv: list[str]) -> int:
     # parse_known_args so a goal beginning with a dash is never read as an option of this
     # script, matching parse-skill-flags.py.
     args, extra = parser.parse_known_args(argv)
-    module, function = derive_target(" ".join(extra))
+    try:
+        module, function = derive_target(" ".join(extra))
+    except ValueError as exc:
+        print(f"derive_codemap_target: {exc}", file=sys.stderr)
+        return 1
     if args.keep_state is not None:
         csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
         # sentinel_path strips unsupported session characters; reject them instead so the shell reads the same name.

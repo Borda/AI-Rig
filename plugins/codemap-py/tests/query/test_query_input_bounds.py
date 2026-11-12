@@ -33,15 +33,17 @@ def test_diff_base_cannot_create_output_file(tmp_path, reader):
     assert result == [] or result.get("error") == "invalid base"
 
 
-@pytest.mark.parametrize("pattern", [".*.*.*.*.*.*!", ".+.+.+.+!", "a{1,}b{1,}c{1,}d{1,}!"])
+@pytest.mark.parametrize("pattern", [".*.*.*.*.*.*!", ".+.+.+.+!"])
 def test_separated_unbounded_quantifiers_are_rejected(pattern):
     """Separated repeats cannot bypass the regex complexity guard."""
     assert symbols._is_dangerous_regex(pattern)
 
 
-@pytest.mark.parametrize("pattern", [r"\*\*\*\*", "[+*][+*][+*][+*]", "^Auth.*Handler$", "a{1,4}b{1,4}"])
+@pytest.mark.parametrize(
+    "pattern", [r"\*\*\*\*", "[+*][+*][+*][+*]", "^Auth.*Handler$", "a{1,4}b{1,4}", "a{1,}b{1,}c{1,}d{1,}!"]
+)
 def test_literal_or_bounded_quantifiers_remain_searchable(pattern):
-    """Escaped punctuation, classes and bounded repeats are safe query syntax."""
+    """Literal patterns and separated name filters run under the regex deadline."""
     assert not symbols._is_dangerous_regex(pattern)
 
 
@@ -82,6 +84,24 @@ def test_symbol_rejects_cyclic_source_path_as_json(tmp_path, capsys):
         symbols._symbol_group_results("secret.py", [({"name": "secret"}, _symbol_entry())], tmp_path, True)
     assert exc.value.code == 2
     assert json.loads(capsys.readouterr().out)["error"] == "invalid symbol path"
+
+
+@pytest.mark.parametrize(
+    "rel_path",
+    [
+        pytest.param("gone.py", id="deleted-file"),
+        pytest.param("pkg/mod.py", id="parent-turned-into-file"),
+    ],
+)
+def test_symbol_with_missing_source_is_reported_stale_not_rejected(tmp_path, rel_path):
+    """A deleted indexed source keeps the stale-result path instead of the bad-input exit.
+
+    The strict resolve added to catch symlink loops on Python 3.13 must not turn an ordinary missing file, or a parent
+    directory since replaced by a file, into an error.
+    """
+    (tmp_path / "pkg").write_text("not a directory", encoding="utf-8")
+    results = symbols._symbol_group_results(rel_path, [({"name": "gone"}, _symbol_entry())], tmp_path, False)
+    assert [result["stale"] for result in results] == [True]
 
 
 def test_untrusted_scan_root_cannot_redirect_source(tmp_path, monkeypatch):

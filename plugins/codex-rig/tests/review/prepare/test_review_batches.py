@@ -7,13 +7,14 @@ import copy
 import dataclasses
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any, NamedTuple
 from unittest import mock
 
@@ -21,16 +22,13 @@ import pytest
 import test_review_prepare as preparation
 from _modules import load_module, load_module_registered
 
-#: Per-test budget for the multi-minute tests below. On Windows pytest-timeout's thread method ends the whole xdist
-#: worker, not just the test, once the global cap passes, and these tests ran at 55-85% of that cap with no headroom.
-HEAVY_TEST_TIMEOUT_SECONDS = 300
-#: Test functions measured over about 45 s on a Windows runner, each carrying the budget above.
+#: macOS multipart recovery fell from 48.639 to at most 22.523 s; Windows 295.74 s scales to 136.94 s.
+#: Keep over twice that estimate, below the workflow's 45-minute limit; other cases use the 120 s default.
+HEAVY_TEST_TIMEOUT_SECONDS = 280
+#: Only multipart recovery still projects above the default Windows budget after reducing fixture work.
 HEAVY_TESTS = frozenset(
     {
-        "test_bounded_final_union_retains_early_adverse_part",
         "test_multipart_confidence_recovery_retains_scoped_judgments",
-        "test_local_source_gate_evidence_reaches_ordinary_confidence_intake",
-        "test_emitted_scoped_deductions_require_evidence_for_reduction",
     }
 )
 
@@ -63,6 +61,50 @@ def _load_finder(name: str) -> ModuleType:
 def _load_validator(name: str) -> ModuleType:
     """Load the artifact validator under a private name so each test judges against a freshly imported copy."""
     return load_module(name, _VALIDATOR_PATH)
+
+
+def _in_process_intake_commands(finder: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run both unchanged validator CLI entry points without spawning an interpreter per proof mutation.
+
+    Ordinary intake still selects commands, checks exit diagnostics, and protects result bytes. Its subprocess transport
+    is outside this proof-admission scenario; end-to-end intake tests retain that real transport.
+    """
+    shared_path = preparation.PLUGIN_ROOT / "shared/validate-artifacts.py"
+    validators = {
+        _VALIDATOR_PATH: _load_validator("proof_intake_review_validator"),
+        shared_path: load_module_registered("proof_intake_shared_validator", shared_path),
+    }
+    source_validator = validators[_VALIDATOR_PATH]
+    real_source = source_validator.validate_local_gate_source
+    verified: dict[tuple[Path, Path], dict[str, Any]] = {}
+
+    def unchanged_source(out: Path, worktree: Path) -> dict[str, Any]:
+        """Recheck immutable checkout bytes once while every mutable proof is still validated independently."""
+        key = (out, worktree)
+        if key not in verified:
+            verified[key] = real_source(out, worktree)
+        return copy.deepcopy(verified[key])
+
+    monkeypatch.setattr(source_validator, "validate_local_gate_source", unchanged_source)
+
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Preserve CLI arguments, stdout, stderr and SystemExit diagnostics through the real entry point."""
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(sys, "argv", args[1:]),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            try:
+                code = validators[Path(args[1])].main()
+            except SystemExit as error:
+                code = error.code
+                if not isinstance(code, int):
+                    print(code, file=stderr)
+                    code = 1
+        return subprocess.CompletedProcess(args, code, stdout.getvalue(), stderr.getvalue())
+
+    monkeypatch.setattr(finder, "subprocess", SimpleNamespace(run=run))
 
 
 def test_heavy_tests_carry_a_timeout_above_the_global_cap(request: pytest.FixtureRequest) -> None:
@@ -1284,13 +1326,15 @@ _SCHEDULE_MUTATIONS: dict[str, Callable[[dict[str, Any]], object]] = {
 }
 
 
-@pytest.mark.timeout(HEAVY_TEST_TIMEOUT_SECONDS)
 def test_bounded_final_union_retains_early_adverse_part(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, subtests: pytest.Subtests
 ) -> None:
-    """Admit complete bounded final comparisons without letting a clean last part erase an early defect."""
+    """Admit complete bounded final comparisons without letting a clean last part erase an early defect.
+
+    Padded reports force multiple final parts; oversized source would repeat unrelated source and interaction waves.
+    """
     run, home = _completed_batches(
-        tmp_path, large=True, consolidation_reports=3, consolidation_adverse=True, consolidation_prefix=True
+        tmp_path, consolidation_reports=3, consolidation_adverse=True, consolidation_prefix=True
     )
     _verify_unchanged_source_once(monkeypatch)
     schedule = json.loads((run / "consolidation-dispatch.json").read_bytes())
@@ -3372,9 +3416,10 @@ def test_multipart_confidence_recovery_retains_scoped_judgments(
     """Allow fully mapped global recovery without altering historical scores or accepting invented evidence.
 
     The checkout never changes after aggregation, so the many in-process result validations below verify the frozen
-    source once per call signature instead of repeating identical Git checks for every confidence mutation.
+    source once per call signature instead of repeating identical Git checks for every confidence mutation. Padded
+    reports retain multipart final judgments without also generating oversized source and interaction waves.
     """
-    run, home = _completed_batches(tmp_path, large=True, consolidation_reports=3)
+    run, home = _completed_batches(tmp_path, consolidation_reports=3)
     import validate_artifacts
 
     assembled = _batch_command(run, "assemble-batches", home)
@@ -3382,6 +3427,7 @@ def test_multipart_confidence_recovery_retains_scoped_judgments(
     _verify_unchanged_source_once(monkeypatch)
     manifest_bytes = (run / "specialist-manifest.json").read_bytes()
     manifest = json.loads(manifest_bytes)
+    assert all(len(item["final_parts"]) > 1 for item in manifest["passes"])
     first_wave = run / manifest["batch_execution"]["waves"][0]["manifest_path"]
     selected = json.loads(first_wave.read_bytes())["passes"][0]
     evidence_path = (first_wave.parent / selected["output_path"]).relative_to(run).as_posix()
@@ -3490,9 +3536,14 @@ def _unresolved_gap_closures(
 
 
 @pytest.mark.parametrize("placement", ["gap", "rationale", "duplicate"])
-@pytest.mark.timeout(HEAVY_TEST_TIMEOUT_SECONDS)
-def test_emitted_scoped_deductions_require_evidence_for_reduction(tmp_path: Path, placement: str) -> None:
-    """Bind permitted raw token positions through native assembly before checking a global reduction."""
+def test_emitted_scoped_deductions_require_evidence_for_reduction(
+    tmp_path: Path, placement: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bind raw deduction positions through native assembly and preserve every global reduction check.
+
+    Padded reports retain multiple final parts. Only confidence metadata changes after assembly, so the unchanged
+    checkout is verified once while raw output, manifest, and evidence validation remain real on every admission.
+    """
     deductions = [
         ("Production source and exact diff unavailable", "(-0.25)"),
         ("Mutation evidence unavailable", "(-0.05)"),
@@ -3511,10 +3562,11 @@ def test_emitted_scoped_deductions_require_evidence_for_reduction(tmp_path: Path
             for name, token in deductions
         ],
     }
-    run, home = _completed_batches(tmp_path, large=True, consolidation_reports=3, consolidation_confidence=profile)
+    run, home = _completed_batches(tmp_path, consolidation_reports=3, consolidation_confidence=profile)
     import validate_artifacts
 
     assert _batch_command(run, "assemble-batches", home).returncode == 0
+    _verify_unchanged_source_once(monkeypatch)
     manifest_bytes = (run / "specialist-manifest.json").read_bytes()
     manifest = json.loads(manifest_bytes)
     part = next(item for item in manifest["passes"] if item["role"] == "qa-specialist")["final_parts"][0]
@@ -3736,11 +3788,14 @@ def _evidence_with_tests_status(
 
 
 @pytest.mark.parametrize("workers", [0, 2])
-@pytest.mark.timeout(HEAVY_TEST_TIMEOUT_SECONDS)
 def test_local_source_gate_evidence_reaches_ordinary_confidence_intake(
-    tmp_path: Path, subtests: pytest.Subtests, workers: int
+    tmp_path: Path, subtests: pytest.Subtests, workers: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Current import-bound local tests can close runtime gaps without changing source scores."""
+    """Current import-bound local tests can close runtime gaps without changing source scores.
+
+    The real gate still runs serial and xdist workers. Subsequent proof forgeries leave the checkout unchanged, so
+    repeated intake verifies source once while rereading and judging every altered gate, sidecar, and snapshot proof.
+    """
     run, home = _completed_source_only(tmp_path, runtime_test=True)
     assert _batch_command(run, "assemble-batches", home).returncode == 0
     manifest = json.loads((run / "specialist-manifest.json").read_bytes())
@@ -3773,6 +3828,7 @@ def test_local_source_gate_evidence_reaches_ordinary_confidence_intake(
         args, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}, capture_output=True, text=True, check=False
     )
     assert completed.returncode == 0, completed.stderr
+    _verify_unchanged_source_once(monkeypatch)
     gates_bytes = (run / "gates.json").read_bytes()
     actual_proof = _tests_gate(json.loads(gates_bytes))["python_imports"]
     assert not workers or (
@@ -3820,6 +3876,7 @@ def test_local_source_gate_evidence_reaches_ordinary_confidence_intake(
     )
     (run / "gates.json").write_bytes(gates_bytes)
     finder = load_module_registered("local_gate_finder", preparation.PLUGIN_ROOT / "shared/find-review-report.py")
+    _in_process_intake_commands(finder, monkeypatch)
     assert finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent") == path
     sidecar_path = run / _IMPORTS_SIDECAR
     sidecar_bytes = sidecar_path.read_bytes()

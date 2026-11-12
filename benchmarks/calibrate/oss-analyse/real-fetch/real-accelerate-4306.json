@@ -1,0 +1,569 @@
+{
+  "2154": {
+    "number": 2154,
+    "title": "Accelerate integration with Transformer Engine crashes when using FlashAttention",
+    "state": "open",
+    "body": "### System Info\n\n```Shell\nAccelerate: 0.24.1\r\nOS: Ubuntu 22.04\r\nPython: 3.10\r\nNumPy: 1.26.0\r\nTorch: 2.1.0\r\n\r\nAccelerate configuration:\r\n\r\ncompute_environment: LOCAL_MACHINE\r\ndebug: false\r\ndeepspeed_config:\r\n  gradient_accumulation_steps: 4\r\n  gradient_clipping: 1.0\r\n  offload_optimizer_device: none\r\n  offload_param_device: none\r\n  zero3_init_flag: true\r\n  zero3_save_16bit_model: false\r\n  zero_stage: 3\r\ndistributed_type: DEEPSPEED\r\ndowncast_bf16: 'no'\r\nmachine_rank: 0\r\nmain_training_function: main\r\nmixed_precision: fp8\r\nnum_machines: 1\r\nnum_processes: 2\r\nrdzv_backend: static\r\nsame_network: true\r\ntpu_env: []\r\ntpu_use_cluster: false\r\ntpu_use_sudo: false\r\nuse_cpu: false\n```\n\n\n### Information\n\n- [X] The official example scripts\n- [ ] My own modified scripts\n\n### Tasks\n\n- [X] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\n- [ ] My own task or dataset (give details below)\n\n### Reproduction\n\nRun the `run_clm_no_trainer.py` script with the provided config on a model that supports Flash Attention, and turn Flash Attention on with the flag `use_flash_attention_2=True`:\r\n\r\n        model = AutoModelForCausalLM.from_pretrained(\r\n            args.model_name_or_path,\r\n            from_tf=bool(\".ckpt\" in args.model_name_or_path),\r\n            config=config,\r\n            torch_dtype=torch.bfloat16,\r\n            trust_remote_code=args.trust_remote_code,\r\n            use_flash_attention_2=True\r\n        )\r\n\r\nEg. here is a call I used:\r\n\r\n`accelerate launch run_clm_no_trainer.py --train_file blog_train.json --validation_file blog_val.json --model_name_or_path facebook/opt-1.3b --per_device_train_batch_size 12 --per_device_eval_batch_size 12 --learning_rate 1e-5 --num_train_epochs 1 --gradient_accumulation_steps 4 --output_dir blog_opt --block_size 1024 --checkpointing_steps 400000 --trust_remote_code true --report_to wandb --eval_steps 100 --with_tracking`\n\n### Expected behavior\n\nTraining should run. Instead, it crashes with this error:\r\n\r\nTraceback (most recent call last):\r\n  File \"/home/alyssa/lm_fun/run_clm.py\", line 769, in <module>\r\n    main()\r\n  File \"/home/alyssa/lm_fun/run_clm.py\", line 675, in main\r\n    outputs = model(**batch)\r\n  File \"/home/alyssa/anaconda3/envs/lm_fun/lib/python3.10/site-packages/torch/nn/modules/module.py\", line 1518, in _wrapped_call_impl\r\n    return self._call_impl(*args, **kwargs)\r\n  File \"/home/alyssa/anaconda3/envs/lm_fun/lib/python3.10/site-packages/torch/nn/modules/module.py\", line 1527, in _call_impl\r\n    return forward_call(*args, **kwargs)\r\n  File \"/home/alyssa/anaconda3/envs/lm_fun/lib/python3.10/site-packages/deepspeed/utils/nvtx.py\", line 15, in wrapped_fn\r\n    ret_val = func(*args, **kwargs)\r\n  File \"/home/alyssa/anaconda3/envs/lm_fun/lib/python3.10/site-packages/deepspeed/runtime/engine.py\", line 1818, in forward\r\n    loss = self.module(*inputs, **kwargs)\r\n  File \"/home/alyssa/anaco",
+    "comments": [
+      {
+        "author": "user-3",
+        "body": "The error states very clearly that you can only use flash attention with bf16 and fp16. This is not an accelerate issue, you must use one of those for mixed precision "
+      },
+      {
+        "author": "user-2",
+        "body": "@user-3 Transformer Engine currently includes support for Flash Attention, see the documentation here:\r\n\r\nhttps://docs.nvidia.com/deeplearning/transformer-engine/user-guide/api/pytorch.html?highlight=flash#transformer_engine.pytorch.DotProductAttention\r\n\r\nbut the Accelerate Transformer Engine integration doesn't include TE's attention classes:\r\n\r\nhttps://github.com/huggingface/accelerate/blob/main/src/accelerate/utils/transformer_engine.py"
+      },
+      {
+        "author": "user-3",
+        "body": "Will see if we can drop in a replacement, but with TE it’s very model specific and more often than not these layers are not drop in with how transformers models have been made, so very doubtful. "
+      },
+      {
+        "author": "user-3",
+        "body": "If you find it does work, feel free to open a PR :)"
+      }
+    ]
+  },
+  "4204": {
+    "number": 4204,
+    "title": "`use_stateful_dataloader` + `num_workers>0` draws epoch-0 permutation during `prepare()` before cross-rank RNG sync — corrupts DDP data partition",
+    "state": "open",
+    "body": "### System Info\n\n```Shell\n- `accelerate` version: 1.13.0 (and main branch)\n- `torch` version: 2.13.0\n- `torchdata` version: 0.11.0\n- Platform: Linux\n- Python version: 3.11\n- Distributed environment: 2-process CPU/Gloo (reproducible without GPU)\n```\n\n### Information\n\n- [ ] The official example scripts\n- [x] My own modified scripts\n\n### Tasks\n\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\n- [x] My own task or dataset (give details below)\n\n### Reproduction\n\n#### Summary & Root Cause\n\nWith `DataLoaderConfiguration(use_stateful_dataloader=True)`, `accelerator.prepare()` wraps the dataloader as a torchdata `StatefulDataLoader` and immediately invokes `base_dataloader.state_dict()` inside `DataLoaderAdapter.__init__` to record the initial dataloader state.\n\nWhen `num_workers > 0`:\n1. `StatefulDataLoader.state_dict()` calls `self._get_iterator()` when `self._iterator is None` to snapshot iterator state.\n2. The multiprocessing iterator's `_reset()` spawns worker processes and primes the prefetch queue (`prefetch_factor * num_workers` items), which iterates `_sampler_iter`.\n3. For a vanilla `RandomSampler(generator=None)`, this immediately draws the epoch-0 permutation seed from the process's **local global RNG at `prepare()` time**.\n4. Cross-rank dataloader RNG synchronization (`DataLoaderShard.__iter__` -> `synchronize_rng_states`) only happens when iteration actually starts, so any divergence in per-rank RNG before `prepare()` (e.g. no global `torch.manual_seed` set, deliberate per-rank seeding, or unequal RNG consumption across ranks during model/dataset setup) causes ranks to derive **different** epoch-0 permutations.\n5. `BatchSamplerShard` then rank-interleaves divergent permutations, which **corrupts the data partition during epoch 0** (samples are duplicated across ranks and others are dropped).\n\n*(Note: This affects uninterrupted training runs during epoch 0, independent of any checkpoint/resume operation).*\n\n#### Minimal Reproducible Example\n\nRun with 2 processes on CPU (no GPU needed):\n\n```bash\n# Case A (diverged/unseeded RNG across ranks): partition is corrupted\npython -m torch.distributed.run --standalone --nproc_per_node=2 repro_prepare_prefetch.py noseed\n\n# Case B (identical seed explicitly set before prepare): partition is intact\npython -m torch.distributed.run --standalone --nproc_per_node=2 repro_prepare_prefetch.py seed\n```\n\n`repro_prepare_prefetch.py`:\n\n```python\nimport sys\nimport torch\nimport torch.distributed as dist\nfrom torch.utils.data import DataLoader, TensorDataset\nfrom accelerate import Accelerator, DataLoaderConfiguration\n\nMODE = sys.argv[1]  # \"seed\" or \"noseed\"\nN, BS = 96, 4\n\nif MODE == \"seed\":\n    torch.manual_seed(1234)  # identical on both ranks before prepare()\n\nacc = Accelerator(cpu=True, dataloader_config=DataLoaderConfiguration(use_stateful_dataloader=True))\nloader = ac",
+    "comments": [
+      {
+        "author": "user-5",
+        "body": "Confirmed on `main`: `DataLoaderAdapter.__init__` captures `self.dl_state_dict = self.base_dataloader.state_dict()` eagerly (`src/accelerate/data_loader.py`, right after the `StatefulDataLoader` is built). With `num_workers > 0`, `StatefulDataLoader.state_dict()` has to build an iterator to snapshot it, and building the iterator spawns the workers and draws the epoch-0 permutation from the local RNG. `synchronize_rng_states` only runs later, at the top of `DataLoaderShard.__iter__`, so the permutation is already fixed per rank by then.\n\nSmallest fix I see: capture lazily. Set `self.dl_state_dict = None` in `__init__`, and have `state_dict()` fall back to `self.base_dataloader.state_dict()` when nothing has been captured yet (a checkpoint taken before the first batch keeps working, and `_update_state_dict()` overwrites it as soon as iteration starts). That moves the first iterator creation into `__iter__`, after the RNG sync, and doesn't touch the resume path (#4195).\n\nThe alternative i"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Thanks for the report ! I'll try to investigate myself. I closed the PRs above as they are slop code agents. I encourage you to try fix the issue yourself if you have time also, happy to review @user-4 "
+      },
+      {
+        "author": "user-5",
+        "body": "@maintainer-1 happy to take this if @user-4 isn't already on it. Lazy capture in `DataLoaderAdapter` + a 2-process test for the rank divergence, can have a PR up in a day."
+      }
+    ]
+  },
+  "908": {
+    "number": 908,
+    "title": "CUDA initialization ",
+    "state": "open",
+    "body": "### System Info\n\n```Shell\nHello everybody. I keep encountering the same issue: I use '1.12.1+cu102'and FastAI '2.7.9'.\r\nI need to use the multiple GPUs in our server to train deeper networks with more images. \r\n___\r\naccelerate env\r\n\r\nTraceback (most recent call last):\r\n  File \"/home/andrea/anaconda3/bin/accelerate\", line 8, in <module>\r\n    sys.exit(main())\r\n  File \"/home/andrea/anaconda3/lib/python3.9/site-packages/accelerate/commands/accelerate_cli.py\", line 43, in main\r\n    args.func(args)\r\n  File \"/home/andrea/anaconda3/lib/python3.9/site-packages/accelerate/commands/env.py\", line 34, in env_command\r\n    accelerate_config = load_config_from_file(args.config_file).to_dict()\r\n  File \"/home/andrea/anaconda3/lib/python3.9/site-packages/accelerate/commands/config/config_args.py\", line 63, in load_config_from_file\r\n    return config_class.from_yaml_file(yaml_file=config_file)\r\n  File \"/home/andrea/anaconda3/lib/python3.9/site-packages/accelerate/commands/config/config_args.py\", line 116, in from_yaml_file\r\n    return cls(**config_dict)\r\nTypeError: __init__() got an unexpected keyword argument 'command_file'\n```\n\n\n### Information\n\n- [ ] The official example scripts\n- [X] My own modified scripts\n\n### Tasks\n\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\n- [X] My own task or dataset (give details below)\n\n### Reproduction\n\nHere is the script that I am using:\r\n____________________________________\r\nfrom fastai.vision.all import *\r\nfrom fastai.distributed import *\r\nfrom fastai.vision.models.xresnet import *\r\n\r\nfrom accelerate import Accelerator\r\nfrom accelerate.utils import set_seed\r\nfrom timm import create_model\r\nfrom accelerate import notebook_launcher\r\n\r\ndef get_msk(o):\r\n    return path_Rflbl+fr'/RfM_{o.stem}{o.suffix.lower()}___fuse{o.suffix.lower()}' \r\n\r\nnumeral_codes=[i for i in range(0,16)] #as I am labeling 16 categories in the data\r\nprint('numeral codes ', numeral_codes)                  \r\nfile = open(path+'/codes.txt', \"w+\")\r\n \r\n# Saving the array in a text file\r\ncontent = str(numeral_codes)\r\nfile.write(content)\r\nfile.close()\r\n\r\ndef train():\r\n    dls = SegmentationDataLoaders.from_label_func(\r\n        path, bs=8, fnames = get_image_files(path+'/Impng'),\r\n        label_func = get_msk,\r\n        codes = np.loadtxt(path+'/codes.txt', dtype=str)\r\n    )\r\n    learn = unet_learner(dls, resnet34)\r\n    with learn.distrib_ctx(in_notebook=True, sync_bn=False):\r\n        learn.fit(10)\r\n\r\nnotebook_launcher(train, num_processes=4)\r\n\r\n________________\r\nIt all works until I use notebook launcher. then it comes up with:\r\n---------------------------------------------------------------------------\r\nValueError                                Traceback (most recent call last)\r\nInput In [46], in <cell line: 24>()\r\n     19     with learn.distrib_ctx(in_notebook=True, sync_bn=False):\r\n     20         learn.fit(10)\r\n---> 24 n",
+    "comments": [
+      {
+        "author": "user-6",
+        "body": "@user-3 \r\nsorry...this is me trying to send you the file..."
+      },
+      {
+        "author": "user-6",
+        "body": "@user-3 \r\nI beg your pardon Zach. I am not very well versed with this interface.\r\nI try to send it now again.  No, it does not allow to attach .iypnb notebooks. \r\nI am sorry: it attaches this script only as pdf.  Here it is. I hop eit is clear enough...\r\n\r\n[Multi-GPUs not working ASCI.pdf](https://github.com/huggingface/accelerate/files/10274163/Multi-GPUs.not.working.ASCI.pdf)\r\n"
+      },
+      {
+        "author": "user-3",
+        "body": "Thanks @user-6, your issue is this line, you shouldn't be re-making dataloaders:\r\n\r\n```python\r\nlearn = unet_learner(resnet34,dls,\r\n dls=TfmdDL(after_item=ToTensor(4,80,80),\r\n after_batch=[IntToFloatTensor(), \r\n*aug_transforms()], bs=8))\r\n```\r\n\r\nTo fix, (or at least get further) change that code to be:\r\n\r\n```python\r\nlearn = unet_learner(resnet34,dls)\r\n```"
+      },
+      {
+        "author": "user-6",
+        "body": "Thanks @user-3 .\r\n\r\nYes, I am sorry: I put actually the file before finding that it is indeed wrong. I found an other issue as well. With the codes. Trying to fix it. \r\nmy problem with such a simple dls is that I do nto know how to make the transform or how to tell it to make all of a certain dimension. This is why I used a datablock before. Which form a datablock needs to have here? the regular one? I'll try. Thanks!!\r\n"
+      },
+      {
+        "author": "user-3",
+        "body": "I'd recommend opening a thread on the fastai forums for more help, since the issue is with the framework more than Accelerate specifically :)\r\n\r\nhttps://forums.fast.ai"
+      },
+      {
+        "author": "user-6",
+        "body": "Thank you for the insightful suggestion, @user-3 , but I have a strange problem I believe:\r\nAfter I run:\r\n<img width=\"919\" alt=\"Screenshot 2022-12-21 at 11 53 57\" src=\"https://user-images.githubusercontent.com/83672195/208961785-cca35367-5cfd-4a93-af36-157cc6464c04.png\">\r\nThe problem is that now Accelerate needs me to use SegmentationDataLoaders . And I need to insert transformations, but I do not know how to do it. Can you send me an example with SegmentationDataLoaders where you insert the 'Items_transform' or 'after_item'  in order to standardize the images seen by the algorithm? Here is what it says when I run notebook_launcher:\r\n\r\n<img width=\"899\" alt=\"Screenshot 2022-12-21 at 11 55 08\" src=\"https://user-images.githubusercontent.com/83672195/208962613-77283e4f-4484-438b-8046-690e7b14684f.png\">\r\n\r\nThanks for your help!\r\n"
+      },
+      {
+        "author": "user-6",
+        "body": "@user-3 \r\n\r\nHi Zack,\r\nI have an important update. I realized that the segmentationDataLoaders.from_label_func() is a function that evidently ember both datablock and dataloader characteristics, so I inserted size-standardization of the images. And it worked, AT FIRST: \r\n[](url)"
+      },
+      {
+        "author": "user-6",
+        "body": "\r\n<img width=\"1160\" alt=\"Screenshot 2022-12-21 at 14 24 09\" src=\"https://user-images.githubusercontent.com/83672195/208987802-0698c22a-d8f5-44b6-8d58-6cd3c441e122.png\">\r\n"
+      },
+      {
+        "author": "user-6",
+        "body": "@user-3 \r\nBut if I start the calculation on more than 2 GPUs, it crashes for out-of-memory errors:\r\n<img width=\"740\" alt=\"Screenshot 2022-12-21 at 14 34 20\" src=\"https://user-images.githubusercontent.com/83672195/208988426-0eb688a0-840f-472a-8b13-58d76b5be644.png\">\r\nNow, the reason why I want to use many GPUs is exactly for avoiding this sort of errors. Do you have any idea how could I manage the memory and/or ask accelerate to do it for us? we plan to have MANY images to train, and use at least Resnet50... while now I am confined to Resnet34.\r\nWhich is not bad but... \r\nThank you for your time!\r\n\r\n"
+      },
+      {
+        "author": "user-7",
+        "body": "I also encountered this problem and don't know how to solve it.\r\nI know that cuda is guaranteed not to be initialized before running jupyter_laucher. But none of my previous codes were initialized. Or called torch.cuda? What should we do?\r\n\r\n\r\n\r\nckpt_path = 'baichuan13b_ner'\r\n\r\noptimizer = bnb.optim.adamw.AdamW(peft_model.parameters(),\r\n                                  lr=6e-05,is_paged=True)  #'paged_adamw'\r\n# 初始化KerasModel\r\nkeras_model = KerasModel(peft_model, loss_fn =None,  optimizer=optimizer)\r\n\r\n# 加载微调后的权重\r\nkeras_model.load_ckpt(ckpt_path)\r\n\r\n# 使用多GPU训练\r\nkeras_model.fit_ddp(num_processes=2,\r\n                    train_data=dl_train,\r\n                    val_data=dl_val,\r\n                    epochs=100,\r\n                    patience=10,\r\n                    monitor='val_loss',\r\n                    mode='min',\r\n                    ckpt_path=ckpt_path)\r\n\r\n\r\n```> ---------------------------------------------------------------------------\r\n> ValueError                                T"
+      }
+    ]
+  },
+  "4154": {
+    "number": 4154,
+    "title": "send_to_device crashes on defaultdict batches",
+    "state": "closed",
+    "body": "## System Info\n\n- `Accelerate` version: 1.14.0; also reproduced on 1.15.0.dev0 at `16cb6eb8`\n- Platform: Windows-10-10.0.26200-SP0\n- Python version: 3.11.9\n- NumPy version: 2.4.6\n- PyTorch version: 2.13.0+cpu\n- PyTorch accelerator: N/A\n- Accelerate default config: Not found\n\n## Information\n\n- [ ] The official example scripts\n- [x] My own modified scripts\n\n## Tasks\n\n- [ ] One of the official example tasks\n- [x] My own task or dataset\n\n## Reproduction\n\n`Accelerator.prepare()` fails during iteration when a PyTorch `DataLoader` collator returns a standard-library `collections.defaultdict`:\n\n```python\nfrom collections import defaultdict\n\nimport torch\nfrom torch.utils.data import DataLoader\n\nfrom accelerate import Accelerator\n\n\ndef collate(examples):\n    return defaultdict(list, input_ids=torch.tensor(examples))\n\n\naccelerator = Accelerator(cpu=True)\ndataloader = accelerator.prepare(\n    DataLoader([1, 2], batch_size=2, collate_fn=collate)\n)\nprint(next(iter(dataloader)))\n```\n\nActual result:\n\n```text\nTypeError: first argument must be callable or None\n```\n\nThis also reproduces directly with the public utility:\n\n```python\nfrom accelerate.utils import send_to_device\n\nsend_to_device(\n    defaultdict(list, input_ids=torch.tensor([1, 2])),\n    \"cpu\",\n)\n```\n\n`send_to_device` reconstructs every `Mapping` as `type(tensor)(new_mapping)`. For `defaultdict`, the first positional constructor argument is the default factory rather than initial data, which causes the exception.\n\nRelevant source: https://github.com/huggingface/accelerate/blob/16cb6eb80dd9aa8b4df1a63ef57863e455d53b83/src/accelerate/utils/operations.py#L181-L190\n\nI have a focused fix and regression test prepared.\n\n## Expected behavior\n\nPrepared dataloaders should preserve the mapping type, tensor values, and `default_factory`, and yield the batch without error. For the reproduction above, the expected batch is a `defaultdict` containing `tensor([1, 2])`, with missing keys still producing `[]`.\n\nAI disclosure: I used Codex to help identify and independently reproduce this behavior on the current release and main, search for duplicates, test a focused fix, and draft this report. I reviewed the reproduction, patch, and tests and will personally handle follow-up.\r\n",
+    "comments": [
+      {
+        "author": "user-8",
+        "body": "Closing this with #4155 after the same scope review. I do not have enough user demand to justify a shared utility special case."
+      }
+    ]
+  },
+  "934": {
+    "number": 934,
+    "title": "`Accelerate test` failing on an 8-GPU docker instance",
+    "state": "open",
+    "body": "### System Info\r\n\r\n```Shell\r\nHost machine:\r\n- Docker version 20.10.22, build 3a2c30b\r\n- 8x A100, 80GB\r\n\r\nDocker file:\r\n\r\nFROM nvidia/cuda:11.6.2-devel-ubuntu20.04\r\n\r\nRUN apt update --fix-missing\r\nRUN apt install -y vim git\r\nRUN apt install -y python3 python3-dev python3-pip\r\nRUN ln -sf python3 /usr/bin/python\r\n\r\nRUN pip3 install --no-cache --upgrade pip setuptools\r\nRUN pip3 install accelerate\r\n\r\nCOPY accelerate_config.yaml /root/.cache/huggingface/accelerate/default_config.yaml\r\n```\r\n\r\nAccelerate config:\r\n```\r\ncompute_environment: LOCAL_MACHINE\r\ndeepspeed_config: {}\r\ndistributed_type: MULTI_GPU\r\ndowncast_bf16: 'no'\r\nfsdp_config: {}\r\ngpu_ids: all\r\nmachine_rank: 0\r\nmain_process_ip: null\r\nmain_process_port: null\r\nmain_training_function: main\r\nmixed_precision: 'no'\r\nnum_machines: 1\r\nnum_processes: 8\r\nrdzv_backend: static\r\nsame_network: true\r\nuse_cpu: false\r\n```\r\n\r\nAccelerate env:\r\n```\r\n- `Accelerate` version: 0.15.0\r\n- Platform: Linux-5.4.0-1078-kvm-x86_64-with-glibc2.29\r\n- Python version: 3.8.10\r\n- Numpy version: 1.24.0\r\n- PyTorch version (GPU?): 1.13.1+cu117 (True)\r\n- `Accelerate` default config:\r\n\t- compute_environment: LOCAL_MACHINE\r\n\t- distributed_type: MULTI_GPU\r\n\t- mixed_precision: no\r\n\t- use_cpu: False\r\n\t- dynamo_backend: NO\r\n\t- num_processes: 8\r\n\t- machine_rank: 0\r\n\t- num_machines: 1\r\n\t- gpu_ids: all\r\n\t- main_process_ip: None\r\n\t- main_process_port: None\r\n\t- rdzv_backend: static\r\n\t- same_network: True\r\n\t- main_training_function: main\r\n\t- deepspeed_config: {}\r\n\t- fsdp_config: {}\r\n\t- megatron_lm_config: {}\r\n\t- downcast_bf16: no\r\n\t- tpu_name: None\r\n\t- tpu_zone: None\r\n\t- command_file: None\r\n\t- commands: None\r\n```\r\n\r\n\r\n### Information\r\n\r\n- [X] The official example scripts\r\n- [ ] My own modified scripts\r\n\r\n### Tasks\r\n\r\n- [X] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\r\n- [ ] My own task or dataset (give details below)\r\n\r\n### Reproduction/Expectation/Core Issue\r\n\r\n- Run the above docker instance with 8 GPUs passed through\r\n- Run `accelerate test`\r\n\r\nI get the error `stderr: ERROR:torch.distributed.elastic.multiprocessing.api:failed (exitcode: -7) local_rank: 0 (pid: 35215) of binary: /usr/bin/python3`.\r\n\r\n**This test works fine and has no errors on the bare metal machine.**\r\n\r\nDo you all have any ideas what might be going on?\r\n\r\n### What about CPU-only config?\r\nI also tried a CPU-only config, but `accelerate test` gave me assertion errors (both for docker and bare metal):\r\n\r\n```\r\nstderr: Traceback (most recent call last):\r\nstderr:   File \"/usr/local/lib/python3.8/dist-packages/accelerate/test_utils/scripts/test_script.py\", line 359, in <module>\r\nstderr:     main()\r\nstderr:   File \"/usr/local/lib/python3.8/dist-packages/accelerate/test_utils/scripts/test_script.py\", line 350, in main\r\nstderr:     training_check()\r\nstderr:   File \"/usr/local/lib/python3.8/dist-packages/accelerate/test_utils/scripts/test_scr",
+    "comments": [
+      {
+        "author": "user-10",
+        "body": "I also failed `accelerate test` on a machine with two A100 (80GB) GPUs.\r\nHere is my output:\r\n```\r\nRunning:  accelerate-launch --config_file=None /home/user/anaconda3/envs/task_temp/lib/python3.10/site-packages/accelerate/test_utils/scripts/test_script.py\r\nstdout: **Initialization**\r\nstdout: Testing, testing. 1, 2, 3.\r\nstdout: Distributed environment: MULTI_GPU  Backend: nccl\r\nstdout: Num processes: 2\r\nstdout: Process index: 0\r\nstdout: Local process index: 0\r\nstdout: Device: cuda:0\r\nstdout: Mixed precision type: no\r\nstdout: \r\nstdout: \r\nstdout: **Test random number generator synchronization**\r\nstdout: Distributed environment: MULTI_GPU  Backend: nccl\r\nstdout: Num processes: 2\r\nstdout: Process index: 1\r\nstdout: Local process index: 1\r\nstdout: Device: cuda:1\r\nstdout: Mixed precision type: no\r\nstdout: \r\nstderr: [E ProcessGroupNCCL.cpp:821] [Rank 1] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=1, OpType=BROADCAST, Timeout(ms)=1800000) ran for 1808182 milliseconds before timi"
+      },
+      {
+        "author": "user-10",
+        "body": "For my case (`RNG states improperly synchronized on CPU`), PCI ACS was the problem. Disabling it in BIOS solved the problem. See https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/troubleshooting.html#pci-access-control-services-acs"
+      },
+      {
+        "author": "user-11",
+        "body": "I do not understand what happens when running the `accelerate test` command when I am using  `A100 (80GB) GPUs`\r\n```\r\nCopy and paste the text below into your GitHub issue\r\n\r\n- `Accelerate` version: 0.18.0\r\n- Platform: Linux-5.4.0-132-generic-x86_64-with-glibc2.29\r\n- Python version: 3.8.10\r\n- Numpy version: 1.23.5\r\n- PyTorch version (GPU?): 1.9.1+cu111 (True)\r\n- `Accelerate` default config:\r\n        - compute_environment: LOCAL_MACHINE\r\n        - distributed_type: DEEPSPEED\r\n        - mixed_precision: fp16\r\n        - use_cpu: False\r\n        - num_processes: 2\r\n        - machine_rank: 0\r\n        - num_machines: 1\r\n        - rdzv_backend: static\r\n        - same_network: True\r\n        - main_training_function: main\r\n        - deepspeed_config: {'gradient_accumulation_steps': 2, 'gradient_clipping': 1.0, 'offload_optimizer_device': 'none', 'offload_param_device': 'none', 'zero3_init_flag': True, 'zero_stage': 2}\r\n        - downcast_bf16: no\r\n        - tpu_use_cluster: False\r\n        - tpu_u"
+      },
+      {
+        "author": "user-12",
+        "body": "Any updates on this issue? I have the same problem running `accelerate test` on my machine with 4 Tesla V100: `stderr: ERROR:torch.distributed.elastic.multiprocessing.api:failed (exitcode: -7) local_rank: 0`\r\n\r\nIt works fine if i select only 2 GPUs on Multi-GPU config, but 3 or 4 raises the error."
+      },
+      {
+        "author": "user-13",
+        "body": "I can run with a small amount of data, but large-scale data can cause errors:\r\n\r\nSome NCCL operations have failed or timed out. Due to the asynchronous nature of CUDA kernels, subsequent GPU operations might run on corrupted/incomplete data."
+      },
+      {
+        "author": "user-14",
+        "body": "> I can run with a small amount of data, but large-scale data can cause errors:\r\n> \r\n> Some NCCL operations have failed or timed out. Due to the asynchronous nature of CUDA kernels, subsequent GPU operations might run on corrupted/incomplete data.\r\n\r\n我也遇到同样的问题了，请问怎么解决了？"
+      }
+    ]
+  },
+  "525": {
+    "number": 525,
+    "title": "I have a problem related to multiprocessing when run accelerate ",
+    "state": "open",
+    "body": "### System Info\n\n```Shell\n- `Accelerate` version: 0.10.0\r\n- Platform: Linux-5.4.0-1043-gcp-x86_64-with-glibc2.29\r\n- Python version: 3.8.5\r\n- Numpy version: 1.19.5\r\n- PyTorch version (GPU?): 1.8.1+cu102 (False)\r\n- `Accelerate` default config:\r\n\t- compute_environment: LOCAL_MACHINE\r\n\t- distributed_type: TPU\r\n\t- mixed_precision: no\r\n\t- use_cpu: False\r\n\t- num_processes: 8\r\n\t- machine_rank: 0\r\n\t- num_machines: 1\r\n\t- main_process_ip: None\r\n\t- main_process_port: None\r\n\t- main_training_function: main\r\n\t- deepspeed_config: {}\r\n\t- fsdp_config: {}\n```\n\n\n### Information\n\n- [ ] The official example scripts\n- [X] My own modified scripts\n\n### Tasks\n\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\n- [X] My own task or dataset (give details below)\n\n### Reproduction\n\nI'm fine-tuning GPT2 with **training_with_tpu.py** on TPU google cloud\r\n\r\n- TPU-type: V2-8\r\n- TPU software version: V2-alpha\r\n- Architecture: TPU VM\r\n\r\nStep 1: setting\r\n```\r\nexport XRT_TPU_CONFIG=\"localservice;0;localhost:51011\"\r\nexport USE_TORCH=ON\r\n```\r\n\r\nstep 2: config with accelerate\r\n```\r\naccelerate config\r\nIn which compute environment are you running? ([0] This machine, [1] AWS (Amazon SageMaker)): 0\r\nWhich type of machine are you using? ([0] No distributed training, [1] multi-CPU, [2] multi-GPU, [3] TPU): 3\r\nWhat is the name of the function in your script that should be launched in all parallel scripts? [main]: main\r\nHow many TPU cores should be used for distributed training? [1]:8\r\n```\r\n\r\nstep 3: run with accelerate\r\n` accelerate launch training_with_tpu.py\r\n`\r\n\r\nThis is error after running\r\n```\r\n2022-07-16 00:33:20.807295: E tensorflow/core/framework/op_kernel.cc:1693] OpKernel ('op: \"TPURoundRobin\" device_type: \"CPU\"') for unknown op: TPURoundRobin\r\n2022-07-16 00:33:20.807349: E tensorflow/core/framework/op_kernel.cc:1693] OpKernel ('op: \"TpuHandleToProtoKey\" device_type: \"CPU\"') for unknown op: TpuHandleToProtoKey\r\nSpecial tokens have been added in the vocabulary, make sure the associated word embeddings are fine-tuned or trained.\r\n2022-07-16 00:34:06.664709: E tensorflow/core/framework/op_kernel.cc:1693] OpKernel ('op: \"TPURoundRobin\" device_type: \"CPU\"') for unknown op: TPURoundRobin\r\n2022-07-16 00:34:06.664770: E tensorflow/core/framework/op_kernel.cc:1693] OpKernel ('op: \"TpuHandleToProtoKey\" device_type: \"CPU\"') for unknown op: TpuHandleToProtoKey\r\n2022-07-16 00:34:06.666079: E tensorflow/core/framework/op_kernel.cc:1693] OpKernel ('op: \"TPURoundRobin\" device_type: \"CPU\"') for unknown op: TPURoundRobin\r\n2022-07-16 00:34:06.666133: E tensorflow/core/framework/op_kernel.cc:1693] OpKernel ('op: \"TpuHandleToProtoKey\" device_type: \"CPU\"') for unknown op: TpuHandleToProtoKey\r\n2022-07-16 00:34:06.666506: E tensorflow/core/framework/op_kernel.cc:1693] OpKernel ('op: \"TPURoundRobin\" device_type: \"CPU\"') for unknown op: TPURoundRobin\r\n2022-07-16 00:",
+    "comments": [
+      {
+        "author": "user-16",
+        "body": "I encountered the same problem\r\n"
+      },
+      {
+        "author": "user-17",
+        "body": "I have same problem...any solutions?"
+      },
+      {
+        "author": "user-18",
+        "body": "I am having the same problem!"
+      },
+      {
+        "author": "user-19",
+        "body": "FYI i've observed this too, running on PJRT_DEVICE, also tried on TPUv3, same issue. \r\nWorth noting that training runs on the TPUs fine when not using accelerate so deffo feels like an issue with accelerate's use of multiprocessing"
+      },
+      {
+        "author": "user-3",
+        "body": "Thanks for the bump all, will look at it this week"
+      }
+    ]
+  },
+  "924": {
+    "number": 924,
+    "title": "Need to do distributed training using 2 separate machines",
+    "state": "open",
+    "body": "Hello, I am trying to do distributed training using 2 separate machines. Can anyone please guide me towards any tutorial / demo on this? The configs created using accelerate are: \r\n\r\n_Machine 1_:\r\n\r\ncompute_environment: LOCAL_MACHINE\r\ndeepspeed_config: {}\r\ndistributed_type: MULTI_CPU\r\nfsdp_config: {}\r\nmachine_rank: 0\r\nmain_process_ip: 20.160.27.77\r\nmain_process_port: 8080\r\nmain_training_function: main\r\nmixed_precision: fp16\r\nnum_machines: 2\r\nnum_processes: 2\r\nuse_cpu: true\r\n\r\n_Machine 2:_ \r\n\r\ncompute_environment: LOCAL_MACHINE\r\ndeepspeed_config: {}\r\ndistributed_type: MULTI_CPU\r\nfsdp_config: {}\r\nmachine_rank: 1\r\nmain_process_ip: 20.160.27.77\r\nmain_process_port: 8080\r\nmain_training_function: main\r\nmixed_precision: fp16\r\nnum_machines: 2\r\nnum_processes: 2\r\nuse_cpu: true\r\n\r\nThen I ran both the launch commands , they started training separately. Then I ran only the main machine , which again started training on it's own. I am not able to get any concrete direction on this.\r\n\r\n",
+    "comments": [
+      {
+        "author": "user-3",
+        "body": "@user-20 this is currently unsupported yet for multi-CPU, changing to a FR and adding it to our timetable"
+      },
+      {
+        "author": "user-21",
+        "body": "Any update on this?"
+      }
+    ]
+  },
+  "3874": {
+    "number": 3874,
+    "title": "Feature request: FSDP2 QLoRA",
+    "state": "open",
+    "body": "Quantization is extremely useful and FSDP2 has lots of nice features. It would be great if we could please have the option to do QLoRA so that we can fully transition from FSDP1 to FSDP2.\n\nExample script that fails with FSDP2 but not FSDP1 (modulo some FSDP1-specific setup):\n```\nimport torch\nfrom accelerate import Accelerator\nfrom peft import LoraConfig, get_peft_model\nfrom transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig\n\n# Initialize accelerator\naccelerator = Accelerator()\n\n# Load model and tokenizer\nmodel_name = \"Qwen/Qwen3-0.6B\"\ntokenizer = AutoTokenizer.from_pretrained(model_name)\npeft_config = LoraConfig(\n    r=16,\n    lora_alpha=32,\n    lora_dropout=0.05,\n    bias=\"none\",\n    task_type=\"CAUSAL_LM\",\n)\nquantization_config = BitsAndBytesConfig(\n    load_in_4bit=True,\n    bnb_4bit_quant_type=\"nf4\",\n    bnb_4bit_compute_dtype=\"bfloat16\",\n    bnb_4bit_use_double_quant=True,\n    bnb_4bit_quant_storage=\"bfloat16\",\n)\nmodel = AutoModelForCausalLM.from_pretrained(\n    model_name, quantization_config=quantization_config, torch_dtype=torch.bfloat16, use_cache=False\n)\nmodel = get_peft_model(model, peft_config, autocast_adapter_dtype=False)\n\n# Tokenize input\ninputs = tokenizer(\"Hello, World!\", return_tensors=\"pt\")\ninputs = {k: v.to(accelerator.device) for k, v in inputs.items()}\n\n\n# Create dummy optimizer for the submodule (required for FSDP2)\noptimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)\n\n# Prepare the model and optimizer (FSDP2 requires both model and optimizer)\nprepared_model, optimizer = accelerator.prepare(model, optimizer)\n```",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Thanks for the feature request @user-22. This is indeed one of our priority before we deprecate fsdp1 ! cc @user-58 @user-59 "
+      },
+      {
+        "author": "user-23",
+        "body": "@maintainer-1 Can I work on this?"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "I think axolotl have this in their lib so we just need to upstream it cc @user-60 "
+      }
+    ]
+  },
+  "3547": {
+    "number": 3547,
+    "title": "`datasets` Iterable Dataset sharding support",
+    "state": "open",
+    "body": "When I'm using huggingface `datasets`, I think a good faeture is the IterableDataset create by `load_dataset(..., streaming=True)`. It has `shard`, `shuffle` and `state_dict`, which is useful in multi node training. I can just call `shard` to make different node with different data, easy to randomize and recover.\n\nHowever, it failed when working with `accelerate`. when passing dataloader with IterableDatset `accelerate` assume that the dataset instance is all same in different rank. and the `IterableDatasetShard` class is doing a overhead sampling by sampling n batch in all rank and yield out the sub batches belongs to the coresspoding rank [src ref](https://github.com/huggingface/accelerate/blob/v1.6.0/src/accelerate/data_loader.py#L265).\n\nNot prepare the dataloader is a temproary solution in this case I think. But I think is nice to have the auto shard and shuffle in accelerate prepare. So I'm writing the issue for this. And If this feature is permmitted, but leaf no one to do, I think I can do the feature pr by myself\n\nI have search the relative issue and find https://github.com/huggingface/accelerate/issues/2859\nbut this issue is aiming to add `load_state_dict` for dataloader",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Indeed, this is a major limitation of using `IterableDatasetShard`. We would be happy to have this feature @user-24 ! "
+      },
+      {
+        "author": "user-25",
+        "body": "Ran into this as well, with a hand-written streaming `IterableDataset` rather than a `datasets` one, so adding the numbers here.\n\nWorth separating two cases, since `prepare_data_loader` already handles part of this:\n\n* a `datasets.IterableDataset` takes the `.shard()` path when `n_shards >= num_processes` **and** `split_batches=False` - no overhead sampling there;\n* everything else - fewer shards than processes, `split_batches=True`, or a plain `torch.utils.data.IterableDataset` - falls through to `IterableDatasetShard`, which iterates the whole dataset on every process and keeps `1 / num_processes` of the elements.\n\nThe second case has a failure mode beyond the read cost: if the dataset already shards by source (each process opens its own files), the wrapper shards the stream a second time. Measured on `main`, 8 shards of 10 records, `num_processes=4`, `batch_size=2`:\n\n| | records per process | unique records seen | shard reads |\n|---|---|---|---|\n| naive dataset + `prepare` | 20, 20,"
+      }
+    ]
+  },
+  "4240": {
+    "number": 4240,
+    "title": "ACCELERATE_BYPASS_DEVICE_MAP is the only boolean env flag read case-sensitively, so =True is silently ignored",
+    "state": "open",
+    "body": "### Describe the bug\n\n`ACCELERATE_BYPASS_DEVICE_MAP` is the only boolean environment flag in `accelerate` that is read case-sensitively, so setting it to `True` silently does nothing while the identical spelling works for every sibling flag.\n\nAll three read sites in `src/accelerate/accelerator.py` compare without `.lower()`:\n\n```python\n# accelerator.py:1475, 1816, 1890\nos.environ.get(\"ACCELERATE_BYPASS_DEVICE_MAP\", \"false\") != \"true\"\n```\n\nEvery other boolean flag lowercases first. Sweeping `src/accelerate` for boolean env comparisons:\n\n| parsing | flags |\n| --- | --- |\n| `.lower() == \"true\"` | `ACCELERATE_USE_FSDP`, `ACCELERATE_USE_DEEPSPEED`, `ACCELERATE_USE_MEGATRON_LM`, `ACCELERATE_USE_SAGEMAKER`, `ACCELERATE_USE_PARALLELISM_CONFIG`, `ACCELERATE_ALLOW_CP_STANDALONE`, `ACCELERATE_DEBUG_MODE`, `ACCELERATE_DEEPSPEED_ZERO3_SAVE_16BIT_MODEL`, `FSDP_OFFLOAD_PARAMS`, `PARALLELISM_CONFIG_SP_SEQ_LENGTH_IS_VARIABLE` |\n| no `.lower()` | **`ACCELERATE_BYPASS_DEVICE_MAP`** |\n\nTen of eleven are case-insensitive. The eleventh is the escape hatch.\n\n### Reproduction\n\nThe expressions as written in `accelerator.py`, side by side:\n\n```python\ndef bypass_active(v):   # accelerator.py:1475 / 1816 / 1890\n    return not (v != \"true\")\n\ndef fsdp_active(v):     # accelerator.py:381 and 9 sibling sites\n    return v.lower() == \"true\"\n```\n\n```\nvalue    BYPASS_DEVICE_MAP   USE_FSDP (sibling)\n'true'   True                True\n'True'   False               True\n'TRUE'   False               True\n```\n\n### Why it matters\n\nThe variable is an escape hatch, and both of the things it guards fail quietly when it is ignored:\n\n1. `accelerator.py:1475` raises `ValueError(\"You can't train a model that has been loaded with device_map='auto' in any distributed mode. ...\")`. A user who sets `ACCELERATE_BYPASS_DEVICE_MAP=True` still gets the exception, and the error text does not mention the variable, so there is nothing to suggest the value was the problem.\n2. `accelerator.py:1890` selects DDP `device_ids` / `output_device`. Ignored here, the process silently takes the non-bypass branch.\n\nThe variable is undocumented, so it is learned from issues and discussions where capitalisation is not consistent, and `True` is the spelling a Python user reaches for first. It is also the spelling that works for `ACCELERATE_USE_FSDP` in the same file, which makes the inconsistency actively misleading rather than merely strict.\n\n### Expected behavior\n\n`ACCELERATE_BYPASS_DEVICE_MAP` should be read the same way as its ten siblings. Adding `.lower()` at the three sites only widens acceptance to `True` and `TRUE`, so no value that works today changes meaning.\n\n### A related question, deliberately kept separate\n\nNone of these eleven flags accept `1`, `yes`, or `on`, even though `str_to_bool` in `utils/environment.py` is the library's own documented truth parser and accepts all of them. Routing the flags through `str_to_bool` would make the whole family consistent, but that is a larger change with a wider blast r",
+    "comments": []
+  },
+  "700": {
+    "number": 700,
+    "title": "[RFC]Integrate Intel Extension for Pytorch into accelerate to get out-of-box optimizations on intel platform.",
+    "state": "open",
+    "body": "### Motivation\r\nIntel Extension for Pytorch(a.k.a IPEX) can provides extra optimization and performance boost on intel hardware platform(currently only for CPU) for both inference and training. These optimization include graph level optimization such as operator fusion, auto mixed precision which support rich bf16 operators and optimization for optimizer which boost the training performance. In contrast with trainer, accelerate mostly is used with distributed training and inference on transformer model, but it also can benefit from IPEX's optimization. So, integrate IPEX into accelerate can make users who do distributed training or evaluation get out-of-box performance boost on CPU.\r\n\r\n### Design\r\n#### User interface\r\n\r\n- The first thing is how we tell accelerate to enable ipex. We can utilize the CLI tool **accelerate config** to config our training and inference environment with IPEX feature enabled. This tool will ask a series of questions including IPEX related config such as _ipex_enabled_ and _ipex_fusion_enabled_.  We can also pass these two options to our python script which is launched by **accelerate launch**. The detailed usage examples of these two scenarios can refer to [user-28's comments](https://github.com/huggingface/accelerate/issues/700#issuecomment-1247766735).\r\nThe meaning of these two option:\r\nipex_enabled: If this option is set, the IPEX's python package will be imported, and optimization such as Conv+BN folding and [weight prepacking](https://intel.github.io/intel-extension-for-pytorch/latest/tutorials/api_doc.html) will at least be applied at inference.\r\nipex_fusion_enabled: Besides the basic optimization, operator fusion is also an important technic to boost the performance, we can trace a model to enable this graph level optimization first, and then ipex will provide more specially optimized fusion op on intel platform with this option.\r\n\r\n- Model and optimizer wrapper for distributed training. \r\n```\r\nmodel, optim, data = accelerator.prepare(model, optim, data)\r\n```\r\nAccelerator.prepare() is the main method where most magic happens, IPEX can also hide optimization via a similar front end API called ipex.optimize(). If we choose use ipex, then we can automatically invoke ipex's API inside prepare(). If the current workload is training, the still use the original accelerate's original prepare API like this: **model, optim, data = accelerator.prepare(model, optim, data)**  ,so, there is no code change in training. But for inference, if we want to benefit from ipex's optimization in addition to operator fusion such as [weight prepack](https://intel.github.io/intel-extension-for-pytorch/1.11.200/tutorials/api_doc.html) etc, we must explicit pass model to prepare method such as:\r\n```\r\ndata = accelerator.prepare(data) # Origin evaluation\r\nmodel, data = accelerator.prepare(model, data) # Need explicitly pass model to prepare() to benefit from broader ipex's optimization. \r\n```\r\n\r\n- Auto Mixed Precision\r\nOnce we import IPEX, we ",
+    "comments": [
+      {
+        "author": "user-28",
+        "body": "Hello @user-27, Thank you for the detailed feature request. I've made the above draft PR. I currently don't have access to instance with latest Intel CPUs to perform the initial testing. Could you please try it out on your end and let us know.\r\nYou can enable ipex via below options:\r\n1. Through  `accelerate config` as shown below:\r\n```\r\ncompute_environment: LOCAL_MACHINE\r\ndeepspeed_config: {}\r\ndistributed_type: MULTI_CPU\r\ndowncast_bf16: 'no'\r\nfsdp_config: {}\r\nipex_config:\r\n  ipex_enabled: true\r\n  ipex_fusion_enabled: false\r\nmachine_rank: 0\r\nmain_process_ip: null\r\nmain_process_port: null\r\nmain_training_function: main\r\nmixed_precision: bf16\r\nnum_machines: 1\r\nnum_processes: 4\r\nrdzv_backend: static\r\nsame_network: true\r\nuse_cpu: true\r\n```\r\n2. Pass `--ipex_enabled` and `--ipex_fusion_enabled` to enable the corresponding options while using `accelerate launch`, e.g., `accelerate launch --config_file xxxxx.yaml  --ipex_enabled --ipex_fusion_enabled script.py`  \r\n\r\n"
+      },
+      {
+        "author": "user-27",
+        "body": "Hi, @user-28 \r\nThanks for the reply! I think both your suggestions for how to pass the ipex related options is more suitable. I will refine this RFC according to your suggestions. The ETA of this PR expected to be ready is by the end of this month."
+      },
+      {
+        "author": "user-28",
+        "body": "Hello @user-27, I have already implemented the above feature request in the draft PR #701. Please test that out and let us know if it works as expected or refine the draft PR using it as a starting point."
+      },
+      {
+        "author": "user-27",
+        "body": "@user-28 Oh, I see. Thanks for the work very much. I will try it out and then give you feedback."
+      },
+      {
+        "author": "user-27",
+        "body": "Hi, @user-28 \r\nI have tried your patch initially without performance test. For the initial functionality test, I found several little issues:\r\n\r\n- [PR701](https://github.com/huggingface/accelerate/pull/701) related:\r\n   1.  For the IntelPytorchExtensionPlugin class defined in [dataclass.py](https://github.com/huggingface/accelerate/pull/701/files#diff-bcbdd609996df7224cc9c21ecd97092122d45263d1323892474021d510ec1eefR243)   , should the default value of use_ipex and do_fusion be 'None' instead of 'False'? Since you test if self.use_ipex is None in __post_init__() method, thus the attribute would never be initialized if it is False. (The same with do_fusion)\r\n   2. In the [is_ipex_available()](https://github.com/huggingface/accelerate/pull/701/files#diff-c76a26947d918d6a5988b4b06804aadfd4d10c21b32b67fee07aa2a96470c305R145) function, should '_torch_version' be passed to the inner function get_major_and_minor_from_version(), since the _full_version_ argument is a positional arg.\r\n\r\n- IPEX r"
+      },
+      {
+        "author": "user-28",
+        "body": "Hello @user-27, please go ahead and make the necessary changes to the PR as per your above comments. We can review everything once post that. "
+      },
+      {
+        "author": "user-27",
+        "body": "OK"
+      },
+      {
+        "author": "user-29",
+        "body": "@user-28 , @user-61, @user-62 ,w/ IPEX load_state_dict support, do we see it's OK to merge this PR? "
+      },
+      {
+        "author": "user-29",
+        "body": "@user-63"
+      }
+    ]
+  },
+  "2865": {
+    "number": 2865,
+    "title": "Dataloader WeightedRandomSampler + Distributed Training",
+    "state": "open",
+    "body": "### System Info\r\n\r\n```Shell\r\naccelerate 0.31.0\r\nUbuntu 22.04 (WSL)\r\npython=3.10.14\r\n```\r\n\r\n\r\n### Information\r\n\r\n- [ ] The official example scripts\r\n- [X] My own modified scripts\r\n\r\n### Tasks\r\n\r\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\r\n- [X] My own task or dataset (give details below)\r\n\r\n### Reproduction\r\n\r\nI would like to combine distributed training and a weighted random sampler. In order to do that, i :\r\n\r\n1. Create my Dataset inheriting from torch.utils.data.Dataset\r\n2. Compute weights specific to my classes and data\r\n3. Create my DataLoader with the random sampler\r\n4. Prepare my dataloader with accelerate\r\n\r\nBut it seems that this is not working because we have data leaks between processes.\r\n![image](https://github.com/huggingface/accelerate/assets/26071804/a8cff431-29f1-414a-97c2-c89c0d453ef1)\r\n\r\nI would like to make sure, processes uses different data, like that : \r\n<img src='https://github.com/huggingface/accelerate/assets/26071804/93ce0cc7-4646-4e34-9b71-90c896f06f2a' width='400px' />\r\n\r\nI developped an example script in order to understand the process : \r\n```python\r\nfrom accelerate import Accelerator\r\nimport argparse\r\nimport os\r\nimport torch.distributed as dist\r\nimport torch\r\nfrom tqdm.auto import tqdm\r\nfrom torch.utils.data import Dataset,DataLoader\r\nfrom torch.utils.data import WeightedRandomSampler,BatchSampler\r\n\r\nWORLD_SIZE = int(os.getenv('WORLD_SIZE',1))\r\nMAIN_PROCESS = not int(os.getenv('RANK',0))\r\n\r\nparser = argparse.ArgumentParser()\r\nparser.add_argument('--dataset_count',default=12800)\r\nparser.add_argument('--epochs',default=20)\r\nparser.add_argument('--batch_size',default=64)\r\nparser.add_argument('--balance',action='store_true',default=False)\r\n\r\ndef is_even(number):\r\n    return not number%2 # example 10 => 10%2 == 0\r\n\r\nclass DummyDataset(Dataset):\r\n    def __init__(self,dataset_count:int):\r\n        self.data = range(dataset_count)\r\n    \r\n    def __len__(self):\r\n        return len(self.data)\r\n    \r\n    def dataloader(self,batch_size,balance:bool=False,seed=42,batch_sampler=False,drop_last:bool=False):\r\n        generator = torch.Generator().manual_seed(seed)\r\n        def get_weight(num):\r\n            if is_even(num):\r\n                # even\r\n                return 1.0\r\n            else:\r\n                # odd (impair)\r\n                return 0.1\r\n        if balance:\r\n            weights = [get_weight(i) for i in self.data]\r\n            sampler = WeightedRandomSampler(weights,len(self),replacement=True,generator=generator)\r\n        else:\r\n            sampler = None\r\n\r\n        if batch_sampler:\r\n            return DataLoader(self,batch_sampler=BatchSampler(sampler,batch_size,drop_last))\r\n        else:\r\n            return DataLoader(self,batch_size,sampler=sampler,drop_last=drop_last)\r\n        \r\n    def __getitem__(self,idx):\r\n        row_index = self.data[idx]\r\n        return ro",
+    "comments": [
+      {
+        "author": "user-3",
+        "body": "PyTorch currently doesn't support this: \r\n\r\nhttps://github.com/pytorch/pytorch/issues/77154\r\n\r\nhttps://github.com/pytorch/pytorch/issues/23430\r\n\r\nSo at this time we don't plan on implementing this, until they have support underneath\r\n\r\n(Labeling as `enhancement` and `feature request` so this can stay open)"
+      },
+      {
+        "author": "user-30",
+        "body": "Thanks for the answer.\r\n\r\nI saw in reference you send me that we can use some proxy sampler that can do this :\r\n\r\n```python\r\nfrom torch.utils.data.distributed import DistributedSampler\r\n\r\nclass DistributedProxySampler(DistributedSampler):\r\n    \"\"\"Sampler that restricts data loading to a subset of input sampler indices.\r\n\r\n    It is especially useful in conjunction with\r\n    :class:`torch.nn.parallel.DistributedDataParallel`. In such case, each\r\n    process can pass a DistributedSampler instance as a DataLoader sampler,\r\n    and load a subset of the original dataset that is exclusive to it.\r\n\r\n    .. note::\r\n        Input sampler is assumed to be of constant size.\r\n\r\n    Arguments:\r\n        sampler: Input data sampler.\r\n        num_replicas (optional): Number of processes participating in\r\n            distributed training.\r\n        rank (optional): Rank of the current process within num_replicas.\r\n    \"\"\"\r\n```\r\nI think i can easily do something like that, to \"eat\" my original sampler an"
+      },
+      {
+        "author": "user-3",
+        "body": "If you do the sampling yourself, you can build a `accelerate.dataloader.DispatchDataLoader` instead of a `DataLoader` and pass in everything you would normally I believe. \r\n\r\nOtherwise I can quickly spin up a `DeviceDataLoader` that basically will not do any distributed sampling etc, and instead leave that to you. It will simply move the data to the right device.\r\n\r\n"
+      },
+      {
+        "author": "user-30",
+        "body": "That's not completely clear for me how works Dispatch Dataloader.\r\n\r\nI have coded this custom **DistributedWeightedRandomSampler** that seems to respect the process exclusivity with **accelerate.prepare()** :\r\n```python\r\nimport torch\r\nfrom torch.utils.data import Sampler\r\nfrom torch import Tensor\r\nimport torch.distributed as dist\r\nfrom collections.abc import Sequence,Iterator\r\n\r\nclass DistributedWeightedRandomSampler(Sampler[int]):\r\n    r\"\"\"Samples elements from ``[0,..,len(weights)-1]`` with given probabilities (weights).\r\n\r\n    Args:\r\n        weights (sequence)   : a sequence of weights, not necessary summing up to one\r\n        num_samples (int): number of samples to draw\r\n        replacement (bool): if ``True``, samples are drawn with replacement.\r\n            If not, they are drawn without replacement, which means that when a\r\n            sample index is drawn for a row, it cannot be drawn again for that row.\r\n        generator (Generator): Generator used in sampling.\r\n\r\n    Exampl"
+      }
+    ]
+  },
+  "1368": {
+    "number": 1368,
+    "title": "Model Parallelism and accelerate's usage of DDP aren't compatible",
+    "state": "open",
+    "body": "### System Info\n\n```Shell\n- `Accelerate` version: 0.18.0\r\n- Platform: Linux-5.4.0-124-generic-x86_64-with-glibc2.31\r\n- Python version: 3.9.12\r\n- PyTorch version (GPU?): 1.12.0 (True)\r\n- `Accelerate` default config:\r\n        - compute_environment: LOCAL_MACHINE\r\n        - distributed_type: MULTI_GPU\r\n        - mixed_precision: no\r\n        - use_cpu: False\r\n        - num_processes: 16\r\n        - machine_rank: 0\r\n        - num_machines: 16\r\n        - main_process_ip: 192.168.1.1\r\n        - main_process_port: 8080\r\n        - rdzv_backend: static\r\n        - same_network: False\r\n        - main_training_function: main\r\n        - downcast_bf16: no\r\n        - tpu_use_cluster: False\r\n        - tpu_use_sudo: False\r\n        - tpu_env: []\n```\n\n\n### Information\n\n- [ ] The official example scripts\n- [X] My own modified scripts\n\n### Tasks\n\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\n- [X] My own task or dataset (give details below)\n\n### Reproduction\n\nIf I use model parallelism (for example using huggingface parallelize), and I'm using accelerate with a standard multi-GPU environment (that uses DDP), then when I prepare the model I get the following error:\r\n\r\n```\r\n  File \"/private/home/raileanu/new-rlvsil/rlvsil/experiment_accel.py\", line 689, in main\r\n    model, optimizer, lr_scheduler, *prepared_dataloaders = accelerator.prepare(\r\n  File \"/private/home/raileanu/.conda/envs/rob/lib/python3.9/site-packages/accelerate/accelerator.py\", line 1122, in prepare\r\n    result = tuple(\r\n  File \"/private/home/raileanu/.conda/envs/rob/lib/python3.9/site-packages/accelerate/accelerator.py\", line 1123, in <genexpr>\r\n    self._prepare_one(obj, first_pass=True, device_placement=d) for obj, d in zip(args, device_placement)\r\n  File \"/private/home/raileanu/.conda/envs/rob/lib/python3.9/site-packages/accelerate/accelerator.py\", line 977, in _prepare_one\r\n    return self.prepare_model(obj, device_placement=device_placement)\r\n  File \"/private/home/raileanu/.conda/envs/rob/lib/python3.9/site-packages/accelerate/accelerator.py\", line 1202, in prepare_model\r\n    model = torch.nn.parallel.DistributedDataParallel(\r\n  File \"/private/home/raileanu/.conda/envs/rob/lib/python3.9/site-packages/torch/nn/parallel/distributed.py\", line 571, in __init__\r\n    self._log_and_throw(\r\n  File \"/private/home/raileanu/.conda/envs/rob/lib/python3.9/site-packages/torch/nn/parallel/distributed.py\", line 674, in _log_and_throw\r\n    raise err_type(err_msg)\r\nValueError: DistributedDataParallel device_ids and output_device arguments only work with single-device/multiple-device GPU modules or CPU modules, but got device_ids [0], output_device 0, and module parameters {device(type='cuda', index=0), device(type='cuda', index=1)}.\r\n```\r\n\r\nI think this is because in line https://github.com/huggingface/accelerate/blob/2708c1ae31f5c32a0715780c2244c8f24ba1cfc3/src/accele",
+    "comments": [
+      {
+        "author": "user-32",
+        "body": "> I feel like you are not listening. You cannot use `DDP + device_map=\"auto\" ` and thus not `DDP + device_map=\"auto\" + DeepSpeep` either. You need to just use DeepSpeed ZeRO-3 to shard your model on several devices and train it with a mix of model parallelism and data parallelism.\r\n\r\nSorry for my misunderstanding, I got your point now"
+      },
+      {
+        "author": "user-33",
+        "body": "@maintainer-2 Just to make sure my understanding is correct, can we use `deepspeed` support with the `Trainer` API to do model + data parallel (without setting `device_map`) or do we have to write code with pure `deepspeed` without HF transformers to load the model? Sorry if my question is repetitive. "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "As long as you properly configure DeepSpeed ZeRO-3, you won't need to use `device_map=\"auto\"` yes, and the model will be loaded on several GPUs (each weight will be split)."
+      },
+      {
+        "author": "user-34",
+        "body": "Just to document my experience on getting DDP + MP (2x2 on 4 gpus) to work with Accelerate (via HF trainer):\r\n\r\nI modified the current main branch to initialize the DDP model by setting device_ids and output_device to None, as described in the pytorch docs when using multi-device modules. Additionally, I had to remove some ValueErrors that are being raised (for no good reason?).\r\n\r\nI launch two processes with torchrun; each supposed to use 2 gpus.\r\nEach process uses a different device map to load the model (llama-2-7b).\r\nProcess 1 uses gpus 0,2, and process 2 uses gpus 1,3.\r\nExample device map for process 1:\r\n```python\r\n{'model.embed_tokens': 0, 'model.norm': 2, 'lm_head': 2, 'model.layers.0': 0, 'model.layers.1': 0, 'model.layers.2': 0, 'model.layers.3': 0, 'model.layers.4': 0, 'model.layers.5': 0 , 'model.layers.6': 0, 'model.layers.7': 0, 'model.layers.8': 0, 'model.layers.9': 0, 'model.layers.10': 0, 'model.layers.11': 0, 'model.layers.12': 0, 'model.layers.13': 0, 'model.layers.14"
+      },
+      {
+        "author": "user-3",
+        "body": "@user-34 can you share your modified code? Curious what those exceptions are that exist for \"no good reason\""
+      },
+      {
+        "author": "user-34",
+        "body": "> @user-34 can you share your modified code? Curious what those exceptions are that exist for \"no good reason\"\r\n\r\n@user-3 I do think these error are necessary if one does not also modify the DDP construction. In fact, they are correct if one has created the `device_map` with 'auto'. However, the errors get triggered even when using a custom `device_map`.\r\n\r\nYou can find my fork here: https://github.com/user-34/accelerate/commit/332d960d625deda76090c32a6e67dee70be76761\r\n\r\nAlso, note that I did not run any tests and check whether this breaks other behavior.\r\n\r\nNow why do I think it is useful to have DDP + MP (in the classic pipeline of layers way): In my case, I am running gpus without fast interconnect (nvlink) which makes FSDP style training very slow."
+      },
+      {
+        "author": "user-3",
+        "body": "Thanks @user-34, as an approach here's what the team has decided we will do:\r\n\r\n1. I'll put a PR in today that let's you *explicitly disable* the blocking behavior, and will set it to `None` as you have shown in your example.\r\n2. We'll keep this issue open, and I ask that the community react with a 👍 to this message if you wind up using this. We want to see what kind of usage folks are having with this, and when we can turn it from a \"power-user\" feature into something more folks are using.\r\n3. Long term we'll see how to enable these kind of native TP trainings directly with accelerate + proper config, once we get a decent amount of folks wanting this.\r\n\r\nSeem reasonable @user-34? And thank you for this reproducer!"
+      },
+      {
+        "author": "user-34",
+        "body": "Sure, that sounds great. Once the changes are in (no rush with that), I might create a tutorial-style GitHub repo for it and do some benchmarking, to be shared via Twitter (sorry, \"X\" ....)."
+      },
+      {
+        "author": "user-32",
+        "body": "@user-3 \r\n\r\nSorry I wanna bring this up again, is it possible to add this functionality as a feature, background is we wanna tune 70b or 8x7b model as a teacher, tried to use FSDP, but lots of feature is not supported in FSDP, DS is even worse, e.g. nested quantization, sliding window attention, the final total saving is actually not that much. \r\n\r\nthe following is my testing code, basically for each node, we have 8 A100_80gb GPU, each training process will take 2 GPU:\r\n(btw, I haven't check @user-34's approach yet, will have a look for sure)\r\n```\r\ndef create_and_prepare_model():\r\n    compute_dtype = getattr(torch, \"float16\")\r\n\r\n    bnb_config = BitsAndBytesConfig(\r\n        load_in_4bit=True,\r\n        # load_in_8bit=True,\r\n        bnb_4bit_quant_type=\"nf4\",\r\n        bnb_4bit_compute_dtype=compute_dtype,\r\n        bnb_4bit_use_double_quant=True,\r\n    )\r\n\r\n    device_map = {'model.embed_tokens': 0, 'model.layers.0': 0, 'model.layers.1': 0, 'model.layers.2': 0, 'model.layers.3': 0, 'model."
+      },
+      {
+        "author": "user-32",
+        "body": "@user-3 @user-34, because I loaded the model in 4bit so I also comment out this line:\r\nhttps://github.com/user-34/accelerate/blob/332d960d625deda76090c32a6e67dee70be76761/src/accelerate/accelerator.py#L1342\r\n\r\nBut don't know is there any bad effect, it starts to train at least, could you pls elaborate potential consequences"
+      }
+    ]
+  },
+  "4102": {
+    "number": 4102,
+    "title": "`--parallelism_config_sp_seq_length_is_variable False` parses as True",
+    "state": "closed",
+    "body": "### System Info\n\n```Shell\nRepository: huggingface/accelerate\nBranch: main\nCommit inspected: 2278ebbfd5ee958452f344774d3b7191808a70b9\nArea: accelerate launch CLI parser / parallelism_config / DeepSpeed sequence parallelism\n\nThis is a static CLI parser bug. I could not run `accelerate env` in the scanning\nenvironment because torch is not installed there, but the issue reproduces with\nstandard-library argparse before any distributed runtime is involved.\n```\n\n### Information\n\n- [ ] The official example scripts\n- [x] My own modified scripts\n\n### Tasks\n\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\n- [x] My own task or dataset (give details below)\n\n### Reproduction\n\n`--parallelism_config_sp_seq_length_is_variable` is documented as a boolean-like CLI option where `False` has a meaningful runtime behavior:\n\n- if `True`, sequence length may vary between batches;\n- if `False`, `parallelism_config_sp_seq_length` should match the batch sequence length.\n\nHowever, the parser currently declares the option with `type=bool`:\n\nhttps://github.com/huggingface/accelerate/blob/2278ebbfd5ee958452f344774d3b7191808a70b9/src/accelerate/commands/launch.py#L964-L968\n\nThe parsed value is then serialized into the runtime environment:\n\nhttps://github.com/huggingface/accelerate/blob/2278ebbfd5ee958452f344774d3b7191808a70b9/src/accelerate/utils/launch.py#L421-L423\n\nThe runtime config later reads that env var:\n\nhttps://github.com/huggingface/accelerate/blob/2278ebbfd5ee958452f344774d3b7191808a70b9/src/accelerate/utils/dataclasses.py#L2256-L2259\n\nMinimal reproduction of the parser behavior:\n\n```python\nimport argparse\n\nparser = argparse.ArgumentParser()\nparser.add_argument(\n    \"--parallelism_config_sp_seq_length_is_variable\",\n    type=bool,\n    default=True,\n)\n\nargs = parser.parse_args([\n    \"--parallelism_config_sp_seq_length_is_variable\",\n    \"False\",\n])\n\nprint(type(args.parallelism_config_sp_seq_length_is_variable).__name__)\nprint(args.parallelism_config_sp_seq_length_is_variable)\n```\n\nActual output:\n\n```text\nbool\nTrue\n```\n\nA natural `accelerate launch` command that would hit this is:\n\n```bash\naccelerate launch \\\n  --use_fsdp \\\n  --fsdp_version 2 \\\n  --use_parallelism_config \\\n  --parallelism_config_sp_size 2 \\\n  --parallelism_config_sp_seq_length 128 \\\n  --parallelism_config_sp_seq_length_is_variable False \\\n  train.py\n```\n\nBecause `bool(\"False\")` is `True` in Python, the user-provided `False` is silently converted to `True`. `prepare_extend_env_parallelism_config` then writes `\"True\"` to `PARALLELISM_CONFIG_SP_SEQ_LENGTH_IS_VARIABLE`, so `DeepSpeedSequenceParallelConfig` enables variable sequence length even though the user selected fixed sequence length.\n\nThis also skips the fixed-length validation path:\n\nhttps://github.com/huggingface/accelerate/blob/2278ebbfd5ee958452f344774d3b7191808a70b9/src/accelerate/utils/dataclasses.py",
+    "comments": [
+      {
+        "author": "user-36",
+        "body": "Hi I want to help with the CLI parsing issue. I can try to figure out what is going on and send in a fix. Can you please give the CLI parsing issue to me to work on? I will take a look, at the CLI parsing issue and do my best to fix it.\n"
+      }
+    ]
+  },
+  "2083": {
+    "number": 2083,
+    "title": "WebLoader Support",
+    "state": "open",
+    "body": "### System Info\n\n```Shell\nCUDA 11.8\r\nMy environment is:\r\n      - accelerate==0.24.0\r\n      - braceexpand==0.1.7\r\n      - certifi==2022.12.7\r\n      - charset-normalizer==2.1.1\r\n      - diffusers==0.21.4\r\n      - filelock==3.9.0\r\n      - fsspec==2023.4.0\r\n      - huggingface-hub==0.17.3\r\n      - idna==3.4\r\n      - imageio==2.31.6\r\n      - importlib-metadata==6.8.0\r\n      - jinja2==3.1.2\r\n      - lazy-loader==0.3\r\n      - markupsafe==2.1.2\r\n      - mpmath==1.3.0\r\n      - natsort==8.4.0\r\n      - networkx==3.0\r\n      - numpy==1.24.1\r\n      - opencv-python==4.8.1.78\r\n      - packaging==23.2\r\n      - pandas==2.1.1\r\n      - pillow==9.3.0\r\n      - psutil==5.9.6\r\n      - python-dateutil==2.8.2\r\n      - pytz==2023.3.post1\r\n      - pyyaml==6.0.1\r\n      - regex==2023.10.3\r\n      - requests==2.28.1\r\n      - safetensors==0.4.0\r\n      - scikit-image==0.22.0\r\n      - scipy==1.11.3\r\n      - six==1.16.0\r\n      - sympy==1.12\r\n      - tifffile==2023.9.26\r\n      - tokenizers==0.14.1\r\n      - torch==2.1.0+cu118\r\n      - torchaudio==2.1.0+cu118\r\n      - torchvision==0.16.0+cu118\r\n      - tqdm==4.66.1\r\n      - transformers==4.34.1\r\n      - triton==2.1.0\r\n      - typing-extensions==4.4.0\r\n      - tzdata==2023.3\r\n      - urllib3==1.26.13\r\n      - webdataset==0.2.62\r\n      - zipp==3.17.0\n```\n\n\n### Information\n\n- [ ] The official example scripts\n- [X] My own modified scripts\n\n### Tasks\n\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\n- [X] My own task or dataset (give details below)\n\n### Reproduction\n\nI am trying to use webdataset and webloader in  my training code.I can run my code without any error if i am using webdataset and dataloader of torch,however if i want to use webdataset and webloader,i am getting this error:\r\n\r\nRuntimeError: Expected all tensors to be on the same device, but found at least two devices, cpu and cuda:1! (when checking argument for argument weight in method wrapper_CUDA___slow_conv2d_forward)\n\n### Expected behavior\n\nWorks without any error as webdataset+dataloader configuration",
+    "comments": [
+      {
+        "author": "maintainer-3",
+        "body": "This is going to be hard to debug without the code that produces the error. Would it be possible for you to share it, at least a minimal version to reproduce the error?"
+      },
+      {
+        "author": "user-37",
+        "body": "```python\r\nurl = #my tar file paths\r\npreprocess_wds = #transform functions\r\ntrain_dataset = wds.WebDataset(url,resampled=True).shuffle(1000)\r\ntrain_dataset = (train_dataset.decode(\"pil\",handler=wds.warn_and_continue).to_tuple(\"jpg;png\"))\r\ntrain_dataset = train_dataset.map(preprocess_wds)\r\ntrain_dataset = train_dataset.with_epoch(10000)\r\n\r\ntrain_dataloader = torch.utils.data.DataLoader(train_dataset,num_workers=12, batch_size=args.train_batch_size,shuffle=False,persistent_workers=True,collate_fn=collate_fn) #it works\r\n\r\ntrain_dataloader = wds.WebLoader(train_dataset,batch_size=args.train_batch_size,collate_fn=collate_fn, num_workers=12,shuffle=False,persistent_workers=True)# if i use instead of above dataloader, i am getting error\r\n```"
+      },
+      {
+        "author": "maintainer-3",
+        "body": "So can you use PyTorch's `DataLoader` or do you need to use `WebLoader`? I tried to check quickly, `WebLoader` doesn't seem to be an instance of `DataLoader`, which could be problematic."
+      },
+      {
+        "author": "user-37",
+        "body": "According to my tests, using webdataset+webloader is faster than using webdataset+dataloader, so I try to use the webdataset+webloader config."
+      },
+      {
+        "author": "maintainer-3",
+        "body": "If possible, could you please test something. Depending on the result, it might give us an idea on how to fix the issue for good. The test would be to define a custom data loader and use it instead:\r\n\r\n```python\r\nclass MyLoader(wds.WebLoader, torch.utils.data.DataLoader):\r\n    pass\r\n\r\ntrain_dataloader = MyLoader(train_dataset, ...)\r\n```\r\n\r\nIf you could report back if this works and if it attains the same speed, that would be awesome."
+      },
+      {
+        "author": "user-38",
+        "body": "> ### System Info\r\n> ```shell\r\n> CUDA 11.8\r\n> My environment is:\r\n>       - accelerate==0.24.0\r\n>       - braceexpand==0.1.7\r\n>       - certifi==2022.12.7\r\n>       - charset-normalizer==2.1.1\r\n>       - diffusers==0.21.4\r\n>       - filelock==3.9.0\r\n>       - fsspec==2023.4.0\r\n>       - huggingface-hub==0.17.3\r\n>       - idna==3.4\r\n>       - imageio==2.31.6\r\n>       - importlib-metadata==6.8.0\r\n>       - jinja2==3.1.2\r\n>       - lazy-loader==0.3\r\n>       - markupsafe==2.1.2\r\n>       - mpmath==1.3.0\r\n>       - natsort==8.4.0\r\n>       - networkx==3.0\r\n>       - numpy==1.24.1\r\n>       - opencv-python==4.8.1.78\r\n>       - packaging==23.2\r\n>       - pandas==2.1.1\r\n>       - pillow==9.3.0\r\n>       - psutil==5.9.6\r\n>       - python-dateutil==2.8.2\r\n>       - pytz==2023.3.post1\r\n>       - pyyaml==6.0.1\r\n>       - regex==2023.10.3\r\n>       - requests==2.28.1\r\n>       - safetensors==0.4.0\r\n>       - scikit-image==0.22.0\r\n>       - scipy==1.11.3\r\n>       - six==1.16.0\r\n>       - sympy==1.12\r\n>    "
+      },
+      {
+        "author": "user-39",
+        "body": "@user-37 any progress here ? We are facing similar issues while combining Webdataloader with Accelerate, ending up using Webdataset + torch dataloader. @user-3 Any more insights here ?"
+      },
+      {
+        "author": "user-40",
+        "body": "> @user-37 any progress here ? We are facing similar issues while combining Webdataloader with Accelerate, ending up using Webdataset + torch dataloader. @user-3 Any more insights here ?\r\n\r\nCould you please give the detailed code about how to use Webdataset and torch dataloader?"
+      }
+    ]
+  },
+  "929": {
+    "number": 929,
+    "title": "Let the launched script handle KeyboardInterrupt",
+    "state": "open",
+    "body": "**Is your feature request related to a problem? Please describe.**\r\nAs part of my training script the model checkpoint is compressed via 7zip. In my code I handle KeyboardInterrupt so I can skip the compression if necessary (it takes a long time). When I do ctrl+c the signal isn't caught by my script, it's caught by Accelerate which exits.\r\n\r\n**Describe the solution you'd like**\r\nAccelerate should not interfere with signals and should pass them to the child process for it to decide a course of action. If the child process exits, Accelerate does too, otherwise it keeps running.\r\n\r\n**Describe alternatives you've considered**\r\nI tried using `signal` to set my own signal handler, which didn't work. Here's what happens:\r\n\r\nRun the script via `accelerate launch test.py`\r\n\r\n`test.py` is as follows:\r\n```python3\r\ndef signal_handler(signal, frame):\r\n    print('got ctrl+c')\r\n\r\nsignal.signal(signal.SIGINT, signal_handler)\r\n\r\nwhile True:\r\n    print('loop')\r\n    time.sleep(1)\r\n```\r\n\r\nThis test is interesting because:\r\n1. `got ctrl+c` is printed\r\n2. Accelerate exits but the child script does not\r\n3. `loop` keeps printing in the terminal until you do `kill [pid of child]`\r\n\r\n**Additional context**\r\nNone",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "cc @user-3 "
+      },
+      {
+        "author": "user-42",
+        "body": "Is there any solutions to the problem? I need the similar feature in my model training loop, where `Ctrl`+`C` is used as a stop signal for all processes. And then evaluation should be taken for current model parameters. "
+      },
+      {
+        "author": "user-3",
+        "body": "Now that we require a minimum of python 3.8, this is on the roadmap to look into due to new capabilities in the language"
+      },
+      {
+        "author": "user-43",
+        "body": "Noticed this as well.  If you use ctrl+c after launching with `accelerate launch` you basically have to go into htop and look for  the children as they are still hogging GPU+RAM.  Seems like there should be a better way to exit if you use accelerate launch."
+      },
+      {
+        "author": "user-3",
+        "body": "You'll still find this via `torchrun` too I believe, so I'm not sure how much we can truly do"
+      },
+      {
+        "author": "user-43",
+        "body": "@user-3 im guessing you know much more than me but could you track the children process ids and atexit.register some hook that kills them?  im not aware of how torchrun works under the hood so maybe thats not entirely feasible"
+      }
+    ]
+  },
+  "348": {
+    "number": 348,
+    "title": "IterableDataset with batch samples of different size",
+    "state": "open",
+    "body": "Hi,\r\nI want to train a large dataset with accelerate.\r\nHowever, my dataset has different shape (same batch, different sequence length) of samples.\r\nThis [line](https://github.com/huggingface/accelerate/blob/b2956acbe925845bf202224797334cfe4da18396/src/accelerate/data_loader.py#L356) requires the big batch for different processes to maintain a same shape so that it can concat.\r\n\r\nI was wondering if we can just broadcast the tensors to other processors without forcing the data to be of same shape? ",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Yes, that's a current limitation of the `dispatch_batches=True` option. I will try to dive into this and find a better solution for batches of different sizes, but that's going to take a bit of time."
+      },
+      {
+        "author": "user-45",
+        "body": "Any update on this? @maintainer-2 by the way, what's the advantage of using dispatch_batches?"
+      },
+      {
+        "author": "user-46",
+        "body": "the same problem, Why should IterableDataset keep all  MAX_LEN  sample to make batches? it is a waste of memory."
+      }
+    ]
+  },
+  "4122": {
+    "number": 4122,
+    "title": "BatchSamplerShard.__len__ overcounts for some ranks when split_batches=True and even_batches=False",
+    "state": "closed",
+    "body": "### System Info\n\nReproduced against the current `main` branch source of `src/accelerate/data_loader.py` (`BatchSamplerShard`), with `torch` installed locally. Pure CPU-side logic, no distributed launch or GPU needed to reproduce.\n\n### Information\n\n- [x] The official example scripts\n- [ ] My own modified scripts\n\n### Tasks\n\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\n- [x] My own task or dataset (give details below)\n\n### Reproduction\n\n`BatchSamplerShard.__len__` reports the wrong length when `split_batches=True` and `even_batches=False`, whenever the underlying sampler's length isn't evenly divisible.\n\n```python\nfrom torch.utils.data import BatchSampler, SequentialSampler\nfrom accelerate.data_loader import BatchSamplerShard\n\nsampler = SequentialSampler(range(3))\nbatch_sampler = BatchSampler(sampler, batch_size=2, drop_last=False)  # yields [0,1], [2]\n\nfor p in (0, 1):\n    shard = BatchSamplerShard(\n        batch_sampler,\n        num_processes=2,\n        process_index=p,\n        split_batches=True,\n        even_batches=False,\n    )\n    print(f\"process_index={p}: len(shard)={len(shard)}, actual batches={list(shard)}\")\n```\n\nOutput:\n```\nprocess_index=0: len(shard)=2, actual batches=[[0], [2]]\nprocess_index=1: len(shard)=2, actual batches=[[1]]\n```\n\nFor `process_index=1`, `len(shard)` reports 2 but iterating only yields 1 batch.\n\nI also ran a broader sweep across dataset sizes 1-19, batch sizes 2/4/6, and process counts 2/3 (171 combinations with `split_batches=True, even_batches=False`): 50 of them show this same `len(shard) != len(list(shard))` mismatch.\n\n### Root cause\n\n`BatchSamplerShard.__len__` (`src/accelerate/data_loader.py`):\n\n```python\ndef __len__(self):\n    if self.split_batches:\n        # Split batches does not change the length of the batch sampler\n        return len(self.batch_sampler)\n    ...\n```\n\nWhen `split_batches=True`, this unconditionally returns `len(self.batch_sampler)` for every process, regardless of `even_batches`.\n\nBut `_iter_with_split` (the actual iteration path used when `split_batches=True`) does not give every process the same number of batches when `even_batches=False`:\n\n```python\nif not self.drop_last and len(initial_data) > 0 and len(batch) < self.batch_size:\n    if not self.even_batches:\n        if len(batch) > batch_length * self.process_index:\n            yield batch[batch_length * self.process_index : batch_length * (self.process_index + 1)]\n    else:\n        ...\n```\n\nThe last, partial batch is only yielded to processes whose slice actually fits inside it. With `even_batches=False`, some processes get one fewer batch than `__len__` claims, exactly like the `split_batches=False` branch already accounts for via its `process_index < len(self.batch_sampler) % self.num_processes` check a few lines below, that same process-index-dependent logic isn't applied in the `spl",
+    "comments": [
+      {
+        "author": "user-36",
+        "body": "Hi, I'd like to investigate and fix this BatchSamplerShard.__len__ mismatch logic. Could you please assign this issue to me?"
+      },
+      {
+        "author": "user-47",
+        "body": "Hey @user-36, thanks for offering to take this on, always good to see someone pick up a niggly sharding bug.\n\nHeads up before you sink time into it though: @user-64 already has #4127 open against this issue since Jul 18 (`data_loader.py` +9/-2 plus a test). It hasn't been reviewed yet, so it's not merged, but the fix is written. I'd hate for you to redo work that's already sitting there.\n\nI'm not the maintainer so I can't assign anyone, that's up to the `accelerate` folks. A couple of ways you could jump in that wouldn't collide:\n\n- Review #4127. It's been sitting a week and a half with no eyes on it, and a second opinion on the `even_batches=False` + `split_batches=True` arithmetic would probably help it land faster than a competing PR would. The bit I'd want checked is whether the length now matches actual iteration for *every* rank, not just the ones that were previously overcounted.\n- If #4127 goes stale and the author doesn't come back, picking it up then is fair game and nobody w"
+      },
+      {
+        "author": "user-36",
+        "body": "Thanks for the heads-up! I'll take a look at PR #4127 and review it."
+      },
+      {
+        "author": "user-47",
+        "body": "Sounds good. One concrete thing to check while you're in there, since it's the part most likely to be wrong and least likely to be covered:\n\n`__len__` should agree with actual iteration for **every** `process_index`, not only the ranks that were previously overcounted. The original bug is process-index-dependent, so a fix can easily correct the over-counting ranks while leaving another rank off by one in the other direction, and both a single-process test and a \"does the total add up\" test would pass.\n\nThe cheapest way to check that is empirical rather than by reading the arithmetic: for each rank, build the sharded sampler and compare `len(sampler)` against `sum(1 for _ in sampler)`. Run it across the grid of `split_batches` x `even_batches` x a dataset size that doesn't divide evenly by `num_processes`, since the remainder handling is where the discrepancy lives. No distributed launch needed, you can instantiate the sampler directly with an explicit `process_index`.\n\nAlso worth flagg"
+      },
+      {
+        "author": "user-36",
+        "body": "Hey @user-47, I checked out PR #4127 and verified the fix locally like you suggested.\nHere is what I tested:\n\nRan pytest tests/test_data_loader.py — all 28 tests passed.\nWrote a Python script to sweep across dataset sizes 1–30, batch sizes (2, 4, 6), and process counts (2, 3) on CPU,\nVerified len(shard) == sum(1 for _ in shard) for all process ranks across every combination of split_batches, even_batches, and drop_last (~2,800 total configs tested),\nThe length matches the actual iteration count for every rank with 0 mismatches. Fix looks good to merge."
+      }
+    ]
+  },
+  "721": {
+    "number": 721,
+    "title": "Not possible to use the notebook_launcher on a cluster of A6000 series",
+    "state": "open",
+    "body": "### System Info\r\n\r\n```Shell\r\nCopy-and-paste the text below in your GitHub issue\r\n\r\n- `Accelerate` version: 0.12.0\r\n- Platform: Linux-5.4.0-105-generic-x86_64-with-debian-buster-sid\r\n- Python version: 3.7.13\r\n- Numpy version: 1.21.5\r\n- PyTorch version (GPU?): 1.12.0 (True)\r\n- `Accelerate` default config:\r\n\t- compute_environment: LOCAL_MACHINE\r\n\t- distributed_type: MULTI_GPU\r\n\t- mixed_precision: bf16\r\n\t- use_cpu: False\r\n\t- num_processes: 8\r\n\t- machine_rank: 0\r\n\t- num_machines: 1\r\n\t- main_process_ip: None\r\n\t- main_process_port: None\r\n\t- main_training_function: main\r\n\t- deepspeed_config: {}\r\n\t- fsdp_config: {}\r\n\t- downcast_bf16: False\r\n```\r\n\r\n\r\n### Information\r\n\r\n- [ ] The official example scripts\r\n- [X] My own modified scripts\r\n\r\n### Tasks\r\n\r\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\r\n- [X] My own task or dataset (give details below)\r\n\r\n### Reproduction\r\n\r\n```\r\ndef training_loop(mixed_precision=\"bf16\", seed: int = 42, batch_size: int = 64):\r\n  set_seed(seed)\r\n  \r\n  accelerator = Accelerator(mixed_precision=mixed_precision)\r\n  \r\nargs = (\"bf16\", 42, 64)\r\nnotebook_launcher(training_loop, args, num_processes=8)\r\n  \r\n```\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n### Expected behavior\r\n\r\nI expect training to start with autocasting to bfloat16 - instead, I get the error: \"RuntimeError: Cannot re-initialize CUDA in forked subprocess. To use CUDA with multiprocessing, you must use the 'spawn' start method\"\r\n\r\nAFAICT, this is due to the \"is_bf16_available\" function in accelerate.utils, which calls \"torch.cuda.is_available()\" and \"torch.cuda.is_bf16_supported()\".\r\n\r\n",
+    "comments": [
+      {
+        "author": "user-48",
+        "body": "Nope, same stack trace for both of those cases."
+      },
+      {
+        "author": "user-3",
+        "body": "I'll go ahead and change this as a feature request then and slightly modify the title, because really it's a Feature Request for running the `notebook_launcher` on the A6000 series. For now I'd recommend through the command line (not the best result I know, but that should work til we can get this!)"
+      },
+      {
+        "author": "user-48",
+        "body": "Sounds good, thanks for your help!"
+      },
+      {
+        "author": "user-3",
+        "body": "No problem! Last question, what provider are you using for renting the 8 A6000 so I can look into it? :) "
+      },
+      {
+        "author": "user-48",
+        "body": "https://www.runpod.io/"
+      },
+      {
+        "author": "user-3",
+        "body": "Just to make sure, does it break also if you don't use Colab? (Sometimes colab does some very weird things, so if we can test in native Jupyter that'd be nice :) )"
+      },
+      {
+        "author": "user-48",
+        "body": "Nope, unfortunately no luck with Jupyter either."
+      },
+      {
+        "author": "user-3",
+        "body": "Thanks @user-48, I've gotten into a pod and can recreate the bug. Working on a fix!"
+      },
+      {
+        "author": "user-3",
+        "body": "This is indeed a torch backend issue, you can track it's progress here: https://github.com/pytorch/pytorch/issues/85841"
+      },
+      {
+        "author": "user-48",
+        "body": "Oh interesting, thanks for diving into this!"
+      }
+    ]
+  },
+  "1239": {
+    "number": 1239,
+    "title": "Feature request - SLURM support",
+    "state": "open",
+    "body": "Hi, it will be really great if you can add SLURM support, or at least add a doc that shows how to run accelerate with multiple nodes on SLURM. I saw that there are several issues that involve people that want to use accelerate with SLURM.\r\nThank you! ",
+    "comments": [
+      {
+        "author": "user-51",
+        "body": "Does one need a config file at all if one is using the settings as I've shown on the slurm script above? \r\n\r\nThis is much more reproducible than having files which are not part of the submission affecting the submission itself:\r\n\r\n```bash\r\ntime srun bash -c 'accelerate launch \\\r\n    --main_process_ip $MASTER_ADDR \\\r\n    --main_process_port $MASTER_PORT \\\r\n    --multi_gpu \\\r\n    --mixed_precision=no \\\r\n    --num_processes=$(($NNODES * 4)) \\\r\n    --dynamo_backend=no \\\r\n    --num_machines=$NNODES  \\\r\n    --machine_rank=$SLURM_PROCID \\\r\n    --rdzv_conf \"rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT rdzv_backend=c10d\" \\\r\n    distrib.py'\r\n```"
+      },
+      {
+        "author": "user-3",
+        "body": "Nope, you do not. That is also extremely valid (and why the non-yaml option exists, for situations where we need to wrap/call it separately and a yaml makes it complicated)"
+      },
+      {
+        "author": "user-51",
+        "body": "In that case, I am confused why I can't run it on my machine with multiple nodes. I opened an issue on https://github.com/huggingface/accelerate/issues/1489\r\n\r\nPS: This machine is used up to 3744 nodes * 4 gpus/node with PyTorch DDP."
+      },
+      {
+        "author": "user-52",
+        "body": "@user-50 I also have the IndexError: list index out of range issue, have you solved it? "
+      },
+      {
+        "author": "user-53",
+        "body": "here is a slurm sbatch script that works for this [minGPT example](https://github.com/pytorch/examples/tree/a38cbfc6f817d9015fc67a6309d3a0be9ff94ab6/distributed/minGPT-ddp/mingpt/slurm). just update [sbatch_run.sh](https://github.com/pytorch/examples/blob/a38cbfc6f817d9015fc67a6309d3a0be9ff94ab6/distributed/minGPT-ddp/mingpt/slurm/sbatch_run.sh), and run `sbatch sbatch_run.sh`.\r\n\r\n```bash\r\n#!/bin/bash\r\n# account to use\r\n#SBATCH --account=<your accouont>\r\n# job name\r\n#SBATCH --job-name=mingpt\r\n# partition to use\r\n#SBATCH --partition=<partition name>\r\n# number of nodes to use\r\n# we use 2 nodes for ddp training\r\n#SBATCH --nodes=2\r\n# number of tasks per node, set it to 1 here\r\n# we only need to start one task per node, aka the train script\r\n#SBATCH --ntasks-per-node=1\r\n# number of gpus per node to use, we use 1 gpu/node here for demo\r\n#SBATCH --gpus-per-node=1\r\n# number of cpus per gpu to use\r\n#SBATCH --cpus-per-gpu=6\r\n# maximum time to run the job, set it to 10 minutes for demo\r\n#SBATCH -"
+      },
+      {
+        "author": "user-54",
+        "body": "for me:\r\n```\r\n    --machine_rank \\$SLURM_PROCID \\\r\n    --role \\$SLURMD_NODENAME: \\\r\n```\r\n  \\ before $SLURMD_NODENAME and $SLURM_PROCID is needed. Thus it can't be translate to each node specific.\r\n   "
+      },
+      {
+        "author": "user-55",
+        "body": "Hi! Triaging older issues this week — I think the general \"SLURM support\" ask here has shipped and the issue can be closed.\n\n`accelerate` ships first-class SLURM examples and docs:\n\n- [`examples/slurm/`](https://github.com/huggingface/accelerate/tree/main/examples/slurm) — `submit_multicpu.sh`, `submit_multigpu.sh`, `submit_multinode.sh`, `submit_multinode_fsdp.sh`, plus `fsdp_config.yaml`.\n- [`docs/source/basic_tutorials/launch.md`](https://github.com/huggingface/accelerate/blob/main/docs/source/basic_tutorials/launch.md) — launch tutorial that covers SLURM usage.\n- [`examples/config_yaml_templates/multi_node.yaml`](https://github.com/huggingface/accelerate/blob/main/examples/config_yaml_templates/multi_node.yaml) — multi-node config template suitable for SLURM-orchestrated runs.\n\nIf the original ask was about **automatic SLURM environment-variable detection** (à la jax.distributed.initialize), that's a narrower follow-up — there's a separate open issue (#1811) tracking exactly that. "
+      },
+      {
+        "author": "user-56",
+        "body": "I'd like to take this one (`Feature request - SLURM support`). I'll dig into the root cause and follow up with a PR shortly. (claiming via @user-56)"
+      },
+      {
+        "author": "user-56",
+        "body": "I'd like to take this one (`Feature request - SLURM support`). I'll look into the root cause and follow up with a PR. (claiming via @user-56)"
+      },
+      {
+        "author": "user-56",
+        "body": "Hi! I'd like to add SLURM support. Plan: add a SLURM launcher/launch config, document usage, add tests. May I be assigned?"
+      }
+    ]
+  }
+}

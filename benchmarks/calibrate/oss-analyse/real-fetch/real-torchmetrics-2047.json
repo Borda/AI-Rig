@@ -1,0 +1,458 @@
+{
+  "1663": {
+    "number": 1663,
+    "title": "Support for semantic segmentation",
+    "state": "open",
+    "body": "I saw that `torchmetrics.detection.mean_ap.MeanAveragePrecision` supports segmentation masks in `iou_type` . It's nice but I'm trying to compute metrics for semantic segmentation (it doesn't cover pixel accuracy or mean iou for example, only precision and recall).\r\n\r\nAlso, when trying to use `MeanAveragePrecision` for `iou_type='segm'` it stills forces me to include `scores` and `labels` which is an information already in my `masks` (the mask index is the label, and the scores are included in the masks). It doesn't seem very intuitive to me!\r\n\r\nUnless I've missed something, it would be nice to have to have support for semantic segmentation :smile: ",
+    "comments": [
+      {
+        "author": "user-3",
+        "body": "+1 for semantic segmentation metrics"
+      },
+      {
+        "author": "user-4",
+        "body": "This might be useful to someone, I use this for segmentation:\r\n\r\n```python\r\ndef get_seg_metrics(num_class, task='multiclass', reduction='none'):\r\n    collection = torchmetrics.MetricCollection([\r\n\r\n        torchmetrics.JaccardIndex(task=task, num_classes=num_class, \r\n                            average=reduction,),\r\n\r\n        torchmetrics.F1Score(task=task, num_classes=num_class, \r\n            average=None),\r\n\r\n        torchmetrics.Recall(task=task, average=None, num_classes=num_class),\r\n\r\n        torchmetrics.Precision(task=task, average=None, num_classes=num_class),\r\n\r\n    ])\r\n    return collection\r\n```"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@maintainer-2 are you working on it as part of the segmentation domain?"
+      }
+    ]
+  },
+  "2580": {
+    "number": 2580,
+    "title": "Classification Report, maybe with the option to select even more metrics",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\n<!-- A clear and concise description of the feature proposal -->\r\nClassification Report, maybe with the option to select even more metrics\r\n### Motivation\r\n\r\n<!-- Please outline the motivation for the proposal. Is your feature request related to a problem? e.g., I'm always frustrated when [...]. If this is related to another GitHub issue, please link here too -->\r\nLike in sklearn,  the feature of an classification report.\r\n\r\nhttps://scikit-learn.org/stable/modules/generated/sklearn.metrics.classification_report.html\r\n\r\n### Pitch\r\n\r\n<!-- A clear and concise description of what you want to happen. -->\r\nImplementation of an classification report like in Sklearn.\r\n\r\n",
+    "comments": [
+      {
+        "author": "maintainer-3",
+        "body": "One more thought — why not implement this as a wrapper around the existing torchmetrics classification metrics? It might help keep things more modular and aligned with standard usage.\n\ncc: @maintainer-1 "
+      },
+      {
+        "author": "user-6",
+        "body": "> One more thought — why not implement this as a wrapper around the existing torchmetrics classification metrics? It might help keep things more modular and aligned with standard usage.\n> \n> cc: [@maintainer-1](https://github.com/maintainer-1)\n\nYup, that sounds like the right way to go for me too. \n\nIn the PR i will do that. \n\nThanks a lot."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "yeah, the formatted output look cool, and I wold second to @maintainer-3 that adding completely new class would be quite some overhead... I think create a mixture that would be do:\n\n- adding mixture that would have the formatting API and eventually some private tool so a relevant class will be extended with this mixing\n- adding the API to the base class with not implemented method but could be not nice to users as there would be API but not all metrics will have it implemented at once..."
+      },
+      {
+        "author": "maintainer-3",
+        "body": "> adding mixture that would have the formatting API and eventually some private tool so a relevant class will be extended with this mixing\n\nagreed , I think this is the best way to approach this..."
+      },
+      {
+        "author": "user-6",
+        "body": "The scikit learn implementation does the formatting within the function itself: https://github.com/scikit-learn/scikit-learn/blob/e78fce44f8a39c7f256fa9f9d92ee93cb69739ed/sklearn/metrics/_classification.py#L2828\n\nCurrently for the following tests (picked from: https://github.com/scikit-learn/scikit-learn/blob/e78fce44f8a39c7f256fa9f9d92ee93cb69739ed/sklearn/metrics/tests/test_classification.py#L1379)\n\n```python\nimport torch\nfrom sklearn import datasets, svm\nfrom sklearn.metrics import classification_report\nfrom sklearn.utils import check_random_state\nimport numpy as np\n\nfrom torchmetrics.classification import ClassificationReport\n\n#? Taken from: https://github.com/scikit-learn/scikit-learn/blob/e78fce44f8a39c7f256fa9f9d92ee93cb69739ed/sklearn/metrics/tests/test_classification.py#L58\ndef make_prediction(dataset=None, binary=False):\n    \"\"\"Make some classification predictions on a toy dataset using a SVC\n\n    If binary is True restrict to a binary classification problem instead of a\n    "
+      },
+      {
+        "author": "user-6",
+        "body": "Hi, just wanted to get an update on this, thanks! @maintainer-3 @maintainer-1 "
+      },
+      {
+        "author": "maintainer-3",
+        "body": "Hi, @user-6 apologies for late reply. Your implementation also looks good to me.... pls feel free to open a pr\n\nbut it may raise some potential issues like \n\n1. Nested Metrics Issue:\n\n```python \nself.precision = MulticlassPrecision(...)\nself.recall = MulticlassRecall(...)\nself.f1 = F1Score(...)\nself.accuracy = Accuracy(...)\n```\n\nas  per tm docs:\n\n> Due to specialized logic around metric states, we in general do not recommend that metrics are initialized inside other metrics (nested metrics), as this can lead to weird behaviour. Instead consider subclassing a metric or use torchmetrics.MetricCollection.\n\n2. State management complexity:\nThe implementation maintains its own states (self.preds, self.target) alongside nested metric states, it creates multiple sources of truth and potential synchronization issues in distributed settings.The docs recommends using MetricCollection for managing multiple metrics.\n\n3. Compute Inefficiency:\nIt doesn't leverage tm's `compute_groups` optimization.Re"
+      },
+      {
+        "author": "user-6",
+        "body": "Thank you very much for linking all the docs and the information. I will start a PR this week keeping these in mind. "
+      },
+      {
+        "author": "user-6",
+        "body": "Hi, just wanted to say that I am still working on this. Setting up the unit tests and everything in accordance to the rest of the repo is eating up some time. I should hopefully start the PR soon :)"
+      },
+      {
+        "author": "maintainer-3",
+        "body": "Hi @user-6 let me know once the pr is ready for review\n"
+      }
+    ]
+  },
+  "3216": {
+    "number": 3216,
+    "title": "`retrieval_normalized_dcg` should compute per-query average when given 2D inputs (IR-standard behavior)",
+    "state": "open",
+    "body": "## 🐛 Bug\nCurrently, when passing a 2D tensor (`[num_queries, num_documents]`) to `retrieval_normalized_dcg`, the function flattens both `preds` and `target` and computes DCG/IDCG on the concatenated list.\nThis treats all queries as a single large ranking problem.\n\nIn Information Retrieval (IR) and recommender systems, the standard practice for NDCG is:  \n- Compute NDCG per query\n- Then take the macro average over queries  \n\n\nFlattening across queries changes the interpretation of the metric and can lead to inflated or misleading results.\n\n\n### To Reproduce\n\n```python\nfrom torchmetrics.functional.retrieval import retrieval_normalized_dcg\nimport torch\n\n# Query 1\np1 = retrieval_normalized_dcg(torch.tensor([0.1, 0.2, 0.3]), torch.tensor([0, 1, 0]))\nprint(p1)  # tensor(0.6309)\n\n# Query 2\np2 = retrieval_normalized_dcg(torch.tensor([0.8, 0.1, 0.05]), torch.tensor([1, 0, 0]))\nprint(p2)  # tensor(1.0000)\n\nprint(\"Mean per-query NDCG:\", (p1 + p2) / 2)\n# tensor(0.8155)\n\n# Batched input (2D)\np_batch = retrieval_normalized_dcg(\n    torch.tensor([[0.1, 0.2, 0.3], [0.8, 0.1, 0.05]]),\n    torch.tensor([[0, 1, 0], [1, 0, 0]]),\n)\nprint(\"Batch NDCG:\", p_batch)\n# tensor(0.9197) <-- Not the mean per-query value\n```\n\nHere, the batch value 0.9197 is different from the expected per-query average 0.8155 because the function flattens both queries before computing NDCG.\n\n**Environment**\n- macOS 15.4.1 (Sequoia) on Intel MacBook Pro\n- Python 3.12.6\n- torch==2.2.0\n- torchmetrics==1.8.1\n\n\n",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "@user-7, good call, would you be interested in sending a fix?\ncc: @user-39"
+      },
+      {
+        "author": "user-7",
+        "body": "@maintainer-1 \nYes, I’d be happy to work on a fix!\n\nBefore I start, could you please confirm the preferred approach?  \nIs it okay to change the default behavior directly for 2D inputs, without preserving backward compatibility, or should I add a flag like `per_query` to keep backward compatibility?"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "> Is it okay to change the default behavior directly for 2D inputs, without preserving backward compatibility, or should I add a flag like `per_query` to keep backward compatibility?\n\nwe need to stay backward compatible"
+      }
+    ]
+  },
+  "3066": {
+    "number": 3066,
+    "title": "Unified `Metrics` class for multiple metrics",
+    "state": "open",
+    "body": "## 🚀 Feature\n\nUnified `Metrics` class for multiple metrics. \n\n### Motivation\n\nWe often need to compute multiple metrics for the same `preds` and `targets`. \n\nFor example, we want to record both AUROC and AUPRC (AP) for a task. \n\nWhile torchmetrics have implemented the distributed communication backend to support distributed training, for metrics like AUROC and AUPRC, current implementation requires syncing the entire process group multiple times for each metrics. This can take a significant amount of time when training on large clusters. \n\n### Pitch\n\n```python\nfrom __future__ import annotations\n\nfrom collections.abc import Mapping, Sequence\nfrom math import nan\nfrom typing import Callable, Iterable\n\nimport torch\nfrom chanfig import DefaultDict, FlatDict\nfrom torch import Tensor\nfrom torch import distributed as dist\nfrom torcheval.metrics import Metric\n\nfrom danling.tensor import NestedTensor\nfrom danling.utils import flist, get_world_size\n\nfrom .preprocess import base_preprocess\nfrom .utils import RoundDict\n\ntry:\n    from typing import Self  # type: ignore[attr-defined]\nexcept ImportError:\n    from typing_extensions import Self\n\n\nclass Metrics(Metric):\n    r\"\"\"\n    A comprehensive metric tracking system that maintains the complete history of predictions and labels.\n\n    Metrics is designed for computing evaluations that require access to the entire dataset history,\n    such as AUROC, Pearson correlation, or other metrics that cannot be meaningfully averaged batch-by-batch.\n\n    Attributes:\n        metrics: A dictionary of metric functions to be computed\n        preprocess: Optional preprocessing function to apply to inputs and targets\n        val: Metrics computed on the current batch only\n        avg: Metrics computed on all accumulated data\n        input: The input tensor from the latest batch\n        target: The target tensor from the latest batch\n        inputs: Concatenation of all input tensors seen so far\n        targets: Concatenation of all target tensors seen so far\n\n    Args:\n        *args: A single mapping of metrics or callable metric functions\n        device: Device to store tensors on\n        preprocess: Function to preprocess inputs before computing metrics\n        **metrics: Named metric functions to compute\n\n    Examples:\n        >>> from danling.metric.functional import auroc, auprc\n        >>> from danling.metric.preprocess import preprocess_binary\n        >>> metrics = Metrics(auroc=auroc, auprc=auprc)\n        >>> metrics\n        Metrics('auroc', 'auprc')\n        >>> metrics.update([0.2, 0.3, 0.5, 0.7], [0, 1, 0, 1])\n        >>> metrics.input  # predicted values of current batch\n        tensor([0.2000, 0.3000, 0.5000, 0.7000])\n        >>> metrics.target  # ground truth of current batch\n        tensor([0, 1, 0, 1])\n        >>> metrics.inputs  # predicted values of all data\n        tensor([0.2000, 0.3000, 0.5000, 0.7000])\n        >>> metrics.targets  # ground truth of all data\n        tensor([0, 1, 0, 1])\n        >>> metrics.va",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "> While torchmetrics have implemented the distributed communication backend to support distributed training, for metrics like AUROC and AUPRC, current implementation requires syncing the entire process group multiple times for each metrics. This can take a significant amount of time when training on large clusters.\n\nHello, thank you for your suggestion. Could you please elaborate more what this metric shall do, except preserving all history of preds and targets?"
+      },
+      {
+        "author": "user-8",
+        "body": "> Hello, thank you for your suggestion. Could you please elaborate more what this metric shall do, except preserving all history of preds and targets?\n\n\nThe primary goal is to optimize performance by synchronizing shared metric states only once. Many of our metrics rely on the same underlying data (preds, targets, etc.), but each currently manages its own state. This results in redundant synchronization operations, one for every metric.\n\nMy proposal is to decouple the metric states from the functional interface. We could introduce a state manager that handles the synchronization of shared states once per step. Individual metric instances would then access these synchronized states to compute their scores. This would streamline the process and limit costly synchronization to a single operation."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "> My proposal is to decouple the metric states from the functional interface. We could introduce a state manager that handles the synchronization of shared states once per step. Individual metric instances would then access these synchronized states to compute their scores. This would streamline the process and limit costly synchronization to a single operation.\n\nThat sounds very interesting! Could you make a minimal demo?"
+      },
+      {
+        "author": "user-8",
+        "body": "> That sounds very interesting! Could you make a minimal demo?\n\nSure thing! I'm busy finalizing my paper this month, I'll work on it right after I finished it. \n"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@maintainer-2, what are your thoughts? 🐿️ "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "This seems very close to what `MetricCollection` but with a bit more narrow scope (metrics that requires the full set of preds and targets at compute time) which then has the benefit that some optimization can be done for sync across devices. I wonder if the feature could be incorporated into `MetricCollection` instead of having a similar separate class."
+      },
+      {
+        "author": "user-8",
+        "body": "I've never heard about `MetricCollection` before, and I just looked at their documents, they look nice. \n\nI'll need to look into it to see if and how we can improve `MetricCollection` with my current implementation. \n\n> with a bit more narrow scope (metrics that requires the full set of preds and targets at compute time) which then has the benefit that some optimization can be done for sync across devices. \n\nThat is the current implementation. But it should be able to be expandable with registry mechanism: we can let the metric object tells the state manager what states do they require, and state manager will maintain a state for them. \nI think the `MetricCollection` may have implemented something similar to this, I'll need to check it. \n\nAnd I believe there are a few things we can work on with `MetricCollection`. \n\nFirst is the distributed syncing. Currently it pads outputs & targets to the same length across devices which may incur some noises. My `_sync` implementation above handles"
+      }
+    ]
+  },
+  "2441": {
+    "number": 2441,
+    "title": "Incorrect result in computing `MulticlassRecall` macro average when `ignore_index` is specified",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nSpecifying the `ignore_index` argument in `MulticlassRecall` leads to incorrect results when computing the macro average.\r\n\r\n### To Reproduce\r\n\r\n```python\r\nimport torch\r\nfrom torchmetrics.classification.precision_recall import MulticlassRecall\r\n\r\nmetric = MulticlassRecall(num_classes=2, ignore_index=0, average=\"macro\")\r\ny_true = torch.tensor([0, 0, 1, 1])\r\ny_pred = torch.tensor([\r\n    [0.9, 0.1],  # Correct\r\n    [0.9, 0.1],  # Correct\r\n    [0.9, 0.1],  # Incorrect\r\n    [0.1, 0.9],  # Correct\r\n])\r\nmetric.update(y_pred, y_true)\r\nprint(metric.compute())  # Prints 0.25, but I would expect the result to be 0.5\r\n```\r\n\r\n### Expected behavior\r\n\r\nIn the toy example above there are two classes (0 and 1) and two instances of each class. I want to ignore class 0 altogether (hence `ignore_index=0`), so I would expect the first two predictions to be ignored entirely (since they relate to class 0 instances). Of the remaining two predictions only one is correct, so I would expect the recall score to be `0.5`.\r\n\r\nHowever, the actual result is `0.25`. It looks as if the recall score for the `ignore_index` class is simply set to 0 before computing the average, causing the average to be computed as `(0 + 0.5) / 2` instead of `0.5 / 1`.\r\n\r\n### Environment\r\n\r\n- TorchMetrics version: 1.3.1 (installed via pip)\r\n- Python version: 3.10\r\n- PyTorch version: 2.2.1\r\n- OS: Ubuntu 22.04",
+    "comments": [
+      {
+        "author": "user-10",
+        "body": "This issue has been there for a while. After v0.9.3, `average=\"macro\"` does not work with `ignore_index`."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "> This issue has been there for a while. After v0.9.3, `average=\"macro\"` does not work with `ignore_index`.\r\n\r\nthank you for the adjustment, would yo be interested in sending a PR?"
+      },
+      {
+        "author": "maintainer-3",
+        "body": "Pls assign it to me @maintainer-1 "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "> Pls assign it to me @maintainer-1\r\n\r\ncc: @maintainer-2 "
+      }
+    ]
+  },
+  "1500": {
+    "number": 1500,
+    "title": "F score over boundaries",
+    "state": "open",
+    "body": "## 🚀 Feature\n\nAn F score over the boundaries.\nIt will requires boundaries extraction on multiclass tensors.\n\n### Motivation\n\nIt is used in many Video dataset and their related challenges (Davis, Yotube VOS, etc.).\n\n### Pitch\nGenerally we have opencv/script/numpy implementations but it could be very useful to have a metrics directly to plug in the eval step.\n\n### Alternatives\nImplementing BoundaryIOU \nhttps://bowenc0221.github.io/boundary-iou/\n\n### Additional context\nF-boundary Reference implementation:\nhttps://github.com/davisvideochallenge/davis2017-evaluation/blob/master/davis2017/metrics.py",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Hi @user-11, thanks for proposing this metric to be a part of torchmetrics.\r\nOne question: what would typical examples for such a metric look like?"
+      },
+      {
+        "author": "user-11",
+        "body": "Check Section 4.1 in\r\nhttps://www.cv-foundation.org/openaccess/content_cvpr_2016/papers/Perazzi_A_Benchmark_Dataset_CVPR_2016_paper.pdf\r\n\r\nYou will find also a comparative analysis where the alternative `BoundaryIOU` was proposed at:\r\nhttps://arxiv.org/pdf/2103.16562.pdf\r\n\r\nBut F is still the popular one for boundaries measurement in dedicated conference challenges/workshop.\r\n\r\nI suppose that probably we could reuse the F1Score multiclass metric already available in the library but it needs to be integrated by a boundary extraction function.\r\n\r\nLet me know if you need any other info. "
+      },
+      {
+        "author": "user-11",
+        "body": "@user-40 Has a torchmetric for `BoundaryIOU` but still relaying on OpenCV for extracting the boundarties:\r\n\r\nhttps://github.com/user-40/anchor_free/blob/master/anchor_free/model/metric.py#L8-L74"
+      },
+      {
+        "author": "user-11",
+        "body": "If it could be useful this is `mask_to_boundary` pytorch equivalent implementation to the reference `BoundaryIOU` implementation for extracting the mask boundaries. \r\n\r\nRefactored it could be probably quite compatible/reused also for the F metric.\r\n\r\n\r\n```python\r\ndef mask_to_boundary_pytorch(mask, dilation_ratio=0.02):\r\n    # convert mask to float tensor\r\n    mask = mask.float()\r\n\r\n    # calculate dilation ratio based on image diagonal\r\n    h, w = mask.shape\r\n    img_diag = math.sqrt(h ** 2 + w ** 2)\r\n    dilation = int(round(dilation_ratio * img_diag))\r\n\r\n    # create structuring element for morphological operations\r\n    selem_size = dilation * 2 + 1\r\n    selem = torch.ones(selem_size, selem_size, device=mask.device)\r\n\r\n    # erode the mask using the structuring element\r\n    eroded_mask = F.conv2d(mask.unsqueeze(0).unsqueeze(0), selem.unsqueeze(0).unsqueeze(0), padding=dilation)\r\n    eroded_mask = eroded_mask.squeeze(0).squeeze(0)\r\n    eroded_mask = (eroded_mask == (selem.sum()))  # m"
+      },
+      {
+        "author": "user-11",
+        "body": "@maintainer-1 Can  the mask to boundary util be contributed somewhere in the meantime? I don't see a generic util file in the image folder."
+      },
+      {
+        "author": "user-12",
+        "body": "This is a very useful metric for semantic segmentation since it correlates nicely with human perception of IoU.\r\n\r\nAny news on whether it will be added?"
+      }
+    ]
+  },
+  "987": {
+    "number": 987,
+    "title": "Allow arbitrary types for metric states",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nMetric states seem to be limited to `torch.Tensor` or `List[torch.Tensor]`.\r\n\r\nIn my usecase i want to store a dictionary as state. My dataset comprises of samples who can be assigned to different documents. In order to calculate macro metrics (calculate metrics per document and average) I want to store my metric states (e.g. true positives, false positives, etc.) as a dictionary. Here is some pseudocode:\r\n\r\n```python\r\nclass MyMetric(Metric):\r\n\r\n    def __init__(self, dist_sync_on_step: bool = False):\r\n        super().__init__(dist_sync_on_step=dist_sync_on_step)\r\n\r\n        self.add_state(\"statistics\", default=defaultdict(lambda: defaultdict(float)), dist_reduce_fx=None)\r\n\r\n    def update(\r\n            self,\r\n            predictions: torch.Tensor,\r\n            targets: torch.Tensor,\r\n            document_ids: List\r\n    ):\r\n        predictions = predictions.bool()\r\n        targets = targets.bool()\r\n\r\n        tps = predictions * targets\r\n        tns = predictions.logical_not() * targets.logical_not()\r\n        fps = predictions * targets.logical_not()\r\n        fns = predictions.logical_not() * targets\r\n\r\n        for id_, tp, tn, fp, fn in zip(document_ids, tps, tns, fps, fns):\r\n            self.statistics[id_]['tp'] += tp.float().item()\r\n            self.statistics[id_]['tn'] += tn.float().item()\r\n            self.statistics[id_]['fp'] += fp.float().item()\r\n            self.statistics[id_]['fn'] += fn.float().item()\r\n\r\n    def compute(self):\r\n            ...\r\n```\r\n\r\nUnfortunately the above code is not allowed. Each metric state has to be a `torch.Tensor` or a `List[torch.Tensor]`.\r\nThat means normal float values or numpy arrays cannot be used as metrics either. Is there a particular reason for that?\r\n",
+    "comments": [
+      {
+        "author": "user-13",
+        "body": "Hey,\r\n\r\nAre there any updates on this matter? After checking `metric.py` I don't see a particular reason for this restriction but maybe I overlooked something. \r\nAlso, the `reset` method could simply reset each state variable to the user defined default instead of checking the type to distinguish between `List` and `torch.Tensor`. Regarding reduction logic one can keep the current approach and if the state type is something custom (e.g. a `Dict`, etc.) the synced state is simply a `List[Dict]` and the user is in charge of providing a custome reduce fn to combine the different states across processes."
+      },
+      {
+        "author": "user-14",
+        "body": "@user-13, I agree that this is an important question to ask. I am also encountering a use case where I need to track my custom `Metric`'s state with a dictionary. Any thoughts on this query, @maintainer-2 or @maintainer-1?"
+      },
+      {
+        "author": "user-13",
+        "body": "Once again a short ping. Are there any plans to tackle this issue in the near future?"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Hi @user-13,\r\nIt has not really been a priority for us, but I am willing to listen. At the moment I think we could consider adding the option to also support dicts of tensors as an third option. It would not completely solve your initial example, because it requires dict of dict of tensors, but then you could do something like:\r\n```python\r\nfor i in range(num_document_ids):\r\n    self.add_state(f\"statistics_{i}\", default=defaultdict(), dist_reduce_fx=None)\r\n```\r\nand then in update:\r\n```\r\nfor id_, tp, tn, fp, fn in zip(document_ids, tps, tns, fps, fns):\r\n    getattr(self, f\"statistics_{id_})['tp'] += tp.float().item()\r\n    getattr(self, f\"statistics_{id_})['tn'] += tn.float().item()\r\n    getattr(self, f\"statistics_{id_})['fp'] += fp.float().item()\r\n    getattr(self, f\"statistics_{id_})['fn'] += fn.float().item()\r\n```\r\nthis would of cause mean that the `num_documents_ids` needed to be known in advance.\r\n\r\n"
+      },
+      {
+        "author": "user-13",
+        "body": "Hi @maintainer-2,\r\n\r\nThanks for your suggestion. That would work as a temporary solution, but I think it's not so elegant to iterate the entire dataset at initialization time, just to retrieve all the document ids.\r\n\r\nIs there a particular reason, why the state types are restricted in the first place? What about the suggestion to extend it to arbitrary types and if it is something custom, the synced/reduced state is simply a List of that custom type and the user is in charge to properly reduce it, i.e. by providing a specific reduce function. \r\n\r\nI am referring to these lines in `metric.py`:\r\n```python\r\nif not isinstance(default, (Tensor, list)) or (isinstance(default, list) and default):\r\n    raise ValueError(\"state variable must be a tensor or any empty list (where you can append tensors)\")\r\n\r\nif dist_reduce_fx == \"sum\":\r\n    dist_reduce_fx = dim_zero_sum\r\nelif dist_reduce_fx == \"mean\":\r\n    dist_reduce_fx = dim_zero_mean\r\nelif dist_reduce_fx == \"max\":\r\n    dist_reduce_fx = dim_zero_"
+      },
+      {
+        "author": "user-15",
+        "body": "Just wondering,\r\n is there a reason to not just keep track of a dictionary of metrics as a class variable and override reset() to iterate through the dictionary and call reset?"
+      },
+      {
+        "author": "user-15",
+        "body": "Actually to answer my own question, I found that internal states are not handled properly by just overridding reset() yourself (which is also stated in the documentation)\r\n\r\nforward() (which calls update, reset, update in this order)  doesn't work as expected (the state gets reset() everytime). This is due to the fact that internal metric._copy_state_dict() cannot properly find internal states to copy before calling reset.\r\n \r\nmoral of story: if you do wrap a class around metric and have a class variable that holds metrics (this includes MetricWrapper classes) :\r\n1. override reset() to reset metrics properly\r\n2. never call forward(), only use update()"
+      }
+    ]
+  },
+  "2320": {
+    "number": 2320,
+    "title": "Inconsistent default values for `average` argument in classification metrics",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nWhen instantiating the multiclass (or multilabel) accuracy metric through the `Accuracy` wrapper class (legacy), the default value for `average` is `micro`. When instantiating directly through `MulticlassAccuracy` (new way since 0.11 I believe), the default value is `macro`. This is inconsistent, which can lead to very unexpected results.\r\n\r\nThe same is true for all metrics that are subclasses of `MulticlassStatScores`, `BinaryStatScores` or `MultilabelStatScores` as well as their respective functional interfaces.\r\n\r\n### To Reproduce\r\n\r\n1. Instantiate the metrics directly as well as through the wrapper.\r\n2. Compare results.\r\n\r\n<details>\r\n  <summary>Code sample</summary>\r\n\r\n```\r\nclasses = {0: \"A\", 1: \"B\", 2: \"C\"}\r\nnum_classes = len(classes)\r\nnum_samples = 10\r\nmulticlass_preds = torch.randn(num_samples, num_classes)\r\nmulticlass_targets = torch.randint(0, num_classes, (num_samples,))\r\n\r\nlegacy_mc_acc = Accuracy(\"multiclass\", num_classes)\r\nnew_mc_acc = MulticlassAccuracy(num_classes)\r\n\r\nlegacy_result = legacy_mc_acc(multiclass_preds, multiclass_targets)\r\nnew_result = new_mc_acc(multiclass_preds, multiclass_targets)\r\n\r\nassert  new_result == legacy_result\r\n```\r\n\r\n</details>\r\n\r\n### Expected behavior\r\n\r\nConsistency between the different interfaces.\r\n\r\n### Environment\r\n\r\n- TorchMetrics version (and how you installed TM, e.g. `conda`, `pip`, build from source): >=0.11 (1.3 in my case)\r\n- Python & PyTorch Version (e.g., 1.0): irrelevant\r\n- Any other relevant information such as OS (e.g., Linux): irrelevant\r\n\r\n### Additional context\r\nI would argue that in the case of accuracy the default being `macro` in the task-specific classes is not only inconsistent with legacy but actually wrong. The common deinition of accuracy is \r\n\r\n$$ \\mathrm{Acc}(\\text{preds},\\text{targets}) = \\frac{1}{N}\\sum_{i = 1}^{N} \\left[ \\begin{cases}\r\n1 & \\text{if preds}_i = \\text{targets}_i \\\\\r\n0 & \\text{otherwise}\r\n\\end{cases} \\right] $$\r\n\r\nwhich is how accuracy is computed when setting `average=\"micro\"`.\r\n\r\nSetting `average=\"macro\"` can still be useful, as it is less prone to class imbalance. However, I think TorchMetrics should adhere to common definitions with the default settings, and would therefore argue for making `micro` the default.\r\n\r\nThe same is kind of true for precision and recall, which are also commonly defined as micro averages, if they are defined globally at all. Usually we encounter recall and precision as class-wise metrics.",
+    "comments": [
+      {
+        "author": "user-17",
+        "body": "To prevent potential confusion and misinterpretation of accuracy results, I strongly ask the torchmetrics package authors to implement a clear warning message when users utilize its accuracy functions or classes. The current lack of such a warning, coupled with the pre-set default behavior, can lead users to unknowingly conflate \"macro\" and \"micro\" averaging, as they may not even be aware of the existence of these options. This oversight can result in incorrect decision-making based on a misunderstanding of the accuracy metric being used."
+      },
+      {
+        "author": "user-18",
+        "body": "This just bit me, and wasted a substantial amount of time!"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@maintainer-2 thoughts? 😺 "
+      },
+      {
+        "author": "user-19",
+        "body": "+1, this confused a lot of my students. I grepped the whole library and found:\n```console\n> git grep '\\baverage: ' | wc -l\n     133\n> git grep '\\baverage: .* = \"macro\",$' | wc -l\n      63\n> git grep '\\baverage: .* = \"micro\",$' | wc -l\n      24\n> git grep '\\baverage: .* = None,$' | wc -l\n      17\n```\nSo most of the time we default to macro, but there are plenty of cases where we default to micro or None or have no default (not just accuracy).\n\nSimilarly, there are a few places where the type hints could be made more consistent:\n```console\n> git grep '\\baverage: ' | wc -l\n     133\n> git grep '\\baverage: Optional\\[Literal' | wc -l\n     108\n> git grep '\\baverage: Literal' | wc -l\n       7\n> git grep '\\baverage: Optional\\[str' | wc -l\n       1\n> git grep '\\baverage: str' | wc -l\n       7\n```\nI would be happy to volunteer for this effort, but will first wait for guidance from above on whether we want break things to achieve consistency and what we want to default to."
+      }
+    ]
+  },
+  "2955": {
+    "number": 2955,
+    "title": "Multi Label Precision numerical stability issues with MPS",
+    "state": "open",
+    "body": "## 🐛 Bug\n\nCurrently trying to track metrics of a rather complicated ECG multi-label classifier (20 labels) and noticed that training with MPS breaks the MultiLabelPrecision in an odd way, so that the returned values are clearly outside of any possible scope e.g. -1.49272e+25. First I thought it is a numerical issue on the logits or some weird input shape issue I am not handling properly, but after doing some further digging I noticed that the inconsistency happens with device MPS specifically and can be reproduced. I couldn't get to the bottom of what leads to this as it is inconsistent, but most likely numerical.\n\nWould love some guidance on this! \n\n### To Reproduce\n\nBelow code snippet with manually calculated expected outputs. I hope my math isn't wrong, but nonetheless, if I set device to MPS and run the code a few times (may work on some runs) I will eventually run into some very odd numerical issues on test 3 and 4:\n\n<details>\n  <summary>Code sample</summary>\n\n```python\nimport torch\nimport torchmetrics\nimport logging\n\nlogging.basicConfig(level=logging.DEBUG)\nlogger = logging.getLogger(__name__)\n\ndef test_label_scenarios(device='cpu'):\n    num_labels = 20\n\n    # Test scenarios specifically for 20-label case\n    test_cases = [\n        {\n            \"name\": \"All labels correct\",\n            \"preds\": torch.full((100, 20), 0.7),\n            \"target\": torch.ones((100, 20)),\n            \"expected\": 1.0,\n        },\n        {\n            \"name\": \"All labels wrong\",\n            \"preds\": torch.full((100, 20), 0.7),\n            \"target\": torch.zeros((100, 20)),\n            \"expected\": 0.0,\n        },\n        {\n            \"name\": \"Exactly 5 labels correct per sample\",\n            \"preds\": torch.cat(\n                [\n                    torch.full((100, 5), 0.9),  # 5 correct predictions\n                    torch.full((100, 15), 0.1),  # 15 never predicted positive\n                ],\n                dim=1,\n            ),\n            \"target\": torch.cat(\n                [\n                    torch.ones((100, 5)),\n                    torch.zeros((100, 15))\n                ],\n                dim=1\n            ),\n            # For macro, 5 labels have precision=1, 15 labels have precision=0 => avg=0.25\n            \"expected\": 0.25,\n        },\n        {\n            \"name\": \"5 correct + 5 false positives\",\n            \"preds\": torch.cat(\n                [\n                    torch.full((100, 5), 0.9),  # 5 always correct\n                    torch.full((100, 5), 0.9),  # 5 always false\n                    torch.full((100, 10), 0.1),\n                ],\n                dim=1,\n            ),\n            \"target\": torch.cat(\n                [\n                    torch.ones((100, 5)),   # True positives for first 5 labels\n                    torch.zeros((100, 15))  # False (and predicted + negative)\n                ],\n                dim=1\n            ),\n            # For macro, first 5 => precision=1, next 5 => precision=0, last 10 => 0 => avg=0.25\n            \"ex",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Most likely related to #1727"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "maybe worth raising some concerns with the Torch team?\ncc: @user-41 "
+      }
+    ]
+  },
+  "2535": {
+    "number": 2535,
+    "title": "Clarify that nan is supported in zero_division",
+    "state": "open",
+    "body": "This option added in https://github.com/Lightning-AI/torchmetrics/pull/2198 to create equivalence with [sklearn](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.precision_score.html#sklearn-metrics-precision-score) also supports passing through a nan if I am not mistaken, based on the implementation of `torchmetrics.utilities.compute._safe_divide`.\r\nI wanted to clarify that nan can indeed be passed through, ask if any code changed are required to support this officially, and suggest this could be added to the docs which state currently `zero_division [float] – Should be 0 or 1.`, e.g. [here](https://lightning.ai/docs/torchmetrics/v1.4.0/classification/precision.html#binary-precision)",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Hi @user-21, thanks for raising this issue and sorry for the slow reply from my side.\r\nSo currently `nan` is not a supported value, only 0 and 1 are supported. I can try to look into what it will take to support `nan` as a value. To my understanding the `nan` option means in sklearn that values will be ignored when calculating the average. I can try to look into what it will take to implement this into torchmetrics"
+      },
+      {
+        "author": "user-21",
+        "body": "@maintainer-2 thanks for clarifying, and yes ignoring these values in averages is the goal 👍 "
+      },
+      {
+        "author": "user-12",
+        "body": "I'm using v1.4.0post0 and can definitely pass NaN with `zero_division` to the metrics affected by #2198 and they work as expected (I think) when the value of `average` is either `micro` or `none` but return NaN in the case of `macro` (bug), so I'm computing it manually from the classwise results. Other metrics such as accuracy and specifity also accept `zero_division` because of inheritance, but complain when it is set to NaN.\r\n\r\nI think that the ideal situation would be for absent and ignored classes to be assigned a NaN score or dropped, but this may not be that straightforward to implement because one class might be absent in one sample in a given batch but not in another, so we probably can't rely on batchwise class supports and have to work sample by sample. You can get `StatScores` to output samplewise NaNs for both absent and ignored classes, but then reducing this to a batchwise metric is a bit too much for me right now."
+      }
+    ]
+  },
+  "1723": {
+    "number": 1723,
+    "title": "Parameter of MulticlassStatScores and MultilabelStatScores to control which classes/labels to include the averages",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nAdd a parameter to `MulticlassStatScores` and `MultilabelStatScores` to control which classes/labels to include in averaging. \r\n\r\n### Motivation\r\n\r\nSklearn's [`precision_recall_fscore_support`](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.precision_recall_fscore_support.html#sklearn.metrics.precision_recall_fscore_support) allows users to define the labels used in averaging the computed metrics (as well as the order if the metrics are not averaged). This allows calculating \"a multiclass average ignoring a majority negative class\". E.g. in my use-case (sequence tagging), I do want to consider datapoints which have an out-tag (\"O\", meaning they are not tagged), as they might contribute to the false positives of other classes. Hence, `ignore_index` is not sufficient, as the datapoints would be completely excluded.\r\n\r\n### Pitch\r\n\r\nAdd a parameter `classes` to  `MulticlassStatScores` and `labels` to `MultilabelStatScores` to limit the calculation of true positives, fp, fn, and tn to these classes/labels. The resulting averages (e.g. f1-score, accuracy) would then be an average only of the selected classes/labels.\r\n\r\nIf the `classes` / `labels` parameter is specified, `num_classes` / `num_labels` would not need to be set (or if they are set and do not agree with the passed number of classes/labels, an Exception would need to be raised).\r\n\r\n\r\n\r\n<!-- A clear and concise description of what you want to happen. -->\r\n\r\n### Alternatives\r\n\r\nCurrently, I am using a very hacky solution:\r\n\r\n```python\r\ndef metric_with_certain_labels_only(\r\n    metric_type: Union[Type[MulticlassStatScores], Type[MultilabelStatScores]],\r\n    included_labels: torch.Tensor,\r\n    average: Optional[Literal[\"micro\", \"macro\", \"weighted\", \"none\"]] = \"macro\",\r\n    **kwargs,\r\n):\r\n    metric_average = average\r\n\r\n    if average == \"micro\":\r\n        metric_average = \"none\"\r\n\r\n    metric = metric_type(average=metric_average, **kwargs)\r\n\r\n    _final_state_inner = metric._final_state\r\n\r\n    def _final_state_wrapper():\r\n        state = _final_state_inner()\r\n\r\n        # manipulate the state variable\r\n        new_state = (s[torch.tensor(included_labels)] for s in state)\r\n\r\n        return new_state\r\n\r\n    metric._final_state = _final_state_wrapper  # type: ignore\r\n\r\n    if average == \"micro\":\r\n        compute_inner = metric.compute\r\n\r\n        def compute_wrapper():\r\n            metric.average = \"micro\"\r\n            result = compute_inner()\r\n            metric.average = \"none\"\r\n            return result\r\n\r\n        metric.compute = compute_wrapper  # type: ignore\r\n\r\n    return metric\r\n```\r\n\r\n\r\nI am not happy with this solution for two reasons:\r\n\r\n1. It would be nicer, if included_labels would be part of the metric init signature directly or (at least) would be provided in a wrapper. It is possible to rewrite this helper function as a Wrapper, however this would require changing the averaging on an already created metric (and recreating an new state), and (more impor",
+    "comments": []
+  },
+  "3336": {
+    "number": 3336,
+    "title": "`_sync_dist` hangs for `dist_reduce_fx=None` list states when ranks have different list lengths",
+    "state": "open",
+    "body": "## Description\n\n`_sync_dist` deadlocks when a metric uses `dist_reduce_fx=None` list states and different ranks have different numbers of entries in those lists. This affects `MeanAveragePrecision`, retrieval metrics, and any custom metric that declares list states with `dist_reduce_fx=None`.\n\nThe same class of bug was fixed for `dist_reduce_fx=\"cat\"` in #2468 (v1.3.x), but `None`-reduction states were not covered and require a fundamentally different fix.\n\n### To Reproduce\n\nProvided are two code samples to reproduce, one that is hypothetical where I construct a \"None reduction list-based metric\", and another that is more realistic using the `MeanAveragePrecision` metric.\n\n\n<details>\n  <summary>Realistic example</summary>\n\n```python\n\"\"\"\nMinimal reproduction: MeanAveragePrecision hangs on compute() with\nsync_on_compute=True when one rank has empty states (no update() called).\n\nMeanAveragePrecision uses dist_reduce_fx=None for all its list states.\nThe empty-list corner case was fixed for dist_reduce_fx=\"cat\" in\nhttps://github.com/Lightning-AI/torchmetrics/pull/2468 (v1.3.x),\nbut dist_reduce_fx=None was not covered.\n\nRun: torchrun --nproc_per_node=2 repro_torchmetrics_hang.py\nExpected: hangs at metric.compute() on rank 1 (waiting for all_gather)\n\"\"\"\n\nimport signal\nimport torch\nimport torch.distributed as dist\nfrom torchmetrics.detection import MeanAveragePrecision\n\n# Auto-kill after 30s so CI doesn't wait forever\nsignal.alarm(30)\n\ndef make_sample_prediction(device):\n    \"\"\"Create a minimal valid prediction + target for MeanAveragePrecision.\"\"\"\n    preds = [\n        {\n            \"boxes\": torch.tensor([[10.0, 10.0, 50.0, 50.0]], device=device),\n            \"scores\": torch.tensor([0.9], device=device),\n            \"labels\": torch.tensor([1], device=device),\n        }\n    ]\n    targets = [\n        {\n            \"boxes\": torch.tensor([[10.0, 10.0, 50.0, 50.0]], device=device),\n            \"labels\": torch.tensor([1], device=device),\n        }\n    ]\n    return preds, targets\n\n\ndef main():\n    dist.init_process_group(\"nccl\")\n    rank = dist.get_rank()\n    device = torch.device(f\"cuda:{rank}\")\n    torch.cuda.set_device(device)\n\n    metric = MeanAveragePrecision(sync_on_compute=True).to(device)\n\n    if rank == 1:\n        preds, targets = make_sample_prediction(device)\n        metric.update(preds, targets)\n        print(f\"[Rank {rank}] Called update() with 1 sample\")\n    else:\n        print(f\"[Rank {rank}] Skipping update() -- states remain as empty lists\")\n\n    print(f\"[Rank {rank}] Calling compute()...\")\n    # Rank 0: all 9 list states are [] -> apply_to_collection finds 0 tensors -> 0 all_gather calls\n    # Rank 1: list states are populated  -> apply_to_collection finds N tensors -> N all_gather calls\n    # Rank 1 blocks at the first all_gather waiting for rank 0 -> HANG\n    result = metric.compute()\n    print(f\"[Rank {rank}] compute() returned: {result}\")  # rank 1 never reaches this\n\n    dist.destroy_process_group()\n\n\nif __name__ == \"__main__\":\n    main(",
+    "comments": []
+  },
+  "2287": {
+    "number": 2287,
+    "title": "Calculations nDCG using GPU are 2x slower than CPU",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nHi TorchMetrics Team,\r\n\r\nIn the following example, nDCG calculation using GPU tensors spent 2 times longer the time using CPU tensors and numpy array.\r\n\r\n### To Reproduce\r\n\r\nThe codes were tested on both Google Colab and a Slurm cluster.\r\n\r\n<!-- If you have a code sample, error messages, stack traces, please provide it here as well -->\r\n\r\n<details>\r\n  <summary>Code sample</summary>\r\n\r\n```python\r\nimport timeit\r\n\r\nimport numpy as np\r\nimport torch\r\nfrom sklearn.metrics import ndcg_score\r\nfrom torchmetrics.functional.retrieval import retrieval_normalized_dcg\r\n\r\n# p and t are examples given by both sklearn and torchmetrics\r\np = [.1, .2, .3, 4, 70] * 100\r\nt = [10, 0, 0, 1, 5] * 100\r\n\r\nnumber = int(1e4)\r\n\r\n# 1. BENCHMARK: numpy array\r\npreds = np.asarray([p])\r\ntarget = np.asarray([t])\r\n\r\ndef a():\r\n    return ndcg_score(target, preds)\r\n\r\nprint(f'numpy array: {timeit.timeit(\"a()\", setup=\"from __main__ import a\", number=number):.4f}')\r\n\r\n# 2. cpu tensor\r\npreds_cpu = torch.tensor(p)\r\ntarget_cpu = torch.tensor(t)\r\n\r\nassert preds_cpu.device == torch.device(\"cpu\")\r\n\r\ndef b():\r\n    retrieval_normalized_dcg(preds_cpu, target_cpu)\r\n\r\nprint(f'CPU tensor: {timeit.timeit(f\"b()\", setup=\"from __main__ import b\", number=number):.4f}')\r\n\r\n# 3. gpu tensor\r\npreds_gpu = torch.tensor(p, device=\"cuda\")\r\ntarget_gpu = torch.tensor(t, device=\"cuda\")\r\n\r\nassert preds_gpu.device == torch.device(\"cuda:0\")\r\n\r\ndef c():\r\n    retrieval_normalized_dcg(preds_gpu, target_gpu)\r\n\r\nprint(f'GPU tensor: {timeit.timeit(\"c()\", setup=\"from __main__ import c\", number=number):.4f}')\r\n```\r\n\r\nResults:\r\n```\r\n# Tesla T4\r\nnumpy array: 6.4896\r\nCPU tensor: 5.8501\r\nGPU tensor: 10.4120\r\n```\r\n\r\nI also tested the codes on the Slurm Cluster I'm currently using, the GPU here is an A100.\r\n\r\n```\r\nnumpy array: 3.8700\r\nCPU tensor: 2.9305\r\nGPU tensor: 7.7575\r\n```\r\n\r\n<!-- Ideally attach a minimal code sample to reproduce the decried issue.\r\nMinimal means having the shortest code but still preserving the bug. -->\r\n\r\n</details>\r\n\r\n### Expected behavior\r\n\r\nThe performance of calculation using GPU tensors, if not superior, should be at least close to CPU tensors.\r\n\r\n### Environment\r\n\r\n- TorchMetrics version (and how you installed TM, e.g. `conda`, `pip`, build from source): 1.2.1 (pip)\r\n- Python & PyTorch Version (e.g., 1.0): Python 3.10.12 and 3.10.13, Torch 2.1.0 and 2.1.1\r\n- Any other relevant information such as OS (e.g., Linux): Ubuntu 22.04.3 LTS and Linux 5.4.204-ql-generic-12.0-19 x86_64\r\n\r\n### Additional context\r\n\r\n<!-- Add any other context about the problem here. -->\r\n",
+    "comments": [
+      {
+        "author": "user-24",
+        "body": "> Thank you for bringing this up. Have you observed it also with other metric then NDCG?\r\n\r\nI only tested NDCG at the time submitting the issue. But now I understand the cause of the issue.\r\n\r\nThe inferior performance of GPU tensor results from the fact that the current implementation of NDCG does not utilize the parallel computation provided by GPU -- TorchMetrics NDCG only accept 1D tensor as inputs.\r\n\r\nTo prove my observation, I tried another metric, multilabel_precision. The results showed that calculation on GPU is faster than CPU when there are hundreds of instances. However, when there is only one instance, calculation on CPU is faster than on GPU.\r\n\r\n#### Scripts for multilabel_precision performance test\r\n```python\r\nimport timeit\r\n\r\nimport torch\r\nfrom torchmetrics.functional.classification import multilabel_precision\r\n\r\nnumber = int(1e3)\r\n\r\n# change 400 to 1 for comparison experiments\r\ny_true = torch.randint(2, (400, 300))\r\ny_pred = torch.randint(2, (400, 300))\r\n\r\n# CPU tensor\r"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "@user-24 thanks for reporting this issue. Sorry for the long reply time from my side.\r\nI been looking at the implementation of our metric for a bit of time now and it is not correct that the implementation is not using parallel computations on GPU. Just because the input is 1D does not mean that the computations cannot be parallelized. \r\nFor example doing a simple sum\r\n![image](https://github.com/Lightning-AI/torchmetrics/assets/24896311/0dfd855f-9bf2-4e80-996e-11983e4eaa3e)\r\nis equally fast, regardless of input is a 1d or 2d tensor.\r\n\r\nLooking at the code, it seems that the operation that takes up most computational time is `torch.unique` used [here](https://github.com/Lightning-AI/torchmetrics/blob/35bdeb6ee877499f495f4fa7c27ec0aec676c4d9/src/torchmetrics/functional/retrieval/ndcg.py#L34). From small experiments, it seems that this operation alone is a bottleneck:\r\n![image](https://github.com/Lightning-AI/torchmetrics/assets/24896311/fdf9d4bf-fecf-48d4-a750-49602b61c061)\r\nthe torch g"
+      },
+      {
+        "author": "user-25",
+        "body": "Hi!\r\n\r\nI'm running into the same issue where the ndcg metric calculation is taking too long and becomes impractical to use while training. Calculating ndcg metric for every step with tensor size around (8000, 40) [batch_size, list_size] takes 2s to complete, and is way higher than the model forward pass.\r\n\r\nAfter looking into the [metric class implementation](https://github.com/Lightning-AI/torchmetrics/blob/bfcd4b0e5bfa1256ef9c142956a86df57542a668/src/torchmetrics/retrieval/base.py#L166), I believe it is not because of the torch.unique function but the fundamental design flaw of the RetrievalMetric. The RetrievalMetric class splits the input tensor with the indexes into a list of tensors and iterates sequentially over that list, which is very slow when the number of query groups is high.\r\n\r\nThe tensorflow ranking implementation of the nDCG metric with the same inputs only takes about 50ms to complete."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "> ~15 times slower for large arrays\r\n\r\nthat is a huge difference\r\n\r\n> I believe it is not because of the torch.unique function but the fundamental design flaw of the RetrievalMetric. The RetrievalMetric class splits the input tensor with the indexes into a list of tensors and iterates sequentially over that list, which is very slow when the number of query groups is high.\r\n\r\n@user-25 would yu be interested and suggest a more efficient solution, sending a PR?"
+      },
+      {
+        "author": "user-26",
+        "body": "For whatever it's worth, I used ChatGPT O3-Pro to help \"vibe code\" a hyper-optimized ndcg implementation based on the discussion here.  I'm sharing it here in case it's of use to anyone else.\n\nBefore you balk - it was an iterative process involving multiple test harnesses checking for metric accuracy, torch profiling, benchmarking across multiple batch/item/top_k sizes, as well as testing against a real-world training data (4096 sized batches with sequences of 150 masked at various sizes). I guided it through the process myself, analyzing benchmarks and profile traces - while I am not a NDCG/retrieval metric expert, I am an experienced MLE.\n\nThe results are kind of astronomical - in production (4096x(2-150) batches), we replaced a sklearn ndcg calculation that took *~4 seconds* and reduced it to about *3ms* with the GPU optimized ndcg. It's worth noting that in some benchmarks, the torchmetrics implementation is slower than sklearn. The benchmarks for both CPU and GPU show performance "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-26 this is great! Would you please be interested in sending it as PR to improve the TM experience for everyone? 🐰  (You may say we can copy the code, but I would prefer it would be your own contribution :)"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "> I used ChatGPT O3-Pro to help \"vibe code\" a hyper-optimized ndcg implementation based on the discussion here.\n\nwould be curious what your approach was, and it could also be applied to other fixes or not-requested-yet metrics improvements?"
+      },
+      {
+        "author": "user-26",
+        "body": "Sure thing - I'll put it in on Monday when I'm at my work machine.\n\nIt's possible it could work more generally - I think having reference implementations (even if they are in other languages) is probably key to a strong starting point (and for verifying) - I imagine it could make a solid attempt at writing it based on a white paper, but I wouldn't feel truly confident that it gets it right. It helps that nDCG is a pretty historied and straightforward metric.\n\nBasically, I explained the problem (TM GPU implementation is slower than expected), provided a link to this GH issue so it could read prior discussion on potential improvements, then gave it a link to the TM implementation as well as the TF ranking implementation, and asked it to give strategies and code examples of how we could write in a more GPU-optimal way, and to give explanations on why each approach would improve speed. I reviewed the work and thought it seemed like a pretty solid plan, and included a potential implementati"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Sounds cool, and what is your tooling/IDE?"
+      },
+      {
+        "author": "user-26",
+        "body": "Sorry about this, I've been super busy - going to try to get to it this week.\n\nGenerally I work in VSCode for proper projects (in this case, Cursor, which is a fork of VSCode). For the development of this fast_ndcg, it was basically O3-Pro (in browser) then using Cursor in agent mode with my instructions to construct tests/benchmarks and the optimization plan from o3-pro, talking it through iterations, profile trace results, etc"
+      }
+    ]
+  },
+  "1989": {
+    "number": 1989,
+    "title": "AUROC reported wrong value when called differently",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nAUROC calculation is different when being called differently. \r\n\r\n### To Reproduce\r\n\r\nCopy the following code and run. \r\n\r\nNote that when .update() is called, values that are greater than 1.0 will be scaled using the sigmoid activation, values that is less than 1.0 will not be scaled. This result in the compute step to compute with the wrong input values. However, directly calling the auroc will not rescale the value\r\n\r\n```python\r\nfrom torchmetrics import AUROC\r\nfrom torch import tensor\r\n\r\npp = tensor([tensor([1.2]), tensor([0.9678]), tensor([1.7])])\r\ntt = tensor([tensor([1]), tensor([0]), tensor([1])])\r\n\r\nauroc = AUROC(num_classes=1, task=\"binary\")\r\nprint(\"Forward:\", auroc(pp, tt))\r\n\r\n\r\nfor p, t in zip(pp, tt):\r\n    auroc.update(p, t)\r\n    print(auroc.preds, auroc.target)\r\n\r\nprint(\"Update and Compute:\", auroc.compute())\r\n\r\n```\r\n\r\n\r\n### Expected behavior\r\n\r\nThe reported AUROC metrics for both cases should be the same.\r\n\r\n### Environment\r\n\r\n- TorchMetrics 1.0.3\r\n- Python 3.9.16\r\n- PyTorch 1.13.1\r\n",
+    "comments": [
+      {
+        "author": "user-28",
+        "body": "Please don't close, this is important"
+      }
+    ]
+  },
+  "2259": {
+    "number": 2259,
+    "title": "Option to return non-standardized AUC value when `max_fpr` is set for BinaryAUROC",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nAdding a simple keyword argument to control where McClish's standardization is applied over AUC or not. Alternatively, could return a pair of standardized and non-standardized AUCs when the argument is set. \r\n\r\n### Motivation\r\n\r\nCurrently, `BinaryAUROC` only returns the standardized AUC according to McClish's method. However sometimes the non-standardized version might be requested. In my specific case, when I set `max_fpr` to `0.2` I was not expecting `BinaryAUROC` to return values over `0.2` to me as I expected `0.2` to be the theoretical max pAUC.\r\n\r\n### Pitch\r\n\r\nInstead of offloading the process of de-standardizing the pAUC scores to the user, this can be done within `torchmetrics` with the addition of a simple keyword argument. Furthermore, the existence of this keyword argument and it's corresponding docstring entry makes it more concise to the user what kind of output they should be expecting from the method. Additionally, the docstring should explicitly explain what the *standard* AUC means by either providing an external link or preferably by providing the actual formulation of the standardization process.\r\n\r\n### Alternatives\r\n\r\nThe de-standardization process can be done out-of-the-box by the user by reverting the normalization process described by McClish, 1989. This has two immediate drawbacks:\r\n\r\n- Reverting the standardization can cause mildly significant and unnecessary precision error propagation.\r\n- The de-standardized score is already calculated and readily available in the current implementation, it simply needs to be returned per user's needs with minimal changes to the code and without introducing any breaking changes.\r\n\r\n### Additional context\r\n\r\nI would be happy to submit a PR for this myself if the pitch is approved",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Hi @user-29, thanks for raising this issue (and sorry for not getting back to you before now).\r\nI am not completly sure what you are proposing in this issue. The `max_fpr` feature was proposed a long time ago and is just implemented to be the exact same as in sklearn:\r\nhttps://scikit-learn.org/stable/modules/generated/sklearn.metrics.roc_auc_score.html\r\nyou are completely right that we should probably include a reference to the specific standardization being used.\r\n\r\nMaybe the problem is that I am no expert in the standardization process, so maybe you could either provide more details on what you are proposing and in particular what changes to the user interface you are proposing?"
+      },
+      {
+        "author": "user-29",
+        "body": "Hi @maintainer-2, sorry for the late response as I am just coming back from a vacation.\r\n\r\nI understand that most of the implementations in `torchmetrics` are meant to mirror their counterparts from existing libraries and a cornerstone of my proposal was maintaining this integrity while offering further functionality for users who might need it.\r\n\r\nI will attempt to describe a prototype of what I'm proposing as a reference. Here is the current implementation of the function `_binary_auroc_compute`, taken from [here](https://github.com/Lightning-AI/torchmetrics/blob/master/src/torchmetrics/functional/classification/auroc.py) verbatim:\r\n\r\n```python\r\ndef _binary_auroc_compute(\r\n    state: Union[Tensor, Tuple[Tensor, Tensor]],\r\n    thresholds: Optional[Tensor],\r\n    max_fpr: Optional[float] = None,\r\n    pos_label: int = 1,\r\n) -> Tensor:\r\n    fpr, tpr, _ = _binary_roc_compute(state, thresholds, pos_label)\r\n    if max_fpr is None or max_fpr == 1 or fpr.sum() == 0 or tpr.sum() == 0:\r\n        "
+      }
+    ]
+  },
+  "1727": {
+    "number": 1727,
+    "title": "`binary_auroc` has various bugs on MPS device",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nThe method `torchmetrics.functional.classification.binary_auroc` has at least two bugs when run on an MPS device. Bug 1 seems more serious than bug 2, and I suspect the bugs are related.\r\n\r\nTo demonstrate the two bugs we will use the following code.\r\n\r\n```python\r\nimport torch\r\nfrom torchmetrics.functional.classification import binary_auroc\r\n\r\ntorch.manual_seed(42)\r\n\r\ndevice_cpu = torch.device(\"cpu\")\r\ndevice_mps = torch.device(\"mps\")\r\n\r\ndef test_auroc(n, thresholds_cpu, thresholds_mps):\r\n    preds_cpu = torch.rand(n, device=device_cpu)\r\n    target_cpu = torch.rand(n, device=device_cpu).round().int()\r\n\r\n    preds_mps = preds_cpu.clone().to(device_mps)\r\n    target_mps = target_cpu.clone().to(device_mps)\r\n\r\n    auroc_cpu = binary_auroc(preds_cpu, target_cpu, thresholds=thresholds_cpu)\r\n    auroc_mps = binary_auroc(preds_mps, target_mps, thresholds=thresholds_mps)\r\n\r\n    print(\"CPU AUROC: \", auroc_cpu.item())\r\n    print(\"MPS AUROC: \", auroc_mps.item())\r\n```\r\n\r\n### Bug 1: using no thresholds and enough data always gives 0 AUROC score on MPS device\r\nCalling\r\n```python\r\ntest_auroc(2**16, None, None)\r\n```\r\nprints\r\n```\r\nCPU AUROC:  0.4983136057853699\r\nMPS AUROC:  0.4983136057853699\r\n```\r\nwhich seems reasonable. However, calling\r\n```python\r\ntest_auroc(2**17, None, None)\r\n```\r\nprints\r\n```\r\nCPU AUROC:  0.49919775128364563\r\nMPS AUROC:  0.0\r\n```\r\nwhich seems wrong. I would have expected the MPS AUROC score to be identical to the CPU AUROC score, and with even greater certainty I would have expected both AUROC scores to be much closer to 0.5 than to 0.\r\n\r\n### Bug 2: using thresholds and sufficiently small data gives inconsistent AUROC score on MPS device\r\nCalling\r\n```python\r\ntest_auroc(2**17, 128, 128)\r\n```\r\nprints\r\n```\r\nCPU AUROC:  0.4991825520992279\r\nMPS AUROC:  0.4991825520992279\r\n```\r\nwhich seems reasonable. However, calling\r\n```python\r\ntest_auroc(2**16, 128, 128)\r\n```\r\nprints\r\n```\r\nCPU AUROC:  0.4983268976211548\r\nMPS AUROC:  0.4983268678188324\r\n```\r\nwhich seems wrong. I would have expected the MPS AUROC score to be identical to the CPU AUROC score, but it deviates slightly. I am not sure whether or not to expect such a deviation, but I'm surprised it deviates for small inputs but not for large. This could be due to the deviations canceling out for sufficiently large input, but since this happens at exactly the same input size as the the one triggering bug 1, I suspect bug 2 is related to bug 1.\r\n\r\n### Bug 3: wrong type hint in return type in `binary_auroc`\r\nThe return type hint for `torchmetrics.functional.classification.binary_auroc` says it returns a `Tuple[Tensor, Tensor, Tensor]`, but as seen in the above code it really returns just a `Tensor`. I believe the type hint should be corrected to `Union[Tensor, Tuple[Tensor, Tensor, Tensor]]`?\r\n\r\n### Environment\r\n\r\n- TorchMetrics version (from `pip`): 0.11.4\r\n- Python version: 3.11.2\r\n- PyTorch Version: 2.0.0\r\n- OS: Mac\r\n",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Hi @user-30,\r\nThanks for reporting the issues. Sadly I do not have access to an MPS accelerated device, so I will have a hard time debugging the issue. Maybe @user-42 you can help out debugging the issue 1 which seem to be most severe.\r\n\r\nHere are  some input for the rest:\r\n\r\n### Bug 1\r\nWhen you report:\r\n```python\r\ntest_auroc(2**16, None, None)\r\nCPU AUROC:  0.4983136057853699\r\ntest_auroc(2**17, 128, 128)\r\nCPU AUROC:  0.4991825520992279\r\n```\r\n\r\nI can confidently say that this is within the range of values you can expect, and that you should not necessarily expect a value of 0.5 even for very large random input. Just try adding the following code to your script:\r\n\r\n```python\r\nfrom sklearn.metrics import roc_auc_score\r\nprint(\"sklearn AUROC: \", roc_auc_score(target_cpu.cpu(), preds_cpu.cpu()))\r\n```\r\n\r\nand you will see that sklearn returns the exact same values as us. Calculating the area under the roc curve is an approximation and it is therefore never exact.\r\n\r\n### Bug 2\r\n\r\nYou report:\r\n`"
+      },
+      {
+        "author": "user-30",
+        "body": "Hello @maintainer-2, thanks for looking into this. You misunderstand some of my remarks, I will attempt to clarify below.\r\n\r\nRegarding your remark to bug 1, the fact that AUROC on CPU returns different results for `n = 2**16` and `n = 2**17`, respectively, irregardless of the thresholds used, and that both results differ from 0.5, is not an issue at all, and it is to be expected, as you write. The sole issue here is that AUROC on MPS returns 0 for `n >= 2**17`.\r\n\r\nRegarding your remark to bug 2, I still think this is a bug, but you are right in that it is of no issue to me. The reason why I think it is a bug is, as explained in my original post, because the AUROC scores differ on CPU and MPS _only when_ `n <= 2**16`.  If they had also differed for `n >= 2**17` I would not believe it to be a bug. I have a feeling bug 2 is a direct consequence of bug 1, and it might be of help to track down bug 1."
+      },
+      {
+        "author": "maintainer-2",
+        "body": "> Hello @maintainer-2, thanks for looking into this. You misunderstand some of my remarks, I will attempt to clarify below.\r\n\r\nI am so sorry, never my intention to misunderstand your remarks :]\r\n\r\n> Regarding your remark to bug 1, the fact that AUROC on CPU returns different results for `n = 2**16` and `n = 2**17`, respectively, irregardless of the thresholds used, and that both results differ from 0.5, is not an issue at all, and it is to be expected, as you write. The sole issue here is that AUROC on MPS returns 0 for `n >= 2**17`.\r\n\r\nAlright, that we can completely agree is a issue and should be looked into. I wonder if it is something we do in torchmetrics or it is some `torch` operator that has a bug for large inputs (when `thresholds=None`)\r\n\r\n> Regarding your remark to bug 2, I still think this is a bug, but you are right in that it is of no issue to me. The reason why I think it is a bug is, as explained in my original post, because the AUROC scores differ on CPU and MPS _only "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "> Alright, I get your point. Lets try to get bug 1 solved first, and then see if bug 2 is also solved. If it still persist, I am not sure if we will look further into it when the difference is so small, but it need to be explored at least if there is a obvious problem.\r\n\r\n@user-42 could you pls help here?"
+      },
+      {
+        "author": "user-31",
+        "body": "@maintainer-1 @maintainer-2 is there any plan to fix this?"
+      },
+      {
+        "author": "user-32",
+        "body": "I could reproduce the error on an Apple M3 Pro chip and `torch==2.2.1`. The issue boils down to an error in torch at [this line](https://github.com/Lightning-AI/torchmetrics/blob/master/src/torchmetrics/functional/classification/precision_recall_curve.py#L69).\r\n\r\nIt turns out that padding for large vector is not well supported on Silicon chips. The following snippet should summarise the issue:\r\n\r\n```python\r\nimport torch\r\nimport torch.nn.functional as F\r\n\r\nvec_cpu = F.pad(torch.arange(2**15, device=\"cpu\"), [0, 1], value=2)\r\nprint(vec_cpu)\r\n# tensor([    0,     1,     2,  ..., 65534, 65535,     2])\r\n\r\nvec_mps = F.pad(torch.arange(2**15, device=\"mps\"), [0, 1], value=2)\r\nprint(vec_mps)\r\n# tensor([    0,     1,     2,  ..., 32766, 32767,     2], device='mps:0')\r\n\r\nvec_cpu_large = F.pad(torch.arange(2**17, device=\"cpu\"), [0, 1], value=2)\r\nprint(vec_cpu_large)\r\n# tensor([    0,     1,     2,  ..., 65534, 65535,     2])\r\n\r\nvec_mps_large = F.pad(torch.arange(2**17, device=\"mps\"), [0, 1], value="
+      },
+      {
+        "author": "maintainer-1",
+        "body": "cc: @user-41 @user-43 "
+      }
+    ]
+  },
+  "1900": {
+    "number": 1900,
+    "title": "Implement surface distance/dice scores",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nHi! It would be great to include surface distance/dice scores from https://github.com/deepmind/surface-distance ( https://docs.monai.io/en/stable/metrics.html#average-surface-distance, https://docs.monai.io/en/stable/metrics.html#surface-dice).\r\n\r\n\r\n### Motivation\r\n\r\nNSD (Normalized Surface DICE) is quite present in the medical image segmentation community.\r\n\r\n",
+    "comments": []
+  },
+  "2473": {
+    "number": 2473,
+    "title": "Metric not moved to device and invalids the cpu-gpu offloading when combining with DeepSpeed",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\n<!-- A clear and concise description of what the bug is. -->\r\nversion 1.3.1\r\n\r\n1) Similar issue as: #531 when using the following code:\r\n\r\nwhen running the following code:\r\n```py\r\nclass MyModel(LightningModule):\r\n  def __init__(self):\r\n            self.metrics: ModuleDict[str, MetricCollection] = ModuleDict(\r\n                {\r\n                    \"train_metric\": MetricCollection(\r\n                        {\r\n                            \"train_accuracy_micro\": Accuracy(\r\n                                task=\"multiclass\", num_classes=3, average=\"micro\"\r\n                            )\r\n                        }\r\n                    ),\r\n                    \"val_metric\": MetricCollection(\r\n                        {\r\n                            \"val_accuracy_micro\": Accuracy(\r\n                                task=\"multiclass\", num_classes=3, average=\"micro\"\r\n                            ),\r\n                            \"val_auroc\": ClasswiseWrapper(\r\n                                AUROC(task=\"multiclass\", num_classes=3, average=None), labels=[\"1\", \"2\", \"3\"],\r\n                            )\r\n                        }\r\n                    ),\r\n                }\r\n            )\r\n\r\n  def forward(self, input):\r\n    print(f\"self.device: {self.device}\")\r\n    print(f\"metric device: {self.metrics['train_metric']['train_accuracy_micro'].device}\")\r\n```\r\n\r\nI got:\r\n```\r\nself.device: cuda:0\r\nself.accuracy.device: cpu\r\n\r\n```\r\n2) When running with deep speed strategy, it gives me:\r\n`Invalidate trace cache @ step 327: expected module 365, but got module 365`, which seems to also slow down the deep speed evaluation. (tried both one or multiple GPUs with the following config and both have the same alert)\r\n\r\nThe deep speed config is:\r\n```json\r\n{\r\n    \"bf16\": {\r\n        \"enabled\": \"auto\"\r\n    },\r\n    \"zero_optimization\": {\r\n        \"stage\": 3,\r\n        \"offload_param\": {\r\n            \"device\": \"cpu\",\r\n            \"pin_memory\": true\r\n        },\r\n        \"offload_optimizer\": {\r\n            \"device\": \"cpu\",\r\n            \"pin_memory\": true\r\n        },\r\n        \"overlap_comm\": true,\r\n        \"contiguous_gradients\": true,\r\n        \"sub_group_size\": 1e9,\r\n        \"reduce_bucket_size\": \"auto\",\r\n        \"zero_hpz_partition_size\": 4,\r\n        \"zero_quantized_gradients\": true,\r\n        \"stage3_prefetch_bucket_size\": \"auto\",\r\n        \"stage3_param_persistence_threshold\": \"auto\",\r\n        \"stage3_max_live_parameters\": 1e9,\r\n        \"stage3_max_reuse_distance\": 1e9,\r\n        \"stage3_gather_16bit_weights_on_model_save\": true\r\n    },\r\n    \"steps_per_print\": 2000,\r\n    \"train_micro_batch_size_per_gpu\": 16,\r\n    \"wall_clock_breakdown\": false\r\n}\r\n```\r\n\r\nTrainer created via:\r\n\r\n```py\r\ntrainer = L.Trainer(\r\n            # Hardware Setup\r\n            # --------------------------------\r\n            devices=self.num_gpus_per_node,\r\n            num_nodes=self.num_nodes,\r\n            accelerator=\"gpu\",\r\n            # Training Configuration\r\n            # --------------------------------\r\n    ",
+    "comments": [
+      {
+        "author": "user-35",
+        "body": "I can take a look at this"
+      },
+      {
+        "author": "user-35",
+        "body": "Can you share a minimal runnable script and the deepspeed config you are using. I got this:\n```\nEpoch 0:   0%|                                                     | 0/7 [00:00<?, ?it/s]self.device: cuda:0\ntrain_accuracy_micro.device: cuda:0\nEpoch 0:  14%|█████▏                              | 1/7 [00:00<00:01,  4.41it/s, v_num=4]self.device: cuda:0\ntrain_accuracy_micro.device: cuda:0\nEpoch 0:  29%|██████████▎                         | 2/7 [00:00<00:00,  8.49it/s, v_num=4]self.device: cuda:0\ntrain_accuracy_micro.device: cuda:0\nEpoch 0:  43%|███████████████▍                    | 3/7 [00:00<00:00, 12.33it/s, v_num=4]self.device: cuda:0\ntrain_accuracy_micro.device: cuda:0\nEpoch 0:  57%|████████████████████▌               | 4/7 [00:00<00:00, 15.94it/s, v_num=4]self.device: cuda:0\ntrain_accuracy_micro.device: cuda:0\nEpoch 0:  71%|█████████████████████████▋          | 5/7 [00:00<00:00, 19.33it/s, v_num=4]self.device: cuda:0\ntrain_accuracy_micro.device: cuda:0\nEpoch 0:  86%|████████████████████"
+      }
+    ]
+  },
+  "3096": {
+    "number": 3096,
+    "title": "Provide BinaryAUROC support for Masked/Sparse Labels",
+    "state": "open",
+    "body": "## 🚀 Feature\n\nCurrently the `BinaryAUROC` metric update step expects a square matrix at each iteration. In a multi-output training regiment involving masked outputs, the current AUROC metrics class fails to offer support.\n\nThis feature proposes to provide an additional metric, `MaskedBinaryAUROC`, to support calculating label-specific and aggregate AUROC when each batch step leverages sparse/nested/masked labels.\n\n### Motivation\n\nI had to create a custom class for this functionality for a professional project, and I'd like to contribute it. Also, my company would like to become involved in the open source community by promoting code when possible.\n\n### Pitch\n\nCreate a `MaskedBinaryAUROC` metric with similar functionality to `AUROC`, but it will also take a mask at each iteration and only consider unmasked values in the final calculations.\n\nThe implementation is straightforward:\n\n0. preds/targets/mask states with List defaults\n1. `.update(preds, targets, mask)` by appending to the list\n2. `.compute()` will iterate through each column to calculate a per-label value by leveraging `torch.metrics.functional.binary_auroc` after applying the mask\n3. return mean of all column-wise auroc values\n\n### Alternatives\n\n- `SparseBinaryAUROC`: support a sparse tensor representation of the output labels instead of a dense output and a mask.\n- Extend functionality of `BinaryAUROC` instead of making a separate class\n\n### Additional context\n\nThere are additional related extensions of the `AUROC`, `MulticlassAUROC`, and `MultilabelAUROC` classes.",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "@user-36 are you interested in implementing this variation? 🐿 "
+      },
+      {
+        "author": "user-36",
+        "body": "@maintainer-1 thanks for picking up this issue. yes, I am interested!"
+      },
+      {
+        "author": "user-36",
+        "body": "@maintainer-1 Did you have any input on the implementation strategy?\n\nAlso, i found this contribution guide, [metrics docs](https://lightning.ai/docs/torchmetrics/stable/generated/CONTRIBUTING.html) is there any other guidelines I should be aware of? The README points to the Discord, but I didn't see anything there."
+      },
+      {
+        "author": "user-37",
+        "body": "Hi @user-36 \nPlease let me know if you're still planning to work on this. If not, I can pick it up."
+      }
+    ]
+  },
+  "3296": {
+    "number": 3296,
+    "title": "Installing torchmetrics causes GIL error even without usage",
+    "state": "open",
+    "body": "## 🐛 Bug\n\nError thrown:\n```\nFatal Python error: PyGILState_Release: thread state 0x7a0b1400fe30 must be current when releasing\nPython runtime state: finalizing (tstate=0x0000000000ba6ac8)\n\nThread 0x00007a0ecbe5c080 (most recent call first):\n  <no Python frame>\n```\n\n### To Reproduce\n\n<details>\n  <summary>Code</summary>\n\n```python\nfrom transformers import AutoModel\nimport torch, torchaudio\nfrom datasets import load_dataset, Audio\nfrom dataclasses import dataclass, field\nimport tomllib\nimport argparse\nimport os\nfrom itertools import islice\nfrom abc import abstractmethod\n# from torchmetrics.text import WordErrorRate\n\n@dataclass\nclass ModelConfig:\n    model_id: str = \"ai4bharat/indic-conformer-600m-multilingual\"\n    expected_sampling_rate: int = 16000\n\n@dataclass\nclass DataloaderConfig:\n    dataset_name: str = \"ai4bharat/IndicVoices\"\n    subset: str = \"hindi\"\n    split: str = \"train\"\n    streaming: bool = True\n\n@dataclass\nclass EvaluationConfig:\n    num_samples: int = 100\n\n@dataclass\nclass STTConfig:\n    model: ModelConfig = field(default_factory=ModelConfig)\n    dataloader: DataloaderConfig = field(default_factory=DataloaderConfig)\n    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)\n\n    def set_key_val_by_path(self, key: str, value_str: str):\n        key_parts = key.split(\".\")\n        node = self\n        for field_name in key_parts[:-1]:\n            node = getattr(node, field_name)\n        field_name = key_parts[-1]\n\n        old_value = getattr(node, field_name)\n        if old_value is None:\n            raise ValueError(\"We don't yet support setting keys with old_value=None\")\n\n        def typecast_val(field: str, val: str, _type: type):\n            # handle boolean separately since bool(\"false\") is True.\n            if _type is bool:\n                assert val.lower() in (\"true\", \"false\"), f\"Cannot assign {val} to {field}(bool)\"\n                return val.lower() == \"true\"\n            return _type(val)\n\n        field = type(node).__name__ + \".\" + field_name\n        new_value = typecast_val(field, value_str, type(old_value))\n\n        # set the new value.\n        setattr(node, field_name, new_value)\n        return field, old_value, new_value\n\n    @classmethod\n    def from_toml(cls, path: str):\n        with open(path, \"rb\") as f:\n            toml_cfg = tomllib.load(f)\n\n        def from_dict(dc_cls, field_to_value):\n            if field_to_value is None:\n                return dc_cls()\n\n            cls_field_names = {f.name for f in dc_cls.__dataclass_fields__.values()}\n            for key in field_to_value.keys():\n                if key not in cls_field_names:\n                    raise ValueError(f\"Unknown field: {dc_cls.__name__}.{key}\")\n\n            return dc_cls(**field_to_value)\n\n        model = from_dict(ModelConfig, toml_cfg.get(\"model\"))\n        dataloader = from_dict(DataloaderConfig, toml_cfg.get(\"dataloader\"))\n        evaluation = from_dict(EvaluationConfig, toml_cfg.get(\"evaluation\"))\n\n        config = cls(\n           ",
+    "comments": []
+  }
+}

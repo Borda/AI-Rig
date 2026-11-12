@@ -25,12 +25,14 @@ The installed plugin tree is immutable input. Resolve requested targets against 
 
 ## Lightweight Local Work
 
+<!-- policy-sibling: shared/native-skill-contract.md §Proportional Execution, skills/implement/SKILL.md §Lightweight Local Work and §Execution Route Selection; intentional divergence: management mutations remain parent-serial and native support is read-only. -->
+
 > Read and apply [Proportional Execution](../../shared/native-skill-contract.md#proportional-execution) before choosing the direct or detailed path.
 
 Use a parent-only path for a small, understood, reversible local change with bounded impact and existing task authorization. A code fix plus its regression test remains one change. Routing examples are optional; tests and documentation for one change do not create separate domains.
 
 1. Inspect the affected flow and applicable instructions; define a concise plan with core acceptance and deferred scope. Investigate an unknown cause before editing. Perform a brief parent self-challenge (not independent); accept the challenged plan under existing authority. Assign execution to the parent for indivisible work; management mutations remain parent-serial.
-2. Make the authorized change with the smallest coherent core. Consolidate the actual result and handoffs; reconcile conflicts and integrate before result review. Obtain one bounded independent challenge of the actual result and retain its findings and independence limits. Run the relevant acceptance check and configured lint/format checks; inspect the diff.
+2. Make the authorized change with the smallest coherent core. Consolidate the actual result and handoffs; reconcile conflicts and integrate before result review. Obtain one bounded independent challenge of the actual result and retain its findings and independence limits. Run the relevant acceptance check and configured lint/format checks; inspect the diff. After acceptance and configured checks pass, no critical findings remain, and shared confidence policy passes, run the [Local Git approval grant](../../shared/native-skill-contract.md#local-git-approval-grant) check and apply its completion-commit rules; otherwise record `commit skipped`. A user instruction for no commit, leave unstaged or to wait takes precedence.
 3. Report the outcome, verification, and material limits concisely. Do not create unnecessary standalone execution-plan artifacts, specialist packs, confidence worksheets, five-entry gate bundles, or final-handoff/result artifacts solely for this path. Reuse still-valid checks for unchanged source and environment.
 
 This path takes precedence over the detailed workflow and role examples below. Select the detailed workflow for medium/large or unexpectedly nontrivial work under Proportional Execution, an explicitly requested structured report/review, or work requiring independent specialist coverage. Actual runtime permissions, protected-state decisions, and project-required checks still apply. Missing parallel controls select parent-serial work; they do not require another permission request for already-authorized local edits.
@@ -43,13 +45,13 @@ Record the choice and reason in the existing plan or concise outcome. Use portab
 
 ## Parallel Adoption (Portable read-only)
 
-<!-- policy-sibling: skills/implement/SKILL.md (Parallel Adoption section) — near-duplicate, invariant text in shared/portable-parallel-read.md; also see skills/code-review/SKILL.md Workflow parallel-review section as a third divergent variant; check siblings before editing this section alone -->
+<!-- policy-sibling: skills/implement/SKILL.md (Parallel Adoption section) — near-duplicate, invariant text in shared/portable-parallel-read.md; check siblings before editing this section alone -->
 
 > Only when Execution Route Selection resolves to `parallel-read`, read [portable-parallel-read.md](../../shared/portable-parallel-read.md) before any child preparation; `serial`, `auto`, and native routes do not load it. The reference preserves the shared route gate, write-policy and approval rules, host-compatibility barrier, preflight and runtime-validation qualifiers, resource-lock declaration, fallback, acceptance, and stop rule; the consumer values below stay authoritative for this skill.
 
 This portable section permits only its promoted portable read-only route. Native disjoint read-only support may follow Proportional Execution; protected-target, approval, and propagation rules stay unchanged.
 
-Follow the [canonical G0–G8 execution flow](../../assets/images/parallel-execution-architecture.svg) for shared gate order and fork outcomes. This consumer's read-only inventory passes are bounded by G0–G5; parent owns deterministic G6 integration, G7 verification, and G8 verdict/promotion.
+Follow [portable-parallel-read.md](../../shared/portable-parallel-read.md) for shared gate order and fork outcomes; the [G0–G8 execution diagram](../../assets/images/parallel-execution-architecture.svg) is illustrative only. This consumer's read-only inventory passes are bounded by G0–G5; parent owns deterministic G6 integration, G7 verification, and G8 verdict/promotion.
 
 ### Safe parallel work
 
@@ -65,7 +67,7 @@ The plan must also freeze schema-3 `dispatch_choices` for each node as specified
 
 Bootstrap exception: run-directory creation (Step 01), the `inventory.txt`/`references.txt`/`ownership.md` writes from Step 03, and the `write-approval.json` write itself are exempt from requiring a prior approved plan digest — these precursor writes must exist before a plan digest can be computed or approved.
 
-Before dispatch, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer manage --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; pass `--execution=parallel-read` for the selected portable route, including an environment-selected value.
+Before dispatch, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer manage --plan <run-directory>/execution-plan.json`; add `--approval <run-directory>/write-approval.json` only when `write_policy.parent_writes=planned`, and omit it when `write_policy.parent_writes=none`; pass `--execution=parallel-read` for the selected portable route, including an environment-selected value.
 
 After every spawned child reaches a terminal handoff, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py validate-runtime --consumer manage --manifest <run-directory>/execution-manifest.json --plan <run-directory>/execution-plan.json --parent-rollout <authoritative-parent-rollout> --sessions-dir <authoritative-sessions-directory> --run-dir <run-directory> --roles-dir PLUGIN_ROOT/roles`. Require `runtime_promotion_eligible=true`, `consumer_id=manage`, and `write_parallel_eligible=false`.
 
@@ -101,7 +103,7 @@ Unknown intent => fail before edit.
 
 ### 03: Resolve owned files and blast radius
 
-Run `rg --files` with the `AGENTS.md`, `.codex/**`, and `.agents/**` globs as argv command; sort its lines and write them to `<run-directory>/inventory.txt`. Run `rg -n` for exact target over `.codex`, `.agents`, and `AGENTS.md`, write results to `<run-directory>/references.txt`, and record unavailable inputs or command failure explicitly.
+Require `rg` (ripgrep) on PATH for inventory and reference scans; if unavailable, report the missing prerequisite before scanning. Run `rg --files` with the `AGENTS.md`, `.codex/**`, and `.agents/**` globs as argv command; sort its lines and write them to `<run-directory>/inventory.txt`. Run `rg -n` for exact target over `.codex`, `.agents`, and `AGENTS.md`, write results to `<run-directory>/references.txt`, and record unavailable inputs or command failure explicitly.
 
 Write `<run-directory>/ownership.md` with the validator-required `Intent`, `Owned Files`, `Verification`, and `Residual Limits` sections: `Owned Files` lists exact edited and intentionally untouched files; complete `Verification` and `Residual Limits` after Step 07.
 
@@ -136,9 +138,13 @@ Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py --help`. Supply 
 
 ### 08: Write mandatory result artifact
 
+Manage artifacts include `ownership.md`; follow `../../shared/helper-cli-contract.md`. Write with `MANAGE_METADATA` and validate the result candidate as `manage` before the completion commit.
+
+Only after all project-relevant gates pass, no critical findings remain, shared confidence policy passes, and result candidate validation passes, perform the completion commit below; otherwise record `commit skipped` in the handoff and do not commit.
+
 Completion commit: run the [Local Git approval grant](../../shared/native-skill-contract.md#local-git-approval-grant) check. `grant …` → commit the verified, owned changes with the shared commit template unless the user asked for no commit, leave unstaged or to wait; `no grant` → an explicit commit request commits after checks, otherwise ask that section's one question (Approve / Approve always / Deny) before committing, and **Deny** leaves the changes unstaged. Record the check result, any answer and the commit disposition in the handoff.
 
-Manage artifacts include `ownership.md`; follow `../../shared/helper-cli-contract.md`. Write with `MANAGE_METADATA`, validate as `manage`, promote only validated candidate.
+Revalidate any result candidate or final handoff changed to record the commit disposition, and promote only a validated candidate.
 
 ## Fail-Fast Rules
 

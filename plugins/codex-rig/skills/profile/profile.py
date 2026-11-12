@@ -50,7 +50,7 @@ from collections import defaultdict
 from datetime import date
 from decimal import Decimal
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any
+from typing import Any, BinaryIO
 
 TOKEN_FIELDS = (
     "input_tokens",
@@ -67,6 +67,7 @@ BASE_LIMITS = (
     "no-tool-or-skill-token-attribution",
     "selected-file-may-omit-prior-history-or-agents",
 )
+MAX_ROW_BYTES = 8 * 1024 * 1024
 
 
 def native_usage(value: Any) -> dict[str, int | None]:
@@ -131,6 +132,16 @@ def item_duration(payload: dict[str, Any], item: dict[str, Any]) -> float | None
     return float(end - start)
 
 
+def read_row(handle: BinaryIO, remaining: int) -> bytes:
+    """Read a captured row with an eight-MiB limit, rejecting oversized rows and truncated prefixes."""
+    raw = handle.readline(min(remaining, MAX_ROW_BYTES + 1))
+    if not raw:
+        raise ValueError("capture-prefix-truncated")
+    if len(raw) > MAX_ROW_BYTES:
+        raise ValueError("json-row-too-large")
+    return raw
+
+
 def summarize(path: Path) -> tuple[dict[str, Any], str | None]:
     """Read a bounded native prefix and project only observed usage and completed tool timing."""
     samples: dict[str, dict[str, int | None]] = {}
@@ -148,9 +159,7 @@ def summarize(path: Path) -> tuple[dict[str, Any], str | None]:
         handle.seek(0)
         remaining = captured_size
         while remaining:
-            raw = handle.readline(remaining)
-            if not raw:
-                raise ValueError("capture-prefix-truncated")
+            raw = read_row(handle, remaining)
             remaining -= len(raw)
             hashed.update(raw)
             try:
@@ -253,7 +262,7 @@ def summarize(path: Path) -> tuple[dict[str, Any], str | None]:
             group["timed_calls"] += 1
             group["inclusive_duration_ms"] = (group["inclusive_duration_ms"] or 0) + duration
     return {
-        "source": path.as_posix(),
+        "source": path.name,
         "capture": capture,
         "models": sorted(models),
         "model_attribution_complete": bool(samples.get("thread_token_usage")) and pricing_covered and not resets,
@@ -351,7 +360,13 @@ def report_rows(report: Any) -> list[list[str]]:
         source = session["source"]
         if (
             not isinstance(source, str)
-            or not (PurePosixPath(source).is_absolute() or PureWindowsPath(source).is_absolute())
+            or not source
+            or source in {".", ".."}
+            or not (
+                PurePosixPath(source).is_absolute()
+                or PureWindowsPath(source).is_absolute()
+                or source == PurePosixPath(source).name == PureWindowsPath(source).name
+            )
             or session["label"] != f"session-{index}"
         ):
             raise ValueError("invalid-profile-source")

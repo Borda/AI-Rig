@@ -329,7 +329,8 @@ class TestDiagnose:
         version = json.loads((PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text())["version"]
         plugin = codex_home / "plugins" / "cache" / "borda-ai-rig" / "codex-rig" / version
         plugin.parent.mkdir(parents=True, mode=0o700)
-        shutil.copytree(PLUGIN_ROOT, plugin)
+        # Local run reports and bytecode are not payload; copying them can exceed the doctor's metadata budget.
+        shutil.copytree(PLUGIN_ROOT, plugin, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".reports"))
         config = codex_home / "config.toml"
         config.write_text(
             '[marketplaces.borda-ai-rig]\nsource_type = "local"\nsource = "/fixture"\n\n'

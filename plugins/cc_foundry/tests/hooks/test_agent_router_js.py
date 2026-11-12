@@ -21,6 +21,7 @@ by requiring the hook as a module under ``node -e`` — no network, no API key.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -120,16 +121,23 @@ class TestAgentRouting:
         updated = envelope["hookSpecificOutput"]["updatedInput"]
         assert updated["subagent_type"] == "general-purpose"
 
-    def test_session_start_builds_index(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
+    def test_session_start_builds_index(self, sid: str, tmp_home: Path, run_hook) -> None:
         """SessionStart writes agent-router-index.json with plugin agents enumerated.
 
         The stubbed home holds one plugin agent; the index written at session start must list it so later calls can
         resolve it without rescanning the cache.
         """
-        result = run_hook("agent-router.js", _session_start(sid), home=tmp_home)
+        result = run_hook("agent-router.js", _session_start(sid), home=tmp_home, env_extra={"TMPDIR": str(tmp_home)})
 
         assert result.returncode == 0, result.stderr
-        index_path = state_dir(sid) / "agent-router-index.json"
+        cache_dir = Path(
+            _node_call(
+                "privateCacheDir",
+                {"TMPDIR": str(tmp_home)},
+                env={"HOME": str(tmp_home), "USERPROFILE": str(tmp_home)},
+            )["ok"]
+        )
+        index_path = cache_dir / f"agent-router-index-{sid}.json"
         assert index_path.exists()
         index = json.loads(index_path.read_text(encoding="utf-8"))
         assert "plugin_agents" in index
@@ -140,20 +148,28 @@ class TestAgentRouting:
 # ── Tier-2B LLM pick helpers ──────────────────────────────────────────────────
 
 
-def _run_node(script: str) -> dict:
+def _run_node(script: str, *, env: dict[str, str] | None = None) -> dict:
     """Run one ``node -e`` script that writes JSON to stdout and return the parsed value."""
-    proc = subprocess.run(["node", "-e", script], capture_output=True, encoding="utf-8", timeout=10, check=False)
+    proc = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        encoding="utf-8",
+        env={**os.environ, **(env or {})},
+        timeout=10,
+        check=False,
+    )
     assert proc.returncode == 0, f"node failed: {proc.stderr}"
     return json.loads(proc.stdout)
 
 
-def _node_call(fn: str, *args: object) -> dict:
+def _node_call(fn: str, *args: object, env: dict[str, str] | None = None) -> dict:
     """Call one exported hook helper under node; return ``{"ok": value}`` or ``{"error": message}``."""
     call_args = ", ".join(json.dumps(a) for a in args)
     return _run_node(
         f"const h = require({json.dumps(str(HOOK))});"
         f"let out; try {{ out = {{ ok: h.{fn}({call_args}) }}; }} catch (e) {{ out = {{ error: e.message }}; }}"
-        "process.stdout.write(JSON.stringify(out));"
+        "process.stdout.write(JSON.stringify(out));",
+        env=env,
     )
 
 
@@ -234,7 +250,9 @@ class TestHaikuModelResolution:
 
         The cache already names a model; the Models API stub throws if touched, so a hit proves the lookup was skipped.
         """
-        (tmp_path / "agent-router-haiku-model-shared").write_text("claude-haiku-7-1\n", encoding="utf-8")
+        cache = Path(_node_call("haikuModelCachePath", {"TMPDIR": str(tmp_path)})["ok"])
+        cache.parent.mkdir(mode=0o700)
+        cache.write_text("claude-haiku-7-1\n", encoding="utf-8")
 
         got = _node_resolve({"TMPDIR": str(tmp_path)}, _MODELS_MUST_NOT_BE_CALLED)
 
@@ -245,7 +263,8 @@ class TestHaikuModelResolution:
 
         The TTL is what lets a newer Haiku release replace the cached id within a day without any code change.
         """
-        cache = tmp_path / "agent-router-haiku-model-shared"
+        cache = Path(_node_call("haikuModelCachePath", {"TMPDIR": str(tmp_path)})["ok"])
+        cache.parent.mkdir(mode=0o700)
         cache.write_text("claude-haiku-old\n", encoding="utf-8")
         day_and_a_bit_later = f"{cache.stat().st_mtime * 1000} + 25 * 3600 * 1000"
 
@@ -271,7 +290,10 @@ class TestHaikuModelResolution:
         got = _node_resolve({"TMPDIR": str(tmp_path)}, page)
 
         assert (got["model"], got["source"], got["calls"]) == ("claude-haiku-6", "models-api", 1)
-        assert (tmp_path / "agent-router-haiku-model-shared").read_text(encoding="utf-8").strip() == "claude-haiku-6"
+        assert (
+            Path(_node_call("haikuModelCachePath", {"TMPDIR": str(tmp_path)})["ok"]).read_text(encoding="utf-8").strip()
+            == "claude-haiku-6"
+        )
 
     @pytest.mark.parametrize(
         "fetch_body",
@@ -305,14 +327,15 @@ class TestHaikuModelResolution:
         ],
     )
     def test_cache_path_is_session_scoped(self, tmp_path: Path, env: dict[str, str], suffix: str) -> None:
-        """The cache file sits in ``TMPDIR`` with a session suffix; a token unsafe for a filename becomes ``shared``.
+        """Cache files sit in a private user directory under ``TMPDIR`` with safe session suffixes.
 
         Two Claude Code sessions must not share one cache file, and a hostile ``CSID`` such as ``../escape`` must never
         steer the path out of ``TMPDIR``.
         """
         got = _node_call("haikuModelCachePath", {**env, "TMPDIR": str(tmp_path)})
 
-        assert Path(got["ok"]) == tmp_path / f"agent-router-haiku-model-{suffix}"
+        assert Path(got["ok"]).name == f"agent-router-haiku-model-{suffix}"
+        assert Path(got["ok"]).parent.parent == tmp_path
 
 
 @_skip_node_unavailable

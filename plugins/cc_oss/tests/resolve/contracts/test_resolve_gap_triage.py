@@ -18,6 +18,7 @@ from pathlib import Path
 
 import merge_action_items as mai
 import pytest
+from _oss_shell_plugin import render_shell
 from _resolve_source import read_resolve_source
 from _review_fixtures import assessment, concern, finding_row
 from _text_io import bash_block_after
@@ -184,7 +185,7 @@ class _Project:
     def run(self, block: str) -> subprocess.CompletedProcess:
         """Execute a shipped block from the project root, as the Bash tool would."""
         return subprocess.run(
-            [self.shell, "-c", block],
+            [self.shell, "-c", render_shell(block, _PLUGIN, "oss")],
             cwd=self.root,
             env=self.env,
             encoding="utf-8",
@@ -493,7 +494,7 @@ class TestIntakeInstructions:
         skill = " ".join(read_resolve_source(_SKILL).split())
         stub = skill[skill.index("### Report source resolution") : skill.index("### Create all workflow tasks upfront")]
         assert "<!-- loads: report-intake.md -->" in stub
-        assert 'cat "$_OSS_RESOLVE/modes/report-intake.md"' in stub
+        assert 'python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_RESOLVE/modes/report-intake.md"' in stub
         assert "#### Gap triage" not in skill
         assert "**Intake proceed** — only on" not in skill
         assert "fill_gaps_scope.py" not in skill

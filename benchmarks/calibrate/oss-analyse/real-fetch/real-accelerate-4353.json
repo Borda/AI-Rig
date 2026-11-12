@@ -1,0 +1,567 @@
+{
+  "924": {
+    "number": 924,
+    "title": "Need to do distributed training using 2 separate machines",
+    "state": "open",
+    "body": "Hello, I am trying to do distributed training using 2 separate machines. Can anyone please guide me towards any tutorial / demo on this? The configs created using accelerate are: \r\n\r\n_Machine 1_:\r\n\r\ncompute_environment: LOCAL_MACHINE\r\ndeepspeed_config: {}\r\ndistributed_type: MULTI_CPU\r\nfsdp_config: {}\r\nmachine_rank: 0\r\nmain_process_ip: 20.160.27.77\r\nmain_process_port: 8080\r\nmain_training_function: main\r\nmixed_precision: fp16\r\nnum_machines: 2\r\nnum_processes: 2\r\nuse_cpu: true\r\n\r\n_Machine 2:_ \r\n\r\ncompute_environment: LOCAL_MACHINE\r\ndeepspeed_config: {}\r\ndistributed_type: MULTI_CPU\r\nfsdp_config: {}\r\nmachine_rank: 1\r\nmain_process_ip: 20.160.27.77\r\nmain_process_port: 8080\r\nmain_training_function: main\r\nmixed_precision: fp16\r\nnum_machines: 2\r\nnum_processes: 2\r\nuse_cpu: true\r\n\r\nThen I ran both the launch commands , they started training separately. Then I ran only the main machine , which again started training on it's own. I am not able to get any concrete direction on this.\r\n\r\n",
+    "comments": [
+      {
+        "author": "user-3",
+        "body": "@user-2 this is currently unsupported yet for multi-CPU, changing to a FR and adding it to our timetable"
+      },
+      {
+        "author": "user-4",
+        "body": "Any update on this?"
+      }
+    ]
+  },
+  "934": {
+    "number": 934,
+    "title": "`Accelerate test` failing on an 8-GPU docker instance",
+    "state": "open",
+    "body": "### System Info\r\n\r\n```Shell\r\nHost machine:\r\n- Docker version 20.10.22, build 3a2c30b\r\n- 8x A100, 80GB\r\n\r\nDocker file:\r\n\r\nFROM nvidia/cuda:11.6.2-devel-ubuntu20.04\r\n\r\nRUN apt update --fix-missing\r\nRUN apt install -y vim git\r\nRUN apt install -y python3 python3-dev python3-pip\r\nRUN ln -sf python3 /usr/bin/python\r\n\r\nRUN pip3 install --no-cache --upgrade pip setuptools\r\nRUN pip3 install accelerate\r\n\r\nCOPY accelerate_config.yaml /root/.cache/huggingface/accelerate/default_config.yaml\r\n```\r\n\r\nAccelerate config:\r\n```\r\ncompute_environment: LOCAL_MACHINE\r\ndeepspeed_config: {}\r\ndistributed_type: MULTI_GPU\r\ndowncast_bf16: 'no'\r\nfsdp_config: {}\r\ngpu_ids: all\r\nmachine_rank: 0\r\nmain_process_ip: null\r\nmain_process_port: null\r\nmain_training_function: main\r\nmixed_precision: 'no'\r\nnum_machines: 1\r\nnum_processes: 8\r\nrdzv_backend: static\r\nsame_network: true\r\nuse_cpu: false\r\n```\r\n\r\nAccelerate env:\r\n```\r\n- `Accelerate` version: 0.15.0\r\n- Platform: Linux-5.4.0-1078-kvm-x86_64-with-glibc2.29\r\n- Python version: 3.8.10\r\n- Numpy version: 1.24.0\r\n- PyTorch version (GPU?): 1.13.1+cu117 (True)\r\n- `Accelerate` default config:\r\n\t- compute_environment: LOCAL_MACHINE\r\n\t- distributed_type: MULTI_GPU\r\n\t- mixed_precision: no\r\n\t- use_cpu: False\r\n\t- dynamo_backend: NO\r\n\t- num_processes: 8\r\n\t- machine_rank: 0\r\n\t- num_machines: 1\r\n\t- gpu_ids: all\r\n\t- main_process_ip: None\r\n\t- main_process_port: None\r\n\t- rdzv_backend: static\r\n\t- same_network: True\r\n\t- main_training_function: main\r\n\t- deepspeed_config: {}\r\n\t- fsdp_config: {}\r\n\t- megatron_lm_config: {}\r\n\t- downcast_bf16: no\r\n\t- tpu_name: None\r\n\t- tpu_zone: None\r\n\t- command_file: None\r\n\t- commands: None\r\n```\r\n\r\n\r\n### Information\r\n\r\n- [X] The official example scripts\r\n- [ ] My own modified scripts\r\n\r\n### Tasks\r\n\r\n- [X] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\r\n- [ ] My own task or dataset (give details below)\r\n\r\n### Reproduction/Expectation/Core Issue\r\n\r\n- Run the above docker instance with 8 GPUs passed through\r\n- Run `accelerate test`\r\n\r\nI get the error `stderr: ERROR:torch.distributed.elastic.multiprocessing.api:failed (exitcode: -7) local_rank: 0 (pid: 35215) of binary: /usr/bin/python3`.\r\n\r\n**This test works fine and has no errors on the bare metal machine.**\r\n\r\nDo you all have any ideas what might be going on?\r\n\r\n### What about CPU-only config?\r\nI also tried a CPU-only config, but `accelerate test` gave me assertion errors (both for docker and bare metal):\r\n\r\n```\r\nstderr: Traceback (most recent call last):\r\nstderr:   File \"/usr/local/lib/python3.8/dist-packages/accelerate/test_utils/scripts/test_script.py\", line 359, in <module>\r\nstderr:     main()\r\nstderr:   File \"/usr/local/lib/python3.8/dist-packages/accelerate/test_utils/scripts/test_script.py\", line 350, in main\r\nstderr:     training_check()\r\nstderr:   File \"/usr/local/lib/python3.8/dist-packages/accelerate/test_utils/scripts/test_scr",
+    "comments": [
+      {
+        "author": "user-6",
+        "body": "I also failed `accelerate test` on a machine with two A100 (80GB) GPUs.\r\nHere is my output:\r\n```\r\nRunning:  accelerate-launch --config_file=None /home/user/anaconda3/envs/task_temp/lib/python3.10/site-packages/accelerate/test_utils/scripts/test_script.py\r\nstdout: **Initialization**\r\nstdout: Testing, testing. 1, 2, 3.\r\nstdout: Distributed environment: MULTI_GPU  Backend: nccl\r\nstdout: Num processes: 2\r\nstdout: Process index: 0\r\nstdout: Local process index: 0\r\nstdout: Device: cuda:0\r\nstdout: Mixed precision type: no\r\nstdout: \r\nstdout: \r\nstdout: **Test random number generator synchronization**\r\nstdout: Distributed environment: MULTI_GPU  Backend: nccl\r\nstdout: Num processes: 2\r\nstdout: Process index: 1\r\nstdout: Local process index: 1\r\nstdout: Device: cuda:1\r\nstdout: Mixed precision type: no\r\nstdout: \r\nstderr: [E ProcessGroupNCCL.cpp:821] [Rank 1] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=1, OpType=BROADCAST, Timeout(ms)=1800000) ran for 1808182 milliseconds before timi"
+      },
+      {
+        "author": "user-6",
+        "body": "For my case (`RNG states improperly synchronized on CPU`), PCI ACS was the problem. Disabling it in BIOS solved the problem. See https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/troubleshooting.html#pci-access-control-services-acs"
+      },
+      {
+        "author": "user-7",
+        "body": "I do not understand what happens when running the `accelerate test` command when I am using  `A100 (80GB) GPUs`\r\n```\r\nCopy and paste the text below into your GitHub issue\r\n\r\n- `Accelerate` version: 0.18.0\r\n- Platform: Linux-5.4.0-132-generic-x86_64-with-glibc2.29\r\n- Python version: 3.8.10\r\n- Numpy version: 1.23.5\r\n- PyTorch version (GPU?): 1.9.1+cu111 (True)\r\n- `Accelerate` default config:\r\n        - compute_environment: LOCAL_MACHINE\r\n        - distributed_type: DEEPSPEED\r\n        - mixed_precision: fp16\r\n        - use_cpu: False\r\n        - num_processes: 2\r\n        - machine_rank: 0\r\n        - num_machines: 1\r\n        - rdzv_backend: static\r\n        - same_network: True\r\n        - main_training_function: main\r\n        - deepspeed_config: {'gradient_accumulation_steps': 2, 'gradient_clipping': 1.0, 'offload_optimizer_device': 'none', 'offload_param_device': 'none', 'zero3_init_flag': True, 'zero_stage': 2}\r\n        - downcast_bf16: no\r\n        - tpu_use_cluster: False\r\n        - tpu_u"
+      },
+      {
+        "author": "user-8",
+        "body": "Any updates on this issue? I have the same problem running `accelerate test` on my machine with 4 Tesla V100: `stderr: ERROR:torch.distributed.elastic.multiprocessing.api:failed (exitcode: -7) local_rank: 0`\r\n\r\nIt works fine if i select only 2 GPUs on Multi-GPU config, but 3 or 4 raises the error."
+      },
+      {
+        "author": "user-9",
+        "body": "I can run with a small amount of data, but large-scale data can cause errors:\r\n\r\nSome NCCL operations have failed or timed out. Due to the asynchronous nature of CUDA kernels, subsequent GPU operations might run on corrupted/incomplete data."
+      },
+      {
+        "author": "user-10",
+        "body": "> I can run with a small amount of data, but large-scale data can cause errors:\r\n> \r\n> Some NCCL operations have failed or timed out. Due to the asynchronous nature of CUDA kernels, subsequent GPU operations might run on corrupted/incomplete data.\r\n\r\n我也遇到同样的问题了，请问怎么解决了？"
+      }
+    ]
+  },
+  "700": {
+    "number": 700,
+    "title": "[RFC]Integrate Intel Extension for Pytorch into accelerate to get out-of-box optimizations on intel platform.",
+    "state": "open",
+    "body": "### Motivation\r\nIntel Extension for Pytorch(a.k.a IPEX) can provides extra optimization and performance boost on intel hardware platform(currently only for CPU) for both inference and training. These optimization include graph level optimization such as operator fusion, auto mixed precision which support rich bf16 operators and optimization for optimizer which boost the training performance. In contrast with trainer, accelerate mostly is used with distributed training and inference on transformer model, but it also can benefit from IPEX's optimization. So, integrate IPEX into accelerate can make users who do distributed training or evaluation get out-of-box performance boost on CPU.\r\n\r\n### Design\r\n#### User interface\r\n\r\n- The first thing is how we tell accelerate to enable ipex. We can utilize the CLI tool **accelerate config** to config our training and inference environment with IPEX feature enabled. This tool will ask a series of questions including IPEX related config such as _ipex_enabled_ and _ipex_fusion_enabled_.  We can also pass these two options to our python script which is launched by **accelerate launch**. The detailed usage examples of these two scenarios can refer to [user-12's comments](https://github.com/huggingface/accelerate/issues/700#issuecomment-1247766735).\r\nThe meaning of these two option:\r\nipex_enabled: If this option is set, the IPEX's python package will be imported, and optimization such as Conv+BN folding and [weight prepacking](https://intel.github.io/intel-extension-for-pytorch/latest/tutorials/api_doc.html) will at least be applied at inference.\r\nipex_fusion_enabled: Besides the basic optimization, operator fusion is also an important technic to boost the performance, we can trace a model to enable this graph level optimization first, and then ipex will provide more specially optimized fusion op on intel platform with this option.\r\n\r\n- Model and optimizer wrapper for distributed training. \r\n```\r\nmodel, optim, data = accelerator.prepare(model, optim, data)\r\n```\r\nAccelerator.prepare() is the main method where most magic happens, IPEX can also hide optimization via a similar front end API called ipex.optimize(). If we choose use ipex, then we can automatically invoke ipex's API inside prepare(). If the current workload is training, the still use the original accelerate's original prepare API like this: **model, optim, data = accelerator.prepare(model, optim, data)**  ,so, there is no code change in training. But for inference, if we want to benefit from ipex's optimization in addition to operator fusion such as [weight prepack](https://intel.github.io/intel-extension-for-pytorch/1.11.200/tutorials/api_doc.html) etc, we must explicit pass model to prepare method such as:\r\n```\r\ndata = accelerator.prepare(data) # Origin evaluation\r\nmodel, data = accelerator.prepare(model, data) # Need explicitly pass model to prepare() to benefit from broader ipex's optimization. \r\n```\r\n\r\n- Auto Mixed Precision\r\nOnce we import IPEX, we ",
+    "comments": [
+      {
+        "author": "user-12",
+        "body": "Hello @user-11, Thank you for the detailed feature request. I've made the above draft PR. I currently don't have access to instance with latest Intel CPUs to perform the initial testing. Could you please try it out on your end and let us know.\r\nYou can enable ipex via below options:\r\n1. Through  `accelerate config` as shown below:\r\n```\r\ncompute_environment: LOCAL_MACHINE\r\ndeepspeed_config: {}\r\ndistributed_type: MULTI_CPU\r\ndowncast_bf16: 'no'\r\nfsdp_config: {}\r\nipex_config:\r\n  ipex_enabled: true\r\n  ipex_fusion_enabled: false\r\nmachine_rank: 0\r\nmain_process_ip: null\r\nmain_process_port: null\r\nmain_training_function: main\r\nmixed_precision: bf16\r\nnum_machines: 1\r\nnum_processes: 4\r\nrdzv_backend: static\r\nsame_network: true\r\nuse_cpu: true\r\n```\r\n2. Pass `--ipex_enabled` and `--ipex_fusion_enabled` to enable the corresponding options while using `accelerate launch`, e.g., `accelerate launch --config_file xxxxx.yaml  --ipex_enabled --ipex_fusion_enabled script.py`  \r\n\r\n"
+      },
+      {
+        "author": "user-11",
+        "body": "Hi, @user-12 \r\nThanks for the reply! I think both your suggestions for how to pass the ipex related options is more suitable. I will refine this RFC according to your suggestions. The ETA of this PR expected to be ready is by the end of this month."
+      },
+      {
+        "author": "user-12",
+        "body": "Hello @user-11, I have already implemented the above feature request in the draft PR #701. Please test that out and let us know if it works as expected or refine the draft PR using it as a starting point."
+      },
+      {
+        "author": "user-11",
+        "body": "@user-12 Oh, I see. Thanks for the work very much. I will try it out and then give you feedback."
+      },
+      {
+        "author": "user-11",
+        "body": "Hi, @user-12 \r\nI have tried your patch initially without performance test. For the initial functionality test, I found several little issues:\r\n\r\n- [PR701](https://github.com/huggingface/accelerate/pull/701) related:\r\n   1.  For the IntelPytorchExtensionPlugin class defined in [dataclass.py](https://github.com/huggingface/accelerate/pull/701/files#diff-bcbdd609996df7224cc9c21ecd97092122d45263d1323892474021d510ec1eefR243)   , should the default value of use_ipex and do_fusion be 'None' instead of 'False'? Since you test if self.use_ipex is None in __post_init__() method, thus the attribute would never be initialized if it is False. (The same with do_fusion)\r\n   2. In the [is_ipex_available()](https://github.com/huggingface/accelerate/pull/701/files#diff-c76a26947d918d6a5988b4b06804aadfd4d10c21b32b67fee07aa2a96470c305R145) function, should '_torch_version' be passed to the inner function get_major_and_minor_from_version(), since the _full_version_ argument is a positional arg.\r\n\r\n- IPEX r"
+      },
+      {
+        "author": "user-12",
+        "body": "Hello @user-11, please go ahead and make the necessary changes to the PR as per your above comments. We can review everything once post that. "
+      },
+      {
+        "author": "user-11",
+        "body": "OK"
+      },
+      {
+        "author": "user-13",
+        "body": "@user-12 , @user-57, @user-58 ,w/ IPEX load_state_dict support, do we see it's OK to merge this PR? "
+      },
+      {
+        "author": "user-13",
+        "body": "@user-59"
+      }
+    ]
+  },
+  "2858": {
+    "number": 2858,
+    "title": "gather objects in TPU is not supported",
+    "state": "open",
+    "body": "Do you have any plans to implement the above functionality on a TPU (Also is this even possible on TPU ?) ? I'm trying to distribute evaluation using accelerate.\r\nError:\r\n```sh\r\n    raise NotImplementedError(\"gather objects in TPU is not supported\")\r\nNotImplementedError: gather objects in TPU is not supported\r\n\r\n```",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-14, thanks for opening the PR. torch.distributed is not fully supported on TPU v2/v3. See related docs [here](https://pytorch.org/xla/release/2.3/index.html#:~:text=torch.distributed%20is%20not%20fully%20supported%20on%20TPU%20v2/v3.%20Only%20a%20subset%20of%20operations%20with%20the%20xla%20backend%20are%20implemented%2C%20and%20gloo%20will%20likely%20not%20work%20as%20expected%20in%20a%20multithreaded%20context.). \r\nCan you check if `torch.distributed.all_gather_object` works on TPU ? If so, we can potentially extend this function to TPUs also. "
+      },
+      {
+        "author": "user-14",
+        "body": "do you think this part of documentation relevant to your question? i can run the below code on v4-8\r\n\r\n```python\r\nimport torch\r\nimport torch.distributed as dist\r\nimport torch_xla.core.xla_model as xm\r\nimport torch_xla.distributed.xla_multiprocessing as xmp\r\nfrom torch_xla.experimental import pjrt\r\n\r\n# Required for `xla://` init_method and `xla` backend\r\nimport torch_xla.distributed.xla_backend\r\n\r\ndef _all_gather(index: int):\r\n  # No need to pass in `rank` or `world_size`\r\n  dist.init_process_group('xla', init_method='xla://')\r\n\r\n  t = torch.tensor([index], dtype=torch.int32, device=xm.xla_device())\r\n  output = [torch.zeros_like(t) for _ in range(dist.get_world_size())]\r\n  dist.all_gather(output, t)\r\n\r\n  xm.mark_step()\r\n  print(output)\r\n\r\nif __name__ == '__main__':\r\n  xmp.spawn(_all_gather)\r\n```\r\n\r\nNote: Although the xla:// init_method is not required on TPU v4, it is still recommended. If you use env://, MASTER_ADDR must be set to IP host that has device 0, which is not always worker 0"
+      },
+      {
+        "author": "user-14",
+        "body": "well if i naively change the `all_gather` to `all_gather_object`, the above code results an error:\r\n\r\n```\r\n*** End stack trace ***\r\nInput tensor is not an XLA tensor: CPULongType\r\nerror executing \"python test_distributed.py\": exit status 1\r\n\r\n```"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hey @user-14 , I was talking about this code in accelerate: \r\n\r\n```python \r\ndef _gpu_gather_object(object: Any):\r\n    output_objects = [None for _ in range(PartialState().num_processes)]\r\n    torch.distributed.all_gather_object(output_objects, object)\r\n    # all_gather_object returns a list of lists, so we need to flatten it\r\n    return [x for y in output_objects for x in y]\r\n\r\n\r\ndef gather_object(object: Any):\r\n    \"\"\"\r\n    Recursively gather object in a nested list/tuple/dictionary of objects from all devices.\r\n\r\n    Args:\r\n        object (nested list/tuple/dictionary of picklable object):\r\n            The data to gather.\r\n\r\n    Returns:\r\n        The same data structure as `object` with all the objects sent to every device.\r\n    \"\"\"\r\n    if PartialState().distributed_type == DistributedType.XLA:\r\n        # replace it by _gpu_gather_object(object)\r\n        raise NotImplementedError(\"gather objects in TPU is not supported\")\r\n    elif PartialState().distributed_type in TORCH_DISTRIBUTED"
+      }
+    ]
+  },
+  "721": {
+    "number": 721,
+    "title": "Not possible to use the notebook_launcher on a cluster of A6000 series",
+    "state": "open",
+    "body": "### System Info\r\n\r\n```Shell\r\nCopy-and-paste the text below in your GitHub issue\r\n\r\n- `Accelerate` version: 0.12.0\r\n- Platform: Linux-5.4.0-105-generic-x86_64-with-debian-buster-sid\r\n- Python version: 3.7.13\r\n- Numpy version: 1.21.5\r\n- PyTorch version (GPU?): 1.12.0 (True)\r\n- `Accelerate` default config:\r\n\t- compute_environment: LOCAL_MACHINE\r\n\t- distributed_type: MULTI_GPU\r\n\t- mixed_precision: bf16\r\n\t- use_cpu: False\r\n\t- num_processes: 8\r\n\t- machine_rank: 0\r\n\t- num_machines: 1\r\n\t- main_process_ip: None\r\n\t- main_process_port: None\r\n\t- main_training_function: main\r\n\t- deepspeed_config: {}\r\n\t- fsdp_config: {}\r\n\t- downcast_bf16: False\r\n```\r\n\r\n\r\n### Information\r\n\r\n- [ ] The official example scripts\r\n- [X] My own modified scripts\r\n\r\n### Tasks\r\n\r\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\r\n- [X] My own task or dataset (give details below)\r\n\r\n### Reproduction\r\n\r\n```\r\ndef training_loop(mixed_precision=\"bf16\", seed: int = 42, batch_size: int = 64):\r\n  set_seed(seed)\r\n  \r\n  accelerator = Accelerator(mixed_precision=mixed_precision)\r\n  \r\nargs = (\"bf16\", 42, 64)\r\nnotebook_launcher(training_loop, args, num_processes=8)\r\n  \r\n```\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n### Expected behavior\r\n\r\nI expect training to start with autocasting to bfloat16 - instead, I get the error: \"RuntimeError: Cannot re-initialize CUDA in forked subprocess. To use CUDA with multiprocessing, you must use the 'spawn' start method\"\r\n\r\nAFAICT, this is due to the \"is_bf16_available\" function in accelerate.utils, which calls \"torch.cuda.is_available()\" and \"torch.cuda.is_bf16_supported()\".\r\n\r\n",
+    "comments": [
+      {
+        "author": "user-15",
+        "body": "Nope, same stack trace for both of those cases."
+      },
+      {
+        "author": "user-3",
+        "body": "I'll go ahead and change this as a feature request then and slightly modify the title, because really it's a Feature Request for running the `notebook_launcher` on the A6000 series. For now I'd recommend through the command line (not the best result I know, but that should work til we can get this!)"
+      },
+      {
+        "author": "user-15",
+        "body": "Sounds good, thanks for your help!"
+      },
+      {
+        "author": "user-3",
+        "body": "No problem! Last question, what provider are you using for renting the 8 A6000 so I can look into it? :) "
+      },
+      {
+        "author": "user-15",
+        "body": "https://www.runpod.io/"
+      },
+      {
+        "author": "user-3",
+        "body": "Just to make sure, does it break also if you don't use Colab? (Sometimes colab does some very weird things, so if we can test in native Jupyter that'd be nice :) )"
+      },
+      {
+        "author": "user-15",
+        "body": "Nope, unfortunately no luck with Jupyter either."
+      },
+      {
+        "author": "user-3",
+        "body": "Thanks @user-15, I've gotten into a pod and can recreate the bug. Working on a fix!"
+      },
+      {
+        "author": "user-3",
+        "body": "This is indeed a torch backend issue, you can track it's progress here: https://github.com/pytorch/pytorch/issues/85841"
+      },
+      {
+        "author": "user-15",
+        "body": "Oh interesting, thanks for diving into this!"
+      }
+    ]
+  },
+  "694": {
+    "number": 694,
+    "title": "Multi-Node Training No progress on Azure",
+    "state": "open",
+    "body": "### System Info\n\n```Shell\naccelerate_Version: 0.12.0, \r\nOS: Ubuntu18.04,\r\npython version:3.8\r\ntorch version: 1.11.0\r\naccelerate config: Root node(0) - {\r\n  \"compute_environment\": \"LOCAL_MACHINE\",\r\n  \"deepspeed_config\": {},\r\n  \"distributed_type\": \"MULTI_GPU\",\r\n  \"downcast_bf16\": false,\r\n  \"fsdp_config\": {},\r\n  \"machine_rank\": 0,\r\n  \"main_process_ip\": \"20.169.144.69\",\r\n  \"main_process_port\": 46585,\r\n  \"main_training_function\": \"main\",\r\n  \"mixed_precision\": \"no\",\r\n  \"num_machines\": 2,\r\n  \"num_processes\": 4,\r\n  \"rdzv_backend\": \"static\",\r\n  \"use_cpu\": false\r\n} \r\nNode 1:{\r\n  \"compute_environment\": \"LOCAL_MACHINE\",\r\n  \"deepspeed_config\": {},\r\n  \"distributed_type\": \"MULTI_GPU\",\r\n  \"downcast_bf16\": false,\r\n  \"fsdp_config\": {},\r\n  \"machine_rank\": 1,\r\n  \"main_process_ip\": \"20.169.144.69\",\r\n  \"main_process_port\": 51731,\r\n  \"main_training_function\": \"main\",\r\n  \"mixed_precision\": \"no\",\r\n  \"num_machines\": 2,\r\n  \"num_processes\": 4,\r\n  \"rdzv_backend\": \"static\",\r\n  \"use_cpu\": false\r\n}\n```\n\n\n### Information\n\n- [ ] The official example scripts\n- [X] My own modified scripts\n\n### Tasks\n\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\n- [ ] My own task or dataset (give details below)\n\n### Reproduction\n\nUse  two azure VMs for multi-node training\n\n### Expected behavior\n\n```Shell\nThe expected behaviour was that both machine start training and either communticate with each to sync or provide an error if that fails but the training did not proceed on either of the nodes. Tried using NCC_DEBUG=INFO to check for network issues but did not get any prompts. Not sure what I could be missing here as I followed the items mentioned in previous issues which were closed for multi-node such as https://github.com/huggingface/accelerate/issues/609 and https://github.com/huggingface/accelerate/issues/412\n```\n",
+    "comments": [
+      {
+        "author": "user-12",
+        "body": "Hello @user-16 , can you share the updated accelerate config? Also, prepend `NCCL_DEBUG=INFO` to the launch command to get logs on the NCCL issues you might be facing. "
+      },
+      {
+        "author": "user-16",
+        "body": "Hi @user-12 ,\r\n\r\nBelow are the configs after setting the same port number:\r\nMaster Node(0):{\r\n  \"compute_environment\": \"LOCAL_MACHINE\",\r\n  \"deepspeed_config\": {},\r\n  \"distributed_type\": \"MULTI_GPU\",\r\n  \"downcast_bf16\": false,\r\n  \"fsdp_config\": {},\r\n  \"machine_rank\": 0,\r\n  \"main_process_ip\": \"40.121.95.65\",\r\n  \"main_process_port\": 8892,\r\n  \"main_training_function\": \"main\",\r\n  \"mixed_precision\": \"no\",\r\n  \"num_machines\": 2,\r\n  \"num_processes\": 4,\r\n  \"rdzv_backend\": \"static\",\r\n  \"use_cpu\": false\r\n}\r\nSlave Node(1):{\r\n  \"compute_environment\": \"LOCAL_MACHINE\",\r\n  \"deepspeed_config\": {},\r\n  \"distributed_type\": \"MULTI_GPU\",\r\n  \"downcast_bf16\": false,\r\n  \"fsdp_config\": {},\r\n  \"machine_rank\": 1,\r\n  \"main_process_ip\": \"40.121.95.65\",\r\n  \"main_process_port\": 8892,\r\n  \"main_training_function\": \"main\",\r\n  \"mixed_precision\": \"no\",\r\n  \"num_machines\": 2,\r\n  \"num_processes\": 4,\r\n  \"rdzv_backend\": \"static\",\r\n  \"use_cpu\": false\r\n}\r\nThese were the configs when I executed the cv_example.py or nlp_example.py "
+      },
+      {
+        "author": "user-12",
+        "body": "Hello @user-16, I think you are not using the accelerate from the main branch because it isn't having `same_network` param. Can you install accelerate from source like this `pip install git+https://github.com/huggingface/accelerate`  and try it out with `same_network` being `no` as shown below:\r\n```bash\r\n- `Accelerate` version: 0.13.0.dev0\r\n- Platform: Linux-5.4.0-122-generic-x86_64-with-glibc2.29\r\n- Python version: 3.8.10\r\n- Numpy version: 1.23.2\r\n- PyTorch version (GPU?): 1.12.1+cu116 (True)\r\n- `Accelerate` default config:\r\n        - compute_environment: LOCAL_MACHINE\r\n        - distributed_type: MULTI_GPU\r\n        - mixed_precision: no\r\n        - use_cpu: False\r\n        - num_processes: 4\r\n        - machine_rank: 0\r\n        - num_machines: 2\r\n        - main_process_ip: 192.168.1.29\r\n        - main_process_port: 29500\r\n        - rdzv_backend: static\r\n        - same_network: False\r\n        - main_training_function: main\r\n        - deepspeed_config: {}\r\n        - fsdp_config: {}\r\n     "
+      },
+      {
+        "author": "user-16",
+        "body": "Hi @user-12 , thank you for pointing that out.\r\nI did install the latest accelerate, here is a pip show accelerate:\r\n(venv_training) azureuser@lbue-mlspr-vm-prefect:~/accelerate/examples$ pip show accelerate\r\nName: accelerate\r\nVersion: 0.13.0.dev0\r\nSummary: Accelerate\r\nHome-page: https://github.com/huggingface/accelerate\r\nAuthor: The HuggingFace team\r\nAuthor-email: sylvain@huggingface.co\r\nLicense: Apache\r\nLocation: /home/azureuser/venv_training/lib/python3.8/site-packages\r\nRequires: numpy, packaging, psutil, pyyaml, rich, torch\r\nRequired-by: upscalers-pytorch\r\n\r\nI think the same_network flag could be the reason as by default it is True. But while doing accelerate config I didnt get the option select the same_network field. I tried manually adding the parameter to the config but threw an error as below:\r\n`╭─────────────────────────────── Traceback (most recent call last) ────────────────────────────────╮\r\n│ /home/azureuser/venv_training/bin/accelerate:8 in <module>                      "
+      },
+      {
+        "author": "user-16",
+        "body": "Hello @user-12 , I fixed the version and same_network param issue. It was due to my virtualenv. 😅\r\nBut setting the same_network didn't help in running the example scripts in accelerate. Below are the configs:\r\nNode 0: \r\n```\r\ncompute_environment: LOCAL_MACHINE\r\ndeepspeed_config: {}\r\ndistributed_type: MULTI_GPU\r\ndowncast_bf16: 'no'\r\nfsdp_config: {}\r\nmachine_rank: 0\r\nmain_process_ip: 20.163.205.163\r\nmain_process_port: 4252\r\nmain_training_function: main\r\nmixed_precision: 'no'\r\nnum_machines: 2\r\nnum_processes: 4\r\nrdzv_backend: static\r\nsame_network: false\r\nuse_cpu: false\r\n\r\n```\r\nNode 1: \r\n```\r\ncompute_environment: LOCAL_MACHINE\r\ndeepspeed_config: {}\r\ndistributed_type: MULTI_GPU\r\ndowncast_bf16: 'no'\r\nfsdp_config: {}\r\nmachine_rank: 1\r\nmain_process_ip: 20.163.205.163\r\nmain_process_port: 4252\r\nmain_training_function: main\r\nmixed_precision: 'no'\r\nnum_machines: 2\r\nnum_processes: 4\r\nrdzv_backend: static\r\nsame_network: false\r\nuse_cpu: false\r\n```\r\nI'm using the NCCL_DEBUG flag but it doesn't print any"
+      },
+      {
+        "author": "user-12",
+        "body": "Hello @user-16, maybe go through the discussions on issue #609 and #412 and see if that helps. Are you able to ssh from one node to another?"
+      },
+      {
+        "author": "user-16",
+        "body": "Hello @user-12 , thank you for the information. I'm able to ssh from one VM to another. I added the ip address for the VMs to connect to in the file /etc/hosts as below :\r\n```\r\n127.0.0.1 localhost\r\n20.x.x.x azure_3\r\n\r\n# The following lines are desirable for IPv6 capable hosts\r\n::1 ip6-localhost ip6-loopback\r\nfe00::0 ip6-localnet\r\nff00::0 ip6-mcastprefix\r\nff02::1 ip6-allnodes\r\nff02::2 ip6-allrouters\r\nff02::3 ip6-allhosts\r\n~                                  \r\n```\r\nI'm not sure if this is the correct way or I should modify any other file or create a hostfile. But if I ssh as : ssh azure_3 , I'm able to connect to the other VM without any issue. To avoid auth chekcing  I disabled it from the /etc/ssh/ssh_config file. \r\n\r\nAs mentioned in the #609 I tried NCCL_IB_GID_INDEX=3 NCCL_DEBUG=INFO accelerate launch script.py but it didn't print any message. Below is a snapshot of what happens after I execute the command.\r\n![image](https://user-images.githubusercontent.com/23045660/190190531-d40117f"
+      },
+      {
+        "author": "user-3",
+        "body": "Thanks for the clear feedback @user-16, I'll be looking into it this week"
+      },
+      {
+        "author": "user-16",
+        "body": "Thanks @user-3 . Looking forward to your feedback over it. :)"
+      },
+      {
+        "author": "user-3",
+        "body": "Labeling this as \"feature request\" for now since after some 1:1 debugging it seems to be related with the Azure platform, and we don't have access to Azure machines with GPUs (yet) to test this out. But we'll get them soon"
+      }
+    ]
+  },
+  "1239": {
+    "number": 1239,
+    "title": "Feature request - SLURM support",
+    "state": "open",
+    "body": "Hi, it will be really great if you can add SLURM support, or at least add a doc that shows how to run accelerate with multiple nodes on SLURM. I saw that there are several issues that involve people that want to use accelerate with SLURM.\r\nThank you! ",
+    "comments": [
+      {
+        "author": "user-19",
+        "body": "Does one need a config file at all if one is using the settings as I've shown on the slurm script above? \r\n\r\nThis is much more reproducible than having files which are not part of the submission affecting the submission itself:\r\n\r\n```bash\r\ntime srun bash -c 'accelerate launch \\\r\n    --main_process_ip $MASTER_ADDR \\\r\n    --main_process_port $MASTER_PORT \\\r\n    --multi_gpu \\\r\n    --mixed_precision=no \\\r\n    --num_processes=$(($NNODES * 4)) \\\r\n    --dynamo_backend=no \\\r\n    --num_machines=$NNODES  \\\r\n    --machine_rank=$SLURM_PROCID \\\r\n    --rdzv_conf \"rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT rdzv_backend=c10d\" \\\r\n    distrib.py'\r\n```"
+      },
+      {
+        "author": "user-3",
+        "body": "Nope, you do not. That is also extremely valid (and why the non-yaml option exists, for situations where we need to wrap/call it separately and a yaml makes it complicated)"
+      },
+      {
+        "author": "user-19",
+        "body": "In that case, I am confused why I can't run it on my machine with multiple nodes. I opened an issue on https://github.com/huggingface/accelerate/issues/1489\r\n\r\nPS: This machine is used up to 3744 nodes * 4 gpus/node with PyTorch DDP."
+      },
+      {
+        "author": "user-20",
+        "body": "@user-18 I also have the IndexError: list index out of range issue, have you solved it? "
+      },
+      {
+        "author": "user-21",
+        "body": "here is a slurm sbatch script that works for this [minGPT example](https://github.com/pytorch/examples/tree/a38cbfc6f817d9015fc67a6309d3a0be9ff94ab6/distributed/minGPT-ddp/mingpt/slurm). just update [sbatch_run.sh](https://github.com/pytorch/examples/blob/a38cbfc6f817d9015fc67a6309d3a0be9ff94ab6/distributed/minGPT-ddp/mingpt/slurm/sbatch_run.sh), and run `sbatch sbatch_run.sh`.\r\n\r\n```bash\r\n#!/bin/bash\r\n# account to use\r\n#SBATCH --account=<your accouont>\r\n# job name\r\n#SBATCH --job-name=mingpt\r\n# partition to use\r\n#SBATCH --partition=<partition name>\r\n# number of nodes to use\r\n# we use 2 nodes for ddp training\r\n#SBATCH --nodes=2\r\n# number of tasks per node, set it to 1 here\r\n# we only need to start one task per node, aka the train script\r\n#SBATCH --ntasks-per-node=1\r\n# number of gpus per node to use, we use 1 gpu/node here for demo\r\n#SBATCH --gpus-per-node=1\r\n# number of cpus per gpu to use\r\n#SBATCH --cpus-per-gpu=6\r\n# maximum time to run the job, set it to 10 minutes for demo\r\n#SBATCH -"
+      },
+      {
+        "author": "user-22",
+        "body": "for me:\r\n```\r\n    --machine_rank \\$SLURM_PROCID \\\r\n    --role \\$SLURMD_NODENAME: \\\r\n```\r\n  \\ before $SLURMD_NODENAME and $SLURM_PROCID is needed. Thus it can't be translate to each node specific.\r\n   "
+      },
+      {
+        "author": "user-23",
+        "body": "Hi! Triaging older issues this week — I think the general \"SLURM support\" ask here has shipped and the issue can be closed.\n\n`accelerate` ships first-class SLURM examples and docs:\n\n- [`examples/slurm/`](https://github.com/huggingface/accelerate/tree/main/examples/slurm) — `submit_multicpu.sh`, `submit_multigpu.sh`, `submit_multinode.sh`, `submit_multinode_fsdp.sh`, plus `fsdp_config.yaml`.\n- [`docs/source/basic_tutorials/launch.md`](https://github.com/huggingface/accelerate/blob/main/docs/source/basic_tutorials/launch.md) — launch tutorial that covers SLURM usage.\n- [`examples/config_yaml_templates/multi_node.yaml`](https://github.com/huggingface/accelerate/blob/main/examples/config_yaml_templates/multi_node.yaml) — multi-node config template suitable for SLURM-orchestrated runs.\n\nIf the original ask was about **automatic SLURM environment-variable detection** (à la jax.distributed.initialize), that's a narrower follow-up — there's a separate open issue (#1811) tracking exactly that. "
+      },
+      {
+        "author": "user-24",
+        "body": "I'd like to take this one (`Feature request - SLURM support`). I'll dig into the root cause and follow up with a PR shortly. (claiming via @user-24)"
+      },
+      {
+        "author": "user-24",
+        "body": "I'd like to take this one (`Feature request - SLURM support`). I'll look into the root cause and follow up with a PR. (claiming via @user-24)"
+      },
+      {
+        "author": "user-24",
+        "body": "Hi! I'd like to add SLURM support. Plan: add a SLURM launcher/launch config, document usage, add tests. May I be assigned?"
+      }
+    ]
+  },
+  "1878": {
+    "number": 1878,
+    "title": "Title: Support for non-tensor based datasets in Accelerate",
+    "state": "open",
+    "body": "### System Info\n\n```Shell\naccelerate==0.21.0\r\npython==3.9\n```\n\n\n### Information\n\n- [X] The official example scripts\n- [ ] My own modified scripts\n\n### Tasks\n\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\n- [X] My own task or dataset (give details below)\n\n### Reproduction\n\nI encountered an issue while using the Accelerate library, as it does not support non-tensor based datasets. For instance, consider the following situation:\r\n```python\r\n        return {  \r\n            \"image\": tensor,  \r\n            \"text_input\": str  \r\n        }  \r\n ```\r\nIn this case, an error occurs: `Can only concatenate tensors but got <class 'str'>`. The problem lies in the following code:\r\n\r\n[raise TypeError(f\"Can only concatenate tensors but got {type(data[0])}\")](https://github.com/huggingface/accelerate/blob/69e4c3c54da3201eda288b500d138761e7a5221c/src/accelerate/utils/operations.py#L365C1-L365C1)\r\n\r\nThe concat function here can only handle tensor type data, otherwise, it raises an error. \n\n### Expected behavior\n\nHowever, in many practical applications, we often need to work with non-tensor datasets in IO operations. I would like to request support for non-tensor type datasets in Accelerate. ",
+    "comments": [
+      {
+        "author": "user-25",
+        "body": "Waiting for kindly reply ..."
+      },
+      {
+        "author": "user-26",
+        "body": "I'm getting the same issue. I'm working with PyTorch Geometric Data objects. According to various other threads I've read, it was supported in the past. "
+      }
+    ]
+  },
+  "480": {
+    "number": 480,
+    "title": "XLA + Gradient Accumulation does not work",
+    "state": "open",
+    "body": "### System Info\n\n```Shell\n- `Accelerate` version: 0.11.0.dev0\r\n- Platform: Linux-5.4.188+-x86_64-with-Ubuntu-18.04-bionic\r\n- Python version: 3.7.13\r\n- Numpy version: 1.21.6\r\n- PyTorch version (GPU?): 1.9.0+cu102 (False)\r\n- `Accelerate` default config:\r\n\t- compute_environment: LOCAL_MACHINE\r\n\t- distributed_type: TPU\r\n\t- mixed_precision: no\r\n\t- use_cpu: False\r\n\t- num_processes: 8\r\n\t- machine_rank: 0\r\n\t- num_machines: 1\r\n\t- main_process_ip: None\r\n\t- main_process_port: None\r\n\t- main_training_function: main\r\n\t- deepspeed_config: {}\r\n\t- fsdp_config: {}\n```\n\n\n### Information\n\n- [X] The official example scripts\n- [ ] My own modified scripts\n\n### Tasks\n\n- [X] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\n- [ ] My own task or dataset (give details below)\n\n### Reproduction\n\n1. Run [this](https://raw.githubusercontent.com/huggingface/accelerate/main/examples/nlp_example.py) version of the simple_nlp script and change it's batch size to be one greater than `MAX_BATCH_SIZE_GPU`\r\n2. See results, and they perform poorly\n\n### Expected behavior\n\n```Shell\nRunning on gradient accumulation vs a very large batch size should hold no difference.\n```\n",
+    "comments": []
+  },
+  "987": {
+    "number": 987,
+    "title": "Different accelerate lauch behavior via ssh command",
+    "state": "open",
+    "body": "### System Info\r\n\r\n```Shell\r\n- `Accelerate` version: 0.15.0\r\n- Platform: Linux-5.11.0-1021-gcp-x86_64-with-glibc2.29\r\n- Python version: 3.8.10\r\n- Numpy version: 1.21.3\r\n- PyTorch version (GPU?): 1.10.0+cu102 (False)\r\n- `Accelerate` config passed:\r\n        - compute_environment: LOCAL_MACHINE\r\n        - distributed_type: TPU\r\n        - mixed_precision: no\r\n        - use_cpu: False\r\n        - dynamo_backend: NO\r\n        - num_processes: 8\r\n        - machine_rank: 0\r\n        - num_machines: 1\r\n        - gpu_ids: None\r\n        - main_process_ip: None\r\n        - main_process_port: None\r\n        - rdzv_backend: static\r\n        - same_network: True\r\n        - main_training_function: main\r\n        - deepspeed_config: {}\r\n        - fsdp_config: {}\r\n        - megatron_lm_config: {}\r\n        - downcast_bf16: no\r\n        - tpu_name: None\r\n        - tpu_zone: None\r\n        - command_file: None\r\n        - commands: None\r\n```\r\n\r\n\r\n### Information\r\n\r\n- [ ] The official example scripts\r\n- [X] My own modified scripts\r\n\r\n### Tasks\r\n\r\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\r\n- [X] My own task or dataset (give details below)\r\n\r\n### Reproduction\r\n\r\nMy test code(main.py):\r\n```python3\r\nfrom accelerate import Accelerator\r\n\r\ndef main():\r\n    accl = Accelerator()\r\n\r\n    if accl.is_main_process:\r\n        print(\"Master\")\r\n    accl.wait_for_everyone()\r\n    print(\"ALL\")\r\n\r\nif __name__==\"__main__\":\r\n    main()\r\n\r\n```\r\n\r\nI executed below experiments on tpu v2-8, tpu-vm-pt1.10.\r\n(on tpu vm) ```$ accelerate launch main.py``` -> works well (same with expected output)\r\n(on remote) ```$ ssh <ip> \"bash -l -c 'accelerate launch main.py'\"``` -> unexpected output\r\n\r\n```\r\nMaster\r\nALL\r\nMaster\r\nALL\r\nMaster\r\nALL\r\nMaster\r\nALL\r\nMaster\r\nALL\r\nMaster\r\nALL\r\nMaster\r\nALL\r\nMaster\r\nALL\r\n```\r\n\r\nThere is no problem when I execute other python/bash scripts via ssh.\r\n\r\n### Expected behavior\r\n\r\n```Shell\r\nMaster\r\nALL\r\nALL\r\nALL\r\nALL\r\nALL\r\nALL\r\nALL\r\nALL\r\n```\r\n",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "cc @user-3 "
+      }
+    ]
+  },
+  "1368": {
+    "number": 1368,
+    "title": "Model Parallelism and accelerate's usage of DDP aren't compatible",
+    "state": "open",
+    "body": "### System Info\n\n```Shell\n- `Accelerate` version: 0.18.0\r\n- Platform: Linux-5.4.0-124-generic-x86_64-with-glibc2.31\r\n- Python version: 3.9.12\r\n- PyTorch version (GPU?): 1.12.0 (True)\r\n- `Accelerate` default config:\r\n        - compute_environment: LOCAL_MACHINE\r\n        - distributed_type: MULTI_GPU\r\n        - mixed_precision: no\r\n        - use_cpu: False\r\n        - num_processes: 16\r\n        - machine_rank: 0\r\n        - num_machines: 16\r\n        - main_process_ip: 192.168.1.1\r\n        - main_process_port: 8080\r\n        - rdzv_backend: static\r\n        - same_network: False\r\n        - main_training_function: main\r\n        - downcast_bf16: no\r\n        - tpu_use_cluster: False\r\n        - tpu_use_sudo: False\r\n        - tpu_env: []\n```\n\n\n### Information\n\n- [ ] The official example scripts\n- [X] My own modified scripts\n\n### Tasks\n\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\n- [X] My own task or dataset (give details below)\n\n### Reproduction\n\nIf I use model parallelism (for example using huggingface parallelize), and I'm using accelerate with a standard multi-GPU environment (that uses DDP), then when I prepare the model I get the following error:\r\n\r\n```\r\n  File \"/private/home/raileanu/new-rlvsil/rlvsil/experiment_accel.py\", line 689, in main\r\n    model, optimizer, lr_scheduler, *prepared_dataloaders = accelerator.prepare(\r\n  File \"/private/home/raileanu/.conda/envs/rob/lib/python3.9/site-packages/accelerate/accelerator.py\", line 1122, in prepare\r\n    result = tuple(\r\n  File \"/private/home/raileanu/.conda/envs/rob/lib/python3.9/site-packages/accelerate/accelerator.py\", line 1123, in <genexpr>\r\n    self._prepare_one(obj, first_pass=True, device_placement=d) for obj, d in zip(args, device_placement)\r\n  File \"/private/home/raileanu/.conda/envs/rob/lib/python3.9/site-packages/accelerate/accelerator.py\", line 977, in _prepare_one\r\n    return self.prepare_model(obj, device_placement=device_placement)\r\n  File \"/private/home/raileanu/.conda/envs/rob/lib/python3.9/site-packages/accelerate/accelerator.py\", line 1202, in prepare_model\r\n    model = torch.nn.parallel.DistributedDataParallel(\r\n  File \"/private/home/raileanu/.conda/envs/rob/lib/python3.9/site-packages/torch/nn/parallel/distributed.py\", line 571, in __init__\r\n    self._log_and_throw(\r\n  File \"/private/home/raileanu/.conda/envs/rob/lib/python3.9/site-packages/torch/nn/parallel/distributed.py\", line 674, in _log_and_throw\r\n    raise err_type(err_msg)\r\nValueError: DistributedDataParallel device_ids and output_device arguments only work with single-device/multiple-device GPU modules or CPU modules, but got device_ids [0], output_device 0, and module parameters {device(type='cuda', index=0), device(type='cuda', index=1)}.\r\n```\r\n\r\nI think this is because in line https://github.com/huggingface/accelerate/blob/2708c1ae31f5c32a0715780c2244c8f24ba1cfc3/src/accele",
+    "comments": [
+      {
+        "author": "user-29",
+        "body": "> I feel like you are not listening. You cannot use `DDP + device_map=\"auto\" ` and thus not `DDP + device_map=\"auto\" + DeepSpeep` either. You need to just use DeepSpeed ZeRO-3 to shard your model on several devices and train it with a mix of model parallelism and data parallelism.\r\n\r\nSorry for my misunderstanding, I got your point now"
+      },
+      {
+        "author": "user-30",
+        "body": "@maintainer-2 Just to make sure my understanding is correct, can we use `deepspeed` support with the `Trainer` API to do model + data parallel (without setting `device_map`) or do we have to write code with pure `deepspeed` without HF transformers to load the model? Sorry if my question is repetitive. "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "As long as you properly configure DeepSpeed ZeRO-3, you won't need to use `device_map=\"auto\"` yes, and the model will be loaded on several GPUs (each weight will be split)."
+      },
+      {
+        "author": "user-31",
+        "body": "Just to document my experience on getting DDP + MP (2x2 on 4 gpus) to work with Accelerate (via HF trainer):\r\n\r\nI modified the current main branch to initialize the DDP model by setting device_ids and output_device to None, as described in the pytorch docs when using multi-device modules. Additionally, I had to remove some ValueErrors that are being raised (for no good reason?).\r\n\r\nI launch two processes with torchrun; each supposed to use 2 gpus.\r\nEach process uses a different device map to load the model (llama-2-7b).\r\nProcess 1 uses gpus 0,2, and process 2 uses gpus 1,3.\r\nExample device map for process 1:\r\n```python\r\n{'model.embed_tokens': 0, 'model.norm': 2, 'lm_head': 2, 'model.layers.0': 0, 'model.layers.1': 0, 'model.layers.2': 0, 'model.layers.3': 0, 'model.layers.4': 0, 'model.layers.5': 0 , 'model.layers.6': 0, 'model.layers.7': 0, 'model.layers.8': 0, 'model.layers.9': 0, 'model.layers.10': 0, 'model.layers.11': 0, 'model.layers.12': 0, 'model.layers.13': 0, 'model.layers.14"
+      },
+      {
+        "author": "user-3",
+        "body": "@user-31 can you share your modified code? Curious what those exceptions are that exist for \"no good reason\""
+      },
+      {
+        "author": "user-31",
+        "body": "> @user-31 can you share your modified code? Curious what those exceptions are that exist for \"no good reason\"\r\n\r\n@user-3 I do think these error are necessary if one does not also modify the DDP construction. In fact, they are correct if one has created the `device_map` with 'auto'. However, the errors get triggered even when using a custom `device_map`.\r\n\r\nYou can find my fork here: https://github.com/user-31/accelerate/commit/332d960d625deda76090c32a6e67dee70be76761\r\n\r\nAlso, note that I did not run any tests and check whether this breaks other behavior.\r\n\r\nNow why do I think it is useful to have DDP + MP (in the classic pipeline of layers way): In my case, I am running gpus without fast interconnect (nvlink) which makes FSDP style training very slow."
+      },
+      {
+        "author": "user-3",
+        "body": "Thanks @user-31, as an approach here's what the team has decided we will do:\r\n\r\n1. I'll put a PR in today that let's you *explicitly disable* the blocking behavior, and will set it to `None` as you have shown in your example.\r\n2. We'll keep this issue open, and I ask that the community react with a 👍 to this message if you wind up using this. We want to see what kind of usage folks are having with this, and when we can turn it from a \"power-user\" feature into something more folks are using.\r\n3. Long term we'll see how to enable these kind of native TP trainings directly with accelerate + proper config, once we get a decent amount of folks wanting this.\r\n\r\nSeem reasonable @user-31? And thank you for this reproducer!"
+      },
+      {
+        "author": "user-31",
+        "body": "Sure, that sounds great. Once the changes are in (no rush with that), I might create a tutorial-style GitHub repo for it and do some benchmarking, to be shared via Twitter (sorry, \"X\" ....)."
+      },
+      {
+        "author": "user-29",
+        "body": "@user-3 \r\n\r\nSorry I wanna bring this up again, is it possible to add this functionality as a feature, background is we wanna tune 70b or 8x7b model as a teacher, tried to use FSDP, but lots of feature is not supported in FSDP, DS is even worse, e.g. nested quantization, sliding window attention, the final total saving is actually not that much. \r\n\r\nthe following is my testing code, basically for each node, we have 8 A100_80gb GPU, each training process will take 2 GPU:\r\n(btw, I haven't check @user-31's approach yet, will have a look for sure)\r\n```\r\ndef create_and_prepare_model():\r\n    compute_dtype = getattr(torch, \"float16\")\r\n\r\n    bnb_config = BitsAndBytesConfig(\r\n        load_in_4bit=True,\r\n        # load_in_8bit=True,\r\n        bnb_4bit_quant_type=\"nf4\",\r\n        bnb_4bit_compute_dtype=compute_dtype,\r\n        bnb_4bit_use_double_quant=True,\r\n    )\r\n\r\n    device_map = {'model.embed_tokens': 0, 'model.layers.0': 0, 'model.layers.1': 0, 'model.layers.2': 0, 'model.layers.3': 0, 'model."
+      },
+      {
+        "author": "user-29",
+        "body": "@user-3 @user-31, because I loaded the model in 4bit so I also comment out this line:\r\nhttps://github.com/user-31/accelerate/blob/332d960d625deda76090c32a6e67dee70be76761/src/accelerate/accelerator.py#L1342\r\n\r\nBut don't know is there any bad effect, it starts to train at least, could you pls elaborate potential consequences"
+      }
+    ]
+  },
+  "944": {
+    "number": 944,
+    "title": "accelerator.end_training() is generating exception when wandb is being used as tracker",
+    "state": "open",
+    "body": "### System Info\r\n\r\n```Shell\r\n- `Accelerate` version: 0.15.0\r\n- Platform: macOS-13.1-arm64-i386-64bit\r\n- Python version: 3.9.15\r\n- Numpy version: 1.24.0\r\n- PyTorch version (GPU?): 1.13.1 (False)\r\n- `Accelerate` default config:\r\n        - compute_environment: LOCAL_MACHINE\r\n        - distributed_type: MPS\r\n        - mixed_precision: bf16\r\n        - use_cpu: False\r\n        - dynamo_backend: NO\r\n        - num_processes: 1\r\n        - machine_rank: 0\r\n        - num_machines: 1\r\n        - gpu_ids: None\r\n        - main_process_ip: None\r\n        - main_process_port: None\r\n        - rdzv_backend: static\r\n        - same_network: True\r\n        - main_training_function: main\r\n        - deepspeed_config: {}\r\n        - fsdp_config: {}\r\n        - megatron_lm_config: {}\r\n        - downcast_bf16: no\r\n        - tpu_name: None\r\n        - tpu_zone: None\r\n        - command_file: None\r\n        - commands: None\r\n```\r\n\r\n\r\n### Information\r\n\r\n- [ ] The official example scripts\r\n- [X] My own modified scripts\r\n\r\n### Tasks\r\n\r\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\r\n- [ ] My own task or dataset (give details below)\r\n\r\n### Reproduction\r\n\r\nI am initiating my accelerator tracker in this way\r\n```\r\n    if args.with_tracking:\r\n        experiment_config = vars(args)\r\n        experiment_config[\"lr_scheduler_type\"] = experiment_config[\"lr_scheduler_type\"]\r\n        wandb.login(key=os.environ.get(\"WANDB_API_KEY\"))\r\n        accelerator.init_trackers(\r\n            project_name=os.environ.get('WANDB_PROJECT_NAME'),\r\n            config=experiment_config,\r\n            init_kwargs={\r\n                \"wandb\": {\r\n                    \"job_type\": \"train\",\r\n                    \"entity\": os.environ.get('WANDB_ENTITY_NAME'),\r\n                    \"name\": get_training_job_name()\r\n                }\r\n            }\r\n        )\r\n```\r\nand finishing my experiment in this way\r\n```\r\n    if args.with_tracking:\r\n        accelerator.end_training()\r\n```\r\n\r\nIt runs the complete training successfully and also the wandb run finishes but at the end it throws the following exception.\r\n\r\nIt throws the below exception\r\n```\r\nException in thread SockSrvRdThr:\r\nTraceback (most recent call last):\r\nFile \"/Users/samarpandutta/miniforge3/envs/banjo-accelerate-demo/lib/python3.9/threading.py\", line 980, in _bootstrap_inner\r\nself.run()\r\nFile \"/Users/samarpandutta/miniforge3/envs/banjo-accelerate-demo/lib/python3.9/site-packages/wandb/sdk/service/server_sock.py\", line 112, in run\r\nshandler(sreq)\r\nFile \"/Users/samarpandutta/miniforge3/envs/banjo-accelerate-demo/lib/python3.9/site-packages/wandb/sdk/service/server_sock.py\", line 173, in server_record_publish\r\niface = self._mux.get_stream(stream_id).interface\r\nFile \"/Users/samarpandutta/miniforge3/envs/banjo-accelerate-demo/lib/python3.9/site-packages/wandb/sdk/service/streams.py\", line 199, in get_stream\r\nstream = self._streams[",
+    "comments": [
+      {
+        "author": "user-36",
+        "body": "Same problem\r\n```\r\nPython 3.10.8\r\n\r\naccelerate==0.15.0\r\nwandb==0.13.9\r\n```"
+      },
+      {
+        "author": "user-3",
+        "body": "We've reached out to the W&B folks, we should have a solution soon!"
+      },
+      {
+        "author": "user-37",
+        "body": "I'm having the same issue"
+      },
+      {
+        "author": "user-38",
+        "body": "Trying to reproduce this, but discovered that I am unable to tap into `mps` GPU anymore using accelerate..."
+      },
+      {
+        "author": "user-39",
+        "body": "Same issue here. I'm using accelerate 0.15.0"
+      },
+      {
+        "author": "user-40",
+        "body": "Solved it by passing keyword settings in init_kwargs and then passing it to accelerate.init. If using in colab then use thread instead of fork. Reference [link](https://docs.wandb.ai/guides/track/launch#init-start-error)\r\n```python\r\ninit_kwargs={\"wandb\":{\"group\":wandb_dict['group_name'],\"name\":wandb_dict['display_name'],'settings':wandb.Settings(start_method=\"fork\")}}\r\n         \r\n        accelerator.init_trackers(wandb_dict['project_name'], config=parameter, init_kwargs=init_kwargs)\r\n```"
+      },
+      {
+        "author": "user-3",
+        "body": "@user-40 thanks for the pointer! Will pass along to the W&B team.\r\nThey should have a fix by the next release as they've identified the problem as well.\r\n\r\nThe workaround they suggested was disabling the console for now:\r\n\r\n```python\r\n        init_kwargs = {\"wandb\":{\"settings\":{\"console\": \"off\"}}}\r\n        accelerator.init_trackers(\"glue_no_trainer\", experiment_config, init_kwargs=init_kwargs)\r\n```"
+      },
+      {
+        "author": "user-33",
+        "body": "@user-40  - Can you  share the version of accelerate and wandb you are using? Thanks! "
+      },
+      {
+        "author": "user-40",
+        "body": "@user-33 : I am using these versions accelerate=0.16.0 & wandb=0.13.9\r\n"
+      },
+      {
+        "author": "user-3",
+        "body": "The fix for this *should* be out now, let us know if you all are still seeing this issue"
+      }
+    ]
+  },
+  "4249": {
+    "number": 4249,
+    "title": "prepare_model unconditionally imports DTensor, breaking single-GPU training on torch builds without a distributed backend",
+    "state": "closed",
+    "body": "### What happens\n\n`Accelerator.prepare_model` calls `model_has_dtensor(model)` while computing `device_placement`. That function imports `torch.distributed.tensor`, which transitively imports `torch._C._distributed_c10d`. On a PyTorch build compiled without a distributed backend, the import raises and every single-GPU run dies at trainer start.\n\nAMD's official Windows ROCm wheels (`repo.amd.com/rocm/whl/...`) are such a build: `torch.distributed` imports, but `torch.distributed.is_available()` is `False` and `torch._C._distributed_c10d` does not exist. This currently breaks all training on AMD GPUs on Windows.\n\n### Reproduction\n\n```python\nimport torch, torch.nn as nn, accelerate\nfrom accelerate import Accelerator\n\nprint(\"accelerate\", accelerate.__version__)\nprint(\"has _distributed_c10d:\", hasattr(torch._C, \"_distributed_c10d\"))\nprint(\"torch.distributed.is_available():\", torch.distributed.is_available())\n\nAccelerator().prepare_model(nn.Linear(4, 4))\nprint(\"PASS\")\n```\n\nOn `torch 2.11.0+rocm7.13.0` (Windows 11, Python 3.13), same machine, only the accelerate version differs:\n\n```\naccelerate 1.14.0\nhas _distributed_c10d: False\ntorch.distributed.is_available(): False\nPASS\n\naccelerate 1.15.0\nhas _distributed_c10d: False\ntorch.distributed.is_available(): False\nModuleNotFoundError: No module named 'torch._C._distributed_c10d'; 'torch._C' is not a package\n```\n\nTrimmed traceback on 1.15.0:\n\n```\n  accelerate/accelerator.py:1802   in prepare_model     -> and not model_has_dtensor(model)\n  accelerate/utils/other.py:243    in model_has_dtensor -> from torch.distributed.tensor import DTensor\n  torch/distributed/tensor/__init__.py:4\n  torch/distributed/tensor/_ops/_conv_ops.py:5\n  torch/distributed/tensor/_dtensor_spec.py:9\n  torch/distributed/tensor/placement_types.py:10\n  torch/distributed/_functional_collectives.py:9\n  torch/distributed/distributed_c10d.py:25 -> from torch._C._distributed_c10d import (...)\nModuleNotFoundError: No module named 'torch._C._distributed_c10d'; 'torch._C' is not a package\n```\n\n### Where it regressed\n\nIn v1.14.0 the only `model_has_dtensor(model)` call is at `accelerator.py:1878`, guarded by:\n\n```python\nif self.multi_device and not (self.parallelism_config and self.parallelism_config.tp_enabled):\n```\n\nso a single-GPU run never reached it.\n\nv1.15.0 adds a second, unguarded call at `accelerator.py:1802`, inside the `device_placement` computation that every `prepare_model` executes. That appears to come from #4181 (`f7cc8e9a57993e049d21f2755fa85d3afc17af7b`, merged 2026-09-03), first released in 1.15.0 on 2026-09-09.\n\n### Suggested fix\n\nEither short-circuit `model_has_dtensor` when `torch.distributed.is_available()` is `False`, or restore the multi-device guard on the new call site. The first looks more robust, since a DTensor cannot be present at all without a distributed build.\n\nRelated, previously accepted as a supported configuration: #1787.\n\n### Environment\n\n- accelerate 1.15.0 (fails) / 1.14.0 (works)\n- torch 2.11.0+rocm7.13.0, W",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Sorry for that, thanks for flagging"
+      }
+    ]
+  },
+  "4306": {
+    "number": 4306,
+    "title": "split_between_processes crashes on tuples when apply_padding=True",
+    "state": "closed",
+    "body": "`split_between_processes` documents `tuple` as an accepted input type, but combining it with `apply_padding=True` raises a TypeError on every rank:\n\n```\nTypeError: can only concatenate tuple (not \"list\") to tuple\n```\n\nThe padding gets concatenated to `result` as a list, but `result` is a tuple slice, and `tuple += list` fails even when there is nothing to pad, so this fails no matter how the data divides up.\n\nRepro with `torchrun --nproc_per_node=2`:\n\n```python\nfrom accelerate.state import PartialState\n\nstate = PartialState(cpu=True)\nwith state.split_between_processes((1, 2, 3), apply_padding=True) as out:\n    print(out)\n```\n\nLists work fine, tuples die on both ranks. Seen on main (1.16.0.dev0) with torch 2.5.1, on CPU and CUDA.\n",
+    "comments": [
+      {
+        "author": "user-43",
+        "body": "Confirmed on the **stable release**: accelerate **1.15.0** (reporter saw it on main `1.16.0.dev0`), macOS 26.5.1 arm64, torch 2.14.0, Python 3.11, `torchrun --nproc_per_node=2`.\n\n```text\n[rank 0] list  -> [1, 2]\n[rank 1] list  -> [3, 3]        # padding itself works fine for lists\n[rank 0] tuple -> TypeError: can only concatenate tuple (not \"list\") to tuple\n[rank 1] tuple -> TypeError: can only concatenate tuple (not \"list\") to tuple\n```\n\nTwo details worth pinning down:\n\n- It fails on both ranks, including rank 0 which got an even split and needed **no** padding — the concatenation happens unconditionally before the emptiness check matters (consistent with `result += padding` being evaluated whenever `num_batches < num_processes`, but here it hits regardless).\n- The list path shows padding semantics are correct otherwise, so the fix is just making the padding a `type(result)(...)`/list-then-cast instead of `+=` against a tuple slice.\n\n`tuple` is in the documented accepted input types, "
+      },
+      {
+        "author": "user-42",
+        "body": "Thanks for confirming! This is fixed in #4307 — the padding is now type-aware (`tuple` results get `(inputs[-1],) * num_padding` instead of a list). Feel free to test that branch on your setup, an extra data point on stable would be great."
+      }
+    ]
+  },
+  "4226": {
+    "number": 4226,
+    "title": "find_executable_batch_size does not catch MPS out-of-memory errors",
+    "state": "closed",
+    "body": "`find_executable_batch_size` re-raises on the first MPS out-of-memory error instead of lowering the batch size.\n\n`should_reduce_batch_size` (`src/accelerate/utils/memory.py`, lines 108 to 116) matches on `\" out of memory.\"`, with a trailing period. The MPS allocator raises:\n\n```\nRuntimeError: MPS backend out of memory (MPS allocated: 0 bytes, other allocations: 448.00 KiB, max allowed: 242.48 MiB). Tried to allocate 256.00 MiB on shared pool. Use PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0 to disable upper limit for memory allocations (may cause system failure).\n```\n\n\"out of memory\" is followed by \" (\" rather than \".\", so no statement matches and the decorator re-raises. The message has been the same since at least torch v2.1.0 (`aten/src/ATen/mps/MPSAllocator.mm`), and it is a plain `RuntimeError`, not `torch.OutOfMemoryError`.\n\n### Reproduction\n\naccelerate 1.15.0.dev0 at 9e5d1de, torch 2.14.0, macOS arm64, Python 3.13. The watermark ratio makes the allocator refuse anything above about 240 MiB, so the OOM fires without filling the GPU.\n\n```python\n# repro.py, following the pattern in docs/source/basic_tutorials/troubleshooting.md\nimport sys, torch\nfrom accelerate import Accelerator\nfrom accelerate.utils import find_executable_batch_size\n\nuse_cpu = \"--cpu\" in sys.argv\naccelerator = Accelerator(cpu=use_cpu)\nunit = 2**25 if not use_cpu else 2**44  # 32 MiB per sample on MPS; 16 TiB per sample on CPU\ntried = []\n\n@find_executable_batch_size(starting_batch_size=32)\ndef inner(batch_size):\n    tried.append(batch_size)\n    accelerator.free_memory()\n    x = torch.empty(batch_size * unit, dtype=torch.uint8, device=accelerator.device)\n    return x.numel() // unit\n\nprint(\"device:\", accelerator.device)\ntry:\n    print(\"succeeded with batch_size =\", inner())\nexcept RuntimeError as e:\n    print(\"raised\", type(e).__name__ + \":\", str(e)[:120])\nprint(\"batch sizes tried:\", tried)\n```\n\n```\n$ PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.02 PYTORCH_MPS_LOW_WATERMARK_RATIO=0.01 python repro.py\ndevice: mps\nraised RuntimeError: MPS backend out of memory (MPS allocated: 0 bytes, other allocations: 448.00 KiB, max allowed: 242.48 MiB). Tried to all\nbatch sizes tried: [32]\n\n$ python repro.py --cpu\ndevice: cpu\nsucceeded with batch_size = 3\nbatch sizes tried: [32, 28, 25, 22, 19, 17, 15, 13, 11, 9, 8, 7, 6, 5, 4, 3]\n```\n\nThe CPU allocator's message (`DefaultCPUAllocator: can't allocate memory`) is matched and the batch size steps down. On MPS the first failure propagates.\n\n`tests/test_memory_utils.py` does not catch this. `raise_fake_out_of_memory` raises `f\"{torch_device.upper()} out of memory.\"`, which on an MPS host is `\"MPS out of memory.\"` and matches the `\" out of memory.\"` statement. The real allocator message does not.\n\n### Expected behavior\n\nThe batch size steps down on MPS the way it does on CPU and CUDA.\n\n`transformers.Trainer` with `auto_find_batch_size=True` delegates to this function through `trainer_utils.find_executable_batch_size`, so that option cannot recover from an OOM on ",
+    "comments": []
+  },
+  "4111": {
+    "number": 4111,
+    "title": "concatenate() still raises TypeError on non-tensor batch fields when num_processes > 1",
+    "state": "closed",
+    "body": "### Context\n\n#3849 reported that `DataLoaderDispatcher` (used when `dispatch_batches=True`, the default for an `IterableDataset`) crashed on non-tensor batch values (str/bool/list) returned by a data collator. \n\n#3850 fixed the single-process case by adding a `len(data) == 1` short-circuit in `concatenate()`:\n```python\nelif isinstance(data[0], torch.Tensor):\n    return torch.cat(data, dim=dim)\nelif isinstance(data, (tuple, list)) and len(data) == 1:\n    return data[0]\nelse:\n    raise TypeError(f\"Can only concatenate tensors but got {type(data[0])}\")\n```\n\n### The remaining bug\n\n`DataLoaderDispatcher._fetch_batches` gathers exactly `num_processes` raw batches before calling `concatenate`:\n```python\nfor _ in range(self.state.num_processes):\n    self._update_state_dict()\n    batches.append(next(iterator))\nbatch = concatenate(batches, dim=0)\n```\n\nAs soon as `num_processes > 1` and a batch field isn't a tensor, `concatenate()` still raises the exact same `TypeError` as before #3850.\n\nThe PR review discussion already covers this exact gap, but it's easy to miss since it's buried in review comments on a merged PR rather than tracked as an open issue: https://github.com/huggingface/accelerate/pull/3850#discussion_r2560098952\n>  @maintainer-1: \"This is a fix that only works when we have one gpu (only one batch is passed in concatenate). The issue happens when we have multi-gpu...\"\n>\n> @user-62: \"The suggestion here works fine with single-process, but the len(data) is simply equal to the number of processes. In short: it'll always fail in multi-process settings.\"\n>\n> @user-62 (final): \"Agreed, it's a step in the right direction, even though multi-process support is not possible... Not supporting IterableDataset + MultiGPU is a bit annoying.\"\n\nSo this is a confirmed, intentional trade-off, not an oversight. I'm opening this mainly so it's trackable/discoverable outside the PR thread.\n\n### Minimal repro\n```python\nfrom accelerate.utils.operations import concatenate\nimport torch\n\ndata = [\n    {\"input_ids\": torch.tensor([[1, 2]]), \"label\": True},\n    {\"input_ids\": torch.tensor([[3, 4]]), \"label\": False},\n]\nconcatenate(data)\n# TypeError: Can only concatenate tensors but got <class 'bool'>\n```\n\n### Ask\n@maintainer-1 mentioned in review: \"We can add in the docstring that if we receive only one batch of data, we will return it as it.\" The current docstring says \"If there is only a single batch of data, it is returned as-is,\" but doesn't spell out that non-tensor fields remain broken for num_processes > 1 on any Accelerate version. Could that be made explicit, so downstream library authors don't assume #3850 was a general fix? \n\nWe hit exactly that assumption gap in `trl` KTOTrainer, where a collator returned a bool field as a plain list, fine for `num_processes == 1` (where CI happened to pass on latest Accelerate), broken for real multi-process streaming eval on any Accelerate version. We're fixing it on our end by making that field a tensor, but wanted to flag the",
+    "comments": []
+  },
+  "908": {
+    "number": 908,
+    "title": "CUDA initialization ",
+    "state": "open",
+    "body": "### System Info\n\n```Shell\nHello everybody. I keep encountering the same issue: I use '1.12.1+cu102'and FastAI '2.7.9'.\r\nI need to use the multiple GPUs in our server to train deeper networks with more images. \r\n___\r\naccelerate env\r\n\r\nTraceback (most recent call last):\r\n  File \"/home/andrea/anaconda3/bin/accelerate\", line 8, in <module>\r\n    sys.exit(main())\r\n  File \"/home/andrea/anaconda3/lib/python3.9/site-packages/accelerate/commands/accelerate_cli.py\", line 43, in main\r\n    args.func(args)\r\n  File \"/home/andrea/anaconda3/lib/python3.9/site-packages/accelerate/commands/env.py\", line 34, in env_command\r\n    accelerate_config = load_config_from_file(args.config_file).to_dict()\r\n  File \"/home/andrea/anaconda3/lib/python3.9/site-packages/accelerate/commands/config/config_args.py\", line 63, in load_config_from_file\r\n    return config_class.from_yaml_file(yaml_file=config_file)\r\n  File \"/home/andrea/anaconda3/lib/python3.9/site-packages/accelerate/commands/config/config_args.py\", line 116, in from_yaml_file\r\n    return cls(**config_dict)\r\nTypeError: __init__() got an unexpected keyword argument 'command_file'\n```\n\n\n### Information\n\n- [ ] The official example scripts\n- [X] My own modified scripts\n\n### Tasks\n\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\n- [X] My own task or dataset (give details below)\n\n### Reproduction\n\nHere is the script that I am using:\r\n____________________________________\r\nfrom fastai.vision.all import *\r\nfrom fastai.distributed import *\r\nfrom fastai.vision.models.xresnet import *\r\n\r\nfrom accelerate import Accelerator\r\nfrom accelerate.utils import set_seed\r\nfrom timm import create_model\r\nfrom accelerate import notebook_launcher\r\n\r\ndef get_msk(o):\r\n    return path_Rflbl+fr'/RfM_{o.stem}{o.suffix.lower()}___fuse{o.suffix.lower()}' \r\n\r\nnumeral_codes=[i for i in range(0,16)] #as I am labeling 16 categories in the data\r\nprint('numeral codes ', numeral_codes)                  \r\nfile = open(path+'/codes.txt', \"w+\")\r\n \r\n# Saving the array in a text file\r\ncontent = str(numeral_codes)\r\nfile.write(content)\r\nfile.close()\r\n\r\ndef train():\r\n    dls = SegmentationDataLoaders.from_label_func(\r\n        path, bs=8, fnames = get_image_files(path+'/Impng'),\r\n        label_func = get_msk,\r\n        codes = np.loadtxt(path+'/codes.txt', dtype=str)\r\n    )\r\n    learn = unet_learner(dls, resnet34)\r\n    with learn.distrib_ctx(in_notebook=True, sync_bn=False):\r\n        learn.fit(10)\r\n\r\nnotebook_launcher(train, num_processes=4)\r\n\r\n________________\r\nIt all works until I use notebook launcher. then it comes up with:\r\n---------------------------------------------------------------------------\r\nValueError                                Traceback (most recent call last)\r\nInput In [46], in <cell line: 24>()\r\n     19     with learn.distrib_ctx(in_notebook=True, sync_bn=False):\r\n     20         learn.fit(10)\r\n---> 24 n",
+    "comments": [
+      {
+        "author": "user-45",
+        "body": "@user-3 \r\nsorry...this is me trying to send you the file..."
+      },
+      {
+        "author": "user-45",
+        "body": "@user-3 \r\nI beg your pardon Zach. I am not very well versed with this interface.\r\nI try to send it now again.  No, it does not allow to attach .iypnb notebooks. \r\nI am sorry: it attaches this script only as pdf.  Here it is. I hop eit is clear enough...\r\n\r\n[Multi-GPUs not working ASCI.pdf](https://github.com/huggingface/accelerate/files/10274163/Multi-GPUs.not.working.ASCI.pdf)\r\n"
+      },
+      {
+        "author": "user-3",
+        "body": "Thanks @user-45, your issue is this line, you shouldn't be re-making dataloaders:\r\n\r\n```python\r\nlearn = unet_learner(resnet34,dls,\r\n dls=TfmdDL(after_item=ToTensor(4,80,80),\r\n after_batch=[IntToFloatTensor(), \r\n*aug_transforms()], bs=8))\r\n```\r\n\r\nTo fix, (or at least get further) change that code to be:\r\n\r\n```python\r\nlearn = unet_learner(resnet34,dls)\r\n```"
+      },
+      {
+        "author": "user-45",
+        "body": "Thanks @user-3 .\r\n\r\nYes, I am sorry: I put actually the file before finding that it is indeed wrong. I found an other issue as well. With the codes. Trying to fix it. \r\nmy problem with such a simple dls is that I do nto know how to make the transform or how to tell it to make all of a certain dimension. This is why I used a datablock before. Which form a datablock needs to have here? the regular one? I'll try. Thanks!!\r\n"
+      },
+      {
+        "author": "user-3",
+        "body": "I'd recommend opening a thread on the fastai forums for more help, since the issue is with the framework more than Accelerate specifically :)\r\n\r\nhttps://forums.fast.ai"
+      },
+      {
+        "author": "user-45",
+        "body": "Thank you for the insightful suggestion, @user-3 , but I have a strange problem I believe:\r\nAfter I run:\r\n<img width=\"919\" alt=\"Screenshot 2022-12-21 at 11 53 57\" src=\"https://user-images.githubusercontent.com/83672195/208961785-cca35367-5cfd-4a93-af36-157cc6464c04.png\">\r\nThe problem is that now Accelerate needs me to use SegmentationDataLoaders . And I need to insert transformations, but I do not know how to do it. Can you send me an example with SegmentationDataLoaders where you insert the 'Items_transform' or 'after_item'  in order to standardize the images seen by the algorithm? Here is what it says when I run notebook_launcher:\r\n\r\n<img width=\"899\" alt=\"Screenshot 2022-12-21 at 11 55 08\" src=\"https://user-images.githubusercontent.com/83672195/208962613-77283e4f-4484-438b-8046-690e7b14684f.png\">\r\n\r\nThanks for your help!\r\n"
+      },
+      {
+        "author": "user-45",
+        "body": "@user-3 \r\n\r\nHi Zack,\r\nI have an important update. I realized that the segmentationDataLoaders.from_label_func() is a function that evidently ember both datablock and dataloader characteristics, so I inserted size-standardization of the images. And it worked, AT FIRST: \r\n[](url)"
+      },
+      {
+        "author": "user-45",
+        "body": "\r\n<img width=\"1160\" alt=\"Screenshot 2022-12-21 at 14 24 09\" src=\"https://user-images.githubusercontent.com/83672195/208987802-0698c22a-d8f5-44b6-8d58-6cd3c441e122.png\">\r\n"
+      },
+      {
+        "author": "user-45",
+        "body": "@user-3 \r\nBut if I start the calculation on more than 2 GPUs, it crashes for out-of-memory errors:\r\n<img width=\"740\" alt=\"Screenshot 2022-12-21 at 14 34 20\" src=\"https://user-images.githubusercontent.com/83672195/208988426-0eb688a0-840f-472a-8b13-58d76b5be644.png\">\r\nNow, the reason why I want to use many GPUs is exactly for avoiding this sort of errors. Do you have any idea how could I manage the memory and/or ask accelerate to do it for us? we plan to have MANY images to train, and use at least Resnet50... while now I am confined to Resnet34.\r\nWhich is not bad but... \r\nThank you for your time!\r\n\r\n"
+      },
+      {
+        "author": "user-46",
+        "body": "I also encountered this problem and don't know how to solve it.\r\nI know that cuda is guaranteed not to be initialized before running jupyter_laucher. But none of my previous codes were initialized. Or called torch.cuda? What should we do?\r\n\r\n\r\n\r\nckpt_path = 'baichuan13b_ner'\r\n\r\noptimizer = bnb.optim.adamw.AdamW(peft_model.parameters(),\r\n                                  lr=6e-05,is_paged=True)  #'paged_adamw'\r\n# 初始化KerasModel\r\nkeras_model = KerasModel(peft_model, loss_fn =None,  optimizer=optimizer)\r\n\r\n# 加载微调后的权重\r\nkeras_model.load_ckpt(ckpt_path)\r\n\r\n# 使用多GPU训练\r\nkeras_model.fit_ddp(num_processes=2,\r\n                    train_data=dl_train,\r\n                    val_data=dl_val,\r\n                    epochs=100,\r\n                    patience=10,\r\n                    monitor='val_loss',\r\n                    mode='min',\r\n                    ckpt_path=ckpt_path)\r\n\r\n\r\n```> ---------------------------------------------------------------------------\r\n> ValueError                                T"
+      }
+    ]
+  },
+  "2154": {
+    "number": 2154,
+    "title": "Accelerate integration with Transformer Engine crashes when using FlashAttention",
+    "state": "open",
+    "body": "### System Info\n\n```Shell\nAccelerate: 0.24.1\r\nOS: Ubuntu 22.04\r\nPython: 3.10\r\nNumPy: 1.26.0\r\nTorch: 2.1.0\r\n\r\nAccelerate configuration:\r\n\r\ncompute_environment: LOCAL_MACHINE\r\ndebug: false\r\ndeepspeed_config:\r\n  gradient_accumulation_steps: 4\r\n  gradient_clipping: 1.0\r\n  offload_optimizer_device: none\r\n  offload_param_device: none\r\n  zero3_init_flag: true\r\n  zero3_save_16bit_model: false\r\n  zero_stage: 3\r\ndistributed_type: DEEPSPEED\r\ndowncast_bf16: 'no'\r\nmachine_rank: 0\r\nmain_training_function: main\r\nmixed_precision: fp8\r\nnum_machines: 1\r\nnum_processes: 2\r\nrdzv_backend: static\r\nsame_network: true\r\ntpu_env: []\r\ntpu_use_cluster: false\r\ntpu_use_sudo: false\r\nuse_cpu: false\n```\n\n\n### Information\n\n- [X] The official example scripts\n- [ ] My own modified scripts\n\n### Tasks\n\n- [X] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\n- [ ] My own task or dataset (give details below)\n\n### Reproduction\n\nRun the `run_clm_no_trainer.py` script with the provided config on a model that supports Flash Attention, and turn Flash Attention on with the flag `use_flash_attention_2=True`:\r\n\r\n        model = AutoModelForCausalLM.from_pretrained(\r\n            args.model_name_or_path,\r\n            from_tf=bool(\".ckpt\" in args.model_name_or_path),\r\n            config=config,\r\n            torch_dtype=torch.bfloat16,\r\n            trust_remote_code=args.trust_remote_code,\r\n            use_flash_attention_2=True\r\n        )\r\n\r\nEg. here is a call I used:\r\n\r\n`accelerate launch run_clm_no_trainer.py --train_file blog_train.json --validation_file blog_val.json --model_name_or_path facebook/opt-1.3b --per_device_train_batch_size 12 --per_device_eval_batch_size 12 --learning_rate 1e-5 --num_train_epochs 1 --gradient_accumulation_steps 4 --output_dir blog_opt --block_size 1024 --checkpointing_steps 400000 --trust_remote_code true --report_to wandb --eval_steps 100 --with_tracking`\n\n### Expected behavior\n\nTraining should run. Instead, it crashes with this error:\r\n\r\nTraceback (most recent call last):\r\n  File \"/home/alyssa/lm_fun/run_clm.py\", line 769, in <module>\r\n    main()\r\n  File \"/home/alyssa/lm_fun/run_clm.py\", line 675, in main\r\n    outputs = model(**batch)\r\n  File \"/home/alyssa/anaconda3/envs/lm_fun/lib/python3.10/site-packages/torch/nn/modules/module.py\", line 1518, in _wrapped_call_impl\r\n    return self._call_impl(*args, **kwargs)\r\n  File \"/home/alyssa/anaconda3/envs/lm_fun/lib/python3.10/site-packages/torch/nn/modules/module.py\", line 1527, in _call_impl\r\n    return forward_call(*args, **kwargs)\r\n  File \"/home/alyssa/anaconda3/envs/lm_fun/lib/python3.10/site-packages/deepspeed/utils/nvtx.py\", line 15, in wrapped_fn\r\n    ret_val = func(*args, **kwargs)\r\n  File \"/home/alyssa/anaconda3/envs/lm_fun/lib/python3.10/site-packages/deepspeed/runtime/engine.py\", line 1818, in forward\r\n    loss = self.module(*inputs, **kwargs)\r\n  File \"/home/alyssa/anaco",
+    "comments": [
+      {
+        "author": "user-3",
+        "body": "The error states very clearly that you can only use flash attention with bf16 and fp16. This is not an accelerate issue, you must use one of those for mixed precision "
+      },
+      {
+        "author": "user-47",
+        "body": "@user-3 Transformer Engine currently includes support for Flash Attention, see the documentation here:\r\n\r\nhttps://docs.nvidia.com/deeplearning/transformer-engine/user-guide/api/pytorch.html?highlight=flash#transformer_engine.pytorch.DotProductAttention\r\n\r\nbut the Accelerate Transformer Engine integration doesn't include TE's attention classes:\r\n\r\nhttps://github.com/huggingface/accelerate/blob/main/src/accelerate/utils/transformer_engine.py"
+      },
+      {
+        "author": "user-3",
+        "body": "Will see if we can drop in a replacement, but with TE it’s very model specific and more often than not these layers are not drop in with how transformers models have been made, so very doubtful. "
+      },
+      {
+        "author": "user-3",
+        "body": "If you find it does work, feel free to open a PR :)"
+      }
+    ]
+  },
+  "4277": {
+    "number": 4277,
+    "title": "`simple_launcher` discards the child's error, unlike the elastic launch path",
+    "state": "closed",
+    "body": "### System Info\n\n```\naccelerate 1.12.0, and unchanged on main at b795b4838eb33bde60eb398649c4ab006874e3e9\n```\n\n### Information\n\n- [ ] The official example scripts\n- [X] My own modified scripts\n\n### Tasks\n\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\n- [X] My own task or dataset (give details below)\n\n### Reproduction\n\n`simple_launcher` runs the training script with `subprocess.Popen` and, on a non-zero exit, raises a `CalledProcessError` built from the return code and the command alone: https://github.com/huggingface/accelerate/blob/b795b4838eb33bde60eb398649c4ab006874e3e9/src/accelerate/commands/launch.py#L992-L1001\n\nThe child's stderr is inherited rather than read, and neither `output` nor `stderr` is passed to the exception, so a caller that catches it learns only that something exited non-zero.\n\n```python\nimport subprocess\nimport sys\n\nfrom accelerate.commands.launch import launch_command, launch_command_parser\n\nargs = launch_command_parser().parse_args([\"--cpu\", \"--num_processes\", \"1\", sys.argv[1]])\ntry:\n    launch_command(args)\nexcept subprocess.CalledProcessError as e:\n    print(f\"parent sees : {type(e).__name__}: {e}\")\n    print(f\"e.stderr    : {e.stderr!r}\")\n    print(f\"e.output    : {e.output!r}\")\n```\n\nRun against a `boom.py` whose only line is `raise ValueError(\"the real cause\")`:\n\n```\nTraceback (most recent call last):\n  File \"boom.py\", line 1, in <module>\n    raise ValueError(\"the real cause\")\nValueError: the real cause\n\nparent sees : CalledProcessError: Command '['.../bin/python', 'boom.py']' returned non-zero exit status 1.\ne.stderr    : None\ne.output    : None\n```\n\n### Expected behavior\n\nThe multi-process path already solves this. `multi_gpu_launcher` delegates to `torch.distributed.run`, and torch elastic propagates the child's root exception to the parent through error files, so the parent raises a `ChildFailedError` carrying the child's traceback in a \"Root Cause\" section. Its docstring gives the rationale: the parent is \"a simple nanny process\", so \"child errors should be propagated to the scheduler for accurate root cause diagnostics\". `simple_launcher` is the same nanny, and it would be good if it gave the same guarantee.\n\nThis matters for callers that handle the exception programmatically rather than reading a terminal. Concretely, the TRL CLI tests invoke `trl sft`, which reaches `simple_launcher`, and the suite retries known transient infrastructure failures by matching the exception type and message. When a child dies of GPU memory pressure from parallel test workers, all that reaches the matcher is `CalledProcessError: Command '[...]' returned non-zero exit status 1.`, indistinguishable from a genuine regression, so the retry never fires and the run fails permanently on a transient condition. The child's traceback does reach the terminal, but a thousand lines above the fai",
+    "comments": [
+      {
+        "author": "user-48",
+        "body": "I opened PR #4292 to capture stdout/stderr in simple_launcher and pass it to CalledProcessError, so callers can surface the actual child error."
+      },
+      {
+        "author": "user-49",
+        "body": "Confirmed the deadlock on option 1 locally — wait()-then-read() hung permanently with a child that floods stdout before raising; communicate() completed in 41ms with the full traceback in e.stderr. Worth a guard comment on that line since it looks like unnecessary complexity at first glance."
+      }
+    ]
+  },
+  "1396": {
+    "number": 1396,
+    "title": "accelerate autocast on mps device",
+    "state": "open",
+    "body": "### System Info\r\n\r\n```Shell\r\naccelerate==0.18.0\r\nsystem==M2 macos 13.3.1\r\n```\r\n\r\n\r\n### Information\r\n\r\n- [ ] The official example scripts\r\n- [X] My own modified scripts\r\n\r\n### Tasks\r\n\r\n- [ ] One of the scripts in the examples/ folder of Accelerate or an officially supported `no_trainer` script in the `examples` folder of the `transformers` repo (such as `run_no_trainer_glue.py`)\r\n- [X] My own task or dataset (give details below)\r\n\r\n### Reproduction\r\n\r\nDown below is the `autocast` implement. The default for fp16 is cuda, I wonder is it possible to adapt on macos mps device. Thanks very much.\r\n\r\n```\r\n    def autocast(self):\r\n        \"\"\"\r\n        Will apply automatic mixed-precision inside the block inside this context manager, if it is enabled. Nothing\r\n        different will happen otherwise.\r\n\r\n        Example:\r\n\r\n        ```python\r\n        >>> from accelerate import Accelerator\r\n\r\n        >>> accelerator = Accelerator(mixed_precision=\"fp16\")\r\n        >>> with accelerator.autocast():\r\n        ...     train()\r\n        ```\r\n        \"\"\"\r\n        if self.native_amp:\r\n            if self.mixed_precision == \"fp16\" and is_torch_version(\">=\", \"1.10\"):\r\n                autocast_context = torch.cuda.amp.autocast(dtype=torch.float16)\r\n            elif self.mixed_precision == \"bf16\":\r\n                if self.distributed_type in [DistributedType.NO, DistributedType.MULTI_CPU, DistributedType.MULTI_GPU]:\r\n                    autocast_context = torch.autocast(dtype=torch.bfloat16, device_type=self.device.type)\r\n            else:\r\n                autocast_context = torch.cuda.amp.autocast()\r\n\r\n            autocast_context.__enter__()\r\n            yield\r\n            autocast_context.__exit__(*sys.exc_info())\r\n        else:\r\n            yield\r\n```\r\n\r\n### Expected behavior\r\n\r\nOmission",
+    "comments": [
+      {
+        "author": "user-3",
+        "body": "When PyTorch adds this feature, we'll make sure it's possible in Accelerate: https://github.com/pytorch/pytorch/issues/88415"
+      },
+      {
+        "author": "user-50",
+        "body": "Thanks for the reply, really looking forward to have it"
+      },
+      {
+        "author": "user-51",
+        "body": "Commenting to follow. It'll be great to finally have mixed precision training on M1!"
+      },
+      {
+        "author": "user-52",
+        "body": "I was trying to get this running, \r\n\r\nWhat I did was \r\n\r\nCreate a fork of the latest pytorch repository and copy the changes manually from https://github.com/pytorch/pytorch/pull/99272 to my fork.\r\n\r\nWhat I ended up with was. \r\n\r\nhttps://github.com/user-52/pytorch/commit/060ccae622a72711af0f8cce30b8617907ecd526\r\n\r\nI built this pytorch locally from source to use in my conda environment.\r\n\r\nHowever, now I am running into the following issue. \r\n\r\n```\r\nTraceback (most recent call last):\r\n  File \"/Users/user-52/.cache/huggingface/diffusers/examples/dreambooth/train_dreambooth_lora_sdxl.py\", line 1964, in <module>\r\n    main(args)\r\n  File \"/Users/user-52/.cache/huggingface/diffusers/examples/dreambooth/train_dreambooth_lora_sdxl.py\", line 1676, in main\r\n    model_pred = unet(\r\n  File \"/Users/user-52/.cache/huggingface/pytorch/torch/nn/modules/module.py\", line 1532, in _wrapped_call_impl\r\n    return self._call_impl(*args, **kwargs)\r\n  File \"/Users/user-52/.cache/huggingface/pytorch/torch/nn/mo"
+      },
+      {
+        "author": "user-53",
+        "body": "Any progress?\r\nThanks"
+      },
+      {
+        "author": "user-3",
+        "body": "SoonTM! https://github.com/pytorch/pytorch/pull/132625"
+      },
+      {
+        "author": "user-54",
+        "body": "HI, when it's planned to support MPS ?"
+      },
+      {
+        "author": "user-55",
+        "body": "Are you planning on support MPS?"
+      },
+      {
+        "author": "user-56",
+        "body": "> Are you planning on support MPS?\n\n+1\n\nFWIW I was able to get my code to run by doing the following:\n1. Install nightly torch nightly with fp16 MPS support\n`pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cpu`\n2. Added `mps` to the following list:\nhttps://github.com/huggingface/accelerate/blob/8d8fd83672cdb8c2314c9b174b416b6bcfae24bb/src/accelerate/accelerator.py#L537\n"
+      }
+    ]
+  }
+}

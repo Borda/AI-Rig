@@ -60,7 +60,7 @@ echo "$USE_PRECOMMIT" > "${TMPDIR:-/tmp}/quality-stack-precommit-${CSID}"
 - `set -o pipefail` (bash/zsh/ksh extension, absent from POSIX `sh`/`dash` — present in both shells this Bash tool resolves to) replaces `${PIPESTATUS[0]}` — zsh has no bash-style `PIPESTATUS`, only a differently-indexed lowercase `$pipestatus`.
 - Every fence below that uses `R`, `$SKIP_RUFF`, or `$SKIP_MYPY` re-reads its sentinel first — a fresh `Bash()` call never inherits this block's shell state.
 - Optional multi-word arguments (`XDIST`, `_QS_DOCTEST_ARGS`, `RETRY`) are arrays too, expanded as `"${NAME[@]}"` (an empty array expands to nothing). Never enable `set -u` in these fences: bash 3.2 (macOS `/bin/bash`) aborts on `"${EMPTY[@]}"` under it.
-- Data operands (a test id, module path, or other repo-derived value) are ordinary quoted arguments — `"$VAR"` — one argument each, no re-splitting, no globbing (a bare `[...]` in a pytest parametrized node-id aborts zsh with `NOMATCH` only when the word is unquoted). `<test_dir>`/`<target_module>` are literal template text, safe as-is.
+- Data operands (a test id, module path, or other repo-derived value) are ordinary quoted arguments — `"$VAR"` — one argument each, no re-splitting, no globbing (a bare `[...]` in a pytest parametrized node-id aborts zsh with `NOMATCH` only when the word is unquoted). `<test_dir>`, `<target_module>`, `<changed_files>` and `<module>` are substitution tokens, never executable shell operands. Before running the fences below, resolve them from the mode's scope and use the Write tool to replace four session files: `${TMPDIR:-/tmp}/quality-stack-test-dir-${CSID}` (one test-directory path), `${TMPDIR:-/tmp}/quality-stack-target-modules-${CSID}` (one doctest module path per line), `${TMPDIR:-/tmp}/quality-stack-changed-files-${CSID}` (one changed file path per line), and `${TMPDIR:-/tmp}/quality-stack-module-${CSID}` (one dotted module name for the optional codemap check). Write actual paths or names, without shell quoting, with a trailing newline and no empty entries. Missing, empty or unresolved targets halt with `! BLOCKED` before tool execution.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -69,14 +69,26 @@ case "$RUNNER" in "uv run") R=(uv run);; "poetry run") R=(poetry run);; "python 
 IFS= read -r SKIP_RUFF < "${TMPDIR:-/tmp}/quality-stack-skip-ruff-${CSID}" 2>/dev/null || SKIP_RUFF=0
 IFS= read -r SKIP_MYPY < "${TMPDIR:-/tmp}/quality-stack-skip-mypy-${CSID}" 2>/dev/null || SKIP_MYPY=0
 IFS= read -r USE_PRECOMMIT < "${TMPDIR:-/tmp}/quality-stack-precommit-${CSID}" 2>/dev/null || USE_PRECOMMIT=0
+CHANGED_FILES=()
+_path=""
+while IFS= read -r _path || [ -n "$_path" ]; do
+    case "$_path" in ""|*'<'*|*'>'*) echo "! BLOCKED — changed file target missing or unresolved"; exit 1;; esac
+    CHANGED_FILES+=("$_path")
+done < "${TMPDIR:-/tmp}/quality-stack-changed-files-${CSID}"
+[ "${#CHANGED_FILES[@]}" -gt 0 ] || { echo "! BLOCKED — changed files missing; resolve targets first"; exit 1; }
 set -o pipefail
-if [ "${USE_PRECOMMIT:-0}" -eq 1 ]; then pre-commit run --files <changed_files>  # timeout: 120000
+if [ "${USE_PRECOMMIT:-0}" -eq 1 ]; then pre-commit run --files "${CHANGED_FILES[@]}"  # timeout: 120000
 else
-    [ "${SKIP_RUFF:-0}" -ne 1 ] && "${R[@]}" ruff check <changed_files> --fix  # timeout: 30000
-    [ "${SKIP_RUFF:-0}" -ne 1 ] && "${R[@]}" ruff format <changed_files>  # timeout: 30000
+    [ "${SKIP_RUFF:-0}" -ne 1 ] && "${R[@]}" ruff check "${CHANGED_FILES[@]}" --fix  # timeout: 30000
+    [ "${SKIP_RUFF:-0}" -ne 1 ] && "${R[@]}" ruff format "${CHANGED_FILES[@]}"  # timeout: 30000
 fi
 MYPY_EXIT=skipped
-[ "${SKIP_MYPY:-0}" -ne 1 ] && { "${R[@]}" mypy <changed_files> --no-error-summary 2>&1 | head -30; MYPY_EXIT=$?; }  # timeout: 30000
+_QS_MYPY_LOG="${TMPDIR:-/tmp}/quality-stack-mypy-${CSID}.log"
+if [ "${SKIP_MYPY:-0}" -ne 1 ]; then
+    "${R[@]}" mypy "${CHANGED_FILES[@]}" --no-error-summary > "$_QS_MYPY_LOG" 2>&1  # timeout: 30000
+    MYPY_EXIT=$?
+    head -30 "$_QS_MYPY_LOG"
+fi
 echo "MYPY_EXIT=$MYPY_EXIT"
 ```
 
@@ -101,8 +113,17 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null || RUNNER=""
 case "$RUNNER" in "uv run") R=(uv run);; "poetry run") R=(poetry run);; "python -m") R=(python -m);; *) echo "! BLOCKED — runner state missing or not one of: uv run, poetry run, python -m (re-run Tool detection)"; exit 1;; esac
 DOCTEST_MERGED=false
+IFS= read -r TEST_DIR < "${TMPDIR:-/tmp}/quality-stack-test-dir-${CSID}" 2>/dev/null || TEST_DIR=""
+case "$TEST_DIR" in ""|*'<'*|*'>'*) echo "! BLOCKED — test directory missing or unresolved"; exit 1;; esac
+TARGET_MODULES=()
+_path=""
+while IFS= read -r _path || [ -n "$_path" ]; do
+    case "$_path" in ""|*'<'*|*'>'*) echo "! BLOCKED — doctest module target missing or unresolved"; exit 1;; esac
+    TARGET_MODULES+=("$_path")
+done < "${TMPDIR:-/tmp}/quality-stack-target-modules-${CSID}"
+[ "${#TARGET_MODULES[@]}" -gt 0 ] || { echo "! BLOCKED — doctest modules missing; resolve targets first"; exit 1; }
 _QS_COLLECT_LOG="${TMPDIR:-/tmp}/quality-stack-doctest-collect-${CSID}.log"
-if "${R[@]}" pytest <test_dir> --doctest-modules <target_module> --collect-only -q >"$_QS_COLLECT_LOG" 2>&1; then
+if "${R[@]}" pytest "$TEST_DIR" --doctest-modules "${TARGET_MODULES[@]}" --collect-only -q >"$_QS_COLLECT_LOG" 2>&1; then
     DOCTEST_MERGED=true
 fi
 echo "$DOCTEST_MERGED" > "${TMPDIR:-/tmp}/quality-stack-doctest-merged-${CSID}"
@@ -116,15 +137,29 @@ IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null
 case "$RUNNER" in "uv run") R=(uv run);; "poetry run") R=(poetry run);; "python -m") R=(python -m);; *) echo "! BLOCKED — runner state missing or not one of: uv run, poetry run, python -m (re-run Tool detection)"; exit 1;; esac
 IFS= read -r XDIST_ARGS < "${TMPDIR:-/tmp}/quality-stack-xdist-args-${CSID}" 2>/dev/null || XDIST_ARGS=""
 IFS= read -r DOCTEST_MERGED < "${TMPDIR:-/tmp}/quality-stack-doctest-merged-${CSID}" 2>/dev/null || DOCTEST_MERGED=false
+IFS= read -r TEST_DIR < "${TMPDIR:-/tmp}/quality-stack-test-dir-${CSID}" 2>/dev/null || TEST_DIR=""
+case "$TEST_DIR" in ""|*'<'*|*'>'*) echo "! BLOCKED — test directory missing or unresolved"; exit 1;; esac
+TARGET_MODULES=()
+_path=""
+while IFS= read -r _path || [ -n "$_path" ]; do
+    case "$_path" in ""|*'<'*|*'>'*) echo "! BLOCKED — doctest module target missing or unresolved"; exit 1;; esac
+    TARGET_MODULES+=("$_path")
+done < "${TMPDIR:-/tmp}/quality-stack-target-modules-${CSID}"
+[ "${#TARGET_MODULES[@]}" -gt 0 ] || { echo "! BLOCKED — doctest modules missing; resolve targets first"; exit 1; }
 _QS_LOG="${TMPDIR:-/tmp}/quality-stack-run1-${CSID}.log"
 _QS_DOCTEST_ARGS=()
-[ "$DOCTEST_MERGED" = "true" ] && _QS_DOCTEST_ARGS=(--doctest-modules <target_module>)
+[ "$DOCTEST_MERGED" = "true" ] && _QS_DOCTEST_ARGS=(--doctest-modules "${TARGET_MODULES[@]}")
 XDIST=()
 [ "$XDIST_ARGS" = "-n auto" ] && XDIST=(-n auto)
+echo pending > "${TMPDIR:-/tmp}/quality-stack-suite-exit-${CSID}"
+echo pending > "${TMPDIR:-/tmp}/quality-stack-retry-a-exit-${CSID}"
+echo false > "${TMPDIR:-/tmp}/quality-stack-flaky-detected-${CSID}"
+: > "${TMPDIR:-/tmp}/quality-stack-failed-ids-${CSID}"
 # Redirect to log, not pipe: pytest exit stays in $? (tee failure on unwritable $TMPDIR can't mask real exit-5 config error);
 # log complete on disk before next line greps it (`> >(tee ...)` runs async in bash and zsh — grep would race a flushing tee).
-"${R[@]}" pytest <test_dir> "${_QS_DOCTEST_ARGS[@]}" -v --tb=short -rfE "${XDIST[@]}" > "$_QS_LOG" 2>&1  # timeout: 600000
+"${R[@]}" pytest "$TEST_DIR" "${_QS_DOCTEST_ARGS[@]}" -v --tb=short -rfE "${XDIST[@]}" > "$_QS_LOG" 2>&1  # timeout: 600000
 SUITE_EXIT=$?
+echo "SUITE_EXIT=$SUITE_EXIT"
 tail -20 "$_QS_LOG"
 
 if [ $SUITE_EXIT -eq 5 ]; then
@@ -137,7 +172,7 @@ if [ $SUITE_EXIT -ne 0 ]; then
     # Full untruncated log, not tail-capped — safe to grep every FAILED/ERROR line. -rfE reports fixture/collection ERRORs too: ERROR-only exit must still retry, never hit empty-set halt below.
     # sed captures id by pytest node-id grammar (whitespace-free prefix + at most one [bracket] group holding at most one nested [..] level; params only part with spaces/dashes), never a " - " split — reason text may contain " - " and over-capture.
     # [^[:space:]] not \S — BSD sed (macOS) has no \S. No awk '{print $2}' — truncates at first whitespace, breaks on space inside bracket params.
-    FAILED_IDS=$(grep -E '^(FAILED|ERROR) ' "$_QS_LOG" | sed -E 's/^(FAILED|ERROR) ([^[:space:]]+(\[([^][]|\[[^]]*\])*\])?).*$/\2/' | sort -u)
+    FAILED_IDS=$(grep -E '^(FAILED|ERROR) ' "$_QS_LOG" | sed -E 's/^(FAILED|ERROR) ([^[:space:][]+(\[([^][]|\[[^]]*\])*\])?).*$/\2/' | sort -u)
 
     if [ -z "$FAILED_IDS" ]; then
         # Degenerate empty set — never invoke pytest with zero node-id args (widens scope to rootdir).
@@ -153,8 +188,8 @@ if [ $SUITE_EXIT -ne 0 ]; then
     DOCTEST_FAILED_IDS=$(printf '%s\n' "$FAILED_IDS" | while IFS= read -r _id; do
         _base=$(basename "${_id%%::*}")
         case "$_base" in
-            test_*.py|*_test.py) ;;
-            *) printf '%s\n' "$_id" ;;
+            (test_*.py|*_test.py) ;;
+            (*) printf '%s\n' "$_id" ;;
         esac
     done)
 
@@ -167,38 +202,70 @@ if [ $SUITE_EXIT -ne 0 ]; then
         exit 1
     fi
 
-    # Retry A: exactly the failing node-ids, serial (never -n while reading a failure).
-    # Each id is one array element → one argument, never re-split or glob-eligible (zsh NOMATCH aborts on bare "[...]",
-    # which every parametrized id contains). Process substitution, not a pipe: a piped loop runs in a subshell and loses the array;
-    # not a heredoc: heredoc breaks fence parsing in list-item context and drops whole fence from blueprint manifest.
-    RETRY=()
-    while IFS= read -r _id; do
-        [ -n "$_id" ] && RETRY+=("$_id")
-    done < <(printf '%s\n' "$FAILED_IDS")
-    "${R[@]}" pytest --tb=short -v "${RETRY[@]}"  # timeout: 600000
-    RETRY_A_EXIT=$?
-    if [ $RETRY_A_EXIT -ne 0 ]; then
-        echo "✗ GENUINE FAILURE: failing node-id(s) fail again on isolated re-run"
-        echo "Quality stack halted — do not proceed further"
-        exit 1
-    fi
-
-    # Retry B: full-dir, serial — rules out order-dependency without conflating it with xdist contention.
-    "${R[@]}" pytest <test_dir> -v --tb=short  # timeout: 600000
-    RETRY_B_EXIT=$?
-    if [ $RETRY_B_EXIT -ne 0 ]; then
-        echo "✗ GENUINE FAILURE: order-dependent — passes isolated, fails in full-dir serial re-run"
-        echo "Quality stack halted — do not proceed further"
-        exit 1
-    fi
-
-    if [ -n "$XDIST_ARGS" ]; then
-        echo "⚠ PARALLEL_FAIL_SERIAL_PASS: failed only under $XDIST_ARGS, passes fully serial"
-        echo "Quality stack halted — likely test-isolation bug, not flaky (repo CLAUDE.md §Test Workflow: passes serially, fails only under -n = a real defect, never an xdist artifact). Investigate before proceeding."
-        exit 1
-    fi
-    FLAKY_DETECTED=true
+    printf '%s\n' "$FAILED_IDS" > "${TMPDIR:-/tmp}/quality-stack-failed-ids-${CSID}"
 fi
+echo "$SUITE_EXIT" > "${TMPDIR:-/tmp}/quality-stack-suite-exit-${CSID}"
+```
+
+Run the wide suite, Retry A and Retry B as separate `Bash()` calls, each with its own 600000 ms timeout. Continue only after the preceding call completes without a halt; the suite-exit sentinel stays `pending` on interruption, so an incomplete wide run cannot authorize retries. Failure IDs and exit states are session-scoped files, never inherited shell variables.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null || RUNNER=""
+case "$RUNNER" in "uv run") R=(uv run);; "poetry run") R=(poetry run);; "python -m") R=(python -m);; *) echo "! BLOCKED — runner state missing or not one of: uv run, poetry run, python -m (re-run Tool detection)"; exit 1;; esac
+IFS= read -r SUITE_EXIT < "${TMPDIR:-/tmp}/quality-stack-suite-exit-${CSID}" 2>/dev/null || SUITE_EXIT=""
+case "$SUITE_EXIT" in 0) exit 0;; 1|2|3|4) ;; *) echo "! BLOCKED — wide run incomplete or halted; inspect its output before retrying"; exit 1;; esac
+IFS= read -r FAILED_IDS < "${TMPDIR:-/tmp}/quality-stack-failed-ids-${CSID}" 2>/dev/null || FAILED_IDS=""
+if [ -z "$FAILED_IDS" ]; then
+    echo "! BLOCKED — failing node-id state missing; inspect the wide run"
+    exit 1
+fi
+echo pending > "${TMPDIR:-/tmp}/quality-stack-retry-a-exit-${CSID}"
+# Retry A: exactly the failing node-ids, serial (never -n while reading a failure).
+# Each id is one array element → one argument, never re-split or glob-eligible (zsh NOMATCH aborts on bare "[...]",
+# which every parametrized id contains). File redirection, not a pipe: a piped loop runs in a subshell and loses the array;
+# not a heredoc: heredoc breaks fence parsing in list-item context and drops whole fence from blueprint manifest.
+RETRY=()
+while IFS= read -r _id; do
+    [ -n "$_id" ] && RETRY+=("$_id")
+done < "${TMPDIR:-/tmp}/quality-stack-failed-ids-${CSID}"
+"${R[@]}" pytest --tb=short -v "${RETRY[@]}"  # timeout: 600000
+RETRY_A_EXIT=$?
+if [ $RETRY_A_EXIT -ne 0 ]; then
+    echo "✗ GENUINE FAILURE: failing node-id(s) fail again on isolated re-run"
+    echo "Quality stack halted — do not proceed further"
+    exit 1
+fi
+echo "$RETRY_A_EXIT" > "${TMPDIR:-/tmp}/quality-stack-retry-a-exit-${CSID}"
+```
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null || RUNNER=""
+case "$RUNNER" in "uv run") R=(uv run);; "poetry run") R=(poetry run);; "python -m") R=(python -m);; *) echo "! BLOCKED — runner state missing or not one of: uv run, poetry run, python -m (re-run Tool detection)"; exit 1;; esac
+IFS= read -r SUITE_EXIT < "${TMPDIR:-/tmp}/quality-stack-suite-exit-${CSID}" 2>/dev/null || SUITE_EXIT=""
+case "$SUITE_EXIT" in 0) exit 0;; 1|2|3|4) ;; *) echo "! BLOCKED — wide run incomplete or halted; inspect its output before retrying"; exit 1;; esac
+IFS= read -r RETRY_A_EXIT < "${TMPDIR:-/tmp}/quality-stack-retry-a-exit-${CSID}" 2>/dev/null || RETRY_A_EXIT=""
+[ "$RETRY_A_EXIT" = "0" ] || { echo "! BLOCKED — Retry A incomplete or failed; do not continue"; exit 1; }
+IFS= read -r TEST_DIR < "${TMPDIR:-/tmp}/quality-stack-test-dir-${CSID}" 2>/dev/null || TEST_DIR=""
+case "$TEST_DIR" in ""|*'<'*|*'>'*) echo "! BLOCKED — test directory missing or unresolved"; exit 1;; esac
+IFS= read -r XDIST_ARGS < "${TMPDIR:-/tmp}/quality-stack-xdist-args-${CSID}" 2>/dev/null || XDIST_ARGS=""
+# Retry B: full-dir, serial — rules out order-dependency without conflating it with xdist contention.
+"${R[@]}" pytest "$TEST_DIR" -v --tb=short  # timeout: 600000
+RETRY_B_EXIT=$?
+if [ $RETRY_B_EXIT -ne 0 ]; then
+    echo "✗ GENUINE FAILURE: order-dependent — passes isolated, fails in full-dir serial re-run"
+    echo "Quality stack halted — do not proceed further"
+    exit 1
+fi
+
+if [ -n "$XDIST_ARGS" ]; then
+    echo "⚠ PARALLEL_FAIL_SERIAL_PASS: failed only under $XDIST_ARGS, passes fully serial"
+    echo "Quality stack halted — passes serially and fails only under -n: a real test-isolation defect, never an xdist artifact. Investigate before proceeding."
+    exit 1
+fi
+FLAKY_DETECTED=true
+echo "$FLAKY_DETECTED" > "${TMPDIR:-/tmp}/quality-stack-flaky-detected-${CSID}"
 ```
 
 Log cleanup lives in its own fence, not inline above — `rm -f` flags a fence `is_dangerous`, and `blueprint-allow.js` re-runs that check on the whole submitted block before any manifest lookup, so a `rm -f` inside the 47-command wide-run fence cost the *entire* fence its manifest coverage (prompts every call, R2). Isolated here, only this one-line fence pays that cost. Runs only when the fence above did not halt — every failure path `exit 1`s first, which leaves the log on disk for debugging; intentional, not a regression:
@@ -211,6 +278,8 @@ rm -f "${TMPDIR:-/tmp}/quality-stack-run1-${CSID}.log" "${TMPDIR:-/tmp}/quality-
 Deviation from the plan's stated `--junitxml` mechanism, noted explicitly: `--junitxml` was proposed to fix `run_pytest_short.py`'s lossy `tail -20` wrapper capture — that lossiness doesn't apply here, since this block calls `"${R[@]}" pytest ...` directly and captures full untruncated output to a session-scoped log file. `-rfE`'s `FAILED <node-id>`/`ERROR <node-id>` lines are already valid pytest node-id syntax, needing no `classname`/`name` → node-id reconstruction that XML parsing would require. Simpler, same non-lossy guarantee.
 
 `FLAKY_DETECTED` is reachable only when run 1 was serial — a genuinely flaky test under `-n auto` takes the `PARALLEL_FAIL_SERIAL_PASS` branch above and halts as a suspected isolation bug instead, per the plan's stated design; no serial-re-run offer before that halt in this revision.
+
+Read `${TMPDIR:-/tmp}/quality-stack-flaky-detected-${CSID}` after Retry B; only `true` authorizes the flaky prompt below. Missing or `false` never means flaky. Use `${TMPDIR:-/tmp}/quality-stack-failed-ids-${CSID}` to name the failing tests. A failed or interrupted call halts the sequence; never proceed to cleanup or reporting from an incomplete call.
 
 `FLAKY_DETECTED=true` (failed run 1, passed isolated re-run, passed full-dir serial re-run, run 1 was already serial — not `-n` — and no doctest id was among the failures):
 
@@ -226,9 +295,16 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null || RUNNER=""
 case "$RUNNER" in "uv run") R=(uv run);; "poetry run") R=(poetry run);; "python -m") R=(python -m);; *) echo "! BLOCKED — runner state missing or not one of: uv run, poetry run, python -m (re-run Tool detection)"; exit 1;; esac
 IFS= read -r DOCTEST_MERGED < "${TMPDIR:-/tmp}/quality-stack-doctest-merged-${CSID}" 2>/dev/null || DOCTEST_MERGED=false
+TARGET_MODULES=()
+_path=""
+while IFS= read -r _path || [ -n "$_path" ]; do
+    case "$_path" in ""|*'<'*|*'>'*) echo "! BLOCKED — doctest module target missing or unresolved"; exit 1;; esac
+    TARGET_MODULES+=("$_path")
+done < "${TMPDIR:-/tmp}/quality-stack-target-modules-${CSID}"
+[ "${#TARGET_MODULES[@]}" -gt 0 ] || { echo "! BLOCKED — doctest modules missing; resolve targets first"; exit 1; }
 set -o pipefail
 if [ "$DOCTEST_MERGED" != "true" ]; then
-    "${R[@]}" pytest --doctest-modules <target_module> -v 2>&1 | tail -20  # timeout: 600000
+    "${R[@]}" pytest --doctest-modules "${TARGET_MODULES[@]}" -v 2>&1 | tail -20  # timeout: 600000
     DOCTEST_EXIT=$?  # pipefail: pytest's exit, not tail's
     # 5 = no doctests in module, not a failure; doctests deterministic → never retried
     case $DOCTEST_EXIT in
@@ -254,11 +330,14 @@ Spawn **foundry:linting-expert** agent if mypy or ruff issues need non-trivial f
 **Post-change blast radius** (if codemap installed — soft check):
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null); [ -n "$_ROOT" ] || _ROOT="$PWD"
 PROJ=$(basename "$_ROOT")
 _IDX="${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}"
 if command -v codemap-py >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ]; then
-    codemap-py query rdeps <module> 2>/dev/null | head -20
+    IFS= read -r MODULE < "${TMPDIR:-/tmp}/quality-stack-module-${CSID}" 2>/dev/null || MODULE=""
+    case "$MODULE" in ""|*'<'*|*'>'*) echo "! BLOCKED — module name missing or unresolved"; exit 1;; esac
+    codemap-py query rdeps "$MODULE" 2>/dev/null | head -20
     echo "^ review rdeps — changes here may affect callers"
 fi
 ```

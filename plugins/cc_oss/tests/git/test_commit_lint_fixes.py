@@ -48,6 +48,7 @@ class _FakeGit:
 
     def __call__(self, cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         """Return the scripted answer for one Git invocation."""
+        cmd = [cmd[0], *cmd[3:]] if cmd[1:2] == ["-c"] else cmd
         self.calls.append(list(cmd))
         sub = next(arg for arg in cmd[1:] if not arg.startswith("--"))
         scripted = self.fail.get(sub)

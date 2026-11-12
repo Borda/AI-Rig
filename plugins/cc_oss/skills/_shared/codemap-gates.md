@@ -4,7 +4,8 @@
 
 ```bash
 # gate before resolve: absent CLI spawns nothing; && chain keeps set -e off resolver exit 1
-command -v codemap-py >/dev/null 2>&1 && _CODEMAP_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" codemap-py claude-skills/_shared 2>/dev/null) && cat "$_CODEMAP_SHARED/codemap-gates.md" 2>/dev/null || echo "codemap gates contract absent — use fallback below"
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+command -v codemap-py >/dev/null 2>&1 && _CODEMAP_SHARED=$(python "$PLUGIN_ROOT/bin/resolve_shared_path.py" codemap-py claude-skills/_shared 2>/dev/null) && cat "$_CODEMAP_SHARED/codemap-gates.md" 2>/dev/null || echo "codemap gates contract absent — use fallback below"
 ```
 
 Calling skill (`oss:review`, `oss:resolve`) sets `CODEMAP_CURRENCY` before reading this file.

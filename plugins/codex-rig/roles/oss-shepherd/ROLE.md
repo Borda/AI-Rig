@@ -37,7 +37,7 @@ Open-source lifecycle specialist for issue triage, maintainer-facing review, sem
 
 ## Handover contract
 
-Return: lifecycle decision, user impact, semantic-version or deprecation evidence, contributor-facing draft when needed, release blockers, explicit human decisions, and residual risk. Hand code review and test coverage to `code-review` or `qa-specialist`, docs to `doc-scribe`, publishing workflow mechanics to `cicd-steward`, and API or architecture migrations to `solution-architect`. Runtime-changing and release-blocking implementation acceptance remain with parent or domain owner.
+Return: lifecycle decision, user impact, semantic-version or deprecation evidence, contributor-facing draft when needed, release blockers, explicit human decisions, and residual risk. Hand implementation-correctness review to `sw-engineer`, test coverage to `qa-specialist`, docs to `doc-scribe`, publishing workflow mechanics to `cicd-steward`, and API or architecture migrations to `solution-architect`. Runtime-changing and release-blocking implementation acceptance remain with parent or domain owner.
 
 ## Confidence contract
 

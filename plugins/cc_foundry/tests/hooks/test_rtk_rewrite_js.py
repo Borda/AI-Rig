@@ -222,8 +222,8 @@ class TestRewrite:
     def test_command_is_rewritten_without_allow(self, command: str) -> None:
         """An eligible command is rewritten to ``rtk <command>`` without an allow decision.
 
-        Read verbs of mixed CLIs and file inspection tools earn the rewrite. The exact rewritten string and the
-        absence of a permission decision are both part of the contract.
+        Read verbs of mixed CLIs and file inspection tools earn the rewrite. The exact rewritten string and the absence
+        of a permission decision are both part of the contract.
         """
         result = _run(command)
         assert _rewritten_to(result) == f"rtk {command}"

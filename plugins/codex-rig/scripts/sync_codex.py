@@ -43,10 +43,12 @@ optional cleanup may be represented as a bounded non-success result.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
 import re
+import runpy
 import shutil
 import subprocess
 import sys
@@ -56,8 +58,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, TextIO
 
-from _package_identity import PackageIdentityError, verify_package
-from install_global_agents import PLUGIN_ROOT_PLACEHOLDER
+# Explicit source loading keeps unverified cached bytecode outside the package trust boundary.
+_identity = runpy.run_path(str(Path(__file__).with_name("_package_identity.py")))
+verify_package = _identity["verify_package"]
+PackageIdentityError = _identity["PackageIdentityError"]
+inventory_package_files = _identity["inventory_package_files"]
+read_safe_file = _identity["read_safe_file"]
+PLUGIN_ROOT_PLACEHOLDER = _identity["_load_source_module"]("install_global_agents").PLUGIN_ROOT_PLACEHOLDER
 
 
 class SyncAction(str, Enum):
@@ -97,9 +104,29 @@ class SyncError(RuntimeError):
     """Report one bounded restore failure without a partial-success claim."""
 
 
+def _windows_path_executable(command: str) -> str | None:
+    """Search absolute PATH candidates without admitting the current directory."""
+    current = Path.cwd().resolve()
+    for value in os.get_exec_path():
+        directory = Path(value).resolve()
+        if directory == current:
+            continue
+        discovered = shutil.which(str(directory / command))
+        if discovered is None:
+            # Python 3.10/3.11 which does not expand PATHEXT for an absolute candidate.
+            extensions = os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD"
+            for extension in extensions.split(";"):
+                discovered = shutil.which(str(directory / (command + extension)))
+                if discovered is not None:
+                    break
+        if discovered is not None and Path(discovered).resolve().parent != current:
+            return discovered
+    return None
+
+
 def _resolve_system_command(command: list[str], *, windows: bool) -> tuple[list[str] | str, bool]:
     """Resolve one command and return its argv plus required shell mode."""
-    executable = shutil.which(command[0])
+    executable = _windows_path_executable(command[0]) if windows else shutil.which(command[0])
     if executable is None:
         raise FileNotFoundError(command[0])
     resolved = [executable, *command[1:]]
@@ -289,13 +316,63 @@ def _check_mcp_python(run: RunCommand) -> None:
         raise SyncError(f"Codex MCP servers require Python 3.10 or newer; found {match.group(0)}")
 
 
+def _bridge_tree_records(payload: str) -> dict[str, str]:
+    """Require ordinary tracked Bridge files with canonical Git blob identities."""
+    if not payload or len(payload.encode("utf-8")) > MAX_JSON_BYTES:
+        raise SyncError("Bridge verification tree is empty or oversized")
+    records: dict[str, str] = {}
+    prefix = "plugins/bridge_cc-codex/bin/"
+    for entry in payload.rstrip("\0").split("\0"):
+        metadata, separator, path = entry.partition("\t")
+        fields = metadata.split()
+        if (
+            not separator
+            or len(fields) != 3
+            or fields[0] not in {"100644", "100755"}
+            or fields[1] != "blob"
+            or re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", fields[2]) is None
+            or not path.startswith(prefix)
+            or path[len(prefix) :] in records
+        ):
+            raise SyncError("Bridge verification tree contains an invalid file")
+        records[path[len(prefix) :]] = fields[2]
+    return records
+
+
+def _verify_bridge_payload(root: Path, run: RunCommand) -> str:
+    """Verify the complete Bridge runtime against one resolved commit before executing it."""
+    revision = _run(run, ["git", "-C", str(root), "rev-parse", "HEAD"]).stdout.strip()
+    if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", revision) is None:
+        raise SyncError("Bridge verification requires a resolved marketplace commit")
+    tree = _run(run, ["git", "-C", str(root), "ls-tree", "-r", "-z", revision, "--", "plugins/bridge_cc-codex/bin"])
+    records = _bridge_tree_records(tree.stdout)
+    bridge = root / "plugins" / "bridge_cc-codex" / "bin"
+    try:
+        observed = inventory_package_files(
+            bridge, excluded_parts=frozenset(), excluded_files=frozenset(), reject_bytecode=True
+        )
+        if sorted(observed) != sorted(records):
+            raise SyncError("Bridge verification file closure mismatch")
+        for relative, expected in records.items():
+            payload = read_safe_file(bridge, relative, maximum=16 * 1024 * 1024).payload
+            blob = b"blob " + str(len(payload)).encode("ascii") + b"\0" + payload
+            algorithm = "sha1" if len(expected) == 40 else "sha256"
+            if hashlib.new(algorithm, blob, usedforsecurity=False).hexdigest() != expected:
+                raise SyncError(f"Bridge verification hash mismatch: {relative}")
+    except (OSError, PackageIdentityError) as error:
+        raise SyncError(f"Bridge verification failed: {error}") from error
+    return revision
+
+
 def _run_bridge_static_diagnosis(root: Path, run: RunCommand, stdout: TextIO) -> None:
     """Check the installed Bridge runtime without starting either provider."""
     doctor = root / "plugins" / "bridge_cc-codex" / "bin" / "bridge_diagnose.py"
     if doctor.is_symlink() or not doctor.is_file():
         raise SyncError("installed Bridge static doctor is incomplete or linked")
 
-    diagnosis = _run(run, ["python", str(doctor), "--direction", "claude"], required=False)
+    revision = _verify_bridge_payload(root, run)
+    print(f"  [ok] Bridge runtime verified at marketplace commit {revision}", file=stdout)
+    diagnosis = _run(run, [sys.executable, "-B", str(doctor), "--direction", "claude"], required=False)
     payload = _json_output(diagnosis, "Bridge static diagnosis")
     if diagnosis.returncode != 0 or payload.get("ok") is not True or payload.get("live") is not False:
         detail = json.dumps(payload, sort_keys=True)[:512]

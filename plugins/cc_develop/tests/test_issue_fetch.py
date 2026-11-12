@@ -93,11 +93,14 @@ class TestRepoOption:
             pytest.param("owner/.github", id="dot-leading-repo"),
         ],
     )
-    def test_valid_repo_is_forwarded_unchanged(self, gh_run: mock.MagicMock, repo: str) -> None:
+    def test_valid_repo_is_forwarded_unchanged(
+        self, gh_run: mock.MagicMock, repo: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """``[HOST/]OWNER/REPO`` forms ``gh --repo`` understands, including a ``.github`` repo, are forwarded unchanged.
 
         The plain ``owner/repo`` case is the golden call site ``issue_fetch.py "$ARGUMENTS" --repo owner/repo``.
         """
+        monkeypatch.setenv("GH_HOST", "ghe.example.com")
         rc = issue_fetch.main(["42", "--repo", repo])
         assert (rc, _delegated_argv(gh_run)) == (0, [[_GH, "issue", "view", "42", "--comments", "--repo", repo]])
 

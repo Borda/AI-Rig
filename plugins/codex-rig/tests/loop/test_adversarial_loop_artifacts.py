@@ -1,5 +1,7 @@
 """Check convergence evidence through the public workflow artifact validator."""
 
+from __future__ import annotations
+
 import copy
 import hashlib
 import itertools
@@ -10,8 +12,10 @@ import sys
 from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import pytest
 from _artifact_files import read_json
@@ -675,32 +679,62 @@ class TestChunkedCoordinator:
             )
 
     @pytest.mark.packaging
-    def test_validates_real_children_and_interaction(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A coordinator accepts complete native child reviews and rejects changed child evidence.
+    def test_accepts_real_children_and_interaction(self, chunked_coordinator: tuple[_ChunkedReview, Path]) -> None:
+        """Accept complete real child and interaction reviews in candidate and canonical coordinator results."""
+        review, coordinator = chunked_coordinator
+        _validate(coordinator.parent, coordinator)
+        _validate(coordinator.parent, coordinator.parent / "result.json")
+        assert len(review.summary["runs"]) == 4
 
-        Real `chunk_diff.py` plans three chunks and checks four native child reviews. The coordinator validates, then is
-        refused when the interaction assessment, origin, manifest schema, a child gate, child request or child source is
-        altered. It is one test because the phases tamper with and restore the same ~20s real setup.
-        """
-        review = _build_real_chunked_review(tmp_path, monkeypatch)
-        chunks, manifest, summary = review.chunks, review.manifest, review.summary
-        coordinator = _write_loop(tmp_path, monkeypatch)
-        handoff = _load_handoff(tmp_path)
-        _set_chunk_only(handoff, summary["runs"])
-        _set_chunk_review_outcome(handoff, "All declared child and interaction reviews are clean.")
-        result = _chunked_result(coordinator, summary, manifest["origin"])
-        _bind_handoff(tmp_path, coordinator, result, handoff)
-        _drop_parent_ledger(tmp_path)
-        monkeypatch.setenv("CODEX_HOME", str(review.session_home))
-        canonical = tmp_path / "result.json"
-        _validate(tmp_path, coordinator)
-        canonical.write_bytes(coordinator.read_bytes())
-        _validate(tmp_path, canonical)
+    @pytest.mark.packaging
+    def test_rejects_substituted_interaction_assessment(self, chunked_coordinator: tuple[_ChunkedReview, Path]) -> None:
+        """Reject a group conclusion absent from the authenticated interaction review."""
+        review, coordinator = chunked_coordinator
+        _validate(coordinator.parent, coordinator)
+        _assert_interaction_assessment_enforced(coordinator.parent, review, coordinator.parent / "result.json")
 
-        _assert_interaction_assessment_enforced(tmp_path, review, canonical)
-        _assert_origin_mismatch_rejected(tmp_path, [coordinator, canonical], result)
-        _assert_archive_manifests_rejected(tmp_path, chunks, canonical)
+    @pytest.mark.packaging
+    @pytest.mark.parametrize("filename", RESULT_FILENAMES)
+    def test_rejects_real_coordinator_origin_mismatch(
+        self, chunked_coordinator: tuple[_ChunkedReview, Path], filename: str
+    ) -> None:
+        """Reject a real coordinator relabelled as a continuation of itself in either result form."""
+        _, coordinator = chunked_coordinator
+        result_path = coordinator.parent / filename
+        _validate(coordinator.parent, result_path)
+        result = read_json(result_path)
+        result["metadata"]["challenge_origin"] = {"kind": "continuation", "caller_run": str(coordinator.parent)}
+        _dump(result_path, result)
+        _assert_rejected(coordinator.parent, result_path, "adversarial-loop-chunk-origin-mismatch")
 
+    @pytest.mark.packaging
+    @pytest.mark.parametrize("archive_version", [3, 4])
+    def test_rejects_real_coordinator_archive_manifest(
+        self, chunked_coordinator: tuple[_ChunkedReview, Path], archive_version: int
+    ) -> None:
+        """Reject archived chunk manifests through both the real checker and public coordinator validator."""
+        review, coordinator = chunked_coordinator
+        canonical = coordinator.parent / "result.json"
+        _validate(coordinator.parent, canonical)
+        manifest_path = review.chunks / "chunks.json"
+        _dump(manifest_path, review.manifest | {"schema_version": archive_version})
+        archived = _run_checker("check", "--manifest", str(manifest_path))
+        assert archived.returncode != 0
+        assert "chunk-manifest-invalid" in archived.stderr
+        _assert_rejected(
+            coordinator.parent,
+            canonical,
+            "adversarial-loop-chunk-coverage-invalid:chunk-diff-error:chunk-manifest-invalid",
+        )
+
+    @pytest.mark.packaging
+    def test_stopped_real_coordinator_retains_pending_scope_and_rejects_tampering(
+        self, chunked_coordinator: tuple[_ChunkedReview, Path]
+    ) -> None:
+        """Accept an honestly stopped review, retain pending scope, and reject altered child requests or source."""
+        review, coordinator = chunked_coordinator
+        tmp_path = coordinator.parent
+        chunks, manifest = review.chunks, review.manifest
         _fail_child_tests_gate(chunks / "runs" / manifest["chunks"][0]["id"])
         _dump(
             chunks / "results.json",
@@ -1306,14 +1340,31 @@ def _write_bound_child(
     request: dict[str, str],
     identity: str,
     findings: list[dict[str, object]] | None = None,
+    repository_template: Path | None = None,
 ) -> dict[str, object]:
     """Create a clean native-reviewed child run bound to its planned source and diff, and return its evidence."""
     run.mkdir(parents=True)
     evidence: dict[str, object] = {}
-    candidate = _write_loop(run, monkeypatch, findings=findings, evidence_out=evidence)
+    arranging = (
+        mock.patch.dict(
+            _loop_evidence_run.__globals__,
+            {"_repository": partial(_copy_loop_repository, repository_template)},
+        )
+        if repository_template is not None
+        else nullcontext()
+    )
+    with arranging:
+        candidate = _write_loop(run, monkeypatch, findings=findings, evidence_out=evidence)
     _bind_real_chunk_run(run, evidence, repository, paths, *inputs, request, identity, findings=findings)
     (run / "result.json").write_bytes(candidate.read_bytes())
     return evidence
+
+
+def _copy_loop_repository(template: Path, fixture_root: Path) -> Path:
+    """Give each child independent Git scaffolding without repeating the identical initial commit."""
+    repository = fixture_root / "repository"
+    shutil.copytree(template, repository)
+    return repository
 
 
 @dataclass(frozen=True)
@@ -1333,6 +1384,8 @@ def _build_real_chunked_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     """Plan three chunks with the real checker, review each plus their interactions, and check the whole set."""
     repository = tmp_path / "repository"
     _init_repository(repository, {name: f"VALUE = '{name}'\n" for name in ("alpha.py", "beta.py", "gamma.py")})
+    repository_template = tmp_path / "loop-repository-template"
+    _init_repository(repository_template, {"widget.py": "VALUE = 1\n"})
     monkeypatch.chdir(repository)
     chunks = tmp_path / "chunks"
     request = {
@@ -1390,6 +1443,7 @@ def _build_real_chunked_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
             _planned_inputs(chunks, chunk),
             request,
             f"chunk-{index}",
+            repository_template=repository_template,
         )
         _collect_chunk_sessions(evidence, sessions)
 
@@ -1408,6 +1462,7 @@ def _build_real_chunked_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         (source, b""),
         interaction_request,
         "interaction",
+        repository_template=repository_template,
     )
     _collect_chunk_sessions(evidence, sessions)
     _dump(chunks / "results.json", result_map)
@@ -1417,6 +1472,26 @@ def _build_real_chunked_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     summary = json.loads(checked.stdout)
     assert len(summary["runs"]) == 4
     return _ChunkedReview(repository, chunks, manifest, request, result_map, session_home, summary)
+
+
+@pytest.fixture
+def chunked_coordinator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[_ChunkedReview, Path]:
+    """Build isolated real child reviews and bound coordinator results for one acceptance or rejection case.
+
+    Keep each public-validation scenario in its own test so Windows process startup and coverage costs do not accumulate
+    against one test's timeout. Function scope isolates mutations, Git repositories and native session evidence.
+    """
+    review = _build_real_chunked_review(tmp_path, monkeypatch)
+    coordinator = _write_loop(tmp_path, monkeypatch)
+    handoff = _load_handoff(tmp_path)
+    _set_chunk_only(handoff, review.summary["runs"])
+    _set_chunk_review_outcome(handoff, "All declared child and interaction reviews are clean.")
+    result = _chunked_result(coordinator, review.summary, review.manifest["origin"])
+    _bind_handoff(tmp_path, coordinator, result, handoff)
+    _drop_parent_ledger(tmp_path)
+    monkeypatch.setenv("CODEX_HOME", str(review.session_home))
+    (tmp_path / "result.json").write_bytes(coordinator.read_bytes())
+    return review, coordinator
 
 
 def _assert_interaction_assessment_enforced(run: Path, review: _ChunkedReview, canonical: Path) -> None:
@@ -1433,31 +1508,6 @@ def _assert_interaction_assessment_enforced(run: Path, review: _ChunkedReview, c
     _assert_rejected(run, canonical, r"adversarial-loop-chunk-coverage-invalid:.*chunk-interaction-assessment-missing")
     canonical.write_bytes(original_canonical)
     results_path.write_bytes(original_results)
-
-
-def _assert_origin_mismatch_rejected(run: Path, result_paths: list[Path], result: dict[str, Any]) -> None:
-    """Relabel each result as a continuation of the run itself and assert refusal, restoring `result` afterwards."""
-    for result_path in result_paths:
-        tampered = read_json(result_path)
-        tampered["metadata"]["challenge_origin"] = {"kind": "continuation", "caller_run": str(run)}
-        _dump(result_path, tampered)
-        _assert_rejected(run, result_path, "adversarial-loop-chunk-origin-mismatch")
-        _dump(result_path, result)
-
-
-def _assert_archive_manifests_rejected(run: Path, chunks: Path, canonical: Path) -> None:
-    """Downgrade the manifest to archive schemas 3 and 4, asserting both checker and validator refuse each."""
-    manifest_path = chunks / "chunks.json"
-    original = manifest_path.read_bytes()
-    for archive_version in (3, 4):
-        _dump(manifest_path, json.loads(original) | {"schema_version": archive_version})
-        archived = _run_checker("check", "--manifest", str(manifest_path))
-        assert archived.returncode != 0
-        assert "chunk-manifest-invalid" in archived.stderr
-        _assert_rejected(
-            run, canonical, "adversarial-loop-chunk-coverage-invalid:chunk-diff-error:chunk-manifest-invalid"
-        )
-    manifest_path.write_bytes(original)
 
 
 def _fail_child_tests_gate(failed_run: Path) -> None:

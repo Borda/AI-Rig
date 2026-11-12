@@ -141,7 +141,7 @@ def test_cleanup_refuses_matching_name_outside_temp_directory(scratch_environmen
     assert path.read_text(encoding="utf-8") == "retain"
 
 
-@pytest.mark.parametrize("name", ["caller.md", "bridge-task-session-nonce.md", "bridge-task-session-../target.md"])
+@pytest.mark.parametrize("name", ["caller.md", "bridge-task-session-nonce.md", "bridge-task-session/../target.md"])
 def test_cleanup_refuses_unrelated_filenames(scratch_environment: Path, name: str) -> None:
     """Cleanup cannot consume caller briefs or paths that merely resemble the scratch prefix."""
     path = scratch_environment / name

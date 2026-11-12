@@ -34,7 +34,7 @@ export const SKILLS: readonly SkillDefinition[] = [
     id: "rig-implement",
     name: "Rig Implement",
     description:
-      "Execute a frozen plan or bounded change, run configured project gates, and produce an evidence-backed commit handoff. Use after planning or for a clear scoped fix. NOT for review-only or investigation-only requests.",
+      "Execute a frozen plan or a trivial change with an inline mini-plan, run configured project gates, and produce an evidence-backed commit handoff. Use after planning or for a clear scoped fix under 3 files and 50 changed lines. NOT for review-only or investigation-only requests.",
   },
   {
     id: "rig-review",
@@ -52,7 +52,7 @@ export const SKILLS: readonly SkillDefinition[] = [
     id: "rig-challenge",
     name: "Rig Challenge",
     description:
-      "Run a bounded adversarial convergence loop: independent challenger, validated findings, fixes, independent re-assessment, and a stop reason. Use for risky or security-sensitive changes. NOT for routine edits.",
+      "Run a bounded adversarial convergence loop with an independent challenger, validated findings, fixes, independent re-assessment, and a stop reason. Use for risky or security-sensitive changes. NOT for routine edits.",
   },
   {
     id: "rig-optimize",
@@ -70,12 +70,12 @@ export const SKILLS: readonly SkillDefinition[] = [
     id: "rig-release",
     name: "Rig Release",
     description:
-      "Assess release readiness: version baseline from the last release tag, full configured gates, changelog and README synchronization, packaged file verification, and read-only release-note, migration, and contributor-reply drafts. Use before tagging or publishing. NOT for performing the publication itself.",
+      "Assess release readiness with a version baseline from the last release tag, full configured gates, changelog and README synchronization, packaged file verification, and read-only release-note, migration, and contributor-reply drafts. Use before tagging or publishing. NOT for performing the publication itself.",
   },
   {
     id: "rig-doctor",
     name: "Rig Doctor",
     description:
-      "Check opencode-rig install health: plugin load, version synchronization, agent installation, Git grant, artifact root, and detected gates. Use when a workflow or tool is unavailable. Also curates shipped cards (assets). NOT for deleting runs, editing configuration or fixing files.",
+      "Check opencode-rig install health, including plugin load, version synchronization, agent installation, Git grant, artifact root, and detected gates. Use when a workflow or tool is unavailable. Also curates shipped cards (assets) and deletes stale runs only through explicitly confirmed cleanup. NOT for editing configuration or fixing files.",
   },
 ]

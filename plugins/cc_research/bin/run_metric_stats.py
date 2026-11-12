@@ -67,6 +67,8 @@ DEFAULT_MIN_DELTA_PCT = 0.1
 #: Run-state file and repeated-run ledger, both inside the run's state directory.
 STATE_FILE = "state.json"
 LEDGER_FILE = "metric-runs.jsonl"
+#: Maximum bytes accepted from one run-state file or metric ledger.
+MAX_JSONL_BYTES = 64 * 1024 * 1024
 
 
 class Direction(str, Enum):
@@ -104,15 +106,27 @@ def _finite(value: object) -> float | None:
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
     return number if math.isfinite(number) else None
+
+
+def _read_limited_text(path: Path) -> str:
+    """Read UTF-8 run input within the metric-ledger byte ceiling, rejecting oversized files."""
+    with path.open("rb") as handle:
+        raw = handle.read(MAX_JSONL_BYTES + 1)
+    if len(raw) > MAX_JSONL_BYTES:
+        raise ValueError(f"{path} exceeds {MAX_JSONL_BYTES} bytes")
+    return raw.decode("utf-8")
 
 
 def load_state(state_dir: Path) -> dict | None:
     """Read ``state.json`` from the run's state directory; ``None`` when unreadable or not a JSON object."""
     try:
-        state = json.loads((state_dir / STATE_FILE).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        state = json.loads(_read_limited_text(state_dir / STATE_FILE))
+    except (OSError, ValueError, ArithmeticError, RecursionError):
         return None
     return state if isinstance(state, dict) else None
 
@@ -124,7 +138,7 @@ def keep_config(state: dict) -> KeepConfig:
     validates it, so a bad value here means a hand-edited ``state.json``.
 
     Raises:
-        ValueError: if ``metric_repeats`` is present but not an integer from 1 to :data:`MAX_REPEATS`.
+        ValueError: if ``metric_repeats`` is invalid or an explicit direction is neither ``higher`` nor ``lower``.
 
     Examples:
         >>> keep_config({"config": {"metric_repeats": 3, "metric": {"direction": "lower"}}})
@@ -139,8 +153,11 @@ def keep_config(state: dict) -> KeepConfig:
         raise ValueError(f"config.metric_repeats must be an integer from 1 to {MAX_REPEATS}, got {repeats!r}")
     min_delta = _finite(config.get("min_delta_pct"))
     metric = config.get("metric")
-    raw_direction = metric.get("direction") if isinstance(metric, dict) else None
-    direction = Direction.LOWER if raw_direction == Direction.LOWER.value else Direction.HIGHER
+    raw_direction = metric.get("direction", "higher") if isinstance(metric, dict) else "higher"
+    try:
+        direction = Direction(raw_direction)
+    except ValueError:
+        raise ValueError(f"config.metric.direction must be 'higher' or 'lower', got {raw_direction!r}") from None
     return KeepConfig(
         repeats=repeats,
         min_delta_pct=min_delta if min_delta is not None and min_delta >= 0 else DEFAULT_MIN_DELTA_PCT,
@@ -149,20 +166,29 @@ def keep_config(state: dict) -> KeepConfig:
 
 
 def iteration_runs(state_dir: Path, iteration: int) -> list[dict]:
-    """Return the staged metric runs of one iteration, in append order; malformed lines are skipped."""
+    """Return staged runs in append order, reporting the number of malformed lines skipped on stderr."""
     try:
-        handle = (state_dir / LEDGER_FILE).open(encoding="utf-8")
+        lines = _read_limited_text(state_dir / LEDGER_FILE).splitlines()
     except OSError:
         return []
     runs = []
-    with handle:
-        for line in handle:
-            try:
-                record = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(record, dict) and _as_iteration(record.get("iteration")) == iteration:
-                runs.append(record)
+    skipped = 0
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except (ValueError, ArithmeticError, RecursionError):
+            skipped += 1
+            continue
+        number = _as_iteration(record.get("iteration")) if isinstance(record, dict) else None
+        if number is None:
+            skipped += 1
+            continue
+        if number == iteration:
+            runs.append(record)
+    if skipped:
+        print(
+            f"run_metric_stats: skipped {skipped} malformed ledger lines in {state_dir / LEDGER_FILE}", file=sys.stderr
+        )
     return runs
 
 
@@ -182,8 +208,11 @@ def _as_iteration(value: object) -> int | None:
         return value
     if isinstance(value, float) and value.is_integer():
         return int(value)
-    if isinstance(value, str) and value.strip().isdigit():
-        return int(value.strip())
+    if isinstance(value, str) and value.strip().isascii() and value.strip().isdigit():
+        try:
+            return int(value.strip())
+        except ValueError:
+            return None
     return None
 
 
@@ -226,20 +255,36 @@ def decide(new: RunStats, best: float, best_sigma: float, best_runs: int, config
         >>> decide(RunStats(3, 90.0, 0.5), 100.0, 0.5, 3, low).improved
         True
     """
+    if new.runs <= 0 or best_runs <= 0:
+        raise ValueError("metric runs must be positive")
     sign = 1.0 if config.direction is Direction.HIGHER else -1.0
     gain = (new.mean - best) * sign
     sigma_delta = math.sqrt((new.sigma or 0.0) ** 2 / new.runs + best_sigma**2 / best_runs)
+    if not math.isfinite(gain) or not math.isfinite(2 * sigma_delta):
+        raise ValueError("non-finite metric gain or noise threshold")
     if best == 0:
         return Decision(improved=gain > 2 * sigma_delta, delta=gain, threshold=2 * sigma_delta, percent=False)
     scale = abs(best) / 100.0
+    if scale == 0:
+        raise ValueError("best_metric is too small for a percentage comparison")
     threshold = max(config.min_delta_pct, 2 * sigma_delta / scale)
     gain_pct = gain / scale
+    if not math.isfinite(threshold) or not math.isfinite(gain_pct):
+        raise ValueError("non-finite metric percentage comparison")
     return Decision(improved=gain_pct > threshold, delta=gain_pct, threshold=threshold, percent=True)
 
 
 def _values(block: list[dict]) -> list[float]:
     """Return the numeric metric values of a block of runs."""
     return [value for value in (_finite(record.get("metric")) for record in block) if value is not None]
+
+
+def _block_stats(block: list[dict]) -> RunStats:
+    """Summarise a completed block, rejecting non-finite aggregates before a verdict is printed."""
+    stats = summarise(_values(block))
+    if not math.isfinite(stats.mean) or (stats.sigma is not None and not math.isfinite(stats.sigma)):
+        raise ValueError("non-finite metric mean or sigma")
+    return stats
 
 
 def _format_sigma(stats: RunStats) -> str:
@@ -278,7 +323,7 @@ def cmd_status(args: argparse.Namespace) -> int:
             f"for iteration {args.iteration}"
         )
         return 0
-    stats = summarise(_values(block))
+    stats = _block_stats(block)
     print(f"RUN_METRIC_DONE=1 runs={stats.runs} mean={stats.mean:.6g} sigma={_format_sigma(stats)}")
     return 0
 
@@ -303,7 +348,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
         return 1
     best_runs = state.get("best_metric_runs")
     best_runs = best_runs if isinstance(best_runs, int) and not isinstance(best_runs, bool) and best_runs > 0 else 1
-    new = summarise(_values(block))
+    new = _block_stats(block)
     verdict = decide(new, best, _finite(state.get("best_metric_sigma")) or 0.0, best_runs, config)
     unit, note = ("%", "") if verdict.percent else ("", " (metric units — best_metric is 0)")
     print(
@@ -348,7 +393,11 @@ def main(argv: list[str] | None = None) -> int:
         args = parser.parse_args(argv)
     except SystemExit as exc:
         return int(exc.code) if isinstance(exc.code, int) else 2
-    return args.handler(args)
+    try:
+        return args.handler(args)
+    except (ValueError, ArithmeticError) as exc:
+        print(f"! BLOCKED — invalid metric data: {exc}")
+        return 1
 
 
 if __name__ == "__main__":

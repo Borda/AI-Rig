@@ -54,6 +54,10 @@ EXIT_BAD_INPUT = 2
 #: Stderr lines echoed under a provider failure.
 STDERR_HEAD_LINES = 5
 
+#: Bound query JSON in memory and retain only a diagnostic prefix from captured stderr.
+MAX_INPUT_SIZE = 50_000_000
+MAX_STDERR_SIZE = 64_000
+
 #: Advice printed only for provider failures — a target typo is never fixed by rebuilding.
 REBUILD_ADVICE = "Rebuild with /codemap-py:scan-codebase, then re-run."
 
@@ -203,11 +207,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _read_stderr(path: str | None) -> str:
-    """Return the captured stderr text, or ``""`` when the file is absent or unreadable."""
+    """Return bounded captured stderr, marking truncation; return empty text for unreadable files."""
     if not path:
         return ""
     try:
-        return Path(path).read_text(encoding="utf-8", errors="replace")
+        with Path(path).open(encoding="utf-8", errors="replace") as handle:
+            text = handle.read(MAX_STDERR_SIZE + 1)
+        return text if len(text) <= MAX_STDERR_SIZE else text[:MAX_STDERR_SIZE] + "\n[stderr truncated]"
     except OSError:
         return ""
 
@@ -256,7 +262,11 @@ def main(argv: list[str] | None = None) -> int:
         ``0`` for a parsed successful result, ``1`` otherwise.
     """
     args = _build_parser().parse_args(argv)
-    payload = extract_payload(sys.stdin.read())
+    raw = sys.stdin.read(MAX_INPUT_SIZE + 1)
+    if len(raw.encode("utf-8")) > MAX_INPUT_SIZE:
+        print(f"! test-impact input too large (max {MAX_INPUT_SIZE} bytes) — NOT an empty result", file=sys.stderr)
+        return 1
+    payload = extract_payload(raw)
     if args.rc != 0:
         print("\n".join(describe_failure(args.rc, payload, _read_stderr(args.stderr_file))), file=sys.stderr)
         return 1
@@ -275,14 +285,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"! {exc} — NOT an empty result", file=sys.stderr)
             return 1
         print(json.dumps(summary))
-        return 0
-    fields = result_fields(payload)
-    try:
-        _write_sentinels(args.output_prefix, fields)
-    except (OSError, ValueError) as exc:
-        print(f"! test-impact sentinels not written: {exc}", file=sys.stderr)
-        return 1
-    print("\n".join(summary_lines(payload, fields)))
+    else:
+        fields = result_fields(payload)
+        try:
+            _write_sentinels(args.output_prefix, fields)
+        except (OSError, ValueError) as exc:
+            print(f"! test-impact sentinels not written: {exc}", file=sys.stderr)
+            return 1
+        print("\n".join(summary_lines(payload, fields)))
     return 0
 
 

@@ -9,7 +9,6 @@ import hashlib
 import importlib.util
 import itertools
 import json
-import os
 import shlex
 import shutil
 import subprocess
@@ -584,13 +583,16 @@ class TestChunkPlanning:
     @pytest.mark.packaging
     @pytest.mark.parametrize("subdirectory", [pytest.param("", id="root"), pytest.param("nested", id="subdirectory")])
     def test_preserves_trailing_space_in_repository_root(
-        self, changed_repository: Path, tmp_path: Path, subdirectory: str
+        self, changed_repository: Path, tmp_path: Path, subdirectory: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Use the real root name when planning from a root or its subdirectory.
 
         The repository directory name ends in a space, which naive path normalisation would strip.
         """
+        # Windows refuses to rename a directory that is the process working directory (the fixture's chdir target).
+        monkeypatch.chdir(tmp_path)
         repository = changed_repository.rename(tmp_path / "repository ")
+        monkeypatch.chdir(repository)
         physical_repository = repository.resolve(strict=True)
         (physical_repository / "nested").mkdir()
         out = tmp_path / "review"
@@ -1857,8 +1859,8 @@ def test_plan_never_invokes_repository_fsmonitor(changed_repository: Path, tmp_p
         encoding="utf-8",
         newline="\n",
     )
-    command = [sys.executable, str(script)]
-    hook = subprocess.list2cmdline(command) if os.name == "nt" else shlex.join(command)
+    # Git evaluates hook commands with its POSIX shell, including on native Windows.
+    hook = shlex.join([Path(sys.executable).as_posix(), script.as_posix()])
     subprocess.run(["git", "config", "core.fsmonitor", hook], cwd=changed_repository, check=True, capture_output=True)
     subprocess.run(["git", "ls-files"], cwd=changed_repository, check=True, capture_output=True)
     assert log.read_text(encoding="utf-8").strip() == "invoked"

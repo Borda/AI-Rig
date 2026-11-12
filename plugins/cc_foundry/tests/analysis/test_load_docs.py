@@ -52,7 +52,11 @@ def _fake_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     Returns:
         The plugin root directory.
     """
-    root = tmp_path / "plugin_install"
+    # The resolver trusts an environment-named root only inside the marketplace cache of the user home.
+    home = tmp_path / "home"
+    root = home / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "foundry" / "1.0.0"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     modes = root / "skills" / "demo" / "modes"
     modes.mkdir(parents=True)
     # write_bytes, not write_text: text mode translates "\n" to CRLF on Windows, which would
@@ -63,6 +67,8 @@ def _fake_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (shared / "doc.md").write_bytes(b"shared body\n")
     (root / ".claude-plugin").mkdir()
     (root / ".claude-plugin" / "plugin.json").write_text('{"name": "foundry"}', encoding="utf-8")
+    (root / "bin").mkdir()
+    (root / "bin" / "resolve_plugin_root.py").write_text("# resolver\n", encoding="utf-8")
     monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(root))
     monkeypatch.chdir(tmp_path)
     return root
@@ -103,6 +109,26 @@ class TestLoadersEmit:
         (fake_plugin / "skills" / "demo" / "modes" / "crlf.md").write_bytes(b"line one\r\nline two\r\n")
         assert load_mode.main(["demo", "modes", "crlf.md"]) == 0
         assert capsysbinary.readouterr().out == b"line one\r\nline two\r\n"
+
+    @pytest.mark.parametrize(
+        ("module", "args", "relative"),
+        [
+            pytest.param(load_mode, ["demo", "modes", "one.md"], "skills/demo/modes/one.md", id="mode"),
+            pytest.param(load_shared_doc, [*_SHARED_ARGS, "doc.md"], "skills/_shared/doc.md", id="shared"),
+        ],
+    )
+    def test_bootstrap_token_is_rendered(
+        self,
+        fake_plugin: Path,
+        module: ModuleType,
+        args: list[str],
+        relative: str,
+        capsysbinary: pytest.CaptureFixture[bytes],
+    ) -> None:
+        """Loaded executable fragments receive their validated absolute owning-plugin path."""
+        (fake_plugin / relative).write_bytes(b'python "${CLAUDE_PLUGIN_ROOT}/bin/a.py"\r\n')
+        assert module.main(args) == 0
+        assert capsysbinary.readouterr().out == f'python "{fake_plugin.as_posix()}/bin/a.py"\r\n'.encode()
 
 
 class TestLoadersReject:

@@ -140,8 +140,8 @@ process.stdin.on("end", () => {
   try {
     const data = JSON.parse(raw);
 
-    // Only handle Bash tool calls
-    if (data.tool_name !== "Bash") {
+    // Only handle shell-command tool calls.
+    if (data.tool_name !== "Bash" && data.tool_name !== "Monitor") {
       process.exit(0);
     }
 
@@ -164,6 +164,7 @@ process.stdin.on("end", () => {
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
           updatedInput: {
+            ...data.tool_input,
             command: "rtk " + cmd,
           },
         },

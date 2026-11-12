@@ -87,9 +87,9 @@ Worked before/after example, recurring casualties of a compression pass (modals,
 ## File Layout
 
 - `.claude-plugin/plugin.json` — version + metadata; `agents/`, `skills/`, `README.md`, `CLAUDE.md` (optional); `rules/`, `hooks/` — foundry only (exception: `bridge_cc-codex/rules/` = packaged contract docs pinned by its tests, not Claude-loaded rules)
-- `bin/` — standalone executables (`.py`, ≥3.10, see §Installability), auto-added to Bash `PATH`, invoked via `python "${CLAUDE_PLUGIN_ROOT}/bin/<script>.py"`. Scope: deterministic transforms only — decision flow/branching/agent-dispatch stays in SKILL.md prose. Full language policy: `AUTHORING.md` §bin/ Language Policy. Narrow bootstrap exception: shared POSIX `bin/python`, native Windows `bin/python.cmd`, and Codemap runtime launchers select and validate Python before Python code can run; application logic stays in Python, with arguments, streams, and exit status preserved and no workload retries.
+- `bin/` — standalone executables (`.py`, ≥3.10, see §Installability), auto-added to Bash `PATH`; each executable block first resolves and exports `PLUGIN_ROOT` through the shared resolver, then invokes `python "$PLUGIN_ROOT/bin/<script>.py"`. Scope: deterministic transforms only — decision flow/branching/agent-dispatch stays in SKILL.md prose. Full language policy: `AUTHORING.md` §bin/ Language Policy. Narrow bootstrap exception: shared POSIX `bin/python`, native Windows `bin/python.cmd`, and Codemap runtime launchers select and validate Python before Python code can run; application logic stays in Python, with arguments, streams, and exit status preserved and no workload retries.
 - Inline SKILL.md blocks: bash default; Python only when bash needs JSON parsing, multi-line strings, or numeric computation (`Bash(python:*)` is allow-listed in every plugin, so a bare `python …` call never prompts; a capture form `VAR=$(python …)` still trips the "Contains expansion" gate).
-- `references/<agent>/*.md` — agent sidecar fragments, loaded via `cat`. **Never nest under `agents/`** (registers as an uncontrolled dispatchable agent) or `bin/` (PATH-scanned); `skills/<name>/` is safe. Mechanism: `AUTHORING.md` §references/<agent> Nesting Mechanism.
+- `references/<agent>/*.md` — agent sidecar fragments, loaded via `cat` only when token-free; fragments with executable bootstrap tokens use a plugin loader or `render_plugin_root.py`. **Never nest under `agents/`** (registers as an uncontrolled dispatchable agent) or `bin/` (PATH-scanned); `skills/<name>/` is safe. Mechanism: `AUTHORING.md` §references/<agent> Nesting Mechanism.
 
 ## Shared File Authoring Rule (`modes/`, `templates/`, `_shared/`)
 
@@ -109,15 +109,15 @@ Worked before/after example, recurring casualties of a compression pass (modals,
 
 ## Loading Shared Docs — Bash `cat` or a plugin loader, never the Read tool
 
-Load `_shared/*.md` (+ `modes/`, `templates/`) through Bash — never the Read tool. Read tool path-matches version-pinned cache paths (plugin update re-prompts permission); a Bash command command-matches its allow rule (`Bash(cat:*)`, `Bash(python:*)`) and prompts once ever. Two equivalent forms:
+Load `_shared/*.md` (+ `modes/`, `templates/`) through Bash — never the Read tool. Read tool path-matches version-pinned cache paths (plugin update re-prompts permission); a Bash command command-matches its allow rule (`Bash(cat:*)`, `Bash(python:*)`). Choose the form according to whether the document contains executable bootstrap tokens:
 
-- **Resolve + `cat`**: `cat "$VAR/foo.md"`, with `$VAR` resolved in the same bash block — bash state doesn't persist cross-call.
-- **Plugin-owned loader**: a script in the consuming plugin's own `bin/` that resolves the doc and prints it in one Bash call, e.g. `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" foo.md` (foundry: `load_shared_doc.py`, `load_mode.py`). It prints the doc byte-for-byte like `cat`, fails visibly when the doc is missing (unless the call opts into warn-and-skip), and resolves only its own plugin's files (§Self-Contained `_shared`).
+- **Resolve + `cat`**: `cat "$VAR/foo.md"`, with `$VAR` resolved in the same bash block — bash state doesn't persist cross-call. Use only for documents without executable bootstrap tokens; otherwise emit through `render_plugin_root.py` or a plugin-owned loader.
+- **Plugin-owned loader**: a script in the consuming plugin's own `bin/` that resolves the doc and prints it in one Bash call, e.g. `python "$PLUGIN_ROOT/bin/dev_load_shared.py" foo.md` after that block's guarded resolver prologue (foundry: `load_shared_doc.py`, `load_mode.py`). It renders only the plain `${CLAUDE_PLUGIN_ROOT}` bootstrap token to the validated absolute owning-plugin path, preserves all other bytes, fails visibly when the doc is missing (unless the call opts into warn-and-skip), and resolves only its own plugin's files (§Self-Contained `_shared`).
 
 Both forms:
 
 - Keep surrounding "follow/execute protocol" prose — only the load mechanism changes
-- **Either form is compliant; never revert one to the other, and never to `` Read `$VAR/foo.md` ``.** Audit/curator: accept both, never raise a finding that converts one into the other. Migrating a plugin's sites between forms is a deliberate, explicitly scoped change, never an opportunistic edit.
+- **Either form is compliant within its token constraint; never revert one to the other, and never to `` Read `$VAR/foo.md` ``.** Audit/curator: accept both within that constraint. Migrating a plugin's sites between forms is a deliberate, explicitly scoped change, never an opportunistic edit.
 
 ## Sentinel Reads — `read`, not `$(cat ...)`
 
@@ -137,7 +137,7 @@ Single-line sentinel read-back: `IFS= read -r VAR < "${TMPDIR:-/tmp}/<name>-${CS
 A file that only grows — `.jsonl` record logs, `.tsv` rows, `.log` files, diaries, journals, results ledgers — is appended to, never re-written. A read-modify-Write round trip re-emits every earlier record through the model: one dropped or reworded line silently rewrites history, and the cost grows with the ledger.
 
 - **Name the mechanism in every instruction that adds to a ledger.** "Append", or "append with the Write/Edit tool", is not a mechanism.
-- **Model-valued record** (metric, verdict, prose the model decides): Write exactly one record to `<ledger>.rec` with the Write tool, then run the fixed-text block `python "${CLAUDE_PLUGIN_ROOT:-plugins/<plugin>}/bin/append_ledger.py" "$LEDGER"`, with `LEDGER` resolved from a sentinel or state file via `IFS= read -r` (§Sentinel Reads). The script appends the staged file, supplies a trailing newline the Write tool may have omitted, and deletes the `.rec` so the next Write creates it fresh. Every `cc_*` plugin ships a byte-identical copy (`propagate_shared.py` MANIFEST).
+- **Model-valued record** (metric, verdict, prose the model decides): Write exactly one record to `<ledger>.rec` with the Write tool, then run the fixed-text block's guarded resolver prologue followed by `python "$PLUGIN_ROOT/bin/append_ledger.py" "$LEDGER"`, with `LEDGER` resolved from a sentinel or state file via `IFS= read -r` (§Sentinel Reads). The script appends the staged file, supplies a trailing newline the Write tool may have omitted, and deletes the `.rec` so the next Write creates it fresh. Every `cc_*` plugin ships a byte-identical copy (`propagate_shared.py` MANIFEST).
 - **Never the shell form `cat "$L.rec" >> "$L" && rm -f "$L.rec"`.** `rm` has no allow entry beyond `.temp/state/*`, and the blueprint manifest drops every block that runs it, so that form prompts on every append. A bare `cat` also glues the next record onto a record saved without a trailing newline.
 - **Parallel writers** each stage their own `<ledger>.<writer>.rec`; one `append_ledger.py` call after every writer has returned appends them all, sorted by name. Two writers never share one `.rec`.
 - **Values already in the shell or on disk**: `printf '…\n' … >> "$LEDGER"`, `jq -c … >> "$LEDGER"`, or `append_ledger.py "$LEDGER" --from <files>` (appends and keeps the sources).
@@ -152,7 +152,7 @@ A file that only grows — `.jsonl` record logs, `.tsv` rows, `.log` files, diar
 - Every file installable via `claude plugin install <name>@borda-ai-rig`; no dependency on source tree — installed path only; no hardcoded paths to sibling plugins or `plugins/<name>/` dirs
 - **No hardcoded absolute user paths** (`/Users/<name>/`, `/home/<name>/`, `/tmp/`) — critical, breaks on every other machine. Always `~/`, `$(git rev-parse --show-toplevel)`, or `$CLAUDE_PLUGIN_ROOT`. Check R3.
 - Validate: after `claude plugin install`, all agents/skills/rules/hooks resolve without a local `plugins/` tree
-- **Bare `plugins/` path = only valid as final fallback** after cache-path resolution: `VAR="$(ls -td ~/.claude/plugins/cache/borda-ai-rig/<plugin>/*/skills/_shared 2>/dev/null | head -1)"; [ -z "$VAR" ] && VAR="plugins/<plugin>/skills/_shared"`. Never bare `plugins/` as primary path. Check C32.
+- **Root selection belongs to the shared resolver**: each executable block begins `PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name <plugin>) || exit $?; export PLUGIN_ROOT`, then calls helpers as `python "$PLUGIN_ROOT/bin/<name>.py"`. The host substitutes the plain token in skills and agents; loaders render it in emitted fragments. Never use the defaulted token or bootstrap from cwd-relative paths. The resolver selects the install record before validated cache versions; its final source fallback is restricted to its own AI-Rig checkout with cwd inside that checkout. Check C32.
 - **Agent spawns require health monitoring**: every `Agent()` spawn runs in the background — the skill spawns, ends the turn, and resumes on the completion notification. Any skill calling `Agent()` must implement CLAUDE.md §6 (per-agent deadline file checked by `agent_watch.py` on each wake-up, ⏱ at once for a missed deadline or a notification without output; never a waiting tool — ScheduleWakeup, ListAgents, Monitor — a fixed-interval poll, or a no-op call holding the turn open) — reference `_FOUNDRY_SHARED/agent-spawn-protocol.md`, don't reproduce inline. Check C35.
 - **`bin/` executables are Python (`.py`), never shell (`.sh`)** — these plugins must run on Windows, where `.sh` does not execute. Call sites use `python "$PLUGIN_ROOT/bin/<name>.py"`, never `bash …/<name>.sh`. Python must itself stay portable: temp dir via `os.environ.get("TMPDIR") or (tempfile.gettempdir() if os.name == "nt" else "/tmp")` (mirrors the shell's `${TMPDIR:-/tmp}`: bare `gettempdir()` honours `TEMP`/`TMP` first on POSIX, and a bare `/tmp` is absent on native Windows Python), session token via `os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"` (never `os.getppid()`), `pathlib` over string path concatenation. (`codemap-py/bin/setup_scan_env.sh` is no longer logic: it is a deprecated `exec` shim delegating to `setup_scan_env.py`, kept only for pre-existing call sites.)
 
@@ -257,6 +257,8 @@ Apply the repository Version Continuity rule to serialized artifact schemas sepa
 >
 > **Changelog shape: a plain list.** Every line of a section is a `- ` entry or a sub-entry of one; no free paragraph before, between or after entries, and no blank lines between items. One entry per topic: a few related sentences saying what changed and its user-visible impact, compact but complete. Sub-bullets only enumerate parallel items. No rationale, implementation mechanics or long example lists; compress, never drop a change. Match the released sections below.
 >
+> **Changelog target section.** New entries go only into the section of the pending commit's own version — the `## <version>` heading equal to the bumped value (or a declared `Unreleased` section when the file has one), at the top. Pick it from `HEAD`, never from the nearest surrounding text: a section whose heading already exists in `HEAD`'s changelog (the top one included) is released history, so open the new heading above it instead of appending; when amending a commit that already carries the bump, its baseline is that commit's parent and its own top section is the pending one. Never add or reword a bullet in an older section; a change that needs one is a new bullet in the pending section.
+>
 > **Baseline = HEAD every time:** Re-read it fresh each session; never trust prior-session recall. Amending or rewriting a commit that already bumps: baseline = that commit's parent (root `CLAUDE.md` §Version Continuity).
 
 Per-plugin version in `.claude-plugin/plugin.json`, space `0.X.Y`:
@@ -283,8 +285,20 @@ Full pre-bump checklist (test-only guard, on-disk-vs-HEAD double-check, calculat
 ## Permission Gates — Diff Against HEAD
 
 - A feature that adds a permission gate, approval question or stop first diffs its gate list against `HEAD` behaviour. An operation that ran without a stop at `HEAD` keeps running without one unless the user asked for the new stop.
-- Default to relaxed; tighten only with a concrete, user-accepted justification. Push stays always-ask and force push forbidden; no other git class gains an always-ask stop.
+- Default to relaxed; tighten only with a concrete, user-accepted justification. Push stays user-approved (asked every time, or once at the start of an `oss:resolve` run with the `git-push-run` question covering that run's one push) and force push forbidden; no other git class gains an always-ask stop.
 - Codex Rig counterpart: same rule, `plugins/AGENTS.md` §Permission Gates.
+
+## Shell-Text Guards — What Not To Do
+
+Repository-maintainer rules for the opencode-rig shell guard; these instructions do not apply to shipped user content.
+
+- Do not grow a text guard by enumerating bypass strings: this guard grew from about 328 to about 2800 lines, then about 3400, through repeated reviews that kept finding more because each new spelling is another hole.
+- Add a quiet class only with a positive model: use a short explicit table of allowed programs and options, never a deny-list of known-bad forms, so permission follows understood behaviour.
+- State in user docs that a text classifier is a speed bump, not a security boundary; further hardening requires a sandbox or isolation decision because string rules cannot enforce isolation.
+- Fix a review budget up front; when spent, document the residue as limits and open gaps instead of widening the guard, because spelling enumeration does not converge.
+- A read-only list entry never gains write options; a program that can write or run code leaves the list, because its name alone cannot establish safety.
+- Decide program identity in one function and use it for every lookup; never match raw spelling at another site, because divergent identity rules create bypasses.
+- Never put round, finding, probe or task numbers in test names, titles, labels, markers or comments; name by scope and behaviour and merge tests into scope-named files, so evidence remains understandable without review history.
 
 ## Edit Quality Gate
 

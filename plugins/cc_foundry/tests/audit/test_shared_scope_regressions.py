@@ -8,11 +8,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from _hook_env import _bash_runs_posix_script
 
 _CHECKS = Path(__file__).resolve().parents[2] / "skills/audit/templates/checks-shared.md"
+_BASH = shutil.which("bash")
 _SHELLS = [
-    pytest.param("bash", marks=pytest.mark.skipif(not _bash_runs_posix_script(), reason="POSIX Bash required")),
+    pytest.param("bash", marks=pytest.mark.skipif(_BASH is None, reason="Bash unavailable")),
     pytest.param("zsh", marks=pytest.mark.skipif(shutil.which("zsh") is None, reason="zsh unavailable")),
 ]
 _TEXT_TOOLS = pytest.mark.skipif(
@@ -59,45 +59,97 @@ def _write_tree(root: Path, label: str) -> None:
         path.write_text(content, encoding="utf-8")
 
 
-def _run(block: str, shell: str, root: Path, local: bool) -> subprocess.CompletedProcess[str]:
+def _run(block: str, shell: str, root: Path, local: bool, timeout: int = 15) -> subprocess.CompletedProcess[str]:
     """Run one fresh tool shell with only persisted audit state selecting the scan root."""
     state_base = root / "state"
     state = state_base / "audit-state-scope-regression"
     state.mkdir(parents=True, exist_ok=True)
-    (state / "local-mode").write_text("true\n" if local else "false\n", encoding="utf-8")
+    (state / "local-mode").write_text("true\n" if local else "false\n", encoding="utf-8", newline="\n")
     env = {**os.environ, "TMPDIR": state_base.as_posix(), "CLAUDE_CODE_SESSION_ID": "scope-regression"}
     env.pop("LOCAL_MODE", None)
     env.pop("_ROOT", None)
-    return subprocess.run(
-        [shell, "-c", block], cwd=root, env=env, capture_output=True, encoding="utf-8", check=False, timeout=15
+    # Binary stdin avoids argv truncation and Windows text-mode CRLF translation of shell source.
+    result = subprocess.run(
+        [shutil.which(shell), "-s"],
+        input=(block + "\n").encode("utf-8"),
+        cwd=root,
+        env=env,
+        capture_output=True,
+        check=False,
+        timeout=timeout,
     )
+    return subprocess.CompletedProcess(
+        result.args, result.returncode, result.stdout.decode("utf-8"), result.stderr.decode("utf-8")
+    )
+
+
+_SCOPE_CHECKS = [
+    ("## Check 13 —", 0, "selected-agent.md"),
+    ("## Check 15 —", 0, "/Users/selected-user"),
+    ("## Check 16 —", 0, "{root}/CLAUDE.md"),
+    ("## Check 16 —", 1, "selected-agent.md"),
+    ("## Check 18 —", 0, "selected-rule"),
+    ("## Check 18 —", 1, "selected-rule.md"),
+    ("## Check 18 —", 2, "selected-agent.md"),
+    ("## Check 18 —", 3, "selected-rule.md"),
+    ("## Check 25 —", 0, 'subagent_type="selected-agent"'),
+    ("## Check 26 —", 0, "selected-symbol"),
+    ("## Check 26 —", 1, "selected-command"),
+    ("## Check 29 —", 0, "selected-agent.md"),
+]
+
+
+def _run_scope_checks(shell: str, root: Path, local: bool) -> dict[str, tuple[str, int]]:
+    """Batch real snippets in fresh subshells, preserving individual output and exit diagnostics."""
+    # Each snippet runs in a separate subshell of an untouched parent: state cannot leak between checks.
+    # One executable startup replaces twelve; retain the existing per-snippet budget for the whole batch.
+    script = "\n".join(
+        f"printf '\\036%s\\n' '{heading}{index}'\n(\n{_bash_blocks(heading)[index]}\n)\nprintf '\\037%s\\n' \"$?\""
+        for heading, index, _ in _SCOPE_CHECKS
+    )
+    result = _run(script, shell, root, local, timeout=15 * len(_SCOPE_CHECKS))
+    assert result.returncode == 0, result
+    assert result.stderr == "", result
+    outputs: dict[str, tuple[str, int]] = {}
+    for record in result.stdout.split("\x1e")[1:]:
+        name, body = record.split("\n", 1)
+        stdout, status = body.rsplit("\x1f", 1)
+        outputs[name] = stdout, int(status)
+    return outputs
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("shell", _SHELLS)
+def test_shell_script_survives_argument_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shell: str) -> None:
+    """Keep long UTF-8 scripts intact when the native-to-POSIX argument transport truncates oversized arguments."""
+    run = subprocess.run
+
+    def truncate_script_argument(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        """Model Windows argv truncation and text-mode stdin translation before real shell execution."""
+        if "-c" in command:
+            index = command.index("-c") + 1
+            command = [*command[:index], command[index][:8191], *command[index + 1 :]]
+        if isinstance(kwargs.get("input"), str):
+            kwargs["input"] = kwargs["input"].replace("\n", "\r\n")
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", truncate_script_argument)
+    script = "#" + "x" * 10000 + "\n(\nprintf '%s\\n' 'complete — \\\\ tail'\n)"
+
+    result = _run(script, shell, tmp_path, local=False)
+
+    assert result.returncode == 0, result
+    assert result.stderr == "", result
+    assert result.stdout == "complete — \\\\ tail\n"
 
 
 @pytest.mark.integration
 @_TEXT_TOOLS
+@pytest.mark.timeout(15 * len(_SCOPE_CHECKS) + 60)
 @pytest.mark.parametrize("shell", _SHELLS)
 @pytest.mark.parametrize("local", [True, False])
-@pytest.mark.parametrize(
-    ("heading", "block_index", "expected"),
-    [
-        pytest.param("## Check 13 —", 0, "selected-agent.md", id="heading-jump-in-nested-agent"),
-        pytest.param("## Check 15 —", 0, "/Users/selected-user", id="hardcoded-user-path"),
-        pytest.param("## Check 16 —", 0, "{root}/CLAUDE.md", id="context-file-in-selected-tree"),
-        pytest.param("## Check 16 —", 1, "selected-agent.md", id="examples-in-nested-agent"),
-        pytest.param("## Check 18 —", 0, "selected-rule", id="rule-inventory"),
-        pytest.param("## Check 18 —", 1, "selected-rule.md", id="rule-frontmatter"),
-        pytest.param("## Check 18 —", 2, "selected-agent.md", id="rule-redundancy-in-nested-agent"),
-        pytest.param("## Check 18 —", 3, "selected-rule.md", id="rule-reference-in-nested-agent"),
-        pytest.param("## Check 25 —", 0, 'subagent_type="selected-agent"', id="implicit-dispatch-in-nested-agent"),
-        pytest.param("## Check 26 —", 0, "selected-symbol", id="symbols-in-nested-agent"),
-        pytest.param("## Check 26 —", 1, "selected-command", id="slash-commands-in-nested-agent"),
-        pytest.param("## Check 29 —", 0, "selected-agent.md", id="context-minimality-targets"),
-    ],
-)
-def test_fresh_shell_scans_only_selected_tree(
-    tmp_path: Path, shell: str, local: bool, heading: str, block_index: int, expected: str
-) -> None:
-    """Persisted mode selects one tree, including nested agents with spaces, in each fresh shell."""
+def test_fresh_shell_scans_only_selected_tree(tmp_path: Path, shell: str, local: bool) -> None:
+    """Persisted mode selects one tree, including nested agents with spaces, in each fresh subshell."""
     selected_root = tmp_path / ("plugins/demo" if local else ".claude")
     other_root = tmp_path / (".claude" if local else "plugins/demo")
     _write_tree(selected_root, "selected")
@@ -107,18 +159,25 @@ def test_fresh_shell_scans_only_selected_tree(
     _write_tree(selected_root / ".venv/package", "excluded")
     _write_tree(selected_root / "tests/fixtures", "excluded")
 
-    result = _run(_bash_blocks(heading)[block_index], shell, tmp_path, local)
+    results = _run_scope_checks(shell, tmp_path, local)
 
-    assert result.returncode in (0, 1)
-    assert result.stderr == ""
-    assert expected.format(root=selected_root.relative_to(tmp_path).as_posix()) in result.stdout
-    assert "unselected" not in result.stdout
-    assert "excluded" not in result.stdout
-    assert not any(part in result.stdout for part in ("worktrees/", "node_modules/", ".venv/", "tests/"))
+    assert len(results) == len(_SCOPE_CHECKS), results
+    assert all(status in (0, 1) for _, status in results.values()), results
+    assert all(
+        expected.format(root=selected_root.relative_to(tmp_path).as_posix()) in results[f"{heading}{index}"][0]
+        for heading, index, expected in _SCOPE_CHECKS
+    ), results
+    assert all("unselected" not in stdout and "excluded" not in stdout for stdout, _ in results.values()), results
+    assert all(
+        part not in stdout
+        for stdout, _ in results.values()
+        for part in ("worktrees/", "node_modules/", ".venv/", "tests/")
+    ), results
 
 
 @pytest.mark.integration
 @_TEXT_TOOLS
+@pytest.mark.skipif(_BASH is None, reason="Bash unavailable")
 @pytest.mark.parametrize("local", [True, False])
 @pytest.mark.parametrize("settings", ["settings.json", "settings.local.json"])
 def test_absolute_hook_paths_include_project_settings(tmp_path: Path, local: bool, settings: str) -> None:

@@ -358,7 +358,8 @@ class TestBuiltIndexReuse:
         with rw.read_index(ident.index_path, timeout=5) as codex_view:
             pass
 
-        assert [claude_view["scan_root"], codex_view["scan_root"]] == [str(ident.root)] * 2
+        assert [claude_view["scan_root"], codex_view["scan_root"]] == ["."] * 2
+        assert [claude_view["scan_root_key"], codex_view["scan_root_key"]] == [ident.root_key] * 2
         assert [claude_view["project"], codex_view["project"]] == [ident.project] * 2
         assert _count(built_index.counter) == 1  # no rebuild on reuse
         assert _sha(ident.index_path) == built_index.h0

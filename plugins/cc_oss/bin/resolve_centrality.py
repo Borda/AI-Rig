@@ -92,7 +92,7 @@ def _rdep_count(module: dict[str, object]) -> int:
     """Read ``rdep_count`` as an int; a missing or malformed value counts as 0 (ordered last)."""
     try:
         return int(module.get("rdep_count") or 0)  # type: ignore[call-overload]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
 
 
@@ -177,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
     payload = sys.stdin.read(_MAX_STDIN_CHARS + 1)
     try:
         central = json.loads(payload) if len(payload) <= _MAX_STDIN_CHARS else None
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, ValueError, RecursionError):
         return 1
     if not isinstance(central, dict):
         return 1

@@ -22,14 +22,13 @@ NOT for: running experiments (use `/research:run`); designing experiments (use `
 **Agent resolution**: load and follow the protocol below. Contains: foundry check + fallback table. `research:scientist` in same plugin — no fallback needed if research plugin installed.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # loads: unsupported-flag-protocol.md
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve_shared.py" --persist research-shared --emit agent-resolution.md --emit unsupported-flag-protocol.md || exit 1  # timeout: 5000 — cold resolve; every later site reads the research-shared sentinel instead of re-running python
+python "$PLUGIN_ROOT/bin/resolve_shared.py" --persist research-shared --emit agent-resolution.md --emit unsupported-flag-protocol.md || exit 1  # timeout: 5000 — cold resolve; every later site reads the research-shared sentinel instead of re-running python
 ```
 
 ## Retro Mode (Steps T1–T7)
-
-Triggered by `retro`, `retro <run-id>`, or `retro <run-id> --compare <run-id-2>`.
 
 **Defaults**: `--threshold 0.001`, `--alpha 0.05`.
 
@@ -65,9 +64,10 @@ If `--compare <run-id-2>` present: load second run identically from `.experiment
 **T1 setup** — one block: assign `RUN_ID_ARG` from `$ARGUMENTS` (first positional non-flag token, empty if absent), resolve `$RUN_ID` (input resolution above), pre-compute and persist `$RUN_DIR` for T3:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # retro has no boolean flag; --flags must be non-empty, so a placeholder name. --keep-state: no eval; --inlined: retro keeps no compaction contract, so it clears none
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags retro --value-flags compare,threshold,alpha --keep-state retro --inlined "$ARGUMENTS" >/dev/null  # timeout: 5000
+python "$PLUGIN_ROOT/bin/parse-skill-flags.py" --flags retro --value-flags compare,threshold,alpha --keep-state retro --inlined -- "$ARGUMENTS" >/dev/null  # timeout: 5000
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/retro-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 IFS= read -r VALUE_ALPHA < "${TMPDIR:-/tmp}/retro-alpha-${CSID}" 2>/dev/null || VALUE_ALPHA=""
 IFS= read -r VALUE_COMPARE < "${TMPDIR:-/tmp}/retro-compare-${CSID}" 2>/dev/null || VALUE_COMPARE=""
@@ -75,11 +75,11 @@ RUN_ID_ARG=$(echo "$CLEAN_ARGS" | awk '{for (i=1; i<=NF; i++) if ($i !~ /^--/) {
 RUN_ID_ARG="${RUN_ID_ARG:-}"
 echo "$RUN_ID_ARG" > "${TMPDIR:-/tmp}/retro-run-id-${CSID}"  # persist for T3 (vars lost between Bash calls)
 echo "${VALUE_ALPHA:-0.05}" > "${TMPDIR:-/tmp}/retro-alpha-${CSID}"
-RUN_ID="${RUN_ID_ARG:-$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/find_run_id.py" .experiments/state 2>/dev/null)}"  # loads: find_run_id.py
+RUN_ID="${RUN_ID_ARG:-$(python "$PLUGIN_ROOT/bin/find_run_id.py" .experiments/state 2>/dev/null)}"  # loads: find_run_id.py
 # find_run_id.py stderr suppressed; empty case surfaced to avoid double-slash path
 [ -z "$RUN_ID" ] && { echo "! Failed to resolve run ID — no completed run found or bin/find_run_id.py unavailable; check research plugin install."; exit 1; }
 echo "$RUN_ID" > "${TMPDIR:-/tmp}/retro-run-id-resolved-${CSID}"
-RUN_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/make_run_dir.py" "retro" ".experiments" 2>/dev/null)  # timeout: 5000
+RUN_DIR=$(python "$PLUGIN_ROOT/bin/make_run_dir.py" "retro" ".experiments" 2>/dev/null)  # timeout: 5000
 [ -n "$RUN_DIR" ] || { echo "! BLOCKED — retro T1: make_run_dir.py returned empty; check research plugin install"; exit 1; }
 mkdir -p "$RUN_DIR/scripts"  # timeout: 3000
 echo "$RUN_DIR" > "${TMPDIR:-/tmp}/retro-run-dir-${CSID}"  # T3 + fallback path reload from temp file
@@ -103,22 +103,23 @@ echo "RUN_ID=$RUN_ID RUN_DIR=$RUN_DIR"
 Run the Wilcoxon signed-rank test via the bundled bin/ script — pure Python with scipy.stats:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/retro-run-id-resolved-${CSID}" 2>/dev/null || RUN_ID=""  # re-hydrate RUN_ID from T1 (Check 41: fresh shell)
 IFS= read -r ALPHA < "${TMPDIR:-/tmp}/retro-alpha-${CSID}" 2>/dev/null || ALPHA="0.05"
-METRIC_DIRECTION=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/read_state_field.py" ".experiments/state/$RUN_ID/state.json" "config.metric.direction" --default "" 2>/dev/null || echo "")  # loads: read_state_field.py
+METRIC_DIRECTION=$(python "$PLUGIN_ROOT/bin/read_state_field.py" ".experiments/state/$RUN_ID/state.json" "config.metric.direction" --default "" 2>/dev/null || echo "")  # loads: read_state_field.py
 # runs before config persistence wrote `config: {}` — say so; a silent `higher` runs the wrong one-sided test on loss/latency
 [ -n "$METRIC_DIRECTION" ] || { echo "⚠ state.json records no config.metric.direction (run predates config persistence) — assuming higher; wrong for a lower-is-better metric"; METRIC_DIRECTION=higher; }
 IFS= read -r _RETRO_RUN_DIR < "${TMPDIR:-/tmp}/retro-run-dir-${CSID}" 2>/dev/null || _RETRO_RUN_DIR=""
 IFS= read -r RETRO_JSONL < "${TMPDIR:-/tmp}/retro-jsonl-path-${CSID}" 2>/dev/null || RETRO_JSONL="$_RETRO_RUN_DIR/experiments-clean.jsonl"  # re-hydrate sanitized path from T1 (Check 41: fresh shell)
 # no raw-jsonl fallback: T2/T3/T5 must share one iteration set
 [ -f "$RETRO_JSONL" ] || { echo "! BLOCKED — retro T2: sanitized copy '$RETRO_JSONL' missing — run the T1 setup block first"; exit 1; }
-RETRO_RESULT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/retro_analyze.py" --jsonl "$RETRO_JSONL" --baseline "baseline" --alpha "$ALPHA" --direction "$METRIC_DIRECTION")  # timeout: 30000
+RETRO_RESULT=$(python "$PLUGIN_ROOT/bin/retro_analyze.py" --jsonl "$RETRO_JSONL" --baseline "baseline" --alpha "$ALPHA" --direction "$METRIC_DIRECTION")  # timeout: 30000
 RETRO_EXIT=$?
 echo "$RETRO_RESULT" > "${TMPDIR:-/tmp}/retro-result-${CSID}"
 [ "$RETRO_EXIT" -eq 2 ] && { echo "retro: Input error (exit 2) — run-id '$RUN_ID' missing, malformed, no baseline record, or invalid --alpha value (input: $RETRO_JSONL); no baseline record → that run never finished R4 baseline"; exit 1; }
 # effect size: script does not return rank-biserial r directly
-EFFECT_R=$(echo "$RETRO_RESULT" | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/compute_effect_size.py")  # timeout: 5000
+EFFECT_R=$(echo "$RETRO_RESULT" | python "$PLUGIN_ROOT/bin/compute_effect_size.py")  # timeout: 5000
 echo "retro_result: $RETRO_RESULT"
 echo "effect_r: $EFFECT_R"
 ```
@@ -143,6 +144,7 @@ Read `direction` from `state.json` config (or infer from goal text), pass via `$
 **If `--compare`**: invoke the script a second time on the second run's sanitized copy `experiments-clean-2.jsonl` (T1 builds it with the same truncation rule as the first run's copy — never the raw file, so both runs are tested on complete iteration sets); downstream report renders second row. Skips itself when no `--compare` was given:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CMP_ID < "${TMPDIR:-/tmp}/retro-compare-id-${CSID}" 2>/dev/null || CMP_ID=""
 [ -n "$CMP_ID" ] || { echo "retro: no --compare — second run skipped"; exit 0; }
@@ -151,15 +153,15 @@ IFS= read -r RETRO_JSONL2 < "${TMPDIR:-/tmp}/retro-jsonl2-path-${CSID}" 2>/dev/n
 [ -f "$RETRO_JSONL2" ] || { echo "! BLOCKED — retro T2: sanitized compare copy '$RETRO_JSONL2' missing — run the T1 setup block first"; exit 1; }
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/retro-run-id-resolved-${CSID}" 2>/dev/null || RUN_ID=""
 [ -n "$RUN_ID" ] || { echo "! BLOCKED — retro T2: resolved run-id sentinel missing — run the T1 setup block first"; exit 1; }
-METRIC1=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/read_state_field.py" ".experiments/state/$RUN_ID/state.json" "config.metric_cmd" --default "" 2>/dev/null)  # timeout: 5000
-METRIC2=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/read_state_field.py" ".experiments/state/$CMP_ID/state.json" "config.metric_cmd" --default "" 2>/dev/null)  # timeout: 5000
+METRIC1=$(python "$PLUGIN_ROOT/bin/read_state_field.py" ".experiments/state/$RUN_ID/state.json" "config.metric_cmd" --default "" 2>/dev/null)  # timeout: 5000
+METRIC2=$(python "$PLUGIN_ROOT/bin/read_state_field.py" ".experiments/state/$CMP_ID/state.json" "config.metric_cmd" --default "" 2>/dev/null)  # timeout: 5000
 [ "$METRIC1" = "$METRIC2" ] || { echo "! BLOCKED — Cannot compare runs with different metrics: $METRIC1 vs $METRIC2"; exit 1; }
 [ -n "$METRIC1" ] || echo "⚠ neither run records config.metric_cmd — metric equality unverified"
-DIRECTION2=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/read_state_field.py" ".experiments/state/$CMP_ID/state.json" "config.metric.direction" --default "" 2>/dev/null || echo "")  # timeout: 5000
+DIRECTION2=$(python "$PLUGIN_ROOT/bin/read_state_field.py" ".experiments/state/$CMP_ID/state.json" "config.metric.direction" --default "" 2>/dev/null || echo "")  # timeout: 5000
 [ -n "$DIRECTION2" ] || { echo "⚠ compare run records no config.metric.direction (predates config persistence) — assuming higher"; DIRECTION2=higher; }
-RETRO_RESULT2=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/retro_analyze.py" --jsonl "$RETRO_JSONL2" --baseline "baseline" --alpha "$ALPHA" --direction "$DIRECTION2")  # timeout: 30000
+RETRO_RESULT2=$(python "$PLUGIN_ROOT/bin/retro_analyze.py" --jsonl "$RETRO_JSONL2" --baseline "baseline" --alpha "$ALPHA" --direction "$DIRECTION2")  # timeout: 30000
 [ "$?" -eq 2 ] && { echo "retro: Input error (exit 2) — compare run '$CMP_ID' malformed or no baseline record (input: $RETRO_JSONL2)"; exit 1; }
-EFFECT_R2=$(echo "$RETRO_RESULT2" | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/compute_effect_size.py")  # timeout: 5000
+EFFECT_R2=$(echo "$RETRO_RESULT2" | python "$PLUGIN_ROOT/bin/compute_effect_size.py")  # timeout: 5000
 echo "retro_result_compare: $RETRO_RESULT2"
 echo "effect_r_compare: $EFFECT_R2"
 ```
@@ -191,6 +193,7 @@ Scan `experiments.jsonl` sequentially, skipping iteration 0 (baseline). For each
 Re-hydrate cross-Bash state at the start of every separate Bash invocation in T3 (each Bash call is a fresh shell — `$RUN_DIR` / `$RUN_ID_ARG` lost across calls):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/retro-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
 IFS= read -r RUN_ID_ARG < "${TMPDIR:-/tmp}/retro-run-id-${CSID}" 2>/dev/null || RUN_ID_ARG=""
@@ -198,10 +201,18 @@ IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/retro-run-id-resolved-${CSID}" 2>/dev/nul
 IFS= read -r RETRO_JSONL < "${TMPDIR:-/tmp}/retro-jsonl-path-${CSID}" 2>/dev/null || RETRO_JSONL="$RUN_DIR/experiments-clean.jsonl"
 # one call reports both missing values; `|| … &&` precedence subtle, trailing `[ -z ] && {…}` leaves exit 1 even when value present
 # `exit 1` ends Bash subprocess only — orchestrator must treat non-zero as hard stop, not proceed to T4
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/require-vars.py" "$RUN_DIR" "retro T3: RUN_DIR missing — T1 must run first" "$RUN_ID" "retro T3: RUN_ID missing — T1 must run first" || exit 1
+python "$PLUGIN_ROOT/bin/require-vars.py" "$RUN_DIR" "retro T3: RUN_DIR missing — T1 must run first" "$RUN_ID" "retro T3: RUN_ID missing — T1 must run first" || exit 1
+IFS= read -r THRESHOLD < "${TMPDIR:-/tmp}/retro-threshold-${CSID}" 2>/dev/null || THRESHOLD=""
+METRIC_DIRECTION=$(python "$PLUGIN_ROOT/bin/read_state_field.py" ".experiments/state/$RUN_ID/state.json" "config.metric.direction" --default "higher") || exit 1  # timeout: 5000
+[ -f "$RETRO_JSONL" ] || { echo "! BLOCKED — retro T3: sanitized copy missing — run T1 first"; exit 1; }
+if [ -n "$THRESHOLD" ]; then
+  python "$PLUGIN_ROOT/bin/retro_scan.py" --jsonl "$RETRO_JSONL" --out-dir "$RUN_DIR" --direction "$METRIC_DIRECTION" --threshold "$THRESHOLD" || exit 1  # timeout: 30000
+else
+  python "$PLUGIN_ROOT/bin/retro_scan.py" --jsonl "$RETRO_JSONL" --out-dir "$RUN_DIR" --direction "$METRIC_DIRECTION" || exit 1  # timeout: 30000
+fi
 ```
 
-Write summary to `$RUN_DIR/dead-iters.json` via Write tool. Format:
+The bundled scanner writes `$RUN_DIR/dead-iters.json` and `$RUN_DIR/suspicious-jumps.json` together from the same sanitized history. The dead-window summary has this shape, plus the applied `threshold`:
 
 ```json
 {
@@ -212,11 +223,11 @@ Write summary to `$RUN_DIR/dead-iters.json` via Write tool. Format:
 }
 ```
 
-Write dead-iteration scan script to `$RUN_DIR/scripts/dead-iter-scan.py` via Write tool, then execute in a separate Bash call. Never inline Python in the Bash command. (Different from T2: T3 writes a fresh dynamic script per invocation; T2 invokes a static bin/ script.)
+Read the scanner outputs; never re-author a scan script or recompute their arithmetic with the model. Add the T3 timeout classifications and advisory to the report using the input rows and scanner diagnostic.
 
 ### Step T4: Suspicious jump detection
 
-Compute per-iteration absolute metric deltas for kept iterations only. Build sliding window of 5 kept iterations to compute running mean and std of deltas.
+Use `$RUN_DIR/suspicious-jumps.json` from the T3 scanner. It computes absolute deltas for kept iterations with numeric measurements only and compares each improvement with the previous five kept deltas, using their mean and sample standard deviation; the candidate is excluded from its own reference window.
 
 Flag any single-step improvement where `abs(delta) > running_mean + 2 * running_std`:
 
@@ -233,23 +244,25 @@ For each flagged jump, record:
 
 **Minimum data**: require ≥6 kept iterations before flagging (need 5 for window + 1 to test). Fewer → skip suspicious-jump detection entirely, write `"⚠ Insufficient data for trend analysis (need ≥6 data points, have <N>)"` in Suspicious Metric Jumps section of report.
 
-Write to `$RUN_DIR/suspicious-jumps.json` via Write tool.
+The scanner records `jumps` and `kept_samples`, plus a `reason` when there are fewer than six usable kept measurements. A zero reference standard deviation makes `sigma: null`; display this as `n/a (zero variance)` while retaining the threshold-based severity. Add corresponding diary context to the report without rewriting the scanner output.
 
 ### Step T5: Scientist learning summary
 
 Pre-compute all file paths before spawning; substitute actual computed values for every `<RUN_DIR>`/`<path>` placeholder in prompt below before constructing Agent() call — unsubstituted placeholder reaches agent as literal text: output lands in wrongly-named directory, post-call check reports false timeout. Verify `$RUN_DIR/stats-results.json`, `$RUN_DIR/dead-iters.json`, `$RUN_DIR/suspicious-jumps.json` exist (T2–T4 must complete first).
 
+Verify the sanitized copy at `$RETRO_JSONL` exists before spawning; if missing, print `! BLOCKED — retro T5: sanitized copy missing — run the T1 setup block first` and stop. Never read the raw JSONL as a fallback.
+
 <!-- policy-sibling: plugins/cc_research/skills/judge/SKILL.md, plugins/cc_research/skills/fortify/SKILL.md, plugins/cc_research/skills/verify/SKILL.md, plugins/cc_research/skills/plan/SKILL.md, plugins/cc_research/skills/topic/SKILL.md, plugins/cc_research/skills/topic/modes/plan.md, plugins/cc_research/skills/topic/modes/team.md — Agent-budget spawn-envelope rule restated in each; keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->
 
 > **Agent budget** — every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
-Spawn `research:scientist` via `Agent(subagent_type="research:scientist", prompt="...")`:
+Spawn `research:scientist` via `Agent(subagent_type="research:scientist", name="analyze-run-history", description="Explain experiment outcomes and next hypotheses", prompt="...")`:
 
 ```markdown
 Act as research retrospective analyst.
 
 Read:
-- experiments-clean.jsonl at <RETRO_JSONL path — the sanitized copy written by T1; fall back to experiments.jsonl if clean copy absent> (full iteration history)
+- experiments-clean.jsonl at <RETRO_JSONL path — the sanitized copy written by T1> (full iteration history); if missing, report ! BLOCKED and stop
 - diary.md at <path> (if exists — for qualitative context)
 - stats results at <RUN_DIR>/stats-results.json
 - dead iteration summary at <RUN_DIR>/dead-iters.json
@@ -268,9 +281,9 @@ Include ## Confidence block per quality-gates rules.
 Return ONLY: {"status":"done","hypotheses":N,"file":"<RUN_DIR>/retrospective.md","confidence":0.N}
 ```
 
-**Health monitoring note** (CLAUDE.md §6): research:scientist agent runs in background — spawn, then end turn; no filler call, no "waiting" line, no sleep. If completion notification arrives with no output file, or nothing appears for >15 min, treat as timed out.
+**Health monitoring note** (CLAUDE.md §6): research:scientist agent runs in background — spawn, then end turn; no filler call, no "waiting" line, no sleep. Arm and check its agent-watch deadline per `agent-resolution.md` §Agent waits — no polling. If completion notification arrives with no output file, treat as timed out.
 
-**Post-call timeout check**: after Agent() returns, verify:
+**Post-call timeout check**: on completion notification, run the shared `agent-resolution.md` §Agent waits check before consuming the result, then verify:
 
 - File `$RUN_DIR/retrospective.md` exists and has content → success
 - File missing or empty → set `scientist_status = "timed_out"`, continue to T6; surface with ⏱ in report
@@ -280,9 +293,10 @@ Parse returned JSON envelope. Record `hypotheses` count and `confidence` for T6.
 ### Step T6: Write retro report
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 mkdir -p .reports/research  # timeout: 3000
 BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')  # timeout: 3000
-OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve-anti-overwrite-path.py" .reports/research "retro-$BRANCH-$(date +%Y-%m-%d)")  # timeout: 5000 — counter suffix (-2, -3, …) when the file exists
+OUT=$(python "$PLUGIN_ROOT/bin/resolve-anti-overwrite-path.py" .reports/research "retro-$BRANCH-$(date +%Y-%m-%d)")  # timeout: 5000 — counter suffix (-2, -3, …) when the file exists
 echo "OUT=$OUT"
 ```
 
@@ -404,10 +418,10 @@ Hypotheses:    <N> next steps generated
 -> saved to .reports/research/retro-<branch>-<date>.md
 ---
 Next: /research:run <program.md> --hypothesis <RUN_DIR>/hypotheses.jsonl    [only if scientist_status != "timed_out" AND <RUN_DIR>/hypotheses.jsonl exists]
-     /research:fortify <run-id>    ← stress-test top hypothesis before full re-run
+     /research:fortify <run-id>    ← ablate kept changes
 ```
 
-If `scientist_status == "timed_out"` or `<RUN_DIR>/hypotheses.jsonl` does not exist on disk, omit the `--hypothesis` Next line entirely and replace with: `Next: /research:fortify <run-id>    ← scientist analysis unavailable; no hypotheses queue generated`.
+If `scientist_status == "timed_out"` or `<RUN_DIR>/hypotheses.jsonl` does not exist on disk, omit the `--hypothesis` Next line entirely and replace with: `Next: /research:fortify <run-id>    ← ablate kept changes; scientist analysis unavailable; no hypotheses queue generated`.
 
 </workflow>
 

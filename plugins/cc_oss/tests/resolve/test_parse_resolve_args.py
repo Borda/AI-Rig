@@ -25,6 +25,7 @@ from pathlib import Path
 
 import parse_resolve_args as parser_module  # loaded by conftest.py
 import pytest
+from _oss_shell_plugin import render_shell
 from _resolve_source import read_resolve_source
 from parse_resolve_args import _emit, main, parse_resolve_args
 
@@ -35,6 +36,23 @@ _BASH = shutil.which("bash")
 _HOSTILE = "'; touch /tmp/pwned; echo 'x"
 
 _skip_without_bash = pytest.mark.skipif(not _BASH, reason="resolve Step 1 runs under Bash")
+
+
+def test_repeated_pull_paths_do_not_stall_argument_parsing() -> None:
+    """A long malformed PR argument returns within the CLI's bounded parsing window."""
+    blob = "https://github.com/owner/repo" + "/pull/7" * 8000 + " not a report"
+    # Keep the full stress payload without exceeding Windows' process-command-line limit.
+    runner = "import runpy, sys; sys.argv = [sys.argv[1], sys.stdin.read()]; runpy.run_path(sys.argv[0], run_name='__main__')"
+    result = subprocess.run(
+        [sys.executable, "-c", runner, str(_BIN)],
+        input=blob,
+        capture_output=True,
+        encoding="utf-8",
+        check=False,
+        timeout=2,
+    )
+    assert result.returncode == 0
+    assert _assignments(result.stdout) == {"PR_NUMBER": "", "PR_URL": "", "MODE": "comment-dispatch", "ARGUMENTS": blob}
 
 
 def _assignments(stdout: str) -> dict[str, str]:
@@ -345,18 +363,17 @@ class TestSkillIntake:
     def test_reads_only_known_keys_as_data(self) -> None:
         """The shipped intake validates parser output and never runs it as shell source.
 
-        A value carrying outside text must stay data: the intake reads ``KEY=value`` lines in a loop and assigns only
+        A value carrying outside text must stay data: the intake reads NUL-delimited key/value pairs and assigns only
         the four known keys, never sourcing or evaluating the file.
         """
         skill = read_resolve_source(_SKILL)
         intake = skill.split("tmpenv=$(mktemp)", 1)[1].split("# sets:", 1)[0]
-        assert "grep -qvE" in intake
+        assert '--null "$ARGUMENTS"' in intake
         assert "exit 1" in intake
         assert '. "$tmpenv"' not in intake
         assert "eval " not in intake
-        assert "while IFS='=' read -r _K _V; do" in intake
-        assert 'case "$_V" in' in intake
-        assert r"_V=${_V#\'}; _V=${_V%\'}" in intake
+        assert "while IFS= read -r -d '' _K && IFS= read -r -d '' _V; do" in intake
+        assert 'case "$_K" in' in intake
         assert re.findall(r"([A-Z_]+)\) ([A-Z_]+)=\$_V;;", intake) == [
             ("PR_NUMBER", "PR_NUMBER"),
             ("PR_URL", "PR_URL"),
@@ -379,7 +396,13 @@ class TestSkillIntake:
         """
         guard = next(line for line in read_resolve_source(_SKILL).splitlines() if "not a pull-request URL" in line)
         result = subprocess.run(
-            [_BASH, "-c", f"MODE=pr; PR_NUMBER='{pr_number}'; PR_URL=https://github.com/o/r/issues/7\n{guard}"],
+            [
+                _BASH,
+                "-c",
+                render_shell(
+                    f"MODE=pr; PR_NUMBER='{pr_number}'; PR_URL=https://github.com/o/r/issues/7\n{guard}", _PLUGIN, "oss"
+                ),
+            ],
             capture_output=True,
             text=True,
             check=False,

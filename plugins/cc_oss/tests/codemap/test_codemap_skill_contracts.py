@@ -15,6 +15,7 @@ from pathlib import Path
 import codemap_batch  # type: ignore[import-not-found]
 import codemap_cache  # type: ignore[import-not-found]
 import pytest
+from _skill_source import read_skill_source
 from _text_io import flat
 
 _OSS_ROOT = Path(__file__).resolve().parents[2]
@@ -79,7 +80,7 @@ def _emitted_queries(block: str) -> set[str]:
 @pytest.fixture(name="skill_texts", scope="module")
 def _skill_texts() -> dict[Path, str]:
     """Read every oss skill Markdown file once; the contents are never mutated."""
-    return {path: path.read_text(encoding="utf-8") for path in _SKILL_MD}
+    return {path: read_skill_source(path) for path in _SKILL_MD}
 
 
 #: Statements the wrapper's gate contract must keep saying, matched against whitespace-flattened text.
@@ -201,5 +202,5 @@ class TestSkillPrefixes:
         The gated launcher is only reachable from the user-typed skill; each SKILL.md must keep naming ``disable-model-
         invocation`` so that boundary stays visible next to the build instructions.
         """
-        text = _OSS_ROOT.joinpath(f"skills/{skill}/SKILL.md").read_text(encoding="utf-8")
+        text = read_skill_source(_OSS_ROOT.joinpath(f"skills/{skill}/SKILL.md"))
         assert "disable-model-invocation" in text, f"{skill}: build path must state the skill is not invocable"

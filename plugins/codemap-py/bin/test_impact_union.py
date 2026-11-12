@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
 """Produce a mock-excluding test union for a complete working-tree change request.
 
-Purpose: Build one batch from changed modules and symbols instead of issuing per-target shell calls.
-Scope: Consume a captured diff-impact response and invoke the PATH-resolved Codemap launcher once.
-Usage: python test_impact_union.py <diff-impact-json-path>
-Outputs: JSON containing the sorted test union, host-quoted pytest command and completeness caveats.
-Failure: Exit 1 with a diagnostic for unreadable input, an unavailable launcher or any failed batch item.
-Used by: The test-impact skill's whole-change route when the user requests mock exclusion.
+Purpose:
+    Build one batch from changed modules and symbols instead of issuing per-target shell calls.
+
+Scope:
+    Consume a captured diff-impact response and invoke the PATH-resolved Codemap launcher once.
+
+Usage:
+    python test_impact_union.py <diff-impact-json-path>
+
+Outputs:
+    JSON containing the sorted test union, host-quoted pytest command and completeness caveats.
+
+Failure:
+    Exit 1 with a diagnostic for unreadable input, an unavailable launcher or any failed batch item.
+
+Used by:
+    The test-impact skill's whole-change route when the user requests mock exclusion.
 """
 
 from __future__ import annotations

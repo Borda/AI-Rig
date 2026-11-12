@@ -34,12 +34,13 @@ Usage:
 Outputs:
     A per-file and total report as text, or as one JSON object with ``files``, ``totals`` and ``exit`` when ``--json``
     is given. Each per-file object carries one integer per bucket name plus ``counts``, whose ``parent`` map holds the
-    derived lineage per tool call so downstream tooling never parses prose.
+    derived lineage per tool call so downstream tooling never parses prose. Its keys join session and tool ids with a
+    pipe, escaping literal backslashes and pipes in either component with a backslash.
 
 Failure:
     Exit 1 only when a record's own hash does not verify. Every other finding — torn framing from concurrent appends,
     a non-conforming record, a missing observation — is a warning and exits 0. Exit 2 for an unusable path or a
-    ``--older-than`` below one day.
+    ``--older-than`` outside 1–365000 days, or a session id that cannot be UTF-8 encoded.
 
     Exit 0 therefore means "no record failed its own hash", never "the whole log was read". A file that hit
     ``--max-lines`` stops there and reports ``limit-exceeded``, so its findings cover a prefix. Separately, a
@@ -67,7 +68,7 @@ NO_SESSION_FILE = "_no-session.jsonl"
 DEFAULT_LOG_DIR = Path.home() / ".claude" / "logs" / "audit"
 
 #: Default line ceiling per file. Exceeding it stops that file and is reported, never fatal.
-DEFAULT_MAX_LINES = 5_000_000
+DEFAULT_MAX_LINES = 100_000
 
 #: Default soft cutoff for `_no-session.jsonl`, kept equal to the writer's `RIG_AUDIT_NOSESSION_MAX_BYTES`.
 DEFAULT_NOSESSION_MAX_BYTES = 64 * 1024 * 1024
@@ -179,6 +180,8 @@ def row_kind(record: dict) -> str | None:
         'lifecycle'
     """
     action, phase = record.get("action_type"), record.get("record_phase")
+    if not isinstance(action, str) or not isinstance(phase, str):
+        return None
     if action == "tool.bash":
         return {"pre_execution": "before", "post_execution": "after"}.get(phase)
     if action in ("session.start", "session.end") and phase == "post_execution":
@@ -186,19 +189,26 @@ def row_kind(record: dict) -> str | None:
     return None
 
 
+def _known_choice(value: object, choices: frozenset[str]) -> bool:
+    """Check a schema vocabulary without hashing an unvalidated record value."""
+    return isinstance(value, str) and value in choices
+
+
 def _check_decision_and_verdicts(detail: dict) -> list[str]:
     """Check a before-row's own decision and lane, and its two or three distinct lane verdicts."""
     findings = []
-    if detail.get("decision") not in DECISIONS or detail.get("lane") not in LANES:
+    decision, lane = detail.get("decision"), detail.get("lane")
+    if not _known_choice(decision, DECISIONS) or not _known_choice(lane, LANES):
         findings.append("before-row needs a valid decision and lane")
     verdicts = detail.get("verdicts")
     if not isinstance(verdicts, list) or len(verdicts) not in (2, 3):
         findings.append("before-row needs two or three verdicts")
         return findings
     lanes = [entry.get("lane") if isinstance(entry, dict) else None for entry in verdicts]
-    if len(set(lanes)) != len(verdicts) or not set(lanes) <= LANES:
+    if any(not isinstance(lane, str) for lane in lanes) or len(set(lanes)) != len(verdicts) or not set(lanes) <= LANES:
         findings.append("verdicts must carry distinct known lanes")
-    if any(not isinstance(entry, dict) or entry.get("decision") not in DECISIONS for entry in verdicts):
+    decisions = [entry.get("decision") if isinstance(entry, dict) else None for entry in verdicts]
+    if any(not _known_choice(decision, DECISIONS) for decision in decisions):
         findings.append("each verdict needs a valid decision")
     return findings
 
@@ -208,7 +218,8 @@ def _check_outcome_and_forbidden_fields(detail: dict, record: dict) -> list[str]
     findings = []
     if detail.get("decision") != "allow" and ("rank" in detail or "src" in detail):
         findings.append("rank and src belong to an allow only")
-    if record.get("outcome") not in BEFORE_OUTCOMES:
+    outcome = record.get("outcome")
+    if not _known_choice(outcome, BEFORE_OUTCOMES):
         findings.append("a before-row's outcome is always pending")
     if {"status", "event", "reason"} & set(detail):
         findings.append("status, event and reason are forbidden on a before-row")
@@ -232,7 +243,8 @@ def _detail_findings_after(detail: dict, record: dict) -> list[str]:
         findings.append("after-row needs a known status and event")
     if {"decision", "lane", "verdicts", "rank", "src", "digest", "reason"} & set(detail):
         findings.append("decision fields are forbidden on an after-row")
-    if record.get("outcome") not in AFTER_OUTCOMES:
+    outcome = record.get("outcome")
+    if not _known_choice(outcome, AFTER_OUTCOMES):
         findings.append("an after-row's outcome is success or failure")
     return findings
 
@@ -266,7 +278,8 @@ def schema_findings(record: dict) -> list[str]:
     findings = []
     if record.get("action_type") not in ACTION_TYPES or record.get("record_phase") not in RECORD_PHASES:
         findings.append("unknown action_type or record_phase")
-    if record.get("trust_level") not in TRUST_LEVELS:
+    trust = record.get("trust_level")
+    if not _known_choice(trust, TRUST_LEVELS):
         findings.append("unknown trust_level")
     if record.get("parent_record_id") is not None or record.get("prev_hash") is not None:
         findings.append("parent_record_id and prev_hash are always null — this log is not chained")
@@ -312,7 +325,10 @@ class FileReport:
                 "trust_level": dict(self.counts["trust_level"]),
                 "agent_id": dict(self.counts["agent_id"]),
                 "lane": {lane: dict(inner) for lane, inner in self.counts["lane"].items()},
-                "parent": dict(self.counts["parent"]),
+                "parent": {
+                    "|".join(part.replace("\\", "\\\\").replace("|", "\\|") for part in group): parent
+                    for group, parent in self.counts["parent"].items()
+                },
             },
         }
 
@@ -393,6 +409,14 @@ def _tally(record: dict, report: FileReport) -> None:
         report.counts["lane"][lane][label] += 1
 
 
+def _allow_rank(row: dict) -> int:
+    """Normalize an allow's rank for ordering, placing unusable ranks after the writer's ranks."""
+    try:
+        return int(row["action_detail"].get("rank"))
+    except (TypeError, ValueError, OverflowError):
+        return 99
+
+
 def _derive_parent(before_rows: list[dict]) -> str | None:
     """Return the record id of the allow with the lowest rank, ties broken by the smallest record id.
 
@@ -401,7 +425,7 @@ def _derive_parent(before_rows: list[dict]) -> str | None:
     allows = [row for row in before_rows if (row.get("action_detail") or {}).get("decision") == "allow"]
     if not allows:
         return None
-    ranked = sorted(allows, key=lambda row: ((row["action_detail"].get("rank") or 99), str(row.get("record_id"))))
+    ranked = sorted(allows, key=lambda row: (_allow_rank(row), str(row.get("record_id"))))
     return str(ranked[0].get("record_id"))
 
 
@@ -455,7 +479,7 @@ def _check_completion_state(
 
     parent = _derive_parent(before)
     if parent is not None:
-        report.counts["parent"][f"{context['session_id']}|{context['tool_use_id']}"] = parent
+        report.counts["parent"][(context["session_id"], context["tool_use_id"])] = parent
 
 
 def _classify_group(rows: list[tuple[int, dict]], context: dict, report: FileReport) -> None:
@@ -602,9 +626,9 @@ def render_text(per_file: dict[str, dict], totals: dict, exit_code: int, skipped
     lines = []
     for name, data in per_file.items():
         flagged = [f"{bucket}: {data[bucket]}" for bucket in BUCKETS if data[bucket]]
-        lines.append(f"{name}: {', '.join(flagged) if flagged else 'clean'}")
+        lines.append(f"{name!a}: {', '.join(flagged) if flagged else 'clean'}")
         for group, parent in sorted(data["counts"]["parent"].items()):
-            lines.append(f"    parent {group} -> {parent}")
+            lines.append(f"    parent {group!a} -> {parent!a}")
     flagged_totals = [f"{bucket}: {totals[bucket]}" for bucket in BUCKETS if totals[bucket]]
     # State the scope of the scan before its verdict. "clean" over zero files and "clean" over nine are the same two
     # words about very different runs, and an empty directory, a mistyped path that happens to exist, or a directory
@@ -646,7 +670,7 @@ def run_verify(args: argparse.Namespace) -> int:
     """Verify one path and print the report."""
     target = args.path
     if not target.exists():
-        print(f"no such path: {target}", file=sys.stderr)
+        print(f"no such path: {str(target)!a}", file=sys.stderr)
         return 2
     # `glob` swallows the error when a directory cannot be listed, so both `log_files` and `unreadable_entries` return
     # empty and the run would print a clean report about a directory it never saw inside. Ask once, up front, and fail
@@ -655,13 +679,13 @@ def run_verify(args: argparse.Namespace) -> int:
         try:
             next(target.iterdir(), None)
         except OSError as error:
-            print(f"cannot list {target}: {error.strerror or error}", file=sys.stderr)
+            print(f"cannot list {str(target)!a}: {(error.strerror or str(error))!a}", file=sys.stderr)
             return 2
     totals = FileReport()
     per_file: dict[str, dict] = {}
     skipped = 0
     for entry, reason in unreadable_entries(target):
-        print(f"skipped {entry}: {reason}", file=sys.stderr)
+        print(f"skipped {ascii(str(entry))[1:-1]}: {ascii(reason)[1:-1]}", file=sys.stderr)
     for path in log_files(target):
         # Guarded the same way the delete loop is, and for the same reason. A file this process cannot open — mode 000,
         # another owner, a mount that went away — passes every type test `log_files` applies, so it arrives here and
@@ -671,11 +695,11 @@ def run_verify(args: argparse.Namespace) -> int:
         try:
             report = verify_file(path, args.max_lines, args.nosession_max_bytes)
         except OSError as error:
-            print(f"skipped {path}: {error.strerror or error}", file=sys.stderr)
+            print(f"skipped {str(path)!a}: {(error.strerror or str(error))!a}", file=sys.stderr)
             skipped += 1
             continue
         if report.read_error:
-            print(f"read stopped in {path}: {report.read_error}", file=sys.stderr)
+            print(f"read stopped in {str(path)!a}: {report.read_error!a}", file=sys.stderr)
         per_file[path.name] = report.as_dict()
         totals.merge(report)
     summary = totals.as_dict()
@@ -703,7 +727,7 @@ def run_prune(args: argparse.Namespace) -> int:
         print(f"--older-than must be at least 1 day, got {args.older_than}", file=sys.stderr)
         return 2
     if not target.exists():
-        print(f"no such path: {target}", file=sys.stderr)
+        print(f"no such path: {str(target)!a}", file=sys.stderr)
         return 2
     cutoff = time.time() - args.older_than * 86400
     keep = (
@@ -720,12 +744,37 @@ def run_prune(args: argparse.Namespace) -> int:
             if not args.dry_run:
                 path.unlink()
         except OSError as error:
-            print(f"skipped {path}: {error.strerror or error}", file=sys.stderr)
+            print(f"skipped {str(path)!a}: {(error.strerror or str(error))!a}", file=sys.stderr)
             continue
-        print(f"{'would remove' if args.dry_run else 'removed'} {path}")
+        print(f"{'would remove' if args.dry_run else 'removed'} {str(path)!a}")
         removed += 1
     print(f"{removed} file(s) {'would be removed' if args.dry_run else 'removed'}")
     return 0
+
+
+def _positive_int(raw: str) -> int:
+    """Parse a positive resource limit for a complete and meaningful prefix scan."""
+    value = int(raw)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return value
+
+
+def _retention_days(raw: str) -> int:
+    """Parse a retention interval bounded to one thousand years without float overflow."""
+    value = int(raw)
+    if value > 365_000:
+        raise argparse.ArgumentTypeError("must be between 1 and 365000 days")
+    return value
+
+
+def _utf8_session(raw: str) -> str:
+    """Accept only session ids the writer's UTF-8 hash can represent."""
+    try:
+        raw.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise argparse.ArgumentTypeError("session id must be UTF-8 encodable") from error
+    return raw
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -741,16 +790,18 @@ def build_parser() -> argparse.ArgumentParser:
     verify = subparsers.add_parser("verify", help="report integrity, schema conformance and per-call classification")
     verify.add_argument("path", nargs="?", type=Path, default=DEFAULT_LOG_DIR)
     verify.add_argument("--json", action="store_true", help="emit one JSON object instead of text")
-    verify.add_argument("--max-lines", type=int, default=DEFAULT_MAX_LINES)
+    verify.add_argument("--max-lines", type=_positive_int, default=DEFAULT_MAX_LINES)
     verify.add_argument("--nosession-max-bytes", type=int, default=DEFAULT_NOSESSION_MAX_BYTES)
     verify.set_defaults(handler=run_verify)
 
     prune = subparsers.add_parser("prune", help="remove whole session log files older than a cutoff")
     prune.add_argument("path", nargs="?", type=Path, default=DEFAULT_LOG_DIR)
     prune.add_argument(
-        "--older-than", type=int, default=DEFAULT_RETENTION_DAYS, help="age in days; minimum 1, below that is rejected"
+        "--older-than", type=_retention_days, default=DEFAULT_RETENTION_DAYS, help="age in days, from 1 to 365000"
     )
-    prune.add_argument("--keep-session", default=None, help="session id whose file is never removed")
+    prune.add_argument(
+        "--keep-session", type=_utf8_session, default=None, help="session id whose file is never removed"
+    )
     prune.add_argument("--dry-run", action="store_true", help="list what would be removed and remove nothing")
     prune.set_defaults(handler=run_prune)
     return parser

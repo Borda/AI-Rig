@@ -67,8 +67,10 @@ import re
 import sys
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from pathlib import Path
 
 _SCRIPT_NAME = "find_module_refs"
+MAX_FILE_SIZE = 5_000_000
 
 #: Directories never searched. A deliberate subset of ``codemap_py.scanner.SKIP_DIRS`` (the index skips
 #: them too) limited to VCS metadata, virtualenvs and tool caches, so the search stays aligned with the
@@ -133,7 +135,7 @@ def _all_exports(module: str, name: str) -> tuple[re.Pattern[str], ...]:
 
 
 def _sphinx_symbol(module: str, name: str) -> tuple[re.Pattern[str], ...]:
-    return (_compile(rf":(?:func|class|meth|mod|attr):`[^']*{re.escape(name)}[^']*`"),)
+    return (_compile(rf":(?:func|class|meth|mod|attr):`(?=[^'`\n]*{re.escape(name)})[^'`\n]*`"),)
 
 
 def _import(module: str, name: str) -> tuple[re.Pattern[str], ...]:
@@ -164,7 +166,7 @@ def _config(module: str, name: str) -> tuple[re.Pattern[str], ...]:
 
 
 def _sphinx_mod(module: str, name: str) -> tuple[re.Pattern[str], ...]:
-    return tuple(_compile(rf":mod:`[^']*{re.escape(text)}[^']*`") for text in (module, _basename(module)))
+    return tuple(_compile(rf":mod:`(?=[^'`\n]*{re.escape(text)})[^'`\n]*`") for text in (module, _basename(module)))
 
 
 def _name(module: str, name: str) -> tuple[re.Pattern[str], ...]:
@@ -245,10 +247,15 @@ def search_file(path: str, pattern: re.Pattern[str], *, required: bool = False) 
     """
     try:
         with open(path, encoding="utf-8", errors="replace", newline="\n") as handle:
-            content = handle.read()
+            if os.fstat(handle.fileno()).st_size > MAX_FILE_SIZE:
+                raise OSError(f"file too large (max {MAX_FILE_SIZE} bytes): {path}")
+            content = handle.read(MAX_FILE_SIZE + 1)
+            if len(content.encode("utf-8")) > MAX_FILE_SIZE:
+                raise OSError(f"file too large (max {MAX_FILE_SIZE} bytes): {path}")
     except OSError:
         if required:
             raise
+        print(f"! cannot scan file (unreadable or too large): {path}", file=sys.stderr)
         return
     if not pattern.search(content):
         return
@@ -309,6 +316,8 @@ def _batch_paths(batch: list[object]) -> set[str]:
             continue
         if (result.get("index") or {}).get("truncated"):
             raise ValueError(f"rdeps answer for {result.get('module')!r} is truncated — query it without --limit")
+        if (result.get("index") or {}).get("query_complete") is False:
+            raise ValueError(f"rdeps answer for {result.get('module')!r} is incomplete — rebuild the index")
         importers = result.get("imported_by")
         names = [result.get("module"), *(importers if isinstance(importers, list) else [])]
         paths.update(where[n] for n in names if isinstance(n, str) and n in where)
@@ -339,7 +348,7 @@ def answer_paths(payload: object) -> set[str]:
 
 
 def files_from_answers(sources: Iterable[str]) -> list[str]:
-    """Return sorted non-symlink paths named by saved query answers, retaining missing files for validation.
+    """Return sorted non-symlink paths within cwd, retaining missing files for read validation.
 
     Raises:
         ValueError: A source is unreadable, is not JSON, or fails :func:`answer_paths`.
@@ -355,6 +364,9 @@ def files_from_answers(sources: Iterable[str]) -> list[str]:
             paths |= answer_paths(payload)
         except ValueError as exc:
             raise ValueError(f"{source}: {exc}") from exc
+    root = Path.cwd().resolve()
+    if any(not Path(path).resolve().is_relative_to(root) for path in paths):
+        raise ValueError("query answer names a path outside the scan root")
     return sorted(p for p in paths if not os.path.islink(p))
 
 

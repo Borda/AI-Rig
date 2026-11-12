@@ -13,8 +13,8 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 
 ## Usage
 
-New handoffs set ``presentation_version=14`` for remediation resolution explanations, readable actions, confidence
-tables, linked artifacts, terminal status tables, verification log links in rows and other paths outside tables.
+New handoffs set ``presentation_version=15`` for substantive outcome judgments, closing recommendations, readable
+prose, confidence tables, linked artifacts, and verification evidence in rows with other paths outside tables.
 Historical versions retain their exact presentation.
 Run ``render`` after gates and handoff creation, then run ``check``
 directly or through the shared artifact validator
@@ -683,7 +683,7 @@ def _validate_handoff(payload: object, *, allow_empty_remediation: bool = False)
     """Validate a handoff while preserving the original presentation's empty-result rule."""
     handoff = _require_object(payload, "handoff")
     presentation_version = handoff.get("presentation_version")
-    if type(presentation_version) is int and presentation_version in {8, 9, 10, 11, 12, 13, 14}:
+    if type(presentation_version) is int and presentation_version in {8, 9, 10, 11, 12, 13, 14, 15}:
         # Only terminal layout changes; use the existing branch's complete factual contract.
         previous = 7 if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed" else 3
         if handoff.get("skill") == "code-remediate":
@@ -691,7 +691,7 @@ def _validate_handoff(payload: object, *, allow_empty_remediation: bool = False)
         _validate_handoff(
             {**handoff, "presentation_version": previous},
             allow_empty_remediation=handoff.get("skill") == "code-remediate"
-            and presentation_version in {11, 12, 13, 14},
+            and presentation_version in {11, 12, 13, 14, 15},
         )
         return handoff
     expected_fields = HANDOFF_FIELDS if presentation_version is None else HANDOFF_FIELDS | {"presentation_version"}
@@ -1206,6 +1206,7 @@ def _externalize_table_paths(
     readable_breaks: bool = False,
     keep_verification_table: bool = False,
     confidence_table: bool = False,
+    actionable_summary: bool = False,
 ) -> str:
     """Move table destinations into item-labelled lists, retaining surrounding action text.
 
@@ -1223,13 +1224,12 @@ def _externalize_table_paths(
 
     def is_path(value: str, *, quoted: bool = False) -> bool:
         """Distinguish path references from ordinary slash-separated prose."""
+        explicit_prefix = value.startswith(("/", "./", "../", "~/", "\\")) or re.match(r"[A-Za-z]:[/\\]", value)
+        # Commands and expressions can contain path arguments. Without a path prefix, keep ambiguous code intact.
+        if actionable_summary and quoted and not explicit_prefix and not re.fullmatch(r"[\w./:\\-]+", value):
+            return False
         basename = value.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1]
-        return bool(
-            filename.fullmatch(basename)
-            or value.startswith(("/", "./", "../", "~/", "\\"))
-            or re.match(r"[A-Za-z]:[/\\]", value)
-            or (quoted and ("/" in value or "\\" in value))
-        )
+        return bool(filename.fullmatch(basename) or explicit_prefix or (quoted and ("/" in value or "\\" in value)))
 
     def whole_path(value: str) -> bool:
         """Recognize an unambiguous plain path with no prose or whitespace boundary."""
@@ -1317,12 +1317,20 @@ def _externalize_table_paths(
                 plain = link.sub(lambda match: match[1], value)
                 if readable_breaks:
                     plain = plain.replace("<br>", " ")
-                ambiguous_quote = "``" in plain or any(
-                    not is_path(match[1], quoted=True) for match in re.finditer(r"`([^`]+)`", plain)
+                ambiguous_quote = "``" in plain or (
+                    not actionable_summary
+                    and any(not is_path(match[1], quoted=True) for match in re.finditer(r"`([^`]+)`", plain))
                 )
                 plain = re.sub(r"`[^`]+`", "", plain)
                 # Classify complete tokens before extracting references; a filename prefix is never evidence.
-                ambiguous_name = any("." in token.rstrip(",;.") and not is_path(token) for token in plain.split())
+                ambiguous_name = any(
+                    "." in token.rstrip(",;.")
+                    and not is_path(token)
+                    and not (
+                        actionable_summary and re.fullmatch(r"v?\d+(?:\.\d+)+(?:[-+][\w.-]+)?", token.rstrip(",;."))
+                    )
+                    for token in plain.split()
+                )
                 references = [
                     match["plain"].rstrip(",;.") for match in reference.finditer(plain) if match["plain"] is not None
                 ]
@@ -1332,7 +1340,11 @@ def _externalize_table_paths(
                     or "](" in plain
                     or any(
                         (is_path(candidate) and re.search(r"[^\w./:\\-]", value))
-                        or (not is_path(candidate) and ("/" in candidate or "\\" in candidate))
+                        or (
+                            not actionable_summary
+                            and not is_path(candidate)
+                            and ("/" in candidate or "\\" in candidate)
+                        )
                         for candidate in references
                     )
                 ):
@@ -1397,7 +1409,7 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
     if handoff["branch"] == "caller-contract":
         return handoff["caller_contract"]["output"]
 
-    if handoff.get("presentation_version") in {8, 9, 10, 11, 12, 13, 14}:
+    if handoff.get("presentation_version") in {8, 9, 10, 11, 12, 13, 14, 15}:
         previous = 7 if handoff["skill"] == "code-review" and handoff["branch"] == "assessed" else 3
         if handoff["skill"] == "code-remediate":
             previous = 6
@@ -1405,17 +1417,19 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
             _render_v2_handoff(
                 {**handoff, "presentation_version": previous},
                 report_root=report_root,
-                readable=handoff["presentation_version"] in {9, 10, 11, 12, 13, 14},
-                show_resolution=handoff["presentation_version"] in {10, 11, 12, 13, 14},
-                status_table=handoff["presentation_version"] in {11, 12, 13, 14},
-                actions_last=handoff["presentation_version"] in {12, 13, 14},
-                current_review_summary=handoff["presentation_version"] in {12, 13, 14},
-                field_tables=handoff["presentation_version"] in {13, 14},
-                confidence_table=handoff["presentation_version"] == 14,
+                readable=handoff["presentation_version"] in {9, 10, 11, 12, 13, 14, 15},
+                show_resolution=handoff["presentation_version"] in {10, 11, 12, 13, 14, 15},
+                status_table=handoff["presentation_version"] in {11, 12, 13, 14, 15},
+                actions_last=handoff["presentation_version"] in {12, 13, 14, 15},
+                current_review_summary=handoff["presentation_version"] in {12, 13, 14, 15},
+                field_tables=handoff["presentation_version"] in {13, 14, 15},
+                confidence_table=handoff["presentation_version"] in {14, 15},
+                actionable_summary=handoff["presentation_version"] == 15,
             ),
-            readable_breaks=handoff["presentation_version"] in {13, 14},
-            keep_verification_table=handoff["presentation_version"] in {13, 14},
-            confidence_table=handoff["presentation_version"] == 14,
+            readable_breaks=handoff["presentation_version"] in {13, 14, 15},
+            keep_verification_table=handoff["presentation_version"] in {13, 14, 15},
+            confidence_table=handoff["presentation_version"] in {14, 15},
+            actionable_summary=handoff["presentation_version"] == 15,
         )
 
     if handoff.get("presentation_version") in {2, 3, 4, 5, 6, 7}:
@@ -1502,6 +1516,7 @@ def _render_v2_handoff(
     current_review_summary: bool = False,
     field_tables: bool = False,
     confidence_table: bool = False,
+    actionable_summary: bool = False,
 ) -> str:
     """Render a plain-English-first report while retaining the validated machine fields."""
     outcome = handoff["outcome"]
@@ -1534,12 +1549,31 @@ def _render_v2_handoff(
             sections = re.findall(r"(?ms)^## Finding Details[^\S\r\n]*\r?\n.*?(?=^## |\Z)", report_text)
             if len(sections) != 1 or sections[0].strip() != expected_details.strip():
                 raise HandoffError("review-report-details-mismatch")
-    lines = [plain_summary, "", "**Outcome**", "", outcome["title"]]
+    # The authored judgment is the opening; a label-only title adds no decision for the reader.
+    lines = [plain_summary] if actionable_summary else [plain_summary, "", "**Outcome**", "", outcome["title"]]
+    table_actions: dict[str, dict[str, str]] = {}
     if technical_summary:
         lines.extend(("", technical_summary))
     if handoff["tables"]:
         lines.extend(("", "**Results**"))
         for table in handoff["tables"]:
+            if actionable_summary and "Next action" in table["columns"]:
+                # Move authored recommendations, not inferred tasks. Canonical machine rows remain untouched.
+                action_index = table["columns"].index("Next action")
+                for row in table["rows"]:
+                    table_actions[row["id"]] = {
+                        "owner": "—",
+                        "item": row["cells"][0],
+                        "next_action": row["cells"][action_index],
+                    }
+                table = {
+                    **table,
+                    "columns": [value for index, value in enumerate(table["columns"]) if index != action_index],
+                    "rows": [
+                        {**row, "cells": [value for index, value in enumerate(row["cells"]) if index != action_index]}
+                        for row in table["rows"]
+                    ],
+                }
             lines.extend(
                 (
                     "",
@@ -1602,9 +1636,12 @@ def _render_v2_handoff(
         )
 
     remaining_by_id = {item["row_id"]: item for item in handoff["remaining"]}
+    if actionable_summary:
+        # Owned follow-up supersedes its display-only recommendation; unrelated recommendations remain visible.
+        remaining_by_id = {**table_actions, **remaining_by_id}
     action_lines = [] if actions_last else lines
     if remaining_by_id and (not actions_last or handoff["branch"] != "closed"):
-        action_lines.extend(("", "**Next steps**", ""))
+        action_lines.extend(("", "**Recommendations / next steps**" if actionable_summary else "**Next steps**", ""))
         if field_tables:
             action_lines.extend(("| Owner | Issue | Action |", "| -- | -- | -- |"))
             action_lines.extend(
@@ -1662,6 +1699,8 @@ def _render_v2_handoff(
         else f"{artifact['label']}: {artifact['path']}"
         for artifact in handoff["artifacts"]
     )
+    if actionable_summary and not remaining_by_id and handoff["branch"] != "closed":
+        action_lines.extend(("", "**Recommendations / next steps**", "", "No further action is required."))
     if actions_last:
         lines.extend(action_lines)
     return "\n".join(lines) + "\n"

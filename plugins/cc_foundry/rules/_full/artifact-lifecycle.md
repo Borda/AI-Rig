@@ -11,7 +11,7 @@ Runtime artifacts at **project root**, not inside `.claude/`. Output dirs dot-pr
 ```text
 .plans/
   blueprint/             ← /brainstorm spec and tree files  (was .brainstorming/)
-  active/                ← todo_*.md, plan_*.md
+  active/                ← todo_*.md, plan_*.md, plan-*.md
   closed/                ← completed plans
 .notes/                  ← lessons.md, diary, guides  (was _tasks/_working/)
 .reports/

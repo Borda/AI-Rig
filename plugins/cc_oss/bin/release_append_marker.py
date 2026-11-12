@@ -187,7 +187,7 @@ def _is_valid_commit(sha: str) -> bool:
     """
     if not sha:
         return False
-    if not _SHA_RE.match(sha):
+    if not _SHA_RE.fullmatch(sha):
         return False
     git = which("git")
     if git is None:
@@ -224,7 +224,7 @@ def _tag_advanced_past(marker_sha: str, last_tag: str) -> bool:
     """
     if not marker_sha or not last_tag:
         return False
-    if not _SHA_RE.match(marker_sha):
+    if not _SHA_RE.fullmatch(marker_sha):
         return False
     git = which("git")
     if git is None:

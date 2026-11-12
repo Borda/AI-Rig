@@ -13,13 +13,16 @@ is one input to a verdict, not the verdict.
 
 Usage:
     python "${CLAUDE_PLUGIN_ROOT}/bin/find_judge_verdict.py" --state-dir-base DIR --run-id ID
+    python "${CLAUDE_PLUGIN_ROOT}/bin/find_judge_verdict.py" --hash-program PATH
+
+``--hash-program`` prints only the file's SHA256 and exits without resolving runs, reports or sentinels.
 
 Sentinels written (newline-terminated — the ``IFS= read -r`` reload contract needs it):
     ${TMPDIR}/fortify-program-file-${CSID}   — consumed by F6
     ${TMPDIR}/fortify-judge-verdict-${CSID}  — consumed by the gate-on-sentinel.py block
 
 Exit codes:
-    0 — verdict and program resolved, sentinels written
+    0 — verdict and program resolved, sentinels written; or requested program digest printed
     1 — BLOCKED: no verdict file, no Program field, source run without program_file, program mismatch,
         or program missing on disk
     2 — argument error (argparse default)
@@ -184,6 +187,15 @@ def _check_program_match(program_file: str, state_program: str) -> int:
     return 0
 
 
+def program_sha256(program_file: str) -> str:
+    """Hash the exact program bytes with a fixed-size read buffer."""
+    digest = hashlib.sha256()
+    with Path(program_file).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _check_program_hash(program_file: str, lines: list[str]) -> bool:
     """Validate content binding when present, admitting older reports with a note."""
     if not any(_PROGRAM_HASH_LINE_RE.search(line) for line in lines):
@@ -196,15 +208,12 @@ def _check_program_hash(program_file: str, lines: list[str]) -> bool:
     if not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
         print("fortify: BLOCKED — judge verdict missing valid Program SHA256: metadata; re-run /research:judge")
         return False
-    digest = hashlib.sha256()
     try:
-        with Path(program_file).open("rb") as stream:
-            for chunk in iter(lambda: stream.read(65536), b""):
-                digest.update(chunk)
+        digest = program_sha256(program_file)
     except OSError as exc:
         print(f"fortify: BLOCKED — cannot hash program: {exc}")
         return False
-    if digest.hexdigest() != expected.lower():
+    if digest != expected.lower():
         print(f"fortify: BLOCKED — program content changed since judgment; re-run /research:judge {program_file}")
         return False
     return True
@@ -239,7 +248,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-dir-base", default=".experiments/state", help="Run-state base directory.")
     parser.add_argument("--run-id", default="", help="Source run id being fortified.")
     parser.add_argument("--reports-dir", default=str(_REPORTS_DIR), help="Directory holding judge-*.md reports.")
+    parser.add_argument("--hash-program", metavar="PATH", help="Print program SHA256 without resolving a verdict.")
     args = parser.parse_args(argv)
+    if args.hash_program is not None:
+        try:
+            print(program_sha256(args.hash_program))
+        except OSError as exc:
+            print(f"find_judge_verdict: cannot hash program: {exc}", file=sys.stderr)
+            return 1
+        return 0
     csid = _session_token()
     if not re.fullmatch(r"[A-Za-z0-9._-]+", csid) or ".." in csid:
         print("find_judge_verdict: invalid sentinel session identity", file=sys.stderr)

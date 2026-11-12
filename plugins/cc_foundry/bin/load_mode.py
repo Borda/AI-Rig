@@ -13,9 +13,12 @@ imported from :mod:`resolve_skill_subdir` so the two can never drift.
 
 Failure behaviour mirrors the inline form it replaces: a ``! BREAKING`` line on
 **stdout** (the inline ``printf`` had no redirect) and exit 1.
+Only the literal bootstrap token is rendered to the validated owning root;
+documents without that token remain byte-identical.
 
 Usage:
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" \
+    PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+    python "$PLUGIN_ROOT/bin/load_mode.py" \
         <skill> <subdir> <file.md> [--local] [--fallback-source]
 
 Arguments:
@@ -35,7 +38,7 @@ Exit codes:
     0  Success — file content written to stdout
     1  Subdirectory or file not found
     2  Argument error
-"""
+"""  # noqa: W505 - the guarded bootstrap command is intentionally one physical line
 
 from __future__ import annotations
 
@@ -45,6 +48,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from render_plugin_root import render_file
 from resolve_skill_subdir import _validate_token, resolve
 
 #: Remediation text appended to the breaking error shown when a skill's modes are not installed.
@@ -188,8 +192,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"! BREAKING: {args.file} not found in {resolved.as_posix()} — {_BREAKING_HINT}")
         return 1
 
-    # Byte-for-byte passthrough — matches `cat`, no encoding or newline rewriting.
-    sys.stdout.buffer.write(target.read_bytes())
+    try:
+        content = render_file(target)
+    except (OSError, ValueError) as exc:
+        print(f"! BREAKING: {exc} — {_BREAKING_HINT}")
+        return 1
+    sys.stdout.buffer.write(content)
     sys.stdout.buffer.flush()
     return 0
 

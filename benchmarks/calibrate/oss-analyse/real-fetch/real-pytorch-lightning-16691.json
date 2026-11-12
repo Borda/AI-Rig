@@ -1,0 +1,585 @@
+{
+  "15283": {
+    "number": 15283,
+    "title": "Progress Bar prints many lines when validation_step is defined",
+    "state": "open",
+    "body": "### Bug description\n\nWith a simple model like this:\r\n```py\r\nclass MyPLModule(pl.LightningModule):\r\n    def __init__(self, model):\r\n        super().__init__()\r\n        self.model = model\r\n        self.loss_func = nn.CrossEntropyLoss()\r\n\r\n    def configure_optimizers(self):\r\n        return optim.Adam(self.model.parameters(), lr=0.02)\r\n\r\n    def training_step(self, batch: tuple[torch.Tensor, ...], batch_idx):\r\n        x, y = batch\r\n        preds = self.model(x)\r\n        loss = self.loss_func(preds, y)\r\n        return loss\r\n\r\n    def validation_step(self, batch: tuple[torch.Tensor, ...], batch_idx):\r\n        # I do nothing!\r\n        return None\r\n```\r\n\r\nI get a console that looks like this. It runs the progress bar as it should up to about 86%, then spits out some validation stuff and from then on each update to the progress 'bar' is a new line:\r\n\r\n![image](https://user-images.githubusercontent.com/4443482/197607137-3c40c656-829c-42f1-8150-589a15ca4eda.png)\r\n\r\nIf I don't have a `validation_step` method in my class, the progress bar works as it should.\n\n### How to reproduce the bug\n\n_No response_\n\n### Error messages and logs\n\n_No response_\n\n### Environment\n\n```\r\n\r\n* CUDA:\r\n\t- GPU:\r\n\t\t- NVIDIA GeForce RTX 3090\r\n\t- available:         True\r\n\t- version:           11.6\r\n* Lightning:\r\n\t- pytorch-ignite:    0.4.10\r\n\t- pytorch-lightning: 1.7.7\r\n\t- torch:             1.12.1+cu116\r\n\t- torchaudio:        0.12.1+cu116\r\n\t- torchmetrics:      0.10.0\r\n\t- torchvision:       0.13.1+cu116\r\n* Packages:\r\n\t- absl-py:           1.2.0\r\n\t- aiohttp:           3.8.1\r\n\t- aiosignal:         1.2.0\r\n\t- altgraph:          0.17.2\r\n\t- anyio:             3.6.1\r\n\t- argcomplete:       2.0.0\r\n\t- argon2-cffi:       21.3.0\r\n\t- argon2-cffi-bindings: 21.2.0\r\n\t- asttokens:         2.0.8\r\n\t- async-timeout:     4.0.2\r\n\t- attrs:             22.1.0\r\n\t- babel:             2.10.3\r\n\t- backcall:          0.2.0\r\n\t- beautifulsoup4:    4.11.1\r\n\t- black:             22.8.0\r\n\t- bleach:            5.0.1\r\n\t- blis:              0.7.8\r\n\t- bottleneck:        1.3.5\r\n\t- cachetools:        5.2.0\r\n\t- catalogue:         2.0.8\r\n\t- category-encoders: 2.5.0\r\n\t- certifi:           2022.6.15\r\n\t- cffi:              1.15.1\r\n\t- charset-normalizer: 2.1.1\r\n\t- click:             8.1.3\r\n\t- cmdstanpy:         1.0.7\r\n\t- colorama:          0.4.5\r\n\t- colour:            0.1.5\r\n\t- convertdate:       2.4.0\r\n\t- cycler:            0.11.0\r\n\t- cymem:             2.0.6\r\n\t- cython:            0.29.32\r\n\t- datasets:          2.4.0\r\n\t- debugpy:           1.6.3\r\n\t- decorator:         5.1.1\r\n\t- defusedxml:        0.7.1\r\n\t- deprecated:        1.2.13\r\n\t- dill:              0.3.5.1\r\n\t- distlib:           0.3.4\r\n\t- dtreeviz:          1.3.7\r\n\t- entrypoints:       0.4\r\n\t- ephem:             4.1.3\r\n\t- et-xmlfile:        1.1.0\r\n\t- executing:         1.0.0\r\n\t- fastai:            2.7.9\r\n\t- fastbook:          0.0.28\r\n\t- fastcore:          1.5.24\r\n\t- fastdownload:      0.0.7\r\n\t- fastjsonschema:    2.16.1\r\n\t- fastprogress:      1.0.3\r\n\t- filelock:          3",
+    "comments": [
+      {
+        "author": "user-3",
+        "body": "After a bit of digging I've found what I'm sure you already know: that this is a known issue with Progress Bars. So I wonder if there's a way to detect if you're in an environment that's going to result in a wall of console text (check `sys.stdout.isatty()`?) and alter the output accordingly?\r\n\r\nI notice that the tqdm source has a check for `isatty()`, but it only runs if `disable=None`. When Lightning calls `Tqdm` it appears to pass `disable` as either `True` or `False` (never `None`) so this check doesn't get to run. This just turns it off entirely which is not great, because it works fine if you only have one and don't interrupt it.\r\n\r\nIf you really wanted to get this working nicely for PyCharm (and other non-tty) users, you could keep track of how many progress bars you're running and check `isatty()` and act accordingly."
+      },
+      {
+        "author": "user-4",
+        "body": "@user-3 We have many PyCharm users here also developing Lightning, and have seen this issue from the very beginning of progress bar integration. PyCharm does not support the necessary features for tqdm to act correctly when nesting bars. More info in their FAQ here: https://github.com/tqdm/tqdm/#faq-and-known-issues. I don't know ways to work around it reliably. \r\n\r\nIf you would like to experiment with this or contribute something here, that would be great. Even a note in the docs, like you said, would already be valuable IMO. \r\n\r\n"
+      },
+      {
+        "author": "user-4",
+        "body": "FYI, we also have a second progress bar implementation using rich: https://pytorch-lightning.readthedocs.io/en/stable/common/progress_bar.html?highlight=rich#richprogressbar"
+      },
+      {
+        "author": "user-3",
+        "body": "Thanks for the reply.\r\n\r\nI've just put together my own hacky little thing. I'm sure as I get to know Lightning better I'll come up with something more elegant. For now at least it prevents the wall of text.\r\n\r\n```py\r\nclass MyProgressBar(TQDMProgressBar):\r\n    def init_validation_tqdm(self):\r\n        bar = super().init_validation_tqdm()\r\n        if not sys.stdout.isatty():\r\n            bar.disable = True\r\n        return bar\r\n\r\n    def init_predict_tqdm(self):\r\n        bar = super().init_predict_tqdm()\r\n        if not sys.stdout.isatty():\r\n            bar.disable = True\r\n        return bar\r\n\r\n    def init_test_tqdm(self):\r\n        bar = super().init_test_tqdm()\r\n        if not sys.stdout.isatty():\r\n            bar.disable = True\r\n        return bar\r\n\r\ntrainer = pl.Trainer(\r\n    ...\r\n    callbacks=[MyProgressBar()],\r\n)\r\n```\r\n\r\nAnd it's a sign of a well-written package that I was so easily able to get in and modify this behaviour. Good stuff!"
+      }
+    ]
+  },
+  "12185": {
+    "number": 12185,
+    "title": "Progress bar for non interactive environments",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nI'd like to request a progress bar for non-terminal, non-interactive environments, like for example Amazon CloudWatch. The TQDM and Rich progress bars are not ideal for tracking progress in these more simple logging environments.\r\n\r\nAdditionally, I'd like to request the ability to automatically adapt to a known-length or an unknown length iterable dataset, by displaying percentage based progress in the former case, and simply iteration count in the latter case. (It appears that the default TQDM progress bar produced errors for me with an unknown length iterable webdataset.)\r\n\r\n### Motivation\r\n\r\nI'm training on both EC2 and Amazon SageMaker, and neither the TQDM nor the Rich progress bars seem appropriate for monitoring progress in CloudWatch. I asked on slack if a more appropriate alternative or configuration setting was available, and was advised that there's not anything currently, but I should create a GitHub issue for one.\r\n\r\n### Pitch\r\n\r\nAt the most basic level, the progress indicator would print something like this on rank 0:\r\n`[Epoch 0 | Iteration 100] train_loss: 0.01, val_acc: 0.74`\r\n\r\nAnother useful feature would be optionally passing a logger to use instead of print, so for example if you pass a logger that writes to stdout:\r\n`LoggerName - INFO - [Epoch 0 | Iteration 100] train_loss: 0.01, val_acc: 0.74`\r\n\r\nIf the epoch has a known total number of batches, additional information on the completion percentage would be nice. For example:\r\n`[Epoch 0 | Iteration 100/450 (22.22% complete)] train_loss: 0.01, val_acc: 0.74` \r\n\r\n### Alternatives\r\n\r\nI guess whenever anyone needs more simple progress tracking they could write their own custom progress meter based on `ProgressBarBase`.\r\n\r\n\r\ncc @maintainer-2 @user-2 @user-4",
+    "comments": [
+      {
+        "author": "user-6",
+        "body": "from my experience with cloudwatch, one needs to push a print statement/log to track something. I used to do a simple print, but my use-case of non-ml related.\r\n\r\nwe should investigate if there's any open source project doing it and think of integrating within lightning or possible solutions to build one of our own by investigating possible ways to log to cloud watch or some other monitoring space."
+      },
+      {
+        "author": "user-5",
+        "body": "Yeah I set the stream to stdout so it functions like print. I do this before importing pytorch lightning (it would be nice if the order didn't matter too):\r\n\r\n```python\r\nimport logging\r\n\r\nlogging.basicConfig(\r\n    format='%(asctime)s [%(levelname)s] %(message)s',\r\n    level=logging.INFO,\r\n    datefmt='%H:%M:%S',\r\n    stream=sys.stdout,\r\n)\r\nlog = logging.getLogger('SageMaker')\r\nlog.setLevel(logging.DEBUG)\r\n```\r\nI would say that using a cloudwatch specific logging utility might be good for EC2, but probably not for SageMaker, since with SageMaker, anything that prints to stdout automatically gets sent to cloudwatch logs under the dynamic training job name, so this could create weird duplicate logging.\r\n\r\n"
+      }
+    ]
+  },
+  "12175": {
+    "number": 12175,
+    "title": "[RFC] Move logger `v_num` information out of progress bar and into simple log statement",
+    "state": "open",
+    "body": "## Proposed refactor\r\n\r\nRemove `v_num` from the progress bar here:\r\nhttps://github.com/PyTorchLightning/pytorch-lightning/blob/5da065e287b44e2c1fe4f7951003813ed45365c9/pytorch_lightning/callbacks/progress/base.py#L217-L223\r\n\r\nAnd add a simple Python log statement at the start of training with the version number for each logger.\r\n\r\n### Motivation\r\n\r\n1. It is a bit unclear to me why we have the logger v_num on the progress bar - there is no direct relation between the two. Why not have this information in a simple log statement at the start of training, and leave more space in the progress bar for other information? As @user-2 put it, the progress bar is \"prime real estate\". \r\n\r\n2. When we have multiple loggers, we have the strange behavior of concatenating the two version numbers (relic of LoggerCollection) and if the concatenated version numbers is longer than 4 digits we truncate it: \r\nhttps://github.com/PyTorchLightning/pytorch-lightning/blob/5da065e287b44e2c1fe4f7951003813ed45365c9/pytorch_lightning/callbacks/progress/base.py#L220-L222\r\n\r\nInstead, we can just have log statements like this at the start of training:\r\n```\r\nInitialized TensorBoardLogger with version X.\r\nInitialized WandbLogger with version Y.\r\n```\r\n\r\n\r\n\r\n\r\ncc @maintainer-1 @user-4 @user-6 @user-34 @maintainer-2 @user-19 @user-35 @user-36 @user-37 @user-2",
+    "comments": [
+      {
+        "author": "user-8",
+        "body": "If my guess is correct:\r\n\r\n## My understanding:\r\nWhen multiple training tasks are launched and we want to stop one of them based on the logging information, we need to idenfity which console corresponding to a target log/tensorboard.\r\n\r\nWithout an `identifier`, all consoles/terminals will look the same.\r\nOf course, we can locate the console based on the training process (current batch index), but that might not be accurate if multiple task progresses are similar.\r\n\r\n## My Concern for proposed refactor:\r\nLog statements at the start of training has some limitations: If too many information printed in the console, it can be diffcult to find out something printed in the beginning of training process. When \r\nvirtual terminal, e.g., `screen` command is used, it is impossible to scroll up to find out previous prints.\r\n\r\n## My Suggestion:\r\nHowever, I feel `v_num` does not convey an obvious meaning.  Something like `training ID`, `logger ID` or `training version` might be more clear for us, alt"
+      },
+      {
+        "author": "user-7",
+        "body": "@user-8 thanks for your input! @user-4 @user-2 do you have any thoughts? "
+      },
+      {
+        "author": "user-4",
+        "body": "I agree with @user-8 and his/her understanding is correct. We have the v_num for exactly this reason. I agree v_num is just a different name for \"ver\" or \"version\", so why not call it version directly? A removal in my opinion is not desired, as I have expressed in the past. I consider this a good default. @user-2 is in favor of removing it. "
+      },
+      {
+        "author": "user-2",
+        "body": "> it can be diffcult to find out something printed in the beginning of training process\r\n\r\nBut this is a problem of the tool used to launch the script (e.g. `screen`). I wouldn't design our interface around their specific papercuts considering all better alternatives that exist today.\r\n\r\n> prefer to totally remove v_num= and warp the value with a bracket.\r\n\r\nNote that doing this or renaming it to `version` or `ver` doesn't address the point that the progress bar row length is very limited so it's better to move out everything we can so `log(prog_bar=True)` values can have more space.\r\n\r\n> @user-2 is in favor of removing it.\r\n\r\nYes 😁"
+      },
+      {
+        "author": "user-2",
+        "body": "> A removal in my opinion is not desired, as I have expressed in the past\r\n\r\nNote that the OP advocates for moving it, not removing it. Did you mean that moving it off the pbar is also not desired?"
+      },
+      {
+        "author": "user-7",
+        "body": "Thanks @user-4 and @user-2 for providing your thoughts. I agree with @user-2 and still think we should move this out of the pbar.\r\n\r\n> When multiple training tasks are launched and we want to stop one of them based on the logging information, we need to idenfity which console corresponding to a target log/tensorboard.\r\n\r\nI could be wrong, but this seems to me like not a super common case, and when this is the case the user can still easily add the logger version to the pbar. That is why it is customizable to the user's preferences.\r\n"
+      }
+    ]
+  },
+  "14394": {
+    "number": 14394,
+    "title": "Hide progress bars on HPC logging environments but keep in interactive terminals",
+    "state": "open",
+    "body": "`tqdm(disable=None)` allows for the suppression of the output in non-tty (e.g. CI/log files) but keeps the progress bars in terminal (i.e. tty mode). I believe this is a simple change that will improve the progress bar functionality.\r\n\r\nsee doc: https://git.io/JnBOi \n\ncc @maintainer-2 @user-4 @user-6",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": " We could add `**kwargs` that get forwarded to the tqdm instantiation. This works if you want the argument to be set for all bars (training, validation, testing...)\r\n\r\nWould you like to open a PR with the enhancement?"
+      },
+      {
+        "author": "user-6",
+        "body": "we could do that but we need to make sure that these `kwargs` takes precedence when we explicitly initialize tqdm. For instance, currently `disable` depends upon the `refresh_rate`. So if `disable` is part of `kwargs`, we should use that instead."
+      },
+      {
+        "author": "user-9",
+        "body": "when I have used this in the past I have used the construction `disable = None if show_progress_bar else True` but that it because I always wanted to suppress the progress bar to non-tty given that it clutters logs esp when using a actual logger such as wandb to keep track of losses. I am not sure that pytorch-lightning would want to make this default behaviour here to not write to non-tty"
+      },
+      {
+        "author": "user-9",
+        "body": "@user-2 @user-6 -- am happy to try make a PR but need to know what would be acceptable to the team, it will probably require a global setting or something `show_progress_bar_in_non_tty` that can be combined with the existing flags and kwargs to turn the progress bars on and off using the `disable=None` trick"
+      },
+      {
+        "author": "user-6",
+        "body": "What I'd suggest is:\r\n```py\r\nclass TQDMProgressBar:\r\n    def __init__(self, ..., **tqdm_kwargs):\r\n        ...\r\n\r\n    def init_train_tqdm(self):\r\n        desc = \r\n        bar = Tqdm(\r\n            self.tqdm_kwargs.get('desc', self.train_description) ,\r\n            ...\r\n        )\r\n```\r\nfor all the bars. This way, you can pass in your preferred parameters, which will take precedence."
+      }
+    ]
+  },
+  "16466": {
+    "number": 16466,
+    "title": "Loss balancer",
+    "state": "open",
+    "body": "### Description & Motivation\r\n\r\nIt's commonplace to combine many losses (l1 loss, feature matching loss, multiscale losses, etc.). However, when they are on different scales, it is fiddly to choose the weighting. And, the weighting might change over time.\r\n\r\nA loss balancer would be a useful addition, using EMA.\r\n\r\nThe API could be this simple:\r\n```py\r\nloss = self.balancer(loss1, loss2, ...)\r\n```\r\n(By default, each loss would have equal weight, but this could be parameterized in the balancer class.)\r\n\r\n### Pitch\r\n\r\nMeta's encodec has a loss balancer and it makes it very easy for them to mix many different scaled losses.\r\n\r\nThis would probably be an easy win for many lightning users that mix losses.\r\n\r\n### Alternatives\r\n\r\nThere is available code for the balancer: https://github.com/facebookresearch/encodec/blob/main/encodec/balancer.py\r\n\r\nHowever: a) the licensing is not permissive and b) it doesn't work in DDP.\r\n\r\n### Additional context\r\n\r\nhttps://arxiv.org/pdf/2210.13438.pdf\r\n\r\ncc @maintainer-2",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "Have you tried using their balancer implementation with manual optimization?"
+      },
+      {
+        "author": "user-10",
+        "body": "@user-2 No, I think that's a decent workaround for now. Actually one can just compute the loss of each component over validation and use a fixed balancing scheme too."
+      }
+    ]
+  },
+  "14457": {
+    "number": 14457,
+    "title": "Loss does not decrease on single TPU",
+    "state": "open",
+    "body": "https://github.com/pytorch/xla/issues/2735#issue-786787271\r\n\r\n> ## 🐛 Bug\r\n> With pytorch-lightning, the trainer hangs up at the end of epoch. By keyboard interruption, it seems that it hangs up at fd_event_list = self._poll.poll(timeout)\r\n> \r\n> ```\r\n> ---------------------------------------------------------------------------\r\n> KeyboardInterrupt                         Traceback (most recent call last)\r\n> <ipython-input-4-fd5234884739> in <module>()\r\n>       4 autoencoder_1 = LitAutoEncoder()\r\n>       5 trainer_1 = pl.Trainer(tpu_cores=8, max_epochs=1, progress_bar_refresh_rate=20)\r\n> ----> 6 trainer_1.fit(autoencoder_1, DataLoader(dataset_mnist_train))\r\n> \r\n> 6 frames\r\n> /usr/local/lib/python3.6/dist-packages/pytorch_lightning/trainer/trainer.py in fit(self, model, train_dataloader, val_dataloaders, datamodule)\r\n>     471         self.call_hook('on_fit_start')\r\n>     472 \r\n> --> 473         results = self.accelerator_backend.train()\r\n>     474         self.accelerator_backend.teardown()\r\n>     475 \r\n> \r\n> /usr/local/lib/python3.6/dist-packages/pytorch_lightning/accelerators/tpu_accelerator.py in train(self)\r\n>     111                 args=(model, self.trainer, self.mp_queue),\r\n>     112                 nprocs=self.trainer.tpu_cores,\r\n> --> 113                 start_method=self.start_method\r\n>     114             )\r\n>     115 \r\n> \r\n> /usr/local/lib/python3.6/dist-packages/torch_xla/distributed/xla_multiprocessing.py in spawn(fn, args, nprocs, join, daemon, start_method)\r\n>     393         join=join,\r\n>     394         daemon=daemon,\r\n> --> 395         start_method=start_method)\r\n>     396 \r\n>     397 \r\n> \r\n> /usr/local/lib/python3.6/dist-packages/torch/multiprocessing/spawn.py in start_processes(fn, args, nprocs, join, daemon, start_method)\r\n>     155 \r\n>     156     # Loop on join until it returns True or raises an exception.\r\n> --> 157     while not context.join():\r\n>     158         pass\r\n>     159 \r\n> \r\n> /usr/local/lib/python3.6/dist-packages/torch/multiprocessing/spawn.py in join(self, timeout)\r\n>      75         ready = multiprocessing.connection.wait(\r\n>      76             self.sentinels.keys(),\r\n> ---> 77             timeout=timeout,\r\n>      78         )\r\n>      79 \r\n> \r\n> /usr/lib/python3.6/multiprocessing/connection.py in wait(object_list, timeout)\r\n>     909 \r\n>     910             while True:\r\n> --> 911                 ready = selector.select(timeout)\r\n>     912                 if ready:\r\n>     913                     return [key.fileobj for (key, events) in ready]\r\n> \r\n> /usr/lib/python3.6/selectors.py in select(self, timeout)\r\n>     374             ready = []\r\n>     375             try:\r\n> --> 376                 fd_event_list = self._poll.poll(timeout)\r\n>     377             except InterruptedError:\r\n>     378                 return ready\r\n> \r\n> KeyboardInterrupt: \r\n> ```\r\n> \r\n> ## To Reproduce\r\n> Steps to reproduce the behavior:\r\n> \r\n> 1. Run [this Colab](https://colab.research.google.com/drive/1qRnR8wUbB3HT2_AUo2pHxDBKe8lP0QQF",
+    "comments": [
+      {
+        "author": "user-11",
+        "body": "@user-2 Here it is:\r\n```\r\nclass TrainingModule(pl.LightningModule):\r\n    def __init__(self,\r\n                 model: PretrainedModelBase, *,\r\n                 loss_fn: Callable[[Tensor, Tensor], Tensor],\r\n                 optimizer: torch.optim.Optimizer,\r\n                 metric_cls: Type[Metric]):\r\n        super().__init__()\r\n        self.model = model\r\n        self.loss_fn = loss_fn\r\n        self.optimizer = optimizer\r\n\r\n        self.weighted_loss = {phase: BatchWeightedLoss() for phase in ['train', 'valid', 'test']}\r\n        self.metric = {phase: metric_cls() for phase in ['train', 'valid', 'test']}\r\n        self.metric_name = metric_cls.__name__.lower()\r\n\r\n    def cuda(self, device: Optional[int] = None):\r\n        setattr(self.model, 'device', device)\r\n        return super(TrainingModule, self).cuda(device)\r\n\r\n    def forward(self, batch: BatchEncodingProtocol):\r\n        return self.model.forward(batch)\r\n\r\n    def _step(self, mode: str, batch: BatchEncodingProtocol, batch_idx: int"
+      },
+      {
+        "author": "user-2",
+        "body": "You need to define the metrics with a `ModuleDict`: https://torchmetrics.readthedocs.io/en/stable/pages/overview.html#metrics-and-devices"
+      },
+      {
+        "author": "user-11",
+        "body": "@user-2 I've done that now and the training proceeds but the same thing is happening: the loss remains roughly the same no matter the number of epochs when training on TPU. I understand conceptually what is happening but I don't know how to fix the code. Any help would be deeply appreciated!"
+      },
+      {
+        "author": "user-2",
+        "body": "Can you share the colab link now? Does it not happen on CPU or GPU?"
+      },
+      {
+        "author": "user-11",
+        "body": "@user-2 It does not happen on GPU. Here is the notebook link: https://colab.research.google.com/drive/1-igDGsR4b0yZ31VaBeAT-pAoR2Y-FdBO?usp=sharing\r\nAttached is a corresponding dataset.\r\n[RMAT_TPU_test_dataset.csv](https://github.com/Lightning-AI/lightning/files/9481771/RMAT_TPU_test_dataset.csv)\r\n"
+      },
+      {
+        "author": "user-2",
+        "body": "Any ideas @user-12? A bug impacting optimization would be of high priority."
+      },
+      {
+        "author": "user-12",
+        "body": "Thanks @user-2! \r\n\r\nHi @user-11! Is this issue also occurring with single TPU core?"
+      },
+      {
+        "author": "user-11",
+        "body": "@user-12 Yes, the issue also occurs with a single TPU core."
+      },
+      {
+        "author": "user-11",
+        "body": "@user-2 @user-12 Any updates on this issue?"
+      },
+      {
+        "author": "user-11",
+        "body": "@user-2 @user-12 @maintainer-2 I should mention that I tried the same thing in Kaggle (slightly adjusted from the Google Colab version), and  the loss also stayed the same, with the following error showing up: `W tensorflow/stream_executor/platform/default/dso_loader.cc:60] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /opt/conda/lib`. I'm not really sure if this is relevant, but I figured it can't hurt to share."
+      }
+    ]
+  },
+  "12145": {
+    "number": 12145,
+    "title": "check_val_every_n_epoch bug with list of dataloaders",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nIf you have a list of dataloaders (used in a continual learning setting) and `check_val_every_n_epoch` in the trainer is not equal to 1 then `validation_step()` won't return the index of the dataloader currently being used. \r\n\r\n### To Reproduce\r\n\r\nDataloader for validation: \r\n\r\n```\r\ndef val_dataloader(self):\r\n    return [DataLoader(ds, batch_size=self.batch_size, shuffle=True , num_workers=self.num_workers) for ds in self.test_datasets[:self.curr_index+1]]\r\n```\r\n\r\nValidation step: \r\n```\r\ndef validation_step(self, val_batch, batch_idx, dataloader_idx=None):\r\n    if dataloader_idx:\r\n        print(\"data loader index provided\")\r\n```\r\n\r\nRun this in a training loop with `check_val_every_n_epoch=1` and compare to `check_val_every_n_epoch=5`. The latter will always have `dataloader_idx=None`. \r\n\r\n### Expected behavior\r\n\r\nThe dataloader_idx is always correctly provided independently of how often the validation is called. \r\n\r\n### Environment\r\n\r\n- PyTorch Lightning Version (e.g., 1.5.0): 1.5.4\r\n- PyTorch Version (e.g., 1.10): 1.10.0          py3.8_cuda10.2_cudnn7.6.5_0\r\n- Python version (e.g., 3.9): 3.8.3\r\n- OS (e.g., Linux): Linux\r\n- CUDA/cuDNN version: 10.1\r\n- GPU models and configuration: v100\r\n- How you installed PyTorch (`conda`, `pip`, source): conda\r\n\r\n### Additional context\r\n\r\nThanks. \r\n\n\ncc @user-2 @maintainer-1 @user-19 @user-40 @user-6",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "I cannot reproduce the issue. This is the code I'm using:\r\n\r\n```python\r\nimport os\r\n\r\nimport torch\r\nfrom torch.utils.data import DataLoader, Dataset\r\n\r\nfrom pytorch_lightning import LightningModule, Trainer\r\n\r\n\r\nclass RandomDataset(Dataset):\r\n    def __init__(self, size, length):\r\n        self.len = length\r\n        self.data = torch.randn(length, size)\r\n\r\n    def __getitem__(self, index):\r\n        return self.data[index]\r\n\r\n    def __len__(self):\r\n        return self.len\r\n\r\n\r\nclass BoringModel(LightningModule):\r\n    def __init__(self):\r\n        super().__init__()\r\n        self.layer = torch.nn.Linear(32, 2)\r\n\r\n    def forward(self, x):\r\n        return self.layer(x)\r\n\r\n    def training_step(self, batch, batch_idx):\r\n        loss = self(batch).sum()\r\n        self.log(\"train_loss\", loss)\r\n        return {\"loss\": loss}\r\n\r\n    def validation_step(self, batch, batch_idx, dataloader_idx=None):\r\n        print(f\"{self.trainer.current_epoch=}, {dataloader_idx=}\")\r\n        loss = self(batch).sum()"
+      },
+      {
+        "author": "user-13",
+        "body": "Thanks for this minimum example. I have been able to reproduce my bug. There seems to be a weird interaction between `check_val_every_n_epoch` and `reload_dataloaders_every_n_epochs` where if the latter is larger than the former the error appears. When `reload_dataloaders_every_n_epochs=4` or any value less than 5 when `check_val_every_n_epoch=5` things work as they should. When `reload_dataloaders_every_n_epochs=5` or any larger value I always get `None` values. \r\n\r\n```py\r\nimport os\r\n\r\nimport torch\r\nfrom torch.utils.data import DataLoader, Dataset\r\n\r\nfrom pytorch_lightning import LightningModule, Trainer\r\n\r\n\r\nclass RandomDataset(Dataset):\r\n    def __init__(self, size, length):\r\n        self.len = length\r\n        self.data = torch.randn(length, size)\r\n        \r\n\r\n    def __getitem__(self, index):\r\n        return self.data[index]\r\n\r\n    def __len__(self):\r\n        return self.len\r\n\r\n\r\nclass BoringModel(LightningModule):\r\n    def __init__(self):\r\n        super().__init__()\r\n        self."
+      },
+      {
+        "author": "user-6",
+        "body": "looks like the issue is with how both of these parameters operate:\r\n\r\nif you set `reload_dataloaders_every_n_epoch=5`, it will reload the dataloaders at 0, 6, 11, 16th epoch. i.e with a gap of 5 epochs.\r\n\r\nand if you set `check_val_every_n_epoch=5`, it will run the validation loop at 0, 5, 10, 15 and 20th epoch.\r\n\r\nso the only difference is that one considers the epoch gap and other considers the exact epoch. This is what causing the issues above.\r\n\r\nIMO, both should work in a similar way and we should choose one of the above criteria to make the fix. "
+      },
+      {
+        "author": "user-2",
+        "body": "> 0, 5, 10, 15 and 20th epoch.\r\n\r\nI'd say this is the natural behaviour for most programmers.\r\n\r\nBut this was changed in https://github.com/Lightning-AI/lightning/pull/11036. Need to familiarize with the edge cases and tradeoffs if any"
+      }
+    ]
+  },
+  "9136": {
+    "number": 9136,
+    "title": "AdvancedProfiler: ValueError: Attempting to stop recording an action (run_test_evaluation) which was never started.",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nIf you have multiple Trainers and only one runs test, afterwards AdvancedProfiler crashes. This happens even if you free all Trainers except the one you want to run test on.\r\n\r\nI have code that has multiple Trainers, doing a grid search. To each Trainer, I just added AdvancedProfiler.\r\n\r\nI find the Trainer with the best_model_score and run test only on the best predictor. I then get this crash:\r\n\r\n```\r\nDATALOADER:0 TEST RESULTS\r\n{'test_chroma_acc': 0.05000000074505806,\r\n 'test_loss': 1763.811279296875,\r\n 'test_pitch_acc': 0.0}\r\n--------------------------------------------------------------------------------\r\nTesting: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 22.07it/s]\r\n  0%|                                                                                                                                                                                                       | 0/3 [00:24<?, ?it/s]\r\nTraceback (most recent call last):\r\n  File \"/Users/joseph/dev/neuralaudio/hear-eval-kit/heareval/predictions/runner.py\", line 75, in <module>\r\n    runner()\r\n  File \"/usr/local/lib/python3.9/site-packages/click/core.py\", line 1137, in __call__\r\n    return self.main(*args, **kwargs)\r\n  File \"/usr/local/lib/python3.9/site-packages/click/core.py\", line 1062, in main\r\n    rv = self.invoke(ctx)\r\n  File \"/usr/local/lib/python3.9/site-packages/click/core.py\", line 1404, in invoke\r\n    return ctx.invoke(self.callback, **ctx.params)\r\n  File \"/usr/local/lib/python3.9/site-packages/click/core.py\", line 763, in invoke\r\n    return __callback(*args, **kwargs)\r\n  File \"/Users/joseph/dev/neuralaudio/hear-eval-kit/heareval/predictions/runner.py\", line 69, in runner\r\n    task_predictions(\r\n  File \"/Users/joseph/dev/neuralaudio/hear-eval-kit/heareval/predictions/task_predictions.py\", line 772, in task_predictions\r\n    test_scores = best_trainer.test(ckpt_path=\"best\", test_dataloaders=test_dataloader)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 706, in test\r\n    results = self._run(model)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 918, in _run\r\n    self._dispatch()\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 982, in _dispatch\r\n    self.accelerator.start_evaluating(self)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/accelerators/accelerator.py\", line 95, in start_evaluating\r\n    self.training_type_plugin.start_evaluating(trainer)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/plugins/training_type/training_type_plugin.py\", line 165, in start_evaluating\r\n    self._results = trainer.run_stage()\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 993, in run_stage\r\n    return self._run_ev",
+    "comments": [
+      {
+        "author": "user-14",
+        "body": "Thanks @user-10. I was able to reproduce it. It seems to be linked to `advanced` profiler when calling fit and then test. `simple` works fine.\r\n\r\nI will check this out tomorrow unless you want to investigate it :)"
+      },
+      {
+        "author": "user-14",
+        "body": "Hey @user-10,\r\n\r\nIt is interesting, I have the impression the bug is actually related to Colab.\r\n\r\nThis works locally. \r\n\r\n```py\r\ndef test_advanced_profiler_on_test(tmpdir):\r\n\r\n    ds = RandomDataset(32, 64)\r\n    loader = DataLoader(ds)\r\n    model = BoringModel()\r\n\r\n    def run(tmpdir):\r\n        trainer = Trainer(\r\n            default_root_dir=tmpdir,\r\n            max_epochs=1,\r\n            progress_bar_refresh_rate=20,\r\n            profiler=\"advanced\"\r\n        )\r\n\r\n        trainer.fit(model, loader, loader)\r\n        trainer.test(test_dataloaders=loader)\r\n\r\n        return trainer\r\n\r\n    for _ in range(4):\r\n        trainer = run(tmpdir)\r\n\r\n    trainer.test(test_dataloaders=loader)\r\n```"
+      },
+      {
+        "author": "user-10",
+        "body": "@user-14 I was experiencing this bug on Ubuntu (GCP GPU instances), not Colab, originally.\r\n\r\nI just ran the colab python on OSX and got the error.\r\n\r\n```\r\n\r\n\r\nTraceback (most recent call last):\r\n  File \"/Users/joseph/Downloads/advancedprofiler_test_the_boringmodel.py\", line 154, in <module>\r\n    trainers[-1].test(test_dataloaders=test)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 706, in test\r\n    results = self._run(model)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 918, in _run\r\n    self._dispatch()\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 982, in _dispatch\r\n    self.accelerator.start_evaluating(self)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/accelerators/accelerator.py\", line 95, in start_evaluating\r\n    self.training_type_plugin.start_evaluating(trainer)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_ligh"
+      },
+      {
+        "author": "user-15",
+        "body": "I read thorugh the comment thread, can I take up this one to help to fix the issue?"
+      },
+      {
+        "author": "user-14",
+        "body": "Hey @ user-15,\r\n\r\nYes, please have a look and open a PR if you have a fix.\r\n\r\nBest,\r\nT.C"
+      },
+      {
+        "author": "user-15",
+        "body": "Fine, let me replicate the bug on my colab."
+      },
+      {
+        "author": "user-15",
+        "body": "> Hey @user-10,\r\n> \r\n> It is interesting, I have the impression the bug is actually related to Colab.\r\n> \r\n> This works locally.\r\n> \r\n> ```python\r\n> def test_advanced_profiler_on_test(tmpdir):\r\n> \r\n>     ds = RandomDataset(32, 64)\r\n>     loader = DataLoader(ds)\r\n>     model = BoringModel()\r\n> \r\n>     def run(tmpdir):\r\n>         trainer = Trainer(\r\n>             default_root_dir=tmpdir,\r\n>             max_epochs=1,\r\n>             progress_bar_refresh_rate=20,\r\n>             profiler=\"advanced\"\r\n>         )\r\n> \r\n>         trainer.fit(model, loader, loader)\r\n>         trainer.test(test_dataloaders=loader)\r\n> \r\n>         return trainer\r\n> \r\n>     for _ in range(4):\r\n>         trainer = run(tmpdir)\r\n> \r\n>     trainer.test(test_dataloaders=loader)\r\n> ```\r\n\r\nHey I successfully replicated the bug, the problem seems to be lying during the test after calling fit, specifically our dictionary object `pr = self.profiled_actions.get(action_name)` is trying to return the value of the `(action_name)` "
+      },
+      {
+        "author": "user-10",
+        "body": "@user-15 do you have access to an OSX machine you can try on too? That's my local arch where I also have this issue."
+      },
+      {
+        "author": "user-15",
+        "body": "@user-10 Yes, I have a Macbook, I will be trying out on that as well."
+      },
+      {
+        "author": "user-16",
+        "body": "Hi, I'm having the same issue on Linux / x86_64 arch, using a single trainer (I'm running the task through PyCharm IDE). \r\n\r\n```\r\n File \"xxx/lib/python3.6/site-packages/mixer/pl/trainer.py\", line 44, in train\r\n    self.fit(model=model, datamodule=datamodule)\r\n  File \"xxx/lib/python3.6/site-packages/pytorch_lightning/trainer/trainer.py\", line 552, in fit\r\n    self._run(model)\r\n  File \"xxx/lib/python3.6/site-packages/pytorch_lightning/trainer/trainer.py\", line 927, in _run\r\n    self.call_hook(\"on_fit_end\")\r\n  File \"xxx/lib/python3.6/site-packages/pytorch_lightning/trainer/trainer.py\", line 1235, in call_hook\r\n    output = accelerator_output if output is None else output\r\n  File \"xxx/lib/python3.6/contextlib.py\", line 88, in __exit__\r\n    next(self.gen)\r\n  File \"xxx/lib/python3.6/site-packages/pytorch_lightning/profiler/base.py\", line 97, in profile\r\n    self.stop(action_name)\r\n  File \"xxx/lib/python3.6/site-packages/pytorch_lightning/profiler/advanced.py\", line 70, in stop\r\n    raise Val"
+      }
+    ]
+  },
+  "11415": {
+    "number": 11415,
+    "title": "ModelCheckpoint with custom directory path not working on TPU",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nSaving a checkpoint to a custom directory on Colab with a TPU runtime fails using `ModelCheckpoint(dirpath=\"/tmp/checkpoints\")`. When using `ModelCheckpoint(dirpath=\"/tmp\")` or simply `ModelCheckpoint()` the checkpoint is saved correctly\r\n\r\n### To Reproduce\r\n\r\nThe code is based on the [TPU tutorial](https://pytorch-lightning.readthedocs.io/en/latest/notebooks/lightning_examples/mnist-tpu-training.html):\r\n\r\nPackage installation:\r\n```\r\n!pip install torch==1.9.1 torchtext==0.10.1 torchvision==0.10.1 pytorch-lightning==1.5.8 cloud-tpu-client==0.10 https://storage.googleapis.com/tpu-pytorch/wheels/torch_xla-1.9-cp37-cp37m-linux_x86_64.whl\r\n```\r\n\r\nCode:\r\n```\r\nimport os\r\nfrom typing import Any, List, Optional\r\n\r\nimport torch\r\nimport torch.nn.functional as F\r\nfrom pytorch_lightning import LightningDataModule, LightningModule, Trainer\r\nfrom pytorch_lightning.callbacks import BasePredictionWriter, ModelCheckpoint\r\nfrom torch import nn\r\nfrom torch.utils.data import DataLoader, random_split\r\nfrom torchmetrics.functional import accuracy\r\nfrom torchvision import transforms\r\nfrom torchvision.datasets import MNIST\r\n\r\nBATCH_SIZE = 1024\r\n\r\n\r\nclass MNISTDataModule(LightningDataModule):\r\n    def __init__(self, data_dir: str = \"./\"):\r\n        super().__init__()\r\n        self.data_dir = data_dir\r\n        self.transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])\r\n\r\n        # self.dims is returned when you call dm.size()\r\n        # Setting default dims here because we know them.\r\n        # Could optionally be assigned dynamically in dm.setup()\r\n        self.dims = (1, 28, 28)\r\n        self.num_classes = 10\r\n\r\n    def prepare_data(self):\r\n        # download\r\n        MNIST(self.data_dir, train=True, download=True)\r\n        MNIST(self.data_dir, train=False, download=True)\r\n\r\n    def setup(self, stage=None):\r\n        mnist_full = MNIST(self.data_dir, train=True, transform=self.transform)\r\n        self.mnist_train, self.mnist_val = random_split(mnist_full, [55000, 5000])\r\n\r\n        self.mnist_test = MNIST(self.data_dir, train=False, transform=self.transform)\r\n\r\n    def train_dataloader(self):\r\n        return DataLoader(self.mnist_train, batch_size=BATCH_SIZE)\r\n\r\n    def val_dataloader(self):\r\n        return DataLoader(self.mnist_val, batch_size=BATCH_SIZE)\r\n\r\n    def test_dataloader(self):\r\n        return DataLoader(self.mnist_test, batch_size=BATCH_SIZE)\r\n\r\n\r\nclass LitModel(LightningModule):\r\n    def __init__(self, channels, width, height, num_classes, hidden_size=64, learning_rate=2e-4):\r\n        super().__init__()\r\n\r\n        self.save_hyperparameters()\r\n\r\n        self.model = nn.Sequential(\r\n            nn.Flatten(),\r\n            nn.Linear(channels * width * height, hidden_size),\r\n            nn.ReLU(),\r\n            nn.Dropout(0.1),\r\n            nn.Linear(hidden_size, hidden_size),\r\n            nn.ReLU(),\r\n            nn.Dropout(0.1),\r\n            nn.Linear(hidden_size, num_classes),\r\n        )\r\n\r\n    def forward(",
+    "comments": [
+      {
+        "author": "user-18",
+        "body": "Hey there, I am also currently facing this issue with running Lightning on TPU on the Kaggle Platform. Did you guys get any approach to solving it?  "
+      }
+    ]
+  },
+  "13378": {
+    "number": 13378,
+    "title": "Add `enable_device_summary` flag to disable device printout",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nAdd `enable_model_summary` boolean kwarg to `pl.Trainer()` to supress `_log_device_info()`'s output.\r\n\r\n### Motivation\r\n\r\nWhen calling predict within a surrogate model loop Trainer prints out the devices each time breaking apart intended tables etc or other outputs. Related to https://github.com/user-41/lightning/issues/13358 for cleaning-up/reducing stdout verbosity.\r\n```\r\nGPU available: False, used: False\r\nTPU available: False, using: 0 TPU cores\r\nIPU available: False, using: 0 IPUs\r\nHPU available: False, using: 0 HPUs\r\n=======================================================\r\nn_gen |  n_eval |  n_nds  |     eps      |  indicator  \r\n=======================================================\r\n    1 |     322 |       3 |            - |            -\r\nGPU available: False, used: False\r\nTPU available: False, using: 0 TPU cores\r\nIPU available: False, using: 0 IPUs\r\nHPU available: False, using: 0 HPUs\r\n    2 |    1322 |       4 |  0.625000000 |        ideal\r\n```\r\n\r\n### Pitch\r\n\r\nAdd `enable_model_summary` kwarg to `Trainer` that defaults to True\r\n\r\n### Alternatives\r\n\r\n<!-- A clear and concise description of any alternative solutions or features you've considered, if any. -->\r\nThe suggested solution is the simplest solution, any alternative would add more complexity.\r\n\r\n### Additional context\r\n\r\n<!-- Add any other context or screenshots about the feature request here. -->\r\nNone\r\n\r\n______________________________________________________________________\r\n\r\n#### If you enjoy Lightning, check out our other projects! ⚡\r\n\r\n- [**Metrics**](https://github.com/user-41/metrics): Machine learning metrics for distributed, scalable PyTorch applications.\r\n\r\n- [**Lite**](https://pytorch-lightning.readthedocs.io/en/latest/starter/lightning_lite.html): enables pure PyTorch users to scale their existing code on any kind of device while retaining full control over their own loops and optimization logic.\r\n\r\n- [**Flash**](https://github.com/user-41/lightning-flash): The fastest way to get a Lightning baseline! A collection of tasks for fast prototyping, baselining, fine-tuning, and solving problems with deep learning.\r\n\r\n- [**Bolts**](https://github.com/user-41/lightning-bolts): Pretrained SOTA Deep Learning models, callbacks, and more for research and production with PyTorch Lightning and PyTorch.\r\n\r\n- [**Lightning Transformers**](https://github.com/user-41/lightning-transformers): Flexible interface for high-performance research using SOTA Transformers leveraging Pytorch Lightning, Transformers, and Hydra.\r\n\n\ncc @maintainer-2 @user-4 @user-19 @user-6 @maintainer-1 @user-12",
+    "comments": [
+      {
+        "author": "user-19",
+        "body": "I don't think another flag should be added. Why not move the print out to the Trainer constructor so it's only printed once?"
+      },
+      {
+        "author": "user-9",
+        "body": "> I don't think another flag should be added. Why not move the print out to the Trainer constructor so it's only printed once?\n\nIt already is. In linked issue (#13358) in order to reduce uncontrollable verbosity I was advised to create a secondary Trainer. There's no need to persist this trainer in the secondary optimisation loop so it gets deleted by the gc and reinitialised when needed.\n\nIn general afaik uncontrollable verbosity isn't ideal and in terms of unhelpful verbosity the number of TPUs, HPUs, and IPUs are less likely to be informative than the model summary which there is an option to suppress."
+      },
+      {
+        "author": "user-4",
+        "body": "I'm curious, is there a desire to have verbosity controlled on a more global level, not just the summary here?"
+      },
+      {
+        "author": "user-9",
+        "body": "> I'm curious, is there a desire to have verbosity controlled on a more global level, not just the summary here?\n\nI think that between the enable options for model summary and progress bars (making new trainer when needed to adjust) and the possibility to make things `PotentialUserWarnings` you can control pretty much anything apart from this device summary.\n\nA `verbose=int` setup c.f. `sklearn` could work but would be a much bigger change"
+      },
+      {
+        "author": "user-9",
+        "body": "Happy for me to change the associated PR to be reviewed?"
+      },
+      {
+        "author": "user-4",
+        "body": "@user-9 thanks for the PR. Since this is adding a flag to the core API in Trainer, we need to discuss it with the core team @user-41/core-lightning and get some more opinions. \r\n\r\nI think there are also a few options we haven't explored yet. \r\n\r\n1. Once could move the device logs to a configurable callback like the model summary or trainer summary. \r\n2. Let the messages be more easily filtered through `logging`\r\n3. Introduce a verbose flag to control messaging through Trainer more generally (e.g. fastdevrun infos)"
+      },
+      {
+        "author": "user-6",
+        "body": "> 2. Let the messages be more easily filtered through logging\r\n3. Introduce a verbose flag to control messaging through Trainer more generally (e.g. fastdevrun infos)\r\n\r\nthese 2 seem better sol. I'd prefer 3 if there are more logs we could configure."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "I'd prefer a combination of 1. and 2. \r\n\r\nIMO it really is not necessary to be able to have that baked into the core trainer (same as model summary was not necessary).\r\n\r\nAnd having it more easily filtered would also be great (I tried to forward the streams to something else to just avoid the prints and that also didn't work)."
+      },
+      {
+        "author": "user-2",
+        "body": "Today, it can be silenced by doing this:\r\n\r\n```python\r\nimport logging\r\n\r\ndef device_info_filter(record):\r\n    return \"PU available: \" not in record.getMessage()\r\n\r\nlogging.getLogger(\"pytorch_lightning.utilities.rank_zero\").addFilter(device_info_filter)\r\n```\r\n\r\nI find the callback idea (1) a bit overkill.\r\nWith (2) we can improve the above, maybe by using a Trainer logger instead of the rank zero logger.\r\n(3) seems like it has a larger scope. It would be interesting to see what are your concrete ideas. But for the device info message in particular, we've always agreed that it should be shown and not just when `fast_dev_run=True`"
+      },
+      {
+        "author": "user-2",
+        "body": "I changed my mind. I think the `callback` proposal is the simplest and most extensible option. This would also resolve https://github.com/user-41/lightning/issues/11014. And we could have flags in the callback to disable specific prints."
+      }
+    ]
+  },
+  "15734": {
+    "number": 15734,
+    "title": "DDP (multi GPU) Iterable Dataset is not working as expected ?",
+    "state": "open",
+    "body": "### Bug description\n\nHi,\r\n\r\nI am currently testing with IterableDataset and DDP.\r\n\r\nTotal Examples - ```10000```\r\nBatch_size - ```32```\r\nNUM_GPUS - ```2``` .\r\n\r\nWhile using IterableDataset , ideally with 2 GPUS, we are supposed to run ```157 steps (10000 / 32 batch / 2 gpus) ``` in one epoch. But, instead of that, it is running for ``` 314 steps (10000 / 32 batch)``` . \r\n\r\nThis issue is only with IterableDataset. When I am using normal Dataset (map dataset) from torch things are good and fine. Is there any reason for this particular behaviour ?\n\n### How to reproduce the bug\n\n```python\nimport os\r\nos.environ[\"TOKENIZERS_PARALLELISM\"] = \"false\"\r\nimport lightning as L\r\nimport torch\r\nimport time\r\nfrom datasets import list_datasets, load_dataset\r\nfrom transformers import AutoTokenizer, AutoModelForSequenceClassification\r\nfrom torch.utils.data import DataLoader, Dataset\r\n\r\n\r\nBATCH_SIZE = 32\r\nNUM_WORKERS = 1\r\n\r\n# Load Dataset in Memory\r\n\r\nimdb_data = load_dataset(\"imdb\")\r\ntokenizer = AutoTokenizer.from_pretrained(\"bert-base-uncased\")\r\n\r\ndef tokenize_text(batch):\r\n    return tokenizer(batch[\"text\"], truncation=True, padding=True)\r\n\r\nimdb_dataset = imdb_data\r\nimdb_tokenized = imdb_dataset.map(tokenize_text, batched=True, batch_size=None)\r\nimdb_tokenized.set_format(\"torch\", columns=[\"input_ids\", \"attention_mask\", \"label\"])\r\n\r\ndef custom_iterator():\r\n    counter = 0\r\n    for item in imdb_tokenized['train']:\r\n        \r\n        inputs = {'input_ids': item['input_ids'], 'attention_mask': item['attention_mask']}\r\n        labels = {'labels': item['label']}\r\n        counter += 1\r\n        yield inputs, labels\r\n\r\n\r\nclass MyIterableDataset(torch.utils.data.IterableDataset):\r\n    def __init__(self):\r\n        super().__init__()\r\n\r\n    def __iter__(self):\r\n        yield from custom_iterator()\r\n\r\ntrain_dataset = MyIterableDataset()\r\n\r\ntrain_loader = DataLoader(\r\n    dataset=train_dataset,\r\n    batch_size=BATCH_SIZE,\r\n    num_workers=NUM_WORKERS,\r\n    persistent_workers=False\r\n)\r\n\r\n# Load Model\r\nmodel = AutoModelForSequenceClassification.from_pretrained(\r\n    \"bert-base-uncased\", num_labels=2)\r\n\r\n# Ligntning Module\r\nclass LightningModel(L.LightningModule):\r\n    def __init__(self, model, learning_rate=5e-5):\r\n        super().__init__()\r\n\r\n        self.learning_rate = learning_rate\r\n        self.model = model\r\n\r\n    def forward(self, input_ids, attention_mask, labels):\r\n        return self.model(input_ids, attention_mask=attention_mask, labels=labels)\r\n        \r\n    def training_step(self, batch, batch_idx):\r\n        \r\n        inputs, labels = batch\r\n        outputs = self(inputs[\"input_ids\"], attention_mask=inputs[\"attention_mask\"],\r\n                    labels=labels[\"labels\"])        \r\n        self.log(\"train_loss\", outputs[\"loss\"])\r\n        \r\n        # print(\" Tensor sum \", torch.sum(inputs['input_ids']))\r\n        # print(\"-------------------\")\r\n        # print(3*\"\\n\")\r\n        \r\n        self.log(\"tensor_sum\", torch.sum(inputs['input_ids']))\r\n        \r\n        return out",
+    "comments": [
+      {
+        "author": "user-4",
+        "body": "> If my num_workers=2, it is looping 628 times in each GPU . Is this expected ?\r\n\r\nNo. num_workers has nothing to do with the sampling of the data.\r\n\r\n> Because, num_workers=2 is supposed to make DataLoader pipeline faster right.\r\n\r\nRead more about workers here: https://pytorch.org/docs/stable/data.html#multi-process-data-loading\r\n\r\n> Is there any concept of steps_per_epoch in lightning. Say, epochs=10, steps_per_epoch=1000, I want each epoch to run 1000 loops max.\r\n\r\n```py\r\nTrainer(limit_train_batches=1000, max_epochs=10)\r\n```\r\n\r\n"
+      },
+      {
+        "author": "user-20",
+        "body": "\r\n> > If my num_workers=2, it is looping 628 times in each GPU . Is this expected ?\r\n> \r\n> No. num_workers has nothing to do with the sampling of the data.\r\n> \r\n\r\nThanks. But, if you could execute the above code by ```NUM_WORKERS=2```, you can notice that, in each GPUs ( 2 GPUS I have ) , it rans for ```626 steps```. Expected was ```313 steps = 10000//32```. \r\n\r\n<img width=\"632\" alt=\"image\" src=\"https://user-images.githubusercontent.com/10637096/203056200-72a98a5c-6788-49bc-a97a-c2e26c897a33.png\">\r\n\r\nIf ```NUM_WORKERS=1```, its working as expected .\r\n\r\n<img width=\"620\" alt=\"image\" src=\"https://user-images.githubusercontent.com/10637096/203058441-94827d6b-26ef-496c-8e2c-0380833805bc.png\">\r\n\r\nSharing results. "
+      },
+      {
+        "author": "user-20",
+        "body": "Any update on this please ?"
+      },
+      {
+        "author": "user-20",
+        "body": "Any update"
+      },
+      {
+        "author": "user-21",
+        "body": "> Yes this is expected. Lightning can't know how to shard the data/iterator you provide. You need to make sure your iterator returns half of the data on GPU 0 and the other half on GPU 1. You can do this for example by changing your for loop to something like this (typos expected):\r\n> \r\n> ```python\r\n> for item in imdb_tokenized['train'][rank::num_gpus]:\r\n>     ...\r\n> ```\r\n> \r\n> This shards your data. The rank can be accessed for example through `trainer.global_rank`. If you do this, you need to make sure the iterator returns the same amount of data on each rank (e.g., drop the remainder)\r\n> \r\n> Another way would be to use the [DistribuedSampler](https://pytorch.org/docs/stable/data.html#torch.utils.data.distributed.DistributedSampler) inside your iterable dataset.\r\n\r\n@user-4, after trying to use PyTorch's DistributedSampler with an IterableDataset in my application, I observed that DistributedSampler raised an error saying it requires each input dataset to have a len() property. Does t"
+      },
+      {
+        "author": "user-21",
+        "body": "@user-4, I second this issue. I am also having difficulties figuring out the simplest way to enable multi-GPU and multi-dataloader worker support for IterableDatasets when using PyTorch Lightning. All the examples I have worked through so far do not seem to work when considering both of the following cases: (1) `num_workers>0` and `len(trainer.devices)>0`.\r\n\r\nWould it be possible to put together a simple PyTorch Lightning example of how one can structure their IterableDataset and PyTorch Lightning DataModule to support the two use cases above?"
+      },
+      {
+        "author": "user-4",
+        "body": "Yes, these observations are all expected. This is not special behavior in Lightning, it's just how the IterableDataset and DataLoader are working in PyTorch. In short: When using an iterable dataset, you need to take care of the sampler inside your dataset yourself, and shard/partition the data yourself across workers and devices. \r\n\r\nYes, I can put together an example, but it has to wait a few days until new year. "
+      },
+      {
+        "author": "user-20",
+        "body": "I really don’t know why Pytorch is so preferred, despite such a complicated\nand clumsy distribution strategies .\nIn Tensorflow its a cakewalk.\n\nOn Thu, 29 Dec 2022 at 8:12 PM, Adrian Wälchli ***@***.***>\nwrote:\n\n> Yes, these observations are all expected. This is not special behavior in\n> Lightning, it's just how the IterableDataset and DataLoader are working in\n> PyTorch. In short: When using an iterable dataset, you need to take care of\n> the sampler inside your dataset yourself, and shard/partition the data\n> yourself across workers and devices.\n>\n> —\n> Reply to this email directly, view it on GitHub\n> <https://github.com/user-41/lightning/issues/15734#issuecomment-1367377541>,\n> or unsubscribe\n> <https://github.com/notifications/unsubscribe-auth/ACRE6KHRFHTBEQSAXZGPQ3DWPWPLVANCNFSM6AAAAAASFEIFJM>\n> .\n> You are receiving this because you authored the thread.Message ID:\n> ***@***.***>\n>\n"
+      },
+      {
+        "author": "user-4",
+        "body": "@user-20 let's stay on topic. \r\n\r\n@user-20 @user-21 [Here is a notebook](https://colab.research.google.com/drive/1OFLZnX9y5QUFNONuvFsxOizq4M-tFvk-?usp=sharing) that explains the difference between the map dataset and iterable dataset with several examples, using dataloader workers and also shows how it behaves across multiple processes. At the bottom, I also show the example with Lightning. I hope this helps your understanding."
+      },
+      {
+        "author": "user-20",
+        "body": "Thanks man. Will have a look\n\nOn Tue, 3 Jan 2023 at 2:49 PM, Adrian Wälchli ***@***.***>\nwrote:\n\n> @user-20 <https://github.com/user-20> let's stay on topic.\n>\n> Here is a notebook\n> <https://colab.research.google.com/drive/1OFLZnX9y5QUFNONuvFsxOizq4M-tFvk-?usp=sharing>\n> that explains the difference between the map dataset and iterable dataset\n> with several examples, using dataloader workers and also shows how it\n> behaves across multiple processes. At the bottom, I also show the example\n> with Lightning. I hope this helps your understanding.\n>\n> —\n> Reply to this email directly, view it on GitHub\n> <https://github.com/user-41/lightning/issues/15734#issuecomment-1369541608>,\n> or unsubscribe\n> <https://github.com/notifications/unsubscribe-auth/ACRE6KAHQZKPOVGB2YFRAE3WQPVI5ANCNFSM6AAAAAASFEIFJM>\n> .\n> You are receiving this because you were mentioned.Message ID:\n> ***@***.***>\n>\n"
+      }
+    ]
+  },
+  "11224": {
+    "number": 11224,
+    "title": "Add \"interval\": \"validation\" to scheduler configuration",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\nThis request concerns the optimizer Scheduler.\r\n\r\nFor now, the scheduler can be configured like this:\r\n```python\r\nlr_scheduler_config = {\r\n    \"scheduler\": lr_scheduler,\r\n    \"interval\": \"epoch\",  # epoch, step\r\n    \"frequency\": 1,\r\n    \"monitor\": \"val_loss\",\r\n    \"strict\": True,\r\n    \"name\": None,\r\n}\r\n```\r\n\r\nIt would be great to add the option `\"interval\": \"validation\"`.\r\n\r\n### Motivation\r\n\r\nMy use case is the following. I want to `.step()` the scheduler after each evaluation step, using an evaluation metric and `ReduceLROnPlateau` scheduler.\r\n\r\nSometimes **(1)** I'm using a bigger dataset, so in the case I use `val_check_interval=0.1`.\r\nand Other times **(2)** I'm using smaller dataset, so I use `check_val_every_n_epoch=5`.\r\n\r\nThe current interval options are not working for me. `step` will call the scheduler each step, and `epoch` will do it after each epoch, however, for my case **(1)**, the scheduler will be called once every 10 validations, and in **(2)**, the scheduler will be called before the validation, and I will get the error `pytorch_lightning.utilities.exceptions.MisconfigurationException: ReduceLROnPlateau conditioned on metric my_quantity which is not available. Available metrics are: ['train/loss']. Condition can be set using 'monitor' key in lr scheduler dict`.\r\n\r\nI hope this is clear for you.\r\n\r\n\r\ncc @maintainer-2 @user-14 @user-6",
+    "comments": [
+      {
+        "author": "user-6",
+        "body": "@user-14 do you think adding an additional `'validation'` interval would be a good idea? can't think of any configuration to support it with `'step'|'epoch'`. Although there are 2 cases in the above-shared example but I think there can be a case where multiple validation checks can happen in a single training epoch with validation configured to be triggered after every n epochs. So both step and epoch won't work here."
+      },
+      {
+        "author": "user-23",
+        "body": "@user-22 following the [doc](https://pytorch-lightning.readthedocs.io/en/latest/common/lightning_module.html#configure-optimizers) you could set `\"interval\": \"step\"` and adjust `frequency` to be equal to your evaluation process frequency.\r\nE.g. for **(1)** set:\r\n\r\n```\r\nlr_scheduler_config = {\r\n    \"scheduler\": lr_scheduler,\r\n    \"interval\": \"step\",\r\n    \"frequency\": 0.1*epoch_length,\r\n    \"monitor\": \"val_loss\"\r\n}\r\n```\r\n\r\nFor **(2)** just set `\"frequency\": 5` and  `\"interval\": \"epoch\"`."
+      }
+    ]
+  },
+  "14197": {
+    "number": 14197,
+    "title": "LayerNorm / BatchNorm fp16 behavior is different in Pytorch Native and Deepspeed",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nCurrently, LayerNorm and BatchNorm behave differently when using fp16 in pytorch and deepspeed. Currently, in native pytorch, LayerNorm and BatchNorm retain fp32 weights, but in deepspeed it is fp16 weights.\r\n\r\nIn some cases, fp32 for certain layers are critical\r\n\r\n### To Reproduce\r\n```\r\nimport os\r\n\r\nimport torch\r\nfrom torch.utils.data import DataLoader, Dataset\r\n\r\nfrom pytorch_lightning import LightningModule, Trainer\r\n\r\nimport fire\r\nimport socket\r\nimport datetime\r\n\r\nfrom pytorch_lightning.utilities.rank_zero import _get_rank\r\nfrom pytorch_lightning.loggers import WandbLogger\r\n\r\n\r\nclass RandomDataset(Dataset):\r\n    def __init__(self, size, length):\r\n        self.len = length\r\n        self.data = torch.randn(length, size)\r\n\r\n    def __getitem__(self, index):\r\n        print(index)\r\n        return self.data[index]\r\n\r\n    def __len__(self):\r\n        return len(self.data)\r\n\r\n\r\nclass BoringModel(LightningModule):\r\n    def __init__(self, ds):\r\n        super().__init__()\r\n        self.layer = torch.nn.Linear(32, 2)\r\n        self.norm_layer = torch.nn.LayerNorm(2)\r\n        self.batch_norm_layer = torch.nn.BatchNorm1d(2)\r\n        self.ds = ds\r\n\r\n    def train_dataloader(self):\r\n        train_ds = self.ds\r\n        self.train_dl = DataLoader(train_ds, batch_size=2, num_workers=10)\r\n        return self.train_dl\r\n\r\n    def forward(self, x):\r\n        return self.norm_layer(self.layer(x))\r\n\r\n    def training_step(self, batch, batch_idx):\r\n        print(f'dtypes batch={batch.dtype}, norm_layer={self.norm_layer.dtype}')\r\n        loss = self(batch).sum()\r\n        batch_sum = batch.sum()\r\n        _B = len(batch)\r\n        self.log(\r\n            \"train_loss\",\r\n            loss,\r\n            on_step=True,\r\n            on_epoch=True,\r\n            prog_bar=True,\r\n            logger=True,\r\n            batch_size=_B,\r\n        )\r\n        self.log(\r\n            \"batch_sum\",\r\n            batch_sum,\r\n            on_step=True,\r\n            on_epoch=True,\r\n            prog_bar=True,\r\n            logger=True,\r\n        )\r\n        return {\"loss\": loss}\r\n\r\n    def validation_step(self, batch, batch_idx):\r\n        loss = self(batch).sum()\r\n        self.log(\"valid_loss\", loss)\r\n\r\n    def configure_optimizers(self):\r\n        return torch.optim.SGD(self.layer.parameters(), lr=0.1)\r\n\r\ndef main():\r\n\r\n    hostname = socket.gethostname()\r\n    ngpus = torch.cuda.device_count()\r\n\r\n    num_nodes = int(os.environ.get(\"SL_NUM_NODES\", 1))\r\n    wsize = ngpus * num_nodes\r\n    grank = _get_rank()\r\n\r\n    train_ds = RandomDataset(32, 32000)\r\n\r\n    model = BoringModel(ds=train_ds)\r\n    trainer = Trainer(\r\n        devices=ngpus,\r\n        num_nodes=num_nodes,\r\n        accelerator=\"gpu\",\r\n        strategy=\"deepspeed_stage_2\", # change it to ddp\r\n        # strategy=\"ddp\",\r\n        limit_train_batches=1000,\r\n        limit_val_batches=1,\r\n        num_sanity_val_steps=0,\r\n        max_epochs=3,\r\n        log_every_n_steps=1,\r\n        reload_dataloaders_every_n_epochs=1,\r\n        precision=16,\r\n    ",
+    "comments": [
+      {
+        "author": "user-4",
+        "body": "@user-24 Here is an answer by DeepSpeed: https://github.com/microsoft/DeepSpeed/issues/520\r\n\r\n"
+      },
+      {
+        "author": "user-24",
+        "body": "@user-4 Thanks for the pointer. Does this mean, we have to create our custom LayerNorm to support this? Or something that pytorch-lightning should support out of the box? For instance, converting all layer-norms with another implementation when using deep-speed? \r\n\r\nEither way, some kind of warning when using deepspeed+fp16 could be raised? Not sure which is the best approach."
+      },
+      {
+        "author": "user-4",
+        "body": "@user-24 I don't think that Lightning would offer and maintain custom implementations for normalization layers. If possible, deepspeed should provide some options how to exclude certain layers from fp16 precision. Honestly, I don't know the best approach here and need to ask too. \r\n\r\nAs for the warning, this can probably be done but it should probably only do so when such layers are in the model. "
+      }
+    ]
+  },
+  "8509": {
+    "number": 8509,
+    "title": "Support Lightning Logging without Trainer",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n<!-- A clear and concise description of the feature proposal -->\r\n\r\n### Motivation\r\n\r\nTo ease conversion from pure PyTorch to Lightning, users might start by creating their LightningModule.\r\n\r\nHowever, their code would break if they try to log as the trainer isn't available.\r\n\r\nCurrently, we have 2 options: \r\n* make `self.log` in the absence of a Trainer\r\n* add support for logging without a trainer.\r\n\r\nHere is a pseudo code to explain how we could support it.\r\n\r\nThe `ResultCollection` object is pretty self contained and is used to store logged values.\r\n\r\n```py\r\nclass LightningModule:\r\n    def __init__(self):\r\n        self._lightning_results = ResultCollection\r\n        self.training_step = self._training_step_wrapper(self.training_step)\r\n\r\n    @property\r\n    def _results(self):\r\n        if getattr(self, \"trainer\", None) is not None:\r\n            return self.trainer._results\r\n        return self._lightning_results\r\n\r\n    def _training_step_wrapper(self, training_step_fn):\r\n        def wrapper(self, *args, **kwargs)\r\n            self._current_fx = \"training_step\"\r\n            output = training_step_fn(self, *args, **kwargs)\r\n            self._current_fx = None\r\n        return wrapper\r\n\r\n    def training_step():\r\n        self.log(...)\r\n\r\nclass Model(LightningModule):\r\n    ...\r\n\r\nmodel = Model()\r\n\r\nfor _ in range(epochs):\r\n    for batch in datalaoder:\r\n        loss = model.training_step(batch, batch_idx)\r\n        ...\r\n        logged_metrics = model.get_logged_metrics()\r\n\r\nreduced_metrics = model.get_callback_metrics(epoch=True)\r\n``` \r\n\r\nDrawback, every LightningModule hooks used for logging should be wrapped to set the `_current_fx` function.\r\n\r\n\r\n<!-- Please outline the motivation for the proposal. Is your feature request related to a problem? e.g., I'm always frustrated when [...]. If this is related to another GitHub issue, please link here too -->\r\n\r\n### Pitch\r\n\r\n<!-- A clear and concise description of what you want to happen. -->\r\n\r\n### Alternatives\r\n\r\n<!-- A clear and concise description of any alternative solutions or features you've considered, if any. -->\r\n\r\n### Additional context\r\n\r\n<!-- Add any other context or screenshots about the feature request here. -->\r\n\r\n\r\n#### If you enjoy PL, check out our other projects:\r\n\r\n- [Metrics](https://github.com/PyTorchLightning/metrics): Machine learning metrics for distributed, scalable PyTorch applications.\r\n- [Flash](https://github.com/PyTorchLightning/lightning-flash): The fastest way to get a Lightning baseline! A collection of tasks for fast prototyping, baselining, finetuning and solving problems with deep learning\r\n- [Bolts](https://github.com/PyTorchLightning/lightning-bolts): Pretrained SOTA Deep Learning models, callbacks and more for research and production with PyTorch Lightning and PyTorch\r\n- [Lightning Transformers](https://github.com/PyTorchLightning/lightning-transformers): Flexible interface for high performance research using SOTA Transformers leveraging Pytorch Lightning",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "I don't quite understand the motivation. Are you saying that new users would:\r\n\r\n1. Convert their `nn.Module` into a `LightningModule`\r\n2. Keep their training loop but use the `LightningModule` hooks manually\r\n3. Replace their training loop with the `Trainer`\r\n\r\nSo you want to be able to `self.log()` inside the `LightningModule` so step (2) works?\r\n\r\nAnother challenge associated is that the following `log()` arguments would not work.\r\n\r\n```python\r\n        prog_bar: bool = False,  # callbacks are managed by the trainer\r\n        logger: bool = True,  # loggers are managed by the trainer\r\n        sync_dist: bool = False,  # would require the user to handle the training type setup\r\n        sync_dist_group: Optional[Any] = None,\r\n        add_dataloader_idx: bool = True,  # not necessary without a trainer that would add it automatically\r\n        rank_zero_only: Optional[bool] = None,\r\n```\r\n\r\nAlso, the user would need to update their training loop with all the logic we currently encode in the"
+      },
+      {
+        "author": "user-19",
+        "body": "@user-2 - one idea is that the LightningModule directly owns the results as a buffer. We could offer an abstract interface for this. Some requirements:\r\n- This buffer must have a `state_dict`/`load_state_dict` style interface for checkpoint saving/loading. This would resolve the gap today where metric attributes are in the lightning module while the result collection is in the loop. we should consolidate all of this in the lightning module, and then populate this in the overall trainer checkpoint for saving & resuming.\r\n\r\nFor example, ResultsCollection could be considered one implementation of this interface, and perhaps its the default one the trainer uses in case the user doesn't provide their own.\r\n\r\nThen calling self.log(...) in the LightningModule simply populates this buffer. Log carries forward much of the assumptions around the prior Results struct, which itself was introduced in Lightning 0.7 or 0.8, before torchmetrics even existed. Since then, I think torchmetrics encapsulat"
+      },
+      {
+        "author": "user-25",
+        "body": "I have another use-case for this: unit-testing an existing LightningModule. In our code, we have some `LightningModule`s that effectively define our task. Previously, in Litghtning 1.3 we were able to test this by calling\r\n```\r\ndef test_my_module(...):\r\n     module = MyModule(...)\r\n     loss = module.training_step(...)\r\n     assert_something_about_the_loss(loss)\r\n```\r\n\r\nIn Lightning 1.4, this fails because the module isn't attached to a trainer."
+      },
+      {
+        "author": "user-2",
+        "body": "I guess for that case in particular, we could convert\r\n\r\nhttps://github.com/PyTorchLightning/pytorch-lightning/blob/2b2537d9a064cd437978b111360b904438452145/pytorch_lightning/core/lightning.py#L394-L397\r\n\r\nto a warning + early return"
+      },
+      {
+        "author": "user-26",
+        "body": "Hello, replying to https://github.com/PyTorchLightning/pytorch-lightning/issues/9716#issuecomment-927872310\r\n\r\nThat was a just mwe. My use case is to write unit tests for different methods of the model (`forward`, but also the `*step` and others).\r\n With Lightning `1.4` it is not possible to test the model without instantiating also the `Trainer` (which arguably wouldn't be a unit test)\r\n \r\nAnother use case I am having problems with is benchmarking the `training_step` speed (without the overhead introduced by other components). Before `1.4` I was monitoring the speed of \r\n \r\n ```python\r\n     def module_step_approximation(_):\r\n        module.zero_grad()\r\n        loss = module.training_step(batch, 0)\r\n        loss.backward()\r\n```"
+      },
+      {
+        "author": "user-14",
+        "body": "Dear @user-26,\n\nOne could patch the log function from the LightningModule to prevent the logging computation to be accounted for speed benchmarking.\n\nBest,\nT.C"
+      }
+    ]
+  },
+  "15682": {
+    "number": 15682,
+    "title": "Updating lightning from v1.7.7 to 1.8.0 significantly affects results",
+    "state": "open",
+    "body": "### Bug description\r\n\r\nThe training curves and the final performance of models is significantly affected by the update from lightning v1.7.7 to v1.8.0 when training with ddp strategy. Here are the curves that I obtained with the code below.\r\n\r\n<img width=\"1115\" alt=\"Screenshot 2022-11-14 at 15 42 29\" src=\"https://user-images.githubusercontent.com/28411935/201688780-c2355113-dc33-4e5d-9f9e-9a09a7314456.png\">\r\n\r\nThe 4 curves with higher accuracy (lower loss) are obtained with 1.7.7, using a single node with 8 gpus for training.\r\nThe 4 curves with lower accuracy (higher loss) are obtained with 1.8.0, using a single node with 8 gpus for training.\r\n\r\nEach curve uses a different seed.\r\n\r\nI do not know whether a similar issue happens with single-gpu training or with other strategies (didn't test).\r\n\r\nThe code is essentially taken from the [pytorch-cifar10-94%-baseline tutorial](https://pytorch-lightning.readthedocs.io/en/latest/notebooks/lightning_examples/cifar10-baseline.html).\r\n(Note that with other code/experiments of mine, the training curves end up being even further apart than in this example.)\r\n\r\n### How to reproduce the bug\r\n\r\n```python\r\nimport os\r\n\r\nimport torch\r\nimport torch.nn as nn\r\nimport torch.nn.functional as F\r\nimport torchvision\r\nfrom pl_bolts.datamodules import CIFAR10DataModule\r\nfrom pl_bolts.transforms.dataset_normalizations import cifar10_normalization\r\nfrom pytorch_lightning import LightningModule, Trainer, seed_everything\r\nfrom pytorch_lightning.callbacks import LearningRateMonitor\r\nfrom pytorch_lightning.loggers import CSVLogger, TensorBoardLogger\r\nfrom torch.optim.lr_scheduler import OneCycleLR\r\nfrom torchmetrics.functional import accuracy\r\n\r\nseed_everything(7)\r\n\r\nPATH_DATASETS = os.environ.get(\"PATH_DATASETS\", \".\")\r\nBATCH_SIZE = 256 if torch.cuda.is_available() else 64\r\nNUM_WORKERS = int(os.cpu_count() / 2)\r\n\r\ntrain_transforms = torchvision.transforms.Compose(\r\n    [\r\n        torchvision.transforms.RandomCrop(32, padding=4),\r\n        torchvision.transforms.RandomHorizontalFlip(),\r\n        torchvision.transforms.ToTensor(),\r\n        cifar10_normalization(),\r\n    ]\r\n)\r\n\r\ntest_transforms = torchvision.transforms.Compose(\r\n    [\r\n        torchvision.transforms.ToTensor(),\r\n        cifar10_normalization(),\r\n    ]\r\n)\r\n\r\ncifar10_dm = CIFAR10DataModule(\r\n    data_dir=PATH_DATASETS,\r\n    batch_size=BATCH_SIZE,\r\n    num_workers=NUM_WORKERS,\r\n    train_transforms=train_transforms,\r\n    test_transforms=test_transforms,\r\n    val_transforms=test_transforms,\r\n)\r\n\r\n\r\ndef create_model():\r\n    model = torchvision.models.resnet18(pretrained=False, num_classes=10)\r\n    model.conv1 = nn.Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)\r\n    model.maxpool = nn.Identity()\r\n    return model\r\n\r\n\r\nclass LitResnet(LightningModule):\r\n    def __init__(self, lr=0.05):\r\n        super().__init__()\r\n\r\n        self.save_hyperparameters()\r\n        self.model = create_model()\r\n\r\n    def forward(self, x):\r\n        out = self.model(x)\r\n ",
+    "comments": [
+      {
+        "author": "user-27",
+        "body": "Just checking: has anyone started working on this from the lightning team? I think this should be top priority, since it can potentially affect significantly (and unfavourably) all training pipelines using distributed-data-parallel."
+      },
+      {
+        "author": "maintainer-2",
+        "body": "@user-2 @user-4 any ideas about what could go wrong? :rabbit: "
+      },
+      {
+        "author": "user-4",
+        "body": "I ran the provided code on 1.7.7 and master (commit a86584d6dd4d50388c7dcef4f3854b0e8355b346). I get similar loss curves. After setting `deterministic=True` and rerunning both versions, I get identical results (8 GPUs being used).\r\n\r\nNote that there are some multiprocessing issues with the provided code, since not all the code is guarded by `if name == main`. This does not affect results but should be fixed.\r\n\r\n@user-27 Could you give me the raw printout of your pip freeze command so that I can install the same environment? Thanks.\r\n\r\n\r\nFor reference, here is the complete modified code I ran to make results deterministic:\r\n\r\n```py\r\nimport os\r\n\r\nimport torch\r\nimport torch.nn as nn\r\nimport torch.nn.functional as F\r\nimport torchvision\r\nfrom pl_bolts.datamodules import CIFAR10DataModule\r\nfrom pl_bolts.transforms.dataset_normalizations import cifar10_normalization\r\nfrom pytorch_lightning import LightningModule, Trainer, seed_everything\r\nfrom pytorch_lightning.callbacks import LearningRateMo"
+      },
+      {
+        "author": "user-27",
+        "body": "Hi @user-4 @maintainer-2 ,\r\nthanks for your replies and tests!\r\nHere is my output of `pip freeze`:\r\n\r\nEnvironment with lightning 1.7.7:\r\n```\r\nabsl-py==1.3.0\r\naiohttp==3.8.3\r\naiosignal==1.3.1\r\nasync-timeout==4.0.2\r\nattrs==22.1.0\r\ncachetools==5.2.0\r\ncertifi==2022.9.24\r\ncharset-normalizer==2.1.1\r\nfrozenlist==1.3.3\r\nfsspec==2022.11.0\r\ngoogle-auth==2.15.0\r\ngoogle-auth-oauthlib==0.4.6\r\ngrpcio==1.51.1\r\nidna==3.4\r\nimportlib-metadata==5.1.0\r\nlightning-bolts==0.6.0.post1\r\nlightning-utilities==0.4.2\r\nMarkdown==3.4.1\r\nMarkupSafe==2.1.1\r\nmultidict==6.0.3\r\nnumpy==1.23.5\r\nnvidia-cublas-cu11==11.10.3.66\r\nnvidia-cuda-nvrtc-cu11==11.7.99\r\nnvidia-cuda-runtime-cu11==11.7.99\r\nnvidia-cudnn-cu11==8.5.0.96\r\noauthlib==3.2.2\r\npackaging==21.3\r\nPillow==9.3.0\r\nprotobuf==3.20.3\r\npyasn1==0.4.8\r\npyasn1-modules==0.2.8\r\npyDeprecate==0.3.2\r\npyparsing==3.0.9\r\npytorch-lightning==1.7.7\r\nPyYAML==6.0\r\nrequests==2.28.1\r\nrequests-oauthlib==1.3.1\r\nrsa==4.9\r\nsix==1.16.0\r\ntensorboard==2.11.0\r\ntensorboard-data-server==0.6.1\r\ntenso"
+      },
+      {
+        "author": "user-27",
+        "body": "> I ran the provided code on 1.7.7 and master (commit https://github.com/user-41/lightning/commit/a86584d6dd4d50388c7dcef4f3854b0e8355b346). I get similar loss curves. After setting deterministic=True and rerunning both versions, I get identical results (8 GPUs being used).\r\n\r\nBy \"identical results\", do you mean:\r\n(a) 1.7.7. (resp. master) with determinstic=False yields the same result than 1.7.7 (resp. master) with deterministic=True; or\r\n(b) 1.7.7 and master yield the same results when setting deterministic=True ?\r\n\r\nFor (a) I agree (with master=1.8.0): setting deterministic=True doesn't affect the training curves significantly.\r\nFor (b) I get different curves (obviously, since (a) is true for me and the 1.7.7 and 1.8.0 curves do not agree).\r\n\r\nUPDATE: But not sure what this tells us, since I don't think that the seed is the problem. (See comment below.)\r\n\r\n[BTW: I used your modified code for those new tests.]"
+      },
+      {
+        "author": "user-27",
+        "body": "Another remark: it's not about the seed. You can change the seed at every run. The curves in 1.7.7 and 1.8.0 will still cluster into 2 separate sets of curves, similarly to the plots shown above.\r\n(Actually, I think that I did use different seeds for every curve in those plots.)"
+      },
+      {
+        "author": "user-4",
+        "body": "@user-27 master means the development branch (the latest commit on the repo). master > 1.8\r\n\r\nSetting the seed is sometimes not enough, especially with cnns where a lot of tuning happens in the cudnn backend, and one has to set the deterministic flags in torch to enforce deterministic algorithms in the backend. That's why I have set `Trainer(deterministic=True)` in addition to the seed. I did this because I couldn't reproduce your observations, but saw non-deterministic behavior. \r\n\r\nI think neither a) nor b) describes it. Let me make it clearer:\r\n\r\nI did \r\n```\r\ngit checkout master\r\npython repro.py\r\ngit checkout tags/1.7.7\r\npython repro.py\r\ntensorboard --logdir lightning_logs\r\n```\r\nwith your posted code and compared the two curves. They are similar, so I investigated whether the results are deterministic. They are not, so I turned `deterministic=True` (the code I posted) and reran the exact same commands. The resulting two curves are identical. \r\n\r\nI can run another experiment against "
+      },
+      {
+        "author": "user-27",
+        "body": "@user-4 I see. Thanks for your quick answer. So maybe it's already resolved in the latest master commit.\r\nI'll try it too and let you know what I get. "
+      },
+      {
+        "author": "user-27",
+        "body": "@user-4 Just finished testing with the lightning git repo installs and your commands from above (master@05dbf48ad). The new curves essentially overlap with the ones I got using pip lightning 1.7.7 / 1.8.0 installs. See plots below.\r\n\r\n<img width=\"1132\" alt=\"Screenshot 2022-12-06 at 22 17 44\" src=\"https://user-images.githubusercontent.com/28411935/206033758-dc3e1caf-f791-4331-8f30-d7f5dcebe955.png\">\r\n\r\n\r\nThere are 2 clear \"beams\" of curves, one for lightning 1.7.7 and one for lightning >= 1.8.0. In both cases, the beams contain curves generated with pip installs (1.7.7 and 1.8.0 respectively) and with git checkout installs (tags/1.7.7 and master respectively), with and without the deterministic=True option."
+      }
+    ]
+  },
+  "11417": {
+    "number": 11417,
+    "title": "Predict on TPU using all cores",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nWhen writing predictions with a `torch.save` together with a `BasePredictionWriter` (see [this example](https://pytorch-lightning.readthedocs.io/en/stable/extensions/generated/pytorch_lightning.callbacks.BasePredictionWriter.html)) on Colab using a TPU runtime employing all 8 cores, only an eighth of the predictions are actually saved on disk.\r\n\r\n### To Reproduce\r\n\r\nThe following code is based on the [TPU tutorial](https://pytorch-lightning.readthedocs.io/en/latest/notebooks/lightning_examples/mnist-tpu-training.html) with a few modifications:\r\n\r\nPackage installation:\r\n```\r\n!pip install torch==1.9.1 torchtext==0.10.1 torchvision==0.10.1 pytorch-lightning==1.5.8 cloud-tpu-client==0.10 https://storage.googleapis.com/tpu-pytorch/wheels/torch_xla-1.9-cp37-cp37m-linux_x86_64.whl\r\n```\r\n\r\nCode:\r\n```\r\nimport os\r\nfrom typing import Any, List, Optional\r\n\r\nimport torch\r\nimport torch.nn.functional as F\r\nfrom pytorch_lightning import LightningDataModule, LightningModule, Trainer\r\nfrom pytorch_lightning.callbacks import BasePredictionWriter\r\nfrom torch import nn\r\nfrom torch.utils.data import DataLoader, random_split\r\nfrom torchmetrics.functional import accuracy\r\nfrom torchvision import transforms\r\nfrom torchvision.datasets import MNIST\r\n\r\nBATCH_SIZE = 1024\r\n\r\n\r\nclass MNISTDataModule(LightningDataModule):\r\n    def __init__(self, data_dir: str = \"./\"):\r\n        super().__init__()\r\n        self.data_dir = data_dir\r\n        self.transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])\r\n\r\n        # self.dims is returned when you call dm.size()\r\n        # Setting default dims here because we know them.\r\n        # Could optionally be assigned dynamically in dm.setup()\r\n        self.dims = (1, 28, 28)\r\n        self.num_classes = 10\r\n\r\n    def prepare_data(self):\r\n        # download\r\n        MNIST(self.data_dir, train=True, download=True)\r\n        MNIST(self.data_dir, train=False, download=True)\r\n\r\n    def setup(self, stage=None):\r\n        mnist_full = MNIST(self.data_dir, train=True, transform=self.transform)\r\n        self.mnist_train, self.mnist_val = random_split(mnist_full, [55000, 5000])\r\n\r\n        self.mnist_test = MNIST(self.data_dir, train=False, transform=self.transform)\r\n\r\n    def train_dataloader(self):\r\n        return DataLoader(self.mnist_train, batch_size=BATCH_SIZE)\r\n\r\n    def val_dataloader(self):\r\n        return DataLoader(self.mnist_val, batch_size=BATCH_SIZE)\r\n\r\n    def test_dataloader(self):\r\n        return DataLoader(self.mnist_test, batch_size=BATCH_SIZE)\r\n\r\n    def predict_dataloader(self):\r\n        return DataLoader(self.mnist_test, batch_size=BATCH_SIZE)\r\n\r\n\r\nclass LitModel(LightningModule):\r\n    def __init__(self, channels, width, height, num_classes, hidden_size=64, learning_rate=2e-4):\r\n        super().__init__()\r\n\r\n        self.save_hyperparameters()\r\n\r\n        self.model = nn.Sequential(\r\n            nn.Flatten(),\r\n            nn.Linear(channels * width * height, hidden_size),\r\n       ",
+    "comments": [
+      {
+        "author": "user-19",
+        "body": "in your callback, each TPU core is overwriting the same files, `f\"self.output_dir/{dataloader_idx}_{batch_idx}.pt\" and `predictions.pt` . So when you're loading them afterwards, you're seeing only a portion of the total (whatever was saved last). Either open the files in append mode, or write to a different file per core and group them together afterwards.\r\n\r\nIf you open the file in append mode, be sure to close it afterwards at the end of prediction.\r\nif you're partitioning the files, you can use `trainer.global_rank` to distinguish each process's outputs"
+      },
+      {
+        "author": "user-17",
+        "body": "Thanks @user-19 for your very helpful guidance!\r\n\r\nYour suggestion to write it in 8 separate files works like a charm. For anyone that is coming across this issue in the future, here's how I modified the code:\r\n\r\n```\r\nclass MultiFileWriter(BasePredictionWriter):\r\n    def __init__(self, output_dir: str, write_interval: str):\r\n        super().__init__(write_interval)\r\n        self.output_dir = output_dir\r\n\r\n    def write_on_batch_end(\r\n            self, trainer, pl_module: LightningModule, prediction: Any, batch_indices: List[int], batch: Any,\r\n            batch_idx: int, dataloader_idx: int):\r\n        torch.save(prediction, os.path.join(self.output_dir, f\"predictions-dataloader_{dataloader_idx}-batch_{batch_idx}-globalrank_{trainer.global_rank}.pt\"))\r\n\r\n    def write_on_epoch_end(\r\n            self, trainer, pl_module: LightningModule, predictions: List[Any], batch_indices: List[Any]):\r\n        torch.save(predictions, os.path.join(self.output_dir, f\"predictions-globalrank_{trainer.globa"
+      },
+      {
+        "author": "user-19",
+        "body": "> It seems that all data is written as the file has the expected size, however, when reading the file using torch.load() only an eighth of the predictions are actually in the loaded object. Looks like the written data is somehow colliding. Maybe you have another clever tip to make this work?\r\n\r\nCould you try writing directly to the file buffer? for instance, does this work?\r\n```py\r\n    def write_on_batch_end(\r\n            self, trainer, pl_module: LightningModule, prediction: Any, batch_indices: List[int], batch: Any,\r\n            batch_idx: int, dataloader_idx: int):\r\n        self.file_buffer.write(<some value>)\r\n\r\n    def write_on_epoch_end(\r\n            self, trainer, pl_module: LightningModule, predictions: List[Any], batch_indices: List[Any]):\r\n        self.file_buffer.write(<some dummy value>)\r\n```"
+      },
+      {
+        "author": "user-17",
+        "body": "I get the same behavior. I write with `self.file_buffer.write(pickle.dumps(predictions)` and read it back with `pickle.load()` as `torch.load()` fails with `RuntimeError: Invalid magic number; corrupt file?` when loading the written buffer."
+      },
+      {
+        "author": "user-28",
+        "body": "Hi, this discussion was very helpful for me!\r\n\r\nBut I still need to figure out how do I save image file names along with their predictions. Also I am working with a very large dataset compared to MNST so may not be able to fit all the predictions in the TPU core memory (viz 8gb) at once.\r\n\r\nI would really appreciate any possible help! Thanks"
+      }
+    ]
+  },
+  "9814": {
+    "number": 9814,
+    "title": "Progress bar doesn't show up on Kaggle TPU with `num_workers` greater than `0`.",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nAs the issue title says: the progress bar doesn't show up on Kaggle TPU with `num_workers` greater than `0`.\r\n\r\nDisclaimer: I haven't tested this program on Google Colab TPU.\r\n\r\n### To Reproduce\r\n\r\nSet `num_workers` to any number greater than zero up to max CPU cores. On Kaggle, the following code sets it to `4`.\r\n\r\n```python\r\ntrain_dataset_loader = DataLoader(train_dataset, \r\n                                  batch_size=BATCH_SIZE, \r\n                                  shuffle=True, \r\n                                  num_workers=multiprocessing.cpu_count(),\r\n                                  drop_last=True)\r\n```\r\n\r\nThe training is successful but instead of showing progress bar the following output is shown:\r\n\r\n```\r\n2021-10-04 04:35:45.588313: W tensorflow/stream_executor/platform/default/dso_loader.cc:60] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /opt/conda/lib\r\n/opt/conda/lib/python3.7/site-packages/pytorch_lightning/trainer/callback_hook.py:103: LightningDeprecationWarning: The signature of `Callback.on_train_epoch_end` has changed in v1.3. `outputs` parameter has been removed. Support for the old signature will be removed in v1.5\r\n  \"The signature of `Callback.on_train_epoch_end` has changed in v1.3.\"\r\n/opt/conda/lib/python3.7/site-packages/pytorch_lightning/plugins/training_type/tpu_spawn.py:192: UserWarning: cleaning up tpu spawn environment...\r\n  rank_zero_warn(\"cleaning up tpu spawn environment...\")\r\n```\r\n\r\n### Expected behavior\r\n\r\nThe progrès bar must show up.\r\n\r\n### Environment\r\n\r\n- PyTorch Lightning Version: 1.4.9\r\n- PyTorch Version: 1.8.0a0+6e9f2c8\r\n- Python version: 3.7.10\r\n- OS (e.g., Linux): Linux\r\n- CUDA/cuDNN version: N/A\r\n- GPU models and configuration: N/A\r\n- How you installed PyTorch (`conda`, `pip`, source): pip\r\n- If compiling from source, the output of `torch.__config__.show()`: N/A\r\n- Any other relevant information: TPU on Kaggle\r\n\r\n### Additional context\r\n\r\nN/A\r\n\n\ncc @user-12 @user-6 @user-14",
+    "comments": [
+      {
+        "author": "user-30",
+        "body": "@user-14\r\n\r\nCan you please help with this issue please thank you.\r\n\r\nRegards."
+      },
+      {
+        "author": "user-29",
+        "body": "> hi, I have checked but I couldn't find anything, Sorry If I find any resource I will add it to this issue\r\n> \r\n> Regards, Ranuga\r\n\r\nBtw please look no further if you are trying to. I have found some helpful potential implementations (although not perfect i.e. doesn't give same results in terms of signs but I'll search more). "
+      },
+      {
+        "author": "user-30",
+        "body": "ok, I am sorry I couldn't solve the problem.\r\n\r\nRegards.\r\n\r\nI will try and find a resource for the error.\r\n\r\nRegards"
+      },
+      {
+        "author": "user-30",
+        "body": "hi can you check the links bellow,\r\n\r\nhttps://www.youtube.com/watch?v=eBZciVDr21o\r\nhttps://www.kaggle.com/pytorchlightning/pytorch-on-tpu-with-pytorch-lightning\r\nhttps://pytorch-lightning.readthedocs.io/en/latest/notebooks/lightning_examples/mnist-tpu-training.html\r\nhttps://pytorch-lightning.readthedocs.io/en/latest/advanced/tpu.html\r\nhttps://devblog.pytorchlightning.ai/announcing-lightning-1-4-8cd20482aee9\r\nhttps://github.com/PyTorchLightning/pytorch-lightning/issues/3649\r\n\r\nRegards"
+      },
+      {
+        "author": "user-29",
+        "body": "Hi, I've gone through all those references but doesn't look they relate to this issue. 🤔 This issue might have to do something with library itself."
+      },
+      {
+        "author": "user-30",
+        "body": "@user-14 Can you please check this issue?\r\n\r\nThanks.\r\n\r\nWith best regards,\r\nRanuga"
+      },
+      {
+        "author": "user-30",
+        "body": "> Hi, I've gone through all those references but doesn't look they relate to this issue. thinking This issue might have to do something with library itself.\r\n\r\nI am new to PyTorch lightning so I am not sure so @user-14 can help.\r\n\r\nWith best regards,\r\nRanuga"
+      },
+      {
+        "author": "user-12",
+        "body": "@user-29 @user-42 I will take a stab at this with GCP TPUs."
+      },
+      {
+        "author": "user-30",
+        "body": "ok, thank you @user-12 \r\n\r\nWith best regards,\r\nRanuga"
+      },
+      {
+        "author": "user-29",
+        "body": "This is issue doesn't really affect my work but just curious if there's been any progress on resolving it."
+      }
+    ]
+  },
+  "16431": {
+    "number": 16431,
+    "title": "`self.log` raised error when number of dataloader is not consistent",
+    "state": "open",
+    "body": "### Bug description\r\n\r\nHi all,\r\n\r\nI posted a discussion in Lightning.ai forum [here](https://lightning.ai/forums/t/self-log-raised-error-when-number-of-dataloader-is-not-consistent/2167) and @user-4 suggested me reporting an issue. \r\n\r\nThere might be a bug in the way `self.log` recording `dataloader_idx`. If we have two validation dataloaders, says A and B. We use A every epoch, but only use B every 2 epoch. However, while using `self.log`, in `validation_step()`, an error would show up:\r\n\r\n```\r\nYou called self.log({name}, ...) twice in {fx} with different arguments. This is not allowed\r\n```\r\n(see [here](https://github.com/user-41/lightning/blob/15ef52bc732d1f907de4de58683f131652c0d68c/src/pytorch_lightning/trainer/connectors/logger_connector/result.py#L489))\r\n\r\nThe way I implement it was by switching the available dataloaders in `val_dataloader()` and reload dataloader every epoch.\r\n```python\r\ndef val_dataloader():\r\n    if self.should_run_B():\r\n        return [loader_A, loader_B]\r\n    else:\r\n        return [loader_A]\r\n```\r\n\r\nI notice that when we are at the epoch that only use one validation dataloader, dataloader_idx is always None. On the other hand, when we have two validation dataloaders, dataloader_idx would be sequentially presented as 0 or 1 in validation_step. If I understand correctly, this is the main reason causing the error.\r\n\r\nAnother interesting finding is that if we set `add_dataloader_idx=True` for all `self.log`, the program would run without error. But the tensorboard logging would be wrong that shows and `c_0` and`c_0/dataloader_idx_0` together (See snapshot below). These two were meant to remain in the same figure but somehow it got split into two figures. Probably it is because of the alternating dataloader design.\r\n<img width=\"865\" alt=\"image\" src=\"https://user-images.githubusercontent.com/28510501/213349188-f087d23d-c431-4ac6-b0cf-323ae996be15.png\">\r\n\r\n\r\n### How to reproduce the bug\r\n\r\n```python\r\nimport torch\r\nfrom torch.utils.data import DataLoader\r\nfrom pytorch_lightning.demos.boring_classes import BoringModel, RandomDataset\r\nfrom pytorch_lightning import Trainer\r\n\r\nclass TestModel(BoringModel):\r\n    def training_step(self, batch, batch_idx):\r\n        out = super().training_step(batch, batch_idx)\r\n        self.log(\"a\", out[\"loss\"])\r\n        self.log(\"b\", out[\"loss\"], on_step=True, on_epoch=True)\r\n        return out\r\n\r\n    def validation_step(self, batch, batch_idx, dataloader_idx=0):\r\n        out = super().validation_step(batch, batch_idx)\r\n        if dataloader_idx == 0:\r\n            self.log(\"c_0\", out[\"x\"], add_dataloader_idx=False)\r\n            self.log(\"d_0\", out[\"x\"], on_step=True, on_epoch=True, add_dataloader_idx=False)\r\n        elif dataloader_idx == 1:\r\n            self.log(\"c_1\", out[\"x\"], add_dataloader_idx=False)\r\n            self.log(\"d_1\", out[\"x\"], on_step=True, on_epoch=True, add_dataloader_idx=False)\r\n        return out\r\n\r\n    def validation_epoch_end(self, outputs):\r\n        self.log(\"g\", torch.tensor(",
+    "comments": []
+  },
+  "14237": {
+    "number": 14237,
+    "title": "The progress bar can't roll while running validation and test",
+    "state": "closed",
+    "body": "## 🐛 Bug\r\n\r\nThe progress bar can roll while training, but for validation and testing, it just stops and runs in the background. And the expected cost time of validation and test can't show up. \r\n\r\n![image](https://user-images.githubusercontent.com/49632327/185029562-608faa20-1793-439f-9b71-0ff1d6fc09e0.png)\r\n\r\n\r\n### To Reproduce\r\nJust a normal procedure.\r\n\r\n\r\n### Expected behavior\r\n\r\nThe progress bar can roll forward when running validation and testing. \r\n\r\n### Environment\r\n\r\n* CUDA:\r\n        - GPU:\r\n                - NVIDIA GeForce RTX 3070 Laptop GPU\r\n        - available:         True\r\n        - version:           11.1\r\n* Lightning:\r\n        - pytorch-lightning: 1.5.0\r\n        - torch:             1.8.0\r\n        - torchaudio:        0.8.0\r\n        - torchmetrics:      0.9.3\r\n        - torchvision:       0.9.0\r\n* Packages:\r\n        - absl-py:           1.2.0\r\n        - aiohttp:           3.8.1\r\n        - aiosignal:         1.2.0\r\n        - async-timeout:     4.0.2\r\n        - asynctest:         0.13.0\r\n        - attrs:             22.1.0\r\n        - cachetools:        5.2.0\r\n        - certifi:           2022.6.15\r\n        - charset-normalizer: 2.1.0\r\n        - colorama:          0.4.5\r\n        - einops:            0.4.1\r\n        - frozenlist:        1.3.1\r\n        - fsspec:            2022.7.1\r\n        - future:            0.18.2\r\n        - google-auth:       2.10.0\r\n        - google-auth-oauthlib: 0.4.6\r\n        - grpcio:            1.48.0\r\n        - idna:              3.3\r\n        - importlib-metadata: 4.12.0\r\n        - markdown:          3.4.1\r\n        - markupsafe:        2.1.1\r\n        - multidict:         6.0.2\r\n        - numpy:             1.21.6\r\n        - oauthlib:          3.2.0\r\n        - packaging:         21.3\r\n        - pillow:            9.2.0\r\n        - pip:               22.1.2\r\n        - protobuf:          3.19.4\r\n        - pyasn1:            0.4.8\r\n        - pyasn1-modules:    0.2.8\r\n        - pydeprecate:       0.3.1\r\n        - pyparsing:         3.0.9\r\n        - pytorch-lightning: 1.5.0\r\n        - pyyaml:            6.0\r\n        - requests:          2.28.1\r\n        - requests-oauthlib: 1.3.1\r\n        - rsa:               4.9\r\n        - setuptools:        61.2.0\r\n        - six:               1.16.0\r\n        - tensorboard:       2.10.0\r\n        - tensorboard-data-server: 0.6.1\r\n        - tensorboard-plugin-wit: 1.8.1\r\n        - torch:             1.8.0\r\n        - torchaudio:        0.8.0\r\n        - torchmetrics:      0.9.3\r\n        - torchvision:       0.9.0\r\n        - tqdm:              4.64.0\r\n        - typing-extensions: 4.3.0\r\n        - urllib3:           1.26.11\r\n        - werkzeug:          2.2.2\r\n        - wheel:             0.37.1\r\n        - wincertstore:      0.2\r\n        - yarl:              1.8.1\r\n        - zipp:              3.8.1\r\n* System:\r\n        - OS:                Windows\r\n        - architecture:\r\n                - 64bit\r\n                - WindowsPE\r\n        - processor:         AMD64 Family 25 Model 80 Steppi",
+    "comments": [
+      {
+        "author": "user-32",
+        "body": "And the validation starts from the middle of the training epoch. Shouldn't it start at the end of the training epoch? "
+      },
+      {
+        "author": "user-6",
+        "body": "did you try it out with the latest version. Several fixes were made to it after v1.5 release"
+      },
+      {
+        "author": "user-32",
+        "body": "@user-6 \r\nI also tried v1.6 release, but it still didn't work in Pycharm console."
+      },
+      {
+        "author": "user-4",
+        "body": "The PyCharm console doesn't work well with tqdm. This has been a long issue we can't do much about. You may want to try the rich progress bar as an alternative. \r\n\r\n```py\r\nTrainer(callbacks=[RichProgressBar()])\r\n```\r\nOr move out to a regular terminal. \r\n"
+      }
+    ]
+  },
+  "14837": {
+    "number": 14837,
+    "title": "When test, the printed log does not show the full text of the metrics, when named in Chinese",
+    "state": "open",
+    "body": "### First check\n\n- [X] I'm sure this is a bug.\n- [X] I've added a descriptive title to this bug.\n- [X] I've provided clear instructions on how to reproduce the bug.\n- [X] I've added a code sample.\n- [x] I've provided any other important info that is required.\n\n### Bug description\n\nHi,\r\n\r\nI am dealing with a very messy segmentation problem, which requires me to log the per-category accuracy and iou at test time. I used self.log(category, metrics) to do this job at \"on_test_epoch_end\". However, the log does not show the full metrics text, and shorten rest of it to \"...\" instead, when the metric name is in Chinese. I know that in the file pytorch_lightning.loops.dataloader.evaluation_loop, by line 340, it setting the max_length based on the longest string. However, my longest Chinese metric is 22 words long, and I checked that \"max_length\" is 25, but the printed metrics still hides part of the name.\r\n\r\n![Screenshot from 2022-09-22 14-43-52](https://user-images.githubusercontent.com/15895948/191676824-ad216c9b-3f22-479b-9798-6c547a60e49c.png)\r\n\r\n\r\n \n\n### How to reproduce the bug\n\n```python\ndef on_test_epoch_end(self):\r\n    self.log(\"车道线-虚减速让行线_清晰_树荫遮挡_acc\", 0.0121)\n```\n\n\n### Error messages and logs\n\n```\r\n\r\n# Error messages and logs here please\r\n\r\n```\r\n\n\n### Important info\n\n```\r\n\r\n#- Lightning Component (e.g. Trainer, LightningModule, LightningApp, LightningWork, LightningFlow): LightningModule\r\n#- PyTorch Lightning Version (e.g., 1.5.0): 1.7.6\r\n#- PyTorch Version (e.g., 1.10): 1.12.1\r\n#- Python version (e.g., 3.9): 3.9\r\n#- OS (e.g., Linux): Ubuntu 20.04 in English\r\n#- CUDA/cuDNN version: 11.6\r\n#- GPU models and configuration: 3060Ti\r\n#- How you installed Lightning(`conda`, `pip`, source): pip\r\n#- Running environment of LightningApp (e.g. local, cloud): local\r\n\r\n```\r\n\n\n### More info\n\n_No response_",
+    "comments": [
+      {
+        "author": "user-33",
+        "body": "I have a solution, more like a trick, that is transfer character to gbk encoding, and edit pytorch_lightning.loops.dataloader.evaluation_loop, at line 340:\r\n```\r\nmatrics_encoded = [metric.encode(\"gbk\") for metric in metrics_strs]\r\nmax_length = int(min(max(len(max(matrics_encoded, key=len)), len(max(headers, key=len)), 25), term_size / 2))\r\n```\r\n\r\nMore complex and thorough solution is the urwid library, old_str_util.py source code. They refer to the EastAsianWidth document to find the correct width, but that is a little bit complex."
+      },
+      {
+        "author": "user-4",
+        "body": "@user-43 Thanks for giving this a try. I'm not familiar with the best practices around handling these differences in languages, but it looks like your solution improves on the existing implementation. The columns are unfortunately still broken, but at least it shows the full name of the metric:\r\n\r\n```\r\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\r\n┃              Test metric              ┃             DataLoader 0             ┃\r\n┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩\r\n│               test_loss               │          -2.555753707885742          │\r\n│ 车道线-虚减速让行线_清晰_树荫遮挡_acc │         0.01209999993443489          │\r\n└───────────────────────────────────────┴──────────────────────────────────────┘\r\n\r\n```\r\nThe problem might be that rich is not able to center the text correctly.\r\n\r\nWould you like to send a PR with your suggestion?"
+      },
+      {
+        "author": "user-33",
+        "body": "\r\n<img width=\"949\" alt=\"Screenshot 2022-09-24 at 19 58 42\" src=\"https://user-images.githubusercontent.com/15895948/192096862-35973cb2-9b0f-4083-ae15-0e3b2ae9f4ee.png\">\r\nHi @user-4 , yes I will submit a PR. In my case, the table looks fine. I run the code in Linux terminal."
+      }
+    ]
+  }
+}

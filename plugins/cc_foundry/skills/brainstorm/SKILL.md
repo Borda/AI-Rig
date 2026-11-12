@@ -46,8 +46,9 @@ Turn unformed idea into branching exploration tree, then distill into spec. Idea
 ## Step 0: Parse flags
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags tight,deep --value-flags type --keep-state brainstorm-state "$ARGUMENTS" >/dev/null  # timeout: 5000 — no eval; brainstorm-state-<flag>-${CSID} sentinels + keep-items, clears stale contract
+python "$PLUGIN_ROOT/bin/parse-skill-flags.py" --flags tight,deep --value-flags type --keep-state brainstorm-state -- "$ARGUMENTS" >/dev/null  # timeout: 5000 — no eval; brainstorm-state-<flag>-${CSID} sentinels + keep-items, clears stale contract
 IFS= read -r ARGUMENTS < "${TMPDIR:-/tmp}/brainstorm-state-clean-args-${CSID}" 2>/dev/null || ARGUMENTS=""
 REPORT_DIR=".reports/brainstorm/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
 echo "$REPORT_DIR" > "${TMPDIR:-/tmp}/brainstorm-state-report-dir-${CSID}"
@@ -98,6 +99,7 @@ echo "" > "${TMPDIR:-/tmp}/brainstorm-state-sidecar-${CSID}"
 On **(a)**:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # timeout: 3000
 IFS= read -r REPORT_DIR < "${TMPDIR:-/tmp}/brainstorm-state-report-dir-${CSID}" 2>/dev/null || REPORT_DIR=""
@@ -105,7 +107,7 @@ IFS= read -r REPORT_DIR < "${TMPDIR:-/tmp}/brainstorm-state-report-dir-${CSID}" 
 VIEWER_DIR="$(pwd -P)/.temp/brainstorm/${REPORT_DIR##*/}/viewer"
 mkdir -p "${VIEWER_DIR%/*}" || exit 1
 mkdir "$VIEWER_DIR" || exit 1
-cp "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/skills/brainstorm/scripts/tree-viewer.html" "$VIEWER_DIR/tree-viewer.html" || exit 1
+cp "$PLUGIN_ROOT/skills/brainstorm/scripts/tree-viewer.html" "$VIEWER_DIR/tree-viewer.html" || exit 1
 SIDECAR="$VIEWER_DIR/tree.json"
 echo "$SIDECAR" > "${TMPDIR:-/tmp}/brainstorm-state-sidecar-${CSID}"
 echo "$SIDECAR"
@@ -335,6 +337,7 @@ Assemble tree state and write to `.plans/blueprint/YYYY-MM-DD-<slug>.md` using W
 Record the path just written so later steps identify this session's tree by identity, not by recency. Substitute the real path into `TREE_FILE` and this run's Step 3 slug into `RUN_SLUG` before running — the guards abort if a required placeholder survives. If the report-directory sentinel is missing or empty, recover it only when exactly one `.reports/brainstorm/<ts>/` directory holds this run's `<slug>-branches.md`; rewrite the sentinel with that directory and continue. Otherwise block with the recovery explanation below:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 TREE_FILE="<tree-file-path>"
 case "$TREE_FILE" in *'<'*'>'*|"") printf "! BLOCKED — tree file path not substituted\n"; exit 1;; esac
@@ -358,7 +361,7 @@ if [ -z "$_REPORT_DIR" ]; then
 fi
 _PRESERVE="tree-file=$_TREE_FILE, report-dir=$_REPORT_DIR"
 [ -n "$_SIDECAR" ] && _PRESERVE="$_PRESERVE, sidecar=$_SIDECAR"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" --keep-sentinel brainstorm-state-keep-items "foundry:brainstorm" "tree-review (after tree saved to disk)" "$_REPORT_DIR" "$_PRESERVE" "challenger tree review (Step 5) → approval gate (Step 6)"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" --keep-sentinel brainstorm-state-keep-items "foundry:brainstorm" "tree-review (after tree saved to disk)" "$_REPORT_DIR" "$_PRESERVE" "challenger tree review (Step 5) → approval gate (Step 6)"  # timeout: 5000
 TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 mkdir -p ".temp/brainstorm/$TS"
 OUTPUT_PATH=".temp/brainstorm/$TS/tree-review.md"
@@ -386,7 +389,7 @@ Write your full findings to <output-path> using the Write tool, one numbered fin
 Return ONLY a compact JSON envelope: {"status":"done","findings":N,"severity":{"critical":N,"high":N,"medium":N,"low":N},"file":"<path>","confidence":0.N,"summary":"<one-line>"}
 ```
 
-**Health monitoring** (`_shared/agent-spawn-protocol.md` §Deadlines): in the spawn response Write `.temp/brainstorm/<TS>/agent-watch-review.tsv` = `challenger\t<OUTPUT_PATH>\t900`, end the turn — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On its notification run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir ".temp/brainstorm/<TS>"` once (substitute `<TS>`). Row not `done` → ⏱ `timed_out` now: surface any partial output already in `$OUTPUT_PATH` with ⏱ and continue to Step 6 with incomplete review noted. A ⏱ never skips the Step 6 gate.
+**Health monitoring** (`_shared/agent-spawn-protocol.md` §Deadlines): in the spawn response Write `.temp/brainstorm/<TS>/agent-watch-review.tsv` = `challenger\t<OUTPUT_PATH>\t900`, end the turn — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On its notification run `python "${CLAUDE_PLUGIN_ROOT}/bin/agent_watch.py" --state-dir ".temp/brainstorm/<TS>"` once (substitute `<TS>`). Row not `done` → ⏱ `timed_out` now: surface any partial output already in `$OUTPUT_PATH` with ⏱ and continue to Step 6 with incomplete review noted. A ⏱ never skips the Step 6 gate.
 
 If `findings > 0`: add missing details, improve closure reasons, or add open threads as needed — loop back to Step 5 (max 2 revision cycles per Step 6 approval cycle; counter resets each time Step 3 re-entry is triggered from Step 6 option b). After 2 cycles with remaining findings, surface unresolved issues to user and proceed to Step 6 anyway.
 
@@ -405,13 +408,13 @@ Write the compact tree summary (same format as Step 3) to `.reports/brainstorm/<
 
 On (b): return to Step 3 with existing tree state — add requested branches or close specified ones, then loop back to Step 5. Use a re-entry cap scaled to the active mode's base operation budget (~30%, rounded to nearest whole operation, minimum 1): **2** additional operations in `--tight` (5-op base), **3** in default (10-op base), **5** in `--deep` (15-op base) — not a fresh full budget reset; cap resets only at start of Step 3, not on re-entry. On (c): loop back to Step 2. (Max 3 approval cycles as guideline — track in context; if 3 cycles pass without convergence, surface unresolved concerns to user.)
 
-On approval, suggest: `/brainstorm breakdown .plans/blueprint/<file>` to distill tree into spec.
+On approval, suggest: `/foundry:brainstorm breakdown .plans/blueprint/<file>` to distill tree into spec.
 
 ```bash
 rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
 ```
 
-> Tree file is durable record of exploration. Share with teammates or use as context for future `/brainstorm` sessions on related ideas.
+> Tree file is durable record of exploration. Share with teammates or use as context for future `/foundry:brainstorm` sessions on related ideas.
 
 When finished, stop the viewer server if you started it; its directory under `.temp/` expires with normal artifact cleanup.
 
@@ -422,7 +425,8 @@ When finished, stop the viewer server if you started it; its directory under `.t
 Resolve the modes dir, then read and execute `breakdown.md` — it carries distillation mode (Steps D1–D4) and action plan mode (Steps B1–B3):
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" brainstorm modes breakdown.md  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/load_mode.py" brainstorm modes breakdown.md  # timeout: 5000
 ```
 
 > loads: modes/breakdown.md Execute the mode loaded above matching the file's `**Status**:` field (`tree` → distillation; `draft` → action plan).
@@ -440,7 +444,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" brainstorm m
 - **Exploration notes in spec**: Section 6 derived from tree's Pruning log — intentional context for future readers; do not remove in the Step 5 tree review
 - **Interaction budget**: idea mode — worst case: 10 (`--tight`) / 20 (default) / 30 (`--deep`) (pre-seeding+branch selection merged to 1 call, saves ~1; Step-2 hybrid pacing batches the first 3 orientation questions into 1 call, saving 2 more); breakdown distillation — max 5 calls (D2, question 1 alone and dependent questions sequenced) + 1 call (D3 full-spec approval), excluding revisions; typical sessions use ~6–12 total AskUserQuestion calls across both. <!-- Branch-path audit: confirm no single branch through the workflow asks more than 4 AskUserQuestion calls in one response — communication.md 4-question-per-call cap is per invocation, not per branch; multiple sequential AskUserQuestion calls in one branch path are permitted but should be reviewed for batching opportunities. -->
 - **Flag modes**: `--tight` / `--deep` scale question and operation caps (5/15 vs default 10); `--type` enables type-aware scan and question framing in Steps 1–2; flags apply to idea mode only, ignored in breakdown
-- **Follow-up**: after spec approval in distillation mode → if targeting `.claude/` config: `/foundry:manage update <name> <spec-file>`; for application or mixed changes: `/brainstorm breakdown .plans/blueprint/<spec-file>` for action plan
+- **Follow-up**: after spec approval in distillation mode → if targeting `.claude/` config: `/foundry:manage update <name> <spec-file>`; for application or mixed changes: `/foundry:brainstorm breakdown .plans/blueprint/<spec-file>` for action plan
 - **Rejected vs resolved distinction**: ⛔ marks branches dismissed as wrong direction; ✅ marks branch explicitly chosen as direction. Resolved branches don't count toward minimum-rejected-branches gate — they're the goal. Pruning log captures rejected only; resolved branches go in separate "Resolved branches" section.
 - **Idea stacking vs pre-seeding exchange**: both are free-form tennis rallies but serve different purposes — pre-seeding runs once before branches exist to seed directions; idea stacking can be invoked at any point during tree ops when exploration feels stuck or a half-formed thought needs batting around before committing to a branch. Neither consumes an operation slot.
 - **Confidence block**: idea mode is a conversational session producing a file (not an inline report) — Confidence block requirement from CLAUDE.md output standards applies to analysis responses only; omitted by design for Steps 1–6. foundry:challenger spawn in Step 5 returns its own Confidence block, surfaced in review but not re-emitted to user.

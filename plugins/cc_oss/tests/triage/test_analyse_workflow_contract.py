@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _oss_shell_plugin import render_shell
 
 _PLUGIN = Path(__file__).resolve().parents[2]
 _SKILL = _PLUGIN / "skills/analyse/SKILL.md"
@@ -55,7 +56,12 @@ def _sentinels(tmp_path: Path, values: dict[str, str]) -> None:
 def _run(script: str, env: dict[str, str], prefix: str = "") -> subprocess.CompletedProcess[str]:
     """Run a shipped fence with only the external GitHub boundary replaced."""
     return subprocess.run(
-        [_BASH, "-c", prefix + "\n" + script], cwd=env["TMPDIR"], env=env, capture_output=True, text=True, timeout=30
+        [_BASH, "-c", render_shell(prefix + "\n" + script, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "oss")],
+        cwd=env["TMPDIR"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
 
 
@@ -116,7 +122,7 @@ def test_cache_timestamp_precedes_fetch(tmp_path: Path, shell_env: dict[str, str
             "analyse-fetch-started": "2026-01-02T10:00:00Z",
         },
     )
-    result = _run(_block(_SKILL, "**Cache miss** — after fetching"), shell_env)
+    result = _run(_block(_SKILL, "**Cache miss**"), shell_env)
     assert result.returncode == 0, result.stderr
     assert json.loads(cache.read_text())["ts"] == "2026-01-02T10:00:00Z"
 
@@ -219,11 +225,14 @@ def test_reproduction_requires_explicit_approval_in_project_environment() -> Non
 def test_discussion_fetch_keeps_reply_cursors() -> None:
     """Expose both comment and reply cursors so long conversations cannot appear complete."""
     lines = _section(_THREAD, "`TYPE=discussion`", "Wide-net duplicate search")
+    assert any("fetch_discussion.py" in line for line in lines)
+    lines += (_THREAD.parents[3] / "bin/fetch_discussion.py").read_text(encoding="utf-8").splitlines()
     assert any("$after: String" in line for line in lines)
     assert any("comments(first: 50, after: $after)" in line for line in lines)
     assert any("replies(first: 50)" in line for line in lines)
     assert any("replies(first: 50, after: $after)" in line for line in lines)
-    assert any("200" in line and "replies" in line and "Summary" in line for line in lines)
+    assert any("200" in line and "replies" in line for line in lines)
+    assert any("Summary" in line and "_fetch.errors" in line for line in lines)
 
 
 def test_followup_prints_manual_only_commands() -> None:

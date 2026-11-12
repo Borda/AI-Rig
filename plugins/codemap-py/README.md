@@ -92,8 +92,8 @@ The index is not a replacement for reading source or running tests. It is a narr
 
 ### Telemetry in brief
 
-- CLI telemetry records handled terminal success/failure once with `exit_code`, including parse, gate, and supported timeout failures. Logging is best-effort and optional; abrupt termination or an unwritable destination can leave gaps. The SIGALRM timeout capability is Unix-only.
-- New CLI/tool/skill records carry their originating project root. Legacy records missing project identity or terminal outcome stay untouched and counted but cannot support joins.
+- CLI telemetry records handled terminal success/failure once with `exit_code`, including parse, gate, and supported timeout failures. Logging is best-effort and optional; abrupt termination or an unwritable destination can leave gaps. Indexing uses Unix-only SIGALRM timeouts; `find-symbol` also enforces a bounded worker deadline when SIGALRM is unavailable.
+- New CLI/tool/skill records carry a SHA-256 digest of their originating project root. CLI absolute local path arguments become project-relative; external POSIX/Windows absolute path arguments become `<external-path>`. Legacy records stay untouched; absolute-root and digest identities do not join across eras. Missing project identity or terminal outcome remains unjoinable. Tool targets/search paths and CLI result payloads retain their existing raw fields: this storage reduction is not full anonymization.
 - Debriefs isolate recent version/project/runtime cohorts. `join_avoidance.py` labels `avoidance_count` and `rate` as `module_overlap_proxy_v3`: verified successful complete answers followed by matching tool targets, including legitimate source reads. This is not confirmed misuse, a guard-failure rate, or measured token savings, and a changed eligibility rule makes earlier rates non-comparable.
 - Each overlap carries a `kind`:
 
@@ -198,22 +198,25 @@ The shared Claude context contract runs its selected queries directly and report
 
 Hooks are optional; they are not required for indexing or querying.
 
-| Hook                                                       | Runtime | Purpose                                                       |
-| ---------------------------------------------------------- | ------- | ------------------------------------------------------------- |
-| [`seed-session.py`](hooks/seed-session.py)                 | Claude  | Seeds session state at start.                                 |
-| [`inject-preamble.py`](hooks/inject-preamble.py)           | Both    | Ambient index-status preamble and bounded refresh scheduling. |
-| [`guard-redundant-scan.py`](hooks/guard-redundant-scan.py) | Both    | Narrow guard against redundant import greps.                  |
-| [`log-skill-start.py`](hooks/log-skill-start.py)           | Claude  | Skill-start telemetry records.                                |
-| [`log-tool-use.py`](hooks/log-tool-use.py)                 | Both    | Runtime-scoped tool records.                                  |
-| [`record-exhausted.py`](hooks/record-exhausted.py)         | Both    | Records exhausted-query state for the gate.                   |
+| Hook                                                       | Runtime | Purpose                                                                                 |
+| ---------------------------------------------------------- | ------- | --------------------------------------------------------------------------------------- |
+| [`seed-session.py`](hooks/seed-session.py)                 | Claude  | Seeds session state at start.                                                           |
+| [`inject-preamble.py`](hooks/inject-preamble.py)           | Both    | Ambient index-status preamble and bounded refresh scheduling.                           |
+| [`guard-redundant-scan.py`](hooks/guard-redundant-scan.py) | Both    | Narrow guard against redundant import greps.                                            |
+| [`log-skill-start.py`](hooks/log-skill-start.py)           | Claude  | Skill-start telemetry records.                                                          |
+| [`log-tool-use.py`](hooks/log-tool-use.py)                 | Both    | Runtime-scoped tool records.                                                            |
+| [`record-exhausted.py`](hooks/record-exhausted.py)         | Both    | Records exhausted-query state for the gate; sentinel writes reject symlink redirection. |
 
 Registrations: [`claude-hooks.json`](hooks/claude-hooks.json), [`codex-hooks.json`](hooks/codex-hooks.json).
+
+Hook sentinel writers reject planted file symlinks, including dangling links on Windows, before opening them.
 
 - **Claude** hooks provide ambient index status, session-sharded telemetry, skill-start records, and a narrow redundant-import-grep guard. Hook commands invoke the packaged launcher with `--run-hook` and a supported hook basename; the launcher verifies a supported CPython runtime before dispatch.
 - **Codex** hooks cover ambient preamble/guard behavior and runtime-scoped tool records. The Codex host has no Codemap skill-start hook. The runtime difference is an evidence boundary, not a query-engine difference.
 - **Missing index:** the shared prompt hook stays silent when scanner exclusions leave no indexable `.py` or `.pyi` sources. Its automatic-query directive keeps the bounded package marker condition (`__init__.py`, `pyproject.toml`, or `setup.py`), so marker-free scripts receive no ambient directive and need a manual `codemap-py index`. An existing index still refreshes after the final source deletion.
 - **Preamble:** the status preamble tells agents to reuse an earlier answer to the same query rather than re-running it, and to keep `--top` small when output enters context.
 - **Refresh suppression:** keyed on HEAD and actual discovered source/documentation and consumed configuration bytes, so unstaged edits and eligible untracked files schedule a new refresh; a published fingerprint suppresses repeated scans only while those inputs stay unchanged. Frozen environments retain `SCAN_NO_AUTOBUILD=1`.
+- **Scan state:** setup stores scan handoff/fallback sentinels in a validated private per-user temporary directory (0700 on POSIX); later scan blocks retain the returned state-file path.
 - **Reminders:** prompt status and missing-index sentinels are scoped per runtime and session (falling back to `shared`). After the first full stale preamble, an unchanged index SHA and currency suppress reminders for 30 minutes; a changed state emits one line and restarts the window; an expired window re-emits the full preamble; a current index clears the stale record.
 - An incremental scan records current source fingerprints and HEAD as `git_sha`, including when no graph rebuild is needed.
 - Hooks suppress expected parsing and filesystem failures; this is not a guarantee against every malformed event. Skill/tool logging expects mapping-shaped `tool_input` when that field is truthy.
@@ -426,7 +429,7 @@ Every query accepts these global flags before or after the subcommand:
 
 - `--index PATH` selects the index file.
 - `--root PATH` resolves paths only; it does not retarget or rebuild an index, and a mismatch forces `query_complete=false`.
-- `--timeout N` sets the query timeout.
+- `--timeout N` sets the query timeout. `find-symbol` has a 5-second search deadline by default, including direct and batch entrypoints; explicit timeouts use the POSIX signal path where available and a bounded worker otherwise. Pattern length and known-danger checks remain input limits, not a complete regex-safety proof.
 - `--no-heal` answers from the existing index without bounded query-time refresh.
 - `--verbose-coverage` keeps the full coverage block on every query.
 - `--compact` reduces repeated coverage metadata.
@@ -518,8 +521,9 @@ $codemap-py:test-impact mypackage.auth
 /codemap-py:rename-refs module <old-module> <new-module> [--dry-run]
 ```
 
-- **Scope:** both hosts check for Python sources from the repository root, excluding Git metadata, virtual environments and `node_modules`.
+- **Scope:** both hosts check for Python sources and run reference helpers/grep scans from the repository root, excluding Git metadata, virtual environments and `node_modules`. Saved repository-relative source paths must be readable; a missing explicit reference file stops discovery rather than counting as zero sites.
 - **Symbol route:** updates a one-to-one Python definition and statically visible references. Call edges alone miss most references to a class or callback, so it also edits non-call references — imports, base classes, `isinstance` targets, callback values, `__all__` strings and ancestor `__init__.py` re-exports — in every file that imports the symbol's module or an ancestor package (`rdeps`). A same-name symbol imported from another module is left alone. Callers reached through `module::Class.method` are resolved by exact qualified name.
+- **Ambiguous symbols:** the Claude adapter saves the full candidate list with 0-based indices to `.temp/rename-refs-candidates-<session-id>.md` before asking. With more than four candidates, it offers the first three plus `Abort — keep code unchanged`; the Other free-text answer accepts any in-range index, including candidates 4 and later. Bind `CHOSEN_IDX` to that saved list, never to a new query or module-qualified re-invocation; abort stops without edits.
 - **Module route:** renames a file/module and its import lines, indented ones inside functions, `try` or `if TYPE_CHECKING:` blocks included, plus attribute uses such as `mypackage.old.func()` after `import mypackage`. It derives its import root from the whole relative path, so `src/` layouts rename correctly; a path that does not match the indexed file stops. The blast report also prints the index's advisory search for references outside the static AST, such as hook-registered callers.
 - `--dry-run` previews without editing.
 - `--deprecate` is symbol-only and defaults to the project deprecation decorator; `--since` and `--removed-in` add the version window. Quote a decorator value with single quotes (`--deprecate='@deprecated_class(...)'`): the Claude skill pastes its arguments into a double-quoted shell word, so a double quote ends it. `--no-deprecate` declines the wrapper explicitly and does not conflict with `--remove-if-no-callers`.
@@ -540,11 +544,11 @@ $codemap-py:test-impact mypackage.auth
 
 `debrief-coding` reads local JSONL telemetry and writes a diagnostic report; it does not build or query the index.
 
-- Flags: `--since YYYY-MM-DD`, `--session ID`, `--anonymize`, and `--output PATH` (default `.reports/codemap/debrief-<date>.md`; an existing report is never overwritten, a `-2`, `-3` counter is appended).
+- Flags: `--since YYYY-MM-DD`, `--session ID`, `--anonymize`, and `--output PATH` (default `.reports/codemap/debrief-<date>.md`). Explicit and default report paths must resolve within the project root; relative paths resolve from that root. Existing paths are never overwritten: a `-2`, `-3` counter is appended.
 - Claude records CLI, skill, and tool layers under `.cache/codemap/logs/`. Codex hooks record runtime-scoped CLI and tool shards but have no skill-start hook, so skill telemetry and some cross-layer joins can be unavailable.
 - `debrief_stats.py` streams every shard under the log root the hooks wrote (Git top level, `CODEMAP_LOG_DIR` honoured), so a run from a subdirectory reads the same tree; the report is written from its single JSON object, not from hand-read shards.
 - `--since` and `--session` filter before anonymization. `bench` records, empty-command CLI records and records without a version are excluded and counted; the newest version is the primary cohort and older cohorts are never pooled.
-- Exit `1` means absent telemetry only when stderr starts with `No codemap telemetry found`; any other exit `1` is a helper crash — relay stderr and stop. Exit `3` means `anonymize.py` or `join_avoidance.py` ran past its 50-second cap.
+- Exit `1` means absent telemetry only when stderr starts with `No codemap telemetry found`; any other exit `1` is a helper crash — relay stderr and stop. Exit `2` means bad arguments, an output outside the project, or telemetry over its byte/record cap. Exit `3` means `anonymize.py` or `join_avoidance.py` ran past its 50-second cap. Exit `4` means requested anonymization failed: stop without a report, never fall back to raw statistics.
 - Flat legacy records remain unattributed.
 - Reports include overall, per-runtime, and unattributed usage summaries, refresh provenance, timing, completeness, and repeated-search avoidance. An avoidance event means a search/read names a module that a complete Codemap query already answered, not that the agent's runtime answer is incorrect; `join_avoidance.py` joins offline with a bounded time window.
 - `token_measurement` is unavailable because host hooks provide no token usage. Debrief does not measure token savings or verify live fresh-session activation.
@@ -552,9 +556,9 @@ $codemap-py:test-impact mypackage.auth
 
 Anonymization:
 
-- `--anonymize` pseudonymizes qualified names with a project-local salt at `.cache/codemap/logs/.salt`, scrubs qualified names inside error and stderr text, hashes `not_covered` values, and writes export JSONL separately into a run-scoped `.cache/codemap/export/<UTC stamp>/` directory, so earlier exports are never read.
+- `--anonymize` pseudonymizes qualified names with a project-local salt at `.cache/codemap/logs/.salt`, scrubs identifying tokens, paths and bare names inside error and stderr text, hashes `not_covered` values, and writes export JSONL separately into a run-scoped `.cache/codemap/export/<UTC stamp>/` directory, so earlier exports are never read.
 - An existing salt must be a regular, owner-only file of exactly 32 hex bytes; a symlinked or loosely permissioned salt stops the export with exit 1.
-- Never share the salt with an anonymized export.
+- Never share the salt with an anonymized export. Exports are scrubbed for the documented fields, not guaranteed fully de-identified; review them before sharing.
 - Anonymization protects names in the supported log fields; it is not a guarantee that arbitrary free text contains no identifying information.
 
 ```text
@@ -574,7 +578,7 @@ Anonymization:
 - Incremental refreshes track changed documentation for freshness and documentation references, but only `.py` and `.pyi` entries become module records, so documentation changes do not contaminate module degradation counts.
 - The query engine loads the same JSON under a read lease, performs bounded freshness checks or self-heal, dispatches one subcommand, and returns a primary result plus an `index` coverage block (method, confidence, query completeness, truncation, totals, degraded count, stale/root-mismatch state, `not_covered`).
 - The index is a cache, not a daemon or runtime tracer; no static result proves dynamic dispatch, external consumers, inheritance, test pass status, or behavior.
-- The default index contains modules, relative paths, symbols and line ranges, direct imports, calls and resolution tags, test/entity classification, source-root metadata, exclusions, collisions, scan version, and Git blob or non-Git content hashes. The JSON format is version-gated: call-graph, fixture, subprocess, documentation, dead-code, and coverage queries refuse unsupported index versions with an upgrade/rebuild instruction.
+- New indexes store `scan_root: "."` plus a `scan_root_key` digest to preserve root-mismatch and cache-collision checks; subprocess and mock source files use POSIX project-relative paths. Legacy absolute-root indexes remain readable and migrate on incremental rebuild. The default index contains modules, relative paths, symbols and line ranges, direct imports, calls and resolution tags, test/entity classification, source-root metadata, exclusions, collisions, scan version, and Git blob or non-Git content hashes. The JSON format is version-gated: call-graph, fixture, subprocess, documentation, dead-code, and coverage queries refuse unsupported index versions with an upgrade/rebuild instruction.
 
 ### Index locations, non-Git roots, and currency
 
@@ -634,8 +638,10 @@ SCAN_NO_AUTOBUILD=1 codemap-py query --index <matching-index> rdeps mypackage.au
 - The deny merge is additive; stale gh write and local branch/tag deletion denies from earlier installs remain until you run `/foundry:setup` (requires `foundry` plugin).
 - The merges are idempotent — the `reduce` dedupe keeps the first occurrence of each rule, so existing entries neither duplicate nor get re-sorted:
 
+Use a host-substituted or loader-rendered copy of this block. For an ordinary shell, first emit the installed README through the installed `render_plugin_root.py`, selected by its absolute path; the shell does not receive the bootstrap token automatically.
+
 ```bash
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}"
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 [ -f ~/.claude/settings.json ] || printf '{}\n' > ~/.claude/settings.json
 cp ~/.claude/settings.json ~/.claude/settings.json.bak
 jq --slurpfile perms "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" \
@@ -647,6 +653,10 @@ jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" \
 ```
 
 The first two lines cover a first install, where `~/.claude/settings.json` may not exist yet, and leave a backup at `~/.claude/settings.json.bak`; run `jq empty ~/.claude/settings.json` afterwards and restore from that backup if it does not parse. Deny wins over allow in Claude Code, so the order of the two merges does not matter. Deny entries are prefix matches, so they stop the documented command forms rather than every possible flag ordering.
+
+#### "Contains expansion" permission prompt
+
+Claude Code may show a "Contains expansion" permission prompt when running Codemap skill or mode shell blocks: their root-resolving prologue, `PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT`, uses command substitution. Loaded modes pass through `render_plugin_root.py` so the bootstrap token names the validated owning install. Codemap-py's hooks are Python-only by design; it ships no Node `PreToolUse` allow-dispatch or blueprint auto-allow hook. Standalone Codemap calls therefore retain normal permission handling, and prefix allow rules do not bypass this gate. See the permissions guide's ["Contains expansion" gate](../cc_foundry/permissions-guide.md#known-limitation--contains-expansion-gate-on-).
 
 <a id="-compatibility-and-exit-codes"></a>
 

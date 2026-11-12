@@ -1,12 +1,12 @@
 #!/usr/bin/env python
-"""check_agent_plugin_root.py — flag agent Markdown that defaults ``${CLAUDE_PLUGIN_ROOT}`` to a repo-relative path.
+"""Flag executable plugin Markdown that defaults the host's plugin-root token.
 
 A plugin agent's Bash does not export ``CLAUDE_PLUGIN_ROOT`` (probed in a spawned plugin agent), but the host
 text-substitutes the exact token ``${CLAUDE_PLUGIN_ROOT}`` in the agent's prompt body with the install path. The
 shell-default form ``${CLAUDE_PLUGIN_ROOT:-plugins/<plugin>}`` is a different string: it is not substituted, the unset
 variable expands to its repo-relative default, and every sidecar or ``_shared`` load resolves to a path that exists only
-inside this repository. An installed plugin then silently loses the file it meant to load. Skills run in the main
-session where the variable is exported, so the default form is correct there and this checker never reads skills.
+inside this repository. An installed plugin then silently loses the file it meant to load. Skills also require the
+plain host-substituted token; loaded modes, templates and sidecars require the owning plugin's literal renderer.
 
 Findings, one per offending line: ``plugin-root-default: <path>:<line>: <text>``. A line carrying
 ``plugin-root-check: allow`` is an explicit, reviewed exemption.
@@ -28,19 +28,19 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-#: Matches the shell-default spelling of the plugin root, which an agent prompt never has substituted.
+#: Matches the shell-default spelling that the host does not substitute.
 _DEFAULTED_ROOT = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT:-")
 #: Marker text that exempts a line from the check.
 _ALLOW = "plugin-root-check: allow"
-#: Glob selecting the agent Markdown files that are scanned.
-_AGENT_GLOB = "**/agents/*.md"
+#: Executable document scopes, including nested loaded fragments.
+_DOCUMENT_DIRS = {"agents", "skills", "claude-skills", "modes", "templates", "references"}
 #: Longest finding text printed, so a minified line cannot flood the report.
 _TEXT_LIMIT = 160
 
 
 @dataclass(frozen=True)
 class Finding:
-    """One agent line that defaults the plugin root."""
+    """One executable document line that defaults the plugin root."""
 
     path: str
     line: int
@@ -68,10 +68,10 @@ def defaults_plugin_root(line: str) -> bool:
 
 
 def scan_file(path: Path) -> list[Finding]:
-    """Return a finding for every line of one agent file that uses the defaulted plugin-root form.
+    """Return a finding for every line that uses the defaulted plugin-root form.
 
     Args:
-        path: Agent Markdown file.
+        path: Plugin Markdown file.
 
     Returns:
         One finding per offending line; an unreadable file yields none.
@@ -87,19 +87,28 @@ def scan_file(path: Path) -> list[Finding]:
     ]
 
 
+def _is_live_document(path: Path) -> bool:
+    """Exclude historical fixtures and changelogs from executable document checks."""
+    return path.suffix == ".md" and path.name != "CHANGELOG.md" and not {"tests", "fixtures"}.intersection(path.parts)
+
+
 def collect(scan_dir: Path | None, files: list[str]) -> list[Path]:
-    """Return the agent files to check: explicit paths plus every ``agents/*.md`` under ``scan_dir``.
+    """Collect explicit Markdown files and executable document scopes under the scan directory.
 
     Args:
-        scan_dir: Directory searched recursively for ``agents/*.md``, or None.
+        scan_dir: Directory searched recursively for executable plugin Markdown, or None.
         files: Explicit Markdown file paths.
 
     Returns:
         Sorted, de-duplicated file paths.
     """
-    found = {Path(f) for f in files if f.endswith(".md")}
+    found = {Path(f) for f in files if _is_live_document(Path(f))}
     if scan_dir is not None:
-        found.update(p for p in scan_dir.glob(_AGENT_GLOB) if p.is_file())
+        found.update(
+            p
+            for p in scan_dir.rglob("*.md")
+            if p.is_file() and _is_live_document(p) and _DOCUMENT_DIRS.intersection(p.parts)
+        )
     return sorted(found)
 
 
@@ -112,8 +121,8 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         0 when clean, 1 when any finding exists.
     """
-    parser = argparse.ArgumentParser(description="Flag ${CLAUDE_PLUGIN_ROOT:-...} defaults in agent Markdown.")
-    parser.add_argument("--scan-dir", type=Path, help="directory whose agents/*.md files are scanned")
+    parser = argparse.ArgumentParser(description="Flag defaulted plugin-root tokens in executable plugin Markdown.")
+    parser.add_argument("--scan-dir", type=Path, help="directory whose skills, agents and loaded fragments are scanned")
     parser.add_argument("files", nargs="*", help="explicit Markdown files")
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
@@ -122,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     for finding in findings:
         print(f"plugin-root-default: {finding.path}:{finding.line}: {finding.text}")
     if not findings:
-        print("✓ agent-plugin-root: no agent defaults ${CLAUDE_PLUGIN_ROOT} to a repo-relative path")
+        print("✓ agent-plugin-root: no executable document defaults the host plugin-root token")
     return 1 if findings else 0
 
 

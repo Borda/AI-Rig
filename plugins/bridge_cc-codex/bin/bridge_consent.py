@@ -3,16 +3,17 @@
 Purpose: Give Bridge setup a durable, reviewer-visible consent boundary without treating plugin installation as
 authorization. Scope: Read or change only the versioned Bridge block in the user's auto_review.extra_policy; preserve
 all other configuration. Usage: Run check from a skill; grant or revoke asks for operator-terminal confirmation. ``grant
---approve`` skips the typed question but still needs operator proof: the operator terminal itself, or a one-time token
+--approve`` skips the typed question but still needs terminal interaction: the terminal itself, or a one-time token
 that ``issue-token`` printed to that terminal and the caller passes as ``BRIDGE_OPERATOR_TOKEN``. With neither it exits
 without a policy update. Outputs: Check emits sanitized JSON; mutations show only the selected path and shipped policy,
 never user configuration or credentials; ``issue-token`` prints the token to the terminal only. Failure: Invalid TOML,
-unsupported placement, unsafe files, changed input, missing operator proof or declined confirmation exits nonzero
+unsupported placement, unsafe files, changed input, missing terminal interaction or declined confirmation exits nonzero
 without a policy update. Used by: Codex Bridge setup, dispatch skills, package tests, and operators. The terminal check
-is an interaction requirement, not proof against another process controlled by the same user. The token file keeps only
-a hash and expiry in the Codex home, and a token is consumed by the grant that uses it. Stored policy is not evidence
-that an active or managed host loaded it; this helper never changes reviewer selection, sandbox permissions,
-authentication or plugin installation, and never invokes a provider.
+is an interaction requirement, not human authentication: a model-controlled process can allocate a PTY, mint a token,
+and grant consent itself. Run this helper outside model-controlled tools; the host must enforce that boundary. The token
+file keeps only a hash and expiry in the Codex home, and a token is consumed by the grant that uses it. Stored policy
+is not evidence that an active or managed host loaded it; this helper never changes reviewer selection,
+sandbox permissions, authentication or plugin installation, and never invokes a provider.
 """
 
 from __future__ import annotations
@@ -54,7 +55,7 @@ TOKEN_TTL_SECONDS = 300
 
 
 def _operator_terminal() -> bool:
-    """Report whether stdin and stdout are the operator's terminal rather than pipes a model could drive."""
+    """Require terminal-shaped streams without claiming that a PTY authenticates a human operator."""
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
@@ -335,7 +336,8 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "approve persistent Claude repository-context transfer and ordinary inference consent without the typed "
-            f"question (grant only); needs the operator terminal or a one-time {TOKEN_ENV} from issue-token"
+            f"question (grant only); needs a terminal or a one-time {TOKEN_ENV} from issue-token. "
+            "A PTY can satisfy this check; the host must prevent model-controlled consent commands"
         ),
     )
     args = parser.parse_args(argv)

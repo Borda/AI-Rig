@@ -54,7 +54,7 @@ _ALLOWED: dict[tuple[str, str], str] = {
         'Candidate missing (first append) → `cp "<migration-guide-draft>"',
     ): "exempt — MIGRATION.md blocks are inserted and struck in place in the refined artifact",
     (
-        "cc_oss/skills/resolve/SKILL.md",
+        "cc_oss/skills/resolve/modes/dispatch-coordination.md",
         "then write the whole map in one Write tool call",
     ): "not a ledger append — one Write of a fresh map file; 'append' names a rejected alternative",
     (

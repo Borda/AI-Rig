@@ -210,11 +210,12 @@ For each hypothesis in `<RUN_DIR>/team-queue.jsonl` (sorted order, 1-indexed as 
    ```
 
    ```bash
+   PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
    IFS= read -r _RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || _RUN_ID=""
-   _TEAM_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/read_state_field.py" ".experiments/state/$_RUN_ID/state.json" team_mode.run_dir 2>/dev/null)
+   _TEAM_DIR=$(python "$PLUGIN_ROOT/bin/read_state_field.py" ".experiments/state/$_RUN_ID/state.json" team_mode.run_dir 2>/dev/null)
    [ -n "$_TEAM_DIR" ] || { echo "! BLOCKED — team_mode.run_dir missing from state.json; team-results.jsonl.rec left in place"; exit 1; }
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/append_ledger.py" "$_TEAM_DIR/team-results.jsonl"  # timeout: 5000
+   python "$PLUGIN_ROOT/bin/append_ledger.py" "$_TEAM_DIR/team-results.jsonl"  # timeout: 5000
    ```
 
 5. **If kept**: update running current metric value for next hypothesis. Each subsequent hypothesis sees cumulative state of all prior kept changes.
@@ -232,9 +233,10 @@ After all hypotheses processed (or user stops early with Ctrl-C / user abort):
 2. Write the full report — this is the run's only report; R6 skips its own report write for `--team`. Resolve a collision-free path first, then Write the report to the printed `OUT` with the Write tool:
 
    ```bash
+   PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
    mkdir -p .reports/research  # timeout: 3000
    BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')  # timeout: 3000
-   OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve-anti-overwrite-path.py" .reports/research "run-team-$BRANCH-$(date +%Y-%m-%d)")  # timeout: 5000
+   OUT=$(python "$PLUGIN_ROOT/bin/resolve-anti-overwrite-path.py" .reports/research "run-team-$BRANCH-$(date +%Y-%m-%d)")  # timeout: 5000
    echo "OUT=$OUT"
    ```
 

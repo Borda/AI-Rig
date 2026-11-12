@@ -41,9 +41,10 @@ is a critical violation
 Mark "Calibrate communication" in_progress. Load the pipeline template — no `~/.claude/skills/` copy exists (setup symlinks only `rules/*.md` and `TEAM_PROTOCOL.md`):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate templates pipeline-prompt.md $([ "$LOCAL_MODE" = "true" ] && echo --local)  # timeout: 5000
+python "$PLUGIN_ROOT/bin/load_mode.py" calibrate templates pipeline-prompt.md $([ "$LOCAL_MODE" = "true" ] && echo --local)  # timeout: 5000
 ```
 
 Use the standard pipeline template printed above with `<TARGET>` = `foundry:curator`, `<DOMAIN>` = domain string above, `<N>` = 3 (fast) or 5 (full), `<TIMESTAMP>` = current run timestamp, `<MODE>` = `fast` or `full`, `<AB_MODE>` = `true` or `false`, `<LOCAL_MODE>` = persisted local mode, `<TARGET_LABEL>` = `<RUN_SLUG>` = `communication`, `<PROBLEM_SET_VERSION>` = SKILL.md constant, `<FLOORS_ARG>` = empty. Domain keys (`mode:`, `haystack:`, `template_sections_not_fp:`, `sev_label:`, `real_fixtures:`, `fetch_store:`, `precision_gate:`) are read by the pipeline from `<DOMAIN>` itself, empty when absent. Spawn **single** `general-purpose` pipeline subagent with `model="sonnet"` — runs curator against synthetic agent responses, full/compact response pairs, team transcripts with injected violations.

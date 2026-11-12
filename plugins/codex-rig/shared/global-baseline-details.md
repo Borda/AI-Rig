@@ -14,9 +14,13 @@ Applies only to instruction files an LLM host loads (`AGENTS.md`, `CLAUDE.md`, r
 
 ## Review cycle routing
 
+A request to repeat review and fix until a reviewer reports no findings or no security findings, or to resolve all findings; a second independent review round about to be dispatched for the same change; or a skill workflow repeating its review then fix cycle counts as an explicitly invoked loop from that moment: before the next reviewer dispatch, start ledger; follow packaged `shared/adversarial-loop.md` (helper output, stop/plateau rules, user's round budget).
+
 - Code Remediate remains single-pass: collect findings, resolve selected work, obtain the bounded independent implementation challenge, verify, and report without convergence scoring. One plan or implementation challenge does not start a multi-round review → fix loop. When the user explicitly requests such a loop, follow packaged `shared/adversarial-loop.md`; read it before dispatch. Its scope, evidence ledger, strictly decreasing nonnegative integer score after baseline `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, stop and remediation rules are mandatory. Never fork the implementing conversation for review or treat a loop's local fix as closed before later independent verification.
 
 ## Reasoning-progress escalation
+
+The append operation admits at most three auxiliary cycles since the latest material primary progress; it rejects a fourth auxiliary append while still allowing a primary cycle. Validation of retained ledgers and historical archives does not apply that cap retroactively.
 
 Continues the template's reasoning-progress bullets; the trigger bullet that names `escalation_ledger.py` stays in the template.
 

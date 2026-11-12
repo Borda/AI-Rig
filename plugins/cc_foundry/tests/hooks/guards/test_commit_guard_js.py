@@ -234,14 +234,17 @@ def test_completed_reading_keeps_token_gate_after_deadline(
 @pytest.mark.parametrize(
     ("expiry", "reason"),
     [
-        pytest.param("remote", "cannot read for a directory change", id="after-git-subprocess"),
         pytest.param("git-read", "cannot read for a git invocation", id="during-git-scope-read"),
     ],
 )
 def test_completed_push_reading_blocks_when_scope_deadline_expires(
     run_hook: Callable, git_repo: Path, tmp_path: Path, expiry: str, reason: str
 ) -> None:
-    """A completed push remains blocked when Git discovery or later scope reading exhausts the read budget."""
+    """A completed push remains blocked when later scope reading exhausts its own read budget.
+
+    Git discovery has finished, but the clock advances while inspecting the command's Git invocations. The fresh scope-
+    reading phase must still fail closed when text inspection itself consumes more than its allotted second.
+    """
     clock = tmp_path / "clock.cjs"
     observed = tmp_path / "expired.txt"
     clock.write_text(
@@ -274,6 +277,80 @@ def test_completed_push_reading_blocks_when_scope_deadline_expires(
     assert result.returncode == 2, (result.stdout, result.stderr)
     assert reason in result.stderr
     assert result.stdout == ""
+
+
+@pytest.mark.parametrize("discovery_ms", [pytest.param(0, id="fast-git"), pytest.param(1500, id="slow-git")])
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(APPROVED, id="literal-branch"),
+        pytest.param("git push origin $(git branch --show-current)", id="discovered-branch"),
+    ],
+)
+def test_git_discovery_time_preserves_approved_push(
+    run_hook: Callable,
+    git_repo: Path,
+    tmp_path: Path,
+    push_token: Callable,
+    approval_transcript: Callable[[Path], Path],
+    command: str,
+    discovery_ms: int,
+) -> None:
+    """Slow Git discovery leaves the same push approval verdict as fast Git discovery.
+
+    Real Git subprocesses discover the checkout and remotes. A Node clock preload charges each completed discovery
+    1.5 seconds without sleeping, so both literal and substituted branches outlive the initial inspection deadline.
+    """
+    token = push_token(git_repo)
+    clock = tmp_path / "discovery-clock.cjs"
+    observed = tmp_path / "discovery-ms.txt"
+    clock.write_text(
+        "const cp = require('child_process'); const fs = require('fs');\n"
+        "const exec = cp.execFileSync; const now = Date.now; let elapsed = 0;\n"
+        f"const delay = {discovery_ms}; const observed = {json.dumps(str(observed))};\n"
+        "Date.now = () => now() + elapsed;\n"
+        "cp.execFileSync = function(file, args, options) {\n"
+        "  const result = exec(file, args, options);\n"
+        "  if (file === 'git') { elapsed += delay; fs.writeFileSync(observed, String(elapsed)); }\n"
+        "  return result;\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    result = run_hook(
+        "commit-guard.js",
+        _push_payload(command, git_repo, transcript_path=str(approval_transcript(git_repo))),
+        cwd=git_repo,
+        env_extra={"CLAUDE_PROJECT_DIR": str(git_repo), "NODE_OPTIONS": f"--require {json.dumps(clock.as_posix())}"},
+    )
+    assert int(observed.read_text(encoding="utf-8")) >= discovery_ms
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert not token.exists()
+
+
+def test_pathological_text_inspection_still_reaches_deadline(
+    run_hook: Callable, git_repo: Path, tmp_path: Path, push_token: Callable
+) -> None:
+    """A command too costly to inspect still asks permission without spending its push token.
+
+    A long command contains a push followed by repeated shell segments. The clock advances during inspection rather than
+    Git discovery, deterministically exhausting the same one-second text budget retained by the guard.
+    """
+    token = push_token(git_repo)
+    clock = tmp_path / "inspection-clock.cjs"
+    clock.write_text("let reads = 0; Date.now = () => ++reads * 100;\n", encoding="utf-8")
+    result = run_hook(
+        "commit-guard.js",
+        _push_payload(APPROVED + "; echo x" * 1000, git_repo),
+        cwd=git_repo,
+        env_extra={"CLAUDE_PROJECT_DIR": str(git_repo), "NODE_OPTIONS": f"--require {json.dumps(clock.as_posix())}"},
+    )
+    decision = json.loads(result.stdout)["hookSpecificOutput"]
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert decision["permissionDecision"] == "ask"
+    assert "command inspection deadline exceeded" in decision["permissionDecisionReason"]
+    assert token.exists()
 
 
 class TestGitDiagnostics:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""parse-skill-flags.py — parse a skill's $ARGUMENTS blob, emit shell variable assignments and optional sentinels.
+"""Parse a skill's argument blob into shell assignments and optional sentinels.
 
 Generalizes the boolean anchored-token flag + ``--keep "<items>"`` extraction that
 was independently re-implemented (regex + ``case``/``[[ ]]`` anchored-token match +
@@ -9,18 +9,18 @@ and ``review/SKILL.md``. Follows the eval-emit shape of ``parse-resolve-args.py`
 Usage (Claude Code plugin — ``CLAUDE_PLUGIN_ROOT`` set automatically)::
 
     # state mode: no eval, values read back from per-session sentinels
-    python "${CLAUDE_PLUGIN_ROOT}/bin/parse-skill-flags.py" --flags reply,worktree --keep-state analyse "$ARGUMENTS"
+    python "${CLAUDE_PLUGIN_ROOT}/bin/parse-skill-flags.py" --flags reply,worktree --keep-state analyse -- "$ARGUMENTS"
     IFS= read -r REPLY_MODE < "${TMPDIR:-/tmp}/analyse-reply-${CSID}" 2>/dev/null || REPLY_MODE=false
 
     # eval mode: the original shape, still supported
-    eval "$(python "${CLAUDE_PLUGIN_ROOT}/bin/parse-skill-flags.py" --flags reply,no-challenge,worktree "$ARGUMENTS")"
+    eval "$(python "${CLAUDE_PLUGIN_ROOT}/bin/parse-skill-flags.py" --flags reply,worktree -- "$ARGUMENTS")"
 
 Emits, for a ``--flags`` list of ``N`` comma-separated bare flag names (no leading
 ``--``):
 
 - ``FLAG_<NAME>`` — one per requested flag, ``true``/``false``; ``<NAME>`` is the
   flag name uppercased with ``-`` replaced by ``_`` (e.g. ``no-challenge`` →
-  ``FLAG_NO_CHALLENGE``). Detection is anchored-token (padded-space match), never
+  ``FLAG_NO_CHALLENGE``). Detection is case-insensitive and requires an unquoted token, never
   bare substring — ``--reply`` does not false-fire on ``--reply-later`` or a repo
   name containing ``--reply-bot``.
 - ``VALUE_<NAME>`` — one per ``--value-flags`` entry, holding the value given as
@@ -40,6 +40,7 @@ initialises the skill's per-session state, which absorbs ``extract-keep-flag.py`
 - clears a stale ``.temp/state/skill-contract.md`` left by a crashed prior run, unless
   ``--inlined`` is given (a parent skill loaded this one and its contract is live) or the
   contract's owner stamp names a session other than ``CLAUDE_CODE_SESSION_ID``;
+- rejects linked or out-of-project contract state directories before reading the owner stamp or clearing a contract;
 - writes one sentinel per value under ``${TMPDIR}``, every run, so a value from an
   earlier invocation in the same session never survives: ``<prefix>-<flag>-<CSID>``
   (``true``/``false``) per ``--flags`` entry, ``<prefix>-<flag>-<CSID>`` (the value,
@@ -68,11 +69,10 @@ Exit codes:
 Nothing is printed on a non-zero exit, so an ``eval`` caller ends with every variable unset
 exactly as before state mode existed.
 
-Note: like ``parse-resolve-args.py``, the ``$ARGUMENTS`` blob is forwarded
-verbatim via ``parse_known_args`` — a blob starting with ``-`` (e.g. dash-leading
-prose) is never misparsed as an option of this script. The one exception is a blob that
-is exactly one of this script's own option spellings (``--inlined``, ``--keep-state=x``):
-argparse consumes it as that option.
+Callers must put a literal ``--`` before the raw ``$ARGUMENTS`` blob. Without that
+separator argparse can consume a blob such as ``--inlined`` or ``--keep-state=x``
+as a helper option. Within the blob, a standalone ``--`` ends flag detection.
+Quoted text stays data; apostrophes inside prose words remain literal.
 """
 
 from __future__ import annotations
@@ -94,9 +94,15 @@ _FLAG_NAME_RE: Final = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 #: Matches the --keep option with its value so the text can be captured and removed from the arguments. The value is
 #: double-quoted, single-quoted, or bare words up to the next ``--`` option: the host substitutes ``$ARGUMENTS`` into
 #: ``"$ARGUMENTS"`` as text, so a user's ``--keep "a b"`` reaches this script with its quotes consumed by the shell.
-_KEEP_RE: Final = re.compile(r"""(?<=\s)--keep(?:=|\s+)(?:"([^"]*)"|'([^']*)'|((?!--)\S+(?:\s+(?!--)\S+)*))(?=\s)""")
+_KEEP_RE: Final = re.compile(
+    r"""(?<=\s)--keep(?:=|\s+)(?:"([^"]*)"|'([^']*)'|((?!--)\S+(?:\s+(?!--)\S+)*))(?=\s)""", re.IGNORECASE
+)
 #: A --keep token with no value after it (end of arguments, or another option next).
-_BARE_KEEP_RE: Final = re.compile(r"(?<=\s)--keep(?:=)?(?=\s)")
+_BARE_KEEP_RE: Final = re.compile(r"(?<=\s)--keep(?:=)?(?=\s)", re.IGNORECASE)
+
+# Preserve raw token spans so stripping options cannot re-quote or reflow comment text. Contractions are prose;
+# quoted segments and escaped whitespace belong to their surrounding token, including attached option values.
+_TOKEN_RE: Final = re.compile(r"""(?:[^\s"'\\]|(?<=\w)'(?=\w)|\\[\s\S]|"(?:\\[\s\S]|[^"\\])*(?:"|$)|'[^']*(?:'|$))+""")
 
 #: Shape of the --keep-state prefix and the session ID, joined into sentinel file names. No separators, so neither can
 #: leave the temp dir.
@@ -136,7 +142,34 @@ def _value_re(flag: str) -> re.Pattern[str]:
         >>> _value_re("agent").search(' --agent-pool x ') is None
         True
     """
-    return re.compile(rf"(?<=\s)--{re.escape(flag)}(?:=|\s+)(\"[^\"]*\"|'[^']*'|\S+)(?=\s)")
+    return re.compile(rf"(?<=\s)--{re.escape(flag)}(?:=|\s+)(\"[^\"]*\"|'[^']*'|\S+)(?=\s)", re.IGNORECASE)
+
+
+def _option_matches(pattern: re.Pattern[str], arguments: str) -> list[re.Match[str]]:
+    """Match options only at unquoted token starts before the end-of-options token."""
+    tokens = list(_TOKEN_RE.finditer(arguments))
+    boundary = next((token.start() for token in tokens if token.group() == "--"), len(arguments))
+    ends = {token.end() for token in tokens}
+    matches = []
+    for token in tokens:
+        if token.start() >= boundary:
+            break
+        match = pattern.match(arguments, token.start(), boundary) if token.group().startswith("--") else None
+        if match and match.end() in ends:
+            matches.append(match)
+    return matches
+
+
+def _strip_matches(arguments: str, matches: list[re.Match[str]], replacement: str) -> str:
+    """Remove recognized option spans without touching surrounding argument bytes."""
+    end = len(arguments)
+    parts = []
+    for match in reversed(matches):
+        if match.end() <= end:
+            parts.extend((arguments[match.end() : end], replacement))
+            end = match.start()
+    parts.append(arguments[:end])
+    return "".join(reversed(parts))
 
 
 def _keep_warning(arguments: str) -> str | None:
@@ -151,9 +184,9 @@ def _keep_warning(arguments: str) -> str | None:
         True
     """
     padded = f" {arguments} "
-    match = _KEEP_RE.search(padded)
+    match = next(iter(_option_matches(_KEEP_RE, padded)), None)
     if match is None:
-        if _BARE_KEEP_RE.search(padded):
+        if _option_matches(_BARE_KEEP_RE, padded):
             return "⚠ --keep given with an empty value; nothing will be preserved through compaction"
         return None
     if match.group(3) is not None:
@@ -177,7 +210,9 @@ def _var_name(flag: str) -> str:
     return flag.upper().replace("-", "_")
 
 
-def parse_skill_flags(arguments: str, flags: list[str], value_flags: list[str] | None = None) -> dict[str, str]:
+def parse_skill_flags(
+    arguments: str, flags: list[str], value_flags: list[str] | None = None, *, preserve_whitespace: bool = False
+) -> dict[str, str]:
     """Parse a skill's ``$ARGUMENTS`` blob against a requested flag list.
 
     Args:
@@ -186,6 +221,7 @@ def parse_skill_flags(arguments: str, flags: list[str], value_flags: list[str] |
             ``["reply", "no-challenge", "worktree"]``.
         value_flags: Bare names of flags that carry a value, e.g. ``["agent", "repo"]``.
             Each emits ``VALUE_<NAME>``, empty when the flag is absent.
+        preserve_whitespace: Keep comment line breaks and indentation after removing requested flags.
 
     Returns:
         Dict with one ``FLAG_<NAME>`` key per requested flag, one ``VALUE_<NAME>`` key per
@@ -209,15 +245,17 @@ def parse_skill_flags(arguments: str, flags: list[str], value_flags: list[str] |
         'foo bar'
     """
     padded = f" {arguments} "
-    keep_match = _KEEP_RE.search(padded)
+    keep_matches = _option_matches(_KEEP_RE, padded)
+    keep_match = next(iter(keep_matches), None)
     keep_items = next((group for group in keep_match.groups() if group is not None), "") if keep_match else ""
 
     result: dict[str, str] = {}
-    clean = _BARE_KEEP_RE.sub(" ", _KEEP_RE.sub(" ", padded))
+    clean = _strip_matches(padded, keep_matches, " ")
+    clean = _strip_matches(clean, _option_matches(_BARE_KEEP_RE, clean), " ")
     # Value flags strip first: a value can look like a boolean flag (``--agent --worktree``),
     # and removing the pair as a unit keeps that value from being read as a flag of its own.
     for flag in value_flags or []:
-        match = _value_re(flag).search(clean)
+        match = next(iter(_option_matches(_value_re(flag), clean)), None)
         raw = match.group(1) if match else ""
         result[f"VALUE_{_var_name(flag)}"] = raw[1:-1] if raw[:1] in ("'", '"') else raw
         if match:
@@ -226,11 +264,12 @@ def parse_skill_flags(arguments: str, flags: list[str], value_flags: list[str] |
         # Detect against `clean`, not the original blob: a value flag has already consumed
         # its value, so a malformed `--agent --worktree` cannot report --worktree as both
         # the agent name and a flag that was set.
-        present = f" --{flag} " in clean
+        matches = _option_matches(re.compile(rf"(?<=\s)--{re.escape(flag)}(?=\s)", re.IGNORECASE), clean)
+        present = bool(matches)
         result[f"FLAG_{_var_name(flag)}"] = "true" if present else "false"
-        clean = re.sub(rf"(?<=\s)--{re.escape(flag)}(?=\s)", "", clean)
+        clean = _strip_matches(clean, matches, "")
 
-    clean = re.sub(r"\s+", " ", clean).strip()
+    clean = clean[1:-1] if preserve_whitespace else re.sub(r"\s+", " ", clean).strip()
     if clean.startswith("#"):
         clean = clean[1:].strip()
 
@@ -268,7 +307,7 @@ def _validate_flags(raw: str) -> list[str]:
     if not tokens:
         raise ValueError("--flags must list at least one flag name")
     for token in tokens:
-        if not _FLAG_NAME_RE.match(token):
+        if not _FLAG_NAME_RE.fullmatch(token):
             raise ValueError(f"invalid flag name: {token!r}")
     return tokens
 
@@ -431,6 +470,16 @@ def _keep_path(prefix: str, csid: str, out_file: str | None, tmp: Path) -> Path:
     return sentinel
 
 
+def _clear_contract() -> None:
+    """Clear an eligible contract only after its state directory passes confinement checks."""
+    if any(parent.is_symlink() for parent in _CONTRACT.parents) or not _CONTRACT.parent.resolve().is_relative_to(
+        Path.cwd().resolve()
+    ):
+        raise _StateError("refusing linked or out-of-project contract state directory", 1)
+    if not _stamped_by_other_session():
+        _CONTRACT.unlink(missing_ok=True)
+
+
 def _persist_state(prefix: str, values: dict[str, str], keep_items: str, out_file: str | None, inlined: bool) -> None:
     """Clear stale compaction state and write every state-mode sentinel for one skill invocation.
 
@@ -456,9 +505,9 @@ def _persist_state(prefix: str, values: dict[str, str], keep_items: str, out_fil
         raise _StateError(
             "--keep-state prefix and CSID must use letters, digits, '.', '_' or '-' and must not contain '..'", 2
         )
-    if not inlined and not _stamped_by_other_session():
+    if not inlined:
         try:
-            _CONTRACT.unlink(missing_ok=True)
+            _clear_contract()
         except OSError as exc:
             raise _StateError(f"cannot clear {_CONTRACT}: {exc}", 1) from exc
     tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
@@ -522,6 +571,9 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="State mode: skip the stale-contract clear (a parent skill loaded this one; its contract is live)",
     )
+    parser.add_argument(
+        "--preserve-whitespace", action="store_true", help="Retain comment line breaks and indentation."
+    )
     return parser
 
 
@@ -538,7 +590,9 @@ def main(argv: list[str]) -> int:
     Examples:
         No doctest — emits to stdout and writes sentinels; covered by pytest via subprocess.
     """
-    ns, extra = _build_parser().parse_known_args(argv)
+    option_end = argv.index("--") if "--" in argv else len(argv)
+    ns, extra = _build_parser().parse_known_args(argv[:option_end])
+    extra.extend(argv[option_end + 1 :])
 
     try:
         flags = _validate_flags(ns.flags)
@@ -548,7 +602,7 @@ def main(argv: list[str]) -> int:
         return 2
 
     arguments = " ".join(extra)
-    parsed = parse_skill_flags(arguments, flags, value_flags)
+    parsed = parse_skill_flags(arguments, flags, value_flags, preserve_whitespace=ns.preserve_whitespace)
     warning = _keep_warning(arguments)
     try:
         if ns.keep_state is not None:

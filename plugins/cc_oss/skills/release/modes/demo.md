@@ -2,7 +2,7 @@
 
 <!-- Variables available: $SKILL_DIR, $_OSS_SHARED, $LAST_TAG, $BRANCH, $DATE, $RANGE, $VERSION, $REPO_ROOT, $GATHER_FILE -->
 
-**Trigger**: `/release demo [range]`
+**Trigger**: `/oss:release demo [range]`
 
 **Purpose**: Story-telling release notebook — self-contained Python script in jupytext percent (`# %%`) format. Highlights 2–3 most significant contributions with narrative prose, runnable code cells. Suitable for Colab, local Jupyter, or blog embeds.
 
@@ -46,7 +46,8 @@ For each headline feature, read actual diff or changed source file to understand
 1. **Document each failed attempt**: output `## Demo attempts` block to terminal listing every approach tried and specific reason rejected (e.g. "test fixtures require database connection", "example script imports non-installable C extension"). Minimum one entry per attempt.
 2. **Ask Codex (if available)**:
    ```bash
-   CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/check_bridge.py" --status 2>/dev/null || echo "absent")  # timeout: 5000
+   PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+   CODEX_STATUS=$(python "$PLUGIN_ROOT/bin/check_bridge.py" --status 2>/dev/null || echo "absent")  # timeout: 5000
    [ "$CODEX_STATUS" = "available" ] && CODEX_OK="available" || CODEX_OK=""
    ```
    If `$CODEX_OK` non-empty, call `Skill(skill="bridge:advise", args="Read the complete ## Demo attempts log printed above and inspect <REPO_ROOT>. Locate a real-world demo using existing project artifacts, tests, examples, or documented APIs. Return one viable approach with exact source paths and commands; do not modify files.")`. If Codex returns a viable approach, use it — stop, skip steps 3–4.

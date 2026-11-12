@@ -440,7 +440,7 @@ def main() -> int:
             "v": _hookutil.plugin_version(),
             "tool": tool_name,
             "session": session,
-            "project": _hookutil.project_root().as_posix(),
+            "project": _hookutil.project_key(),
             "target": target_for(tool_name, tool_input),
         }
         if tool_name in {"Grep", "Glob"}:

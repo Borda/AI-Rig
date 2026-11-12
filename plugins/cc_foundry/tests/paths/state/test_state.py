@@ -7,9 +7,30 @@ another session and the session token resolves to ``shared`` unless a test sets 
 from __future__ import annotations
 
 import importlib.util
+import os
+import stat
+import tempfile
 from pathlib import Path
 
 import pytest
+from _hook_env import _symlinks_supported
+
+_CAN_SYMLINK = _symlinks_supported()
+
+
+def _private_modes_supported() -> bool:
+    """Probe whether this filesystem enforces the private POSIX modes used by state files."""
+    with tempfile.TemporaryDirectory() as root:
+        path = Path(root) / "private"
+        path.write_text("", encoding="utf-8")
+        try:
+            path.chmod(0o600)
+            return stat.S_IMODE(path.stat().st_mode) == 0o600
+        except OSError:
+            return False
+
+
+_CAN_PRIVATE_MODES = _private_modes_supported()
 
 _MOD_PATH = Path(__file__).resolve().parents[3] / "bin" / "state.py"
 _spec = importlib.util.spec_from_file_location("state", _MOD_PATH)
@@ -19,12 +40,30 @@ st = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(st)
 
 
+_SHIPPED_KEYS = st._KEY_ALLOWED_NAMES
+_FIXTURE_KEYS = frozenset(
+    {"A", "B", "C", "EMPTY", "ENVIRONMENT", "GOOD", "K", "LDAP_URL", "MSG", "MYPATH", "N", "PATHS", "URL"}
+)
+
+
 @pytest.fixture(autouse=True)
 def _tmp_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Redirect state files into a temp dir; strip session env so CSID resolves to 'shared'."""
+    """Redirect state files into a temp dir; strip session env so CSID resolves to 'shared'.
+
+    The restorable-key allowlist is widened with this module's fixture names only; the shipped list stays narrow.
+    """
     monkeypatch.setenv("TMPDIR", str(tmp_path))
     monkeypatch.delenv("CSID", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.setattr(st, "_KEY_ALLOWED_NAMES", _SHIPPED_KEYS | _FIXTURE_KEYS)
+
+
+def test_shipped_allowlist_names_only_workflow_values() -> None:
+    """The restorable-key allowlist shipped with the helper holds only the documented workflow values.
+
+    A test fixture name leaking into the shipped list would widen what ``load`` may emit for ``eval``.
+    """
+    assert _SHIPPED_KEYS == {"RUN_DIR", "SCOPE"}
 
 
 class TestSet:
@@ -188,3 +227,109 @@ class TestStatePath:
         monkeypatch.setenv("CSID", csid)
         monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", session_id)
         assert st.state_path("ns").name == f"claude-state-ns-{token}.env"
+
+
+@pytest.mark.parametrize("key", ["HOME", "CLAUDE_PLUGIN_ROOT", "GIT_SSH_COMMAND", "UNDECLARED_SETTING"])
+def test_rejects_environment_keys_outside_supported_names(key: str) -> None:
+    """Environment configuration cannot be persisted for a later eval."""
+    assert st.set_values("ns", [f"{key}=untrusted"]) == 2
+    assert not st.state_path("ns").exists()
+
+
+@pytest.mark.parametrize("key", ["HOME", "CLAUDE_PLUGIN_ROOT", "GIT_SSH_COMMAND", "UNDECLARED_SETTING"])
+def test_load_omits_environment_keys_from_tampered_file(key: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """Only supported workflow state names reach emitted shell assignments."""
+    st.state_path("ns").write_text(f"{key}=untrusted\nGOOD=2\n", encoding="utf-8")
+    assert st.load_values("ns") == 0
+    captured = capsys.readouterr()
+    assert captured.out == "GOOD='2'\n"
+    assert key in captured.err
+
+
+def test_state_parent_is_private_per_user_directory(tmp_path: Path) -> None:
+    """State files no longer share the world-writable temporary directory itself."""
+    assert st.set_values("ns", ["GOOD=2"]) == 0
+    path = st.state_path("ns")
+    assert path.parent.parent == tmp_path
+    assert path.parent.name.startswith("claude-shell-state-")
+
+
+@pytest.mark.skipif(not _CAN_PRIVATE_MODES, reason="this filesystem does not enforce private POSIX file modes")
+def test_state_directory_and_file_are_private() -> None:
+    """Helper-created directories and files expose no group or other access."""
+    assert st.set_values("ns", ["GOOD=2"]) == 0
+    path = st.state_path("ns")
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(not _CAN_SYMLINK, reason="this process may not create symlinks")
+@pytest.mark.parametrize("without_nofollow", [False, True])
+def test_set_refuses_symlink_without_touching_victim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, without_nofollow: bool
+) -> None:
+    """A planted state-file link cannot redirect writes, including without O_NOFOLLOW."""
+    monkeypatch.setattr(st.os, "O_NOFOLLOW", 0 if without_nofollow else getattr(os, "O_NOFOLLOW", 0), raising=False)
+    victim = tmp_path / "victim"
+    victim.write_text("GOOD=private\n", encoding="utf-8")
+    st.state_path("ns").symlink_to(victim)
+    assert st.set_values("ns", ["GOOD=changed"]) == 2
+    assert victim.read_text(encoding="utf-8") == "GOOD=private\n"
+    assert st.state_path("ns").is_symlink()
+
+
+@pytest.mark.skipif(not _CAN_SYMLINK, reason="this process may not create symlinks")
+def test_load_refuses_symlink(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A planted state-file link cannot import arbitrary supported assignments."""
+    victim = tmp_path / "victim"
+    victim.write_text("GOOD=private\n", encoding="utf-8")
+    st.state_path("ns").symlink_to(victim)
+    assert st.load_values("ns") == 2
+    assert capsys.readouterr().out == ""
+
+
+def test_session_id_cannot_create_path_components(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An environment session token cannot escape the state directory."""
+    monkeypatch.setenv("CSID", "../../outside/session")
+    assert st.state_path("ns").name == "claude-state-ns-.._.._outside_session.env"
+
+
+@pytest.mark.skipif(not _CAN_PRIVATE_MODES, reason="this filesystem does not enforce private POSIX file modes")
+def test_existing_file_is_restricted_on_update() -> None:
+    """Updating a legacy readable state file restores private file permissions."""
+    path = st.state_path("ns")
+    path.write_text("A=old\n", encoding="utf-8")
+    path.chmod(0o644)
+    assert st.set_values("ns", ["B=new"]) == 0
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert st._read(path) == {"A": "old", "B": "new"}
+
+
+@pytest.mark.skipif(not _CAN_SYMLINK, reason="this process may not create symlinks")
+def test_planted_private_directory_link_is_refused(tmp_path: Path) -> None:
+    """A pre-existing link cannot redirect the private state directory outside its root."""
+    directory = st.state_path("ns").parent
+    directory.rmdir()
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    directory.symlink_to(victim, target_is_directory=True)
+    assert st.set_values("ns", ["GOOD=private"]) == 2
+    assert list(victim.iterdir()) == []
+
+
+@pytest.mark.skipif(not _CAN_PRIVATE_MODES, reason="this filesystem does not enforce private POSIX file modes")
+def test_nonprivate_existing_directory_is_refused() -> None:
+    """An unsafe directory is rejected rather than reused for private values."""
+    directory = st.state_path("ns").parent
+    directory.chmod(0o755)
+    assert st.set_values("ns", ["GOOD=private"]) == 2
+    assert list(directory.iterdir()) == []
+
+
+def test_round_trip_without_posix_file_apis(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Native-platform fallbacks remain usable when POSIX identity and descriptor modes are absent."""
+    monkeypatch.delattr(st.os, "getuid", raising=False)
+    monkeypatch.delattr(st.os, "fchmod", raising=False)
+    monkeypatch.delattr(st.os, "O_NOFOLLOW", raising=False)
+    assert st.set_values("ns", ["GOOD=private"]) == 0
+    assert st._read(st.state_path("ns")) == {"GOOD": "private"}

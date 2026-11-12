@@ -47,6 +47,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
 
+from resolve_commit_hooks import commit_with_hooks
+
 #: Matches ASCII control characters, including newlines, that must not reach a commit message.
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
 #: Parses a Conventional Commits subject into type, optional scope, optional ``!`` marker and description.
@@ -598,10 +600,9 @@ def _stage_and_commit_calls(git: str, msg_file: str, files: list[str]) -> int:
     # index and working tree identical for these files (a soft reset touches only the index). Any
     # future caller that stages a file via a partial `git add -p` (or a hook rewrites it after
     # `add`) would silently commit content the caller never staged.
-    result = subprocess.run(  # noqa: S603
-        [git, "--literal-pathspecs", "commit", "-F", msg_file, "--", *files], check=False, timeout=_COMMIT_TIMEOUT
+    return commit_with_hooks(
+        git, ["--literal-pathspecs", "commit", "-F", msg_file, "--", *files], files, _COMMIT_TIMEOUT
     )
-    return result.returncode
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -2,7 +2,7 @@
 name: session
 description: 'Session state that outlives a context reset — `dump` sweeps the live conversation and writes a compact handover doc (goal, decisions + why, lessons, standing instructions, files-touched table, outstanding items, next step), then prints `/clear`; the `session-restore.js` SessionStart hook re-injects it automatically. `park` stashes a diverging idea mid-session without derailing; `sweep` audits the conversation for unlanded work. TRIGGER when: user says "dump the session", "handover before clear", "save state before clearing", "carry this over", "I want to clear but keep the plan", "park this for later", "what did we defer", "anything unfinished before I close". SKIP: surviving auto-compact (that is the skill contract in `.temp/state/skill-contract.md` per `compaction.md`, written by the running skill); reviving a *finished* conversation (Claude Code native `/resume`).'
 argument-hint: dump [name] | recall [name] | list | park <idea> | sweep | drop <item>
-allowed-tools: Read, Write, Edit, Glob, Bash, TaskList, AskUserQuestion
+allowed-tools: Read, Write, Edit, Glob, Bash, TaskList, TaskUpdate, AskUserQuestion
 effort: low
 ---
 
@@ -38,7 +38,7 @@ NOT for: auto-compact survival (`compaction.md` skill contract); reviving a fini
 - Hook auto-restore window: unconsumed **and** `created` within 30 min. Outside it, `recall` is the manual path.
 - Hook truncation threshold: ~8000 chars — above it hook injects `## Goal` + files table + `## Next step` + a `→ /foundry:session recall <slug>` pointer instead of the whole doc.
 - Stale threshold: 14 days (`⚠ stale` prefix when listing) — applies to handover docs **and** parked items
-- Delete threshold: 30 days — handover docs only, swept during `list`. **Parked items never auto-deleted**; only `drop` removes one.
+- Delete threshold: 30 days — consumed handover docs only, swept during `list`. **Unconsumed handovers and parked items never auto-deleted**; only `drop` removes a parked item.
 - Files-table row cap: 25 (over that, group by directory, state elided count)
 
 </constants>
@@ -73,7 +73,7 @@ Otherwise (empty, unrecognized, misspelled): use `AskUserQuestion`:
 ### Substep 1a: Derive slug and timestamp
 
 ```bash
-git branch --show-current 2>/dev/null; date -u +%Y-%m-%dT%H:%M:%SZ; date -u +%Y-%m-%dT%H-%M-%SZ; echo "--- file evidence (Substep 1c) ---"; git diff --stat HEAD 2>/dev/null; echo "--- committed since session start ---"; git log --name-only --pretty=format:'%h %s' --since="8 hours ago" 2>/dev/null | head -60; echo "--- artifact dirs (Substep 1d) ---"; find .temp .reports .experiments .developments -maxdepth 2 -type d -mtime -1 2>/dev/null | head -20  # timeout: 5000
+git branch --show-current 2>/dev/null; date -u +%Y-%m-%dT%H:%M:%SZ; date -u +%Y-%m-%dT%H-%M-%SZ; echo "--- file evidence (Substep 1c) ---"; git diff --stat HEAD 2>/dev/null; echo "--- candidate commits (last 8 hours) ---"; git log --name-only --pretty=format:'%h %s' --since="8 hours ago" 2>/dev/null | head -60; echo "--- artifact dirs (Substep 1d) ---"; find .temp .reports .experiments .developments -maxdepth 2 -type d -mtime -1 2>/dev/null | head -20  # timeout: 5000
 ```
 
 > git parses the relative date itself — no BSD/GNU `date` flag split needed.
@@ -86,13 +86,13 @@ Run **Step 5 / Mode: sweep** detection only — collect its rows; skip its `unla
 
 ### Substep 1c: Gather file evidence
 
-Evidence comes from the Substep 1a call: `git diff --stat HEAD`, then the commits since session start under the `--- committed since session start ---` marker.
+Evidence comes from the Substep 1a call: `git diff --stat HEAD`, then candidate commits under the `--- candidate commits (last 8 hours) ---` marker. The eight-hour window does not establish session start; conversation evidence decides whether each commit belongs to this session.
 
 **Sourcing precedence for files table** — union of four sources, in this order:
 
 1. **Conversation history — authoritative.** Every `Edit`/`Write` of this session is visible to this skill; that's the touched-file list, and the only source that also knows *what* each change was (`Change`) and whether it landed (`State`).
 2. `git diff --stat HEAD` → `Ref` column (`+N/-M`). A file with no diff entry and no commit is `Ref: uncommitted-new`, or dropped when it was temp scratch.
-3. `git log --name-only --since=…` → files already committed this session, no longer appearing in `git diff HEAD`.
+3. `git log --name-only --since=…` → candidate committed files no longer appearing in `git diff HEAD`; include only when conversation evidence confirms they belong to this session.
 4. `.claude/state/session-context.md` → `## Files Modified This Session` — **fallback only**. `task-log.js` writes that section from its PreCompact branch, firing only when auto-compact triggers (`autoCompactThreshold`, 0.7 in foundry's guidance); a session dumping before any compaction has no such section, or a stale one from a prior session. Read only when sources 1–3 come up empty.
 
 **Column rules**: `Change` ≤6 words, what changed, never why (why belongs in `## Decisions`). `State` ∈ `done` / `wip` / `needs-test` / `reverted`. Cap 25 rows — over that, group by directory, state elided count explicitly, never silently truncate (`quality-gates.md`). Scratchpad and `.temp/` paths are never rows; belong in `## Artifacts`.
@@ -165,7 +165,7 @@ implementation detail, tool output, exploration transcript
 Use **Write tool** for both (it creates `.claude/state/session/` on demand; no `mkdir` permission gap):
 
 1. `.claude/state/session/<slug>.md` — composed doc. A slug that already exists is overwritten only after `AskUserQuestion` confirms; otherwise append `-2`, `-3`, … .
-2. `.claude/state/session/LATEST` — slug alone, one line.
+2. `.claude/state/session/LATEST` — slug alone, one line. Read it first when it exists, before calling Write to replace it.
 
 `PARKED.md` is **not** cleared by a dump — doc copies items, doesn't consume them. An item leaves only via `drop`.
 
@@ -211,12 +211,14 @@ End with a `## Confidence` block per `quality-gates.md` — score on: target res
 # age from frontmatter `created`, never mtime — recall's consumed edit rewrites the file and resets mtime
 CUTOFF=$(date -u -v-30d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)
 find .claude/state/session -maxdepth 1 -name '*.md' ! -name 'PARKED.md' 2>/dev/null | while IFS= read -r f; do
-    c=$(sed -n 's/^created: *//p' "$f" | head -1)
-    [ -n "$c" ] && [[ "$c" < "$CUTOFF" ]] && find "$f" -maxdepth 0 -delete && echo "expired: $f"
+    c=$(sed -n 's/^created: *//p' "$f" | head -1 | sed "s/^['\"]//; s/['\"]$//")
+    [[ "$c" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || continue
+    consumed=$(sed -n 's/^consumed: *//p' "$f" | head -1)
+    [ "$consumed" = true ] && [[ "$c" < "$CUTOFF" ]] && find "$f" -maxdepth 0 -delete && echo "expired: $f"
 done; echo "sweep done"  # timeout: 5000
 ```
 
-> `PARKED.md` excluded by name — parked items have no TTL, only `drop` removes them. A doc without a `created` line is kept, never guessed old. ISO-8601 UTC stamps compare correctly as strings.
+> `PARKED.md` excluded by name — parked items have no TTL, only `drop` removes them. Unconsumed docs are kept. Strip surrounding quotes from `created` and require the ISO-8601 UTC shape before comparing; missing or malformed timestamps are kept, never guessed old. Normalized ISO-8601 UTC stamps compare correctly as strings.
 
 ### Substep 3b: Collect and render
 
@@ -306,8 +308,11 @@ Match everything after `drop ` against slugs and summaries in `.claude/state/ses
 Edit tool on `PARKED.md` — remove only matched bullet, leave rest untouched. Then append one audit line:
 
 ```bash
+ITEM="<matched slug>"
+[[ "$ITEM" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || { echo "! BLOCKED — resolve the matched slug before logging"; exit 1; }
+mkdir -p .claude/state/session || exit 1
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-jq -n --arg ts "$TS" --arg item "<matched slug>" '{"ts":$ts,"item":$item,"action":"dropped"}' >> .claude/state/session/dropped.jsonl  # timeout: 5000
+jq -n --arg ts "$TS" --arg item "$ITEM" '{"ts":$ts,"item":$item,"action":"dropped"}' >> .claude/state/session/dropped.jsonl  # timeout: 5000
 ```
 
 > jq escapes the slug — a bullet holding quotes or braces can never break the log line.

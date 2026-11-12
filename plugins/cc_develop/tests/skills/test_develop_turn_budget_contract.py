@@ -79,7 +79,7 @@ class TestAgentResolution:
             ),
             pytest.param("agent-watch-<batch>.tsv", id="one-tsv-per-batch"),
             pytest.param(
-                'python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/agent_watch.py" --state-dir "$WATCH_DIR"',
+                'python "$PLUGIN_ROOT/bin/agent_watch.py" --state-dir "$WATCH_DIR"',
                 id="plugin-own-watch-helper",
             ),
         ],
@@ -276,7 +276,7 @@ def test_final_gate_reruns_in_full_after_any_fix(skill: str, start: str) -> None
     a full run; a green full suite must be the last test evidence, and the cap never reports green.
     """
     gate = _section(f"{skill}/SKILL.md", start, "## Final Report")
-    assert gate.count('python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" suite') == 1
+    assert gate.count('python "$PLUGIN_ROOT/bin/dev_run_tests.py" suite') == 1
     assert 'eval "$TEST_CMD"' not in gate
     assert "any fix to a full-suite failure" in gate
     assert "then rerun this block in full" in gate

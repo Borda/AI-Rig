@@ -9,7 +9,8 @@ Thresholds: agents > 300 lines (~4 k tokens) · skill SKILL.md > 600 lines (~8 k
 > **Line count = human-readable proxy; token count = true measure.** Thresholds guide human review — not actual context budget. Short sentences + short lines preferred: easier to read AND cheaper per logical unit. Collapsing multiple short lines into one long line does NOT reduce token cost and destroys readability. Fix = remove or distill content. Collapsing lines is not a fix.
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/measure_config_size.py" --mode inventory  # timeout: 10000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/measure_config_size.py" --mode inventory  # timeout: 10000
 ```
 
 **Severity**: **medium** — report only, never auto-fix. When flagging, remind fixer: only content removal or distillation counts; collapsing lines not acceptable.
@@ -55,11 +56,12 @@ Checks two failure modes: (1) empty blocks — `<tag></tag>` with only whitespac
 Scan all agent and skill files via deterministic bin/ script:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 printf "=== Check 14a: Structural tag symmetry ===\n"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/list_audit_files.py" --paths-only -0 --entrypoints $( [ "$LOCAL_MODE" = true ] && echo --local ) |
-  xargs -0 -r python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_tag_symmetry.py"  # timeout: 10000
+python "$PLUGIN_ROOT/bin/list_audit_files.py" --paths-only -0 --entrypoints $( [ "$LOCAL_MODE" = true ] && echo --local ) |
+  xargs -0 -r python "$PLUGIN_ROOT/bin/check_tag_symmetry.py"  # timeout: 10000
 ```
 
 **Severity**: **medium** — gate-level; must fix before audit passes.
@@ -76,11 +78,12 @@ Detects two failure modes: (1) unclosed fence — opening ```` ``` ```` or ```` 
 Scan all agent and skill files via deterministic bin/ script:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 printf "=== Check 14b: Code fence symmetry ===\n"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/list_audit_files.py" --paths-only -0 --entrypoints $( [ "$LOCAL_MODE" = true ] && echo --local ) |
-  xargs -0 -r python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_fence_symmetry.py"  # timeout: 10000
+python "$PLUGIN_ROOT/bin/list_audit_files.py" --paths-only -0 --entrypoints $( [ "$LOCAL_MODE" = true ] && echo --local ) |
+  xargs -0 -r python "$PLUGIN_ROOT/bin/check_fence_symmetry.py"  # timeout: 10000
 ```
 
 **Severity**: **high** — unclosed fence corrupts all subsequent code blocks in the file; Claude misparses the rest of the file.
@@ -98,8 +101,9 @@ Detects README facts drifted from disk: (1) a literal `Current version: `X.Y.Z\`
 Scan all plugins via deterministic bin/ script:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 printf "=== Check 14c: README drift ===\n"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_readme_drift.py" \
+python "$PLUGIN_ROOT/bin/check_readme_drift.py" \
     --scan-dir plugins  # timeout: 10000
 ```
 
@@ -115,8 +119,9 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_readme_drift.py" \
 Detects dangling mode-dispatch references: a SKILL.md line routing control to a named section (e.g. `go to "Mode: Lessons Distillation"` or `skip to **Mode: X**`) with no matching `## Mode: X` header in the same file — the half-done-rename bug class where the header was renamed but a dispatch line still points at the old name. Scan all plugins via deterministic bin/ script:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 printf "=== Check 14d: Mode dispatch integrity ===\n"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_mode_dispatch.py" \
+python "$PLUGIN_ROOT/bin/check_mode_dispatch.py" \
     --scan-dir plugins  # timeout: 10000
 ```
 
@@ -133,8 +138,9 @@ Detects byte-level drift in files that must be identical across plugins because 
 Scan via deterministic bin/ script:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 printf "=== Check 14e: Cross-plugin shared-file drift ===\n"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/propagate_shared.py"  # timeout: 10000
+python "$PLUGIN_ROOT/bin/propagate_shared.py"  # timeout: 10000
 ```
 
 **Severity**: **high** — a stale copy means one plugin runs old fallback logic; behaviour diverges silently by plugin.
@@ -155,8 +161,9 @@ Two shapes permitted:
 Inline bash in agent/skill prose is a fragment `MANIFEST` can't propagate, so those copies are named in the script's `REGISTRY` with a reason and held to two invariants: index dir anchored to a project-root variable (never CWD), project name the raw basename (never sanitized).
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 printf "=== Check 14f: Unmanaged codemap index-guard copy ===\n"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_codemap_guard.py"  # timeout: 10000
+python "$PLUGIN_ROOT/bin/check_codemap_guard.py"  # timeout: 10000
 ```
 
 **Severity**: **high** — an unmanaged copy drifts silently; a subdir-anchored or sanitized-name copy reports `no_index` while an index exists, and the agent falls back to Grep with no error.
@@ -227,9 +234,10 @@ Report per-file: `N examples total, K high-value, M low-value (est. ~X tokens wa
 Block count across all .md files in scope. NxN similarity analysis is expensive — runs in `--efficiency` mode only (Phase B2), which subsumes this check. When `--efficiency` active, skip Check 17.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/list_audit_files.py" $( [ "$LOCAL_MODE" = "true" ] && echo "--local" )  # timeout: 30000
+python "$PLUGIN_ROOT/bin/list_audit_files.py" $( [ "$LOCAL_MODE" = "true" ] && echo "--local" )  # timeout: 30000
 ```
 
 Flag files with block count ≥ 10 as extraction candidates — recommend `--efficiency` run for full NxN analysis.
@@ -282,7 +290,7 @@ Severity: **high** — skill silently fails for any user who installed via marke
 
 Four sub-checks covering rules under the mode-selected root (`plugins/` in local mode, `.claude/` otherwise). Each fresh shell re-derives the root per `checks-skills.md`. Skip if no rule files exist.
 
-**18a — Inventory vs MEMORY.md**:
+**18a — Inventory discovery**:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -294,7 +302,7 @@ while IFS= read -r f; do # timeout: 5000
 done | sort
 ```
 
-Rules on disk absent from MEMORY.md → **medium**. Rules in MEMORY.md absent on disk → **medium**.
+Use the disk inventory for the remaining rule checks. Discovery carries no severity.
 
 **18b — Frontmatter completeness**:
 
@@ -338,7 +346,7 @@ done |
 grep -o 'rules/[a-z_-]*\.md' | sort -u # timeout: 5000
 ```
 
-Severity: 18b = **high**; 18a/18c/18d = **medium**.
+Severity: 18b = **high**; 18c/18d = **medium**; 18a is discovery only.
 
 ## Check 25 — Implicit agent references (missing plugin prefix)
 
@@ -446,7 +454,7 @@ Flag: `[medium] Inconsistent symbol for "<concept>" in <file>: <symbol-A> (line 
 
 **26b — Slash command notation consistency**
 
-Directive references to other skills (e.g., "run → /audit") must use `/name` form. Prose mentions (e.g., "the audit skill") may omit slash. Flag files mixing `` `/name` `` and `` `name` `` in same directive context.
+Directive references to other skills (e.g., "run → /foundry:audit") must use `/name` form. Prose mentions (e.g., "the audit skill") may omit slash. Flag files mixing `` `/name` `` and `` `name` `` in same directive context.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -466,10 +474,11 @@ Via model reasoning: same skill referenced with both `/name` and bare `name` in 
 When file defines legend (any line matching `Legend:` followed by symbol/concept pairs), every body use of concept must match legend symbol exactly.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 printf "=== Check 26c: Legend/key alignment ===\n"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/list_audit_files.py" --paths-only -0 --entrypoints $( [ "$LOCAL_MODE" = true ] && echo --local ) |
+python "$PLUGIN_ROOT/bin/list_audit_files.py" --paths-only -0 --entrypoints $( [ "$LOCAL_MODE" = true ] && echo --local ) |
   xargs -0 -r grep -Hn 'Legend:\|^Key:' || true # timeout: 5000
 ```
 
@@ -620,6 +629,8 @@ for f in $(grep -rl "<!-- policy-sibling:" .claude plugins --include="*.md" --ex
 done
 if [ -n "$OUT" ]; then printf '%s' "$OUT"; else printf "✓: Check 45 — no unsynced policy-sibling markers found\n"; fi
 ```
+
+Treat the shell output as candidate evidence. Before reporting either failure, read this plugin’s `bin/propagate_shared.py` `MANIFEST` and map every copy path and declaring path to its canonical path; resolve reciprocal identities through that same map. A byte-identical propagated copy inherits its canonical file’s sibling declarations, so a canonical reciprocal link covers its copies. Do not report asymmetry solely because a marker names the canonical source instead of each propagated copy. Unavailable membership leaves the symmetry result unverified.
 
 A sibling path resolves from the repository root first, then from the marker file's own plugin root (`plugins/<p>/`), then from its directory. Reciprocal paths resolve from the sibling's roots and directory and must identify the declaring file. An installed plugin has no repository root, so shipped markers may name siblings plugin-relatively (`skills/assess/SKILL.md`) — only a path missing under all three locations is `45-BROKEN`.
 

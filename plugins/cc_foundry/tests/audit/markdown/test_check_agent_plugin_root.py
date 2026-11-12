@@ -46,8 +46,7 @@ class TestMain:
     ) -> None:
         """A defaulted line in any ``agents/*.md`` is reported with its path and line number, exit 1.
 
-        Skills are excluded: they run in the main session where the variable is exported, so the default is correct
-        there and must not be flagged.
+        Skills are checked too: only the plain token receives host substitution.
         """
         agents = tmp_path / "p" / "agents"
         skills = tmp_path / "p" / "skills" / "s"
@@ -59,7 +58,32 @@ class TestMain:
         exit_code = checker.main(["--scan-dir", str(tmp_path)])
 
         out = capsys.readouterr().out
-        assert (exit_code, out.count("plugin-root-default:"), "a.md:2:" in out.replace("\\", "/")) == (1, 1, True)
+        assert (exit_code, out.count("plugin-root-default:"), "a.md:2:" in out.replace("\\", "/")) == (1, 2, True)
+
+    @pytest.mark.parametrize("folder", ["skills/s/modes", "claude-skills/s/templates", "references/agent"])
+    def test_loaded_markdown_defaults_are_reported(self, tmp_path: Path, folder: str) -> None:
+        """Loaded modes, templates and sidecars cannot retain an unrendered defaulted token."""
+        target = tmp_path / "p" / folder / "fragment.md"
+        target.parent.mkdir(parents=True)
+        target.write_text('python "${CLAUDE_PLUGIN_ROOT:-plugins/p}/bin/helper.py"\n', encoding="utf-8")
+        assert checker.main(["--scan-dir", str(tmp_path)]) == 1
+
+    @pytest.mark.parametrize("folder", ["tests/fixtures/skills/s", "fixtures/agents", "tests/agents"])
+    def test_historical_fixtures_are_not_scanned(self, tmp_path: Path, folder: str) -> None:
+        """Historical fixture examples do not become live instruction findings."""
+        target = tmp_path / folder / "example.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("${CLAUDE_PLUGIN_ROOT:-plugins/p}\n", encoding="utf-8")
+        assert checker.collect(tmp_path, [str(target)]) == []
+
+    @pytest.mark.parametrize("scope", ["skills", "agents", "modes", "templates"])
+    def test_direct_scope_scan_includes_children(self, tmp_path: Path, scope: str) -> None:
+        """Selecting a document scope itself does not strip that scope from the inventory."""
+        directory = tmp_path / scope
+        directory.mkdir()
+        target = directory / "fragment.md"
+        target.write_text("${CLAUDE_PLUGIN_ROOT:-plugins/p}\n", encoding="utf-8")
+        assert checker.collect(directory, []) == [target]
 
     def test_clean_scan_prints_pass_line(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Agents using the exact token produce a single pass line and exit 0.
@@ -92,5 +116,5 @@ def test_foundry_agents_never_default_the_plugin_root() -> None:
     A reintroduced default silently degrades sidecar and ``_shared`` loads on every installed copy, while still working
     inside this repository where the relative path exists, so nothing else catches it.
     """
-    findings = [finding for path in checker.collect(FOUNDRY_AGENTS.parent, []) for finding in checker.scan_file(path)]
+    findings = [finding for path in FOUNDRY_AGENTS.glob("*.md") for finding in checker.scan_file(path)]
     assert findings == []

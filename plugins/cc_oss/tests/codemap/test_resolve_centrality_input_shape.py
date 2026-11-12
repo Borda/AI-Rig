@@ -62,9 +62,23 @@ class TestBuildMaps:
         payload = {"central": [{"name": "pkg", "path": "src/pkg.py", "rdep_count": "many"}]}
         assert rc.build_maps(payload, [])["centrality"] == {"pkg": 0}
 
+    @pytest.mark.parametrize("count", [float("inf"), float("-inf")])
+    def test_infinite_rdep_count_preserves_module_resolution(self, count: float) -> None:
+        """An unrepresentable count scores zero while keeping its file-to-module match."""
+        payload = {"central": [{"name": "pkg", "path": "src/pkg.py", "rdep_count": count}]}
+        assert rc.build_maps(payload, ["src/pkg.py"]) == {
+            "centrality": {"pkg": 0},
+            "file_module": {"src/pkg.py": "pkg"},
+        }
+
 
 class TestMainExitCodes:
     """Main: stdin that is not a central JSON object exits 1."""
+
+    def test_deeply_nested_json_returns_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Excessive JSON nesting returns the normal invalid-input status without a traceback."""
+        monkeypatch.setattr("sys.stdin", io.StringIO("[" * 200000 + "0" + "]" * 200000))
+        assert rc.main([]) == 1
 
     @pytest.mark.parametrize(
         "stdin_text",

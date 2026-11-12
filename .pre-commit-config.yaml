@@ -49,6 +49,9 @@ repos:
         exclude: ^plugins/(?:[^/]+/blueprint-manifest|codex-rig/runtime/calibration/behavioral-cases)\.json$
       - id: detect-private-key
         name: "🔐 detect-private-key"
+        # These journal tests assert that PEM private-key markers are redacted, so they carry the markers with
+        # placeholder bodies, never real key material.
+        exclude: ^plugins/opencode-rig/tests/unit/state/journal-(?:secrets|recovery)\.test\.ts$
       - id: check-merge-conflict
         name: "🔀 check-merge-conflict"
       - id: mixed-line-ending
@@ -111,8 +114,11 @@ repos:
         args: ["--in-place", "--config=pyproject.toml"]
         # docformatter needs tomli to parse pyproject.toml when pre-commit selects Python 3.10.
         additional_dependencies: ["tomli"]
-        # Docformatter 1.7.8 crashes while tokenizing multiline f-strings in these files.
-        exclude: ^(?:benchmarks/tests/entrypoints/test_run_all\.py|plugins/codex-rig/tests/remediate/validation/test_code_remediate_(?:final_outcome|work_bucket)_validation\.py)$
+        # Docformatter 1.7.8 crashes while tokenizing multiline f-strings in the first group. The second group
+        # crashes on a `# noqa` comment trailing the closing docstring quotes (the comment cannot move: W505
+        # reads it on that line). The third mangles a raw triple-quoted regex argument into a whitespace-padded
+        # line. Identical on Python 3.10, 3.11 and 3.15, so the interpreter is not the cause.
+        exclude: ^(?:benchmarks/tests/entrypoints/test_run_all\.py|plugins/codex-rig/tests/remediate/validation/test_code_remediate_(?:final_outcome|work_bucket)_validation\.py|plugins/[^/]+/bin/(?:render_plugin_root|dev_load_shared|load_mode|load_shared_doc)\.py|plugins/cc_[^/]+/bin/parse-skill-flags\.py)$
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.3

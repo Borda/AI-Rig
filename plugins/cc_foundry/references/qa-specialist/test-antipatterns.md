@@ -1,0 +1,26 @@
+- **Out-of-scope items to skip (not flag)**: syntactic issues (dead imports, unused variables, naming conventions, import ordering) — exclude silently rather than routing to "secondary observations"
+- **Scenario-opaque test name with no docstring**: name gives no scenario clue AND no docstring — `[medium]`; rename to `test_<unit>_<condition>_<expected>` or add `"""Scenario: ..."""`; every test needs a docstring regardless of its name (Ruff `D102`/`D103`), so a descriptive name never waives it
+- **Scenario declared but not fully covered**: name/docstring declares scenario but parametrize/assertions omit variations, boundary values, or error paths — `[medium]`; extend parametrize list
+- Tests with no assertions
+- Test names that describe implementation, not behavior (e.g. `test_function_1`)
+- No test for error/failure path
+- Tests sharing mutable state between test cases
+- Integration tests disguised as unit tests — missing `@pytest.mark.integration` marker
+- ML tests without fixed random seed — flaky tests worse than no tests; flag as primary coverage gap any test calling `np.random`, `random`, or `torch` random APIs with no preceding seed; note when multiple RNG sources (e.g. `random` + `np.random`) need dual-seeding
+- Using `assert torch.equal(a, b)` instead of `torch.testing.assert_close` (float comparison needs tolerance)
+- **Testing implementation details or observed behavior** (including asserting call order as primary): apply **Black-box first** and **Public API surface by default**
+- **Mocking internals or concealing failures**: apply **Mocking discipline**
+- **Missing public symbol in inventory**: public function/class (no `_` prefix, not excluded from `__all__`) with zero coverage and no `# pragma: no cover` — always primary finding
+- **N nearly-identical test functions**: apply **Parametrization**
+- **Repeated inline fixture scaffold**: 3+ tests each repeat the same N-field dict (≥6 fields) changing only 1–2 fields — extract a module-level factory function using **Factory default = most common shape**
+- **Verbatim fixture duplicate**: two or more test functions copy-paste identical inline dict — extract to a module-level constant and reference it; copy-paste creates silent divergence when one copy is updated
+- **New test when existing could expand**: apply **Expand-first**
+- **Dead-code detection out of scope**: unreachable functions, unused public API, missing `__all__` exports → use `foundry:linting-expert` or `foundry:solution-architect`; qa-specialist NOT-for excludes dead-code analysis
+- **`if`/`for`/`while` logic in test bodies**: control flow = doing too much — split into parametrized cases; `if`/`else` inside parametrize value generation OK when \<30% of cases
+- **Thread-safety assertion missing**: class claims thread-safety (`Lock`, `RLock`) but no concurrent-access test — primary if explicitly described as thread-safe; secondary if implied
+- **Inline skip in test body**: `pytest.skip(...)` or `pytest.skipif(...)` called inside function body — use decorator `@pytest.mark.skipif(<cond>, reason="...")` instead; body-skip OK only when condition can't be evaluated at import time
+- **`try`/`except` suppressing test failure**: `except: pass` or `except: pytest.skip(...)` around act+assert — `[critical]`; remove wrapper and fix the bug
+- **`try`/`finally` for cleanup in test body**: extract to `pytest.fixture` with `yield`; inline OK only when teardown is assertion logic, not pure resource cleanup
+- **pytest.fixture for pure factory data**: fixture with no setup/teardown and no yield used only to return a data dict — replace with a plain module-level function; plain functions work inside `@pytest.mark.parametrize` lists where fixture injection is unavailable
+- **`@pytest.mark.xfail` without `raises=` and issue ref**: open-ended xfail = silent regression hole; require `raises=<ExceptionType>` + `reason="<issue-url>"`
+- **Skipped doctest**: apply **Doctest discipline**; conditional tests may use `@pytest.mark.skipif` instead

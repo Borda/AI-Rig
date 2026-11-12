@@ -51,6 +51,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const crypto = require("crypto");
 
 function configDir() {
   return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
@@ -108,7 +109,35 @@ function sessionToken(payload) {
 function warnedSentinel(finding, csid) {
   if (!csid) return null;
   const name = `stale-plugin-warned-${finding.plugin}-${finding.version}-${csid}`.replace(/[^A-Za-z0-9._-]/g, "_");
-  return path.join(process.env.TMPDIR || os.tmpdir(), name);
+  const user =
+    typeof process.getuid === "function"
+      ? process.getuid()
+      : crypto.createHash("sha256").update(os.userInfo().username).digest("hex");
+  const dir = path.join(process.env.TMPDIR || os.tmpdir(), `stale-plugin-user-${user}`);
+  try {
+    try {
+      fs.mkdirSync(dir, { mode: 0o700 });
+    } catch (err) {
+      if (err.code !== "EEXIST") throw err;
+    }
+    const stat = fs.lstatSync(dir);
+    if (!stat.isDirectory() || (typeof process.getuid === "function" && stat.uid !== process.getuid())) return null;
+    if (process.platform !== "win32" && (stat.mode & 0o777) !== 0o700) return null;
+    return path.join(dir, name);
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Only an ordinary marker created by this user can suppress the repeated mandate. */
+function alreadyWarned(sentinel) {
+  if (!sentinel) return false;
+  try {
+    const stat = fs.lstatSync(sentinel);
+    return stat.isFile() && stat.nlink === 1 && (typeof process.getuid !== "function" || stat.uid === process.getuid());
+  } catch (_) {
+    return false;
+  }
 }
 
 function warning(finding, sessionId, askedBefore) {
@@ -161,10 +190,10 @@ function main() {
   if (!finding) return;
   const sessionId = typeof payload.session_id === "string" ? payload.session_id.trim() : "";
   const sentinel = warnedSentinel(finding, sessionToken(payload));
-  const askedBefore = Boolean(sentinel) && REBUILT_CONTEXT_SOURCES.has(payload.source) && fs.existsSync(sentinel);
+  const askedBefore = REBUILT_CONTEXT_SOURCES.has(payload.source) && alreadyWarned(sentinel);
   if (sentinel && !askedBefore) {
     try {
-      fs.writeFileSync(sentinel, `${Date.now()}\n`);
+      fs.writeFileSync(sentinel, `${Date.now()}\n`, { flag: "wx", mode: 0o600 });
     } catch {
       // unrecorded — the next compact/clear asks once more, never less
     }

@@ -42,6 +42,7 @@ Before building item lines, re-check every carried verifier verdict and parent-c
 The review confirmed findings at its recorded head. The selected block drops independent verifier and parent-confirmation shortcuts when the wave's source no longer matches, retaining evidence pointers for changed-gap investigation. Report mode without a PR uses checkout HEAD. The following block is for the early wave only:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
@@ -51,7 +52,7 @@ IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null
 # no-PR report mode never runs Step 4, so a PR head oid left from an earlier run must not be compared
 case "$PR_NUMBER" in ''|n/a|*[!0-9]*) PR_HEAD_OID="" ;; esac
 if [ -f "$REPORT_FILE" ]; then
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --recheck-verdicts --review-dir "$(dirname "$REPORT_FILE")" --current-head "$PR_HEAD_OID" || exit 1  # timeout: 15000
+    python "$PLUGIN_ROOT/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --recheck-verdicts --review-dir "$(dirname "$REPORT_FILE")" --current-head "$PR_HEAD_OID" || exit 1  # timeout: 15000
 else
     echo "→ no review report consumed — no verdicts to re-check"
 fi
@@ -117,6 +118,7 @@ Immediately after each call returns, persist its raw JSON reply verbatim via the
 **Structural prep — fire in this same turn, concurrently with the challenge agents** (the codemap queries below are read-only and depend only on item *files*, known from Step 3b — not on any challenge verdict — so they run under the challenge agents' latency shadow, adding ~0 wall-clock; grouping in Phase 2 then finds its maps already warm). Keyed off all `SELECTED_ITEMS` (not yet-unknown `SURVIVING_ITEMS`) — a few queries for items challenge later drops are cheap and hidden under the agent latency; Phase 2 filters to survivors. Resolve each file to its canonical module name + build the whole-repo centrality map (`resolve_centrality.py`), then capture each module's **forward imports** (`deps`, fan-*out*, naturally small — never the 20-cap that truncates reverse `rdeps`):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/resolve-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
 if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
@@ -137,7 +139,7 @@ if command -v codemap-py >/dev/null 2>&1 && [ -f "$IMPL_DIR/action-items.jsonl" 
     [ -f "$IMPL_DIR/codemap-maps.stamp" ] && IFS= read -r _SAVED_STAMP < "$IMPL_DIR/codemap-maps.stamp"
     if [ -z "$_MAP_STAMP" ] || [ "$_MAP_STAMP" != "$_SAVED_STAMP" ] || ! python -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(not set(filter(None,sys.argv[2].split(","))).issubset(d["file_module"]))' "$CODEMAP_MAPS" "$_FILES" 2>/dev/null; then
         codemap-py query central --top 100000 2>/dev/null \
-            | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_centrality.py" --files "$_FILES" > "$CODEMAP_MAPS" 2>/dev/null \
+            | python "$PLUGIN_ROOT/bin/resolve_centrality.py" --files "$_FILES" > "$CODEMAP_MAPS" 2>/dev/null \
             || : > "$CODEMAP_MAPS"
         printf '%s\n' "$_MAP_STAMP" > "$IMPL_DIR/codemap-maps.stamp"
     fi

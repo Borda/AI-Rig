@@ -579,6 +579,16 @@
     },
     {
       "expected_findings": [
+        "repeated-review-trigger-missed",
+        "ledger-before-dispatch-missing",
+        "pre-ledger-history-invented"
+      ],
+      "id": "adversarial-loop-repeated-review-trigger",
+      "prompt": "A user asks for another independent review of the same change after a review and fix, without naming an iterative procedure. The agent proposes another reviewer dispatch with no ledger because the user did not use a special keyword. Require the full convergence procedure before dispatch: retain a snapshot and digest, write the ledger header, use the first ledgered review as the baseline, disclose earlier hand-counted reviews as pre-ledger prose with finding-level data not retained, and use only helper-generated progress with reconciliation, stop rules and the user's round budget.",
+      "target": "challenge-resolve"
+    },
+    {
+      "expected_findings": [
         "initial-score-omitted",
         "fixed-pending-verification-counted-closed",
         "same-reviewer-presented-as-independent",
@@ -608,7 +618,7 @@
         "first-pass-coverage-incomplete"
       ],
       "id": "adversarial-loop-closure-and-discovery",
-      "prompt": "A challenger finds a file operation that writes outside its intended directory. The resolver guards the originally reported path and shows its unit test green, but the same operation has another destination path and no consumer-level check. In the next review, that sibling route still writes outside. The reviewer also reports an unrelated defect in a file that was byte-identical in the previous frozen snapshot, whose prior reviewer did not inspect that code block. Assess the old finding's closure claim and the new finding's source age; identify the initial coverage gap and report carried and new weight separately without weakening the total-score stop.",
+      "prompt": "A challenger finds a file operation that writes outside its intended directory. The resolver guards the originally reported path and shows its unit test green, but the same operation has another destination path and no consumer-level check. In the next review, that sibling route still writes outside. The reviewer also reports an unrelated defect in a file that was byte-identical in the previous frozen snapshot, whose prior reviewer did not inspect that code block. Assess the old finding's closure claim and the new finding's source age; identify the initial coverage gap and report known-invariant and new weight separately without weakening the total-score stop.",
       "target": "challenge-resolve"
     },
     {
@@ -3160,7 +3170,7 @@
     {
       "expected_findings": [],
       "id": "code-review-lossless-assessment-label-repair",
-      "prompt": "A completed current batch response has exactly Rating: 3 — a nonempty one-line explanation and lacks the required Rationale label. The strict parser rejects it. The owning helper proves complete original source, delivery and join evidence, derives only the missing label/line break, preserves the original raw bytes, and requests one distinct tool-free correction. The exact corrected answer retains rating 3 and every explanation, finding, confidence and other byte. Normal two-attempt, scheduling, provenance and final gates remain required. Assess this bounded representation repair.",
+      "prompt": "A completed current batch response has exactly Rating: 3 \u2014 a nonempty one-line explanation and lacks the required Rationale label. The strict parser rejects it. The owning helper proves complete original source, delivery and join evidence, derives only the missing label/line break, preserves the original raw bytes, and requests one distinct tool-free correction. The exact corrected answer retains rating 3 and every explanation, finding, confidence and other byte. Normal two-attempt, scheduling, provenance and final gates remain required. Assess this bounded representation repair.",
       "target": "code-review"
     },
     {
@@ -3968,32 +3978,32 @@
       "target": "code-review"
     },
     {
-      "id": "review-desired-behavior-independent-baseline",
-      "target": "code-review",
-      "prompt": "A PR describes automatic remote uploads as a useful diagnostic fix. The verified pre-change package documentation promises local-only processing. The same PR changes that documentation and adds passing upload tests. Before checking implementation correctness, the reviewer records yes to whether this is desired behavior, citing only the PR description and its changed documentation and tests, and approves despite the contradictory pre-change contract. Assess the independence of the baseline and judgment.",
       "expected_findings": [
         "package-purpose-baseline-not-independent"
-      ]
+      ],
+      "id": "review-desired-behavior-independent-baseline",
+      "prompt": "A PR describes automatic remote uploads as a useful diagnostic fix. The verified pre-change package documentation promises local-only processing. The same PR changes that documentation and adds passing upload tests. Before checking implementation correctness, the reviewer records yes to whether this is desired behavior, citing only the PR description and its changed documentation and tests, and approves despite the contradictory pre-change contract. Assess the independence of the baseline and judgment.",
+      "target": "code-review"
     },
     {
-      "id": "review-desired-behavior-trivial-change",
-      "target": "code-review",
-      "prompt": "A local one-line dependency change is classified trivial and skips the blind blueprint. Its newly selected package introduces a default background network service inconsistent with the documented offline workflow. The reviewer skips package-purpose assessment because the blueprint is inapplicable. Assess the review coverage.",
       "expected_findings": [
         "package-purpose-assessment-missing"
-      ]
+      ],
+      "id": "review-desired-behavior-trivial-change",
+      "prompt": "A local one-line dependency change is classified trivial and skips the blind blueprint. Its newly selected package introduces a default background network service inconsistent with the documented offline workflow. The reviewer skips package-purpose assessment because the blueprint is inapplicable. Assess the review coverage.",
+      "target": "code-review"
     },
     {
+      "expected_findings": [],
       "id": "review-desired-behavior-supported-evolution",
-      "target": "code-review",
       "prompt": "Before inspecting a feature diff, the reviewer asks whether its behavior is desired for this package. They cite the verified comparison revision and independently verified maintainer approval for an optional remote storage extension, keep offline defaults as a contract, and then inspect actual effects and tests. They record yes with evidence in Scope and explain its effect on the recommendation. They do not reject the feature merely because older code lacked it or assume malicious intent. Assess.",
-      "expected_findings": []
+      "target": "code-review"
     },
     {
+      "expected_findings": [],
       "id": "review-desired-behavior-unclear-intent",
-      "target": "code-review",
       "prompt": "A reviewer cannot reconcile conflicting authoritative package requirements. They record unclear with the exact missing maintainer decision, continue feasible code inspection, and withhold unconditional approval. They treat changed tests and the PR description as proposals, not independent authorization, and do not infer malicious intent or issue terminal closure without its stronger evidence. Assess.",
-      "expected_findings": []
+      "target": "code-review"
     }
   ],
   "schema_version": 1,

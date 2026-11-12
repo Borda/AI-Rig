@@ -19,6 +19,7 @@ from shutil import which
 from typing import Any, NamedTuple
 from unittest import mock
 
+import dev_run_dir
 import pytest
 import run_pytest_short  # type: ignore[import-not-found]
 
@@ -299,7 +300,7 @@ class TestTargetContainment:
 
 
 class TestLogFile:
-    """``--log`` writes the full output to disk, but only inside the project or ``$TMPDIR``."""
+    """``--log`` writes the full output only inside a declared run directory or its dedicated fallback."""
 
     def test_keeps_full_output_while_terminal_shows_tail(
         self, fake_popen: Callable[..., mock.MagicMock], capsys: pytest.CaptureFixture[str], workspace: _Workspace
@@ -309,7 +310,7 @@ class TestLogFile:
         Targeted loop runs print a short tail to keep context small; the full output must stay inspectable afterwards.
         """
         fake_popen(stdout=_make_lines(30))
-        log = workspace.scratch / "logs" / "run.log"
+        log = workspace.project / ".developments" / "run" / "run.log"
         run_pytest_short.main(["pytest", "--tail-n", "5", "--log", str(log)])
         assert capsys.readouterr().out.splitlines() == _line_range(26, 30)
         assert log.read_text(encoding="utf-8").splitlines() == _line_range(1, 30)
@@ -328,16 +329,17 @@ class TestLogFile:
     @pytest.mark.parametrize(
         "where",
         [
-            pytest.param("project/.developments/run.log", id="under-cwd"),
-            pytest.param("scratch/run.log", id="under-tmpdir"),
+            pytest.param("project/.developments/run/run.log", id="project-run"),
+            pytest.param("scratch/run/run.log", id="temp-run"),
         ],
     )
-    def test_inside_project_or_temp_is_written(
+    def test_declared_run_directory_is_written(
         self, fake_popen: Callable[..., mock.MagicMock], workspace: _Workspace, where: str
     ) -> None:
-        """The two places the skills write — the project's ``.developments/`` run dir and ``$TMPDIR`` — stay allowed."""
+        """A trusted run sentinel can name a dedicated run directory in either the project or temp directory."""
         fake_popen(stdout="line-1")
         log = workspace.project.parent / where
+        dev_run_dir.write_sentinel("dev-feature-dev-dir", str(log.parent))
         assert run_pytest_short.main(["pytest", "--log", str(log)]) == 0
         assert log.read_text(encoding="utf-8") == "line-1"
 

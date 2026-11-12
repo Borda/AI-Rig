@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 from _artifact_files import read_json
+from test_collect_pr_git_recovery import _build_repository_template
 from test_review_completion_gate import _assessed_pr, _module
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
@@ -150,6 +153,80 @@ def _routing_checkout_disagreement(pr_dir: Path) -> None:
 
 class TestRemediationReceipt:
     """Validation of the collector's checkout receipt before remediation prepares its branch."""
+
+    @pytest.mark.parametrize("remote_ref", ["FETCH_HEAD", "immutable-head"])
+    def test_accepts_verified_head_fetch_receipt(
+        self, validator: ModuleType, remediation_pr: Path, remote_ref: str
+    ) -> None:
+        """Accept historical fetch state and the collector's immutable verified head identity."""
+        head = read_json(remediation_pr / "pr-routing.json")["head_oid"]
+        _update_json(
+            remediation_pr / "pr-head-fetch.json", remote_ref=head if remote_ref == "immutable-head" else remote_ref
+        )
+
+        _validate_receipt(validator, remediation_pr)
+
+    @pytest.mark.parametrize(
+        "remote_ref",
+        [None, "", "f" * 40, "a" * 39, "a" * 41, "A" * 40, "refs/heads/topic", pytest.param([], id="non-string")],
+    )
+    def test_rejects_unverified_head_fetch_ref(
+        self, validator: ModuleType, remediation_pr: Path, remote_ref: object
+    ) -> None:
+        """Reject malformed references and valid-looking OIDs that do not identify the routed head."""
+        _update_json(remediation_pr / "pr-head-fetch.json", remote_ref=remote_ref)
+
+        with pytest.raises(SystemExit, match=r"^code-remediate-pr-source-oid-provenance-invalid$"):
+            _validate_receipt(validator, remediation_pr)
+
+    @pytest.mark.parametrize("field", ["local_head", "expected_head_oid"])
+    def test_rejects_head_fetch_oid_disagreement(self, validator: ModuleType, remediation_pr: Path, field: str) -> None:
+        """An immutable remote identity never bypasses the local and expected head bindings."""
+        head = read_json(remediation_pr / "pr-routing.json")["head_oid"]
+        _update_json(remediation_pr / "pr-head-fetch.json", remote_ref=head, **{field: "f" * 40})
+
+        with pytest.raises(SystemExit, match=r"^code-remediate-pr-source-oid-provenance-invalid$"):
+            _validate_receipt(validator, remediation_pr)
+
+    @pytest.mark.integration
+    def test_accepts_receipt_from_real_local_head_fetch(
+        self, validator: ModuleType, remediation_pr: Path, tmp_path: Path
+    ) -> None:
+        """Consume the real collector's local Git fetch receipt without rewriting its produced fields."""
+        repository_root = tmp_path / "git-repositories"
+        repository_root.mkdir()
+        repositories = _build_repository_template(repository_root)
+        collector = _module(PLUGIN_ROOT / "shared" / "collect_pr.py")
+        head = repositories.head
+        run = partial(subprocess.run, cwd=repository_root / "worktree")
+        collector._fetch_pr_head_ref(
+            run,
+            30,
+            remediation_pr,
+            collector._HeadFetchRequest(
+                remote_name=str(repository_root / "source"),
+                source_ref="refs/heads/topic",
+                head_ref="topic",
+                head_oid=head,
+                source_policy="verified local PR source",
+                error_prefix="pr-head",
+            ),
+        )
+        _update_json(remediation_pr / "pr.json", headRefOid=head)
+        _update_json(
+            remediation_pr / "pr-routing.json", head_oid=head, local_checkout_command=f"git checkout --detach {head}"
+        )
+        _update_json(
+            remediation_pr / "local-checkout.json",
+            command=f"git checkout --detach {head}",
+            expected_head=head,
+            local_head=head,
+            diff_head_oid=head,
+        )
+        _update_json(remediation_pr / "worktree-preflight.json", current_head=head, expected_head=head)
+
+        assert read_json(remediation_pr / "pr-head-fetch.json")["remote_ref"] == head
+        _validate_receipt(validator, remediation_pr)
 
     @pytest.mark.parametrize(
         "command_template",

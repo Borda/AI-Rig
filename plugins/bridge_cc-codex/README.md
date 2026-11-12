@@ -6,7 +6,7 @@ The bridge is useful with either host integration installed and has no dependenc
 
 > Contributing or want internals? See [Development and release verification](docs/development.md) and [Security and privacy](docs/security.md).
 
-> Release: `0.12.4`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
+> Release: `0.13.0`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
 
 ## 🚀 After installation
 
@@ -161,7 +161,7 @@ Plain `/bridge:setup` and `$bridge:setup` invocations use those defaults. `all`:
 1. Inspects, proposes, and reports every supported stage.
 2. Asks for one expiring, one-use approval before safe configuration or repair, bound to the exact action, target, resolved scope, workspace, observed-state fingerprint, native argv, external capability, rollback record, and stop condition.
 
-> The digest is authenticated with a host-held per-user HMAC key so a caller cannot forge or alter a plan, but the digest is not consent: the operator or host permission surface must still approve the displayed operation. A denial, changed or expired digest, replay, failed probe, or failed operation stops without an equivalent retry.
+> The digest is authenticated with a host-held per-user HMAC key so a caller cannot forge or alter a plan, but the digest is not consent: the operator or host permission surface must still approve the displayed operation. A denial, changed digest, replay, failed probe, or failed operation stops without an equivalent retry. An expired approval permits one replacement plan, new operations file, and fresh approval per stage; never reuse the old digest or approval, and stop on a second expiry. Recheck live-verification preconditions before planning its replacement. The approval deadline is 300 seconds from plan issuance, not approval; after an operator command, wait for the user to report completion before checking or advancing.
 
 The remaining setup stages have distinct boundaries:
 
@@ -247,20 +247,25 @@ Invoke the namespaced skills directly. Pass a concrete task or question and sele
 /bridge:review --model <codex-model> --effort <effort> --timeout-seconds 300 "Review the current diff for correctness, regressions, and missing tests."
 ```
 
+For write-capable dispatch, caller approval means the user's approval of the exact task, absolute workspace, and network mode. A direct `/bridge:implement` invocation supplies that approval. An orchestrating skill or subagent may reuse a recorded user decision covering its task set, launch directory, and network mode (`none` unless named); cite that decision in the brief. Otherwise obtain the missing user approval before dispatch; a subagent without that approval returns `blocked`.
+
 The verb skills accept the bridge's task text and these caller-selected fields:
 
-| Applies to                      | Fields and behavior                                                                                                                                                                                                            |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| All verbs                       | `--timeout-seconds`, `--depth`, `--run-id`, and `--workspace`. Omitted budget uses the per-verb default (`advise` 120 seconds, `review` 300 seconds, `implement` 600 seconds); omitted depth starts an outermost call at zero. |
-| `implement`                     | `--background` and `--session-id`. A write-capable implementation is never automatically retried after timeout because its process may already have changed the worktree.                                                      |
-| `advise`, `review`, `implement` | `--network none\|github-read` (default `none`; caller opt-in, Codex peer only).                                                                                                                                                |
-| `advise` and `review`           | May receive one bounded retry at the next lower supported effort tier, so the retry can finish within the same budget.                                                                                                         |
+| Applies to                      | Fields and behavior                                                                                                                                                                                                                       |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| All verbs                       | `--timeout-seconds`, `--run-id`, and `--workspace`. Omitted budget uses the per-verb default (`advise` 120 seconds, `review` 300 seconds, `implement` 600 seconds); recursion depth is transport-owned and cannot be lowered by a caller. |
+| All verbs                       | `--task-file PATH` instead of inline task text; `--untrusted-task` when any task source is external. The reverse MCP tools use the optional boolean `untrusted_task=true`.                                                                |
+| `implement`                     | `--background` and `--session-id`. A write-capable implementation is never automatically retried after timeout because its process may already have changed the worktree.                                                                 |
+| `advise`, `review`, `implement` | `--network none\|github-read` (default `none`; caller opt-in, Codex peer only).                                                                                                                                                           |
+| `advise` and `review`           | May receive one bounded retry at the next lower supported effort tier, so the retry can finish within the same budget.                                                                                                                    |
 
 ### Task text and timing
 
-- Pass task text with `--task`, or with `--task-file <path>` when it contains a backtick, `$`, double quote, backslash or a flag-shaped token. The two are mutually exclusive, and the file must be a regular file of at most 16 KiB.
-- Worst-case wall time of one call is `--timeout-seconds` × 2.4: the hard cutoff is × 1.2, and a timed-out `advise` or `review` retries once at the next lower effort with the same budget.
-- Foreground calls set their Bash `timeout` above that figure; when it can reach the ~10 min foreground cap, run the call in the background.
+- Pass task text with `--task`, or with `--task-file <path>` for unauthored text or when it contains a backtick, `$`, double quote, backslash or a flag-shaped token. On native Windows always use `--task-file`, including with `bin/python.cmd`, so task text never reaches batch argument expansion. The two sources are mutually exclusive, and the file must be a regular file of at most 16 KiB.
+- A caller-supplied task file is passed through unchanged and never deleted. For text moved out of `--task`, the skill uses `bridge_task_path.py` to select a unique host-temporary path outside the selected workspace, creates it with Write, then cleans up only its own file as best effort after the call returns. Never reconstruct unauthored text with a shell heredoc, echo or printf.
+- Set `--untrusted-task` whenever task text comes from PR comments, issue bodies, web pages or any external source, including scratch and caller-supplied task files. The transport wraps it in a fresh-token data-only fence; preserve a caller's designation.
+- Worst-case wall time is `2 × (1.2 × --timeout-seconds + 9 seconds)` for `advise` and `review`, including one same-budget lower-effort retry and per-attempt termination/drain. For `implement`, which never retries, it is `1.2 × --timeout-seconds + 9 seconds`.
+- Foreground calls set Bash `timeout` at least 20 seconds above that figure. Synchronous skill/subagent callers use at most 230 seconds for `advise`/`review` or 470 seconds for `implement`, with Bash `timeout` 595 seconds; never background these callers or silently replace an incompatible caller-supplied budget. Other callers use background Bash when the worst case can reach the ~10 min foreground cap or independent work can continue.
 - A `status=error` object (exit 2) is a refused invocation, such as passing both `--task` and `--task-file`: fix the invocation rather than retrying it unchanged.
 
 ### Detached jobs
@@ -284,6 +289,8 @@ Pass the same `--workspace` the originating call used; when it omitted the optio
 | `failed`            | The supervisor itself errored; its error is returned. An `implement` job may already have edited files. |
 | `stalled`           | The supervisor is gone, or the job is still queued after 120 seconds. Route to `/bridge:result`.        |
 | `missing`           | No such job in this workspace: a wrong workspace, a job that never existed, or one already pruned.      |
+
+On Windows, `stalled` may never appear after supervisor PID reuse. Retain the launch budget and dispatch time (`--timeout-seconds`, default 600 seconds for `implement` when omitted); stop waiting at `--timeout-seconds` × 1.2 + 9 seconds termination/drain + 120 seconds startup grace, measured from dispatch, then read `/bridge:result`. Report incomplete work if no result exists; that deadline does not prove the child stopped or release its paths for editing.
 
 > Background execution and lifecycle controls are available only for Claude Code → Codex `implement`.
 >
@@ -428,6 +435,7 @@ Bridge state is project-local:
 .temp/bridge/jobs/<job-id>.json                     detached-job metadata and lifecycle state
 .temp/bridge/jobs/<job-id>.cancel.json              durable cooperative-cancellation request
 .temp/bridge/health.jsonl                           one health/cost record per completed bridge call
+.temp/bridge/result-<timestamp>-<nonce>.json         private final result and warnings
 .temp/bridge/incidents/<timestamp>-<fault>.json     sanitized fault and recovery evidence
 ```
 
@@ -435,7 +443,10 @@ Artifact handling:
 
 - Artifact directories and members are rechecked against the bound project and store before reads, creation, and writes. Escaping parents and linked file leaves are rejected; directory aliases contained within the store remain usable. These checks do not promise immunity to concurrent path replacement during an OS operation.
 - Incident records do not persist child command arguments or environment data. They preserve the classified fault, reason, model, effort, verb, budget, transcript path, and—when a write-capable process is killed—the observed worktree delta. That delta is advisory: unchanged dirty status or unavailable Git can produce an empty delta despite edits, so inspect the actual worktree independently.
-- The optional health log records direction, verb, model, effort, cost/tokens when reported by the host, duration, status, depth, and `run_id`. A write failure appends a sanitized nonblocking telemetry warning to public `findings`, preserving the original status, verdict, decision fields and incident without rerunning the child. A symlink, reparse point, hard link, or nonregular `health.jsonl` is refused without writing its target.
+- Optional local accounting writes one private structured result after final warnings and one health row per logical call, with schema version 1, direct result/transcript/incident links, outcome counts, direction, verb, requested model, effort, reported cost/tokens, status, depth, and `run_id`. `elapsed_seconds` covers the whole call through final checks, excluding optional accounting writes; `duration_seconds`, cost and tokens retain final-attempt semantics. Retry incidents retain their own observed duration/tokens/cost; unavailable observations stay null or empty. Reports retain the public result, including warnings, blockers and remaining scope. New artifacts use the existing private writer (owner-only mode on POSIX; platform filesystem permissions on Windows). Accounting is entirely workspace-local: no exporter, network request, additional model call or agent step, only local serialization and file writes. Keep this private store out of version control and shared folders. A report write failure leaves a null report link and a sanitized warning; a health write failure updates the report with that warning when storage permits. A write failure appends a sanitized nonblocking telemetry warning to public `findings`, preserving the original status, verdict, decision fields and incident without rerunning the child. A symlink, reparse point, hard link, or nonregular `health.jsonl` is refused without writing its target.
+- Completed job artifacts under `.temp/bridge` older than 30 days, or beyond the newest 200 completed jobs, are pruned automatically; queued or running jobs and anything they reference are never pruned, and `health.jsonl` rotates at 5 MiB, keeping one previous generation as `health.jsonl.1`.
+- Pass `--untrusted-task` (MCP argument `untrusted_task`) whenever the task text comes from PR comments, issue bodies, web pages or any other external source. The bridge then wraps the task in a fresh-token fence and tells the peer it is data only, never instructions.
+- After a `stalled` job, edit the workspace only once the peer is confirmed terminated or the original hard cutoff has passed. A supervisor that died abruptly cannot enforce the cutoff and may leave its peer running, because portable subprocess APIs cannot guarantee cleanup.
 - Setup summarizes blocked/timeout/refused counts, their latest timestamps, and reported cost by direction, verb, and model; static CLI findings are reported separately.
 
 > Artifacts are evidence, not authority. Read the envelope, source changes, tests, permissions, and remaining limits before accepting consequential work. Delete `.temp/bridge/` only under your project's normal retention policy and only after preserving any incident or review evidence you still need.
@@ -504,3 +515,9 @@ Run `action=verify-live ... live=required` only after explicitly accepting the s
 ## 📄 License and attribution
 
 This plugin is distributed under the Apache License, Version 2.0; see [LICENSE](LICENSE). Repository attribution is in [NOTICE](NOTICE). The bridge's implementation is maintained as a self-contained package and does not require a sibling plugin.
+
+### Offline usage accounting
+
+[`bin/bridge_usage.py`](bin/bridge_usage.py) reads explicitly selected project stores without provider calls or writes: `python "$BRIDGE_PLUGIN_ROOT/bin/bridge_usage.py" --workspace /absolute/project` (replace the variable with the installed plugin root). Repeat `--workspace` to consolidate projects. Output separates version/model cohorts, partial outcomes, observed attempt usage, unknown spend and evidence gaps; it does not score provider quality or fabricate historical metadata. Add `--calls` to also list every call with its start/end times, message sizes, attempts and the expected fields it lacks, for completeness checks and later replay. See [offline usage audit](docs/operations.md#offline-usage-audit).
+
+Private accounting records retain ordered executed attempts, provider-reported model identities, the plugin version and a cached runtime-file digest. Public envelopes retain final-attempt usage. Both host skill sets now require bounded task scope and parent-prepared verification dependencies when needed, reusing existing evidence without expanding child permissions.

@@ -14,6 +14,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _skill_source import read_skill_source
 
 _PLUGIN = Path(__file__).resolve().parents[2]
 _SKILL = _PLUGIN / "skills/review/modes/post-agent.md"
@@ -23,7 +24,7 @@ _SESSION = "dispatch-test"
 
 def _dispatch() -> tuple[str, str]:
     """Return Step 5 (whitespace-flattened, so line wraps do not matter) and its instruction-path recipe."""
-    text = _SKILL.read_text(encoding="utf-8").split("## Step 5: Consolidate findings", 1)[1]
+    text = read_skill_source(_SKILL).split("## Step 5: Consolidate findings", 1)[1]
     text = text.split('TaskUpdate "Step 5b:', 1)[0]
     blocks = re.findall(r"```bash\n(.*?)```", text, re.DOTALL)
     block = next(block for block in blocks if "_CONSOLIDATOR_INSTRUCTIONS=" in block)

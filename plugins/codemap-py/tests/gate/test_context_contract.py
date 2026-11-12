@@ -138,7 +138,10 @@ def _queries(tmp_path: Path) -> list[str]:
 
 
 def _run_gap(cwd: Path, payload: str, **env: str) -> subprocess.CompletedProcess[str]:
-    """Execute the documented shell and Python with only git-root discovery replaced at its process boundary."""
+    """Execute the documented shell and Python with only git-root discovery replaced at its process boundary.
+
+    Deliver shell source on stdin so native Windows argv quoting cannot halve its JSON backslash pairs in MSYS Bash.
+    """
     lines = _CONTEXT_CONTRACT.read_text(encoding="utf-8").splitlines()
     section = lines.index("## Coverage metadata in output")
     start = lines.index("```bash", section)
@@ -172,7 +175,8 @@ exec(compile(sys.argv[1], "<gap-example>", "exec"))
         'python() { "$PYTHON_EXE" -c "$GAP_DRIVER" "${@:2}"; }\n'
     )
     return subprocess.run(
-        [_POSIX_BASH, "-c", "set -e\n" + stubs + snippet + '\nprintf "task continues\\n"'],
+        [_POSIX_BASH, "-s"],
+        input="set -e\n" + stubs + snippet + '\nprintf "task continues\\n"',
         cwd=cwd,
         env=full_env,
         capture_output=True,

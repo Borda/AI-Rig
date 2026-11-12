@@ -11,6 +11,7 @@ Names come verbatim from the prior run's `review-validation.json`: roles = `asse
 `bin/fill_gaps_scope.py plan` checks: run layout `.reports/review/pr-<PR>/run-<NNN>/review-report.md`; readable v1 sidecars + `head-sha.txt` holding a 7–40 hex commit id; not a REJECT run; every name known; every role maps to a review dimension (Codex role → bridge available); PR head starts with prior `head-sha.txt`; no gap a rerun cannot repair (`sidecar-*`, `contract-unsupported`, `concern-unknown-candidate`, a findings row naming no candidate); no carried candidate bound to another revision; carried projection passes the publication gate's record rules and its producer row rules (every carried findings row merge-ready, ids unique). Projection = prior envelope − re-run roles' assessments − re-validated candidates with their concerns and rows + one row per `publish_rows` id, every other record verbatim; only what the new consolidator may write varies: aggregate readiness, aggregate outcome (recomputed over the projected assessments: null only beside a carried completed undecidable reviewer, judged only beside a carried judging one, either with ≥1 re-run role; the prior's own label never counts), re-run roles' assessments, an added concern for an open carried candidate lacking one. `publish_rows` = named CONFIRMED candidates on that head that pass every record rule, have no open concern and lack only their row; any other named candidate is re-validated. Refusal names the carried records whose addition to `--roles`/`--candidates` makes the projection pass (a carried row failing a producer row rule names its candidate), or says none can (a failing row naming no recorded candidate needs a full review). Pass → plan + head sentinels written, summary and cost line printed. Refuse → `! BLOCKED — <reason>`, both sentinels emptied.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || SNAP_DIR=""
@@ -18,7 +19,7 @@ IFS= read -r FILL_REPORT < "${TMPDIR:-/tmp}/oss-review-fill-report-${CSID}" 2>/d
 IFS= read -r FILL_ROLES < "${TMPDIR:-/tmp}/oss-review-fill-roles-${CSID}" 2>/dev/null || FILL_ROLES=""
 IFS= read -r FILL_CANDIDATES < "${TMPDIR:-/tmp}/oss-review-fill-candidates-${CSID}" 2>/dev/null || FILL_CANDIDATES=""
 # `=` form: a value starting with `--` stays a value, never an option
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/fill_gaps_scope.py" plan --pr="$CLEAN_ARGS" --report="$FILL_REPORT" --roles="$FILL_ROLES" --candidates="$FILL_CANDIDATES" --snapshot="$SNAP_DIR/pr-meta.json" --plan-out="${TMPDIR:-/tmp}/oss-review-fill-plan-${CSID}" --head-out="${TMPDIR:-/tmp}/oss-review-fill-head-${CSID}" || exit 1  # timeout: 10000
+python "$PLUGIN_ROOT/bin/fill_gaps_scope.py" plan --pr="$CLEAN_ARGS" --report="$FILL_REPORT" --roles="$FILL_ROLES" --candidates="$FILL_CANDIDATES" --snapshot="$SNAP_DIR/pr-meta.json" --plan-out="${TMPDIR:-/tmp}/oss-review-fill-plan-${CSID}" --head-out="${TMPDIR:-/tmp}/oss-review-fill-head-${CSID}" || exit 1  # timeout: 10000
 # resolve ledger beside the selected run → Step 2 prior-resolution propagation; guard skips in this mode
 _PRIOR_RES="${FILL_REPORT%/*}/resolution.jsonl"
 [ -s "$_PRIOR_RES" ] || _PRIOR_RES=""
@@ -67,10 +68,11 @@ Consolidator prompt adds `FILL_GAPS_PLAN=<literal $REPORT_DIR/fill-gaps.json>`; 
 After the publication summary, before the Step 5 publication gate:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
 [ -n "$_REPORT_DIR" ] || { echo "! BLOCKED — report-dir sentinel missing; cannot check fill-gaps carry-over"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/fill_gaps_scope.py" verify --report "$_REPORT_DIR/review-report.md"  # timeout: 10000
+python "$PLUGIN_ROOT/bin/fill_gaps_scope.py" verify --report "$_REPORT_DIR/review-report.md"  # timeout: 10000
 ```
 
 - Exit 0 (`[carry] intact`) → Step 5 publication gate.

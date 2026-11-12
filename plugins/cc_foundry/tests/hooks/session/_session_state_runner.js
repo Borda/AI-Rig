@@ -37,6 +37,7 @@ const sandbox = {
   process: {
     platform: "win32",
     pid: process.pid,
+    env: process.env,
     stderr: process.stderr,
     cwd: () => root,
     exit() {},

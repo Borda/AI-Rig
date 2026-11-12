@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 import test_impact_union
+from _codemap_shell_plugin import render_shell
 from _host_skips import needs_git_and_bash
 from _scan_helpers import index_path_for, run_query, run_scan
 
@@ -62,8 +63,16 @@ python() { "$PYTHON" "$@"; }
 codemap-py() { printf '%s\\n' "$@" > "$TMPDIR/dispatcher-args"; }
 git() { return 1; }
 """
+    block = block.replace(
+        'SCAN_STATE_FILE="<state-file-path-from-Step-1>"', f"SCAN_STATE_FILE={shlex.quote(env.get('STATE_FILE', ''))}"
+    )
     return subprocess.run(
-        ["bash", "-c", prelude + block], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30
+        ["bash", "-c", render_shell(prelude + block, PLUGIN, "codemap-py")],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
 
 
@@ -92,7 +101,9 @@ def _scan_state(tmp_path: Path, raw_args: str = "", project_name: str = "project
         "SCAN_ARGS_RAW": args.format_scan_args(shlex.split(raw_args)),
         "PROJ_NAME": project_name,
     }
-    state = setup._write_state_file(tmp_path, values)
+    directory = tmp_path / "private-scan-state"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    state = setup._write_state_file(directory, values)
     with state.open("a", encoding="utf-8") as stream:
         stream.write("UNKNOWN='$(printf exploited > \"$TMPDIR/executed\")'\n")
     return state
@@ -236,8 +247,7 @@ def test_whole_change_mock_exclusion_retains_same_module_test_callers(
 
 def _report_state(tmp_path: Path, state: Path) -> None:
     """Prepare the two sentinels required for a successful scan's report block."""
-    (tmp_path / f"codemap-scan-ok-{tmp_path.name}-skill-safety").write_text("ok\n", encoding="utf-8")
-    (tmp_path / f"codemap-state-ref-{tmp_path.name}-skill-safety").write_text(str(state) + "\n", encoding="utf-8")
+    (state.parent / f"codemap-scan-ok-{tmp_path.name}-skill-safety").write_text("ok\n", encoding="utf-8")
 
 
 @needs_git_and_bash
@@ -262,9 +272,10 @@ def test_incomplete_scan_state_cannot_inherit_arguments(tmp_path: Path, shell_en
 @needs_git_and_bash
 def test_scan_report_does_not_execute_state(tmp_path: Path, shell_env: dict[str, str]) -> None:
     """The second Bash boundary must also treat swapped state content as data."""
-    _report_state(tmp_path, _scan_state(tmp_path))
+    state = _scan_state(tmp_path)
+    _report_state(tmp_path, state)
 
-    _shell(_bash_blocks("scan-codebase")[1], tmp_path, shell_env)
+    _shell(_bash_blocks("scan-codebase")[1], tmp_path, {**shell_env, "STATE_FILE": str(state)})
 
     assert not (tmp_path / "executed").exists()
 
@@ -272,9 +283,10 @@ def test_scan_report_does_not_execute_state(tmp_path: Path, shell_env: dict[str,
 @needs_git_and_bash
 def test_scan_report_missing_index_fails_with_expected_path(tmp_path: Path, shell_env: dict[str, str]) -> None:
     """An absent index after a zero scanner exit cannot permit the Index ready step."""
-    _report_state(tmp_path, _scan_state(tmp_path))
+    state = _scan_state(tmp_path)
+    _report_state(tmp_path, state)
 
-    result = _shell(_bash_blocks("scan-codebase")[1], tmp_path, shell_env)
+    result = _shell(_bash_blocks("scan-codebase")[1], tmp_path, {**shell_env, "STATE_FILE": str(state)})
 
     assert result.returncode == 1, result.stdout + result.stderr
     assert str(tmp_path / "index" / "project.json") in result.stdout + result.stderr
@@ -298,7 +310,7 @@ def test_scan_report_preserves_quoted_custom_root(tmp_path: Path, shell_env: dic
     state = _scan_state(tmp_path, "--root " + shlex.quote(str(root)), root.name)
     _report_state(tmp_path, state)
 
-    result = _shell(_bash_blocks("scan-codebase")[1], tmp_path, env)
+    result = _shell(_bash_blocks("scan-codebase")[1], tmp_path, {**env, "STATE_FILE": str(state)})
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Skipping stats" not in result.stdout

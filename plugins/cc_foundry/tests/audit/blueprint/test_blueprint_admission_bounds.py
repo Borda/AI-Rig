@@ -2,6 +2,7 @@
 
 import os
 import stat
+from contextlib import nullcontext
 from pathlib import Path
 
 import _blueprint_danger as danger
@@ -170,14 +171,61 @@ def test_repeated_shell_syntax_finishes(shape: str) -> None:
         "path-brackets": "echo " + "PATH[" * 600,
         "path-text": "echo " + "PATH= " * 600,
     }
-    assert not bbm.is_excluded(commands[shape])
+    expectation = (
+        pytest.raises(RecursionError, match="nesting") if shape in {"braces", "path-brackets"} else nullcontext()
+    )
+    with expectation:
+        assert not bbm.is_excluded(commands[shape])
 
 
-def test_recursive_shell_input_reports_unreadable(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize(
+    ("opening", "closing", "depth"),
+    [
+        pytest.param("$(echo ", ")", 800, id="substitution"),
+        pytest.param("if true { ", "} ", 80, id="braces"),
+        pytest.param("PATH[", "", 600, id="path-brackets"),
+        pytest.param("( ", ") ", 800, id="subshell"),
+        pytest.param("${X:-", "}", 800, id="parameter"),
+        pytest.param("$(echo ')' ", ")", 800, id="quoted-closer"),
+        pytest.param("$(echo \\) ", ")", 800, id="escaped-closer"),
+        pytest.param('"$(echo ', ')"', 800, id="quoted-substitution"),
+    ],
+)
+def test_recursive_shell_input_reports_unreadable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], opening: str, closing: str, depth: int
+) -> None:
     """Excessive substitution nesting produces a concise failure instead of a traceback."""
     plugin = tmp_path / "cc_foundry" / "skills" / "demo"
     plugin.mkdir(parents=True)
-    (plugin / "SKILL.md").write_text("```bash\necho " + "$(echo " * 800 + "x" + ")" * 800 + "\n```\n")
+    (plugin / "SKILL.md").write_text(
+        "```bash\necho " + opening * depth + "x" + closing * depth + "\n```\n", encoding="utf-8", newline="\n"
+    )
+    assert bbm.main(["--check", "--scan-dir", str(tmp_path)]) == 1
+    assert "unreadable" in capsys.readouterr().err.lower()
+
+
+@pytest.mark.parametrize(
+    ("opening", "closing", "excluded"),
+    [
+        pytest.param("$(echo ", ")", False, id="substitution"),
+        pytest.param("if true { ", "} ", True, id="braces"),
+        pytest.param("[", "]", False, id="brackets"),
+        pytest.param("( ", ") ", True, id="subshell"),
+    ],
+)
+def test_shell_nesting_boundary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], opening: str, closing: str, excluded: bool
+) -> None:
+    """Ordinary bounded inputs retain admission while excessive nesting fails before parsing."""
+    below = "echo " + opening * 31 + "x" + closing * 31
+    assert bbm.is_excluded(below) is excluded
+    with pytest.raises(RecursionError, match="nesting"):
+        bbm.is_excluded("echo " + opening * 33 + "x" + closing * 33)
+    plugin = tmp_path / "cc_foundry" / "skills" / "demo"
+    plugin.mkdir(parents=True)
+    (plugin / "SKILL.md").write_text(
+        "```bash\necho " + opening * 33 + "x" + closing * 33 + "\n```\n", encoding="utf-8", newline="\n"
+    )
     assert bbm.main(["--check", "--scan-dir", str(tmp_path)]) == 1
     assert "unreadable" in capsys.readouterr().err.lower()
 

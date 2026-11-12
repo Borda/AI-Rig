@@ -122,10 +122,12 @@ def role_context(root: Path, role: str, layout: Layout | str = Layout.SOURCE) ->
 
     Args:
         root: Asset root the layout is resolved against.
-        role: Role identifier whose instructions are loaded.
+        role: Portable single-component role identifier whose instructions are loaded.
         layout: Which layout to read. Accepts a `Layout` member or its plain string value —
             callers passing a raw CLI string stay supported via the `str` mixin.
     """
+    if not isinstance(role, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", role) is None:
+        raise ValueError(f"invalid path component: {role!r}")
     layout = Layout(layout)  # rejects unknown values at the boundary
     if layout == Layout.PLUGIN:
         role_path = root / "roles" / role / "ROLE.md"

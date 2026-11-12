@@ -6,6 +6,7 @@ status`` output rather than a canned porcelain string.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -238,3 +239,39 @@ class TestScopeCheck:
 
         assert code == 1
         assert "BLOCKED" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("program", ["program.md", "docs/campaign.md"])
+    def test_existing_campaign_inputs_stay_out_of_iteration_changes(
+        self, repo: Path, capsys: pytest.CaptureFixture[str], program: str
+    ) -> None:
+        """Unchanged dirty or untracked program inputs and reports are never staged as experiment edits."""
+        _write(repo, program, _PROGRAM + "\nCampaign input.\n")
+        state = {
+            "program_file": program,
+            "program_sha256": hashlib.sha256((repo / program).read_bytes()).hexdigest(),
+        }
+        _write(repo, ".experiments/state/r1/state.json", json.dumps(state))
+        _write(repo, ".reports/research/judge.md", "APPROVED\n")
+        _write(repo, "src/pkg/sort.py", "changed\n")
+
+        code, result = _run(repo, capsys)
+
+        assert code == 0
+        assert result["changed"] == ["src/pkg/sort.py"]
+        assert result["untracked"] == []
+        assert result["violations"] == []
+
+    def test_changed_program_snapshot_remains_protected(self, repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Editing the program after R1 still fails scope validation despite its campaign-input exemption."""
+        state = {
+            "program_file": "program.md",
+            "program_sha256": hashlib.sha256((repo / "program.md").read_bytes()).hexdigest(),
+        }
+        _write(repo, ".experiments/state/r1/state.json", json.dumps(state))
+        _write(repo, "program.md", _PROGRAM + "\nChanged metric.\n")
+
+        code, result = _run(repo, capsys)
+
+        assert code == 3
+        assert result["changed"] == ["program.md"]
+        assert result["violations"] == ["program.md"]

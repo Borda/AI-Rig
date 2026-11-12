@@ -41,12 +41,15 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import runpy
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from _package_identity import verify_package
+# Explicit source loading keeps unverified cached bytecode outside the package trust boundary.
+_identity = runpy.run_path(str(Path(__file__).with_name("_package_identity.py")))
+verify_package = _identity["verify_package"]
 
 #: Root directory of the codex-rig plugin package, derived from this script's location.
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -95,6 +98,11 @@ PRIVATE_PATH_PATTERN = re.compile(
 )
 #: Byte string that begins a PEM private key block; its presence in a package file fails validation.
 PRIVATE_KEY_MARKER = b"BEGIN " + b"PRIVATE KEY"
+PRIVATE_KEY_PATTERN = re.compile(rb"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----")
+TOKEN_PATTERN = re.compile(
+    rb"(?<![A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}"
+    rb"|sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{32,}|AKIA[A-Z0-9]{16})(?![A-Za-z0-9_])"
+)
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -155,13 +163,16 @@ def validate_publication_payload() -> None:
         relative = PurePosixPath(relative_value) if isinstance(relative_value, str) else PurePosixPath(".")
         if not relative_value or relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
             raise ValueError("publication manifest path invalid")
-        if "tests" in relative.parts:
-            continue
         path = PACKAGE_ROOT.joinpath(*relative.parts)
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"publication payload missing: {relative.as_posix()}")
         payload = path.read_bytes()
-        if PRIVATE_PATH_PATTERN.search(payload) or PRIVATE_KEY_MARKER in payload:
+        if (
+            PRIVATE_PATH_PATTERN.search(payload)
+            or PRIVATE_KEY_MARKER in payload
+            or PRIVATE_KEY_PATTERN.search(payload)
+            or TOKEN_PATTERN.search(payload)
+        ):
             raise ValueError(f"private material in payload: {relative.as_posix()}")
 
 

@@ -7,14 +7,16 @@ source-tree fallback for local development.
 
 Tier cascade
 ------------
-* **Tier 1** — Cache semver scan under
+* **Tier 1** — The common root resolver selects the newest valid install record.
+* **Tier 2** — Strict cache semver scan under
   ``~/.claude/plugins/cache/borda-ai-rig/research/*/skills/_shared``,
   skipping versions marked ``.orphaned_at``.
-* **Tier 2** — Source-tree fallback ``plugins/cc_research/skills/_shared`` relative to the working directory
+* **Tier 3** — Source-tree fallback ``plugins/cc_research/skills/_shared`` inside the executing resolver's checkout
   (with stderr warning). The CLI uses it only when the working directory carries
-  ``plugins/cc_research/.claude-plugin/plugin.json`` whose ``name`` is ``research`` — this plugin's own source
-  repository. Anywhere else that tree is the text of whatever repository the session was opened in, so the CLI exits 1
-  with a ``!`` message on stderr and prints nothing, with or without flags.
+  ``plugins/cc_research/.claude-plugin/plugin.json`` whose ``name`` is ``research`` and its plugin root matches this
+  executing resolver's plugin root — this plugin's own source repository. Anywhere else that tree belongs to the
+  repository the session was opened in, so the CLI exits 1 with a ``!`` message on stderr and prints nothing, with or
+  without flags.
 
 Without flags it prints the resolved path and exits 0; the caller validates that the printed path exists on disk.
 
@@ -24,12 +26,14 @@ Flags (each skill's Agent Resolution block, which replaced a 6-line capture/guar
   later block of the same skill reads back with ``IFS= read -r`` instead of re-running this script. ``CSID`` comes from
   the environment (``CSID``, else ``CLAUDE_CODE_SESSION_ID``, else ``shared``), so callers ``export CSID`` first.
 * ``--emit DOC`` (repeatable) prints ``<shared>/DOC`` to stdout, in order — the ``cat`` that followed the capture.
-  ``DOC`` is a bare file name; a path separator or ``..`` is rejected.
+  ``DOC`` is a bare file name; a path separator, colon or ``..`` is rejected.
 
 With either flag the resolution is verified: a missing ``_shared`` directory or document prints a ``!`` message on
 stderr and exits 1, so the caller's ``|| exit 1`` replaces the old empty-string guard (which could never fire, since
 the source-tree fallback always yields a non-empty path). Without ``--emit`` the path is still printed; with it, only
 the documents are.
+The literal bootstrap token in emitted documents is rendered to their validated
+owning plugin root; all other document bytes are preserved.
 
 Usage::
 
@@ -42,7 +46,6 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import shutil
@@ -57,6 +60,9 @@ if _BIN_DIR not in sys.path:
     sys.path.insert(0, _BIN_DIR)
 
 from _sentinel_io import write_private_text  # noqa: E402
+from render_plugin_root import render_file  # noqa: E402
+from resolve_plugin_root import resolve as resolve_plugin_root  # noqa: E402
+from resolve_plugin_root import source_root  # noqa: E402
 
 #: Marketplace directory name under the Claude plugin cache in which installed plugin versions are searched.
 _MARKETPLACE = "borda-ai-rig"
@@ -89,49 +95,34 @@ def _resolve(cmd: str) -> str:
     return resolved
 
 
-def _version_key(name: str) -> list[int]:
-    """Extract digit runs for semver-aware sort.
+def _version_key(name: str) -> tuple[int, int, int, bool, tuple[tuple[int, int | str], ...]] | None:
+    """Parse a SemVer directory name into a precedence key, or reject it with ``None``.
 
     Args:
         name: Directory basename.
 
     Returns:
-        Integer list (``0.20.0`` → ``[0, 20, 0]``).
+        Major, minor, patch, release flag and prerelease identifiers. Build metadata does not affect precedence.
 
     Examples:
         >>> _version_key("0.20.0")
-        [0, 20, 0]
+        (0, 20, 0, True, ())
         >>> _version_key("0.9.0") < _version_key("0.20.0")
         True
     """
-    return [int(t) for t in re.findall(r"\d+", name)]
-
-
-def _cache_hit(home: Path) -> str | None:
-    """Return newest non-orphaned cached research ``skills/_shared`` path.
-
-    Args:
-        home: User home directory.
-
-    Returns:
-        Path string when cache hit found, else ``None``.
-    """
-    plugin_cache = home / ".claude" / "plugins" / "cache" / _MARKETPLACE / _PLUGIN
-    if not plugin_cache.is_dir():
+    number = r"(0|[1-9][0-9]*)"
+    match = re.fullmatch(
+        rf"{number}\.{number}\.{number}(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+        r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?",
+        name,
+    )
+    if match is None:
         return None
-    candidates: list[tuple[list[int], Path]] = []
-    for version_dir in plugin_cache.iterdir():
-        if not version_dir.is_dir():
-            continue
-        if (version_dir / ".orphaned_at").exists():
-            continue
-        target = version_dir / _SHARED_SUBDIR
-        if target.is_dir():
-            candidates.append((_version_key(version_dir.name), target))
-    if not candidates:
+    prerelease = match[4].split(".") if match[4] else []
+    if any(part.isdigit() and len(part) > 1 and part.startswith("0") for part in prerelease):
         return None
-    candidates.sort(key=lambda pair: pair[0])
-    return str(candidates[-1][1])
+    parts = tuple((0, int(part)) if part.isdigit() else (1, part) for part in prerelease)
+    return int(match[1]), int(match[2]), int(match[3]), not prerelease, parts
 
 
 def resolve(home: Path | None = None) -> tuple[str, bool]:
@@ -152,10 +143,19 @@ def resolve(home: Path | None = None) -> tuple[str, bool]:
         ('plugins/cc_research/skills/_shared', False)
     """
     home = home if home is not None else Path.home()
-    hit = _cache_hit(home)
-    if hit is not None:
-        return hit, True
-    return (Path("plugins") / f"cc_{_PLUGIN}" / _SHARED_SUBDIR).as_posix(), False
+    root = resolve_plugin_root(
+        home, _MARKETPLACE, _PLUGIN, resolver_file=Path(__file__).with_name("resolve_plugin_root.py")
+    )
+    fallback = (Path("plugins") / f"cc_{_PLUGIN}" / _SHARED_SUBDIR).as_posix()
+    if root is None:
+        return fallback, False
+    installed = Path(root).is_relative_to(home / ".claude/plugins/cache")
+    if not installed and Path.cwd().resolve() == Path(root).parents[1]:
+        return fallback, False
+    target = Path(root) / _SHARED_SUBDIR
+    if not target.resolve().is_relative_to(Path(root)):
+        raise ValueError("shared directory escapes selected plugin root")
+    return target.as_posix(), installed
 
 
 def source_repo_marker_present(cwd: Path | None = None) -> bool:
@@ -163,14 +163,15 @@ def source_repo_marker_present(cwd: Path | None = None) -> bool:
 
     The source-tree tier reads ``plugins/cc_research/...`` relative to the working directory. Outside this plugin's
     source repository that tree belongs to whatever repository the session was opened in, so it is trusted only when
-    the same directory also carries ``plugins/cc_research/.claude-plugin/plugin.json`` naming ``research``.
+    the same directory also carries ``plugins/cc_research/.claude-plugin/plugin.json`` naming ``research`` and its
+    plugin root resolves to this executing resolver's plugin root.
     ``load-agent-reference.py`` applies the same gate to its cwd-relative sidecar tier.
 
     Args:
         cwd: Directory to inspect; defaults to ``Path.cwd()``.
 
     Returns:
-        ``True`` when the manifest exists, parses as a JSON object, and its ``name`` is exactly ``research``.
+        ``True`` when the executing resolver belongs to this source tree and its manifest names ``research``.
 
     Examples:
         >>> import tempfile
@@ -180,15 +181,9 @@ def source_repo_marker_present(cwd: Path | None = None) -> bool:
         ...     manifest.parent.mkdir(parents=True)
         ...     _ = manifest.write_text('{"name": "research"}', encoding="utf-8")
         ...     (before, source_repo_marker_present(Path(d)))
-        (False, True)
+        (False, False)
     """
-    root = cwd if cwd is not None else Path.cwd()
-    manifest = root / "plugins" / f"cc_{_PLUGIN}" / ".claude-plugin" / "plugin.json"
-    try:
-        data = json.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    return isinstance(data, dict) and data.get("name") == _PLUGIN
+    return source_root(_PLUGIN, resolver_file=Path(__file__).with_name("resolve_plugin_root.py"), cwd=cwd) is not None
 
 
 def _emit_docs(shared: Path, docs: list[str]) -> int:
@@ -199,18 +194,22 @@ def _emit_docs(shared: Path, docs: list[str]) -> int:
         docs: Bare file names to print.
 
     Returns:
-        ``0`` when every document was printed, ``2`` for a name containing a path separator or ``..``, ``1`` when a
-        document is missing.
+        ``0`` for success, ``2`` for a path separator, colon or ``..``, ``1`` for a missing document.
     """
     for doc in docs:
-        if not doc or "/" in doc or "\\" in doc or doc == "..":
+        if not doc or "/" in doc or "\\" in doc or ":" in doc or doc == "..":
             print(f"resolve_shared: --emit expects a bare file name, got {doc!r}", file=sys.stderr)
             return 2
         target = shared / doc
         if not target.is_file():
             print(f"! {doc} not found under {shared} — ensure research plugin installed", file=sys.stderr)
             return 1
-        sys.stdout.write(target.read_text(encoding="utf-8"))
+        try:
+            payload = render_file(target, plugin_name=_PLUGIN)
+        except (OSError, ValueError) as exc:
+            print(f"! resolve_shared: {exc}", file=sys.stderr)
+            return 1
+        sys.stdout.buffer.write(payload)
     return 0
 
 
@@ -243,14 +242,18 @@ def main(argv: list[str] | None = None) -> int:
         if any(not re.fullmatch(r"[A-Za-z0-9._-]+", value) or ".." in value for value in (args.persist, csid)):
             print("resolve_shared: invalid sentinel slug or session identity", file=sys.stderr)
             return 2
-    path, from_cache = resolve()
+    try:
+        path, from_cache = resolve()
+    except ValueError as exc:
+        print(f"! Plugin path resolution failed — {exc}", file=sys.stderr)
+        return 1
     if not from_cache:
         # Callers `cat` protocol files from this directory; in a repository under analysis it is that repository's text.
         if not source_repo_marker_present():
             print(
                 "! Plugin path resolution failed — research plugin not found in cache, and the working directory is "
-                f"not the research plugin source repository (no plugins/cc_{_PLUGIN}/.claude-plugin/plugin.json naming "
-                f"{_PLUGIN}); refusing to read {path} from it — install research@borda-ai-rig",
+                "not the research plugin source repository (matching plugin root and research manifest required); "
+                f"refusing to read {path} from it — install research@borda-ai-rig",
                 file=sys.stderr,
             )
             return 1
@@ -263,8 +266,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not Path(path).is_dir():
         print(
-            "! Plugin path resolution failed — ensure research plugin installed and CLAUDE_PLUGIN_ROOT set, "
-            "or invoke from project root.",
+            "! Plugin path resolution failed — install research@borda-ai-rig, "
+            "or invoke inside the resolver's own source checkout.",
             file=sys.stderr,
         )
         return 1

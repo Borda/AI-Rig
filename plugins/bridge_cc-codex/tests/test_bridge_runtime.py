@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import ctypes
 import hashlib
 import json
 import os
@@ -31,6 +32,29 @@ import bridge_mcp  # noqa: E402  (shares bridge_call's local import seam)
 
 DIRECTORY_SYMLINKS_SUPPORTED = directory_symlinks_supported()
 HARDLINKS_SUPPORTED = hardlinks_supported()
+
+
+@pytest.fixture
+def windows_retention_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Supply native directory-handle APIs when Windows lifecycle behavior is simulated on another OS."""
+
+    def create_file(*args: object) -> int:
+        """Return an opaque directory handle to the foreign-platform adapter."""
+        return 1
+
+    def inspect_file(handle: object, kind: int, attributes: object, size: int) -> int:
+        """Identify the opened fixture directory as a non-reparse directory."""
+        attributes[0] = 0x10
+        return 1
+
+    def close_handle(handle: object) -> int:
+        """Release the simulated directory handle."""
+        return 1
+
+    kernel = SimpleNamespace(
+        CreateFileW=create_file, GetFileInformationByHandleEx=inspect_file, CloseHandle=close_handle
+    )
+    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(kernel32=kernel), raising=False)
 
 
 def _request(tmp_path: Path, **overrides: Any) -> bridge_call.Request:
@@ -311,18 +335,6 @@ def _run_mcp_stdio(tmp_path: Path, messages: str, **kwargs: Any) -> list[dict[st
     return [json.loads(line) for line in result.stdout.splitlines()]
 
 
-def _write_fake_codex_launcher(fake_bin: Path, peer_script: Path) -> None:
-    """Install a ``codex`` launcher in fake_bin that runs peer_script with this interpreter."""
-    if os.name == "nt":
-        (fake_bin / "codex.cmd").write_text(f'@"{sys.executable}" "{peer_script}" %*\r\n', encoding="utf-8", newline="")
-        return
-    fake_codex = fake_bin / "codex"
-    fake_codex.write_text(
-        "#!" + sys.executable + "\n" + peer_script.read_text(encoding="utf-8"), encoding="utf-8", newline="\n"
-    )
-    fake_codex.chmod(0o755)
-
-
 class TestBuildChildEnvironment:
     """Child environment is an allowlist, so session credentials never reach a peer process."""
 
@@ -498,6 +510,7 @@ def test_supervisor_without_task_flag_loads_task_from_job_record(
     This is the launch path start_background now uses; failing to load the stored task would leave every background job
     erroring with "one of --task or --task-file is required".
     """
+    (tmp_path / ".git").mkdir()
     monkeypatch.setattr(bridge_call.subprocess, "Popen", lambda command, **kwargs: SimpleNamespace(pid=1))
     started = bridge_call.start_background(
         _request(tmp_path, verb="implement", background=True, task="Stored task text.")
@@ -2907,6 +2920,34 @@ def test_timeout_retries_read_only_once_at_a_lower_tier_but_never_implement(
     assert implement["effort_substituted"] is None
 
 
+def test_timeout_at_low_never_retries_at_minimal_when_supported_efforts_are_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A timed-out ``low`` advise call with no advertised effort list runs once and reports the timeout.
+
+    Without a supported list the bridge cannot know the target accepts ``minimal``; retrying there turned a plain
+    timeout into an unsupported-effort rejection. A ``medium`` call still steps down to ``low``.
+    """
+    efforts: list[str] = []
+
+    def _timeout_child(command: list[str], workspace: Path, timeout: float) -> bridge_call.ChildOutcome:
+        """Return a timeout result while recording each attempt's effort."""
+        efforts.append(next(item for item in command if item.startswith("model_reasoning_effort=")))
+        return _outcome(timed_out=True)
+
+    monkeypatch.setattr(bridge_call, "_run_child", _timeout_child)
+    floor = bridge_call.run_request(_request(tmp_path, effort="low"))
+    stepped = bridge_call.run_request(_request(tmp_path, effort="medium"))
+
+    assert efforts == [
+        'model_reasoning_effort="low"',
+        'model_reasoning_effort="medium"',
+        'model_reasoning_effort="low"',
+    ]
+    assert (floor["status"], floor["effort_substituted"]) == ("timeout", None)
+    assert stepped["effort_substituted"] == {"requested": "medium", "applied": "low", "reason": "timeout retry"}
+
+
 @pytest.mark.parametrize(
     ("failure", "status"),
     [
@@ -3428,11 +3469,11 @@ def test_dead_supervisor_running_record_is_reported_stalled(tmp_path: Path, exit
 
 
 def test_simulated_windows_stalled_probe_uses_tasklist_and_never_signals(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, windows_retention_api: None
 ) -> None:
     """Prevent the Windows liveness probe from using os.kill termination semantics.
 
-    With os.name simulated as nt, a running record is probed through a fake tasklist.EXE on PATH that reports no tasks
+    With os.name simulated as nt, a running record is probed through a resolved fake tasklist.EXE that reports no tasks
     while os.kill fails the test. Status is stalled and the first spawned command is the resolved tasklist path.
     """
     paths = bridge_call.BridgePaths(tmp_path)
@@ -3444,6 +3485,7 @@ def test_simulated_windows_stalled_probe_uses_tasklist_and_never_signals(
     probes: list[list[str]] = []
     tasklist = tmp_path / "tasklist.EXE"
     tasklist.touch()
+    monkeypatch.setattr(bridge_call, "_resolve_executable", lambda name: str(tasklist))
     monkeypatch.setenv("PATH", str(tmp_path))
     monkeypatch.setenv("PATHEXT", ".EXE")
 
@@ -3545,6 +3587,7 @@ def test_supervisor_internal_failure_writes_a_terminal_failed_record(
     run_request raises inside a supervisor started against a queued record. The supervisor exits 2 and rewrites the
     record as failed with the error text, so status callers do not wait on a job that can never finish.
     """
+    (tmp_path / ".git").mkdir()
     paths = bridge_call.BridgePaths(tmp_path)
     paths.prepare()
     job_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
@@ -3792,6 +3835,7 @@ def test_supervisor_preserves_a_cancellation_requested_during_its_final_record_w
     A cancel is injected just before the supervisor writes its finished record. The job ends cancelled and its blocked
     result still carries the files, findings and remaining work the child reported.
     """
+    (tmp_path / ".git").mkdir()
     paths = bridge_call.BridgePaths(tmp_path)
     paths.prepare()
     job_id = "66666666-6666-4666-8666-666666666666"
@@ -4039,6 +4083,7 @@ def test_cli_implement_is_the_only_write_capable_verb(
     The CLI runs implement, advise and review with a stubbed child, then an unknown verb. Only implement launches with
     the workspace-write sandbox, the others read-only, and the retired delegate verb exits with a usage error.
     """
+    (tmp_path / ".git").mkdir()
     commands: dict[str, list[str]] = {}
 
     def _fake_child(command: list[str], *args: object) -> bridge_call.ChildOutcome:
@@ -4545,8 +4590,8 @@ def test_mcp_implement_runs_real_supervisor_with_claude_write_permissions(
     """Prevent implement from using read-only Claude flags or bypassing the real bridge envelope path.
 
     bridge_implement runs against a stubbed Claude child that writes a marker file. The child command uses acceptEdits
-    without tool-disabling flags, and the envelope reports implement, codex_to_claude and the touched file, with details
-    only in the transcript.
+    with an explicit file-tool allowlist, and the envelope reports implement, codex_to_claude and the touched file.
+    Details remain only in the transcript.
     """
     (tmp_path / ".git").mkdir()  # project marker: implement refuses a folder without one
     commands: list[list[str]] = []
@@ -4577,7 +4622,15 @@ def test_mcp_implement_runs_real_supervisor_with_claude_write_permissions(
     assert response["result"]["isError"] is False
     assert marker.read_text(encoding="utf-8") == "implemented by fake Claude child\n"
     assert command[command.index("--permission-mode") + 1] == "acceptEdits"
-    assert "--disallowed-tools" not in command
+    assert command[command.index("--disallowed-tools") + 1] == "mcp__*"
+    assert set(command[command.index("--tools") + 1].split(",")) == {
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "NotebookEdit",
+    }
     assert "Edit" not in command
     assert "Write" not in command
     assert envelope["status"] == "complete"
@@ -4893,6 +4946,7 @@ def test_simulated_windows_child_launch_uses_a_new_process_group_without_posix_s
     """
     monkeypatch.setattr(bridge_call.os, "name", "nt")
     monkeypatch.setattr(bridge_call.subprocess, "CREATE_NEW_PROCESS_GROUP", 2468, raising=False)
+    monkeypatch.setattr(bridge_call, "_resolve_executable", lambda executable: executable)
 
     outcome = bridge_call._run_child([sys.executable], tmp_path, timeout=1.0)
 
@@ -4915,11 +4969,10 @@ def test_cancelling_detached_supervisor_terminates_its_real_child(
     A background implement job runs a fake codex whose own child ignores SIGTERM. After cancel_job the supervisor must
     tear down the whole tree, and the registered job and PID fixtures reclaim anything left on failure.
     """
-    fake_bin = tmp_path / "fake-bin"
-    fake_bin.mkdir()
+    (tmp_path / ".git").mkdir()
     child_pid_path = tmp_path / "child.pid"
     pid_files.append(child_pid_path)
-    peer_script = fake_bin / "codex_peer.py"
+    peer_script = tmp_path / "codex_peer.py"
     # Path baked into the peer script rather than read from the environment: the bridge
     # filters the child environment to an allowlist, so a test-only variable never arrives.
     peer_script.write_text(
@@ -4937,11 +4990,20 @@ def test_cancelling_detached_supervisor_terminates_its_real_child(
         encoding="utf-8",
         newline="\n",
     )
-    _write_fake_codex_launcher(fake_bin, peer_script)
-    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    supervisor_script = tmp_path / "supervisor.py"
+    supervisor_script.write_text(
+        "import sys\n"
+        f"sys.path.insert(0, {str(BIN_ROOT)!r})\n"
+        "import bridge_call\n"
+        f"bridge_call.build_codex_argv = lambda request, schema: [sys.executable, {str(peer_script)!r}]\n"
+        "raise SystemExit(bridge_call.main())\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    monkeypatch.setattr(bridge_call, "__file__", str(supervisor_script))
     started = bridge_call.start_background(_request(tmp_path, verb="implement", background=True, timeout_seconds=30.0))
     started_jobs.append(started["job_id"])
-    assert _wait_for(child_pid_path.is_file, 10.0, 0.01), "fake peer did not start its child within 10 seconds"
+    assert _wait_for(child_pid_path.is_file, 10.0, 0.01), bridge_call.job_result(tmp_path, started["job_id"])
     child_pid = int(child_pid_path.read_text(encoding="utf-8"))
 
     bridge_call.cancel_job(tmp_path, started["job_id"])
@@ -5111,6 +5173,7 @@ def test_simulated_windows_termination_uses_tree_kill_before_the_leader_can_exit
     tree_kills: list[list[str]] = []
     taskkill = tmp_path / "taskkill.EXE"
     taskkill.touch()
+    monkeypatch.setattr(bridge_call, "_resolve_executable", lambda name: str(taskkill))
     monkeypatch.setenv("PATH", str(tmp_path))
     monkeypatch.setenv("PATHEXT", ".EXE")
     monkeypatch.setattr(bridge_call.os, "name", "nt")
@@ -5147,7 +5210,7 @@ def test_simulated_windows_termination_uses_tree_kill_before_the_leader_can_exit
 
 
 def test_simulated_windows_cancel_is_cooperative_without_posix_process_apis(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, windows_retention_api: None
 ) -> None:
     """Prevent Windows cancellation from signalling a PID stored in a job record.
 
@@ -5174,7 +5237,7 @@ def test_simulated_windows_cancel_is_cooperative_without_posix_process_apis(
 
 
 def test_simulated_windows_cancel_never_uses_taskkill_for_a_persisted_pid(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, windows_retention_api: None
 ) -> None:
     """Prevent a stale Windows record from escalating cooperative cancellation into tree termination.
 

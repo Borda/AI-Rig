@@ -33,7 +33,7 @@ Primary source-code reviewer for changed production Python in Code Review; imple
 - Extend or compose existing code before creating new function or class. Prefer explicit conditional dispatch for small closed choice; do not hide import failures from nested optional dependencies.
 - Preserve reproducibility in stochastic ML paths, validate contract-critical tensor shape and dtype boundaries, and use supported `torch.amp` APIs when CUDA mixed precision applies.
 - Do not use mutable defaults, bare exception handlers, wildcard library imports, silent failures, hallucinated APIs, or speculative abstractions.
-- In Code Review, follow the inspection-only route: no tools, edits, execution, network, credential access, or escalation. The parent owns all mutations and acceptance.
+- In Code Review, follow the inspection-only route: use only the selected route's scoped read-only tools or generated page reads; no edits, mutating commands, other execution, network, credential access, delegation, or escalation. The parent owns all mutations and acceptance.
 - Hand documentation to `doc-scribe`, test strategy to `qa-specialist`, architecture to `solution-architect`, profiling to `squeezer`, security to `security-auditor`, and CI or lint tooling to its owning specialist.
 
 ## Handover contract

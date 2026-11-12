@@ -45,8 +45,11 @@ import os
 import re
 import subprocess
 import sys
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
+
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
 
 SHARED_DIRECTORY = Path(__file__).resolve().parent
 if str(SHARED_DIRECTORY) not in sys.path:
@@ -72,9 +75,33 @@ def _git(root: Path, *arguments: str) -> list[str]:
     return [line for line in completed.stdout.splitlines() if line.strip()]
 
 
+def _base_revision(root: Path, base: str) -> str:
+    """Resolve a non-option revision to one verified commit before forwarding it to other tools."""
+    if not base or base.startswith("-"):
+        raise TargetError("invalid-base")
+    revisions = _git(root, "rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}")
+    if len(revisions) != 1 or re.fullmatch(r"[0-9a-f]{40,64}", revisions[0]) is None:
+        raise TargetError("invalid-base")
+    return revisions[0]
+
+
+def _contained_path(root: Path, path: str) -> str:
+    """Normalize one target or changed path while refusing paths outside the repository."""
+    if PureWindowsPath(path).drive and not Path(path).is_absolute():
+        raise TargetError(f"path-outside-root:{path}")
+    try:
+        repository = root.resolve()
+        candidate = repository / path
+        candidate.resolve().relative_to(repository)
+        return candidate.relative_to(repository).as_posix()
+    except (OSError, ValueError) as error:
+        raise TargetError(f"path-outside-root:{path}") from error
+
+
 def changed_files(root: Path, base: str) -> list[str]:
     """List tracked changes against ``base`` plus untracked files, as POSIX repository-relative paths."""
-    tracked = _git(root, "diff", "--name-only", base)
+    revision = _base_revision(root, base)
+    tracked = _git(root, "diff", "--name-only", "--end-of-options", revision, "--")
     untracked = _git(root, "ls-files", "--others", "--exclude-standard")
     return sorted({PurePosixPath(path).as_posix() for path in (*tracked, *untracked)})
 
@@ -135,10 +162,13 @@ def heuristic_targets(root: Path, source: str, tests: list[str]) -> list[str]:
 
 def codemap_targets(root: Path, base: str, provider_root: Path | None, timeout: float) -> tuple[list[str] | None, str]:
     """Ask codemap-py for the unioned test impact of the change set; return ``None`` when unusable."""
+    if not base or base.startswith("-"):
+        raise TargetError("invalid-base")
     resolution = codemap_adapter._resolve_codemap_executable(provider_root)
     if resolution.launcher is None:
         return None, resolution.status
-    argv = [resolution.launcher, "query", "--compact", "--root", str(root), "diff-impact", "--base", base]
+    revision = _base_revision(root, base)
+    argv = [resolution.launcher, "query", "--compact", "--root", str(root), "diff-impact", "--base", revision]
     exit_code, payload, error = codemap_adapter._run_json(argv, timeout)
     if exit_code != 0 or not isinstance(payload, dict):
         return None, f"failed:{error or exit_code}"
@@ -174,6 +204,9 @@ def sandbox_safe(root: Path, targets: list[str], conftests: list[str]) -> tuple[
 
 def choose(root: Path, changed: list[str], base: str, use_codemap: bool, provider_root: Path | None) -> dict[str, Any]:
     """Build the full target report for one change set."""
+    if not base or base.startswith("-"):
+        raise TargetError("invalid-base")
+    changed = [_contained_path(root, path) for path in changed]
     sources: dict[str, str] = {}
     for path in changed:
         if is_test_file(path) and (root / path).is_file():
@@ -186,17 +219,19 @@ def choose(root: Path, changed: list[str], base: str, use_codemap: bool, provide
     unmapped = []
     tests, conftests = _python_test_layout(root)
     for test in impact or []:
-        sources.setdefault(test, "codemap")
+        sources.setdefault(_contained_path(root, test), "codemap")
     if impact is None or codemap_status == "incomplete":
         # An incomplete index may miss tests, so the heuristics add theirs instead of being skipped.
         for source in python_sources:
             matches = heuristic_targets(root, source, tests)
             for test in matches:
-                sources.setdefault(test, "heuristic")
+                sources.setdefault(_contained_path(root, test), "heuristic")
             if not matches:
                 unmapped.append(source)
-    targets = sorted(path for path in sources if (root / path).is_file())
+    targets = sorted({_contained_path(root, path) for path in sources if (root / path).is_file()})
     safe, reason = sandbox_safe(root, targets, conftests)
+    # pytest on Python 3.10 and 3.11 still reads an option-shaped word after ``--``, so a leading dash gets a ``./``.
+    pytest_targets = [f"./{path}" if path.startswith("-") else path for path in targets]
     return {
         "targets": targets,
         "sources": {path: sources[path] for path in targets},
@@ -205,7 +240,10 @@ def choose(root: Path, changed: list[str], base: str, use_codemap: bool, provide
         "codemap": codemap_status,
         "sandbox_safe": safe,
         "sandbox_reason": reason,
-        "pytest_args": [*targets, *(["-p", "no:xdist"] if safe and targets else [])],
+        "pytest_args": [
+            *(["-p", "no:xdist"] if safe and targets else []),
+            *(["--", *pytest_targets] if targets else []),
+        ],
     }
 
 

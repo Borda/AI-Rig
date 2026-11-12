@@ -1,0 +1,342 @@
+{
+  "620": {
+    "number": 620,
+    "title": "Sample packing for pretraining/fine-tuning",
+    "state": "open",
+    "body": "I was wondering if there are sample packing approaches defined somewhere for preprocessing and tokenization of datasets? I looked through different prepare_*.py, but couldn't find anything related to packing multiple sequences being packed into max_length for efficiency etc\r\n\r\nAlso, wondering how the data prep works as of now in the lit-gpt framework:\r\n\r\n- if a document, article, instruction/output pair exceeds the max sequence length, how is it treated? What about if a doc/article/instruction-output pair falls short of max seq. length? are the remaining time steps padded or are more sequences packed until max length is achieved? ",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "cc @user-15, if you'd like to answer"
+      },
+      {
+        "author": "user-4",
+        "body": "Just chiming in, from what I understand, this is not a simple feature to implement in general.\r\n\r\nAs one current example, the [axolotl](https://github.com/OpenAccess-AI-Collective/axolotl/tree/main) finetuning harness implements efficient sample packing with correct block diagonal attention masking through [a series of monkey patches](https://github.com/OpenAccess-AI-Collective/axolotl/tree/main/src/axolotl/monkeypatch) for the underlying huggingface model definitions for a few of the very popular models like llama and mistral. Though I have not looked through the code in detail, I believe it leverages the fact that the flash attention api supports the masking required to implement this scheme.\r\n\r\nIt seems like the simplicity of the lit-gpt model definition might actually make this easier to implement as a first class feature. It is relevant for efficient finetuning (the reason it's incorporated into axolotl), and general wisdom (and whispers from inside large corps) suggest that this "
+      },
+      {
+        "author": "user-2",
+        "body": "> if a document, article, instruction/output pair exceeds the max sequence length, how is it treated?\r\n\r\nDepends on the data preparation, but our scripts trim it: https://github.com/Lightning-AI/lit-gpt/blob/0791c52a944f022a5cee91ed1e47288830efb72c/scripts/prepare_alpaca.py#L116-L117\r\n\r\n> What about if a doc/article/instruction-output pair falls short of max seq. length? are the remaining time steps padded or are more sequences packed until max length is achieved?\r\n\r\nThey are packed in the pretraining scripts: https://github.com/Lightning-AI/lit-gpt/blob/0791c52a944f022a5cee91ed1e47288830efb72c/pretrain/redpajama.py#L249-L257\r\nand padded in the fine-tuning scripts: https://github.com/Lightning-AI/lit-gpt/blob/0791c52a944f022a5cee91ed1e47288830efb72c/finetune/full.py#L232-L246\r\n\r\n> suggest that this type of block diagonal masking is better for large scale training code.\r\n\r\nThe inconvenience is that `torch.nn.functional.scaled_dot_product_attention` will not use flash-attn if an attentio"
+      }
+    ]
+  },
+  "642": {
+    "number": 642,
+    "title": "Add NEFTune to improve fine-tuning? ",
+    "state": "open",
+    "body": "Came across this thread / paper / repo on Twitter yesterday and it seems like a promising approach for getting a little more out of your fine-tuning. Haven't tested for myself just yet, but can report those results unless someone else already has. \r\n\r\nI started to implement a version of this on my fork of lit-gpt, but wondering if this is of broader interest? Can make this a PR if so. \r\n\r\nlinks to the work:\r\nhttps://twitter.com/neeljain1717/status/1712125846553554987\r\nhttps://arxiv.org/abs/2310.05914\r\nhttps://github.com/neelsjain/NEFTune\r\n\r\nmy implementation (EDIT: Tested and works in a basic case)\r\nhttps://github.com/Lightning-AI/lit-gpt/pull/653/files\r\n\r\n",
+    "comments": [
+      {
+        "author": "user-6",
+        "body": "Hey @user-5 just curious did you get time to test this?"
+      },
+      {
+        "author": "user-5",
+        "body": "Hey @user-6, TLDR I did for a very simple example, and think it should work for LoRA. If you want to try it, all you'd need to do is specify `neftune_alpha` in `finetune/lora.py` (currently default to `None`)\r\nI updated the link above & corresponding PR. \r\n\r\nThe simple example: \r\nI fine-tuned Llama2 7B for 50 steps with a LoRA adapter only on the LM head. Using the logs I confirmed that the logic in the PR only adds noise to the embeddings during training, and the result was slightly worse train loss for these extremely early on parts of fine-tuning. Admittedly there's a lot more you'd want to confirm like what performance gains this has during actual training, but I don't have the compute or time budget to check that all out right now. \r\n\r\n\r\n\r\n"
+      },
+      {
+        "author": "user-6",
+        "body": "Great!! Thanks "
+      },
+      {
+        "author": "user-2",
+        "body": "There's no plan to add this implementation for now, but I'm glad that you were able to easily implement it with Lit-GPT"
+      }
+    ]
+  },
+  "225": {
+    "number": 225,
+    "title": "[Tokenizer Question]: Falcon 7B fine-tune with new language",
+    "state": "open",
+    "body": "Hi there,\r\n\r\nCurrently, I'm attempting to fine-tune a customer dataset that includes Chinese text.\r\n\r\nDuring the fine-tuning process, I noticed that although the tokenizer functions during training, I did not observe any parameter increase from token embedding in the initial information. I'm wondering if I should add new tokens that are not present in falcon-7b/tokenizer.json to the tokenizer and model.\r\n\r\nCould you please provide me with some guidance on how to add tokens and modify the token embedding in Falcon-7B? (If necessary)\r\n\r\nMany thanks :-)",
+    "comments": []
+  },
+  "686": {
+    "number": 686,
+    "title": "Significantly different results with inference using a saved checkpoint v/s inferencing during fine-tuning",
+    "state": "open",
+    "body": "I am using lora for fine-tuning Llama-2-7b-chat-hf with my custom dataset. This is the command I am running:\r\n```!CUDA_VISIBLE_DEVICES=2,3 python finetune/lora.py --data_dir '../new_test_data_llm' --checkpoint_dir '../checkpoint/Llama-2-7b-chat-hf/' --out_dir '../output_chat_model_temp'```\r\n\r\nLoss is decreasing steadily:\r\n```iter 90 step 91: loss 0.4730, iter time: 2164.59ms (optimizer.step)\r\niter 91 step 92: loss 0.3682, iter time: 2216.19ms (optimizer.step)\r\niter 92 step 93: loss 0.5185, iter time: 2389.64ms (optimizer.step)\r\niter 93 step 94: loss 0.3875, iter time: 2417.41ms (optimizer.step)\r\niter 94 step 95: loss 0.1968, iter time: 2399.70ms (optimizer.step)\r\niter 95 step 96: loss 0.2645, iter time: 2209.37ms (optimizer.step)\r\niter 96 step 97: loss 0.3107, iter time: 2206.34ms (optimizer.step)\r\niter 97 step 98: loss 0.3512, iter time: 2174.37ms (optimizer.step)\r\niter 98 step 99: loss 0.3052, iter time: 2338.01ms (optimizer.step)\r\niter 99 step 100: loss 0.3454, iter time: 2274.14ms (optimizer.step)\r\n```\r\nand validation step that runs after 100 iters also shows that the response is shaping up correctly (at least generating the right response format in terms of number of words etc). This is the output from inferencing after 100 iterations when getting triggered from fine-tuning script (finetune/lora.py).\r\n```\r\niter 98 step 99: loss 0.3051, iter time: 2506.50ms (optimizer.step)\r\niter 99 step 100: loss 0.3453, iter time: 2524.91ms (optimizer.step)\r\nValidating ...\r\nRephrase the ... <full prompt> ... request.\r\n\r\n### Instruction:\r\nRephrase ... <full prompt> ... crisp response.\r\n\r\n### Input:\r\n0 year girls frock\r\n\r\n### Response:8 year girl clothess\r\n```\r\nBut later when I run seperate inference call with explicit loading of the checkpoint (trained from above) with this command:\r\n```!python generate/lora.py  --checkpoint_dir '../LLM/checkpoint/Llama-2-7b-chat-hf/' --lora_path '../output_chat_model_temp/lit_model_lora_finetuned.pth' --prompt 'Rephrase ... <same prompt> ... crisp response.' --input '0 year girls frock'```\r\n\r\nI get this weird output:\r\n```Loading model '/var/lib/search-data/abhinav.a/LLM/checkpoint/Llama-2-7b-chat-hf/lit_model.pth' with {'org': 'meta-llama', 'name': 'Llama-2-7b-chat-hf', 'block_size': 4096, 'vocab_size': 32000, 'padding_multiple': 64, 'padded_vocab_size': 32000, 'n_layer': 32, 'n_head': 32, 'n_embd': 4096, 'rotary_percentage': 1.0, 'parallel_residual': False, 'bias': False, 'lm_head_bias': False, 'n_query_groups': 32, 'shared_attention_norm': False, '_norm_class': 'RMSNorm', 'norm_eps': 1e-05, '_mlp_class': 'LLaMAMLP', 'gelu_approximate': 'none', 'intermediate_size': 11008, 'rope_condense_ratio': 1, 'rope_base': 10000, 'r': 8, 'alpha': 16, 'dropout': 0.05, 'to_query': True, 'to_key': False, 'to_value': True, 'to_projection': False, 'to_mlp': False, 'to_head': False, 'head_size': 128, 'rope_n_elem': 128}\r\nTime to instantiate model: 3.37 seconds.\r\nTime to load the model weights: 8.97 seconds.\r\nNumber of total parameters: 6,742",
+    "comments": [
+      {
+        "author": "user-9",
+        "body": "Finetuning with multi-GPU might just be bugged, as reported here: https://github.com/Lightning-AI/lit-gpt/issues/652\r\nUnfortunately, I couldn't have any feedback on this issue.\r\n\r\nAlso your training losses seem to be quite low. If you faced the same problem as we did (training starting from random weights instead of the actual foundation models), I would expect losses to be high after 100 steps.\r\nUnless you train on a very small dataset, that contains a similar prompt as the one you use to validate the model.\r\n\r\nIf you can afford it, you can maybe try single GPU training (making sure that it amounts to `fabric.init_module(empty_init=False)` in your version of the code), and see if it solves your problem..."
+      },
+      {
+        "author": "user-8",
+        "body": "@user-9 Thanks for your inputs. You are absolutely right. Tried fine tuning on bigger GPU and single GPU fine-tuning followed by inferencing is quite improved."
+      }
+    ]
+  },
+  "595": {
+    "number": 595,
+    "title": "QA-LoRA: Quantization Aware Low-Rank Adaptation",
+    "state": "open",
+    "body": "Hi there 👋 \r\n\r\nToday I came across this paper: [QA-LoRA: Quantization-Aware Low-Rank Adaptation of Large Language Models](https://arxiv.org/pdf/2309.14717.pdf).\r\n\r\nSo what's wrong with the current QLoRA? \r\nQLoRA quantizes pretrained weights into `NF4`/`FP4` format, but keeps trainable LoRA weights (matrices A and B) in non-quantized form (`float16`/`bfloat16`). During each forward pass in each layer the pretrained weights are dequantized to the same dtype as LoRA weights. So that means that all calculations are still done in non-quantized form, which results in:\r\n- No speed improvement compared to LoRA; actually it's slower as we have an overhead caused by quantization-dequantization process.\r\n- If one wants to run a fine-tuned model on inference in a quantized form - the accuracy will drop.\r\n\r\nThat's what the authors of the paper are trying to solve: to train the model in full quantized form, so it is:\r\n- Faster: no need to dequantize weights; weights are not in half-precision which should result in higher performance, since LLMs are IO-bound; in addition `INT4` dtype is used and \"INT4 operators have been optimized by CUDA and are much faster in execution\".\r\n- No significant drop in accuracy on inference, especially if smaller n-bit quantization is used.\r\n\r\n-----\r\n\r\nGiven that it's supposedly easy to implement plus brings that much improvement during fine-tuning and inference, I think that soon enough it will be all the rage and it's worth spending time on implementing. \r\nBut, of course, it's all up to @user-2 to decide. \r\n\r\nIn addition, I've noticed that for GPTQ quantization the [implementation repo](https://github.com/yuhuixu1993/qa-lora) uses [AutoGPTQ](https://github.com/PanQiWei/AutoGPTQ). So it might be an answer to the [question](https://github.com/Lightning-AI/lit-gpt/issues/583) what implementation to use.\r\n\r\n----\r\n\r\nIf it's decided to implement, I'd love to work on it: both AutoGPTQ and QA-LoRA.\r\nBut it will be after I finish the other work, which might not be soon 😞.\r\n\r\n----\r\n\r\nLinks:\r\n- Paper: https://arxiv.org/pdf/2309.14717.pdf\r\n- Implementation: https://github.com/yuhuixu1993/qa-lora",
+    "comments": [
+      {
+        "author": "user-11",
+        "body": "Just read the paper and came here to suggest it and see you were already faster 😊\r\n\r\nWhat I currently don't understand is why they need to shrink the number of LoRA parameters. It's something related to the quantization I guess, but wouldn't it be possible to leave the LoRA adapter weights at the same size as the original LoRA adapter weights? I guess I don't know much enough about quantization implementations ...\r\n\r\n<img width=\"813\" alt=\"Screenshot 2023-09-30 at 7 44 06 AM\" src=\"https://github.com/Lightning-AI/lit-gpt/assets/5618407/0e548ca3-dcf3-4459-9809-dd24fd902afd\">\r\n<img width=\"849\" alt=\"Screenshot 2023-09-30 at 7 42 50 AM\" src=\"https://github.com/Lightning-AI/lit-gpt/assets/5618407/15706b72-f17c-4150-9791-cdb5b72bbb91\">\r\n\r\nI think on paper this is a simple modification like you said, but that's only true if this step above is already handled automatically by quantization implementations. \r\n\r\nHow would the usage look like?\r\n\r\nFor QLoRA\r\n\r\n```python\r\npython finetune/lora.py --qua"
+      },
+      {
+        "author": "user-10",
+        "body": "> Just read the paper and came here to suggest it and see you were already faster 😊\r\n\r\nWell, what can I say ... 😊.\r\n\r\n> I guess I don't know much enough about quantization implementations ...\r\n\r\nNeither do I. That the main reason why I would like to work on this task - to get more hands-on experience.\r\n\r\n> What I currently don't understand is why they need to shrink the number of LoRA parameters. It's something related to the quantization I guess, but wouldn't it be possible to leave the LoRA adapter weights at the same size as the original LoRA adapter weights? \r\n\r\nI'm not hugely confident that understood the paper correctly, but from what I see they decided to reduce the number of LoRA parameter to:\r\n- not only fit the number of trainable parameters for quantization and LoRA (QA-LoRA) into the same budget as previous implementation of LoRA (QLoRA)\r\n- but also fix \"he imbalanced degrees of freedom for quantization and adaptation\", which, as for my understanding, means that with a smal"
+      },
+      {
+        "author": "user-10",
+        "body": ">  - but also fix \"he imbalanced degrees of freedom for quantization and adaptation\", which, as for my understanding, means that with a smaller number of LoRA parameters the model will focus more on quantization parameters in order to minimize the loss value, some sort of bottleneck.\r\n\r\n> Though I might be wrong, need to dive more into paper/code ...\r\n\r\nYep, unsurprisingly, I was wrong 😊.\r\n\r\nEverything is explained in **Section 3.3**:\r\n<img width=\"878\" alt=\"Screenshot 2023-10-12 at 8 11 11 PM\" src=\"https://github.com/Lightning-AI/lit-gpt/assets/58434077/8d5034ed-2b29-475f-b9b7-0809cf88a14b\">\r\n\r\nAlthough, it's still not clear why we have to have $c_{i,j}$ be constant. The phrase “This is intractable in continuous and gradient-based optimization” doesn't ring any bells to me. Perhaps I need a deeper knowledge 🤔.\r\n\r\n---\r\n\r\n> wouldn't it be possible to leave the LoRA adapter weights at the same size as the original LoRA adapter weights? \r\n\r\nTechnically no, the size/shape cannot be the same"
+      }
+    ]
+  },
+  "711": {
+    "number": 711,
+    "title": "[Question] Best Practice With Multiple GPUs on 1 node",
+    "state": "open",
+    "body": "Hello, I'm creating a fine-tuned LLM based off of StableLM 3b Tuned model. I used lora.py with 4 Nvidia L4(24 GB) on GCP(I don’t have access to A100 but anything else I do). My observation is that for the amount of compute I'm providing the fine-tuning takes too long and consumes too much VRAM which has led to reducing max-seq-length to 2000 tokens instead of the max of 4096. The fine-tuning dataset is lighteval/legal-summarization on hugging Face and I adapted it to a alpaca format. Here are my questions:\n1. Should I be using different GPU's as I looked at the benchmarks on the github page and it showed 3 min for 1000 iterations (1 A100) while for me it was around 40 minutes?\n2. My dataset's input goes well beyond 4096 tokens, does the lora.py file do any type of chunking or does it just take the first 4096 tokens?\n3. For micro-batch-size of 4 and batches of 128 and max-seq-length of 500 tokens, the gpu utilization on all gpu's was around 18GB (using bf16-true). Shouldn't this be lower for 3B parameter model?\n4. What can I do to make this fine-tuning process faster (should i spawn a cluster of nodes or 1 instance with multiple gpus is enough)?",
+    "comments": []
+  },
+  "884": {
+    "number": 884,
+    "title": "Can you support the chatglm3-6b model?",
+    "state": "open",
+    "body": "Can you support fine-tuning and pre-training the chatglm3-6b model?\r\nhttps://huggingface.co/THUDM/chatglm3-6b",
+    "comments": [
+      {
+        "author": "user-10",
+        "body": "Looks like a fairly popular model. HF reports over 1 million of downloads (last month).\r\nAfter #850 is merged, this can be the next goal.\r\nThough, it's better to be done by someone who knows Chinese to validate whether the output is a correct or not."
+      }
+    ]
+  },
+  "258": {
+    "number": 258,
+    "title": "Full finetuning crash and model outputs are random tokens.",
+    "state": "open",
+    "body": "I followed the tutorial to setup Alpaca data and full fine-tuning with Falcon-7B-instruct.\r\n\r\nHere are the results comparison:\r\n\r\n- Original Falcon-7B-Instruct:\r\n\r\n'What is the Premiere Pro?\\nPremiere Pro is a video editing software developed by Adobe. It allows users to create and edit videos, edit audio, add effects to their videos, and export them in a variety of formats. It is commonly used by professional video editors and content'\r\n\r\n\r\n- After fine-tuning with Alpaca data (`./finetune/full.py`):\r\n\r\n'Below is an instruction that describes a task. Write a response that appropriately completes the request.\\n\\n### Instruction:\\nWhat is the Premiere Pro?\\n\\n### Response: stro con con stro con stro con stro con stro�#\\x01\\x01 beginningGE th toax\" managementmet$\\x01\\x01 beginning1660\\x01)$\\x01\\x01 beginning1660\\x01 up concerningac to to �be th cweight\\x01\\x01 sought\\x01)$\\x01\\x01 beginningiek0\\x01 infestationightess new of ctt th c hear th cbe thren black\"ireess th c31$\\x01\\x01 beginning$ up Christightessown c Ser\"il c claims$'\r\n",
+    "comments": []
+  },
+  "830": {
+    "number": 830,
+    "title": "On converting checkpoints to weights",
+    "state": "open",
+    "body": "## Motivation\r\n\r\nWhenever a script wants to load model weights, there are different variations of it that could be loaded depending on which script we are referring to:\r\n\r\n1. A lit model weights file `lit_model.pth`. This is the output of `scripts/convert_hf_checkpoint.py`\r\n2. A Fabric weights-only checkpoint. This is the output of `finetune/*.py`. It will include the lit model checkpoint under the `model` key. Example: https://github.com/Lightning-AI/lit-gpt/blob/main/finetune/lora.py#L310-L312\r\n3. A Fabric training checkpoint. This is the output of `pretrained/*.py`. It will include the lit model checkpoint under the `model` key plus extra training state (e.g. optimizer state).\r\n4. A Trainer checkpoint. This is the output of `pretrained/openwebtext_trainer.py`, the only script using the Trainer.\r\n\r\nMost of our scripts support loading (1) and (2): https://github.com/search?q=repo%3ALightning-AI%2Flit-gpt%20.get(%22model&type=code\r\nhttps://github.com/Lightning-AI/lit-gpt/pull/803 added support for loading (3) after a conversion step.\r\n\r\nCurrently (4) cannot be loaded anywhere other than the pertaining script itself.\r\n\r\n## Pitch\r\n\r\nThis issue suggests unifying these cases by having a single interface to \"process\" checkpoints and `checkpont_dirs`. There are two ways to do it\r\n\r\n### With a previous conversion step:\r\n\r\nRoughly:\r\n```bash\r\npython convert_checkpoint.py out/foobar/ converted_checkpoint/\r\npython generate/base.py --checkpoint_dir converted_checkpoint/\r\n```\r\n\r\nCons:\r\n- You have to remember to call this step\r\n- It will create a duplicate version of the weights. This can be very annoying for large checkpoints in environments with limited disk size such as cloud instances.\r\n\r\n### With a in-memory conversion function:\r\n\r\nInside `generate/base.py`, we call\r\n\r\n```python\r\nfrom lit_gpt.utils import get_weights_from\r\n\r\nstate_dict = get_weights_from(ckpt_dir)\r\n```\r\n\r\nCons:\r\n- Some users might prefer to have a clean checkpoint_dir to read from\r\n\r\n## What about configs?\r\n\r\nIf we implement #483, all weights should have a config file beside it so that it can be carried over?\r\n\r\n## What about the tokenizer vocabulary?\r\n\r\nThis will need to be manually copied over. Unless we choose to carry it over as with the configs.\r\n\r\nTutorials such as https://github.com/Lightning-AI/lit-gpt/blob/main/tutorials/finetune_lora.md#merging-lora-weights already indicate the need for this `cp` step",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "cc @user-30 @user-15 @user-31 @user-11 @user-32 for UX suggestions and preferences\r\n\r\nMy personal preference is the in-memory conversion step."
+      },
+      {
+        "author": "user-10",
+        "body": "I like in-memory conversion.\r\n\r\n> Some users might prefer to have a clean checkpoint_dir to read from\r\n\r\nIn such case, we can have a map for conversion (like we have right now) and use it inside in-memory conversion and in a conversion scripts. So basically have both options, but use in-memory option by default.\r\n\r\nIf we stick to in-memory option and a user wants to save the whole model, to which format, hf or lit, it will be saved?\r\nIf to hf, it will ease the process of uploading weights to huggingface hub. But in such case it might be weird to have in a Lit-GPT hf format by default.\r\nOr such a question should be raised in another issue, \"On converting weights to checkpoints\"?"
+      },
+      {
+        "author": "user-2",
+        "body": "This issue doens't intend to change the process of converting weights weights in the Lit-GPT format to the HF format (`convert_lit_checkpoint.py`) or the other way around (`convert_hf_checkpoint.py`).\r\n\r\nIt aims to standardize the supported inputs and outputs of our scripts."
+      },
+      {
+        "author": "user-15",
+        "body": "The proposal here makes sense to me for the use cases where you download weights from HF etc. I'd like to explain my use case though, because I am sure this in-memory approach can't replace the conversion step I introduced in https://github.com/Lightning-AI/lit-gpt/blob/main/scripts/convert_pretrained_checkpoint.py, which triggered this discussion in the first place.\r\n\r\nI'm currently pretraining an LLM, saving a bunch of metadata, optimizer states etc. to the checkpoint so that I can fully resume training at any point. But as soon as I take the checkpoint and use it for evaluation, inference, finetuning etc, I don't want to keep this unnecessary data around. Note: The optimizer states are a considerable fraction of the checkpoint! So for this use case, I don't see how an in-memory conversion function would be beneficial. \r\n\r\nFurthermore, think about this: If I left the checkpoint as it is without dropping metadata, and used it for finetuning, I would \"silently\" load the optimizer state"
+      },
+      {
+        "author": "user-12",
+        "body": "@user-15 , How about we implement @user-2's solution for fine tuning workflow and do-nothing/different-solution for pre-training workflow?\r\n\r\nA significant portion of users use lit-gpt for fine tuning purposes as pre-training is costly for them, and simplifying the fine tuning workflow can reduce a few issues the repo receives each month on the confusion mentioned in the first thread of this issue.\r\n\r\nSincerely,\r\nMehrdad "
+      }
+    ]
+  },
+  "733": {
+    "number": 733,
+    "title": "Adding Direct Preference Optimization (DPO) support",
+    "state": "open",
+    "body": "Has anyone implemented [Direct Preference Optimization](https://arxiv.org/abs/2305.18290) (DPO) or is there a plan to add it to lit-gpt?\r\n\r\nIf not, any advice on the best way to architect it within lit-gpt?\r\n\r\nThere’s another issue for [RLHF support](https://github.com/Lightning-AI/lit-gpt/issues/557) too, that this could be related to for post-SFT fine tuning. \r\n\r\nExample DPO implementations in other frameworks:\r\n\r\n* [Author’s code implementation](https://github.com/eric-mitchell/direct-preference-optimization)\r\n* [Huggingface implementation](https://github.com/huggingface/trl/blob/main/trl/trainer/dpo_trainer.py)",
+    "comments": []
+  },
+  "616": {
+    "number": 616,
+    "title": "Will longlora finetune supported in the future?",
+    "state": "open",
+    "body": "Will longlora finetune supported in the future?",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "Hi!\r\n\r\nThe architecture is supported (it's Llama 2), but if I understand correctly, they released the LoRA modules trained with HF's PEFT, and the repo does not support loading those at the moment.\r\n\r\nPerhaps the [merge_lora.py](https://github.com/Lightning-AI/lit-gpt/blob/main/scripts/merge_lora.py) script could support merging PEFT weights."
+      },
+      {
+        "author": "user-18",
+        "body": "If I understood, the question was about fine-tuning LongLoRAs."
+      }
+    ]
+  },
+  "209": {
+    "number": 209,
+    "title": "[Feature Request] Restore from Checkpoint",
+    "state": "open",
+    "body": "It would be nice to have a `--restore_from_checkpoint` flag for the common case in which a model fails after many iterations of training.\r\n\r\nThanks!\r\n\r\nGriffin",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "The pretraining scripts now have a `resume` argument.\r\n\r\nThe finetuning scripts don't have it yet. Contributions would be welcome"
+      }
+    ]
+  },
+  "847": {
+    "number": 847,
+    "title": "Stuck on model forward with 100% GPU-Util",
+    "state": "open",
+    "body": "When I run finetune/adapter.py with my dataset with almost no modification (with devices=2), the code stuck on `logits = model(input_ids, lm_head_chunk_size=128)`(https://github.com/Lightning-AI/lit-gpt/blob/main/finetune/adapter.py#L157C13-L157C62), the `model ()` call nerver finish but GPU-Util is always 100%. \r\n\r\nThe process even can't be terminated with `Ctrl-C`\r\n\r\nAfter replacing `validate(fabric, model, val_data, tokenizer, max_iters=2)`(https://github.com/Lightning-AI/lit-gpt/blob/main/finetune/adapter.py#L137) with `model.train()`, output error log with following:\r\n```\r\ntorch.utils.checkpoint.CheckpointError: torch.utils.checkpoint: A different number of tensors was saved during the original forward and recomputation.\r\nNumber of tensors saved during forward: 49\r\nNumber of tensors saved during recomputation: 47\r\n    raise CheckpointError(\r\ntorch.utils.checkpoint.CheckpointError: torch.utils.checkpoint: A different number of tensors was saved during the original forward and recomputation.\r\nNumber of tensors saved during forward: 49\r\nNumber of tensors saved during recomputation: 47\r\n```\r\n\r\nThe script param I used to run is: \r\n```\r\npython finetune/adapter.py \\\r\n    --data_dir data/xxx \\\r\n    --checkpoint_dir checkpoints/meta-llama/Llama-2-7b-chat-hf \\\r\n    --out_dir out/adapter/xxx\r\n```\r\n\r\nAny tips will be appreciated.",
+    "comments": [
+      {
+        "author": "user-20",
+        "body": "After upgrade torch to nightly 2.3, the trainning process run without problem.\r\n\r\nBut another problem is that the trainning process cost too much GPU memory, with the config:\r\n```\r\ndevices = 2\r\nbatch_size = 2 / devices\r\nmicro_batch_size = 1\r\n```\r\ncost 33944MiB each on two NVIDIA A100-SXM4-40GB.\r\n\r\nIs that normal? "
+      },
+      {
+        "author": "user-20",
+        "body": "After one validate interval, it stucks again~ I don't know why~"
+      },
+      {
+        "author": "user-12",
+        "body": "@user-20 , what quantization level are you using(FP64, FP32, FP16, BFLOAT16)? \r\n\r\n* typically you would need 4X the parameter count for 32-bit and 2 times the parameter count for 16-bit quantization level. In your case, 7b parameter would need 14gb(just for the model parameters and not the other miscellaneous items) in 16-bit. Feel free to also visit `tutorials/oom.md`. \r\n* The token count in your fine tune dataset also adds to the memory needs during fine tuning. Feel free to check the max sequence length parameter in your prepare dataset function. "
+      },
+      {
+        "author": "user-20",
+        "body": "@user-33 Thanks for you reply, I just use the default configuration. My main problem is just like https://github.com/Lightning-AI/lit-gpt/issues/856, but with a lot difference, it hang just like forever."
+      }
+    ]
+  },
+  "708": {
+    "number": 708,
+    "title": "[suggestion] Lit is missing Alpaca_Eval and MT benchmark",
+    "state": "open",
+    "body": "Lit-gpt has superb libraries for instruction tuning. But instruction tuned models are popularly never used for eval using lm eval harness. \r\nMT benchmark: https://lmsys.org/blog/2023-06-22-leaderboard/\r\nalpaca eval: https://github.com/tatsu-lab/alpaca_eval",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "Is your suggestion to have a tutorial on how to submit lit-gpt models to those leaderboards?"
+      },
+      {
+        "author": "user-6",
+        "body": "Yeah that should work. But I am suggesting more in the lines of making lit version of both of these benchmarks. Like you guys did with lm eval harness."
+      }
+    ]
+  },
+  "756": {
+    "number": 756,
+    "title": "Is there a library to serve the model trained via lit-gpt?",
+    "state": "open",
+    "body": "I'm experimenting with lit-gpt to fine-tune models. Is there a library that can be used to serve the models so that it can be leveraged to serve the model via API?",
+    "comments": [
+      {
+        "author": "user-22",
+        "body": "you can convert the model to Transformers ([convert_hf_checkpoint.py](https://github.com/Lightning-AI/lit-gpt/blob/main/scripts/convert_hf_checkpoint.py)) and use vLLM for serving."
+      },
+      {
+        "author": "user-23",
+        "body": "@user-21 once its back to hf you can convert it to GGUF format also using \r\n\r\n`llama.cpp/convert-WHATEVER_ARCHITECTURE_IS-hf-to-gguf.py`"
+      },
+      {
+        "author": "user-12",
+        "body": "@user-34, could you mention which part of the conversion you are stuck at?"
+      },
+      {
+        "author": "user-22",
+        "body": "you can also use [this Studio](https://lightning.ai/lightning-ai/studios/llm-chat-api-llama2-7b?section=all) to deploy Lit-GPT. The server can handle requests from multiple concurrent users, and can leverage multiple GPUs on a single machine.\r\n"
+      }
+    ]
+  },
+  "680": {
+    "number": 680,
+    "title": "[question] how to finetune efficiently",
+    "state": "open",
+    "body": "Dear all,\r\n\r\nFinetuning my data takes so long (more than 24 hours). In this case, how can I shorten the time? \r\n\r\nCan I know the estimated end time? \r\n\r\nCan I stop the finetuning at some point and resume finetuning from the point that I stopped at?\r\n\r\nThanks in advance.",
+    "comments": [
+      {
+        "author": "user-11",
+        "body": "> Finetuning my data takes so long (more than 24 hours). In this case, how can I shorten the time?\r\n\r\nIf you are not doing it already, you could try `bf16-true` precision, use a smaller model, use more GPUs (if available), or run fewer iterations. You might like the resource tables [here](https://github.com/Lightning-AI/lit-gpt/blob/main/tutorials/resource-tables.md) :).\r\n\r\n> Can I know the estimated end time?\r\n\r\nPersonally, what I usually do is a test run on 1000 iters and then extrapolate to the max iterations. \r\n\r\n> Can I stop the finetuning at some point and resume finetuning from the point that I stopped at?\r\n\r\nYes you can :). For that, you just need to copy the .json config files from the `checkpoint_dir` folder to the folder that contains your finetuned checkpoint file (and rename that finetuned checkpoint file). Then you can use the finetuned target folder as `--checkpoint_dir` input. If you use LoRA, you need to merge the weights first. There's an explanation in the tutorials "
+      }
+    ]
+  },
+  "805": {
+    "number": 805,
+    "title": "Weird error when using activation checkpointing for FSDPStrategy",
+    "state": "open",
+    "body": "I'm training tinyllama with 8 A40s. \r\nEverything goes very smooth until I want to increase the micro batch size for better computation to communication ratio.\r\n\r\nI follow the official tutorial of lit gpt by passing `activation_checkpointing_policy={Block}` into FSDPStrategy. The modified setup is also attached below.\r\n\r\n```\r\ndef setup(\r\n    devices: int = 8,\r\n    train_data_dir: Path = Path(\"data/redpajama_sample\"),\r\n    val_data_dir: Optional[Path] = None,\r\n    precision: Optional[str] = None,\r\n    tpu: bool = False,\r\n    resume: Union[bool, Path] = False,\r\n) -> None:\r\n    precision = precision or get_default_supported_precision(training=True, tpu=tpu)\r\n\r\n    if devices > 1:\r\n        if tpu:\r\n            ...\r\n        else:\r\n            strategy = FSDPStrategy(\r\n                auto_wrap_policy={Block},\r\n                activation_checkpointing_policy={Block},\r\n                state_dict_type=\"full\",\r\n                limit_all_gathers=True,\r\n                cpu_offload=False,\r\n                sharding_strategy=\"FULL_SHARD\",\r\n            )\r\n    else:\r\n        strategy = \"auto\"\r\n```\r\n\r\nBut I got some strange errors about the activation checkpointing. \r\nCould someone shed some light on this, anything informative is a big help for me.\r\n\r\n```\r\nTraceback (most recent call last):\r\n  File \"pretrain/tinyllama.py\", line 424, in <module>\r\n    CLI(setup)\r\n  File \"/usr/local/lib/python3.8/dist-packages/jsonargparse/_cli.py\", line 96, in CLI\r\n    return _run_component(components, cfg_init)\r\n  File \"/usr/local/lib/python3.8/dist-packages/jsonargparse/_cli.py\", line 181, in _run_component\r\n    return component(**cfg)\r\n  File \"pretrain/tinyllama.py\", line 108, in setup\r\n    main(fabric, train_data_dir, val_data_dir, resume)\r\n  File \"pretrain/tinyllama.py\", line 160, in main\r\n    train(fabric, state, train_dataloader, val_dataloader, monitor, resume)\r\n  File \"pretrain/tinyllama.py\", line 244, in train\r\n    fabric.backward(loss / gradient_accumulation_steps)\r\n  File \"/usr/local/lib/python3.8/dist-packages/lightning/fabric/fabric.py\", line 422, in backward\r\n    self._strategy.backward(tensor, module, *args, **kwargs)\r\n  File \"/usr/local/lib/python3.8/dist-packages/lightning/fabric/strategies/strategy.py\", line 192, in backward\r\n    self.precision.backward(tensor, module, *args, **kwargs)\r\n  File \"/usr/local/lib/python3.8/dist-packages/lightning/fabric/plugins/precision/fsdp.py\", line 126, in backward\r\n    super().backward(tensor, model, *args, **kwargs)\r\n  File \"/usr/local/lib/python3.8/dist-packages/lightning/fabric/plugins/precision/precision.py\", line 107, in backward\r\n    tensor.backward(*args, **kwargs)\r\n  File \"/usr/local/lib/python3.8/dist-packages/torch/_tensor.py\", line 492, in backward\r\n    torch.autograd.backward(\r\n  File \"/usr/local/lib/python3.8/dist-packages/torch/autograd/__init__.py\", line 251, in backward\r\n    Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass\r\n  File \"/usr/local/lib/python3.8/dist-package",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "Hi! The `setup` that you shared in your first snippet is very different to the `setup` in https://github.com/Lightning-AI/lit-gpt/blob/main/pretrain/tinyllama.py#L66. Can you share all changes that you made to the repo? You can do:\r\n\r\n`git diff > changes.diff`\r\n\r\nAnd then post the `changes.diff` file here.\r\n\r\ncc @user-15 in case you are familiar"
+      }
+    ]
+  },
+  "477": {
+    "number": 477,
+    "title": "OOM with bf16-true, Quantization, for long context length.",
+    "state": "open",
+    "body": "Hello. \r\n\r\nI tried to install everything mentioned from git cloning to installing all requirements, except flash attentions.\r\n\r\nI have an A100 40GB machine\r\nCUDA 11.0 \r\n\r\nNow downloaded the llama-2-7B checkpoints and prepared.\r\n\r\nalso prepared alpaca dataset. with llama-2-7B using \r\n```\r\npython scripts/prepare_alpaca.py \r\n```\r\n\r\nNow i changes the finetune.lora.py. Inside get_batch.\r\n```\r\nmax_len = 4000 # max(len(s) for s in input_ids) if fabric.device.type != \"xla\" else longest_seq_length\r\n```\r\n\r\nUsing the Below command runs successfully on single GPU. with 4000 context length\r\n```\r\npython finetune/lora.py --precision 'bf16-true'\r\n```\r\n\r\nUsing Below command with quantization is giving OOM.\r\n```\r\npython finetune/lora.py --precision 'bf16-true' --quantize 'bnb.nf4-dq'\r\n```\r\n\r\nThis is suspicious. I think if just \"bf16-true\" is running fine, then \"bf16-true\" along with quantization should also work even with less memory.\r\n\r\nCan someone suggest, what went wrong. What am i missing?\r\n",
+    "comments": [
+      {
+        "author": "user-26",
+        "body": "I am using same Alpaca, but i also have custom dataset, I just wanted to test llama-2-7B model using full context length.\r\ni am trying to pad the content until we are getting 4000 context length. in get_batch.\r\nThank you."
+      },
+      {
+        "author": "user-11",
+        "body": "Just for debugging purposes, what is your memory usage if you use the default lora.py script with microbatch size 1 on Alpaca so that we can compare to my results above and see if there's something off."
+      },
+      {
+        "author": "user-26",
+        "body": "```\r\n(litgpt) root@b313af4d8107:/home/jupyter/Satya/lit-gpt# python finetune/lora.py  --precision \"bf16-true\" --quantize \"bnb.nf4\"\r\n{'eval_interval': 100, 'save_interval': 100, 'eval_iters': 100, 'log_interval': 1, 'devices': 1, 'learning_rate': 0.0003, 'batch_size': 128, 'micro_batch_size': 1, 'gradient_accumulation_iters': 128, 'max_iters': 10, 'weight_decay': 0.01, 'lora_r': 8, 'lora_alpha': 16, 'lora_dropout': 0.05, 'lora_query': True, 'lora_key': False, 'lora_value': True, 'lora_projection': False, 'lora_mlp': False, 'lora_head': False, 'warmup_steps': 100}\r\nGlobal seed set to 1337\r\nLoading model 'checkpoints/meta-llama/Llama-2-7b-hf/lit_model.pth' with {'org': 'meta-llama', 'name': 'Llama-2-7b-hf', 'block_size': 4096, 'vocab_size': 32000, 'padding_multiple': 64, 'padded_vocab_size': 32000, 'n_layer': 32, 'n_head': 32, 'n_embd': 4096, 'rotary_percentage': 1.0, 'parallel_residual': False, 'bias': False, 'n_query_groups': 32, 'shared_attention_norm': False, '_norm_class': 'RMSNorm',"
+      },
+      {
+        "author": "user-11",
+        "body": "Interesting, so the problem is the longer contexts then?"
+      },
+      {
+        "author": "user-26",
+        "body": "I am not sure about the reason.\r\n\r\nIf you can change the below line and check \r\n \r\nin finetune/lora.py in the function get_batch:\r\n\r\n```\r\nmax_len = 4000 # max(len(s) for s in input_ids) if fabric.device.type != \"xla\" else longest_seq_length\r\n```\r\n\r\nand run  same command\r\n\r\n```\r\npython finetune/lora.py  --precision \"bf16-true\" --quantize \"bnb.nf4\"\r\n\r\n(litgpt) root@b313af4d8107:/home/jupyter/Satya/lit-gpt# python finetune/lora.py  --precision \"bf16-true\" --quantize \"bnb.nf4\"\r\n{'eval_interval': 100, 'save_interval': 100, 'eval_iters': 100, 'log_interval': 1, 'devices': 1, 'learning_rate': 0.0003, 'batch_size': 128, 'micro_batch_size': 1, 'gradient_accumulation_iters': 128, 'max_iters': 10, 'weight_decay': 0.01, 'lora_r': 8, 'lora_alpha': 16, 'lora_dropout': 0.05, 'lora_query': True, 'lora_key': False, 'lora_value': True, 'lora_projection': False, 'lora_mlp': False, 'lora_head': False, 'warmup_steps': 100}\r\nGlobal seed set to 1337\r\nLoading model 'checkpoints/meta-llama/Llama-2-7b-hf/lit_mo"
+      },
+      {
+        "author": "user-11",
+        "body": "I see. Hm, that's interesting. So on small contexts, bnb.nf4 performs better, but on longer contexts bnb.nf4 performs worse? "
+      },
+      {
+        "author": "user-26",
+        "body": "> I see. Hm, that's interesting. So on small contexts, bnb.nf4 performs better, but on longer contexts bnb.nf4 performs worse?\r\n\r\nI guess so."
+      },
+      {
+        "author": "user-2",
+        "body": "Could you do an experiment where you run with both short and long context with precision and precision+quantization for the same model? And report the results"
+      },
+      {
+        "author": "user-26",
+        "body": "Hello @user-2, Here are my observations.\r\n\r\nEvery experiment i ran only with micro_batch_size = 1\r\n                                                    model is Llama-2-7b-hf\r\nLong context length is 4000.\r\nMemory Utilization observed - observed using watch nvidia-smi\r\n\r\n  | context length |  precision |  Memory displayed at end of run | Memory Utilization observed |\r\n  |-----------------|------------|--------------------------------------|---------------------------------|\r\n  |                         |  --precision \"bf16-true\" | 21.32  | 22.6 |\r\n  |                         |  --quantize \"bnb.nf4\" |  19.62 | 21.5|\r\n  |      Short          |  --quantize \"bnb.nf4-dq\"  |  19.32 | 21.2 |\r\n  |                         |  --precision \"bf16-true\" --quantize \"bnb.nf4\"  |  14.15  | 16.1 |\r\n  |                         |  --precision \"bf16-true\"  --quantize \"bnb.nf4-dq\" |  13.84 | 15.6 |\r\n  |--------------|-------------------------|--------------|--------------------| \r\n  |                         "
+      },
+      {
+        "author": "user-11",
+        "body": "Referencing #501 because there seems to be a similar issue when using larger microbatch sizes."
+      }
+    ]
+  },
+  "223": {
+    "number": 223,
+    "title": "Error with self dataset falcon 7b: RuntimeError: expected mat1 and mat2 to have the same dtype, but got: c10::BFloat16 != signed char",
+    "state": "open",
+    "body": "\r\nHi! I followed all steps in the falcon blog, I'm using my own dataset. I get this error when I try to run an inference:\r\n\r\n```\r\npython generate/adapter_v2.py --adapter_path workspace/out/adapter/falcon/lit_model_adapter_finetuned.pth --checkpoint_dir checkpoints/tiiuae/falcon-7b --quantize llm.int8 --prompt \"What food do lamas eat?\"\r\n\r\nLoading model 'checkpoints/tiiuae/falcon-7b/lit_model.pth' with {'org': 'tiiuae', 'name': 'falcon-7b', 'block_size': 2048, 'vocab_size': 50254, 'padding_multiple': 512, 'padded_vocab_size': 65024, 'n_layer': 32, 'n_head': 71, 'n_embd': 4544, 'rotary_percentage': 1.0, 'parallel_residual': True, 'bias': False, 'n_query_groups': 1, 'shared_attention_norm': True, '_norm_class': 'LayerNorm', 'norm_eps': 1e-05, '_mlp_class': 'GptNeoxMLP', 'intermediate_size': 18176, 'adapter_prompt_length': 10, 'adapter_start_layer': 2}\r\nbin /usr/local/lib/python3.10/dist-packages/bitsandbytes/libbitsandbytes_cuda117.so\r\nTime to instantiate model: 1.49 seconds.\r\nTime to load the model weights: 27.58 seconds.\r\nTraceback (most recent call last):\r\n  File \"/workspace/lit-gpt/generate/adapter_v2.py\", line 137, in <module>\r\n    CLI(main)\r\n  File \"/usr/local/lib/python3.10/dist-packages/jsonargparse/_cli.py\", line 85, in CLI\r\n    return _run_component(component, cfg_init)\r\n  File \"/usr/local/lib/python3.10/dist-packages/jsonargparse/_cli.py\", line 147, in _run_component\r\n    return component(**cfg)\r\n  File \"/workspace/lit-gpt/generate/adapter_v2.py\", line 106, in main\r\n    y = generate(\r\n  File \"/usr/local/lib/python3.10/dist-packages/torch/utils/_contextlib.py\", line 115, in decorate_context\r\n    return func(*args, **kwargs)\r\n  File \"/workspace/lit-gpt/generate/base.py\", line 66, in generate\r\n    logits = model(x, max_seq_length, input_pos)\r\n  File \"/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py\", line 1505, in _wrapped_call_impl\r\n    return self._call_impl(*args, **kwargs)\r\n  File \"/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py\", line 1514, in _call_impl\r\n    return forward_call(*args, **kwargs)\r\n  File \"/usr/local/lib/python3.10/dist-packages/lightning/fabric/wrappers.py\", line 116, in forward\r\n    output = self._forward_module(*args, **kwargs)\r\n  File \"/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py\", line 1505, in _wrapped_call_impl\r\n    return self._call_impl(*args, **kwargs)\r\n  File \"/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py\", line 1514, in _call_impl\r\n    return forward_call(*args, **kwargs)\r\n  File \"/workspace/lit-gpt/lit_gpt/adapter.py\", line 108, in forward\r\n    x, self.kv_caches[i], self.adapter_kv_caches[i] = block(\r\n  File \"/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py\", line 1505, in _wrapped_call_impl\r\n    return self._call_impl(*args, **kwargs)\r\n  File \"/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py\", line 1514, in _call_impl\r\n    return forward_call(*args, **kwargs)\r\n  File \"/workspace/lit-gpt/lit_gpt/",
+    "comments": [
+      {
+        "author": "user-28",
+        "body": "I also have this issue, looking at lit-llama it seems to be same as that [issue](https://github.com/Lightning-AI/lit-llama/pull/314). I am not sure quantization method is yet address for inference adapter fine-tuned model in lit-gpt repo."
+      }
+    ]
+  },
+  "766": {
+    "number": 766,
+    "title": "KeyError in convert_hf_checkpoint.py when using 'TinyLlama-1.1B-intermediate-step-480k-1T' checkpoint",
+    "state": "open",
+    "body": "Encountered a KeyError running convert_hf_checkpoint.py with the specified checkpoint directory 'checkpoints/PY007/TinyLlama-1.1B-intermediate-step-480k-1T'. The error occurs in lit_gpt/config.py at the line(85) conf_dict = name_to_config[name].copy().\r\n\r\nCommand: python scripts/convert_hf_checkpoint.py --checkpoint_dir checkpoints/PY007/TinyLlama-1.1B-intermediate-step-480k-1T\r\n\r\n![image](https://github.com/Lightning-AI/lit-gpt/assets/61625665/0bd849ca-9719-4ecd-8a5b-cee9d77bb7be)\r\n",
+    "comments": [
+      {
+        "author": "user-10",
+        "body": "Hello @user-29 \r\n\r\nI just tried to do the steps described in `tutorials/download_tinyllama.md` with the latest code from main branch and latest packages (from requirements.txt) and all worked fine.\r\nTry to pull the latest changes and upgrade packages (ideally in a freshly created virtual environment)."
+      },
+      {
+        "author": "user-10",
+        "body": "@user-2 \r\nIs there a way to display a user recommendations to use the latest code/packages before submitting an issue?"
+      }
+    ]
+  }
+}

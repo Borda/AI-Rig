@@ -7,6 +7,7 @@ source-tree fallback, and argument validation.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -45,7 +46,7 @@ class TestResolveSharedPath:
 
         Scenario: the host exports the plugin root and the requested ``skills/_shared`` exists under it.
         """
-        root = tmp_path / "plugin_install"
+        root = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "oss" / "1.0.0"
         (root / "skills" / "_shared").mkdir(parents=True)
         path, tier = resolve_shared_path.resolve("oss", "skills/_shared", home=tmp_path, env_root=str(root))
         assert tier == 0
@@ -84,6 +85,10 @@ class TestResolveSharedPath:
         on Windows too (``sys.stdout.reconfigure(newline="\\n")``).
         """
         _plant_source_tree(tmp_path, files)
+        script = tmp_path / "plugins/cc_oss/bin/resolve_shared_path.py"
+        script.parent.mkdir()
+        shutil.copyfile(SCRIPT, script)
+        monkeypatch.setattr(resolve_shared_path, "__file__", str(script))
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "")
         monkeypatch.setattr(resolve_shared_path.Path, "home", classmethod(lambda _cls: tmp_path))
@@ -92,3 +97,14 @@ class TestResolveSharedPath:
         assert (rc, captured.out.strip()) == (expected_rc, expected_out)
         assert expected_err in captured.err
         assert "\r" not in captured.out
+
+    def test_copied_manifest_does_not_select_foreign_checkout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A matching cwd manifest cannot authorize source fallback for the actual executing resolver."""
+        _plant_source_tree(tmp_path, _MANIFEST)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "")
+        monkeypatch.setattr(resolve_shared_path.Path, "home", classmethod(lambda _cls: tmp_path))
+        assert resolve_shared_path.main(["oss", "skills/_shared"]) == 1
+        assert capsys.readouterr().out == ""

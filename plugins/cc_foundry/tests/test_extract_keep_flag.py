@@ -28,6 +28,25 @@ _skip_no_symlink = pytest.mark.skipif(not _symlinks_supported(), reason="symlink
 _skip_without_uids = pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX uids and mode bits unavailable")
 
 
+@_skip_no_symlink
+@pytest.mark.parametrize("linked_parent", [".temp", ".temp/state"])
+def test_contract_clear_refuses_linked_state_parent(
+    session: Path, tmp_path: Path, linked_parent: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Initializing a skill cannot delete a contract through a redirected state directory."""
+    outside = tmp_path / "outside"
+    target = outside / "state" if linked_parent == ".temp" else outside
+    target.mkdir(parents=True)
+    protected = target / "skill-contract.md"
+    protected.write_text("preserve\n", encoding="utf-8")
+    parent = session / linked_parent
+    parent.parent.mkdir(parents=True, exist_ok=True)
+    parent.symlink_to(outside, target_is_directory=True)
+    assert ekf.main([_ARGV0, "myskill", ""]) == 1
+    assert protected.read_text(encoding="utf-8") == "preserve\n"
+    assert "state" in capsys.readouterr().err
+
+
 @pytest.fixture
 def session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Isolate one run: temp dir, working directory, and session ID all inside ``tmp_path``.
@@ -40,6 +59,21 @@ def session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.chdir(tmp_path)
     return tmp_path
+
+
+def test_contract_clear_refuses_out_of_project_state(
+    session: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Resolved containment protects redirected directories that do not report themselves as symlinks."""
+    project = session / "project"
+    project.mkdir()
+    contract = session / "skill-contract.md"
+    contract.write_text("preserve", encoding="utf-8")
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(ekf, "_CONTRACT", contract)
+    assert ekf.main([_ARGV0, "myskill", ""]) == 1
+    assert contract.read_text(encoding="utf-8") == "preserve"
+    assert "state" in capsys.readouterr().err
 
 
 @pytest.fixture

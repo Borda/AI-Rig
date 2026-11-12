@@ -57,10 +57,11 @@ The arguments are pasted as text into the double-quoted word handed to `parse_re
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 # one shlex parse — awk/grep/sed re-splits fired on flags inside values; refs reach git mv, so validated there
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/parse_rename_args.py" "$ARGUMENTS" --output-prefix "codemap-${_CM_PROJ}" || exit 1
+python "$PLUGIN_ROOT/bin/parse_rename_args.py" "$ARGUMENTS" --output-prefix "codemap-${_CM_PROJ}" || exit 1
 ```
 
 Non-zero exit → print the helper's stderr unchanged; stop. It rejects: missing/unknown subcommand (Usage line); missing old/new ref; flag-shaped ref (`looks like a flag, not a target — check argument order`); a ref that is not a dotted Python name, incl. `module::symbol` (own message); symbol-only flags under `module`; `--since`/`--removed-in` without a value; unquoted text left over; `--deprecate` with `--remove-if-no-callers` (`conflicting flags`). Unknown `--` tokens print `! Unknown flag(s): --<token>. Supported flags: --dry-run, --deprecate[=<decorator>], --no-deprecate, --since, --removed-in, --remove-if-no-callers. Re-invoke with corrected flags.` Never AskUserQuestion here: fail-fast keeps the worst-case AskUserQuestion path at 4 (post-query stale index, multiple-matches, apply/dry-run, hard-delete confirmation).
@@ -69,11 +70,12 @@ Non-zero exit → print the helper's stderr unchanged; stop. It rejects: missing
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 # Python-only: zero .py/.pyi → stop before index checks; scan-codebase would only write an empty index. node_modules pruned — ships node-gyp .py
 find "$(git rev-parse --show-toplevel 2>/dev/null || echo .)" \( -name .git -o -name .venv -o -name venv -o -name node_modules \) -prune -o \( -name '*.py' -o -name '*.pyi' \) -print -quit | grep -q . || { echo "! UNSUPPORTED — no .py/.pyi files: /codemap-py:rename-refs is Python-only. Stop: do not rename by hand."; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/resolve_index_env.py" \
+python "$PLUGIN_ROOT/bin/resolve_index_env.py" \
     --output-prefix "codemap-${_CM_PROJ}" 2>/dev/null  # timeout: 5000
 IFS= read -r PROJ < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-proj-${CSID}" 2>/dev/null || PROJ=""
 [ -n "$PROJ" ] || { printf "! resolve_index_env.py failed — check Python availability and CLAUDE_PLUGIN_ROOT\n"; exit 1; }
@@ -108,6 +110,7 @@ All structural queries/rebuilds use `codemap-py` dispatcher, never `scan-query`/
 
 ```bash
 # timeout: 25000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r OLD_REF < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_REF-${CSID}" 2>/dev/null || OLD_REF=""
@@ -127,7 +130,7 @@ except (OSError, ValueError, AttributeError) as exc:
 PY
 [ "$?" -eq 0 ] || exit 1
 # find-symbol is an unanchored pattern — keep exact qualified_name matches when any exist, so a unique exact target never asks
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/cm_json.py" narrow --input "$_FS_SENTINEL" --qualified-name "$OLD_REF"
+python "$PLUGIN_ROOT/bin/cm_json.py" narrow --input "$_FS_SENTINEL" --qualified-name "$OLD_REF"
 ```
 
 `find-symbol` returns `matches`, each `{name, qualified_name, type, module, path, start_line, end_line, source}` (same as `query-code` `symbol`). Edits use `path`, `start_line`, `end_line`; exact filter uses `qualified_name` (applied above when any match is exact); Step 4e reads `.matches[0].type`.
@@ -136,22 +139,24 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/cm_json.py" narrow --input
 - Multiple → Write the full candidate list (name/type/module/path) with each match's 0-based index to `.temp/rename-refs-candidates-<session-id>.md` first; print it once as the last reply text before `AskUserQuestion`. The question text carries a plain candidate-count summary and `→ <candidate list path>`; options identify the candidate with a one-line description, no previews. At most 4 options: more than 4 candidates → offer the first 3 plus `Abort — keep code unchanged`. In the question text, say the Other free-text answer accepts any 0-based index from the saved candidate list. Accept any in-range index, including candidates 4 and later; an abort answer stops without edits. Bind `CHOSEN_IDX` to that exact saved list, never to a new query or a module-qualified re-invocation. After choice, narrow sentinel so every downstream `.matches[0]` is correct:
   ```bash
   # timeout: 5000
+  PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
   _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
   CHOSEN_IDX="<0-based index of the match selected via AskUserQuestion>"
   case "$CHOSEN_IDX" in *[!0-9]*|"") echo "! BLOCKED — substitute CHOSEN_IDX with the chosen 0-based index"; exit 1 ;; esac
   # out of range → exit 4, answer left as is — never fall through to an unnarrowed matches[0]
-  python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/cm_json.py" narrow --input "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-find-symbol-json-${CSID}" --index "$CHOSEN_IDX" || exit 1
+  python "$PLUGIN_ROOT/bin/cm_json.py" narrow --input "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-find-symbol-json-${CSID}" --index "$CHOSEN_IDX" || exit 1
   ```
 
 Full qname: `<module>::<qualified_name>` (e.g. `mypackage.auth::validate_token`).
 
 ```bash
 # timeout: 25000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 # one parse of the narrowed answer; 4b/4e read sym-path/sym-type back
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/cm_json.py" first-match --input "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-find-symbol-json-${CSID}" --output-prefix "codemap-${_CM_PROJ}" --field module=sym-module --field qualified_name=sym-qname --field path=sym-path --field type=sym-type
+python "$PLUGIN_ROOT/bin/cm_json.py" first-match --input "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-find-symbol-json-${CSID}" --output-prefix "codemap-${_CM_PROJ}" --field module=sym-module --field qualified_name=sym-qname --field path=sym-path --field type=sym-type
 IFS= read -r SYM_MODULE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-sym-module-${CSID}" 2>/dev/null || SYM_MODULE=""
 IFS= read -r SYM_QNAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-sym-qname-${CSID}" 2>/dev/null || SYM_QNAME=""
 [ -n "$SYM_MODULE" ] && [ -n "$SYM_QNAME" ] || { printf "! could not extract module/qualified_name from find-symbol result\n" >&2; exit 1; }
@@ -162,7 +167,7 @@ _RDEPS_FILE="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rdeps-json-${CSID}"
 codemap-py query --timeout 20 fn-rdeps "${SYM_MODULE}::${SYM_QNAME}" > "$_RDEPS_FILE" || { printf '! fn-rdeps failed (exit %d) — callers unknown; stop before any source edit\n' "$?"; exit 1; }
 grep -q '^{"error"' "$_RDEPS_FILE" && { printf '! fn-rdeps returned an error — callers unknown; stop before any source edit\n'; head -c 400 "$_RDEPS_FILE"; exit 1; }
 # forward-first, fail-closed — query_complete wins even when false (a `//` fallback let legacy true arm the delete gate on an incomplete graph); zero-caller method → `hint` blocks delete (obj.method()/dynamic dispatch unresolved statically). Rules: cm_json.py rdeps_values
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/cm_json.py" rdeps-summary --kind fn --input "$_RDEPS_FILE" --output-prefix "codemap-${_CM_PROJ}"
+python "$PLUGIN_ROOT/bin/cm_json.py" rdeps-summary --kind fn --input "$_RDEPS_FILE" --output-prefix "codemap-${_CM_PROJ}"
 IFS= read -r RDEP_COUNT < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rdep-count-${CSID}" 2>/dev/null || RDEP_COUNT="0"
 IFS= read -r EXHAUSTIVE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-EXHAUSTIVE-${CSID}" 2>/dev/null || EXHAUSTIVE="false"
 IFS= read -r RDEP_HINT < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-RDEP_HINT-${CSID}" 2>/dev/null || RDEP_HINT=""
@@ -184,6 +189,7 @@ printf 'REMOVE_IF_ZERO=%s DRY_RUN=%s RDEP_COUNT=%s EXHAUSTIVE=%s\nRDEP_HINT=%s\n
 
 ```bash
 # timeout: 25000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r SYM_MODULE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-sym-module-${CSID}" 2>/dev/null || SYM_MODULE=""
@@ -197,7 +203,7 @@ while :; do _ITEMS="$_ITEMS,{\"cmd\":\"rdeps\",\"args\":[\"$_M\"]}"; case "$_M" 
 printf '[%s]\n' "$_ITEMS" > "${_T}-ref-batch-in-${CSID}"
 codemap-py query --timeout 20 batch "${_T}-ref-batch-in-${CSID}" > "${_T}-ref-batch-json-${CSID}" || { printf '! importer batch failed (exit %d) — reference sites unknown; stop before any source edit\n' "$?"; exit 1; }
 # exit 1 = unreadable answer or unmappable batch; a partial site list would silently skip importers
-(cd "$_CM_ROOT" && python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind name --name "$OLD_NAME" --files-from-json "${_T}-rdeps-json-${CSID}" --files-from-json "${_T}-find-symbol-json-${CSID}" --files-from-json "${_T}-ref-batch-json-${CSID}") > "${_T}-ref-sites-${CSID}" || exit 1
+(cd "$_CM_ROOT" && python "$PLUGIN_ROOT/bin/find_module_refs.py" --kind name --name "$OLD_NAME" --files-from-json "${_T}-rdeps-json-${CSID}" --files-from-json "${_T}-find-symbol-json-${CSID}" --files-from-json "${_T}-ref-batch-json-${CSID}") > "${_T}-ref-sites-${CSID}" || exit 1
 printf 'REF_SITES='; wc -l < "${_T}-ref-sites-${CSID}" | tr -d ' '
 cat "${_T}-ref-sites-${CSID}"
 ```
@@ -208,6 +214,7 @@ Each printed `path:line:text` is a candidate reference site. Hits in comments, d
 
 ```bash
 # timeout: 25000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r OLD_REF < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_REF-${CSID}" 2>/dev/null || OLD_REF=""
@@ -230,7 +237,7 @@ except (OSError, ValueError, AttributeError) as exc:
 PY
 [ "$?" -eq 0 ] || exit 1
 # same forward-first, fail-closed read as the symbol branch; rdeps carries no method hint, so --kind module overwrites it empty (an earlier symbol run's hint never reaches this gate)
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/cm_json.py" rdeps-summary --kind module --input "$_RDEPS_FILE" --output-prefix "codemap-${_CM_PROJ}"
+python "$PLUGIN_ROOT/bin/cm_json.py" rdeps-summary --kind module --input "$_RDEPS_FILE" --output-prefix "codemap-${_CM_PROJ}"
 IFS= read -r RDEP_COUNT < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rdep-count-${CSID}" 2>/dev/null || RDEP_COUNT="0"
 IFS= read -r EXHAUSTIVE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-EXHAUSTIVE-${CSID}" 2>/dev/null || EXHAUSTIVE="false"
 # module never deletes — parse_rename_args.py rejects --remove-if-no-callers for module
@@ -427,7 +434,8 @@ PY
 
 ```bash
 # timeout: 3000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/anti_overwrite_path.py" .temp output-rename-refs-dry --branch-date
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/anti_overwrite_path.py" .temp output-rename-refs-dry --branch-date
 ```
 
 Write report to the printed `$DRY_OUT` path via Write, beginning with YAML header:
@@ -473,11 +481,12 @@ Steps 4a–4e (definition site, `__all__` re-exports, import call sites, Sphinx 
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r SUBCOMMAND < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-SUBCOMMAND-${CSID}" 2>/dev/null || SUBCOMMAND=""
 [ "$SUBCOMMAND" = "symbol" ] || { printf 'ℹ SUBCOMMAND=%s — skip Step 4\n' "$SUBCOMMAND"; exit 0; }
-cat "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/claude-skills/rename-refs/modes/symbol.md"
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$PLUGIN_ROOT/claude-skills/rename-refs/modes/symbol.md"
 ```
 
 ## Step 5: Apply edits — module rename
@@ -492,11 +501,12 @@ Steps 5a–5f (file rename, direct imports, from-imports, `__init__.py` relative
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r SUBCOMMAND < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-SUBCOMMAND-${CSID}" 2>/dev/null || SUBCOMMAND=""
 [ "$SUBCOMMAND" = "module" ] || { printf 'ℹ SUBCOMMAND=%s — skip Step 5\n' "$SUBCOMMAND"; exit 0; }
-cat "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/claude-skills/rename-refs/modes/module.md"
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$PLUGIN_ROOT/claude-skills/rename-refs/modes/module.md"
 ```
 
 ## Step 6: Re-scan + verify
@@ -580,6 +590,7 @@ For `symbol`, the index check above never sees a reference — only definitions.
 
 ```bash
 # timeout: 30000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r SUBCOMMAND < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-SUBCOMMAND-${CSID}" 2>/dev/null || SUBCOMMAND=""
@@ -593,9 +604,9 @@ _T="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}"
 _CM_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 _ALIAS=""; [ "$DEPRECATE" = "true" ] && _ALIAS="$SYM_PATH"
 if [ "$SYM_TYPE" = "method" ]; then
-    (cd "$_CM_ROOT" && python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind name --name "$OLD_NAME" ${_ALIAS:+--alias-in "$_ALIAS"} --files-from-json "${_T}-rdeps-json-${CSID}" --files-from-json "${_T}-find-symbol-json-${CSID}" --files-from-json "${_T}-ref-batch-json-${CSID}") > "${_T}-residual-${CSID}" || exit 1
+    (cd "$_CM_ROOT" && python "$PLUGIN_ROOT/bin/find_module_refs.py" --kind name --name "$OLD_NAME" ${_ALIAS:+--alias-in "$_ALIAS"} --files-from-json "${_T}-rdeps-json-${CSID}" --files-from-json "${_T}-find-symbol-json-${CSID}" --files-from-json "${_T}-ref-batch-json-${CSID}") > "${_T}-residual-${CSID}" || exit 1
 else
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind name --name "$OLD_NAME" ${_ALIAS:+--alias-in "$_CM_ROOT/$_ALIAS"} --scope "$_CM_ROOT" > "${_T}-residual-${CSID}" || exit 1
+    python "$PLUGIN_ROOT/bin/find_module_refs.py" --kind name --name "$OLD_NAME" ${_ALIAS:+--alias-in "$_CM_ROOT/$_ALIAS"} --scope "$_CM_ROOT" > "${_T}-residual-${CSID}" || exit 1
 fi
 printf 'RESIDUAL_COUNT='; wc -l < "${_T}-residual-${CSID}" | tr -d ' '
 cat "${_T}-residual-${CSID}"
@@ -813,7 +824,7 @@ Advisory — check manually (outside static analysis coverage):
   [if not EXHAUSTIVE] Index non-exhaustive — unknown consumers remain outside this rename's verification
   - <the printed test-impact pytest command, or no covering test; advisory only>
   [if MODULE_HISTORY_ADVISORY > 0] Historical module references: <locations; advisory, left unchanged>
-  - getattr("<old_name>") dynamic dispatch: grep -rn '"<old_name>"' src/
+  - getattr("<old_name>") dynamic dispatch: grep -rn '"<old_name>"' "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
   [if cross-repo public API and DEPRECATE not used]
   - External consumers: update CHANGELOG; use --deprecate alias until next major release
   [if residual hits from Step 6 re-scan]

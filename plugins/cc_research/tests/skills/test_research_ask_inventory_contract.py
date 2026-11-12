@@ -36,7 +36,7 @@ _ASKS = [
     ),
     pytest.param(
         "skills/plan/SKILL.md",
-        "Dry-run both commands before presenting (add `# timeout: 60000` to timed bash calls —",
+        "Dry-run both commands before presenting. Run the metric with the proposed `metric_timeout_sec`",
         id="plan-4",
     ),
     pytest.param(
@@ -56,7 +56,7 @@ _ASKS = [
     ),
     pytest.param(
         "skills/topic/SKILL.md",
-        "- This task exists because a sibling skill (oss:review) had an incident: report written",
+        '- Always create **"Print report header"** as its own task (all paths',
         id="topic-1",
     ),
     pytest.param(
@@ -86,7 +86,7 @@ _ASKS = [
     ),
     pytest.param(
         "skills/verify/SKILL.md",
-        'python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py"',
+        'python "$PLUGIN_ROOT/bin/write_skill_contract.py"',
         id="verify-2",
     ),
     pytest.param(

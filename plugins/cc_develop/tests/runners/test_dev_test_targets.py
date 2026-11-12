@@ -22,6 +22,19 @@ _skip_no_git = pytest.mark.skipif(shutil.which("git") is None, reason="selector 
 _CHANGED_MOD = "def f():\n    return 3\n"
 
 
+@pytest.mark.parametrize("spelling", ["tests/test_api.py", "./tests/test_api.py", "tests\\test_api.py"])
+def test_explicit_file_selection_uses_repository_path_spelling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, spelling: str
+) -> None:
+    """Equivalent explicit file spellings select the same repository-relative test on every host."""
+    _write(tmp_path, "tests/test_api.py", "def test_api():\n    pass\n")
+    monkeypatch.setattr(dtt, "_repo_root", lambda: tmp_path)
+    args = dtt._parse_args(["--pytest-cmd", "python -m pytest", "--files", spelling])
+    plan = dtt._select_plan(args, tmp_path, False)
+    assert plan.changed == ["tests/test_api.py"]
+    assert plan.sources == {"tests/test_api.py": "changed"}
+
+
 def _write(root: Path, relative: str, text: str) -> None:
     """Create one file under the fixture repository."""
     path = root / relative
@@ -246,6 +259,15 @@ class TestRunFlag:
 class TestRecordDir:
     """``--record-dir`` leaves the selection reasons and the full log on disk."""
 
+    @pytest.fixture(autouse=True)
+    def _active_run(
+        self, repo: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Declare the destination as this session's run directory before exercising artifact writes."""
+        monkeypatch.setenv("TMPDIR", str(tmp_path_factory.mktemp("record-sentinels")))
+        monkeypatch.setenv("CSID", "record-targets")
+        write_sentinel("dev-fix-dev-dir", str(repo / "run"))
+
     @mock.patch("run_pytest_short.main", autospec=True, return_value=0)
     def test_run_records_selection_reasons_and_keeps_full_log(self, mock_main, repo: Path, no_codemap: None) -> None:
         """``--record-dir`` appends why each test was picked and the exit code, and asks the runner for a full log.
@@ -360,14 +382,19 @@ class TestSkillSentinels:
 
     @mock.patch("run_pytest_short.main", autospec=True, return_value=0)
     def test_explicit_record_dir_wins_over_the_sentinel(self, mock_main, repo: Path, no_codemap: None) -> None:
-        """A caller that passes ``--record-dir`` keeps control of where the record goes."""
+        """A caller can choose a subdirectory of the session run for its explicit record destination."""
         write_sentinel("dev-pytest-cmd", "pytest")
         write_sentinel("dev-feature-dev-dir", str(repo / "from-sentinel"))
         _write(repo, "src/pkg/mod.py", _CHANGED_MOD)
 
-        rc = dtt.main(["--skill", "feature", "--run", "--record-dir", str(repo / "explicit")])
+        explicit = repo / "from-sentinel" / "explicit"
+        rc = dtt.main(["--skill", "feature", "--run", "--record-dir", str(explicit)])
 
-        assert (rc, (repo / "explicit" / "test-targets.jsonl").is_file(), (repo / "from-sentinel").exists()) == (
+        assert (
+            rc,
+            (explicit / "test-targets.jsonl").is_file(),
+            (repo / "from-sentinel/test-targets.jsonl").exists(),
+        ) == (
             0,
             True,
             False,

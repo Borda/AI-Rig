@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import compaction_boundary as cb
 import find_polluter
@@ -14,6 +14,42 @@ import pytest
 from _hook_env import _symlinks_supported
 
 _requires_symlink = pytest.mark.skipif(not _symlinks_supported(), reason="host cannot create symlinks")
+
+
+class _ResolvedWindowsPath(PureWindowsPath):
+    """Supply Windows lexical containment without relying on the host filesystem."""
+
+    def resolve(self) -> _ResolvedWindowsPath:
+        """Return the already absolute or project-relative Windows test coordinate."""
+        return _ResolvedWindowsPath(r"C:\project") / self
+
+    @classmethod
+    def cwd(cls) -> _ResolvedWindowsPath:
+        """Use the same absolute Windows project root on every host."""
+        return cls(r"C:\project")
+
+
+@pytest.mark.parametrize(
+    ("victim", "test_dir", "message"),
+    [
+        pytest.param(
+            r"C:\outside\test_case.py", "tests", "failing_test must be within project root", id="victim-escape"
+        ),
+        pytest.param(
+            r"tests\test_case.py", r"C:\outside", "test_dir must be within project root", id="directory-escape"
+        ),
+        pytest.param(r"tests\test_case.py", r"tests\unit", "pytest not found", id="native-relative-paths"),
+    ],
+)
+def test_polluter_windows_paths_reach_containment_check(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], victim: str, test_dir: str, message: str
+) -> None:
+    """Windows paths reach native containment checks before pytest discovery on every host."""
+    monkeypatch.setattr(find_polluter, "Path", _ResolvedWindowsPath)
+    monkeypatch.setattr(find_polluter, "_BACKSLASH_IS_SEPARATOR", True)
+    monkeypatch.setattr(find_polluter, "_resolve_pytest_cmd", lambda: None)
+    assert find_polluter.main([victim + "::test_case", test_dir]) == 1
+    assert message in capsys.readouterr().err
 
 
 @pytest.mark.integration

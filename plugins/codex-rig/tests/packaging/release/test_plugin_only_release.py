@@ -525,7 +525,7 @@ class TestPublicationPayloadValidator:
         "payload",
         [
             pytest.param(b"C:" + b"\\Users\\" + b"Alice\\project", id="backslash"),
-            pytest.param(b"d:" + b"/users/" + b"alice/project", id="case-insensitive-forward-slash"),
+            pytest.param(b"d:" + b"/us" + b"ers/alice/project", id="case-insensitive-forward-slash"),
         ],
     )
     def test_rejects_windows_user_profile_paths(
@@ -570,7 +570,7 @@ class TestPublicationPayloadValidator:
         """
         report = package_root / ".reports" / "calibration" / "result.json"
         report.parent.mkdir(parents=True)
-        report.write_bytes(b'"' + b"/Users/" + b'Alice/project"')
+        report.write_bytes(b'"' + b"/Us" + b'ers/Alice/project"')
         (package_root / "runtime.txt").write_text("portable runtime\n", encoding="utf-8", newline="\n")
         _write_payload_manifest(package_root, "runtime.txt")
 
@@ -675,10 +675,13 @@ class TestShippedMarkdown:
         assert ".developments/" not in text, path
 
     def test_agent_shims_skill_points_at_the_manager_script(self) -> None:
-        """The agent-shims skill reaches the shipped lifecycle manager through a cache-relative path."""
-        text = (PLUGIN_ROOT / "skills" / "agent-shims" / "SKILL.md").read_text(encoding="utf-8")
+        """The agent-shims skill runs its cache-local manager through the portable launcher."""
+        lines = (PLUGIN_ROOT / "skills" / "agent-shims" / "SKILL.md").read_text(encoding="utf-8").splitlines()
+        invocation = next(line for line in lines if "Run `PLUGIN_ROOT/bin/python" in line)
 
-        assert "../../scripts/manage_role_agents.py" in text
+        assert "PLUGIN_ROOT/bin/python PLUGIN_ROOT/scripts/manage_role_agents.py <action>" in invocation
+        assert "on native Windows use `PLUGIN_ROOT/bin/python.cmd`" in invocation
+        assert "Resolve `PLUGIN_ROOT` two levels above this installed skill directory" in invocation
 
     @pytest.mark.parametrize(("skill_id", "extra_dependencies"), _SKILL_DEPENDENCY_CASES)
     def test_skill_dependencies_are_cache_local_and_manifested(

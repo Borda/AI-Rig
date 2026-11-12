@@ -24,6 +24,7 @@ import re
 import stat
 import subprocess
 import sys
+import uuid
 from collections import deque
 from pathlib import Path
 from typing import IO, Any, TypedDict
@@ -338,7 +339,7 @@ def _live_result(target: str, workspace: Path) -> LiveResult:
         DEFAULT_EFFORT,
         DEFAULT_TIMEOUTS["advise"],
         0,
-        "diagnostic",
+        f"diagnostic-{uuid.uuid4()}",
         workspace.resolve(),
         direction,
     )

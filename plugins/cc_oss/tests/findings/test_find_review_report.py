@@ -8,11 +8,57 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 from unittest import mock
 
 import find_review_report as frr
 import pytest
+
+
+def _can_symlink() -> bool:
+    """Return whether this host permits creating symbolic links."""
+    with tempfile.TemporaryDirectory() as directory:
+        try:
+            Path(directory, "link").symlink_to(Path(directory, "target"))
+        except (OSError, NotImplementedError):
+            return False
+    return True
+
+
+@pytest.mark.skipif(not _can_symlink(), reason="host cannot create symlinks")
+def test_path_out_replaces_symlink_without_overwriting_target(tmp_path: Path) -> None:
+    """Publishing a report path replaces a planted sentinel link and leaves its target intact."""
+    victim = tmp_path / "victim"
+    victim.write_text("precious", encoding="utf-8")
+    sentinel = tmp_path / "sentinel"
+    sentinel.symlink_to(victim)
+    report = tmp_path / "report.md"
+    assert frr._write_path_out(str(sentinel), report)
+    assert not sentinel.is_symlink()
+    assert sentinel.read_text(encoding="utf-8") == report.as_posix() + "\n"
+    assert victim.read_text(encoding="utf-8") == "precious"
+
+
+def test_legacy_lookup_ignores_body_pr_mentions(tmp_path: Path) -> None:
+    """A newer report quoting another PR cannot hide that PR's standing rejection."""
+    older = tmp_path / ".reports/review/older/review-report.md"
+    older.parent.mkdir(parents=True)
+    older.write_text(
+        "---\nTitle: Review\nPR: #42\nGate: REJECT_SCOPE @a1b2c3d\n"
+        "Outcome: N/A — rejected at gate\nSummary: Out of scope.\n---\n",
+        encoding="utf-8",
+    )
+    os.utime(older, (1, 1))
+    newer = tmp_path / ".reports/review/newer/review-report.md"
+    newer.parent.mkdir()
+    newer.write_text(
+        "---\nTitle: Review\nPR: #7\nGate: PASS\nOutcome: APPROVE\nSummary: Ready.\n---\n```\nPR: #42\n```\n",
+        encoding="utf-8",
+    )
+    os.utime(newer, (2, 2))
+    assert frr.newest_report_for_pr("42", tmp_path) == older
+    assert frr.gate_line(older) == "Gate: REJECT_SCOPE @a1b2c3d"
 
 
 def _write_report(
@@ -37,7 +83,7 @@ def _write_legacy_report(root: Path, run_id: str, pr: str, mtime: int | None = N
     """Create a pre-rename flat-layout report (no ``pr-<N>`` nesting), naming ``pr`` in its header."""
     report = root / ".reports/review" / run_id / "review-report.md"
     report.parent.mkdir(parents=True, exist_ok=True)
-    report.write_text(f"# Review\nPR: #{pr}\n", encoding="utf-8")
+    report.write_text(f"---\nTitle: Review\nPR: #{pr}\n---\n", encoding="utf-8")
     if mtime is not None:
         os.utime(report, (mtime, mtime))
     return report

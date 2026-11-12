@@ -1,6 +1,6 @@
 ---
 name: Rig Release
-description: Assess release readiness with a version baseline from the last release tag, full gates, packaged file verification, and read-only release-note, migration, and contributor-reply drafts.
+description: Assess release readiness with a version baseline from the last release tag, full configured gates, changelog and README synchronization, packaged file verification, and read-only release-note, migration, and contributor-reply drafts. Use before tagging or publishing. NOT for performing the publication itself.
 ---
 
 # Rig Release

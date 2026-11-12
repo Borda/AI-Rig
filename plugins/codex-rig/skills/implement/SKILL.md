@@ -17,6 +17,8 @@ Keep setup and review artifacts subordinate to the user's acceptance condition u
 
 An ordinary bounded plan or implementation challenge is one independent pass. Use `challenge-resolve` and `../../shared/adversarial-loop.md` for an explicitly requested iterative loop; this workflow still owns its normal completion gates.
 
+A request to repeat review and fix until a reviewer reports no findings or no security findings, or to resolve all findings; a second independent review round about to be dispatched for the same change; or a skill workflow repeating its review then fix cycle counts as an explicitly invoked loop from that moment: before the next reviewer dispatch, start ledger; follow `../../shared/adversarial-loop.md` (helper output, stop/plateau rules, user's round budget).
+
 ## Input Schema
 
 ```json
@@ -33,13 +35,15 @@ An ordinary bounded plan or implementation challenge is one independent pass. Us
 
 ## Lightweight Local Work
 
+<!-- policy-sibling: shared/native-skill-contract.md §Proportional Execution, skills/manage/SKILL.md §Lightweight Local Work and §Execution Route Selection; intentional divergence: implementation may use native disjoint writers, while management mutations remain parent-serial. -->
+
 > Read and apply [Proportional Execution](../../shared/native-skill-contract.md#proportional-execution) before choosing the direct or detailed path.
 
 Use a parent-owned implementation path for a small, understood, reversible local change with bounded impact and existing task authorization. A code fix plus its regression test remains one change. Routing examples are optional; tests and documentation for one change do not create separate domains.
 
 1. Inspect the affected flow and applicable instructions; define a concise plan with core acceptance and deferred scope. Investigate an unknown cause before editing. Perform a brief parent self-challenge (not independent); accept the challenged plan under existing authority. Assign execution to the parent for indivisible work or useful bounded disjoint owners.
 2. Make the authorized change with the smallest coherent core. Consolidate the actual result and handoffs; reconcile conflicts and integrate before result review. Obtain one bounded independent challenge of the changed behavior and its relevant source; retain its findings and actual independence limits.
-3. Resolve feasible in-scope findings, run the relevant acceptance check and configured lint/format checks, and inspect the diff. Before reporting a missing declared dependency as blocked verification, apply [Project Dependency Preparation](../../shared/native-skill-contract.md#project-dependency-preparation) and rerun the affected check; this recovery does not require switching to the detailed workflow.
+3. Resolve feasible in-scope findings, run the relevant acceptance check and configured lint/format checks, and inspect the diff. Before reporting a missing declared dependency as blocked verification, apply [Project Dependency Preparation](../../shared/native-skill-contract.md#project-dependency-preparation) and rerun the affected check; this recovery does not require switching to the detailed workflow. After acceptance and configured checks pass, no critical findings remain, and shared confidence policy passes, run the [Local Git approval grant](../../shared/native-skill-contract.md#local-git-approval-grant) check and apply its completion-commit rules; otherwise record `commit skipped`. A user instruction for no commit, leave unstaged or to wait takes precedence.
 4. Report the outcome, verification, and material limits concisely. Do not create unnecessary standalone execution-plan artifacts, specialist packs, confidence worksheets, five-entry gate bundles, or final-handoff/result artifacts solely for this path. Reuse still-valid checks for unchanged source and environment; never claim independent review of a later change the reviewer did not assess.
 
 This path takes precedence over the detailed workflow and role examples below. Select the detailed workflow for medium/large or unexpectedly nontrivial work under Proportional Execution, an explicitly requested structured report/review, or specialist coverage beyond the bounded challenge. Actual runtime permissions, protected-state decisions, and project-required checks still apply. Missing portable parallel controls select parent-serial work for that route; they do not prohibit an authorized native bounded delegation route or require another permission request for already-authorized local edits. Missing independence stays an explicit limit, never a fabricated review.
@@ -58,13 +62,13 @@ This route uses existing task authorization and observed tool capabilities, sepa
 
 ## Parallel Adoption (Portable read-only)
 
-<!-- policy-sibling: skills/manage/SKILL.md (Parallel Adoption section) — near-duplicate, invariant text in shared/portable-parallel-read.md; also see skills/code-review/SKILL.md Workflow parallel-review section as a third divergent variant; check siblings before editing this section alone -->
+<!-- policy-sibling: skills/manage/SKILL.md (Parallel Adoption section) — near-duplicate, invariant text in shared/portable-parallel-read.md; check siblings before editing this section alone -->
 
 > Only when Execution Route Selection resolves to `parallel-read`, read [portable-parallel-read.md](../../shared/portable-parallel-read.md) before any child preparation; `serial`, `auto`, and native routes do not load it. The reference preserves the shared route gate, write-policy and approval rules, host-compatibility barrier, preflight and runtime-validation qualifiers, resource-lock declaration, fallback, acceptance, and stop rule; the consumer values below stay authoritative for this skill.
 
 This portable section permits only its promoted portable read-only route; its restrictions do not govern the separate Native Bounded Delegation route.
 
-Follow the [canonical G0–G8 execution flow](../../assets/images/parallel-execution-architecture.svg) for shared gate order and fork outcomes. This consumer's read-only evidence passes are bounded by G0–G5; parent owns deterministic G6 integration, G7 verification, and G8 verdict/promotion.
+Follow [portable-parallel-read.md](../../shared/portable-parallel-read.md) for shared gate order and fork outcomes; the [G0–G8 execution diagram](../../assets/images/parallel-execution-architecture.svg) is illustrative only. This consumer's read-only evidence passes are bounded by G0–G5; parent owns deterministic G6 integration, G7 verification, and G8 verdict/promotion.
 
 ### Safe parallel work
 
@@ -80,7 +84,7 @@ The plan must also freeze schema-3 `dispatch_choices` for each node as specified
 
 Bootstrap exception: run-directory creation (Step 01), baseline diff/branch persistence (Step 02), and the `write-approval.json` write itself are exempt from requiring a prior approved plan digest — these precursor writes must exist before a plan digest can be computed or approved.
 
-Before dispatch, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer implement --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; pass `--execution=parallel-read` for the selected portable route, including an environment-selected value.
+Before dispatch, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer implement --plan <run-directory>/execution-plan.json`; add `--approval <run-directory>/write-approval.json` only when `write_policy.parent_writes=planned`, and omit it when `write_policy.parent_writes=none`; pass `--execution=parallel-read` for the selected portable route, including an environment-selected value.
 
 After every spawned child reaches a terminal handoff, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py validate-runtime --consumer implement --manifest <run-directory>/execution-manifest.json --plan <run-directory>/execution-plan.json --parent-rollout <authoritative-parent-rollout> --sessions-dir <authoritative-sessions-directory> --run-dir <run-directory> --roles-dir PLUGIN_ROOT/roles`. Require `runtime_promotion_eligible=true`, `consumer_id=implement`, and `write_parallel_eligible=false`.
 
@@ -104,7 +108,7 @@ Run `create_run.py --skill implement` per `../../shared/helper-cli-contract.md`.
 
 ### 02: Record baseline diff and branch
 
-Run `git rev-parse --abbrev-ref HEAD` as argv command and write stdout to `<run-directory>/branch.txt`.
+Run `git rev-parse --abbrev-ref HEAD` as argv command and retain its exit status and stderr. Write stdout to `<run-directory>/branch.txt` only on zero exit status. On nonzero exit status, write a failure record with the exit status and stderr to `branch.txt` instead of stdout, distinguishing an unborn branch from not a repository; never treat the failure as a detached HEAD.
 
 Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/collect_diff.py --help`; collect `working-tree` into `<run-directory>/baseline`.
 
@@ -120,7 +124,7 @@ Modes:
 
 Define one scoped plan with the narrowest reversible change, owners, dependencies, acceptance and stop conditions. Apply Proportional Execution: independently challenge that plan before Step 05 for medium/large or promoted work, and seek bounded higher-capability advice when a material decision remains uncertain. Reuse accepted parent-scoped plans for bounded child tasks. Assign native bounded owners after the plan challenge and before Step 05.
 
-**Structural context (required for Python targets)**: select one task-neutral route at decision point, then invoke adapter once: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Invoking it is mandatory whenever target or planned files include a `.py` path; a `skip` route still runs the adapter and persists its `skipped` artifact, never no artifact. Use `skip` for exact localized edit with no unresolved structural fact, matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) for one unresolved fact, and `standard` for broad or unknown scope. Map direct, all, or production caller questions to `callers`; use `blast` only for explicitly transitive caller questions. An explicit user or tool request for structural evidence overrides `skip`. Per `../../shared/codemap-contract.md`, provider absence/incompatibility stays non-fatal — the artifact records status and reason, then continue with routing above. Persist result once here, before step 05 implementation; step 06 specialist fan-out consumes `<run-directory>/codemap-context.json`, plus at most 3 targeted follow-ups per specialist under the contract's `Specialist follow-up queries` rule, each cited in that specialist's own evidence.
+**Structural context (required for Python targets)**: select one task-neutral route at decision point, then invoke adapter once: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Invoking it is mandatory whenever target or planned files include a `.py` path; a `skip` route still runs the adapter and persists its `skipped` artifact, never no artifact. Read and apply [Route selection per skill](../../shared/codemap-contract.md#route-selection-per-skill) for this route decision. Per `../../shared/codemap-contract.md`, provider absence/incompatibility stays non-fatal — the artifact records status and reason, then continue with routing above. Persist result once here, before step 05 implementation; step 06 specialist fan-out consumes `<run-directory>/codemap-context.json`, plus at most 3 targeted follow-ups per specialist under the contract's `Specialist follow-up queries` rule, each cited in that specialist's own evidence.
 
 ### 04: Run the anti-rationalization gate before editing
 
@@ -212,13 +216,17 @@ Confidence must be honest and objectively verifiable. Do not inflate it to pass 
 
 ### 12: Write and validate the mandatory result artifact
 
-Completion commit: run the [Local Git approval grant](../../shared/native-skill-contract.md#local-git-approval-grant) check. `grant …` → commit the verified, owned changes with the shared commit template unless the user asked for no commit, leave unstaged or to wait; `no grant` → an explicit commit request commits after checks, otherwise ask that section's one question (Approve / Approve always / Deny) before committing, and **Deny** leaves the changes unstaged. Record the check result, any answer and the commit disposition in the handoff.
-
-Follow `../../shared/helper-cli-contract.md` and authoritative help. Write with `IMPLEMENT_METADATA`, validate as skill `implement`, and promote only validated candidate.
+Follow `../../shared/helper-cli-contract.md` and authoritative help. Write with `IMPLEMENT_METADATA` and validate the result candidate as skill `implement` before the completion commit.
 
 `IMPLEMENT_METADATA.confidence_recovery` must mirror `confidence-calibration.md` and include `initial_confidence`, `final_confidence`, `status`, `evidence`, `recovery_actions`, and `remaining_limits`. `IMPLEMENT_METADATA.confidence_gap_closures` must include one closure record per non-empty `confidence_gaps` entry, with `status=closed|unresolved|deferred` and matching evidence or rationale.
 
-## Fail-fast Rules
+Only after all project-relevant gates pass, no critical findings remain, shared confidence policy passes, and result candidate validation passes, perform the completion commit below; otherwise record `commit skipped` in the handoff and do not commit.
+
+Completion commit: run the [Local Git approval grant](../../shared/native-skill-contract.md#local-git-approval-grant) check. `grant …` → commit the verified, owned changes with the shared commit template unless the user asked for no commit, leave unstaged or to wait; `no grant` → an explicit commit request commits after checks, otherwise ask that section's one question (Approve / Approve always / Deny) before committing, and **Deny** leaves the changes unstaged. Record the check result, any answer and the commit disposition in the handoff.
+
+Revalidate any result candidate or final handoff changed to record the commit disposition, and promote only a validated candidate.
+
+## Fail-Fast Rules
 
 01. Missing `goal` or `done_when` => fail.
 02. Shared gate script missing => fail.
@@ -241,7 +249,7 @@ Follow `../../shared/helper-cli-contract.md` and authoritative help. Write with 
 
 Required checks:
 
-- `review`: `git diff --check`, changed-file inspection, acceptance criteria trace, simplicity/readability/reproducibility inspection, project docstring-style detection, and docstring/comment policy inspection for changed code.
+- `review`: the scoped whitespace check from `../../shared/quality-gates.md` §review (`git diff --check -- <run-owned paths>` or the exact reviewed range), changed-file inspection, acceptance criteria trace, simplicity/readability/reproducibility inspection, project docstring-style detection, and docstring/comment policy inspection for changed code. Outside a Git repository, record that reason and scan run-owned files by path for trailing whitespace and conflict markers while retaining the other review checks.
 - `tests`: failing-then-passing check or explicit acceptance probe for changed behavior; `feature` mode must include demo failure before edits and demo pass after implementation.
 - `artifact`: shared validator confirms `development-notes.md`, gate logs, and result JSON shape.
 - `confidence`: `confidence-calibration.md` and `IMPLEMENT_METADATA.confidence_recovery` satisfy shared confidence band policy from `../../shared/quality-gates.md`.
@@ -270,7 +278,7 @@ Apply standards 1-5 through authorized automatic owned corrections and relevant 
 Update calibration when implementation routing or output expectations change:
 
 - benchmark patterns: `implement`
-- behavioral cases: symptom-first routing, specialist substitution, config behavior changes, premature portable read-only adoption, missing acceptance probe, feature demo gate bypass, missing project docstring-style detection, missing function docstrings, overlong docstrings masking complex code, long code blocks not factored, deep branching without guard clauses, low-value argument-remapping wrappers, pre-definition comments that should be docstrings, missing explanatory inline comments, low-confidence recovery loop, objective confidence evidence, artifact validator bypass, spike output promoted to retained implementation without resuming docstring/structure rules 15-19
+- behavioral cases: symptom-first routing, specialist substitution, config behavior changes, premature portable read-only adoption, missing acceptance probe, feature demo gate bypass, missing project docstring-style detection, missing function docstrings, overlong docstrings masking complex code, long code blocks not factored, deep branching without guard clauses, low-value argument-remapping wrappers, pre-definition comments that should be docstrings, missing explanatory inline comments, low-confidence recovery loop, objective confidence evidence, artifact validator bypass, spike output promoted to retained implementation without resuming docstring/structure standards 1-5
 
 ## Output Contract
 

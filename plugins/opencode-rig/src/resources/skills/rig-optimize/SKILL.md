@@ -1,11 +1,11 @@
 ---
 name: Rig Optimize
-description: Improve a measured performance metric in guarded rounds, keeping only changes that beat the baseline noise and pass every correctness gate.
+description: Improve a measured performance metric in guarded rounds against a configured benchmark gate, keeping only noise-clearing wins that pass correctness gates. Use for a concrete performance target. NOT for speculative refactors or unmeasured tuning.
 ---
 
 # Rig Optimize
 
-> Read [Evidence rules](../../references/evidence.md).
+> Read [Evidence rules](../../references/evidence.md). Follow [Role dispatch](../../references/evidence.md#role-dispatch) for native-agent fallback and stop on reported scope violations.
 
 > This workflow changes code, one measured variable at a time. It never commits, pushes, or rewrites history; a human or `rig-implement` owns the commit.
 
@@ -21,7 +21,7 @@ description: Improve a measured performance metric in guarded rounds, keeping on
 2. **Measure the baseline.** Run the benchmark gate at least three times from a clean start. Record every receipt, the median, the spread, and the environment (hardware, runtime version, cache state). Statistical noise is evidence, not an obstacle.
 3. **Profile before editing.** Use the project's profiler or timing instrumentation to name the hotspot. Profile output is an `output`, not a claim.
 4. **Change one variable.** State the hypothesis, the expected effect, the files to touch, and the rollback. Do not combine a refactor with a measurement round.
-5. **Re-measure the same way.** Rerun the benchmark gate at least three times under the same conditions. A win must exceed the baseline spread and the declared minimum improvement. Also run every non-benchmark gate: a faster build that breaks correctness is a regression.
+5. **Re-measure the same way.** Before measuring the edited candidate, call `rig_evidence` with `action: "refresh"`, the `run_id`, and a `message` naming the candidate change. Rerun the benchmark gate at least three times under the same conditions. A win must exceed the baseline spread and the declared minimum improvement. Also run every non-benchmark gate: a faster build that breaks correctness is a regression. If a gate rewrites source, refresh again and rerun the affected measurements and correctness checks.
 6. **Decide and record.** Keep the round when it wins and everything passes; otherwise restore the touched files exactly and record the failed hypothesis with `rig_evidence` `action: "record"` and a `decision`. After every kept or reverted round, call `rig_evidence` with `action: "refresh"`, the `run_id`, and a `message` explaining the round outcome so the scope matches the retained source before review. Never rewrite or delete the measurement history.
 7. **Stop honestly.** Stop on target reached, improvement below noise after the round budget, a correctness regression, or an exhausted budget. A non-improvement is a valid result.
 8. **Review independently.** Dispatch `rig-optimizer` on the refreshed final scope to check the methodology: sample count, variance, warmup, environment, and whether the benchmark still measures the intended behavior. Record it with `reviewer`.

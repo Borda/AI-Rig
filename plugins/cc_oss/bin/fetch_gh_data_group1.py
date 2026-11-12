@@ -423,7 +423,7 @@ def _parse_args(args: list[str]) -> tuple[dict, str | None]:
     if not owner_repo:
         return fields, "fetch_gh_data_group1: --repo required"
     # `.` and `..` pass the character class but would walk the `repos/<owner>/<repo>` API path
-    if not _REPO_RE.match(owner_repo) or {".", ".."} & set(owner_repo.split("/")):
+    if not _REPO_RE.fullmatch(owner_repo) or {".", ".."} & set(owner_repo.split("/")):
         return (
             fields,
             f"fetch_gh_data_group1: --repo must match 'owner/repo' (allowed chars: A-Za-z0-9._-), got: {owner_repo!r}",

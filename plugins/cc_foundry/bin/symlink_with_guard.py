@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""symlink_with_guard.py — foundry-init symlink cleanup and conflict scan.
+"""Clean up owned foundry symlinks and scan installation conflicts.
 
 Encapsulates Phase 1 (obsolete-cleanup) and Phase 2 (conflict-scan) from the
 init/SKILL.md symlinking flow. Phase 4 (the actual replacement that depends on
@@ -577,7 +577,7 @@ def _cleanup_rules(plugin_root: Path, home: Path, log: list[str]) -> None:
 def cleanup(plugin_root: Path, home: Path, marker: str) -> list[str]:
     """Remove foundry-managed symlinks the current plugin version does not provide.
 
-    Four scopes evaluated, under two different ownership regimes.
+    Four scopes evaluated with the same installed-path ownership proof.
 
     ``~/.claude/rules/`` and ``TEAM_PROTOCOL.md`` are destinations foundry
     legitimately writes, so removal there demands the strict proof in
@@ -587,9 +587,8 @@ def cleanup(plugin_root: Path, home: Path, marker: str) -> list[str]:
 
     ``~/.claude/skills/`` and ``~/.claude/agents/`` are destinations foundry
     never writes at all: both are dispatched from the plugin namespace and are
-    never produced by :func:`_build_entries`. Any foundry-marked symlink there is
-    obsolete by construction, so those two scopes keep the cheaper ``marker``
-    substring test and purge with no source-existence check. The two differ in
+    never produced by :func:`_build_entries`. Owned symlinks there are
+    obsolete by construction and need no source-existence check. The two differ in
     one respect — see the inline comments for why the skills scope also removes
     links pointing at the *current* plugin root while the agents scope keeps
     those.
@@ -597,17 +596,19 @@ def cleanup(plugin_root: Path, home: Path, marker: str) -> list[str]:
     Args:
         plugin_root: Currently-installed plugin root.
         home: Value of ``$HOME``.
-        marker: Substring identifying foundry-managed targets (skills/agents scopes).
+        marker: Unused; retained for the shared CLI interface.
 
     Returns:
         Log lines describing removed obsolete items or user-level skill links. Calling
         :func:`main` also prints these lines to stdout.
     """
     log: list[str] = []
+    del marker
+    lineage = _cache_lineage(plugin_root, home)
     _cleanup_rules(plugin_root, home, log)
     _cleanup_team_protocol(plugin_root, home, log)
-    _purge_skills_links(home / ".claude" / "skills", marker, log)
-    _purge_agent_links(home / ".claude" / "agents", marker, plugin_root, log)
+    _purge_skills_links(home / ".claude" / "skills", plugin_root, lineage, log)
+    _purge_agent_links(home / ".claude" / "agents", plugin_root, lineage, log)
     return log
 
 
@@ -626,7 +627,7 @@ def _cleanup_team_protocol(plugin_root: Path, home: Path, log: list[str]) -> Non
         pass
 
 
-def _purge_skills_links(skills_dest: Path, marker: str, log: list[str]) -> None:
+def _purge_skills_links(skills_dest: Path, plugin_root: Path, lineage: Path | None, log: list[str]) -> None:
     """Remove every foundry-managed link under ``~/.claude/skills/``.
 
     No source-existence check and — unlike :func:`_purge_agent_links` — no
@@ -638,7 +639,7 @@ def _purge_skills_links(skills_dest: Path, marker: str, log: list[str]) -> None:
     """
     for link_path in _existing_dest_symlinks(skills_dest):
         target = _readlink(link_path)
-        if target is None or not _is_foundry_managed(target, marker):
+        if target is None or not _owns(link_path, target, plugin_root, lineage):
             continue
         try:
             link_path.unlink()
@@ -647,7 +648,7 @@ def _purge_skills_links(skills_dest: Path, marker: str, log: list[str]) -> None:
         log.append(f"removed user-level skill link: {link_path.name}")
 
 
-def _purge_agent_links(agents_dest: Path, marker: str, plugin_root: Path, log: list[str]) -> None:
+def _purge_agent_links(agents_dest: Path, plugin_root: Path, lineage: Path | None, log: list[str]) -> None:
     """Remove obsolete foundry-managed links under ``~/.claude/agents/``.
 
     No source-existence check — agents are dispatched from the plugin namespace and are never (re-)created in
@@ -655,7 +656,7 @@ def _purge_agent_links(agents_dest: Path, marker: str, plugin_root: Path, log: l
     """
     for link_path in _existing_dest_symlinks(agents_dest):
         target = _readlink(link_path)
-        if target is None or not _is_foundry_managed(target, marker):
+        if target is None or not _owns(link_path, target, plugin_root, lineage):
             continue
         if _is_current(target, plugin_root):
             # A symlink under the current plugin root would still be obsolete
@@ -697,6 +698,17 @@ def scan(plugin_root: Path, home: Path, marker: str) -> list[str]:
                 continue
             conflicts.append(_conflict_label(entry, target))
         elif entry.dest.exists():
+            sidecar = entry.dest.parent / f".{entry.dest.name}.sourced_from"
+            try:
+                source = sidecar.read_text(encoding="utf-8").strip() if not sidecar.is_symlink() else ""
+            except (OSError, UnicodeDecodeError):
+                source = ""
+            if source:
+                origin = Path(source)
+                if not origin.is_absolute():
+                    origin = home / ".claude" / origin
+                if _owns(entry.dest, str(origin), plugin_root, lineage):
+                    continue
             conflicts.append(_conflict_label(entry, None))
     return conflicts
 

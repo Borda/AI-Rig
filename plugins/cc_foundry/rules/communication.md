@@ -4,35 +4,18 @@ paths:
   - '**'
 ---
 
-> §Reply Visibility exemption rationale, §Execution Failure Signaling elaboration, §Artifact Framing register table, §Interactive Questions non-compliant-form catalogue, §Confidence Display full axis spec have worked detail in `_full/communication.md`. Resolve + Read when that section's own trigger applies — not needed for routine work:
+> Extracted sections bind before their activity. Resolve with active Foundry’s `bin/resolve_plugin_root.py --plugin-name foundry` (registry preferred); in that Bash call set `FOUNDRY_ROOT` to its result. Never select a different installed version by mtime. For repository maintenance only, use source-tree `plugins/cc_foundry`. Unreadable detail: stop and report.
 >
 > ```bash
-> RULE_FULL="$(ls -td ~/.claude/plugins/cache/borda-ai-rig/foundry/*/rules/_full/communication.md 2>/dev/null | head -1)"; [ -z "$RULE_FULL" ] && RULE_FULL="plugins/cc_foundry/rules/_full/communication.md"  # timeout: 5000
+> RULE_FULL="$FOUNDRY_ROOT/rules/_full/communication.md"  # timeout: 5000
+> cat "$RULE_FULL"  # timeout: 5000
 > ```
 
 ## Re: Anchor
 
-Start every reply with Unicode box header containing one-line summary, then response body, then closing `▓` footer line.
+> Before applying, Read `_full/communication.md` §Re: Anchor; binding inline. If it cannot be read, stop and report the missing prerequisite.
 
-Example (actual template — copy structure, replace bracketed text):
-
-```
-╔════════════════════════════════════════════════════════════╗
-║  Re: [one-sentence summary of what was asked]              ║
-╚════════════════════════════════════════════════════════════╝
-
-[full response here]
-
-▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-```
-
-**Rules:**
-
-- Box: 62 chars total — `╔` + 60 `═` + `╗`; bottom `╚` + 60 `═` + `╝`; summary line `║` + two spaces + summary text + pad to 60 + `║`
-- Summary: neutral factual gist of what user asked — not full restatement, no labels; never a pipe char (corrupts box borders)
-- Footer: exactly 62 `▓` chars — matches box width, signals end of reply
-- No exceptions except the two Exemptions in §Reply Visibility below — any other response not opening with `╔` is non-compliant
-- Tables, code blocks, bold headers work normally in body — no per-line prefix conflicts
+Every reply uses the Unicode box summary and 62-`▓` footer, except §Reply Visibility exemptions. Box: `╔` + 60 `═` + `╗`, matching bottom; neutral factual summary, no labels or pipe, two leading spaces and padding to 60 inside `║`. Use its exact template.
 
 ## Reply Visibility
 
@@ -52,15 +35,9 @@ Box `╔═╗`/`╚═╝` + `▓` footer frame the reply against surrounding t
 
 ## Execution Failure Signaling
 
-Unable to execute or proceed with any part of a request (unsupported flag, `disable-model-invocation` block, parse error, missing prerequisite, permission denied, tool unavailable): lead with a bold failure block — never bury it at the end, never silently skip it.
+> Before applying, Read `_full/communication.md` §Execution Failure Signaling; binding inline. If it cannot be read, stop and report the missing prerequisite.
 
-```
-**! BLOCKED — [one-line reason]**
-**! UNSUPPORTED — [what and why]**
-**! MISSING — [what is needed]**
-```
-
-Block is FIRST content, not a footnote; state what was asked, what can't proceed, what alternative exists. Applies to partial failures too — if 3 of 4 sub-tasks fail, flag the 3 at top before reporting the 1 success. Never substitute grey prose ("note: X was skipped") — that's what gets missed.
+Any execution or progress failure, including partial failure, leads with the bold `**! BLOCKED — [one-line reason]**`, `**! UNSUPPORTED — [what and why]**` or `**! MISSING — [what is needed]**` block as appropriate. It is FIRST content: state the ask, what cannot proceed and the alternative; never bury, silently skip or replace it with grey prose.
 
 ## Tone
 
@@ -72,8 +49,7 @@ Block is FIRST content, not a footnote; state what was asked, what can't proceed
 
 ## Artifact Framing
 
-- **Verbal summary as skeleton**: user verbal summary = output skeleton — mirror order, abstraction level, named examples verbatim; no added info user didn't mention; source material (README, code) fill explicit gaps only; preserve quotable phrases exact, no paraphrasing
-- **Format-label register**: translate the format label (Slack message, PR description, executive summary, etc.) to its implied register before writing — per-format register rules: `_full/communication.md`. When format ambiguous, ask one question before writing.
+> Before applying, Read `_full/communication.md` §Artifact Framing; binding inline. If it cannot be read, stop and report the missing prerequisite.
 
 ## Markdown Authoring
 

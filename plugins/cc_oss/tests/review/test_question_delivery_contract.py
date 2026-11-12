@@ -4,6 +4,7 @@ from functools import cache
 from pathlib import Path
 
 import pytest
+from _skill_source import read_skill_source
 
 _SKILLS = Path(__file__).resolve().parents[2] / "skills"
 
@@ -11,7 +12,7 @@ _SKILLS = Path(__file__).resolve().parents[2] / "skills"
 @cache
 def _read(*parts: str) -> str:
     """Read one shipped skill file by path parts below ``skills/``; the text is immutable during a run."""
-    return _SKILLS.joinpath(*parts).read_text(encoding="utf-8")
+    return read_skill_source(_SKILLS.joinpath(*parts))
 
 
 def _missing(text: str, *required: str) -> list[str]:

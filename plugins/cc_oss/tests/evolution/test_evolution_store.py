@@ -24,13 +24,16 @@ from evolution_store import (
     StoreTrackedError,
     StoreVersionError,
     VerdictError,
+    _Fencer,
     _this_host,
     acquire_lock,
     adjudication_key,
     append_adjudication,
     append_fix_result,
+    append_fix_results,
     break_lock,
     build_prompt,
+    compact_store,
     is_stale_lock,
     load_adjudications,
     load_store,
@@ -391,6 +394,90 @@ class TestWriteProtocol:
         assert not store.evidence.exists()
 
 
+class TestBatchedWrite:
+    """``append_fix_results`` writes many fixes with one append per file and the same binding as one by one."""
+
+    def test_batch_loads_like_single_appends(self, store: StorePaths, tmp_path: Path) -> None:
+        """Two fixes written as one batch read back identically to two single appends.
+
+        The sequential store is a second one built beside the batch store.
+        """
+        other = resolve_store_root(tmp_path / ".evolution-other", ["github.com", "owner", "repo"])
+        other.root.mkdir(parents=True)
+        pairs = [(_evidence(), _row()), (_evidence("2.0.0/x"), _row("2.0.0/x"))]
+        written = append_fix_results(store, pairs)
+        singles = [append_fix_result(other, evidence, row) for evidence, row in pairs]
+        assert (written, load_store(store)) == (singles, load_store(other))
+
+    def test_invalid_pair_writes_nothing(self, store: StorePaths) -> None:
+        """One mismatched pair rejects the whole batch before any line is written.
+
+        A half-written batch would leave evidence for fixes whose row the caller never learns about.
+        """
+        pairs = [(_evidence(), _row()), (_evidence("2.0.0/x"), _row("3.0.0/y"))]
+        with pytest.raises(ValueError, match="cannot bind"):
+            append_fix_results(store, pairs)
+        assert not store.evidence.exists()
+
+
+class TestCompactStore:
+    """Compaction drops superseded records so repeated rescoring cannot outgrow the input size cap."""
+
+    def test_keeps_last_record_per_fix_without_changing_the_load(self, store: StorePaths) -> None:
+        """Superseded evidence and row lines are removed; what the store loads stays identical.
+
+        Fix one is written twice (a rescore), fix two once.
+        """
+        append_fix_result(store, _evidence(), _row(scores_fp="old"))
+        append_fix_result(store, _evidence(), _row(scores_fp="new"))
+        append_fix_result(store, _evidence("2.0.0/x"), _row("2.0.0/x"))
+        before = load_store(store)
+        removed = compact_store(store)
+        assert (removed, len(store.evidence.read_text().splitlines()), len(store.rows.read_text().splitlines())) == (
+            2,
+            2,
+            2,
+        )
+        assert load_store(store) == before
+
+    def test_clean_store_is_left_untouched(self, store: StorePaths) -> None:
+        """A store with nothing superseded is not rewritten, and a second pass removes nothing.
+
+        Compaction runs on every scan, so the common case must cost no write.
+        """
+        append_fix_result(store, _evidence(), _row())
+        before = store.rows.read_bytes()
+        assert (compact_store(store), store.rows.read_bytes()) == (0, before)
+
+    def test_torn_tail_is_dropped_with_the_superseded_lines(self, store: StorePaths) -> None:
+        """A torn last line is not carried into the rewritten file.
+
+        The crash left half a record after a rescore's rows; the rewrite must stay line-aligned.
+        """
+        append_fix_result(store, _evidence(), _row(scores_fp="old"))
+        append_fix_result(store, _evidence(), _row(scores_fp="new"))
+        with store.rows.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write('{"fix_id": "1.1.0/torn')
+        compact_store(store)
+        assert (store.rows.read_bytes().endswith(b"\n"), load_store(store)["dropped"]) == (True, 0)
+
+    def test_rescored_file_over_the_cap_is_readable_again(
+        self, store: StorePaths, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Repeated rescoring pushes the rows file past the read cap; compaction brings it back under.
+
+        Without it the next scan stops with ``exceeds size limit``, as a doubled rf-detr store did on a scorer bump.
+        """
+        monkeypatch.setattr("_evolution_common.MAX_INPUT_BYTES", 3000)
+        append_fix_result(store, _evidence(), _row())
+        line = store.rows.read_text(encoding="utf-8")
+        store.rows.write_text(line * (3000 // len(line) + 2), encoding="utf-8", newline="\n")
+        with pytest.raises(ValueError, match="size limit"):
+            load_store(store)
+        compact_store(store)
+        assert sorted(load_store(store)["rows"]) == [_FIX]
+
+
 class TestPlanWork:
     """Selection of fixes needing blame, rescoring or a retry."""
 
@@ -658,18 +745,40 @@ class TestMatrixCsv:
 class TestAdjudication:
     """Prompt building, verdict keys and validation, and verdict persistence."""
 
+    @pytest.mark.parametrize(
+        "marker",
+        [
+            "end—untrusted",
+            "\uff45\uff4e\uff44 \uff55\uff4e\uff54\uff52\uff55\uff53\uff54\uff45\uff44",
+            "e\u200bnd untrusted",
+            "end_untrusted",
+            "untrusted\uff1aforged",
+        ],
+    )
+    def test_marker_lookalikes_are_neutralised(self, marker: str) -> None:
+        """Unicode and invisible-character marker variants cannot imitate prompt fences."""
+        block = _Fencer().fence("entry", marker)
+        assert "&#8288;" in block.splitlines()[1]
+        assert block.splitlines()[1].replace("&#8288;", "") == marker
+
+    def test_fence_uses_long_reproducible_token(self) -> None:
+        """A deterministic long token preserves paid-verdict reuse without a sixteen-bit namespace."""
+        block = _Fencer().fence("entry", "ordinary text")
+        assert re.search(r"<!-- untrusted:[0-9a-f]{16} entry", block)
+        assert _Fencer().fence("entry", "ordinary text") == block
+
     def test_prompt_fences_and_neutralises_untrusted_text(self) -> None:
         """Every untrusted block has a matching closing fence, tokens are unique, and forged end markers are defused.
 
         Changelog text is attacker-controlled; it must not close its own fence and smuggle instructions to the model.
         """
         prompt = build_prompt(_ENTRY, _CANDIDATES, _evidence())
-        opened = re.findall(r"<!-- untrusted:([0-9a-f]{4}) ", prompt)
-        closed = re.findall(r"<!-- end untrusted:([0-9a-f]{4}) -->", prompt)
+        opened = re.findall(r"<!-- untrusted:([0-9a-f]{16}) ", prompt)
+        closed = re.findall(r"<!-- end untrusted:([0-9a-f]{16}) -->", prompt)
         assert opened == closed
         assert len(set(opened)) == len(opened) == 7
-        assert "END&#8288;untrusted:abcd" in prompt
-        assert "end&#8288;untrusted" in prompt
+        assert "END&#8288; untrusted&#8288;:abcd" in prompt
+        assert "end&#8288; untrusted" in prompt
 
     def test_prompt_and_key_are_reproducible(self) -> None:
         """Equal inputs give the same prompt and key, regardless of candidate order and volatile fields.

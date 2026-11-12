@@ -34,6 +34,115 @@ def _standard_payload(finalizer: Any, skill: str, version: int) -> dict:
 class TestHandoffActionOrder:
     """Where the Next steps block sits relative to the Artifact block across presentation versions."""
 
+    def test_current_diagnosis_keeps_judgment_and_recommendations(self, finalizer: Any) -> None:
+        """A completed diagnosis still delivers its repair recommendations without empty outcome labels."""
+        payload = _standard_payload(finalizer, "investigate", 15)
+        payload["outcome"] = {"title": "Local validation", "summary": "Two defects confirmed; repairs are required."}
+        payload.update(remaining=[], next_steps=[])
+        payload["tables"][0]["rows"][0]["cells"] = [
+            "Receipt mismatch",
+            "Producer/consumer disagreement.",
+            "Confirmed in installed 2.3.4; review/remediation is affected.",
+            "Maintainer: align producer/consumer receipts.",
+        ]
+        original = copy.deepcopy(payload)
+
+        rendered = finalizer.render_handoff(payload)
+
+        assert rendered.startswith("Two defects confirmed; repairs are required.\n")
+        assert "Local validation" not in rendered
+        assert "See detail" not in rendered
+        assert "| Hypothesis | Evidence | Disposition |" in rendered
+        assert "Confirmed in installed 2.3.4; review/remediation is affected." in rendered
+        assert rendered.index("**Artifact**") < rendered.index("**Recommendations / next steps**")
+        assert rendered.count("Maintainer: align producer/consumer receipts.") == 1
+        assert rendered.rstrip().endswith("| — | Receipt mismatch | Maintainer: align producer/consumer receipts. |")
+        assert payload == original
+
+    def test_current_actions_merge_owned_and_table_recommendations(self, finalizer: Any) -> None:
+        """An owned action supersedes its display cell without hiding other rows' recommendations."""
+        payload = _standard_payload(finalizer, "investigate", 15)
+        payload["tables"][0]["rows"][0].update(
+            cells=["Parser", "Evidence", "Confirmed", "Older action"], source_ids=["report:CR-2"]
+        )
+        payload["tables"][0]["rows"].append(
+            {
+                "id": "CR-1",
+                "cells": ["Copier", "Evidence", "Confirmed", "Narrow copied inputs."],
+                "source_ids": ["report:CR-1"],
+            }
+        )
+
+        rendered = finalizer.render_handoff(payload)
+        actions = rendered.split("**Recommendations / next steps**\n\n", 1)[1]
+
+        assert "Older action" not in rendered
+        assert "| ci | External CI | Rerun CI. |" in actions
+        assert "| — | Copier | Narrow copied inputs. |" in actions
+
+    def test_current_completed_work_has_explicit_final_action_status(self, finalizer: Any) -> None:
+        """A clean implementation ends with an explicit no-follow-up judgment."""
+        payload = _standard_payload(finalizer, "implement", 15)
+        payload.update(remaining=[], next_steps=[])
+
+        rendered = finalizer.render_handoff(payload)
+
+        assert rendered.endswith("**Recommendations / next steps**\n\nNo further action is required.\n")
+
+    def test_current_action_paths_are_externalized_without_hiding_prose(self, finalizer: Any) -> None:
+        """Explicit source references leave the table while commands and slash prose remain readable."""
+        payload = _standard_payload(finalizer, "implement", 15)
+        payload["remaining"][0].update(
+            item="Review/remediation receipts", next_action="Inspect `src/worker.py` with `pytest` and rerun."
+        )
+
+        rendered = finalizer.render_handoff(payload)
+        actions = rendered.split("**Recommendations / next steps**\n\n", 1)[1]
+
+        assert "See detail" not in actions
+        assert "| ci | Review/remediation receipts | Inspect worker.py with `pytest` and rerun. |" in actions
+        assert "- Review/remediation receipts: src/worker.py" in actions
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("pytest tests/unit", id="directory-argument"),
+            pytest.param("python shared/check.py --strict", id="script-with-option"),
+            pytest.param("python shared/check.py", id="script-argument"),
+            pytest.param('os.path.join("src/file")', id="call-with-path-string"),
+            pytest.param("len(src/path)", id="expression-with-slash"),
+        ],
+    )
+    def test_current_inline_commands_remain_complete(self, finalizer: Any, command: str) -> None:
+        """A slash in a command argument never turns the complete command into a shortened path."""
+        payload = _standard_payload(finalizer, "implement", 15)
+        payload["remaining"][0]["next_action"] = f"Run `{command}` and inspect `./source files/worker.py`."
+
+        rendered = finalizer.render_handoff(payload)
+        actions = rendered.split("**Recommendations / next steps**\n\n", 1)[1]
+
+        assert f"Run `{command}` and inspect worker.py." in actions
+        assert "- External CI: ./source files/worker.py" in actions
+        assert f"- External CI: {command}" not in actions
+
+    def test_prior_diagnosis_bytes_remain_unchanged(self, finalizer: Any) -> None:
+        """Previously bound reports retain their original title, action placement and prose fallback."""
+        payload = _standard_payload(finalizer, "investigate", 14)
+        payload["outcome"] = {"title": "Local validation", "summary": "Two defects confirmed; repairs are required."}
+        payload.update(remaining=[], next_steps=[])
+        payload["tables"][0]["rows"][0]["cells"] = [
+            "Receipt mismatch",
+            "Producer/consumer disagreement.",
+            "Confirmed in installed 2.3.4; review/remediation is affected.",
+            "Maintainer: align producer/consumer receipts.",
+        ]
+
+        rendered = finalizer.render_handoff(payload)
+
+        assert hashlib.sha256(rendered.encode()).hexdigest() == (
+            "c96b1944e90c98154236a8006cb9e57bb25e4a7a8955bb6c5016b9d63d2ff4ee"
+        )
+
     @pytest.mark.parametrize("skill", ["implement", "investigate", "manage"])
     def test_v13_tables_preserve_actions_and_verification(self, finalizer: Any, skill: str) -> None:
         """Repeated owner/action and check fields form readable tables without mutating source records."""
@@ -114,9 +223,10 @@ class TestHandoffActionOrder:
         assert "- Item 1: src/one/state.py" in rendered
         assert "- Item 2: src/two/state.py" in rendered
 
-    def test_v13_exact_caller_output_is_unchanged(self, finalizer: Any) -> None:
+    @pytest.mark.parametrize("version", [13, 15])
+    def test_v13_exact_caller_output_is_unchanged(self, finalizer: Any, version: int) -> None:
         """A caller-owned exact output bypasses every human table transformation."""
-        payload = _standard_payload(finalizer, "implement", 13)
+        payload = _standard_payload(finalizer, "implement", version)
         payload.update(branch="caller-contract", tables=[], source_records=[], remaining=[], next_steps=[])
         payload["source_coverage"] = {
             "source_records_total": 0,
@@ -156,7 +266,7 @@ class TestHandoffActionOrder:
         assert "1. **Owner: maintainer**\n\n   Status: Dependency is blocked." in rendered
         assert payload == before
 
-    @pytest.mark.parametrize("version", [12, 13])
+    @pytest.mark.parametrize("version", [12, 13, 15])
     def test_closed_review_has_no_next_steps(self, finalizer: Any, version: int) -> None:
         """A closed v12 code review renders no Next steps block when nothing is left to do.
 
@@ -182,6 +292,7 @@ class TestHandoffActionOrder:
         rendered = finalizer.render_handoff(payload)
 
         assert "**Next steps**" not in rendered
+        assert "**Recommendations / next steps**" not in rendered
 
     @pytest.mark.parametrize("version", [8, 9, 10, 11])
     def test_historical_versions_keep_next_steps_before_artifact(self, finalizer: Any, version: int) -> None:

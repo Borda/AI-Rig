@@ -42,20 +42,24 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from datetime import datetime, timezone
 from glob import escape
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-from local_reviewer_wave import ReviewRouteError
-from local_reviewer_wave import validate_evidence as validate_local_reviewer_evidence
-from parallel_execution import (
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
+from local_reviewer_wave import ReviewRouteError  # noqa: E402
+from local_reviewer_wave import validate_evidence as validate_local_reviewer_evidence  # noqa: E402
+from parallel_execution import (  # noqa: E402
     _SECRET_PATTERNS,
     _runtime_parent_rows,
     review_input_has_sensitive_material,
     validate_inspection_contexts,
 )
-from review_context import context_pages, dispatch_message, render_read_call, render_read_output
+from review_context import context_pages, dispatch_message, render_read_call, render_read_output  # noqa: E402
 
 #: Severity values a reviewer finding record may use.
 FINDING_SEVERITIES = ("critical", "high", "medium", "low")
@@ -706,8 +710,16 @@ def _native_dispatch_message(
     manifest: dict[str, Any], plan_path: Path, role: str, attempt: int, *, bounded: bool | None = None
 ) -> str:
     """Render the declared native recipe, preserving historical reader paths exactly."""
+    recipe_plan = _native_recipe_plan(manifest, plan_path)
+    recipe = _load_json(recipe_plan)
+    contexts = [entry for entry in recipe["contexts"] if entry.get("role_id") == role]
+    if len(contexts) != 1:
+        raise SystemExit("review-context-role-count")
+    context_path = (recipe_plan.parent / contexts[0]["context_path"]).resolve()
+    if not context_path.is_relative_to(recipe_plan.parent.resolve()):
+        raise SystemExit("review-context-outside-plan")
     message = dispatch_message(
-        _native_recipe_plan(manifest, plan_path),
+        recipe_plan,
         role,
         attempt,
         manifest["context_reader_python"],
@@ -744,7 +756,7 @@ def _native_dispatch_message(
                 message
                 if attempt == 1
                 else dispatch_message(
-                    _native_recipe_plan(manifest, plan_path),
+                    recipe_plan,
                     role,
                     1,
                     manifest["context_reader_python"],

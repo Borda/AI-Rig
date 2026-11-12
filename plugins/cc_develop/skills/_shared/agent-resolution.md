@@ -3,8 +3,9 @@
 > **Foundry plugin check**: run the block below — exit 0 = foundry available through its active install record. This probe accepts the `borda-ai-rig` marketplace slug only; a different marketplace slug or a `--plugin-dir` session without a registry entry uses the fallback. Cache directories or a local source tree alone do not establish availability. Missing install record or agent file → use the fallback below; an explicit foundry dispatch failure also uses that fallback.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/get_plugin_install_path.py" borda-ai-rig foundry > "${TMPDIR:-/tmp}/dev-foundry-path-${CSID}" 2>/dev/null || exit 1
+python "$PLUGIN_ROOT/bin/get_plugin_install_path.py" borda-ai-rig foundry > "${TMPDIR:-/tmp}/dev-foundry-path-${CSID}" 2>/dev/null || exit 1
 IFS= read -r FOUNDRY_PATH < "${TMPDIR:-/tmp}/dev-foundry-path-${CSID}" || exit 1
 [ -f "$FOUNDRY_PATH/agents/sw-engineer.md" ]
 ```
@@ -62,10 +63,11 @@ mkdir -p "$WATCH_DIR" && echo "WATCH_DIR=$WATCH_DIR"  # timeout: 5000
 Check — once per wake-up:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r WATCH_DIR < "${TMPDIR:-/tmp}/dev-agent-watch-dir-${CSID}" 2>/dev/null || WATCH_DIR=""
 [ -n "$WATCH_DIR" ] || { echo "! BLOCKED — agent-watch dir sentinel missing; run the arm block before spawning"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/agent_watch.py" --state-dir "$WATCH_DIR"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/agent_watch.py" --state-dir "$WATCH_DIR"  # timeout: 5000
 ```
 
 A deadline is enforced at the next wake-up — another agent's notification or a user message — since nothing else can wake a waiting run; the check then reports every agent past its deadline at once.

@@ -93,8 +93,8 @@ class TestTestFunctions:
         assert cbtc.test_functions(source) == expected
 
     def test_deep_expression_is_left_to_the_syntax_checker(self) -> None:
-        """An AST recursion failure cannot abort the report-only coverage scan."""
-        assert cbtc.test_functions("value = " + "+".join(["1"] * 10000)) == (1, 1)
+        """A parser depth failure cannot abort the report-only coverage scan."""
+        assert cbtc.test_functions("value = " + "(" * 1000 + "1" + ")" * 1000) == (1, 1)
 
 
 class TestCheckScript:

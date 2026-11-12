@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""state.py — persist small shell values across Bash tool calls.
+"""Persist supported workflow values across Bash tool calls.
 
 Each Bash tool call runs in a fresh shell, so a variable assigned in one
 ```bash block is empty when a later block references it. Skills work around this
@@ -12,17 +12,15 @@ that pattern behind one tested idiom instead of ad-hoc per-skill code:
     eval "$(python "${CLAUDE_PLUGIN_ROOT}/bin/state.py" load audit-$RUN)"
 
 The namespace is chosen by the caller. Session scoping is automatic: the file
-name embeds the session token (``CSID`` → ``CLAUDE_CODE_SESSION_ID`` → literal
-``shared``), so concurrent sessions never collide on the same namespace — a
-run-unique component (timestamp / run-id) is still useful to separate multiple
-runs *within* one session, but no longer required for cross-session safety.
-Values are stored under ``<tmp>/claude-state-<namespace>-<csid>.env`` (``<tmp>``
+name embeds the sanitized session token (``CSID`` → ``CLAUDE_CODE_SESSION_ID`` → literal
+``shared``); callers without a session token must use a run-unique namespace to
+separate runs belonging to the same user. Values are stored at mode 0600 under
+``<tmp>/claude-shell-state-<user>/claude-state-<namespace>-<csid>.env`` in a private 0700 directory (``<tmp>``
 = ``$TMPDIR`` or the platform temp dir — never a hardcoded ``/tmp``, which does
 not exist on native Windows Python). Both halves of an emitted line are
 constrained so ``eval`` is injection-safe: KEY must match
-``^[A-Za-z_][A-Za-z0-9_]*$`` and must not be a variable the shell or loader reads to
-change command lookup or load code (``PATH``, ``IFS``, ``BASH_ENV``, ``LD_*`` …) —
-rejected by ``set``, skipped by ``load`` — and VALUE is single-quote-quoted with
+``^[A-Za-z_][A-Za-z0-9_]*$`` and be one of the supported workflow keys in ``_KEY_ALLOWED_NAMES`` —
+other keys are rejected by ``set`` and skipped by ``load`` — and VALUE is single-quote-quoted with
 embedded quotes escaped. ``set`` also rejects a VALUE holding a line break or NUL, since
 the state file is line-oriented and such a value would be re-read as a second
 ``KEY=VALUE`` line that ``load`` then emits.
@@ -32,14 +30,16 @@ Usage:
     state.py load <namespace>                            # print `KEY='VALUE'` lines for eval
     state.py clear <namespace>                           # remove the state file
 
-Exit code 0 on success, 2 on usage error.
+Exit code 0 on success, 2 on usage or unsafe-storage error.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -54,46 +54,32 @@ _KEY_SAFE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 #: Characters ``str.splitlines`` treats as a line boundary, plus NUL.  A value carrying one
 #: would be read back as a second ``KEY=VALUE`` line, so ``set_values`` refuses it.
 _LINE_BREAKS = re.compile(r"[\r\n\x00\x0b\x0c\x1c-\x1e\x85\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]")
-#: Variables the shell reads to change command lookup or word splitting, or that make a
-#: child process load other code.  An ``eval`` of ``PATH='…'`` or ``IFS=','`` turns a
-#: state value into code execution, so they are never accepted as keys.
-_KEY_DENIED_NAMES = frozenset(
+#: Only documented workflow values are restored; shell, loader and tool configuration names are never emitted.
+_KEY_ALLOWED_NAMES = frozenset(
     {
-        "BASHOPTS",
-        "BASH_ENV",
-        "CDPATH",
-        "FPATH",
-        "GLOBIGNORE",
-        "IFS",
-        "NODE_OPTIONS",
-        "PATH",
-        "PROMPT_COMMAND",
-        "PS4",
-        "PYTHONPATH",
-        "PYTHONSTARTUP",
-        "SHELLOPTS",
+        "RUN_DIR",
+        "SCOPE",
     }
 )
-#: Dynamic-loader variable families (``LD_PRELOAD``, ``DYLD_INSERT_LIBRARIES`` …) denied by prefix.
-_KEY_DENIED_PREFIXES = ("DYLD_", "LD_")
 
 
 def _key_denied(key: str) -> bool:
-    """Report whether a key names a variable that must never be restored through ``eval``.
+    """Report whether a key is outside the workflow values that may be restored through ``eval``.
 
     Args:
         key: A shell identifier that already passed ``_KEY_SAFE``.
 
     Returns:
-        True for shell/loader variables such as ``PATH``, ``IFS``, ``BASH_ENV`` and ``LD_PRELOAD``.
+        True for every name not in ``_KEY_ALLOWED_NAMES``, including shell and loader variables such as ``PATH``,
+        ``IFS``, ``BASH_ENV`` and ``LD_PRELOAD``.
 
     Examples:
         >>> _key_denied("PATH"), _key_denied("LD_PRELOAD"), _key_denied("RUN_DIR")
         (True, True, False)
-        >>> _key_denied("PATHS"), _key_denied("LDAP_URL")
-        (False, False)
+        >>> _key_denied("PATHS")
+        True
     """
-    return key in _KEY_DENIED_NAMES or key.startswith(_KEY_DENIED_PREFIXES)
+    return key not in _KEY_ALLOWED_NAMES
 
 
 def _csid() -> str:
@@ -113,7 +99,23 @@ def _csid() -> str:
         >>> _ = os.environ.pop("CSID")
         >>> _ = os.environ.setdefault("CSID", _prev) if _prev else None
     """
-    return os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
+    token = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
+    return _NS_SAFE.sub("_", token)
+
+
+def _private_dir() -> Path:
+    """Create or validate the current user's private temporary state directory."""
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    base = Path(os.environ.get("TMPDIR") or tmp_fallback)
+    user = str(os.getuid()) if hasattr(os, "getuid") else hashlib.sha256(str(Path.home()).encode()).hexdigest()[:16]
+    directory = base / f"claude-shell-state-{user}"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode):
+        raise OSError(f"unsafe state directory: {directory}")
+    if hasattr(os, "getuid") and (info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700):
+        raise OSError(f"state directory must be owned by this user with mode 0700: {directory}")
+    return directory
 
 
 def state_path(namespace: str) -> Path:
@@ -123,7 +125,7 @@ def state_path(namespace: str) -> Path:
         namespace: Caller-chosen namespace (sanitized to a safe filename).
 
     Returns:
-        Path under the platform temp dir: ``claude-state-<namespace>-<csid>.env``.
+        Path inside the private per-user temporary directory, created and checked here.
 
     Examples:
         >>> import os
@@ -135,17 +137,52 @@ def state_path(namespace: str) -> Path:
         >>> _ = os.environ.setdefault("CSID", _prev) if _prev else None
     """
     safe = _NS_SAFE.sub("_", namespace)
-    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
-    base = os.environ.get("TMPDIR") or tmp_fallback
-    return Path(base) / f"claude-state-{safe}-{_csid()}.env"
+    return _private_dir() / f"claude-state-{safe}-{_csid()}.env"
+
+
+def _check_file(info: os.stat_result) -> None:
+    """Refuse non-regular, multiply-linked or foreign-owned state files before use."""
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise OSError("state file must be a regular file with one link")
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise OSError("state file must be owned by this user")
+
+
+def _open_state(path: Path, *, create: bool = False) -> int:
+    """Open a regular state file without following links or truncating unvalidated data."""
+    try:
+        before = path.lstat()
+    except FileNotFoundError:
+        if not create:
+            raise
+        before = None
+    if before is not None:
+        _check_file(before)
+    flags = os.O_RDWR if create else os.O_RDONLY
+    if before is None:
+        flags |= os.O_CREAT | os.O_EXCL
+    descriptor = os.open(path, flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0), 0o600)
+    try:
+        opened = os.fstat(descriptor)
+        _check_file(opened)
+        if before is not None and (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
+            raise OSError("state file changed while opening")
+    except OSError:
+        os.close(descriptor)
+        raise
+    return descriptor
 
 
 def _read(path: Path) -> dict[str, str]:
     """Return existing KEY=VALUE pairs from a state file (empty if absent)."""
     values: dict[str, str] = {}
-    if not path.is_file():
+    try:
+        descriptor = _open_state(path)
+    except FileNotFoundError:
         return values
-    for line in path.read_text(encoding="utf-8").splitlines():
+    with os.fdopen(descriptor, encoding="utf-8") as handle:
+        text = handle.read()
+    for line in text.splitlines():
         if "=" in line:
             key, _, val = line.partition("=")
             values[key.strip()] = val
@@ -169,8 +206,8 @@ def _assignment_problem(item: str) -> str | None:
         "malformed assignment (want KEY=VALUE): 'NOEQUALS'"
         >>> _assignment_problem("PATH=/evil")
         "reserved key 'PATH' in 'PATH=/evil' — shell and loader variables cannot be restored through eval"
-        >>> _assignment_problem("A=x\\nB=1")
-        "value of 'A' contains a line break or NUL"
+        >>> _assignment_problem("RUN_DIR=x\\nB=1")
+        "value of 'RUN_DIR' contains a line break or NUL"
     """
     if "=" not in item:
         return f"malformed assignment (want KEY=VALUE): {item!r}"
@@ -199,17 +236,27 @@ def set_values(namespace: str, assignments: list[str]) -> int:
         0 on success, 2 if any assignment is malformed, carries an unsafe or reserved key, or holds
         a value with a line break or NUL.
     """
-    path = state_path(namespace)
-    values = _read(path)
     for item in assignments:
         problem = _assignment_problem(item)
         if problem is not None:
             sys.stderr.write(f"state.py: {problem}\n")
             return 2
-        key, _, val = item.partition("=")
-        values[key.strip()] = val
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(f"{k}={v}\n" for k, v in values.items()), encoding="utf-8")
+    try:
+        path = state_path(namespace)
+        values = _read(path)
+        for item in assignments:
+            key, _, val = item.partition("=")
+            values[key.strip()] = val
+        with os.fdopen(_open_state(path, create=True), "w", encoding="utf-8") as handle:
+            if hasattr(os, "fchmod"):
+                os.fchmod(handle.fileno(), 0o600)
+            else:
+                os.chmod(path, 0o600)
+            handle.write("".join(f"{k}={v}\n" for k, v in values.items()))
+            handle.truncate()
+    except (OSError, UnicodeError) as exc:
+        sys.stderr.write(f"state.py: cannot store state: {exc}\n")
+        return 2
     return 0
 
 
@@ -221,15 +268,20 @@ def load_values(namespace: str) -> int:
     module — any key failing ``^[A-Za-z_][A-Za-z0-9_]*$`` (legacy file, concurrent
     writer, hand edit) is skipped with a stderr warning rather than emitted, since
     KEY precedes the quoting that protects VALUE. Keys naming shell or loader
-    variables (``PATH``, ``IFS``, ``BASH_ENV``, ``LD_*`` …) are skipped the same way.
+    variables or names outside ``_KEY_ALLOWED_NAMES`` are skipped the same way.
 
     Args:
         namespace: Namespace to load.
 
     Returns:
-        0 always (absent file → no output).
+        0 on success (absent file → no output), 2 for unsafe or unreadable storage.
     """
-    for key, val in _read(state_path(namespace)).items():
+    try:
+        values = _read(state_path(namespace))
+    except (OSError, UnicodeError) as exc:
+        sys.stderr.write(f"state.py: cannot load state: {exc}\n")
+        return 2
+    for key, val in values.items():
         if not _KEY_SAFE.fullmatch(key):
             sys.stderr.write(f"state.py: skipping unsafe key {key!r} from state file\n")
             continue
@@ -244,9 +296,13 @@ def load_values(namespace: str) -> int:
 def clear(namespace: str) -> int:
     """Remove a namespace's state file (no-op if absent).
 
-    Returns 0.
+    Returns 0 on success or 2 for unsafe or unwritable storage.
     """
-    state_path(namespace).unlink(missing_ok=True)
+    try:
+        state_path(namespace).unlink(missing_ok=True)
+    except OSError as exc:
+        sys.stderr.write(f"state.py: cannot clear state: {exc}\n")
+        return 2
     return 0
 
 

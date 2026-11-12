@@ -482,17 +482,21 @@ def _list_tags(repo: Path) -> list[_Tag]:
     ]
 
 
-def _select_releases(tags: list[_Tag]) -> tuple[list[_Release], list[str]]:
+def _select_releases(tags: list[_Tag], tag_prefix: str = "") -> tuple[list[_Release], list[str]]:
     """Keep tags that parse as versions and point at commits; return releases in global order and excluded tags.
 
     Excluded (reported in ``unparsable_tags``): tags that are not versions, tags not pointing at a commit, and a second
     tag with an already-seen canonical version on a different commit (the earliest tag wins). A second tag with the same
-    version on the same commit is an alias and is dropped silently.
+    version on the same commit is an alias and is dropped silently. With ``tag_prefix`` only tags starting with it are
+    considered, and the version is read from the text after it; every other tag belongs to another package and is
+    neither a release nor reported.
     """
     excluded: list[str] = []
     kept: dict[str, _Release] = {}
     for tag in sorted(tags, key=lambda item: (item.timestamp, item.name)):
-        version = parse_version(tag.name)
+        if tag_prefix and not tag.name.startswith(tag_prefix):
+            continue
+        version = parse_version(tag.name[len(tag_prefix) :])
         if version is None or tag.commit is None:
             excluded.append(tag.name)
             continue
@@ -743,7 +747,7 @@ def _iso_utc(timestamp: int) -> str:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def build_release_index(repo: Path) -> dict[str, Any]:
+def build_release_index(repo: Path, tag_prefix: str = "") -> dict[str, Any]:
     """Build the release index of ``repo``: every release tag, its release line, predecessor and commit coverage.
 
     Algorithm:
@@ -780,17 +784,21 @@ def build_release_index(repo: Path) -> dict[str, Any]:
 
     Args:
         repo: Repository root (full history; callers block shallow clones with :func:`is_shallow` first).
+        tag_prefix: Package prefix of a monorepo's tags (``pkg-v`` for ``pkg-v1.2.0``, ``pkg@`` for ``pkg@1.2.0``):
+            only tags starting with it become releases, with the version read after it. Empty (default) reads every
+            tag as a plain version.
 
     Returns:
         ``{"schema_version", "releases", "unparsable_tags", "lines", "predecessor", "commit_releases", "head",
-        "fingerprint"}`` as defined by the evolution contract. ``head["sha"]`` is None on an unborn branch.
-        ``fingerprint`` covers the full tag -> object map and the index algorithm version; it does not cover HEAD.
+        "fingerprint"}`` as defined by the evolution contract, plus ``"tag_prefix"`` when one was given.
+        ``head["sha"]`` is None on an unborn branch. ``fingerprint`` covers the full tag -> object map, the prefix and
+        the index algorithm version; it does not cover HEAD.
 
     Examples:
         >>> # build_release_index(Path("."))["lines"]  ->  {'main': ['1.0.0', '1.1.0']}
     """
     tags = _list_tags(repo)
-    releases, unparsable = _select_releases(tags)
+    releases, unparsable = _select_releases(tags, tag_prefix)
     head = _head_sha(repo)
     masks, walk_order = _walk(repo, releases, head)
     _assign_predecessors(releases, masks)
@@ -807,8 +815,11 @@ def build_release_index(repo: Path) -> dict[str, Any]:
         }
         for index, rel in enumerate(releases)
     ]
+    tag_map = {tag.name: tag.object_sha for tag in tags}
+    prefixed = {"tag_prefix": tag_prefix} if tag_prefix else {}
     return {
         "schema_version": SCHEMA_VERSION,
+        **prefixed,
         "releases": records,
         "unparsable_tags": unparsable,
         "lines": {name: [releases[i].version.canonical for i in chain] for name, chain in chains.items()},
@@ -818,7 +829,7 @@ def build_release_index(repo: Path) -> dict[str, Any]:
         },
         "commit_releases": _commit_releases(releases, chains, masks),
         "head": {"sha": head, "unreleased": [commit for commit in walk_order if not masks.get(commit)]},
-        "fingerprint": fingerprint(ALGO_VERSIONS["index"], {tag.name: tag.object_sha for tag in tags}),
+        "fingerprint": fingerprint(ALGO_VERSIONS["index"], {**tag_map, **prefixed}),
     }
 
 

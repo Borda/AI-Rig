@@ -65,6 +65,9 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, TextIO
 
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
 #: Current schema revision of the local reviewer-wave plan.
 SCHEMA_VERSION = 3
 PREVIOUS_PLAN_SCHEMA_VERSION = 2

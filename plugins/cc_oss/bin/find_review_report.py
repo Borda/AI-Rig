@@ -60,6 +60,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Final
 
+from _sentinel_io import write_private_text
+
 #: Label that prefixes the gate text in the one-line report summary.
 _GATE_PREFIX: Final = "Gate:"
 #: Extracts the abbreviated or full commit SHA recorded after ``@`` in a report field.
@@ -93,7 +95,7 @@ FINDING_SEVERITIES: Final = ("critical", "high", "medium", "low", "cosmetic")
 
 def _run_sort_key(run_dir: Path) -> tuple[int, str]:
     """Order run directories numerically, not lexically — ``run-1000`` must outrank ``run-999``."""
-    match = _RUN_RE.match(run_dir.name)
+    match = _RUN_RE.fullmatch(run_dir.name)
     return (int(match.group(1)), run_dir.name) if match else (-1, run_dir.name)
 
 
@@ -119,7 +121,13 @@ def _legacy_report_for_pr(pr_number: str, base: Path) -> Path | None:
             lines = report.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             continue
-        if any(header.match(line) for line in lines):
+        if not lines or lines[0].strip() != "---":
+            continue
+        try:
+            end = next(index for index, line in enumerate(lines[1:], 1) if line.strip() == "---")
+        except StopIteration:
+            continue
+        if any(header.fullmatch(line) for line in lines[1:end]):
             return report
     return None
 
@@ -611,7 +619,7 @@ def _read_findings(report: Path) -> list:
         OSError: the file cannot be read.
         ValueError: a line is not JSON.
     """
-    lines = report.with_name("findings.jsonl").read_text(encoding="utf-8").splitlines()
+    lines = report.with_name("findings.jsonl").read_text(encoding="utf-8").split("\n")
     return [json.loads(line) for line in lines if line.strip()]
 
 
@@ -1236,7 +1244,7 @@ def _write_path_out(path_out: str, report: Path | None) -> bool:
     if not path_out:
         return True
     try:
-        Path(path_out).write_text(f"{report.as_posix()}\n" if report else "", encoding="utf-8", newline="\n")
+        write_private_text(Path(path_out), f"{report.as_posix()}\n" if report else "")
     except OSError as exc:
         print(f"[gate] ⚠ could not write --path-out {path_out}: {exc} — a stale sentinel may remain", file=sys.stderr)
         return False
@@ -1358,7 +1366,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.report is None and (not pr_number or pr_number == "n/a"):
         return _nothing_to_gate(args.path_out, "[gate] no PR number — reject-gate check skipped")
 
-    if args.report is None and not _PR_NUMBER_RE.match(pr_number):
+    if args.report is None and not _PR_NUMBER_RE.fullmatch(pr_number):
         _write_path_out(args.path_out, None)
         print(f"find_review_report: --pr must be digits only, got {pr_number!r}", file=sys.stderr)
         return 1

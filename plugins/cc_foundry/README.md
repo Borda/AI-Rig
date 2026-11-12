@@ -91,7 +91,7 @@ Use `/foundry:audit` for structural checks, `/foundry:calibrate` for measured ro
 **Prerequisites**:
 
 - Claude Code with plugin support
-- Python 3.10+ and `git` (setup runs from a project repository)
+- Python 3.10+; `git` is needed only for setup's project-local permissions guide copy
 - `jq` on PATH for audit/manage JSON work (setup uses Python only)
 - Node.js for the plugin's hooks
 
@@ -112,7 +112,7 @@ claude plugin install develop@borda-ai-rig
 claude plugin install research@borda-ai-rig
 ```
 
-**One-time setup** — run inside Claude Code after install, from the project repository root:
+**One-time setup** — run inside Claude Code after install, from any directory (the project repository root for the project-local permissions guide copy):
 
 ```text
 /foundry:setup
@@ -120,10 +120,10 @@ claude plugin install research@borda-ai-rig
 
 Setup, in short:
 
-- merges `statusLine`, `permissions.allow`, `permissions.deny`, `enabledPlugins`, the shipped `env` defaults, and (when pinned by the project) `advisorModel` into `~/.claude/settings.json`
+- merges `statusLine`, `permissions.allow`, `permissions.deny` and the shipped `env` defaults into `~/.claude/settings.json`; enabling an installed bridge or promoting a project-pinned `advisorModel` requires explicit opt-in
 - removes retired allow and deny entries (details under [`/foundry:setup`](#foundry-setup)), preserving every other existing entry
 - symlinks all rule files into `~/.claude/rules/` as `foundry-<name>.md`, and `TEAM_PROTOCOL.md` into `~/.claude/`
-- counts removals in its summary from the complete retired allow set
+- reports added and retired allow/deny counts, retained conflicts and actual timestamped backup paths in its summary
 - is idempotent — safe to re-run
 
 **After any plugin upgrade**, re-run `/foundry:setup` — auto-replaces stale foundry symlinks, removes rules gone from new version. No prompt for old-version symlinks.
@@ -172,6 +172,10 @@ These are current boundaries of the shipped plugin, not promises about future su
 
 Foundry alone ships the git/gh guards, approval records and one-time tokens. Each approval is recorded by the `approval-guard.js` hook from your actual answer to a question.
 
+Commands naming git or gh that cannot be inspected within the parser's size, nesting or time bounds ask for permission. This includes lexer failures and dynamically built command words. Readable force pushes are blocked; the accepted limit is a slow-host branch-substitution inspection deadline that can downgrade that block to an ask. Alias-of-config inspection uses the same bounds. `gh config set` requires approval, and browser/watch flags are excluded from automatic read approval.
+
+The blueprint hook matches exact command text from its manifest. For loader-rendered fragments it binds the source template to its recorded digest, renders only the validated owning-plugin bootstrap path, then matches the rendered command; altered commands still require permission. Each helper block resolves and exports `PLUGIN_ROOT` before calling `python "$PLUGIN_ROOT/bin/<helper>.py"`.
+
 ### Local Git operations
 
 Operations that need authorization (commit, staging owned changes, a local merge and its merge commit, cherry-pick, branch/worktree prep) ask one question:
@@ -197,9 +201,10 @@ A grant never covers push (asked every time), force operations, history rewritin
 Every push asks its own question, `git-push`: **Approve** (this push, once) or **Deny**. The question shows the branch, the target and the command the agent will run.
 
 - Approve makes the hook record a single-use token, `claude-push-approval.json`, in the same common directory. It holds the current branch, HEAD and the id of the question you answered, and expires after 15 minutes. A later Approve replaces it; a later Deny removes it.
-- `commit-guard.js` lets one push of that branch at that HEAD to a configured remote run (`git push`, `git push origin`, `-u`, `origin <branch>`, `origin HEAD:<branch>`, `git lfs push origin <branch>`), after checking that your Approve to that very question is in the session transcript, and consumes the token. Of parallel push calls only one runs; a spawned agent never spends it.
+- `commit-guard.js` lets one push of that branch at that HEAD to a configured remote run (`git push`, `git push origin`, `-u`, `origin <branch>`, `origin HEAD:<branch>`, `git lfs push origin <branch>`), after checking that your Approve to that very question is in the session transcript, and consumes the token. Of parallel push calls only one runs; a spawned agent never spends it. Each shell-text inspection phase has a one-second budget that excludes Git discovery time, so slow Git subprocesses do not invalidate an otherwise readable push.
 - The push must run from the checkout itself, be the only push in its command, and have no commit, reset or checkout beside it. A second push, a new commit or another branch needs a new Approve.
 - No Approve covers deleting a remote branch, `--prune`, `--all`, `--tags`, another branch or ref, a URL, path or variable destination, `cd`, `send-pack`, `http-push` or `subtree push`: the agent gives you the command to run yourself.
+- One exception to a question per push: `/oss:resolve` asks once at its start, `git-push-run` (**Approve** / **Deny**), naming one `git push <remote> <branch>` and the PR head commit id. Approve records `claude-push-run-approval.json`, valid 12 hours; one push of that branch to that remote then runs while HEAD descends from that head, so the run does not ask again. Every other rule above still holds.
 - A dry run (`--dry-run`) needs no approval. Force pushes stay forbidden even with a token.
 - A new session or `/clear` deletes a pending token — per project, so a second session in the same project clears the first one's. The former `! touch /tmp/claude-push-auth-…` sentinel no longer authorizes anything.
 
@@ -225,7 +230,7 @@ Behaviors the shipped rules and skills apply across workflows.
 
 - Review loops fix feasible authorized findings, investigate repeated signatures, and continue whenever the weighted score decreases; structural labels alone do not stop remediation.
 - Each round challenges and collects findings, reports the cumulative old/new table, resolves feasible authorized findings, and escalates unfixable `security`/`critical`/`high` findings. It repeats until clean or plateau/non-convergence, subject to authority, evidence, recurrence and stricter caller budgets.
-- The table is `Iteration | Security | Critical | High | Medium | Low | Nits | Weighted score`. Score weights are `20/10/6/4/2/1`. Empty rounds print no progress table; pending reviews and unrelated status updates do not repeat it.
+- The table is `Iteration | Security | Critical | High | Medium | Low | Nits | Weighted score`. Score weights are `20/10/6/4/2/1`. Before any completed round, no progress table is printed; pending reviews and unrelated status updates do not repeat it.
 - Before the baseline review of a diff the parent or its resolver wrote, the author records an attestation (invariant, sibling routes, consumer, failing-before/passing-after check) and fixes the gaps it exposes. The reviewer never sees it, and it never counts toward scoring.
 - Each open finding needs a recorded fix, escalation, or justified deferral. Each round's cost lands in an advisory `loop-metrics.jsonl`.
 - Completion prompts ask only for a missing decision or authorization, regardless of report length, and already-authorized next steps continue. Concrete gates for fresh scope, paid execution, sensitive or destructive actions, and remote changes remain in force.
@@ -267,21 +272,23 @@ Post-install setup. Merges settings, creates symlinks. Run once after install, a
 
 ```text
 /foundry:setup
-/foundry:setup --approve      # non-interactive; auto-accepts all recommended choices
+/foundry:setup --approve      # non-interactive; keeps existing user-owned choices
 ```
 
 What it does:
 
-- Detects Python 3.10+ (`python` / `py -3` / `python3`); installs `~/.local/bin/python` shim when `python` absent or resolves to Windows Store stub
+- Detects an existing Python 3.10+ runtime (`python` / `py -3` / `python3`); installs no global interpreter shim
+- Parses `--approve` case-insensitively as an unquoted standalone token; quoted text stays data and a standalone `--` ends detection. The raw blob follows a literal `--`; parser or sentinel-read failure stops setup before settings changes.
 - Backs up `~/.claude/settings.json` before touching
-- Merges `statusLine`, `permissions.allow`, `permissions.deny`, `enabledPlugins`, `advisorModel` (copied from project `.claude/settings.json` when pinned)
+- Keeps existing user files by default and under `--approve`; explicit replacement writes a backup first. Custom statusLine replacement, bridge enablement and advisorModel promotion have separate gates. Step 12 handles `~/.claude/CLAUDE.md`; rule linking is repository-optional, and cleanup removes only verified Foundry hook registrations and owned legacy files.
+- Merges `statusLine`, `permissions.allow`, `permissions.deny`; `enabledPlugins` bridge enablement and project-pinned `advisorModel` promotion require explicit opt-in and are skipped under `--approve`
 - Removes the obsolete `Bash(gh api repos/*:*)` allow entry, the broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)` allow entries (`permissions-allow-retired.json`), and the retired deny entries (gh writes, local branch/tag deletion; `permissions-deny-retired.json`), while preserving all other existing allow and deny entries
 - Merges shipped `env` defaults from `.claude-plugin/env-defaults.json` — currently `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, without which Claude Code keeps the task tools disabled and every skill that mandates task tracking silently no-ops; existing values are never overwritten
-- Copies `permissions-guide.md` to `.claude/` (only if absent — preserves project-local edits)
+- Copies `permissions-guide.md` to `.claude/` at a git repository root (only if absent — preserves project-local edits); skips this copy elsewhere and continues global setup
 - Symlinks all `plugins/cc_foundry/rules/*.md` into `~/.claude/rules/` as `foundry-<name>.md`, plus `TEAM_PROTOCOL.md` into `~/.claude/`; on upgrade, auto-replaces stale foundry symlinks, removes rules gone from the current version, and migrates pre-namespace unprefixed links it provably owns
-- Removes stale `hooks` block from settings if present (hooks now register via plugin manifest)
+- Removes only verified stale Foundry hook registrations from settings, preserving user hooks; `--approve` keeps an existing block containing user hooks (hooks now register via plugin manifest)
 
-Hooks (`hooks.json`) register automatically when plugin enabled — `/foundry:setup` never touches them directly.
+Hooks (`hooks.json`) register automatically when the plugin is enabled. Setup cleans verified stale Foundry registrations from user settings only after its cleanup gate; it preserves user-owned registrations and does not rewrite the plugin manifest.
 
 Codemap integration metadata uses the `codemap-py.integration.v2` managed-block body while retaining the `v1` sentinel format; use `codemap-py integrate audit` for read-only integration evidence.
 
@@ -292,16 +299,19 @@ Codemap integration metadata uses the `codemap-py.integration.v2` managed-block 
 Full-sweep quality audit of the project's `.claude/` config by default, or of all `plugins/*/` agent and skill files with `--local` (plugin source checkout).
 
 - Installed plugins in `~/.claude/plugins/cache/` are not audited; a default run that finds no `.claude/` agents or skills reports them as `⚠ UNSCANNED` instead of a clean sweep.
-- Catches broken cross-references, inventory drift, model-tier mismatches, description overlap, doc staleness.
-- Reports findings by severity; fix level chosen from always-fire follow-up gate after report.
-- Adversarial mode challenges every claim via `foundry:challenger` + Codex.
+- Catches broken cross-references, model-tier mismatches, description overlap, doc staleness.
+- Command-rebinding checks keep a complete single-quoted first `grep` pattern as data while still reporting quoted commands, declaration targets, and concatenated operands.
+- Reports findings by severity; asks for fix scope only when authorization is missing. Zero findings complete without a fix question; already-authorized fixes continue.
+- Default mode checks declared handoff inputs and outputs within scope; adversarial mode adds deep producer/consumer tracing and independently challenges claims via `foundry:challenger` + Codex. Preflight validates configuration without rewriting sources, and Step 3 then Step 4 curators share bounded Opus waves alongside Bash checks and Sonnet docs lookup.
+
+Combined efficiency runs place their report under `RUN_DIR/efficiency/` and stage rows in `summary.jsonl.efficiency.rec`; Step 5 alone writes the canonical summary. Run `--upgrade` as a separate invocation; the report follow-up does not switch the current audit into upgrade mode. Upgrade reuses only a completed same-project audit from the last four hours whose sources remain unchanged; otherwise it runs a fresh scoped audit. Each proposal snapshots exact pre-edit bytes, records its edited bytes and restores only while those bytes still match; concurrent changes require reconciliation.
 
 **Execution architecture** — animated diagram of fans, joins and gates.
 
 ![/foundry:audit execution architecture: fans, joins and gates (animated)](assets/images/audit-arch.svg)
 
 ```text
-/foundry:audit                      # full sweep, report only — gate offers fix options
+/foundry:audit                      # full sweep; asks for fix scope only when authorization is missing
 /foundry:audit --upgrade            # fetch latest Claude Code docs, apply improvements with A/B testing
 /foundry:audit --adversarial        # adversarial review with foundry:challenger + Codex
 /foundry:audit --consolidate        # advisory: propose merging narrow same-intent rules; edits nothing, standalone
@@ -345,9 +355,9 @@ Full-sweep quality audit of the project's `.claude/` config by default, or of al
 >
 > Dropping the exemption widens missing-model detection from 14 to 35 skills, so expect more findings under `--efficiency` than before.
 
-**Sweep checks (30 checks)**, among them:
+**Sweep checks**, among them:
 
-- Inventory drift: MEMORY.md roster vs files on disk
+- README agent/skill tables vs files on disk
 - Broken cross-references between agents and skills
 - Hardcoded absolute user paths
 - Model-tier appropriateness (reasoning vs execution roles)
@@ -411,7 +421,7 @@ With `--ab-test`, each target also runs against a `general-purpose` baseline and
 **Modes**:
 
 - `agents` — all specialist agents
-- `skills` — `/foundry:audit` and `/oss:review`
+- `skills` — registered synthetic domains, including `/foundry:audit` and diagnostic-only `/foundry:investigate`; optional domains depend on their owning plugins. `/oss:review` is excluded because it requires a live GitHub PR
 - `routing` — orchestrator dispatch accuracy for synthetic task prompts
 - `communication` — team protocol compliance, file-handoff protocol violations
 - `rules` — rule adherence across global + path-scoped rule files
@@ -419,13 +429,17 @@ With `--ab-test`, each target also runs against a `general-purpose` baseline and
 - `<agent-name>` / `<skill-name>` — single target, bare or plugin-prefixed name
 - `all` — all above
 
-Results saved to `.reports/calibrate/<timestamp>/<slug>/`, where the slug is the target name with `:`, `/` and spaces replaced by `-` (`foundry-sw-engineer`, `oss-analyse-vitality`; the communication mode uses `communication`). Improvement proposals written to `proposal.md` per slug dir; `--apply` shows the exact edits for approval first and applies only the approved ones, and never trusts a proposal without that review. Agents and skills modes use dual-source evaluation: Claude + Codex generate problems and score responses independently, Claude 51% tiebreaker.
+Results saved to `.reports/calibrate/<timestamp>/<slug>/`, where the slug strips a leading `/` and replaces remaining `:`, `/` and spaces with `-` (`foundry-sw-engineer`, `oss-analyse-vitality`; the communication mode uses `communication`). Improvement proposals written to `proposal.md` per slug dir; `--apply` shows the exact edits for approval first and applies only the approved ones, and never trusts a proposal without that review. Agents and skills modes use dual-source evaluation: Claude + Codex generate problems and score responses independently, Claude 51% tiebreaker.
+
+Target discovery uses installed plugin manifests and cache by default; `--local` selects plugin source in the current checkout. Pipelines use at most two categories together, four Sonnet coordinators per session (four in one category or two each), with child tier slots reserved before dispatch. Missing dependencies, unmeasured trigger fidelity and incomplete outcomes are reported explicitly; unmeasured values stay null rather than becoming scores. Edit approval still applies under `--skip-gate`. Availability checks distinguish absent plugins from resolver refusals or failures, and disclose each skipped target. Every expected target retains a persisted outcome; timeouts keep their reservations until the coordinator and children stop. Routing and rules run their children serially within the reserved tier budget.
 
 <a id="foundry-manage"></a>
 
 ### `/foundry:manage`
 
-Create, update, or delete agents, skills, and rules; update or delete hooks. Full cross-reference propagation. Keeps MEMORY.md, README, `settings.json` in sync automatically.
+Create, update, or delete agents, skills, and rules; update or delete hooks. Full cross-reference propagation. Keeps README and `settings.json` in sync automatically.
+
+Resolution uses the current project’s `.claude/` configuration by default. `--local` supports content updates to plugin-source agents, skills and rules using a quoted directive or spec file; it rejects creation, rename, deletion, hooks and permission operations. Hook creation and rename are unsupported; content updates delegate to `foundry:sw-engineer`. Hook deletion deregisters only the selected hook before removing its file. Permission operations validate the requested rule and distinguish unavailable settings/tools from an absent entry; permission shipping applies only to operations that need it.
 
 **Execution architecture** — animated diagram of fans, joins and gates.
 
@@ -446,10 +460,10 @@ Create, update, or delete agents, skills, and rules; update or delete hooks. Ful
 /foundry:manage remove perm "Bash(jq:*)"
 ```
 
-- **Create**: fetches latest Claude Code agent/skill frontmatter schema, picks unused color, assigns model tier by role complexity, delegates content generation to `foundry:curator`. Checks overlap with existing agents first.
-- **Update**: auto-detects type from disk. Rename atomic (write-before-delete). Content edits delegated to `foundry:curator` (agents/skills) or `foundry:sw-engineer` (hooks). Propagates description changes to cross-references when more than 3 files affected.
-- **Delete**: removes file, cleans broken references across `.claude/`, updates MEMORY.md and README.
-- **Permissions**: `add perm` / `remove perm` update both `settings.json` and `permissions-guide.md` atomically — never one without other.
+- **Create**: fetches latest Claude Code agent/skill frontmatter schema, picks unused color, assigns model tier by role complexity, delegates agent/skill scaffolding to `foundry:sw-engineer`; rules are written inline. Checks overlap with existing agents first.
+- **Update**: auto-detects type from disk. Rename writes and verifies the new file before deleting the old one. Content edits delegated to `foundry:curator` (agents/skills) or `foundry:sw-engineer` (hooks). Propagates description changes to cross-references when more than 3 files affected.
+- **Delete**: confirms the target and affected references before removal, cleans broken references across `.claude/`, updates README; hooks are deregistered from project settings before their file is removed.
+- **Permissions**: `add perm` / `remove perm` update both `settings.json` and `permissions-guide.md` atomically — never one without other; shipping an added permission in the plugin source list requires a separate choice when that list exists.
 
 After any create or update: `/foundry:calibrate routing --fast` to confirm routing accuracy unaffected.
 
@@ -512,6 +526,8 @@ Output always includes: confirmed root cause (or narrowed suspects), key evidenc
 
 **Auto-invokes when (MAYBE):** unknown failure, no Python traceback — hook not firing, CI passes locally but fails remotely, behavior inconsistent with config; "not working but config looks right", "hook not triggering", "why isn't X running".
 
+Investigation diagnostics print environment names and sanitized configuration projections, mask permission/hook strings and exclude MCP definitions. Credentials must not enter reports, contracts, probes or review prompts.
+
 <a id="foundry-profile"></a>
 
 ### `/foundry:profile`
@@ -559,10 +575,9 @@ Extracts patterns from work history + corrections, distills into durable improve
 
 ```text
 /foundry:distill                                     # analyze project patterns, suggest new agents/skills
-/foundry:distill review                              # review existing roster for quality and gaps (no new suggestions)
-/foundry:distill prune                               # trim stale/redundant entries from all project MEMORY.md files
+/foundry:distill prune                               # prune current-project memory files and their MEMORY.md index links
 /foundry:distill prune --project                     # interactive picker: select which project(s) to prune
-/foundry:distill memory                              # promote patterns from all projects into rules/agents/skills
+/foundry:distill memory                              # promote current-project patterns into rules/agents/skills
 /foundry:distill memory --project                    # interactive picker: select which project(s) to distill from
 /foundry:distill "external https://..."              # analyse external plugin/skill/agent resource, produce adoption proposal
 /foundry:distill "external ./path/to/plugin"         # same — local path or directory
@@ -570,9 +585,9 @@ Extracts patterns from work history + corrections, distills into durable improve
 /foundry:distill --keep "task-111"                       # preserve key context across compaction
 ```
 
-- `--project` triggers an interactive project picker — lists all slugs under `~/.claude/projects/*/memory/` with MEMORY.md size in tokens; select one or more. Without `--project`, `prune` and `memory` run across **all** projects automatically.
-- Both run parallel across selected projects (one agent per project), then consolidate into a single confirmation step. `memory` mode also enriches each project's feedback with project-level context (CLAUDE.md, recent git log, active plans) for better classification.
-- **`lessons` mode** consolidates `feedback_*.md` memory files and a legacy `.notes/lessons.md` when present: clusters by domain, classifies each entry as `→ rule`, `→ agent update`, `→ skill update`, `→ already covered`, or `→ too narrow`, and generates proposals. Before applying, a conflict pre-check greps each target file and flags cross-proposal collisions with ⚠. Confirmed changes are applied, followed by a `git diff` gate — inspect or revert before committing.
+- `--project` triggers an interactive project picker — lists slugs under `~/.claude/projects/*/memory/` with MEMORY.md size in tokens; select one or more. Without `--project`, `prune` and `memory` use only the current project's memory; an absent current entry stops `prune`, while `memory` continues with `.notes/lessons.md` alone rather than selecting another project.
+- Both run parallel across selected projects (one agent per project), then consolidate for confirmation; `memory` mode's Review first path approves or skips each proposal. `memory` mode also enriches each project's feedback with project-level context (CLAUDE.md, recent git log, active plans) for better classification.
+- **`memory` mode** selects memory files by `type: feedback` frontmatter and includes a legacy `.notes/lessons.md` when present: clusters by domain, classifies each entry as `→ rule`, `→ agent update`, `→ skill update`, `→ already covered`, or `→ too narrow`, and generates proposals. Before applying, a conflict pre-check greps each target file and flags cross-proposal collisions with ⚠. Each proposal names its concrete target and edits for approval; confirmed changes are snapshotted and applied, followed by a `git diff` review before committing. Pruning evaluates memory bodies, including unlinked files, and updates approved memory files and their MEMORY.md index links together; failed index updates restore only the affected memory snapshot.
 - **`external` mode** reads the source (URL, file, directory), extracts its mental model and standout implementation details, and compares against the live local setup.
   - Candidates split into *Align + improve* (maps onto existing agents/skills/rules) and *Differentiated highlights* (novel, larger work).
   - Each is scored and assigned a lane: adopt-as-is / tweak / discuss / skip.
@@ -580,6 +595,8 @@ Extracts patterns from work history + corrections, distills into durable improve
   - Nothing is written until confirmed.
 
 After applying: update or reinstall the plugin so the new rule files ship; `/foundry:setup` then only links rules into `~/.claude/rules/` and merges settings.
+
+Executable cleanup is Python-only: `foundry:sw-engineer` extracts logic into `bin/` with narrowly scoped consumer edits, while Markdown instruction design remains with `foundry:curator`.
 
 Run monthly or after any correction burst.
 
@@ -602,7 +619,7 @@ Session state that outlives a context reset — a handover document plus a parki
 
 - Runs **inline, not forked** — the conversation history is the authoritative source for what changed, what was decided, and what never landed. Implementation detail (diffs, tool output, exploration transcript, abandoned approaches) is dropped on purpose.
 - The hook auto-restores only an **unconsumed** handover **under 30 minutes old**, so an old dump never ambushes an unrelated session; anything outside that window is reachable via `recall`, which has no age gate. Over ~8000 chars the hook injects `## Goal` + files table + `## Next step` + a pointer instead of the whole doc.
-- Handover docs older than 14 days list as `⚠ stale`; older than 30 days are swept during `list`.
+- Handover docs older than 14 days list as `⚠ stale`; only consumed handovers older than 30 days are swept during `list`. Unconsumed handovers are retained.
 - Parked items live in `.claude/state/session/PARKED.md`, are copied into every dump rather than consumed by it, and have **no TTL** — only `drop` removes one, appending an audit line to `dropped.jsonl`. Parking is an explicit command, not an automatic behaviour.
 - The mode is `recall`, not `resume`, to stay clear of Claude Code's native `/resume` — which revives a whole past conversation and is the better tool whenever it applies.
 - **Not** auto-compact survival (the skill contract in `.temp/state/skill-contract.md`, per `rules/compaction.md`) — the two are distinguished in a boundary table in the skill.
@@ -620,7 +637,7 @@ Interactive outline co-creation for developer advocacy content. Collects format,
 ```
 
 - **Supported formats**: blog post, Marp slide deck (conference/meetup talk), social thread (Twitter/LinkedIn), talk abstract (CFP submission), lightning talk (5–10 min), animated SVG (SMIL, plays inside `<img>`), short video (up to 60 s, written as a [HyperFrames](https://github.com/heygen-com/hyperframes) HTML composition).
-- **Short video prerequisites**: Node 22 or newer is required; `ffmpeg` is needed later for rendering, so a missing `ffmpeg` only triggers a warning. Only after you choose to generate does the skill run `npx hyperframes init --skip-skills` with telemetry turned off (`HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1`) to scaffold `.plans/content/<slug>-video/`. It renames the `CLAUDE.md` and `AGENTS.md` that the scaffold copies in to `HYPERFRAMES-*.txt`, so no agent loads them as instructions. `foundry:creator` then writes the scenes into the project and lists the media files you need to copy into `assets/`. Check, preview and render stay user-run, and the skill prints the commands: `npm run check`, `npm run dev` and `npm run render -- --quality delivery --fps <fps> -o <slug>.mp4`. These use the CLI version pinned at scaffold time, run with the same telemetry opt-out, and come with optional `ffmpeg` GIF/WebM conversion. The skill never runs HyperFrames sign-in, skill installs, publish or cloud renders. If you stop before generating, the skill prints the commands to resume later without redoing the outline.
+- **Short video prerequisites**: Node 22 or newer, npm/npx and network access to npm/scaffold dependency sources are required; `ffmpeg` is needed later for rendering, so a missing `ffmpeg` only triggers a warning. Choosing generation authorizes downloading/executing the latest package and installing project dependencies; only then does the skill run `npx hyperframes@latest init --skip-skills` with telemetry turned off (`HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1`) to scaffold `.plans/content/<slug>-video/`. It renames the `CLAUDE.md` and `AGENTS.md` that the scaffold copies in to `HYPERFRAMES-*.txt`, so no agent loads them as instructions. `foundry:creator` then writes the scenes into the project and lists the media files you need to copy into `assets/`. Check, preview and render stay user-run, and the skill prints the commands: `npm run check`, `npm run dev` and `npm run render -- --quality delivery --fps <fps> -o <slug>.mp4`. These use the CLI version pinned at scaffold time, run with the same telemetry opt-out, and come with optional `ffmpeg` GIF/WebM conversion. The skill never runs HyperFrames sign-in, skill installs, publish or cloud renders. If you stop before generating, the skill prints subshell-wrapped commands to resume later without redoing the outline.
 - **Out-of-scope detection**: refuses FAQs, comparison tables, reference docs at Step 1, redirects to `foundry:doc-scribe`. Pure media processing (download, transcode, trim, transcribe existing media) is redirected to `ffmpeg`, Whisper or `yt-dlp` run directly. Their outputs, such as a transcript of your own talk, can be passed as source paths in the outline `## Constraints`. Remotion is not supported.
 - **Editorial conflict detection**: brief implies expert-level topic for beginner audience (or reverse) — skill surfaces mismatch explicitly before writing.
 - Writes `.plans/content/<slug>-outline.md`. Hand off to `foundry:creator` after approval: `@foundry:creator`.
@@ -638,6 +655,8 @@ Strips AI-writing tells from human-facing prose — docs, PR/commit bodies, repo
 ```
 
 Primarily model-initiated self-review pass: foundry may invoke before finalizing substantial prose artifact drafted during task. Best-effort, not guaranteed intercept. Skips code, config, machine-parsed envelopes, inter-agent handover files. Commit-message edits preserve the commit rules, including omission of a scope that repeats the type.
+
+Ordinary document frontmatter is preserved verbatim while the prose body is edited. `check` remains read-only; confidence and findings stay in the response rather than being inserted into the target artifact.
 
 <a id="-agents-reference"></a>
 
@@ -675,10 +694,10 @@ Details per agent follow.
 - docstrings (`foundry:doc-scribe`), ruff/mypy config (`foundry:linting-expert`)
 - system design (`foundry:solution-architect`), test quality analysis (`foundry:qa-specialist`), perf profiling (`foundry:perf-optimizer`)
 - ML paper implementations (`research:scientist`), `.claude/` config edits (`foundry:curator`)
-- CI/CD pipeline config — GitHub Actions, pre-commit hooks, CI YAML (`oss:cicd-steward` — requires `oss` plugin)
+- CI/CD pipeline config — GitHub Actions and CI YAML (`oss:cicd-steward` — requires `oss` plugin); pre-commit hook configuration belongs to `foundry:linting-expert`
 - read-only third-party release impact questions without a fix request (general-purpose)
 
-Bug-finding reviews remain in scope; compatibility review of the project's own public API belongs to `foundry:solution-architect`.
+Bug-finding reviews remain in scope and leave source, tests, configuration and the index unchanged. Compatibility review of the project's own public API belongs to `foundry:solution-architect`. Implementation handoffs to QA and lint review are recommendations the caller may decline; lint fix mode needs explicit authorization.
 
 **Auto-invokes when:** user asks to implement, build, write, modify, fix code across 3+ files; phrases: "implement", "build", "write the code for", "add feature", "fix this bug".
 
@@ -700,7 +719,9 @@ Worktree isolation is chosen per spawn, not by the agent: a caller passes `isola
 
 **Auto-invokes when (MAYBE):** architecture questions involving 3+ components; "how should I structure this", "ADR for", "migration plan for". Not for simple design questions.
 
-Produces documentation — ADRs, interface contracts, migration plans, component diagrams — not production code. Hands off to `foundry:sw-engineer` for execution. Spec with multiple unresolved decision branches: resolves one at a time via `AskUserQuestion` with recommended answer each, not one bulk ask. Review-only asks return findings without standalone design artifacts; alignment waits only for an ambiguous design question, and irreversible-decision flags fold into matching findings.
+Produces documentation — ADRs, interface contracts, migration plans, component diagrams — not production code. Hands off to `foundry:sw-engineer` for execution. Spec with multiple unresolved decision branches: resolves one at a time via `AskUserQuestion` with recommended answer each, not one bulk ask. Review and analysis/mapping asks return findings without a confirmation wait or standalone design artifacts. Subagents return `needs_decision` with the concern and question only when a decision is required; callers ask and re-spawn with the answer.
+
+The agent loads its finding methodology, boundary checks and design antipatterns from `references/solution-architect/` with `cat` before the corresponding analysis or report.
 
 <a id="foundry-qa-specialist"></a>
 
@@ -718,6 +739,10 @@ Produces documentation — ADRs, interface contracts, migration plans, component
 
 Writes deterministic, parametrized, behavior-focused tests. Progression: happy path → edge cases → error cases → boundary values → adversarial inputs. Applies public-API coverage checklist before done; edge-case coverage findings require documented or code-explicit contracts, while unspecified behavior goes under `Contract questions:`.
 
+Caller execution scope, test command and budget control verification. Review-only work leaves source unchanged; coverage comparisons distinguish the supplied baseline from unexecuted behavior, and unsupported requests preserve the caller's required file/envelope.
+
+The agent loads test validation, test patterns, review assertions and antipatterns from `references/qa-specialist/` with `cat` before the corresponding activity, plus the teammate protocol when operating in Agent Teams.
+
 <a id="foundry-linting-expert"></a>
 
 ### foundry:linting-expert
@@ -733,6 +758,8 @@ Writes deterministic, parametrized, behavior-focused tests. Progression: happy p
 **Auto-invokes when:** after code edits when user asks "is this clean", "any lint issues", "check formatting", "check types"; lint or type errors visible in output.
 
 Always downstream of `foundry:sw-engineer` — never lints unimplemented code.
+
+Review mode reports findings without source edits and runs rewriting checks in a disposable copy. Fix mode requires an explicit fix request. Pinned tools use targeted pre-commit hooks; unpinned tools use a verified project runner. Missing required tools return a blocked envelope. Python docstrings/examples and lint/type configuration are in scope; Markdown prose formatting belongs to `foundry:doc-scribe` and the project formatter.
 
 <a id="foundry-perf-optimizer"></a>
 
@@ -750,6 +777,8 @@ Always downstream of `foundry:sw-engineer` — never lints unimplemented code.
 
 Strictly profile-first: measure before change, change one thing, measure again. Optimization order: algorithm -> data structure -> I/O -> memory -> concurrency -> vectorization -> compute -> caching. Never GPU tuning before checking I/O.
 
+Advisory and research-plan reviews remain static: no workload, metric, profiler or benchmark execution, and no implementation edits. Executable work uses a concrete representative script or temporary harness; optimization rollback checks candidate hashes and restores only the iteration's owned files. Static estimates are labelled unconfirmed, and optional redesigns remain separate from active defects.
+
 <a id="foundry-doc-scribe"></a>
 
 ### foundry:doc-scribe
@@ -760,11 +789,11 @@ Strictly profile-first: measure before change, change one thing, measure again. 
 
 **Model**: `sonnet`
 
-**Not for**: CHANGELOG entries or release notes (`oss:shepherd` for lifecycle/format decisions, `/oss:release` for automated generation), linting code examples (`foundry:linting-expert`), implementation (`foundry:sw-engineer`), outward-facing narrative artifacts — blog posts, talk slides, social threads (`foundry:creator`).
+**Not for**: independent CHANGELOG entries or release notes (`oss:shepherd` for lifecycle/format decisions, `/oss:release` for automated generation), linting code examples (`foundry:linting-expert`), implementation (`foundry:sw-engineer`), outward-facing narrative artifacts — blog posts, talk slides, social threads (`foundry:creator`). Mechanical CHANGELOG/contributor cross-checks delegated by `/oss:release` remain in scope under the caller's guards; towncrier/commitizen direct CHANGELOG edits route to `oss:shepherd` (requires `oss` plugin).
 
 **Auto-invokes when:** user asks for documentation; "write docs for", "add docstrings to", "update the README", "document this function".
 
-Audit category restrictions and documentation standards explicitly set as acceptance criteria filter findings; background style mentions do not narrow a broad audit. Always downstream — documents finalized code, never shapes design. After `foundry:doc-scribe` produces content, follow with `foundry:linting-expert` to sanitize code examples.
+Read-only documentation audits remain in scope. Audit category restrictions and documentation standards explicitly set as acceptance criteria filter findings; background style mentions do not narrow a broad audit. Always downstream — documents finalized code, never shapes design. After `foundry:doc-scribe` produces content, follow with `foundry:linting-expert` to check Python docstrings/examples under the selected review/fix mode. Doc-scribe owns Markdown prose formatting.
 
 <a id="foundry-web-explorer"></a>
 
@@ -777,6 +806,8 @@ Audit category restrictions and documentation standards explicitly set as accept
 **Model**: `sonnet`
 
 **Not for**: local code analysis — local code reading with a fix request or implementation (`foundry:sw-engineer`), read-only impact questions (general-purpose); ML paper analysis (`research:scientist`), README/docstring writing (`foundry:doc-scribe`), dependency upgrade lifecycle decisions (`oss:shepherd`), perf profiling or benchmarking recommendations (`foundry:perf-optimizer`).
+
+Dependency-pin lookup in local package/lock files and fetching or checking external README content remain in scope. Documentation build failures route to `oss:cicd-steward` (requires `oss` plugin); local source behavior comes from the caller.
 
 **Auto-invokes when:** user asks about library docs, external API, URL content; "what does X docs say", "look up", "find the docs for", "latest version of"; user pastes URL + asks question about it.
 
@@ -881,7 +912,7 @@ Agent and skill frontmatter uses aliases only, never a pinned model ID, so each 
 - Re-running setup after an upgrade migrates any pre-namespace unprefixed link, but only when that link provably belongs to foundry; a link into another marketplace, a source checkout, or a dotfiles tree is preserved and reported as a conflict instead.
 - Confidence describes the correctness of the delivered result and how it was produced and checked within scope. Report completion separately; a high score does not pass an unmet gate.
 
-> **Stub + on-demand split (token diet):** several rules are thin always-loaded stubs with hard constraints only (`debugging.md`, `external-data.md`, `artifact-lifecycle.md`, `quality-gates.md`, `communication.md`, `claude-config.md`, `public-github.md`, `task-lifecycle.md`, `notebooks.md`). Their full procedural bodies live in `rules/_full/` (resolved from plugin cache, not symlinked or injected) and are read on demand at the trigger point the stub names.
+> **Stub + on-demand split (token diet):** several rules retain their constraints in installed stubs (`debugging.md`, `external-data.md`, `artifact-lifecycle.md`, `quality-gates.md`, `communication.md`, `claude-config.md`, `public-github.md`, `task-lifecycle.md`, `notebooks.md`, `agent-spawn.md`, `python-code.md`, `python-testing.md`). Detailed contracts and worked examples live in `rules/_full/` (resolved from plugin cache, not symlinked or injected); each stub requires reading its binding detail before the corresponding activity and stops that activity if the detail is unavailable.
 >
 > Sections that matter only while touching one kind of file sit behind a narrower `paths` glob (`markdown.md`, `python-code.md`). Rules that matter only during one activity are injected by `hooks/rule-inject.js`: `agent-spawn.md` on the first `Agent()` call, `git-commit.md` on the first commit-creating git call of each session and subagent (again after compaction or `/clear`).
 >
@@ -908,6 +939,8 @@ Agent and skill frontmatter uses aliases only, never a pinned model ID, so each 
 | [`agent-spawn.md`](rules/agent-spawn.md)               | injected after the first `Agent()` call; `**/skills/**/*.md`, `**/agents/**/*.md`             | Spawn slots, end the turn after spawning with per-agent deadlines, parallel spawn ceilings by model tier                                     |
 | [`model-tiering.md`](rules/model-tiering.md)           | `**/skills/**/*.md`, `**/agents/**/*.md`                                                      | Model tier ladder, checkable escalation triggers, no `model:` pin on inline skills, author cost checklist                                    |
 
+Progress tables come only from the ledger helper and include reconciliation of previous dispositions and current carried, repeat-route and new findings for all tiers and security. Old means a known invariant, including closed history, rather than only previous-row carryover. Reviews run before a ledger are disclosed as pre-ledger prose, never invented table rows. Repeated review/fix requests, a second independent review of the same change, or a repeated skill review/fix cycle activate the full loop before the next reviewer dispatch, with its stop rules and user-set round budget.
+
 <a id="-configuration"></a>
 
 ## ⚙️ Configuration
@@ -919,11 +952,13 @@ Agent and skill frontmatter uses aliases only, never a pinned model ID, so each 
 | `statusLine.command`                    | Runs `statusline.js` — active agent count in Claude Code status bar                                                               |
 | `permissions.allow`                     | Adds pre-approved Bash commands, git operations, WebFetch domains                                                                 |
 | `permissions.deny`                      | Adds denied operations (force push, curl writes, `rm -rf`, `sudo`); removes retired gh write and local branch/tag deletion denies |
-| `enabledPlugins["bridge@borda-ai-rig"]` | Enables bridge-backed Codex review in `/foundry:calibrate` and `/foundry:audit`                                                   |
-| `advisorModel`                          | Copied from project `.claude/settings.json` when pinned — advisor tool uses chosen model                                          |
+| `enabledPlugins["bridge@borda-ai-rig"]` | Enables an installed bridge for Codex review only after explicit opt-in; skipped under `--approve`                                |
+| `advisorModel`                          | Promotes a project-pinned model globally only after explicit opt-in; preserves the global value under `--approve`                 |
 | `env.CLAUDE_CODE_ENABLE_TODO_TOOLS`     | Re-enables the task tools (`TaskCreate`/`TaskList`/`TaskUpdate`/`TaskGet`), off by default                                        |
 
 Env defaults ship in `.claude-plugin/env-defaults.json` and merge per key with `settings_json.py` — a key already present in `~/.claude/settings.json` keeps the user's value, including a deliberate `"0"`. All setup JSON reads, probes and writes use Python; writes replace a complete temporary file atomically without a Write-tool prompt.
+
+Setup uses `settings_json.py filter-foundry-hooks ~/.claude/settings.json --root "$PLUGIN_ROOT" --dry-run` to report foundry/user hook counts, then `--apply` only after selecting removal. It removes only shipped foundry commands and preserves user hooks, matcher metadata, unrecognized shapes and unrelated settings. `settings_json.py statusline-owned ~/.claude/settings.json --root "$PLUGIN_ROOT"` proves ownership from an executed shipped-hook path before updating a stale entry; custom status lines require explicit replacement consent and remain unchanged under `--approve`.
 
 ### Optional flags and knobs
 
@@ -942,15 +977,15 @@ No environment variables required. foundry reads `~/.claude/settings.json` + plu
 
 **`/foundry:audit` reports broken symlinks (Check I3)**
 
-Symlinks in `~/.claude/rules/` point to previous plugin cache path after upgrade. Re-run `/foundry:setup` — Step 10 detects stale symlinks as conflicts, offers replacement.
+Symlinks in `~/.claude/rules/` point to previous plugin cache path after upgrade. Re-run `/foundry:setup` — Step 10 auto-replaces verified stale Foundry links; conflicting user files are kept by default.
 
 **Hooks not firing**
 
-Run `/foundry:investigate "hooks not firing on Save"`. Most common cause: `hooks` block still in `~/.claude/settings.json` from pre-plugin-migration install (hooks now register via plugin manifest, not `hooks` key). `/foundry:setup` Step 3 detects + removes stale block.
+Run `/foundry:investigate "hooks not firing on Save"`. Most common cause: `hooks` block still in `~/.claude/settings.json` from pre-plugin-migration install (hooks now register via plugin manifest, not `hooks` key). `/foundry:setup` Step 3 offers selective removal of verified stale Foundry registrations and preserves user hooks.
 
 **`/foundry:calibrate` times out**
 
-Each pipeline subagent has 10-minute hard cutoff (15 minutes when Codex active, 60 minutes with `--full` or `--ab-test`). Target consistently times out: run in isolation: `/foundry:calibrate foundry:sw-engineer --fast`. Persistent: `/foundry:investigate "/calibrate times out every run"`.
+Each pipeline has a 52-minute fast deadline (139 minutes when Codex is active); `--full` and `--ab-test` use a computed allowance for serial children, real fixtures and Codex work. Timeouts are reported as incomplete with null metrics, and reservations remain until the pipeline and its children stop. Target consistently times out: run in isolation: `/foundry:calibrate foundry:sw-engineer --fast`. Persistent: `/foundry:investigate "/calibrate times out every run"`.
 
 **`/foundry:manage create` picks wrong model tier**
 
@@ -986,12 +1021,20 @@ plugins/cc_foundry/
 ├── hooks/             hooks.json registrations + Node hook scripts and hooks/lib/
 ├── bin/               Python helpers used by skills and hooks (see Bin helpers below)
 ├── assets/images/     animated SVG execution diagrams embedded in this README
-├── CLAUDE.src.md      workflow rules + the five delivery principles; /foundry:setup Step 10 copies → ~/.claude/CLAUDE.md
+├── CLAUDE.src.md      workflow rules + the five delivery principles; /foundry:setup Step 12 copies → ~/.claude/CLAUDE.md
 ├── TEAM_PROTOCOL.md   AgentSpeak v2 inter-agent protocol
 └── permissions-guide.md  annotated allow/deny reference (copied to .claude/ by /foundry:setup)
 ```
 
 Hooks register through [`hooks/hooks.json`](hooks/hooks.json) (`${CLAUDE_PLUGIN_ROOT}` paths). All hooks fail open unless noted: a hook that crashes grants nothing and falls back to normal permission handling.
+
+Activity state for task logging, the statusline and batch nudges lives under owner-private `claude-state-user-<uid>/claude-state-<session>/` in TMPDIR or the OS temp directory; absent session IDs do not share activity state. Router caches and stale-plugin warning markers are owner-private, and warning writes are exclusive. Report-header sentinels are checked for owner, type and links before reading. Restored repository contracts and handovers carry fresh untrusted-content fences; PreCompact saves only owner-verified contracts.
+
+Automatic linting requires user-set absolute `FOUNDRY_LINT_CONFIG` before Claude starts; repository config alone does not opt in. External routing requires `AGENT_ROUTER_ALLOW_EXTERNAL=1`. Markdown normalization runs after Edit on regular in-project files, refuses symlinked targets, and grants no permission. Bash and Monitor share the rewritten-command and approval checks; RTK rewrites do not allow a command by themselves. Native PowerShell hook behavior remains unverified.
+
+Session-end artifact cleanup preserves files when Git cannot reliably enumerate tracked paths, including damaged repository metadata.
+
+`gh api --allow-escape-sequences` is recognized by the write guard as an output-display flag, including `=true` and `=false`; write detection and single-use approval stay unchanged. The read allow hook intentionally excludes it, so each use reaches normal permission handling before terminal escape sequences enter the session.
 
 | Hook                                                           | Purpose                                                                                                                      |
 | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -1034,6 +1077,7 @@ For per-hook detail see the header comment of each script in `hooks/`; the repos
 
 - **Audit and document checks** — the deterministic Layer-1 checks behind `/foundry:audit` (cross-reference, layout, fence/tag symmetry, plugin version sync, README drift via `check_readme_drift.py`, orphaned helpers via `check_orphaned_bin.py`, efficiency signals).
 - **Session, install and state** — path and plugin-root resolvers, settings merge (`settings_json.py`), run-directory creation, append-only ledgers, review-loop recording, compaction gate, spawned-agent deadline reporting (`agent_watch.py`), stale lock and worktree cleanup, symlink guard.
+- **Ledger confinement** — without `--run-root`, `append_ledger.py` authorizes only `.reports/`, `.temp/`, `.notes/`, `.experiments/` and `.developments/` directly under the ledger's nearest `.git` ancestor, falling back to cwd. Optional `--run-root` replaces those defaults with an existing run directory; `--history-root` adds ledger destinations and `--source-root` adds read-only sources. Linked paths, parent traversal and combined inputs above 64 MiB are refused before appending or deleting staged records.
 - **Reporting, sync and transforms** — profile analyzers (`timing_analyzer.py`, `cost_analyzer.py`), blueprint manifest builder, cross-plugin shared-file propagation (`propagate_shared.py`), code-block extraction, flag parsing.
 - **Auto-allow audit** — `verify_blueprint_audit.py` verifies and prunes the audit log (see [Auto-allow audit log](#auto-allow-audit-log)).
 
@@ -1074,6 +1118,8 @@ Claude Code runs no cleanup hook on uninstall, so nothing `/foundry:setup` creat
 
 ## 🧾 Auto-allow audit log
 
+The blueprint and sentinel classifiers treat command-table names inside fixed ordinary quoted search operands as inert data. Command substitutions, variable writes and existing arithmetic-expression refusals remain checked. JavaScript classifiers also reject executing Git configuration and environment overrides consistently with the Python manifest generator. The sentinel module retains its narrower command whitelist.
+
 `allow-dispatch.js` and `audit-close.js` append one JSON line each per Bash call to `~/.claude/logs/audit/`: one file per session (`s-<key>.jsonl`, the key being a hash of the session id) plus a shared `_no-session.jsonl` for calls that arrive without one.
 
 - A record names the deciding plugin and hook, the session and tool-call ids, the working directory, the effective decision with its lane and provenance, and both decision modules' own verdicts.
@@ -1082,8 +1128,9 @@ Claude Code runs no cleanup hook on uninstall, so nothing `/foundry:setup` creat
 - `RIG_AUDIT=0` disables audit writing without changing any permission decision.
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" verify
-python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" prune --older-than 30 --dry-run
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/verify_blueprint_audit.py" verify
+python "$PLUGIN_ROOT/bin/verify_blueprint_audit.py" prune --older-than 30 --dry-run
 ```
 
 - `verify` exits 1 only when a record's own hash fails to verify; torn framing from concurrent appends and every classification are warnings. `record_hash` detects a record that changed after it was written — it is not tamper-evidence, because the same user owns the log, the hooks and the checker.
@@ -1118,7 +1165,7 @@ JS hook tests only:
 pytest plugins/cc_foundry/tests/ -v -k "js"
 ```
 
-- **JS hook tests** are subprocess, black-box contract tests: each spawns a real `node <hook>.js` with a JSON payload on stdin and asserts filesystem side-effects (under `/tmp/claude-state-<session_id>/`) and exit codes. The `run_hook` and `state_dir` fixtures live in `conftest.py`. Python is only the orchestrator, so no `package.json` or `node_modules` is needed. Tradeoff: these tests cover the hook *interface* contract, not individual JS function internals.
+- **JS hook tests** are subprocess, black-box contract tests: each spawns a real `node <hook>.js` with a JSON payload on stdin and asserts filesystem side-effects (under the owner-private temporary state root) and exit codes. The `run_hook` and `state_dir` fixtures live in `conftest.py`. Python is only the orchestrator, so no `package.json` or `node_modules` is needed. Tradeoff: these tests cover the hook *interface* contract, not individual JS function internals.
 - **Python `bin/` script tests** cover the helpers directly, one test module per script under `plugins/cc_foundry/tests/`.
 - Tests are grouped in topic subfolders (`audit/`, `hooks/`, `paths/`, `analysis/`, …); the hooks suite includes the guards, auto-allow decision modules, audit log, and the shell lexer.
 
@@ -1139,11 +1186,16 @@ foundry = part of Borda-AI-Rig repository. Suggest improvement or report bug:
 2. File issue on repository — include output of `/foundry:audit setup` + Claude Code version
 3. Plugin updates reach users via `claude plugin install foundry@borda-ai-rig` (update or reinstall); `/foundry:setup` afterwards only links rules and merges settings
 
-New agent or skill: use `/foundry:manage create` — handles scaffolding, README sync, MEMORY.md updates automatically.
+New agent or skill: use `/foundry:manage create` — handles scaffolding and README sync automatically.
 
 Review and evidence expectations in the shipped `rules/quality-gates.md`:
 
+- Before `bridge:implement`, provide the exact finding, target paths, evidence, permitted edits, result, stop condition and proof command. A dirty tree blocks delegation unless the invoking skill explicitly documents a combined-change exception with bounded owned paths, a recorded starting snapshot, combined-diff review and proof commands; only that invocation may use the exception. The parent reads the full returned diff and runs the proof before committing; the bridge never commits. Repeated fix rounds on the same issue (2+) stay with the parent; a review-and-fix loop counts every round on one component as the same issue, so continuing past the second delegated round needs one recorded user decision naming the component.
+
 - Cited proof for factual, causal and completion claims; a representative real case alongside TDD; user-authorized behavior unchanged. Mocks are supplementary polishing after real behavior is validated; unavailable real acceptance stays explicit.
+
 - Review limits remain factual process evidence; an out-of-scope extra review needs one explicit user decision with its gap, expected output and stop condition. Declined optional reviews are omitted from findings and action items while factual limits remain disclosed.
+
 - The shared cross-validation protocol requires parent validation at every severity before findings publication, then capped independent critical verification. Review presentation uses role names only and square-bracketed scores, such as `Software engineer [3]`. Static proof may settle a claim; unavailable evidence never refutes it, and incomplete feasible work never becomes unconditional approval.
+
 - Review outcomes follow the final findings' concrete impact and required repair. Minor changes include bounded correctness, test and compatibility fixes; Major revision requires evidenced material behavioral impact or substantial repair. The verdict cites the controlling finding IDs, while finding counts, CI status and reviewer votes do not set it automatically. Required fixes remain actionable under Minor, and source approval stays separate from verification readiness. Documentation-only corrections and missing or additional tests normally remain Minor unless concrete material consequences or a substantially incomplete required deliverable justify more; missing tests alone do not establish a production bug. These factors inform one combined judgment: high-impact findings can control the verdict and are never diluted by minor items. Use the strongest confirmed consequence as the baseline, account for proven joint effects, and keep severity, source disposition and verification separate. Missing tests no longer receive an automatic High rating; numeric topic discounts require independent calibration before they can determine verdicts.

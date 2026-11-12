@@ -784,7 +784,7 @@ class TestPrune:
         The path of the removed file appears in the report.
         """
         verifier.main(["prune", str(aged.directory)])
-        assert str(aged.old) in capsys.readouterr().out
+        assert ascii(str(aged.old)) in capsys.readouterr().out
 
     @pytest.mark.parametrize("name", ["timings.jsonl", "invocations.jsonl", "notes.txt", "s-short.jsonl"])
     def test_never_deletes_a_file_that_is_not_a_session_log(self, aged: _AgedLogs, name: str) -> None:

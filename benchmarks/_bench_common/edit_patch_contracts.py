@@ -1322,7 +1322,9 @@ def semantic_index_sha256(payload: Mapping[str, Any], source_root: PurePath) -> 
             return {key: replace_root(item) for key, item in value.items()}
         return value
 
-    semantic_payload = {key: value for key, value in payload.items() if key not in {"scan_root", "scanned_at"}}
+    semantic_payload = {
+        key: value for key, value in payload.items() if key not in {"scan_root", "scan_root_key", "scanned_at"}
+    }
     normalized = replace_root(semantic_payload)
     return hashlib.sha256(json.dumps(normalized, separators=(",", ":"), sort_keys=True).encode("utf-8")).hexdigest()
 

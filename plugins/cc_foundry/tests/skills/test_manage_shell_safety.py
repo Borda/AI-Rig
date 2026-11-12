@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from _hook_env import _bash_runs_posix_script, _symlinks_supported
+from _plugin_payload import install_foundry
 
 _PLUGIN = Path(__file__).resolve().parents[2]
 _BASH = pytest.mark.skipif(not _bash_runs_posix_script(), reason="POSIX bash unavailable")
@@ -41,7 +42,14 @@ def _run(script: str, root: Path, **env: str) -> subprocess.CompletedProcess[str
         ["bash"],
         input='python() { "$MANAGE_PYTHON" "$@"; }\n' + script,
         cwd=root,
-        env={**os.environ, "MANAGE_PYTHON": sys.executable, "CLAUDE_PLUGIN_ROOT": str(_PLUGIN), **env},
+        env={
+            **os.environ,
+            "MANAGE_PYTHON": sys.executable,
+            "CLAUDE_PLUGIN_ROOT": str(install_foundry(root)),
+            "HOME": str(root),
+            "USERPROFILE": str(root),
+            **env,
+        },
         text=True,
         capture_output=True,
         check=False,

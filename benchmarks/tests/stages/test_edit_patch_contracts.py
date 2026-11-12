@@ -432,6 +432,18 @@ class TestSemanticIndexSha256:
 
         assert posix_digest == windows_digest
 
+    def test_ignores_the_scan_root_key_that_hashes_the_runtime_root(self) -> None:
+        """The scan-root key identifies where a scan ran, so two scans of one graph in different roots hash the same.
+
+        A fixture indexed in two temporary directories records different root keys; the graph identity must not depend
+        on which directory held the scan.
+        """
+        first = {"scan_version": 14, "scan_root_key": "a" * 64, "modules": [{"file": "src/app.py"}]}
+        second = {"scan_version": 14, "scan_root_key": "b" * 64, "modules": [{"file": "src/app.py"}]}
+        root = PurePosixPath("/canonical/checkout")
+
+        assert semantic_index_sha256(first, root) == semantic_index_sha256(second, root)
+
     def test_leaves_non_path_backslashes_alone(self) -> None:
         """Only a tail that followed the runtime root is renormalized; content is not touched.
 

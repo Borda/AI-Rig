@@ -2,6 +2,7 @@
 import { chmodSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { sha256 } from "../../src/digest.ts"
 import { collectScope } from "../../src/evidence.ts"
 import type { RunRecord } from "../../src/run.ts"
 import { createHarness, Project } from "../helpers/harness.ts"
@@ -12,7 +13,27 @@ async function started(skill = "rig-challenge", gates = ['node -e "process.exit(
   const project = Project.withCommit()
   project.write("src/a.ts", "export const a = 2\n")
   const harness = await createHarness(project, { gates })
-  const result = await harness.call("rig_evidence", { action: "start", skill, paths: ["src"] })
+  let sourceRunId: string | undefined
+  if (skill === "rig-remediate") {
+    const source = await harness.call("rig_evidence", { action: "start", skill: "rig-review", paths: ["src"] })
+    sourceRunId = source.metadata.run_id
+    await harness.call("rig_findings", {
+      action: "write",
+      run_id: sourceRunId,
+      axes: ["correctness"],
+      coverage: ["src"],
+      reviewer: "reviewer",
+      findings: [],
+    })
+    await harness.call("rig_evidence", { action: "finalize", run_id: sourceRunId })
+  }
+  const result = await harness.call("rig_evidence", {
+    action: "start",
+    skill,
+    paths: ["src"],
+    ...(skill === "rig-implement" ? { trivial_plan: "Change one source constant; verify with configured gates." } : {}),
+    ...(sourceRunId ? { source_run_id: sourceRunId } : {}),
+  })
   const call = harness.call.bind(harness)
   harness.call = (name, input) => call(name, { run_id: result.metadata.run_id, ...(input as object) })
   const directory = project.path(`.opencode-rig/runs/${skill}/${result.metadata.run_id}`)
@@ -105,7 +126,7 @@ describe("gate history", () => {
     expect(runAt(runPath).gates).toEqual([])
   })
 
-  it("binds a source-rewriting gate receipt to the live digest without updating the scope", async () => {
+  it("leaves a source-rewriting gate receipt unbound to any source digest", async () => {
     const { project, harness, runPath } = await started("rig-implement", [
       `node -e "require('fs').writeFileSync('src/a.ts', 'changed by gate')"`,
     ])
@@ -113,8 +134,8 @@ describe("gate history", () => {
     const result = await harness.call("rig_gate", { action: "run" })
     const run = runAt(runPath)
     expect(run.scope.digest).toBe(saved)
-    expect(run.gates[0]!.source_digest).toBe(collectScope(project.root, ["src"]).digest)
-    expect(run.gates[0]!.source_digest).not.toBe(saved)
+    expect(run.gates[0]!.source_digest).toBeUndefined()
+    expect(collectScope(project.root, ["src"]).digest).not.toBe(saved)
     expect(result.content).toMatch(/source changed.*refresh/is)
     expect(result.content).not.toContain("All recorded gates passed")
     expect((await harness.call("rig_evidence", { action: "finalize" })).metadata.ok).toBe(false)
@@ -337,7 +358,7 @@ describe("run write boundaries", () => {
     const { project, harness, runPath } = await started("rig-implement")
     rmSync(project.path("src/a.ts"))
     await harness.call("rig_evidence", { action: "record", outputs: ["src/a.ts"] })
-    expect(runAt(runPath).outputs).toEqual([{ path: "src/a.ts", sha256: "" }])
+    expect(runAt(runPath).outputs).toEqual([{ path: "src/a.ts", sha256: sha256("") }])
     await expect(harness.call("rig_evidence", { action: "record", inputs: ["src/a.ts"] })).rejects.toThrow(
       /does not exist/,
     )
@@ -349,8 +370,8 @@ describe("run write boundaries", () => {
   })
 
   it("permits remediation findings without review-only axes or coverage", async () => {
-    const { harness } = await started("rig-remediate")
-    await harness.call("rig_findings", { action: "write", findings: [] })
+    const { harness, runPath } = await started("rig-remediate")
+    await harness.call("rig_findings", { action: "write", source_run_id: runAt(runPath).source_run_id, findings: [] })
     const artifact = JSON.parse((await harness.call("rig_findings", { action: "read" })).content)
     expect(artifact).toMatchObject({ axes: [], coverage: [], findings: [] })
   })

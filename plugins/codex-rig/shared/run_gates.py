@@ -71,6 +71,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -78,7 +79,11 @@ import time
 from pathlib import Path
 from typing import Any, NamedTuple
 
-import collect_diff
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
+import collect_diff  # noqa: E402
+from gate_test_approval import retain_approval  # noqa: E402
 
 #: Verification gate identifiers, in the order the gates run and are reported.
 GATE_IDS = ("lint", "format", "types", "tests", "review")
@@ -88,6 +93,8 @@ DEFAULT_TIMEOUT_SECONDS = 7200
 CHECKS_DIRNAME = "checks"
 #: Timeout, in seconds, for the quick git and source-inspection commands run alongside the gates.
 SOURCE_INSPECTION_TIMEOUT_SECONDS = 30
+#: Disable repository-configured executables during parent source observations.
+SOURCE_GIT = ("git", "--no-pager", "-c", "core.fsmonitor=false", "-c", f"core.hooksPath={os.devnull}")
 #: Pattern for a dotted Python module name accepted as a pytest import-origin argument.
 PYTHON_MODULE_PATTERN = re.compile(r"[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*")
 
@@ -207,6 +214,7 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--out", required=True, type=Path, help="Required artifact directory.")
+    parser.add_argument("--test-skip-approval", type=Path, help="Retained user decision authorizing --skip-tests.")
     for gate_id in GATE_IDS:
         parser.add_argument(
             f"--{gate_id}",
@@ -362,15 +370,25 @@ def default_commands(platform: str) -> dict[str, str]:
 def terminate_process(process: subprocess.Popen[str], platform: str) -> None:
     """Terminate a timed-out command and its descendants on the current platform."""
     if platform == "win32":
-        completed = subprocess.run(  # noqa: S603 - argv list, no shell
-            ["taskkill", "/PID", str(process.pid), "/T", "/F"],  # noqa: S607 - native system tool
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=2,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(  # noqa: S603 - argv list, no shell
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],  # noqa: S607 - native system tool
+                capture_output=True,
+                timeout=2,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(
+                "windows-process-tree-cleanup-unproven: "
+                f"returncode=unavailable timeout={error.timeout} "
+                f"stdout={(error.stdout or b'')[:256]!r} stderr={(error.stderr or b'')[:256]!r}"
+            ) from error
         if completed.returncode != 0:
-            raise RuntimeError("windows-process-tree-cleanup-unproven")
+            raise RuntimeError(
+                "windows-process-tree-cleanup-unproven: "
+                f"returncode={completed.returncode} "
+                f"stdout={(completed.stdout or b'')[:256]!r} stderr={(completed.stderr or b'')[:256]!r}"
+            )
         try:
             process.wait(timeout=2)
         except subprocess.TimeoutExpired:
@@ -863,8 +881,8 @@ def _ignored_source_inventory(worktree: Path | None) -> str:
     """Record ignored paths outside tool caches without mixing them into Git status."""
     caches = (".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache")
     ignored = subprocess.run(  # noqa: S603 - fixed local Git inspection with cache exclusions
-        [  # noqa: S607 - Git resolved through PATH for local inspection
-            "git",
+        [
+            *SOURCE_GIT,
             "ls-files",
             "--others",
             "--ignored",
@@ -884,12 +902,12 @@ def _ignored_source_inventory(worktree: Path | None) -> str:
 
 
 def _concealed_source_error(flags: str, worktree: Path | None) -> str | None:
-    """Reject flagged index entries only when present working bytes differ from the index."""
+    """Reject concealed content or mode changes while preserving Git's platform configuration."""
     concealed = [row for row in flags.split("\0") if row and (row[0].islower() or row[0] == "S")]
     if not concealed:
         return None
-    staged = subprocess.run(
-        ["git", "ls-files", "-s", "-z"],  # noqa: S607 - local Git inspection
+    staged = subprocess.run(  # noqa: S603 - fixed local Git inspection
+        [*SOURCE_GIT, "ls-files", "-s", "-z"],
         cwd=worktree,
         capture_output=True,
         text=True,
@@ -897,6 +915,19 @@ def _concealed_source_error(flags: str, worktree: Path | None) -> str | None:
         timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
     )
     index = dict(row.split("\t", 1)[::-1] for row in staged.stdout.split("\0") if row)
+    configuration = subprocess.run(  # noqa: S603 - fixed local Git inspection
+        [*SOURCE_GIT, "config", "--bool", "--get-regexp", r"^core\.(filemode|symlinks)$"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
+    )
+    if configuration.returncode not in {0, 1}:
+        raise subprocess.CalledProcessError(configuration.returncode, configuration.args)
+    settings = dict(line.split(None, 1) for line in configuration.stdout.splitlines())
+    symlinks = settings.get("core.symlinks", "true") == "true"
+    filemode = settings.get("core.filemode", "true") == "true"
     changed = []
     for row in concealed:
         path = row[2:]
@@ -904,15 +935,28 @@ def _concealed_source_error(flags: str, worktree: Path | None) -> str | None:
         if row[0].upper() == "S" and not target.exists() and not target.is_symlink():
             continue
         link = target.is_symlink()
+        mode, expected_hash, _stage = index[path].split()
+        metadata = target.lstat()
+        regular = stat.S_ISREG(metadata.st_mode)
+        # Git permits a regular-file representation of indexed symlinks on hosts without symlink support.
+        kind_matches = (link or (not symlinks and regular)) if mode == "120000" else regular
+        executable_matches = (
+            mode not in {"100644", "100755"}
+            or not filemode
+            or (bool(metadata.st_mode & stat.S_IXUSR) == (mode == "100755"))
+        )
+        if not kind_matches or not executable_matches:
+            changed.append(path)
+            continue
         observed = subprocess.run(  # noqa: S603 - index-derived path after the option terminator
-            ["git", "hash-object", "--stdin"] if link else ["git", "hash-object", "--", path],
+            [*SOURCE_GIT, "hash-object", "--stdin"] if link else [*SOURCE_GIT, "hash-object", "--", path],
             cwd=worktree,
             input=os.fsencode(os.readlink(target)) if link else None,
             capture_output=True,
             check=False,
             timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
         )
-        if observed.returncode != 0 or observed.stdout.strip().decode("ascii") != index[path].split()[1]:
+        if observed.returncode != 0 or observed.stdout.strip().decode("ascii") != expected_hash:
             changed.append(path)
     if changed:
         return f"git-index-concealed-entries:count={len(changed)}:paths={changed[:10]!r}"
@@ -923,9 +967,10 @@ def inspect_source(worktree: Path | None = None) -> dict[str, str]:
     """Return the selected Git checkout head and status, or a failed inspection receipt."""
     empty = {"head": "", "status": ""}
     try:
+        collect_diff.reject_executable_filters(worktree or Path.cwd())
         if worktree is not None:
-            root = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+            root = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
+                [*SOURCE_GIT, "rev-parse", "--show-toplevel"],
                 cwd=worktree,
                 capture_output=True,
                 text=True,
@@ -934,8 +979,8 @@ def inspect_source(worktree: Path | None = None) -> dict[str, str]:
             )
             if root.returncode != 0 or not root.stdout.strip() or Path(root.stdout.strip()).resolve() != worktree:
                 return {**empty, "error": "selected-worktree-is-not-checkout-root"}
-        head = subprocess.run(
-            ["git", "rev-parse", "HEAD"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+        head = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
+            [*SOURCE_GIT, "rev-parse", "HEAD"],
             cwd=worktree,
             capture_output=True,
             text=True,
@@ -946,8 +991,8 @@ def inspect_source(worktree: Path | None = None) -> dict[str, str]:
             detail = head.stderr.strip() or f"exit {head.returncode}"
             return {**empty, "error": f"git-rev-parse-failed:{detail}"}
         # Repository ignore settings must not conceal changed release dependencies.
-        status = subprocess.run(
-            ["git", "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+        status = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
+            [*SOURCE_GIT, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"],
             cwd=worktree,
             capture_output=True,
             text=True,
@@ -957,8 +1002,8 @@ def inspect_source(worktree: Path | None = None) -> dict[str, str]:
         if status.returncode != 0:
             detail = status.stderr.strip() or f"exit {status.returncode}"
             return {**empty, "error": f"git-status-failed:{detail}"}
-        flags = subprocess.run(
-            ["git", "ls-files", "-v", "-z"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+        flags = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
+            [*SOURCE_GIT, "ls-files", "-v", "-z"],
             cwd=worktree,
             capture_output=True,
             text=True,
@@ -976,7 +1021,7 @@ def inspect_source(worktree: Path | None = None) -> dict[str, str]:
         if concealed_error:
             snapshot["error"] = concealed_error
         return snapshot
-    except (OSError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
+    except (OSError, RuntimeError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
         return {**empty, "error": f"git-inspection-failed:{error}"}
 
 
@@ -1303,6 +1348,11 @@ def main() -> int:
         print(f"gate-recovery-blocked:{error}", file=sys.stderr)
         return 2
     (output / CHECKS_DIRNAME).mkdir(parents=True, exist_ok=True)
+    approval = None
+    if arguments.test_skip_approval is not None:
+        if not skip_reasons["tests"]:
+            raise SystemExit("test-skip-approval-without-skip")
+        approval = retain_approval(arguments.test_skip_approval, output, skip_reasons["tests"])
 
     local_source = None
     if arguments.worktree is not None and arguments.expected_head is None:
@@ -1337,6 +1387,8 @@ def main() -> int:
         for gate_id in GATE_IDS
     ]
     failed = [check["id"] for check in checks if check["status"] in {"fail", "missing-command", "timeout"}]
+    if approval is not None:
+        next(check for check in checks if check["id"] == "tests")["approval"] = approval
     status = "timeout" if any(check["status"] == "timeout" for check in checks) else "fail" if failed else "pass"
     not_applicable = [check["id"] for check in checks if check["status"] == "not-applicable"]
     (output / "gates.txt").write_text(
@@ -1354,9 +1406,9 @@ def main() -> int:
         "checks_not_applicable": not_applicable,
         "checks": checks,
     }
-    if arguments.worktree is not None:
+    if arguments.worktree is not None or arguments.expected_head is not None:
         payload["source"] = local_source or {
-            "worktree": arguments.worktree.as_posix(),
+            "worktree": (arguments.worktree or Path.cwd()).as_posix(),
             "expected_head": arguments.expected_head,
         }
         if arguments.project_env is not None:

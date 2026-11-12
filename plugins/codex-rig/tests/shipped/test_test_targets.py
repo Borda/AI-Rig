@@ -50,7 +50,7 @@ def test_heuristics_pick_named_and_importing_tests_and_report_unmapped(project: 
     assert report["unmapped"] == ["src/pkg/orphan.py"]
     assert report["codemap"] == "disabled"
     assert report["sandbox_safe"] is True
-    assert report["pytest_args"] == ["tests/test_mod.py", "tests/test_usage.py", "-p", "no:xdist"]
+    assert report["pytest_args"] == ["-p", "no:xdist", "--", "tests/test_mod.py", "tests/test_usage.py"]
 
 
 def test_changed_tests_and_config_are_reported(project: Path) -> None:
@@ -181,7 +181,9 @@ def test_missing_codemap_falls_back_to_heuristics(project: Path, monkeypatch: py
 )
 @mock.patch.object(HELPER.codemap_adapter, "_run_json", autospec=True)
 @mock.patch.object(HELPER.codemap_adapter, "_resolve_codemap_executable", autospec=True)
+@mock.patch.object(HELPER.subprocess, "run", autospec=True)
 def test_codemap_completeness_is_read_from_the_nested_index_block(
+    git: mock.MagicMock,
     resolve: mock.MagicMock,
     run_json: mock.MagicMock,
     project: Path,
@@ -196,6 +198,7 @@ def test_codemap_completeness_is_read_from_the_nested_index_block(
     """
     resolve.return_value = HELPER.codemap_adapter.LauncherResolution("codemap-py", "available", "test launcher")
     run_json.return_value = (0, payload, None)
+    git.return_value = subprocess.CompletedProcess([], 0, "a" * 40, "")
 
     report = HELPER.choose(project, ["src/pkg/mod.py"], "HEAD", True, None)
 

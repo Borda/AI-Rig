@@ -50,6 +50,9 @@
           "exclusiveMinimum": 0,
           "maximum": 350,
           "type": "number"
+        },
+        "untrusted_task": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -121,6 +124,9 @@
           "exclusiveMinimum": 0,
           "maximum": 700,
           "type": "number"
+        },
+        "untrusted_task": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -179,6 +185,9 @@
           "exclusiveMinimum": 0,
           "maximum": 350,
           "type": "number"
+        },
+        "untrusted_task": {
+          "type": "boolean"
         }
       },
       "required": [

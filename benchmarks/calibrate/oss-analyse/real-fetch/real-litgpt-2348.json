@@ -1,0 +1,362 @@
+{
+  "2031": {
+    "number": 2031,
+    "title": "Add support for Qwen 3",
+    "state": "open",
+    "body": "https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3/modular_qwen3.py\n\nIt seems very similar to qwen 2.5.",
+    "comments": [
+      {
+        "author": "user-3",
+        "body": "would be great to have!"
+      }
+    ]
+  },
+  "1830": {
+    "number": 1830,
+    "title": "Support Deepseek MoE models",
+    "state": "open",
+    "body": "Please describe the feature or enhancement along with the intended usecase.",
+    "comments": []
+  },
+  "1723": {
+    "number": 1723,
+    "title": "Is Support for the DeepSeek v2.5 model on the roadmap?",
+    "state": "open",
+    "body": "The new DeepSeek v2.5 model is the frontier model for local LLM coding. Is this on the roadmap for support?",
+    "comments": [
+      {
+        "author": "user-6",
+        "body": "Thanks for sharing. I currently wouldn't have the capacity to add it, but if there is someone interested in adding it, PRs are welcome!"
+      }
+    ]
+  },
+  "1920": {
+    "number": 1920,
+    "title": "implement DeepSeek",
+    "state": "open",
+    "body": "I want to implement deepseek LLM",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-7 it would be great to have it, note, though, that given the large amount of interest, this is likely a time-sensitive endeavour. If you plan to implement it, what do you think will be the ETA? (also other people might be interested, and note their interest here)."
+      }
+    ]
+  },
+  "873": {
+    "number": 873,
+    "title": "Can you support the DeepSeekMoE model?",
+    "state": "open",
+    "body": "Can you support the DeepSeekMoE model?",
+    "comments": [
+      {
+        "author": "user-9",
+        "body": "The MoE logic would need to be ported: https://huggingface.co/deepseek-ai/deepseek-moe-16b-base/blob/main/modeling_deepseek.py#L245-L411\r\n\r\nI don't think this will be supported soon until more weights are published using this logic."
+      }
+    ]
+  },
+  "702": {
+    "number": 702,
+    "title": "Can lit-gpt support deepseek-coder finetune?",
+    "state": "open",
+    "body": "DeepSeek-Coder:\r\nhttps://github.com/deepseek-ai/DeepSeek-Coder",
+    "comments": [
+      {
+        "author": "user-9",
+        "body": "It can since it's based off Llama 2, which is already fully supported. Contributions are welcome"
+      }
+    ]
+  },
+  "1871": {
+    "number": 1871,
+    "title": "failure converting pretrained litgpt checkpoints to HF format: a reproducible example",
+    "state": "open",
+    "body": "### Bug description\r\n\r\nthere will be an OS File Error if following this example\r\n\r\n```\r\n## 1. pretrain the model in litgpt format\r\nmkdir -p custom_texts\r\ncurl https://www.gutenberg.org/cache/epub/24440/pg24440.txt --output custom_texts/book1.txt\r\ncurl https://www.gutenberg.org/cache/epub/26393/pg26393.txt --output custom_texts/book2.txt\r\n\r\nlitgpt download EleutherAI/pythia-14m --tokenizer_only True\r\n\r\nlitgpt pretrain EleutherAI/pythia-14m \\\r\n  --tokenizer_dir EleutherAI/pythia-14m \\\r\n  --data TextFiles \\\r\n  --data.train_data_path \"custom_texts/\" \\\r\n  --train.max_tokens 10_000_000 \\\r\n  --out_dir out/custom-model\r\n\r\n## 2. convert to hf format\r\nlitgpt convert_from_litgpt out/custom-model/final converted_dir\r\ncp out/custom-model/final/config.json converted_dir\r\n\r\n\r\n```\r\n\r\n```\r\n## 3. load the model in python\r\nimport torch\r\nfrom transformers import AutoModel\r\n\r\nmodel_pth_path = 'converted_dir/model.pth'\r\nmodel_dir_path = 'converted_dir/'\r\nstate_dict = torch.load(model_pth_path)\r\nmodel = AutoModel.from_pretrained(model_dir_path, state_dict=state_dict, local_files_only=True)\r\n\r\nOSError: Error no file named pytorch_model.bin, tf_model.h5, model.ckpt.index or flax_model.msgpack found in directory converted_dir/.\r\n```\r\n\r\nEdit: \r\n\r\nThere two approaches though work.\r\n```\r\nimport torch\r\nfrom transformers import AutoModel\r\n\r\nmodel_pth_path = 'converted_dir/model.pth'\r\nmodel_dir_path = 'converted_dir/'\r\n\r\nstate_dict = torch.load(model_pth_path)\r\nmodel = AutoModel.from_pretrained('EleutherAI/pythia-14m', state_dict=state_dict)\r\nmodel.embed_in._parameters['weight'][0][:2]\r\nstate_dict['gpt_neox.embed_in.weight'][0][:2]\r\nAutoModel.from_pretrained('EleutherAI/pythia-14m').embed_in._parameters['weight'][0][:2]  # compare with huggingface's version to ensure it is actually loaded\r\n```\r\n\r\n\r\n```\r\nimport torch\r\nfrom transformers import AutoConfig, AutoModelForCausalLM\r\n\r\nmodel_pth_path = 'converted_dir/model.pth'\r\nmodel_dir_path = 'converted_dir/'\r\n\r\nstate_dict = torch.load(model_pth_path)\r\nconfig = AutoConfig.from_pretrained(model_dir_path)\r\nmodel = AutoModelForCausalLM.from_config(config)\r\nmodel.load_state_dict(state_dict)\r\n```\r\n\r\n### What operating system are you using?\r\n\r\nmacOS\r\n\r\n### LitGPT Version\r\n\r\n``` \r\nVersion: 0.5.3\r\n```\r\n",
+    "comments": [
+      {
+        "author": "user-11",
+        "body": "any update on this?"
+      },
+      {
+        "author": "user-12",
+        "body": "convert_from_litgpt only change lit_model.pth to model.pth.\n\nwe need pytorch_model.bin. and another config files\n\nso edit ```litgpt/scripts/covert_lit_checkpoint.py``` function ```convert_lit_checkpoint``` like\n(found litgpt/eval/evaluate.py)\n```python\n@torch.inference_mode()\ndef convert_lit_checkpoint(checkpoint_dir: Path, output_dir: Path) -> None:\n    \"\"\"Convert a LitGPT trained checkpoint into a Hugging Face Transformers checkpoint.\"\"\"\n    checkpoint_dir = extend_checkpoint_dir(checkpoint_dir)\n    pprint(locals())\n\n    config = Config.from_file(checkpoint_dir / \"model_config.yaml\")\n\n    output_dir.mkdir(parents=True, exist_ok=True)\n    output_path = output_dir / \"model.pth\"\n\n    if \"falcon\" in config.name:\n        copy_fn = partial(copy_weights_falcon, config)\n    elif config.name.startswith(\"Gemma-2\"):\n        copy_fn = partial(copy_weights_gemma_2, config)\n    elif config.name.lower().startswith(\"phi\"):\n        copy_fn = partial(copy_weights_phi, config)\n    elif config.name.lowe"
+      },
+      {
+        "author": "user-13",
+        "body": "where is this function \"copy_config_files\" is defined?"
+      },
+      {
+        "author": "user-12",
+        "body": "@user-13  from litgpt.utils import auto_download_checkpoint, copy_config_files"
+      },
+      {
+        "author": "user-14",
+        "body": "The converted directory was missing both `pytorch_model.bin` and the config/tokenizer\nfiles; `litgpt evaluate` already worked around this internally, and the re-save half of\nthat workaround turns out to be unnecessary on torch>=2.7. Fix in #2265: conversion now\nwrites `pytorch_model.bin` and copies the config/tokenizer files, so\n`AutoModel.from_pretrained(converted_dir)` works directly.\n"
+      }
+    ]
+  },
+  "2115": {
+    "number": 2115,
+    "title": "Bitsandbytes quantization for litgpt 2d parallel model (TP+FSDP) within LightningTrainer",
+    "state": "open",
+    "body": "I'm trying to run inference within the LightningTrainer using a litgpt model with 2d parallelization (TP+FSDP) while using a Bitsandbytes precision plugin to enable quantization, however I get into issues.\nHere's a sample script I use\n\n```\nfrom __future__ import annotations\n\nfrom pathlib import Path\nfrom typing import Union\n\nimport lightning as L\nimport litgpt\nimport torch\nfrom lightning.pytorch.plugins import (\n    BitsandbytesPrecision,\n)\nfrom lightning.pytorch.strategies.model_parallel import ModelParallelStrategy\nfrom litgpt import GPT, Config\nfrom litgpt.model import CausalSelfAttention, GptNeoxMLP, LLaMAMLP, LLaMAMoE\nfrom torch import nn\nfrom torch.distributed._tensor import Replicate, Shard\nfrom torch.distributed.device_mesh import DeviceMesh\nfrom torch.distributed.fsdp import MixedPrecisionPolicy\nfrom torch.distributed.tensor.parallel import (\n    ColwiseParallel,\n    RowwiseParallel,\n    SequenceParallel,\n    parallelize_module,\n)\n\n\nclass RandomTokenDataset(torch.utils.data.Dataset):\n    def __init__(self, vocab_size: int, seq_length: int):\n        self.vocab_size = vocab_size\n        self.seq_length = seq_length\n        self.tokens = torch.randint(\n            self.vocab_size,\n            size=(len(self), self.seq_length + 1),\n            # Set a seed to make this toy dataset the same on each rank\n            # Fabric will add a `DistributedSampler` to shard the data correctly\n            generator=torch.Generator().manual_seed(42),\n        )\n\n    def __len__(self) -> int:\n        return 128\n\n    def __getitem__(self, item: int):\n        return self.tokens[item][:-1], self.tokens[item][1:]\n\n\ndef _apply_data_parallel(model: GPT, device_mesh: DeviceMesh, mp_policy: MixedPrecisionPolicy):\n    \"\"\"Apply data parallelism using PyTorch FSDP (Fully Sharded Data Parallelism).\n\n    Applies FSDP to each transformer block and the inner model, configuring\n    mixed precision and customized sharding.\n\n    Args:\n        model: HuggingFace PreTrainedModel to apply data parallelism to\n        device_mesh: Device mesh containing the data_parallel submesh\n        mp_policy: MixedPrecisionPolicy to apply\n    \"\"\"\n    from torch.distributed.fsdp import fully_shard\n\n    dp_mesh = device_mesh[\"data_parallel\"]\n\n    assert dp_mesh.ndim == 1, f\"Hybrid-sharding not supported; dp_mesh.ndim ({dp_mesh.ndim}) != 1\"\n\n    # NOTE: Currently, the user is required to manually handle precision settings such as the `mp_policy` here\n    # because the model parallel strategy does not respect all settings of `Fabric(precision=...)` at the moment.\n    fsdp_config = {\"mesh\": dp_mesh, \"mp_policy\": mp_policy}\n\n    layers = model.transformer.h\n    for layer_id, transformer_block in enumerate(layers):\n        # As an optimization, do not reshard after forward for the last transformer block since FSDP would prefetch it immediately\n        reshard_after_forward = int(layer_id) < len(layers) - 1\n        fully_shard(\n            transformer_block,\n            **fsdp_config,\n            r",
+    "comments": []
+  },
+  "1911": {
+    "number": 1911,
+    "title": "LitGPT fine-tuning Dont Use GPU",
+    "state": "open",
+    "body": "This is the first time I have used LitGPT for fine-tuning, and as an experiment, I chose Qwen2.5-0.5B for fine-tuning.\nI am Runing this on windows server 2022dc\n\n(.env) f:\\litgpt>litgpt finetune Qwen/Qwen2.5-0.5B-Instruct --data JSON --data.json_path F:\\litgpt\\alpaca_zh_demo.json --data.val_split_fraction 0.1 --out_dir f:\\out\nI found that the whole process was done using the CPU, not my GPU\n\n![Image](https://github.com/user-attachments/assets/12730d2d-5b4c-45d6-a829-e2c7938d4f14)\n\nI  confirm that cuda12.2 is installed correctly and I can use ML Studio to use the GGUF format model.\n\nDid I miss any settings?",
+    "comments": [
+      {
+        "author": "user-17",
+        "body": "Did you figure anything out by chance @user-16 ?"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Are you using a native terminal or Ubuntu subsystem?"
+      }
+    ]
+  },
+  "2158": {
+    "number": 2158,
+    "title": "Support for SSM models (Mamba, Mamba2)",
+    "state": "open",
+    "body": "Hi,\nWas wondering if adding support for SSM models (Mamba, Mamba2) would be something you'd consider having in litgpt?\nhttps://arxiv.org/abs/2405.21060\n\nThanks!",
+    "comments": [
+      {
+        "author": "user-18",
+        "body": "Hi @user-15, @user-35  and team, \n\n+1 to this feature request! I'd be happy to take this on and implement Mamba/Mamba2 support for LitGpt.\n\nIs there anyone from the maintainer team available to provide some initial guidance on how you'd like this integrated? I'm thinking of following the same pattern as the existing model implementations, but wanted to confirm the approach first. \n\nLmk and I'll open a draft PR soon! "
+      },
+      {
+        "author": "user-19",
+        "body": "I've been looking into integrating Mamba models into my own projects, and I think I can help with this. To get started, I'd modify the `model_config.py` to include SSM layers, something like this:\n```python\nif config_name == 'mamba':\n    from mamba_ssm import Mamba\n    model_config['layer_cls'] = Mamba\n```\nI've used the `mamba_ssm` library (v1.1.2) for this, which is what's referenced in the arxiv paper (https://arxiv.org/abs/2405.21060) you linked."
+      }
+    ]
+  },
+  "1261": {
+    "number": 1261,
+    "title": "1.8B H2O model",
+    "state": "open",
+    "body": "A nice new 1.8B base model from H2O which would run on a single GPU. Looks like Llama 2 with Mistral tokenizer and might be an easy add: https://huggingface.co/h2oai/h2o-danube2-1.8b-base",
+    "comments": [
+      {
+        "author": "user-20",
+        "body": "Hi @user-6, Can I please work on this?"
+      },
+      {
+        "author": "user-6",
+        "body": "Oh sure, that would be nice!"
+      },
+      {
+        "author": "user-20",
+        "body": "Hi @user-6, Could you please review this https://github.com/Lightning-AI/litgpt/pull/1282."
+      }
+    ]
+  },
+  "1475": {
+    "number": 1475,
+    "title": "Support a new model",
+    "state": "open",
+    "body": "Do you have a plan to support JetMoE model (https://github.com/myshell-ai/JetMoE) that very effective to reduce computational cost in inference in litgpt?",
+    "comments": [
+      {
+        "author": "user-6",
+        "body": "Hi there,\r\nthanks for suggesting! New models are always welcome. JetMoE is currently not on the priority list due to many other requests and features to be added, but if you want to contribute it, that'd be welcome!"
+      },
+      {
+        "author": "user-6",
+        "body": "I added a doc describing how to add a new model to LitGPT in case this comes in handy: https://github.com/Lightning-AI/litgpt/blob/main/tutorials/developer-docs/adding-models.md"
+      },
+      {
+        "author": "user-21",
+        "body": "> I added a doc describing how to add a new model to LitGPT in case this comes in handy: https://github.com/Lightning-AI/litgpt/blob/main/tutorials/developer-docs/adding-models.md\r\n\r\nThanks so much for your information. It is really valuable for me.\r\nCurrently, I have a difficulty in updating the checkpoint conversion script (convert_hf_checkpoint.py) for the new model (jetmoe/jetmoe-8b). I think It needs another weight_map in the script. However, I don't find out some keys of the new model as follows.\r\nweight_map = {\r\n    \"model.embed_tokens.weight\": \"transformer.wte.weight\",\r\n    \"model.layers.{}.mlp.output_linear.weight\":  ?, # ? mark means unknown key\r\n    \"model.layers.{}.mlp.router.layer.weight\":  ?,\r\n    \"model.layers.{}.input_layernorm.weight\":\"transformer.h.{}.norm_1.weight\",\r\n    \"model.layers.{}.mlp.bias\":  ?,\r\n    \"model.layers.{}.mlp.input_linear.weight\":  ?,\r\n    \"model.layers.{}.post_attention_layernorm.weight\":\"transformer.h.{}.norm_2.weight\",\r\n    \"model.layers.{}.self"
+      },
+      {
+        "author": "user-6",
+        "body": "That's a good question and usually the tricky part. It can be pretty hard to find the corresponding layer some times due to naming convention and sometimes because it may not be supported yet. I think in this case the LlamaMoE might be a good template to look at: \r\n\r\nhttps://github.com/Lightning-AI/litgpt/blob/e2f8074b32ce08852f933636d1d81689990e1771/litgpt/scripts/convert_hf_checkpoint.py#L138"
+      },
+      {
+        "author": "user-6",
+        "body": "I haven't read the JetMoE paper, do they also have different attention experts? In this case, this would not be supported yet. The LlamaMoE is only for the MLP layers as in the Mixtral."
+      },
+      {
+        "author": "user-21",
+        "body": "Thank you for your continued support.\r\nAccording to the technical website of jetmoe ( https://research.myshell.ai/jetmoe ), jetmoe has two MoE layers: Mixture of Attention heads (MoA) and Mixture of MLP exports (MoE) looks like ModuleFormer ( https://arxiv.org/abs/2306.04640 ). So, LlamaMoE model might not be fit to jetmoe. \r\nSeparately, I am asking the jetmoe website to provide parameter mapping information ( https://github.com/myshell-ai/JetMoE/issues/11 ). Unfortunately, I haven't received a reply yet."
+      },
+      {
+        "author": "user-6",
+        "body": "Oh I see, the ` Mixture of Attention heads (MoA)` part will be a bit tricky then, that's currently not supported by LitGPT and would have to be coded. It might be a bit tricky for a contribution like this"
+      }
+    ]
+  },
+  "1153": {
+    "number": 1153,
+    "title": "support for older models",
+    "state": "open",
+    "body": "Hello,\r\n\r\nI was wondering if it is straightforward to bring older models such as GPT-2 to lit-gpt. \r\nIf so, what files/configs do I need to change?\r\n\r\nThank you! ",
+    "comments": [
+      {
+        "author": "user-6",
+        "body": "Good point, and it should be. I use GPT-2 myself privately a lot as well, and it'd be nice to have it in LitGPT as well. \r\n\r\nI think the architecture is similar to GPTNeo, so you can probably copy and adapt the GPTNeo config. The general todo list I use for adding new configs is:\r\n\r\n\r\n- [ ] Implement model download\r\n- [ ] Implement HF checkpoint conversion\r\n- [ ] Make sure `generate.py` produces reasonable outputs\r\n- [ ] Update model_download docs\r\n- [ ] Test pretraining\r\n- [ ] Test finetuning\r\n  - [ ] Full finetuning\r\n  - [ ] LoRA\r\n  - [ ] Adapter + Adapter v2 \r\n- [ ] Add tests\r\n\r\n\r\n"
+      }
+    ]
+  },
+  "1642": {
+    "number": 1642,
+    "title": "access hidden layer(s) from a model",
+    "state": "open",
+    "body": "Hi, all,\r\n\r\nI'd like to add more heads on top of LLM models for multi-task application.\r\nI couldn't find a tutorial about how 1) I can access the last hidden layer, 2) add new heads, 3) train the new model.\r\n\r\nThanks for any help!",
+    "comments": [
+      {
+        "author": "user-24",
+        "body": "I am also looking something similar to access last layers etc"
+      }
+    ]
+  },
+  "1614": {
+    "number": 1614,
+    "title": "adding Aya model (checkpoints) to the supported checkpoints list that litgpt support ",
+    "state": "open",
+    "body": "can you add this model to the list: https://huggingface.co/CohereForAI/aya-23-8B/tree/main\r\n\r\nbecause I need a pre-trained model on Arabic, and Aya is the best model for Arabic model, The model is particularly optimized for multilinguality and supports the following languages: Arabic, Chinese (simplified & traditional), Czech, Dutch, English, French, German, Greek, Hebrew, Hindi, Indonesian, Italian, Japanese, Korean, Persian, Polish, Portuguese, Romanian, Russian, Spanish, Turkish, Ukrainian, and Vietnamese",
+    "comments": []
+  },
+  "925": {
+    "number": 925,
+    "title": "Adding OLMo 1B and 7B",
+    "state": "open",
+    "body": "OLMo is a pretty attractive set of models by Allen AI since they open sourced the whole training code etc. It's one of the few fully open models: https://github.com/allenai/olmo\r\n\r\nWe have a lot of 7B models (OLMo would be just another one here) but it's also  interesting for its 1B model, because we don't have that many good models on a small scale, and that small scale is attractive for experiments on single GPU.",
+    "comments": []
+  },
+  "872": {
+    "number": 872,
+    "title": "How to pretrain moe model?",
+    "state": "open",
+    "body": "How to pretrain moe model?",
+    "comments": [
+      {
+        "author": "user-9",
+        "body": "Have a look at this pretraining tutorial: https://github.com/Lightning-AI/lit-gpt/blob/main/tutorials/pretrain_tinyllama.md\r\n\r\nThe only MoE model we support is Mixtral. You would need to replace tinyllama with it."
+      },
+      {
+        "author": "user-8",
+        "body": "> Have a look at this pretraining tutorial: https://github.com/Lightning-AI/lit-gpt/blob/main/tutorials/pretrain_tinyllama.md\r\n> \r\n> The only MoE model we support is Mixtral. You would need to replace tinyllama with it.\r\n\r\nLike this?\r\n ```\r\n  dict(\r\n        name=\"tiny-llama-1.1b-MOE{}\",\r\n        hf_config=dict(org=\"TinyLlama-MOE\", name=\"TinyLlama-1.1B-MOE{}\"),\r\n        block_size=4096,\r\n        vocab_size=32000,\r\n        padding_multiple=64,\r\n        n_layer=11,\r\n        n_query_groups=4,\r\n        n_head=32,\r\n        n_embd=4096,\r\n        rotary_percentage=1.0,\r\n        parallel_residual=False,\r\n        bias=False,\r\n        _norm_class=\"RMSNorm\",  # original TinyLlama uses FusedRMSNorm\r\n        norm_eps=1e-5,\r\n        intermediate_size=5632,\r\n        _mlp_class=\"LLaMAMoE\",\r\n        n_expert=8,\r\n        n_expert_per_token=2,\r\n    )\r\n```"
+      },
+      {
+        "author": "user-8",
+        "body": "> Have a look at this pretraining tutorial: https://github.com/Lightning-AI/lit-gpt/blob/main/tutorials/pretrain_tinyllama.md\n> \n> The only MoE model we support is Mixtral. You would need to replace tinyllama with it.\n\n```\nC:\\Users\\jmes1\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\transformers\\utils\\generic.py:441: UserWarning: torch.utils._pytree._register_pytree_node is deprecated. Please use torch.utils._pytree.register_pytree_node instead.\n  _torch_pytree._register_pytree_node(\nUsing bfloat16 Automatic Mixed Precision (AMP)\n{'model_name': 'Mixtral-8', 'name': 'Mixtral-8', 'save_interval': 10, 'eval_interval': 1000, 'eval_iters': 100, 'log_interval': 1, 'learning_rate': 0.0006, 'batch_size': 10, 'micro_batch_size': 5, 'gradient_accumulation_steps': 2, 'max_iters': 6000, 'weight_decay': 0.1, 'beta1': 0.9, 'beta2': 0.95, 'grad_clip': 1.0, 'decay_lr': True, 'warmup_iters': 2000, 'lr_decay_iters': 6000, 'min_lr': 6e-05}\nSeed set to 1337\nLoading model with {'name': 'Mixtral"
+      },
+      {
+        "author": "user-26",
+        "body": "> > Have a look at this pretraining tutorial: https://github.com/Lightning-AI/lit-gpt/blob/main/tutorials/pretrain_tinyllama.md\r\n> > The only MoE model we support is Mixtral. You would need to replace tinyllama with it.\r\n> \r\n> @user-9 C:\\Users\\jmes1\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\torch\\nn\\modules\\module.py\", line 1561, in _call_impl result = forward_call(*args, **kwargs) ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ File \"D:\\AItest\\lit-gpt-moellama\\lit_gpt\\model.py\", line 317, in forward token_idx, expert_idx = torch.where(mask) ^^^^^^^^^^^^^^^^^ File \"C:\\Users\\jmes1\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\torch\\utils_device.py\", line 77, in **torch_function** return func(*args, **kwargs) ^^^^^^^^^^^^^^^^^^^^^ File \"C:\\Users\\jmes1\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\torch\\utils\\flop_counter.py\", line 449, in **torch_dispatch** out = func(*args, **kwargs) ^^^^^^^^^^^^^^^^^^^^^ File \"C:\\Users\\jmes1\\AppData\\Local\\Programs\\Python\\Python311"
+      },
+      {
+        "author": "user-8",
+        "body": "> > > Have a look at this pretraining tutorial: https://github.com/Lightning-AI/lit-gpt/blob/main/tutorials/pretrain_tinyllama.md\r\n> > > The only MoE model we support is Mixtral. You would need to replace tinyllama with it.\r\n> > \r\n> > \r\n> > @user-9 C:\\Users\\jmes1\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\torch\\nn\\modules\\module.py\", line 1561, in _call_impl result = forward_call(*args, **kwargs) ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ File \"D:\\AItest\\lit-gpt-moellama\\lit_gpt\\model.py\", line 317, in forward token_idx, expert_idx = torch.where(mask) ^^^^^^^^^^^^^^^^^ File \"C:\\Users\\jmes1\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\torch\\utils_device.py\", line 77, in **torch_function** return func(*args, **kwargs) ^^^^^^^^^^^^^^^^^^^^^ File \"C:\\Users\\jmes1\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\torch\\utils\\flop_counter.py\", line 449, in **torch_dispatch** out = func(*args, **kwargs) ^^^^^^^^^^^^^^^^^^^^^ File \"C:\\Users\\jmes1\\AppData\\Local\\Programs\\Py"
+      }
+    ]
+  },
+  "591": {
+    "number": 591,
+    "title": "Add tutorial for custom checkpoints",
+    "state": "open",
+    "body": "If I were to pretrain a model with my own data with something like Phi 1.5, how do I go about using the model? I have only a `last.ckpt` file containing all the weights and optimizers. The pretraining guide doesn't say how this file should be converted to something lit-gpt can use. I've also created the other config files, which the tutorial also lacks for a custom pretrained model. For instance, using my own tokenizer instead of the open source pretrained models'.",
+    "comments": [
+      {
+        "author": "user-28",
+        "body": "@user-27 Were you able to figure this out?"
+      },
+      {
+        "author": "user-27",
+        "body": "> @user-27 Were you able to figure this out?\r\n\r\nI added my own version of a Phi config in `lit_gpt/config.py`\r\nFill in your own xxx, yyy\r\n```\r\nPhi = [\r\n    # https://huggingface.co/microsoft/phi-1_5/blob/main/config.json\r\n    dict(\r\n        org=\"xxx\",\r\n        name=\"phi-0\",\r\n        vocab_size=yyy,\r\n        padded_vocab_size=yyy,\r\n        block_size=zzz,\r\n        n_embd=2048,\r\n        n_layer=24,\r\n        rotary_percentage=0.5,  # 32 / (n_embd / n_head) = 32 / 64\r\n        shared_attention_norm=True,\r\n        lm_head_bias=True,\r\n        gelu_approximate=\"tanh\",\r\n    )\r\n]\r\nconfigs.extend(Phi)\r\n```\r\n\r\nI modified `openwebtext_trainer.py` to the following (though it's now a relatively old version of `openwebtext_trainer.py`:\r\n```\r\nimport math\r\nimport sys\r\nimport time\r\nfrom pathlib import Path\r\nfrom typing import Any, Optional\r\n\r\nimport lightning as L\r\nimport numpy as np\r\nimport torch\r\nfrom lightning.pytorch.callbacks import ModelCheckpoint\r\nfrom lightning.pytorch.loggers import CSVLogger\r\nf"
+      }
+    ]
+  },
+  "1107": {
+    "number": 1107,
+    "title": "Add MPS configs",
+    "state": "open",
+    "body": "It would be nice to also have some configs for MPS machines (like Ollama does). I can run some small representative models on my Macbook.",
+    "comments": [
+      {
+        "author": "user-29",
+        "body": "Hi @user-6 , is pretraining on MPS accelerator not supported.\r\n\r\nI am getting below error on Macbook M1.\r\n\r\n`Verifying settings ...\r\n/Users/mvohra/miniforge3/envs/litgpt/lib/python3.12/site-packages/torch/amp/autocast_mode.py:265: UserWarning: User provided device_type of 'cuda', but CUDA is not available. Disabling\r\n\r\ntorch._dynamo.exc.BackendCompilerFailed: backend='inductor' raised:\r\n\r\nAssertionError: Device mps not supported\r\n`"
+      },
+      {
+        "author": "user-6",
+        "body": "Thanks for the note. I am not sure if we ever supported MPS devices for pretraining. We can take a look some time, but I don't have a timeline for this due to some other things being a bit higher on the priority list."
+      },
+      {
+        "author": "user-29",
+        "body": "Thanks for that @user-6 . Is there a way to pretrain on CPUs for a tiny model to just do sanity tests?"
+      },
+      {
+        "author": "user-6",
+        "body": "Yes, it should work on CPU devices"
+      },
+      {
+        "author": "user-30",
+        "body": "I think there might be a dependency issue with enabling MPS support, [Pytorch 2.x does not have MPS support](https://github.com/pytorch/pytorch/issues/78343) however Pytorch 1.x does. I tried installing litgpt with `torch < 2.0.0` and got the following error:\r\n\r\n```\r\nERROR: Cannot install litgpt and torch<2.0.0 because these package versions have conflicting dependencies.\r\n\r\nThe conflict is caused by:\r\n    The user requested torch<2.0.0\r\n    litgpt 0.4.11 depends on torch>=2.2.0\r\n    The user requested torch<2.0.0\r\n    litgpt 0.4.10 depends on torch>=2.2.0\r\n    The user requested torch<2.0.0\r\n    litgpt 0.4.9 depends on torch>=2.2.0\r\n    The user requested torch<2.0.0\r\n    litgpt 0.4.8 depends on torch>=2.2.0\r\n    The user requested torch<2.0.0\r\n    litgpt 0.4.7 depends on torch>=2.2.0\r\n    The user requested torch<2.0.0\r\n    litgpt 0.4.6 depends on torch>=2.2.0\r\n    The user requested torch<2.0.0\r\n    litgpt 0.4.5 depends on torch>=2.2.0\r\n    The user requested torch<2.0.0\r\n    litgpt"
+      },
+      {
+        "author": "user-6",
+        "body": "Hi there,\r\n\r\nI think it might be an issue with the latest release version (see https://github.com/user-6/LLM-workshop-2024/discussions/4 for more details). In the meantime, I think that it should work with\r\n\r\n```\r\npip install litgpt==0.4.9 -U\r\n```"
+      },
+      {
+        "author": "user-31",
+        "body": "I can confirm that the issue is not with the `torch` and `mps`:\r\n<img width=\"724\" alt=\"Screenshot 2024-09-03 at 11 39 47 AM\" src=\"https://github.com/user-attachments/assets/808b45b4-66ea-4175-995f-f01ec3058781\">\r\n"
+      },
+      {
+        "author": "user-32",
+        "body": "> I can confirm that the issue is not with the `torch` and `mps`: <img alt=\"Screenshot 2024-09-03 at 11 39 47 AM\" width=\"724\" src=\"https://private-user-images.githubusercontent.com/58434077/363906240-808b45b4-66ea-4175-995f-f01ec3058781.png?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3NjA1MjMzMDYsIm5iZiI6MTc2MDUyMzAwNiwicGF0aCI6Ii81ODQzNDA3Ny8zNjM5MDYyNDAtODA4YjQ1YjQtNjZlYS00MTc1LTk5NWYtZjAxZWMzMDU4NzgxLnBuZz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUFLSUFWQ09EWUxTQTUzUFFLNFpBJTJGMjAyNTEwMTUlMkZ1cy1lYXN0LTElMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjUxMDE1VDEwMTAwNlomWC1BbXotRXhwaXJlcz0zMDAmWC1BbXotU2lnbmF0dXJlPTk2ZGE4M2VkMTk5ODI5OGViOTZmMDM5NjE5MjViZDA2NzA1NzZlOTNhYWZkODhjMzMzOGI0YTE5MDFkNWUyYzQmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0In0.vsCpB8vNFx-h3aioFN0cUnZp9qu4AxoB9fO4pLKH5lI\">\n\ncan you tell what OS are you with? @user-36 "
+      },
+      {
+        "author": "user-31",
+        "body": "@user-32 \nWell, since we are talking about MPS device, then there is only one option, really :)\n(It's MacOS, obviously.)\n\nIt was a year ago, so maybe I forgot something, but I believe that with that screenshot I tried to confirm that the latest PyTorch does play nicely with MPS devices, in general.\nFrom what I remember is that generation works fine on a Macbook, both with old Intel+Radeon and on Apple Silicon. But have never tested the pretraining. So there might be either something hardcoded to CUDA, or an operation or two that are not yet supported by Torch+MPS.\nSo, I guess, if you want pretraining/fine-tuning, the only option is just to try it."
+      }
+    ]
+  },
+  "1226": {
+    "number": 1226,
+    "title": "LoRA model tokenizer configuration fails to load",
+    "state": "open",
+    "body": "```\r\nTraceback (most recent call last):\r\n  File \"<stdin>\", line 1, in <module>\r\n  File \"/home/mmior/.local/share/virtualenvs/json-descriptions-cLP9Kwl8/lib/python3.10/site-packages/litgpt/tokenizer.py\", line 39, in __init__\r\n    self.bos_id = self.token_to_id(bos_token) if bos_token is not None else None\r\n  File \"/home/mmior/.local/share/virtualenvs/json-descriptions-cLP9Kwl8/lib/python3.10/site-packages/litgpt/tokenizer.py\", line 62, in token_to_id\r\n    id_ = self.processor.token_to_id(token)\r\nTypeError: argument 'token': 'dict' object cannot be converted to 'PyString'\r\n```\r\n\r\nThis happens because the value of `bos_token` and `eos_token` in `tokenizer_config.json` is not a string value, but a dictionary like the following:\r\n\r\n```python\r\n  bos_token: {\r\n    __type: AddedToken,\r\n    content: <s>,\r\n    lstrip: false,\r\n    normalized: true,\r\n    rstrip: false,\r\n    single_word: false\r\n  }\r\n```\r\n\r\nIf I modify the tokenizer to check for a dictionary and use `content`, things seem to work fine.",
+    "comments": [
+      {
+        "author": "user-9",
+        "body": "What tokenizer config from huggingface are you trying to load?"
+      },
+      {
+        "author": "user-33",
+        "body": "This isn't from Hugging Face, but a configuration output from LoRA finetuning using `litgpt finetune lora`."
+      },
+      {
+        "author": "user-33",
+        "body": "```json\r\n{\r\n  \"chat_template\": \"{% if messages[0]['role'] == 'system' %}{% set loop_messages = messages[1:] %}{% set system_message = messages[0]['content'] %}{% else %}{% set loop_messages = messages %}{% set system_message = false %}{% endif %}{% for message in loop_messages %}{% if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}{{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}{% endif %}{% if loop.index0 == 0 and system_message != false %}{% set content = '<<SYS>>\\\\n' + system_message + '\\\\n<</SYS>>\\\\n\\\\n' + message['content'] %}{% else %}{% set content = message['content'] %}{% endif %}{% if message['role'] == 'user' %}{{ bos_token + '[INST] ' + content | trim + ' [/INST]' }}{% elif message['role'] == 'assistant' %}{{ ' '  + content | trim + ' ' + eos_token }}{% endif %}{% endfor %}\",\r\n  \"add_bos_token\": true,\r\n  \"add_eos_token\": false,\r\n  \"bos_token\": {\r\n    \"__type\": \"AddedToken\",\r\n    \"content\": \"<s>\",\r\n    \"lstrip\": false,\r\n  "
+      },
+      {
+        "author": "user-9",
+        "body": "When you finetune, you load existing Hugging Face hub weights/tokenizer. LitGPT then copies over the tokenizer into your finetuned output so that it can be loaded in subsequent steps.\r\n\r\nDid you manually copy over a different tokenizer or modified it yourself?\r\n\r\nThe `tokenizer.py` is a tiny shim over Hugging Face's tokenizers, so we haven't tried to support every possible tokenization config, just the ones that are used by the checkpoints we support. If you are running a \"custom\" tokenizer the code will need an update to check these different fields."
+      },
+      {
+        "author": "user-9",
+        "body": "Just saw your last message. Looks like it's treating it as a HF tokenizer instead of SentencePiece tokenizer, so this line must be resolving to `False`: https://github.com/Lightning-AI/litgpt/blob/main/litgpt/tokenizer.py#L21\r\n\r\n"
+      },
+      {
+        "author": "user-33",
+        "body": "@user-9 It is true that there is no `tokenizer.model` and instead there is `tokenizer.json` and `tokenizer_config.json`. To clarify, this is just the output from litgpt and I didn't modify any of it or copy anything from Hugging Face."
+      },
+      {
+        "author": "user-9",
+        "body": "Which --checkpoint_dir did you use with LoRA? I can try to follow the same steps you did to see if I end up with the same error"
+      },
+      {
+        "author": "user-33",
+        "body": "@user-9 I downloaded `codellama/CodeLlama-7b-Instruct-hf` with `litgpt download` and then used that checkpoint."
+      },
+      {
+        "author": "maintainer-2",
+        "body": "@user-33 could you pls provide a complete sample to reproduce this issue?\n> A simple guide on how to create such a studio can be found [here](https://www.youtube.com/watch?v=YcW-2Zt_bFg&ab_channel=LightningAI)."
+      }
+    ]
+  }
+}

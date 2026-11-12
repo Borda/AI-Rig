@@ -6,26 +6,9 @@
  * check to an attacker-controlled directory.
  */
 
-import { spawnSync } from "node:child_process"
-import { existsSync } from "node:fs"
-import { isAbsolute, join, relative, resolve, sep } from "node:path"
-
-const GIT_OVERRIDE_ENV = [
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_COMMON_DIR",
-  "GIT_INDEX_FILE",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_NAMESPACE",
-  "GIT_PREFIX",
-  "GIT_CONFIG_GLOBAL",
-  "GIT_CONFIG_SYSTEM",
-  "GIT_CONFIG_COUNT",
-  "GIT_CONFIG_PARAMETERS",
-] as const
-
-const GIT_CONFIG_ENV_PREFIXES = ["GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"] as const
+import { existsSync, lstatSync, realpathSync } from "node:fs"
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { runGit } from "./util/git.ts"
 
 export interface RigPaths {
   readonly projectRoot: string
@@ -34,19 +17,10 @@ export interface RigPaths {
   readonly statePath: string
 }
 
-function cleanGitEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env }
-  for (const key of GIT_OVERRIDE_ENV) delete env[key]
-  for (const key of Object.keys(env)) {
-    if (GIT_CONFIG_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) delete env[key]
-  }
-  return env
-}
-
 function git(cwd: string, args: readonly string[]): string | undefined {
-  const result = spawnSync("git", [...args], { cwd, env: cleanGitEnv(), encoding: "utf8" })
-  if (result.status !== 0) return undefined
-  return result.stdout.trim()
+  const result = runGit(cwd, args)
+  if (result.error || result.status !== 0) return undefined
+  return result.stdout.toString("utf8").trim()
 }
 
 export function isBareRepository(cwd: string): boolean | undefined {
@@ -82,6 +56,12 @@ export function resolvePaths(cwd: string, artifacts: string): RigPaths {
   const rel = relative(projectRoot, artifactRoot)
   if (rel.startsWith(`..${sep}`) || rel === ".." || isAbsolute(rel)) {
     throw new Error(`artifact root must stay inside the project: ${artifactRoot}`)
+  }
+  let ancestor = artifactRoot
+  while (!lstatSync(ancestor, { throwIfNoEntry: false })) ancestor = dirname(ancestor)
+  const physical = relative(realpathSync(projectRoot), realpathSync(ancestor))
+  if (physical === ".." || physical.startsWith(`..${sep}`) || isAbsolute(physical)) {
+    throw new Error(`artifact root resolves outside the project: ${artifactRoot}`)
   }
   return {
     projectRoot,

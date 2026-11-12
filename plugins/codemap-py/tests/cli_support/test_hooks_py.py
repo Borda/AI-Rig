@@ -281,22 +281,80 @@ def _await_marker(path: Path, needle: str = "", timeout_s: float = 8.0) -> bool:
     whose cold start (a new, Defender-scanned ``CreateProcess``) can take several seconds under CI load — far longer
     than a warm Python process. Returns as soon as the condition holds, so a fast platform pays only the real spawn
     latency, not the ceiling. JSON decoding rejects partial writes as well as the empty file visible after truncation;
-    plain-text publication records use *needle* as their completion signal. Return False on timeout.
+    plain-text publication records use *needle* as their completion signal. Missing files and transient Windows sharing
+    failures are retried within the same deadline. Return False on timeout.
     """
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        if path.exists():
+        try:
             content = path.read_text(encoding="utf-8")
-            if content and needle in content:
-                try:
-                    if path.suffix == ".json":
-                        json.loads(content)
-                except json.JSONDecodeError:
-                    pass
-                else:
-                    return True
+        except (FileNotFoundError, PermissionError):
+            # An atomic marker replacement can temporarily deny readers or remove the name on Windows.
+            content = ""
+        if content and needle in content:
+            try:
+                if path.suffix == ".json":
+                    json.loads(content)
+            except json.JSONDecodeError:
+                pass
+            else:
+                return True
         time.sleep(0.02)
     return False
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [pytest.param(PermissionError, id="sharing-violation"), pytest.param(FileNotFoundError, id="replaced-marker")],
+)
+def test_await_marker_retries_transient_read_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_type: type[OSError]
+) -> None:
+    """A temporarily unavailable marker must be read completely after replacement or sharing contention settles."""
+    marker = tmp_path / "refresh.marker"
+    marker.write_text("fingerprint\n1\npublished", encoding="utf-8")
+    read_text = Path.read_text
+    reads = 0
+
+    def contested_read(path: Path, *args: object, **kwargs: object) -> str:
+        """Reject only the first marker read, then read the real published bytes."""
+        nonlocal reads
+        if path == marker:
+            reads += 1
+            if reads == 1:
+                raise error_type("marker is being replaced")
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", contested_read)
+
+    assert _await_marker(marker, "published")
+    assert reads == 2
+
+
+def test_await_marker_times_out_when_access_never_recovers(tmp_path: Path) -> None:
+    """Repeated access denial remains a failed wait rather than accepting an unreadable marker."""
+    marker = tmp_path / "refresh.marker"
+    marker.write_text("published", encoding="utf-8")
+
+    with (
+        mock.patch.object(
+            Path, "read_text", autospec=True, side_effect=PermissionError("marker remains inaccessible")
+        ) as read,
+        mock.patch.object(time, "monotonic", autospec=True, side_effect=[0.0, 0.01, 0.02, 0.06]),
+    ):
+        assert not _await_marker(marker, "published", timeout_s=0.05)
+
+    assert read.call_count == 2
+
+
+def test_await_marker_propagates_unexpected_read_errors(tmp_path: Path) -> None:
+    """Unrelated storage errors must stay visible instead of being treated as transient sharing failures."""
+    marker = tmp_path / "refresh.marker"
+    marker.write_text("published", encoding="utf-8")
+
+    with mock.patch.object(Path, "read_text", autospec=True, side_effect=OSError("storage failure")):
+        with pytest.raises(OSError, match="storage failure"):
+            _await_marker(marker, "published")
 
 
 @pytest.mark.parametrize(
@@ -934,6 +992,7 @@ class TestInjectPreambleHeaderFields:
             "git_sha": "a" * 40,
             "scanned_at": "2026-06-20T00:00:00Z",
             "scan_root": str(tmp_path.resolve()),
+            "scan_root_key": "",
             "source_fingerprint": _INJECT_MODULE.fingerprint_file_hashes({}),
         }
 
@@ -974,7 +1033,13 @@ class TestInjectPreambleHeaderFields:
         """
         fields = _INJECT_MODULE.header_fields(tmp_path / "absent" / "proj.json")
 
-        assert fields == {"git_sha": "", "scanned_at": "", "scan_root": "", "source_fingerprint": ""}
+        assert fields == {
+            "git_sha": "",
+            "scanned_at": "",
+            "scan_root": "",
+            "scan_root_key": "",
+            "source_fingerprint": "",
+        }
 
 
 # ── inject-preamble: stale-index background refresh + lock lifecycle ──────────────
@@ -2566,7 +2631,7 @@ class TestSessionKeyAgreement:
         shard = repo / ".cache/codemap/logs/claude" / f"{layer}_environment-session.jsonl"
         record = json.loads(shard.read_text())
         assert record["session"] == "environment-session"
-        assert record["project"] == repo.resolve().as_posix()
+        assert record["project"] == _INJECT_MODULE.root_key(repo.resolve())
 
     def test_skill_hook_does_not_mint_a_second_session(self, subdir_repo: tuple[Path, Path, Path]) -> None:
         """Reading the marker from a subdirectory must not look absent and mint a rival id.
@@ -2654,7 +2719,7 @@ class TestCodexRuntimeTelemetry:
         assert result.returncode == 0, result.stderr
         record = json.loads((cache / "logs" / "codex" / shard_name).read_text())
         assert record["session"] == ""
-        assert record["project"] == repo.resolve().as_posix()
+        assert record["project"] == _INJECT_MODULE.root_key(repo.resolve())
         assert (hook_tmp / f"codemap-{repo.name}-session").read_text() == "claude-session"
 
     def test_codex_tool_record_uses_thread_id_and_codex_shard(self, tmp_path: Path, hook_tmp: Path) -> None:

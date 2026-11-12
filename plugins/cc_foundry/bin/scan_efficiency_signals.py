@@ -50,20 +50,20 @@ _FORK_FIELD = re.compile(r"^context:\s*fork\s*$", re.MULTILINE)
 #: Directory names that hold ``<skill>/SKILL.md`` files; ``claude-skills`` is codemap-py's Claude-only skill root.
 SKILL_ROOTS = ("skills", "claude-skills")
 
-#: Section label → regex counted across files, for the two count-only sections.
-BOILERPLATE: dict[str, str] = {
-    "agent-resolution boilerplate": r"=\$\(ls -td.*plugins/cache",
-    "unsupported-flag-check boilerplate": r"Unknown flag",
+#: Section label to alternative ordered literal sequences counted across files.
+BOILERPLATE: dict[str, tuple[tuple[str, ...], ...]] = {
+    "agent-resolution boilerplate": (("=$(ls -td", "plugins/cache"),),
+    "unsupported-flag-check boilerplate": (("Unknown flag",),),
     # Keyed on HARD_CUTOFF, not the retired MONITOR_INTERVAL: spawns are background and the
     # orchestrator ends its turn, so no skill declares a poll interval any more. Matching the
     # old token would count zero files and quietly retire the section.
-    "health-monitoring constants": r"HARD_CUTOFF=",
+    "health-monitoring constants": (("HARD_CUTOFF=",),),
 }
 
-#: Section label to regex for code patterns that are candidates for extraction into a bin script.
-EXTRACTION: dict[str, str] = {
-    "mode-dispatch pattern": r"find.*plugins/cache.*-path.*modes/",
-    "_shared resolution pattern": r"=\$\(find.*plugins/cache.*_shared|=\$\(ls -td.*plugins/cache",
+#: Section label to alternative ordered literal sequences that suggest bin-script extraction.
+EXTRACTION: dict[str, tuple[tuple[str, ...], ...]] = {
+    "mode-dispatch pattern": (("find", "plugins/cache", "-path", "modes/"),),
+    "_shared resolution pattern": (("=$(find", "plugins/cache", "_shared"), ("=$(ls -td", "plugins/cache")),
 }
 
 
@@ -119,9 +119,24 @@ def _read(path: Path) -> str:
         return ""
 
 
-def _count_matching(files: dict[Path, str], pattern: str) -> int:
-    compiled = re.compile(pattern)
-    return sum(1 for text in files.values() if compiled.search(text))
+def _has_sequence(text: str, parts: tuple[str, ...]) -> bool:
+    """Recognize ordered literal markers without retrying earlier candidate starts."""
+    cursor = 0
+    for part in parts:
+        found = text.find(part, cursor)
+        if found < 0:
+            return False
+        cursor = found + len(part)
+    return True
+
+
+def _count_matching(files: dict[Path, str], alternatives: tuple[tuple[str, ...], ...]) -> int:
+    """Count files with an ordered literal sequence contained within one line."""
+    return sum(
+        1
+        for text in files.values()
+        if any(_has_sequence(line, parts) for line in text.splitlines() for parts in alternatives)
+    )
 
 
 def scan(scan_dir: Path) -> int:

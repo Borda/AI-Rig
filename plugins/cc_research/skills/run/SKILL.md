@@ -117,16 +117,15 @@ Bare tokens `eval`, `train`, `val` (without compound suffix) do NOT trigger `ml`
 
 ```bash
 # loads: compaction-contract.md
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve_shared.py" --persist research-shared --emit agent-resolution.md || exit 1  # timeout: 5000 — cold resolve; every later site reads the research-shared sentinel instead of re-running python
+python "$PLUGIN_ROOT/bin/resolve_shared.py" --persist research-shared --emit agent-resolution.md || exit 1  # timeout: 5000 — cold resolve; every later site reads the research-shared sentinel instead of re-running python
 # installed plugin root; source-tree path only when CLAUDE_PLUGIN_ROOT unset
-CLAUDE_SKILL_DIR="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/skills/run"
+CLAUDE_SKILL_DIR="$PLUGIN_ROOT/skills/run"
 echo "$CLAUDE_SKILL_DIR" > "${TMPDIR:-/tmp}/research-run-skill-dir-${CSID}"
 ```
 
 ## Default Mode (Steps R1–R7)
-
-Triggered by `run <file.md>`.
 
 **Task tracking**: create tasks R0–R7 at start, all in the same response as the first real tool call. Every later `TaskUpdate` rides with the next real tool call — never a bookkeeping-only turn; the one standalone call is a `completed` right before a long report. Per-iteration R5 subject updates ride with that iteration's next real call. If none of `--researcher`/`--architect`/`--hypothesis`, `TaskUpdate` R0 status `deleted` (no `skipped` status exists). If `--codex` active, create task `R5b: Codex co-pilot (iter ?/max)` status `pending`.
 
@@ -186,11 +185,18 @@ After clarification extraction, remaining non-flag tokens (not starting `--`) ar
 **`--keep` extraction + unsupported flag check** — one block: parse `--keep`, then load and follow the unsupported-flag protocol. Supported flags for this skill: `--resume`, `--team`, `--compute`, `--colab`, `--codex`, `--researcher`, `--architect`, `--journal`, `--hypothesis`, `--scientist`, `--codemap`, `--no-codemap`, `--keep`.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # runs under bash — zsh never populates ${BASH_REMATCH[1]}, so --keep "..." was silently resolving empty
-IFS= read -r _RUN_ARGS < "${TMPDIR:-/tmp}/sweep-run-args-${CSID}" 2>/dev/null || _RUN_ARGS="$ARGUMENTS"  # sweep S5 cat-loads this file: $ARGUMENTS is then sweep's goal text, not run's args
-[ -f "${TMPDIR:-/tmp}/sweep-run-args-${CSID}" ] && _INL=--inlined || _INL=""  # handoff sentinel present = inlined in sweep: sweep's live contract must survive
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/extract-keep-flag.py" research-run "$_RUN_ARGS" $_INL  # timeout: 5000 — parses --keep, clears a stale contract (not when --inlined), persists for Phase 8
+_SWEEP_TOKEN='<active-sweep-token>'
+case "$_SWEEP_TOKEN" in '<'*) _SWEEP_TOKEN="";; esac
+IFS= read -r _ACTIVE_SWEEP < "${TMPDIR:-/tmp}/sweep-active-token-${CSID}" 2>/dev/null || _ACTIVE_SWEEP=""
+_RUN_ARGS="$ARGUMENTS"; _INL=""
+if [ -n "$_SWEEP_TOKEN" ] && [ "$_SWEEP_TOKEN" = "$_ACTIVE_SWEEP" ]; then
+    IFS= read -r _RUN_ARGS < "${TMPDIR:-/tmp}/sweep-run-args-${CSID}" || { echo "! BLOCKED — sweep run arguments missing"; exit 1; }
+    _INL=--inlined
+fi
+python "$PLUGIN_ROOT/bin/extract-keep-flag.py" research-run "$_RUN_ARGS" $_INL  # timeout: 5000 — parses --keep, clears a stale contract (not when --inlined), persists for Phase 8
 # loads: unsupported-flag-protocol.md
 IFS= read -r _RESEARCH_SHARED < "${TMPDIR:-/tmp}/research-shared-${CSID}" 2>/dev/null || _RESEARCH_SHARED=""  # warm read (Check 41)
 cat "$_RESEARCH_SHARED/unsupported-flag-protocol.md"
@@ -200,10 +206,17 @@ cat "$_RESEARCH_SHARED/unsupported-flag-protocol.md"
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # writes true/false to research-run-codemap-enabled-${CSID}; strict mode exits 1 (already printed ! BLOCKED) if unavailable
-IFS= read -r _RUN_ARGS < "${TMPDIR:-/tmp}/sweep-run-args-${CSID}" 2>/dev/null || _RUN_ARGS="$ARGUMENTS"  # same sweep handoff as the --keep block
-CODEMAP_RAW=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/codemap-flag.py" research-run "$_RUN_ARGS") || exit 1
+_SWEEP_TOKEN='<active-sweep-token>'
+case "$_SWEEP_TOKEN" in '<'*) _SWEEP_TOKEN="";; esac
+IFS= read -r _ACTIVE_SWEEP < "${TMPDIR:-/tmp}/sweep-active-token-${CSID}" 2>/dev/null || _ACTIVE_SWEEP=""
+_RUN_ARGS="$ARGUMENTS"
+if [ -n "$_SWEEP_TOKEN" ] && [ "$_SWEEP_TOKEN" = "$_ACTIVE_SWEEP" ]; then
+    IFS= read -r _RUN_ARGS < "${TMPDIR:-/tmp}/sweep-run-args-${CSID}" || { echo "! BLOCKED — sweep run arguments missing"; exit 1; }
+fi
+CODEMAP_RAW=$(python "$PLUGIN_ROOT/bin/codemap-flag.py" research-run "$_RUN_ARGS") || exit 1
 ```
 
 > loads: codemap-gates.md
@@ -211,9 +224,10 @@ CODEMAP_RAW=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/codemap-fla
 When `CODEMAP_RAW` ≠ `off`:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RESEARCH_SHARED < "${TMPDIR:-/tmp}/research-shared-${CSID}" 2>/dev/null || _RESEARCH_SHARED=""  # warm read (Check 41)
-cat "$_RESEARCH_SHARED/codemap-gates.md"
+python "$PLUGIN_ROOT/bin/resolve_shared.py" --emit codemap-gates.md
 ```
 
 Follow Gate A and Gate B.
@@ -225,8 +239,8 @@ Follow Gate A and Gate B.
 3. Parse block as `key: value` lines; multi-value = indented `  - value` items. Paths with spaces: wrap in double quotes.
 4. Missing required fields (`command` under `## Metric`/`## Guard`) → stop with error.
 5. `agent_strategy: auto` (or omitted) → apply keyword heuristics from `<constants>` to `## Goal` text and metric command.
-6. `target` under `## Metric`: `direction: higher` → stop when kept `best_metric` ≥ target; `direction: lower` → stop when kept `best_metric` ≤ target. If `target` omitted, run until `max_iterations`. `direction` omitted → `higher`, print `⚠ ## Metric has no direction — assuming higher`.
-7. Recognized keys: `## Metric` `command`, `direction`, `target`; `## Guard` `command`; `## Config` `max_iterations`, `agent_strategy`, `scope_files`, `compute`, `colab_hw`, `sandbox_network`, `metric_repeats`, `min_delta_pct`. Unrecognized keys/headings → warn once, ignore.
+6. `target` under `## Metric`: `direction: higher` → stop when kept `best_metric` ≥ target; `direction: lower` → stop when kept `best_metric` ≤ target. If `target` omitted, run until `max_iterations`. `direction` omitted → `higher`, print `⚠ ## Metric has no direction — assuming higher`. Any value other than exact `higher` or `lower` → warn once and default to `higher` before serializing configuration.
+7. Recognized keys: `## Metric` `command`, `direction`, `target`; `## Guard` `command`; `## Config` `max_iterations`, `agent_strategy`, `scope_files`, `compute`, `colab_hw`, `sandbox_network`, `metric_repeats`, `min_delta_pct`, `metric_timeout_sec`. Unrecognized keys/headings → warn once, ignore. `metric_timeout_sec` must be a positive integer; absent → 120 local/Docker or 300 Colab. Apply `VERIFY_TIMEOUT_SEC` when set and persist the effective limit in `config.metric_timeout_sec`.
 8. `## Notes` and `# Program:` title never parsed — human-only. (`# Campaign:` accepted as alias.)
 9. `metric_repeats` (integer 1–10, default `METRIC_REPEATS_DEFAULT`) and `min_delta_pct` (number ≥ 0, default `MIN_DELTA_PCT`): invalid value → print `⚠ metric_repeats '<value>' invalid (1–10) — using 1` / `⚠ min_delta_pct '<value>' invalid (≥ 0) — using 0.1` and use the default. `metric_repeats` > 1 turns on repeated measurement (R4, Phase 5, Phase 7 — see `<constants>`).
 
@@ -271,6 +285,8 @@ Create run directory:
 
 Convert `program_file` to absolute path: `realpath "$PROGRAM_FILE"` — Resume Mode matches on absolute path.
 
+Before writing initial state, run `python "${CLAUDE_PLUGIN_ROOT}/bin/find_judge_verdict.py" --hash-program "<resolved absolute program_file>"` (`timeout: 5000`) and use its printed SHA256 as `program_sha256`. Stop on hash failure. Preserve this snapshot throughout active iterations and interrupted recovery; resume establishes a fresh snapshot only at its documented program re-parse boundary after recovery.
+
 Write initial `state.json` (`program_file` = absolute path to the existing `.md` file):
 
 ```json
@@ -283,6 +299,7 @@ Write initial `state.json` (`program_file` = absolute path to the existing `.md`
     "metric": {"direction": "higher", "target": null},
     "scope_files": [],
     "compute": "local",
+    "metric_timeout_sec": 120,
     "agent_strategy": "auto",
     "max_iterations": 20,
     "sandbox_network": "none",
@@ -290,6 +307,7 @@ Write initial `state.json` (`program_file` = absolute path to the existing `.md`
     "min_delta_pct": 0.1
   },
   "program_file": "<absolute path to program.md>",
+  "program_sha256": "<SHA256 captured before initialization>",
   "iteration": 0,
   "baseline_commit": null,
   "previous_best_metric": null,
@@ -317,12 +335,12 @@ Note: status is `"initializing"` until all R2 precondition checks pass — resum
 
 Run all checks before touching code. Fail fast with clear message. First validate `program_file` from the active state: it must name an existing file, including on resume; otherwise print `! BLOCKED — an existing program file is required; use /research:sweep to build one` and stop. **Order**: checks 1–2 and 5–11, then the sandbox/timeout init and `sandbox_mode` blocks below, then checks 3–4 (they need the compute route), then R0 when active, then R3.
 
-01. **Clean git**: `git status --porcelain` → must be empty. If dirty: print dirty files and stop. Exact command excludes run artifacts: `git status --porcelain -- . ':(exclude).experiments' ':(exclude).temp'`.
+01. **Clean git**: `git status --porcelain` → must be empty except run artifacts and the unchanged program input. If dirty: print dirty files and stop. Use `git status --porcelain -- . ':(exclude).experiments' ':(exclude).temp' ':(exclude).reports' ':(top,exclude,literal)<repo-relative program_file>'`, substituting the exact resolved program path. Before excluding the program, compare its current `find_judge_verdict.py --hash-program` result with `state.program_sha256`; mismatch → stop. Phase 3 applies the same snapshot exemption, so campaign inputs are never staged as experiment changes.
 02. **Not detached HEAD**: `git rev-parse --abbrev-ref HEAD` → must not be `HEAD`.
-03. **Metric command numeric**: run `metric_cmd` once through the Phase 5 compute route (`modes/phase5-metric.md`: docker sandbox, Colab MCP, or local) — same environment as iterations (with `--colab`, the Phase 5 code-identity check runs first). Docker wrapper exit 2 accompanied by its own `docker_sandbox_run.py: verify-mode command ...` rejection diagnostic → print `! UNSUPPORTED — Docker verify rejected the command; use a script entry point for shell pipelines`, show wrapper output and stop before parsing. Other wrapper preparation errors → show the diagnostic and stop as `! BLOCKED`. A container command's own exit 2 with a usable float is still accepted; exit code alone does not identify a wrapper rejection. Otherwise parse stdout for float. If no float: show output and stop. Docker image is `python:3.11-slim` without project deps (`modes/compute-docker.md`) — a metric needing them fails here, not at iteration 1.
+03. **Metric command numeric**: run `metric_cmd` once through the Phase 5 compute route (`modes/phase5-metric.md`: docker sandbox, Colab MCP, or local) — same environment as iterations (with `--colab`, the Phase 5 code-identity check runs first). Docker wrapper exit 2 accompanied by its own `docker_sandbox_run.py: verify-mode command ...` rejection diagnostic → print `! UNSUPPORTED — Docker verify rejected the command; use a script entry point for shell pipelines`, show wrapper output and stop before parsing. Other wrapper preparation errors → show the diagnostic and stop as `! BLOCKED`. A container command's own exit 2 is a failed metric, even with a usable float; exit code alone does not identify a wrapper rejection. Require exit 0, then parse stdout for a finite float. If non-zero or no finite float: show output and stop. Docker image is `python:3.11-slim` without project deps (`modes/compute-docker.md`) — a metric needing them fails here, not at iteration 1.
 04. **Guard passes**: run `guard_cmd` once through the same route; for Docker, use the R2 guard block below. Must exit 0. If fails: show output and stop.
 05. **`--colab` check**: verify `mcp__colab-mcp__runtime_execute_code` available. If not, print setup instructions (see Colab MCP section) and stop. If `--colab=HW` (`colab_hw` non-null): print: `  Hardware requested: --colab=<colab_hw>. Ensure your Colab notebook running with <colab_hw> GPU.`
-06. **`--codex` check**: distinguish the installed-and-enabled bridge target from absence. `claude` CLI not needed — run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/check_bridge.py" --status` (`timeout: 5000`; reads plugin registry + settings). `absent` → print `⚠ bridge@borda-ai-rig not installed. Install it from the Borda AI Rig marketplace.` and **stop**. `disabled` → print `⚠ bridge@borda-ai-rig is disabled. Enable it and reload plugins.` and **stop**. `available` → continue.
+06. **`--codex` check**: distinguish the installed-and-enabled bridge target from absence. `claude` CLI not needed — run `python "${CLAUDE_PLUGIN_ROOT}/bin/check_bridge.py" --status` (`timeout: 5000`; reads plugin registry + settings). `absent` → print `⚠ bridge@borda-ai-rig not installed. Install it from the Borda AI Rig marketplace.` and **stop**. `disabled` → print `⚠ bridge@borda-ai-rig is disabled. Enable it and reload plugins.` and **stop**. `available` → continue.
 07. **`compute: docker` check**: run `docker ps` via Bash (`timeout: 5000`). If non-zero: print `⚠ Docker daemon not running. Start Docker Desktop and retry.` and **stop**.
 08. **Flag conflict**: if `--colab` and `--compute=docker` both active: print `⚠ --colab and --compute=docker are mutually exclusive. Use one or the other.` and **stop**.
 09. **`--colab` + `--codex` compatibility note** (non-blocking): if both flags active, print `ℹ --colab + --codex active: Codex Phase 2c will receive colab_hw context so generated code can target the right GPU (H100/T4 bf16 vs fp16). Phase 5 metric verification runs through Colab MCP as usual.` and continue. Pass `colab_hw` to Codex spawn prompt (Phase 2c — see `modes/codex-copilot.md`).
@@ -347,17 +365,31 @@ IFS= read -r _CFG_NET < "${TMPDIR:-/tmp}/research-run-sandbox-network-${CSID}" 2
 SANDBOX_NETWORK="${SANDBOX_NETWORK:-${_CFG_NET:-none}}"  # env override > program.md Config sentinel (R1) > none
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
 [ -n "$RUN_ID" ] || { echo "! BLOCKED — R2: research run-id sentinel missing"; exit 1; }
-compute=$(jq -er '.flags.compute // .config.compute' ".experiments/state/${RUN_ID}/state.json") || { echo "! BLOCKED — R2: resolved compute route missing"; exit 1; }  # timeout: 5000
-# Verify timeout — 120s local, 300s Colab per <constants>; bash overrides via VERIFY_TIMEOUT_SEC env var
-if [ "$compute" = "colab" ]; then
-    VERIFY_TIMEOUT_SEC="${VERIFY_TIMEOUT_SEC:-300}"
-else
-    VERIFY_TIMEOUT_SEC="${VERIFY_TIMEOUT_SEC:-120}"
+compute=$(jq -b -er '.flags.compute // .config.compute' ".experiments/state/${RUN_ID}/state.json") || { echo "! BLOCKED — R2: resolved compute route missing"; exit 1; }  # timeout: 5000
+# Verify timeout — persisted program value, then 120s local/300s Colab; environment overrides
+_METRIC_TIMEOUT=$(jq -b -r '.config.metric_timeout_sec // empty' ".experiments/state/${RUN_ID}/state.json") || exit 1  # timeout: 5000
+_TIMEOUT_OVERRIDE="${VERIFY_TIMEOUT_SEC:-}"
+case "$_TIMEOUT_OVERRIDE" in *[!0-9]*) echo "! BLOCKED — metric timeout override must be positive integer seconds"; exit 1;; esac
+if [ -n "$_TIMEOUT_OVERRIDE" ]; then
+    [ "$_TIMEOUT_OVERRIDE" -gt 0 ] || { echo "! BLOCKED — metric timeout override must be positive"; exit 1; }
+    _TIMEOUT_OVERRIDE=$((10#$_TIMEOUT_OVERRIDE)); VERIFY_TIMEOUT_SEC="$_TIMEOUT_OVERRIDE"
 fi
+if [ "$compute" = "colab" ]; then
+    GUARD_TIMEOUT_MS=$(( ${_TIMEOUT_OVERRIDE:-300} * 1000 ))
+    VERIFY_TIMEOUT_SEC="${VERIFY_TIMEOUT_SEC:-${_METRIC_TIMEOUT:-300}}"
+else
+    GUARD_TIMEOUT_MS=$(( ${_TIMEOUT_OVERRIDE:-120} * 1000 ))
+    VERIFY_TIMEOUT_SEC="${VERIFY_TIMEOUT_SEC:-${_METRIC_TIMEOUT:-120}}"
+fi
+case "$VERIFY_TIMEOUT_SEC" in ''|*[!0-9]*|0) echo "! BLOCKED — metric timeout must be positive integer seconds"; exit 1;; esac
+VERIFY_TIMEOUT_SEC=$((10#$VERIFY_TIMEOUT_SEC))
+[ "$VERIFY_TIMEOUT_SEC" -gt 0 ] || { echo "! BLOCKED — metric timeout must be positive"; exit 1; }
 VERIFY_TIMEOUT_MS=$((VERIFY_TIMEOUT_SEC * 1000))
+jq -b --argjson seconds "$VERIFY_TIMEOUT_SEC" '.config.metric_timeout_sec=$seconds' ".experiments/state/${RUN_ID}/state.json" > ".experiments/state/${RUN_ID}/state-timeout.json" && mv ".experiments/state/${RUN_ID}/state-timeout.json" ".experiments/state/${RUN_ID}/state.json" || exit 1  # timeout: 5000
 echo "$VERIFY_TIMEOUT_MS" > "${TMPDIR:-/tmp}/research-run-verify-timeout-ms-${CSID}"  # shell vars die per Bash call; modes/ blocks reload this
-echo "SANDBOX_NETWORK=$SANDBOX_NETWORK VERIFY_TIMEOUT_MS=$VERIFY_TIMEOUT_MS"
-# Ideation Agent() calls run in background — spawn, end turn, no filler call; on each notification check its output file, mark timed_out (⏱) if empty.
+echo "$GUARD_TIMEOUT_MS" > "${TMPDIR:-/tmp}/research-run-guard-timeout-ms-${CSID}"
+echo "SANDBOX_NETWORK=$SANDBOX_NETWORK VERIFY_TIMEOUT_MS=$VERIFY_TIMEOUT_MS GUARD_TIMEOUT_MS=$GUARD_TIMEOUT_MS"
+# Ideation agents follow agent-resolution.md §Agent waits: arm, record batch deadline, then check once per wake-up.
 ```
 
 **Initialize `sandbox_mode`**:
@@ -368,17 +400,18 @@ echo "SANDBOX_NETWORK=$SANDBOX_NETWORK VERIFY_TIMEOUT_MS=$VERIFY_TIMEOUT_MS"
 **R2 Docker guard check** (`sandbox_mode = "docker"` only, check 4 after check 3):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 command -v jq >/dev/null 2>&1 || { echo "! MISSING — jq not on PATH; install jq and retry"; exit 1; }  # timeout: 5000
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
 [ -n "$RUN_ID" ] || { echo "! BLOCKED — R2 guard: run-id sentinel missing"; exit 1; }
-GUARD_CMD=$(jq -r '.config.guard_cmd // empty' ".experiments/state/$RUN_ID/state.json") || { echo "! BLOCKED — R2 guard: state.json unreadable"; exit 1; }  # timeout: 5000
+GUARD_CMD=$(jq -b -r '.config.guard_cmd // empty' ".experiments/state/$RUN_ID/state.json") || { echo "! BLOCKED — R2 guard: state.json unreadable"; exit 1; }  # timeout: 5000
 [ -n "$GUARD_CMD" ] || { echo "! BLOCKED — R2 guard: config.guard_cmd missing from state.json"; exit 1; }
 IFS= read -r _CFG_NET < "${TMPDIR:-/tmp}/research-run-sandbox-network-${CSID}" 2>/dev/null || _CFG_NET=""
-SANDBOX_NETWORK="${SANDBOX_NETWORK:-${_CFG_NET:-none}}" python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/docker_sandbox_run.py" --mode verify "$GUARD_CMD"
+SANDBOX_NETWORK="${SANDBOX_NETWORK:-${_CFG_NET:-none}}" python "$PLUGIN_ROOT/bin/docker_sandbox_run.py" --mode verify "$GUARD_CMD"
 ```
 
-Use Bash tool `timeout: $VERIFY_TIMEOUT_MS` from R2's initialization output. Non-zero exit → show output and stop.
+Use Bash tool `timeout: $GUARD_TIMEOUT_MS` from R2's initialization output. Non-zero exit → show output and stop.
 
 **Update state.json status to `"running"`** — write only after ALL checks above pass. Resume treats `"initializing"` as failed-init and skips such runs.
 
@@ -413,11 +446,12 @@ Update `state.json`: `best_metric = <baseline>`, `best_commit = <HEAD sha>`, `ba
 **`metric_repeats` > 1** — measure the baseline that many times. After each `metric_cmd` run (same route, its own call), Write one line `{"iteration":0,"metric":<float or null>,"exit":<code>}` to `.experiments/state/<run-id>/metric-runs.jsonl.rec` with the Write tool, then run the block below. `RUN_METRIC_NEXT_RUN=<k>` → run again; `RUN_METRIC_FAILED` → stop the run (an unmeasurable baseline cannot anchor Phase 7); `RUN_METRIC_DONE` → the baseline record's `metric` is the printed mean plus `"metric_sigma"` and `"metric_runs"` fields, and `state.json` gets `best_metric` = mean, `best_metric_sigma` = sigma (`null` for `n/a`), `best_metric_runs` = runs.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
 [ -n "$RUN_ID" ] || { echo "! BLOCKED — R4: research run-id sentinel missing; metric-runs.jsonl.rec left in place"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/append_ledger.py" ".experiments/state/$RUN_ID/metric-runs.jsonl"  # timeout: 5000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/run_metric_stats.py" status ".experiments/state/$RUN_ID" --iteration 0  # timeout: 5000 — repeat count read from state.json config
+python "$PLUGIN_ROOT/bin/append_ledger.py" ".experiments/state/$RUN_ID/metric-runs.jsonl"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/run_metric_stats.py" status ".experiments/state/$RUN_ID" --iteration 0  # timeout: 5000 — repeat count read from state.json config
 ```
 
 Print: `Baseline: <metric_cmd key> = <value>`.
@@ -441,9 +475,10 @@ Then proceed to R5.
 **`--team` mode**: If `--team` active, follow `modes/team.md` and execute Phases A–D in place of standard iteration loop below.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLAUDE_SKILL_DIR < "${TMPDIR:-/tmp}/research-run-skill-dir-${CSID}" 2>/dev/null || CLAUDE_SKILL_DIR=""
-cat "$CLAUDE_SKILL_DIR/modes/team.md"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$CLAUDE_SKILL_DIR/modes/team.md"  # timeout: 5000
 ```
 
 **`--team` + `--hypothesis` combination**: combinable. `--hypothesis` changes only R0's queue source — `modes/hypothesis-pipeline.md` steps 1–4 build `RESEARCH_QUEUE` from the file, no oracle spawn, file stays read-only. Team Phase A still runs its axis agents; Phase B merges every `RESEARCH_QUEUE` entry alongside the axis hypotheses with the same backfill as R0 oracle entries (team.md Phase B step 1).
@@ -495,7 +530,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
 [ -n "$RUN_ID" ] || { echo "! BLOCKED — Phase 0: research run-id sentinel missing; run R1 or --resume first"; exit 1; }
 # state.json.iteration = last finished iteration until Phase 8 writes i → +1 holds through Phase 7
-DONE_ITER=$(jq -r '.iteration // 0' ".experiments/state/${RUN_ID}/state.json") || { echo "! BLOCKED — Phase 0: state.json unreadable"; exit 1; }  # timeout: 5000
+DONE_ITER=$(jq -b -r '.iteration // 0' ".experiments/state/${RUN_ID}/state.json") || { echo "! BLOCKED — Phase 0: state.json unreadable"; exit 1; }  # timeout: 5000
 I=$((DONE_ITER + 1))
 echo "$I" > "${TMPDIR:-/tmp}/research-run-iter-${CSID}"
 git rev-parse HEAD > "${TMPDIR:-/tmp}/research-run-iter-sha-${CSID}"  # Phase 3 asserts the agent left HEAD here
@@ -543,7 +578,7 @@ If `--journal` active and `<RUN_DIR>/journal.md` has 1+ entries: append last 5 e
 
 #### Phase 2 — Propose change
 
-Spawn selected specialist agent (`maxTurns: 15`) with this prompt (adapt as needed):
+Spawn selected specialist agent with `name="improve-metric-<i>"`, `description="Apply the selected metric improvement"` and this prompt (adapt as needed). State a 15-turn working budget in the prompt; on exhaustion return `partial: true` and completed work. Do not pass `maxTurns` as an Agent() argument:
 
 <!-- policy-sibling: plugins/cc_research/skills/run/modes/team.md §Phase C -->
 
@@ -590,9 +625,10 @@ If Agent tool unavailable (nested subagent context), implement change inline, co
 > Follow `modes/compute-docker.md` — full Phase 2a and 2b logic for docker sandbox. Skip entire file if `sandbox_mode = "local"`. Cat once, first iteration only — static content stays in context; re-cat only if no longer in context (e.g. after a compaction).
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLAUDE_SKILL_DIR < "${TMPDIR:-/tmp}/research-run-skill-dir-${CSID}" 2>/dev/null || CLAUDE_SKILL_DIR=""
-cat "$CLAUDE_SKILL_DIR/modes/compute-docker.md"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$CLAUDE_SKILL_DIR/modes/compute-docker.md"  # timeout: 5000
 ```
 
 #### Phase 2b — Apply change (`sandbox_mode = "docker"` only)
@@ -604,20 +640,22 @@ Skip if `sandbox_mode = "local"` — Phase 2 already applied the change. For `ar
 Follow `modes/codex-copilot.md` — contains full Phase 2c logic, cost-bounded gate, Codex dispatch prompt, outcome handling, and stuck escalation. Cat once, first `--codex` iteration only — static content stays in context; re-cat only if no longer in context (e.g. after a compaction).
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLAUDE_SKILL_DIR < "${TMPDIR:-/tmp}/research-run-skill-dir-${CSID}" 2>/dev/null || CLAUDE_SKILL_DIR=""
-cat "$CLAUDE_SKILL_DIR/modes/codex-copilot.md"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$CLAUDE_SKILL_DIR/modes/codex-copilot.md"  # timeout: 5000
 ```
 
 #### Phase 3 — Verify files changed
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r ITER_START_SHA < "${TMPDIR:-/tmp}/research-run-iter-sha-${CSID}" 2>/dev/null || ITER_START_SHA=""
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
 [ -n "$ITER_START_SHA" ] && [ -n "$RUN_ID" ] || { echo "! BLOCKED — Phase 3: iteration start SHA or run-id sentinel missing (run the Phase 0 block first)"; exit 1; }
 [ "$(git rev-parse HEAD)" = "$ITER_START_SHA" ] || { echo "⚠ agent committed during Phase 2 — folding its commits back into the tree for the Phase 4 experiment commit"; git reset --soft "$ITER_START_SHA"; }  # timeout: 5000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/check_iteration_scope.py" --state-json ".experiments/state/${RUN_ID}/state.json"  # timeout: 15000 — porcelain change set vs scope_files + metric/guard script files; exit 3 = violation, 1 = unreadable
+python "$PLUGIN_ROOT/bin/check_iteration_scope.py" --state-json ".experiments/state/${RUN_ID}/state.json"  # timeout: 15000 — porcelain change set vs scope_files + metric/guard script files; exit 3 = violation, 1 = unreadable
 ```
 
 The JSON line's `changed` comes from `git status --porcelain` (tracked edits and created files — `git diff --stat` misses the latter), run artifacts excluded.
@@ -633,8 +671,11 @@ The JSON line's `changed` comes from `git status --porcelain` (tracked edits and
 Stage only the Phase 3 porcelain paths (never `git add -A`; never the agent's `files_modified` alone — it can omit created files). `<N>` is the `iteration=` value the Phase 0 block printed — the revert guard compares the subject against that sentinel and stops with `! BLOCKED` on any other number:
 
 ```bash
-git add -- <Phase 3 porcelain paths>  # timeout: 3000
-git commit -m "experiment(optimize/i<N>): <description>"  # timeout: 90000
+set -- '<Phase 3 porcelain paths>'
+_ITER='<N>'; _DESCRIPTION='<description>'
+case "$*|$_ITER|$_DESCRIPTION" in *'<'*'>'*) echo "! BLOCKED — substitute reviewed paths, iteration and description before committing"; exit 1;; esac
+git add -- "$@"  # timeout: 3000
+git commit -m "experiment(optimize/i${_ITER}): ${_DESCRIPTION}"  # timeout: 90000
 ```
 
 If pre-commit hooks fail:
@@ -651,9 +692,10 @@ Commit fails for any other reason (no hook output — signing, identity, empty i
 > Follow `modes/phase5-metric.md` — metric verification logic for docker, local, and colab sandbox modes. Cat once, first iteration only — static content stays in context; re-cat only if no longer in context (e.g. after a compaction).
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLAUDE_SKILL_DIR < "${TMPDIR:-/tmp}/research-run-skill-dir-${CSID}" 2>/dev/null || CLAUDE_SKILL_DIR=""
-cat "$CLAUDE_SKILL_DIR/modes/phase5-metric.md"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$CLAUDE_SKILL_DIR/modes/phase5-metric.md"  # timeout: 5000
 ```
 
 #### Phase 6 — Run guard
@@ -661,17 +703,18 @@ cat "$CLAUDE_SKILL_DIR/modes/phase5-metric.md"  # timeout: 5000
 **If `sandbox_mode = "docker"`**: run `guard_cmd` through the same wrapper call as Phase 5 (`docker_sandbox_run.py --mode verify "$GUARD_CMD"`: same image, mounts, caps, network and quotas `--cpus 2 --memory 2g --pids-limit 512`; a fresh container, not Phase 5's). Check exit code only.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 command -v jq >/dev/null 2>&1 || { echo "! MISSING — jq not on PATH; install jq and retry"; exit 1; }  # timeout: 5000
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
 [ -n "$RUN_ID" ] || { echo "! BLOCKED — Phase 6: run-id sentinel missing"; exit 1; }
-GUARD_CMD=$(jq -r '.config.guard_cmd // empty' ".experiments/state/$RUN_ID/state.json") || { echo "! BLOCKED — Phase 6: state.json unreadable"; exit 1; }  # timeout: 5000
+GUARD_CMD=$(jq -b -r '.config.guard_cmd // empty' ".experiments/state/$RUN_ID/state.json") || { echo "! BLOCKED — Phase 6: state.json unreadable"; exit 1; }  # timeout: 5000
 [ -n "$GUARD_CMD" ] || { echo "! BLOCKED — Phase 6: config.guard_cmd missing from state.json"; exit 1; }
 IFS= read -r _CFG_NET < "${TMPDIR:-/tmp}/research-run-sandbox-network-${CSID}" 2>/dev/null || _CFG_NET=""
-SANDBOX_NETWORK="${SANDBOX_NETWORK:-${_CFG_NET:-none}}" python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/docker_sandbox_run.py" --mode verify "$GUARD_CMD"
+SANDBOX_NETWORK="${SANDBOX_NETWORK:-${_CFG_NET:-none}}" python "$PLUGIN_ROOT/bin/docker_sandbox_run.py" --mode verify "$GUARD_CMD"
 ```
 
-Use Bash tool `timeout: $VERIFY_TIMEOUT_MS` from the Phase 5 reload.
+Reload `research-run-guard-timeout-ms-${CSID}` from TMPDIR and use that printed value as Bash tool `timeout: $GUARD_TIMEOUT_MS`; stop if missing. The program's metric timeout does not change the guard budget.
 
 **If `sandbox_mode = "local"`**: run `guard_cmd` directly.
 
@@ -698,13 +741,14 @@ git rev-parse HEAD > "${TMPDIR:-/tmp}/research-run-rework-sha-${CSID}"  # timeou
 After each rework returns, fold only its commits back to the saved experiment SHA and re-run the Phase 3 porcelain scope check before any amend:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
 [ -n "$RUN_ID" ] || { echo "! BLOCKED — rework: research run-id sentinel missing"; exit 1; }
 IFS= read -r REWORK_SHA < "${TMPDIR:-/tmp}/research-run-rework-sha-${CSID}" 2>/dev/null || REWORK_SHA=""
 [ -n "$REWORK_SHA" ] || { echo "! BLOCKED — rework: experiment SHA sentinel missing"; exit 1; }
 [ "$(git rev-parse HEAD)" = "$REWORK_SHA" ] || git reset --soft "$REWORK_SHA" || exit 1  # timeout: 3000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/check_iteration_scope.py" --state-json ".experiments/state/${RUN_ID}/state.json"  # timeout: 15000
+python "$PLUGIN_ROOT/bin/check_iteration_scope.py" --state-json ".experiments/state/${RUN_ID}/state.json"  # timeout: 15000
 ```
 
 Exit 0 with `checked: true` → stage only the returned changed paths, amend, then re-run Phases 5–6. Exit 3 → clean the rework's tracked changes with `git restore --staged --worktree -- <tracked changed paths>`, delete only agent-reported untracked paths as in Phase 3, then use the Phase 7 double-revert guard to revert the experiment commit; set `status: scope-violation` and skip to Phase 7a. Exit 1 or `checked: false` → stop without amending; never accept an unchecked rework.
@@ -712,11 +756,12 @@ Exit 0 with `checked: true` → stage only the returned changed paths, amend, th
 **`metric_repeats` > 1 — decide before the table** (and again after every rework's re-measurement). `metric_repeats` = 1 skips this block: one sample against `best_metric`, as above.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
 IFS= read -r I < "${TMPDIR:-/tmp}/research-run-iter-${CSID}" 2>/dev/null || I=""
 [ -n "$RUN_ID" ] && [ -n "$I" ] || { echo "! BLOCKED — Phase 7: run-id or iteration sentinel missing (run the Phase 0 block first)"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/run_metric_stats.py" decide ".experiments/state/$RUN_ID" --iteration "$I"  # timeout: 5000 — gain must beat max(min_delta_pct, 2σΔ); best values come from state.json
+python "$PLUGIN_ROOT/bin/run_metric_stats.py" decide ".experiments/state/$RUN_ID" --iteration "$I"  # timeout: 5000 — gain must beat max(min_delta_pct, 2σΔ); best values come from state.json
 ```
 
 `RUN_METRIC_IMPROVED=1` → "metric improved" holds and the iteration's metric is the printed `mean`; `=0` → "no improvement". A guard rework re-measures the amended commit with Phase 5's repeated runs (a fresh block of `metric_repeats` runs under the same iteration), then re-runs this block.
@@ -736,9 +781,10 @@ echo "CHANGE_LINES=$CHANGE_LINES (insertions=$INSERTIONS deletions=$DELETIONS)"
 **Double-revert guard** (ADV-H19) — Phase 7 rework→revert can collide with a partial Phase 5 timeout revert performed in the same iteration. Always check before issuing the revert; `modes/phase5-metric.md` calls the same script for its timeout revert.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r I < "${TMPDIR:-/tmp}/research-run-iter-${CSID}" 2>/dev/null || I=""  # written by Phase 0
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/revert_iteration_commit.py" --iteration "$I" --phase 7  # timeout: 15000 — reverts HEAD only if its subject starts with `experiment(optimize/i${I}):` (revert subjects embed the original, so never a substring match); unset $I → ! BLOCKED, exit 1
+python "$PLUGIN_ROOT/bin/revert_iteration_commit.py" --iteration "$I" --phase 7  # timeout: 15000 — reverts HEAD only if its subject starts with `experiment(optimize/i${I}):` (revert subjects embed the original, so never a substring match); unset $I → ! BLOCKED, exit 1
 ```
 
 The guard fires on `metric improved AND guard fail` (after `GUARD_REWORK_MAX` attempts exhausted), `no improvement`, and `gain < min_delta_pct AND change > 50 lines` paths — any path that issues a revert after Phase 5 may have already reverted. Rework amends the iteration commit (table above), so one revert covers every attempt. HEAD carrying another iteration's `experiment(optimize/i<M>):` subject is never skipped: the script prints `! BLOCKED`, reverts nothing and exits 1 — fix the subject, then re-run the guard.
@@ -805,11 +851,12 @@ Stage one JSONL record for `experiments.jsonl` (same schema as baseline record i
 Flush every staged record — this iteration's `experiments.jsonl`, `diary.md`, and, when their flags are active, `checkpoint.jsonl` and `journal.md` — in one fixed block. `append_ledger.py` appends each staged `.rec`, supplies a trailing newline the Write tool may have omitted, and deletes the `.rec`; a ledger with nothing staged is a no-op:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || _RUN_ID=""
 [ -n "$_RUN_ID" ] || { echo "! BLOCKED — research run-id sentinel missing; staged iteration records left in place"; exit 1; }
 for _LEDGER in ".experiments/state/$_RUN_ID/experiments.jsonl" ".experiments/state/$_RUN_ID/diary.md" ".experiments/$_RUN_ID/checkpoint.jsonl" ".experiments/$_RUN_ID/journal.md"; do
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/append_ledger.py" "$_LEDGER" || exit 1  # timeout: 5000
+    python "$PLUGIN_ROOT/bin/append_ledger.py" "$_LEDGER" || exit 1  # timeout: 5000
 done
 ```
 
@@ -825,14 +872,15 @@ TaskUpdate R5 subject: `R5: Iter N/max — last: <status>, best: <best_metric>`
 
 ```bash
 # compaction contract — overwritten each iteration, always latest state (compaction-contract.md §Lifecycle)
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || _RUN_ID=""
 _STATE_JSON=".experiments/state/${_RUN_ID}/state.json"
-_ITER=$(jq -r '.iteration // 0' "$_STATE_JSON" 2>/dev/null || echo "?")
-_BEST=$(jq -r '.best_metric // "?"' "$_STATE_JSON" 2>/dev/null || echo "?")
-_PROG=$(jq -r '.program_file // ""' "$_STATE_JSON" 2>/dev/null || echo "")
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" --keep-sentinel research-run-keep-items "research:run" "iteration-loop (after iter ${_ITER})" ".experiments/${_RUN_ID}" "state-json=${_STATE_JSON}, program=${_PROG}, iter=${_ITER}, best-metric=${_BEST}, cat-once-files=_shared/codemap-context.md + modes/compute-docker.md + modes/codex-copilot.md + modes/phase5-metric.md (re-cat after compaction only)" "continue R5 from iter $(( _ITER + 1 )) or proceed to R6 when loop done" -- calls_ahead=30 "drop=iteration diff, metric and guard output, ideation prompts"  # timeout: 5000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/compaction_boundary.py"  # timeout: 60000 — prints the Boundary step, then the foundry gate decision; follow it
+_ITER=$(jq -b -r '.iteration // 0' "$_STATE_JSON" 2>/dev/null || echo "?")
+_BEST=$(jq -b -r '.best_metric // "?"' "$_STATE_JSON" 2>/dev/null || echo "?")
+_PROG=$(jq -b -r '.program_file // ""' "$_STATE_JSON" 2>/dev/null || echo "")
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" --keep-sentinel research-run-keep-items "research:run" "iteration-loop (after iter ${_ITER})" ".experiments/${_RUN_ID}" "state-json=${_STATE_JSON}, program=${_PROG}, iter=${_ITER}, best-metric=${_BEST}, cat-once-files=_shared/codemap-context.md + modes/compute-docker.md + modes/codex-copilot.md + modes/phase5-metric.md (re-cat after compaction only)" "continue R5 from iter $(( _ITER + 1 )) or proceed to R6 when loop done" -- calls_ahead=30 "drop=iteration diff, metric and guard output, ideation prompts"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/compaction_boundary.py"  # timeout: 60000 — prints the Boundary step, then the foundry gate decision; follow it
 ```
 
 #### Phase 9 — Progress checks
@@ -850,9 +898,10 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/compaction_boundary.py"  
 Pre-compute the report path before writing — branch is for report paths only; anti-overwrite appends a counter suffix (`-2.md`, `-3.md`, …) when the file exists:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 mkdir -p .reports/research  # timeout: 3000
 BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')  # timeout: 3000
-OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve-anti-overwrite-path.py" .reports/research "run-$BRANCH-$(date +%Y-%m-%d)")  # timeout: 5000
+OUT=$(python "$PLUGIN_ROOT/bin/resolve-anti-overwrite-path.py" .reports/research "run-$BRANCH-$(date +%Y-%m-%d)")  # timeout: 5000
 echo "OUT=$OUT"
 ```
 
@@ -903,9 +952,10 @@ Apply criteria loaded above.
 > Follow and execute `modes/resume.md`.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLAUDE_SKILL_DIR < "${TMPDIR:-/tmp}/research-run-skill-dir-${CSID}" 2>/dev/null || CLAUDE_SKILL_DIR=""
-cat "$CLAUDE_SKILL_DIR/modes/resume.md"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$CLAUDE_SKILL_DIR/modes/resume.md"  # timeout: 5000
 ```
 
 ## Mode: colab
@@ -930,7 +980,7 @@ cat "$CLAUDE_SKILL_DIR/modes/colab-setup.md"  # timeout: 5000
 - **Never `--no-verify`** — if pre-commit hook blocks, delegate to `foundry:linting-expert` and fix.
 - **Guard ≠ Verify** — guard checks regressions (tests, lint); verify checks target metric. Both must pass to keep commit.
 - **Single-sample keep rule by default** — `metric_repeats` 1 compares one Phase 5 sample with `best_metric` and keeps any measured gain: right for a deterministic metric (coverage, line counts, fixed-seed eval), wrong for timing, throughput or stochastic training, where noise alone produces "gains" and the `perf` fallback strategy lands. For those set `metric_repeats` ≥ 3: Phase 7 then keeps only gains beyond `max(min_delta_pct, 2σΔ)`, the noise model `/research:fortify` uses, at `metric_repeats`× metric cost. Default stays 1 (fortify's own `--runs` defaults to 3) so deterministic campaigns and the Colab time budget pay nothing extra.
-- **metric_cmd exit code ignored** — R2 validates metric_cmd by parsing stdout for a float, not exit code, except identified Docker wrapper failures (R2 check 3); a metric command's own non-zero exit alone is not a wrapper rejection. Piping metric output through grep/awk/tr is acceptable for local shell execution. Docker verify accepts a single command without shell metacharacters; use a script entry point for parsing or pipelines.
+- **metric_cmd must exit 0 and print a finite float** — apply the same rule in R2, single-sample and repeated Phase 5 measurements, judge and fortify. A non-zero metric exit is a failed measurement even when stdout contains a number; distinguish Docker wrapper rejection using its diagnostic (R2 check 3). Piping metric output through grep/awk/tr is acceptable for local shell execution only when failures propagate (for example `set -o pipefail`). Docker verify accepts a single command without shell metacharacters; use a script entry point for parsing or pipelines.
 - **Guard/metric scripts protected** — ideation agent must not modify files referenced in `guard_cmd`/`metric_cmd`; exclude them from `scope_files`. Enforced in Phase 3 and after every guard rework by `check_iteration_scope.py`; a missing program file stops the run. New test files may be created within `scope_files` for coverage-improvement campaigns.
 - **JSONL over TSV** — richer structured fields, `jq`-parseable, no delimiter ambiguity; query with `jq -c 'select(.status == "kept")' experiments.jsonl`.
 - **State persistence enables resume** — if loop crashes/times out, `resume` picks up exactly where it stopped.

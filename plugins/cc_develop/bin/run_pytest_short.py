@@ -22,6 +22,7 @@ Usage:
 
 Every target is containment-checked; several targets run as one pytest process (``dev_test_targets.py --run``
 passes its whole selection this way). ``--log PATH`` also writes the full, untruncated-by-tail output there.
+Logs stay inside the session's run directory, or ``.developments`` for standalone runs without a run sentinel.
 
 Outputs: The output tail on stdout and optionally the full bounded log at ``--log``.
 Failure: Runner failures remain distinct from pytest-reported failures.
@@ -49,6 +50,8 @@ import threading
 from pathlib import Path
 from shutil import which
 
+from dev_run_dir import read_sentinel
+
 #: The only pytest launch commands this runner will execute, so an arbitrary command cannot be passed through it.
 _PYTEST_ALLOWLIST: frozenset[str] = frozenset(
     {
@@ -64,19 +67,20 @@ _DEFAULT_TAIL_N: int = 20
 
 
 def _validate_target_in_cwd(target: str) -> None:
-    """Reject option-shaped targets and targets that resolve outside the current working directory.
+    """Reject option-shaped or response-file targets and paths outside the current working directory.
 
     A target starting with ``-`` is refused outright: ``Path("-p")`` resolves under the working directory, so
     containment alone lets an option-shaped token such as ``-p``, ``-c`` or ``--rootdir=...`` reach pytest's argv.
+    A leading ``@`` is also refused because pytest expands response files into unchecked command-line arguments.
 
     Args:
         target: Raw target string from argv (file/dir path or pytest node id).
 
     Raises:
-        SystemExit: With exit code 64 if the target starts with ``-`` or its resolved path escapes ``Path.cwd()``.
+        SystemExit: With exit code 64 if the target starts with ``-`` or ``@``, or resolves outside ``Path.cwd()``.
             Pytest node ids (``path::nodeid``) have the path portion validated.
     """
-    if target.startswith("-"):
+    if target.startswith(("-", "@")):
         print(f"run-pytest-short: rejected option-shaped target: {target}", file=sys.stderr)
         sys.exit(64)
     path_part = target.split("::", 1)[0]
@@ -109,8 +113,7 @@ def is_allowed_pytest_cmd(cmd: str) -> bool:
 def within_workspace(path: str) -> bool:
     """Report whether ``path`` resolves inside the working directory or the session temp dir.
 
-    Output paths (``--log``, ``--record-dir``) are created and written without further checks, so they are fenced to
-    the two places the skills legitimately write: the project (``.developments/<run>``) and ``$TMPDIR``.
+    The batch Codemap writer, run logs and selection records use the narrower :func:`within_run_directory` boundary.
 
     Examples:
         >>> within_workspace("logs/run.log")
@@ -125,6 +128,19 @@ def within_workspace(path: str) -> bool:
         Path(os.environ.get("TMPDIR") or tempfile.gettempdir()),
     )
     return any(resolved.is_relative_to(root.resolve()) for root in roots)
+
+
+def within_run_directory(path: str) -> bool:
+    """Accept artifacts only under a session run directory or the standalone developments fallback.
+
+    Session sentinels use the ownership-checked reader and may name an absolute directory in the original project while
+    the caller runs in a worktree. Without one, standalone selection keeps its artifacts under ``.developments``.
+    Resolved paths prevent an artifact symlink from reaching project sources or an unrelated temporary directory.
+    """
+    roots = [read_sentinel(f"dev-{skill}-dev-dir") for skill in ("feature", "fix", "refactor")]
+    directories = [Path(root).resolve() for root in roots if root] or [(Path.cwd() / ".developments").resolve()]
+    resolved = Path(path).resolve()
+    return any(resolved.is_relative_to(root) for root in directories)
 
 
 # Hard cap on captured subprocess output (50 MB) — guards against adversarial test floods.
@@ -307,8 +323,8 @@ def main(argv: list[str] | None = None) -> int:
 
     for target in targets:
         _validate_target_in_cwd(target)
-    if log_path and not within_workspace(log_path):
-        print(f"run-pytest-short: rejected --log outside project and temp directories: {log_path}", file=sys.stderr)
+    if log_path and not within_run_directory(log_path):
+        print(f"run-pytest-short: rejected --log outside run directory: {log_path}", file=sys.stderr)
         return 64
 
     parts = shlex.split(pytest_cmd)

@@ -1,5 +1,6 @@
 """Verify the agreed GPT-6 model and effort assignments in active source routing, and the live runner's guards."""
 
+import io
 import json
 import re
 import subprocess
@@ -112,11 +113,19 @@ def windows_host(live_cli: tuple[Any, Path, Path], monkeypatch: pytest.MonkeyPat
 def windows_timeout_capture(windows_host: tuple[Any, Path], monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Path]:
     """Make the simulated Windows child time out once, then drain captured stdout after a successful tree kill."""
     runner, output = windows_host
-    process = Mock(pid=321, returncode=1)
-    process.communicate.side_effect = [subprocess.TimeoutExpired("example", 7), (CAPTURED_EVENTS, "detail")]
+    process = streaming_timeout_process(runner, monkeypatch, 321, CAPTURED_EVENTS, "detail")
+    process.communicate.return_value = (None, None)
     monkeypatch.setattr(runner.subprocess, "Popen", Mock(return_value=process))
     monkeypatch.setattr(runner.subprocess, "run", Mock(return_value=subprocess.CompletedProcess("taskkill", 0)))
     return runner, output
+
+
+def streaming_timeout_process(runner: Any, monkeypatch: pytest.MonkeyPatch, pid: int, stdout: str, stderr: str) -> Mock:
+    """Provide finite binary child pipes and an expired deadline without waiting seven real seconds."""
+    process = Mock(pid=pid, returncode=1, stdout=io.BytesIO(stdout.encode()), stderr=io.BytesIO(stderr.encode()))
+    process.poll.return_value = None
+    monkeypatch.setattr(runner.time, "monotonic", Mock(side_effect=[0, 8, 9]))
+    return process
 
 
 @pytest.mark.parametrize(
@@ -162,8 +171,8 @@ def test_live_timeout_cleans_windows_tree_without_posix_apis(
     even though `os.killpg` and `signal.SIGKILL` do not exist on the simulated host.
     """
     runner, _ = windows_host
-    process = Mock(pid=123, returncode=1)
-    process.communicate.side_effect = [subprocess.TimeoutExpired("example", 7), ("partial output", "detail")]
+    process = streaming_timeout_process(runner, monkeypatch, 123, "partial output", "detail")
+    process.communicate.return_value = (None, None)
     kill_tree = Mock(return_value=subprocess.CompletedProcess("taskkill", 0))
     monkeypatch.setattr(runner.subprocess, "Popen", Mock(return_value=process))
     monkeypatch.setattr(runner.subprocess, "run", kill_tree)
@@ -181,7 +190,7 @@ def test_live_timeout_cleans_windows_tree_without_posix_apis(
         timeout=2,
         check=False,
     )
-    assert [call.kwargs["timeout"] for call in process.communicate.call_args_list] == [7, 2]
+    assert [call.kwargs["timeout"] for call in process.communicate.call_args_list] == [2]
     process.kill.assert_not_called()
 
 
@@ -202,9 +211,9 @@ def test_live_timeout_reports_failed_windows_tree_cleanup_and_bounds_drain(
     unproven, kill the leader directly, and never block on a pipe that cannot close.
     """
     runner, _ = windows_host
-    process = Mock(pid=456)
+    process = streaming_timeout_process(runner, monkeypatch, 456, "captured", "original detail")
+    stdout_pipe, stderr_pipe = process.stdout, process.stderr
     process.communicate.side_effect = [
-        subprocess.TimeoutExpired("example", 7, output=b"captured", stderr=b"original detail"),
         subprocess.TimeoutExpired("example", 2),
         subprocess.TimeoutExpired("example", 2),
     ]
@@ -219,18 +228,18 @@ def test_live_timeout_reports_failed_windows_tree_cleanup_and_bounds_drain(
     assert result.stderr.startswith("original detail\ntimeout after 7 seconds\n")
     assert "process-tree cleanup unproven" in result.stderr
     assert "output drain incomplete" in result.stderr
-    assert [call.kwargs["timeout"] for call in process.communicate.call_args_list] == [7, 2, 2]
+    assert [call.kwargs["timeout"] for call in process.communicate.call_args_list] == [2, 2]
     process.kill.assert_called_once_with()
-    process.stdout.close.assert_not_called()
-    process.stderr.close.assert_not_called()
+    assert stdout_pipe.closed
+    assert stderr_pipe.closed
     assert kill_tree.call_args.kwargs["timeout"] == 2
 
 
 @pytest.mark.parametrize(
     ("later_responses", "killed_signals", "drain_timeouts"),
     [
-        pytest.param([], [(789, 15)], [7, 2], id="soft-kill-exits-group"),
-        pytest.param([subprocess.TimeoutExpired("example", 2)], [(789, 15), (789, 9)], [7, 2, 2], id="hard-kill"),
+        pytest.param([], [(789, 15)], [2], id="soft-kill-exits-group"),
+        pytest.param([subprocess.TimeoutExpired("example", 2)], [(789, 15), (789, 9)], [2, 2], id="hard-kill"),
     ],
 )
 def test_live_timeout_preserves_posix_soft_then_hard_group_cleanup(
@@ -251,8 +260,8 @@ def test_live_timeout_preserves_posix_soft_then_hard_group_cleanup(
     monkeypatch.setattr(runner.signal, "SIGKILL", 9, raising=False)
     kill_group = Mock()
     monkeypatch.setattr(runner.os, "killpg", kill_group, raising=False)
-    process = Mock(pid=789)
-    process.communicate.side_effect = [subprocess.TimeoutExpired("example", 7), *later_responses, ("posix output", "")]
+    process = streaming_timeout_process(runner, monkeypatch, 789, "posix output", "")
+    process.communicate.side_effect = [*later_responses, (None, None)]
     monkeypatch.setattr(runner.subprocess, "Popen", Mock(return_value=process))
 
     result = runner._run_bounded_process(["example"], None, 7)

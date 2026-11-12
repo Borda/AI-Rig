@@ -43,11 +43,9 @@ import argparse
 import hashlib
 import os
 import re
-import shutil
 import stat
 import sys
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 #: Token in the packaged template that rendering replaces with the absolute installed Codex Rig plugin root.
@@ -67,6 +65,8 @@ LEGACY_SKILL_DESCRIPTIONS = {
     "develop": "Minimal codex-native develop loop. Use for implementation tasks with linear plan-build-verify flow and measurable quality gates.",
     "analyse": "Minimal codex-native analysis loop. Use for issue/PR/problem analysis before implementation with measurable gates.",
 }
+#: Largest instruction template, installed instruction file, or legacy skill file accepted for reading.
+MAX_BYTES = 4 * 1024 * 1024
 
 
 class UnsafeGlobalAgentsState(ValueError):
@@ -245,14 +245,46 @@ def rendered_plugin_root(body: bytes) -> str | None:
         return None
 
 
+def _require_directory(path: Path) -> None:
+    """Reject linked or non-directory components below the selected canonical home."""
+    for part in (path, *path.parents):
+        if part.is_symlink():
+            raise UnsafeGlobalAgentsState(f"linked directory; refusing change: {path}")
+        if part.exists() and not part.is_dir():
+            raise UnsafeGlobalAgentsState(f"not a directory: {part}")
+
+
+def _read_regular(path: Path) -> bytes:
+    """Read only bounded ordinary instruction bytes without following a final symlink."""
+    if path.is_symlink():
+        raise UnsafeGlobalAgentsState(f"linked file; refusing read: {path}")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(descriptor, "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_BYTES:
+            raise UnsafeGlobalAgentsState(f"not a bounded ordinary file: {path}")
+        payload = stream.read(MAX_BYTES + 1)
+    if len(payload) > MAX_BYTES:
+        raise UnsafeGlobalAgentsState(f"not a bounded ordinary file: {path}")
+    return payload
+
+
 def backup_target(target: Path, codex_home: Path, payload: bytes) -> Path:
     """Create and verify a unique backup before changing an existing target."""
     backup_root = codex_home / "backups" / "codex-rig"
-    backup_root.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
-    backup = backup_root / f"{timestamp}-{sha256(payload)[:12]}-AGENTS.md"
-    shutil.copy2(target, backup, follow_symlinks=False)
-    if backup.read_bytes() != payload:
+    _require_directory(backup_root)
+    if _read_regular(target) != payload:
+        raise UnsafeGlobalAgentsState(f"target changed before backup; refusing write: {target}")
+    for directory in (codex_home / "backups", backup_root):
+        directory.mkdir(mode=0o700, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        dir=backup_root, prefix=f"{sha256(payload)[:12]}-", suffix="-AGENTS.md", delete=False
+    ) as stream:
+        backup = Path(stream.name)
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    if _read_regular(backup) != payload:
         raise OSError(f"backup verification failed: {backup}")
     return backup
 
@@ -274,7 +306,7 @@ def atomic_write(
         if expected is None:
             if target.exists():
                 raise UnsafeGlobalAgentsState(f"target appeared during installation; refusing write: {target}")
-        elif not target.is_file() or target.read_bytes() != expected:
+        elif not target.is_file() or _read_regular(target) != expected:
             raise UnsafeGlobalAgentsState(f"target changed during installation; refusing write: {target}")
         if expected_identity is not None:
             observed = target.stat()
@@ -296,14 +328,16 @@ def check_global_agents(source: Path, codex_home: Path, *, plugin_root: str | No
     """
     if source.is_symlink() or not source.is_file():
         raise UnsafeGlobalAgentsState("template must be an ordinary file")
-    template = rendered_template(source.read_bytes(), source, plugin_root)
+    codex_home = codex_home.resolve()
+    _require_directory(codex_home)
+    template = rendered_template(_read_regular(source), source, plugin_root)
     block = managed_block(template)
     reasons: list[str] = []
     target = codex_home / "AGENTS.md"
     if target.is_symlink() or (target.exists() and not target.is_file()):
         reasons.append("unsafe-global-target")
     elif target.exists():
-        existing = target.read_bytes()
+        existing = _read_regular(target)
         try:
             # Check the same proposed composition as installation, including exact unmarked adoption.
             template_body = template if template.endswith(b"\n") else template + b"\n"
@@ -325,7 +359,7 @@ def check_global_agents(source: Path, codex_home: Path, *, plugin_root: str | No
         if skill.is_symlink() or not skill.is_file():
             continue
         try:
-            text = skill.read_text(encoding="utf-8")
+            text = _read_regular(skill).decode("utf-8")
         except UnicodeError:
             continue
         frontmatter = re.match(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|$)", text, re.DOTALL)
@@ -372,7 +406,9 @@ def install_global_agents(
     """
     if source.is_symlink() or not source.is_file():
         raise UnsafeGlobalAgentsState(f"template must be an ordinary file: {source}")
-    template = rendered_template(source.read_bytes(), source, plugin_root)
+    codex_home = codex_home.resolve()
+    _require_directory(codex_home)
+    template = rendered_template(_read_regular(source), source, plugin_root)
     block = managed_block(template)
     target = codex_home / "AGENTS.md"
     if target.is_symlink():
@@ -383,12 +419,12 @@ def install_global_agents(
     if not target.exists():
         if legacy_prefix_sha256 is not None:
             raise UnsafeGlobalAgentsState("legacy migration requires an existing target; refusing write")
-        codex_home.mkdir(parents=True, exist_ok=True)
+        codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
         atomic_write(target, block, 0o600, None)
         return "created", target, None
 
     identity = target.stat()
-    existing = target.read_bytes()
+    existing = _read_regular(target)
     template_body = template if template.endswith(b"\n") else template + b"\n"
     if legacy_prefix_sha256 is not None:
         desired, action = migrated_prefix_payload(existing, block, legacy_prefix_sha256), "migrated legacy prefix"
@@ -409,7 +445,7 @@ def install_global_agents(
     fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
     if (
         target.is_symlink()
-        or target.read_bytes() != existing
+        or _read_regular(target) != existing
         or any(getattr(observed, field) != getattr(identity, field) for field in fields)
     ):
         raise UnsafeGlobalAgentsState("target changed before backup; refusing write")
@@ -420,6 +456,8 @@ def install_global_agents(
 
 def remove_global_agents(codex_home: Path) -> tuple[str, Path, Path | None]:
     """Strip Codex Rig's managed block from AGENTS.md without touching user content."""
+    codex_home = codex_home.resolve()
+    _require_directory(codex_home)
     target = codex_home / "AGENTS.md"
     if not target.exists():
         return "absent", target, None
@@ -428,7 +466,7 @@ def remove_global_agents(codex_home: Path) -> tuple[str, Path, Path | None]:
     if not target.is_file():
         raise UnsafeGlobalAgentsState(f"target is not an ordinary file; refusing write: {target}")
 
-    existing = target.read_bytes()
+    existing = _read_regular(target)
     updated, action = stripped_payload(existing)
     if action == "absent":
         return "absent", target, None

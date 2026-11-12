@@ -179,7 +179,7 @@ def parse_plan(raw: str) -> list[PlanEntry]:
     entries = []
     for e in json.loads(raw):
         sha = str(e["sha"]).strip()
-        if not _SHA_RE.match(sha):
+        if not _SHA_RE.fullmatch(sha):
             raise ValueError(f"invalid sha for item {e.get('item_id')!r}: {sha!r}")
         entries.append(
             PlanEntry(
@@ -363,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"error": str(exc)}))
         return 2
 
-    if args.base_sha is not None and not _SHA_RE.match(args.base_sha):
+    if args.base_sha is not None and not _SHA_RE.fullmatch(args.base_sha):
         print(json.dumps({"error": f"invalid --base-sha: {args.base_sha!r}"}))
         return 2
 

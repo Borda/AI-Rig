@@ -1622,15 +1622,25 @@ class CompletedRemediation:
 @pytest.fixture(
     scope="module",
     params=[
-        pytest.param((_keep_plan_location, None, ["bucket-a.txt"]), id="sorted-plan"),
-        pytest.param((_promote_to_pr_run, None, ["bucket-a.txt"]), id="promoted-sorted-plan"),
+        pytest.param(
+            (_keep_plan_location, None, ["bucket-a.txt"]),
+            id="sorted-plan",
+            marks=pytest.mark.xdist_group(name="remediation-sorted-plan"),
+        ),
+        pytest.param(
+            (_promote_to_pr_run, None, ["bucket-a.txt"]),
+            id="promoted-sorted-plan",
+            marks=pytest.mark.xdist_group(name="remediation-promoted-plan"),
+        ),
         pytest.param(
             (_keep_plan_location, ["bucket-c.txt", "bucket-a.txt"], ["bucket-a.txt", "bucket-c.txt"]),
             id="authored-unsorted-paths",
+            marks=pytest.mark.xdist_group(name="remediation-unsorted-paths"),
         ),
         pytest.param(
             (_keep_plan_location, [".\\bucket-c.txt", ".//bucket-a.txt"], ["bucket-a.txt", "bucket-c.txt"]),
             id="portable-authored-spellings",
+            marks=pytest.mark.xdist_group(name="remediation-portable-paths"),
         ),
     ],
 )

@@ -2,25 +2,27 @@
 
 <!-- file: efficiency.md — consumers: audit/SKILL.md -->
 
-Triggered by `/audit --efficiency`. Read+executed by `/audit` when `--efficiency` flag present.
+Triggered by `/foundry:audit --efficiency`. Read+executed by `/foundry:audit` when `--efficiency` flag present.
 
 ## Mode: efficiency
 
-**Trigger**: `/audit [<scope>...] --efficiency`
+**Trigger**: `/foundry:audit [<scope>...] --efficiency`
 
 Sweeps agents and skills for cost inefficiency signals. Does NOT run standard per-file quality audit (Steps 3–6) — efficiency-only analysis. Generates prioritized cost-reduction plan with estimated savings. Static phases produce heuristic estimates only. With `--measured`, Phase B3 adds measured dollars from this project's real transcripts for every inline skill that declares `model:`, and keeps a baseline so a re-run prints the post-fix delta; every other savings figure stays directional guidance.
 
 **Scope resolution**: same as standard audit. No scope = all agents + skills across plugins + `.claude/`. Named scope = union of resolved file sets. Fragment files (`*/modes/*`, `*/templates/*`, `*/_shared/*`): skip checks 1–3 and 6 (no model frontmatter); run checks 5 (token bloat) and 7 (bin/ extraction) only.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null || RUN_DIR=""
 if [ -z "$RUN_DIR" ] || [ ! -d "$RUN_DIR" ]; then
-  RUN_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/make_run_dir.py" .reports/audit)  # timeout: 5000
+  RUN_DIR=$(python "$PLUGIN_ROOT/bin/make_run_dir.py" .reports/audit)  # timeout: 5000
   [ -z "$RUN_DIR" ] && { printf "! BREAKING: make_run_dir.py returned empty path\n"; exit 1; }
   mkdir -p "${TMPDIR:-/tmp}/audit-state-${CSID}"
   echo "$RUN_DIR" > "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir"
 fi
+mkdir -p "$RUN_DIR/efficiency"
 echo "Run dir: $RUN_DIR"
 ```
 
@@ -72,7 +74,7 @@ Spawn **foundry:curator** per file with efficiency-specific prompt:
 >
 >     Omit (a) and (d) when no file-internal or CLAUDE.md/settings.json evidence exists — do not flag on inference. Never flag guard-rail taxonomy items above, domain-specific constraints, or format contracts. Severity: low. Fix: remove or replace with concrete behavioral constraint. For each E9 finding in the report file include columns: `check` (E9), `location` (line range), `issue` (one-line), `impact` (estimated lines reduced), `suggested simplification`.
 >
->     Write findings to `<RUN_DIR>/efficiency-<file-slug>.md` where `<file-slug>` = `<plugin>-<skill-dir-name>` for skills (e.g. `foundry-audit`, `oss-review`) or `<plugin>-<agent-name>` for agents (e.g. `foundry-curator`). `.claude/` files prefix with `local` (e.g. `local-audit`). Never use bare `efficiency-SKILL.md` — all skills share that basename.
+>     Write findings to `<RUN_DIR>/efficiency/efficiency-<file-slug>.md` where `<file-slug>` = `<plugin>-<skill-dir-name>` for skills (e.g. `foundry-audit`, `oss-review`) or `<plugin>-<agent-name>` for agents (e.g. `foundry-curator`). `.claude/` files prefix with `local` (e.g. `local-audit`). Never use bare `efficiency-SKILL.md` — all skills share that basename.
 >
 > 10. **Ceremony turns (E10)**: each fenced bash block is one billed turn, and a turn re-reads the whole live context — measured mean 221,527 tok, 69.2% of spend, so a block that does only bookkeeping costs the same as one that does real work. Flag:
 >
@@ -88,6 +90,7 @@ Spawn **foundry:curator** per file with efficiency-specific prompt:
 **Phase B — System-wide spawn pattern + duplication scan** (parallel with Phase A):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null || RUN_DIR=""
@@ -95,16 +98,16 @@ IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null
 SCAN_OUT="$RUN_DIR/efficiency-scan.txt"; : > "$SCAN_OUT"
 set -o pipefail  # tee would otherwise hide a scanner crash behind its own exit 0
 if [ "$LOCAL_MODE" = "true" ]; then
-  python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/scan_efficiency_signals.py" --scan-dir "plugins/" | tee -a "$SCAN_OUT" || echo "⚠ Phase B scan failed — say so in the report"  # timeout: 60000
+  python "$PLUGIN_ROOT/bin/scan_efficiency_signals.py" --scan-dir "plugins/" | tee -a "$SCAN_OUT" || echo "⚠ Phase B scan failed — say so in the report"  # timeout: 60000
 else
   # installed context: project .claude/ plus every installed plugin's current root — the plugins live there, not under .claude/
-  if [ -d ".claude/" ]; then python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/scan_efficiency_signals.py" --scan-dir ".claude/" | tee -a "$SCAN_OUT" || echo "⚠ Phase B scan failed — say so in the report"; fi  # timeout: 60000
+  if [ -d ".claude/" ]; then python "$PLUGIN_ROOT/bin/scan_efficiency_signals.py" --scan-dir ".claude/" | tee -a "$SCAN_OUT" || echo "⚠ Phase B scan failed — say so in the report"; fi  # timeout: 60000
   _N=0
   while IFS= read -r p; do
     m="${p%/*}"; m="${m##*/}"
-    r=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_plugin_root.py" --plugin-name "${p##*/}" --marketplace "$m" 2>/dev/null) || continue
+    r=$(python "$PLUGIN_ROOT/bin/resolve_plugin_root.py" --plugin-name "${p##*/}" --marketplace "$m" 2>/dev/null) || continue
     [ -n "$r" ] || continue
-    _N=$((_N + 1)); python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/scan_efficiency_signals.py" --scan-dir "$r" | tee -a "$SCAN_OUT" || echo "⚠ Phase B scan failed — say so in the report"  # timeout: 60000
+    _N=$((_N + 1)); python "$PLUGIN_ROOT/bin/scan_efficiency_signals.py" --scan-dir "$r" | tee -a "$SCAN_OUT" || echo "⚠ Phase B scan failed — say so in the report"  # timeout: 60000
   done < <(find "$HOME/.claude/plugins/cache" -mindepth 2 -maxdepth 2 -type d 2>/dev/null)
   [ "$_N" -gt 0 ] || echo "⚠ Phase B: no installed plugin root resolved — plugin agents/skills NOT scanned; say so in the report"
 fi
@@ -179,16 +182,17 @@ Spawn **foundry:curator** per plugin with this prompt:
 >
 > **Severity**: DUPLICATE cluster (max-sim ≥ 0.90) → **high** regardless of gate/score; HIGH verdict → **medium**; MEDIUM verdict → **low**; LOW or HOLD → Table 2 only (not a finding). Python blocks with HIGH verdict → medium; note approval-prompt impact only for capture forms (`VAR=$(python …)`), never bare `python` (allow-listed).
 >
-> Write to `<RUN_DIR>/efficiency-check33-<plugin>.md`. Return ONLY: `{"status":"done","file":"<path>","clusters":N,"findings":N,"severity":{"high":N,"medium":N,"low":N},"confidence":0.N}`
+> Write to `<RUN_DIR>/efficiency/efficiency-check33-<plugin>.md`. Return ONLY: `{"status":"done","file":"<path>","clusters":N,"findings":N,"severity":{"high":N,"medium":N,"low":N},"confidence":0.N}`
 
 **Phase B3 — Measured evidence for inline `model:` pins**: only with `--measured`. The steps live in `efficiency-measured.md`, loaded here so a plain `--efficiency` run does not carry them; run after the Phase B scan block.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 IFS= read -r MEASURED < "${TMPDIR:-/tmp}/audit-state-${CSID}/measured" 2>/dev/null || MEASURED="false"
 [ "$MEASURED" = "true" ] || { echo "Phase B3 skipped — no --measured"; exit 0; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes efficiency-measured.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
+python "$PLUGIN_ROOT/bin/load_mode.py" audit modes efficiency-measured.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
 ```
 
 Execute the steps loaded above.
@@ -196,20 +200,21 @@ Execute the steps loaded above.
 **Phase B4 — Size to importance (E11)**: deterministic, zero model tokens, the source tree only; it also covers `rules/`, which the per-file sweep above does not. Each block of instruction text is judged spine or complement (complement only on proof: an opt-in flag gate or rationale vocabulary; doubt means spine; a flag-only step counts only what its flag scopes, a flag-only heading its section up to a default-path sub-heading). Only complement is flagged: `move` out of always-loaded or flag-only text, `trim` when lazy text weighs over twice the median per obligation. Spine is not flagged for size, by keyword proof and not by guarantee; a spine block that is too thin is not detected here.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null || RUN_DIR=""
 [ "$LOCAL_MODE" = "true" ] || { echo "Phase B4 skipped — needs --local (the plugin source tree)"; exit 0; }
 [ -n "$RUN_DIR" ] || { echo "! BLOCKED — audit run-dir sentinel missing; Phase B4 cannot place its report"; exit 1; }
 set -o pipefail  # tee would otherwise hide a scorer crash behind its own exit 0
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/size_importance.py" --json "$RUN_DIR/size-importance.json" | tee "$RUN_DIR/size-importance.md" || echo "⚠ Phase B4 failed — say so in the report" | tee -a "$RUN_DIR/size-importance.md"  # timeout: 60000
+python "$PLUGIN_ROOT/bin/size_importance.py" --json "$RUN_DIR/size-importance.json" | tee "$RUN_DIR/size-importance.md" || echo "⚠ Phase B4 failed — say so in the report" | tee -a "$RUN_DIR/size-importance.md"  # timeout: 60000
 ```
 
 **Phase C — Aggregate, score, and plan** (after A+B+B2+B3+B4 complete):
 
 Spawn **foundry:curator** consolidator to merge all findings:
 
-> Read all per-file reports from `<RUN_DIR>/efficiency-*.md` and all Check 33 reports from `<RUN_DIR>/efficiency-check33-*.md`. Also read Phase B and Phase B4 bash output passed as context. Deduplicate findings by `(file, finding_type)` pair — Phase A curator and Phase B bash both scan for the missing-model condition; prefer Phase A curator finding (has file context) over Phase B bash line (no context) when both report same file+condition. **Phase A silence never removes a Phase B line**: every `INLINE_MODEL` and `NO_MODEL` line is a model-placement finding on its own, even when the Phase A report calls the tier a fit — only a Phase A finding for the same file and condition replaces it. Also read `<RUN_DIR>/measured-efficiency.md` when present (only a `--measured` run writes it): attach each skill's R1 dollars per occurrence, pre-gate median and baseline delta to its model-placement row, and rank those rows by measured dollars × run count above wording findings.
+> Read all per-file reports from `<RUN_DIR>/efficiency/efficiency-*.md` and all Check 33 reports from `<RUN_DIR>/efficiency/efficiency-check33-*.md`. Also read Phase B and Phase B4 bash output passed as context. Deduplicate findings by `(file, finding_type)` pair — Phase A curator and Phase B bash both scan for the missing-model condition; prefer Phase A curator finding (has file context) over Phase B bash line (no context) when both report same file+condition. **Phase A silence never removes a Phase B line**: every `INLINE_MODEL` and `NO_MODEL` line is a model-placement finding on its own, even when the Phase A report calls the tier a fit — only a Phase A finding for the same file and condition replaces it. Also read `<RUN_DIR>/measured-efficiency.md` when present (only a `--measured` run writes it): attach each skill's R1 dollars per occurrence, pre-gate median and baseline delta to its model-placement row, and rank those rows by measured dollars × run count above wording findings.
 >
 > Produce a cost-reduction report with these sections:
 >
@@ -222,11 +227,11 @@ Spawn **foundry:curator** consolidator to merge all findings:
 > 07. **Estimated Combined Savings** — rough directional reduction for most common workflows if all P1+P2 applied; savings are heuristic estimates, except the model-placement rows that carry measured Phase B3 dollars (shown as measured); directional guidance, not engineering targets
 > 08. **Instruction Quality Issues** — table of E8/E9 findings aggregated from per-file envelopes (`e8_complexity` + `e9_noise` fields) and detailed findings in `efficiency-*.md` reports: `| file | check | location | issue | impact | suggested simplification |`; sorted by estimated noise reduction (high→low). NON_AUTO_FIXABLE — E8 findings contribute to `medium` count; E9 findings contribute to `low` count; both enter option (c) "Fix ALL" as an `instruction-quality` question folded into the model-tier category's `AskUserQuestion` call (its own call only when no model-tier finding exists) — never a fifth call past `fix.md`'s 4-call cap. Do not auto-fix instruction-quality findings via options (a) or (b). Omit section entirely when both E8 and E9 totals are zero.
 > 09. **Ceremony Turns** — table of E10 findings from per-file envelopes (`e10_ceremony`): `| file | check | location | issue | turns removed | suggested merge |`, sorted by turns removed (high→low), plus an `export CSID` occurrence column per file as the block-count proxy. This section ranks by **turns**, not tokens: token-bloat findings (checks 5, 7b, E8) shrink what each turn re-reads, E10 removes turns outright, and the two are additive. Findings that merge only setup blocks are auto-fixable; any finding whose merge would cross a model decision point is reported and never auto-fixed. Omit section when the E10 total is zero.
-> 10. **Size to Importance (E11)** — `<RUN_DIR>/size-importance.md` (Phase B4) as printed: flagged `move`/`trim` rows with tokens, load class and copy count. Report-only: no `summary.jsonl` row and no fix-gate category. Only text the scorer proved complement is proposed for a cut, and any move or trim goes through the Instruction-File Compression Gate (`markdown.md`). Omit section only when the file is absent (Phase B4 printed `skipped`) or the scorer reported no flagged block; when the file or the Phase B4 output shows `⚠ Phase B4 failed` or `! BLOCKED`, say so in this section. Write full report to `<RUN_DIR>/efficiency-report.md`. End report with `## Confidence` block per quality-gates.md format (Score, Gaps, Refinements).
+> 10. **Size to Importance (E11)** — `<RUN_DIR>/size-importance.md` (Phase B4) as printed: flagged `move`/`trim` rows with tokens, load class and copy count. Report-only: no `summary.jsonl` row and no fix-gate category. Only text the scorer proved complement is proposed for a cut, and any move or trim goes through the Instruction-File Compression Gate (`markdown.md`). Omit section only when the file is absent (Phase B4 printed `skipped`) or the scorer reported no flagged block; when the file or the Phase B4 output shows `⚠ Phase B4 failed` or `! BLOCKED`, say so in this section. Write full report to `<RUN_DIR>/efficiency/efficiency-report.md`. End report with `## Confidence` block per quality-gates.md format (Score, Gaps, Refinements).
 >
-> Also write the audit gate inputs (standalone `--efficiency` only — with `--adversarial` in the same invocation the Step 5 consolidator writes the merged files): `<RUN_DIR>/aggregate.md` (non-empty, findings grouped by severity) and `<RUN_DIR>/summary.jsonl` — one compact JSON object per line, one row per P1–P4 plan item (P-HOLD excluded) plus one row per finding outside the plan (e.g. section 8 E8/E9 rows, section 9 E10 rows): `{"id":"P1-1","sev":"critical|high|medium|low","file":"<repo-relative path>","category":"<model-tier|token-bloat|bin-extraction|duplication|instruction-quality|ceremony|…>","auto_fixable":true,"one_line":"<finding description>"}`. `sev` and a non-empty `one_line` are mandatory on every row — the audit follow-up gate and `Stop` hook block without `aggregate.md` and `summary.jsonl`, and reject a row missing either field. `auto_fixable` is `false` for E8/E9 rows (NON_AUTO_FIXABLE, section 8) and for any E10 merge crossing a model decision point (section 9). Zero findings: `aggregate.md` carries a one-line no-findings note, `summary.jsonl` is written empty.
+> Stage the selected rows in `<RUN_DIR>/summary.jsonl.efficiency.rec` in every mode. Standalone `--efficiency`: append the stage with `python "${CLAUDE_PLUGIN_ROOT}/bin/append_ledger.py" "<RUN_DIR>/summary.jsonl" --run-root "<RUN_DIR>"`, then write the audit gate inputs. With `--adversarial`, leave the stage for adversarial Phase C, the sole canonical writer, and return there before any gate. The canonical inputs are `<RUN_DIR>/aggregate.md` (non-empty, findings grouped by severity) and `<RUN_DIR>/summary.jsonl` — one compact JSON object per line, one row per P1–P4 plan item (P-HOLD excluded) plus one row per finding outside the plan (e.g. section 8 E8/E9 rows, section 9 E10 rows): `{"id":"P1-1","sev":"critical|high|medium|low","file":"<repo-relative path>","category":"<model-tier|token-bloat|bin-extraction|duplication|instruction-quality|ceremony|…>","auto_fixable":true,"one_line":"<finding description>"}`. `sev` and a non-empty `one_line` are mandatory on every row — the audit follow-up gate and `Stop` hook block without `aggregate.md` and `summary.jsonl`, and reject a row missing either field. `auto_fixable` is also false for model-tier findings and every systemic/advisory exclusion from `fix.md`; it is `false` for E8/E9 rows (NON_AUTO_FIXABLE, section 8) and for any E10 merge crossing a model decision point (section 9). Zero findings: `aggregate.md` carries a one-line no-findings note, stage an empty `summary.jsonl.efficiency.rec` and append it through the same helper to create empty `summary.jsonl`.
 >
-> Return ONLY: `{"status":"done","file":"<RUN_DIR>/efficiency-report.md","critical":N,"high":N,"medium":N,"low":N,"total_issues":N,"clusters":N,"extract_count":N,"recommended_count":N,"e8_complexity":N,"e9_noise":N,"e10_ceremony":N,"top_saving":"<description>","findings":N,"summary_file":"<RUN_DIR>/summary.jsonl","confidence":0.N}` — `findings` = `summary.jsonl` row count.
+> Return ONLY: `{"status":"done","file":"<RUN_DIR>/efficiency/efficiency-report.md","critical":N,"high":N,"medium":N,"low":N,"total_issues":N,"clusters":N,"extract_count":N,"recommended_count":N,"e8_complexity":N,"e9_noise":N,"e10_ceremony":N,"top_saving":"<description>","findings":N,"summary_file":"<RUN_DIR>/summary.jsonl","confidence":0.N}` — `findings` = selected staged row count; combined-mode canonical counts are computed only after adversarial Phase C merges the stage.
 
 **Report format** (terminal summary):
 
@@ -236,7 +241,7 @@ code-blocks: clusters: N · HIGH: N · MEDIUM: N
 instruction-quality: complexity: N · noise: N
 ceremony: turns removable: N · files: N
 confidence: 0.N
-→ <RUN_DIR>/efficiency-report.md
+→ <RUN_DIR>/efficiency/efficiency-report.md
 
 Critical: [list each]
 Estimated savings (P1+P2): ~X%
@@ -248,8 +253,8 @@ Omit `code-blocks:` line when no clusters found (all HOLD verdicts or no Check 3
 
 Efficiency findings feed into standard fix pipeline (Steps 7–10). **Model-tier findings stay NON_AUTO_FIXABLE** (`fix.md`, Check 19): report only under options (a)/(b), applied only on explicit per-category user selection under (c) — invoking `--efficiency` is not that selection. A tier downgrade additionally needs `/foundry:calibrate <agent> --full --ab-test` evidence before it lands (`agents/curator.md` model policy).
 
-**Extraction routing**: when Phase C envelope `extract_count > 0` (HIGH or MEDIUM verdict clusters), Step 11 final report prints `/distill executables (N HIGH, M MEDIUM candidates)` as plain text — no follow-up gate option (`/distill` is `disable-model-invocation`); user runs it; do NOT auto-run.
+**Extraction routing**: when Phase C envelope `extract_count > 0` (HIGH or MEDIUM verdict clusters), Step 11 final report prints `/foundry:distill executables (N HIGH, M MEDIUM candidates)` as plain text — no follow-up gate option (`/foundry:distill` is `disable-model-invocation`); user runs it; do NOT auto-run.
 
-**Post-extraction orphan check**: after `/distill executables` completes, run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_orphaned_bin.py"` — must exit 0. New orphan introduced (bin/ script created without consumer rewire) = HIGH finding; abort extraction phase, require wire-in before commit.
+**Post-extraction orphan check**: after `/foundry:distill executables` completes, run `python "${CLAUDE_PLUGIN_ROOT}/bin/check_orphaned_bin.py"` — must exit 0. New orphan introduced (bin/ script created without consumer rewire) = HIGH finding; abort extraction phase, require wire-in before commit.
 
 **Flag aliases**: `--efficiency` only (no alias).

@@ -999,7 +999,7 @@ class TestPreCompactContract:
         transcript = tmp_path / "transcript.jsonl"
         _write_transcript(transcript, ["/proj/src/foo.py"])
         contract = "CONTRACT: keep phase 3 in-progress; do NOT re-run steps 1-2.\n- next: verify tests"
-        (contract_dir / "skill-contract.md").write_text(contract, encoding="utf-8")
+        (contract_dir / "skill-contract.md").write_bytes(contract.encode("utf-8"))
         (contract_dir / "skill-contract.owner").write_text(
             json.dumps(_owner_record(sid, contract.encode())), encoding="utf-8"
         )

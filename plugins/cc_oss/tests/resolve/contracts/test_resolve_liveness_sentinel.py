@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _oss_shell_plugin import render_shell
 from _resolve_source import read_resolve_source
 
 _RESOLVE = Path(__file__).resolve().parents[3] / "skills/resolve"
@@ -44,7 +45,14 @@ def _env(tmp_path: Path, session: str, arguments: str) -> dict[str, str]:
 
 def _run_bash(block: str, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """Execute one shipped block in a fresh Bash, as a separate Bash tool call would."""
-    return subprocess.run([_BASH, "-c", block], cwd=cwd, env=env, capture_output=True, text=True, check=False)
+    return subprocess.run(
+        [_BASH, "-c", render_shell(block, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "oss")],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 @_requires_bash

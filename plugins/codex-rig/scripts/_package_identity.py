@@ -42,17 +42,42 @@ import hashlib
 import json
 import os
 import re
+import runpy
+import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from types import ModuleType
 from typing import Any, NoReturn
 
-from _safe_package_io import inventory_package_files, read_safe_file
+# run_path on an explicit .py path compiles source rather than trusting adjacent cached bytecode.
+_safe_io = runpy.run_path(str(Path(__file__).with_name("_safe_package_io.py")))
+read_safe_file = _safe_io["read_safe_file"]
+
+
+def _load_source_module(name: str) -> ModuleType:
+    """Load an explicitly selected sibling from source before its dependent imports run."""
+    path = Path(__file__).with_name(name + ".py")
+    existing = sys.modules.get(name)
+    if existing is not None and getattr(existing, "_codex_rig_source_path", None) == str(path):
+        return existing
+    # Registration is required for dataclasses and for the following sibling modules' ordinary imports.
+    module = ModuleType(name)
+    module.__file__ = str(path)
+    module._codex_rig_source_path = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec"), module.__dict__)  # noqa: S102 - source-only module loading
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return module
+
 
 #: Largest package manifest, in bytes (4 MiB), that package verification will read.
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 #: Largest individual package file, in bytes (16 MiB), that package verification will read.
 MAX_PACKAGE_FILE_BYTES = 16 * 1024 * 1024
-#: Directory names skipped when inventorying package files (caches and generated report folders).
+#: Cache and root metadata exclusions; bytecode cache contents are checked before exclusion.
 EXCLUDED_PARTS = frozenset({"__pycache__", ".pytest_cache", ".reports"})
 #: File names skipped when inventorying package files, including the manifest that records the inventory.
 EXCLUDED_FILES = frozenset({".coverage", "package-manifest.json"})
@@ -64,6 +89,36 @@ MODE_PATTERN = re.compile(r"0[0-7]{3}")
 
 class PackageIdentityError(ValueError):
     """Report a package identity invariant that could not be established."""
+
+
+def is_bytecode_cache(relative: str) -> bool:
+    """Exclude only visible .pyc files directly inside one bytecode cache directory."""
+    parts = PurePosixPath(relative).parts
+    if "__pycache__" not in parts:
+        return False
+    if parts.index("__pycache__") != len(parts) - 2 or parts[-1].startswith(".") or not parts[-1].endswith(".pyc"):
+        raise PackageIdentityError(f"unexpected bytecode cache payload: {relative}")
+    return True
+
+
+def inventory_package_files(
+    root: Path | str,
+    *,
+    excluded_parts: frozenset[str],
+    excluded_files: frozenset[str],
+    reject_bytecode: bool = False,
+) -> tuple[str, ...]:
+    """Inspect caches safely, optionally rejecting bytecode files and even empty cache directories."""
+    paths = _safe_io["inventory_package_files"](
+        root, excluded_parts=excluded_parts - {"__pycache__"}, excluded_files=excluded_files
+    )
+    if reject_bytecode:
+        bytecode = next((path for path in paths if path.endswith(".pyc")), None)
+        cache = next(Path(root).rglob("__pycache__"), None)
+        if bytecode is not None or cache is not None:
+            raise PackageIdentityError(f"unexpected bytecode payload: {bytecode or cache}")
+        return paths
+    return tuple(path for path in paths if not is_bytecode_cache(path))
 
 
 @dataclass(frozen=True)

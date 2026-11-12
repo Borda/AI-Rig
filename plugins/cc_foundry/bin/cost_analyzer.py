@@ -71,6 +71,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from _context_composition import DEFAULT_RUNTIME, run_composition
+from _report_io import write_report
 
 #: Default Claude transcript root; Codex composition uses its own default unless --projects-root is given.
 CLAUDE_PROJECTS_ROOT = "~/.claude/projects"
@@ -988,9 +989,8 @@ def _write_report(lines: list[str], output: str | None) -> Path:
     else:
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
         out = Path(f".reports/profile/{stamp}/cost.md")
-    out.parent.mkdir(parents=True, exist_ok=True)
     # Transcript-controlled labels may carry lone surrogates; replace them rather than lose the whole report.
-    out.write_text(report, encoding="utf-8", errors="replace")
+    write_report(out, report, errors="replace")
     return out
 
 

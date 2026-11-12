@@ -116,7 +116,8 @@ class TestPersistSentinel:
         captured = capsys.readouterr()
         assert (rc, list(sentinel_dir.iterdir())) == (0, [])
         assert "could not persist" in captured.err
-        assert captured.out.startswith(".developments/")
+        assert Path(captured.out.strip()).parent == Path.cwd() / ".developments"
+        assert Path(captured.out.strip()).is_dir()
 
 
 class TestPersistReplacesExistingEntry:
@@ -131,7 +132,9 @@ class TestPersistReplacesExistingEntry:
         target = sentinel_dir / "dev-feature-dev-dir-s2"
         target.write_text("stale\n", encoding="utf-8")
         dev_run_dir.main(["--persist", "feature"])
-        assert target.read_text(encoding="utf-8").startswith(".developments/")
+        recorded = Path(target.read_text(encoding="utf-8").strip())
+        assert recorded.parent == Path.cwd() / ".developments"
+        assert recorded.is_dir()
 
     @_skip_no_symlinks
     def test_replaces_planted_symlink_without_following_it(

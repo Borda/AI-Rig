@@ -1,13 +1,16 @@
 #!/usr/bin/env python
 """Print commit SHAs from a resolve ledger or merge plan.
 
-Purpose: Supply the two SHA streams used by resolve's stranded-pick and overlap guards. Scope: Read a JSONL commits
-ledger or a JSON-array merge plan without modifying either. Usage: ``python extract_commit_shas.py {ledger,plan} FILE``.
-Outputs: Print one SHA per line in input order. Ledger mode skips blank rows, strips SHA whitespace and refuses empty
-SHAs; plan mode prints the stored SHA values unchanged. Failure: Read, JSON and missing-field failures propagate with
-exit 1, as in the inline implementations. Ledger output may be partial on failure, so callers must check the exit code.
-Invalid CLI arguments exit 2; successful extraction exits 0. Used by: ``skills/resolve/modes/dispatch-phase3.md`` before
-patch-id and overlap checks.
+Purpose:
+    Supply the two SHA streams used by resolve's stranded-pick and overlap guards. Scope: Read a JSONL commits ledger or
+    a JSON-array merge plan without modifying either. Usage: ``python extract_commit_shas.py {ledger,plan} FILE``.
+
+Outputs:
+    Print one SHA per line in input order. Ledger mode skips blank rows, strips SHA whitespace and refuses empty SHAs;
+    plan mode prints the stored SHA values unchanged. Failure: Read, JSON and missing-field failures propagate with exit
+    1, as in the inline implementations. Ledger output may be partial on failure, so callers must check the exit code.
+    Invalid CLI arguments exit 2; successful extraction exits 0. Used by: ``skills/resolve/modes/dispatch-phase3.md``
+    before patch-id and overlap checks.
 """
 
 from __future__ import annotations

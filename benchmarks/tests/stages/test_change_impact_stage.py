@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import json
+import ntpath
 import os
 import shutil
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -18,6 +22,112 @@ import pytest
 from _bench_claude.agentic import cli as agentic_cli
 from _bench_claude.agentic import runner as agentic_runner
 from _bench_common import change_impact_stage as stage
+
+
+@pytest.fixture
+def scanned_fixture() -> Iterator[tuple[Path, Path, dict[str, Any]]]:
+    """Build a real fixture index and its approved source and graph scope."""
+    with stage._fixture_workspace() as (root, index_path):
+        payload = json.loads(index_path.read_bytes())
+        yield (
+            root,
+            index_path,
+            {
+                "fixture_sha256": stage.contracts.source_fingerprint(root),
+                "scan_version": payload["scan_version"],
+                "semantic_index_sha256": stage.semantic_index_sha256(payload, root),
+            },
+        )
+
+
+def test_fixture_coordinate_accepts_fresh_checkouts_with_the_same_graph(scanned_fixture) -> None:
+    """Fresh scans at distinct temporary roots share approval while retaining exact byte coordinates."""
+    first_root, first_index, scope = scanned_fixture
+    first = stage._fixture_coordinate(first_root, first_index, scope)
+    with stage._fixture_workspace() as (second_root, second_index):
+        second = stage._fixture_coordinate(second_root, second_index, scope)
+        assert first_root != second_root
+        assert (
+            json.loads(first_index.read_bytes())["scan_root_key"]
+            != json.loads(second_index.read_bytes())["scan_root_key"]
+        )
+        assert first["index_scan_root"] == second["index_scan_root"] == "."
+        assert first["scan_version"] == second["scan_version"] == scope["scan_version"]
+        assert first["source_fingerprint"] == second["source_fingerprint"] == scope["fixture_sha256"]
+        assert first["raw_index_sha256"] == hashlib.sha256(first_index.read_bytes()).hexdigest()
+        assert second["raw_index_sha256"] == hashlib.sha256(second_index.read_bytes()).hexdigest()
+        assert first["raw_index_sha256"] != second["raw_index_sha256"]
+
+
+def test_fixture_coordinate_rejects_an_index_scanned_in_another_checkout(scanned_fixture) -> None:
+    """Identical fixture source and graph cannot admit a copied index with a foreign root key."""
+    first_root, first_index, scope = scanned_fixture
+    with stage._fixture_workspace() as (second_root, second_index):
+        second_index.write_bytes(first_index.read_bytes())
+        assert stage.contracts.source_fingerprint(second_root) == scope["fixture_sha256"]
+        assert (
+            stage.semantic_index_sha256(json.loads(second_index.read_bytes()), second_root)
+            == scope["semantic_index_sha256"]
+        )
+        assert first_root != second_root
+        with pytest.raises(ValueError, match="impact fixture index differs from approved scope"):
+            stage._fixture_coordinate(second_root, second_index, scope)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        pytest.param({"scan_root_key": None}, id="missing-root-key"),
+        pytest.param({"scan_root_key": "a" * 63}, id="short-root-key"),
+        pytest.param({"scan_root_key": "A" * 64}, id="uppercase-root-key"),
+        pytest.param({"scan_root_key": "0" * 64}, id="foreign-root-key"),
+        pytest.param({"scan_version": 13}, id="different-scan-version"),
+        pytest.param({"modules": []}, id="different-semantic-graph"),
+    ],
+)
+def test_fixture_coordinate_rejects_index_drift(scanned_fixture, changes: dict[str, Any]) -> None:
+    """Root identity, scan version and semantic graph remain independent admission requirements."""
+    root, index_path, scope = scanned_fixture
+    payload = json.loads(index_path.read_bytes())
+    payload.update(changes)
+    index_path.write_bytes(json.dumps(payload).encode())
+    with pytest.raises(ValueError, match="impact fixture index differs from approved scope"):
+        stage._fixture_coordinate(root, index_path, scope)
+
+
+def test_fixture_coordinate_rejects_absolute_root_in_current_schema(scanned_fixture) -> None:
+    """Current indexes require relative root metadata even when an absolute path names the checkout."""
+    root, index_path, scope = scanned_fixture
+    payload = json.loads(index_path.read_bytes())
+    payload["scan_root"] = str(root)
+    index_path.write_bytes(json.dumps(payload).encode())
+    with pytest.raises(ValueError, match="impact fixture index differs from approved scope"):
+        stage._fixture_coordinate(root, index_path, scope)
+
+
+def test_fixture_coordinate_rejects_mutated_source(scanned_fixture) -> None:
+    """Source drift is refused even when the index still matches the approved graph."""
+    root, index_path, scope = scanned_fixture
+    (root / "impactlib/retry.py").write_bytes(b"raise RuntimeError('changed source')\n")
+    with pytest.raises(ValueError, match="source fingerprint drift"):
+        stage._fixture_coordinate(root, index_path, scope)
+
+
+def test_fixture_coordinate_uses_codemap_windows_root_identity(
+    scanned_fixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows root keys normalize separators and case before hashing the resolved checkout path."""
+    original_root, _, scope = scanned_fixture
+    root = tmp_path / "MiXeD-Straße"
+    shutil.copytree(original_root, root)
+    index_path = root / ".cache/codemap/repo.json"
+    payload = json.loads(index_path.read_bytes())
+    payload["scan_root_key"] = hashlib.sha256(ntpath.normcase(str(root.resolve())).casefold().encode()).hexdigest()
+    index_path.write_bytes(json.dumps(payload).encode())
+    monkeypatch.setattr(stage, "os", SimpleNamespace(name="nt"))
+    coordinate = stage._fixture_coordinate(root, index_path, scope)
+    assert coordinate["index_scan_root"] == "."
+    assert coordinate["raw_index_sha256"] == hashlib.sha256(index_path.read_bytes()).hexdigest()
 
 
 def test_paid_impact_lifecycle_uses_isolated_fixture_and_native_rows(

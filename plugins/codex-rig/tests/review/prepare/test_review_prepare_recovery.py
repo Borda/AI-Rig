@@ -448,9 +448,16 @@ def _check_closure_correction_refusal(
 
 
 def _check_finding_id_namespace_recovery(
-    tmp_path: Path, run: Path, home: Path, children: dict[str, Path], original: str, expected: str, damage: str
+    tmp_path: Path,
+    run: Path,
+    home: Path,
+    children: dict[str, Path],
+    original: str,
+    expected: str,
+    prepared: subprocess.CompletedProcess[str],
+    damage: str,
 ) -> None:
-    """Generate the namespace correction, record its replacement with one damage, and check wave assembly."""
+    """Replay a generated namespace correction with one damage and check real wave assembly."""
     import test_review_batches as batches  # Reciprocal fixture import waits until collection has completed.
 
     if damage == "origin-raw":
@@ -458,7 +465,7 @@ def _check_finding_id_namespace_recovery(
         origin.write_bytes(
             origin.read_bytes().replace(b"Preserve the exact source obligation.", b"Different obligation.")
         )
-    prepared = _prepare_repair(run, home, "qa-specialist", "finding-id-namespace")
+        prepared = _prepare_repair(run, home, "qa-specialist", "finding-id-namespace")
     if damage == "origin-raw":
         assert prepared.returncode != 0
         assert "provenance-raw-output-mismatch:challenger" in prepared.stderr
@@ -721,8 +728,9 @@ class TestFindingIdNamespaceCorrection:
     def test_public_recovery_preserves_original_provenance(self, tmp_path: Path, subtests: pytest.Subtests) -> None:
         """Require generated tool-free a2 bytes, complete original reads and one native correction attempt.
 
-        Every damage starts from the same refused interaction wave, so that wave is built once and each damage runs as
-        an independent subtest from a byte-exact restore of it.
+        Every damage starts from the same refused interaction wave and real generated repair. Only the raw-provenance
+        damage precedes repair preparation, so it reruns that command; later damages reuse its unchanged output before
+        real assembly judges each independent subtest from a byte-exact restore.
         """
         import test_review_batches as batches  # Batch and native fixture modules share this established boundary.
 
@@ -730,8 +738,9 @@ class TestFindingIdNamespaceCorrection:
         initial = batches._batch_command(run, "assemble-wave", home)
         assert initial.returncode != 0
         assert "review-batch-individual-findings-record:qa-specialist" in initial.stderr
+        prepared = _prepare_repair(run, home, "qa-specialist", "finding-id-namespace")
         check = functools.partial(
-            _check_finding_id_namespace_recovery, tmp_path, run, home, children, original, expected
+            _check_finding_id_namespace_recovery, tmp_path, run, home, children, original, expected, prepared
         )
         scenarios = [{"damage": damage} for damage in _NAMESPACE_RECOVERY_DAMAGES]
         _replay_scenarios(subtests, tmp_path, _tree_state(tmp_path), scenarios, check)

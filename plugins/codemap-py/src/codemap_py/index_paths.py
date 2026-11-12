@@ -45,7 +45,6 @@ Resolution rules:
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import shutil
 import subprocess
@@ -230,11 +229,16 @@ def root_key(root: Path | str, *, windows: bool | None = None) -> str:
 
 def _read_scan_root(path: Path) -> str | None:
     """Return the ``scan_root`` field stored in *path*, or ``None`` if unreadable."""
+    # rwgate imports coordination_root from this module; defer its bounded reader until resolution is called.
+    from codemap_py.rwgate import IndexUnreadable, _load_index
+
     try:
-        with path.open(encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
+        data = _load_index(path)
+    except (OSError, IndexUnreadable):
         return None
+    if isinstance(data, dict) and data.get("scan_root") == ".":
+        key = data.get("scan_root_key")
+        return f"sha256:{key}" if isinstance(key, str) else None
     value = data.get("scan_root") if isinstance(data, dict) else None
     return value if isinstance(value, str) else None
 
@@ -255,7 +259,14 @@ def _diagnose_root_collision(path: Path, root: Path, diagnostics: list[Diagnosti
     if not path.is_file():
         return
     stored = _read_scan_root(path)
-    if stored is None or normalize_identity(_real(Path(stored))) == normalize_identity(root):
+    if stored is None:
+        return
+    matches = (
+        stored == f"sha256:{root_key(root)}"
+        if stored.startswith("sha256:")
+        else normalize_identity(_real(Path(stored))) == normalize_identity(root)
+    )
+    if matches:
         return
     diagnostics.append(
         Diagnostic(

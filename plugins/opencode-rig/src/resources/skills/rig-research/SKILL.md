@@ -1,11 +1,11 @@
 ---
 name: Rig Research
-description: Build a source-backed research brief with labeled claims, contradictions, and explicit limits.
+description: Answer a decision question from primary sources with labeled claims, contradictions, and explicit limits. Use for official docs, state-of-the-art comparisons, paper analysis, or paper-versus-code checks. NOT for changing code or running experiments.
 ---
 
 # Rig Research
 
-> Read [Evidence rules](../../references/evidence.md).
+> Read [Evidence rules](../../references/evidence.md). Follow [Role dispatch](../../references/evidence.md#role-dispatch) for native-agent fallback and stop on reported scope violations.
 
 > This workflow reads and cites. It never changes product code; a change that follows from the research goes to `rig-plan`.
 

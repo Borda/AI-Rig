@@ -25,9 +25,10 @@ Usage:
 Exit codes:
     0 — the run finished with pytest exit 0 or 1; the verdict line says whether the bug reproduced (the pytest code is
         in ``dev-gate-exit``).
-    1 — runner sentinel empty, the target resolved outside the working directory, or pytest exited with a code other
+    1 — runner sentinel empty, or pytest exited with a code other
         than 0 or 1 (``! GATE ERROR`` line printed; the code is still recorded in ``dev-gate-exit``).
     2 — runner is not an allowlisted pytest command, or pytest was not found on PATH.
+    64 — target is option-shaped or resolves outside the working directory (propagated containment rejection).
 """
 
 from __future__ import annotations

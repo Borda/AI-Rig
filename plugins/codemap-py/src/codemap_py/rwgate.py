@@ -62,11 +62,18 @@ Public API:
     atomic_publish(index_path, data) -> None   (helper for build_fn)
     IndexBusy, CoordinationUnavailable          (exceptions)
     set_instrument(callback) / _emit event hooks (event-order oracles)
+
+Environment overrides are trusted launcher/operator configuration, not repository input. ``CODEMAP_INDEX_DIR``,
+``CODEMAP_COORDINATION_DIR``, ``CODEMAP_LOG_DIR`` and ``CODEMAP_RWGATE_EVENTLOG`` intentionally select writable paths
+outside the project, including shared mounts. Launchers must not import these values from untrusted repository data.
+The refresh hook likewise controls ``CODEMAP_REFRESH_RECORD`` (the write destination) and
+``CODEMAP_REFRESH_FINGERPRINT`` (record content); neither is an authorization boundary.
 """
 
 from __future__ import annotations
 
 import contextlib
+import errno
 import itertools
 import json
 import os
@@ -112,6 +119,9 @@ _WRITER_NAME = "writer.json"
 
 #: os.O_BINARY where available (Windows), otherwise 0, so os.open calls never translate line endings.
 _O_BINARY = getattr(os, "O_BINARY", 0)
+
+#: Largest existing index accepted by a writer or leased reader, matching the query engine's 512 MiB limit.
+_MAX_INDEX_SIZE_BYTES = 512 * 1024 * 1024
 
 
 class IndexBusy(RuntimeError):
@@ -274,7 +284,7 @@ def _append_event_line(log_path: str, event: str, fields: dict) -> None:
     try:
         line = json.dumps({"event": event, **fields}, sort_keys=True) + "\n"
         data = line.encode("utf-8")
-        fd = os.open(log_path, os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o644)
+        fd = _open_nofollow(Path(log_path), os.O_CREAT | os.O_WRONLY | os.O_APPEND)
         try:
             if sys.platform == "win32":
                 deadline = time.time() + 2.0
@@ -319,7 +329,10 @@ class _Registry:
     def _registry_fd(self) -> int:
         """Lazily open ``registry.lock`` once; reused for every acquisition."""
         if self._reg_fd is None:
-            self._reg_fd = os.open(self.coord / _REGISTRY_NAME, os.O_RDWR | _O_BINARY)
+            try:
+                self._reg_fd = _open_nofollow(self.coord / _REGISTRY_NAME, os.O_RDWR | _O_BINARY)
+            except OSError as exc:
+                raise CoordinationUnavailable(f"cannot open registry without following links: {self.coord}") from exc
         return self._reg_fd
 
     @contextlib.contextmanager
@@ -410,6 +423,13 @@ def _safe_close(fd: int) -> None:
         os.close(fd)
 
 
+def _open_nofollow(path: Path, flags: int) -> int:
+    """Open a regular coordination or log path without following a final symlink."""
+    if path.is_symlink():
+        raise OSError(errno.ELOOP, "refusing symlink", str(path))
+    return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0), 0o644)
+
+
 def _ensure_coord(index_path: Path) -> Path:
     """Create the coordination root for *index_path* and initialise the registry file.
 
@@ -422,6 +442,8 @@ def _ensure_coord(index_path: Path) -> Path:
     """
     coord = coordination_root(index_path.parent)
     try:
+        if coord.is_symlink() or (coord / _READERS_NAME).is_symlink():
+            raise OSError(errno.ELOOP, "refusing coordination directory symlink")
         (coord / _READERS_NAME).mkdir(parents=True, exist_ok=True)
         _init_registry_file(coord)
     except OSError as exc:
@@ -436,8 +458,10 @@ def _init_registry_file(coord: Path) -> None:
     here — reopening and closing a second descriptor would drop a lock this process may currently hold on it.
     """
     reg = coord / _REGISTRY_NAME
+    if reg.is_symlink():
+        raise OSError(errno.ELOOP, "refusing registry symlink", str(reg))
     try:
-        fd = os.open(reg, os.O_CREAT | os.O_EXCL | os.O_RDWR | _O_BINARY, 0o644)
+        fd = _open_nofollow(reg, os.O_CREAT | os.O_EXCL | os.O_RDWR | _O_BINARY)
     except FileExistsError:
         return
     try:
@@ -454,7 +478,10 @@ def _create_owned(reg: _Registry, path: Path, payload: bytes) -> int | None:
         racing owner (only possible for a shared fixed name, never a unique
         reader token).
     """
-    fd = os.open(path, os.O_CREAT | os.O_RDWR | _O_BINARY, 0o644)
+    try:
+        fd = _open_nofollow(path, os.O_CREAT | os.O_RDWR | _O_BINARY)
+    except OSError as exc:
+        raise CoordinationUnavailable(f"cannot create token without following links: {path}") from exc
     if not _os_try_lock(fd):
         os.close(fd)
         return None
@@ -509,11 +536,13 @@ def _open_foreign_token(path: Path) -> tuple[int | None, str]:
     POSIX ``PermissionError`` still propagates.
     """
     try:
-        return os.open(path, os.O_RDWR | _O_BINARY), ""
+        return _open_nofollow(path, os.O_RDWR | _O_BINARY), ""
     except FileNotFoundError:
         return None, _PROBE_GONE
-    except PermissionError:
-        if sys.platform == "win32":
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise CoordinationUnavailable(f"refusing token symlink: {path}") from exc
+        if isinstance(exc, PermissionError) and sys.platform == "win32":
             return None, _PROBE_PENDING
         raise
 
@@ -694,7 +723,12 @@ def _load_index(index_path: Path) -> dict | None:
     """
     try:
         with open(index_path, "rb") as fh:
-            return json.loads(fh.read().decode("utf-8"))
+            if os.fstat(fh.fileno()).st_size > _MAX_INDEX_SIZE_BYTES:
+                raise IndexUnreadable(f"index too large: {index_path}; limit is {_MAX_INDEX_SIZE_BYTES} bytes")
+            data = fh.read(_MAX_INDEX_SIZE_BYTES + 1)
+            if len(data) > _MAX_INDEX_SIZE_BYTES:
+                raise IndexUnreadable(f"index too large: {index_path}; limit is {_MAX_INDEX_SIZE_BYTES} bytes")
+            return json.loads(data.decode("utf-8"))
     except FileNotFoundError:
         return None
     except (UnicodeDecodeError, ValueError) as exc:
@@ -994,7 +1028,7 @@ def publish_stream(index_path: os.PathLike[str] | str) -> Iterator[IO[str]]:
     target = Path(index_path)
     tmp = _temp_beside(target)
     try:
-        with open(tmp, "w", encoding="utf-8") as fh:
+        with open(tmp, "x", encoding="utf-8") as fh:
             yield fh
             fh.flush()
             os.fsync(fh.fileno())
@@ -1031,7 +1065,7 @@ def atomic_publish(index_path: os.PathLike[str] | str, data: bytes) -> None:
     target = Path(index_path)
     tmp = _temp_beside(target)
     try:
-        with open(tmp, "wb") as fh:
+        with open(tmp, "xb") as fh:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())

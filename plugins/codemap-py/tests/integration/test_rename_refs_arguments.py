@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -60,13 +61,18 @@ def run_step0(tmp_path: Path):
     sentinels = tmp_path / "tmp"
     sentinels.mkdir()
     block = next(block for block in _bash_blocks(_SKILL.read_text(encoding="utf-8")) if "parse_rename_args.py" in block)
+    tool_dirs = [str(Path(sys.executable).parent)]
+    if sys.platform == "darwin" and shutil.which("git") == "/usr/bin/git":
+        # Apple's shim creates xcrun_db under TMPDIR even before bash reaches the malformed helper command.
+        native_git = subprocess.check_output(["xcrun", "--find", "git"], text=True, timeout=30).strip()
+        tool_dirs.append(str(Path(native_git).parent))
     env = {
         **os.environ,
         "TMPDIR": str(sentinels),
         "CLAUDE_CODE_SESSION_ID": _CSID,
         "CLAUDE_PLUGIN_ROOT": str(_PLUGIN_ROOT),
         # the block calls bare ``python``; put this interpreter first so the run never depends on the host PATH
-        "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
+        "PATH": os.pathsep.join([*tool_dirs, os.environ.get("PATH", "")]),
     }
 
     def run(arguments: str) -> tuple[subprocess.CompletedProcess[str], Path]:

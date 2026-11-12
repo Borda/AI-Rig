@@ -205,7 +205,8 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - Canonical `run_gates.py` test gate keeps the configured command; its escalation stays one-time without reusable prefix.
 - `shared/test_targets.py` picks the loop's tests from the change set: codemap-py test impact when a launcher is available, otherwise test-name and import heuristics, plus the sandbox-safe flag decision.
 - Loops never run the full suite per finding or iteration; it runs once at the canonical gate.
-- Code Review's source-bound test gate is its final gate and always runs the project's full selection; collected CI results supplement but never replace it.
+- Code Review's source-bound test gate is its final gate and runs the project's full selection; collected CI results supplement but never replace it.
+- A documentation-only change in Code Review, Code Remediate or Challenge Resolve skips the full suite with the `documentation-only change` tests reason, which Code Remediate validation accepts without a skip approval; the skip is a zero-weight confidence gap.
 - Child-agent waits use one blocking `wait_agent` with a 30-minute default per-agent deadline, never `list_agents` or `sleep` polling, and plan updates ride with real work.
 - Each wait return requires a visible status before another call: completed/expected counts, pending roles and elapsed time, last observed event or no new progress evidence, deadlines and next action.
 - Empty returns establish neither progress nor failure; waiting requires an outstanding accepted dispatch.
@@ -997,7 +998,7 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - Local completion retains current runtime defaults.
 - Same-directory gate reruns archive prior runner-owned evidence under `gate-attempts/<NNN>` before executing. A failed, timed-out, or missing-command check cannot become skipped; re-execute it through the canonical runner. Unreadable or incomplete prior evidence blocks overwrite and requires diagnosis.
 - Review and remediation check current PR state before report lookup, run allocation, checkout or specialist work, including resumed and `+review` requests. Closed or merged PRs are reported immediately and stop intake; local report-only work stays local. The early read validates repository identity and uses the existing GitHub reader permission boundary.
-- New final handoffs use `presentation_version=14`; remediation with findings includes a compact per-item table—even for one item—with Finding, Selected, Outcome and How resolved, preserving each concrete resolution reason; an empty result states that there are no findings to remediate.
+- New final handoffs use `presentation_version=15`; remediation with findings includes a compact per-item table—even for one item—with Finding, Selected, Outcome and How resolved, preserving each concrete resolution reason; an empty result states that there are no findings to remediate.
 - Terminal review outcomes include a compact status table; remediation retains its resolution explanations, with compact tables and evidence paths in separate `- Item: file-path` lists; every workflow renders separate confidence bullets, coalescing only identical limit/gap labels while retaining closure details.
 - Handoffs lead with a plain-English explanation, no empty Results section, one concise line for checks not run, and each recovery action shown once in an Owner / Issue / Action table; machine row IDs stay in JSON.
 - Historical handoff versions retain their original bytes during validation.
@@ -1215,9 +1216,9 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - Machine records and historical reports retain their full evidence.
 - Read-only audits rank findings without requiring remediation selection.
 - Implementation style corrections recover automatically; release headings and contributor credit accept equivalent Markdown while preserving identity and content checks.
-- Ambiguous plain table cells containing paths and words or spaces, including unmarked slash expressions, move verbatim into item-labelled detail lists.
+- Ambiguous path expressions move verbatim into item-labelled detail lists; presentation 15 keeps ordinary slash prose, version numbers and non-path code readable in cells.
 - Explicit Markdown links and quoted paths retain adjacent prose in the table.
-- This automatic fallback preserves complete instructions and directory names without guessing path boundaries; new writers use presentation version 14, supported version-8/9/10/11/12/13 candidates remain admissible, and archived results retain their original rendering.
+- This automatic fallback preserves complete instructions and directory names without guessing path boundaries; new writers use presentation version 15, supported version-8/9/10/11/12/13/14 candidates remain admissible, and archived results retain their original rendering.
 - Cosmetic handoff failures use automatic presentation recovery: regenerate owned display fields from retained evidence and rerun the affected check without another user decision.
 - Reader defects are reproduced and fixed in authorized package source; genuine evidence, verification and authority failures retain their gates.
 - Canonical PR remediation lifecycle roots accept the promoted PR/run layout while preserving legacy flat runs and rejecting malformed or foreign identities.

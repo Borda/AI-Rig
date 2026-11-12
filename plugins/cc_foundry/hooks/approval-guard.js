@@ -113,6 +113,12 @@ process.stdin.on("end", () => {
     const envelope = grants.recordAnswers(data);
     if (envelope) process.stdout.write(JSON.stringify(envelope));
   } catch (_) {
+    if (fallbackProblem(data)) {
+      process.stderr.write(
+        "approval record guard — blocked: approval record inspection failed; repair the guard before writing a record.\n",
+      );
+      process.exit(2);
+    }
     // Never strand the session on a hook bug; the rule still asks without a record.
   }
   process.exit(0);

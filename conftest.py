@@ -9,11 +9,31 @@ controller, xdist workers, and their children all avoid this race before fixture
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import zlib
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
+
+ROOT = Path(__file__).resolve().parent
+
+#: Plugins whose helper resolver finds a plugin only through an install record or the plugin cache, by plugin name.
+_CLAUDE_PLUGINS = {
+    "develop": "cc_develop",
+    "foundry": "cc_foundry",
+    "oss": "cc_oss",
+    "research": "cc_research",
+    "codemap-py": "codemap-py",
+}
+
+#: Test path fragments whose subprocesses resolve plugins as installed users do.
+_INSTALLED_PLUGIN_TEST_DIRS = ("/plugins/cc_", "/plugins/codemap-py/")
+
+#: Marketplace directory the resolver's cache tier reads.
+_MARKETPLACE = "borda-ai-rig"
 
 
 def disable_git_maintenance(environment: Mapping[str, str]) -> dict[str, str]:
@@ -63,6 +83,44 @@ def parse_shard(value: str) -> tuple[int, int]:
     if not (index.isdecimal() and total.isdecimal() and 1 <= int(index) <= int(total)):
         raise pytest.UsageError(f"--shard expects I/N with 1 <= I <= N, got {value!r}")
     return int(index), int(total)
+
+
+@pytest.fixture(scope="session")
+def claude_plugin_home(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build a home directory holding an installed copy of every Claude plugin in the plugin cache.
+
+    Skill blocks resolve their plugin through the install record, then the plugin cache, and only then through the
+    checkout that holds the executing resolver, and only while the working directory is inside that checkout. A test
+    that runs a block from a temporary directory therefore finds a plugin only when its home has one installed. A
+    developer machine has; a clean CI runner does not, so such tests passed locally and failed in CI. Copies leave out
+    tests and bytecode, as a published install does.
+    """
+    home = tmp_path_factory.mktemp("claude-home")
+    cache = home / ".claude" / "plugins" / "cache" / _MARKETPLACE
+    for name, directory in _CLAUDE_PLUGINS.items():
+        source = ROOT / "plugins" / directory
+        manifest = json.loads((source / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        shutil.copytree(
+            source,
+            cache / name / manifest["version"],
+            ignore=shutil.ignore_patterns("tests", "__pycache__", "node_modules", ".pytest_cache"),
+        )
+    return home
+
+
+@pytest.fixture(autouse=True)
+def _installed_claude_plugins(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the home of Claude plugin tests at the installed copies, so their subprocesses resolve plugins as users do.
+
+    Applies only to tests under ``plugins/cc_*`` and ``plugins/codemap-py``; a test that sets its own ``HOME`` still
+    overrides this one.
+    """
+    path = request.node.path.as_posix()
+    if not any(fragment in path for fragment in _INSTALLED_PLUGIN_TEST_DIRS):
+        return
+    home = request.getfixturevalue("claude_plugin_home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

@@ -101,7 +101,7 @@ def _marketplace_fixture(tmp_path: Path) -> Path:
         (plugin / "scripts" / filename).write_text("# fixture\n", encoding="utf-8")
     (plugin / "shared" / "github_read.py").write_text('"""Fixture reader."""\n', encoding="utf-8")
     _write_fixture_package_manifest(plugin, "0.3.0")
-    bridge_doctor.write_text("# fixture\n", encoding="utf-8")
+    bridge_doctor.write_text("# fixture\n", encoding="utf-8", newline="\n")
     return root
 
 
@@ -145,11 +145,17 @@ def _fake_runner(
             return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
         if rendered == ("git", "-C", str(marketplace_root), "sparse-checkout", "list"):
             return subprocess.CompletedProcess(command, 0, "\n".join(sparse_paths), "")
+        if "ls-tree" in rendered:
+            relative = "plugins/bridge_cc-codex/bin/bridge_diagnose.py"
+            payload = b"# fixture\n"
+            blob = b"blob " + str(len(payload)).encode("ascii") + b"\0" + payload
+            digest = hashlib.sha1(blob, usedforsecurity=False).hexdigest()
+            return subprocess.CompletedProcess(command, 0, f"100644 blob {digest}\t{relative}\0", "")
         if rendered[:3] == ("git", "-C", str(marketplace_root)):
-            return subprocess.CompletedProcess(command, 0, "0123456789abcdef\n", "")
+            return subprocess.CompletedProcess(command, 0, "0123456789abcdef" * 2 + "01234567\n", "")
         if rendered == ("python", "--version"):
             return subprocess.CompletedProcess(command, 0, *python_probe)
-        if rendered[0] == "python" and rendered[-2:] == ("--direction", "claude"):
+        if rendered[0] == sys.executable and rendered[-2:] == ("--direction", "claude"):
             return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "live": False}), "")
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -417,7 +423,7 @@ class TestBridgeDiagnosis:
 
         assert result == 0
         assert ("python", "--version") in calls
-        assert ("python", str(doctor), "--direction", "claude") in calls
+        assert (sys.executable, "-B", str(doctor), "--direction", "claude") in calls
         assert "Bridge static diagnosis passed; no provider call made" in output.getvalue()
 
     def test_failed_diagnosis_is_reported(self, sync: ModuleType, tmp_path: Path) -> None:
@@ -892,7 +898,9 @@ class TestWindowsBatchLauncher:
         flagged for shell execution, since a batch file cannot be started directly by Windows process creation.
         """
         monkeypatch.setattr(
-            sync.shutil, "which", lambda command: {"codex": r"C:\Program Files\Codex\codex.cmd"}.get(command)
+            sync,
+            "_windows_path_executable",
+            lambda command: {"codex": r"C:\Program Files\Codex\codex.cmd"}.get(command),
         )
 
         resolved, shell = sync._resolve_system_command(["codex", "plugin", "list"], windows=True)
@@ -923,7 +931,7 @@ class TestWindowsBatchLauncher:
         Each argument carries a command separator, redirection, escape, expansion, quote, or space. Resolving a batch
         shim with it must raise "unsafe Windows batch command", because the shell would otherwise run injected text.
         """
-        monkeypatch.setattr(sync.shutil, "which", lambda _command: r"C:\fixture\codex.cmd")
+        monkeypatch.setattr(sync, "_windows_path_executable", lambda _command: r"C:\fixture\codex.cmd")
 
         with pytest.raises(OSError, match="unsafe Windows batch command"):
             sync._resolve_system_command(["codex", "plugin", "add", argument], windows=True)

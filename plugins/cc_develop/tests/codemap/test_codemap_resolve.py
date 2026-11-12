@@ -195,7 +195,13 @@ class TestCurrency:
         The probe is a real child process printing a stale verdict and exiting 1, as the shipped checker does.
         """
         fake = _write_fake_check_currency(sentinel_session / "fake_cic.py", "stale", "3 changed", 1)
-        monkeypatch.setattr(resolver.shutil, "which", lambda _name: str(fake))
+        provider = sentinel_session / "provider"
+        (provider / "bin").mkdir(parents=True)
+        (provider / "bin" / "check-index-currency").write_bytes(fake.read_bytes())
+        registry = sentinel_session / "plugins" / "installed_plugins.json"
+        registry.parent.mkdir()
+        registry.write_text(json.dumps({"plugins": {"codemap-py@borda-ai-rig": [{"installPath": str(provider)}]}}))
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(sentinel_session))
 
         resolver._record_currency("dev-codemap-currency", sentinel_session / "index.json")
 

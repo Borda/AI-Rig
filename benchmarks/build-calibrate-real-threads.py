@@ -20,7 +20,7 @@ from pathlib import Path
 import fire
 from _bench_calibrate import real_threads
 
-DEFAULT_OUT = Path(__file__).resolve().parent / "calibrate" / "oss-analyse" / "real"
+DEFAULT_OUT = Path(__file__).resolve().parent / "calibrate" / "oss-analyse" / "real-problems"
 
 Builder = Callable[..., real_threads.BuiltProblem]
 

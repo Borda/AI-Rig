@@ -23,6 +23,8 @@ from unittest import mock
 import pytest
 import release_setup as rs
 import resolve_shared_path as rsp
+from _oss_shell_plugin import render_shell
+from _skill_source import read_skill_source
 
 _PLUGIN = Path(__file__).resolve().parents[2]
 _SKILL = _PLUGIN / "skills/release/SKILL.md"
@@ -349,8 +351,8 @@ class TestFallbackPath:
             (1, ""),  # describe -> no source tag
             (0, "abc0123"),  # rev-list --max-parents=0 -> first commit
             (1, ""),  # rev-list -n1 refs/tags/abc0123 -> fail
-            (0, "def456"),  # merge-base
-            (1, ""),  # describe def456 -> no tag
+            (0, "def4567"),  # merge-base returns a usable abbreviated SHA
+            (1, ""),  # describe def4567 -> no tag
             (0, ""),  # git log
         )
 
@@ -358,6 +360,95 @@ class TestFallbackPath:
 
         assert rc == 0
         assert "No stable tags found" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("tag", ["--output=owned", "release-2024-05", "v1.2.3..HEAD"])
+@pytest.mark.parametrize("position", ["branch", "source", "ancestor"])
+def test_unsafe_baseline_is_refused_before_reuse(
+    git_sequence: Callable[..., list[list[str]]],
+    out_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    tag: str,
+    position: str,
+) -> None:
+    """Untrusted describe output cannot reach another Git command or a published baseline."""
+    outcomes = {
+        "branch": ((0, "/repo"), (0, "main"), (0, tag)),
+        "source": (*_FALLBACK_GIT[:3], (0, tag)),
+        "ancestor": (*_FALLBACK_GIT[:6], (0, tag)),
+    }[position]
+    recorded = git_sequence(*outcomes)
+
+    assert rs.main([]) == 1
+
+    assert "invalid release baseline" in capsys.readouterr().err
+    assert len(recorded) == len(outcomes)
+    assert not out_dir.exists()
+
+
+def test_fallback_ranges_terminate_options_after_log_flags(
+    git_sequence: Callable[..., list[list[str]]],
+) -> None:
+    """Git receives log flags before its option terminator and the complete range after it."""
+    recorded = git_sequence(*_FALLBACK_GIT)
+
+    assert rs.main([]) == 0
+
+    assert recorded[-1] == ["/fake/git", "log", "--no-merges", "--format=%s", "--end-of-options", "v0.8.0..v0.9.0"]
+    assert recorded[4] == ["/fake/git", "rev-list", "-n1", "--end-of-options", "refs/tags/v0.9.0"]
+    assert recorded[5] == ["/fake/git", "merge-base", "--end-of-options", "HEAD", "abc123"]
+    assert recorded[6][-2:] == ["--end-of-options", "def456"]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("tag", "expected"),
+    [
+        pytest.param("v1.2.3", 0, id="semver-tag-accepted"),
+        pytest.param("--output=owned", 1, id="option-shaped-tag-refused"),
+        pytest.param("release-2024-05", 1, id="non-semver-tag-refused"),
+    ],
+)
+def test_real_git_baseline_obeys_allow_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, out_dir: Path, tag: str, expected: int
+) -> None:
+    """Real Git describe output is validated before setup publishes any release state."""
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "commit", "-q", "--allow-empty", "-m", "initial")
+    _git(tmp_path, "update-ref", f"refs/tags/{tag}", "HEAD")
+    monkeypatch.chdir(tmp_path)
+
+    assert rs.main([]) == expected
+
+    assert out_dir.exists() is (expected == 0)
+    assert not (tmp_path / "owned").exists()
+
+
+@pytest.mark.integration
+def test_real_git_stable_fallback_accepts_terminated_refs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real Git commands still resolve a valid source tag after option termination."""
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "commit", "-q", "--allow-empty", "-m", "initial")
+    _git(tmp_path, "tag", "v1.2.3")
+    monkeypatch.chdir(tmp_path)
+
+    assert rs._resolve_stable_baseline(shutil.which("git")) == ("v1.2.3", "", "v1.2.3")
+
+
+@pytest.mark.integration
+def test_real_git_first_release_publishes_initial_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, out_dir: Path
+) -> None:
+    """A real repository without tags retains its initial commit as the release baseline."""
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "commit", "-q", "--allow-empty", "-m", "initial")
+    monkeypatch.chdir(tmp_path)
+    initial = subprocess.run(["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+
+    assert rs.main([]) == 0
+
+    assert (out_dir / "LAST_TAG").read_text(encoding="utf-8") == initial + "\n"
+    assert (out_dir / "SOURCE_TAG_REF").read_text(encoding="utf-8") == initial + "\n"
 
 
 class TestEntryPoint:
@@ -410,7 +501,7 @@ def detached_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _shared_setup_block() -> str:
     """Return the bash block SKILL.md documents as the consumer of ``bin/release_setup.py``."""
-    lines = _SKILL.read_text(encoding="utf-8").splitlines(keepends=True)
+    lines = read_skill_source(_SKILL).splitlines(keepends=True)
     anchor = next(i for i, line in enumerate(lines) if _SETUP_ANCHOR in line)
     start = next(i for i in range(anchor, len(lines)) if lines[i].strip() == "```bash") + 1
     end = next(i for i in range(start, len(lines)) if lines[i].strip() == "```")
@@ -452,7 +543,10 @@ class TestDetachedHead:
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))
 
         completed = subprocess.run(
-            [shutil.which("bash"), "-c", _shared_setup_block()], cwd=detached_repo, capture_output=True, text=True
+            [shutil.which("bash"), "-c", render_shell(_shared_setup_block(), _PLUGIN, "oss")],
+            cwd=detached_repo,
+            capture_output=True,
+            text=True,
         )
 
         assert completed.returncode == 1

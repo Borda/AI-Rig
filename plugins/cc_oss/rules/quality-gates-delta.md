@@ -6,6 +6,8 @@ paths:
 
 ## Adversarial Convergence Loop (explicitly invoked)
 
+A request to repeat review and fix until a reviewer reports no findings or no security findings, or to resolve all findings; a second independent review round about to be dispatched for the same change; or a skill workflow repeating its review then fix cycle counts as an explicitly invoked loop from that moment: before the next reviewer dispatch, start ledger; follow `_full/adversarial-loop.md` (helper output, stop/plateau rules, user's round budget).
+
 For permitted independent review in `/oss:review` → `/oss:resolve`, pre-commit review, and contributor-PR fix rounds. For a permitted independent pass, dispatch `foundry:challenger` via `Agent()` (requires `foundry` plugin), or `bridge:review` when the bridge plugin is available; never use `subagent_type: "fork"`. Give the reviewer the diff, specification, and symptom, never the implementation narrative. A challenger round that returns no deliverable or a `blocked` envelope is an agent failure, never a silent `not-run`: record its cause from the transcript (safety-classifier stop, refused report write, background stall, malformed envelope, reply truncated before its required closing block) and re-dispatch once with a brief that removes it. For a security-filter review, leave Codex enabled (no `--no-codex`): the challenger runs the open-ended bypass search through its Codex cross-check, statically classifies Codex's candidates and any probe generator the caller supplies, counts the reproduced ones in its own six-tier row, and never authors bypass strings itself, so the round needs no separate Codex row.
 
 > **Shared body lives in `foundry-quality-gates.md`.** This file states only what is specific to the `oss` plugin: the review-loop scope above and the follow-up-gate routing below. Every other quality-gate obligation — Evidence Grounding, Evidence and real-case acceptance, Adversarial Pass, Confidence Block, Internal Quality Loop, Pre-Handover Check, Link Verification, Report File Format, Reporting Findings — is delivered once by foundry and is not restated here. `/oss:setup` delivers this delta only when a foundry-owned `foundry-quality-gates.md` is already installed, and delivers the plugin's complete `quality-gates.md` otherwise, so a standalone install loses no rule.
@@ -17,6 +19,7 @@ For permitted independent review in `/oss:review` → `/oss:resolve`, pre-commit
 - `<branch>` in the `.temp/output-*` filename = `$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')`
 - ASCII verdict fallback line (no YAML block): `·` separator, no Unicode box-drawing chars (`─`, `═`, `│`, `┌` etc.)
 - Prose paragraphs: no hard line breaks at column width
+- **Manual follow-ups**: when the chosen skill has `disable-model-invocation: true`, print its exact command with the target for the user to run; never call `Skill()` for it. Missing optional plugin: name the prerequisite and print the command.
 - **Follow-up gate options**: skill-defined; minimum: (a) primary action · (b) skip. Canonical examples:
-  - `oss:review N` → (a) `/oss:resolve N` · (b) `/oss:resolve report` · (c) `/oss:resolve N report` · (d) walk findings · (e) skip
-  - `oss:analyse N` → (a) `/develop:fix` · (b) `/develop:feature` · (c) `/oss:review N` · (d) draft reply · (e) skip
+  - `/oss:review N` → (a) `/oss:resolve N` · (b) `/oss:resolve report` · (c) `/oss:resolve N report` · (d) walk findings · (e) skip
+  - `/oss:analyse N` → (a) `/develop:fix` · (b) `/develop:feature` · (c) `/oss:review N` · (d) draft reply · (e) skip

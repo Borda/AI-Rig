@@ -326,7 +326,14 @@ def run_jq_write(target: Path, jq_filter: str, extras: list[str]) -> int:
         print(f"! target not found: {target}", file=sys.stderr)
         return 1
 
-    return _run_jq_into(target, Path(os.path.realpath(target)), jq_filter, extras)
+    from merge_settings_permissions import _settings_lock
+
+    try:
+        with _settings_lock(target) as destination:
+            return _run_jq_into(target, destination, jq_filter, extras)
+    except OSError as exc:
+        print(f"! cannot lock {target}: {exc} — target unchanged", file=sys.stderr)
+        return 2
 
 
 def main(argv: list[str] | None = None) -> int:

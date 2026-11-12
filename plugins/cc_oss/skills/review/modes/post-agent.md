@@ -58,7 +58,7 @@ case "${PR_TYPE:-CODE}" in
     TESTS_CI)    CONSOLIDATOR_AGENT="foundry:qa-specialist" ;;
     *)           CONSOLIDATOR_AGENT="foundry:sw-engineer" ;;  # domain-match rule: file-handoff-protocol.md §Consolidator
 esac
-echo "CONSOLIDATOR_AGENT=$CONSOLIDATOR_AGENT"
+echo "CONSOLIDATOR_AGENT=$CONSOLIDATOR_AGENT DOCS_ONLY_MODE=${DOCS_ONLY_MODE:-false}"
 IFS= read -r REVIEW_SKILL_DIR < "${TMPDIR:-/tmp}/review-skill-dir-${CSID}" 2>/dev/null || REVIEW_SKILL_DIR=""
 _CONSOLIDATOR_INSTRUCTIONS="$REVIEW_SKILL_DIR/templates/consolidator-prompt.md"
 [ -f "$_CONSOLIDATOR_INSTRUCTIONS" ] || { echo "! BLOCKED — consolidator instruction file missing; restore/reinstall this oss version before consolidation"; exit 1; }
@@ -76,6 +76,7 @@ REVIEW_SKILL_DIR=<resolved installed review skill directory>
 _OSS_SHARED=<resolved own-plugin shared directory>
 DATE=<resolved date>
 REVIEWED_COMMIT_SHA=<full frozen reviewed SHA or explicit unavailable reason>
+PR_URL=<frozen pr-meta.json `url`, or empty>
 CHANGED_FILES=<resolved changed-file list>
 SCOPE=<resolved scope label>
 IMPACT=<resolved IMPACT line>
@@ -83,6 +84,7 @@ CI_FAILING_CHECKS=<resolved CI failing-check names or empty>
 CI_COUNTS=<resolved CI counts or empty>
 GATE=<resolved PASS or BLOCK>
 PR_NUMBER=<resolved PR number or empty>
+DOCS_ONLY_MODE=<resolved true or false>
 FILL_GAPS_PLAN=<resolved $REPORT_DIR/fill-gaps.json — fill-gaps runs only; omit this line otherwise>
 Return ONLY the publication summary: verdict=<APPROVE|MINOR_EDITS|NEEDS_WORK|INSUFFICIENT_BUT_PROMISING|null> | findings=N | critical=N | high=N | file=<REPORT_DIR>/review-report.md
 Late terminal conflict instead: terminal-ground=<GROUND> | evidence=<path>; publish nothing, return to parent for Stage 1 ground validation and terminal publication.
@@ -97,10 +99,11 @@ If the consolidator returns `terminal-ground=<GROUND> | evidence=<path>` instead
 **Publication gate** — after a publication summary, before Step 5b. The consolidator self-certifies header, `review-validation.json` and `findings.jsonl` from prose rules; run the deterministic check `/oss:resolve` applies at intake plus the producer checks (`--producer`: the header carries `Review contract: 1`, and every `findings.jsonl` row carries the fields resolve's merge requires, a known severity and its own id; skipped for a `REJECT_` gate), so a report resolve would reject or fail to merge never ships as finished. Stage 1's terminal REJECT publication is parent-written from the fixed field list in `modes/acceptance-gate.md` and never reaches this gate:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
 [ -n "$_REPORT_DIR" ] || { echo "! BLOCKED — report-dir sentinel missing; cannot validate publication"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --report "$_REPORT_DIR/review-report.md" --producer  # timeout: 15000
+python "$PLUGIN_ROOT/bin/find_review_report.py" --report "$_REPORT_DIR/review-report.md" --producer  # timeout: 15000
 ```
 
 - Exit 0 → continue to Step 5b.
@@ -132,7 +135,7 @@ TaskUpdate "Step 5b: Print report header" → `in_progress`.
 **MANDATORY, not optional narration** — the consolidator's returned one-liner is a routing signal only; it is never printed to the user and never satisfies this step. Prepare items 1–3 in this exact order, in this same turn, before any other Step 5/6 output; deliver items 4–5 in the final response:
 
 1. Read `$REPORT_DIR/review-report.md` (Read tool, `limit=60` — the `---` block plus the legend, aggregate summary and findings overview that follow it, with headroom for a `Gate:` line or a prepended note; the full report is 5–20K tok and the detailed finding sections are not needed in main context here — they are read per-item later, on demand). A report whose overview runs past that bound: re-read with `offset` from the last line delivered, never the whole file.
-2. Extract every field from the opening `---` up to and including the closing `---` — `Title:`, `PR:` (absent in direct-path mode), `Date:`, `PR Type:`, `Scope:`, `Focus:`, `Agents:`, `Reviewers:`, `CI:`, `Gate:`, `Outcome:`, `Summary:`, `Confidence:`, `Next steps:`, `Path:`. Render whatever fields the file actually carries — the delivery hook matches the file, not this list.
+2. Extract every field from the opening `---` up to and including the closing `---` — `Title:`, `PR:` (absent in direct-path mode), `Link:` (absent in direct-path mode), `Date:`, `PR Type:`, `Scope:`, `Focus:`, `Agents:`, `Reviewers:`, `CI:`, `Gate:`, `Outcome:`, `Summary:`, `Confidence:`, `Next steps:`, `Path:`. Render whatever fields the file actually carries — the delivery hook matches the file, not this list.
 3. Build the delivery block: all extracted fields as a two-column Markdown table (`Field | Value`, one row per key, file order) per quality-gates.md §Report File Format — never the raw `---`-delimited block. The table is the required core — its `Path` row points at the full report. Below it the reviewer legend, then keep the rest short: the aggregate summary as 2–3 sentences of prose, each critical/high finding on one line, limits as at most 3 bullets. The full findings overview with its Author column stays in the report. End with `→ saved to $REPORT_DIR/review-report.md`.
 4. Deliver the block once in the final reply after the answer, after its last tool call, never as Bash/tool stdout. Do not print the header table before the follow-up question or put it in option previews. The question carries only the plain summary defined below; the full table stays in the report file until final delivery. On a no-question path, the block still opens the final reply after all Step 6/7/8 tool calls that apply. The `Stop` hook requires the matching full header table there; the question summary does not satisfy final delivery.
 5. TaskUpdate "Step 5b: Print report header" → `completed` in the response that delivers the final block, beside the last tool calls immediately before the table text, never at the follow-up question.
@@ -148,12 +151,13 @@ Render all fields verbatim as table rows; use the `·`-separated one-line fallba
 The review is the spotter: it calls targets, `/oss:resolve` fires. A fix applied here would land outside resolve's item tracking, challenge, commit attribution and push gate, and could collide with resolve's own edits to the same file. So this step only reports which findings the consolidator tagged `codex_eligible: true` in `findings.jsonl` (criteria: `codex-delegation.md`); resolve routes those items to its Codex path (C1) when the bridge is available.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # boundary2: post-consolidation, pre-reply (compaction-contract.md §Lifecycle)
 IFS= read -r _PR_TAG < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || _PR_TAG="unknown"
 IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
 IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:review" "reply (after consolidation)" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md, pr=$_PR_TAG" "draft contributor reply (--reply) or stop at Step 7"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" "oss:review" "reply (after consolidation)" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md, pr=$_PR_TAG" "draft contributor reply (--reply) or stop at Step 7"  # timeout: 5000
 [ -s "$_REPORT_DIR/findings.jsonl" ] && jq -r 'select(.codex_eligible == true) | "\(.id)\t\(.title)"' "$_REPORT_DIR/findings.jsonl"  # timeout: 5000
 ```
 
@@ -161,7 +165,7 @@ Any rows printed → add a `### Codex-eligible findings` line to the reply: the 
 
 ## Step 7: Reply gate — STOP CHECK
 
-**Worktree exit** — if `WT_ENABLED=true` and a worktree was entered at Step 1: the report already lives in the main tree (§review). Follow `worktree-isolation.md` §Exit — capture branch, call `ExitWorktree(action="keep")`, append the `Worktree` block. Exit **before** the follow-up gate so any follow-up runs in the main tree. Never auto-merge.
+**Worktree exit** — if `WT_ENABLED=true` and a worktree was entered at Step 1: follow SKILL.md §Worktree isolation, report the final report path and detached SHA, call `ExitWorktree(action="keep")`, and append the `Worktree` block. Exit **before** the follow-up gate so any follow-up runs in the main tree. Never auto-merge.
 
 **Hard gate**: before the follow-up question, the Step 5b header table and plain summary must already be built from the current report file. Not built → go back and do it now (see Step 5b). Delivery timing: Step 5b item 4. Keep "Step 5b: Print report header" `in_progress` until that final delivery.
 
@@ -193,11 +197,12 @@ This gate idles longest (measured up to 11 h on a real review). Refresh the cont
 
 ```bash
 # compaction boundary 3 — immediately before the 7a idle gate (compaction-contract.md §Lifecycle)
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
 IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
 IFS= read -r _PR_TAG < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || _PR_TAG="n/a"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:review" "follow-up gate (Step 7a)" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md, pr=$_PR_TAG" "resume: re-read report header, re-issue Step 7a AskUserQuestion; /oss:resolve reads the report file directly"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" "oss:review" "follow-up gate (Step 7a)" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md, pr=$_PR_TAG" "resume: re-read report header, re-issue Step 7a AskUserQuestion; /oss:resolve reads the report file directly"  # timeout: 5000
 ```
 
 ! IMPORTANT — invoke `AskUserQuestion` tool directly. Never write options as plain text. Not a hollow question: `walk through findings` and `skip` are honored inline, so quality-gates' "Don't ask what you can't honor" never skips this gate — only the already-running check above does. Single call — all options in one. The `/compact` hint rides in the question text, never as reply prose or Bash stdout before the call (text before a tool call can vanish on 5.5-family models):

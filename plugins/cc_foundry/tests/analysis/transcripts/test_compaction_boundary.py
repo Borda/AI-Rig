@@ -44,6 +44,10 @@ def test_tier_three_warning_prevents_provider_execution(
     (provider / "bin" / "compact_gate.py").write_text(
         f"from pathlib import Path\nPath({str(marker)!r}).touch()\n", encoding="utf-8"
     )
+    resolver = provider / "bin" / "resolve_shared_path.py"
+    shutil.copyfile(rsp.__file__, resolver)
+    monkeypatch.setattr(rsp, "__file__", str(resolver))
+    monkeypatch.setattr(cb, "_RESOLVER", resolver)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))

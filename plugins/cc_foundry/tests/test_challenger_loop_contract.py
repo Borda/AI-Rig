@@ -201,7 +201,10 @@ def test_loop_rule_redispatch_is_not_gated_on_retry_contract() -> None:
             "so reuse the same invariant wording for every route of one invariant", id="recurrence-by-invariant"
         ),
         pytest.param("a later bypass inside a cell an earlier round marked `refused`", id="refused-cell-reopens"),
-        pytest.param("Write the header before recording the first round, on every runtime", id="ledger-from-round-one"),
+        pytest.param(
+            "write the ledger header and retain a snapshot with its digest before the first reviewer dispatch",
+            id="ledger-before-dispatch",
+        ),
     ],
 )
 def test_loop_rule_closes_route_by_route_drift(clause: str) -> None:
@@ -235,6 +238,89 @@ def test_claude_loop_checker_runs_standalone(plugin: str, loop_ledger: Path) -> 
         [sys.executable, str(script), "--ledger", str(loop_ledger)], capture_output=True, text=True, timeout=60
     )
     assert json.loads(result.stdout)["status"] != "invalid", result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("plugin", ["cc_foundry", "cc_oss", "cc_develop", "cc_research"])
+def test_claude_loop_checker_reconciles_from_identical_copy(plugin: str, loop_ledger: Path) -> None:
+    """Every standalone installed checker emits reconciled progress from the canonical implementation."""
+    finding = {"signature": "boundary", "tier": "security", "structural": False, "evidence": ["invariant: boundary"]}
+    record = {
+        "index": 1,
+        "reviewer": {"identity": "reviewer", "independent": True},
+        "snapshot": {"revision": "HEAD", "diff_digest": "0" * 64},
+        "report_path": "review.md",
+        "findings": [finding | {"disposition": "open"}],
+    }
+    closed = finding | {"disposition": "verified-fixed"}
+    records = [record, record | {"index": 2, "findings": [closed]}]
+    loop_ledger.with_name("loop-rounds.jsonl").write_text(
+        "".join(json.dumps(item) + "\n" for item in records), encoding="utf-8", newline="\n"
+    )
+    script = _PLUGINS / plugin / "bin/adversarial_loop.py"
+
+    result = subprocess.run(
+        [sys.executable, str(script), "--ledger", str(loop_ledger), "--progress"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert script.read_bytes() == (_PLUGINS / "codex-rig/shared/adversarial_loop.py").read_bytes()
+    assert result.returncode == 0, result.stderr
+    assert "Reconciliation round 2: all tiers: previous open 1 -> verified-fixed 1" in result.stderr
+    assert result.stderr.count("carried 0 + repeat route 0 + new 0 = open now 0") == 2
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "cc_foundry/rules/quality-gates.md",
+        "cc_foundry/rules/_full/quality-gates.md",
+        "cc_develop/rules/quality-gates.md",
+        "cc_develop/rules/quality-gates-delta.md",
+        "cc_develop/skills/fix/SKILL.md",
+        "cc_develop/skills/feature/SKILL.md",
+        "cc_develop/skills/refactor/SKILL.md",
+        "cc_oss/rules/quality-gates.md",
+        "cc_oss/rules/quality-gates-delta.md",
+        "cc_research/rules/quality-gates.md",
+        "cc_research/rules/quality-gates-delta.md",
+        "codex-rig/assets/AGENTS.md",
+        "codex-rig/shared/native-skill-contract.md",
+        "codex-rig/shared/global-baseline-details.md",
+        "codex-rig/shared/adversarial-loop.md",
+    ],
+)
+def test_loop_scope_starts_on_repeated_independent_review(relative: str) -> None:
+    """Scope stubs activate the full ledger procedure even when a user does not name a loop."""
+    lines = (_PLUGINS / relative).read_text(encoding="utf-8").splitlines()
+    assert any(
+        "A request to repeat review and fix until a reviewer reports no findings or no security findings, "
+        "or to resolve all findings; a second independent review round about to be dispatched for the same change; "
+        "or a skill workflow repeating its review then fix cycle counts as an explicitly invoked loop from that moment"
+        in line
+        and "before the next reviewer dispatch" in line
+        and "ledger" in line
+        and "adversarial-loop.md" in line
+        for line in lines
+    )
+
+
+@pytest.mark.parametrize("plugin", ["codex-rig", "cc_foundry", "cc_oss", "cc_develop", "cc_research"])
+@pytest.mark.parametrize(
+    "clause",
+    [
+        "A table typed or rebuilt by hand is invalid and must not be shown",
+        "write the ledger header and retain a snapshot with its digest before the first reviewer dispatch",
+        "pre-ledger: finding-level data was not retained",
+        "carried + repeat route + new = open now",
+    ],
+)
+def test_loop_rule_requires_ledger_and_reconciliation(plugin: str, clause: str) -> None:
+    """Every independently installed rule prevents invented history and unexplained old counts."""
+    relative = "shared/adversarial-loop.md" if plugin == "codex-rig" else "rules/_full/adversarial-loop.md"
+    lines = (_PLUGINS / plugin / relative).read_text(encoding="utf-8").splitlines()
+    assert any(clause in line for line in lines)
 
 
 @_skip_bash_unavailable

@@ -14,7 +14,10 @@ IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/de
 [ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
 printf "=== Check C35: Agent health monitoring ===\n"
 mkdir -p "${TMPDIR:-/tmp}/audit-state-${CSID}"
-find "$_ROOT" -path "*skills/*/SKILL.md" -exec grep -l 'Agent(subagent_type' {} + 2>/dev/null |
+find "$_ROOT" -type f -path '*skills/*' -name '*.md' ! -path '*/tests/*' ! -path '*/audit/templates/checks-*.md' -print 2>/dev/null |
+  while IFS= read -r f; do
+    tr '\n' ' ' < "$f" | grep -qE 'Agent[[:space:]]*\([^)]*subagent_type[[:space:]]*=' && printf '%s\n' "$f"
+  done |
   sort > "${TMPDIR:-/tmp}/audit-state-${CSID}/c35-bg-skills"
 if [ ! -s "${TMPDIR:-/tmp}/audit-state-${CSID}/c35-bg-skills" ]; then
     printf "✓: No agent spawns found — C35 N/A\n"
@@ -31,19 +34,23 @@ Step 1's list is re-read from the state file — a variable set in Step 1's bloc
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 while IFS= read -r f; do  # timeout: 5000
     [ -f "$f" ] || continue
-    skill=$(basename "$(dirname "$f")")
+    owner_dir=$(dirname "$f")
+    while [ ! -f "$owner_dir/SKILL.md" ] && [ "$owner_dir" != "." ] && [ "$owner_dir" != "/" ]; do owner_dir=$(dirname "$owner_dir"); done
+    [ -f "$owner_dir/SKILL.md" ] || continue
+    owner="$owner_dir/SKILL.md"
+    skill="$owner ($f)"
     # grep -c prints 0 AND exits 1 on no match — || echo 0 double-fires, "0\n0" breaks numeric tests below
     has_wait_tool=$(grep -E 'ScheduleWakeup|ListAgents|Monitor\(|`Monitor`' "$f" 2>/dev/null | grep -Evc '[Nn]ever|[Nn]o |not |forbid|ban') || has_wait_tool=0
     has_interval=$(grep -c 'MONITOR_INTERVAL\|every 5 min\|poll every' "$f" 2>/dev/null) || has_interval=0
     [ "$has_wait_tool" -gt 0 ] && printf "⚠ C35e: %s — waits on agents with ScheduleWakeup/ListAgents/Monitor (CLAUDE.md §6)\n" "$skill"  # wait-check: allow — detector output
     [ "$has_interval" -gt 0 ] && printf "⚠ C35d: %s — prescribes a fixed-interval poll; spawns are background, the turn ends and resumes on notification\n" "$skill"
-    if grep -q 'agent-spawn-protocol' "$f" 2>/dev/null; then
+    if grep -q 'agent-spawn-protocol' "$owner" "$f" 2>/dev/null; then
         printf "✓ C35: %s — references agent-spawn-protocol.md\n" "$skill"
         continue
     fi
-    has_deadline=$(grep -c 'agent-watch\|agent_watch' "$f" 2>/dev/null) || has_deadline=0
-    has_notify=$(grep -c 'completion notification\|idle notification' "$f" 2>/dev/null) || has_notify=0
-    has_timeout=$(grep -c 'timed.out' "$f" 2>/dev/null) || has_timeout=0
+    has_deadline=$(grep -h 'agent-watch\|agent_watch' "$owner" "$f" 2>/dev/null | wc -l | tr -d ' ')
+    has_notify=$(grep -h 'completion notification\|idle notification' "$owner" "$f" 2>/dev/null | wc -l | tr -d ' ')
+    has_timeout=$(grep -h 'timed.out' "$owner" "$f" 2>/dev/null | wc -l | tr -d ' ')
     [ "$has_deadline" -eq 0 ] && printf "⚠ C35a: %s — no per-agent deadline (agent-watch-<batch>.tsv + agent_watch.py) (CLAUDE.md §6)\n" "$skill"
     [ "$has_notify" -eq 0 ]   && printf "⚠ C35b: %s — no completion-notification handling (CLAUDE.md §6)\n" "$skill"
     [ "$has_timeout" -eq 0 ]  && printf "⚠ C35c: %s — no timed_out handling (CLAUDE.md §6)\n" "$skill"
@@ -65,25 +72,27 @@ Severity: **high** for C35a/b/c/e — stalled agents drop findings with no user-
 Variables assigned in one ```` ```bash ```` block are NOT available in later bash blocks — each Bash tool call runs in a fresh shell. Referencing a variable from a prior block silently expands to empty string, corrupting commands, paths, and conditional guards without any error.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 printf "=== Check 43: Shell variable persistence across Bash calls ===\n"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_bash_persistence.py" --scan-dir .  # timeout: 15000
+python "$PLUGIN_ROOT/bin/check_bash_persistence.py" --scan-dir .  # timeout: 15000
 ```
 
-**Severity**: critical — silent empty-string expansion; corrupts file paths, conditional branches, spawn prompts. No error surfaced at runtime.
+**Severity**: medium per `severity-table.md` §Canonical defect classes (cross-call shell state); report separately any demonstrated runtime failure with its evidence.
 
 Fix: re-assign the variable at the top of every bash block that needs it, or combine dependent commands into a single bash block. Do NOT rely on variable state persisting between bash tool calls.
 
 | Sub-check | Pattern | Severity | Auto-fix |
 | -- | -- | -- | -- |
-| 43 — cross-block ref | `$VAR` in block N where VAR assigned only in block M\<N | critical | no — requires combining blocks or re-assigning |
+| 43 — cross-block ref | `$VAR` in block N where VAR assigned only in block M\<N | medium | no — requires combining blocks or re-assigning |
 
 ## Check 42 — Unexpanded variables in agent spawn prompts
 
 Variables written as `$VAR` or `${VAR}` inside ```` ```markdown ```` fenced blocks (spawn prompt templates) are passed literally to the spawned agent — the agent receives the dollar-sign string, not the resolved value. The agent can't resolve orchestrator shell variables; `$_FOUNDRY_SHARED/foo.md` becomes the literal path string `$_FOUNDRY_SHARED/foo.md` and the Read tool fails silently.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 printf "=== Check 42: Unexpanded variables in spawn prompt markdown blocks ===\n"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_spawn_prompt_vars.py" --scan-dir .  # timeout: 10000
+python "$PLUGIN_ROOT/bin/check_spawn_prompt_vars.py" --scan-dir .  # timeout: 10000
 ```
 
 **Severity**: critical — spawn prompt contains unresolved path or name; spawned agent reads wrong file or fails silently with no diagnostic.
@@ -100,8 +109,8 @@ Fix: resolve the variable in a preceding bash block and substitute the resolved 
 
 ```bash
 printf "=== Check 44: TMPDIR sentinel session scoping ===\n"
-_C44_PAT='TMPDIR:-/tmp}/'  # tmpdir-exempt: lint-self-reference — pattern literal, not a sentinel
-grep -rn "$_C44_PAT" . --include='*.md' --include='*.py' --include='*.sh' 2>/dev/null \
+_C44_PAT='TMPDIR:-/tmp}/|/tmp/'  # tmpdir-exempt: lint-self-reference — pattern literal, not a sentinel
+grep -rnE "$_C44_PAT" . --include='*.md' --include='*.py' --include='*.sh' 2>/dev/null \
   | grep -v 'CSID' | grep -v '_csid' | grep -v 'CLAUDE_CODE_SESSION_ID' | grep -v 'tmpdir-exempt' \
   | grep -v 'rules/claude-config.md' \
   | while IFS= read -r line; do printf "C44-HIGH: unscoped TMPDIR sentinel: %s\n" "$line"; done  # timeout: 10000

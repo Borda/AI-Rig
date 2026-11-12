@@ -18,7 +18,7 @@ This is the **one** sanctioned bookkeeping-only response. Everywhere else, a `Ta
 
 ### Frozen plan during build
 
-An approved `.plans/active/todo_*.md` or `plan_*.md` is read-only once implementation starts. Only a post-build sync step (move to `.plans/closed/results_*.md`) or explicit user-directed revision may edit it. An implementer that rewrites the spec to match what it built destroys the spec's value as an independent verification target. Build reveals the plan is wrong → stop, surface via `AskUserQuestion`; never edit the plan to fit.
+An approved `.plans/active/todo_*.md`, `plan_*.md` or `plan-*.md` is read-only once implementation starts. Only a post-build sync step (move to `.plans/closed/results_*.md`) or explicit user-directed revision may edit it. An implementer that rewrites the spec to match what it built destroys the spec's value as an independent verification target. Build reveals the plan is wrong → stop, surface via `AskUserQuestion`; never edit the plan to fit.
 
 ### Subagent task prohibition
 

@@ -54,6 +54,7 @@ def pytest_configure(config: pytest.Config) -> None:
         "integration: exercises interactions between real components or processes",
         "live: uses real external services, user credentials, or provider budget",
         "packaging: validates plugin build and distribution contracts",
+        "xdist_group: keeps shared fixture consumers on one package shard and xdist worker",
     ):
         config.addinivalue_line("markers", marker)
 
@@ -82,8 +83,13 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     index, count = coordinates
     selected, deselected = [], []
     for item in items:
-        # Stable node IDs include parameter values; Python's randomized hash differs between workers.
-        destination = int.from_bytes(hashlib.sha256(item.nodeid.encode("utf-8")).digest(), "big") % count
+        # Preserve xdist fixture groups across shards as well as workers, avoiding repeated expensive setup.
+        groups = {
+            str(mark.args[0] if mark.args else mark.kwargs.get("name", "default"))
+            for mark in item.iter_markers("xdist_group")
+        }
+        identity = "_".join(sorted(groups)) if groups else item.nodeid
+        destination = int.from_bytes(hashlib.sha256(identity.encode("utf-8")).digest(), "big") % count
         (selected if destination == index else deselected).append(item)
     items[:] = selected
     config.hook.pytest_deselected(items=deselected)

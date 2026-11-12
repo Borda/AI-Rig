@@ -8,6 +8,7 @@ fixture project are identical across those suites, so they live here once. Impor
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -128,18 +129,29 @@ def canonical(index: dict) -> str:
 
 
 def assert_v13_index_delta(old: dict, new: dict) -> None:
-    """Prove frozen v11 content is identical except declared v12/v13 graph semantics."""
+    """Prove frozen content differs only by declared graph semantics and exact relative coordinates."""
+    root = Path(old["scan_root"])
+    identity = str(root).replace("/", "\\").casefold() if os.name == "nt" else str(root)
+    assert new["scan_root"] == "."
+    assert new["scan_root_key"] == hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    old = copy.deepcopy(old)
+    old["scan_root"] = "."
+    old["scan_root_key"] = new["scan_root_key"]
+    for module in old["modules"]:
+        for field in ("subprocess_calls", "mock_patches"):
+            for record in module.get(field, []):
+                record["file"] = Path(record["file"]).relative_to(root).as_posix()
     assert old["scan_version"] == 11
-    assert new["scan_version"] == 13
+    assert new["scan_version"] == 14
     assert set(new) == set(old) | V12_ROOT_ADDITIONS | {"source_fingerprint"}
     # These non-Git fixtures retain every historical digest, plus the newly consumed ignore-policy input.
     expected_hashes = dict(old["file_shas"])
-    ignore_file = Path(new["scan_root"]) / ".codemapignore"
+    ignore_file = root / ".codemapignore"
     if ignore_file.exists():
         expected_hashes[".codemapignore"] = hashlib.md5(ignore_file.read_bytes(), usedforsecurity=False).hexdigest()
     assert new["file_shas"] == expected_hashes
     sources = {key: value for key, value in expected_hashes.items() if key != "__coverage_mtime__"}
-    payload = json.dumps([13, sources], sort_keys=True, separators=(",", ":")).encode("utf-8")
+    payload = json.dumps([14, sources], sort_keys=True, separators=(",", ":")).encode("utf-8")
     assert new["source_fingerprint"] == hashlib.sha256(payload).hexdigest()
     assert len(old["modules"]) == len(new["modules"])
     for legacy_module, current_module in zip(old["modules"], new["modules"], strict=True):

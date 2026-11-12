@@ -32,7 +32,7 @@ In particular this tool never writes under ``~/.codex/``.
 
 Usage:
     python "${CLAUDE_PLUGIN_ROOT}/bin/sync_rules.py" --plugin-name <name> --plugin-root <path>
-        [--home <path>] [--approve] [--dry-run]
+        [--home <path>] [--approve] [--replace-user-files] [--dry-run]
 
 Exit codes:
     0   success — links are in place (unresolved conflicts are reported, not fatal)
@@ -47,15 +47,20 @@ import contextlib
 import json
 import os
 import re
+import shutil
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from get_plugin_install_path import pick_latest_install_path
 
 #: Location of a plugin's manifest relative to the plugin root.
 _MANIFEST_REL = Path(".claude-plugin") / "plugin.json"
 #: Plugin names the namespaced destination ``<name>-<rule>`` may carry: no separator or dot-segment can
 #: leave ``rules/``.
 _PLUGIN_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+_MAX_RULE_BYTES = 1024 * 1024
 
 
 class SourceError(Exception):
@@ -87,7 +92,7 @@ class SyncResult:
         unchanged: Names already pointing at the current source.
         removed: Obsolete owned links deleted because the source is gone.
         conflicts: ``"<name> → <state>"`` descriptors left untouched.
-        replaced: Conflicting names overwritten because ``--approve`` was given.
+        replaced: Conflicting names overwritten with explicit authorization.
         failed: ``"<name>: <reason>"`` for destinations that could not be written.
     """
 
@@ -179,25 +184,71 @@ def _manifest_name(plugin_root: Path) -> str:
     return name
 
 
-def _check_rule_file(rule: Path, rules_dir: Path) -> None:
+def _check_rule_file(rule: Path) -> None:
     """Assert one candidate rule file is safe to link.
 
     Args:
         rule: Candidate ``*.md`` path.
-        rules_dir: The plugin's ``rules/`` directory.
 
     Raises:
-        SourceError: When the entry is a symlink, is not a regular file, is
-            empty, or escapes ``rules_dir``.
+        SourceError: When the entry is unsafe, too large, or lacks valid Markdown content.
     """
     if rule.is_symlink():
-        raise SourceError(f"rule is a symlink, refusing to link it: {rule}")
+        raise SourceError(f"RULE_TYPE: rule is a symlink, refusing to link it: {rule}")
     if not rule.is_file():
-        raise SourceError(f"rule is not a regular file: {rule}")
+        raise SourceError(f"RULE_TYPE: rule is not a regular file: {rule}")
     if rule.stat().st_size == 0:
-        raise SourceError(f"rule is empty: {rule}")
-    if not Path(os.path.normpath(str(rule))).is_relative_to(rules_dir):
-        raise SourceError(f"rule escapes the plugin rules directory: {rule}")
+        raise SourceError(f"RULE_CONTENT: rule is empty: {rule}")
+    try:
+        with rule.open("rb") as handle:
+            raw = handle.read(_MAX_RULE_BYTES + 1)
+    except OSError as exc:
+        raise SourceError(f"RULE_READ: cannot read rule {rule}: {exc}") from exc
+    if len(raw) > _MAX_RULE_BYTES:
+        raise SourceError(f"RULE_SIZE: rule exceeds {_MAX_RULE_BYTES} bytes: {rule}")
+    try:
+        content = raw.decode("utf-8-sig")
+    except UnicodeError as exc:
+        raise SourceError(f"RULE_ENCODING: rule is not UTF-8: {rule}") from exc
+    _check_rule_content(content, rule)
+
+
+def _check_rule_content(content: str, rule: Path) -> None:
+    """Require readable Markdown with a heading and complete optional frontmatter.
+
+    This structural check cannot establish that arbitrary prose is trustworthy; source provenance remains required.
+    Permission-rule examples inside Markdown are data and remain legal.
+    """
+    if any((ord(char) < 32 and char not in "\t\r\n") or ord(char) == 127 for char in content):
+        raise SourceError(f"RULE_CONTENT: rule contains control characters: {rule}")
+    lines = content.splitlines()
+    if lines and lines[0] == "---":
+        try:
+            lines = lines[lines.index("---", 1) + 1 :]
+        except ValueError as exc:
+            raise SourceError(f"RULE_CONTENT: rule frontmatter is not closed: {rule}") from exc
+    if not any(re.match(r"#{1,6}\s+\S", line) for line in lines):
+        raise SourceError(f"RULE_CONTENT: rule needs a Markdown heading and nonempty content: {rule}")
+
+
+def _validate_install_root(plugin_root: Path, plugin_name: str, home: Path) -> None:
+    """Require the executing plugin root or a current matching plugin install record."""
+    if plugin_root.resolve() == Path(__file__).resolve().parents[1]:
+        return
+    registry = home / ".claude" / "plugins" / "installed_plugins.json"
+    try:
+        data = json.loads(registry.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise SourceError(f"cannot verify installed plugin {plugin_name!r}: {registry}") from exc
+    plugins = data.get("plugins") if isinstance(data, dict) else None
+    if isinstance(plugins, dict):
+        for key, entries in plugins.items():
+            if not isinstance(key, str) or key.partition("@")[0] != plugin_name or not isinstance(entries, list):
+                continue
+            installed = pick_latest_install_path(entries)
+            if installed and Path(installed).is_absolute() and Path(installed).resolve() == plugin_root.resolve():
+                return
+    raise SourceError(f"root does not match the current installed plugin {plugin_name!r}: {plugin_root}")
 
 
 def _check_variants(rules: list[Path], rules_dir: Path) -> None:
@@ -253,7 +304,7 @@ def validate_source(plugin_root: Path, plugin_name: str) -> list[Path]:
     if not rules:
         raise SourceError(f"no *.md rules found in {rules_dir}")
     for rule in rules:
-        _check_rule_file(rule, rules_dir)
+        _check_rule_file(rule)
     _check_variants(rules, rules_dir)
     return rules
 
@@ -573,8 +624,22 @@ def _replace_link(link: RuleLink) -> None:
         raise
 
 
+def _backup_user_file(dest: Path) -> None:
+    """Preserve a real user's file in a new sibling backup before replacement."""
+    backup = dest.with_name(f"{dest.name}.bak-{time.time_ns()}")
+    with dest.open("rb") as source, backup.open("xb") as saved:
+        shutil.copyfileobj(source, saved)
+    shutil.copystat(dest, backup)
+
+
 def _install_one(
-    link: RuleLink, plugin_root: Path, lineage: Path | None, approve: bool, dry_run: bool, result: SyncResult
+    link: RuleLink,
+    plugin_root: Path,
+    lineage: Path | None,
+    approve: bool,
+    dry_run: bool,
+    result: SyncResult,
+    replace_user_files: bool,
 ) -> None:
     """Create, refresh, preserve, or replace a single destination.
 
@@ -582,15 +647,16 @@ def _install_one(
         link: Pairing to install.
         plugin_root: Current plugin install root.
         lineage: Result of :func:`cache_lineage`, or ``None``.
-        approve: Whether the caller authorised replacing foreign entries.
+        approve: Whether the caller authorised replacing foreign links.
         dry_run: Report only; make no filesystem change.
         result: Accumulator mutated in place.
+        replace_user_files: Explicit choice to back up and replace conflicting real files.
     """
     target = read_link_target(link.dest)
     exists = link.dest.is_symlink() or link.dest.exists()
     foreign = exists and not (target is not None and owns(link.dest, target, plugin_root, lineage))
 
-    if foreign and not approve:
+    if foreign and not (replace_user_files if target is None else approve):
         result.conflicts.append(_describe(link.dest, target))
         return
     if target is not None and resolve_target(link.dest, target) == Path(os.path.normpath(str(link.source))):
@@ -600,6 +666,8 @@ def _install_one(
         (result.replaced if foreign else result.linked).append(link.dest.name)
         return
     try:
+        if foreign and target is None:
+            _backup_user_file(link.dest)
         _replace_link(link)
     except OSError as exc:
         result.failed.append(f"{link.dest.name}: {exc}")
@@ -649,7 +717,15 @@ def _prune_obsolete(
         result.removed.append(entry.name)
 
 
-def sync(plugin_name: str, plugin_root: Path, home: Path, approve: bool = False, dry_run: bool = False) -> SyncResult:
+def sync(
+    plugin_name: str,
+    plugin_root: Path,
+    home: Path,
+    approve: bool = False,
+    dry_run: bool = False,
+    *,
+    replace_user_files: bool = False,
+) -> SyncResult:
     """Install this plugin's rules into ``<home>/.claude/rules/``.
 
     Which form of a variant rule gets installed is decided from what is already delivered — see
@@ -659,8 +735,9 @@ def sync(plugin_name: str, plugin_root: Path, home: Path, approve: bool = False,
         plugin_name: Name the plugin manifest must declare.
         plugin_root: Plugin install root.
         home: User home directory.
-        approve: Replace foreign entries instead of preserving them.
+        approve: Replace foreign links; real user files stay preserved.
         dry_run: Report the plan without touching the filesystem.
+        replace_user_files: Explicitly back up and replace conflicting real files.
 
     Returns:
         A :class:`SyncResult` describing every destination considered.
@@ -672,6 +749,7 @@ def sync(plugin_name: str, plugin_root: Path, home: Path, approve: bool = False,
     # against ~/.claude/rules/, producing a dangling link that looks installed.
     plugin_root = Path(os.path.abspath(plugin_root))
     rules = validate_source(plugin_root, plugin_name)
+    _validate_install_root(plugin_root, plugin_name, home)
     rules_dest = home / ".claude" / "rules"
     links = plan_links(rules, plugin_name, rules_dest)
     lineage = cache_lineage(plugin_root, home)
@@ -680,7 +758,7 @@ def sync(plugin_name: str, plugin_root: Path, home: Path, approve: bool = False,
     if not dry_run:
         rules_dest.mkdir(parents=True, exist_ok=True)
     for link in links:
-        _install_one(link, plugin_root, lineage, approve, dry_run, result)
+        _install_one(link, plugin_root, lineage, approve, dry_run, result, replace_user_files)
     _prune_obsolete(rules_dest, {link.dest.name for link in links}, plugin_name, plugin_root, lineage, dry_run, result)
     return result
 
@@ -701,7 +779,7 @@ def _report(result: SyncResult) -> str:
     labels = (
         ("linked", result.linked),
         ("unchanged", result.unchanged),
-        ("replaced (--approve)", result.replaced),
+        ("replaced (explicit approval)", result.replaced),
         ("removed obsolete", result.removed),
         ("conflict, kept as-is", result.conflicts),
         ("FAILED", result.failed),
@@ -723,8 +801,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--home", default=None, metavar="PATH", help="Override $HOME (default: value from environment)."
     )
+    parser.add_argument("--approve", action="store_true", help="Replace conflicting links; keep real user files.")
     parser.add_argument(
-        "--approve", action="store_true", help="Replace conflicting destinations instead of preserving them."
+        "--replace-user-files", action="store_true", help="Explicitly back up and replace conflicting real user files."
     )
     parser.add_argument("--dry-run", action="store_true", help="Report the plan without touching the filesystem.")
     args = parser.parse_args(argv)
@@ -735,7 +814,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        result = sync(args.plugin_name, Path(args.plugin_root), home, approve=args.approve, dry_run=args.dry_run)
+        result = sync(
+            args.plugin_name,
+            Path(args.plugin_root),
+            home,
+            approve=args.approve,
+            dry_run=args.dry_run,
+            replace_user_files=args.replace_user_files,
+        )
     except SourceError as exc:
         print(f"sync_rules: {exc}", file=sys.stderr)
         return 1

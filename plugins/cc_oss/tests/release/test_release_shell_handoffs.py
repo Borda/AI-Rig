@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 
 import pytest
+from _oss_shell_plugin import render_shell
+from _skill_source import read_skill_source
 from _text_io import bash_block_after, bash_blocks, bash_path
 
 _PLUGIN = Path(__file__).resolve().parents[2]
@@ -17,7 +19,7 @@ _skip_shell_unavailable = pytest.mark.skipif(shutil.which("bash") is None, reaso
 
 def _text(relative: str = "SKILL.md") -> str:
     """Read the current release procedure."""
-    return (_RELEASE / relative).read_text(encoding="utf-8")
+    return read_skill_source(_RELEASE / relative)
 
 
 def _run(script: str, root: Path, **extra: str) -> subprocess.CompletedProcess[str]:
@@ -32,7 +34,13 @@ def _run(script: str, root: Path, **extra: str) -> subprocess.CompletedProcess[s
     }
     env.pop("ARGUMENTS", None)
     return subprocess.run(
-        [shutil.which("bash"), "-c", script], cwd=root, env=env, capture_output=True, text=True, timeout=30, check=False
+        [shutil.which("bash"), "-c", render_shell(script, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "oss")],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
     )
 
 
@@ -180,14 +188,32 @@ def test_breaking_gate_reloads_verified_count(tmp_path: Path, breaking: int) -> 
 
 
 @_skip_shell_unavailable
-def test_diff_stat_accepts_a_two_ref_range(tmp_path: Path) -> None:
+def test_diff_stat_accepts_a_two_ref_range(tmp_path: Path, discovery_repo: Path) -> None:
     """The shipped diff command accepts a real commit range as one Git revision argument."""
     command = next(line for line in _text().splitlines() if line.startswith("git diff --stat"))
-    repo = _PLUGIN.parents[1]
-    completed = _run('cd "$RELEASE_REPO"\nRANGE=HEAD~1..HEAD\n' + command, tmp_path, RELEASE_REPO=bash_path(repo))
+    repo = discovery_repo
+    # Own two-commit history: a shallow CI checkout has no HEAD~1 to diff against.
+    _commit_file(repo, "one\n")
+    _commit_file(repo, "two\n")
+    work = tmp_path / "run"
+    work.mkdir()
+    completed = _run('cd "$RELEASE_REPO"\nRANGE=HEAD~1..HEAD\n' + command, work, RELEASE_REPO=bash_path(repo))
 
     assert completed.returncode == 0, completed.stderr
     assert "file" in completed.stdout
+
+
+def _commit_file(repo: Path, body: str) -> None:
+    """Commit a tracked file holding *body*, so the commit carries a real change."""
+    (repo / "tracked.txt").write_text(body, encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True, capture_output=True, timeout=10)
+    subprocess.run(
+        ["git", "-c", "core.hooksPath=", "commit", "-q", "-m", "range fixture"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        timeout=10,
+    )
 
 
 def _commit_at(repo: Path, date: str) -> None:

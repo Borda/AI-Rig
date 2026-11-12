@@ -23,6 +23,15 @@ import tempfile
 from pathlib import Path
 
 
+def _hook_state_base() -> Path:
+    """Resolve the private per-user directory shared by the activity hooks."""
+    script = "const os=require('os'),p=require('path'),c=require('crypto');const u=typeof process.getuid==='function'?process.getuid():c.createHash('sha256').update(os.userInfo().username).digest('hex');process.stdout.write(p.join(process.env.TMPDIR||os.tmpdir(),'claude-state-user-'+u));"
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True, timeout=10)
+    directory = Path(result.stdout)
+    directory.mkdir(mode=0o700, exist_ok=True)
+    return directory
+
+
 @functools.lru_cache(maxsize=1)
 def _hook_tmp_base() -> Path:
     """Return the temp base the foundry hooks write sentinel state into.

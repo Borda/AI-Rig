@@ -11,13 +11,13 @@ Review contract: 1
 Rating scale: source-5-v1
 Readiness:    [complete | blocked | incomplete]
 Reviewers:    Role [rating], Role [rating]
-CI:           N/A (develop:review is read-only — runs no tests)
+CI:           [actual parent-supplied CI evidence, or N/A (no CI evidence supplied)]
 Gate:         [REVIEW_V1_PASS | REVIEW_V1_BLOCK | REVIEW_V1_REJECT_<GROUND> @<sha>]
 Outcome:      [APPROVE | MINOR_EDITS | NEEDS_WORK | INSUFFICIENT_BUT_PROMISING | REJECT | null]
 Summary:      [review summary]
 Confidence:   [aggregate score] — [key gaps]
 Next steps:   [actions, blockers first]
-Path:         → .reports/review/[YYYY-MM-DDTHH-MM-SSZ]/review-report.md
+Path:         → .reports/develop-review/[YYYY-MM-DDTHH-MM-SSZ]/review-report.md
 ---
 
 Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.

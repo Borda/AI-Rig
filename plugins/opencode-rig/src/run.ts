@@ -6,12 +6,13 @@
  * run is always backed by checked evidence.
  */
 
-import { appendFileSync, chmodSync, existsSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { appendFileSync, chmodSync, existsSync, lstatSync, realpathSync, writeFileSync } from "node:fs"
+import { dirname, isAbsolute, join, relative, sep } from "node:path"
 import { sha256, type ScopeEntry } from "./digest.ts"
 import { PLUGIN_VERSION, SCHEMA_VERSION } from "./version.ts"
 import { ensureDir, readJson, writeJsonAtomic } from "./util/fsx.ts"
 import { createRunId, type RigPaths } from "./paths.ts"
+import { reconciliationProblems, type Finding } from "./findings.ts"
 
 export type RunStatus = "in_progress" | "completed" | "blocked" | "failed" | "stale"
 export type GateStatus = "passed" | "failed" | "skipped"
@@ -42,6 +43,7 @@ export interface GateReceipt {
   readonly tail: string
   readonly reason?: string
   readonly source_digest?: string
+  readonly log_path?: string
 }
 
 export interface FindingsSummary {
@@ -67,6 +69,7 @@ export interface ReviewEvidence {
   readonly run_id: string
   readonly reviewer: string
   readonly source_digest: string
+  readonly plan_digest?: string
 }
 
 export interface RunRecord {
@@ -78,7 +81,10 @@ export interface RunRecord {
   status: RunStatus
   readonly plugin_version: string
   scope: ScopeRecord
-  plan?: { readonly path: string; readonly digest: string }
+  plan?: { readonly path: string; readonly digest: string; readonly run_id?: string }
+  trivial_plan?: string
+  source_run_id?: string
+  source_findings?: { readonly digest: string; readonly ids: readonly string[] }
   inputs: FileRecord[]
   outputs: FileRecord[]
   gates: GateReceipt[]
@@ -93,14 +99,169 @@ export interface RunRecord {
 }
 
 const SKILL_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/
+const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/
 
+/** Reject path syntax and inherited-object keys before using run storage identities. */
+export function validateRunIdentity(skill: string, runId: string): void {
+  if (typeof skill !== "string" || !SKILL_PATTERN.test(skill) || Object.hasOwn(Object.prototype, skill)) {
+    throw new Error(`invalid skill id: ${skill}`)
+  }
+  if (typeof runId !== "string" || !RUN_ID_PATTERN.test(runId) || Object.hasOwn(Object.prototype, runId)) {
+    throw new Error(`invalid run id: ${runId}`)
+  }
+}
+
+function object(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function strings(record: Record<string, unknown>, keys: readonly string[]): boolean {
+  return keys.every((key) => typeof record[key] === "string")
+}
+
+function stringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string")
+}
+
+function counts(record: Record<string, unknown>, keys: readonly string[]): boolean {
+  return keys.every((key) => Number.isSafeInteger(record[key]) && (record[key] as number) >= 0)
+}
+
+function validScope(value: unknown): boolean {
+  if (!object(value)) return false
+  return (
+    (value.base === null || typeof value.base === "string") &&
+    (value.commit === undefined || typeof value.commit === "string") &&
+    typeof value.digest === "string" &&
+    typeof value.dirty === "boolean" &&
+    stringArray(value.paths) &&
+    Array.isArray(value.entries) &&
+    value.entries.every((entry) => object(entry) && strings(entry, ["path", "status", "sha256"]))
+  )
+}
+
+function validGate(value: unknown): boolean {
+  if (!object(value)) return false
+  return (
+    strings(value, ["id", "command", "source", "status", "stdout_sha256", "stderr_sha256", "tail"]) &&
+    ["passed", "failed", "skipped"].includes(value.status as string) &&
+    (value.exit_code === null || Number.isInteger(value.exit_code)) &&
+    typeof value.duration_ms === "number" &&
+    Number.isFinite(value.duration_ms) &&
+    value.duration_ms >= 0 &&
+    ["reason", "source_digest"].every((key) => value[key] === undefined || typeof value[key] === "string")
+  )
+}
+
+function validPlan(value: unknown): boolean {
+  return (
+    object(value) &&
+    strings(value, ["path", "digest"]) &&
+    (value.run_id === undefined || (typeof value.run_id === "string" && RUN_ID_PATTERN.test(value.run_id)))
+  )
+}
+
+function validFindingsSummary(value: unknown): boolean {
+  return (
+    object(value) &&
+    strings(value, ["path", "digest"]) &&
+    counts(value, ["open", "fixed", "rejected", "deferred", "accepted_risk"])
+  )
+}
+
+function validLoopSummary(value: unknown): boolean {
+  return (
+    object(value) &&
+    strings(value, ["path", "stop_reason"]) &&
+    counts(value, ["rounds", "weighted", "open_security", "open_critical"])
+  )
+}
+
+function validReview(value: unknown, runId: unknown): boolean {
+  return (
+    object(value) &&
+    strings(value, ["run_id", "reviewer", "source_digest"]) &&
+    value.run_id === runId &&
+    (value.plan_digest === undefined || typeof value.plan_digest === "string")
+  )
+}
+
+function validOptionalEvidence(run: Record<string, unknown>): boolean {
+  if (run.plan !== undefined && !validPlan(run.plan)) return false
+  if (run.findings !== undefined && !validFindingsSummary(run.findings)) return false
+  if (run.loop !== undefined && !validLoopSummary(run.loop)) return false
+  if (run.review !== undefined && !validReview(run.review, run.run_id)) return false
+  return ["trivial_plan", "source_run_id", "report_path", "stop_reason", "gate_exemption"].every(
+    (key) => run[key] === undefined || typeof run[key] === "string",
+  )
+}
+
+function validSourceFindings(value: unknown): boolean {
+  return (
+    object(value) &&
+    typeof value.digest === "string" &&
+    stringArray(value.ids) &&
+    value.ids.every((id) => /^F-[A-Za-z0-9-]+$/.test(id)) &&
+    new Set(value.ids).size === value.ids.length
+  )
+}
+
+function validRunCollections(run: Record<string, unknown>): boolean {
+  return (
+    validScope(run.scope) &&
+    [run.inputs, run.outputs].every(
+      (files) => Array.isArray(files) && files.every((file) => object(file) && strings(file, ["path", "sha256"])),
+    ) &&
+    Array.isArray(run.gates) &&
+    run.gates.every(validGate) &&
+    stringArray(run.limits)
+  )
+}
+
+/** Validate persisted evidence before its fields can authorize writes or completion. */
+export function validateRunRecord(raw: unknown): RunRecord {
+  if (!object(raw)) throw new Error("invalid run record: expected an object")
+  validateRunIdentity(raw.skill as string, raw.run_id as string)
+  if (
+    raw.schema !== SCHEMA_VERSION ||
+    !strings(raw, ["created_at", "updated_at", "plugin_version", "status"]) ||
+    !["in_progress", "completed", "blocked", "failed", "stale"].includes(raw.status as string) ||
+    typeof raw.confidence !== "number" ||
+    !Number.isFinite(raw.confidence) ||
+    raw.confidence < 0 ||
+    raw.confidence > 1 ||
+    !validRunCollections(raw) ||
+    !validOptionalEvidence(raw)
+  )
+    throw new Error("invalid run record schema or evidence")
+  if (raw.source_run_id !== undefined) validateRunIdentity("rig-review", raw.source_run_id as string)
+  if (raw.source_findings !== undefined && !validSourceFindings(raw.source_findings)) {
+    throw new Error("invalid run record source inventory")
+  }
+  return raw as unknown as RunRecord
+}
+
+/** Resolve a validated run identity without following storage directories outside the project. */
 export function runDirectory(paths: RigPaths, skill: string, runId: string): string {
-  return join(paths.runsRoot, skill, runId)
+  validateRunIdentity(skill, runId)
+  const directory = join(paths.runsRoot, skill, runId)
+  for (const path of [paths.artifactRoot, paths.runsRoot, join(paths.runsRoot, skill), directory]) {
+    if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      throw new Error(`symbolic run directory: ${path}`)
+    }
+  }
+  let ancestor = directory
+  while (!lstatSync(ancestor, { throwIfNoEntry: false })) ancestor = dirname(ancestor)
+  const physical = relative(realpathSync(paths.projectRoot), realpathSync(ancestor))
+  if (physical === ".." || physical.startsWith(`..${sep}`) || isAbsolute(physical)) {
+    throw new Error("run directory resolves outside the project")
+  }
+  return directory
 }
 
 export function createRun(
   paths: RigPaths,
-  input: { skill: string; scope: ScopeRecord; plan?: { path: string; digest: string } },
+  input: { skill: string; scope: ScopeRecord; plan?: { path: string; digest: string; run_id?: string } },
 ): RunRecord {
   if (!SKILL_PATTERN.test(input.skill)) throw new Error(`invalid skill id: ${input.skill}`)
   let runId = createRunId()
@@ -134,11 +295,19 @@ export function createRun(
   return run
 }
 
+/** Load checked evidence whose stored identity agrees with its storage directory. */
 export function loadRun(paths: RigPaths, skill: string, runId: string): RunRecord {
-  return readJson<RunRecord>(join(runDirectory(paths, skill, runId), "run.json"))
+  const path = join(runDirectory(paths, skill, runId), "run.json")
+  if (lstatSync(path).isSymbolicLink()) throw new Error("symbolic run record")
+  const run = validateRunRecord(readJson<unknown>(path))
+  if (run.skill !== skill || run.run_id !== runId) throw new Error("run record identity does not match its directory")
+  return run
 }
 
+/** Persist only records that satisfy the same schema enforced on reads. */
 export function saveRun(paths: RigPaths, run: RunRecord): void {
+  validateRunIdentity(run.skill, run.run_id)
+  validateRunRecord(run)
   writeJsonAtomic(join(runDirectory(paths, run.skill, run.run_id), "run.json"), {
     ...run,
     updated_at: new Date().toISOString(),
@@ -196,12 +365,50 @@ export function requirementsFor(skill: string): SkillRequirements {
 
 export interface FinalizeInput {
   readonly drift: boolean
+  readonly plan_digest?: string
+  readonly source_findings_digest?: string
+  readonly findings?: readonly Finding[]
 }
 
 export interface FinalizeResult {
   readonly ok: boolean
   readonly problems: string[]
   readonly status: RunStatus
+}
+
+/** Check the frozen plan separately from the source inventory that excludes artifact directories. */
+function planProblems(run: RunRecord, input: FinalizeInput): string[] {
+  if (run.skill !== "rig-plan" && run.skill !== "rig-implement") return []
+  if (!run.plan) {
+    if (run.skill === "rig-implement" && run.trivial_plan?.trim()) return []
+    return [
+      run.skill === "rig-plan"
+        ? "plan artifact is missing"
+        : "implementation requires a reviewed plan or a trivial plan",
+    ]
+  }
+  const problems: string[] = []
+  if (input.plan_digest !== run.plan.digest)
+    problems.push("plan bytes changed or could not be verified against the frozen plan digest")
+  if (run.skill === "rig-plan" && run.review?.plan_digest !== run.plan.digest) {
+    problems.push("review evidence does not match the bound plan digest")
+  }
+  if (run.skill === "rig-implement" && !run.plan.run_id)
+    problems.push("implementation plan is missing reviewed plan-run provenance")
+  return problems
+}
+
+/** Reconcile actual remediation records with the immutable source inventory captured at start. */
+function remediationProblems(run: RunRecord, input: FinalizeInput): string[] {
+  if (run.skill !== "rig-remediate") return []
+  if (!run.source_run_id || !run.source_findings) return ["remediation source findings inventory is missing"]
+  const problems: string[] = []
+  if (input.source_findings_digest !== run.source_findings.digest) {
+    problems.push("source findings inventory changed or could not be verified")
+  }
+  if (!input.findings) problems.push("remediation findings inventory could not be verified")
+  else problems.push(...reconciliationProblems(run.source_findings.ids, input.findings))
+  return problems
 }
 
 /**
@@ -223,6 +430,8 @@ export function finalizeRun(run: RunRecord, input: FinalizeInput): FinalizeResul
       status: requirements.loop && run.loop && run.loop.stop_reason !== "converged" ? "blocked" : "stale",
     }
   }
+
+  problems.push(...planProblems(run, input), ...remediationProblems(run, input))
 
   if (requirements.gates) {
     const current = currentGateReceipts(run)

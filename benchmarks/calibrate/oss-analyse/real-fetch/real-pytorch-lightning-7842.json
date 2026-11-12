@@ -1,0 +1,322 @@
+{
+  "4846": {
+    "number": 4846,
+    "title": "`lr_finder` fails when called after training for 1 or more epochs",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\n<!-- A clear and concise description of what the bug is. -->\r\n\r\nCalling [`lr_finder`](https://pytorch-lightning.readthedocs.io/en/latest/api/pytorch_lightning.tuner.lr_finder.html?highlight=lr_finder) on the model after `trainer.fit()` has been called will fail with:\r\n```\r\nLR finder stopped early due to diverging loss.\r\nFailed to compute suggesting for `lr`. There might not be enough points.\r\n```\r\n, even when the default value of `min_lr=1e-08` has been changed to `1e-30`.\r\n\r\n## Please reproduce using [the BoringModel and post here](https://colab.research.google.com/drive/1HvWVVTK8j2Nj52qU4Q4YCyzOm0_aLQF3?usp=sharing)\r\n\r\n<!-- Please paste your BoringModel colab link here. -->\r\n- Reproduced using a **callback**: https://colab.research.google.com/drive/1sbOPs8edyFi_idJNnd6gr3etyv7V57YU?usp=sharing\r\n- Reproduced with **calling Trainer twice**: https://colab.research.google.com/drive/1WxUvayBBg_163nu8fjv-jsvPk6pUrSrK?usp=sharing\r\n\r\n### To Reproduce\r\n<!-- If you could not reproduce using the BoringModel and still think there's a bug, please post here -->\r\nAdd the following callback (as demonstrated with the BoringModel):\r\n\r\n```\r\n# Call Learning Rate finder after X epochs\r\nclass LRFinderXEpoch(Callback):\r\n    def __init__(self, epoch=1):\r\n        super().__init__()\r\n        \r\n        self.epoch = epoch\r\n    \r\n    def on_train_epoch_start(self, trainer, pl_module):\r\n        if trainer.current_epoch == self.epoch:\r\n            print(\"Calling learning rate finder!\")\r\n            trainer.tune(pl_module)\r\n            # trainer.tuner.lr_find(pl_module, min_lr=1e-30)\r\n```\r\n\r\n### Expected behavior\r\n\r\n<!-- FILL IN -->\r\nFind the best learning rate after a few epochs of training (e.g. when doing Transfer Learning).\r\n\r\n### Environment\r\n\r\n```\r\n* CUDA:\r\n\t- GPU:\r\n\t\t- Tesla T4\r\n\t- available:         True\r\n\t- version:           10.1\r\n* Packages:\r\n\t- numpy:             1.18.5\r\n\t- pyTorch_debug:     True\r\n\t- pyTorch_version:   1.7.0+cu101\r\n\t- pytorch-lightning: 1.0.8\r\n\t- tqdm:              4.41.1\r\n* System:\r\n\t- OS:                Linux\r\n\t- architecture:\r\n\t\t- 64bit\r\n\t\t- \r\n\t- processor:         x86_64\r\n\t- python:            3.6.9\r\n\t- version:           #1 SMP Thu Jul 23 08:00:38 PDT 2020\r\n```\r\n\r\n### Additional context\r\n\r\n<!-- Add any other context about the problem here. -->\r\nIssue came from the following discussion: https://forums.pytorchlightning.ai/t/train-2-epochs-head-unfreeze-learning-rate-finder-continue-training-fit-one-cycle/366/4\r\n\r\nPotentially related issues:\r\n- https://github.com/PyTorchLightning/pytorch-lightning/issues/4784\r\n- https://github.com/PyTorchLightning/pytorch-lightning/issues/4616",
+    "comments": [
+      {
+        "author": "user-4",
+        "body": "The early [stopping threshold](https://github.com/PyTorchLightning/pytorch-lightning/blob/master/pytorch_lightning/tuner/lr_finder.py#L83) of the Learning Rate finder seems to be too small. I regularly observe https://github.com/PyTorchLightning/pytorch-lightning/blob/f2fa3c82567ade0aa5bea3aa298542fc5040e4b7/pytorch_lightning/tuner/lr_finder.py#L419 to trigger on a standard image classification task after the first batch."
+      },
+      {
+        "author": "user-3",
+        "body": "@user-4 Thank you for the suggestion.\r\nI tried in both the BoringModel and my own ML experiment the following code in the lr-finder callback:\r\n\r\n```\r\nlr_finder = trainer.tuner.lr_find(pl_module, early_stop_threshold=1000.0, min_lr=1e-30)\r\nlr = lr_finder.suggestion()\r\nprint(f\"Found lr: {lr}\")\r\npl_module.hparams[\"learning_rate\"] = lr\r\n```\r\nI tried both `early_stop_threshold=1000.0` and `0.001` (default: `20.0`) in combination with `min_lr=1e-30` (default: `1e-8`).\r\n\r\nWhich both print: `Found lr: None`.\r\n\r\nSo the issue seems to be somewhere else :/"
+      },
+      {
+        "author": "user-3",
+        "body": "As by @user-4 's suggestion on SLACK, I tried with `early_stop_threshold=None`. This throws a `RuntimeError: value cannot be converted to type float without overflow: -5.01187e+38` for the BoringModel, but it works for my own ML project.\r\n\r\nHowever, the next issue I face is: `RuntimeError: Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu!`\r\n\r\nEven if I try the following modifications to my snippet above:\r\n```\r\nfrom pytorch_lightning.utilities.apply_func import move_data_to_device\r\n\r\nlr = lr_finder.suggestion()\r\n\r\ntorch.tensor(lr).cuda()\r\ntorch.tensor(lr, device=pl_module.device)\r\ntorch.tensor(lr).to(pl_module.device)\r\nmove_data_to_device(lr, device=pl_module.device)\r\n```\r\n\r\nAll fail to get rid of the device issue."
+      },
+      {
+        "author": "user-5",
+        "body": "@user-35 any idea?"
+      },
+      {
+        "author": "user-6",
+        "body": "For my project, I found that setting `early_stop_threshold=None` fixes this. Thanks to @user-3 for the suggestion. "
+      },
+      {
+        "author": "user-3",
+        "body": "Preventing stale bot from closing the issue, as it is still a problem."
+      },
+      {
+        "author": "user-7",
+        "body": "> For my project, I found that setting `early_stop_threshold=None` fixes this. Thanks to @user-3 for the suggestion.\r\n\r\nSame here. Thanks guys! And let's hope that this is eventually properly solved,"
+      },
+      {
+        "author": "user-8",
+        "body": "> early_stop_threshold=None\r\n\r\nIt makes it work! "
+      },
+      {
+        "author": "user-9",
+        "body": "@user-3 and @user-6, would you agree that this is not an ideal solution?  I would think we would want early stopping enabled.  I'm finding that I get `RuntimeError: value cannot be converted to type float without overflow` when early stopping is not set to `None`.  "
+      },
+      {
+        "author": "user-3",
+        "body": "@user-9 This is indeed not a solution, just a workaround that works in some cases. I'm not working anymore on the project I encountered that problem though (never solved it)."
+      }
+    ]
+  },
+  "10759": {
+    "number": 10759,
+    "title": "Proper support for Pytorch SequentialLR Scheduler",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nCurrently there is a bug when a ReduceLROnPlateau is used inside SequentialLR due to no proper support for this scheduler in [Trainer._configure_schedulers](https://github.com/PyTorchLightning/pytorch-lightning/blob/b57feccbff57271144dae70a82b1948f7a4cf7af/pytorch_lightning/trainer/optimizers.py#L123-L193). An exception is raised since the monitor metric is not properly passed to the ReduceLROnPlateau scheduler in [TrainingEpochLoop._update_learning_rates](https://github.com/PyTorchLightning/pytorch-lightning/blob/b57feccbff57271144dae70a82b1948f7a4cf7af/pytorch_lightning/loops/epoch/training_epoch_loop.py#L447-L507)\r\n\r\nNote: Currently, there is a bug in SequentialLR missing an optimizer attribute, see https://github.com/pytorch/pytorch/pull/67406 and https://github.com/PyTorchLightning/pytorch-lightning/issues/10278. But that should not interfere here.\r\n\r\n### To Reproduce\r\nrun any lightning model with trainer with scheduler setup like:\r\n```python\r\ndef configure_optimizers(self):\r\n    optimizer = torch.optim.Adam(self.parameters(), lr=0.01)\r\n    s1= torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)\r\n    s2= torch.optim.lr_scheduler.ConstantLR(optimizer)\r\n    scheduler = torch.optim.lr_scheduler.SequentialLR(\r\n        optimizer,\r\n        schedulers=[s1, s2],\r\n        milestones=[2]\r\n    )\r\n    scheduler.optimizer = optimizer  # dirty fix for bug in SequentialLR\r\n    return {\"optimizer\": optimizer,\r\n            \"lr_scheduler\": scheduler,\r\n            \"monitor\": \"loss\"}\r\n```\r\n<!--\r\nPlease reproduce using the BoringModel!\r\n\r\nYou can use the following Colab link:\r\nhttps://colab.research.google.com/github/PytorchLightning/pytorch-lightning/blob/master/pl_examples/bug_report/bug_report_model.ipynb\r\nIMPORTANT: has to be public.\r\n\r\nor this simple template:\r\nhttps://github.com/PyTorchLightning/pytorch-lightning/blob/master/pl_examples/bug_report/bug_report_model.py\r\n\r\nIf you could not reproduce using the BoringModel and still think there's a bug, please post here\r\nbut remember, bugs with code are fixed faster!\r\n-->\r\n\r\n### Expected behavior\r\nThe monitor value should be passed to the underlying ReduceLROnPlateau scheduler. \r\n\r\nThis is defenitely tricky to achieve as the current way is assuming a fixed scheduler setup for the entire training time, e.g. allows for multiple scheduler but if scheduler1 is changing midway it only works if it is not ReduceLROnPlateau.\r\n\r\n### Environment\r\n- PyTorch Lightning Version (e.g., 1.5.0): 1.5.3\r\n- PyTorch Version (e.g., 1.10): 1.10\r\n- Python version (e.g., 3.9): 3.9\r\n- OS (e.g., Linux): Windows\r\n- CUDA/cuDNN version: 10.2\r\n- GPU models and configuration: -\r\n- How you installed PyTorch (`conda`, `pip`, source): pip\r\n- If compiling from source, the output of `torch.__config__.show()`: -\r\n- Any other relevant information: -\r\n\r\n### Additional context\r\n\r\n\n\ncc @user-13",
+    "comments": [
+      {
+        "author": "user-10",
+        "body": "Related to this but for another issue: There is no support for custom LRScheduler afaik unless they are inherited from _LRScheduler AND require no extra arguments when .step() is called.\r\n\r\nIn vanilla pytorch this is \"solved\" as the user is calling .step() directly.\r\n\r\nPerhaps the newly introduced customizable loops is a solution for this?"
+      },
+      {
+        "author": "user-2",
+        "body": "> Perhaps the newly introduced customizable loops is a solution for this?\r\n\r\nI would rather go with [\"Manual Optimization\"](https://pytorch-lightning.readthedocs.io/en/latest/common/optimizers.html?highlight=Manual%20Optimizuation#manual-optimization) before going for custom loops. \r\n\r\nIn manual optimization mode, the user calls the scheduler step manually, hence you can use a custom one and pass args to its step method. How does that sound for a (temporary?) workaround?"
+      },
+      {
+        "author": "user-10",
+        "body": "great idea, i forgot about that. I guess that solves the custom scheduler issue. But I still think the support for SequentialLR is necessary. I think there is a debate on Pytorch whether the schedule class needs a rewrite, so perhaps one waits for that?"
+      },
+      {
+        "author": "user-11",
+        "body": "For the main issue regarding `ReduceLROnPlateau`, `SequentialLR` doesn't support an additional argument inside `.step` so we really can't do anything from our side.\r\nhttps://github.com/pytorch/pytorch/blob/5fdcc20d8d96a6b42387f57c2ce331516ad94228/torch/optim/lr_scheduler.py#L628\r\n\r\n> Related to this but for another issue: There is no support for custom LRScheduler afaik unless they are inherited from _LRScheduler AND require no extra arguments when .step() is called.\r\n\r\nDo you have any scheduler that is inherited from `_LRScheduler` and requires an additional argument inside the `.step` method? I have a PR for it: https://github.com/PyTorchLightning/pytorch-lightning/pull/10249, that will solve the issue but seems to be blocked under the decision whether to support outside schedulers or not which are not inherited from PT `_LRScheduler`."
+      },
+      {
+        "author": "user-10",
+        "body": "Well, I wanted to use WarmStart (custom scheduler inherited from _LRScheduler) together with ReduceLROnPlateu. First try was using SequentialLR but as outlined above is impossible to use with ReduceLROnPlateu. Then I simply inherited from ReduceLROnPlateu and modified its step function to include the logic from WarmStart. See [here](https://gist.github.com/Nesqulck/48c562d358c5484db8362fdfe634dbd0) for the code. That works now with PytorchLightning as it is simply a ReduceLROnPlateu in disguise. Although it would be cleaner to use SequentialLR but is now a pytorch issue rather than PL. Maybe a separate issue can be opened there such that SequentialLR can accept arbitrary arguments in step?"
+      },
+      {
+        "author": "user-11",
+        "body": "yeah, I'd suggest opening an issue in PyTorch and linking it here. We won't close this issue. Once they support it, we will make adjustments here, if required, to make it compatible."
+      }
+    ]
+  },
+  "9136": {
+    "number": 9136,
+    "title": "AdvancedProfiler: ValueError: Attempting to stop recording an action (run_test_evaluation) which was never started.",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nIf you have multiple Trainers and only one runs test, afterwards AdvancedProfiler crashes. This happens even if you free all Trainers except the one you want to run test on.\r\n\r\nI have code that has multiple Trainers, doing a grid search. To each Trainer, I just added AdvancedProfiler.\r\n\r\nI find the Trainer with the best_model_score and run test only on the best predictor. I then get this crash:\r\n\r\n```\r\nDATALOADER:0 TEST RESULTS\r\n{'test_chroma_acc': 0.05000000074505806,\r\n 'test_loss': 1763.811279296875,\r\n 'test_pitch_acc': 0.0}\r\n--------------------------------------------------------------------------------\r\nTesting: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 22.07it/s]\r\n  0%|                                                                                                                                                                                                       | 0/3 [00:24<?, ?it/s]\r\nTraceback (most recent call last):\r\n  File \"/Users/joseph/dev/neuralaudio/hear-eval-kit/heareval/predictions/runner.py\", line 75, in <module>\r\n    runner()\r\n  File \"/usr/local/lib/python3.9/site-packages/click/core.py\", line 1137, in __call__\r\n    return self.main(*args, **kwargs)\r\n  File \"/usr/local/lib/python3.9/site-packages/click/core.py\", line 1062, in main\r\n    rv = self.invoke(ctx)\r\n  File \"/usr/local/lib/python3.9/site-packages/click/core.py\", line 1404, in invoke\r\n    return ctx.invoke(self.callback, **ctx.params)\r\n  File \"/usr/local/lib/python3.9/site-packages/click/core.py\", line 763, in invoke\r\n    return __callback(*args, **kwargs)\r\n  File \"/Users/joseph/dev/neuralaudio/hear-eval-kit/heareval/predictions/runner.py\", line 69, in runner\r\n    task_predictions(\r\n  File \"/Users/joseph/dev/neuralaudio/hear-eval-kit/heareval/predictions/task_predictions.py\", line 772, in task_predictions\r\n    test_scores = best_trainer.test(ckpt_path=\"best\", test_dataloaders=test_dataloader)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 706, in test\r\n    results = self._run(model)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 918, in _run\r\n    self._dispatch()\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 982, in _dispatch\r\n    self.accelerator.start_evaluating(self)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/accelerators/accelerator.py\", line 95, in start_evaluating\r\n    self.training_type_plugin.start_evaluating(trainer)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/plugins/training_type/training_type_plugin.py\", line 165, in start_evaluating\r\n    self._results = trainer.run_stage()\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 993, in run_stage\r\n    return self._run_ev",
+    "comments": [
+      {
+        "author": "user-13",
+        "body": "Thanks @user-12. I was able to reproduce it. It seems to be linked to `advanced` profiler when calling fit and then test. `simple` works fine.\r\n\r\nI will check this out tomorrow unless you want to investigate it :)"
+      },
+      {
+        "author": "user-13",
+        "body": "Hey @user-12,\r\n\r\nIt is interesting, I have the impression the bug is actually related to Colab.\r\n\r\nThis works locally. \r\n\r\n```py\r\ndef test_advanced_profiler_on_test(tmpdir):\r\n\r\n    ds = RandomDataset(32, 64)\r\n    loader = DataLoader(ds)\r\n    model = BoringModel()\r\n\r\n    def run(tmpdir):\r\n        trainer = Trainer(\r\n            default_root_dir=tmpdir,\r\n            max_epochs=1,\r\n            progress_bar_refresh_rate=20,\r\n            profiler=\"advanced\"\r\n        )\r\n\r\n        trainer.fit(model, loader, loader)\r\n        trainer.test(test_dataloaders=loader)\r\n\r\n        return trainer\r\n\r\n    for _ in range(4):\r\n        trainer = run(tmpdir)\r\n\r\n    trainer.test(test_dataloaders=loader)\r\n```"
+      },
+      {
+        "author": "user-12",
+        "body": "@user-13 I was experiencing this bug on Ubuntu (GCP GPU instances), not Colab, originally.\r\n\r\nI just ran the colab python on OSX and got the error.\r\n\r\n```\r\n\r\n\r\nTraceback (most recent call last):\r\n  File \"/Users/joseph/Downloads/advancedprofiler_test_the_boringmodel.py\", line 154, in <module>\r\n    trainers[-1].test(test_dataloaders=test)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 706, in test\r\n    results = self._run(model)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 918, in _run\r\n    self._dispatch()\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 982, in _dispatch\r\n    self.accelerator.start_evaluating(self)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/accelerators/accelerator.py\", line 95, in start_evaluating\r\n    self.training_type_plugin.start_evaluating(trainer)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_ligh"
+      },
+      {
+        "author": "user-14",
+        "body": "I read thorugh the comment thread, can I take up this one to help to fix the issue?"
+      },
+      {
+        "author": "user-13",
+        "body": "Hey @ user-14,\r\n\r\nYes, please have a look and open a PR if you have a fix.\r\n\r\nBest,\r\nT.C"
+      },
+      {
+        "author": "user-14",
+        "body": "Fine, let me replicate the bug on my colab."
+      },
+      {
+        "author": "user-14",
+        "body": "> Hey @user-12,\r\n> \r\n> It is interesting, I have the impression the bug is actually related to Colab.\r\n> \r\n> This works locally.\r\n> \r\n> ```python\r\n> def test_advanced_profiler_on_test(tmpdir):\r\n> \r\n>     ds = RandomDataset(32, 64)\r\n>     loader = DataLoader(ds)\r\n>     model = BoringModel()\r\n> \r\n>     def run(tmpdir):\r\n>         trainer = Trainer(\r\n>             default_root_dir=tmpdir,\r\n>             max_epochs=1,\r\n>             progress_bar_refresh_rate=20,\r\n>             profiler=\"advanced\"\r\n>         )\r\n> \r\n>         trainer.fit(model, loader, loader)\r\n>         trainer.test(test_dataloaders=loader)\r\n> \r\n>         return trainer\r\n> \r\n>     for _ in range(4):\r\n>         trainer = run(tmpdir)\r\n> \r\n>     trainer.test(test_dataloaders=loader)\r\n> ```\r\n\r\nHey I successfully replicated the bug, the problem seems to be lying during the test after calling fit, specifically our dictionary object `pr = self.profiled_actions.get(action_name)` is trying to return the value of the `(action_name)` "
+      },
+      {
+        "author": "user-12",
+        "body": "@user-14 do you have access to an OSX machine you can try on too? That's my local arch where I also have this issue."
+      },
+      {
+        "author": "user-14",
+        "body": "@user-12 Yes, I have a Macbook, I will be trying out on that as well."
+      },
+      {
+        "author": "user-15",
+        "body": "Hi, I'm having the same issue on Linux / x86_64 arch, using a single trainer (I'm running the task through PyCharm IDE). \r\n\r\n```\r\n File \"xxx/lib/python3.6/site-packages/mixer/pl/trainer.py\", line 44, in train\r\n    self.fit(model=model, datamodule=datamodule)\r\n  File \"xxx/lib/python3.6/site-packages/pytorch_lightning/trainer/trainer.py\", line 552, in fit\r\n    self._run(model)\r\n  File \"xxx/lib/python3.6/site-packages/pytorch_lightning/trainer/trainer.py\", line 927, in _run\r\n    self.call_hook(\"on_fit_end\")\r\n  File \"xxx/lib/python3.6/site-packages/pytorch_lightning/trainer/trainer.py\", line 1235, in call_hook\r\n    output = accelerator_output if output is None else output\r\n  File \"xxx/lib/python3.6/contextlib.py\", line 88, in __exit__\r\n    next(self.gen)\r\n  File \"xxx/lib/python3.6/site-packages/pytorch_lightning/profiler/base.py\", line 97, in profile\r\n    self.stop(action_name)\r\n  File \"xxx/lib/python3.6/site-packages/pytorch_lightning/profiler/advanced.py\", line 70, in stop\r\n    raise Val"
+      }
+    ]
+  },
+  "5558": {
+    "number": 5558,
+    "title": "Mixed precision: scheduler and optimizer are called in the wrong order",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nWhen using mixed-precision training, scheduler and optimizer are called in the wrong order. Warning is generated:\r\n\r\n```\r\nUserWarning: Detected call of `lr_scheduler.step()` before `optimizer.step()`. In PyTorch 1.1.0 and later, you should call them in the opposite order: `optimizer.step()` before `lr_scheduler.step()`.\r\n```\r\n\r\n## Please reproduce using the BoringModel\r\n\r\nhttps://colab.research.google.com/drive/1G7pk6E9XUYq-pS41DXKhqM9Srx8sikiP?usp=sharing\r\n\r\nThere are four tests. Three of them doesn't raise the warning:\r\n\r\n1. test_amp_scheduler(precision=16, configure_optimizers=configure_optimizers_1)\r\n2. test_amp_scheduler(precision=32, configure_optimizers=configure_optimizers_1)\r\n3. test_amp_scheduler(precision=32, configure_optimizers=configure_optimizers_2)\r\n\r\nThis testcase raises the warning:\r\n\r\n1. test_amp_scheduler(precision=16, configure_optimizers=configure_optimizers_2)\r\n\r\n\r\n### To Reproduce\r\n\r\n1. Create model with `configure_optimizers` in a following dictionary style:\r\n\r\n```python\r\ndef configure_optimizers_2(model):\r\n    optimizer = torch.optim.SGD(model.layer.parameters(), lr=0.1)\r\n    scheduler = {'scheduler':  torch.optim.lr_scheduler.StepLR(optimizer, step_size=1),\r\n              'name': 'learning_rate',\r\n              'interval':'step',\r\n              'frequency': 1}\r\n    \r\n    return {\"optimizer\": optimizer, \"lr_scheduler\": scheduler}\r\n```\r\n\r\n2. Enable mixed-precision training by setting `precision=16` in a `Trainer`\r\n3. Start training\r\n\r\n#### Note\r\n\r\nWhen scheduler is defined in another way, the issue seems to not occur:\r\n\r\n```python\r\ndef configure_optimizers_1(model):\r\n    optimizer = torch.optim.SGD(model.layer.parameters(), lr=0.1)\r\n    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1)\r\n    \r\n    return {\"optimizer\": optimizer, \"lr_scheduler\": scheduler}\r\n```\r\n\r\n### Expected behavior\r\n\r\nNo warning\r\n\r\n### Environment\r\n\r\n* CUDA:\r\n\t- GPU:\r\n\t\t- Tesla P100-PCIE-16GB\r\n\t- available:         True\r\n\t- version:           10.1\r\n* Packages:\r\n\t- numpy:             1.19.5\r\n\t- pyTorch_debug:     True\r\n\t- pyTorch_version:   1.7.0+cu101\r\n\t- pytorch-lightning: 1.1.4\r\n\t- tqdm:              4.41.1\r\n* System:\r\n\t- OS:                Linux\r\n\t- architecture:\r\n\t\t- 64bit\r\n\t\t- \r\n\t- processor:         x86_64\r\n\t- python:            3.6.9\r\n\t- version:           #1 SMP Thu Jul 23 08:00:38 PDT 2020\r\n",
+    "comments": [
+      {
+        "author": "user-23",
+        "body": "As another datapoint, I'm finding this issue with pytorch-lightning==1.3.4\r\n"
+      },
+      {
+        "author": "user-24",
+        "body": "Same issue here with `pytorch-lightning==1.3.1`."
+      },
+      {
+        "author": "user-9",
+        "body": "Same issue with `pytorch-lightning==1.4.1`."
+      },
+      {
+        "author": "user-25",
+        "body": "Any updates on this?"
+      },
+      {
+        "author": "user-21",
+        "body": "Hi @user-36 @user-25 The fix is still wip in #9923.\r\n\r\n---\r\n\r\nThis issue only happens when\r\n- `Trainer(precision=16)` AND\r\n- `lr_scheduler.step()` runs every small steps (not epochs), i.e.\r\n  ```python\r\n  def configure_optimizers(self):\r\n      optimizer = ...\r\n      scheduler = {\r\n          \"scheduler\": ...,\r\n          \"interval\": \"step\",\r\n          \"frequency\": 1,  # other small numbers may also cause this issue.\r\n      }\r\n      return {\"optimizer\": optimizer, \"lr_scheduler\": scheduler}\r\n  ```\r\n\r\nWhat's happening is that `scaler.step(optimizer)` (getting called when using native amp) is likely to skip `optimizer.step()` for the first few iterations, and thus, it makes `lr_scheduler.step()` called before any call of `optimizer.step()`.\r\n\r\nFor side note, you'll get the same behaviour in pure PyTorch, too, as reported in \"[`optimizer.step()` before `lr_scheduler.step()` error using GradScaler](https://discuss.pytorch.org/t/optimizer-step-before-lr-scheduler-step-error-using-gradscaler/92"
+      },
+      {
+        "author": "user-26",
+        "body": "Hi @user-21, thanks for your mention/comment.\r\nI am not sure how can I adapt this to my code but I can show you what my configure_optimizers looks like if it will help you fix the issue :)\r\n```\r\n  def configure_optimizers(self):\r\n    optimizer = AdamW(self.parameters(), lr=self.lr, eps=self.eps)\r\n\r\n    scheduler = get_linear_schedule_with_warmup(optimizer,\r\n                                                num_training_steps = self.n_training_steps,\r\n                                                num_warmup_steps = self.n_warmup_steps)\r\n\r\n    return dict(lr_scheduler = dict(scheduler=scheduler, interval='step'),\r\n                optimizer = optimizer)\r\n```"
+      },
+      {
+        "author": "user-21",
+        "body": "@user-36 I'm sorry for your inconvenience. I'm not sure if there's a workaround for this issue at the moment... I'll try to have this issue resolved asap within this week and keep you updated."
+      },
+      {
+        "author": "user-27",
+        "body": "@user-21  do we have to switch them? I feel it's just warning when the first few iteration got skipped, but impact to overall accuracy is very minor. In fact, this is desired behavior right? "
+      },
+      {
+        "author": "user-21",
+        "body": "@user-27 \r\n\r\n> I feel it's just warning when the first few iteration got skipped, \r\n\r\nPyTorch raises the warning ONLY IF `scheduler.step()` is called before any call of `optimizer.step()`, but in practice, `optimizer.step()` can be skipped in later iterations, too, with amp used.\r\n\r\n> but impact to overall accuracy is very minor. In fact, this is desired behavior right?\r\n\r\nThis is a known but not desired behaviour for sure because users would expect the following call orders:\r\n\r\n```python\r\noptimizer.step()  # 1st call\r\nscheduler.step()  # 1st call\r\n\r\n# optimizer.step()  # skipped by the amp scaler\r\n# scheduler.step()  # skipped because no optmizer.step() has been called in the iteration\r\n\r\noptimizer.step()  # 2nd call\r\nscheduler.step()  # 2nd call\r\n...\r\n```\r\n\r\nbut currently, when using Lightning with native amp, the orders can be:\r\n```python\r\noptimizer.step()  # 1st call\r\nscheduler.step()  # 1st call\r\n\r\n# optimizer.step()  # skipped by the amp scaler\r\nscheduler.step()  # 2nd call  # sh"
+      },
+      {
+        "author": "user-28",
+        "body": "My 2 cents: Users should never get a warning when they aren't doing anything wrong and/or there is no way for them to do something correctly. Specifically, unless this bug is fixed there is no way to run `CyclicLR` or `OneCycleLR` correctly without getting this warning."
+      }
+    ]
+  },
+  "7550": {
+    "number": 7550,
+    "title": "DDP spawn no longer works in Jupyter environment",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nRunning multi-GPU training does not update training progress bar, used in Grid Jupyterlab\r\n\r\n## Please reproduce using the BoringModel\r\n\r\nhttps://github.com/maintainer-1/kaggle_plant-pathology/blob/main/notebooks/Plant-Pathology-with-Lightning.ipynb\r\n\r\n### To Reproduce\r\n\r\njust change \r\n```\r\n    gpus=2\r\n    accelerator=\"ddp_spawn\"\r\n    precision=16,\r\n    accumulate_grad_batches=8,\r\n    val_check_interval=0.25,\r\n    progress_bar_refresh_rate=1,\r\n    weights_summary='top',\r\n```\r\nwhen I check GPU utilization it is running correctly\r\n\r\n### Expected behaviour\r\n\r\na properly updated progress bar\r\n\r\n### Environment\r\n\r\n**Note**: `Bugs with code` are solved faster ! `Colab Notebook` should be made `public` !\r\n",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "I did a quick test on a Grid session with this snippet:\r\n\r\n```python\r\nimport torch.multiprocessing as mp\r\n\r\n\r\ndef foo(process_idx):\r\n    print(process_idx)\r\n\r\n\r\nif __name__ == \"__main__\":\r\n    mp.spawn(foo, nprocs=2)  # should print 0 1\r\n```\r\n\r\nIt crashes in Jupyter environment and works fine as a regular python program. \r\n\r\n```\r\n---------------------------------------------------------------------------\r\nProcessExitedException                    Traceback (most recent call last)\r\n<ipython-input-20-53d29309dc61> in <module>\r\n      7 \r\n      8 if __name__ == \"__main__\":\r\n----> 9     mp.spawn(foo, nprocs=2)  # should print 0 1\r\n\r\n~/conda/lib/python3.7/site-packages/torch/multiprocessing/spawn.py in spawn(fn, args, nprocs, join, daemon, start_method)\r\n    228                ' torch.multiprocessing.start_process(...)' % start_method)\r\n    229         warnings.warn(msg)\r\n--> 230     return start_processes(fn, args, nprocs, join, daemon, start_method='spawn')\r\n\r\n~/conda/lib/python3.7/site-pa"
+      },
+      {
+        "author": "user-2",
+        "body": "I may have found something. This works in a Jupyter notebook (tested on colab):\r\n\r\n```python\r\n\r\nimport torch.multiprocessing as mp\r\n\r\ndef foo(process_idx):\r\n    print(process_idx)\r\n\r\n\r\nif __name__ == \"__main__\":\r\n    mp.start_processes(foo, nprocs=2, start_method=\"fork\")  # should print 0 1\r\n```\r\nwhile [this](https://github.com/PyTorchLightning/pytorch-lightning/issues/7550#issuecomment-851992193) does not. \r\n\r\ncame to this idea when reading the PyTorch source code and reading this [remark](https://github.com/pytorch/pytorch/blob/db11619901e1bd941042af4c49c6e9da7b0d206d/torch/multiprocessing/spawn.py#L160): \r\n\r\n```\r\n# mp.start_processes handles both start_method='spawn' and 'fork'. It's supposed to be a\r\n# more generalized API than mp.spawn. Currently we only document mp.spawn as it's the\r\n# CUDA compatible start_method. However, in environments like Ipython notebooks, 'fork'\r\n# works better than 'spawn'. Every helper function we created for mp.spawn is indeed\r\n# general enough, and ba"
+      },
+      {
+        "author": "user-2",
+        "body": "We are blocked here. \r\n\r\nSummary: \r\n```python\r\n# A)\r\n# not working\r\n# current usage in Lightning and recommended by PyTorch\r\ntorch.multiprocessing.spawn(..., start_method=\"spawn\") \r\n\r\n# B)\r\n# not supported by PyTorch, the start_method arg is being deprecated and has no impact, uses start_method=spawn anyway\r\ntorch.multiprocessing.spawn(..., start_method=\"fork\") \r\n\r\n# C)\r\n# works in the simple case that I showed in my comment above\r\n# but incompatible with CUDA context, see the error below:\r\ntorch.multiprocessing.start_processes(..., start_method=\"fork\") \r\n```\r\n```\r\n-- Process 0 terminated with the following error:\r\nTraceback (most recent call last):\r\n  File \"/home/adrian/anaconda3/envs/pl/lib/python3.8/site-packages/torch/multiprocessing/spawn.py\", line 59, in _wrap\r\n    fn(i, *args)\r\n  File \"/home/adrian/repositories/pytorch-lightning/pytorch_lightning/plugins/training_type/ddp_spawn.py\", line 195, in new_process\r\n    self.model_to_device()\r\n  File \"/home/adrian/repositories/pytorch-l"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "> I don't know what we can do at this point. Need to look into multiprocessing support in pytorch.\r\n\r\nso you say we are in deadlock, A+B does not shoe progress but works, C fails to start for multi-GPU"
+      },
+      {
+        "author": "user-2",
+        "body": "Yes, A+B are not compatible with Jupyter and C) is compatible with Jupyter but not when we use cuda. "
+      },
+      {
+        "author": "user-29",
+        "body": "@user-2 So it's currently not possible to run code on multiple GPUs with Pytorch Lightning inside a Jupyter notebook?"
+      },
+      {
+        "author": "user-2",
+        "body": "@user-29 It is possible to do so with `accelerator=\"dp\"`, but with \"ddp_spawn\" (default) it seems not. "
+      },
+      {
+        "author": "user-2",
+        "body": "Related issue and reply from PyTorch dev: https://github.com/PyTorchLightning/pytorch-lightning/issues/8230#issuecomment-907193430"
+      },
+      {
+        "author": "user-13",
+        "body": "Hey @user-2,\r\n\r\nAny updates there ?"
+      },
+      {
+        "author": "user-2",
+        "body": "Still blocked. PyTorch does not support fork anymore and spawn does not work in notebook cells. "
+      }
+    ]
+  },
+  "9814": {
+    "number": 9814,
+    "title": "Progress bar doesn't show up on Kaggle TPU with `num_workers` greater than `0`.",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nAs the issue title says: the progress bar doesn't show up on Kaggle TPU with `num_workers` greater than `0`.\r\n\r\nDisclaimer: I haven't tested this program on Google Colab TPU.\r\n\r\n### To Reproduce\r\n\r\nSet `num_workers` to any number greater than zero up to max CPU cores. On Kaggle, the following code sets it to `4`.\r\n\r\n```python\r\ntrain_dataset_loader = DataLoader(train_dataset, \r\n                                  batch_size=BATCH_SIZE, \r\n                                  shuffle=True, \r\n                                  num_workers=multiprocessing.cpu_count(),\r\n                                  drop_last=True)\r\n```\r\n\r\nThe training is successful but instead of showing progress bar the following output is shown:\r\n\r\n```\r\n2021-10-04 04:35:45.588313: W tensorflow/stream_executor/platform/default/dso_loader.cc:60] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /opt/conda/lib\r\n/opt/conda/lib/python3.7/site-packages/pytorch_lightning/trainer/callback_hook.py:103: LightningDeprecationWarning: The signature of `Callback.on_train_epoch_end` has changed in v1.3. `outputs` parameter has been removed. Support for the old signature will be removed in v1.5\r\n  \"The signature of `Callback.on_train_epoch_end` has changed in v1.3.\"\r\n/opt/conda/lib/python3.7/site-packages/pytorch_lightning/plugins/training_type/tpu_spawn.py:192: UserWarning: cleaning up tpu spawn environment...\r\n  rank_zero_warn(\"cleaning up tpu spawn environment...\")\r\n```\r\n\r\n### Expected behavior\r\n\r\nThe progrès bar must show up.\r\n\r\n### Environment\r\n\r\n- PyTorch Lightning Version: 1.4.9\r\n- PyTorch Version: 1.8.0a0+6e9f2c8\r\n- Python version: 3.7.10\r\n- OS (e.g., Linux): Linux\r\n- CUDA/cuDNN version: N/A\r\n- GPU models and configuration: N/A\r\n- How you installed PyTorch (`conda`, `pip`, source): pip\r\n- If compiling from source, the output of `torch.__config__.show()`: N/A\r\n- Any other relevant information: TPU on Kaggle\r\n\r\n### Additional context\r\n\r\nN/A\r\n\n\ncc @user-13 @user-32",
+    "comments": [
+      {
+        "author": "user-31",
+        "body": "@user-13\r\n\r\nCan you please help with this issue please thank you.\r\n\r\nRegards."
+      },
+      {
+        "author": "user-30",
+        "body": "> hi, I have checked but I couldn't find anything, Sorry If I find any resource I will add it to this issue\r\n> \r\n> Regards, Ranuga\r\n\r\nBtw please look no further if you are trying to. I have found some helpful potential implementations (although not perfect i.e. doesn't give same results in terms of signs but I'll search more). "
+      },
+      {
+        "author": "user-31",
+        "body": "ok, I am sorry I couldn't solve the problem.\r\n\r\nRegards.\r\n\r\nI will try and find a resource for the error.\r\n\r\nRegards"
+      },
+      {
+        "author": "user-31",
+        "body": "hi can you check the links bellow,\r\n\r\nhttps://www.youtube.com/watch?v=eBZciVDr21o\r\nhttps://www.kaggle.com/pytorchlightning/pytorch-on-tpu-with-pytorch-lightning\r\nhttps://pytorch-lightning.readthedocs.io/en/latest/notebooks/lightning_examples/mnist-tpu-training.html\r\nhttps://pytorch-lightning.readthedocs.io/en/latest/advanced/tpu.html\r\nhttps://devblog.pytorchlightning.ai/announcing-lightning-1-4-8cd20482aee9\r\nhttps://github.com/PyTorchLightning/pytorch-lightning/issues/3649\r\n\r\nRegards"
+      },
+      {
+        "author": "user-30",
+        "body": "Hi, I've gone through all those references but doesn't look they relate to this issue. 🤔 This issue might have to do something with library itself."
+      },
+      {
+        "author": "user-31",
+        "body": "@user-13 Can you please check this issue?\r\n\r\nThanks.\r\n\r\nWith best regards,\r\nRanuga"
+      },
+      {
+        "author": "user-31",
+        "body": "> Hi, I've gone through all those references but doesn't look they relate to this issue. thinking This issue might have to do something with library itself.\r\n\r\nI am new to PyTorch lightning so I am not sure so @user-13 can help.\r\n\r\nWith best regards,\r\nRanuga"
+      },
+      {
+        "author": "user-32",
+        "body": "@user-30 @user-37 I will take a stab at this with GCP TPUs."
+      },
+      {
+        "author": "user-31",
+        "body": "ok, thank you @user-32 \r\n\r\nWith best regards,\r\nRanuga"
+      },
+      {
+        "author": "user-30",
+        "body": "This is issue doesn't really affect my work but just curious if there's been any progress on resolving it."
+      }
+    ]
+  },
+  "1237": {
+    "number": 1237,
+    "title": "Model Verification in Trainer",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n<!-- A clear and concise description of the feature proposal -->\r\n\r\nVerifies that the provided model code does not mix up data across the batch dimension. We do this by setting the loss to be something trivial (e.g. the sum of all outputs of example i), running the backward pass all the way to the input, and ensuring that we only get a non-zero gradient on the i-th input.\r\n\r\n\r\n### Motivation\r\n<!-- Please outline the motivation for the proposal. Is your feature request related to a problem? e.g., I'm always frustrated when [...]. If this is related to another GitHub issue, please link here too -->\r\n\r\nFirst of all, I would like to say thank you for the fantastic work being done on this project. Recently, I was working on a side project that has almost the exact same goal as this one, which I used as motivation to learn more about PyTorch and how to make Deep Learning easier. Clearly, this project is a lot more thought-out than mine :^), but I wanted to see if there were any ideas I developed independently that might be useful in this project.\r\n\r\nOne of the most useful utils I've implemented is a verification step before the model runs. In my project, this verification step performs checks such as:\r\n- ensuring data is not mixed across the batch dimension\r\n- ensuring the model can overfit a single example\r\n- ensuring that all layers of the model are training (or selected layers are properly frozen)\r\n\r\nSince I am very new to this project, I thought that the first bullet point might be a good place to start.\r\n\r\n\r\n### Pitch\r\n<!-- A clear & concise description of what you want to happen. -->\r\n\r\nGiven the introductory example in the documention, assume we had written some poor tensor operations in our model like so:\r\n\r\n```python\r\nclass BadModel(pl.LightningModule):\r\n    def __init__(self):\r\n        super().__init__()\r\n        self.layer_1 = torch.nn.Linear(28 * 28, 128)\r\n        self.layer_2 = torch.nn.Linear(128, 256)\r\n        self.layer_3 = torch.nn.Linear(256, 10)\r\n\r\n    def forward(self, x):\r\n        batch_size, channels, width, height = x.size()\r\n\r\n        ###\r\n        # x = x.view(batch_size, -1)\r\n        ###\r\n        x = x.view(-1, 1, 56, 56)\r\n        x = x.permute(1, 0, 3, 2)\r\n        x = x.reshape((batch_size, -1))\r\n        ###\r\n\r\n        x = self.layer_1(x)\r\n        x = torch.relu(x)\r\n        x = self.layer_2(x)\r\n        x = torch.relu(x)\r\n        x = self.layer_3(x)\r\n        x = torch.log_softmax(x, dim=1)\r\n        return x\r\n```\r\n\r\nWhen we start to train our model, everything begins training smoothly. However, this code is clearly wrong - we are crossing image data from separate datapoints in our batch.\r\n\r\nIt would be helpful if Lightning gave us a warning if this has happened. For example:\r\n\r\n```python\r\ndef check_batch_dimension(model, loader, optimizer, test_val=2):\r\n    model.eval()\r\n    torch.set_grad_enabled(True)\r\n    data, _ = next(iter(loader))\r\n    optimizer.zero_grad()\r\n    data.requires_grad_()\r\n\r\n    output = model(dat",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "@user-33 can we help you? or wait a bit after we finish the refactoring..."
+      },
+      {
+        "author": "user-2",
+        "body": "I have actually implemented this in a separate class myself to verify my models and used it many times. It is a great sanity test. Maybe I can send a PR or Google Colab and @user-33 can help me test it. We can also come up with more verification tests. "
+      },
+      {
+        "author": "user-34",
+        "body": "this is prime for a callback"
+      },
+      {
+        "author": "user-33",
+        "body": "Yeah, I would love to help test it! I haven't had the chance to work on this for a while, but if someone with more experience can lead the effort, that would be great :)"
+      },
+      {
+        "author": "user-2",
+        "body": "Draft here in this repo\r\nhttps://github.com/user-2/pytorch-lightning-snippets\r\nPolished my code and made sure it also works great with models that have multiple inputs and outputs. \r\nI put examples in the readme. There is a regular class that works with any nn.Module and then there is also the Callback that integrates these checks easily with PL Trainer. "
+      },
+      {
+        "author": "user-33",
+        "body": "@user-2  looks like the repo is private"
+      },
+      {
+        "author": "user-2",
+        "body": "Thanks, I changed it to public now!"
+      },
+      {
+        "author": "user-5",
+        "body": "@user-2 keep this open? do we want to include your callback in lightning?"
+      },
+      {
+        "author": "user-2",
+        "body": "@user-5 It would be great. I made an issue in bolts https://github.com/user-38/pytorch-lightning-bolts/issues/194\r\nbut haven't had the time to make a PR. "
+      },
+      {
+        "author": "user-33",
+        "body": "What's the distinction between callbacks in bolts and callbacks in the main repo?\r\n\r\nOptimistically, a lot of these checks (e.g. batch verification) will fit well in the majority of existing lightning workflows, whereas bolts seems like a better fit for utilities that are a bit more niche or application-specific.\r\n\r\nThoughts?"
+      }
+    ]
+  }
+}

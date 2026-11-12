@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import multiprocessing
 import re
 import sys
 from collections.abc import Callable
+from multiprocessing.connection import Connection
 from pathlib import Path
 
 from codemap_py.scanner import discovery
@@ -173,6 +175,13 @@ def _symbol_group_results(
             _die_json({"error": "invalid symbol path", "path": rel_path}, _EXIT_BAD_INPUT)
         if not file_path.is_relative_to(root):
             _die_json({"error": "symbol path outside project", "path": rel_path}, _EXIT_BAD_INPUT)
+        try:
+            # Python 3.13 stopped raising on a symlink loop in the non-strict resolve above; strict still does.
+            file_path.resolve(strict=True)
+        except (FileNotFoundError, NotADirectoryError):
+            pass  # missing or stale source (deleted file, parent turned into a file): exists() branch below
+        except (OSError, RuntimeError):
+            _die_json({"error": "invalid symbol path", "path": rel_path}, _EXIT_BAD_INPUT)
         if file_path.exists():
             if not file_path.is_file() or file_path.stat().st_size > discovery._MAX_FILE_SIZE_BYTES:
                 _die_json({"error": "invalid symbol source", "path": rel_path}, _EXIT_BAD_INPUT)
@@ -331,6 +340,9 @@ _DANGEROUS_PATTERN = re.compile(
 #: Regex flagging a flat alternation group followed by an outer quantifier, a ReDoS shape.
 _ALT_REDOS_RE = re.compile(r"\([^()]*\|[^()]*\)[+*{]")
 
+#: Default deadline for regex matching, including direct and batch command dispatch.
+FIND_SYMBOL_TIMEOUT_SECONDS = 5
+
 
 def _is_dangerous_regex(pattern: str) -> bool:
     """Return True if *pattern* exhibits a known catastrophic-backtracking shape.
@@ -352,17 +364,59 @@ def _is_dangerous_regex(pattern: str) -> bool:
     if len(pattern) > 4096:
         return True
     normalized = re.sub(r"\\.|\[(?:\\.|[^\]\\])*\]", "a", pattern)
-    unbounded = re.findall(r"[*+]|\{[0-9]+,\}", normalized)
-    return bool(len(unbounded) > 3 or _DANGEROUS_PATTERN.search(normalized) or _ALT_REDOS_RE.search(normalized))
+    return bool(
+        re.search(r"(?:\.[*+]){4}", normalized)
+        or _DANGEROUS_PATTERN.search(normalized)
+        or _ALT_REDOS_RE.search(normalized)
+    )
 
 
-def cmd_find_symbol(index: dict, pattern: str, limit: int = 20, exclude_tests: bool = False) -> None:
-    """Regex search across all symbol qualified_names in the index.
+def _regex_worker(pattern: str, names: list[str], sender: Connection) -> None:
+    """Return matching positions over a pipe so an expensive regex can be terminated."""
+    with sender:
+        rx = re.compile(pattern, re.IGNORECASE)
+        sender.send([position for position, name in enumerate(names) if rx.search(name)])
+
+
+def _bounded_regex_matches(pattern: str, names: list[str], timeout: float) -> list[int]:
+    """Match names in a disposable process with a wall-clock deadline on every supported host."""
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(target=_regex_worker, args=(pattern, names, sender), daemon=True)
+    try:
+        process.start()
+        sender.close()
+        if not receiver.poll(timeout):
+            _print(f"find-symbol: timed out after {timeout:g}s", file=sys.stderr)
+            _die_json({"error": "timeout", "timeout_seconds": timeout}, _EXIT_BAD_INPUT)
+        return receiver.recv()
+    except (EOFError, OSError) as exc:
+        _print(f"find-symbol: regex worker failed: {exc}", file=sys.stderr)
+        _die_json({"error": "regex worker failed"}, _EXIT_BAD_INPUT)
+    finally:
+        receiver.close()
+        sender.close()
+        if process.pid is not None:
+            if process.is_alive():
+                process.terminate()
+            process.join()
+
+
+def cmd_find_symbol(
+    index: dict,
+    pattern: str,
+    limit: int = 20,
+    exclude_tests: bool = False,
+    timeout: float = FIND_SYMBOL_TIMEOUT_SECONDS,
+) -> None:
+    """Search indexed symbol qualified names with a bounded regular expression.
 
     Args:
         index: parsed codemap index dict.
         pattern: Python regex pattern matched against each symbol's qualified name.
         limit: max results to return (0 = unlimited).
+        exclude_tests: Omit test modules from candidate symbols.
+        timeout: Maximum seconds to wait for the regex worker.
     """
     # ReDoS guard — nested/adjacent and alternation quantifiers (e.g. `(a+)+`, `(.*){2,}`,
     # `(a|aa)+`) can cause catastrophic backtracking. a bare stderr `return` left
@@ -378,29 +432,30 @@ def cmd_find_symbol(index: dict, pattern: str, limit: int = 20, exclude_tests: b
             _EXIT_BAD_INPUT,
         )
     try:
-        rx = re.compile(pattern, re.IGNORECASE)
+        re.compile(pattern, re.IGNORECASE)
     except re.error as exc:
         _die_json({"error": "invalid regex", "pattern": pattern, "detail": str(exc)}, _EXIT_BAD_INPUT)
 
-    results = []
+    candidates = []
     for m in index.get("modules", []):
         if m.get("status") == "degraded":
             continue
         if exclude_tests and m.get("is_test"):
             continue
         for sym in m.get("symbols", []):
-            if rx.search(sym["qualified_name"]):
-                results.append(
-                    {
-                        "name": sym["name"],
-                        "qualified_name": sym["qualified_name"],
-                        "type": sym.get("type", ""),
-                        "module": m["name"],
-                        "path": m.get("path", ""),
-                        "start_line": sym["start_line"],
-                        "end_line": sym["end_line"],
-                    }
-                )
+            candidates.append(
+                {
+                    "name": sym["name"],
+                    "qualified_name": sym["qualified_name"],
+                    "type": sym.get("type", ""),
+                    "module": m["name"],
+                    "path": m.get("path", ""),
+                    "start_line": sym["start_line"],
+                    "end_line": sym["end_line"],
+                }
+            )
+    matches = _bounded_regex_matches(pattern, [entry["qualified_name"] for entry in candidates], timeout)
+    results = [candidates[position] for position in matches]
     total_matches = len(results)
     truncated = limit > 0 and total_matches > limit
     if truncated:

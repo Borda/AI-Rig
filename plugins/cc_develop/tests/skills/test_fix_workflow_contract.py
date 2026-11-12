@@ -12,6 +12,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from _develop_shell_plugin import render_shell
 
 _PLUGIN = Path(__file__).resolve().parents[2]
 _SKILL = _PLUGIN / "skills/fix/SKILL.md"
@@ -40,6 +41,7 @@ def _block(marker: str, *, dedent: bool = True) -> str:
 
 def _run(block: str, tmp_path: Path, setup: str = "", arguments: str = "") -> subprocess.CompletedProcess[str]:
     """Run a recipe with private session files and the current Python interpreter."""
+    (tmp_path / f"dev-fix-arguments-{_SESSION}.txt").write_text(arguments, encoding="utf-8", newline="\n")
     env = {
         **os.environ,
         "TMPDIR": tmp_path.as_posix(),
@@ -47,15 +49,22 @@ def _run(block: str, tmp_path: Path, setup: str = "", arguments: str = "") -> su
         "CSID": _SESSION,
         "CLAUDE_PLUGIN_ROOT": _PLUGIN.as_posix(),
         "ARGUMENTS": arguments,
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8",
         "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
     }
     python = f'python() {{ {shlex.quote(sys.executable)} "$@"; }}\n'
     return subprocess.run(
-        [_BASH, "-c", python + setup + "\n" + block],
+        [
+            _BASH,
+            "-c",
+            render_shell(python + setup + "\n" + block, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "develop"),
+        ],
         cwd=tmp_path,
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
 
@@ -74,7 +83,7 @@ def _run(block: str, tmp_path: Path, setup: str = "", arguments: str = "") -> su
 )
 def test_only_whole_issue_numbers_fetch(tmp_path: Path, argument: str, fetch: bool) -> None:
     """A numeric prefix in a symptom never fetches an unrelated issue."""
-    (tmp_path / f"dev-fix-clean-args-{_SESSION}").write_text(argument + "\n", encoding="utf-8")
+    (tmp_path / f"dev-fix-clean-args-{_SESSION}").write_text(argument + "\n", encoding="utf-8", newline="\n")
     result = _run(_block("dev_issue_fetch_wrap.py"), tmp_path, "python() { echo ISSUE_FETCH; }")
     assert result.returncode == 0, result.stderr
     assert ("ISSUE_FETCH" in result.stdout) is fetch
@@ -94,7 +103,7 @@ def test_only_whole_issue_numbers_fetch(tmp_path: Path, argument: str, fetch: bo
 )
 def test_unresolved_targets_abort_before_launch(tmp_path: Path, marker: str) -> None:
     """An unedited recipe stops explicitly before any runner or shell redirection can consume a stand-in."""
-    (tmp_path / f"dev-pytest-cmd-{_SESSION}").write_text("pytest\n", encoding="utf-8")
+    (tmp_path / f"dev-pytest-cmd-{_SESSION}").write_text("pytest\n", encoding="utf-8", newline="\n")
     result = _run(_block(marker), tmp_path, "python() { echo RUNNER_LAUNCHED; }")
     assert result.returncode == 1, result.stderr
     assert "RUNNER_LAUNCHED" not in result.stdout
@@ -143,7 +152,7 @@ def _diagnosis(tmp_path: Path, qname: str, *, stale: bool | None = False) -> tup
     index = tmp_path / "index"
     index.mkdir()
     (index / f"{tmp_path.name}.json").write_text('{"scanned_at":"unchanged"}', encoding="utf-8")
-    (tmp_path / f"dev-fix-diag-file-{_SESSION}").write_text(diagnosis.as_posix() + "\n", encoding="utf-8")
+    (tmp_path / f"dev-fix-diag-file-{_SESSION}").write_text(diagnosis.as_posix() + "\n", encoding="utf-8", newline="\n")
     setup = f"export CODEMAP_INDEX_DIR={shlex.quote(index.as_posix())}\n"
     return diagnosis, setup
 
@@ -187,7 +196,7 @@ def test_handoff_requires_explicit_freshness(tmp_path: Path, stale: bool | None)
     """Stale or unknown nested index freshness clears a previous reused command despite matching module coverage."""
     diagnosis, setup = _diagnosis(tmp_path, "leaf", stale=stale)
     sentinel = tmp_path / f"dev-fix-reused-pytest-cmd-{_SESSION}"
-    sentinel.write_text("pytest tests/test_old.py\n", encoding="utf-8")
+    sentinel.write_text("pytest tests/test_old.py\n", encoding="utf-8", newline="\n")
     setup += 'git() { case "$1" in rev-parse) pwd;; diff) echo leaf.py;; ls-files) :;; esac; }\n'
     result = _run(_block('REUSED_PYTEST_CMD=""'), tmp_path, setup, f"--diagnosis {diagnosis.as_posix()}")
     assert result.returncode == 0, result.stderr
@@ -246,7 +255,7 @@ def test_diagnosis_path_survives_worktree_directory_change(tmp_path: Path) -> No
 )
 def test_fixed_query_route_is_persisted(tmp_path: Path, route: str) -> None:
     """Selecting a fixed route records that exact choice rather than silently defaulting another route."""
-    block = _block(f'--query-kind {route} -- "$ARGUMENTS"')
+    block = _block(f'--query-kind {route} -- "$ARGUMENT_BLOB"')
     result = _run(block, tmp_path, arguments="pkg.leaf::run")
     assert result.returncode == 0, result.stderr
     assert (tmp_path / f"dev-fix-codemap-query-kind-{_SESSION}").read_text().strip() == route
@@ -259,7 +268,7 @@ def test_real_regression_must_pass_before_continuation(tmp_path: Path) -> None:
     target = tmp_path / "test_leaf.py"
     target.write_text("def test_leaf():\n    assert False\n", encoding="utf-8")
     (tmp_path / "pytest.ini").write_text("[pytest]\naddopts = -p no:xdist\n", encoding="utf-8")
-    (tmp_path / f"dev-pytest-cmd-{_SESSION}").write_text("python -m pytest\n", encoding="utf-8")
+    (tmp_path / f"dev-pytest-cmd-{_SESSION}").write_text("python -m pytest\n", encoding="utf-8", newline="\n")
     block = _block("<test_file>::<test_name>").replace("<test_file>::<test_name>", "test_leaf.py::test_leaf")
     failed = _run(block + "\necho CONTINUED", tmp_path)
     assert (failed.returncode, "CONTINUED" in failed.stdout) == (1, False), failed.stderr
@@ -286,10 +295,12 @@ def test_latest_tagged_suspect_wins_over_rejected_and_test_nodes(tmp_path: Path)
     """A revision uses the latest approved suspect, ignoring incidental node IDs and earlier suspects."""
     checkpoint = tmp_path / "checkpoint.md"
     checkpoint.write_text(
-        "suspect: old.module::old\ntests.test_leaf::test_leaf\nsuspect: new.module::run\n", encoding="utf-8"
+        "suspect: old.module::old\ntests.test_leaf::test_leaf\nsuspect: new.module::run\n",
+        encoding="utf-8",
+        newline="\n",
     )
-    (tmp_path / f"dev-fix-dev-dir-{_SESSION}").write_text(tmp_path.as_posix() + "\n", encoding="utf-8")
-    (tmp_path / f"dev-fix-codemap-enabled-{_SESSION}").write_text("true\n", encoding="utf-8")
+    (tmp_path / f"dev-fix-dev-dir-{_SESSION}").write_text(tmp_path.as_posix() + "\n", encoding="utf-8", newline="\n")
+    (tmp_path / f"dev-fix-codemap-enabled-{_SESSION}").write_text("true\n", encoding="utf-8", newline="\n")
     setup = 'python() { :; }\ncodemap-py() { printf "%s\\n" "$@"; }\n'
     result = _run(_block("DERIVED_FN="), tmp_path, setup)
     assert result.returncode == 0, result.stderr

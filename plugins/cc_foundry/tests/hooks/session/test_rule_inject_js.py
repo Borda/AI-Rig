@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -582,7 +583,9 @@ class TestSkillContractRestore:
 
         context = _context(_run(_session_start("compact"), plugin, temp_dir, cwd=plugin), "SessionStart")
 
-        assert context == header + "\n\n" + raw.decode("utf-8")
+        boundary = re.search(r"<(untrusted-[0-9a-f]{32})>", context)
+        assert boundary is not None
+        assert context == header + f"\n\n<{boundary.group(1)}>\n" + raw.decode("utf-8") + f"</{boundary.group(1)}>"
         assert context.count(header) == 1
 
     def test_foreign_session_owner_is_silent(self, plugin: Path, temp_dir: Path) -> None:
@@ -671,7 +674,11 @@ class TestSkillContractRestore:
         assert raw.endswith(b"\n")
         assert b"\r\n" not in raw
         assert context.startswith("Skill contract, verified:")
-        assert context.split("\n\n", 1)[1].encode("utf-8") == raw
+        fenced = context.split("\n\n", 1)[1]
+        boundary, body = fenced.split("\n", 1)
+        assert re.fullmatch(r"<untrusted-[0-9a-f]{32}>", boundary)
+        assert body.endswith(boundary.replace("<", "</", 1))
+        assert body.removesuffix(boundary.replace("<", "</", 1)).encode("utf-8") == raw
 
     def test_unreadable_contract_is_silent(self, plugin: Path, temp_dir: Path) -> None:
         """An inaccessible contract fails open without a nonzero exit.
@@ -693,7 +700,7 @@ class TestSkillContractRestore:
 
         context = _context(out, "SessionStart")
         assert context.startswith("Skill contract, unverified:")
-        assert context.endswith("CONTRACT\n")
+        assert re.search(r"CONTRACT\n</untrusted-[0-9a-f]{32}>$", context)
 
     def test_sentinel_safe_id_collision_is_not_verified(self, plugin: Path, temp_dir: Path) -> None:
         """Session ids that collapse to the same sentinel-safe name do not verify each other's contract.

@@ -41,10 +41,9 @@ import os
 import stat
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
-from dev_run_dir import _owned_by_caller, write_atomic  # sibling bin/ script; link-safe, owner-checked writes
+from dev_run_dir import _owned_by_caller, read_sentinel, sentinel_path, write_atomic
 
 #: Skill names this gate accepts, as a pipe-separated list that is also shown in the unknown-skill error message.
 _KNOWN_SKILLS = "debug|feature|fix|plan|refactor|review"
@@ -61,26 +60,17 @@ _PLAN_NS_PREFIX = "dev-plan-"
 CURRENCY_PREFIX = "dev-codemap-currency"
 
 
-def _tmp_dir() -> Path:
-    """Session temp dir; never a hardcoded /tmp, which is absent on native Windows Python."""
-    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
-    return Path(os.environ.get("TMPDIR") or tmp_fallback)
-
-
-def _csid() -> str:
-    """Caller-exported session token, mirroring `${CSID:-${CLAUDE_CODE_SESSION_ID:-shared}}`."""
-    return os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
-
-
 def _first_line(path: Path) -> str:
-    """First line of *path* minus its trailing newline; empty string when unreadable.
+    """Read the first line of an owned namespace flag, or return empty when unreadable or foreign-owned.
 
     Mirrors `[ -f f ] && IFS= read -r X < f`: an unterminated final line still yields its value there (read assigns
     before returning non-zero), unlike gate-on-sentinel's explicit `|| VALUE=""` wipe.
     """
     try:
         with path.open("r", encoding="utf-8", errors="replace") as handle:
-            return handle.readline().rstrip("\n")
+            if not _owned_by_caller(os.fstat(handle.fileno())):
+                return ""
+            return handle.readline().rstrip("\r\n")
     except OSError:
         return ""
 
@@ -104,16 +94,16 @@ def _is_own_plan_namespace(ns_dir: Path, tmp: Path) -> bool:
     return stat.S_ISDIR(status.st_mode) and _owned_by_caller(status)
 
 
-def _resolve_paths(skill: str, tmp: Path, csid: str) -> tuple[Path, Path]:
+def _resolve_paths(skill: str, tmp: Path) -> tuple[Path, Path]:
     """Map *skill* to its (raw-flag input, resolved-value output) sentinel pair."""
     if skill in ("debug", "feature", "fix", "refactor", "review"):
         # Read the parser's raw sentinel so re-resolution after an index build cannot confuse prior false with off.
         # refactor used to name a `-raw` variant that only an inline shell block in its
         # SKILL.md ever wrote, so the skill had to re-parse the flag the parser had already
         # parsed. Reading the same file as its siblings removes that second parse.
-        return tmp / f"dev-{skill}-codemap-{csid}", tmp / f"dev-{skill}-codemap-enabled-{csid}"
+        return sentinel_path(f"dev-{skill}-codemap"), sentinel_path(f"dev-{skill}-codemap-enabled")
     if skill == "plan":
-        plan_ns = _first_line(tmp / f"dev-plan-ns-current-{csid}")
+        plan_ns = read_sentinel("dev-plan-ns-current")
         if not plan_ns:
             print(
                 "! PLAN_NS empty — dev-plan-ns-current not found; re-run /develop:plan",
@@ -152,6 +142,7 @@ def _run_codemap_resolve(bin_dir: Path, raw: str) -> tuple[str, int]:
             text=True,
             check=False,
             timeout=_RESOLVE_TIMEOUT_S,
+            env={**os.environ, "CSID": sentinel_path(CURRENCY_PREFIX).name.removeprefix(f"{CURRENCY_PREFIX}-")},
         )
     except OSError as exc:  # mirrors the shell's 127 "no such file" path
         print(f"dev_codemap_gate.py: cannot run codemap_resolve.py: {exc}", file=sys.stderr)
@@ -180,16 +171,19 @@ def main(argv: list[str]) -> int:
     """Normalize CODEMAP_ENABLED for one of the six develop skills."""
     skill = argv[1] if len(argv) > 1 else ""
     bin_dir = Path(__file__).resolve().parent
-    in_file, out_file = _resolve_paths(skill, _tmp_dir(), _csid())
+    if sentinel_path(CURRENCY_PREFIX).name == f"{CURRENCY_PREFIX}-":
+        print("dev_codemap_gate.py: session identity is empty after sanitization", file=sys.stderr)
+        return 1
+    in_file, out_file = _resolve_paths(skill, sentinel_path("dev-plan-ns-current").parent)
 
     if "--skip" in argv[2:]:
         # The next tool call reloads these files; changing only this process's environment would lose the choice.
-        if not _write_line(out_file, "false") or not _write_line(_tmp_dir() / f"{CURRENCY_PREFIX}-{_csid()}", "off"):
+        if not _write_line(out_file, "false") or not _write_line(sentinel_path(CURRENCY_PREFIX), "off"):
             return 1
         print("false")
         return 0
 
-    codemap_raw = _first_line(in_file) or "auto"
+    codemap_raw = (_first_line(in_file) if skill == "plan" else read_sentinel(f"dev-{skill}-codemap")) or "auto"
     enabled, resolve_exit = _run_codemap_resolve(bin_dir, codemap_raw)
     if resolve_exit != 0:
         print(

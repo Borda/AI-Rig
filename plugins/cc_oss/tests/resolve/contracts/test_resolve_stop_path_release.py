@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _skill_source import read_skill_source
 
 _RESOLVE = Path(__file__).resolve().parents[3] / "skills/resolve"
 _BASH = shutil.which("bash")
@@ -71,7 +72,7 @@ class TestStopPathRelease:
         ``dispatch-phase3.md`` loads only once every Phase 2 group has returned, so a stop before that point told to run
         "Phase 3's cleanup block" could not find it and leaked the branch mutex until the healer's 30-minute cap.
         """
-        text = (_RESOLVE / relative_path).read_text(encoding="utf-8")
+        text = read_skill_source(_RESOLVE / relative_path)
         line = next(line for line in text.splitlines() if anchor in line)
         assert "stop-path release fence" in line
         assert "dispatch-prelude.md" in line

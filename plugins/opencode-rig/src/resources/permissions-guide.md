@@ -27,12 +27,12 @@ A rule of your own still wins over them, exactly as it wins over every other shi
 
 | Rule | Effect | Why it is here |
 | -- | -- | -- |
-| `git rebase --abort` | `allow` | Recovery, not a rewrite. The hook already lets this through. |
-| `git rebase --continue` | `allow` | Recovery after resolving a conflict. |
-| `git rebase --skip` | `allow` | Recovery by dropping the current patch. |
-| `git rebase --quit` | `allow` | Recovery that abandons the rebase state. |
+| `git rebase --abort` | `allow` | Configuration allows recovery; the hook still asks through its unparsed-Git fallback. |
+| `git rebase --continue` | `allow` | Configuration allows recovery after resolving a conflict; the hook still asks. |
+| `git rebase --skip` | `allow` | Configuration allows dropping the current patch; the hook still asks. |
+| `git rebase --quit` | `allow` | Configuration allows abandoning the rebase state; the hook still asks. |
 
-The four `allow` entries exist so the blanket `git rebase*` rule does not stop the recovery commands a rebase needs to finish. OpenCode resolves the last matching rule, so they must stay after `git rebase*`; the ordering is documented in the [OpenCode v2 permission documentation](https://opencode.ai/v2/docs/permissions/).
+The four `allow` entries override the blanket `git rebase*` configuration rule for recovery. The hook still asks because these forms are outside its literal Git allowlist. OpenCode resolves the last matching rule, so they must stay after `git rebase*`; the ordering is documented in the [OpenCode v2 permission documentation](https://opencode.ai/v2/docs/permissions/).
 
 A plain local commit is deliberately absent. `git commit` is governed by the guardrail hook instead of a blanket rule, so a recorded grant can take effect; adding `git commit*` here would pin every commit to `ask` and make the grant useless.
 
@@ -122,9 +122,9 @@ These run regardless of the rules above, because the hook classifies the command
 - **Destructive local** — `git reset --hard`, a `git clean` carrying `-f`, `-d`, or `-x`, `git branch -D`, `git branch --delete --force`, a forced `git checkout` (`-f` or `--force`), a `git checkout -- <path>` that overwrites the working tree, `git restore` outside `--staged`, `git stash drop|clear`, a forced `git worktree remove`, recursive `rm`, `find -delete`, and `truncate -s 0`.
 - **Unreviewed commit** — `git commit` with no recorded grant.
 
-In `strict` mode the hook additionally escalates `git merge` and `git cherry-pick`.
+In `standard` mode, any Git form outside the hook's literal command-and-option allowlist asks through the `unparsed-git` fallback, including unreadable shell syntax that names Git or GitHub. Readable guarded operations retain their stronger classifications. In `strict` mode, `git merge` and `git cherry-pick` receive the destructive-local classification; they already ask through the fallback in standard mode.
 
-The `git clean` rule stops the whole class, the hook only stops a `git clean` that carries `-f`, `-d`, or `-x`. So `git clean -n`, `git clean -i`, and a bare `git clean` are new stops that the configuration rule introduces and the hook never provided.
+The `git clean` rule stops the whole class. The hook classifies `git clean` carrying `-f`, `-d`, or `-x` as destructive-local and asks for other forms through its unparsed-Git fallback, so `git clean -n`, `git clean -i`, and bare `git clean` also ask.
 
 With `guardrails` set to `off` the hook stops escalating, and the shipped `ask` rules become the only stops for push, hard reset, clean, rebase, and the `--output` writes. Turning the hook off therefore removes the hook's stops and keeps the configuration's; the shipped rules still ask.
 
@@ -134,20 +134,20 @@ Outside a role agent, OpenCode starts permissive, so most actions default to `al
 
 - Reading, globbing, and searching the project.
 - Editing project files.
-- Shell commands, including `git status`, `git diff`, `git log`, test runners, linters, and build tools.
+- Shell commands, including supported literal forms of `git status`, `git diff`, and `git log`, test runners, linters, and build tools. Git or GitHub forms outside the hook's literal allowlist still ask.
 - `external_directory` is allowed by default, not asked. The [v2 documentation](https://opencode.ai/v2/docs/permissions/) says no default rule asks for it, so a read or an edit outside the Location and worktree proceeds without a prompt. Add `{ "action": "external_directory", "resource": "*", "effect": "ask" }` to your own configuration to be asked. `doom_loop` and `lsp` are not v2 Core permission actions, so a rule naming either of them does nothing.
 
 Inside a role agent the shell is different: each role agent declares `shell: *` as `ask`, so anything outside the allowlist above asks, including test runners, linters, and build tools. The allowlist covers inspection, not execution.
 
 ## Plain commits and the grant
 
-`git commit` asks until an approval exists, and the approval is durable and project-scoped rather than a per-session answer. The grant below is one JSON file in the repository's common Git directory, outside version control and shared by every worktree, and the host's own `Allow always` answer is recorded the same way: the v2 documentation describes saved approvals as durable, project-scoped `allow` rules.
+`git commit` asks until a valid grant exists. Use the runtime shell permission prompt for one-time consent; do not first ask for a conversational **Approve** answer. The plugin's **Approve always** grant is one JSON file in the repository's common Git directory, outside version control and shared by every worktree, valid for 30 days or until revoked. It is distinct from the host's own saved permission rules.
 
 ```text
-rig_git_grant action=approve confirm="<the user's own approval>" scope_acknowledged=true
+rig_git_grant action=approve confirm="Approve always" scope_acknowledged=true
 ```
 
-`confirm` must be the user's own words. The grant covers local commits only — never push, force, destructive operations, or history rewrites — and `rig_git_grant action=revoke` removes it. `rig_git_grant action=status` reports `granted`, `absent`, `invalid`, or `no-git`.
+`confirm` must preserve the user's literal **Approve always** answer after the scope was explained. The record stores that confirmation, a creation ID, physical repository binding, and creation and expiry times. Expired, differently bound, or incomplete older records are invalid and require fresh approval. Writers to the common Git directory remain trusted; the record is not cryptographically signed. The grant covers local commits only — never push, force, destructive operations, or history rewrites — and `rig_git_grant action=revoke` removes it. `rig_git_grant action=status` reports `granted`, `absent`, `invalid`, or `no-git`.
 
 ## How `init` merges
 

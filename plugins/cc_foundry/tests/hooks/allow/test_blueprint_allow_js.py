@@ -44,7 +44,9 @@ from pathlib import Path
 
 import build_blueprint_manifest as bbm
 import pytest
+import render_plugin_root as renderer
 from _blueprint_vectors import VECTORS, vector_params
+from _hook_env import _symlinks_supported
 from _hook_io import is_allowed
 
 HOOK = Path(__file__).resolve().parents[3] / "hooks" / "blueprint-allow.js"
@@ -66,6 +68,22 @@ NODE_UNAVAILABLE = shutil.which("node") is None
 SINGLE = 'RUN_DIR="$(cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}")"'
 BLOCK = 'export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"\nmkdir -p .reports/review\necho "$CSID"'
 OTHER = "git rev-parse --show-toplevel"
+BOOTSTRAP = (
+    'PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry)'
+    " || exit $?; export PLUGIN_ROOT"
+)
+
+
+def _rendered_manifest(plugin_root: Path, template: str) -> bytes:
+    """Prepare an owning-plugin identity and a schema-two source-template binding."""
+    metadata = plugin_root / ".claude-plugin"
+    metadata.mkdir(exist_ok=True)
+    (metadata / "plugin.json").write_text('{"name":"foundry","version":"0.0.0"}', encoding="utf-8")
+    record = {"kind": "block", "src": "skills/demo/SKILL.md:1", "template": template}
+    return bbm.encode_manifest(
+        {"schema": 2, "plugin": "cc_foundry@0.0.0", "entries": {bbm.sha256_text(template): record}}
+    )
+
 
 #: Request/reply loop of the long-lived node worker: one JSON line in, one JSON line out, errors reported not fatal.
 _WORKER_JS = (
@@ -210,6 +228,156 @@ _skip_node_unavailable = pytest.mark.skipif(
     NODE_UNAVAILABLE,
     reason="requires node to execute the hook",
 )
+
+
+@_skip_node_unavailable
+class TestRenderedTemplates:
+    """Source hashes bind only to literal commands rendered with the hook's own plugin root."""
+
+    def test_rendered_root_matches_exactly(self, plugin_root: Path, run_blueprint: Callable[..., dict]) -> None:
+        """A bound template admits the owning absolute root without rewriting incoming command input."""
+        template = BOOTSTRAP + '\npython "$PLUGIN_ROOT/bin/check.py" --status'
+        rendered = template.replace("${CLAUDE_PLUGIN_ROOT}", plugin_root.as_posix())
+        result = run_blueprint(rendered, manifest=_rendered_manifest(plugin_root, template))
+        assert is_allowed(result)
+        assert "updatedInput" not in result["hookSpecificOutput"]
+
+    @pytest.mark.parametrize("alteration", ["other-root", "extra-argument", "source-token"])
+    def test_altered_command_misses(
+        self, plugin_root: Path, run_blueprint: Callable[..., dict], alteration: str
+    ) -> None:
+        """An arbitrary absolute path, changed command or unrendered environment token never matches."""
+        template = BOOTSTRAP + '\npython "$PLUGIN_ROOT/bin/check.py" --status'
+        commands = {
+            "other-root": template.replace("${CLAUDE_PLUGIN_ROOT}", (plugin_root / "other").as_posix()),
+            "extra-argument": template.replace("${CLAUDE_PLUGIN_ROOT}", plugin_root.as_posix()) + " --extra",
+            "source-token": template,
+        }
+        assert run_blueprint(commands[alteration], manifest=_rendered_manifest(plugin_root, template)) == {}
+
+    def test_forged_template_binding_fails(self, plugin_root: Path, run_blueprint: Callable[..., dict]) -> None:
+        """Changing template text without its source hash cannot create a rendered allow entry."""
+        template = BOOTSTRAP + "\necho safe"
+        manifest = json.loads(_rendered_manifest(plugin_root, template))
+        manifest["entries"][bbm.sha256_text(template)]["template"] += " extra"
+        rendered = (template + " extra").replace("${CLAUDE_PLUGIN_ROOT}", plugin_root.as_posix())
+        assert run_blueprint(rendered, manifest=bbm.encode_manifest(manifest)) == {}
+
+    def test_owning_identity_mismatch_fails(self, plugin_root: Path, run_blueprint: Callable[..., dict]) -> None:
+        """A sibling plugin identity cannot supply a trusted root for a template."""
+        template = BOOTSTRAP + "\necho safe"
+        manifest = json.loads(_rendered_manifest(plugin_root, template))
+        manifest["plugin"] = "cc_oss@0.0.0"
+        rendered = template.replace("${CLAUDE_PLUGIN_ROOT}", plugin_root.as_posix())
+        assert run_blueprint(rendered, manifest=bbm.encode_manifest(manifest)) == {}
+
+    def test_rendered_danger_still_refused(self, plugin_root: Path, run_blueprint: Callable[..., dict]) -> None:
+        """A valid rendered digest cannot bypass the existing danger check."""
+        template = BOOTSTRAP + "\nrm -rf payload"
+        rendered = template.replace("${CLAUDE_PLUGIN_ROOT}", plugin_root.as_posix())
+        assert run_blueprint(rendered, manifest=_rendered_manifest(plugin_root, template)) == {}
+
+    def test_poisoned_environment_cannot_supply_root(self, plugin_root: Path, tmp_path: Path) -> None:
+        """The template lookup uses its hook's root even when the environment points to a sibling tree."""
+        template = BOOTSTRAP + "\necho safe"
+        (plugin_root / "blueprint-manifest.json").write_bytes(_rendered_manifest(plugin_root, template))
+        rendered = template.replace("${CLAUDE_PLUGIN_ROOT}", plugin_root.as_posix())
+        proc = _run_node(
+            [str(plugin_root / "hooks" / HOOK.name)],
+            stdin=_bash_stdin(rendered),
+            plugin_root=tmp_path / "poisoned",
+        )
+        assert is_allowed(_hook_result(proc))
+
+    def test_poisoned_environment_cannot_supply_historical_manifest(self, plugin_root: Path, tmp_path: Path) -> None:
+        """A missing owning manifest cannot be replaced by environment-selected digest entries."""
+        forged = tmp_path / "forged"
+        forged.mkdir()
+        (forged / "blueprint-manifest.json").write_bytes(_manifest_bytes({"f.md:1": "echo forged"}))
+        proc = _run_node([str(plugin_root / "hooks" / HOOK.name)], stdin=_bash_stdin("echo forged"), plugin_root=forged)
+        assert _hook_result(proc) == {}
+
+    @pytest.mark.skipif(not _symlinks_supported(), reason="symlinks unavailable")
+    def test_escaping_blueprint_manifest_is_untrusted(self, plugin_root: Path, tmp_path: Path) -> None:
+        """A digest file outside the owning installation cannot supply allow entries through a symlink."""
+        outside = tmp_path.parent / f"{tmp_path.name}.json"
+        outside.write_bytes(_manifest_bytes({"f.md:1": "echo escaped"}))
+        (plugin_root / "blueprint-manifest.json").symlink_to(outside)
+        proc = _run_node([str(plugin_root / "hooks" / HOOK.name)], stdin=_bash_stdin("echo escaped"))
+        assert _hook_result(proc) == {}
+
+    @pytest.mark.skipif(not _symlinks_supported(), reason="symlinks unavailable")
+    def test_escaping_plugin_identity_is_untrusted(self, plugin_root: Path, tmp_path: Path) -> None:
+        """An external identity file cannot establish ownership for rendered source templates."""
+        template = BOOTSTRAP + "\necho safe"
+        manifest = _rendered_manifest(plugin_root, template)
+        identity = plugin_root / ".claude-plugin" / "plugin.json"
+        outside = tmp_path.parent / f"{tmp_path.name}.json"
+        identity.rename(outside)
+        identity.symlink_to(outside)
+        (plugin_root / "blueprint-manifest.json").write_bytes(manifest)
+        rendered = template.replace("${CLAUDE_PLUGIN_ROOT}", plugin_root.as_posix())
+        proc = _run_node([str(plugin_root / "hooks" / HOOK.name)], stdin=_bash_stdin(rendered))
+        assert _hook_result(proc) == {}
+
+    @pytest.mark.parametrize(
+        ("template", "root", "expected"),
+        [
+            pytest.param(
+                'python "${CLAUDE_PLUGIN_ROOT}/bin/x.py"',
+                "/root with space",
+                'python "/root with space/bin/x.py"',
+                id="double-quoted-space",
+            ),
+            pytest.param(
+                'echo "${CLAUDE_PLUGIN_ROOT}"',
+                '/root$`"\\x',
+                'echo "/root\\$\\`\\"\\\\x"',
+                id="double-quoted-metacharacters",
+            ),
+            pytest.param(
+                "echo '${CLAUDE_PLUGIN_ROOT}'", "/root's", "echo '/root'\\''s'", id="single-quoted-apostrophe"
+            ),
+            pytest.param("echo ${CLAUDE_PLUGIN_ROOT}", "/root's", "echo '/root'\"'\"'s'", id="unquoted-apostrophe"),
+            pytest.param(
+                'X="$(python "${CLAUDE_PLUGIN_ROOT}/bin/x.py")"',
+                "/root$path",
+                'X="$(python "/root\\$path/bin/x.py")"',
+                id="nested-substitution",
+            ),
+            pytest.param(
+                '# plugin\'s helper\npython "${CLAUDE_PLUGIN_ROOT}/bin/x.py"',
+                "/root$path",
+                '# plugin\'s helper\npython "/root\\$path/bin/x.py"',
+                id="comment-quote-is-inert",
+            ),
+            pytest.param(
+                'X="`python "${CLAUDE_PLUGIN_ROOT}/bin/x.py"`"',
+                "/root$path",
+                'X="`python "/root\\$path/bin/x.py"`"',
+                id="legacy-substitution",
+            ),
+            pytest.param(
+                'echo "${CLAUDE_PLUGIN_ROOT}"',
+                "C:\\Program Files\\Plugin",
+                'echo "C:/Program Files/Plugin"',
+                id="windows-drive",
+            ),
+            pytest.param(
+                'echo "${CLAUDE_PLUGIN_ROOT}"',
+                "\\\\server\\share\\Plugin",
+                'echo "//server/share/Plugin"',
+                id="windows-unc",
+            ),
+        ],
+    )
+    def test_python_and_hook_render_identical_literals(self, template: str, root: str, expected: str) -> None:
+        """Both runtime paths emit exactly the same escaped shell text for unusual absolute roots."""
+        program = "const h=require(process.argv[1]);process.stdout.write(h.renderRootTemplate(...JSON.parse(process.argv[2])));"
+        proc = _run_node(["-e", program, str(HOOK), json.dumps([template, root])])
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout == expected
+        assert renderer.render_document(template, root) == expected
 
 
 @_skip_node_unavailable
@@ -450,7 +618,9 @@ def _committed_block() -> tuple[str, str]:
             if not normalized or normalized == block.content:
                 continue
             if bbm.sha256_text(normalized) in entries:
-                return block.content, normalized
+                # The host substitutes the bootstrap token before the hook sees the command.
+                rendered = block.content.replace("${CLAUDE_PLUGIN_ROOT}", PLUGIN_DIR.resolve().as_posix())
+                return rendered, bbm.normalize(rendered)
     return "", ""
 
 

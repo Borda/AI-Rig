@@ -48,8 +48,11 @@ Computation order (every run, plan "Scores and views"):
    fix count. Residue: when no other cell carries weight, the row's whole mass goes to one residue bucket: the LLM
    verdict's bucket, else the evidence status (``unlinked``, ``unattributable``, ``timed_out``), else ``unknown``
    (including a fix with no evidence record).
-7. Binary view: a real column counts when its final raw score is at or above the threshold. Pseudo-columns always
-   carry ``binary: false``.
+7. Binary view: a real column counts when its final raw score is at or above the threshold and its cell method (the
+   strongest signal) is one of ``LINK_METHODS``: blame, blame-context, text, llm or manual. A cell led by symbol
+   overlap, file overlap or an inherited share keeps its soft weight but is not a binary link: on labelled
+   repositories those methods produced most false links (symbol 7 of 73 correct, inherited 1 of 38, file 0 of 25,
+   against blame 16 of 23). Pseudo-columns always carry ``binary: false``.
 
 Evidence use: blamed and context line counts are used only when the evidence status is ``ok``; a fix's own commits
 are dropped from both the numerator and the denominator (a later commit of a multi-commit fix blaming an earlier
@@ -71,10 +74,12 @@ from __future__ import annotations
 import argparse
 import bisect
 import csv
+import io
 import json
 import math
 import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
@@ -86,6 +91,7 @@ from _evolution_common import (
     KIND_NON_FEATURE,
     KIND_PRE_WINDOW,
     KIND_RESIDUE,
+    LINK_METHODS,
     METHODS,
     RESIDUE_COLUMNS,
     SCHEMA_VERSION,
@@ -97,6 +103,8 @@ from _evolution_common import (
     last_by_key,
     non_feature_id,
     pre_window_id,
+    read_bounded_bytes,
+    read_bounded_text,
     read_jsonl,
 )
 
@@ -801,7 +809,8 @@ class _Scorer:
             if soft <= 0 and not (real and draft.method in _VERDICT_METHODS):
                 continue
             origin = self._cell_release(column_id, line, fix_release)
-            cells.append(_cell(draft, origin, soft, real and draft.raw >= self.threshold))
+            linked = real and draft.method in LINK_METHODS and draft.raw >= self.threshold
+            cells.append(_cell(draft, origin, soft, linked))
             if soft > 0:
                 view[column_id] = (soft, draft.raw, draft.confidence)
         return sorted(cells, key=lambda cell: cell["column_id"]), view
@@ -1228,7 +1237,7 @@ def aggregate(rows: list[dict[str, Any]], columns: list[dict[str, Any]], index: 
 
 def _read_json(path: Path) -> Any:
     """Read one JSON document."""
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(read_bounded_text(path))
 
 
 def _read_keyed(path: Path, key: str) -> dict[str, dict[str, Any]]:
@@ -1263,7 +1272,7 @@ def read_overrides_file(path: Path) -> list[dict[str, Any]]:
         overrides = [dict(item) for item in data]
     else:
         overrides = []
-        with path.open(encoding="utf-8", newline="") as handle:
+        with io.StringIO(read_bounded_bytes(path).decode("utf-8"), newline="") as handle:
             for number, fields in enumerate(csv.reader(handle), start=1):
                 cells = [part.strip() for part in fields]
                 if not cells or not cells[0] or cells[0].startswith("#") or cells[0] == "fix_id":
@@ -1280,10 +1289,14 @@ def read_overrides_file(path: Path) -> list[dict[str, Any]]:
 def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
     """Write records as canonical JSON lines through a temp file and an atomic rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with tmp.open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write("".join(f"{canonical_json(record)}\n" for record in records))
-    os.replace(tmp, path)
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("".join(f"{canonical_json(record)}\n" for record in records))
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _run_score(args: argparse.Namespace) -> str:

@@ -5,16 +5,23 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from _research_shell_plugin import render_shell
 
 _PLUGIN = Path(__file__).resolve().parents[2]
 _SKILL = _PLUGIN / "skills/fortify/SKILL.md"
-_SHELLS = ["bash", pytest.param("zsh", marks=pytest.mark.skipif(shutil.which("zsh") is None, reason="zsh unavailable"))]
+_BASH = shutil.which("bash")
+_requires_bash = pytest.mark.skipif(_BASH is None, reason="Bash is required for shell recipes")
+_SHELLS = [
+    pytest.param("bash", marks=pytest.mark.skipif(_BASH is None, reason="bash unavailable")),
+    pytest.param("zsh", marks=pytest.mark.skipif(shutil.which("zsh") is None, reason="zsh unavailable")),
+]
 
 
 def _block(marker: str) -> str:
@@ -41,6 +48,7 @@ def _git(cwd: Path, env: dict[str, str], *args: str) -> str:
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     )
     return result.stdout.strip()
@@ -64,11 +72,12 @@ def campaign(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
             }
         ),
         encoding="utf-8",
+        newline="\n",
     )
     sentinels = tmp_path / "sentinels"
     sentinels.mkdir()
     values = {
-        "orig-dir": str(origin),
+        "orig-dir": origin.as_posix(),
         "dir": ".experiments/fortify-test",
         "variant-name": variant.name,
         "run-id": "source",
@@ -77,16 +86,17 @@ def campaign(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
         "program-file": "",
     }
     for name, value in values.items():
-        (sentinels / f"fortify-{name}-test").write_text(value + "\n", encoding="utf-8")
+        (sentinels / f"fortify-{name}-test").write_text(value + "\n", encoding="utf-8", newline="\n")
     env = os.environ.copy()
     env.pop("STATE_DIR_BASE", None)
     env.pop("METRIC_CMD", None)
     env.pop("GUARD_CMD", None)
     env.update(
         CLAUDE_CODE_SESSION_ID="test",
-        CLAUDE_PLUGIN_ROOT=str(_PLUGIN),
-        TMPDIR=str(sentinels),
-        TEST_PYTHON=sys.executable,
+        CLAUDE_PLUGIN_ROOT=_PLUGIN.as_posix(),
+        TMPDIR=sentinels.as_posix(),
+        TEST_PYTHON=Path(sys.executable).as_posix(),
+        PYTHONIOENCODING="cp1252",
         ARGUMENTS="source --runs 1",
         GIT_AUTHOR_NAME="Test",
         GIT_AUTHOR_EMAIL="test@example.invalid",
@@ -95,17 +105,19 @@ def campaign(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
     )
     _git(origin, env, "init", "--template=")
     _git(origin, env, "config", "core.hooksPath", str(tmp_path / "no-hooks"))
-    (origin / ".gitignore").write_text(".experiments/\n.reports/\n", encoding="utf-8")
+    (origin / ".gitignore").write_text(".experiments/\n.reports/\n", encoding="utf-8", newline="\n")
     for value in (8, 9, 10):
         env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = f"2000-01-{value - 7:02d}T00:00:00+00:00"
-        (origin / "m.txt").write_text(f"{value}\n", encoding="utf-8")
+        (origin / "m.txt").write_text(f"{value}\n", encoding="utf-8", newline="\n")
         _git(origin, env, "add", ".gitignore", "m.txt")
         _git(origin, env, "commit", "-m", f"Metric {value}")
     best = _git(origin, env, "rev-parse", "HEAD")
     first = _git(origin, env, "rev-parse", "HEAD^")
-    (sentinels / "fortify-best-commit-test").write_text(best + "\n", encoding="utf-8")
+    (sentinels / "fortify-best-commit-test").write_text(best + "\n", encoding="utf-8", newline="\n")
     (run / "variants.jsonl").write_text(
-        json.dumps({"variant_name": "no-component", "revert_commits": [first, best]}) + "\n", encoding="utf-8"
+        json.dumps({"variant_name": "no-component", "revert_commits": [first, best]}) + "\n",
+        encoding="utf-8",
+        newline="\n",
     )
     _git(origin, env, "worktree", "add", "--detach", str(variant), best)
     return origin, run, env
@@ -115,7 +127,17 @@ def _run(marker: str, cwd: Path, env: dict[str, str], shell: str = "bash") -> su
     """Run a shipped shell block with real jq, helpers and the temporary checkout's Git."""
     prelude = 'python() { "$TEST_PYTHON" "$@"; }\n'
     return subprocess.run(
-        [shell, "-c", prelude + _block(marker)], cwd=cwd, env=env, capture_output=True, text=True, check=False
+        [
+            shutil.which(shell),
+            "-c",
+            render_shell(prelude + _block(marker), Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "research"),
+        ],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
     )
 
 
@@ -131,6 +153,62 @@ def reverted_campaign(campaign: tuple[Path, Path, dict[str, str]]) -> tuple[Path
     return campaign
 
 
+@_requires_bash
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "shell_cwd",
+    [
+        "/c/Users/runner/project with spaces",
+        "C:/Users/runner/project with spaces",
+        r"C:\Users\runner\project with spaces",
+    ],
+)
+def test_metric_receipt_uses_native_physical_path(
+    reverted_campaign: tuple[Path, Path, dict[str, str]], shell_cwd: str
+) -> None:
+    """Shell path spellings cannot reject a real checkout or contaminate its metric receipt."""
+    _origin, run, env = reverted_campaign
+    variant = run / "worktrees/variant-no-component"
+    shell_env = variant / "shell-env"
+    shell_env.write_text(
+        f"pwd() {{ printf '%s\\n' {shlex.quote(shell_cwd)}; }}\n"
+        f"realpath() {{ printf '%s\\n' {shlex.quote(variant.resolve().as_posix())}; }}\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    env["BASH_ENV"] = shell_env.as_posix()
+    measured = _run('--kind metric --command-override "$METRIC_CMD"', variant, env)
+    assert measured.returncode == 0, measured.stdout + measured.stderr
+    (run / "metric-runs.jsonl.rec").write_text(
+        json.dumps({"variant": variant.name, "metric": 8, "exit": 0}) + "\n", encoding="utf-8", newline="\n"
+    )
+    recorded = _run('fortify_metric_stats.py" status', variant, env)
+    assert recorded.returncode == 0, recorded.stdout + recorded.stderr
+    row = json.loads((run / "metric-runs.jsonl").read_text(encoding="utf-8"))
+    assert row["checkout"]["cwd"] == variant.resolve().as_posix()
+
+
+def test_original_directory_capture_ignores_windows_text_translation(tmp_path: Path) -> None:
+    """Native path captures emit UTF-8 without CRLF even with a Windows-style text stream."""
+    checkout = tmp_path / "project \u2603"
+    checkout.mkdir()
+    line = next(line for line in _block("ORIG_DIR=$(").splitlines() if line.startswith("ORIG_DIR="))
+    code = shlex.split(line.partition("python -c ")[2].partition(") ||")[0])[0]
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            'import io, sys; sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="cp1252", newline="\\r\\n"); exec(sys.argv[1])',
+            code,
+        ],
+        cwd=checkout,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == checkout.resolve().as_posix().encode("utf-8")
+
+
 @pytest.fixture
 def approved_campaign(campaign: tuple[Path, Path, dict[str, str]]) -> tuple[Path, Path, dict[str, str]]:
     """Provide the same-program judge receipt needed after the source selection gates."""
@@ -138,17 +216,18 @@ def approved_campaign(campaign: tuple[Path, Path, dict[str, str]]) -> tuple[Path
     state = origin / ".experiments/state/source/state.json"
     data = json.loads(state.read_text(encoding="utf-8"))
     data["program_file"] = "program.md"
-    state.write_text(json.dumps(data), encoding="utf-8")
-    (origin / "program.md").write_text("Controlled campaign", encoding="utf-8")
+    state.write_text(json.dumps(data), encoding="utf-8", newline="\n")
+    (origin / "program.md").write_text("Controlled campaign", encoding="utf-8", newline="\n")
     reports = origin / ".reports/research"
     reports.mkdir(parents=True)
     program_hash = hashlib.sha256((origin / "program.md").read_bytes()).hexdigest()
     (reports / "judge-test.md").write_text(
-        f"Verdict: APPROVED\nProgram: program.md\nProgram SHA256: {program_hash}\n", encoding="utf-8"
+        f"Verdict: APPROVED\nProgram: program.md\nProgram SHA256: {program_hash}\n", encoding="utf-8", newline="\n"
     )
     return campaign
 
 
+@_requires_bash
 @pytest.mark.integration
 @pytest.mark.parametrize("status", ["completed", "goal-achieved"])
 def test_explicit_completed_local_run_reaches_judge(
@@ -159,7 +238,7 @@ def test_explicit_completed_local_run_reaches_judge(
     state = origin / ".experiments/state/source/state.json"
     data = json.loads(state.read_text(encoding="utf-8"))
     data["status"] = status
-    state.write_text(json.dumps(data), encoding="utf-8")
+    state.write_text(json.dumps(data), encoding="utf-8", newline="\n")
 
     result = _run('STATE_DIR_BASE="${STATE_DIR_BASE:-.experiments/state}"', origin, env)
 
@@ -167,6 +246,7 @@ def test_explicit_completed_local_run_reaches_judge(
     assert (Path(env["TMPDIR"]) / "fortify-judge-verdict-test").read_text(encoding="utf-8") == "APPROVED\n"
 
 
+@_requires_bash
 @pytest.mark.integration
 @pytest.mark.parametrize("compute", ["docker", "colab"])
 def test_skip_run_accepts_nonlocal_source_campaign(
@@ -178,7 +258,7 @@ def test_skip_run_accepts_nonlocal_source_campaign(
     data = json.loads(state.read_text(encoding="utf-8"))
     data["config"]["compute"] = compute
     data["config"]["metric_cmd"] = "touch metric-executed"
-    state.write_text(json.dumps(data), encoding="utf-8")
+    state.write_text(json.dumps(data), encoding="utf-8", newline="\n")
     env["ARGUMENTS"] += " --skip-run"
 
     result = _run('STATE_DIR_BASE="${STATE_DIR_BASE:-.experiments/state}"', origin, env)
@@ -199,7 +279,7 @@ def test_revert_commits_are_found_from_variant_cwd(
     origin, run, env = campaign
     commits = [_git(origin, env, "rev-parse", "HEAD^"), _git(origin, env, "rev-parse", "HEAD")][-commit_count:]
     (run / "variants.jsonl").write_text(
-        json.dumps({"variant_name": "no-component", "revert_commits": commits}) + "\n", encoding="utf-8"
+        json.dumps({"variant_name": "no-component", "revert_commits": commits}) + "\n", encoding="utf-8", newline="\n"
     )
 
     result = _run("REVERT_COMMITS_RAW=", run / "worktrees/variant-no-component", env, shell)
@@ -211,11 +291,14 @@ def test_revert_commits_are_found_from_variant_cwd(
     assert not (run / "results.jsonl").exists()
 
 
+@_requires_bash
 @pytest.mark.integration
 def test_missing_revert_is_recorded_from_variant_cwd(campaign: tuple[Path, Path, dict[str, str]]) -> None:
     """A genuinely empty component writes its skip record to the original run directory."""
     _origin, run, env = campaign
-    (run / "variants.jsonl").write_text('{"variant_name":"no-component","revert_commits":[]}\n', encoding="utf-8")
+    (run / "variants.jsonl").write_text(
+        '{"variant_name":"no-component","revert_commits":[]}\n', encoding="utf-8", newline="\n"
+    )
 
     result = _run("REVERT_COMMITS_RAW=", run / "worktrees/variant-no-component", env)
 
@@ -227,12 +310,13 @@ def test_missing_revert_is_recorded_from_variant_cwd(campaign: tuple[Path, Path,
     }
 
 
+@_requires_bash
 @pytest.mark.integration
 def test_conflict_result_appends_before_leaving_worktree(campaign: tuple[Path, Path, dict[str, str]]) -> None:
     """4g consumes the conflict record even when cleanup has not restored the original cwd."""
     _origin, run, env = campaign
     record = '{"variant":"variant-no-component","status":"revert-conflict"}\n'
-    (run / "results.jsonl.rec").write_text(record, encoding="utf-8")
+    (run / "results.jsonl.rec").write_text(record, encoding="utf-8", newline="\n")
 
     result = _run('"$_FDIR/results.jsonl"', run / "worktrees/variant-no-component", env)
 
@@ -241,6 +325,7 @@ def test_conflict_result_appends_before_leaving_worktree(campaign: tuple[Path, P
     assert not (run / "results.jsonl.rec").exists()
 
 
+@_requires_bash
 @pytest.mark.integration
 @pytest.mark.parametrize("status", ["running", "failed", "paused"])
 def test_explicit_run_rejects_incomplete_campaign(campaign: tuple[Path, Path, dict[str, str]], status: str) -> None:
@@ -249,7 +334,7 @@ def test_explicit_run_rejects_incomplete_campaign(campaign: tuple[Path, Path, di
     state = origin / ".experiments/state/source/state.json"
     data = json.loads(state.read_text(encoding="utf-8"))
     data["status"] = status
-    state.write_text(json.dumps(data), encoding="utf-8")
+    state.write_text(json.dumps(data), encoding="utf-8", newline="\n")
 
     result = _run('STATE_DIR_BASE="${STATE_DIR_BASE:-.experiments/state}"', origin, env)
 
@@ -260,6 +345,7 @@ def test_explicit_run_rejects_incomplete_campaign(campaign: tuple[Path, Path, di
     assert "judge" not in result.stdout.lower()
 
 
+@_requires_bash
 @pytest.mark.integration
 @pytest.mark.parametrize("compute", ["docker", "colab", "unknown"])
 def test_nonlocal_compute_stops_before_judge_or_measurement(
@@ -270,7 +356,7 @@ def test_nonlocal_compute_stops_before_judge_or_measurement(
     state = origin / ".experiments/state/source/state.json"
     data = json.loads(state.read_text(encoding="utf-8"))
     data["config"]["compute"] = compute
-    state.write_text(json.dumps(data), encoding="utf-8")
+    state.write_text(json.dumps(data), encoding="utf-8", newline="\n")
 
     result = _run('STATE_DIR_BASE="${STATE_DIR_BASE:-.experiments/state}"', origin, env)
 
@@ -280,13 +366,16 @@ def test_nonlocal_compute_stops_before_judge_or_measurement(
     assert "judge" not in result.stdout.lower()
 
 
+@_requires_bash
 @pytest.mark.integration
 def test_metric_rejects_main_repository_cwd(campaign: tuple[Path, Path, dict[str, str]]) -> None:
     """Every metric call enforces the variant cwd even if an earlier navigation check passed."""
     origin, _run_dir, env = campaign
-    (Path(env["TMPDIR"]) / "fortify-metric-cmd-test").write_text("printf ran > metric-executed\n", encoding="utf-8")
+    (Path(env["TMPDIR"]) / "fortify-metric-cmd-test").write_text(
+        "printf ran > metric-executed\n", encoding="utf-8", newline="\n"
+    )
 
-    result = _run('bash -c "$METRIC_CMD"', origin, env)
+    result = _run('--kind metric --command-override "$METRIC_CMD"', origin, env)
 
     assert result.returncode != 0
     assert "! BLOCKED" in result.stdout
@@ -301,9 +390,11 @@ def test_metric_rejects_an_unreverted_ablation(campaign: tuple[Path, Path, dict[
     variant = run / "worktrees/variant-no-component"
     ordered = _run("REVERT_COMMITS_RAW=", variant, env, shell)
     assert ordered.returncode == 0, ordered.stderr
-    (Path(env["TMPDIR"]) / "fortify-metric-cmd-test").write_text("touch metric-executed\n", encoding="utf-8")
+    (Path(env["TMPDIR"]) / "fortify-metric-cmd-test").write_text(
+        "touch metric-executed\n", encoding="utf-8", newline="\n"
+    )
 
-    measured = _run('bash -c "$METRIC_CMD"', variant, env, shell)
+    measured = _run('--kind metric --command-override "$METRIC_CMD"', variant, env, shell)
 
     assert measured.returncode != 0
     assert "variant checkout is not best_commit plus its reverts" in measured.stdout
@@ -322,16 +413,19 @@ def test_full_metric_rejects_extra_commits_despite_stale_reverts(
     _git(origin, env, "worktree", "add", "--detach", str(full), "HEAD")
     _git(full, env, "commit", "--allow-empty", "-m", "Extra commit")
     _git(full, env, "commit", "--allow-empty", "-m", "Another extra commit")
-    (Path(env["TMPDIR"]) / "fortify-variant-name-test").write_text("variant-full\n", encoding="utf-8")
-    (Path(env["TMPDIR"]) / "fortify-metric-cmd-test").write_text("touch metric-executed\n", encoding="utf-8")
+    (Path(env["TMPDIR"]) / "fortify-variant-name-test").write_text("variant-full\n", encoding="utf-8", newline="\n")
+    (Path(env["TMPDIR"]) / "fortify-metric-cmd-test").write_text(
+        "touch metric-executed\n", encoding="utf-8", newline="\n"
+    )
 
-    measured = _run('bash -c "$METRIC_CMD"', full, env, shell)
+    measured = _run('--kind metric --command-override "$METRIC_CMD"', full, env, shell)
 
     assert measured.returncode != 0
     assert "variant checkout is not best_commit plus its reverts" in measured.stdout
     assert not (full / "metric-executed").exists()
 
 
+@_requires_bash
 @pytest.mark.integration
 @pytest.mark.parametrize(
     ("field", "value"),
@@ -350,21 +444,21 @@ def test_metric_run_binds_checkout_before_ranking(
     origin, run, env = reverted_campaign
     variant = run / "worktrees/variant-no-component"
 
-    measured = _run('bash -c "$METRIC_CMD"', variant, env)
+    measured = _run('--kind metric --command-override "$METRIC_CMD"', variant, env)
 
     assert measured.returncode == 0, measured.stderr
     (run / "metric-runs.jsonl.rec").write_text(
-        '{"variant":"variant-no-component","metric":10,"exit":0}\n', encoding="utf-8"
+        '{"variant":"variant-no-component","metric":10,"exit":0}\n', encoding="utf-8", newline="\n"
     )
     recorded = _run('"$_FDIR/metric-runs.jsonl" || exit 1', variant, env)
     assert recorded.returncode == 0, recorded.stderr
     row = json.loads((run / "metric-runs.jsonl").read_text(encoding="utf-8"))
-    assert row["checkout"]["cwd"] == str(variant.resolve())
+    assert Path(row["checkout"]["cwd"]) == variant.resolve()
     assert len(row["checkout"]["head"]) == 40
     assert row["checkout"]["variant"] == row["variant"]
     assert row["checkout"]["exit"] == row["exit"]
     row["checkout"][field] = value
-    (run / "metric-runs.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    (run / "metric-runs.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8", newline="\n")
 
     ranked = _run('rank "$_FDIR"', origin, env)
 
@@ -373,20 +467,21 @@ def test_metric_run_binds_checkout_before_ranking(
     assert not (run / "results-deltas.jsonl").exists()
 
 
+@_requires_bash
 @pytest.mark.integration
 def test_stale_receipt_cannot_record_an_unexecuted_metric(reverted_campaign: tuple[Path, Path, dict[str, str]]) -> None:
     """A failed second metric call cannot reuse the previous call's verified checkout receipt."""
     _origin, run, env = reverted_campaign
     variant = run / "worktrees/variant-no-component"
-    first = _run('bash -c "$METRIC_CMD"', variant, env)
+    first = _run('--kind metric --command-override "$METRIC_CMD"', variant, env)
     assert first.returncode == 0, first.stderr
-    (Path(env["TMPDIR"]) / "fortify-metric-cmd-test").write_text("\n", encoding="utf-8")
+    (Path(env["TMPDIR"]) / "fortify-metric-cmd-test").write_text("\n", encoding="utf-8", newline="\n")
 
-    second = _run('bash -c "$METRIC_CMD"', variant, env)
+    second = _run('--kind metric --command-override "$METRIC_CMD"', variant, env)
 
     assert second.returncode != 0
     (run / "metric-runs.jsonl.rec").write_text(
-        '{"variant":"variant-no-component","metric":10,"exit":0}\n', encoding="utf-8"
+        '{"variant":"variant-no-component","metric":10,"exit":0}\n', encoding="utf-8", newline="\n"
     )
     recorded = _run('"$_FDIR/metric-runs.jsonl" || exit 1', variant, env)
     assert recorded.returncode != 0
@@ -394,20 +489,21 @@ def test_stale_receipt_cannot_record_an_unexecuted_metric(reverted_campaign: tup
     assert not (run / "metric-runs.jsonl").exists()
 
 
+@_requires_bash
 @pytest.mark.integration
 def test_metric_receipt_is_consumed_after_one_record(reverted_campaign: tuple[Path, Path, dict[str, str]]) -> None:
     """One real metric execution cannot certify two separately staged numeric samples."""
     _origin, run, env = reverted_campaign
     variant = run / "worktrees/variant-no-component"
-    measured = _run('bash -c "$METRIC_CMD"', variant, env)
+    measured = _run('--kind metric --command-override "$METRIC_CMD"', variant, env)
     assert measured.returncode == 0, measured.stderr
     (run / "metric-runs.jsonl.rec").write_text(
-        '{"variant":"variant-no-component","metric":10,"exit":0}\n', encoding="utf-8"
+        '{"variant":"variant-no-component","metric":10,"exit":0}\n', encoding="utf-8", newline="\n"
     )
     first = _run('"$_FDIR/metric-runs.jsonl" || exit 1', variant, env)
     assert first.returncode == 0, first.stderr
     (run / "metric-runs.jsonl.rec").write_text(
-        '{"variant":"variant-no-component","metric":80,"exit":0}\n', encoding="utf-8"
+        '{"variant":"variant-no-component","metric":80,"exit":0}\n', encoding="utf-8", newline="\n"
     )
 
     replayed = _run('"$_FDIR/metric-runs.jsonl" || exit 1', variant, env)
@@ -429,29 +525,33 @@ def test_matching_checkout_evidence_allows_expected_ranking(
     full = run / "worktrees/variant-full"
     _git(origin, env, "worktree", "add", "--detach", str(full), best)
     variant_sentinel = Path(env["TMPDIR"]) / "fortify-variant-name-test"
-    variant_sentinel.write_text("variant-full\n", encoding="utf-8")
-    full_measured = _run('bash -c "$METRIC_CMD"', full, env, shell)
+    variant_sentinel.write_text("variant-full\n", encoding="utf-8", newline="\n")
+    full_measured = _run('--kind metric --command-override "$METRIC_CMD"', full, env, shell)
     assert full_measured.returncode == 0, full_measured.stdout + full_measured.stderr
     assert full_measured.stdout == "10\nMETRIC_EXIT=0\n"
-    (run / "metric-runs.jsonl.rec").write_text('{"variant":"variant-full","metric":10,"exit":0}\n', encoding="utf-8")
+    (run / "metric-runs.jsonl.rec").write_text(
+        '{"variant":"variant-full","metric":10,"exit":0}\n', encoding="utf-8", newline="\n"
+    )
     full_recorded = _run('"$_FDIR/metric-runs.jsonl" || exit 1', full, env, shell)
     assert full_recorded.returncode == 0, full_recorded.stdout + full_recorded.stderr
-    variant_sentinel.write_text("variant-no-component\n", encoding="utf-8")
+    variant_sentinel.write_text("variant-no-component\n", encoding="utf-8", newline="\n")
     variant = run / "worktrees/variant-no-component"
     ordered = _run("REVERT_COMMITS_RAW=", variant, env, shell)
     assert ordered.returncode == 0, ordered.stdout + ordered.stderr
     reverted = _run("git revert $(", variant, env, shell)
     assert reverted.returncode == 0, reverted.stdout + reverted.stderr
-    measured = _run('bash -c "$METRIC_CMD"', variant, env, shell)
+    measured = _run('--kind metric --command-override "$METRIC_CMD"', variant, env, shell)
     assert measured.returncode == 0, measured.stdout + measured.stderr
     assert measured.stdout == "8\nMETRIC_EXIT=0\n"
     (run / "metric-runs.jsonl.rec").write_text(
-        '{"variant":"variant-no-component","metric":8,"exit":0}\n', encoding="utf-8"
+        '{"variant":"variant-no-component","metric":8,"exit":0}\n', encoding="utf-8", newline="\n"
     )
     recorded = _run('"$_FDIR/metric-runs.jsonl" || exit 1', variant, env, shell)
     assert recorded.returncode == 0, recorded.stderr
     (run / "results.jsonl").write_text(
-        '{"variant":"full","status":"completed"}\n{"variant":"no-component","status":"completed"}\n', encoding="utf-8"
+        '{"variant":"full","status":"completed"}\n{"variant":"no-component","status":"completed"}\n',
+        encoding="utf-8",
+        newline="\n",
     )
 
     ranked = _run('rank "$_FDIR"', origin, env, shell)

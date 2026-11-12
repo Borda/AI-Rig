@@ -1,13 +1,17 @@
 """Measure token-only context composition in Codex rollout files.
 
-Purpose: Extend the foundry cost analyzer with observable Codex context overhead. Scope: Read session metadata, per-
-response usage, injected messages, tool results     and compaction markers; parent links keep each thread's windows
-independent. Usage: Imported by _context_composition.run_composition after its shared window     types initialize. The
-CLI supplies the analyzer module, avoiding a second     cost_analyzer import when its entrypoint runs as __main__.
-Outputs: Markdown window measurements and family-wide subagent token shares,     attempted code edits and AGENTS.md byte
-exposure estimates. No prices apply. Failure: Missing selections or usable usage return 1; ambiguous prefixes and
-duplicate thread identities fail with diagnostics. Malformed rows and usage     warn on stderr; filesystem errors
-propagate. No rollout is modified. Used by: cost_analyzer.py --runtime codex and composition regression tests.
+Purpose:
+    Extend the foundry cost analyzer with observable Codex context overhead. Scope: Read session metadata, per- response
+    usage, injected messages, tool results     and compaction markers; parent links keep each thread's windows
+    independent. Usage: Imported by _context_composition.run_composition after its shared window     types initialize.
+    The CLI supplies the analyzer module, avoiding a second     cost_analyzer import when its entrypoint runs as
+    __main__.
+
+Outputs:
+    Markdown window measurements and family-wide subagent token shares,     attempted code edits and AGENTS.md byte
+    exposure estimates. No prices apply. Failure: Missing selections or usable usage return 1; ambiguous prefixes and
+    duplicate thread identities fail with diagnostics. Malformed rows and usage     warn on stderr; filesystem errors
+    propagate. No rollout is modified. Used by: cost_analyzer.py --runtime codex and composition regression tests.
 
 Codex input already includes cached tokens; reasoning is part of output. New rollouts dedupe by response_id. Legacy
 token-count events use sequential cumulative usage signatures, not content hashes or turn ids. Opaque base prompts and
@@ -22,6 +26,8 @@ import os
 import re
 import sys
 import time
+from bisect import bisect_left
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
@@ -33,10 +39,9 @@ if TYPE_CHECKING:
 
 # Match only recorded injection wrappers; arbitrary XML in user text stays other.
 INJECTION_TAGS = re.compile(
-    r"<(?P<tag>INSTRUCTIONS|skills_instructions|model_switch|multi_agent_[\w]+|hook[\w]*)(?:\s[^>]*)?>"
-    r"(?P<text>.*?)</(?P=tag)>",
-    re.DOTALL,
+    r"<(?P<tag>INSTRUCTIONS|skills_instructions|model_switch|multi_agent_[\w]+|hook[\w]*)(?:\s[^<>]*)?>"
 )
+_INJECTION_CLOSE = re.compile(r"</([\w]+)>")
 CODE_SUFFIXES = r"(?:py|pyi|js|jsx|ts|tsx|c|cc|cpp|h|hpp|rs|go|java|sh|rb|cs|swift|kt)"
 CODE_WRITE = re.compile(
     rf"(?:>{{1,2}}\s*|(?:Set-Content|Out-File)\s+(?:-Path\s+)?)[\"']?[^\s\"'<>]+\.{CODE_SUFFIXES}\b",
@@ -161,6 +166,24 @@ def _observe_usage(row: dict, state: CodexState, analyzer: ModuleType, explicit:
     context.compacted = False
 
 
+def _injection_spans(text: str) -> Iterator[tuple[re.Match[str], int, int]]:
+    """Pair injection openings with indexed closers without rescanning unmatched suffixes."""
+    closers: dict[str, list[int]] = {}
+    for closing in _INJECTION_CLOSE.finditer(text):
+        closers.setdefault(closing[1], []).append(closing.start())
+    cursor = 0
+    for opening in INJECTION_TAGS.finditer(text):
+        if opening.start() < cursor:
+            continue
+        positions = closers.get(opening["tag"], [])
+        index = bisect_left(positions, opening.end())
+        if index == len(positions):
+            continue
+        close = positions[index]
+        cursor = close + len(opening["tag"]) + 3
+        yield opening, close, cursor
+
+
 def _observe_message(payload: dict, state: CodexState) -> None:
     """Partition input message text into tagged injection payloads and other bytes."""
     if payload.get("role") not in {"user", "developer", "system"}:
@@ -168,15 +191,16 @@ def _observe_message(payload: dict, state: CodexState) -> None:
     window = state.context.windows[-1]
     text = state.shared._payload_bytes(payload.get("content")).decode("utf-8")
     cursor = 0
-    for match in INJECTION_TAGS.finditer(text):
+    agents_header = text.find("AGENTS.md")
+    for match, close, end in _injection_spans(text):
         tag = match["tag"]
         # INSTRUCTIONS is a project injection only when the native AGENTS heading identifies it.
-        if tag == "INSTRUCTIONS" and "AGENTS.md" not in text[: match.start()]:
+        if tag == "INSTRUCTIONS" and not 0 <= agents_header < match.start():
             continue
         kind = "instructions" if tag == "INSTRUCTIONS" else tag
         if kind.startswith("hook"):
             kind = "hook_developer" if payload.get("role") == "developer" else "other"
-        size = len(match["text"].encode("utf-8"))
+        size = len(text[match.end() : close].encode("utf-8"))
         window.attachments[kind] = window.attachments.get(kind, 0) + size
         prefix = text[cursor : match.start()]
         if tag == "INSTRUCTIONS":
@@ -184,7 +208,7 @@ def _observe_message(payload: dict, state: CodexState) -> None:
         other = len(prefix.encode("utf-8"))
         if other:
             window.attachments["other"] = window.attachments.get("other", 0) + other
-        cursor = match.end()
+        cursor = end
     remainder = len(text[cursor:].encode("utf-8"))
     if remainder:
         window.attachments["other"] = window.attachments.get("other", 0) + remainder

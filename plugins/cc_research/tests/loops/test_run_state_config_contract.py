@@ -16,9 +16,9 @@ import pytest
 
 _SKILLS = Path(__file__).resolve().parents[2] / "skills"
 _TEMPLATE_MARKER = "Write initial `state.json`"
-#: fortify reads ``jq -r '.config.<path> // empty'``; retro reads ``read_state_field.py … "config.<path>"``.
+#: fortify reads ``jq -b -r '.config.<path> // empty'``; retro reads ``read_state_field.py … "config.<path>"``.
 _READERS = {
-    "fortify": re.compile(r"jq -r '\.config\.(?P<path>[a-z_.]+) //"),
+    "fortify": re.compile(r"jq -b -r '\.config\.(?P<path>[a-z_.]+) //"),
     "retro": re.compile(r'"config\.(?P<path>[a-z_.]+)"'),
 }
 

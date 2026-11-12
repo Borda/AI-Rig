@@ -51,12 +51,24 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
+import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from live_contract import Layout, build_prompt, candidate_findings, prompt_sha256, role_context, task_contract_sha256
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
+from live_contract import (  # noqa: E402
+    Layout,
+    build_prompt,
+    candidate_findings,
+    prompt_sha256,
+    role_context,
+    task_contract_sha256,
+)
 
 #: Exact set of field names every live observation record must carry for scoring.
 LIVE_FIELDS = {
@@ -165,24 +177,54 @@ def _validate_live_metadata(
     missing = sorted(LIVE_FIELDS - set(record))
     if missing:
         raise ValueError("live observation missing fields: " + ",".join(missing))
+    _validate_live_identity(record, route_policy)
+    _validate_live_hashes(record)
+    _validate_live_usage(record)
+    route_id = record["route_id"]
+    role = record["role"]
+    signature = (record["case_id"], role, record["task_type"], record["evidence_scope"])
+    task = route_tasks[route_id].get(signature)
+    if task is None:
+        raise ValueError(f"unknown live task signature: {signature!r}")
+    if record["task_contract_sha256"] != task_contract_sha256(task):
+        raise ValueError(f"live task contract hash mismatch: {route_id}:{record['case_id']}:{role}")
+    case = cases[record["case_id"]]
+    expected_prompt = build_prompt(
+        case, candidate_findings(record["case_id"], cases), task, role_context(root, role, layout)
+    )
+    if record["prompt_sha256"] != prompt_sha256(expected_prompt):
+        raise ValueError(f"live prompt hash mismatch: {route_id}:{record['case_id']}:{role}")
+
+
+def _validate_live_identity(record: dict[str, Any], route_policy: dict[str, Any]) -> None:
+    """Validate scalar identifiers and policy assignments before indexing the task contract."""
+    for key, choices in {
+        "pair_role": {"baseline", "candidate"},
+        "outcome": {"pass", "fail", "timeout"},
+        "evidence_scope": {"classification", "tool-use"},
+    }.items():
+        if not isinstance(record[key], str) or record[key] not in choices:
+            raise ValueError(f"invalid live {key}: {record[key]!r}")
+    for key in ("campaign_id", "pair_id", "task_type", "pricing_ref", "role", "case_id"):
+        if not isinstance(record[key], str) or not record[key].strip():
+            raise ValueError(f"live observation needs non-empty {key}")
     route_id = record["route_id"]
     routes = route_policy.get("routes", {})
     if not isinstance(route_id, str) or route_id not in routes:
         raise ValueError(f"unknown live route_id: {route_id!r}")
     pair_role = record["pair_role"]
-    if pair_role not in {"baseline", "candidate"}:
-        raise ValueError(f"invalid live pair_role: {pair_role!r}")
     route = routes[route_id]
     expected_model = route[f"{pair_role}_model"]
     if record["model"] != expected_model or record["reasoning_effort"] != route["effort"]:
         raise ValueError(f"live model/effort mismatch: {route_id}:{pair_role}")
-    for key in ("campaign_id", "pair_id", "task_type", "pricing_ref"):
-        if not isinstance(record[key], str) or not record[key].strip():
-            raise ValueError(f"live observation needs non-empty {key}")
     if record.get("run_id") != record["pair_id"]:
         raise ValueError("live run_id must equal pair_id")
     if record["pricing_ref"] != PRICING_REF:
         raise ValueError(f"unsupported live pricing_ref: {record['pricing_ref']!r}")
+
+
+def _validate_live_hashes(record: dict[str, Any]) -> None:
+    """Require hexadecimal SHA-256 fields before checking their canonical values."""
     for key in ("prompt_sha256", "task_contract_sha256"):
         digest = record[key]
         if not isinstance(digest, str) or len(digest) != 64:
@@ -191,6 +233,10 @@ def _validate_live_metadata(
             int(digest, 16)
         except ValueError as exc:
             raise ValueError(f"live observation {key} is not hexadecimal") from exc
+
+
+def _validate_live_usage(record: dict[str, Any]) -> None:
+    """Require real integer counters and a finite cost consistent with the recorded token evidence."""
     for key in (
         "input_tokens",
         "cached_input_tokens",
@@ -199,33 +245,16 @@ def _validate_live_metadata(
         "tool_failure_count",
         "check_failure_count",
     ):
-        if not isinstance(record[key], int) or record[key] < 0:
+        if type(record[key]) is not int or record[key] < 0:
             raise ValueError(f"live observation needs non-negative integer {key}")
     if record["cached_input_tokens"] > record["input_tokens"]:
         raise ValueError("live cached_input_tokens exceeds input_tokens")
-    if not isinstance(record["estimated_cost_units"], int | float) or record["estimated_cost_units"] < 0:
-        raise ValueError("live observation needs non-negative estimated_cost_units")
+    cost = record["estimated_cost_units"]
+    if type(cost) not in (int, float) or not math.isfinite(cost) or cost < 0:
+        raise ValueError("live observation needs finite non-negative estimated_cost_units")
     expected_cost = _normalized_cost_units(record)
     if abs(float(record["estimated_cost_units"]) - expected_cost) > 0.001:
         raise ValueError("live estimated_cost_units does not match token evidence")
-    if record["outcome"] not in {"pass", "fail", "timeout"}:
-        raise ValueError(f"invalid live outcome: {record['outcome']!r}")
-    if record["evidence_scope"] not in {"classification", "tool-use"}:
-        raise ValueError(f"invalid live evidence_scope: {record['evidence_scope']!r}")
-    role = record["role"]
-    if not isinstance(role, str) or not role:
-        raise ValueError("live observation needs non-empty role")
-    signature = (record["case_id"], role, record["task_type"], record["evidence_scope"])
-    task = route_tasks[route_id].get(signature)
-    if task is not None:
-        if record["task_contract_sha256"] != task_contract_sha256(task):
-            raise ValueError(f"live task contract hash mismatch: {route_id}:{record['case_id']}:{role}")
-        case = cases[record["case_id"]]
-        expected_prompt = build_prompt(
-            case, candidate_findings(record["case_id"], cases), task, role_context(root, role, layout)
-        )
-        if record["prompt_sha256"] != prompt_sha256(expected_prompt):
-            raise ValueError(f"live prompt hash mismatch: {route_id}:{record['case_id']}:{role}")
 
 
 def _prompt_sha256(prompt: str) -> str:
@@ -289,8 +318,7 @@ def _load_cases(path: Path) -> tuple[dict[str, dict[str, Any]], dict[str, float]
     """Load behavioral cases and scoring thresholds while preserving expected finding order.
 
     Each case is indexed by its unique non-empty ID and retains both the original finding list and a set for metric
-    comparisons. Missing thresholds receive permissive defaults so callers can validate the case schema independently
-    from gate policy.
+    comparisons. Every acceptance threshold must be explicitly supplied as a finite number.
     """
     payload = _read_json(path)
     cases_raw = payload.get("cases", [])
@@ -322,18 +350,28 @@ def _load_cases(path: Path) -> tuple[dict[str, dict[str, Any]], dict[str, float]
             "prompt": prompt,
         }
 
-    thresholds_raw = payload.get("thresholds", {})
+    return cases, _load_thresholds(payload)
+
+
+def _load_thresholds(payload: dict[str, Any]) -> dict[str, float]:
+    """Require explicit finite numeric thresholds for all behavioral gates."""
+    thresholds_raw = payload.get("thresholds")
     if not isinstance(thresholds_raw, dict):
         raise ValueError("thresholds must be a JSON object")
-    thresholds = {
-        "min_observations": float(thresholds_raw.get("min_observations", 1)),
-        "min_recall": float(thresholds_raw.get("min_recall", 0.0)),
-        "min_precision": float(thresholds_raw.get("min_precision", 0.0)),
-        "max_confidence_mae": float(thresholds_raw.get("max_confidence_mae", 1.0)),
-        "max_mean_overconfidence": float(thresholds_raw.get("max_mean_overconfidence", 1.0)),
-        "min_negative_specificity": float(thresholds_raw.get("min_negative_specificity", 0.0)),
-    }
-    return cases, thresholds
+    thresholds: dict[str, float] = {}
+    for key in (
+        "min_observations",
+        "min_recall",
+        "min_precision",
+        "max_confidence_mae",
+        "max_mean_overconfidence",
+        "min_negative_specificity",
+    ):
+        value = thresholds_raw.get(key)
+        if type(value) not in (int, float) or not math.isfinite(value):
+            raise ValueError(f"threshold missing or invalid: {key}")
+        thresholds[key] = float(value)
+    return thresholds
 
 
 def _load_route_policy(path: Path) -> dict[str, Any]:

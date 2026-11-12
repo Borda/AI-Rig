@@ -131,7 +131,7 @@ class TestGatesWrapper:
     @pytest.mark.parametrize(
         "present",
         [
-            '"${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/resolve_shared_path.py" codemap-py claude-skills/_shared',
+            '"$PLUGIN_ROOT/bin/resolve_shared_path.py" codemap-py claude-skills/_shared',
             'cat "$_CODEMAP_SHARED/codemap-gates.md"',
             "Contract (version as loaded)",
             "Fallback when codemap-py plugin absent",

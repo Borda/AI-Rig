@@ -10,12 +10,13 @@ Each sibling additionally ships a ``rules/quality-gates-delta.md``: the subset `
 the full file once foundry's copy is already installed, so one shared body loads instead of four. The rule text a plugin
 states is therefore spread over two files, and the checks below read them as one text.
 
-Foundry additionally binds its own full-detail Proportional Execution section before planning; only that section is
-assembled when its eager mandatory trigger is present. The three satellite policies remain self-contained.
+Foundry additionally binds its own full-detail sections through mandatory pointers, including Proportional Execution
+before planning. The checks assemble those sections as delivered. The three satellite policies remain self-contained.
 """
 
 from __future__ import annotations
 
+import runpy
 from functools import cache
 from pathlib import Path
 
@@ -23,6 +24,7 @@ import pytest
 from _repo_phrases import missing_phrases
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+_PARITY = runpy.run_path(str(REPO_ROOT / "scripts" / "check_policy_parity.py"))
 PLUGINS = ("cc_foundry", "cc_develop", "cc_oss", "cc_research")
 RULE_NAME = "quality-gates.md"
 DELTA_NAME = "quality-gates-delta.md"
@@ -78,7 +80,7 @@ def _sections(text: str) -> dict[str, str]:
 
 @cache
 def _delivered_text(plugin: str) -> str:
-    """Read each plugin's rule, explicitly bound proportional detail, and optional delta.
+    """Read each plugin's rule, explicitly bound full sections, and optional delta.
 
     Only one of the two is ever delivered, but both are the plugin's own statement of policy, so the rule set it must
     keep in step with its siblings is the union.
@@ -89,34 +91,24 @@ def _delivered_text(plugin: str) -> str:
     Returns:
         The rule text, with mandatory bound detail and the plugin's delta appended where applicable.
     """
-    text = RULE_FILES[plugin].read_text(encoding="utf-8")
-    if plugin == "cc_foundry" and _PROPORTIONAL_TRIGGER in _sections(text)["Proportional Execution"]:
-        full = RULE_FILES[plugin].parent / "_full" / RULE_NAME
-        body = _sections(full.read_text(encoding="utf-8"))["Proportional Execution"]
-        text = f"{text}\n## Proportional Execution\n\n{body}\n"
-    delta = DELTA_FILES.get(plugin)
-    if delta is not None and delta.is_file():
-        text = f"{text}\n{delta.read_text(encoding='utf-8')}"
-    return text
+    return _PARITY["_delivered_text"](REPO_ROOT, plugin)
 
 
 class TestPolicyObligations:
     """Each plugin states the evidence, routing and proportionality obligations in its own delivered rule text."""
 
-    @pytest.mark.parametrize(
-        "relative",
-        [
-            *(pytest.param(f"plugins/{plugin}/rules/{RULE_NAME}", id=plugin) for plugin in PLUGINS),
-            pytest.param("plugins/codex-rig/shared/native-skill-contract.md", id="codex-rig"),
-        ],
-    )
-    def test_evidence_and_tdd_keep_controlled_first_and_real_acceptance(self, relative: str) -> None:
+    @pytest.mark.parametrize("plugin", [*PLUGINS, "codex-rig"])
+    def test_evidence_and_tdd_keep_controlled_first_and_real_acceptance(self, plugin: str) -> None:
         """Controlled validation precedes bounded real acceptance in every host policy without weakening coverage.
 
         Claude plugins carry the policy in ``quality-gates.md`` and Codex Rig in its native-skill contract; a copy that
         drops the ordering would let a real-environment run substitute for the controlled cases.
         """
-        policy = (REPO_ROOT / relative).read_text(encoding="utf-8")
+        policy = (
+            (REPO_ROOT / "plugins/codex-rig/shared/native-skill-contract.md").read_text(encoding="utf-8")
+            if plugin == "codex-rig"
+            else _delivered_text(plugin)
+        )
         obligations = (
             "Every factual, causal, and completion claim",
             "first run realistic controlled cases",
@@ -189,13 +181,15 @@ class TestPolicyObligations:
         The read must also cover routine parent-owned tasks, so the stub may not call it optional and must state the
         trigger before the first validation step.
         """
-        text = RULE_FILES["cc_foundry"].read_text(encoding="utf-8")
-        stub = _sections(text)["Proportional Execution"]
+        text = _delivered_text("cc_foundry")
+        stub = _sections(RULE_FILES["cc_foundry"].read_text(encoding="utf-8"))["Proportional Execution"]
 
         assert _PROPORTIONAL_TRIGGER in stub
         assert stub.index(_PROPORTIONAL_TRIGGER) < stub.index("Validate bounded outcome")
         assert "not needed for routine work" not in text
-        assert 'RULE_FULL="$(ls -td ' in text
+        assert "`bin/resolve_plugin_root.py --plugin-name foundry` helper (registry preferred)" in text
+        assert 'RULE_FULL="$FOUNDRY_ROOT/rules/_full/quality-gates.md"' in text
+        assert "Never select a different installed version by mtime." in text
         assert (
             "Plan → challenge → approve within existing authority → delegate/parent execution → parent consolidate"
             in stub

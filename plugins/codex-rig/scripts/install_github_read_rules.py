@@ -51,6 +51,7 @@ import hashlib
 import json
 import os
 import re
+import runpy
 import stat
 import sys
 import tempfile
@@ -65,7 +66,9 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 needs the TOML par
     except ModuleNotFoundError:
         tomllib = None
 
-from _package_identity import verify_package
+# Explicit source loading keeps unverified cached bytecode outside the package trust boundary.
+_identity = runpy.run_path(str(Path(__file__).with_name("_package_identity.py")))
+verify_package = _identity["verify_package"]
 
 #: Path components, below the Codex home, of the installed plugin cache directory for this plugin.
 CACHE_PARTS = ("plugins", "cache", "borda-ai-rig", "codex-rig")
@@ -395,6 +398,25 @@ def _apply_change(target: Path, payload: bytes | None, existing: bytes | None) -
     return "created" if existing is None else "updated"
 
 
+def _quoted_end(content: str, start: int) -> int:
+    """Find the end of one already-validated TOML string without interpreting its contents."""
+    quote = content[start]
+    delimiter = quote * (3 if content.startswith(quote * 3, start) else 1)
+    position = start + len(delimiter)
+    while position < len(content):
+        if quote == '"' and content[position] == "\\":
+            position += 2
+            continue
+        if content.startswith(delimiter, position):
+            position += len(delimiter)
+            if len(delimiter) == 3:
+                while position < len(content) and content[position] == quote:
+                    position += 1
+            return position
+        position += 1
+    raise UnsafeRulesState("config statement could not be safely separated")
+
+
 def _config_lines(content: str) -> list[str]:
     """Keep complete TOML statements together so nested string contents stay opaque."""
     if tomllib is None:
@@ -404,19 +426,29 @@ def _config_lines(content: str) -> list[str]:
     except ValueError as error:
         raise UnsafeRulesState("invalid config TOML") from error
     lines: list[str] = []
-    pending = ""
-    for line in content.splitlines(keepends=True):
-        pending += line
-        try:
-            tomllib.loads(pending)
-        except ValueError:
+    start = position = depth = 0
+    while position < len(content):
+        character = content[position]
+        if character in "\"'":
+            position = _quoted_end(content, position)
             continue
-        # A complete assignment may contain arrays and multiline strings. Retain
-        # its exact bytes as one unit rather than interpreting their lines again.
-        lines.append(pending)
-        pending = ""
-    if pending:
-        raise UnsafeRulesState("config statement could not be safely separated")
+        if character == "#":
+            position = content.find("\n", position)
+            if position == -1:
+                break
+            character = "\n"
+        if character in "[{":
+            depth += 1
+        elif character in "]}":
+            depth -= 1
+        elif character == "\n" and depth == 0:
+            # A complete assignment may contain arrays and multiline strings. Retain
+            # its exact bytes as one unit rather than interpreting their lines again.
+            lines.append(content[start : position + 1])
+            start = position + 1
+        position += 1
+    if start < len(content):
+        lines.append(content[start:])
     return lines
 
 
@@ -994,6 +1026,16 @@ def main(argv: list[str] | None = None) -> int:
             if backup is not None:
                 print(f"    backup: {backup}", flush=True)
             completed_changes += status not in {"absent", "already current"}
+        if args.plugin_root is not None:
+            config = _read_regular(args.codex_home / "config.toml")
+            effective = tomllib.loads(config.decode("utf-8"))
+            print(
+                f"  [ok] permissions: default_permissions={effective.get('default_permissions')}; "
+                ".git write access on every workspace root in local-workflow and github-read; "
+                f"network_proxy={str(effective.get('features', {}).get('network_proxy')).lower()}; "
+                "local-workflow network disabled; github-read permits GitHub domains",
+                flush=True,
+            )
     except (OSError, ValueError) as error:
         print(f"github-read-profile-error: {error}", file=sys.stderr)
         if completed_changes:

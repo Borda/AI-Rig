@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from _hook_env import _bash_runs_posix_script
+from _plugin_payload import install_foundry
 
 _SKILLS = Path(__file__).resolve().parents[2] / "skills"
 _requires_bash = pytest.mark.skipif(not _bash_runs_posix_script(), reason="requires Bash executing POSIX scripts")
@@ -28,7 +29,7 @@ def test_viewer_setup_exposes_only_copied_viewer_and_live_state(tmp_path: Path, 
     tmp_path.mkdir()
     section = _section("brainstorm/SKILL.md", "On **(a)**:", "**Persistence note**")
     script = section.split("```bash\n", 1)[1].split("```", 1)[0]
-    plugin = tmp_path / "plugin"
+    plugin = install_foundry(tmp_path)
     scripts = plugin / "skills" / "brainstorm" / "scripts"
     scripts.mkdir(parents=True)
     (scripts / "tree-viewer.html").write_text("viewer", encoding="utf-8")
@@ -42,6 +43,8 @@ def test_viewer_setup_exposes_only_copied_viewer_and_live_state(tmp_path: Path, 
             **os.environ,
             "TMPDIR": tmp_path.as_posix(),
             "CLAUDE_PLUGIN_ROOT": plugin.as_posix(),
+            "HOME": str(tmp_path),
+            "USERPROFILE": str(tmp_path),
             "CSID": "viewer-test",
             "CLAUDE_CODE_SESSION_ID": "viewer-test",
         },
@@ -95,6 +98,8 @@ def test_viewer_setup_exposes_only_copied_viewer_and_live_state(tmp_path: Path, 
             "TMPDIR": tmp_path.as_posix(),
             "CLAUDE_CODE_SESSION_ID": "viewer-test",
             "CLAUDE_PLUGIN_ROOT": plugin.as_posix(),
+            "HOME": str(tmp_path),
+            "USERPROFILE": str(tmp_path),
         },
         capture_output=True,
         text=True,

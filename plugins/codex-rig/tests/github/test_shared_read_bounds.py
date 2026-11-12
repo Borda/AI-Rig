@@ -7,9 +7,10 @@ import io
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from threading import Event
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest import mock
 
@@ -73,6 +74,58 @@ def test_default_transport_deadline_covers_inherited_pipes(reader: ModuleType) -
     assert time.monotonic() - started < 0.8
 
 
+@pytest.fixture
+def blocking_pipe_close(reader: ModuleType, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Event, Event]]:
+    """Simulate Windows pipe cleanup and release every blocked worker during teardown."""
+    release = Event()
+    read_finished = Event()
+    close_finished = Event()
+    stream = mock.Mock(spec=io.RawIOBase)
+
+    def read_output(_size: int) -> bytes:
+        """Hold the reader as though a descendant still owns an output handle."""
+        release.wait(2)
+        read_finished.set()
+        return b""
+
+    def close_output() -> None:
+        """Model a close waiting for the synchronous reader's descriptor lock."""
+        release.wait(2)
+        close_finished.set()
+
+    stream.read.side_effect = read_output
+    stream.close.side_effect = close_output
+    process = mock.MagicMock(spec=subprocess.Popen)
+    process.stdout = stream
+    process.stderr = io.BytesIO()
+    process.stdin = None
+    process.__enter__.return_value = process
+    real_exit = subprocess.Popen.__exit__
+    process.__exit__.side_effect = lambda *args: real_exit(process, *args)
+    monkeypatch.setattr(reader.subprocess, "Popen", mock.Mock(spec=subprocess.Popen, return_value=process))
+    monkeypatch.setattr(reader, "sys", SimpleNamespace(platform="win32"))
+    yield release, close_finished
+    release.set()
+    assert read_finished.wait(2)
+    assert close_finished.wait(2)
+
+
+def test_bounded_command_timeout_does_not_wait_for_pipe_close(
+    reader: ModuleType, blocking_pipe_close: tuple[Event, Event]
+) -> None:
+    """Raise at the deadline while Windows-style pipe closing remains blocked.
+
+    The subprocess boundary models an exited child whose descendant holds a pipe; cleanup must outlive the caller.
+    """
+    release, close_finished = blocking_pipe_close
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        reader.run_bounded_command(["child"], timeout=0.1, max_output_bytes=1024)
+    assert time.monotonic() - started < 0.8
+    assert not release.is_set()
+    assert not close_finished.is_set()
+
+
 @pytest.mark.parametrize("operation", ["write", "close"])
 @pytest.mark.parametrize("error_number", [errno.EINVAL, errno.EPIPE])
 def test_bounded_command_preserves_child_failure_after_closed_stdin(
@@ -97,7 +150,7 @@ def test_bounded_command_preserves_child_failure_after_closed_stdin(
 
     monkeypatch.setattr(reader.subprocess, "Popen", start_with_closed_stdin)
     result = reader.run_bounded_command(
-        [sys.executable, "-c", "import sys; sys.stderr.write('consumer rejected patch\\n'); sys.exit(7)"],
+        [sys.executable, "-c", "import sys; sys.stderr.buffer.write(b'consumer rejected patch\\n'); sys.exit(7)"],
         timeout=10,
         max_output_bytes=1024,
         input_bytes=payload,
@@ -148,7 +201,8 @@ def test_collector_drains_output_while_sending_input() -> None:
     collector = load_module("duplex_pr_collector", SHARED / "collect_pr.py")
     payload = b"p" * (256 * 1024)
     program = (
-        "import sys; sys.stdout.buffer.write(b'x'*262144); sys.stdout.flush(); print(len(sys.stdin.buffer.read()))"
+        "import sys; sys.stdout.buffer.write(b'x'*262144); sys.stdout.flush(); "
+        "sys.stdout.buffer.write(str(len(sys.stdin.buffer.read())).encode('ascii') + b'\\n')"
     )
     result = collector._run(subprocess.run, [sys.executable, "-c", program], 10, "duplex", input_bytes=payload)
     assert result == b"x" * 262144 + b"262144\n"

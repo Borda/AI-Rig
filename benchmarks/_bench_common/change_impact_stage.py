@@ -178,9 +178,13 @@ def _fixture_coordinate(source_root: Path, index_path: Path, scope: Mapping[str,
     """Validate copied source and semantic graph before binding root-dependent runtime bytes."""
     contracts.verify_source_fingerprint(source_root, scope["fixture_sha256"])
     payload = json.loads(index_path.read_bytes())
+    root_identity = str(source_root.resolve())
+    if os.name == "nt":
+        root_identity = root_identity.replace("/", "\\").casefold()
     if (
         payload.get("scan_version") != scope["scan_version"]
-        or payload.get("scan_root") != str(source_root)
+        or payload.get("scan_root") != "."
+        or payload.get("scan_root_key") != hashlib.sha256(root_identity.encode("utf-8")).hexdigest()
         or semantic_index_sha256(payload, source_root) != scope["semantic_index_sha256"]
     ):
         raise ValueError("impact fixture index differs from approved scope")

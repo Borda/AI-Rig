@@ -106,6 +106,12 @@ def test_missing_payload_file_is_reported(payload_root: Path, relative: str, exp
     ("relative", "text", "expected_rc"),
     [
         pytest.param(_REVIEWED_SITE, _INVESTIGATOR_TEXT, 0, id="reviewed-site"),
+        pytest.param(
+            "plugins/cc_oss/skills/review/modes/scope-context.md",
+            _INVESTIGATOR_TEXT,
+            0,
+            id="reviewed-issue-investigator-mode",
+        ),
         pytest.param("plugins/cc_oss/skills/new/SKILL.md", _INVESTIGATOR_TEXT, 1, id="unreviewed-site"),
         pytest.param("plugins/cc_oss/skills/new/modes/a.md", "Hypotheses go to each sw-engineer.\n", 1, id="reversed"),
         pytest.param(

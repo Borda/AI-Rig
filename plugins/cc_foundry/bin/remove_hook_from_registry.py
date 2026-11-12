@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""remove_hook_from_registry.py — strip a named hook from a Claude Code hooks registry.
+"""Remove a named hook from a project Claude Code hooks registry.
 
 Reads a JSON file that has a top-level ``hooks`` object whose values are arrays
 of hook-group entries, each containing a ``hooks`` array of command objects.
@@ -25,7 +25,7 @@ rewrites the target file in place. Typical usage:
 
     --hook-name rtk-rewrite --match path
 
-Atomic write — writes to ``<path>.tmp`` then renames over the target. On any
+Atomic write — uses a private sibling temporary file and preserves file mode. On any
 failure the temp file is removed and the original file is left untouched.
 
 Exit codes:
@@ -40,10 +40,11 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import shutil
 import sys
 from pathlib import Path
 from typing import Any
+
+from merge_settings_permissions import _atomic_replace
 
 
 def filter_hooks(
@@ -67,7 +68,7 @@ def filter_hooks(
     Returns:
         A new dict with the same top-level keys as ``registry``, but with the
         ``hooks`` sub-tree filtered. Non-``hooks`` keys are passed through
-        unchanged. ``hooks`` is always present in the output (possibly empty).
+        unchanged. An absent ``hooks`` key stays absent.
 
     Examples:
         >>> import re
@@ -86,6 +87,8 @@ def filter_hooks(
         [{'command': '.claude/hooks/bar.js'}]
     """
     out = dict(registry)
+    if "hooks" not in out:
+        return out
     hooks_section = out.get("hooks") or {}
     new_hooks: dict[str, list[dict[str, Any]]] = {}
     for event, groups in hooks_section.items():
@@ -160,7 +163,7 @@ def run(json_file: Path, hook_name: str, path_pattern: str) -> int:
 
     Reads the file, applies :func:`filter_hooks` with the compiled
     ``path_pattern`` (case-insensitive), serialises the result with 2-space
-    indentation to ``<json_file>.tmp`` and renames over the original. On any
+    indentation to a private sibling file and renames over the original, preserving mode. On any
     failure the tmp file is removed and the original is left untouched.
 
     Args:
@@ -179,6 +182,16 @@ def run(json_file: Path, hook_name: str, path_pattern: str) -> int:
     if not json_file.is_file():
         print(f"! target not found: {json_file}", file=sys.stderr)
         return 1
+    if json_file.name not in {
+        "settings.json",
+        "settings.local.json",
+        "hooks.json",
+    } or not json_file.resolve().is_relative_to(Path.cwd().resolve()):
+        print("! target must be a project settings.json, settings.local.json or hooks.json", file=sys.stderr)
+        return 3
+    if len(path_pattern) > 4096:
+        print("! --path-pattern must be at most 4096 characters", file=sys.stderr)
+        return 3
     try:
         pattern = re.compile(path_pattern, re.IGNORECASE)
     except re.error as exc:
@@ -192,14 +205,13 @@ def run(json_file: Path, hook_name: str, path_pattern: str) -> int:
     if not isinstance(registry, dict):
         print(f"! top-level JSON in {json_file} must be an object", file=sys.stderr)
         return 2
+    if "hooks" not in registry:
+        return 0
 
     filtered = filter_hooks(registry, pattern)
-    tmp = json_file.with_suffix(json_file.suffix + ".tmp")
     try:
-        tmp.write_text(json.dumps(filtered, indent=2) + "\n", encoding="utf-8")
-        shutil.move(str(tmp), str(json_file))
+        _atomic_replace(json_file, json.dumps(filtered, indent=2) + "\n")
     except OSError as exc:
-        tmp.unlink(missing_ok=True)
         print(f"! failed to write {json_file}: {exc}", file=sys.stderr)
         return 2
 

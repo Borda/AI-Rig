@@ -68,7 +68,9 @@ def _run_child(root: Path, env: dict[str, str], *pytest_args: str) -> subprocess
 def _executed_node_ids(root: Path, env: dict[str, str], shard: str | None) -> set[str]:
     """Run the marker-selected probe under two workers (optionally one shard) and return the node IDs they executed."""
     shard_options = ["--installed-package-shard", shard] if shard is not None else []
-    result = _run_child(root, env, "-q", "-n", "2", "-m", "installed_plugin", "--strict-markers", *shard_options)
+    result = _run_child(
+        root, env, "-q", "-n", "2", "--dist", "loadgroup", "-m", "installed_plugin", "--strict-markers", *shard_options
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     # Phase diagnostics expose the node IDs executed by actual xdist workers.
     return {
@@ -171,6 +173,43 @@ class TestPackageShards:
         assert set.union(*shards) == complete
         assert sum(map(len, shards)) == len(complete), selections
         assert repeat == shards[0]
+
+    @pytest.mark.integration
+    @pytest.mark.packaging
+    def test_shared_fixture_groups_execute_once_across_shards_and_workers(
+        self, diagnostic_child: DiagnosticChild
+    ) -> None:
+        """Keep each expensive fixture variant on one shard and worker without losing any selected case."""
+        root, env = diagnostic_child
+        _write_probe(
+            root,
+            "from pathlib import Path\nfrom uuid import uuid4\nimport pytest\n"
+            "@pytest.fixture(scope='module', params=[\n"
+            "    pytest.param(name, marks=pytest.mark.xdist_group(name=name))\n"
+            "    for name in ('alpha', 'beta', 'gamma', 'delta')\n])\n"
+            "def completed(request):\n"
+            "    Path(f'{uuid4()}.setup').write_text(request.param, encoding='utf-8')\n"
+            "    return request.param\n"
+            "@pytest.mark.installed_plugin\n@pytest.mark.parametrize('value', range(6))\n"
+            "def test_receipt(completed, value):\n"
+            "    Path(f'{uuid4()}.call').write_text(f'{completed}-{value}', encoding='utf-8')\n"
+            "    assert completed\n" + SHARD_PROBE,
+        )
+
+        selections = [_executed_node_ids(root, env, f"{index}/4") for index in range(4)]
+
+        assert sum(map(len, selections)) == 48
+        assert len(set.union(*selections)) == 48
+        assert sorted(path.read_text(encoding="utf-8") for path in root.glob("*.setup")) == [
+            "alpha",
+            "beta",
+            "delta",
+            "gamma",
+        ]
+        calls = [path.read_text(encoding="utf-8") for path in root.glob("*.call")]
+        assert sorted(calls) == sorted(
+            f"{name}-{value}" for name in ("alpha", "beta", "gamma", "delta") for value in range(6)
+        )
 
     @pytest.mark.integration
     @pytest.mark.packaging

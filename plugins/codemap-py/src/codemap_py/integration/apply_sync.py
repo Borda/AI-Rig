@@ -6,9 +6,11 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
+from uuid import uuid4
 
 from codemap_py import index_paths
 
@@ -16,15 +18,19 @@ from codemap_py import index_paths
 # module (monkeypatch.setattr(integration.native, ...)), which a `from .native import`
 # binding here would not see.
 from . import native
-from .managed_block import _managed_block_status, _mutate_content
+from .managed_block import _managed_block_body, _managed_block_status, _mutate_content, _render_managed_block
 from .native import _installed_version_lookup, _run_native
+from .plan import _marketplace_sync_op, _plugin_sync_op, _source_write_op
 from .types import (
     _EXIT_OK,
     MARKETPLACE_NAME,
+    PROVIDER_NAME,
     ApprovalError,
     ConsumerTarget,
     IntegrationError,
     RefusalError,
+    Runtime,
+    Source,
     _cli_for,
     _find_target,
 )
@@ -60,6 +66,7 @@ class Journal:
 
     def save_before_image(self, index: int, data: bytes) -> Path:
         """Persist *data* as the pre-mutation image for op *index*; return its path."""
+        _validate_index(index)
         before_dir = self.directory / "before"
         before_dir.mkdir(parents=True, exist_ok=True)
         path = before_dir / f"{index}.bak"
@@ -94,6 +101,14 @@ def verify_approval(plan: dict, approve: str) -> None:
         raise ApprovalError("approve_malformed", "--approve must be a 64-hex sha256")
     if compute_plan_sha256(plan) != approve:
         raise ApprovalError("approve_mismatch", "--approve does not match this plan's SHA-256")
+    for op in plan["ops"]:
+        _validate_index(op["index"])
+
+
+def _validate_index(index: object) -> None:
+    """Require an operation index safe to use as a journal basename."""
+    if type(index) is not int or index < 0:
+        raise IntegrationError("plan_malformed", "operation index must be a nonnegative integer")
 
 
 def _is_contained(path: Path, base: Path) -> bool:
@@ -122,6 +137,7 @@ def _is_installed_cache_path(path: Path) -> bool:
 
 
 def _git_dirty(root: Path, rel_path: str) -> bool:
+    """Refuse overlays unless Git positively reports a clean target."""
     try:
         result = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
             ["git", "status", "--porcelain", "--", rel_path],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
@@ -133,8 +149,8 @@ def _git_dirty(root: Path, rel_path: str) -> bool:
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return False
-    return bool(result.stdout.strip())
+        return True
+    return result.returncode != 0 or bool(result.stdout.strip())
 
 
 def _refuse_if(condition: bool, code: str, message: str) -> None:
@@ -197,34 +213,136 @@ def _validate_source_write(op: dict, root: Path) -> tuple[Path, str]:
             product identity, a foreign/modified existing managed block, or drift.
     """
     target = _find_target(op["runtime"], op["consumer"])
-    plugin_dir = (root / target.plugin_dir).resolve()
+    plugin_dir = root / target.plugin_dir
     target_path = (root / op["path"]).resolve()
     _refuse_if(_is_installed_cache_path(target_path), "installed_cache_root", "target resolves under a plugin cache")
     _refuse_if(not _is_contained(target_path, plugin_dir), "path_escape", "target escapes its consumer directory")
     _refuse_if(
-        (root / op["path"]).is_symlink() or plugin_dir.is_symlink(), "symlink_target", "target path traverses a symlink"
+        any(p.is_symlink() for p in (root / op["path"], *(root / op["path"]).parents)),
+        "symlink_target",
+        "target path traverses a symlink",
     )
     _refuse_if(_git_dirty(root, op["path"]), "dirty_overlap", "target has uncommitted changes; refusing to overlay")
     _refuse_unverified_identity(target, root)
+    expected = _source_write_op(op["index"], target, root)
+    _refuse_if(
+        op["path"] != expected["path"] or not _matches_source_block(op, target, expected["desired"]["version"]),
+        "plan_mismatch",
+        "source action does not match the planner",
+    )
     return target_path, _classify_mutation(op, target_path)
 
 
+def _matches_source_block(op: dict, target: ConsumerTarget, version: str | None) -> bool:
+    """Validate planner-generated content while retaining the original timestamp."""
+    block = op.get("new_block")
+    if not isinstance(block, str):
+        return False
+    stamp = re.search(r"^Updated: ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)\n", block, re.MULTILINE)
+    if stamp is None:
+        return False
+    body = _managed_block_body(target.runtime, target.consumer, version)
+    body = re.sub(r"^Updated: .*\n", f"Updated: {stamp.group(1)}\n", body, flags=re.MULTILINE)
+    return block == _render_managed_block(body)
+
+
 def _atomic_write(path: Path, content: str | bytes) -> None:
+    """Replace source bytes through a pinned parent directory when supported."""
     # Write raw bytes in binary mode: the managed block is self-authenticating (its embedded
     # sha256 stamps its exact body), so the on-disk bytes must equal ``content`` UTF-8-encoded
     # with LF line endings on every OS. Text mode translates ``\n`` to ``\r\n`` on Windows,
     # which would break the post-write hash check and corrupt the marker's integrity stamp.
     data = content if isinstance(content, bytes) else content.encode("utf-8")
+    if os.open in os.supports_dir_fd and os.rename in os.supports_dir_fd:
+        _atomic_write_at(path, data)
+        return
+    _refuse_symlink_parents(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    parent_stat = path.parent.stat()
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
+        _refuse_changed_parent(path, parent_stat)
         os.replace(tmp_name, path)
-    except OSError:
+        _refuse_changed_parent(path, parent_stat)
+    except (OSError, RefusalError):
         with contextlib.suppress(OSError):
             os.unlink(tmp_name)
         raise
+
+
+def _refuse_symlink_parents(path: Path) -> None:
+    """Reject source paths traversing a symlink before resolving them."""
+    _refuse_if(
+        any(parent.is_symlink() for parent in path.parents),
+        "symlink_target",
+        "target path traverses a symlink",
+    )
+
+
+def _refuse_changed_parent(path: Path, before: os.stat_result) -> None:
+    """Detect parent replacement on hosts without directory-relative writes."""
+    _refuse_symlink_parents(path)
+    after = path.parent.stat()
+    _refuse_if(
+        (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino),
+        "symlink_target",
+        "target parent changed during write",
+    )
+
+
+def _open_source_parent(path: Path, *, create: bool = True) -> int:
+    """Open each source parent without following links and retain the final handle."""
+    path = path.absolute()
+    fd = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for component in path.parent.parts[1:]:
+            if create:
+                try:
+                    os.mkdir(component, dir_fd=fd)
+                except FileExistsError:
+                    pass
+            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        return fd
+    except OSError as exc:
+        os.close(fd)
+        raise RefusalError("symlink_target", "cannot pin target parent without following symlinks") from exc
+
+
+def _atomic_write_at(path: Path, data: bytes) -> None:
+    """Create and replace relative to one held directory descriptor."""
+    parent_fd = _open_source_parent(path)
+    temp_name = f".{path.name}.{uuid4().hex}"
+    try:
+        fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent_fd)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.replace(temp_name, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        _refuse_changed_parent(path, os.fstat(parent_fd))
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(temp_name, dir_fd=parent_fd)
+        os.close(parent_fd)
+
+
+def _unlink_source(path: Path) -> None:
+    """Remove a newly created source file without following redirected parents."""
+    _refuse_symlink_parents(path)
+    if os.open in os.supports_dir_fd and os.unlink in os.supports_dir_fd:
+        parent_fd = _open_source_parent(path, create=False)
+        try:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(path.name, dir_fd=parent_fd)
+            _refuse_changed_parent(path, os.fstat(parent_fd))
+        finally:
+            os.close(parent_fd)
+    else:
+        parent_stat = path.parent.stat()
+        path.unlink(missing_ok=True)
+        _refuse_changed_parent(path, parent_stat)
 
 
 def _apply_one(op: dict, root: Path, journal: Journal) -> None:
@@ -254,10 +372,10 @@ def _rollback_source_writes(applied: list[dict], root: Path, journal: Journal) -
             if before_path.is_file():
                 _atomic_write(target_path, before_path.read_bytes())
             else:
-                target_path.unlink(missing_ok=True)
+                _unlink_source(target_path)
             if _sha256_file(target_path) != op["before_hash"]:
                 ok = False
-        except OSError:
+        except (OSError, IntegrationError):
             ok = False
     return "rollback-succeeded" if ok else "rollback-failed"
 
@@ -333,14 +451,27 @@ def cmd_apply(ns: argparse.Namespace, plugin_root: Path) -> int:
     return _EXIT_OK
 
 
-def _validate_runtime_sync(op: dict) -> None:
+def _validate_runtime_sync(op: dict, source: str, root: Path) -> None:
     """Revalidate one ``runtime_sync`` op's before-state immediately before executing it."""
+    try:
+        runtime = Runtime(op["runtime"])
+        source_kind = Source(source)
+    except ValueError as exc:
+        raise RefusalError("plan_mismatch", "runtime action does not match the planner") from exc
+    _refuse_if(runtime == Runtime.BOTH, "plan_mismatch", "runtime action does not match the planner")
     if op["role"] == "marketplace":
+        expected = _marketplace_sync_op(op["index"], runtime, source_kind, root)
+        _refuse_if(op["argv"] != expected["argv"], "plan_mismatch", "runtime argv does not match the planner")
         return  # a marketplace refresh has no single before-hash worth redrift-checking
+    _refuse_if(op["role"] != "plugin", "plan_mismatch", "runtime role does not match the planner")
+    if op["consumer"] != PROVIDER_NAME:
+        _find_target(runtime, op["consumer"])
     cli = _cli_for(op["runtime"])
     installed_state = native._native_json_probe([cli, "plugin", "list", "--json"])
     current = _installed_version_lookup(op["runtime"])(op["consumer"], installed_state)
     _refuse_if(current != op["before_hash"], "drift", "installed state changed since the plan was made")
+    expected = _plugin_sync_op(op["index"], runtime, op["consumer"], installed_state)
+    _refuse_if(op["argv"] != expected["argv"], "plan_mismatch", "runtime argv does not match the planner")
 
 
 def _verify_plugin_installed(op: dict) -> None:
@@ -350,8 +481,8 @@ def _verify_plugin_installed(op: dict) -> None:
         raise IntegrationError("post_state_mismatch", f"{op['consumer']} is not enabled after sync")
 
 
-def _sync_one(op: dict, journal: Journal) -> None:
-    _validate_runtime_sync(op)
+def _sync_one(op: dict, journal: Journal, source: str, root: Path) -> None:
+    _validate_runtime_sync(op, source, root)
     journal.record("applying", index=op["index"])
     for argv in op["argv"]:
         native._run_native_required(argv)
@@ -431,7 +562,7 @@ def sync_plan(plan: dict, approve: str, source: str, plugin_root: Path, journal_
     applied: list[dict] = []
     for op in ops:
         try:
-            _sync_one(op, journal)
+            _sync_one(op, journal, source, root)
         except IntegrationError as exc:
             _handle_sync_failure(op, applied, journal, exc)
         applied.append(op)

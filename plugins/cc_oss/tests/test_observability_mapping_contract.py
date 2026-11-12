@@ -16,6 +16,7 @@ from pathlib import Path
 
 import agent_watch as aw
 import pytest
+from _skill_source import read_skill_source
 
 _PLUGIN = Path(__file__).resolve().parents[1]
 _SKILLS = _PLUGIN / "skills"
@@ -25,7 +26,10 @@ _BASELINE = json.loads((Path(__file__).parent / "data/observability_baseline.jso
 @functools.cache
 def _skill_text(skill: str) -> str:
     """Concatenate every Markdown file one skill ships, so an output moved between its files still counts."""
-    return "\n".join(path.read_text(encoding="utf-8") for path in sorted((_SKILLS / skill).rglob("*.md")))
+    text = "\n".join(path.read_text(encoding="utf-8") for path in sorted((_SKILLS / skill).rglob("*.md")))
+    if skill in {"release", "review"}:
+        text += "\n" + (_SKILLS / "_shared/agent-resolution.md").read_text(encoding="utf-8")
+    return text
 
 
 def _rows(key: str) -> list:
@@ -91,7 +95,7 @@ class TestRestoredVisibility:
         These were the regressions: the Step 4 git context, review's expected-file list, the full-suite run record
         (its duration is otherwise lost once the suite runs in a background call) and the final report sections.
         """
-        assert needle in (_SKILLS / skill / relative).read_text(encoding="utf-8")
+        assert needle in read_skill_source(_SKILLS / skill / relative)
 
     def test_agent_watch_reports_liveness(self, tmp_path: Path) -> None:
         """Agent_watch shows at least what the old probe did: which agents are pending, elapsed time, who timed out.

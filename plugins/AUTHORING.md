@@ -94,6 +94,7 @@ Applies when creating or editing a `plugins/<name>/bin/` script.
 
 - **Python scripts**: type hints, module docstring, `if __name__ == "__main__"` guard; ruff-format 120-char line length (pre-commit enforced); aggregate related print output into a single `print()` using `\n`/`\t`; pure functions (no I/O, no subprocess, no env-var reads) → `doctest` in the docstring; anything with I/O/subprocess/argv → `pytest` with `capsys`/`monkeypatch` in `tests/` alongside `bin/`
 - **bin/ scope**: deterministic transforms only (parse args, resolve paths, compute one value); decision flow, branching prompts, agent-dispatch logic stays in SKILL.md prose
+- **Claude helper calls**: each executable block starts `PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name <plugin>) || exit $?; export PLUGIN_ROOT`, then uses `python "$PLUGIN_ROOT/bin/<name>.py"`. Only the plain bootstrap token receives host substitution in skills and agents; loaded modes, templates and sidecars must pass through a plugin loader or `render_plugin_root.py`, which renders that token literally with shell-context escaping. Never use defaulted tokens or cwd-relative bootstrap paths. Root selection is install record, validated cache, then the resolver's own AI-Rig checkout only when cwd is inside it. Codex recipes retain their explicit portable-launcher policy.
 - **Reference design**: `plugins/codemap-py/bin/` (typed, docstrings, `__name__` guards, dataclass serialization boundaries)
 
 ## references/<agent> Nesting Mechanism

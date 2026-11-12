@@ -17,6 +17,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from render_plugin_root import render_document
 
 _needs_sed = pytest.mark.skipif(shutil.which("sed") is None, reason="sed is not on PATH")
 
@@ -38,18 +39,23 @@ def _load_arguments(skill: str) -> list[str]:
     """Return the sweep load command for ``skill`` as an argv list without the trailing owner file path."""
     owner_ref = f'"$_RESEARCH_SKILLS/{skill}/SKILL.md"'
     lines = _SWEEP.read_text(encoding="utf-8").splitlines()
-    commands = [line for line in lines if line.startswith("sed ") and line.endswith(owner_ref)]
+    commands = [line for line in lines if "render_plugin_root.py" in line and owner_ref in line and " | sed " in line]
     assert len(commands) == 1, f"sweep must hold exactly one sed load of {skill}/SKILL.md, found {len(commands)}"
-    arguments = shlex.split(commands[0])
-    assert arguments[-1] == f"$_RESEARCH_SKILLS/{skill}/SKILL.md"
-    return arguments[:-1]
+    arguments = shlex.split(commands[0].split(" | ", 1)[1].split(" || exit", 1)[0])
+    assert arguments[0] == "sed"
+    return arguments
 
 
 def _load(skill: str, source: Path | None = None) -> str:
     """Run sweep's load command for ``skill`` against its owner file, or against ``source`` when given."""
     target = source or _owner(skill)
     done = subprocess.run(
-        [*_load_arguments(skill), str(target)], capture_output=True, text=True, encoding="utf-8", check=True
+        _load_arguments(skill),
+        input=render_document(target.read_text(encoding="utf-8"), _SKILLS.parent),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
     )
     return done.stdout
 
@@ -88,7 +94,7 @@ class TestLoadedRange:
         assert "<notes>" in loaded
         assert "Verdict deterministic" in loaded
         assert not any(marker in loaded for marker in _JUDGE_HEAD_MARKERS)
-        assert _owner("judge").read_text(encoding="utf-8").endswith(loaded)
+        assert render_document(_owner("judge").read_text(encoding="utf-8"), _SKILLS.parent).endswith(loaded)
 
     def test_run_keeps_constants_agent_resolution_steps_notes(self) -> None:
         """The run load keeps constants, Agent Resolution (its sentinel feeds every mode load), R0-R7, modes, notes.
@@ -102,7 +108,7 @@ class TestLoadedRange:
         assert all(token in loaded for token in required)
         assert all(token in loaded for token in ("## Resume Mode", "## Mode: colab", "<notes>"))
         assert "<objective>" not in loaded
-        assert _owner("run").read_text(encoding="utf-8").endswith(loaded)
+        assert render_document(_owner("run").read_text(encoding="utf-8"), _SKILLS.parent).endswith(loaded)
 
     def test_run_constants_defined_in_loaded_text(self) -> None:
         """Each constant the run steps name resolves to a key of the ``<constants>`` block the load keeps.
@@ -123,7 +129,7 @@ class TestLoadedRange:
         The head is skipped, so a sentinel it wrote or a ``--persist`` key it set would be missing at runtime unless
         sweep sets the same keys.
         """
-        owner_text = _owner(skill).read_text(encoding="utf-8")
+        owner_text = render_document(_owner(skill).read_text(encoding="utf-8"), _SKILLS.parent)
         dropped = owner_text[: len(owner_text) - len(_load(skill))]
         persisted_by_head = set(re.findall(r"--persist (\S+)", dropped))
         persisted_by_sweep = set(re.findall(r"--persist (\S+)", _SWEEP.read_text(encoding="utf-8")))

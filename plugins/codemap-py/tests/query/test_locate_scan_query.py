@@ -66,6 +66,7 @@ def configure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[..., 
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows compat
         monkeypatch.setattr(shutil, "which", lambda cmd: None if path_hit is None else str(path_hit))
+        monkeypatch.setattr(_mod, "__file__", str(tmp_path / "bin" / "locate_scan_query.py"))
 
     return _configure
 

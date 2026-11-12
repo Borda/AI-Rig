@@ -25,6 +25,15 @@
       {
         "hooks": [
           {
+            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/md-compress.js\"; done; exit 0",
+            "type": "command"
+          }
+        ],
+        "matcher": "Edit"
+      },
+      {
+        "hooks": [
+          {
             "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js\"; done; exit 0",
             "type": "command"
           }
@@ -164,7 +173,7 @@
             "type": "command"
           }
         ],
-        "matcher": "Bash"
+        "matcher": "Bash|Monitor"
       },
       {
         "hooks": [
@@ -173,7 +182,7 @@
             "type": "command"
           }
         ],
-        "matcher": "Bash"
+        "matcher": "Bash|Monitor"
       },
       {
         "hooks": [
@@ -182,7 +191,7 @@
             "type": "command"
           }
         ],
-        "matcher": "Bash"
+        "matcher": "Bash|Monitor"
       },
       {
         "hooks": [
@@ -191,7 +200,7 @@
             "type": "command"
           }
         ],
-        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit"
+        "matcher": "Bash|Monitor|Write|Edit|MultiEdit|NotebookEdit"
       },
       {
         "hooks": [
@@ -200,16 +209,7 @@
             "type": "command"
           }
         ],
-        "matcher": "Bash"
-      },
-      {
-        "hooks": [
-          {
-            "command": "for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v \"$n\" >/dev/null 2>&1 && exec \"$n\" \"${CLAUDE_PLUGIN_ROOT}/hooks/md-compress.js\"; done; exit 0",
-            "type": "command"
-          }
-        ],
-        "matcher": "Edit"
+        "matcher": "Bash|Monitor"
       },
       {
         "hooks": [
@@ -218,7 +218,7 @@
             "type": "command"
           }
         ],
-        "matcher": "Edit"
+        "matcher": "Edit|MultiEdit"
       },
       {
         "hooks": [
@@ -290,7 +290,7 @@
         "hooks": [
           {
             "async": true,
-            "command": "mkdir -p ~/.claude/state && claude auth status > ~/.claude/state/subscription.json 2>/dev/null",
+            "command": "umask 077; mkdir -p ~/.claude/state && claude auth status > ~/.claude/state/subscription.json 2>/dev/null",
             "type": "command"
           }
         ]

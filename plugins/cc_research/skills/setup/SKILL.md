@@ -33,7 +33,7 @@ NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `
 <inputs>
 
 - **No arguments** — interactive; prompts before replacing a conflicting destination.
-- **`--approve`** — non-interactive; replaces conflicting destinations without asking. Used by `make sync-claude`.
+- **`--approve`** — non-interactive; replaces conflicting links without asking and preserves real user files. Used by `make sync-claude`.
 
 </inputs>
 
@@ -49,9 +49,9 @@ Parse `$ARGUMENTS` for `--approve` (case-insensitive) → `APPROVE_ALL=true`, el
 
 ```bash
 # later steps run bare `python` (plugin bin/python shim on PATH) — probe that exact command
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 python --version 2>&1 | grep -qE "Python 3\.(1[0-9]|[2-9][0-9])" || { printf "! Python 3.10+ not found as 'python' — install it and re-run /research:setup\n"; exit 1; }
 printf "  Python: %s\n" "$(python --version 2>&1)"
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}"
 python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT" --dry-run  # timeout: 15000
 ```
 
@@ -62,18 +62,18 @@ Non-zero exit → print stderr verbatim and stop; nothing was modified.
 Run without `--dry-run`. `APPROVE_ALL=true` → run the `--approve` block below instead:
 
 ```bash
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}"
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT"  # timeout: 15000
 ```
 
-`APPROVE_ALL=true` variant (also used when re-running after (b) in Step 3):
+`APPROVE_ALL=true` variant:
 
 ```bash
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}"
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT" --approve  # timeout: 15000
 ```
 
-Output lines, one per destination: `linked:` · `unchanged:` · `replaced (--approve):` · `removed obsolete:` · `conflict, kept as-is:` · `FAILED:`.
+Output lines, one per destination: `linked:` · `unchanged:` · `replaced (explicit approval):` · `removed obsolete:` · `conflict, kept as-is:` · `FAILED:`.
 
 Ownership is proved before any replace or remove: the existing link must resolve under the current plugin root, or under the same `~/.claude/plugins/cache/<marketplace>/research/` lineage as the current install. A link into another marketplace, another plugin, a source checkout, or a dotfiles tree is never adopted — path substrings are not evidence of ownership.
 
@@ -81,15 +81,20 @@ Ownership is proved before any replace or remove: the existing link must resolve
 
 No `conflict, kept as-is:` lines → skip to Step 4.
 
-`APPROVE_ALL=true` → conflicts were already replaced in Step 2; skip to Step 4.
+`APPROVE_ALL=true` with remaining conflicts → report them as undelivered and stop; do not assume replacement succeeded.
 
 Otherwise invoke `AskUserQuestion`, listing each conflicting destination and its current state:
 
 - (a) **Keep them** — those rules stay undelivered
-- (b) **Replace all with plugin links** ★ recommended — existing content is overwritten
+- (b) **Replace all with plugin links** ★ recommended — real user files are backed up beside the destination before replacement
 - (c) **Abort** — leave everything as it is
 
-On **(b)**, run the `--approve` block from Step 2 and report the resulting `replaced (--approve):` lines. On (a) or (c), report which rules remain undelivered.
+On **(b)**, run this fixed replacement block only after the user explicitly chooses replacement, then report the resulting `replaced (explicit approval):` lines and sibling `<destination>.bak-<timestamp>` backups. `--approve` alone preserves real user files. On (a) or (c), report which rules remain undelivered.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT" --approve --replace-user-files  # timeout: 15000
+```
 
 ## Step 4: Merge permissions.allow and permissions.deny
 
@@ -114,9 +119,9 @@ Before merging, remove exactly the entries in `permissions-allow-retired.json`: 
 Writes merged `permissions.allow` and `permissions.deny` arrays via `merge_settings_permissions.py` — one atomic write covers both arrays, so allow never lands without deny. A missing or invalid shipped file aborts the block with settings unchanged. The same block then validates what was written: settings.json that no longer parses is restored from the backup taken above, the failure is printed, and the block exits 1 — report it and stop; zero exit → continue to Step 5:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow-file "$PLUGIN_ROOT/.claude-plugin/permissions-allow-retired.json" --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
+python "$PLUGIN_ROOT/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow-file "$PLUGIN_ROOT/.claude-plugin/permissions-allow-retired.json" --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 if ! python -m json.tool ~/.claude/settings.json > /dev/null; then  # timeout: 5000
     IFS= read -r SETUP_BAK_TS < "${TMPDIR:-/tmp}/research-setup-bak-ts-${CSID}" 2>/dev/null || SETUP_BAK_TS=$(ls -t "$HOME/.claude/settings.json.bak-"* 2>/dev/null | head -1 | sed 's/.*\.bak-//')
     cp "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}" ~/.claude/settings.json  # timeout: 5000

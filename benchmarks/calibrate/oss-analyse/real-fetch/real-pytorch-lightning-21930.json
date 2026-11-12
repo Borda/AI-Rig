@@ -1,0 +1,428 @@
+{
+  "10759": {
+    "number": 10759,
+    "title": "Proper support for Pytorch SequentialLR Scheduler",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nCurrently there is a bug when a ReduceLROnPlateau is used inside SequentialLR due to no proper support for this scheduler in [Trainer._configure_schedulers](https://github.com/PyTorchLightning/pytorch-lightning/blob/b57feccbff57271144dae70a82b1948f7a4cf7af/pytorch_lightning/trainer/optimizers.py#L123-L193). An exception is raised since the monitor metric is not properly passed to the ReduceLROnPlateau scheduler in [TrainingEpochLoop._update_learning_rates](https://github.com/PyTorchLightning/pytorch-lightning/blob/b57feccbff57271144dae70a82b1948f7a4cf7af/pytorch_lightning/loops/epoch/training_epoch_loop.py#L447-L507)\r\n\r\nNote: Currently, there is a bug in SequentialLR missing an optimizer attribute, see https://github.com/pytorch/pytorch/pull/67406 and https://github.com/PyTorchLightning/pytorch-lightning/issues/10278. But that should not interfere here.\r\n\r\n### To Reproduce\r\nrun any lightning model with trainer with scheduler setup like:\r\n```python\r\ndef configure_optimizers(self):\r\n    optimizer = torch.optim.Adam(self.parameters(), lr=0.01)\r\n    s1= torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)\r\n    s2= torch.optim.lr_scheduler.ConstantLR(optimizer)\r\n    scheduler = torch.optim.lr_scheduler.SequentialLR(\r\n        optimizer,\r\n        schedulers=[s1, s2],\r\n        milestones=[2]\r\n    )\r\n    scheduler.optimizer = optimizer  # dirty fix for bug in SequentialLR\r\n    return {\"optimizer\": optimizer,\r\n            \"lr_scheduler\": scheduler,\r\n            \"monitor\": \"loss\"}\r\n```\r\n<!--\r\nPlease reproduce using the BoringModel!\r\n\r\nYou can use the following Colab link:\r\nhttps://colab.research.google.com/github/PytorchLightning/pytorch-lightning/blob/master/pl_examples/bug_report/bug_report_model.ipynb\r\nIMPORTANT: has to be public.\r\n\r\nor this simple template:\r\nhttps://github.com/PyTorchLightning/pytorch-lightning/blob/master/pl_examples/bug_report/bug_report_model.py\r\n\r\nIf you could not reproduce using the BoringModel and still think there's a bug, please post here\r\nbut remember, bugs with code are fixed faster!\r\n-->\r\n\r\n### Expected behavior\r\nThe monitor value should be passed to the underlying ReduceLROnPlateau scheduler. \r\n\r\nThis is defenitely tricky to achieve as the current way is assuming a fixed scheduler setup for the entire training time, e.g. allows for multiple scheduler but if scheduler1 is changing midway it only works if it is not ReduceLROnPlateau.\r\n\r\n### Environment\r\n- PyTorch Lightning Version (e.g., 1.5.0): 1.5.3\r\n- PyTorch Version (e.g., 1.10): 1.10\r\n- Python version (e.g., 3.9): 3.9\r\n- OS (e.g., Linux): Windows\r\n- CUDA/cuDNN version: 10.2\r\n- GPU models and configuration: -\r\n- How you installed PyTorch (`conda`, `pip`, source): pip\r\n- If compiling from source, the output of `torch.__config__.show()`: -\r\n- Any other relevant information: -\r\n\r\n### Additional context\r\n\r\n\n\ncc @user-17",
+    "comments": [
+      {
+        "author": "user-4",
+        "body": "Related to this but for another issue: There is no support for custom LRScheduler afaik unless they are inherited from _LRScheduler AND require no extra arguments when .step() is called.\r\n\r\nIn vanilla pytorch this is \"solved\" as the user is calling .step() directly.\r\n\r\nPerhaps the newly introduced customizable loops is a solution for this?"
+      },
+      {
+        "author": "user-5",
+        "body": "> Perhaps the newly introduced customizable loops is a solution for this?\r\n\r\nI would rather go with [\"Manual Optimization\"](https://pytorch-lightning.readthedocs.io/en/latest/common/optimizers.html?highlight=Manual%20Optimizuation#manual-optimization) before going for custom loops. \r\n\r\nIn manual optimization mode, the user calls the scheduler step manually, hence you can use a custom one and pass args to its step method. How does that sound for a (temporary?) workaround?"
+      },
+      {
+        "author": "user-4",
+        "body": "great idea, i forgot about that. I guess that solves the custom scheduler issue. But I still think the support for SequentialLR is necessary. I think there is a debate on Pytorch whether the schedule class needs a rewrite, so perhaps one waits for that?"
+      },
+      {
+        "author": "user-6",
+        "body": "For the main issue regarding `ReduceLROnPlateau`, `SequentialLR` doesn't support an additional argument inside `.step` so we really can't do anything from our side.\r\nhttps://github.com/pytorch/pytorch/blob/5fdcc20d8d96a6b42387f57c2ce331516ad94228/torch/optim/lr_scheduler.py#L628\r\n\r\n> Related to this but for another issue: There is no support for custom LRScheduler afaik unless they are inherited from _LRScheduler AND require no extra arguments when .step() is called.\r\n\r\nDo you have any scheduler that is inherited from `_LRScheduler` and requires an additional argument inside the `.step` method? I have a PR for it: https://github.com/PyTorchLightning/pytorch-lightning/pull/10249, that will solve the issue but seems to be blocked under the decision whether to support outside schedulers or not which are not inherited from PT `_LRScheduler`."
+      },
+      {
+        "author": "user-4",
+        "body": "Well, I wanted to use WarmStart (custom scheduler inherited from _LRScheduler) together with ReduceLROnPlateu. First try was using SequentialLR but as outlined above is impossible to use with ReduceLROnPlateu. Then I simply inherited from ReduceLROnPlateu and modified its step function to include the logic from WarmStart. See [here](https://gist.github.com/Nesqulck/48c562d358c5484db8362fdfe634dbd0) for the code. That works now with PytorchLightning as it is simply a ReduceLROnPlateu in disguise. Although it would be cleaner to use SequentialLR but is now a pytorch issue rather than PL. Maybe a separate issue can be opened there such that SequentialLR can accept arbitrary arguments in step?"
+      },
+      {
+        "author": "user-6",
+        "body": "yeah, I'd suggest opening an issue in PyTorch and linking it here. We won't close this issue. Once they support it, we will make adjustments here, if required, to make it compatible."
+      },
+      {
+        "author": "user-7",
+        "body": "@user-4 hello , would you please share the code again as the link is now dead . i am trying my hardest to incorporate warm up with reducelronplateu but no success so far"
+      },
+      {
+        "author": "user-4",
+        "body": "Sure but not guarantees that it works with any of the recent PyTorch or PytorhLightning versions. I haven't touched that in years.\r\n\r\n```python\r\n\r\nimport math\r\nimport warnings\r\n\r\nimport numpy as np\r\nfrom torch.optim.lr_scheduler import ReduceLROnPlateau, _LRScheduler\r\n\r\n\r\nclass WarmStartReduceOnPlateau(ReduceLROnPlateau):\r\n    def __init__(self,\r\n                 optimizer,\r\n                 warm_start: float,\r\n                 warm_stop: float,\r\n                 warm_patience: int = 0,\r\n                 warm_duration: int = 25,\r\n                 warm_type: str = \"linear\",\r\n                 mode: str = \"min\",\r\n                 patience: int = 10,\r\n                 cooldown=0,\r\n                 factor=0.1,\r\n                 threshold=1e-4,\r\n                 threshold_mode='rel',\r\n                 min_lr=0,\r\n                 eps=1e-8,\r\n                 verbose=False):\r\n        \"\"\"\r\n        Workaround class as SequentialLR with ReduceLROnPlateau is not working in pytorch lightning current"
+      },
+      {
+        "author": "user-7",
+        "body": "@user-4 it's working fantastically . thank you so much."
+      }
+    ]
+  },
+  "20356": {
+    "number": 20356,
+    "title": "Type annotation for `BasePredictionWriter` subclass",
+    "state": "open",
+    "body": "### Bug description\r\n\r\nSubclassing the `BasePredictionWriter` for custom functionality results in Pylance complaining about incorrect type.\r\n\r\n### What version are you seeing the problem on?\r\n\r\nv2.4\r\n\r\n### How to reproduce the bug\r\n\r\n```python\r\nfrom __future__ import annotations\r\n\r\nfrom pathlib import Path\r\nfrom typing import TYPE_CHECKING, Any, Literal\r\n\r\nimport lightning as L\r\nfrom lightning.pytorch.callbacks import BasePredictionWriter\r\n\r\nif TYPE_CHECKING:\r\n    import polars as pl\r\n    from lightning.pytorch import LightningModule, Trainer\r\n    from torch import Tensor\r\n\r\n\r\nclass ParquetWriter(BasePredictionWriter):\r\n    \"\"\"\r\n    Callback for writing predictions to Parquet files.\r\n\r\n    Parameters\r\n    ----------\r\n    output_dir\r\n        The directory where the parquet files will be written.\r\n    write_interval\r\n        The interval at which the predictions will be written.\r\n    \"\"\"\r\n\r\n    def __init__(self, output_dir: str, write_interval: Literal[\"batch\"]) -> None:\r\n        super().__init__(write_interval)\r\n        self.output_dir = Path(output_dir)\r\n\r\n    def write_on_batch_end(\r\n        self,\r\n        trainer: Trainer,\r\n        pl_module: LightningModule,  # noqa: ARG002\r\n        prediction: pl.DataFrame,\r\n        batch_indices: Tensor,  # noqa: ARG002\r\n        batch: dict[str, Any],  # noqa: ARG002\r\n        batch_idx: int,\r\n        dataloader_idx: int,  # noqa: ARG002\r\n    ) -> None:\r\n        \"\"\"Write the prediction to a parquet file.\"\"\"\r\n        prediction.write_parquet(\r\n            self.output_dir / f\"{trainer.global_rank}{batch_idx}.parquet\",\r\n        )\r\n\r\n\r\ncallbacks = [\r\n    ParquetWriter(\r\n        output_dir=\"/tmp\",\r\n        write_interval=\"batch\",\r\n    ),\r\n]\r\ntrainer = L.Trainer(\r\n    callbacks=callbacks, <----- Pylance(reportArgumentType)\r\n)\r\n```\r\n\r\n\r\n### Error messages and logs\r\n\r\n```\r\nArgument of type \"list[ParquetWriter]\" cannot be assigned to parameter \"callbacks\" of type \"List[Callback] | Callback | None\" in function \"__init__\"\r\n  Type \"list[ParquetWriter]\" is not assignable to type \"List[Callback] | Callback | None\"\r\n    \"list[ParquetWriter]\" is not assignable to \"List[Callback]\"\r\n      Type parameter \"_T@list\" is invariant, but \"ParquetWriter\" is not the same as \"Callback\"\r\n      Consider switching from \"list\" to \"Sequence\" which is covariant\r\n    \"list[ParquetWriter]\" is not assignable to \"Callback\"\r\n    \"list[ParquetWriter]\" is not assignable to \"None\"\r\n```\r\n\r\n### Environment\r\n\r\n<details>\r\n  <summary>Current environment</summary>\r\n\r\n* CUDA:\r\n\t- GPU:               None\r\n\t- available:         False\r\n\t- version:           None\r\n* Lightning:\r\n\t- lightning:         2.4.0\r\n\t- lightning-utilities: 0.11.7\r\n\t- pytorch-lightning: 2.4.0\r\n\t- torch:             2.4.1\r\n\t- torchaudio:        2.4.1\r\n\t- torchmetrics:      1.4.2\r\n\t- torchvision:       0.19.1\r\n* Packages:\r\n\t- aenum:             3.1.12\r\n\t- aiohappyeyeballs:  2.4.3\r\n\t- aiohttp:           3.10.8\r\n\t- aiosignal:         1.3.1\r\n\t- altair:            5.4.1\r\n\t- annotated-types:   ",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Reason we are seeing this is that `list` is invariant in its type parameter (unlike `Sequence` which is covariant).. Even though `ParquetWriter` is a subclass of `Callback`, `list[ParquetWriter]` is not considered a subtype of `list[Callback]` due to invariance. The simple solution to this is to change `list[Callback]` to `Sequence[Callback]`."
+      }
+    ]
+  },
+  "20743": {
+    "number": 20743,
+    "title": "Allow customized parameter grouping for automatic optimzier configuration",
+    "state": "open",
+    "body": "### Description & Motivation\n\nI personally rewrite the CLI's `_add_configure_optimizers_to_model`: replace `self.model.parameters()` with an additional method `_get_model_parameters`. The default behavior of this method is just returning `self.model.parameters()`. But after this change, I can directly inherit a new subclass from LightningCLI, change what happens in `_get_model_parameters`, to allow optimizers get parameter names and values together.\n\nIn this case, I can write a new optimizer to allow applying weight decay to different groups of parameters, while not manually write `configure_optimizers` method in my LightningModule, nor worrying about CLI config files or anything else.\n\nWhat I'm current doing is:\n\n1. Write a new optimizer interface:\n```[python]\nclass AutoDetachBiasDecay(Optimizer):\n\n    def __new__(\n        cls,\n        /,\n        named_params: Iterator[tuple[str, Parameter]],\n        optimizer_class: type[Optimizer],\n        lr: float = 1.0e-3,\n        weight_decay: float = 1.0e-2,\n        **kwargs,\n    ):\n        decay, no_decay = [], []\n        for name, param in named_params:\n            if not param.requires_grad:\n                continue\n            if \"bias\" in name or \"Norm\" in name:\n                no_decay.append(param)\n            else:\n                decay.append(param)\n\n        grouped_params = [\n            {\"params\": decay, \"weight_decay\": weight_decay, \"lr\": lr},\n            {\"params\": no_decay, \"weight_decay\": 0.0, \"lr\": 5 * lr},\n        ]\n\n        return optimizer_class(grouped_params, **kwargs)\n```\n\n2. Changed the cli.py file\nBefore:\n```[python]\n        optimizer = instantiate_class(self.model.parameters(), optimizer_init)\n        lr_scheduler = instantiate_class(optimizer, lr_scheduler_init) if lr_scheduler_init else None\n        fn = partial(self.configure_optimizers, optimizer=optimizer, lr_scheduler=lr_scheduler)\n        update_wrapper(fn, self.configure_optimizers)  # necessary for `is_overridden`\n        # override the existing method\n        self.model.configure_optimizers = MethodType(fn, self.model)\n```\nAfter:\n```[python]\n        optimizer = instantiate_class(self._get_parameters(), optimizer_init)\n        lr_scheduler = instantiate_class(optimizer, lr_scheduler_init) if lr_scheduler_init else None\n        fn = partial(self.configure_optimizers, optimizer=optimizer, lr_scheduler=lr_scheduler)\n        update_wrapper(fn, self.configure_optimizers)  # necessary for `is_overridden`\n        # override the existing method\n        self.model.configure_optimizers = MethodType(fn, self.model)\n\n    def _get_parameters(self) -> dict[str, Any]:\n        return self.model.parameters()\n```\n\n3. Write a new subclass of CLI\n```[python]\nclass NamedParamsCLI(LightningCLI):\n    model: torch.nn.Module\n\n    def _get_parameters(self):\n        return self.model.named_parameters()\n```\n\n4. Replace the optimizer config yaml file from\n```[yaml]\nclass_path: AdamW\ninit_args: something\n```\nto\n```[yaml]\nclass_path: path.to.AutoDetach",
+    "comments": [
+      {
+        "author": "user-10",
+        "body": "The automatic `configure_optimizers` from `LightningCLI` is intended only for simple cases. I would probably be against changing that logic. For more complex cases or any custom behavior, I would recommend to implement `configure_optimizers` in the module and use dependency injection as explained in [multiple-optimizers-and-schedulers](https://lightning.ai/docs/pytorch/stable/cli/lightning_cli_advanced_3.html#multiple-optimizers-and-schedulers)."
+      },
+      {
+        "author": "user-11",
+        "body": "> [schedulers](https://lightning.ai/docs/pytorch/stable/cli/lightning_cli_advanced_3.html#multiple-optimizers-and-schedulers).\n\nMany schedulers require specifying the number of steps.\nSuch as \"total_steps\" in OneCycleLR, and \"T_max\" in CosineAnnealingLR.\nHowever, in YAML, the \"${trainer.estimated_stepping_batches} cannot be used.\n\nIf I use a custom string and replace it during instantiation, there will still be a problem of different types.\n```\ndef configure_optimizers(self):\n    ...\n    for key, value in self.scheduler.keywords.items():\n        if value == \"ALL_STEPS\":\n            self.scheduler.keywords[key] = self.trainer.estimated_stepping_batches\n    scheduler = self.scheduler(optimizer)\n    ...\n```\nThen they will encounter type checking issues.\n```\nType typing.Callable[[torch.optim.optimizer.Optimizer], typing.Union[torch.optim.lr_scheduler.LRScheduler, lightning.pytorch.cli.ReduceLROnPlateau]] expects a function or a callable class: Parser key \"total_steps\"\n```\nIn fact, I unders"
+      }
+    ]
+  },
+  "18870": {
+    "number": 18870,
+    "title": "Support for returning LRSchedulerConfig on LightningModule.configure_optimizers",
+    "state": "open",
+    "body": "### Description & Motivation\n\nThis is a re-proposal for #13569. At that time, this feature is considered to be discouraged since `LRSchedulerConfig` is supposed to be an \"internal structure\" (according to [this comment](https://github.com/Lightning-AI/lightning/issues/13569#issuecomment-1180878555)). However, as #18463 adds type hints for the returns of `configure_optimizers` (also can be found in the [current documentation](https://lightning.ai/docs/pytorch/2.1.0/common/lightning_module.html#configure-optimizers)), one of them is `Tuple[Sequence[Optimizer], Sequence[Union[LRScheduler, ReduceLROnPlateau, LRSchedulerConfig]]]`, indicating that returning `LRSchedulerConfig` should be supported now.\r\n\r\nAccording to my personal experience, I find returning `LRSchedulerConfig` handy, and I hope this feature could be supported, instead of revising the type hints. Thanks!\n\n### Pitch\n\nThe suggestion proposed in #13569 still should work, i.e., adding the following two lines to `_configure_schedulers_automatic_opt`:\r\n\r\n```python\r\n...\r\nelif isinstance(scheduler, LRSchedulerConfig):\r\n    config = scheduler\r\n...\r\n```\n\n### Alternatives\n\n_No response_\n\n### Additional context\n\n_No response_\n\ncc @user-67 @user-13 @user-3 @user-5",
+    "comments": [
+      {
+        "author": "user-13",
+        "body": "My suggestion would be to get rid of https://github.com/Lightning-AI/lightning/blob/master/src/lightning/pytorch/utilities/types.py#L86-L100 and always use the TypedDict version https://github.com/Lightning-AI/lightning/blob/master/src/lightning/pytorch/utilities/types.py#L103-L110 (would need to be renamed)\r\n\r\nThen both us internally and the user deal with dictionaries at runtime, and the user is free to import the `TypedDict` version for improved typing."
+      }
+    ]
+  },
+  "18972": {
+    "number": 18972,
+    "title": "Loose type annotations of hparams cause Pylint basic type checker false positives",
+    "state": "open",
+    "body": "### Bug description\r\n\r\nLoose type annotation for `hparams` causes false positives in type checkers if hyperparameters are accessed as attributes.\r\n\r\nI have identified the problem and will open a PR shortly.\r\n\r\n### What version are you seeing the problem on?\r\n\r\nv2.1\r\nv2.0\r\nmaster\r\n\r\n### How to reproduce the bug\r\n\r\n```python\r\nSimple snippet:\r\n\r\n\r\nimport pytorch_lightning as pl\r\n\r\n\r\nclass TrivialModule(pl.LightningModule):\r\n    def __init__(self, arg: int = 1):\r\n        super().__init__()\r\n        self.save_hyperparameters()\r\n    \r\n    def forward(self, x: T) -> T:\r\n        return x * self.hparams.arg\r\n```\r\n\r\n\r\n### Error messages and logs\r\n\r\nUsing VSCode, set the pylint basic type checker to \"basic\". \r\nYou will get the following false positive:\r\n\r\n![image](https://github.com/Lightning-AI/lightning/assets/13602468/9f4fb268-e80e-416c-8a5f-f4bcf8961dc4)\r\n\r\nThis is because `self.hparams` should be annotated as `AttributeDict`, rather than `Union[AttributeDict, MutableMapping]`\r\n\r\n\r\n### Environment\r\n\r\n<details>\r\n  <summary>Current environment</summary>\r\n\r\n* CUDA:\r\n        - GPU:\r\n                - NVIDIA A100-PCIE-40GB\r\n        - available:         True\r\n        - version:           11.8\r\n* Lightning:\r\n        - lightning-utilities: 0.9.0\r\n        - pytorch-lightning: 2.1.1\r\n        - torch:             2.0.1\r\n        - torch-cluster:     1.6.1\r\n        - torch-geometric:   2.3.0\r\n        - torchmetrics:      0.11.4\r\n* Packages:\r\n        - aiohttp:           3.8.4\r\n        - aiohttp-cors:      0.7.0\r\n        - aiosignal:         1.3.1\r\n        - alembic:           1.11.1\r\n        - antlr4-python3-runtime: 4.9.3\r\n        - anyio:             3.6.2\r\n        - appdirs:           1.4.4\r\n        - argcomplete:       3.0.8\r\n        - argon2-cffi:       21.3.0\r\n        - argon2-cffi-bindings: 21.2.0\r\n        - asttokens:         2.2.1\r\n        - async-timeout:     4.0.2\r\n        - attrs:             23.1.0\r\n        - awkward:           2.2.4\r\n        - awkward-cpp:       17\r\n        - backcall:          0.2.0\r\n        - backports.functools-lru-cache: 1.6.4\r\n        - beautifulsoup4:    4.12.2\r\n        - bleach:            6.0.0\r\n        - blessed:           1.20.0\r\n        - bokeh:             2.4.3\r\n        - cachetools:        5.3.1\r\n        - certifi:           2023.5.7\r\n        - cffi:              1.15.1\r\n        - cfgv:              3.4.0\r\n        - charset-normalizer: 3.1.0\r\n        - click:             8.1.3\r\n        - cloudpickle:       2.2.1\r\n        - cmaes:             0.9.1\r\n        - colorama:          0.4.6\r\n        - colorful:          0.5.5\r\n        - colorlog:          6.7.0\r\n        - comm:              0.1.3\r\n        - configparser:      6.0.0\r\n        - contourpy:         1.0.7\r\n        - coolname:          2.2.0\r\n        - coverage:          7.2.7\r\n        - cubinlinker:       0.3.0\r\n        - cuda-python:       11.8.2\r\n        - cudf:              23.6.1\r\n        - cugraph:           23.6.2\r\n        - cuml:              23.6.0\r\n        - ",
+    "comments": [
+      {
+        "author": "user-5",
+        "body": "Would this also address #17852 or is it different? Sorry no expert on this, just pointing it out in case related."
+      },
+      {
+        "author": "user-14",
+        "body": "Hi @user-5 Indeed, it seems like my report is a duplicate (somehow I didn't find the other issue). Feel free to close my issue, I'll link the PR to #17852 as well. "
+      }
+    ]
+  },
+  "21400": {
+    "number": 21400,
+    "title": "[cli] Fail gracefully on unsupported type annotations in config constructors",
+    "state": "open",
+    "body": "### Description & Motivation\n\n- When LightningCLI parses YAML configs it inspects constructor annotations via `LightningArgumentParser`/`jsonargparse`. Typing constructs such as `typing.List[str]` or `Protocol` instances (e.g., our `ModelConverter`) are not concrete runtime types, so LightningCLI raises validation/type errors before callbacks are instantiated (docs describe type-driven config parsing).\n- In our repo we had to strip the annotations entirely just to unblock training:\n\n```\ntrainer:\n \n...\n\n  callbacks:\n    - class_path: crosslayer_transcoder.utils.callbacks.ModelConversionCallback\n      init_args:\n        converter:\n          class_path: crosslayer_transcoder.utils.model_converters.circuit_tracer.CircuitTracerConverter  # implements ModelConverter Protocol \n          init_args:\n\n          ...\n\n        on_events: [\"on_train_batch_end\"]\n```\n\n```\nclass ModelConversionCallback(L.Callback):\n\n    # Note: you can't type these directly with List or ModelConverter\n    def __init__(\n        self, \n        converter, # type: ModelConverter \n        on_events=[\"on_train_batch_end\"], # type: List[str]\n    ):\n        super().__init__()\n\n...\n```\n\n### Pitch\n\n- During schema generation, detect when an annotation is a `typing` object or protocol that `jsonargparse` can’t coerce.\n- Instead of raising, fall back to treating the argument as `Any` (or defaulting to primitive validators) and log a warning pointing users to supported types.\n\n### Alternatives\n\n_No response_\n\n### Additional context\n\n_No response_\n\ncc @user-2 @user-10",
+    "comments": [
+      {
+        "author": "user-10",
+        "body": "@user-15 the behavior of `jsonargparse` when it encounters a type that it doesn't support is already to use `Any`. There could be bugs or edge cases. Better if you provide a minimal reproducible example for what is happening to you. The information above is not enough. Also I don't understand what you mean by\n\n> Typing constructs such as typing.List[str] or Protocol instances (e.g., our ModelConverter) are not concrete runtime types\n\nIf you have for `on_events` as type hint `List[str]` and you give to `LightningCLI` a list of strings, then there is no reason why it would fail. Is it that you did not know what the problem was, so you removed all type hints? Or does it actually fail if only `List[str]` is brought back?\n\nProtocols are supported, but I would need more information to say anything about `ModelConverter`.\n\nAnd please have a look in the docs [How do I troubleshoot a CLI?](https://lightning.ai/docs/pytorch/stable/cli/lightning_cli_faq.html#how-do-i-troubleshoot-a-cli)."
+      },
+      {
+        "author": "user-15",
+        "body": "@user-10 thank you for the response!\n\nI've been trying to come up with a minimal reproduction and I think it has something to do with module import scope or \"double importing\". \n\nI'm not familiar with this but trying to get a useful reproduction together and open it in the `jsonargparse` repo. \n\nWe can close this issue here. "
+      },
+      {
+        "author": "user-10",
+        "body": "@user-15 A minimal reproduction would be ideal, but I know that there are cases when it is difficult. If the code in question is public, then you could already share where `ModelConverter` is defined. Or share the logs with your original code with type hints as explained in [How do I troubleshoot a CLI](https://lightning.ai/docs/pytorch/stable/cli/lightning_cli_faq.html#how-do-i-troubleshoot-a-cli) to see if the information there gives clues what is happening."
+      }
+    ]
+  },
+  "9136": {
+    "number": 9136,
+    "title": "AdvancedProfiler: ValueError: Attempting to stop recording an action (run_test_evaluation) which was never started.",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nIf you have multiple Trainers and only one runs test, afterwards AdvancedProfiler crashes. This happens even if you free all Trainers except the one you want to run test on.\r\n\r\nI have code that has multiple Trainers, doing a grid search. To each Trainer, I just added AdvancedProfiler.\r\n\r\nI find the Trainer with the best_model_score and run test only on the best predictor. I then get this crash:\r\n\r\n```\r\nDATALOADER:0 TEST RESULTS\r\n{'test_chroma_acc': 0.05000000074505806,\r\n 'test_loss': 1763.811279296875,\r\n 'test_pitch_acc': 0.0}\r\n--------------------------------------------------------------------------------\r\nTesting: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 22.07it/s]\r\n  0%|                                                                                                                                                                                                       | 0/3 [00:24<?, ?it/s]\r\nTraceback (most recent call last):\r\n  File \"/Users/joseph/dev/neuralaudio/hear-eval-kit/heareval/predictions/runner.py\", line 75, in <module>\r\n    runner()\r\n  File \"/usr/local/lib/python3.9/site-packages/click/core.py\", line 1137, in __call__\r\n    return self.main(*args, **kwargs)\r\n  File \"/usr/local/lib/python3.9/site-packages/click/core.py\", line 1062, in main\r\n    rv = self.invoke(ctx)\r\n  File \"/usr/local/lib/python3.9/site-packages/click/core.py\", line 1404, in invoke\r\n    return ctx.invoke(self.callback, **ctx.params)\r\n  File \"/usr/local/lib/python3.9/site-packages/click/core.py\", line 763, in invoke\r\n    return __callback(*args, **kwargs)\r\n  File \"/Users/joseph/dev/neuralaudio/hear-eval-kit/heareval/predictions/runner.py\", line 69, in runner\r\n    task_predictions(\r\n  File \"/Users/joseph/dev/neuralaudio/hear-eval-kit/heareval/predictions/task_predictions.py\", line 772, in task_predictions\r\n    test_scores = best_trainer.test(ckpt_path=\"best\", test_dataloaders=test_dataloader)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 706, in test\r\n    results = self._run(model)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 918, in _run\r\n    self._dispatch()\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 982, in _dispatch\r\n    self.accelerator.start_evaluating(self)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/accelerators/accelerator.py\", line 95, in start_evaluating\r\n    self.training_type_plugin.start_evaluating(trainer)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/plugins/training_type/training_type_plugin.py\", line 165, in start_evaluating\r\n    self._results = trainer.run_stage()\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 993, in run_stage\r\n    return self._run_ev",
+    "comments": [
+      {
+        "author": "user-16",
+        "body": "@user-17 I was experiencing this bug on Ubuntu (GCP GPU instances), not Colab, originally.\r\n\r\nI just ran the colab python on OSX and got the error.\r\n\r\n```\r\n\r\n\r\nTraceback (most recent call last):\r\n  File \"/Users/joseph/Downloads/advancedprofiler_test_the_boringmodel.py\", line 154, in <module>\r\n    trainers[-1].test(test_dataloaders=test)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 706, in test\r\n    results = self._run(model)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 918, in _run\r\n    self._dispatch()\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 982, in _dispatch\r\n    self.accelerator.start_evaluating(self)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_lightning/accelerators/accelerator.py\", line 95, in start_evaluating\r\n    self.training_type_plugin.start_evaluating(trainer)\r\n  File \"/usr/local/lib/python3.9/site-packages/pytorch_ligh"
+      },
+      {
+        "author": "user-18",
+        "body": "I read thorugh the comment thread, can I take up this one to help to fix the issue?"
+      },
+      {
+        "author": "user-17",
+        "body": "Hey @ user-18,\r\n\r\nYes, please have a look and open a PR if you have a fix.\r\n\r\nBest,\r\nT.C"
+      },
+      {
+        "author": "user-18",
+        "body": "Fine, let me replicate the bug on my colab."
+      },
+      {
+        "author": "user-18",
+        "body": "> Hey @user-16,\r\n> \r\n> It is interesting, I have the impression the bug is actually related to Colab.\r\n> \r\n> This works locally.\r\n> \r\n> ```python\r\n> def test_advanced_profiler_on_test(tmpdir):\r\n> \r\n>     ds = RandomDataset(32, 64)\r\n>     loader = DataLoader(ds)\r\n>     model = BoringModel()\r\n> \r\n>     def run(tmpdir):\r\n>         trainer = Trainer(\r\n>             default_root_dir=tmpdir,\r\n>             max_epochs=1,\r\n>             progress_bar_refresh_rate=20,\r\n>             profiler=\"advanced\"\r\n>         )\r\n> \r\n>         trainer.fit(model, loader, loader)\r\n>         trainer.test(test_dataloaders=loader)\r\n> \r\n>         return trainer\r\n> \r\n>     for _ in range(4):\r\n>         trainer = run(tmpdir)\r\n> \r\n>     trainer.test(test_dataloaders=loader)\r\n> ```\r\n\r\nHey I successfully replicated the bug, the problem seems to be lying during the test after calling fit, specifically our dictionary object `pr = self.profiled_actions.get(action_name)` is trying to return the value of the `(action_name)` "
+      },
+      {
+        "author": "user-16",
+        "body": "@user-18 do you have access to an OSX machine you can try on too? That's my local arch where I also have this issue."
+      },
+      {
+        "author": "user-18",
+        "body": "@user-16 Yes, I have a Macbook, I will be trying out on that as well."
+      },
+      {
+        "author": "user-19",
+        "body": "Hi, I'm having the same issue on Linux / x86_64 arch, using a single trainer (I'm running the task through PyCharm IDE). \r\n\r\n```\r\n File \"xxx/lib/python3.6/site-packages/mixer/pl/trainer.py\", line 44, in train\r\n    self.fit(model=model, datamodule=datamodule)\r\n  File \"xxx/lib/python3.6/site-packages/pytorch_lightning/trainer/trainer.py\", line 552, in fit\r\n    self._run(model)\r\n  File \"xxx/lib/python3.6/site-packages/pytorch_lightning/trainer/trainer.py\", line 927, in _run\r\n    self.call_hook(\"on_fit_end\")\r\n  File \"xxx/lib/python3.6/site-packages/pytorch_lightning/trainer/trainer.py\", line 1235, in call_hook\r\n    output = accelerator_output if output is None else output\r\n  File \"xxx/lib/python3.6/contextlib.py\", line 88, in __exit__\r\n    next(self.gen)\r\n  File \"xxx/lib/python3.6/site-packages/pytorch_lightning/profiler/base.py\", line 97, in profile\r\n    self.stop(action_name)\r\n  File \"xxx/lib/python3.6/site-packages/pytorch_lightning/profiler/advanced.py\", line 70, in stop\r\n    raise Val"
+      },
+      {
+        "author": "user-20",
+        "body": "I have the same issue with `AdvancedProfiler` when I call `.start` and `.stop` manually. It appears to be broken. `SimpleProfiler` works just fine, however.\r\n\r\n```python\r\n    def on_validation_epoch_start(self):\r\n        self.profiler.start(f\"validation loop\")\r\n\r\n    def on_validation_epoch_end(self) -> None:\r\n        self.profiler.stop(f\"validation loop\")\r\n        self.profiler.describe()\r\n```\r\n\r\n\r\n`ValueError: Attempting to stop recording an action ([LightningModule]Model.on_validation_epoch_end) which was never started.`"
+      },
+      {
+        "author": "user-21",
+        "body": "Hi — I’d like to work on this issue. I’ll reproduce the error using the Colab repro linked in the issue, inspect pytorch_lightning/profiler/advanced.py, and implement a minimal fix so stop() is only called for actions that were started (e.g., add a guard or track started actions). I’ll also add a regression test that exercises the multi-Trainer / test flow and prevents this ValueError from recurring. I expect to open a PR within a few days that references this issue and includes the test and change"
+      }
+    ]
+  },
+  "20937": {
+    "number": 20937,
+    "title": "LightningModule -> configure_optimizers() return type",
+    "state": "closed",
+    "body": "### Bug description\n\nIn the documentation of the [`configure_optimizers`](https://lightning.ai/docs/pytorch/stable/api/lightning.pytorch.core.LightningModule.html#lightning.pytorch.core.LightningModule.configure_optimizers) it says that:\n\n> Returns:\n> Any of these 6 options. \n> - •••\n> - Dictionary, with an \"optimizer\" key, and (optionally) a \"lr_scheduler\" key whose value is a single LR scheduler or lr_scheduler_config.\n> - None - Fit will run without any optimizer.\n\nWhen I set the return type equal to the default one (`OptimizerLRScheduler`) I get the mypy error:\n```\nerror: Incompatible types (expression has type \"dict[str, object]\", TypedDict item \"lr_scheduler\" has type \"LRScheduler | ReduceLROnPlateau | LRSchedulerConfigType\")  [typeddict-item]\n```\n\nA possible solution could be something like adding `Mapping[Literal[\"optimizer\", \"lr_scheduler\"], Union[Optimizer, LRSchedulerTypeUnion, LRSchedulerConfig]],` to the  `OptimizerLRScheduler` type.\n\n### What version are you seeing the problem on?\n\nv2.5\n\n### Reproduced in studio\n\n_No response_\n\n### How to reproduce the bug\n\n```python\nclass Model(LightningModule):\n    def __init__(\n        self,\n        model: Aurora,\n        loss_fn: nn.Module,\n        lr: float,\n        warmup_len: int = 1000,\n    ) -> None:\n        super().__init__()\n        self.model = model\n        self.loss_fn = loss_fn\n        self.lr = lr\n        self.warmup_len = warmup_len\n\n    def forward(self, x: Batch) -> Batch:\n        return self.model(x)\n\n    def training_step(self, batch: dict[str, Batch]) -> Tensor:\n        input, target = batch[\"input\"], batch[\"target\"]\n        output = self.forward(input)\n        loss = self.loss_fn(output, target)\n        self.log(\n            \"train_loss\",\n            loss,\n            on_step=True,\n            on_epoch=True,\n            prog_bar=True,\n            # sync_dist=True,\n        )\n        return loss\n\n    def configure_optimizers(self) -> OptimizerLRScheduler:\n        optimizer = AdamW(self.parameters(), lr=self.lr, weight_decay=0.0)\n\n        warmup_scheduler = LinearLR(\n            optimizer,\n            start_factor=1e-8,  # start near zero\n            end_factor=1.0,\n            total_iters=self.warmup_len,\n        )\n\n        lr_scheduler_config = {\n            \"scheduler\": warmup_scheduler,\n            \"interval\": \"step\",\n            \"frequency\": 1,\n        }\n\n        return {\"optimizer\": optimizer, \"lr_scheduler\": lr_scheduler_config}\n```\n\n### Error messages and logs\n\n```\nerror: Incompatible types (expression has type \"dict[str, object]\", TypedDict item \"lr_scheduler\" has type \"LRScheduler | ReduceLROnPlateau | LRSchedulerConfigType\")  [typeddict-item]\n```\n\n\n### Environment\n\n<details>\n  <summary>Current environment</summary>\n\n```\n#- PyTorch Lightning Version: 2.5.1.post0\n#- PyTorch Version: 2.7.1+cu128)\n#- Python version: 3.13.1\n#- OS: Linux\n#- CUDA/cuDNN version: 12.8\n#- How you installed Lightning: pip\n```\n\n</details>\n\n\n### More info\n\nIf I have overlooked something or are doin",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Yeah, it seems like the type isn't being inferred correctly in this case.\nWhen I explicitly annotated the scheduler config, it worked with Pyright:\n\n```python\nlr_scheduler_config: LRSchedulerConfigType = {\n    \"scheduler\": warmup_scheduler,\n    \"interval\": \"step\",\n    \"frequency\": 1,\n}\n```\n\nInterestingly, `ty` didn't complain about it, so it might just be stricter inference from mypy here.\n\n"
+      },
+      {
+        "author": "user-22",
+        "body": "Thanks! That also works with mypy."
+      }
+    ]
+  },
+  "18803": {
+    "number": 18803,
+    "title": "[Bug] RuntimeError: No backend type associated with device type cpu",
+    "state": "open",
+    "body": "### Bug description\r\n\r\nOn upgrading torch and lightning to both 2.1.0, and running DDP leads to the following error trace,\r\n```\r\n# Error messages and logs here please\r\n23 Traceback (most recent call last):\r\n24   File \"/home/nikhil_valencediscovery_com/projects/openMLIP/src/mlip/train.py\", line 126, in main\r\n25     train(cfg)\r\n26   File \"/home/nikhil_valencediscovery_com/projects/openMLIP/src/mlip/train.py\", line 102, in train\r\n27     trainer.fit(model, datamodule=datamodule, ckpt_path=cfg.get(\"ckpt_path\"))\r\n28   File \"/home/nikhil_valencediscovery_com/local/conda/envs/mlip4/lib/python3.11/site-packages/lightning/pytorch/trainer/trainer.py\", line 545, in fit\r\n29     call._call_and_handle_interrupt(\r\n30   File \"/home/nikhil_valencediscovery_com/local/conda/envs/mlip4/lib/python3.11/site-packages/lightning/pytorch/trainer/call.py\", line 43, in _call_and_handle_interrupt\r\n31     return trainer.strategy.launcher.launch(trainer_fn, *args, trainer=trainer, **kwargs)\r\n32            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\r\n33   File \"/home/nikhil_valencediscovery_com/local/conda/envs/mlip4/lib/python3.11/site-packages/lightning/pytorch/strategies/launchers/subprocess_script.py\", line 102, in launch\r\n34     return function(*args, **kwargs)\r\n35            ^^^^^^^^^^^^^^^^^^^^^^^^^\r\n36   File \"/home/nikhil_valencediscovery_com/local/conda/envs/mlip4/lib/python3.11/site-packages/lightning/pytorch/trainer/trainer.py\", line 581, in _fit_impl\r\n37     self._run(model, ckpt_path=ckpt_path)\r\n38   File \"/home/nikhil_valencediscovery_com/local/conda/envs/mlip4/lib/python3.11/site-packages/lightning/pytorch/trainer/trainer.py\", line 990, in _run\r\n39     results = self._run_stage()\r\n40               ^^^^^^^^^^^^^^^^^\r\n41   File \"/home/nikhil_valencediscovery_com/local/conda/envs/mlip4/lib/python3.11/site-packages/lightning/pytorch/trainer/trainer.py\", line 1034, in _run_stage\r\n42     self._run_sanity_check()\r\n43   File \"/home/nikhil_valencediscovery_com/local/conda/envs/mlip4/lib/python3.11/site-packages/lightning/pytorch/trainer/trainer.py\", line 1063, in _run_sanity_check\r\n44     val_loop.run()\r\n45   File \"/home/nikhil_valencediscovery_com/local/conda/envs/mlip4/lib/python3.11/site-packages/lightning/pytorch/loops/utilities.py\", line 181, in _decorator\r\n46     return loop_run(self, *args, **kwargs)\r\n47            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\r\n48   File \"/home/nikhil_valencediscovery_com/local/conda/envs/mlip4/lib/python3.11/site-packages/lightning/pytorch/loops/evaluation_loop.py\", line 141, in run\r\n49     return self.on_run_end()\r\n50            ^^^^^^^^^^^^^^^^^\r\n51   File \"/home/nikhil_valencediscovery_com/local/conda/envs/mlip4/lib/python3.11/site-packages/lightning/pytorch/loops/evaluation_loop.py\", line 253, in on_run_end\r\n52     self._on_evaluation_epoch_end()\r\n53   File \"/home/nikhil_valencediscovery_com/local/conda/envs/mlip4/lib/python3.11/site-packages/lightning/pytorch/loops/evaluation_loop.py\", line 331, in _on_ev",
+    "comments": [
+      {
+        "author": "user-41",
+        "body": "Got the same error, when trying to compute a confusion matrix on a `callback` when I call `metric.plot()`:\r\n\r\n   ```\r\n def on_test_epoch_end(self) -> None:\r\n        metric = MulticlassConfusionMatrix(num_classes=self.num_classes).to(\"cpu\")\r\n\r\n        outputs = torch.cat(self.x_test, dim=0).to(\"cpu\")\r\n        labels = torch.cat(self.y_test, dim=0).to(\"cpu\")\r\n        outputs = torch.softmax(outputs, dim=1).argmax(dim=1)\r\n        metric.update(outputs, labels)\r\n        pl = [\"Latin\", \"Russian\", \"Arabic\", \"Chinese\"]\r\n        fig_, ax_ = metric.plot(labels=pl)\r\n        fig_.savefig(\"test.png\")\r\n```\r\n"
+      },
+      {
+        "author": "user-42",
+        "body": "> Same bug here after upgrade to torch==2.1.0 and lightning==2.1.0.\r\n> \r\n> This bug appeared when running `Metric.compute()` of a `torchmetric` after a validation epoch.\r\n> \r\n> Edit: I am using lightning fabric instead of lightning trainer. This bug is also triggered.\r\n\r\nFor me, I also saw this on `Metric.compute()`. It happened when I was running integration tests where one used a `DDPStraregy` and the other used a single process strategy on the cpu. After distributed process groups are created, an error seems to be raised if a metric is computed on the cpu.\r\n\r\n```python\r\nimport lightning\r\nimport torch\r\nimport torchmetrics\r\nfrom torch import nn\r\n\r\nfabric = lightning.Fabric(accelerator=\"cuda\", devices=2)\r\nfabric.launch()\r\nmodule = nn.Linear(2, 1)\r\nmodule = fabric.setup(module)\r\n\r\nmetric = torchmetrics.Accuracy(task=\"multiclass\", num_classes=2)\r\nmetric.update(torch.tensor([0., 1.]), torch.tensor([0, 1]))\r\nmetric.compute()\r\n```\r\n\r\n```\r\nRuntimeError:\r\nNo backend type associated with devic"
+      },
+      {
+        "author": "user-43",
+        "body": "> Same for me. Downgrading to `pytorch-lightning==2.0.8` fixed the issue.\r\n\r\nThis is the only thing that works to date, is there any update from the lightning devs to when this issue would be properly resolved else we will be tied to that version forever."
+      },
+      {
+        "author": "user-44",
+        "body": "I was having the same error message when using `MeanAveragePrecision()` on Databricks.\r\n\r\nFor me it worked adding the following three kwargs when the metric was initialized: \r\n\r\n- `compute_on_cpu=False`\r\n- `sync_on_compute=False`\r\n- `dist_sync_on_step=True`\r\n\r\nAll three arguments are needed to solve it in my case. \r\n\r\nMy code now looks like: \r\n```\r\nmetric = MeanAveragePrecision(\r\n          iou_type=\"segm\", \r\n          class_metrics=True, \r\n          compute_on_cpu=False, \r\n          sync_on_compute=False,\r\n          dist_sync_on_step=True, \r\n)\r\n```"
+      },
+      {
+        "author": "user-45",
+        "body": "@user-44 This also \"fixes\" the issue for me. Thank you for posting it.  Do you have any intuition on why these kwargs fix the issue?"
+      },
+      {
+        "author": "user-46",
+        "body": "It would be nice if the error message revealed which metric was the problem."
+      },
+      {
+        "author": "user-47",
+        "body": "> This error can also be reproduced using `torchmetrics` 1.3.2 when storing lists of tensors in CPU `compute_on_cpu=True`\r\n\r\nThis should be because of a bug in the documentation of `sync_dist` and in the raise of the warning: TorchMetric already have internally the right logic to do the reduction and don't need that parameter and don't need `sync_dist=True` to correctly reduce metrics across devices. See: https://github.com/Lightning-AI/pytorch-lightning/issues/20153"
+      },
+      {
+        "author": "user-48",
+        "body": "I'm using `segmentation-models-pytorch` for metrics and facing the same error like \n\n```python\niou = smp.metrics.iou_score(tp, fp, fn, tn, reduction=\"micro-imagewise\")\naccuracy = smp.metrics.accuracy(tp, fp, fn, tn, reduction=\"micro-imagewise\")\nf1_score = smp.metrics.f1_score(tp, fp, fn, tn, reduction=\"micro-imagewise\")\n\nself.log(f\"{stage}_IoU\", iou, prog_bar=True, on_epoch=True, sync_dist=True)\nself.log(f\"{stage}_accuracy\", accuracy, prog_bar=True, on_epoch=True, sync_dist=True)\nself.log(f\"{stage}_f1_score\", f1_score, prog_bar=True, on_epoch=True, sync_dist=True)\nself.log(f\"{stage}_loss\", loss, prog_bar=True, on_epoch=True, sync_dist=True) \n```\n\n`sync_dist=False` would not cause an error, but the warning says I'd be better of with turning it to `True` if I were using multiple GPUs training.\n\nWould `sync_dist=False` be a reasonable solution here?"
+      },
+      {
+        "author": "user-49",
+        "body": "> I also just ran across this error. It seems like the self.log(key, val) calls have changed in some way, as in my case the error went away if I manually moved val to the GPU in every call of self.log in my code\n\nThis worked for me! I moved val to the current device in every call of self.log and removed unnecessary moves of variables to CPU in the training pipeline: \n\n`self.log(key, val.to(self.device))`\n\npython 3.9\npytorch-lightning v 2.5.5\nCUDA 11.8"
+      },
+      {
+        "author": "user-50",
+        "body": "`self.log(key, val.item())` works"
+      }
+    ]
+  },
+  "11205": {
+    "number": 11205,
+    "title": "Adopt PEP 563, PEP 585, and PEP 604",
+    "state": "open",
+    "body": "## Proposed refactor\r\n\r\nWe've dropped support for Python 3.6, which means we can use the new annotations format.\r\n\r\n### Motivation\r\n\r\nNew shiny things are nice\r\n\r\n### Pitch\r\n\r\nAdopt [PEP 585](https://www.python.org/dev/peps/pep-0585/), [PEP 604](https://www.python.org/dev/peps/pep-0604/), and [PEP 563](https://www.python.org/dev/peps/pep-0563/).\r\n\r\nWe can do this automatically with the following sequence of commands:\r\n\r\n```bash\r\n# adds the future import to all files\r\nisort -a \"from __future__ import annotations\" --append-only pytorch_lightning\r\n\r\n# lets pyupgrade do its thing and use the new notation\r\npre-commit run pyupgrade --all-files\r\n\r\n# remove the unused `from typing import ...` imports\r\nautoflake -ir --remove-unused-variables pytorch_lightning\r\n\r\n# format everything\r\npre-commit run black --all-files\r\n```\r\n\r\nAlthough some manual cleanup will be necessary because isort will add the import to all files, even those who don't need the `__future__` import\r\n\r\n### Additional context\r\n\r\nIn regards to non-quoted annotations, there are talks of replacing [PEP 563](https://www.python.org/dev/peps/pep-0563/) with [PEP 649](https://www.python.org/dev/peps/pep-0649/). I don't think it impacts our project, but depending on the resolution of the latter the import statement might change.\r\n\r\nAlso, we might want to delay this until 1.6 will be released, to avoid conflicts with the bug-fix branch.\r\n\r\n______________________________________________________________________\r\n\r\n#### If you enjoy Lightning, check out our other projects! ⚡\r\n\r\n- [**Metrics**](https://github.com/PyTorchLightning/metrics): Machine learning metrics for distributed, scalable PyTorch applications.\r\n\r\n- [**Lite**](https://pytorch-lightning.readthedocs.io/en/latest/starter/lightning_lite.html): enables pure PyTorch users to scale their existing code on any kind of device while retaining full control over their own loops and optimization logic.\r\n\r\n- [**Flash**](https://github.com/PyTorchLightning/lightning-flash): The fastest way to get a Lightning baseline! A collection of tasks for fast prototyping, baselining, fine-tuning, and solving problems with deep learning.\r\n\r\n- [**Bolts**](https://github.com/PyTorchLightning/lightning-bolts): Pretrained SOTA Deep Learning models, callbacks, and more for research and production with PyTorch Lightning and PyTorch.\r\n\r\n- [**Lightning Transformers**](https://github.com/PyTorchLightning/lightning-transformers): Flexible interface for high-performance research using SOTA Transformers leveraging Pytorch Lightning, Transformers, and Hydra.\r\n\r\n\r\ncc @user-3 @user-5 @user-68",
+    "comments": [
+      {
+        "author": "user-13",
+        "body": "Looks like this would break the `LightningCLI` so will have to wait for a while"
+      },
+      {
+        "author": "user-10",
+        "body": "I tired the `isort` and `pyupgrade` with https://github.com/omni-us/jsonargparse/pull/294. Then ran the test_cli.py tests in python 3.8. Fails because pydantic doesn't do backporting of 585 and 604 types.\r\n\r\n```\r\nImportError while loading conftest 'tests/tests_pytorch/conftest.py'.\r\ntests/tests_pytorch/conftest.py:29: in <module>\r\n    import lightning.fabric\r\nsrc/lightning/__init__.py:20: in <module>\r\n    from lightning.app import storage  # noqa: E402\r\nsrc/lightning/app/__init__.py:26: in <module>\r\n    from lightning.app import components  # noqa: E402, F401\r\nsrc/lightning/app/components/__init__.py:3: in <module>\r\n    from lightning.app.components.database.client import DatabaseClient\r\nsrc/lightning/app/components/database/__init__.py:4: in <module>\r\n    from lightning.app.components.database.server import Database\r\nsrc/lightning/app/components/database/server.py:31: in <module>\r\n    from lightning.app.core.work import LightningWork\r\nsrc/lightning/app/core/__init__.py:3: in <module>\r"
+      },
+      {
+        "author": "user-13",
+        "body": "Yes. We could do the upgrade separately for fabric, the trainer, and apps.\r\n\r\nThere might be newer ways to upgrade the codebase. The instructions in the top post are quite old by now."
+      },
+      {
+        "author": "user-10",
+        "body": "> There might be newer ways to upgrade the codebase. The instructions in the top post are quite old by now.\r\nI searched but didn't find anything different.\r\n\r\nI tried to upgrade only `lightning/pytorch` as:\r\n```\r\nisort -a \"from __future__ import annotations\" --append-only src/lightning/pytorch\r\npyupgrade --py37-plus $(find src/lightning/pytorch -name '*.py')\r\n```\r\nThen I had to manually fix the future import in `src/lightning/pytorch/loggers/neptune.py`.\r\n\r\nWith this, there is a different error. Upgrading the code does not seem like a simple task.\r\n```\r\nImportError while loading conftest 'tests/tests_pytorch/conftest.py'.\r\ntests/tests_pytorch/conftest.py:27: in <module>\r\n    import lightning.fabric\r\nsrc/lightning/__init__.py:27: in <module>\r\n    from lightning.pytorch.callbacks import Callback  # noqa: E402\r\nsrc/lightning/pytorch/__init__.py:28: in <module>\r\n    from lightning.pytorch.callbacks import Callback  # noqa: E402\r\nsrc/lightning/pytorch/callbacks/__init__.py:31: in <module>\r\n"
+      },
+      {
+        "author": "user-13",
+        "body": "If you open a PR with the changes, I might be able to help with fixing the circular import"
+      },
+      {
+        "author": "user-10",
+        "body": "Created #17779."
+      }
+    ]
+  },
+  "20456": {
+    "number": 20456,
+    "title": "[BUG] (`DataLoader`) sanity check fails due to `Input type (torch.FloatTensor) and weight type (torch.cuda.FloatTensor)`",
+    "state": "open",
+    "body": "### Bug description\r\n\r\nHi there! I have previously created my first `LightningDataModule`. More specifically, a `NonGeoDataModule` which inherits from there (see [torchgeo-fork](https://github.com/user-51/torchgeo/blob/main/torchgeo/datamodules/flair2.py). Interestingly, when I try to run this module I get `RuntimeError: Input type (torch.FloatTensor) and weight type (torch.cuda.FloatTensor) should be the same or input should be a MKLDNN tensor and weight is a dense tensor`. Even more intersting is the fact, that if I override the `transfer_batch_to_device` like:\r\n\r\n```py\r\ndef transfer_batch_to_device(self, batch: Any, device: torch.device, dataloader_idx: int) -> Any:\r\n        batch = super().transfer_batch_to_device(batch, device, dataloader_idx)\r\n        print(\"----------------------------------------\")\r\n        for k in batch.keys(): print(k, batch[k][0].get_device())\r\n        print(\"----------------------------------------\")\r\n        \r\n        return batch\r\n```\r\n\r\nI get the output \r\n> image 0\r\n> mask 0\r\n\r\nIt happens during the validation step (lightning/pytorch/strategies/strategy.py\", line 411).\r\n\r\n\r\n### What version are you seeing the problem on?\r\n\r\nv2.4\r\n\r\n### How to reproduce the bug\r\n\r\n```python\r\ndef train(\r\n    config: dict, \r\n    data_dir: str=default_data_dir, \r\n    root_dir: str=default_root_dir,\r\n    min_epochs: int=1,\r\n    max_epochs: int=25) -> None:\r\n    \r\n    tune_metrics = {\"loss\": \"ptl/val_loss\", \"acc\": \"ptl/val_accuracy\"}\r\n    \r\n    module = FL(\r\n        num_workers=config[\"num_workers\"], \r\n        batch_size=config[\"batch_size\"], \r\n        patch_size=config[\"patch_size\"],\r\n        val_split_pct=0.25,\r\n        use_toy=True,\r\n        #augs=transforms,\r\n        root=data_dir, \r\n    )\r\n    task = SemanticSegmentationTask(\r\n        model=\"unet\",\r\n        backbone=\"resnet50\",\r\n        ignore_index=255,\r\n        in_channels=5,#(5+3), #appended indices\r\n        num_classes=13,\r\n        lr=config[\"lr\"],\r\n        patience=config[\"lr_patience\"]\r\n    )\r\n\r\n    # Callbacks\r\n    checkpoint_callback = ModelCheckpoint(monitor=\"val_loss\", save_top_k=1, mode=\"min\")\r\n    lr_monitor = LearningRateMonitor(logging_interval=\"step\")\r\n    tune_callback = TuneReportCheckpointCallback(\r\n        {\"loss\": \"val_loss\", \"accuracy\": \"val_accuracy\"}, on=\"validation_end\"\r\n    )\r\n    logger = TensorBoardLogger(save_dir=root_dir, name=\"FLAIR2logs\")\r\n\r\n    trainer = Trainer(\r\n        accelerator=accelerator,\r\n        num_nodes=1,\r\n        callbacks=[checkpoint_callback, lr_monitor, tune_callback],\r\n        log_every_n_steps=1,\r\n        logger=logger,\r\n        min_epochs=1,\r\n        max_epochs=25,\r\n        precision=32,\r\n    )\r\n\r\n    trainer.fit(model=task, datamodule=module)\r\n```\r\n\r\n\r\n### Error messages and logs\r\n\r\n```\r\nTraceback (most recent call last):\r\n  File \"//Dev/forks/torchgeo/train_simple.py\", line 158, in <module>\r\n    main()\r\n  File \"//Dev/forks/torchgeo/train_simple.py\", line 154, in main\r\n    train(config)\r\n  File \"//Dev/forks/torchgeo/train_simple.p",
+    "comments": [
+      {
+        "author": "user-51",
+        "body": "After some debugging, I found that indeed, the batches were not on the GPU during the different steps. When I add `.to(self.device)` to the `batch['image']` and `batch['mask']` accesses (see: https://github.com/microsoft/torchgeo/blob/main/torchgeo/trainers/segmentation.py), the pipeline executes without errors. \r\n\r\nAFAIK, this should not be necessary, as a `pl.Trainer` with a `pl.LightningDataModule` and `pl.LightningModule` should guarantee these are on the same device via the `transfer_batch_to_device` function. And obviously, those are are being called as I do get an output.\r\n\r\nEDIT: Tagging @user-53 as this might be related to torchgeo "
+      },
+      {
+        "author": "user-52",
+        "body": "Hit this too. Not sure how significant it is that the batch is a dict"
+      },
+      {
+        "author": "user-2",
+        "body": "Hey @user-51 it definitely isn't needed in standard PyTorch Lightning code.\r\n\r\nI'm not sure how dataloading is managed on the torchgeo side in detail though, maybe @user-53 you have a hint here?\r\n"
+      },
+      {
+        "author": "user-53",
+        "body": "The only hacky thing TorchGeo does is to override `transfer_batch_to_device` like so:\r\n```python\r\n    def transfer_batch_to_device(self, batch, device, dataloader_idx):\r\n        # Non-Tensor values cannot be moved to a device\r\n        del batch['crs']\r\n        del batch['bounds']\r\n\r\n        batch = super().transfer_batch_to_device(batch, device, dataloader_idx)\r\n        return batch\r\n```\r\nBut that's only for `GeoDataModule`, not `NonGeoDataModule`. All definitions can be seen here: https://github.com/microsoft/torchgeo/blob/main/torchgeo/datamodules/geo.py\r\n\r\n@user-51 @user-52 maybe you can provide more details on how to reproduce this, I haven't personally hit this issue yet."
+      },
+      {
+        "author": "user-52",
+        "body": "I encountered this when using a litdata streaming dataset, serialised via \r\n\r\n```python\r\ndef fetch_and_serialize_fn(index):\r\n    \"\"\"Serialize as bytes.\"\"\"\r\n    sample = dataset[index]  # Fetch the sample\r\n    data = {\r\n        \"image_id\": sample[\"image_id\"],\r\n        \"mask\": sample[\"mask_path\"],\r\n        \"image\": sample[\"image_path\"],\r\n    }\r\n    return data\r\n```\r\nWhich is then handled by a streaming dataset:\r\n```python\r\nclass BaseStreamingDataset(StreamingDataset):\r\n    \"\"\"\r\n    Base class for streaming datasets.\r\n\r\n    Args:\r\n        input_dir: Local directory or S3 location of the dataset\r\n        transforms: A transform that takes in an image and returns a transformed version.\r\n        band_indices: List of band indices to read from the dataset.\r\n    \"\"\"\r\n\r\n    def __init__(\r\n        self,\r\n        *args,\r\n        transforms: Optional[Callable] = None,\r\n        band_indices: Optional[List[int]] = None,\r\n        **kwargs,\r\n    ):\r\n        super().__init__(*args, **kwargs)\r\n        s"
+      },
+      {
+        "author": "user-54",
+        "body": "Hey all, another torchgeo user here. I hit this as well with 0.7.4.\r\n\r\nHere's a minimal reproduceable example:\r\n```\r\nimport kornia.augmentation as K\r\nimport lightning.pytorch as pl\r\nimport torch\r\nfrom lightning.pytorch import LightningDataModule\r\nfrom torch.utils.data import DataLoader, Dataset\r\n\r\nfrom torchgeo.trainers import SemanticSegmentationTask\r\n\r\nclass DummyDataset(Dataset):\r\n\r\n    def __init__(self, size=256, length=32):\r\n        super().__init__()\r\n        self.size = size\r\n        self.length = length\r\n\r\n    def __len__(self):\r\n        return self.length\r\n\r\n    def __getitem__(self, idx):\r\n        img = torch.randn((4, self.size, self.size)).float()\r\n        mask = torch.randint(0, 2, (self.size, self.size)).long()\r\n        return {\r\n            \"image\": img,\r\n            \"mask\": mask,\r\n        }\r\n\r\n\r\nclass DummyDataModule(LightningDataModule):\r\n\r\n    def __init__(self):\r\n        super().__init__()\r\n\r\n        self.train_aug = K.AugmentationSequential(\r\n            K.RandomRo"
+      },
+      {
+        "author": "user-53",
+        "body": "Is this just a bug in Kornia and not a bug in Lightning? https://github.com/kornia/kornia/issues/3066\r\n\r\n(thanks @user-55 for pointing this out)"
+      },
+      {
+        "author": "user-55",
+        "body": "@user-51 to confirm whether kornia bug is the issue in your case, you can check the `on_after_batch_transfer` function where the kornia augmentations are applied: https://github.com/microsoft/torchgeo/blob/98196254b460f1218354d34a8280ad3ead72113a/torchgeo/datamodules/geo.py#L118"
+      },
+      {
+        "author": "user-53",
+        "body": "Can also check which version of kornia you are using."
+      }
+    ]
+  },
+  "20215": {
+    "number": 20215,
+    "title": "Model does not update its weights",
+    "state": "open",
+    "body": "### Bug description\r\n\r\nHi, I am using PyTorch lightning to implement some new optimization strategies using `automatic_optimization=False`. For certain setting my optimization strategy (using  `automatic_optimization=False`) should yield the same results as using standard optimization process (`automatic_optimization=True`). However I could not make it work. My optimization process was returning slightly different results as using default optimization process. After a while I figured out that PyTorch lightning sometimes does not update the model weights when using the default `automatic_optimization=True`. I have put together minimal example in which model weights won't get updated on step 5. Model weights also won't get updated when using different hyper-parameters (e.g., batch-size, lr), only at different training step.\r\n\r\nAm I missing something or does this look like a bug.\r\nThanks!\r\n\r\n### What version are you seeing the problem on?\r\n\r\nv2.4\r\n\r\n### How to reproduce the bug\r\n\r\n```python\r\nimport pytorch_lightning as pl\r\nimport torch\r\nimport torch.nn as nn\r\nimport torch.nn.functional as F\r\nfrom torch.utils.data import DataLoader\r\nfrom torchvision import datasets, transforms\r\n\r\n\r\nclass CNN(nn.Module):\r\n    def __init__(self):\r\n        super().__init__()\r\n        self.convs = nn.ModuleList(\r\n            [\r\n                nn.Conv2d(1, 64, 3, 1),\r\n                nn.Conv2d(64, 64, 3, 1),\r\n                nn.Conv2d(64, 128, 3, 1),\r\n            ]\r\n        )\r\n        self.fc1 = nn.Linear(128, 10)\r\n\r\n    def forward(self, x, target):\r\n        for conv in self.convs:\r\n            x = conv(x)\r\n            x = F.relu(x)\r\n            x = F.max_pool2d(x, 2)\r\n        x = torch.flatten(x, 1)\r\n        x = self.fc1(x)\r\n        logits = F.log_softmax(x, dim=1)\r\n        return F.nll_loss(logits, target)\r\n\r\n\r\nclass MRELoop(pl.LightningModule):\r\n    def __init__(self):\r\n        super(MRELoop, self).__init__()\r\n        self.model = CNN()\r\n        self.dataset = datasets.MNIST(root=\".mnist_data\", download=True, transform=transforms.ToTensor())\r\n        self.previous_params = None\r\n\r\n    def training_step(self, batch, batch_idx):\r\n        # Check whether new model weights differs from previous ones\r\n        params = torch.cat([param.view(-1) for param in self.model.parameters()])\r\n        if self.previous_params is not None:\r\n            num_different_values = (self.previous_params != params).sum().item()\r\n            self.trainer.should_stop = num_different_values == 0\r\n        else:\r\n            num_different_values = None\r\n\r\n        self.previous_params = params\r\n        loss = self.model.forward(*batch)\r\n        print(\r\n            f\"step {batch_idx} | diff weights: {num_different_values} | all weights: {params.numel()} | weights mean: {torch.mean(params)} | loss: {loss.item()}\"\r\n        )\r\n        return loss\r\n\r\n    def configure_optimizers(self):\r\n        # Bug occurs also with different lr only at differnt training step\r\n        return torch.optim.AdamW(self.para",
+    "comments": [
+      {
+        "author": "user-57",
+        "body": "Thanks for reporting the issue. Setting precision to '32-true' fixes the problem for me."
+      },
+      {
+        "author": "user-56",
+        "body": "Yes but that is not really the solution. In addition the problem might be still present and manifest itself at different training step."
+      },
+      {
+        "author": "user-57",
+        "body": "Agreed it's not a fix, but it saved me from having to rewrite my implementation or tell my PI that we had to wait for a bug to be fixed before we could finish our paper."
+      },
+      {
+        "author": "user-58",
+        "body": "Looks like it's affected lighting verion `2.3.3`."
+      },
+      {
+        "author": "user-59",
+        "body": "This PR #20460 fix this issue, ptal"
+      },
+      {
+        "author": "user-2",
+        "body": "@user-56 thank you for the investigation and the reproduction"
+      },
+      {
+        "author": "user-2",
+        "body": "So this happens because automatic mixed precision in PyTorch is explicitly designed to work this way:\r\n\r\nhttps://github.com/pytorch/pytorch/blob/51b7528e274d350c1d5091acc40572d6b43879b8/torch/amp/grad_scaler.py#L99\r\n\r\nin order to avoid issues with `nan` gradients.\r\n\r\nHere is the equivalent raw PyTorch code:\r\n\r\n```python\r\ndef train():\r\n    model = CNN()\r\n    dataset = datasets.MNIST(root=\".mnist_data\", download=True, transform=transforms.ToTensor())\r\n    dataloader = DataLoader(dataset)\r\n\r\n    scaler = GradScaler(device=\"cuda\")\r\n\r\n    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-3)\r\n    previous_params = None\r\n\r\n    for batch_idx, batch in enumerate(dataloader):\r\n        params = torch.cat([param.view(-1) for param in model.parameters()])\r\n        if previous_params is not None:\r\n            num_different_values = (previous_params != params).sum().item()\r\n            assert num_different_values != 0:\r\n        else:\r\n            num_different_values = None\r\n        previous_pa"
+      }
+    ]
+  },
+  "18285": {
+    "number": 18285,
+    "title": "Lightning CLI should use fail_untyped=True",
+    "state": "open",
+    "body": "### Outline & Motivation\r\n\r\nUse fail_untyped=True here https://github.com/Lightning-AI/lightning/blob/97020bf8d7a88ca5195534b8585a5ef53f1ce6cb/src/lightning/pytorch/cli.py#L135 and here https://github.com/Lightning-AI/lightning/blob/97020bf8d7a88ca5195534b8585a5ef53f1ce6cb/src/lightning/pytorch/cli.py#L139\r\n\r\n### Pitch\r\n\r\nI have spent quite a bit of time with the same issue described here https://github.com/Lightning-AI/lightning/issues/15741 . The person there also reported spending \"several days\". I finally figured it out when I created an isolated example with just jsonargparse which told me  _\"Types as a string and `from __future__ import annotations` is currently not supported\"_ . That was because CLI has fail_untyped=True by default . I do believe it would be better to have that as default to ease debugging. If not by default, maybe allow users to set that themselves.\r\n\r\nI do know that from version 4.22 of jsonargparse this specific example is no longer an issue https://github.com/omni-us/jsonargparse/issues/120 , but my point is more about the general principle of having fail_untyped=True\r\n\r\n\r\n### Additional context\r\n\r\n_No response_\r\n\r\ncc @user-3 @user-5 @user-67 @user-13 @user-10",
+    "comments": [
+      {
+        "author": "user-13",
+        "body": "This cannot change because it would be a breaking change for CLI users who don't want to type their code. Many Python users are also against typing their scripts so it would make the LightningCLI opinionated.\r\n\r\nHowever, maybe that specific error should be shown regardless of the value of fail_untyped"
+      },
+      {
+        "author": "user-60",
+        "body": "Thanks @user-13 for the quick reply. That make sense, a lot of people may be using the cli without typed code . What if the constructor of LightningArgumentParser allowed you to set **fail_untyped** (and by default it would be false as to not introduce a breaking change). "
+      },
+      {
+        "author": "user-13",
+        "body": "We'd accept this contribution if you want to open a PR. The `LightningCLI` already exposes `parser_kwargs`"
+      },
+      {
+        "author": "user-60",
+        "body": "Thanks. I will submit a PR this week. "
+      }
+    ]
+  },
+  "16793": {
+    "number": 16793,
+    "title": "Integration with DeepSpeed and PyG: expected scalar type Float but found Half",
+    "state": "open",
+    "body": "### Bug description\n\nHi, i have a problem integrating DeepSpeed and PyG.\r\nIn particular Setting 32 precision on Lightning Trainer on single GPU Quadro RTX 6000 everything works fine. Something similar to the issue in [#8426](https://github.com/Lightning-AI/lightning/issues/8426), i guess.\r\nBut, switching to 16 precision i have the following Traceback calling `Trainer.fit()` (even calling `torch.Tensor.half()` on model, or on input, or both). \n\n### How to reproduce the bug\n\n```python\nimport torch\r\nfrom torch_geometric.loader import DataLoader\r\nfrom torch_geometric.datasets import TUDataset\r\nfrom pytorch_lightning.strategies import DeepSpeedStrategy\r\nfrom torch_geometric.nn import global_mean_pool\r\nfrom torch_geometric_temporal import GConvGRU\r\nimport torch.nn.functional as F\r\nfrom torch.nn import Linear\r\nimport pytorch_lightning as pl\r\nimport time\r\nfrom typing import Union, Dict, List\r\nimport math\r\nimport torchmetrics as tm\r\n\r\n\r\nclass GraphNN(pl.LightningModule):\r\n    def __init__(self,\r\n                 num_features,\r\n                 num_classes,\r\n                 k,\r\n                 dropout: Union[int, float] = 0.2,\r\n                 learning_rate: float = 1e-4,\r\n                 weight_decay: float = 1e-4,\r\n                 num_layers: int = 2,\r\n                 batch_size: int = 32,\r\n                 ):\r\n        super(GraphNN, self).__init__()\r\n        self.dropout = dropout\r\n        self.learning_rate = learning_rate\r\n        self.criterion = torch.nn.CrossEntropyLoss()\r\n        self.weight_decay = weight_decay\r\n        self.k = k\r\n        self.num_classes = num_classes+1\r\n        self.layers = torch.nn.ModuleList()\r\n        self.batch_size = batch_size\r\n        h_channels = round(num_features/4)\r\n        for layer in range(num_layers):\r\n            if layer == 0:\r\n                self.layers.append(GConvGRU(num_features, h_channels, k))\r\n\r\n            else:\r\n                output = round(math.sqrt(h_channels * self.num_classes))\r\n                self.layers.append(GConvGRU(h_channels, output, k))\r\n                h_channels = output\r\n\r\n        output = round(math.sqrt(h_channels * self.num_classes))\r\n        self.fc = Linear(h_channels, output)\r\n        self.output = Linear(output, self.num_classes)\r\n        self.save_hyperparameters()\r\n\r\n    def forward(self, x, edge_index, edge_attr, batch):\r\n        for f in self.layers:\r\n            x = f(x, edge_index, edge_attr)\r\n            x = x.relu()\r\n        x = self.fc(x)\r\n        x = global_mean_pool(x, batch)  # [batch_size, hidden_channels]\r\n        x = F.dropout(x, p=self.dropout, training=self.training)\r\n        x = self.output(x)\r\n        return x\r\n\r\n    def training_step(self, batch, batch_idx):\r\n        return self.step(batch)\r\n\r\n    def validation_step(self, batch, batch_idx):\r\n        return self.step(batch)\r\n\r\n    def step(self, batch):\r\n        phase: str = \"train\" if self.training is True else \"val\"\r\n        x: torch.Tensor = batch.x\r\n        x.requires_grad = True\r\n        y = ba",
+    "comments": []
+  },
+  "21815": {
+    "number": 21815,
+    "title": "Mixed precision autocast is disabled when running FSDP on CPU",
+    "state": "open",
+    "body": "### Bug description\n\nThe `FSDPPrecision` plugin hardcodes the `\"cuda\"` device type in `forward_context` when using mixed precision (e.g., `bf16-mixed`). \n\nWhen FSDP is run on CPU with mixed precision, this hardcoded `\"cuda\"` value causes PyTorch to print a warning and disable autocast. Because autocast is disabled, CPU operations are not cast to `bfloat16` during the forward pass, which can lead to type mismatches (e.g., `Float` inputs meeting `BFloat16` weights) or incorrect benchmarking results.\n\n### What version are you seeing the problem on?\n\nv2.5\n\n### Reproduced in studio\n\n_No response_\n\n### How to reproduce the bug\n\n```python\nimport torch\nfrom lightning.fabric.plugins.precision.fsdp import FSDPPrecision\n\n# Initialize precision plugin for bf16-mixed\nprecision = FSDPPrecision(precision=\"bf16-mixed\")\n\n# On a CPU-only environment, enter forward context\nwith precision.forward_context():\n    # This will trigger: UserWarning: CUDA is not available... Disabling autocast.\n    print(\"Autocast CPU enabled:\", torch.is_autocast_enabled(\"cpu\")) \n    # Expected: True (if we want bf16 mixed on CPU)\n    # Actual: False\n```\n\n### Error messages and logs\n\n```\nUserWarning: CUDA is not available or torch_xla is imported. Disabling autocast.\n```\nThis can also lead to:\n```\nRuntimeError: expected scalar type Float but found BFloat16\n``` \nor similar type mismatch errors when inputs are not auto-casted to match the FSDP sharded parameter type.\n\n\n\n### Environment\n\n<details>\n  <summary>Current environment</summary>\n\n```\n- PyTorch Lightning Version: master/latest\n- PyTorch Version: 2.0+\n- OS: Linux/macOS/Windows\n- Accelerator: CPU\n```\n\n</details>\n\n\n### More info\n\n`FSDPPrecision` should be updated to accept or dynamically set the target `device_type` (e.g., propagating `self.root_device.type` from the FSDP strategy during setup) and pass it to `torch.autocast`.\n\n\ncc @user-69",
+    "comments": []
+  },
+  "17492": {
+    "number": 17492,
+    "title": "TPU related documentation updates",
+    "state": "open",
+    "body": "### 📚 Documentation\r\n\r\nThere's several TPU specific topics to update in the documentation before the v2.1 release\r\n\r\n### Update the guide in Trainer with:\r\n- [ ] v4 support\r\n- [ ] gcloud instructions\r\n- [ ] PjRT support\r\n\r\n### Write a full guide for running on TPUs with Fabric:\r\n\r\n- Installation + gcloud instructions\r\n- How to use the accelerator\r\n- Launching processes\r\n- Where to use mark_step()\r\n- Potential pitfalls and how to avoid them (recompilation etc)\r\n- FSDP\r\n...\r\n\r\nCreating this issue to track this.\r\n\r\n### Additional context\r\n\r\nhttps://pytorch.org/xla/release/2.0 already contains a lot of useful information to pull from\r\n\r\ncc @user-67 @user-13 @user-70 @user-71 @user-72 @user-3 @user-5",
+    "comments": []
+  },
+  "21724": {
+    "number": 21724,
+    "title": "EMA validation swap models before first update_parameters",
+    "state": "open",
+    "body": "### Bug description\n\nWith `EMAWeightAveraging` and a delayed start (e.g. update_starting_at_step: 1000), validation still swaps `pl_module` and `_average_model` on every val epoch (e.g. val every 100 steps), even while `self._average_model.n_averaged == 0`. The `_average_model` is only a deepcopy(pl_module) from setup() and has never been updated. Retrieval metrics before `update_starting_at_step` near 0.\n\nExample for EMA init:\n```yaml:\nuse_buffers: false\ndecay: 0.999\nupdate_every_n_steps: 1\nupdate_starting_at_step: 1000\nupdate_starting_at_epoch: -1\n```\n\nSuggested fix: in `WeightAveraging` [on_validation_epoch_start](https://github.com/Lightning-AI/pytorch-lightning/blob/master/src/lightning/pytorch/callbacks/weight_averaging.py#L216) / [on_validation_epoch_end](https://github.com/Lightning-AI/pytorch-lightning/blob/master/src/lightning/pytorch/callbacks/weight_averaging.py#L230), only call `_swap_models` when `self._average_model.n_averaged > 0`.\n\n\n### What version are you seeing the problem on?\n\nv2.6\n\n### Reproduced in studio\n\n_No response_\n\n### How to reproduce the bug\n\n```python\n\n```\n\n### Error messages and logs\n\n_No response_\n\n### Environment\n\n_No response_\n\n### More info\n\n_No response_\n\ncc @user-69",
+    "comments": []
+  },
+  "17621": {
+    "number": 17621,
+    "title": "Update deepspeed activation checkpointing docs",
+    "state": "open",
+    "body": "### 📚 Documentation\n\nIn your [documentation](https://lightning.ai/docs/pytorch/stable/advanced/model_parallel.html#deepspeed-activation-checkpointing), you refer to the function `deepspeed.checkpointing.checkpoint`, but it looks like it does not exist (anymore?).  Can you update that section?  \r\n\r\nWhile we're at it, can you provide a more common use-case as an example?  The guide warns against wrapping an entire model, but having a pretrained language model from `transformers` is probably the most common use case.  What if someone is just using GPT-2 or T5 with no further mathematical layers?  What should get wrapped then?\n\ncc @user-67 @user-5",
+    "comments": []
+  },
+  "20189": {
+    "number": 20189,
+    "title": "Support IO Type Checkpoints for trainer.fit() in ckpt_path Parameter",
+    "state": "open",
+    "body": "### Description & Motivation\n\nCurrently, PyTorch Lightning supports loading checkpoints using model.load_from_checkpoint(checkpoint_path) where the checkpoint_path parameter can accept IO types. This flexibility is very useful in scenarios where checkpoints are stored in non-standard storage systems (e.g., cloud storage, in-memory storage, etc.).\r\n\r\nHowever, when resuming training with the trainer.fit() method, the ckpt_path parameter does not support IO types. This limitation restricts users to using string paths only, which may not be feasible in all environments.\n\n### Pitch\n\n_No response_\n\n### Alternatives\n\nExtend the functionality of the ckpt_path parameter in the trainer.fit() method to also accept IO types, similar to how load_from_checkpoint() operates. This would involve modifying the internal logic of trainer.fit() to handle IO types appropriately, ensuring consistency with the load_from_checkpoint() method.\n\n### Additional context\n\n_No response_\n\ncc @user-2 @user-67",
+    "comments": []
+  },
+  "21293": {
+    "number": 21293,
+    "title": "Update from Torchscript to `torch.export`",
+    "state": "open",
+    "body": "### Outline & Motivation\n\nTorchscript is deprecated in the most recent releases of Pytorch\nhttps://docs.pytorch.org/docs/stable/jit.html\nInstead `torch.export` is the recommended way to go:\nhttps://docs.pytorch.org/docs/stable/export.html\n\nThe most obvious change that need to be made is to `LightningModule.to_torchscript` which either:\n* keep function but update internals to use the new `torch.export` functionality\n* deprecate/remove and introduce a new function called `export` or similar that use new functionality\n* deprecate/remove and let users manually export\n\nIn addition to this we need to update documentation etc. since there are still multiple references to `torch.jit`. See this hotfix for when torch v2.9 was released: https://github.com/Lightning-AI/pytorch-lightning/pull/21292\n\n### Pitch\n\n_No response_\n\n### Additional context\n\n_No response_\n\ncc @user-2 @user-3",
+    "comments": [
+      {
+        "author": "user-66",
+        "body": "I'm not so sure about the 1st option - since `torch.export` doesn't produce the same `ScriptModule` object as `to_torchscript`, simply replacing the implementation with `torch.export` might cause confusion.\n\nI'd prefer the second approach, maybe introducing a method like `to_exportedprogram`, so we could take advantage of the existing exporting mechanisms, (like `example_input_array` and others)."
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Agree that option 1 is not optimal but just wanted to list all options for sake of completeness. Also in favor of option 2."
+      }
+    ]
+  }
+}

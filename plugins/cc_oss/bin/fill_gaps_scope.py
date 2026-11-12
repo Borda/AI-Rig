@@ -114,6 +114,7 @@ _BIN_DIR = str(Path(__file__).resolve().parent)
 if _BIN_DIR not in sys.path:
     sys.path.insert(0, _BIN_DIR)
 
+from _sentinel_io import write_private_text  # noqa: E402
 from check_bridge import bridge_status  # noqa: E402
 from find_review_report import (  # noqa: E402
     _SOURCE_RATINGS,
@@ -1254,8 +1255,8 @@ def verify_carry(report: Path) -> list[str]:
 
 def _write_outputs(plan_out: Path, head_out: Path, plan: dict | None) -> None:
     """Write the plan and head files, or truncate both when the request was refused."""
-    plan_out.write_text(json.dumps(plan, indent=2) + "\n" if plan else "", encoding="utf-8", newline="\n")
-    head_out.write_text(plan["head_sha"] + "\n" if plan else "", encoding="utf-8", newline="\n")
+    write_private_text(plan_out, json.dumps(plan, indent=2) + "\n" if plan else "")
+    write_private_text(head_out, plan["head_sha"] + "\n" if plan else "")
 
 
 def _run_plan(args: argparse.Namespace) -> int:

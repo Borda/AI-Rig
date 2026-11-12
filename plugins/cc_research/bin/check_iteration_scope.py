@@ -11,7 +11,8 @@ Scope:
     Reads ``state.json`` for ``program_file`` and persisted config constraints, falling
     back to the program's fenced blocks only for absent keys, and reads
     ``git status --porcelain``. Never modifies the working tree; cleanup of a violating
-    iteration stays in the skill. The program file itself is always protected.
+    iteration stays in the skill. Program edits after the saved R1 snapshot are protected;
+    unchanged campaign inputs are omitted from the iteration change set.
 Usage:
     ``check_iteration_scope.py --state-json .experiments/state/<run-id>/state.json``
 Outputs:
@@ -36,6 +37,7 @@ Used by:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shlex
@@ -45,7 +47,7 @@ import sys
 from pathlib import Path
 
 #: Run-artifact dirs the loop writes itself; never part of an iteration's change set.
-_EXCLUDED_PREFIXES = (".experiments/", ".temp/")
+_EXCLUDED_PREFIXES = (".experiments/", ".temp/", ".reports/")
 
 _HEADING = re.compile(r"^##\s+(.+?)\s*$")
 _FENCE = re.compile(r"^\s*```")
@@ -227,6 +229,20 @@ def _scope_constraints(config: dict, program: Path, root: Path) -> tuple[list[st
     return scope, protected
 
 
+def _program_matches_snapshot(program: Path, expected: object) -> bool:
+    """Recognize unchanged campaign input without exempting program edits from scope checks."""
+    if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
+        return False
+    digest = hashlib.sha256()
+    try:
+        with program.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(65536), b""):
+                digest.update(chunk)
+    except OSError:
+        return False
+    return digest.hexdigest() == expected.lower()
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the scope check and print the JSON result line."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -245,6 +261,10 @@ def main(argv: list[str] | None = None) -> int:
     if program_path is None or not program_path.is_file():
         print(json.dumps({"changed": changed, "untracked": untracked, "violations": [], "checked": False}))
         return 0
+    if program_path.is_relative_to(root) and _program_matches_snapshot(program_path, state.get("program_sha256")):
+        program_relative = program_path.relative_to(root).as_posix()
+        changed = [path for path in changed if path != program_relative]
+        untracked = [path for path in untracked if path != program_relative]
     scope, protected = _scope_constraints(state.get("config", {}), program_path, root)
     violations = [path for path in changed if path in protected or (scope and not _in_scope(path, scope, root))]
     print(json.dumps({"changed": changed, "untracked": untracked, "violations": violations, "checked": True}))

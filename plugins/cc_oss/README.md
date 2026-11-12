@@ -152,13 +152,15 @@ ______________________________________________________________________
 
 ### /oss:analyse
 
+Issue/discussion reproduction requires the parent to show the exact snippet and command, then obtain approval before host execution in the project environment; no additional isolation boundary is promised. PR analysis always refreshes general conversation, review bodies and inline comments. Discussion fetching merges both pagination levels with 200-comment/200-total-reply caps and explicitly reports incomplete evidence.
+
 Analyse GitHub threads + repo vitality + release evolution. Accepts issue/PR number, keyword `vitality`, keyword `ecosystem`, keyword `evolution`, or path to saved report file.
 
 **Execution architecture** — animated diagram of fans, joins and gates.
 
 ![/oss:analyse execution architecture: fans, joins and gates (animated)](assets/images/analyse-arch.svg)
 
-**Purpose:** Structured actionable summary of any GitHub thread, or broad view of open work. No need to read every comment yourself.
+**Purpose:** Structured actionable summary of any GitHub thread, or broad view of open work. No need to read every comment yourself. Every thread report header carries a bare `Link:` URL (issue, PR or discussion), so the delivered header table is clickable.
 
 **Auto-invokes when:** user gives GitHub issue/PR number (`#N`) or `github.com` URL + asks analyze/summarize/triage; user asks "is this repo healthy" or vitality stats; user asks which release introduced the features that later releases fixed, or for a fix-lineage / feature burn-up chart.
 
@@ -184,18 +186,22 @@ Analyse GitHub threads + repo vitality + release evolution. Accepts issue/PR num
 | `--break-lock`         | Evolution only: remove a store lock the run cannot prove stale (another host, or native Windows), after you confirm                                                                    |
 | `--adjudicate`         | Evolution only: let an LLM decide fix rows whose evidence is ambiguous; off by default until the Phase 0 evaluation shows it helps                                                     |
 | `--bug-labels "<a,b>"` | Evolution only: replace the default bug label set (`bug`, `type: bug`, `kind/bug`, `type/bug`) for the open-bugs line                                                                  |
+| `--tag-prefix "<p>"`   | Evolution only: scan one package of a monorepo whose tags carry a prefix (`pkg-v1.2.0` → `pkg-v`); the package gets its own store and report                                           |
 | `--keep "<items>"`     | Append quoted string to compaction contract's `preserve:` line — items survive auto-compact mid-run (advanced; long multi-agent sessions)                                              |
+
+The shared parser used by analyse, review, and resolve recognizes flag names case-insensitively across whitespace separators. Quoted text stays data, and a standalone `--` ends flag detection. Helper callers must put a literal `--` before the raw argument blob. Contract cleanup refuses linked or out-of-project state directories before deleting anything.
 
 **What it does:**
 
 - **Thread number:** fetches issue/PR, reads all comments, classifies thread type (bug report, feature request, question, duplicate, stale), produces a structured summary: what asked, current state, action needed from you, and — with `--reply` — a draft response.
   - With a codemap index, symbols/modules named in the thread are existence-checked; identifiers that no longer resolve flag the issue as referencing stale code (with a likely rename target when codemap suggests one).
+  - PR mode leads with a **vitality** verdict — is the PR's intent still aligned with the current codebase and worth pushing forward — built for long-stale PRs where the base drifted. `bin/pr_drift.py` measures last-push age, commits the base gained, and which touched files changed or vanished on base since the merge base; the verdict is `ALIVE`, `REVIVE-MINOR`, `REVIVE-MAJOR` (push forward only with named rework), `SUPERSEDED`, `OBSOLETE` or `UNCLEAR`, each citing its evidence. A fresh, undrifted PR gets a one-line `ALIVE`. `SUPERSEDED` and `OBSOLETE` verdicts offer a close-with-thanks reply instead of review.
   - PR mode reads review bodies and inline code comments, expands findings a bot collapsed into a `<details>` block, and merges the same finding when it recurs across review rounds.
   - The duplicate search reads a 400-character body snippet of every candidate, so a duplicate call rests on the reported failure rather than title words, then fetches the full thread of up to 3 candidates to confirm each: the potential duplicates first, then numbers cited in the thread, then the closest related candidates in the same component, which are promoted when their body or comments show the same failure or root cause; an unconfirmed one is marked `(snippet only)` with "verify, then close". The canonical is the item a maintainer named, else the strongest failure match, the analysed item included; candidates whose fetched bodies or comments establish the same root cause are an equal match, and closer symptom wording never makes one stronger. At an equal match a candidate that itself defers to another issue loses; when two or more potential duplicates are all unconfirmed, no canonical is named until the fetch confirms one. Once the canonical is determined and two or more potential duplicates remain, only the canonical (or the next-ranked candidate by the same order when the canonical is the analysed item) stays under Potential Duplicates; every other one, including a candidate whose fetched comments defer to another report, moves under Related as itself a duplicate of the canonical, with an action to close against it and `(snippet only)` where applicable. When the canonical is undetermined, every potential duplicate stays listed. A number cited in the thread but absent from the search results is listed as related and unverified until its fetched body shows the same failure.
 - **`vitality`:** pulls open issues + PRs, scores the repo across 9 axes (Axes 1–8 plus Axis 9 Trajectory), clusters duplicates, flags threads stale beyond the project threshold, and gives a prioritised triage list with a weighted Health Score % (🟢 ≥ 70%, 🟡 40–69.9%, 🔴 < 40%) and one Top Risk axis. All raw API data is saved to a JSONL file beside the report.
   - With a codemap index the report gains an Open-PR Overlap note (pairwise changed-file overlap plus tightly-coupled-module conflict candidates) and a Structural Constraints block (highest-blast-radius modules, collision/degraded/stale index signals).
   - Every codemap signal is optional — no index or plugin absent → GitHub-only behavior, gap flagged inline, never blocks.
-- **`evolution`:** traces which features each fix repairs and which release introduced them. It reads the changelog ("Added", "Changed", "Fixed" sections; conventional-commit fallback for releases without one), links entries to commits (SHA, PR, closing issue, then a low-confidence text match), and blames the lines each fix changed (SZZ, source files only). The result is a feature × fix association matrix with a soft view (each fix sums to 1, for release totals) and a binary view (one fix can repair several features).
+- **`evolution`:** traces which features each fix repairs and which release introduced them. It reads the changelog ("Added", "Changed", "Fixed" sections; conventional-commit fallback for releases without one), links entries to commits (SHA, PR, closing issue, then a low-confidence text match), and blames the lines each fix changed (SZZ, source files only). The result is a feature × fix association matrix with a soft view (each fix sums to 1, for release totals) and a binary view (one fix can repair several features; only blame, changelog-text, LLM or manual evidence counts as a link, while symbol, file and inherited overlap stay in the soft view).
   - The report shows a fix-flow Sankey and release heatmap coloured by origin age (previous release, 2–5 back, legacy), the most-fixed features, a burn-up of features, fixes and approximate open bugs, a same-cycle panel for bugs fixed before they shipped, and every fix it could not place (`unlinked`, `unattributable`, `timed_out`, `unadjudicated`, `unknown`).
   - All charts are inline SVG in one self-contained HTML file; no CDN, no script. A Markdown report with static SVGs sits beside it.
   - Results live in a durable store, `.evolution/<host>/<owner>/<repo>/`, outside every TTL sweep. A rerun resumes an interrupted scan, adds new releases, and rescores from stored evidence without blaming again. Correct any cell in `overrides.csv` (`fix_id,column_id,assert|deny,note`); corrections survive reruns and `--full`.
@@ -249,13 +255,17 @@ ______________________________________________________________________
 
 ### /oss:review
 
+PR review freezes the full PR-head SHA for source reads. Targeted execution requires a clean checkout at that SHA and the foreground parent's approval of the exact command and project environment; a matching HEAD alone never grants consent. `--worktree` uses a detached PR-head checkout, reports its path and SHA, and keeps it before follow-up. QA/security coverage stays pinned except for docs-only review.
+
+Reviews assess material improvement claims against revision-bound tests or measurements, distinguish supplied evidence from independent reproduction, and treat unresolved shared-hardware noise as inconclusive rather than proof of a gain or regression.
+
 Scope-aware parallel review of a GitHub PR. Input is a PR number or a saved review report for reply drafting.
 
 **Execution architecture** — animated diagram of fans, joins and gates.
 
 ![/oss:review execution architecture: fans, joins and gates (animated)](assets/images/review-arch.svg)
 
-**Purpose:** Review architecture, tests, performance, docs, linting, and security in parallel. Produce a ranked findings report and, optionally, a welcoming contributor comment.
+**Purpose:** Review architecture, tests, performance, docs, linting, and security in parallel. Produce a ranked findings report and, optionally, a welcoming contributor comment. The report header carries a bare `Link:` to the PR, so the delivered header table is clickable.
 
 **Invocation:**
 
@@ -386,13 +396,15 @@ ______________________________________________________________________
 
 ### /oss:resolve
 
+Preflight fetches `origin` without pulling or merging the caller's branch. Checkout verifies both the expected branch and exact PR-head OID. Fork heads named like the upstream default use a local `pr-<N>-<head>` alias, with an explicit remote-head refspec handed to the user for manual push. Closed/non-editable PRs stop before checkout. Stage mode and detached recovery preserve pending work. Repository hooks stay disabled unless the parent shows their exact commands/configuration and records per-run approval; approved formatter failures retry once only within selected worktree and index paths.
+
 Apply review findings to codebase. Reads live PR comments, a saved review report, or both — deduplicates, resolves conflicts, implements fixes.
 
 **Execution architecture** — animated diagram of fans, joins and gates.
 
 ![/oss:resolve execution architecture: fans, joins and gates (animated)](assets/images/resolve-arch.svg)
 
-**Purpose:** Close the gap between "reviewer said X" and "X in code." One command: open findings → committed fixes.
+**Purpose:** Close the gap between "reviewer said X" and "X in code." One command: open findings → committed fixes. The final report prints a bare `Link:` to the PR under its heading.
 
 **Reject-gate interlock:** if the newest `/oss:review` report for this PR carries `Gate: REJECT_<GROUND>` (any of the 8 grounds above), resolve refuses to start unless the PR's head commit has changed since that review — a rejected premise isn't something a code fix resolves. `Gate: BLOCK` (e.g. red CI) and everything else proceed normally.
 
@@ -460,7 +472,7 @@ The answer changes wave width and sub-group size only — specialist routing and
 **Tests run where they pay off.**
 
 - Implementation and QA agents run only tests covering their changed files (codemap test-impact when available, name/import heuristics otherwise).
-- The repository's full-suite command runs in the background at the end of the lint/QA gate — once when it passes, again after each fix (within the gate's 3-iteration cap) — so a green full suite is the last test evidence before push.
+- The repository's full-suite command runs in the background at the end of the lint/QA gate — once when it passes, again after each fix (within the gate's 3-iteration cap) — so a green full suite is the last test evidence before push. It is skipped when every item was lint/typo class, and when the run edited only user documentation (`.md`/`.rst`, not skills, agents, rules or prompts) — QA is skipped too and the report notes `full test suite not run — documentation-only change` as a zero-weight confidence gap. `/oss:review` notes the same gap on Docs-only PRs.
 - Every resolve cycle closes with parallel `foundry:linting-expert` + `foundry:qa-specialist` passes before the final report.
 
 **Fewer turns while it runs.** Progress tasks ride along with real work, git state is read with one `git_state_snapshot.py` call, and background agents are never polled: each spawn gets a deadline, and an agent that stops without its deliverable is reported as timed out immediately.
@@ -542,18 +554,20 @@ Release communication and readiness pipeline with four modes: notes, prepare, au
 
 Range notation: `v1->v2` (e.g. `v1.2->v2.0`). Omit range → defaults to `last-tag..HEAD`. When newer stable tags exist off the branch's ancestry (patch releases cut from a maintenance branch such as `release/latest`), commits they already shipped are detected by patch equivalence and left out of notes, counts, contributors and breaking-change checks; commits matched only by PR number are kept and flagged for verification. Pre-release tags (`rcN`, `devN`, `alphaN`, `betaN`) are excluded from tag detection automatically.
 
+PR discovery recovery uses UTC-bounded search dates. Capped or failed recovery remains a visible Confidence Gap for `notes` and `prepare`; associated PRs missing from the bounded list have their bodies fetched before classification. Promoted breaking changes require an inline waiver approval before downstream artifacts are written.
+
 **Modes and flags:**
 
-| Mode / Flag   | What it produces                                                                                                                                                                                                                                           |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `notes`       | Release notes (`DRAFT.md`); add flags for extra outputs                                                                                                                                                                                                    |
-| `--changelog` | CHANGELOG.md entry (no shepherd review)                                                                                                                                                                                                                    |
-| `--summary`   | Internal summary saved to `.temp/`                                                                                                                                                                                                                         |
-| `--migration` | Migration guide for breaking changes saved to `.temp/` (shepherd review)                                                                                                                                                                                   |
-| `--append`    | Rerun the pipeline scoped to newly-landed commits; integrate results into existing artifacts instead of a full regenerate                                                                                                                                  |
-| `prepare`     | Full pipeline: audit → project `CHANGELOG.md` entry plus `HIGHLIGHTS.md`, `MIGRATION.md`, `SUMMARY.md`, `DRAFT.md`, `demo.py`, and `waived-changes.md` under `releases/<version>/`                                                                         |
-| `audit`       | Readiness checklist: tests green, changelog present, version bumped, no uncommitted changes, doc proportionality for new features, no blocking upstream `/oss:review` verdict, changelog scope check, Codex adversarial pass (if `codex` plugin installed) |
-| `demo`        | Story-telling jupytext notebook (`demo.py`) highlighting the most significant contributions, following the repo-wide notebook standard in `skills/_shared/notebook-style.md`                                                                               |
+| Mode / Flag   | What it produces                                                                                                                                                                                                                                                                                                    |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `notes`       | Release notes (`DRAFT.md`); add flags for extra outputs                                                                                                                                                                                                                                                             |
+| `--changelog` | CHANGELOG.md entry (no shepherd review)                                                                                                                                                                                                                                                                             |
+| `--summary`   | Internal summary saved to `.temp/`                                                                                                                                                                                                                                                                                  |
+| `--migration` | Migration guide for breaking changes saved to `.temp/` (shepherd review)                                                                                                                                                                                                                                            |
+| `--append`    | Rerun the pipeline scoped to newly-landed commits; integrate results into existing artifacts instead of a full regenerate                                                                                                                                                                                           |
+| `prepare`     | Full pipeline: audit → project `CHANGELOG.md` entry plus `HIGHLIGHTS.md`, `MIGRATION.md`, `SUMMARY.md`, `DRAFT.md`, `demo.py`, and `waived-changes.md` under `releases/<version>/`; stops after the changelog if any doc still reads as unreleased                                                                  |
+| `audit`       | Readiness checklist: tests green, changelog present, version bumped, no uncommitted changes, no docs still calling shipped work unreleased (blocker), doc proportionality for new features, no blocking upstream `/oss:review` verdict, changelog scope check, Codex adversarial pass (if `codex` plugin installed) |
+| `demo`        | Story-telling jupytext notebook (`demo.py`) highlighting the most significant contributions, following the repo-wide notebook standard in `skills/_shared/notebook-style.md`                                                                                                                                        |
 
 **What each mode does:**
 
@@ -591,7 +605,7 @@ Flag mark = output produced only when flag passed. ¹ Full guide when breaking c
 
 **Breaking-change classification in `notes` mode** (codemap-gated):
 
-- After the truth check, each diff-derived public symbol runs through `fn-rdeps --exclude-tests`. A caller outside the symbol's top-level package proposes a move to ⚠ Breaking Changes, with external call sites as evidence.
+- After the truth check, each diff-derived public symbol runs through `fn-rdeps --exclude-tests`. A caller outside the symbol's top-level package proposes a move to ⚠️ Breaking Changes, with external call sites as evidence.
 - The proposal needs a separate baseline check and item approval before the category or migration guide changes. Symbols with only same-package callers keep their human label.
 - Requires a codemap v3 index — no index skips the phase. Partial coverage (`query_complete:false`) is labeled possibly incomplete, never treated as exhaustive.
 
@@ -646,6 +660,7 @@ ______________________________________________________________________
 ```
 
 - Each rule installs as a symlink at `~/.claude/rules/oss-<source-name>.md`. The `oss-` prefix keeps the flat rule namespace collision-free.
+- Before installing any link, setup checks every source rule: at most 1 MiB, valid UTF-8, no ASCII control characters except tabs and line endings, a `#` Markdown heading, and closed frontmatter when present. Invalid content returns a coded `RULE_*` error with exit 1; no rule is installed or pruned. This structural check does not authenticate arbitrary prose.
 - Only one quality-gates variant is installed, at `oss-quality-gates.md`: when a foundry-owned `foundry-quality-gates.md` is already delivered it links `rules/quality-gates-delta.md` (review-loop scope and output-routing only, shared obligations read from foundry's copy); otherwise it links the complete `rules/quality-gates.md`, so a standalone install loses no rule.
 - Only links this plugin provably owns are replaced or removed. A real file, a link into another marketplace, a source checkout, or a dotfiles tree is reported as a conflict and left alone unless you approve replacing it.
 
@@ -807,6 +822,8 @@ ______________________________________________________________________
 
 ## ⚙️ Configuration
 
+The blueprint and sentinel classifiers treat command-table names inside fixed ordinary quoted search operands as inert data. Command substitutions, variable writes and existing arithmetic-expression refusals remain checked. JavaScript classifiers also reject executing Git configuration and environment overrides consistently with the Python manifest generator. The sentinel module retains its narrower command whitelist.
+
 `oss` needs no required configuration — it reads project structure automatically.
 
 **Model and cost:** `analyse`, `review`, `resolve` and `release` carry no `model:` pin and run on the session model. A pin on an inline skill swaps the model for one turn and back, which rewrites the whole cached prompt prefix twice — measured at about $1.4 to $1.5 per `/oss:resolve` run in an Opus session. Start these sessions on Sonnet for the cheap path; an Opus session now saves about $0.4 per resolve run and keeps Opus quality. Measure a skill with `/foundry:audit --efficiency`.
@@ -816,7 +833,7 @@ ______________________________________________________________________
 **Permission manifests:** `.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved; `.claude-plugin/permissions-deny.json` lists operations that stay denied no matter how broad the allow list becomes.
 
 - Deny covers destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, force-push, `claude --dangerously-skip-permissions`) and the `curl` write verbs the broad `Bash(curl:*)` allowance would otherwise reach. Deny entries are prefix matches, so they stop the documented command forms rather than every possible flag ordering.
-- `/oss:setup` (Step 5) merges both files into `~/.claude/settings.json` additively and idempotently. It also removes allow entries earlier oss versions shipped (listed in `.claude-plugin/permissions-allow-retired.json`, applied through `--drop-allow-file`): `Bash(gh api repos/*:*)`, `Bash(uv pip install:*)` and the broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)`, plus the former PR-number `sed -nE` grant whose regex `*` read as wildcards (`bin/extract_review_pr.py` replaces it). Every other existing allow and deny entry is preserved.
+- `/oss:setup` (Step 5) merges both files into `~/.claude/settings.json` additively and idempotently. It also removes allow entries earlier oss versions shipped (listed in `.claude-plugin/permissions-allow-retired.json`, applied through `--drop-allow-file`): `Bash(gh api repos/*:*)`, `Bash(uv pip install:*)` and the broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)`, plus the former PR-number `sed -nE` grant whose regex `*` read as wildcards (`bin/extract_review_pr.py` replaces it). Retirement matches exact rule text, so an identical user-authored entry is removed too. Every other existing allow and deny entry is preserved.
 - No shipped allow entry matches `uv pip install`, `uv run --with`, `pip install` or `pip download`, so the review's dependency overlay downloads each reach their own permission prompt.
 
 **Git/GitHub permissions**
@@ -844,7 +861,11 @@ ______________________________________________________________________
 | [`quality-gates-delta.md`](rules/quality-gates-delta.md)       | Review-loop scope and output routing only; installed when foundry's quality gates are present    |
 | [`_full/adversarial-loop.md`](rules/_full/adversarial-loop.md) | Detailed review → fix loop procedure the quality gates require                                   |
 
+Progress tables come only from the ledger helper and include reconciliation of previous dispositions and current carried, repeat-route and new findings for all tiers and security. Old means a known invariant, including closed history, rather than only previous-row carryover. Reviews run before a ledger are disclosed as pre-ledger prose, never invented table rows. Repeated review/fix requests, a second independent review of the same change, or a repeated skill review/fix cycle activate the full loop before the next reviewer dispatch, with its stop rules and user-set round budget.
+
 **Hooks** register automatically from `hooks/hooks.json` when the plugin is enabled — no `settings.json` edits needed.
+
+Executable helper blocks resolve and export `PLUGIN_ROOT` before calling `python "$PLUGIN_ROOT/bin/<script>.py"`. Loaders render the plain bootstrap token in modes and templates to the validated owning-plugin path. The blueprint hook checks the bound source template and exact rendered command; altered commands still use normal permission checks, and deny rules remain effective. Run these examples from a host-substituted or loader-rendered copy; an ordinary shell does not supply the bootstrap token.
 
 - Each hook runs `node` from PATH, then `/opt/homebrew/bin/node` or `/usr/local/bin/node`; when none exists, the hooks skip without blocking and one `SessionStart` check reports once per session that they are inactive.
 - The plugin's `bin/python` (native Windows `bin/python.cmd`) probes for a Python 3.10+ runtime before executing a workload; an eligible system `python` takes precedence, and a missing runtime produces a clear diagnostic.
@@ -880,8 +901,9 @@ ______________________________________________________________________
 **Auto-allow audit log.** `allow-dispatch.js` and `audit-close.js` append one JSON line each per Bash call to `~/.claude/logs/audit/` (one file per session, plus `_no-session.jsonl` for calls without a session id). A record names the deciding plugin and hook, the effective decision and its lane, and both decision modules' verdicts. Command text is never written — only a digest. With several plugins installed each writes its own rows, so one call yields one row per plugin.
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" verify
-python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" prune --older-than 30 --dry-run
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/verify_blueprint_audit.py" verify
+python "$PLUGIN_ROOT/bin/verify_blueprint_audit.py" prune --older-than 30 --dry-run
 ```
 
 - `verify` exits 1 only when a record's own hash fails; torn framing from concurrent appends and every classification are warnings.
@@ -901,12 +923,12 @@ ______________________________________________________________________
 
 The plugin ships 67 deterministic helpers in `bin/`. They are installed workflow support, not additional slash-command skills: the skills own orchestration, the helpers handle bounded parsing, evidence collection, path resolution, scoring, and artifact preparation. Only the groups matter at user level:
 
-| Group                    | What the helpers cover                                                                                                     | Examples                                                                                      |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Analysis and vitality    | GitHub data fetching, vitality assembly/scoring, thread-type and PR-scope classification, codemap detection and batching   | `fetch_gh_data_group1.py`, `assemble_vitality_scores.py`, `classify_pr_scope.py`              |
-| Review and resolve       | PR intel fetch, finding ids, action-item merge, commits, fork/remote handling, test planning, worktree cleanup, git state  | `fetch_pr_intel.py`, `merge_action_items.py`, `resolve_test_plan.py`, `git_state_snapshot.py` |
-| Release and install      | Range/contributor extraction, release directory and marker handling, audit evidence, rule-link install, permission merge   | `release_append_publish.py`, `run_audit_checks.py`, `sync_rules.py`                           |
-| Loop and session support | Review → fix loop ledgers, append-only ledgers, compaction contracts, agent deadline checks, auto-allow audit verification | `adversarial_loop.py`, `append_ledger.py`, `agent_watch.py`, `verify_blueprint_audit.py`      |
+| Group                    | What the helpers cover                                                                                                                                 | Examples                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| Analysis and vitality    | GitHub data fetching, vitality assembly/scoring, thread-type and PR-scope classification, codemap detection and batching                               | `fetch_gh_data_group1.py`, `assemble_vitality_scores.py`, `classify_pr_scope.py`                    |
+| Review and resolve       | PR intel fetch, finding ids, action-item merge, commits, fork/remote handling, test planning, worktree cleanup, git state                              | `fetch_pr_intel.py`, `merge_action_items.py`, `resolve_test_plan.py`, `git_state_snapshot.py`       |
+| Release and install      | Range/contributor extraction, release directory and marker handling, audit evidence, unreleased-leftover doc scan, rule-link install, permission merge | `release_append_publish.py`, `run_audit_checks.py`, `scan_unreleased_leftovers.py`, `sync_rules.py` |
+| Loop and session support | Review → fix loop ledgers, append-only ledgers, compaction contracts, agent deadline checks, auto-allow audit verification                             | `adversarial_loop.py`, `append_ledger.py`, `agent_watch.py`, `verify_blueprint_audit.py`            |
 
 ______________________________________________________________________
 

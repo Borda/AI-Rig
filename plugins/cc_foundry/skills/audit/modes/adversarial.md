@@ -1,10 +1,10 @@
 # Adversarial Mode — foundry:audit
 
-Triggered by `/audit --adversarial` (alias: `--challenge`). Read+executed by `/audit` when `--adversarial` flag present.
+Triggered by `/foundry:audit --adversarial` (alias: `--challenge`). Read+executed by `/foundry:audit` when `--adversarial` flag present.
 
 ## Mode: adversarial (alias: --challenge)
 
-**Trigger**: `/audit [<scope>...] --adversarial`
+**Trigger**: `/foundry:audit [<scope>...] --adversarial`
 
 Adversarial review of all agents + skills in scope. Runs parallel with or after standard per-file audit (Step 3). Surfaces issues curator pass misses: subtle logic flaws, inconsistent claims, NOT-for gaps, scope leakage, cross-file contradictions, security vulnerabilities in bin/ executables.
 
@@ -35,9 +35,10 @@ Use `ADVERSARIAL_BATCH_SIZE` (default 2) for grouping — smaller batches than S
 Resolve checklist path first — spawned curator runs in a fresh shell, can't expand orchestrator variables, so resolved value interpolates as a literal string into the prompt:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-IFS= read -r AUDIT_TPL < "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || AUDIT_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
+IFS= read -r AUDIT_TPL < "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || AUDIT_TPL=$(python "$PLUGIN_ROOT/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
 printf "CURATOR_PROMPT_PATH=%s/curator-prompt.md\n" "$AUDIT_TPL"
 ```
 
@@ -52,8 +53,9 @@ Use `ADVERSARIAL_BATCH_SIZE` grouping. Phase C deduplicates Phase A-prime findin
 **Phase B — Codex adversarial pass** (parallel with Phase A):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_bridge.py" --status > "${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status" 2>/dev/null || echo "absent" > "${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/check_bridge.py" --status > "${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status" 2>/dev/null || echo "absent" > "${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status"  # timeout: 5000
 IFS= read -r CODEX_STATUS < "${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status" || CODEX_STATUS="absent"
 [ "$CODEX_STATUS" = "available" ] && printf 'CODEX_AVAILABLE=%s\n' true || printf 'CODEX_AVAILABLE=%s\n' false  # timeout: 5000
 ```
@@ -69,8 +71,8 @@ For state-changing workflows, include unchanged downstream consumers and the nex
 Scope resolution — map audit scope tokens to plugin dirs, collect all bin/ scripts:
 
 - Default (full sweep): all `plugins/*/bin/*.py`
-- Named scope (e.g. `foundry`, `oss`, `codemap`): `plugins/<name>/bin/*.py`
-- `--local` mode: same paths from `plugins/` source tree; non-local: resolve each scoped plugin's active root with `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_plugin_root.py" --plugin-name <manifest-name>` and scan only that root's `bin/*.py`. Never glob cache versions; failed resolution is unreviewed scope, not zero scripts. Pass the resolved literal bin directory into the review prompt.
+- Named scope (e.g. `foundry`, `oss`, `codemap-py`): use the actual plugin directory resolved by SKILL.md tier 2 (`plugins/<name>/`, `plugins/cc_<name>/`, or matching manifest name), then collect its `bin/*.py`
+- `--local` mode: same paths from `plugins/` source tree; non-local: resolve each scoped plugin's active root with `python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name <manifest-name>` and scan only that root's `bin/*.py`. Never glob cache versions; failed resolution is unreviewed scope, not zero scripts. Pass the resolved literal bin directory into the review prompt.
 - `bin/` executables are Python-only (plugins/CLAUDE.md §Installability); legacy `.sh` shims are portability debt, out of Phase D scope — list any found as unreviewed in the report
 - Zero bin/ scripts for scope: skip Phase D, note in report
 
@@ -88,7 +90,7 @@ With `--efficiency`, defer this Phase C dispatch until efficiency Phase C comple
 
 Adversarial-only mode (`--adversarial` flag without preceding standard audit in same RUN_DIR): no `summary.jsonl` exists in this RUN_DIR. Skip dedup entirely — surface all adversarial findings without overlap filtering. Do NOT dedup against prior audit runs in `.reports/audit/`; prior runs may have unresolved findings still needing fixing.
 
-Write deduplicated findings to `<RUN_DIR>/adversarial/adversarial-aggregate.md` and stage `<RUN_DIR>/summary.jsonl.adversarial.rec` (Step 5 schema: repo-relative `file`, `sev`, `id`, `line`, `category`, `auto_fixable`, `one_line`). Phase C never rewrites the ledger. With `--efficiency`, read `<RUN_DIR>/efficiency/efficiency-report.md` or, if absent, the existing run-root `<RUN_DIR>/efficiency-report.md` once; consume its staged `<RUN_DIR>/summary.jsonl.efficiency.rec` if present, otherwise stage its findings there using the same schema. Apply efficiency Phase C's row-selection rules to E8/E9/E10 and plan items: one row per P1–P4 item plus outside-plan findings; exclude P-HOLD and E11 entirely from the ledger and fix gate. E8/E9 set auto_fixable false; E10 merges crossing a model decision point also set it false, while setup-only merges may be true; model-tier and all other systemic/advisory exclusions stay false. Preserve P-HOLD/E11 suggestions in the human report. Deduplicate both mode stages against each other and current same-run rows by source path, line and issue; preserve systemic/advisory exclusions and decisions. A missing efficiency report is a coverage gap, never zero findings. After standard aggregation (if any) and both active modes complete, this consolidator runs `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/append_ledger.py" "<RUN_DIR>/summary.jsonl"`, consuming both stages, then renders canonical `<RUN_DIR>/aggregate.md` from all current same-run rows, retaining standard findings and ending with a Confidence block before returning its envelope. Zero findings: stage an empty `.rec` so the same helper creates empty canonical `summary.jsonl`, and write a non-empty no-findings `aggregate.md`. Return: `{"status":"done","new_findings":N,"overlapping":N,"severity":{"security":N,"critical":N,"high":N,"medium":N,"low":N}}`
+Write deduplicated findings to `<RUN_DIR>/adversarial/adversarial-aggregate.md` and stage `<RUN_DIR>/summary.jsonl.adversarial.rec` (Step 5 schema: repo-relative `file`, `sev`, `id`, `line`, `category`, `auto_fixable`, `one_line`). Phase C never rewrites the ledger. With `--efficiency`, read `<RUN_DIR>/efficiency/efficiency-report.md` or, if absent, the existing run-root `<RUN_DIR>/efficiency-report.md` once; consume its staged `<RUN_DIR>/summary.jsonl.efficiency.rec` if present, otherwise stage its findings there using the same schema. Apply efficiency Phase C's row-selection rules to E8/E9/E10 and plan items: one row per P1–P4 item plus outside-plan findings; exclude P-HOLD and E11 entirely from the ledger and fix gate. E8/E9 set auto_fixable false; E10 merges crossing a model decision point also set it false, while setup-only merges may be true; model-tier and all other systemic/advisory exclusions stay false. Preserve P-HOLD/E11 suggestions in the human report. Deduplicate both mode stages against each other and current same-run rows by source path, line and issue; preserve systemic/advisory exclusions and decisions. A missing efficiency report is a coverage gap, never zero findings. After standard aggregation (if any) and both active modes complete, this consolidator runs `python "${CLAUDE_PLUGIN_ROOT}/bin/append_ledger.py" "<RUN_DIR>/summary.jsonl" --run-root "<RUN_DIR>"`, consuming both stages, then renders canonical `<RUN_DIR>/aggregate.md` from all current same-run rows, retaining standard findings and ending with a Confidence block before returning its envelope. Zero findings: stage an empty `.rec` so the same helper creates empty canonical `summary.jsonl`, and write a non-empty no-findings `aggregate.md`. Return: `{"status":"done","new_findings":N,"overlapping":N,"severity":{"security":N,"critical":N,"high":N,"medium":N,"low":N}}`
 
 **Report format**:
 

@@ -62,7 +62,7 @@ def main() -> int:
         if not session_id:
             return 0
         tmp_dir = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
-        (tmp_dir / f"codemap-{project_name()}-session").write_text(session_id, encoding="utf-8")
+        _hookutil.write_sentinel(tmp_dir / f"codemap-{project_name()}-session", session_id)
     except (OSError, ValueError, TypeError):
         pass
     return 0

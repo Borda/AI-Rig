@@ -153,8 +153,8 @@ class TestReviewEntryAndRoutes:
     def test_prior_report_does_not_pause_authorized_review(self) -> None:
         """A prior report must not turn authorized review into a routine choice prompt.
 
-        The entry distinguishes fresh requests, completed reuse and incomplete resume before allocating a run,
-        and preserves validated tables and findings on delivery.
+        The entry distinguishes fresh requests, completed reuse and incomplete resume before allocating a run, and
+        preserves validated tables and findings on delivery.
         """
         entry = flat(_section(_review("source-and-scope.md"), ENTRY_HEADING, "### 01:"))
 
@@ -269,7 +269,7 @@ class TestReviewEntryAndRoutes:
         Step 12 must list render, writer, both validators, promotion and completion in that order.
         """
         skill = _review("findings-and-completion.md")
-        checkpoint = flat(_section(skill, "### 12:", "## Fail-fast Rules"))
+        checkpoint = flat(_section(skill, "### 12:", "## Fail-Fast Rules"))
         actions = (
             "final_handoff.py render",
             "write-result.py",
@@ -342,7 +342,7 @@ class TestReviewEntryAndRoutes:
             ),
             pytest.param(
                 "findings-and-completion.md",
-                "## Fail-fast Rules",
+                "## Fail-Fast Rules",
                 (
                     "complete required role and assigned-path coverage",
                     "Direct schema-ten runs require authentic child and join evidence",

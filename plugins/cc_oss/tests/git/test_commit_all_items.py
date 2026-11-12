@@ -26,6 +26,7 @@ def _fake_git(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 
     def _fake_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         """Record Git argv and return the response needed by the bulk-commit path."""
+        cmd = [cmd[0], *cmd[3:]] if cmd[1:2] == ["-c"] else cmd
         recorded.append(list(cmd))
         return subprocess.CompletedProcess(cmd, 1 if cmd[1:2] == ["diff"] else 0, stdout="")
 
@@ -180,6 +181,7 @@ class TestCommit:
 
         def _hang(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
             """Report staged changes, then time out on commit."""
+            cmd = [cmd[0], *cmd[3:]] if cmd[1:2] == ["-c"] else cmd
             if cmd[1] == "commit":
                 raise cai.subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs["timeout"])
             return subprocess.CompletedProcess(cmd, 1, stdout="")

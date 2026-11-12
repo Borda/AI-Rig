@@ -313,7 +313,10 @@ class TestPythonLauncher:
 
         assert result.returncode == 127
         assert result.stdout == ""
-        assert result.stderr == "python: no Python 3.10+ found on PATH (python3, python3.10-python3.20); install one\n"
+        assert (
+            result.stderr
+            == "python: no Python 3.10+ found on PATH (python3, python3.10-python3.20, py -3); install one\n"
+        )
 
     def test_windows_launcher_disables_implicit_current_directory_lookup(self) -> None:
         """The cmd search guard is set inside ``setlocal`` before any interpreter is probed.

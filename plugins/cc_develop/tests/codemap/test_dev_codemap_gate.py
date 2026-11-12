@@ -128,11 +128,19 @@ def test_gate_build_and_skip_reach_next_process(tmp_path: Path, wire: Callable[[
         encoding="utf-8",
         newline="\n",
     )
+    config = tmp_path / "config"
+    registry = config / "plugins" / "installed_plugins.json"
+    registry.parent.mkdir(parents=True)
+    registry.write_text(
+        json.dumps({"plugins": {"codemap-py@borda-ai-rig": [{"installPath": str(tmp_path.resolve())}]}}),
+        encoding="utf-8",
+    )
     env = {
         **os.environ,
         "PATH": str(bin_dir),
         "TMPDIR": str(tmp_path),
         "CSID": "gate-flow",
+        "CLAUDE_CONFIG_DIR": str(config),
         "CODEMAP_INDEX_DIR": str(index_dir),
         "GATE_QUERY_LOG": str(query_log),
     }

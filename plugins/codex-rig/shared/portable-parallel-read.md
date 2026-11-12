@@ -2,13 +2,15 @@
 
 Shared invariant contract for the promoted portable read-only `parallel-read` route of the `implement` and `manage` skills. The loading skill's Parallel Adoption section supplies the consumer values: promoted consumer id and `consumer_policy`, safe parallel work, freeze list and join point, bootstrap exemptions, the literal `parallel_execution.py preflight` and `validate-runtime` commands, serial-parent ownership, resource-overlap wording, and the generic-write stop sentence. Those values and this contract apply together.
 
-<!-- policy-sibling: skills/implement/SKILL.md, skills/manage/SKILL.md (Parallel Adoption sections) — invariant sentences live here, consumer values stay per skill; also see skills/code-review/SKILL.md Workflow parallel-review section as a third divergent variant; check siblings before editing this file alone -->
+<!-- policy-sibling: skills/implement/SKILL.md, skills/manage/SKILL.md (Parallel Adoption sections) — invariant sentences live here, consumer values stay per skill; check siblings before editing this file alone -->
 
 ## Portable Read-Only Route
 
 Execution Route Selection must resolve to `parallel-read` before this section applies; `auto` does not select it. This consumer's runtime matrix and promotion remain mandatory. Serial parent work uses existing task authorization; exact-plan-digest approval applies when the promoted parallel-read route is selected. This route never bypasses consumer promotion, serial parent authority, or applicable write approval. Supplied denials or stale approvals remain invalid in every execution mode.
 
 ### Required barrier
+
+The route follows this gate order: G0 Authority + intake; G1 Evidence ready; G2 Route + plan freeze; G3 Required approvals; G4 Dependency-ready dispatch; G5 Terminal, join, derivation (G5a Real terminal state, G5b Join contracts, G5c Observed derivation); G6 Parent-only integration; G7 Integration-wide verification; G8 Verdict + promotion. The execution diagram illustrates these gates; this text defines their names and order.
 
 Apply shared [host compatibility check](specialist-orchestration.md#host-compatibility-before-dispatch) before preparing any child work. Include `read_host` only from verified launcher-supported child controls. Missing or incompatible controls stop the selected parallel-read route before dispatch. A plan declaration is not effective-control proof, and post-run validation remains mandatory.
 

@@ -1,7 +1,6 @@
 """Tests for ``bin/parse_audit_json.py`` — the pip-audit JSON summariser.
 
-``summarize*`` and ``runtime_closure`` are pure; ``main`` is driven through a replaced ``sys.stdin``, and the installed-
-distribution lookup is replaced by a small in-memory table so no real package metadata is read.
+``summarize*`` and the ``pyproject.toml`` readers are pure; ``main`` is driven through a replaced ``sys.stdin``.
 """
 
 from __future__ import annotations
@@ -10,19 +9,17 @@ import doctest
 import json
 import sys
 from collections.abc import Callable
-from importlib import metadata
 from pathlib import Path
-from types import SimpleNamespace
 
 import parse_audit_json
 import pytest
-from parse_audit_json import main, runtime_closure, summarize, summarize_scoped, summarize_shipped
-
-_REQUIRES = {
-    "app-dep": ["sub-dep>=1", "pytest ; extra == 'test'"],
-    "sub-dep": [],
-    "plot-dep": [],
-}
+from parse_audit_json import (
+    main,
+    shipped_extra_groups,
+    shipped_requirements,
+    summarize,
+    summarize_scoped,
+)
 
 
 class _BrokenStdin:
@@ -31,13 +28,6 @@ class _BrokenStdin:
     def read(self, *_args: object) -> str:
         """Raise the injected stdin failure when the parser reads input."""
         raise OSError("broken pipe")
-
-
-def _fake_distribution(name: str) -> SimpleNamespace:
-    """Return a distribution stand-in exposing ``requires``, or raise the real not-installed error."""
-    if name not in _REQUIRES:
-        raise metadata.PackageNotFoundError(name)
-    return SimpleNamespace(requires=_REQUIRES[name])
 
 
 class TestSummarize:
@@ -162,69 +152,82 @@ class TestScopedSummary:
         assert (rc, capsys.readouterr().out.strip()) == (0, "1 deps, 1 vulns | new: 0 [] | pre-existing: 1 [a]")
 
 
-class TestRuntimeClosure:
-    """runtime_closure: core and non-dev extras plus transitive runtime requirements, never dev groups."""
-
-    @pytest.fixture(autouse=True)
-    def _installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Route metadata lookups to the in-memory installed set."""
-        monkeypatch.setattr(parse_audit_json.metadata, "distribution", _fake_distribution)
+class TestShippedExtraGroups:
+    """shipped_extra_groups: the optional-dependency groups a release exports for its CVE scan."""
 
     @pytest.mark.parametrize(
         ("pyproject", "expected"),
         [
+            pytest.param('[project]\nname = "x"\n', [], id="no-extras"),
             pytest.param(
-                '[project]\nname = "x"\ndependencies = ["App_Dep>=2"]\n',
-                {"app-dep", "sub-dep"},
-                id="transitive-followed-extra-requirement-skipped",
+                '[project]\nname = "x"\n[project.optional-dependencies]\nzeta = ["a"]\nalpha = ["b"]\ndev = ["c"]\n'
+                'Docs = ["d"]\n',
+                ["alpha", "zeta"],
+                id="dev-groups-dropped-and-sorted",
             ),
-            pytest.param(
-                '[project]\nname = "x"\n[dependency-groups]\ntest = ["pytest"]\n', set(), id="dependency-groups-ignored"
-            ),
-            pytest.param(
-                '[project]\nname = "x"\n[project.optional-dependencies]\ndocs = ["pytest"]\nplot = ["plot-dep"]\n',
-                {"plot-dep"},
-                id="dev-named-extra-dropped-other-extra-kept",
-            ),
-            pytest.param(
-                '[project]\nname = "x"\ndependencies = ["not-installed"]\n', None, id="uninstalled-root-unknown"
-            ),
-            pytest.param(
-                '[project]\nname = "x"\ndependencies = ["not-installed ; sys_platform == \'nope\'"]\n',
-                set(),
-                id="uninstalled-marker-root-skipped",
-            ),
-            pytest.param(
-                '[project]\nname = "x"\ndynamic = ["dependencies"]\n', None, id="dynamic-dependencies-unknown"
-            ),
+            pytest.param('[tool.x]\nname = "x"\n', None, id="no-project-table"),
+            pytest.param("", None, id="empty-file"),
         ],
     )
-    def test_follows_runtime_requirements_only(self, tmp_path: Path, pyproject: str, expected: set[str] | None) -> None:
-        """Closure follows runtime requirements only, and refuses to guess when the set is incomplete.
+    def test_lists_non_dev_groups_or_none_without_project(
+        self, tmp_path: Path, pyproject: str, expected: list[str] | None
+    ) -> None:
+        """Non-dev extras come back sorted as spelled; a file without ``[project]`` means no shipped set.
 
-        An incomplete closure would silently drop vulnerable shipped packages, so unknown scope returns ``None`` and the
-        audit falls back to scanning everything.
+        A dropped shipped extra would hide its vulnerabilities from the release scan, and a dev group kept in would
+        report test tooling as a release finding.
         """
         path = tmp_path / "pyproject.toml"
         path.write_text(pyproject)
-        assert runtime_closure(path) == expected
-
-    def test_missing_file_is_unknown(self, tmp_path: Path) -> None:
-        """No pyproject.toml means the shipped set is unknowable."""
-        assert runtime_closure(tmp_path / "pyproject.toml") is None
+        assert shipped_extra_groups(path) == expected
 
 
-class TestShippedSummary:
-    """summarize_shipped: vulnerable packages outside the shipped set are reported as not shipped, never as findings."""
+class TestShippedRequirements:
+    """shipped_requirements: the declared requirements an unlocked release scan audits."""
 
-    def test_excludes_dev_only_vulns(self) -> None:
-        """A vulnerable docs tool is listed under ``not shipped`` and stays out of the shipped counts."""
-        payload = {"dependencies": [{"name": "app", "vulns": [{}]}, {"name": "mkdocs", "vulns": [{}, {}]}]}
-        assert summarize_shipped(payload, {"app"}, {"app"}) == (
-            "1 deps, 1 vulns | new: 1 [app] | pre-existing: 0 [] | not shipped: 2 [mkdocs]"
+    @pytest.mark.parametrize(
+        ("pyproject", "expected"),
+        [
+            pytest.param('[project]\nname = "x"\n', [], id="no-dependencies"),
+            pytest.param(
+                '[project]\nname = "x"\ndependencies = ["a>=1", "b ; sys_platform == \'win32\'"]\n'
+                '[project.optional-dependencies]\nplot = ["c"]\ndev = ["pytest"]\n',
+                ["a>=1", "b ; sys_platform == 'win32'", "c"],
+                id="core-plus-non-dev-extras",
+            ),
+            pytest.param(
+                '[project]\nname = "x"\ndynamic = ["dependencies"]\n', None, id="dynamic-dependencies-unknowable"
+            ),
+            pytest.param('[tool.x]\nname = "x"\n', None, id="no-project-table"),
+        ],
+    )
+    def test_lists_shipped_requirements_or_none_when_unknowable(
+        self, tmp_path: Path, pyproject: str, expected: list[str] | None
+    ) -> None:
+        """Core and non-dev extra requirements come back in file order; an unknowable set is ``None``.
+
+        Dynamic dependencies are filled in by the build backend, so reading them statically would report an empty set
+        and turn a release that ships dependencies into a clean CVE row.
+        """
+        path = tmp_path / "pyproject.toml"
+        path.write_text(pyproject)
+        assert shipped_requirements(path) == expected
+
+
+class TestSkippedDependencies:
+    """Pip-audit entries with a ``skip_reason`` were never audited and must be reported, not counted as clean."""
+
+    def test_reports_skipped_dependencies_apart_from_the_scanned_count(self) -> None:
+        """A local or URL requirement is listed under ``skipped`` and excluded from ``N deps``.
+
+        Counting it as a clean dependency would let a release with unauditable requirements read as fully scanned.
+        """
+        payload = {
+            "dependencies": [
+                {"name": "scanned", "vulns": []},
+                {"name": "local-pkg", "skip_reason": "Dependency not found on PyPI"},
+            ]
+        }
+        assert summarize_scoped(payload, set()) == (
+            "1 deps, 0 vulns | new: 0 [] | pre-existing: 0 [] | skipped: 1 [local-pkg]"
         )
-
-    def test_unknown_scope_scans_everything(self) -> None:
-        """Without a shipped set every vulnerable package is counted and the line says the scope is unknown."""
-        payload = {"dependencies": [{"name": "a", "vulns": [{}]}]}
-        assert summarize_shipped(payload, None, set()).endswith("| scope: unknown")

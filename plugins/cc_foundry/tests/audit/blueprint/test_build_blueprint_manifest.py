@@ -14,6 +14,78 @@ import pytest
 from _blueprint_vectors import vector_params
 
 PLUGIN_JSON = '{"name": "foundry", "version": "1.2.3"}\n'
+BOOTSTRAP = (
+    'PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry)'
+    " || exit $?; export PLUGIN_ROOT"
+)
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "",
+        'echo "PLUGIN_ROOT:"',
+        "echo 'PLUGIN_ROOT:'",
+        "printf 'PLUGIN_ROOT: %s\\n' ready",
+        'echo ready | sed "s|^|PLUGIN_ROOT: |"',
+        "python -c 'print(\"PLUGIN_ROOT:\")'",
+    ],
+)
+@pytest.mark.parametrize("script_root", ["$PLUGIN_ROOT", "${PLUGIN_ROOT}"])
+def test_guarded_bootstrap_admits_complete_block_only(label: str, script_root: str) -> None:
+    """The resolver guard establishes provenance only within its complete block."""
+    script = f'python "{script_root}/bin/check.py" --status'
+    command = bbm.normalize("\n".join((BOOTSTRAP, label, script)))
+    entries, dropped = bbm.block_entries(command, "skills/demo/SKILL.md:1")
+    assert dropped == 1
+    assert entries[bbm.sha256_text(command)]["template"] == command
+    assert bbm.sha256_text(script) not in entries
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        BOOTSTRAP.replace(" || exit $?", ""),
+        BOOTSTRAP.replace(" || exit $?", " || true"),
+        BOOTSTRAP + "\nPLUGIN_ROOT=/untrusted",
+        BOOTSTRAP + "\nread -r PLUGIN_ROOT < input",
+        BOOTSTRAP + "\nunset PLUGIN_ROOT",
+        BOOTSTRAP + "\nPLUGIN_ROOT+=/untrusted",
+        'PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"',
+        'python "$PLUGIN_ROOT/bin/check.py"\n' + BOOTSTRAP,
+        "",
+        'IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/root-${CSID}"',
+        'echo "PLUGIN_ROOT:"',
+        'echo "PLUGIN_ROOT:"\nIFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/root-${CSID}"',
+        BOOTSTRAP + '\necho "PLUGIN_ROOT:"\nPLUGIN_ROOT=/untrusted',
+        BOOTSTRAP + '\necho "PLUGIN_ROOT:"\nread -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/root-${CSID}"',
+        BOOTSTRAP + '\necho "PLUGIN_ROOT:"\nunset PLUGIN_ROOT',
+        BOOTSTRAP + '\necho "PLUGIN_ROOT:"\n: "${PLUGIN_ROOT:=/untrusted}"',
+        BOOTSTRAP + '\necho "PLUGIN_ROOT:"\n: "${PLUGIN_ROOT:-/untrusted}"',
+    ],
+)
+@pytest.mark.parametrize("script_root", ["$PLUGIN_ROOT", "${PLUGIN_ROOT}"])
+def test_unguarded_or_overwritten_root_stays_unlisted(command: str, script_root: str) -> None:
+    """A helper cannot inherit provenance from a missing guard or overwritten resolver output."""
+    workload = command + f'\npython "{script_root}/bin/check.py" --status'
+    assert bbm.is_excluded(workload)
+    assert bbm.sha256_text(workload) not in bbm.block_entries(workload, "f.md:1")[0]
+
+
+def test_bootstrap_cannot_select_another_plugin(tmp_path: Path) -> None:
+    """An owning plugin cannot bind its template to a sibling resolver request."""
+    command = BOOTSTRAP.replace("--plugin-name foundry", "--plugin-name oss")
+    plugin = _make_plugin(tmp_path, "cc_foundry", skill_md=f"```bash\n{command}\n```\n")
+    manifest, _ = bbm.build_plugin(plugin)
+    assert bbm.sha256_text(command) not in manifest["entries"]
+
+
+def test_bootstrap_requires_owning_plugin_identity(tmp_path: Path) -> None:
+    """Missing owning metadata cannot disable the resolver's selected-plugin check."""
+    plugin = _make_plugin(tmp_path, "cc_foundry", skill_md=f"```bash\n{BOOTSTRAP}\n```\n")
+    (plugin / ".claude-plugin" / "plugin.json").write_text('{"version":"1.2.3"}', encoding="utf-8")
+    manifest, _ = bbm.build_plugin(plugin)
+    assert bbm.sha256_text(BOOTSTRAP) not in manifest["entries"]
 
 
 def _make_plugin(scan_dir: Path, name: str, skill_md: str = "", claude_md: str = "") -> Path:
@@ -32,9 +104,9 @@ def _make_plugin(scan_dir: Path, name: str, skill_md: str = "", claude_md: str =
     if skill_md:
         skill_dir = plugin_dir / "skills" / "demo"
         skill_dir.mkdir(parents=True)
-        (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
+        (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8", newline="\n")
     if claude_md:
-        (plugin_dir / "CLAUDE.md").write_text(claude_md, encoding="utf-8")
+        (plugin_dir / "CLAUDE.md").write_text(claude_md, encoding="utf-8", newline="\n")
     return plugin_dir
 
 
@@ -231,7 +303,7 @@ class TestDangerFilter:
         dropped. An allowlist drop (``mv``) is reported in the same stderr count as a denylist drop (``rm -rf``).
         """
         skill = scan_dir / "cc_foundry" / "skills" / "demo" / "SKILL.md"
-        skill.write_text(f"```bash\necho safe\n{unsafe_command}\n```\n", encoding="utf-8")
+        skill.write_text(f"```bash\necho safe\n{unsafe_command}\n```\n", encoding="utf-8", newline="\n")
         assert bbm.main(["--update", "--scan-dir", str(scan_dir)]) == 0
         assert "cc_foundry: 2 entries, 2 dropped by danger filter" in capsys.readouterr().err
 
@@ -372,6 +444,28 @@ class TestAllowlistGate:
                 id="shell-string-of-variable-also-set-by-loop",
             ),
             pytest.param('eval "$(python "$ROOT/bin/parse.py" "$ARGS")"', "eval", id="eval-of-plugin-script-output"),
+            pytest.param(
+                'echo "PLUGIN_ROOT:"\nbash -c \'python "$PLUGIN_ROOT/bin/x.py"\'',
+                "python script $PLUGIN_ROOT/bin/x.py",
+                id="root-label-with-unset-root-in-shell-string",
+            ),
+            pytest.param(
+                'IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/root-${CSID}"\n'
+                'echo "PLUGIN_ROOT:"\nbash -c \'python "${PLUGIN_ROOT}/bin/x.py"\'',
+                "python script ${PLUGIN_ROOT}/bin/x.py",
+                id="root-label-with-sentinel-root-in-shell-string",
+            ),
+            pytest.param(
+                'echo "PLUGIN_ROOT:"\neval \'python "$PLUGIN_ROOT/bin/x.py"\'',
+                "eval",
+                id="root-label-with-unset-root-in-eval",
+            ),
+            pytest.param(
+                'IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/root-${CSID}"\n'
+                'echo "PLUGIN_ROOT:"\neval \'python "${PLUGIN_ROOT}/bin/x.py"\'',
+                "eval",
+                id="root-label-with-sentinel-root-in-eval",
+            ),
             pytest.param('kaggle competitions download "$SLUG"', "kaggle competitions download", id="kaggle-download"),
             pytest.param('unlink "$dest"', "unlink", id="unlink-non-state-path"),
             pytest.param("case x in a) mv p q;; esac", "mv", id="arm-on-case-line"),
@@ -588,7 +682,7 @@ class TestCli:
         """
         bbm.main(["--update", "--scan-dir", str(scan_dir)])
         skill = scan_dir / "cc_foundry" / "skills" / "demo" / "SKILL.md"
-        skill.write_text("```bash\necho gamma\n```\n", encoding="utf-8")
+        skill.write_text("```bash\necho gamma\n```\n", encoding="utf-8", newline="\n")
         capsys.readouterr()
         assert bbm.main(["--check", "--scan-dir", str(scan_dir)]) == 1
         assert "BLUEPRINT-MANIFEST-DRIFT: cc_foundry" in capsys.readouterr().err
@@ -638,7 +732,7 @@ class TestCli:
         """
         bbm.main(["--update", "--scan-dir", str(scan_dir)])
         manifest = json.loads((scan_dir / "cc_foundry" / bbm.MANIFEST_NAME).read_text(encoding="utf-8"))
-        assert manifest["schema"] == 1
+        assert manifest["schema"] == 2
         assert manifest["plugin"] == "cc_foundry@1.2.3"
         assert manifest["entries"][bbm.sha256_text("ls -la")] == {"kind": "block", "src": "CLAUDE.md:1"}
 

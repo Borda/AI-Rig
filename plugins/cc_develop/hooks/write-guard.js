@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// write-guard.js — PreToolUse hook (matchers: Edit, Write, NotebookEdit)
+// write-guard.js — PreToolUse hook (matchers: Edit, Write, legacy MultiEdit, NotebookEdit)
 //
 // PURPOSE
 //   Ship the PROTECT list in the plugin instead of re-adding an ALLOW list by
@@ -83,7 +83,7 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-const GUARDED_TOOLS = new Set(["Edit", "Write", "NotebookEdit"]);
+const GUARDED_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
 // Matched against the POSIX-normalized path. Windows hosts hand us backslashes,
 // so every pattern assumes "/" and the caller normalizes first — a separator
@@ -186,6 +186,27 @@ function occupied(abs) {
 }
 
 /**
+ * Resolve aliases even when the final file does not exist yet.
+ *
+ * @param {string} abs Absolute target path.
+ * @param {number} [depth] Symlink and missing-parent traversal bound.
+ * @returns {string} Resolved path, or the original path when resolution is unavailable.
+ */
+function resolvedTarget(abs, depth = 0) {
+  if (depth > 40) return abs;
+  try {
+    return fs.realpathSync(abs);
+  } catch (_) {}
+  try {
+    if (fs.lstatSync(abs).isSymbolicLink()) {
+      return resolvedTarget(path.resolve(path.dirname(abs), fs.readlinkSync(abs)), depth + 1);
+    }
+  } catch (_) {}
+  const parent = path.dirname(abs);
+  return parent === abs ? abs : path.join(resolvedTarget(parent, depth + 1), path.basename(abs));
+}
+
+/**
  * Check whether this session earlier asked to create the file, which now exists.
  *
  * Both halves are needed: a ledger entry alone would let a denied creation retry without a prompt, and existence
@@ -232,12 +253,14 @@ function decide(data) {
   if (!data || !GUARDED_TOOLS.has(data.tool_name)) return null;
   const input = data.tool_input || {};
   const target = input.file_path || input.notebook_path;
-  const hit = classify(target);
+  if (!target) return null;
+  const addressed = path.resolve(data.cwd || process.cwd(), target);
+  const abs = resolvedTarget(addressed);
+  const hit = classify(target) || classify(abs);
   if (!hit) return null;
-  if (isTracked(target, data.cwd)) return null;
-  const abs = path.resolve(data.cwd || process.cwd(), target);
+  if (isTracked(abs, data.cwd)) return null;
   if (createdThisSession(abs, data)) return null;
-  if (!occupied(abs)) recordCreation(abs, data);
+  if (!occupied(addressed) && !occupied(abs)) recordCreation(abs, data);
   return {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",

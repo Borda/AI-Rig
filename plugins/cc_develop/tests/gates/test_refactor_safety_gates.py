@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _develop_shell_plugin import render_shell, shell_path
 from _develop_text import nested_bash_fences
 
 _PLUGIN = Path(__file__).resolve().parents[2]
@@ -42,8 +43,16 @@ def _run(block: str, tmp_path: Path, plugin: Path = _PLUGIN) -> subprocess.Compl
         "CLAUDE_PLUGIN_ROOT": plugin.as_posix(),
         "PATH": os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", ""),
         "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        "PYTHONIOENCODING": "utf-8",
     }
-    return subprocess.run([_BASH, "-c", block], cwd=tmp_path, env=env, capture_output=True, text=True, check=False)
+    return subprocess.run(
+        [_BASH, "-c", render_shell(block, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "develop")],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        encoding="utf-8",
+        check=False,
+    )
 
 
 @_skip_no_bash
@@ -64,8 +73,10 @@ def test_team_gate_runs_the_saved_characterization_file(
     target = tmp_path / "tests/test_current.py"
     target.parent.mkdir()
     target.write_text(body, encoding="utf-8")
-    (tmp_path / "dev-refactor-char-test-refactor-safety").write_text("tests/test_current.py\n", encoding="utf-8")
-    (tmp_path / "dev-pytest-cmd-refactor-safety").write_text("python -m pytest\n", encoding="utf-8")
+    (tmp_path / "dev-refactor-char-test-refactor-safety").write_text(
+        "tests/test_current.py\n", encoding="utf-8", newline="\n"
+    )
+    (tmp_path / "dev-pytest-cmd-refactor-safety").write_text("python -m pytest\n", encoding="utf-8", newline="\n")
     result = _run(_block(_TEAM, f"Gate {gate}"), tmp_path)
     assert result.returncode == exit_code, result.stdout + result.stderr
     assert verdict in result.stdout
@@ -78,8 +89,10 @@ def test_team_gate_refuses_untrusted_runner(tmp_path: Path, gate: str) -> None:
     target = tmp_path / "tests/test_current.py"
     target.parent.mkdir()
     target.write_text("def test_current():\n    assert True\n", encoding="utf-8")
-    (tmp_path / "dev-refactor-char-test-refactor-safety").write_text("tests/test_current.py\n", encoding="utf-8")
-    (tmp_path / "dev-pytest-cmd-refactor-safety").write_text("touch injected\n", encoding="utf-8")
+    (tmp_path / "dev-refactor-char-test-refactor-safety").write_text(
+        "tests/test_current.py\n", encoding="utf-8", newline="\n"
+    )
+    (tmp_path / "dev-pytest-cmd-refactor-safety").write_text("touch injected\n", encoding="utf-8", newline="\n")
     result = _run(_block(_TEAM, f"Gate {gate}"), tmp_path)
     assert result.returncode == 64, result.stdout + result.stderr
     assert "GATE ERROR" in result.stdout
@@ -97,10 +110,16 @@ def test_team_gate_missing_characterization_path_blocks(tmp_path: Path, gate: st
 
 
 @_skip_no_bash
-def test_missing_quality_stack_blocks(tmp_path: Path) -> None:
+def test_missing_quality_stack_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A missing shipped quality stack is an installation error, never a successful skip."""
-    (tmp_path / "shared").mkdir()
-    (tmp_path / "dev-shared-refactor-safety").write_text((tmp_path / "shared").as_posix() + "\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", tmp_path.as_posix())
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    root = tmp_path / ".claude/plugins/cache/borda-ai-rig/develop/1.0.0"
+    (root / ".claude-plugin").mkdir(parents=True)
+    (root / ".claude-plugin/plugin.json").write_text('{"name":"develop"}', encoding="utf-8")
+    shared = root / "skills/_shared"
+    shared.mkdir(parents=True)
+    (tmp_path / "dev-shared-refactor-safety").write_text(shared.as_posix() + "\n", encoding="utf-8", newline="\n")
     result = _run(_quality_stack_blocks(), tmp_path)
     assert result.returncode != 0
     assert "! BREAKING" in result.stdout
@@ -141,7 +160,9 @@ def test_baseline_requires_a_completed_nonempty_green_run(
     plugin = tmp_path / "plugin"
     scripts = plugin / "bin"
     scripts.mkdir(parents=True)
-    (tmp_path / "dev-refactor-dev-dir-refactor-safety").write_text(tmp_path.as_posix() + "\n", encoding="utf-8")
+    (tmp_path / "dev-refactor-dev-dir-refactor-safety").write_text(
+        tmp_path.as_posix() + "\n", encoding="utf-8", newline="\n"
+    )
     (tmp_path / "test-targets.jsonl").write_text(
         json.dumps({"tests": tests, "exit": 1 if selector_exit == 1 else 0}) + "\n", encoding="utf-8"
     )
@@ -192,8 +213,8 @@ def test_team_gate_refuses_paths_outside_tests(tmp_path: Path, gate: str, path: 
     """An existing file outside tests cannot become the team's characterization proof."""
     (tmp_path / "tests").mkdir()
     (tmp_path / "test_outside.py").write_text("def test_external():\n    assert True\n", encoding="utf-8")
-    (tmp_path / "dev-refactor-char-test-refactor-safety").write_text(path + "\n", encoding="utf-8")
-    (tmp_path / "dev-pytest-cmd-refactor-safety").write_text("python -m pytest\n", encoding="utf-8")
+    (tmp_path / "dev-refactor-char-test-refactor-safety").write_text(path + "\n", encoding="utf-8", newline="\n")
+    (tmp_path / "dev-pytest-cmd-refactor-safety").write_text("python -m pytest\n", encoding="utf-8", newline="\n")
     result = _run(_block(_TEAM, f"Gate {gate}"), tmp_path)
     assert result.returncode == 1, result.stdout + result.stderr
     assert "! BLOCKED" in result.stdout
@@ -207,7 +228,7 @@ def test_characterization_path_is_persisted_literally(tmp_path: Path, path: str)
     target = tmp_path / path
     target.parent.mkdir()
     target.write_text("def test_current():\n    assert True\n", encoding="utf-8")
-    (tmp_path / "dev-pytest-cmd-refactor-safety").write_text("python -m pytest\n", encoding="utf-8")
+    (tmp_path / "dev-pytest-cmd-refactor-safety").write_text("python -m pytest\n", encoding="utf-8", newline="\n")
     block = _block(_TEAM, "<char_test_file>").replace("<char_test_file>", path)
     saved = _run(block, tmp_path)
     assert saved.returncode == 0, saved.stderr
@@ -229,7 +250,7 @@ def test_teammate_skill_resolution_checks_the_installed_file(tmp_path: Path, pre
     plugin_arg = plugin if present else tmp_path / "missing"
     result = _run(_block(_TEAM, "REFACTOR_SKILL="), tmp_path, plugin_arg)
     assert result.returncode == (0 if present else 1), result.stdout + result.stderr
-    assert (skill.as_posix() in result.stdout) is present
+    assert (shell_path(result.stdout.strip()) == skill) is present
     assert ("! BLOCKED" in result.stdout) is not present
 
 
@@ -237,8 +258,11 @@ def test_teammate_skill_resolution_checks_the_installed_file(tmp_path: Path, pre
 def test_quality_stack_cold_loads_without_shared_sentinel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A missing warm sentinel cannot veto an available installed quality stack."""
     monkeypatch.setenv("HOME", tmp_path.as_posix())
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     shared = tmp_path / ".claude/plugins/cache/borda-ai-rig/develop/1.0.0/skills/_shared"
     shared.mkdir(parents=True)
+    (shared.parents[1] / ".claude-plugin").mkdir()
+    (shared.parents[1] / ".claude-plugin/plugin.json").write_text('{"name":"develop"}', encoding="utf-8")
     (shared / "foundry--quality-stack.md").write_text("installed quality stack\n", encoding="utf-8")
     (shared / "codex-delegation.md").write_text("installed delegation contract\n", encoding="utf-8")
     result = _run(_quality_stack_blocks(), tmp_path)
@@ -254,7 +278,9 @@ def test_quality_stack_cold_loads_without_shared_sentinel(tmp_path: Path, monkey
 @_skip_no_bash
 def test_baseline_placeholder_blocks_before_selector(tmp_path: Path) -> None:
     """An unsubstituted scope cannot be diagnosed as a source failure."""
-    (tmp_path / "dev-refactor-dev-dir-refactor-safety").write_text(tmp_path.as_posix() + "\n", encoding="utf-8")
+    (tmp_path / "dev-refactor-dev-dir-refactor-safety").write_text(
+        tmp_path.as_posix() + "\n", encoding="utf-8", newline="\n"
+    )
     result = _run(_block(_SKILL, "BASELINE_EXIT"), tmp_path)
     assert result.returncode == 1, result.stdout + result.stderr
     assert "! BLOCKED" in result.stdout
@@ -269,7 +295,9 @@ def test_baseline_exit_one_without_completed_record_is_runner_failure(tmp_path: 
     plugin = tmp_path / "plugin"
     scripts = plugin / "bin"
     scripts.mkdir(parents=True)
-    (tmp_path / "dev-refactor-dev-dir-refactor-safety").write_text(tmp_path.as_posix() + "\n", encoding="utf-8")
+    (tmp_path / "dev-refactor-dev-dir-refactor-safety").write_text(
+        tmp_path.as_posix() + "\n", encoding="utf-8", newline="\n"
+    )
     (tmp_path / "test-targets.jsonl").write_text(
         json.dumps({"tests": ["tests/test_existing.py"], "exit": record_exit}) + "\n", encoding="utf-8"
     )
@@ -282,6 +310,7 @@ def test_baseline_exit_one_without_completed_record_is_runner_failure(tmp_path: 
 
 
 @_skip_no_bash
+@pytest.mark.parametrize("marker_newline", ["\n", "\r\n"])
 @pytest.mark.parametrize(
     ("existing_passes", "expected_exit", "message"),
     [
@@ -290,17 +319,21 @@ def test_baseline_exit_one_without_completed_record_is_runner_failure(tmp_path: 
     ],
 )
 def test_accepted_red_characterization_is_excluded_from_baseline_and_t2(
-    tmp_path: Path, existing_passes: bool, expected_exit: int, message: str
+    tmp_path: Path, existing_passes: bool, expected_exit: int, message: str, marker_newline: str
 ) -> None:
     """Accepted bad assertions are excluded while real source-test failures still block the baseline."""
     tests = tmp_path / "tests"
     tests.mkdir()
     (tests / "test_red.py").write_text("def test_red():\n    assert False\n", encoding="utf-8")
     (tests / "test_existing.py").write_text(f"def test_existing():\n    assert {existing_passes!r}\n", encoding="utf-8")
-    (tmp_path / "accepted-red-characterization.txt").write_text("tests/test_red.py\n", encoding="utf-8")
-    (tmp_path / "dev-refactor-dev-dir-refactor-safety").write_text(tmp_path.as_posix() + "\n", encoding="utf-8")
-    (tmp_path / "dev-refactor-char-test-refactor-safety").write_text("tests/test_red.py\n", encoding="utf-8")
-    (tmp_path / "dev-pytest-cmd-refactor-safety").write_text("python -m pytest\n", encoding="utf-8")
+    (tmp_path / "accepted-red-characterization.txt").write_bytes(f"tests/test_red.py{marker_newline}".encode())
+    (tmp_path / "dev-refactor-dev-dir-refactor-safety").write_text(
+        tmp_path.as_posix() + "\n", encoding="utf-8", newline="\n"
+    )
+    (tmp_path / "dev-refactor-char-test-refactor-safety").write_text(
+        "tests/test_red.py\n", encoding="utf-8", newline="\n"
+    )
+    (tmp_path / "dev-pytest-cmd-refactor-safety").write_text("python -m pytest\n", encoding="utf-8", newline="\n")
     plugin = tmp_path / "plugin"
     scripts = plugin / "bin"
     scripts.mkdir(parents=True)

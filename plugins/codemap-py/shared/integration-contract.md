@@ -51,7 +51,7 @@ Marker shape (HTML-comment sentinels bound the re-injectable region; content out
 - `sha256=<64-hex>` — full SHA-256 of exact managed body engine last wrote; `apply` recomputes on-disk body hash, compares against this stamp (and its plan before-state hash) to detect drift/foreign edits before touching anything. Full digest is self-authenticating — a body edited out of band no longer matches its own stamp.
 - A file with sentinels present but a hash that doesn't match any version the engine generated is a **foreign/modified marker** — `apply` refuses it.
 - A file with no sentinels present is a first-time wiring target, handled by `plan`'s ordered-ops list, not by `apply`'s replace-in-place path.
-- One managed block per file per consumer contract; multiple codemap-py capabilities in the same consumer file (if ever needed) would require distinct sentinel names, not nested/overlapping regions — out of scope for `0.25.2`.
+- One managed block per file per consumer contract; multiple codemap-py capabilities in the same consumer file (if ever needed) would require distinct sentinel names, not nested/overlapping regions — out of scope.
 
 ## Plan artifact shape
 

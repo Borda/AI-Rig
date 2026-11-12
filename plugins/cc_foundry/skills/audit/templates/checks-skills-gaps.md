@@ -7,9 +7,10 @@
 **Step 1 — Read calibrate domain table**: Load calibrate `skills.md` via `cat` (not the Read tool — `Bash(cat:*)` grant is version-proof), extract registered target list under `### Domain table`. Build registered-targets set.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate modes skills.md $([ "$LOCAL_MODE" = "true" ] && echo --local) --fallback-source  # timeout: 5000
+python "$PLUGIN_ROOT/bin/load_mode.py" calibrate modes skills.md $([ "$LOCAL_MODE" = "true" ] && echo --local) --fallback-source  # timeout: 5000
 ```
 
 **Step 2 — Scan all skill modes on disk**: In local mode, enumerate `plugins/*/.claude-plugin/plugin.json`, parse each JSON `name` as the routing prefix and inspect that plugin root's `skills/*/SKILL.md`, `claude-skills/*/SKILL.md` and their `modes/*.md`. In non-local mode, read `~/.claude/plugins/installed_plugins.json` for installed marketplace/plugin identities, then invoke the audit plugin's own `bin/get_plugin_install_path.py <marketplace> <plugin-name>` for each identity and inspect the same subdirectories under its resolved active install path. Also include directly installed `.claude/skills/`. Do not infer routing prefixes from directory names or treat an unavailable install record as a missing target. Extract mode names from `argument-hint:` frontmatter and `## Mode:` / `### Mode:` headings.
@@ -29,9 +30,10 @@ Mode is calibratable when ALL three signals present:
 **Step 5 — Read agents domain table**: Load calibrate `agents.md` via `cat` (not the Read tool — `Bash(cat:*)` grant is version-proof), extract all agent names from `### Domain table`. Build registered-agent-names set.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate modes agents.md $([ "$LOCAL_MODE" = "true" ] && echo --local) --fallback-source  # timeout: 5000
+python "$PLUGIN_ROOT/bin/load_mode.py" calibrate modes agents.md $([ "$LOCAL_MODE" = "true" ] && echo --local) --fallback-source  # timeout: 5000
 ```
 
 **Step 6 — Scan all agent files on disk**: Reuse Step 2's Claude manifest/active-install map, scan each resolved root's `agents/*.md` and qualify each basename with that manifest's JSON `name`. Also scan `.claude/agents/*.md` as bare names. In non-local mode, never infer installed agents from a project-local `plugins/` tree. Build the full discovered-agent set.

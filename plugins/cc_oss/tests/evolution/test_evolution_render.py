@@ -153,6 +153,22 @@ class TestHostileText:
     """Untrusted titles, warnings and links never reach any output raw."""
 
     @pytest.mark.parametrize(
+        ("title", "escaped"),
+        [
+            pytest.param("https://evil.example/claim", r"https\://evil\.example/claim", id="https"),
+            pytest.param("http://evil.example/claim", r"http\://evil\.example/claim", id="http"),
+            pytest.param("www.evil.example/claim", r"www\.evil\.example/claim", id="www"),
+        ],
+    )
+    def test_markdown_titles_cannot_autolink(self, title: str, escaped: str) -> None:
+        """Repository titles remain plain text instead of becoming external GFM autolinks."""
+        report = _hostile_report()
+        report["aggregate"]["top_features"] = [{"column_id": "c1", "title": title, "release": "1.0", "fix_count": 2}]
+        text = render_markdown(report)
+        assert escaped in text
+        assert title not in text
+
+    @pytest.mark.parametrize(
         "needle",
         [
             pytest.param("<img src=x", id="img-tag"),
@@ -451,7 +467,7 @@ class TestRendering:
         [
             pytest.param("a|b", "a\\|b", id="pipe"),
             pytest.param("=SUM(A1)", "\\=SUM\\(A1\\)", id="formula"),
-            pytest.param("[x](javascript:1)", "\\[x\\]\\(javascript:1\\)", id="link"),
+            pytest.param("[x](javascript:1)", "\\[x\\]\\(javascript\\:1\\)", id="link"),
             pytest.param("<b>", "&lt;b&gt;", id="html"),
             pytest.param("line1\nline2", "line1 line2", id="newline"),
         ],

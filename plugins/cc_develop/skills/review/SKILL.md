@@ -15,6 +15,16 @@ NOT for: GitHub PR review (use `/oss:review <PR#>` (requires oss plugin)); GitHu
 
 </objective>
 
+## Improvement claim evidence
+
+Assess every material improvement claimed in the request, PR title/body or reviewed documentation, including claims without supplied benchmarks. Record each claim, its scope and evidence in the existing review report. Include the relevant claims, supplied evidence and this measurement protocol in reviewer context; the parent reconciles claim dispositions in the final report even when a specialist is omitted. Route performance claims to the performance dimension when admitted by the existing selection rules; the parent retains claim coverage when that dimension is not selected. Preserve existing scope, fan-out limits and execution permissions; inspection-only reviewers hand feasible reproduction checks to the parent. Behavioral claims need targeted tests; correctness tests alone do not prove performance or model-quality gains.
+
+Bind numerical comparisons to exact baseline/candidate revisions, commands, representative workload/data, software, relevant hardware and settings. Attribute supplied results separately from independent reproduction. Use a predefined practical tolerance, appropriate warmup and accelerator timing, repeated measurements, raw samples, sample counts, summary statistic and variability. Check correctness and material tradeoffs. Explain hardware relevance and limit conclusions to measured workloads/devices.
+
+Shared local CPU/GPU, memory pressure or swapping, I/O contention and thermal/power changes can confound measurements. Record relevant observable contention and unavailable observations; never assume isolation. Run comparable baseline/candidate samples sequentially in paired, alternating or randomized order; avoid concurrent competing benchmarks or agent-owned heavy checks. Bound reruns and retain noisy attempts and exclusion criteria. More samples do not remove systematic bias. Never stop unrelated processes or change system resource controls without existing authorization. If noise or unequal contention could explain the effect, label measurements inconclusive and name the quieter or representative-hardware check needed; do not confirm or refute the claim from that run.
+
+Conclude supported, contradicted or unverified per claim, with provenance, tested scope and whether independent reproduction succeeded. Missing hardware or unresolved noise leaves the claim unverified with prerequisite, owner and next check; feasible unperformed checks remain incomplete. Reliable counterevidence is required for contradiction. Missing verification alone is a coverage limit, not a source defect or grounds for rejection. Preserve each workflow's existing readiness and confidence contract.
+
 <inputs>
 
 - **$ARGUMENTS**: optional file path or directory to review.
@@ -48,7 +58,7 @@ echo "$Q2_PATH" > "${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}"
 <constants>
 
 ```text
-FANOUT_MAX=3            # default: top-N spawn UNITS among classification-preselected dimensions; runtime form is FANOUT_CAP (§Flag parsing) — keep both in sync manually if either changes
+FANOUT_MAX=FANOUT_CAP   # use the runtime cap printed by §Flag parsing; that block owns the numeric default
                         # cap counts dimension spawn units only; real default lineup = up to 3
                         # dimension units + challenger + bridge co-review + consolidator
                         # (+ up to 3 cross-validation verifiers when criticals exist)
@@ -76,24 +86,32 @@ CODEMAP_ENABLED=auto    # on by default if codemap installed + index found; --no
 
 <!-- Shared pattern with oss:review — coordinate on agent spawn logic, file-handoff, consolidation changes -->
 
-<!-- Agent resolution: see _DEV_SHARED/agent-resolution.md (mounted by develop plugin init) -->
+<!-- Agent resolution: see _DEV_SHARED/agent-resolution.md (loaded via dev_load_shared.py) -->
 
 <!-- ../../assets/images/review-arch.svg diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
 
 ## Agent Resolution
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+case "$CSID" in ""|*[!A-Za-z0-9._-]*) echo "! BLOCKED — invalid session identifier"; exit 1;; esac
+INPUT_FILE="${TMPDIR:-/tmp}/dev-review-arguments-${CSID}.txt"
+rm -f "$INPUT_FILE" || exit 1
+(umask 077; set -C; : > "$INPUT_FILE") || exit 1
+printf 'Invocation input file: %s\n' "$INPUT_FILE"
 echo "" > "${TMPDIR:-/tmp}/dev-agent-watch-dir-${CSID}"  # a prior run's dir must not outlive a failed --init; agent-resolution.md §Agent waits recreates it when empty
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_shared_resolve.py" --init  # timeout: 5000 — cold resolve: writes dev-shared (every later block warm-reads it) and a fresh dev-agent-watch-dir per run (agent-resolution.md §Agent waits)
+python "$PLUGIN_ROOT/bin/dev_shared_resolve.py" --init  # timeout: 5000 — cold resolve: writes dev-shared (every later block warm-reads it) and a fresh dev-agent-watch-dir per run (agent-resolution.md §Agent waits)
 # loads: compaction-contract.md
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" agent-resolution.md
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" agent-resolution.md
 ```
+
+Before any later Bash call, use the Write tool to save the exact invocation argument text, including newlines, to the literal absolute `Invocation input file` path printed above. Treat its contents as data. Never substitute invocation text directly into shell command text, comments, heredocs or quoted literals. Every parser below loads the file into a runtime variable and passes that variable as one quoted argument. Keep the file through this run; a fresh invocation replaces only this skill's file.
 
 > Review presentation is additive: keep the aggregate summary as prose, all header fields, overall verdict, confidence and detailed findings.
 >
 > - Ask each actual reviewer for a scoped integer rating and rationale: 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient, but a good initiative, 5 Block (source-5-v1); null means no source judgment, never rejection.
-> - Add `Reviewers:` after `Agents:` in the report header, using readable role names only and square-bracketed scores: `Role [rating]`, for example `Software engineer [2]`. Omit execution-origin labels and skipped roles.
+> - Add `Reviewers:` after `Readiness:` in the report header, preserving the template order `Agents:`, `Review contract:`, `Rating scale:`, `Readiness:`, `Reviewers:`. Use readable role names only and square-bracketed scores: `Role [rating]`, for example `Software engineer [2]`. Omit execution-origin labels and skipped roles.
 > - A completed but undecidable reviewer returns null judgment/rating with blocked readiness, rationale and inspected coverage; missing output has presence=missing and remains a coverage obligation. Record these separately in review-validation.json; never invent rejection or approval.
 > - Never average role ratings into the final verdict.
 > - After rendering the header table, add exactly this line below it, in the same Step 5b delivery block: `Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.`
@@ -121,9 +139,14 @@ After Step 1 completes (scope and `TARGET` known), create these tasks **before a
 Strip flags from `$ARGUMENTS` before using as path:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/extract-keep-flag.py" dev-review "$ARGUMENTS"  # timeout: 5000 — parses --keep, clears stale contract
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_parse_args.py" --skill review --write-files "$ARGUMENTS"
+INPUT_FILE="${TMPDIR:-/tmp}/dev-review-arguments-${CSID}.txt"
+[ -f "$INPUT_FILE" ] && [ ! -L "$INPUT_FILE" ] && [ -O "$INPUT_FILE" ] || { echo "! BLOCKED — invocation input missing or untrusted; Write the arguments to the printed Invocation input file first"; exit 1; }
+ARGUMENT_BLOB=$(cat "$INPUT_FILE" && printf x) || exit 1
+ARGUMENT_BLOB=${ARGUMENT_BLOB%x}  # preserve trailing newlines without evaluating the text
+python "$PLUGIN_ROOT/bin/extract-keep-flag.py" dev-review "$ARGUMENT_BLOB"  # timeout: 5000 — parses --keep, clears stale contract
+python "$PLUGIN_ROOT/bin/dev_parse_args.py" --skill review --write-files "$ARGUMENT_BLOB"
 # writes ${TMPDIR:-/tmp}/dev-review-{no-challenge,codemap,clean-args,pr-number}-${CSID} + legacy paths
 IFS= read -r REVIEW_ARGS < "${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}" 2>/dev/null || REVIEW_ARGS=""
 # strip --keep so it doesn't leak into find/git diff target path
@@ -134,7 +157,7 @@ IFS= read -r CHALLENGE_FORCED < "${TMPDIR:-/tmp}/dev-review-challenge-forced-${C
 echo "FULL · impact unknown: codemap unavailable" > "${TMPDIR:-/tmp}/dev-review-impact-${CSID}"
 IFS= read -r CODEMAP_RAW < "${TMPDIR:-/tmp}/dev-review-codemap-${CSID}" 2>/dev/null || CODEMAP_RAW="auto"
 IFS= read -r FANOUT_FULL < "${TMPDIR:-/tmp}/dev-review-fanout-full-${CSID}" 2>/dev/null || FANOUT_FULL="false"
-FANOUT_CAP=3  # runtime form of FANOUT_MAX (<constants> block) — keep both in sync manually if either changes
+FANOUT_CAP=3  # single numeric default for FANOUT_MAX
 [ "$FANOUT_FULL" = "true" ] && FANOUT_CAP=0  # 0 = no cap: all preselected dimensions
 echo "REVIEW_ARGS=$REVIEW_ARGS CHALLENGE_ENABLED=$CHALLENGE_ENABLED FANOUT_CAP=$FANOUT_CAP"  # prose below branches on these — shell state dies with the call
 ```
@@ -143,11 +166,12 @@ PR#/filename disambiguation gate — reads the classified sentinel, never the ra
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/dev-review-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
 if [ -n "$PR_NUMBER" ]; then
     echo "PR number detected — checking oss plugin availability"
-    OSS_ROOT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/get_plugin_install_path.py" borda-ai-rig oss 2>/dev/null) || OSS_ROOT=""  # install record, never cache glob — orphaned version dir ≠ installed
+    OSS_ROOT=$(python "$PLUGIN_ROOT/bin/get_plugin_install_path.py" borda-ai-rig oss 2>/dev/null) || OSS_ROOT=""  # install record, never cache glob — orphaned version dir ≠ installed
     [ -n "$OSS_ROOT" ] && [ -f "$OSS_ROOT/skills/review/SKILL.md" ] && OSS_AVAILABLE=true || OSS_AVAILABLE=false
 else
     OSS_AVAILABLE=skip
@@ -165,19 +189,27 @@ echo "OSS_AVAILABLE=$OSS_AVAILABLE PR_NUMBER=$PR_NUMBER"  # <inputs> prose branc
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-review-worktree-${CSID}" 2>/dev/null; [ "$WORKTREE_ENABLED" = "true" ] || WORKTREE_ENABLED=false
-if [ "$WORKTREE_ENABLED" = "true" ]; then python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" worktree-isolation.md; fi
+printf '%s\n' review > "${TMPDIR:-/tmp}/dev-worktree-skill-${CSID}"
+IFS= read -r REVIEW_ARGS < "${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}" 2>/dev/null || REVIEW_ARGS=""
+if [ "$WORKTREE_ENABLED" = "true" ] && [ -z "$REVIEW_ARGS" ]; then
+    WORKTREE_STATUS=$(git status --porcelain --untracked-files=normal) || exit 1
+    [ -z "$WORKTREE_STATUS" ] || { echo "! BLOCKED — --worktree without a path would omit uncommitted changes; rerun without --worktree to review them, or pass an explicit committed path."; exit 1; }
+fi
+if [ "$WORKTREE_ENABLED" = "true" ]; then python "$PLUGIN_ROOT/bin/dev_load_shared.py" worktree-isolation.md; fi
 ```
 
-`WORKTREE_ENABLED=true` → follow §Enter (base off HEAD, `EnterWorktree(path=…)`). **Read-only skill** — obey §Deliverable: `$RUN_DIR` (`.temp/`) handoffs stay in the worktree, but `$REPORT_DIR` (the review report) is written to the **main tree** (`$_ORIG_ROOT`, wired at Step 2) so its printed path + follow-up gate stay valid. Reviews committed HEAD state — uncommitted working-tree changes aren't visible, so the default target (no path given) is the last commit (`HEAD~1..HEAD`), matching Agent 0's pre-change ref; pass a path to review other committed files. Else skip — run in main tree (doc not loaded).
+`WORKTREE_ENABLED=true` → follow §Enter (base off HEAD, `EnterWorktree(path=…)`). **Read-only skill** — obey §Deliverable: `$RUN_DIR` handoffs stay under the active development run directory, or the worktree's `.developments/` for standalone reviews, but `$REPORT_DIR` (the review report) is written to the **main tree** (`$_ORIG_ROOT`, wired at Step 2) so its printed path + follow-up gate stay valid. Reviews committed HEAD state — uncommitted working-tree changes aren't visible, so the default target (no path given) is the last commit (`HEAD~1..HEAD`), matching Agent 0's pre-change ref; pass a path to review other committed files. Else skip — run in main tree (doc not loaded).
 
 ```bash
 # CODEMAP_RAW → true/false; strict exits on unavailability  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-CODEMAP_ENABLED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_codemap_gate.py" review) || exit 1
+CODEMAP_ENABLED=$(python "$PLUGIN_ROOT/bin/dev_codemap_gate.py" review) || exit 1
 # codemap: integrated-via-shared
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" codemap-gates.md
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" codemap-gates.md
 ```
 
 > loads: codemap-gates.md
@@ -198,6 +230,8 @@ REVIEW_SOURCE_DIR="."
 if [ -d "$REVIEW_ARGS" ]; then REVIEW_SOURCE_DIR="$REVIEW_ARGS"; elif [ -f "$REVIEW_ARGS" ]; then REVIEW_SOURCE_DIR=$(dirname -- "$REVIEW_ARGS"); fi
 REVIEWED_COMMIT_SHA=$(git -C "$REVIEW_SOURCE_DIR" rev-parse --verify HEAD 2>/dev/null) || REVIEWED_COMMIT_SHA="unavailable (non-Git directory or unborn HEAD)"
 REVIEWED_COMMIT_KIND="working-tree base; reviewed files may include uncommitted changes"
+IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-review-worktree-${CSID}" 2>/dev/null || WORKTREE_ENABLED=false
+if [ "$WORKTREE_ENABLED" = "true" ] && [ -z "$REVIEW_ARGS" ]; then REVIEWED_COMMIT_KIND="committed worktree source; reviewed range HEAD~1..HEAD"; fi
 printf '%s\n' "$REVIEWED_COMMIT_SHA" > "${TMPDIR:-/tmp}/dev-review-commit-sha-${CSID}"
 printf '%s\n' "$REVIEWED_COMMIT_KIND" > "${TMPDIR:-/tmp}/dev-review-commit-kind-${CSID}"
 printf 'Commit SHA: %s (%s)\n' "$REVIEWED_COMMIT_SHA" "$REVIEWED_COMMIT_KIND"
@@ -207,11 +241,12 @@ Scope + non-Python impact check + Python filter in ONE pass — a single `git di
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r REVIEW_ARGS < "${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}" 2>/dev/null || REVIEW_ARGS=""   # re-derive — bash resets between calls
 IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-review-worktree-${CSID}" 2>/dev/null || WORKTREE_ENABLED=false
 COMMITTED=""; [ "$WORKTREE_ENABLED" = "true" ] && COMMITTED="--committed"  # fresh worktree: working-tree diff is empty, the change is the last commit
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/resolve_review_target.py" $COMMITTED -- "$REVIEW_ARGS" || exit 1
+python "$PLUGIN_ROOT/bin/resolve_review_target.py" $COMMITTED -- "$REVIEW_ARGS" || exit 1
 ```
 
 Any `⚠` line printed above: include in report header regardless of whether Python files exist. No Python files → `resolve_review_target.py` prints `! Diff contains non-Python files only.`; a nonexistent path prints `! Review target not found: <path>`; either exits 1 and the `|| exit 1` stops Step 1 there — do not continue.
@@ -255,16 +290,32 @@ Skip optional agents by classification:
 
 - FIX → **only when `IMPACT_TIER=LIGHT`** (see Impact tier below; `FULL` keeps both): skip Agent 3 (perf-optimizer) and Agent 6 (solution-architect), unless diff changes an already-exported public function's signature (added/removed/renamed params, new flags) — then Agent 6 still runs per its own trigger (Agent 1's "API-consistency audit" subsection already checks the surface; Agent 6 adds design-quality/backward-compat judgment)
 - REFACTOR → skip Agent 6 (solution-architect), same exception — an already-exported public function's signature change still fires Agent 6
-- CHORE (config/deps, no logic) → skip Agent 2 (qa-specialist), Agent 3 (perf-optimizer), Agent 6 (solution-architect); keep Agent 1 (sw-engineer), Agent 4 (doc-scribe), Agent 5 (linting-expert). No logic = no test-gap, perf, or architecture surface — same saving pattern as `oss:review`'s DOCS_TYPING/TESTS_CI pre-classification (cc_oss/skills/review/SKILL.md:182,198).
+- CHORE (config/deps, no logic) → skip Agent 2 (qa-specialist), Agent 3 (perf-optimizer), Agent 6 (solution-architect); keep Agent 1 (sw-engineer), Agent 4 (doc-scribe), Agent 5 (linting-expert). No logic = no test-gap, perf, or architecture surface — same saving pattern as `oss:review`'s DOCS_TYPING/TESTS_CI pre-classification (requires oss plugin).
 - FEATURE/MIXED → spawn all agents, plus Agent 0 (blind-solve) when a matching `.plans/active/*.md` exists — see §Agent 0 below
 - **Challenger at any diff size** — Agent 7 runs on every classification and every diff size; only `--no-challenge` (`CHALLENGE_ENABLED=false`) disables it. Small diff ≠ low risk: few lines in a private helper on the main path can break the main user story.
 
 **Impact tier** — review depth follows the code path a change sits on, never line or file count. `review_impact_tier.py` (codemap `diff-impact` + `fn-blast`, run in the codemap block below) prints `FULL` or `LIGHT` plus reason:
 
 - `FULL` — any changed symbol, public or private, reaches a public function outside tests/leaf modules (main path), or a changed main-path module has ≥5 importers, or a module-level main-path change. **Unknown impact (codemap off, query failed, unmapped file) = `FULL`.**
-- `LIGHT` — every change and every transitive caller stays in tests, leaf modules (`viz`, `plot`, `examples`, `docs`, `scripts`, `notebooks`), or uncalled private code.
+- `LIGHT` — every change and every transitive caller stays in tests, leaf modules (`viz`, `plot`, `examples`, `docs`, `notebooks`), or uncalled private code. `conftest.py`, `docs/conf.py`, setup/release/build entrypoints and `scripts/` are always `FULL`.
 
 The Step 2 codemap-copy block prints `IMPACT_TIER=` and `IMPACT=` — apply the FIX skip above from that value (codemap runs after classification). Report the `IMPACT=` line in the review header as `Impact:`.
+
+Create the review run directory before pre-flight, including when Codemap is disabled. Reuse an active feature/fix/refactor run root when present; standalone reviews use `.developments/`, matching the run-artifact fence.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+TIMESTAMP=$(date -u +%Y-%m-%dT%H-%M-%SZ)
+RUN_BASE=""
+for _RUN_SKILL in feature fix refactor; do
+    IFS= read -r RUN_BASE 2>/dev/null < "${TMPDIR:-/tmp}/dev-${_RUN_SKILL}-dev-dir-${CSID}" || :
+    [ -z "$RUN_BASE" ] || break
+done
+RUN_DIR="${RUN_BASE:-.developments}/review/$TIMESTAMP"
+mkdir -p "$RUN_DIR" || exit 1  # timeout: 5000
+# persisted for agents — hand-retyping drops leading dot (stray developments/review/ dirs)
+echo "$RUN_DIR" > "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}"
+```
 
 ### Structural context + review pre-flight (codemap-py — only if `CODEMAP_ENABLED=true`)
 
@@ -272,31 +323,46 @@ The Step 2 codemap-copy block prints `IMPACT_TIER=` and `IMPACT=` — apply the 
 
 Extended scan for changed modules — runs v5 pre-flight queries per module, persists structured output to `$RUN_DIR/codemap-context.md`, and sets `codemap_available` flag for Step 3 agent spawns:
 
+Before this block, enumerate the review target's Python files (the explicit file/directory contents, or the Step 1 diff's files). Convert only those paths to dotted modules relative to the target project root: strip leading `./`, `src/` and `.py`, replace `/` with `.`, and map `.__init__` to its package. Use the Write tool to save the space-separated module names to `${TMPDIR:-/tmp}/dev-review-target-modules-${CSID}` with resolved sentinel path, replacing any prior run's list. Unmappable targets get an empty list and file-read fallback. Path/directory and committed worktree reviews keep `FULL`: working-tree `diff-impact` does not measure those targets.
+
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
 if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
 codemap_available=false
 IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/dev-review-codemap-enabled-${CSID}" || CODEMAP_ENABLED="false"
+IFS= read -r REVIEW_ARGS < "${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}" 2>/dev/null || REVIEW_ARGS=""
+IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-review-worktree-${CSID}" 2>/dev/null || WORKTREE_ENABLED=false
+TARGET_MODULES=""
+IFS= read -r TARGET_MODULES < "${TMPDIR:-/tmp}/dev-review-target-modules-${CSID}" 2>/dev/null || :
+if [ -n "$REVIEW_ARGS" ] || [ "$WORKTREE_ENABLED" = "true" ]; then
+    echo "FULL · impact unknown: review target is not the working-tree diff" > "${TMPDIR:-/tmp}/dev-review-impact-${CSID}"
+fi
+if [ -z "$TARGET_MODULES" ]; then CODEMAP_ENABLED=false; echo "⚠ target modules unavailable — use file reads and FULL impact"; fi
 if [ "$CODEMAP_ENABLED" = "true" ]; then
     codemap_available=true
-    # RUN_DIR not made yet (Step 2) — stage here, copy after mkdir. codemap-py on PATH guaranteed (codemap_resolve.py confirmed)
+    # RUN_DIR made before pre-flight — stage here, copy in Step 2. codemap-py on PATH guaranteed (codemap_resolve.py confirmed)
     CODEMAP_CONTEXT_STAGE="${TMPDIR:-/tmp}/dev-review-codemap-context.md-${CSID}"
-    BATCH_REQ="${TMPDIR:-/tmp}/dev-review-codemap-batch.json-${CSID}"
-    # derives changed modules from diff, batches central + 5 pre-flight queries/module — one query process, not N×5 spawns
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/build_codemap_batch.py" "$BATCH_REQ"  # timeout: 5000
+    IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
+    [ -n "$RUN_DIR" ] || { echo "! BLOCKED — review run directory missing; re-run run-directory setup"; exit 1; }
+    BATCH_REQ="$RUN_DIR/dev-review-codemap-batch.json-${CSID}"
+    # explicit target modules prevent unrelated dirty files from selecting structural context
+    python "$PLUGIN_ROOT/bin/build_codemap_batch.py" "$BATCH_REQ" --modules "$TARGET_MODULES" || exit 1  # timeout: 5000
     {
         echo "## Structural Context (codemap-py)"
         echo
         echo "### Batched query results (one shared coverage block)"
         codemap-py query --timeout 20 batch "$BATCH_REQ" 2>/dev/null
-        echo
-        echo "### Change-set blast radius (diff-impact)"
-        # fn-level context batch can't give: fn-rdeps per symbol (line-range, methods), unioned test-impact, risk tiers
-        _DIFF_IMPACT_JSON=$(codemap-py query --timeout 15 diff-impact 2>/dev/null)
-        printf '%s\n' "$_DIFF_IMPACT_JSON"
-        # review depth from code path, not diff size — overrides Step 0's fail-safe FULL default; stdout to sentinel, not stage
-        printf '%s\n' "$_DIFF_IMPACT_JSON" | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/review_impact_tier.py" > "${TMPDIR:-/tmp}/dev-review-impact-${CSID}" 2>/dev/null  # timeout: 300000 — batch + diff-impact + ≤12 tier fn-blast queries
+        if [ -z "$REVIEW_ARGS" ] && [ "$WORKTREE_ENABLED" != "true" ]; then
+            echo
+            echo "### Change-set blast radius (diff-impact)"
+            # fn-level context batch can't give: fn-rdeps per symbol (line-range, methods), unioned test-impact, risk tiers
+            _DIFF_IMPACT_JSON=$(codemap-py query --timeout 15 diff-impact 2>/dev/null)
+            printf '%s\n' "$_DIFF_IMPACT_JSON"
+            # review depth from code path, not diff size — overrides Step 0's fail-safe FULL default; stdout to sentinel, not stage
+            printf '%s\n' "$_DIFF_IMPACT_JSON" | python "$PLUGIN_ROOT/bin/review_impact_tier.py" > "${TMPDIR:-/tmp}/dev-review-impact-${CSID}" 2>/dev/null  # timeout: 300000 — batch + diff-impact + ≤12 tier fn-blast queries
+        fi
     } > "$CODEMAP_CONTEXT_STAGE"
 fi
 echo "$codemap_available" > "${TMPDIR:-/tmp}/dev-review-codemap-available-${CSID}"
@@ -304,7 +370,7 @@ echo "$codemap_available" > "${TMPDIR:-/tmp}/dev-review-codemap-available-${CSID
 
 Codemap context propagation in Step 3:
 
-- `codemap_available=true` → copy `$CODEMAP_CONTEXT_STAGE` to `$RUN_DIR/codemap-context.md` once `$RUN_DIR` exists (Step 2). Each dimension spawn prompt gets a literal block holding only ITS slice of the batch results (the whole block in every prompt re-bills every query result to consumers that never read it; results for skipped agents injected nowhere): qa unit → `uncovered` + `mock-rdeps` entries; doc unit → `undocumented` + `xrefs --broken` entries; sw-engineer → `rdeps` + `central` + `diff-impact`. Entries whose only consumer was skipped by classification aren't injected anywhere:
+- `codemap_available=true` → copy `$CODEMAP_CONTEXT_STAGE` to `$RUN_DIR/codemap-context.md` once in Step 2, reusing the directory created before pre-flight. Each dimension spawn prompt gets a literal block holding only ITS slice of the batch results (the whole block in every prompt re-bills every query result to consumers that never read it; results for skipped agents injected nowhere): qa unit → `uncovered` + `mock-rdeps` entries; doc unit → `undocumented` + `xrefs --broken` entries; sw-engineer → `rdeps` + `central` + `diff-impact`. Entries whose only consumer was skipped by classification aren't injected anywhere:
   ```text
   ## Structural Context (codemap-py, codemap_available=true)
   <this agent's slice of $RUN_DIR/codemap-context.md>
@@ -329,23 +395,23 @@ Tier annotation for Agent 1 (sw-engineer) only: label each module's `imported_by
 
 ## Step 2: Codex co-review
 
-Set up run directory, check Codex availability, and materialize codemap context into the run directory:
+Reload the run directory, check Codex availability, and materialize codemap context into the run directory:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-TIMESTAMP=$(date -u +%Y-%m-%dT%H-%M-%SZ)
-RUN_DIR=".temp/review/$TIMESTAMP"
-mkdir -p "$RUN_DIR"  # timeout: 5000
-# persisted for agents — hand-retyping drops leading dot (stray temp/review/ dirs)
-echo "$RUN_DIR" > "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}"
-# REPORT_DIR: orig-root sentinel (worktree §Enter) or pwd — stays reachable outside worktree. RUN_DIR stays worktree-local.
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
+[ -n "$RUN_DIR" ] || { echo "! BLOCKED — review run directory missing; re-run run-directory setup"; exit 1; }
+TIMESTAMP=$(basename -- "$RUN_DIR")
+# REPORT_DIR: orig-root sentinel (worktree §Enter) or pwd — stays reachable outside worktree. RUN_DIR stays under its run root.
 IFS= read -r _REPORT_BASE < "${TMPDIR:-/tmp}/dev-review-orig-root-${CSID}" 2>/dev/null || _REPORT_BASE="$(pwd)"
 [ -n "$_REPORT_BASE" ] || _REPORT_BASE="$(pwd)"
-REPORT_DIR="$_REPORT_BASE/.reports/review/$TIMESTAMP"
+REPORT_DIR="$_REPORT_BASE/.reports/develop-review/$TIMESTAMP"
+if command -v cygpath >/dev/null 2>&1; then REPORT_DIR=$(cygpath -m -- "$REPORT_DIR") || exit $?; fi
 mkdir -p "$REPORT_DIR"  # timeout: 5000
 echo "$REPORT_DIR" > "${TMPDIR:-/tmp}/dev-review-report-dir-${CSID}"  # persist for contract-write
 REPORT_DIR_LITERAL="$REPORT_DIR"
-CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/check_bridge.py" --status 2>/dev/null || echo "absent")  # timeout: 5000
+CODEX_STATUS=$(python "$PLUGIN_ROOT/bin/check_bridge.py" --status 2>/dev/null || echo "absent")  # timeout: 5000
 [ "$CODEX_STATUS" = "available" ] && echo "bridge@borda-ai-rig available" || echo "⚠ bridge@borda-ai-rig is ${CODEX_STATUS} — skipping co-review"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""  # round-trip the sentinel agents self-resolve from
 [ -n "$RUN_DIR" ] || { echo "! BLOCKED — run-dir sentinel empty; refusing to copy codemap context to a root-relative path"; exit 1; }
@@ -370,15 +436,16 @@ echo "$CODEX_OUT" > "${TMPDIR:-/tmp}/dev-review-codex-out-${CSID}"  # Step 6 re-
 ```
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" codex-prepass.md  # timeout: 5000
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" codex-prepass.md  # timeout: 5000
 ```
 
 Use the loaded `codex-prepass.md` for the **skip/run criteria only** (formatting-only skip, availability check) — do NOT use its dispatch line as the call: its args name no output path, so `$RUN_DIR/codex.md` would never be written and Step 6 would silently skip.
 
-Dispatch — substitute `<TARGET>` with its resolved literal value before the call: `Skill(skill="bridge:review", args="Read-only adversarial review of <TARGET>. Look for bugs, missed edge cases, incorrect logic, and inconsistencies with existing code patterns. Report findings with file:line locations; do not apply fixes.")` (requires `bridge@borda-ai-rig`).
+Dispatch — substitute `<TARGET>` with its resolved literal value before the call: `Skill(skill="bridge:review", args="--timeout-seconds 230 Read-only adversarial review of <TARGET>. Look for bugs, missed edge cases, incorrect logic, and inconsistencies with existing code patterns. Report findings with file:line locations; do not apply fixes.")` (requires `bridge@borda-ai-rig`).
 
-Note: `bridge:review` is a foreground, read-only skill with no Write tool — it returns findings inline in its response envelope and never creates a file itself, unlike a background `Agent()` spawn. No health-monitoring/liveness-probe protocol applies to this call: it blocks until it returns. After `Skill(skill="bridge:review", ...)` returns, the orchestrator itself writes `$RUN_DIR/codex.md` from the returned envelope's `.findings`/`.verdict`/`.transcript_path` fields.
+Note: with `--timeout-seconds 230`, `bridge:review` uses its synchronous foreground route and blocks until it returns. Its Write tool is limited to its own scratch task file; it returns findings inline in its response envelope and does not write `$RUN_DIR/codex.md`. No background health-monitoring/liveness-probe protocol applies. After `Skill(skill="bridge:review", ...)` returns, the orchestrator itself writes `$RUN_DIR/codex.md` from the returned envelope's `.findings`/`.verdict`/`.transcript_path` fields.
 
 After `$RUN_DIR/codex.md` is written (or skipped/blocked), extract compact seed list (≤10 items, `[{"loc":"file:line","note":"..."}]`) to inject into agent prompts in Step 3 as pre-flagged issues to verify or dismiss. Codex skipped, timed out, or found nothing → proceed with empty seed.
 
@@ -390,11 +457,13 @@ Codex: first 10 items seeded to review agents; full list in $RUN_DIR/codex.md (N
 
 Pass notice through to consolidator (Step 5) so it appears in final report header, not just terminal scratch.
 
-### Agent 0 — blind-solve (FEATURE/MIXED with a matching plan file only, general-purpose)
+### Matched plan claim and Agent 0 — blind-solve (FEATURE/MIXED diff with a matching plan only, general-purpose)
 
 Anti-anchoring pre-step: before any agent reads the diff, spawn a standalone agent that derives its own **blueprint-level** solution to the problem the change solves — approach + key data structures + edge cases, not full implementation. Bounded: ~10 tool calls, output ≤1 page. Isolation-motivated spawn, not work displacement — the blind agent must not share the orchestrator's context, so the "under ~73 calls → inline" rule does not apply; it still pays the fixed per-spawn overhead, hence the double gate below.
 
-Problem statement = a matching plan file, nothing else. A local diff has no PR body; the last commit message describes the *previous* change when the target is the working tree, so it is never used. Gather with this block — no diff content is read:
+For every classification, inspect `.plans/active/*.md` with the Read tool. Match only exact repository-relative paths listed in the plan's **Affected files** section against the review target's files; normalize `./` and path separators, never match stems or free-text mentions. A path/directory review uses its own files, not unrelated dirty files. Exactly one matching plan → use the Write tool to persist its resolved path to `${TMPDIR:-/tmp}/dev-review-plan-${CSID}`; none or multiple matches → overwrite that sentinel with an empty line and record the missing/ambiguous claim. Agent 1 receives `PLAN_CLAIM=<resolved matched-plan path>` when present, for every classification; omit the binding otherwise. A matched plan remains an author's claim, never contract evidence.
+
+Problem statement for Agent 0 = that matching plan file, nothing else. A local diff has no PR body; the last commit message describes the *previous* change when the target is the working tree, so it is never used. Only FEATURE/MIXED diff reviews run the block below — path/directory targets have no change baseline and skip blind-solve. No diff content is read:
 
 ```bash
 # timeout: 10000
@@ -404,29 +473,29 @@ IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null 
 IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-review-worktree-${CSID}" 2>/dev/null || WORKTREE_ENABLED=false
 # pre-change ref: working-tree diff → HEAD is untouched; --worktree reviews committed HEAD → parent is the pre-change state
 if [ "$WORKTREE_ENABLED" = "true" ]; then PRE_REF=HEAD~1; CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null); else PRE_REF=HEAD; CHANGED=$(git diff --name-only HEAD 2>/dev/null); fi
-STEMS=$(printf '%s\n' $CHANGED | sed -E 's#.*/##; s#\.py$##; s#^test_##' | sort -u | grep -v '^__init__$' | head -20)
-PLAN=""; for f in .plans/active/*.md; do [ -f "$f" ] || continue; for s in $STEMS; do grep -qi -- "$s" "$f" 2>/dev/null && { PLAN="$f"; break 2; }; done; done
+PLAN=""
+IFS= read -r PLAN < "${TMPDIR:-/tmp}/dev-review-plan-${CSID}" 2>/dev/null || :
 if [ -n "$PLAN" ]; then
   { echo "## Plan: $PLAN"; sed -n '1,120p' "$PLAN"; echo; echo "## Changed files (names only)"; printf '%s\n' $CHANGED; echo; echo "PRE_REF=$PRE_REF"; } > "$RUN_DIR/blind-solve-input.md"
   echo "blind-solve input: $RUN_DIR/blind-solve-input.md plan=$PLAN pre-ref=$PRE_REF"
 else
-  echo "blind-solve: skipped — no .plans/active/*.md mentions a changed module ($(printf '%s ' $STEMS))"
+  echo "blind-solve: skipped — no unambiguous .plans/active/*.md Affected files match"
 fi
 ```
 
 `blind-solve: skipped` → no spawn; note the skip in the report header. Otherwise spawn with the contents of `$RUN_DIR/blind-solve-input.md` verbatim, then: "Your only source for pre-change code is `git show <PRE_REF>:<path>` for files listed above. Never use Read, `cat`, `git diff`, or any working-tree path — the working tree contains the change under review. Sketch your own solution to the stated problem — approach, key data structures/functions, edge cases — in ≤1 page. Do not write full code." Write to `$RUN_DIR/blind-solve.md`, return `{"status":"done","file":"$RUN_DIR/blind-solve.md","confidence":0.N}`.
 
-Skip when classification is FIX/REFACTOR/CHORE (no fresh problem to solve blind) — checked before the block above runs. Launch in the same batch as the Step 3 spawn units — it needs no diff, nothing blocks it. Not a `FANOUT_MAX` unit — never counted against the cap, never ranked out, not part of any merged spawn unit.
+Skip Agent 0 when classification is FIX/REFACTOR/CHORE (no fresh problem to solve blind) or target is a path/directory — checked before the block above runs; plan matching and the Agent 1 claim binding still apply. Launch in the same batch as the Step 3 spawn units — it needs no diff, nothing blocks it. Not a `FANOUT_MAX` unit — never counted against the cap, never ranked out, not part of any merged spawn unit.
 
 ## Step 3: Spawn sub-agents in parallel
 
 **Spawn-count gate — apply before spawning anything.** Each agent costs ~120,851 tok fixed overhead regardless of how little work it does (~73 tool-calls' worth), plus ~12.0 s/call. Rules, all mandatory:
 
-Two stages, in order — never collapse them:
+Three stages, in order — never collapse them:
 
-1. **Classification preselection** (always): the FIX (at `IMPACT_TIER=LIGHT`) / CHORE skips above decide which dimensions are *relevant at all*. A dimension with no changed file in its territory is out here and never comes back, at any flag.
+1. **Classification preselection** (always): the FIX (at `IMPACT_TIER=LIGHT`) / CHORE skips above decide which dimensions are *relevant at all*. Agent 1 always survives because intended behavior applies to every review target. Any other dimension with no target file in its territory is out here and never comes back, at any flag.
 2. **Unit grouping** (always): fold the survivors into spawn units per §Merged spawn units below — Agents 3+6 share one spawn, Agents 4+5 share one spawn, Agents 1 and 2 stay standalone. A unit exists when at least one of its dimensions survived stage 1; its prompt lists only the surviving dimensions' brief files.
-3. **Relevance ranking** (default only): rank the units by evidence — changed files and lines in their dimensions' territory, what the classification implies, what the structural context flagged (a merged unit ranks by its strongest surviving dimension) — and spawn the top `FANOUT_MAX` (3) units. With `--full` (`FANOUT_CAP=0`) skip this stage and spawn every unit of stage 2.
+3. **Relevance ranking** (default only): Agent 1 is never ranked out; reserve its unit within the cap, then rank the other units by evidence — target files and lines in their dimensions' territory, what the classification implies, what the structural context flagged (a merged unit ranks by its strongest surviving dimension) — and fill the remaining `FANOUT_MAX - 1` slots. With `--full` (`FANOUT_CAP=0`) skip this stage and spawn every unit of stage 2.
 
 - More work → give each agent more, never add agents.
 - **Spawn the fewest that keep each near `AGENT_CALL_BUDGET`** — not the most the cap allows. Small diff → merge surviving units into fewer spawns, **never zero**.
@@ -446,10 +515,11 @@ Two stages, in order — never collapse them:
 **File-based handoff** — load the protocol, then resolve the develop:review checklist path (version-agnostic) and the dimension-briefs directory (`$REVIEW_CHECKLIST` rules follow the preamble and pre-expansion rule below):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" file-handoff-protocol.md  # timeout: 5000
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" file-handoff-protocol.md  # timeout: 5000
 # loads: the brief-*.md files in the loop — each child cats only its own; parent passes the directory path only
-_DIMENSION_BRIEFS="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/review/templates"
+_DIMENSION_BRIEFS="$PLUGIN_ROOT/skills/review/templates"
 for _B in brief-sw-engineer.md brief-qa-specialist.md brief-perf-optimizer.md brief-doc-scribe.md brief-linting-expert.md brief-security-augmentation.md brief-solution-architect.md brief-challenger.md; do
     [ -f "$_DIMENSION_BRIEFS/$_B" ] || { echo "! BLOCKED — dimension brief $_B missing; restore/reinstall this develop version before spawning review agents"; exit 1; }
 done
@@ -463,15 +533,17 @@ else
 fi
 ```
 
-Run directory created in Step 2 (`$RUN_DIR`).
+Run directory created before pre-flight and reloaded in Step 2 (`$RUN_DIR`).
 
 <!-- $REPORT_DIR pre-expanded into $REPORT_DIR_LITERAL — substitute literal vars in Agent spawn prompt strings. Run-dir is the exception: agents self-resolve it (see run-dir preamble below), never hand-substituted. -->
 
 ### Run-dir preamble (canonical)
 
-Place this in every agent spawn prompt (Agents 1–7 and the Step 5 consolidator) as the paragraph **after** prompt line 1 — line 1 is the delta task line (dimension + target, ≤12 words, delta first; `agent-spawn.md`), never this shared boilerplate:
+Place this in every agent spawn prompt (Agents 0–7, Step 4 verifiers and the Step 5 consolidator) as the paragraph **after** prompt line 1 — line 1 is the delta task line (dimension + target, ≤12 words, delta first; `agent-spawn.md`), never this shared boilerplate:
 
-> "First run Bash `CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""` to obtain the exact run-dir path. Use `$RUN_DIR` verbatim for every file you read or write — never retype the path literally (the leading `.` in `.temp` is easy to drop, scattering output into a stray `temp/` dir)."
+> "First run Bash `CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""` to obtain the exact run-dir path. Use `$RUN_DIR` verbatim for every handoff file you read or write — never retype the path literally (the leading `.` in `.developments` is easy to drop, scattering output into a stray `developments/` dir)."
+>
+> "Read-only review: no source edits, no fixers, no dependency installation, no writes outside `$RUN_DIR`; direct all tool caches and temporary output there. Only the consolidator may additionally write the prescribed report and sidecars under `REPORT_DIR_LITERAL`. Do not execute reviewed code, examples or tests. Existing static analyzers and dependency audits may run without fixes, with caches under `$RUN_DIR`, within existing authorization; unavailable or incompatible checks remain explicit coverage gaps. Task tracking: do NOT call TaskCreate or TaskUpdate."
 
 Inside agent prompt strings, leave `$RUN_DIR` literal — agent resolves it via preamble. Orchestrator must NOT hand-substitute run-dir path.
 
@@ -481,17 +553,19 @@ Any OTHER shell variable inserted into an Agent spawn prompt string — `$REPORT
 
 Pass the resolved `$REVIEW_CHECKLIST` path (printed by the File-based handoff block above) as a `REVIEW_CHECKLIST=<resolved path>` binding line in Agent 1's spawn prompt and in the consolidator's. **Empty → omit that binding line from Agent 1's prompt entirely** — don't pass empty path.
 
+For Agent 1, also read the Step 2 matched-plan sentinel and pass its nonempty resolved path as `PLAN_CLAIM=<resolved matched-plan path>` alongside `REVIEW_CHECKLIST`; omit that binding if no unambiguous match exists. Agent 1 loads the claim itself.
+
 **Visible-degradation rule** — `$REVIEW_CHECKLIST` empty → print `⚠ REVIEW_CHECKLIST is empty — review scope undefined` at TOP of review output (before Findings), and consolidator prompt (Step 5) **must** insert into report header (YAML `---` block or first line before Findings): "Review checklist not applied (review-checklist.md missing from this develop install) — severity anchors may be inconsistent." Silent degradation hides the gap from reviewers, makes severity drift invisible.
 
 **Finding evidence standard — applies to every agent, every finding** (tiers, source independence and citation tracing per `quality-gates.md` §Evidence Grounding):
 
-- Every finding must cite specific `file:line` from diff as primary evidence — "I know this typically causes issues" without a diff citation isn't a valid finding
+- Every finding must cite specific `file:line` from the target source (changed lines in diff mode) as primary evidence — "I know this typically causes issues" without a target citation isn't a valid finding
 - Claims referencing external standards (OWASP, PEP, language spec, CVE) must cite the specific authoritative document — official spec, CVE entry, PEP text; a blog post or Stack Overflow answer referencing the standard is Tier 2 only
 - Only Tier 2 available, distinct-origin count < 3, no experiment run → downgrade finding to LOW or drop it; never raise MEDIUM/HIGH/CRITICAL on Tier 2 alone
 
 Launch spawn units simultaneously with Agent tool (security augmentation folded into Agent 1 — not separate spawn; Agent 6 optional; Agents 3+6 and 4+5 launch as merged units per §Merged spawn units; Agent 0 blind-solve joins this batch on FEATURE/MIXED, outside the cap). Every agent prompt opens with its delta task line, carries the [run-dir preamble (canonical)](#run-dir-preamble-canonical) next, and ends with:
 
-> "Write your FULL findings (all sections, Confidence block) to `$RUN_DIR/<agent-name>.md` using the Write tool — where `<agent-name>` is e.g. `sw-engineer`, `qa-specialist`, `perf-optimizer`, `doc-scribe`, `linting-expert`, `solution-architect`. Then return to the caller ONLY a compact JSON envelope on your final line — nothing else after it (a merged unit returns the JSON array of §Merged spawn units instead, one such object per dimension file): `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":0,\"high\":1,\"medium\":2,\"low\":0},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.88}`"
+> "Write your FULL findings (all sections, Confidence block) to `$RUN_DIR/<agent-name>.md` using the Write tool — where `<agent-name>` is e.g. `sw-engineer`, `qa-specialist`, `perf-optimizer`, `doc-scribe`, `linting-expert`, `solution-architect`. Include your scoped source_outcome, source_rating (source-5-v1 integer 1–5 or null when undecidable), rationale, readiness (complete/blocked/incomplete), readiness_reason and inspected coverage (paths and checks, including unavailable checks). Then return to the caller ONLY a compact JSON envelope on your final line — nothing else after it (a merged unit returns the JSON array of §Merged spawn units instead, one such object per dimension file): `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":0,\"high\":1,\"medium\":2,\"low\":0},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.88,\"source_outcome\":\"MINOR_EDITS\",\"source_rating\":2,\"rationale\":\"<scoped judgment basis>\",\"readiness\":\"complete\",\"readiness_reason\":\"<completed checks or verification limits>\",\"coverage\":[\"<inspected path/check>\"]}`. Replace example judgments with your actual scoped assessment."
 
 **Codemap-py context preamble (substituted by orchestrator)**: rehydrate `IFS= read -r codemap_available < "${TMPDIR:-/tmp}/dev-review-codemap-available-${CSID}" 2>/dev/null || codemap_available=false`. When `codemap_available=true`, each dimension spawn prompt is prefixed with its `## Structural Context (codemap-py, codemap_available=true)` slice from `$RUN_DIR/codemap-context.md` per the per-agent slicing rules in Step 1. Agents must read that block first and skip redundant Grep/Read on symbols already covered by codemap output. Block absent → fall back to current file-read behaviour. Challenger (Agent 7) unchanged.
 
@@ -501,7 +575,7 @@ Dispatch triggers stay here — the orchestrator decides before any child reads 
 
 - **Security augmentation** (folds into Agent 1, never a separate spawn): target touches authentication, user input handling, dependency updates, or serialization → add the security brief to Agent 1's brief list. Skip for purely internal refactoring.
 - **Agent 6** (optional, folds into the Agents 3+6 unit): target touches `__init__.py` exports, adds/modifies Protocols or ABCs, changes module structure, introduces new public classes, or changes the signature of any already-exported public function (added/removed/renamed params, new flags) → include the Agent 6 brief. Skip for purely internal (non-exported) implementation changes.
-- **Agent 7** (challenger): skip only if `CHALLENGE_ENABLED=false`; runs at any diff size.
+- **Agent 7** (challenger): skip only if `CHALLENGE_ENABLED=false`; runs at any diff size. Include `--no-codex` in its prompt when Step 2 completed `bridge:review` on the same target; omit it when that co-review was skipped or unavailable. Apply this rule to any challenger redispatch on the same material.
 
 **Challenger severity propagation**: consolidator (Step 5) reads `challenger.md` → map its findings by section before merging — Blockers (`[CRITICAL]`) → `critical` or `high` (promote to `critical` only when independently corroborated, e.g. a Step 4 CONFIRMED verdict or matching evidence from another agent; otherwise keep the required independent verification open, never downgrade uncertainty into actionable high severity), Concerns (`[HIGH]`) → `medium`, Nitpicks (`[LOW]`) → `low`. Never drop challenger candidates from validation; only parent-CONFIRMED claims become findings, and uncertainty stays separately durable.
 
@@ -513,6 +587,7 @@ Agent phase reports must be written to the run-dir before this refresh.
 
 ```bash
 # compaction boundary 1 (compaction-contract.md §Lifecycle) — written before entering Step 4
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
 IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/dev-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
@@ -520,10 +595,10 @@ IFS= read -r _TARGET < "${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}" 2>/dev/nu
 IFS= read -r _CLASS < "${TMPDIR:-/tmp}/dev-review-classification-${CSID}" 2>/dev/null || _CLASS=""
 _FINDING_FILES=$(ls "$_RUN_DIR/"*.md 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
 _PRESERVE="run-dir=$_RUN_DIR, report-dir=$_REPORT_DIR, target=$_TARGET, classification=$_CLASS, finding-files=$_FINDING_FILES"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" --keep-sentinel dev-review-keep-items "develop:review" "consolidation (after parallel review-agent fan-out)" "$_RUN_DIR" "$_PRESERVE" "resume: re-cat own agent-resolution.md, file-handoff-protocol.md and foundry--cross-validation-protocol.md; cross-validate critical findings (Step 4) → consolidate → final report" -- calls_ahead=20 "drop=expanded review findings"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" --keep-sentinel dev-review-keep-items "develop:review" "consolidation (after parallel review-agent fan-out)" "$_RUN_DIR" "$_PRESERVE" "resume: re-cat own agent-resolution.md, file-handoff-protocol.md and foundry--cross-validation-protocol.md; cross-validate critical findings (Step 4) → consolidate → final report" -- calls_ahead=20 "drop=expanded review findings"  # timeout: 5000
 IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
 [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/compaction_boundary.py" "$_DEV_SHARED"
+python "$PLUGIN_ROOT/bin/compaction_boundary.py" "$_DEV_SHARED"
 RUN_DIR="$_RUN_DIR"
 [ -n "$RUN_DIR" ] || { echo "! BLOCKED — run-dir sentinel empty; refusing to write cross-validation notes to a root-relative path"; exit 1; }
 if [ ! -f "$_DEV_SHARED/foundry--cross-validation-protocol.md" ]; then
@@ -543,6 +618,8 @@ File present → parent validates all candidates using the printed protocol befo
 
 Before consolidation, persist the parent's all-severity candidate validation and reviewer assessment evidence in `$RUN_DIR/cross-validation.md` with the Write tool. Include structured envelope fields defined by the loaded protocol and retain all dispositions. Pass that literal evidence path to the consolidator. Parent rechecks new/materially strengthened claims and the final envelope before delivery; a model's confirmation label alone is not proof. Non-empty `new_claims` in the consolidator envelope → validate each listed candidate ID against the source before delivery; any still unvalidated stays out of Findings and is listed under the report's open concerns.
 
+If the protocol was unavailable, the parent's final Write must retain `## Cross-Validation: SKIPPED` and its reason in `cross-validation.md`; do not overwrite the earlier marker with validation notes that omit it.
+
 ## Step 5: Consolidate findings
 
 Resolve the report date — the consolidator's `DATE` binding (the report directory already exists from the Step 2 run-dir block):
@@ -559,8 +636,9 @@ Resolve both instruction and report-template paths **before** spawning the gener
 
 ```bash
 # loads: consolidator-prompt.md — child reads the file; parent passes its literal path only
-_CONSOLIDATOR_INSTRUCTIONS="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/review/templates/consolidator-prompt.md"
-_REVIEW_TEMPLATE="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/review/templates/review-report.md"
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+_CONSOLIDATOR_INSTRUCTIONS="$PLUGIN_ROOT/skills/review/templates/consolidator-prompt.md"
+_REVIEW_TEMPLATE="$PLUGIN_ROOT/skills/review/templates/review-report.md"
 [ -f "$_CONSOLIDATOR_INSTRUCTIONS" ] && [ -f "$_REVIEW_TEMPLATE" ] || { echo "! BLOCKED — consolidator instruction/report template missing; restore/reinstall this develop version before consolidation"; exit 1; }
 printf 'Consolidator instructions: %s\nReport template: %s\n' "$_CONSOLIDATOR_INSTRUCTIONS" "$_REVIEW_TEMPLATE"  # timeout: 5000
 ```
@@ -604,10 +682,11 @@ Report file already contains the fields — no separate prepend needed.
 
 ```bash
 # compaction boundary 2 (compaction-contract.md §Lifecycle)
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
 IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/dev-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:review" "follow-up (after consolidation)" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md" "Step 6 only with Codex output → follow-up gate: re-read report header, re-issue follow-up AskUserQuestion"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" "develop:review" "follow-up (after consolidation)" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md" "Step 6 only with Codex output → follow-up gate: re-read report header, re-issue follow-up AskUserQuestion"  # timeout: 5000
 ```
 
 ## Step 6: Delegate implementation follow-up (optional)
@@ -625,8 +704,9 @@ Block printed the skip line (`$CODEX_OUT` empty or file at that path doesn't exi
 After consolidating, identify findings Codex could implement — not style violations (pre-commit handles those), but bounded code or documentation work grounded in the actual implementation. The review only names them; it never edits code. A fix applied inside review would land outside the fix skills' reproduce-test-verify loop and could collide with their later edits to the same file.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" codex-delegation.md  # timeout: 5000
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" codex-delegation.md  # timeout: 5000
 ```
 
 Apply the "good fit" and "don't delegate" criteria defined there (when found) — criteria only; never invoke `bridge:implement` from this step. Qualifying findings → print a `### Codex-eligible findings` section listing each finding's location and a one-line brief, and add them to the report's **Recommended Next Steps** as candidates for a `bridge:implement` call by the fix workflow or the user. None qualify → omit the section.
@@ -637,16 +717,17 @@ Apply the "good fit" and "don't delegate" criteria defined there (when found) �
 
 **Worktree exit** — if `WORKTREE_ENABLED=true`: the report already lives in the main tree (§Deliverable). Follow `worktree-isolation.md` §Exit — capture branch, call `ExitWorktree(action="keep")`, append the `Worktree` block to the report/output. Exit **before** the follow-up gate so the `/develop:fix`/`/develop:refactor` next-step suggestions below point at the main tree. Never auto-merge.
 
-**Suggested next steps** (plain text, not selectable — `/develop:fix` and `/develop:refactor` both carry `disable-model-invocation: true`, so `Skill()` dispatch is impossible for either): blocking issues found → `Run: /develop:fix` to reproduce with a test, apply a targeted fix; structural/quality issues found → `Run: /develop:refactor` for test-first improvements.
+**Suggested next steps** (plain text, not selectable — `/develop:fix` and `/develop:refactor` both carry `disable-model-invocation: true`, so `Skill()` dispatch is impossible for either): for each blocking finding, print `Run: /develop:fix "<finding title> (<file:line>)"` with the actual title and location to reproduce with a test and apply a targeted fix; structural/quality issues found → `Run: /develop:refactor` for test-first improvements.
 
 Refresh the contract right before the gate — boundary 2 was written before Step 6 pulled more into context — and print the hint so a long wait can be spent compacted. Step 6 skipped (`CODEX_OUT` empty or its file absent) → nothing new entered context and boundary 2 already carries the gate resume line: skip the block below and go straight to the follow-up gate. Otherwise run:
 
 ```bash
 # compaction boundary 3 — immediately before the follow-up idle gate (compaction-contract.md §Lifecycle)
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
 IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/dev-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:review" "follow-up gate" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md" "resume: re-read report header, re-issue follow-up AskUserQuestion"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" "develop:review" "follow-up gate" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md" "resume: re-read report header, re-issue follow-up AskUserQuestion"  # timeout: 5000
 ```
 
 **Follow-up gate (NEVER SKIP)** — Call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments. The `/compact` hint rides in the question text, never as reply prose or Bash stdout before the call (text before a tool call can vanish on 5.5-family models):
@@ -657,7 +738,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "
 - (b) label: `skip` — description: no action
 - every option: label and one-line description only, no `preview`; never put the header table in the question or its options.
 
-**Confidence block** — emitted by consolidator agent in `$REPORT_DIR/review-report.md`, not at skill level (DMI skill: top-level model invocation disabled, so any skill-level instruction would be unreachable).
+**Confidence block** — emitted by consolidator agent in `$REPORT_DIR/review-report.md` because the consolidator owns the report and its evidence synthesis.
 
 ```bash
 rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
@@ -668,10 +749,10 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 <notes>
 
 - Critical issues always surfaced regardless of scope
-- Skip sections with no issues — no padding with "looks good". Reviewing isolated code without git context → skip Performance Concerns unless code itself shows performance issues.
+- Skip sections with no issues — no padding with "looks good". Reviewing isolated code without git context → skip Performance Concerns unless code itself shows performance issues or the request/documentation makes a material performance claim.
 - **Signal-to-noise gate**: function or class ≤50 lines with only 1–2 ground-level issues (critical/high) → no more than 2 medium/low findings beyond them. Remainder as `[nit]` in dedicated "Minor Observations" section — not elevated to same tier as high-severity findings.
 - **Follow-up chains**:
-  - `[blocking]` bugs or regressions → `/develop:fix` to reproduce with test, apply targeted fix
+  - `[blocking]` bugs or regressions → `/develop:fix "<finding title> (<file:line>)"` per finding to reproduce with test, apply targeted fix
   - Structural or quality issues → `/develop:refactor` for test-first improvements
   - Security findings in auth/input/deps → run `pip-audit` for dependency CVEs; address OWASP issues inline via `/develop:fix`
   - Mechanical issues beyond Step 5 findings → `bridge@borda-ai-rig` available → call its `implement` skill with a brief stating the exact finding, target paths, current evidence, permitted edits, required result, stop condition, verification command.

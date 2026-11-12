@@ -8,6 +8,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -39,7 +40,7 @@ from .callgraph import (  # noqa: E402
 )
 from .diff_batch import cmd_batch, cmd_diff_impact  # noqa: E402
 from .docs_coverage import UncoveredSort, cmd_coverage, cmd_coverage_gap, cmd_uncovered, cmd_undocumented  # noqa: E402
-from .errors import _EXIT_BAD_INPUT, _die_json  # noqa: E402
+from .errors import _EXIT_BAD_INPUT, _EXIT_NOT_INDEXED, _die_json  # noqa: E402
 from .index_io import (  # noqa: E402
     _GIT_TIMEOUT_S,
     _autobuild_disabled,
@@ -70,7 +71,13 @@ from .subprocess_fixtures import (  # noqa: E402
     cmd_subprocess_deps,
     cmd_subprocess_rdeps,
 )
-from .symbols import _reject_multiline_args, cmd_find_symbol, cmd_symbol, cmd_symbols  # noqa: E402
+from .symbols import (  # noqa: E402
+    FIND_SYMBOL_TIMEOUT_SECONDS,
+    _reject_multiline_args,
+    cmd_find_symbol,
+    cmd_symbol,
+    cmd_symbols,
+)
 from .xrefs_dead import cmd_dead_modules, cmd_dead_symbols, cmd_xrefs  # noqa: E402
 
 
@@ -454,7 +461,8 @@ def _add_global_flags(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=0,
         metavar="N",
-        help="Hard timeout in seconds; 0 = no limit (default). Uses SIGALRM — Unix only.",
+        help="Hard timeout in seconds; 0 = no limit except find-symbol (default 5s). "
+        "Uses SIGALRM on Unix; regex matching also has a portable worker deadline.",
     )
     parser.add_argument(
         "--no-heal",
@@ -592,6 +600,18 @@ def main(argv: Sequence[str] | None = None) -> None:
         state._invocation, state._CMD = invocation, ""
         try:
             _run_query(arguments)
+        except (KeyError, TypeError, ValueError) as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            _print(f"codemap: index failed self-check — {detail}", file=sys.stderr)
+            _die_json(
+                {
+                    "error": "index failed self-check",
+                    "reason": "invalid_entries",
+                    "detail": detail,
+                    "fix": "Re-run /codemap-py:scan-codebase to rebuild.",
+                },
+                _EXIT_NOT_INDEXED,
+            )
         finally:
             if hasattr(signal, "SIGALRM") and signal.getsignal(signal.SIGALRM) != previous_alarm:
                 signal.alarm(0)
@@ -601,6 +621,24 @@ def main(argv: Sequence[str] | None = None) -> None:
                     remaining = max(1e-6, previous_timer[0] - (time.monotonic() - timer_started))
                     signal.setitimer(signal.ITIMER_REAL, remaining, previous_timer[1])
             state._invocation, state._CMD = previous, previous_command
+
+
+def _start_query_timeout(args: argparse.Namespace) -> None:
+    """Apply the regex default deadline and arm the Unix timer where the calling thread permits it."""
+    if args.command == "find-symbol" and args.timeout <= 0:
+        args.timeout = FIND_SYMBOL_TIMEOUT_SECONDS
+    if args.timeout <= 0 or not hasattr(signal, "SIGALRM") or threading.current_thread() is not threading.main_thread():
+        return
+
+    def _timeout_handler(signum: int, frame: object) -> None:
+        """Retain timeout evidence while preserving the CLI's existing exit contract."""
+        if state._invocation is not None:
+            state._invocation.result = {"error": "timeout", "timeout_seconds": args.timeout}
+        _print(f"scan-query: timed out after {args.timeout}s", file=sys.stderr)
+        sys.exit(2)
+
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(args.timeout)
 
 
 def _run_query(argv: Sequence[str]) -> None:
@@ -623,17 +661,7 @@ def _run_query(argv: Sequence[str]) -> None:
     state._FORMAT = args.output_format
     _reject_multiline_args(args)
 
-    if args.timeout > 0 and hasattr(signal, "SIGALRM"):
-
-        def _timeout_handler(signum: int, frame: object) -> None:
-            """Retain timeout evidence while preserving the CLI's existing exit contract."""
-            if state._invocation is not None:
-                state._invocation.result = {"error": "timeout", "timeout_seconds": args.timeout}
-            _print(f"scan-query: timed out after {args.timeout}s", file=sys.stderr)
-            sys.exit(2)
-
-        signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(args.timeout)
+    _start_query_timeout(args)
 
     index_path = _resolve_index_path(args)
     source_identity = index_paths.resolve_index(root=args.root)
@@ -708,7 +736,9 @@ _COMMAND_HANDLERS: dict[str, Callable[[dict, argparse.Namespace, Path], None]] =
         i, a.name, a.limit, exclude_tests=a.exclude_tests, with_imports=a.with_imports, project_root=r
     ),
     "symbols": lambda i, a, r: cmd_symbols(i, a.module),
-    "find-symbol": lambda i, a, r: cmd_find_symbol(i, a.pattern, a.limit, exclude_tests=a.exclude_tests),
+    "find-symbol": lambda i, a, r: cmd_find_symbol(
+        i, a.pattern, a.limit, exclude_tests=a.exclude_tests, timeout=a.timeout or FIND_SYMBOL_TIMEOUT_SECONDS
+    ),
     "fn-deps": lambda i, a, r: cmd_fn_deps(i, a.qname),
     "fn-rdeps": lambda i, a, r: cmd_fn_rdeps(i, a.qname, exclude_tests=a.exclude_tests),
     "fn-central": lambda i, a, r: cmd_fn_central(i, a.top, exclude_tests=a.exclude_tests),

@@ -9,8 +9,12 @@ Frontmatter declares aliases only; a pinned model ID freezes the version and is 
 Extract declared models:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
 printf "%-30s %s\n" "AGENT" "MODEL"
-for f in .claude/agents/*.md; do # timeout: 5000
+find "$_ROOT" -type f -path '*/agents/*.md' ! -path '*/tests/*' ! -path '*/worktrees/*' 2>/dev/null |
+while IFS= read -r f; do # timeout: 5000
     name=$(basename "$f" .md)
     model=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^model:/{sub(/^model: /,""); print}' "$f")
     printf "%-30s %s\n" "$name" "${model:-(inherit)}"
@@ -37,8 +41,12 @@ Canonical roster-consistency check. Three routing sub-checks + one decision chec
 Extract all agent descriptions:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
 printf "%-25s %s\n" "AGENT" "DESCRIPTION"
-for f in .claude/agents/*.md; do # timeout: 5000
+find "$_ROOT" -type f -path '*/agents/*.md' ! -path '*/tests/*' ! -path '*/worktrees/*' 2>/dev/null |
+while IFS= read -r f; do # timeout: 5000
     name=$(basename "$f" .md)
     desc=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^description:/{sub(/^description: /,""); print}' "$f")
     printf "%-25s %s\n" "$name" "$desc"
@@ -68,11 +76,11 @@ done
 
 Every Check 20 finding must include: overlapping pair, shared surface, remaining distinct surface (if any), decision (`keep`, `sharpen`, `merge-prune`), concrete fix path.
 
-Fix reference: run `/calibrate routing` to verify description overlap translates to actual routing confusion.
+Fix reference: run `/foundry:calibrate routing` to verify description overlap translates to actual routing confusion.
 
 ## Check 46 — Roster boundary alignment
 
-Holistic roster-level analysis. Subsumes former `/distill review` mode. Run as part of `foundry:audit agents`.
+Holistic roster-level analysis. Subsumes former `/foundry:distill review` mode. Run as part of `foundry:audit agents`.
 
 **46a — Per-pair overlap scan**: for every agent pair, compute scope overlap from descriptions + NOT-for clauses. Default threshold: **>50%** shared scope → flag. With `--eager`: threshold drops to **>30%**; any single shared named capability also flags as boundary issue.
 

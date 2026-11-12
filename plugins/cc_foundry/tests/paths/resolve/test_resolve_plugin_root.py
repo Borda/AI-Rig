@@ -7,7 +7,9 @@ isolated tree.
 
 from __future__ import annotations
 
+import io
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -40,6 +42,8 @@ def _make_install(home: Path, version: str, *, name: str = "foundry") -> Path:
     root = home / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "foundry" / version
     (root / ".claude-plugin").mkdir(parents=True)
     (root / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": name}), encoding="utf-8")
+    (root / "bin").mkdir()
+    (root / "bin/resolve_plugin_root.py").write_text("# resolver\n", encoding="utf-8")
     return root
 
 
@@ -91,11 +95,29 @@ def _registry_outside_cache(home: Path) -> None:
 def _fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Make ``os.path.expanduser`` resolve every ``~`` to ``tmp_path`` and return that directory."""
     monkeypatch.setattr("os.path.expanduser", lambda _p: str(tmp_path))
+    monkeypatch.chdir(tmp_path)
     return tmp_path
 
 
 class TestMain:
     """Main: CLI surface — stdout, stderr, exit codes."""
+
+    def test_root_output_uses_lf_with_a_windows_text_stream(
+        self, fake_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Bash command substitution must receive a root without a trailing carriage return."""
+        expected = _registry_hit(fake_home)
+        buffer = io.BytesIO()
+        with io.TextIOWrapper(buffer, encoding="utf-8", newline="\r\n") as output:
+            with monkeypatch.context() as stream_patch:
+                stream_patch.setattr(sys, "stdout", output)
+                result = main(["--plugin-name", "foundry"])
+                output.flush()
+                emitted = buffer.getvalue()
+
+        assert result == 0
+        assert emitted == (expected.as_posix() + "\n").encode("utf-8")
+        assert b"\r" not in emitted
 
     @pytest.mark.parametrize(
         "arrange",
@@ -118,7 +140,7 @@ class TestMain:
         rc = main(["--plugin-name", "foundry"])
 
         assert rc == 0
-        assert capsys.readouterr().out.strip() == str(expected)
+        assert Path(capsys.readouterr().out.strip()) == expected
 
     def test_exits_1_when_not_found_anywhere(self, fake_home: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Empty registry and empty cache → exit 1 with diagnostic.

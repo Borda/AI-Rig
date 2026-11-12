@@ -2,7 +2,7 @@
 
 Covers:
 * ``_resolve_root`` precedence: --root arg → git toplevel → cwd
-* ``_resolve_root`` directory-traversal guard (--root outside cwd → exit 2)
+* ``_resolve_root`` accepts explicit roots outside cwd
 * ``_load_index`` happy path and missing/oversized/vanished-file exits
 * ``main()`` output for typical index shapes: no modules, ok+degraded, symbol totals, calls line
 * ``main()`` top-5 ranking by rdep_count
@@ -15,6 +15,7 @@ import doctest
 import importlib.util
 import json
 import os
+import shlex
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -61,7 +62,7 @@ def _stats_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[
 
 
 class TestResolveRoot:
-    """_resolve_root: root precedence and directory-traversal guard."""
+    """Resolve explicit roots before falling back to git or cwd."""
 
     def test_returns_absolute_path_from_scan_args(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A ``--root`` inside cwd resolves to its absolute form and is returned.
@@ -76,19 +77,27 @@ class TestResolveRoot:
 
         assert result == str(subdir)
 
-    def test_traversal_blocked_exits_2(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """``--root`` outside cwd causes sys.exit(2) — directory traversal guard.
+    @pytest.mark.parametrize("root_kind", ["absolute", "relative"])
+    def test_external_root_summary(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], root_kind: str
+    ) -> None:
+        """Print stats for an explicit root outside cwd, as accepted by the scanner."""
+        project = tmp_path / "external project"
+        project.mkdir()
+        caller = tmp_path / "caller"
+        caller.mkdir()
+        _write_index(project, [{"name": "external", "status": "ok", "symbols": [{}, {}]}])
+        root = project.as_posix() if root_kind == "absolute" else "../external project"
+        monkeypatch.chdir(caller)
+        monkeypatch.delenv("CODEMAP_INDEX_DIR", raising=False)
+        monkeypatch.setenv("SCAN_ARGS", f"--root {shlex.quote(root)}")
 
-        SCAN_ARGS is user-influenced text; a root escaping the working directory must be refused before any file is
-        read.
-        """
-        monkeypatch.chdir(tmp_path)
-        outside = tmp_path.parent / "escaped"
+        main([])
 
-        with pytest.raises(SystemExit) as exc_info:
-            _resolve_root(f"--root {outside.as_posix()}", timeout=5)
-
-        assert exc_info.value.code == 2
+        out = capsys.readouterr().out
+        assert "Modules: 1 indexed, 0 degraded" in out
+        assert "Symbols: 2" in out
+        assert "external" in out
 
     @mock.patch("subprocess.check_output", autospec=True, return_value=b"/some/git/root")
     def test_falls_back_to_git_toplevel(self, mock_git: mock.Mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -121,6 +130,43 @@ class TestResolveRoot:
 
 class TestLoadIndex:
     """_load_index: JSON loading and missing-file error path."""
+
+    @pytest.mark.parametrize("directory_kind", ["absolute", "relative", "home"])
+    def test_custom_cache_outside_default_roots(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory_kind: str
+    ) -> None:
+        """Load the same external cache for absolute, relative and home-relative overrides."""
+        cache = tmp_path / "custom cache"
+        cache.mkdir()
+        expected = {"modules": [{"name": "cached", "status": "ok", "symbols": [{}]}]}
+        (cache / "project.json").write_text(json.dumps(expected), encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        custom_dir = {"absolute": str(cache), "relative": "custom cache", "home": "~/custom cache"}[directory_kind]
+        monkeypatch.setenv("CODEMAP_INDEX_DIR", custom_dir)
+
+        assert _load_index(str(tmp_path / "project")) == expected
+
+    @mock.patch.object(
+        Path, "expanduser", autospec=True, side_effect=RuntimeError("Could not determine home directory.")
+    )
+    def test_unresolvable_cache_exits_2(
+        self, mock_expanduser: mock.Mock, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reject an unresolved home directory with a diagnostic instead of a traceback.
+
+        The loader expands the override through ``Path.expanduser``, so the failure is injected there: older Python
+        versions do not route it through ``os.path.expanduser`` and Windows resolves an unknown user instead of failing.
+        """
+        monkeypatch.setenv("CODEMAP_INDEX_DIR", "~missing/cache")
+
+        with pytest.raises(SystemExit) as exc_info:
+            _load_index("project")
+
+        assert exc_info.value.code == 2
+        assert "CODEMAP_INDEX_DIR cannot be resolved: '~missing/cache'" in capsys.readouterr().err
+        mock_expanduser.assert_called_once_with(Path("~missing/cache"))
 
     def test_returns_parsed_json(self, tmp_path: Path) -> None:
         """Valid index JSON is loaded and returned as dict.

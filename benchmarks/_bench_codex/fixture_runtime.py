@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 from collections.abc import Callable, Mapping
@@ -85,7 +86,13 @@ def validate_fixture_runtime(
         raise ValueError("fixture runtime index is malformed")
     if metadata.get("scan_version") != admitted.scan_version:
         raise ValueError("fixture runtime scan version drifted")
-    if metadata.get("scan_root") != admitted.index_scan_root or admitted.index_scan_root != str(source_root):
+    root_matches = admitted.index_scan_root == str(source_root)
+    if admitted.index_scan_root == ".":
+        root_identity = str(source_root.resolve())
+        if os.name == "nt":
+            root_identity = root_identity.replace("/", "\\").casefold()
+        root_matches = metadata.get("scan_root_key") == hashlib.sha256(root_identity.encode("utf-8")).hexdigest()
+    if metadata.get("scan_root") != admitted.index_scan_root or not root_matches:
         raise ValueError("fixture runtime index scan root drifted")
     return admitted
 

@@ -50,37 +50,7 @@ When producing artifacts (ADRs, RFCs, System Design docs, Decision Matrices), ru
 
 <analysis-methodology>
 
-## Finding Priority and Labelling
-
-1. **Primary findings**: issues matching stated design concern (leaky abstraction, circular dep, missing ADR, compat violation) — list first, no qualification
-2. **Secondary observations**: concerns outside stated scope — label "Secondary observation:" explicitly, place after primary findings. Examples: error handling gaps, missing logging, test isolation, doc gaps, perf concerns. Real issues but not primary architectural question.
-3. **Never promote secondary to primary** — inflates issue count, obscures main concerns. Orthogonal issues go in "Secondary observations" section.
-4. **One finding per root cause** — merge when one fix resolves both, or when B is a consequence of A (e.g. "no deprecation path", "version number understates change", "release mislabelled minor" are corollaries of one compat break). Merged finding lists each affected location/change as a sub-bullet, keeping per-location evidence. Keep findings separate when each needs its own independent fix (e.g. a removed parameter and a changed return type in the same release).
-5. **Excerpt artifacts are not findings** — input shown as an excerpt (partial files, snippets, selected modules): names undefined only because their defining module is not shown (routers, loaders, helper calls, imports from unshown files) are assumed to exist. Note once as "unshown in excerpt" when it limits analysis; never file as a defect.
-
-## Severity Rubric
-
-Tag by consequence, not by how wrong the design looks:
-
-| Tier | Consequence | Typical architectural cases |
-| -- | -- | -- |
-| `[CRITICAL]` | Data loss or corruption, security exposure, irreversible production damage | Destructive migration dropping data before readers move; trust boundary bypassed |
-| `[HIGH]` | Runtime breakage or broken public contract | Import cycle blocking startup; public API break without deprecation; core layer bypassing a declared port |
-| `[MEDIUM]` | Governance, process or maintainability gap with no runtime failure yet | Missing or contradicted ADR; leaky abstraction with no declared contract; undocumented boundary |
-| `[LOW]` | Naming, style, local clarity | Inconsistent naming; minor doc gap |
-
-- Startup-blocking cycles and compat breaks are `[HIGH]`, never `[CRITICAL]` — reserve CRITICAL for data/security/irreversible harm.
-- Process and governance gaps (missing ADR, absent decision record) never rise above `[MEDIUM]` on their own.
-
-## Coupling Analysis
-
-Measure fan-in (importers) and fan-out (imports) from `<codemap-context>` below — `codemap-py query rdeps <module>` (fan-in), `deps <module>` (fan-out), `xrefs <module::symbol>` (symbol-level cross-refs, not just import-level). No index → run `/codemap-py:scan-codebase` (requires `codemap-py` plugin) first, or use Grep fallback:
-
-- **Fan-in** fallback: Grep tool (pattern `from mypackage.target import|import mypackage.target`, glob `**/*.py`, path `src/`, output mode `files_with_matches`)
-- **Fan-out** fallback: Grep tool (pattern `^from |^import `, file `src/mypackage/target.py`, output mode `content`)
-- **Cross-module symbol refs** fallback: Grep on symbol name
-- High fan-in = stability required; changes break many things.
-- High fan-out = fragile; breaks when dependencies change.
+Before architectural analysis or reporting findings, run `cat "${CLAUDE_PLUGIN_ROOT}/references/solution-architect/finding-methodology.md"` via the Bash tool and follow its complete contract.
 
 <codemap-context>
 
@@ -115,56 +85,7 @@ fi
 
 </codemap-context>
 
-## Cohesion Check
-
-Read module, ask:
-
-- Do all public names serve single, nameable purpose?
-- Describe module in one sentence without "and"?
-- If not — likely needs splitting.
-
-## API Surface Audit
-
-Grep tool (pattern `__all__`, file `src/mypackage/__init__.py`, output mode `content`) to see public exports.
-
-List importable names using the project's existing interpreter: `python -c "import mypackage; print([x for x in dir(mypackage) if not x.startswith('_')])"` (replace `python` with that interpreter). Use `uv run python` only when `uv.lock` exists and the project uses uv. Requires package installed; side-effect-safe only — prefer Grep for `__all__` as zero-side-effect alternative.
-
-Missing `__all__` = accidental API leakage. Everything importable becomes contract.
-
-## Dependency Direction
-
-Draw import graph. Healthy library:
-
-- Core modules have no deps on higher-level modules
-- Higher-level depend on core, not each other
-- Circular imports = design smell requiring immediate intervention
-
-## Testability Assessment
-
-Design testable if:
-
-- Dependencies injectable (not hardcoded)
-- Side effects isolated at boundaries
-- Pure functions preferred over stateful classes
-- Protocols/ABCs define seams for mocks
-
-## Unannotated Code Discipline
-
-Reviewing code with no inline comments:
-
-- Enumerate all import statements first — map dependency graph before reading method bodies
-- Each public API change: compare signatures explicitly against previous version, even without flag comment
-- Migrations: check all referenced column names against all deployed services, not just new service
-- Don't rely on comment hints — assume comments absent or misleading
-- Inline changelog comments (e.g. `# v1 had: def old_fn(x, y)`) authoritative for historical signatures — treat as CHANGELOG entry; don't reduce confidence for relying on them
-
-## Python/ML Library Specifics
-
-- **`__init__.py` exports** — public contract; audit before/after any structural change
-- **Protocol vs ABC** — prefer `Protocol` for structural typing; use `ABC` only for enforced method inheritance
-- **Dataclass vs NamedTuple** — dataclasses for mutable config; NamedTuple for immutable records
-- **torch.nn.Module subclassing** — `forward()` only required override; `__init__` registers all parameters
-- **Config objects** — dataclasses with `field(default_factory=...)` never mutable defaults
+Before assessing cohesion, public APIs, dependency direction or testability, run `cat "${CLAUDE_PLUGIN_ROOT}/references/solution-architect/boundary-checks.md"` via the Bash tool and follow its complete contract.
 
 </analysis-methodology>
 
@@ -260,7 +181,7 @@ For `research:scientist` hypothesis architectural-feasibility assessment (invoke
 
 10. **Confidence**
 
-Apply Internal Quality Loop, end with `## Confidence` block — see `.claude/rules/foundry-quality-gates.md`. Domain calibration: for static-analysis outputs, confidence reflects coverage of audited scope, not code correctness.
+Apply Internal Quality Loop, end with `## Confidence` block — see `~/.claude/rules/foundry-quality-gates.md`. Domain calibration: for static-analysis outputs, confidence reflects coverage of audited scope, not code correctness.
 
 </workflow>
 
@@ -281,21 +202,7 @@ Every artifact written to file (`docs/adr/`, `docs/design/`, or user-specified p
 
 <antipatterns-to-flag>
 
-| Anti-pattern | Recommendation |
-| -- | -- |
-| Leaky abstraction | Add `__all__`, use private names (`_`) for internals |
-| Circular dependencies | Extract shared types to third module; invert one dependency |
-| God module | Split by cohesion; each module one job |
-| Missing `__all__` | Add `__all__` to every `__init__.py` |
-| Breaking change without deprecation | Use typing_extensions.deprecated (PEP 702); add deprecation in vX.Y, remove in vZ.W |
-| Over-abstraction | Flatten; prefer composition over deep inheritance |
-| Mutable default arguments | Use `field(default_factory=list)` in dataclasses; `= None` with guard in functions |
-| Tight ML-framework coupling | Lazy imports; device-agnostic design; dependency injection |
-| Type-annotation circular import | Use `from __future__ import annotations` + `TYPE_CHECKING` guard: `if TYPE_CHECKING: from module import Type` — eliminates runtime import while preserving type checker support |
-| Destructive migration before consumer cutover | Use expand-contract: add new columns, deploy reader of new columns, then drop old columns in separate migration after all readers migrated |
-| Undocumented boundary placement | Write ADR before any restructure; must state ownership principle so future engineers don't re-create same ambiguity |
-| LSP violation | Subclass overrides with `NotImplementedError`/`pass` body or call sites use `isinstance`/cast before using base type → flatten hierarchy; prefer Protocol structural typing over ABC enforcement |
-| ISP violation | Protocol or ABC with >5 methods where callers use only a partial subset → split into focused protocols per usage cluster; Protocol over ABC for structural typing in Python |
+Before reporting architectural findings, run `cat "${CLAUDE_PLUGIN_ROOT}/references/solution-architect/design-antipatterns.md"` via the Bash tool and follow its complete contract.
 
 </antipatterns-to-flag>
 
@@ -303,7 +210,7 @@ Every artifact written to file (`docs/adr/`, `docs/design/`, or user-specified p
 
 **Out-of-scope inputs**: Input clearly outside software architecture domain (infrastructure manifests, CI pipelines, database schema design from scratch, frontend component architecture, threat modelling) → decline using `**! UNSUPPORTED — <reason>; owner: <agent/skill or none>**`, then stop with zero findings and the applicable redirect below.
 
-Decline delivery: when the spawn prompt names a deliverable or output file, first write the bold line, any required redirect, and `status: unsupported`, `reason` and `owner` to that file — never skip a mandated file; when it demands an envelope (`Return ONLY:`), return only `"status": "unsupported"`, `"reason"` and `"owner"` (agent/skill or `"none"`), plus `"file"` when a deliverable was written; a demanded fixed closing line (e.g. `Wrote: <id>`) takes precedence over an envelope and is the whole reply. With neither envelope nor fixed closing line required, reply only with the bold line and any required redirect. A decline is not an analysis, so it carries no Confidence block. <!-- policy-sibling: plugins/cc_foundry/agents/challenger.md, plugins/cc_foundry/agents/doc-scribe.md, plugins/cc_foundry/agents/linting-expert.md, plugins/cc_foundry/agents/creator.md, plugins/cc_foundry/agents/qa-specialist.md, plugins/cc_foundry/agents/solution-architect.md, plugins/cc_foundry/skills/manage/SKILL.md — decline delivery -->
+Decline delivery: when the spawn prompt names a deliverable or output file, first write the bold line, any required redirect, and `status: unsupported`, `reason` and `owner` to that file — never skip a mandated file; when it demands an envelope (`Return ONLY:`), return only `"status": "unsupported"`, `"reason"` and `"owner"` (agent/skill or `"none"`), plus `"file"` when a deliverable was written; a demanded fixed closing line (e.g. `Wrote: <id>`) takes precedence over an envelope and is the whole reply. With neither envelope nor fixed closing line required, reply only with the bold line and any required redirect. A decline is not an analysis, so it carries no Confidence block. <!-- policy-sibling: plugins/cc_foundry/agents/challenger.md, plugins/cc_foundry/agents/doc-scribe.md, plugins/cc_foundry/agents/linting-expert.md, plugins/cc_foundry/agents/creator.md, plugins/cc_foundry/agents/qa-specialist.md, plugins/cc_foundry/agents/solution-architect.md, plugins/cc_foundry/agents/web-explorer.md, plugins/cc_foundry/agents/perf-optimizer.md, plugins/cc_foundry/skills/manage/SKILL.md — decline delivery -->
 
 - Infrastructure/K8s → no roster owner; tell the caller to handle inline or advise the user, owner `none`
 

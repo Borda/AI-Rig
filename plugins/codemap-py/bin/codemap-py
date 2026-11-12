@@ -1,6 +1,7 @@
 #!/bin/sh
 # codemap-py POSIX launcher (plan §7.3/§7.4): probe an eligible CPython, exec the
 # single Python entry. No install, no Bash dependency, no shell-command mode.
+# CODEMAP_PYTHON and PATH must name trusted interpreters; relative entries trust the working directory.
 set -u
 
 HERE="$(CDPATH= cd -- "${0%/*}" && pwd -P)"

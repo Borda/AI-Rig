@@ -85,6 +85,8 @@ _INDEX_HINT = "rename-INDEX_HINT"
 #: Exit code for a ``narrow`` input that cannot be used; the answer file is left as it was.
 _EXIT_NARROW_UNUSABLE = 4
 
+MAX_INPUT_SIZE = 50_000_000
+
 
 def _load_json(source: str) -> Any:
     """Parse JSON from a file path, or from stdin when ``source`` is ``-``.
@@ -110,7 +112,13 @@ def _load_json(source: str) -> Any:
         ValueError: cannot read JSON from '/nonexistent/x.json': ...
     """
     try:
-        text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+        if source == "-":
+            text = sys.stdin.read(MAX_INPUT_SIZE + 1)
+        else:
+            with Path(source).open(encoding="utf-8") as handle:
+                text = handle.read(MAX_INPUT_SIZE + 1)
+        if len(text.encode("utf-8")) > MAX_INPUT_SIZE:
+            raise ValueError(f"JSON input too large (max {MAX_INPUT_SIZE} bytes)")
         return json.loads(text)
     except (OSError, ValueError) as exc:
         raise ValueError(f"cannot read JSON from {source!r}: {exc}") from exc

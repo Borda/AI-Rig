@@ -125,10 +125,29 @@ class TestRepoFromArgument:
 class TestRepoFromContext:
     """repo_from_context: infer the repository from the working directory when no argument names one."""
 
-    @mock.patch("parse_analyse_args.subprocess.run", new=_by_executable({"gh": done(stdout="owner/repo\n")}))
+    @mock.patch(
+        "parse_analyse_args.subprocess.run",
+        new=_by_executable({"gh": done(stdout='{"nameWithOwner":"owner/repo","url":"https://github.com/owner/repo"}')}),
+    )
     def test_prefers_gh(self) -> None:
         """``gh repo view`` answers first when it is available."""
         assert paa.repo_from_context(5) == "owner/repo"
+
+    @mock.patch("parse_analyse_args.subprocess.run", autospec=True)
+    def test_rejects_enterprise_context(self, run: mock.MagicMock) -> None:
+        """A slug returned by a non-public GitHub host never becomes a public repository target."""
+        run.return_value = done(stdout='{"nameWithOwner":"owner/repo","url":"https://github.example/owner/repo"}')
+        with pytest.raises(paa._Abort, match="GitHub"):
+            paa.repo_from_context(5)
+
+    @mock.patch("parse_analyse_args.subprocess.run", autospec=True)
+    def test_rejects_github_substring_remote(self, run: mock.MagicMock) -> None:
+        """A hostname containing github.com is not treated as the public host."""
+        run.side_effect = _by_executable(
+            {"gh": done(returncode=1), "git": done(stdout="https://github.com.example/owner/repo")}
+        )
+        with pytest.raises(paa._Abort):
+            paa.repo_from_context(5)
 
     @pytest.mark.parametrize(
         ("remote", "expected"),

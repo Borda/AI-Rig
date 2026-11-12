@@ -111,7 +111,10 @@ def test_shared_doc_ask_is_still_loaded(doc: str, marker: str) -> None:
 
     The fix skill reaches these questions only by loading the doc, so a dropped load line removes the ask silently.
     """
-    loads = f'bin/dev_load_shared.py" {doc}' in _flat_text(_FIX / "SKILL.md")
+    loads = any(
+        'bin/dev_load_shared.py"' in line and doc in line.split()
+        for line in (_FIX / "SKILL.md").read_text(encoding="utf-8").splitlines()
+    )
     assert (loads, marker in _flat_text(_SHARED / doc)) == (True, True)
 
 

@@ -49,15 +49,12 @@ _MAX_FAILED_STARTS = 1000
 def recover_json_object(text: str) -> dict[str, Any] | None:
     """Return the last (rightmost) top-level balanced JSON object in ``text``.
 
-    Scans every ``{`` position and at each one tries progressively shorter
-    truncations of the tail until :func:`json.loads` accepts a balanced
-    object. Nested objects are discarded (only top-level objects are kept);
-    when several sibling top-level objects are present, the one with the
-    largest start index — i.e. the last/rightmost — is returned. This
-    tolerates prose preamble before the JSON, trailing prose after it, and
-    reasoning blocks that contain stray ``{`` characters before the real
-    object. Returning the rightmost object suits recovering the final answer
-    envelope from an agent response that ends with the JSON.
+    Decodes one object at each candidate ``{`` and skips starts inside any
+    recovered object. Only the last accepted object is retained, so sibling
+    objects need no pairwise containment scan. Input length and failed
+    candidate attempts are bounded. Stray opening braces and prose before or
+    after an answer remain supported; the rightmost accepted outer object
+    supplies the final answer envelope.
 
     Pure function — no I/O, deterministic.
 
@@ -67,7 +64,7 @@ def recover_json_object(text: str) -> dict[str, Any] | None:
 
     Returns:
         The parsed object as a ``dict``, or ``None`` if no balanced JSON
-        object could be recovered.
+        object could be recovered or the input exceeds the size limit.
 
     Examples:
         >>> recover_json_object('{"a":"sw","ok":true}')
@@ -87,8 +84,10 @@ def recover_json_object(text: str) -> dict[str, Any] | None:
         >>> recover_json_object('{"a":1} and then {"b":2}')
         {'b': 2}
     """
+    if len(text) > _MAX_INPUT_CHARS:
+        return None
     decoder = json.JSONDecoder()
-    valid_objects: list[tuple[int, int, dict[str, Any]]] = []
+    last_object: dict[str, Any] | None = None
     covered_until = 0  # starts inside an already-recovered object cannot be outermost
     failed_starts = 0
     for start, ch in enumerate(text):
@@ -103,18 +102,9 @@ def recover_json_object(text: str) -> dict[str, Any] | None:
             if failed_starts >= _MAX_FAILED_STARTS:
                 break
             continue
-        valid_objects.append((start, end, parsed))
+        last_object = parsed
         covered_until = end
-    outermost_objects = [
-        current
-        for current in valid_objects
-        if not any(
-            other_start < current[0] and current[1] <= other_end for other_start, other_end, _other in valid_objects
-        )
-    ]
-    if not outermost_objects:
-        return None
-    return max(outermost_objects, key=lambda item: item[0])[2]
+    return last_object
 
 
 def format_field(value: Any) -> str:

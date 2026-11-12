@@ -9,7 +9,7 @@
 // HOW IT WORKS
 //   1. Parse stdin JSON for hook_event_name and team_name
 //   2. TeammateIdle: validate team_name is safe (basename check), then read
-//      .claude/_tasks/<team_name>/*.json from the current workspace
+//      ~/.claude/tasks/<team_name>/*.json from the user home
 //      (Claude Code stores agent-team task files there — not a project artifact dir)
 //   3. Filter task files to those with status === "pending"
 //   4. Pending tasks found: write task list to stderr and exit 2 — Claude Code
@@ -22,7 +22,7 @@
 //   TeammateIdle
 //     Fires when a teammate finishes its current task and has nothing to do.
 //     Checks for pending tasks in the shared task list for the current team
-//     (.claude/_tasks/<team>/*.json — Claude Code's internal agent-teams state dir).
+//     (~/.claude/tasks/<team>/*.json — Claude Code's internal agent-teams state dir).
 //     If any pending tasks exist, writes a redirect message to stderr and exits 2 —
 //     Claude Code interprets exit 2 as "feedback for the teammate", re-activating it
 //     with the message as context so it can claim and complete the next task.
@@ -42,12 +42,14 @@
 //      Never exit 2 on TaskCompleted — rejection loops are worse than gaps.
 //
 // ERROR HANDLING
-//   All errors are silently swallowed (exit 0).  A quality-gate hook must never
+//   I/O and parse errors are swallowed (exit 0); missing or unsafe team names
+//   produce a diagnostic. A quality-gate hook must never
 //   crash or block Claude — a broken hook that prevents teammates from completing
 //   tasks is worse than no gate at all.
 
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 
 let raw = "";
 process.stdin.setEncoding("utf8");
@@ -57,14 +59,25 @@ process.stdin.on("end", () => {
     const data = JSON.parse(raw);
     const { hook_event_name, team_name } = data;
 
-    if (hook_event_name === "TeammateIdle" && team_name) {
+    if (hook_event_name === "TeammateIdle") {
+      // Newer payloads may omit the deprecated team_name field: diagnose and no-op.
+      if (
+        typeof team_name !== "string" ||
+        !team_name ||
+        team_name === "." ||
+        team_name === ".." ||
+        /[\\/\x00]/.test(team_name) ||
+        path.basename(team_name) !== team_name
+      ) {
+        process.stderr.write("teammate-quality: missing or unsafe team_name; task lookup skipped.\n");
+        process.exit(0);
+      }
       // Look for pending tasks in the shared task list — redirect if any exist
       try {
-        if (typeof team_name !== "string" || path.basename(team_name) !== team_name) process.exit(0);
-        // Task files live at <workspace>/.claude/_tasks/<team>/ when teams use file-based tracking.
-        // If the directory is absent (e.g., in-memory teams), readdirSync throws and the
-        // catch block silently lets the teammate go idle — no redirect occurs.
-        const tasksDir = path.join(process.cwd(), ".claude", "_tasks", team_name);
+        // Claude Code's documented shared task storage is scoped to the user, not the workspace.
+        // If the directory is absent, readdirSync throws and the catch block
+        // lets the teammate go idle without redirecting it to an unknown task.
+        const tasksDir = path.join(os.homedir(), ".claude", "tasks", team_name);
         const taskFiles = fs.readdirSync(tasksDir).filter((f) => f.endsWith(".json"));
         const pendingTasks = taskFiles
           .map((f) => {

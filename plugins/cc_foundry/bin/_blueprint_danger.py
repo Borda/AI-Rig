@@ -1,11 +1,12 @@
 """Classify shell blueprint text without executing commands.
 
-Purpose: Keep shell lexing and danger classification together behind the manifest builder's public API. Scope: Read
-shell words, compound commands, substitutions, lookup writes, name operands and text-only formats. Usage: Imported by
-build_blueprint_manifest.py; the JavaScript allow hooks mirror the same static contracts. Outputs: Boolean danger
-verdicts and parsed shell text for the manifest builder's completeness and allowlist gates. Failure: Unmodeled syntax
-and unsafe writes are refused; this module never executes the command text it examines. Used by:
-build_blueprint_manifest.py and its existing audit and hook parity tests through the unchanged public API.
+Purpose:
+    Keep shell lexing and danger classification together behind the manifest builder's public API. Scope: Read shell
+    words, compound commands, substitutions, lookup writes, name operands and text-only formats. Usage: Imported by
+    build_blueprint_manifest.py; the JavaScript allow hooks mirror the same static contracts. Outputs: Boolean danger
+    verdicts and parsed shell text for the manifest builder's completeness and allowlist gates. Failure: Unmodeled
+    syntax and unsafe writes are refused; this module never executes the command text it examines. Used by:
+    build_blueprint_manifest.py and its existing audit and hook parity tests through the unchanged public API.
 
 This private sibling is shipped only with the foundry manifest builder. It has no CLI, filesystem writes or external
 dependencies, and needs no propagation into plugins that consume generated manifests through their JavaScript hooks.
@@ -2031,7 +2032,26 @@ def _writes_command_table(command: str) -> bool:
     text, live, unterminated = _split_heredocs(command)
     if unterminated:
         return True
-    text = _mask_single_quoted(text)
+    visible = list(text)
+    for segment, offset in _lookup_regions(text):
+        spans = _shell_word_spans(segment)
+        words = [word for word, _ in spans]
+        start = _command_word_index(words)
+        positions = _lookup_text_positions(words, start, set())
+        for index, (word, end) in enumerate(spans):
+            if index in positions and (
+                re.fullmatch(r"'[^']*'", word.raw, re.DOTALL) is not None
+                or (
+                    word.quoted
+                    and any(mark in word.raw for mark in "'\"")
+                    and "$'" not in word.raw
+                    and '$"' not in word.raw
+                    and _literal_word(word)
+                )
+            ):
+                begin = offset + end - len(word.raw)
+                visible[begin : offset + end] = " " * len(word.raw)
+    text = _mask_single_quoted("".join(visible))
     unquoted = text.replace("\\", "").replace("'", "").replace('"', "")
     return (
         any(_COMMAND_TABLE_USE.search(value) for value in (text, unquoted))
@@ -2467,7 +2487,19 @@ def _command_is_dangerous(segment: str) -> bool:
     table_words = (
         word.value
         for index, word in enumerate(words)
-        if not (index in text_positions and re.fullmatch(r"'[^']*'", word.raw, re.DOTALL))
+        if not (
+            index in text_positions
+            and (
+                re.fullmatch(r"'[^']*'", word.raw, re.DOTALL) is not None
+                or (
+                    word.quoted
+                    and any(mark in word.raw for mark in "'\"")
+                    and "$'" not in word.raw
+                    and '$"' not in word.raw
+                    and _literal_word(word)
+                )
+            )
+        )
     )
     if any(mark in _last_segment(values[0]) for mark in "$`") or any(_COMMAND_TABLE_USE.search(v) for v in table_words):
         return True

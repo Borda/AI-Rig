@@ -224,10 +224,16 @@ def main(argv: list[str] | None = None) -> int:
             description="Label changed public symbols Breaking vs internal (reads codemap-py query batch JSON on stdin).",
         ).parse_args(["-h"])  # prints help, exits 0
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
-    raw = sys.stdin.read()
+    limit = 10 * 1024 * 1024
+    raw = sys.stdin.buffer.read(limit + 1) if hasattr(sys.stdin, "buffer") else sys.stdin.read(limit + 1)
+    if len(raw) > limit or (isinstance(raw, str) and len(raw.encode("utf-8")) > limit):
+        print(json.dumps({"error": f"stdin exceeds size limit of {limit} bytes"}))
+        return 2
     try:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
         batch_output = json.loads(raw)
-    except (json.JSONDecodeError, ValueError, RecursionError):  # deeply nested input recurses past the limit
+    except (json.JSONDecodeError, ValueError, RecursionError):  # malformed, undecodable or deeply nested input
         print(json.dumps({"error": "stdin is not valid JSON"}))
         return 2
     print(json.dumps(classify(batch_output)))

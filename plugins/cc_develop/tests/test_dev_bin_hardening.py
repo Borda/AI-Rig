@@ -1,7 +1,7 @@
 """Tests for the output-path fence of ``build_codemap_batch.py`` and the bounded search of ``resolve_review_target.py``.
 
-Both scripts take a path from the skill's arguments, so a hostile or mistyped value must not write outside the project
-and temp dir, nor walk an unbounded directory tree.
+Both scripts take a path from the skill's arguments, so a hostile or mistyped value must not write outside a run
+directory, nor walk an unbounded directory tree.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ class _Dirs(NamedTuple):
 
 
 class TestBuildCodemapBatchOutputFence:
-    """The batch request is written only under the working directory or the session temp dir."""
+    """The batch request is written only under a declared run directory."""
 
     @pytest.fixture(name="dirs")
     def _dirs_fixture(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Dirs:
@@ -33,15 +33,19 @@ class TestBuildCodemapBatchOutputFence:
             directory.mkdir()
         monkeypatch.chdir(dirs.work)
         monkeypatch.setenv("TMPDIR", str(dirs.temp))
+        monkeypatch.setenv("CSID", "batch-roots")
         return dirs
 
     @pytest.mark.parametrize("root", ["work", "temp"])
     def test_writes_inside_allowed_roots(self, dirs: _Dirs, root: str) -> None:
-        """A request path under the project or ``$TMPDIR`` is written and exit 0 is returned.
+        """A run directory in the project or session temp dir accepts a batch request.
 
-        These are the two places the skills legitimately stage the batch request, so both must stay writable.
+        The session sentinel, rather than the encompassing project or temp root, grants this output location.
         """
-        out = getattr(dirs, root) / "batch.json"
+        run_dir = getattr(dirs, root) / "run"
+        run_dir.mkdir()
+        (dirs.temp / "dev-refactor-dev-dir-batch-roots").write_text(str(run_dir), encoding="utf-8")
+        out = run_dir / "batch.json"
 
         rc = build_codemap_batch.main([str(out), "--modules", "pkg.mod"])
 
@@ -58,7 +62,7 @@ class TestBuildCodemapBatchOutputFence:
         rc = build_codemap_batch.main([str(out), "--modules", "pkg.mod"])
 
         assert rc == 1
-        assert "outside the workspace" in capsys.readouterr().err
+        assert "outside the run directory" in capsys.readouterr().err
         assert not out.exists()
 
 

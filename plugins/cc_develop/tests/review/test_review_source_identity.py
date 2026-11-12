@@ -154,7 +154,7 @@ def test_consolidator_retains_bound_sha_and_supported_source_judgment() -> None:
     """Presentation must retain source evidence even when execution remains blocked.
 
     The skill must hand the consolidator the bound SHA and its kind, and the prompt and report template must keep the
-    commit line, the supported-source judgment and the no-tests-run disclosure.
+    commit line, the supported-source judgment and the actual-CI-evidence requirement.
     """
     skill = _SKILL.read_text(encoding="utf-8")
     prompt = (_PLUGIN / "skills/review/templates/consolidator-prompt.md").read_text(encoding="utf-8")
@@ -165,4 +165,5 @@ def test_consolidator_retains_bound_sha_and_supported_source_judgment() -> None:
     assert "`Commit SHA:`" in prompt
     assert "Preserve a supported source judgment" in prompt
     assert "independence" in prompt
-    assert "runs no tests" in report
+    assert "actual parent-supplied CI evidence" in report
+    assert "N/A (no CI evidence supplied)" in report

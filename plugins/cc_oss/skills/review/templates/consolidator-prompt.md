@@ -2,7 +2,7 @@
 
 **Reviewer attribution (additive):** Preserve the aggregate prose summary, existing metadata fields, overall verdict, confidence and detailed sections.
 
-- Add `Reviewers:` immediately after `Agents:`, listing actual readable role names and their scoped rating, for example `Software engineer [3], QA specialist [2], Documentation reviewer [1].`
+- Add `Reviewers:` immediately after `Readiness:`, preserving template order `Agents:`, `Review contract:`, `Rating scale:`, `Readiness:`, `Reviewers:`, `CI:`. List actual readable role names and their scoped rating, for example `Software engineer [3], QA specialist [2], Documentation reviewer [1].`
 - Use square brackets for each score: `Role [rating]`; a null rating renders as `Role [no source judgment]`.
 - Ratings: 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient, but a good initiative, 5 Block (source-5-v1); null means no source judgment, never rejection.
 - Use each reviewer's explicit source-5-v1 rating and rationale. Completed undecidable output has null judgment/rating with blocked readiness and inspected coverage; missing output remains a distinct coverage obligation in review-validation.json.
@@ -79,6 +79,7 @@ The parent supplies resolved literal input bindings in its compact Agent prompt.
 | -- | -- |
 | `Title:` | `oss-review — [PR #N title]` |
 | `PR:` | `#<PR_NUMBER>`; omit entirely when `<PR_NUMBER>` is empty (direct-path mode has no PR). |
+| `Link:` | Literal `<PR_URL>` as one bare `https://` URL, so the delivered header table is clickable; when `<PR_URL>` is empty, `https://github.com/<owner>/<repo>/pull/<PR_NUMBER>` from the prompt's first line; omit entirely when `<PR_NUMBER>` is empty. |
 | `Date:` | `<DATE>` |
 | `Commit SHA:` | Literal `<REVIEWED_COMMIT_SHA>`: full frozen `pr-meta.json` `headRefOid` for an ordinary review, or the selected fill-gaps run's full `head_sha`. Never abbreviate or use the invoking checkout's HEAD. Missing identity and legacy abbreviated identity remain explicitly unavailable. |
 | `PR Type:` | Classify diff INTENT, never title/file-count: `fix` / `feat` / `refactor` / `perf` / `docs` / `ci` / `chore` / `test` / `mixed`. |
@@ -99,7 +100,7 @@ The parent supplies resolved literal input bindings in its compact Agent prompt.
 
 **Severity tiers:** Every finding must carry an explicit inline severity label: `[cosmetic]`, `[low]`, `[medium]`, `[high]`, or `[critical]`. Cosmetic findings go in the dedicated `### Cosmetic / Style` section — never interleaved with behavioural findings.
 
-**Confidence parsing:** Parse each agent's `confidence` from JSON envelope. Assign `codex` fixed confidence 0.75 (moderate — static analysis, no runtime context).
+**Confidence parsing:** Parse each agent's `confidence` from JSON envelope. Assign `codex` fixed confidence 0.75 (moderate — static analysis, no runtime context). `DOCS_ONLY_MODE=true` → the report's `## Confidence` **Gaps** carry `- (-0.00) full test suite not run — documentation-only change` once; weight 0 — never lowers the aggregate, never a finding, `Next steps` item or low-confidence banner, and any reviewer gap asking for a test run folds into it.
 
 **Missing-package gaps:** copy every agent's `### Ephemeral dependency evidence` line verbatim into `Review Confidence`. Such a line closes the same package gap raised by any other reviewer (Codex "not installed", perf "nothing measured") — cite it as the closure, never carry that gap into the aggregate score or `Confidence:` header. A gap naming only "<pkg> not installed / not importable", with neither an evidence line nor a failed-step reason, stays open: append `ephemeral-install procedure not attempted` and add the overlay run to `Next steps`.
 

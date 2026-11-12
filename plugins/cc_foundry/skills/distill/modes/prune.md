@@ -2,7 +2,7 @@
 
 <!-- file: prune.md — consumers: distill/SKILL.md -->
 
-Triggered when `$ARGUMENTS == "prune"`. Locate, evaluate, and trim project memory file.
+Triggered when the first normalized argument token is `prune`. Locate, evaluate, and trim project memory files and their index.
 
 **Find memory file:**
 
@@ -12,8 +12,9 @@ Triggered when `$ARGUMENTS == "prune"`. Locate, evaluate, and trim project memor
 
 ```bash
 # timeout: 15000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 FOUND=$(find "$HOME/.claude/projects" -maxdepth 3 -name "MEMORY.md" -path "*/memory/MEMORY.md" 2>/dev/null | sort)
-CUR_MEM=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_memory_dir.py" 2>/dev/null)
+CUR_MEM=$(python "$PLUGIN_ROOT/bin/resolve_memory_dir.py" 2>/dev/null)
 if [ -z "$FOUND" ]; then
     echo "PRUNE_ABORT"
     echo "PRUNE_ABORT_REASON: no memory files found under ~/.claude/projects/"
@@ -31,46 +32,50 @@ fi
 
 **Short-circuit**: after block runs, scan for `PRUNE_ABORT` (exact-line match). If present, stop prune mode, end with Confidence block. Otherwise collect all `PRUNE_ENTRY:` lines — each has format `<slug> | <N> tokens | <scope> | <path>`.
 
-**CLAUDE.md overlap scope**: only the `current` entry (memory of the project in the working directory) is compared against this project's CLAUDE.md. An `other` entry belongs to a different project whose CLAUDE.md is not loaded here — never Drop or Trim its sections for duplication, judge them on their own content only.
+**CLAUDE.md overlap scope**: only the `current` entry (memory of the project in the working directory) is compared against this project's CLAUDE.md. An `other` entry belongs to a different project whose CLAUDE.md is not loaded here — never Drop or Trim its memory files for duplication, judge them on their own content only.
 
 **If `PROJECT_FLAG == true`** (interactive picker): call `AskUserQuestion` with `multiSelect: true`. Build options from `PRUNE_ENTRY` lines — label = `<slug> (tokens=<N>)`, description = `prune this project's memory`. Max 3 project options plus `Skip` (4-option cap): more than 3 projects found, take the `current` entry plus the largest others by token count up to 3, note in question text that remaining projects were omitted (user can re-run). Always add a final option with label `Skip`, description `exit without changes`. Checked slugs: extract matching `<path>` fields as working set.
 
 **If `PROJECT_FLAG == false`**: working set = the `<path>` of the `current` PRUNE_ENTRY only — memory of the project in the working directory. No `current` entry: print `No memory file for the current project — re-run with --project to pick another.`, stop prune mode, end with Confidence block. Never prune `other` projects without the picker.
 
-**Parallel analysis across projects** — working sets with 2+ files: spawn one analysis agent per project simultaneously. Single-file working sets: run P1–P2 inline (no spawn).
+**Memory inventory** — for each selected project, Read `MEMORY.md` as the index, then Glob `*.md` in its memory directory excluding `MEMORY.md`; Read every memory file's frontmatter and full body, including unlinked files. Evaluate bodies, never index summaries alone. Key each proposal by exact memory-file path and its matching index link(s); retain frontmatter on trims. Missing files, malformed frontmatter, ambiguous links, and legacy inline facts in the index are reported separately for manual review, never silently dropped or treated as file-backed memories.
 
-Spawn one `Agent` per project with `model="sonnet"` (mechanical Drop/Trim/Keep classification — no reasoning tier needed; no schema — returns text analysis):
+**Approved prune actions** — applies to both standard and eager flows, only after approval of the listed file paths and actions, including removals for Drop and Convert to rule. Before any memory mutation, create the snapshot directory with Bash `mkdir -p -- ".temp/distill/prune/pre/<slug>"`, then copy each selected memory file and its project's `MEMORY.md` with Bash `cp -p -- "<source-path>" "<snapshot-path>"` into that directory, using unique snapshot names and recording the source-to-snapshot mapping. Substitute concrete paths before each command; any failed directory creation or snapshot stops that project's writes. Drop: delete only the approved memory file with Bash `rm -- "<approved-memory-file>"`, then remove its matching index link(s) with Edit; a failed deletion leaves the index unchanged. A failed index edit restores the file from its snapshot and stops that project's apply. Trim: Edit the memory file body, preserve frontmatter, and update its index summary only if meaning changed. Convert to rule: Write the proposed rule draft first; only after that Write succeeds, remove the selected memory file and index link(s) using the same approved Drop procedure. After applying, compare each surviving target with its snapshot, list deletions, and verify every retained index link resolves and every retained memory stays discoverable. Unexpected changes stop for review; never restore unrelated user edits.
+
+**Parallel analysis across projects** — working sets with 2+ projects: spawn one analysis agent per project simultaneously. Single-project working sets: run P1–P2 inline (no spawn).
+
+Spawn one `Agent(subagent_type="general-purpose", model="sonnet", name="prune-analysis-<slug>", description="Classify project memory files", prompt="<analysis prompt below>")` per project (mechanical Drop/Trim/Keep classification — no reasoning tier needed; no schema — returns text analysis):
 
 ```text
-Read MEMORY.md at <absolute-path> (scope: <current|other>).
+Read MEMORY.md at <absolute-path> as the index (scope: <current|other>), then Glob *.md in its directory excluding MEMORY.md and Read every memory file's frontmatter and full body, including unlinked files. Evaluate file bodies, not index summaries; report missing files, malformed frontmatter, ambiguous links and legacy inline index facts separately for manual review, never as Drop/Trim proposals.
 Scope current only: also read CLAUDE.md and .claude/CLAUDE.md in the current working directory (limit=40 each, whichever exist) to identify overlap — anything already there need not live in memory. Scope other: skip CLAUDE.md; that project's CLAUDE.md is not this one, so never cite duplication.
-Evaluate every section using these criteria:
+Evaluate every memory file using these criteria:
   Drop: stale/no-longer-accurate, fully duplicated in CLAUDE.md (scope current only), resolved one-time issues
   Trim: accurate but contains rationale/history no longer needed day-to-day; keep operational facts only
   Keep: rules applied every session, project-specific facts absent from CLAUDE.md
 Return structured analysis (no prose):
 PROJECT: <slug>
-DROP: <section-name> — <one-line reason>
-TRIM: <section-name> — <what to keep vs remove>
-KEEP: <section-name>
+DROP: <memory-file path and index links> — <one-line reason>
+TRIM: <memory-file path and index links> — <what to keep vs remove>
+KEEP: <memory-file path>
 CONFIDENCE: 0.N
 ```
 
-In the spawn response Write `.temp/distill/prune/agent-watch-analysis.tsv` — one row per project, `<slug>\t-\t600` (envelope-only) — then end the turn; never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep (`_shared/agent-spawn-protocol.md` §Deadlines). On each notification run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir ".temp/distill/prune"` once; a project whose notification carried no analysis is ⏱ `timed_out` — list it as not analysed. Once every row is settled, merge into consolidated proposal list keyed by slug, labeling each section with its project slug.
+In the spawn response Write `.temp/distill/prune/agent-watch-analysis.tsv` — one row per project, `<slug>\t-\t600` (envelope-only) — then end the turn; never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep (`_shared/agent-spawn-protocol.md` §Deadlines). On each notification run `python "${CLAUDE_PLUGIN_ROOT}/bin/agent_watch.py" --state-dir ".temp/distill/prune"` once; a project whose notification carried no analysis is ⏱ `timed_out` — list it as not analysed. Once every row is settled, merge into consolidated proposal list keyed by slug, labeling each section with its project slug.
 
 **If `$EAGER == true`**: skip P1–P3 below, execute P-eager steps:
 
-**P-eager-1**: spawn one scoring agent per project in parallel with `model="sonnet"` (structured two-dimension scoring — no reasoning tier needed); working sets with 2+ files; inline for single file. Each agent scores every section in its assigned MEMORY.md:
+**P-eager-1**: spawn one `Agent(subagent_type="general-purpose", model="sonnet", name="prune-score-<slug>", description="Score project memory files", prompt="<scoring prompt below>")` per project in parallel (structured two-dimension scoring — no reasoning tier needed); working sets with 2+ projects; inline for single project. Each agent scores every memory file in its assigned memory directory:
 
 ```text
-Read MEMORY.md at <absolute-path>.
-Score every section on two dimensions:
+Read MEMORY.md at <absolute-path> as the index, then Glob *.md in its directory excluding MEMORY.md and Read every memory file's frontmatter and full body, including unlinked files. Evaluate file bodies, not index summaries; report missing files, malformed frontmatter, ambiguous links and legacy inline index facts separately for manual review, never as scored Drop/Trim candidates.
+Score every memory file on two dimensions:
   Usage likelihood: High (every session) | Moderate (occasional) | Low (rare/one-off)
   Impact if missing: High (wrong behavior) | Moderate (degraded output) | Low (no effect)
   Tier: P0=keep (High×High or High×Moderate) | P1=trim (Moderate×Moderate or mixed) | P2=drop (Low on either)
   Action: if content belongs in rules/*.md or agent file → "→ rule"
-Return ONLY (one TSV line per section, no prose):
-PROJECT:<slug>  #:<n>  Section:<name>  Usage:<tier>  Impact:<tier>  Tier:P<n>  Action:<keep|drop|trim|→ rule>
+Return ONLY (one TSV line per memory file, no prose):
+PROJECT:<slug>  #:<n>  File:<exact path>  IndexLinks:<matching links or unlinked>  Usage:<tier>  Impact:<tier>  Tier:P<n>  Action:<keep|drop|trim|→ rule>
 ```
 
 Collect responses from all projects. Assign sequential `#` IDs across all projects. Build one consolidated scored table (all projects, `#` as primary sort) with the legend below; save and print it at P-eager-2:
@@ -84,7 +89,7 @@ Collect responses from all projects. Assign sequential `#` IDs across all projec
 - **Action**: entries whose content could live in `rules/*.md` or an agent file → mark `→ rule` in Action column
 
 ```text
-| #  | Project | Section | Usage likelihood | Impact if missing | Tier | Action      |
+| #  | Project | Memory file | Usage likelihood | Impact if missing | Tier | Action      |
 |----|---------|---------|-----------------|-------------------|------|-------------|
 | 1  | slug-a  | ...     | High            | High              | P0   | Keep        |
 | 2  | slug-b  | ...     | Low             | Low               | P2   | Drop        |
@@ -104,34 +109,37 @@ Legend:
 - (a) label: `All P2` — description: drop all tier-P2 entries; apply `→ rule` conversions as proposals
 - (b) label: `All P1 + P2` — description: trim P1 entries and drop P2 entries
 - (c) label: `Specific items` — description: enter item numbers in next message; applies only those
-- (d) label: `Skip` — description: leave MEMORY.md untouched; user edits manually
+- (d) label: `Skip` — description: leave memory files and MEMORY.md untouched; user edits manually
 
 User picks (c): print "Enter item numbers (e.g. 2, 4, 7):", wait for next message; resolve item numbers against # column before proceeding.
 
-**P-eager-3**: Spawn one **foundry:curator** agent per project in parallel. Group selected `#` items by project slug; each agent receives only the items for its project. Substitute absolute memory file path inline before issuing each Agent call:
+**P-eager-3**: Spawn one `Agent(subagent_type="foundry:curator", name="prune-apply-<slug>", description="Apply approved memory pruning", prompt="<apply prompt below>")` per project in parallel. Group selected `#` items by project slug; each agent receives only the items for its project. Substitute the absolute index path, the Memory inventory and Approved prune actions instructions, and the selected file paths inline before issuing each Agent call:
 
 ```text
-Read MEMORY.md at <absolute-path>.
-Apply these prune actions (sections identified by # from scored table — only the items for this project):
-  <list: # — section name — action (Drop | Trim | Convert to rule)>
+Read MEMORY.md at <absolute-path> as the index and each selected memory file in full.
+Apply these prune actions (files identified by # from scored table — only the items for this project):
+  <list: # — exact memory-file path and index links — action (Drop | Trim | Convert to rule)>
 Rules:
-- Drop: remove entire section including heading
-- Trim: keep operational directive only (1 line max per entry); remove rationale/backstory
-- Convert to rule: first Write the proposed rule content to .temp/distill/prune/rule-<slug>-<n>.md (<n> = item #) for user review; remove the section from MEMORY.md only after that Write succeeds — Write failed → keep the section, count it as not converted. Do NOT write the rule file under rules/ or into an agent file
-Write MEMORY.md changes using the Edit tool.
+- Follow the supplied Approved prune actions snapshot, deletion, rollback and verification rules.
+- Drop: delete only the approved memory file and remove its index link(s) together.
+- Trim: keep operational directives in the memory file body (1 line max per entry), preserve frontmatter; remove rationale/backstory.
+- Convert to rule: first Write the proposed rule content to .temp/distill/prune/rule-<slug>-<n>.md (<n> = item #) for user review; remove the selected memory file and index link(s) using the approved Drop procedure only after that Write succeeds — Write failed → keep both, count it as not converted. Do NOT write the rule file under rules/ or into an agent file.
+Write memory body and MEMORY.md index changes using Edit; use Bash only for approved snapshots, exact-path deletions and verification.
 Return ONLY: {"status":"done","project":"<slug>","sections_dropped":N,"sections_trimmed":N,"rule_conversions":N,"rule_drafts":["<draft path>",...],"confidence":0.N}
 ```
+
+The existing `sections_dropped` and `sections_trimmed` envelope fields count memory files; `rule_conversions` counts proposed drafts, never unapproved removals.
 
 Same deadline protocol: in the spawn response Write `.temp/distill/prune/agent-watch-apply.tsv` (`<slug>\t-\t600` per curator), end the turn, run the check once per notification; a curator whose notification carried no envelope is ⏱ `timed_out` — report that project's MEMORY.md as unverified. Once every row is settled, collect results. Print consolidated summary:
 
 ```text
 Pruned MEMORY.md — <date>
   Projects processed: N
-  Dropped: N sections total — [project: names, ...]
-  Trimmed: N sections total — [project: names, ...]
-  Rule conversions proposed: N — [project: names, ...] (review and write manually or via /manage)
+  Dropped: N memory files total — [project: paths, ...]
+  Trimmed: N memory files total — [project: paths, ...]
+  Rule conversions proposed: N — [project: names, ...] (review and write manually or via /foundry:manage)
   Rule drafts: [every rule_drafts path from the envelopes]
-  Kept:    N sections unchanged
+  Kept:    N memory files unchanged
   Saved:   ~N lines total
 ```
 
@@ -143,15 +151,15 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 
 **Otherwise** (`$EAGER == false`) — standard read-only advisory flow:
 
-**Evaluate each section against these criteria:**
+**Evaluate each memory file body against these criteria:**
 
 - **Drop**: content no longer accurate (removed features, resolved one-time issues, superseded decisions), or fully duplicated in CLAUDE.md (`current` entry only — see CLAUDE.md overlap scope above)
-- **Trim**: sections still accurate but containing implementation history or rationale no longer needed day-to-day — keep operational facts (what/where), drop why-it-was-built backstory
+- **Trim**: memory files still accurate but containing implementation history or rationale no longer needed day-to-day — keep operational facts (what/where), drop why-it-was-built backstory
 - **Keep**: rules actively applied every session; project-specific facts absent from CLAUDE.md; anything model needs to act correctly
 
-**Memory-write gate** — project CLAUDE.md `Memory Policy` prohibits auto-writes to MEMORY.md. Prune mode runs read-only by default, produces advisory diff/report rather than applying edits silently:
+**Memory-write gate** — prune mode runs read-only by default and requires explicit user approval before editing or deleting any memory file or changing `MEMORY.md`; this rule applies in every installation, regardless of project CLAUDE.md content. Produce advisory diff/report rather than applying edits silently:
 
-**P1**: Read all memory files (parallel for 2+ files). Analyse each for stale, redundant, and verbose entries.
+**P1**: Read all memory file bodies from the Memory inventory (parallel across 2+ projects). Analyse each for stale, redundant, and verbose entries.
 
 **P2**: Build consolidated proposed prune report across all projects and Write it to `.temp/distill/prune/proposals.md` first; it is printed once, rendered as normal Markdown, as the last reply text before the P3 question call. The question text carries the prune headline, project count, Drop/Trim counts and `→ .temp/distill/prune/proposals.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping. Report format:
 
@@ -159,8 +167,8 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 Prune proposals (apply manually unless explicitly approved below):
 
 [Project: <slug>]
-  Drop  — <section name>: <reason>
-  Trim  — <section name>: <what to remove vs keep>
+  Drop  — <exact memory-file path and index links>: <reason>
+  Trim  — <exact memory-file path and index links>: <what to remove vs keep>
 
 [Project: <slug>]
   ...
@@ -173,16 +181,16 @@ Prune proposals (apply manually unless explicitly approved below):
 - (b) label: `Show diff first` — description: print line-by-line preview before applying any change
 - (c) label: `Skip` — description: leave all MEMORY.md files untouched; user will edit manually
 
-Only after user picks (a) (or (b) followed by approval) may Edit be invoked on memory files. **Never apply prune edits silently.** Apply edits to all projects in parallel with Edit tool (one project per call, concurrent).
+Only after user picks (a) (or (b) followed by approval) may memory files or index links be changed or deleted. **Never apply prune edits silently.** Follow Approved prune actions above for snapshots, body edits, exact-path deletions, index updates and verification; apply across projects in parallel (one owner per project).
 
 Print consolidated summary after applying (or after user declines):
 
 ```text
 Pruned MEMORY.md — <date>
   Projects: N
-  Dropped: N sections total — [project: names, ...]
-  Trimmed: N sections total — [project: names, ...]
-  Kept:    N sections unchanged
+  Dropped: N memory files total — [project: paths, ...]
+  Trimmed: N memory files total — [project: paths, ...]
+  Kept:    N memory files unchanged
   Saved:   ~N lines total
 ```
 

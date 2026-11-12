@@ -1258,16 +1258,19 @@ L4 previously failed on undefined data: the timing helper counted `grep`'s "no m
 
 # Calibration real-thread fixtures
 
-`/foundry:calibrate` generates synthetic problems for every domain, but generated issue threads turned out to be closed puzzles that a solver without the skill also solves. The `/oss:analyse` thread domain therefore carries a frozen set of real, public issue threads whose outcome a maintainer recorded. They are the hard tier of that domain: the calibrate pipeline copies them into a run on `--full` (domain key `real_fixtures: benchmarks/calibrate/oss-analyse/real` in `plugins/cc_foundry/skills/calibrate/modes/skills.md`), reports them as `recall_real`, and takes the domain's calibration verdict from them (`verdict_tier: real`).
+`/foundry:calibrate` generates synthetic problems for every domain, but generated issue threads turned out to be closed puzzles that a solver without the skill also solves. The `/oss:analyse` thread domain therefore carries a frozen set of real, public issue threads whose outcome a maintainer recorded. They are the hard tier of that domain: the calibrate pipeline copies them into a run on `--full` (domain key `real_fixtures: benchmarks/calibrate/oss-analyse/real-problems` in `plugins/cc_foundry/skills/calibrate/modes/skills.md`), reports them as `recall_real`, and takes the domain's calibration verdict from them (`verdict_tier: real`).
 
 ## Files
 
-| Path                                             | Role                                                                                                       |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `build-calibrate-real-threads.py`                | Fire CLI: lists candidate issues in one repository, builds problems, writes them unless they already exist |
-| `_bench_calibrate/real_threads.py`               | Builder: verdict detection, cutoff, snapshot, distractor pool, pseudonymization, problem assembly          |
-| `calibrate/oss-analyse/real/<problem_id>.json`   | Frozen problems, one schema-v2 calibration problem per file                                                |
-| `tests/manifests/test_calibrate_real_threads.py` | Builder tests (offline; GraphQL responses are fixtures)                                                    |
+| Path                                                    | Role                                                                                                       |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `build-calibrate-real-threads.py`                       | Fire CLI: lists candidate issues in one repository, builds problems, writes them unless they already exist |
+| `_bench_calibrate/real_threads.py`                      | Builder: verdict detection, cutoff, snapshot, distractor pool, pseudonymization, problem assembly          |
+| `calibrate/oss-analyse/real-problems/<problem_id>.json` | Frozen problems, one schema-v2 calibration problem per file                                                |
+| `build-calibrate-fetch-store.py`                        | Fire CLI: writes the candidate-fetch store for every frozen problem that has none                          |
+| `calibrate/oss-analyse/real-fetch/<problem_id>.json`    | Frozen fetch store: per pool candidate, its body and last 10 comments as of the problem's cutoff           |
+| `calibrate/oss-analyse/real-consolidation/`             | Problems whose label is a maintainer consolidation onto a tracker; kept, not scored                        |
+| `tests/manifests/test_calibrate_real_threads.py`        | Builder tests (offline; GraphQL responses are fixtures)                                                    |
 
 ## What one problem is
 
@@ -1292,33 +1295,49 @@ Every skip is printed with its reason. A file that already exists is never overw
 Freezing is an operator step after the build:
 
 1. **Weak-solver probe.** Give each candidate's `task_prompt` + `input` (never the JSON file, which holds the answer key) to Haiku with no skill and Read/Write tools only, asking for an explicit `Duplicate of: #N` or `Duplicate of: none` line. Drop every duplicate problem Haiku solves, and record the result in each kept file as `provenance.probe = {"model": "haiku", "hit": <bool>}`; the calibrate report turns it into the frozen-time weak hit rate.
-2. **Select** among the survivors: at most one problem per canonical issue; a structured verdict event before a maintainer comment; then the larger candidate pool; then more pre-cutoff comments. One negative control per repository.
+2. **Select** among the survivors: at most one problem per canonical issue; a structured verdict event before a maintainer comment; then the larger candidate pool; then more pre-cutoff comments. Up to three negative controls per repository, preferring those whose candidate pool sits closest to the item (same component, different failure).
 3. **Check pseudonymization** on each selected file: no contributor or thread participant login may remain in `input` as a whole word. Free-text mentions of accounts outside the thread are not detectable this way; read the candidate text of any thread that names an account.
-4. **Copy** the selected files into `calibrate/oss-analyse/real/` and run `plugins/cc_foundry/bin/calibrate_validate_problems.py` on them (as `problems-real-<problem_id>.json` in a scratch run dir).
+4. **Audit the label** of each duplicate problem: read the item, the canonical and the maintainer's verdict comment. Keep it only when the two issues share a failure or root cause. A verdict that routes the report into a tracking issue ("tracked in", "consolidated in", "discussed in") is a consolidation: the thread is cut before that comment, so nothing in the input leads to the tracker. The builder skips the phrasings it recognises; a problem that still gets through goes to `calibrate/oss-analyse/real-consolidation/`.
+5. **Copy** the selected files into `calibrate/oss-analyse/real-problems/` and run `plugins/cc_foundry/bin/calibrate_validate_problems.py` on them (as `problems-real-<problem_id>.json` in a scratch run dir).
+6. **Build the fetch store**: `python benchmarks/build-calibrate-fetch-store.py` writes `calibrate/oss-analyse/real-fetch/<problem_id>.json` for each problem that has none. The skill verifies its top candidates by fetching their full body and comments; a fixture run cannot fetch, so without the store every duplicate verdict stays snippet-only. The store holds what that fetch would have returned at the cutoff, with the same cuts, logins aliased as in the problem, and any text naming the item removed. The calibrate pipeline hands it to the solver through the domain key `fetch_store:`.
 
 `benchmarks/calibrate/` is excluded from `pretty-format-json`, `mixed-line-ending` and `codespell` in `.pre-commit-config.yaml`: the files quote issue text verbatim, and a typo fix or reformat would change the benchmark.
 
 ## Current set
 
-| Repository                     | Duplicate problems                          | Negative control |
-| ------------------------------ | ------------------------------------------- | ---------------- |
-| Lightning-AI/pytorch-lightning | 21694, 16691, 13609, 7842                   | 21930            |
-| roboflow/rf-detr               | 461, 580, 394, 267, 258, 362, 426, 700, 722 | 1647             |
-| Lightning-AI/torchmetrics      | 3289, 2047                                  | 3489             |
-| roboflow/supervision           | none (Haiku solved both usable duplicates)  | 2910             |
-| pytorch/vision                 | 5798, 7011, 7969                            | 9687             |
-| Lightning-AI/litgpt            | 238                                         | 2348             |
-| huggingface/peft               | none (Haiku solved both usable duplicates)  | 4094             |
-| huggingface/accelerate         | none (no usable duplicate thread)           | 4353             |
+| Repository                     | Duplicate problems         | Negative controls |
+| ------------------------------ | -------------------------- | ----------------- |
+| Lightning-AI/pytorch-lightning | 21694, 16691, 13609, 7842  | 21930, 21825      |
+| roboflow/rf-detr               | 461                        | 1647              |
+| Lightning-AI/torchmetrics      | 3289, 2047                 | 3489              |
+| roboflow/supervision           | none (Haiku solved both)   | 2910, 2932, 2846  |
+| pytorch/vision                 | 5798, 7011, 7969           | 9687, 9513        |
+| Lightning-AI/litgpt            | 238                        | 2348              |
+| huggingface/peft               | none (Haiku solved both)   | 4094, 4032, 4052  |
+| huggingface/accelerate         | none (no usable duplicate) | 4353, 4306        |
 
-19 duplicate problems, each with a distinct canonical issue, and 8 negative controls. Haiku missed every kept duplicate and answered "none" on every negative control. rf-detr supplies 9 of the 19 duplicates, and its maintainers label loosely (see below), so report rf-detr recall beside the rest rather than only pooled.
+11 duplicate problems, each with a distinct canonical issue, and 15 negative controls; every problem has a fetch store. Haiku missed every kept duplicate and answered "none" on every negative control.
 
-First baseline on this set (2026-11-10, `/oss:analyse` thread mode with the skill unchanged): duplicates 10/19 (rf-detr 1/9, the other repositories 9/10), negative controls 8/8, 6 wrong-canonical false positives across 4 problems, calibration bias +0.07. The 11 problems carried over from the earlier set reproduced their previous hits and false positives exactly. 8 of the 9 misses are rf-detr problems labelled only by a maintainer comment, and the fixtures stop before that comment, so whether those labels mark true duplicates is unaudited.
+Two changes on 2026-11-10 reshaped the set:
 
-After the thread-mode change that lists numbers cited only in the thread as unverified, leaves the canonical undetermined when every potential duplicate is snippet-only, and keeps a candidate bundling other questions related: duplicates 10/19, negative controls 8/8, false positives 6 → 4 (every remaining one was already present in the baseline), scorer agreement 1.00. Hit and miss confidence still do not separate (0.74 vs 0.76).
+- **Label audit.** 8 of the 9 rf-detr duplicate problems (258, 267, 362, 394, 426, 580, 700, 722) were labelled by one maintainer triage sweep that consolidated reports onto topic trackers: a load-weights bug onto a partial-loading feature request, an ONNX export error onto a dynamic-batching request. The issues do not share a failure, and the thread is cut before the comment naming the tracker. They moved to `calibrate/oss-analyse/real-consolidation/` and are not scored. The 10 duplicate problems from other repositories and rf-detr 461 were checked the same way and kept.
+- **Harder negative controls.** Haiku answers "none" on 55 of 56 fresh negative candidates, so a weak-solver miss cannot select hard ones. Seven were chosen instead by how close the candidate pool sits to the item (highest title similarity to a pool candidate): same component, different failure, such as an AdaLoRA `Conv2d` `padding_mode` report beside a BOFT `Conv2d` one. One candidate (litgpt 2187) was dropped because its closest pool item may be a true duplicate.
+
+Results on this set, `/oss:analyse` thread mode, one run per problem, Claude and Codex scorers:
+
+| Run (2026-11-10)                              | Duplicates | Negatives | False positives | Bias  | Confidence, duplicate hits         |
+| --------------------------------------------- | ---------- | --------- | --------------- | ----- | ---------------------------------- |
+| Fetch store on, skill unchanged (`18-34-04Z`) | 10/11      | 15/15     | 2               | -0.12 | 0.86 (the one miss: 0.90)          |
+| Plus four verification rules (`19-20-53Z`)    | 11/11      | 15/15     | 2               | -0.18 | 0.83 (with a false positive: 0.82) |
+
+With the store no verdict stays snippet-only, and the snippet-only false positives of the earlier 27-problem set are gone. The four rules (spare fetch slots go to related candidates in the same component, a fetched related candidate can be promoted, a candidate that defers to another issue loses a tie, a verified verdict keeps a deduction while candidates compete) recovered the remaining miss (16691) and kept every negative, with no related candidate wrongly promoted. Both remaining false positives are a second issue listed beside the true duplicate (16691 `#15283`, 461 `#301`); the scorers split on those two responses, and the Codex scorer alone counts 9/11. Reported confidence is now too low for the recall and still does not separate correct verdicts from those carrying a false positive.
+
+Earlier baselines on the 27-problem set (19 duplicates including the 8 consolidations, 8 negatives, no fetch store): duplicates 10/19, negatives 8/8, false positives 6, then 4 after the thread-mode change that lists thread-cited numbers as unverified. They are not comparable with the table above.
 
 ## Known limits
 
 - Solvers without the skill default to "related, not duplicate" on real threads: Haiku missed every rf-detr candidate and Sonnet solved none of 20 Haiku survivors, including one the skill-equipped target solved. A strong-solver filter would therefore remove exactly the discriminating cases, so none is applied.
-- Maintainer verdicts are sometimes loose, routing a report into a tracking issue rather than marking a true duplicate. `recall_real` is a small-n point estimate over such labels.
+- Maintainer verdicts are sometimes loose, routing a report into a tracking issue rather than marking a true duplicate. The label audit removes those it finds; `recall_real` stays a small-n point estimate (11 duplicates).
+- The set is close to saturated for the current skill (11/11, 15/15). It still separates the skill from a solver without it, which finds none of the duplicates, and it guards against regressions; it no longer ranks improvements to the duplicate rules.
+- The fetch store records which entries a solver read only through the solver's own report.
 - Repositories run out quickly: pytorch-lightning and torchmetrics yielded 14 and 5 usable duplicate threads over their whole history, supervision 2, peft 2, litgpt 1 and accelerate none; vision gave 8 from its newest issues, and Haiku solved 4 of them (three shared one canonical).

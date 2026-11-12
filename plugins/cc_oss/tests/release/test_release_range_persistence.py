@@ -14,12 +14,14 @@ import sys
 from pathlib import Path
 
 import pytest
+from _oss_shell_plugin import render_shell
+from _skill_source import read_skill_source
 from _text_io import bash_blocks
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 
 
-_BLOCKS = bash_blocks((_PLUGIN_ROOT / "skills" / "release" / "SKILL.md").read_text(encoding="utf-8"))
+_BLOCKS = bash_blocks(read_skill_source(_PLUGIN_ROOT / "skills" / "release" / "SKILL.md"))
 _MODE_BLOCK = next(block for block in _BLOCKS if "release-do-migration-" in block and "parse-skill-flags.py" in block)
 _GATHER_RELOAD = next(block for block in _BLOCKS if "# quote RANGE" in block).split('if [ -z "$RANGE" ]', 1)[0]
 
@@ -52,10 +54,24 @@ def test_mode_detection_range_reaches_gather_shell(tmp_path: Path, arguments: st
         }
     )
     bash = shutil.which("bash")
-    subprocess.run([bash, "-c", _MODE_BLOCK], cwd=tmp_path, env=environment, check=True, capture_output=True)
+    subprocess.run(
+        [bash, "-c", render_shell(_MODE_BLOCK, Path(environment.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN_ROOT))), "oss")],
+        cwd=tmp_path,
+        env=environment,
+        check=True,
+        capture_output=True,
+    )
 
     gather = subprocess.run(
-        [bash, "-c", _GATHER_RELOAD + 'printf "RANGE=%s\\n" "$RANGE"'],
+        [
+            bash,
+            "-c",
+            render_shell(
+                _GATHER_RELOAD + 'printf "RANGE=%s\\n" "$RANGE"',
+                Path(environment.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN_ROOT))),
+                "oss",
+            ),
+        ],
         cwd=tmp_path,
         env=environment,
         check=True,

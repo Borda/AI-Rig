@@ -2,7 +2,7 @@
 
 <!-- Variables available: $SKILL_DIR, $_OSS_SHARED, $LAST_TAG, $BRANCH, $DATE, $RANGE, $VERSION, $REPO_ROOT, $SOURCE_TAG_REF, $CHERRY_PICK_SUBJECTS -->
 
-**Trigger**: `/release audit [version]`
+**Trigger**: `/oss:release audit [version]`
 
 **Purpose**: Pre-release readiness check — surfaces outstanding work, alignment gaps, blockers before cutting release
 
@@ -42,11 +42,12 @@ Verify all APIs scheduled for removal at `$TARGET` absent from HEAD. Runs after 
 
 ```bash
 # Source A: pyDeprecate remove_in= markers (includes deprecated_class, deprecated_instance)
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 git -C "$REPO_ROOT" grep -n 'remove_in=' HEAD -- '*.py' 2>/dev/null | grep -v '^\s*#'  # timeout: 5000
 
 # Source B: CHANGELOG 🗑️ Deprecated entries — prior releases may name removal version in prose
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-CHANGELOG_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_changelog_file.py" --repo-root "${REPO_ROOT:-.}" --write-sentinel)  # timeout: 5000
+CHANGELOG_FILE=$(python "$PLUGIN_ROOT/bin/resolve_changelog_file.py" --repo-root "${REPO_ROOT:-.}" --write-sentinel)  # timeout: 5000
 [ -f "${REPO_ROOT:-.}/$CHANGELOG_FILE" ] && grep -n '🗑️\|Deprecated\|remove_in\|scheduled for removal\|will be removed' "${REPO_ROOT:-.}/$CHANGELOG_FILE" 2>/dev/null | head -60  # timeout: 3000
 ```
 
@@ -57,9 +58,10 @@ CHANGELOG_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_chang
 
 ```bash
 # stdlib version parse — no packaging dep
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r TARGET < "${TMPDIR:-/tmp}/release-audit-target-${CSID}" 2>/dev/null || TARGET=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/compare_removal_version.py" "<remove_in_value>" "${TARGET:-0}"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/compare_removal_version.py" "<remove_in_value>" "${TARGET:-0}"  # timeout: 5000
 ```
 
 **Step 3** — for each OVERDUE item, check if old symbol still present in HEAD. Read 3-line context around `remove_in=` match to extract deprecated function or class name (typically decorated name 1–2 lines above), then:
@@ -106,8 +108,21 @@ Dependency CVE rows follow `templates/audit-checks.md` §Check 6 scope: a CVE ne
 Every `critical` row from the Scope check (already-released commit landed a second time) → add to the Findings summary table below, `severity: critical` — this is the check that must be visible to the reviewer before the PR merges, not something the audit file alone carries.
 
 ```bash
-cat "$SKILL_DIR/templates/audit-checks.md"  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$SKILL_DIR/templates/audit-checks.md"  # timeout: 5000
 ```
+
+**Unreleased leftovers** — docs still calling shipped work unreleased (`unreleased`, `next release`, `coming soon`, `TBD` beside a version, `versionadded:: next`/newer-than-target, a changelog Unreleased section with entries once the target heading exists):
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r TARGET < "${TMPDIR:-/tmp}/release-audit-target-${CSID}" 2>/dev/null || TARGET=""
+IFS= read -r REPO_ROOT < "${TMPDIR:-/tmp}/release-setup-${CSID}/REPO_ROOT" 2>/dev/null || REPO_ROOT="."
+python "$PLUGIN_ROOT/bin/scan_unreleased_leftovers.py" --repo-root "$REPO_ROOT" ${TARGET:+--version "$TARGET"}; echo "leftovers-rc: $?"  # timeout: 60000
+```
+
+`leftovers-rc: 0` → `Unreleased leftovers` row ✓. `1` → row ✗ with the hit count; every printed `path:line: <marker>` row becomes its own Findings summary row, severity `high`, listed as a ✗ blocking item under `NEEDS_ATTENTION` (`BLOCKED` stays reserved for `critical`, so `prepare` continues past Phase 1 and its Phase 2c gate stops it after the changelog); never auto-edit the docs. `2` → row ⚠ with the scanner's error line.
 
 After readiness table, if issues found, append **Findings summary** table:
 
@@ -122,7 +137,8 @@ Every finding needs explicit location, severity, action — matches structured o
 Checklist checks above (version/docs/CVE/deprecation) are static and can't catch semantic gaps — e.g. a public example contradicting the release's own behavior change, or a migration note describing the wrong version. When Codex is installed, dispatch it as an independent adversarial pass over the same `RANGE` before declaring a verdict.
 
 ```bash
-CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/check_bridge.py" --status 2>/dev/null || echo "absent")  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+CODEX_STATUS=$(python "$PLUGIN_ROOT/bin/check_bridge.py" --status 2>/dev/null || echo "absent")  # timeout: 5000
 if [ "$CODEX_STATUS" = "available" ]; then CODEX_AVAILABLE=1; echo "bridge@borda-ai-rig available"; else CODEX_AVAILABLE=0; echo "⚠ bridge@borda-ai-rig is ${CODEX_STATUS} — skipping adversarial audit pass"; fi
 ```
 

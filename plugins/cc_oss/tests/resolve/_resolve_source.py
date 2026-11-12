@@ -2,11 +2,22 @@
 
 from pathlib import Path
 
-_RELOCATED = ("handoff-detect", "report-merge", "item-selection", "push", "final-report")
+_RELOCATED = (
+    "run-coordination",
+    "dispatch-coordination",
+    "preflight",
+    "handoff-detect",
+    "report-merge",
+    "item-selection",
+    "checkout",
+    "dispatch-closeout",
+    "push",
+    "final-report",
+)
 
 
 def read_resolve_source(path: Path) -> str:
-    """Read a source file, expanding the five relocated sections when reading SKILL.md.
+    """Read a source file, expanding the relocated sections when reading SKILL.md.
 
     Existing contract slices span adjacent step headings, so insert each mode body at its load block rather than
     appending mode files after the workflow. Other sources are read unchanged.
@@ -15,7 +26,7 @@ def read_resolve_source(path: Path) -> str:
     if path.name != "SKILL.md":
         return text
     for name in _RELOCATED:
-        marker = f'cat "$_OSS_RESOLVE/modes/{name}.md"'
+        marker = f'python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_RESOLVE/modes/{name}.md"'
         position = text.index(marker)
         begin = text.rindex("```bash\n", 0, position)
         end = text.index("```", position) + len("```")

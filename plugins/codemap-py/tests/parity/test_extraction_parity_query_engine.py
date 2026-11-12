@@ -53,6 +53,7 @@ from pathlib import Path
 
 import pytest
 from _parity_helpers import PATH_CLASSES, materialize_old_bin
+from codemap_py import index_paths
 
 _TESTS_DIR = Path(__file__).resolve().parents[1]
 _PLUGIN_ROOT = _TESTS_DIR.parent
@@ -706,7 +707,8 @@ def test_missing_index_is_prepared_before_ordinary_query(
     assert payload["index"]["stale"] is False
     assert payload["index"]["query_complete"] is True
     index = json.loads(index_path.read_text(encoding="utf-8"))
-    assert index["scan_root"] == str(tmp_path.resolve())
+    assert index["scan_root"] == "."
+    assert index["scan_root_key"] == index_paths.root_key(tmp_path.resolve())
     assert {module["name"] for module in index["modules"]} == {"leaf", "caller"}
     assert "built missing index for the queried source root" in result.stderr
 

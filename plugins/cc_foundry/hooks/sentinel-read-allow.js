@@ -350,7 +350,8 @@ const TRAVERSAL = /(?<![.\w])\.\.(?![.\w])/;
 // `read` target the blueprint danger gate refuses.
 const SENSITIVE_VARS =
   "PATH|path|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_[A-Z_]+|BASH_ENV|ENV|ZDOTDIR|SHELLOPTS|BASHOPTS|GLOBIGNORE|CDPATH|cdpath|PROMPT_COMMAND|PS[0-4]|PROMPT[0-4]?|RPROMPT2?|RPS[12]|SPROMPT|(?:precmd|preexec|chpwd|periodic|zshexit|zshaddhistory)_functions|options" +
-  "|fpath|FPATH|commands|functions|aliases|galiases|saliases|dis_[a-z_]+|BASH_CMDS|BASH_ALIASES|TMPDIR";
+  "|fpath|FPATH|commands|functions|aliases|galiases|saliases|dis_[a-z_]+|BASH_CMDS|BASH_ALIASES|TMPDIR" +
+  "|GIT_(?:SSH_COMMAND|SSH|PROXY_COMMAND|EXTERNAL_DIFF|PAGER|EDITOR|SEQUENCE_EDITOR|ASKPASS|EXEC_PATH|CONFIG_[A-Z0-9_]+|TEMPLATE_DIR)|NODE_OPTIONS|PYTHONPATH|LESSOPEN|LESSCLOSE|PAGER";
 // Raw and shell-decoded writes are checked before shape admission; only proven inert operands are exempt.
 const LOOKUP_WRITE_TOKEN_RE = new RegExp(
   "(?<![A-Za-z0-9_])(?:(?:\\+\\+|--)(?:" +
@@ -565,7 +566,18 @@ function lookupWriteScan(cmd) {
       if (printfWritesName(head, words, start)) return [true, cmd];
     }
     for (const [index, [word, begin]] of spans.entries()) {
-      if (COMMAND_TABLE_USE_RE.test(word.value) && !(positions.has(index) && /^'[^']*'$/.test(word.raw)))
+      if (
+        COMMAND_TABLE_USE_RE.test(word.value) &&
+        !(
+          positions.has(index) &&
+          (/^'[^']*'$/.test(word.raw) ||
+            (word.quoted &&
+              /['"]/.test(word.raw) &&
+              !word.raw.includes("$'") &&
+              !word.raw.includes('$"') &&
+              literalWord(word)))
+        )
+      )
         return [true, cmd];
       const data = literalLookupData(word, head, positions.has(index));
       if (data) lookupText.fill(" ", begin, begin + word.raw.length);
@@ -766,7 +778,7 @@ function commandOf(raw) {
   } catch (_) {
     return null;
   }
-  if (!data || data.tool_name !== "Bash") return null;
+  if (!data || (data.tool_name !== "Bash" && data.tool_name !== "Monitor")) return null;
   const command = data.tool_input && data.tool_input.command;
   if (typeof command !== "string") return null;
   return command.trim() || null;

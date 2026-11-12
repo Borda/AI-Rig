@@ -153,6 +153,40 @@ class TestSweepingColumns:
         assert (_field(row, "binary")["1.3/A"], _soft(row)["1.3/A"]) == (linked, pytest.approx(0.6))
 
 
+class TestBinaryLinkMethods:
+    """Only a blame-backed, text-backed or verdict cell is a binary link; overlap signals stay in the soft view."""
+
+    def test_symbol_overlap_above_threshold_does_not_link(self) -> None:
+        """A fix whose symbols all sit in feature A's footprint scores raw 0.6 yet gets no binary link.
+
+        Seen on labelled repositories: symbol-led cells were right 7 times in 73, so overlap alone must not link.
+        """
+        index = _index(_VERSIONS, {"a1": "1.2", "p1": "1.0"})
+        columns = [_column("1.2/A", ["a1"], symbols=["load_config"])]
+        evidence = [_evidence("1.3/F", {"p1": 8}, symbols=["load_config"])]
+        cell = _cells(_score(index, columns, [_fix("1.3/F", ["f"])], evidence)[0])["1.2/A"]
+        assert (cell["method"], cell["raw_score"] >= DEFAULT_THRESHOLD, cell["binary"]) == ("symbol", True, False)
+
+    def test_blame_still_links_when_symbols_agree(self) -> None:
+        """Blamed lines in feature A link it even when the symbol overlap also points at A.
+
+        The blame signal (weight 1.0) outweighs the symbol signal (0.6), so blame leads the cell.
+        """
+        index = _index(_VERSIONS, {"a1": "1.2"})
+        columns = [_column("1.2/A", ["a1"], symbols=["load_config"])]
+        evidence = [_evidence("1.3/F", {"a1": 8}, symbols=["load_config"])]
+        cell = _cells(_score(index, columns, [_fix("1.3/F", ["f"])], evidence)[0])["1.2/A"]
+        assert (cell["method"], cell["binary"]) == ("blame", True)
+
+    def test_validated_text_reference_still_links(self) -> None:
+        """A fix whose changelog text names feature A links it without any blamed line."""
+        index = _index(_VERSIONS, {"a1": "1.2"})
+        columns = [_column("1.2/A", ["a1"])]
+        fixes = [_fix("1.3/F", ["f"], text_refs=["1.2/A"])]
+        cell = _cells(_score(index, columns, fixes, [_evidence("1.3/F", {}, status="unattributable")])[0])["1.2/A"]
+        assert (cell["method"], cell["binary"]) == ("text", True)
+
+
 class TestSoftConservation:
     """Every row's soft shares sum to 1, so the matrix total equals the fix count."""
 
@@ -321,15 +355,17 @@ class TestInheritance:
         return _score(index, columns, fixes, evidence, **kwargs)
 
     def test_child_mass_follows_parent_soft_shares(self) -> None:
-        """Lines blamed on the parent fix spread over the parent's final shares, keeping both binary links.
+        """Lines blamed on the parent fix spread over the parent's final shares, as soft mass only.
 
         The parent repairs A and B half each; the child, given first in the entry list, is still scored after it.
+        An inherited share carries soft weight but no binary link: on labelled repositories 1 of 38 inherited links
+        was a true repair, so the binary view needs blamed lines or a text reference of the fix itself.
         """
         parent, child = self._rows({"a1": 5, "b1": 5})
         assert [parent["fix_id"], child["fix_id"]] == ["1.3/P", "1.4/C"]
         assert _soft(child) == pytest.approx({"1.1/A": 0.5, "1.2/B": 0.5})
         assert _field(child, "method") == {"1.1/A": "inherited", "1.2/B": "inherited"}
-        assert _field(child, "binary") == {"1.1/A": True, "1.2/B": True}
+        assert _field(child, "binary") == {"1.1/A": False, "1.2/B": False}
 
     def test_inherited_confidence_is_below_parent(self) -> None:
         """An inherited cell's confidence is strictly below the parent cell's confidence.

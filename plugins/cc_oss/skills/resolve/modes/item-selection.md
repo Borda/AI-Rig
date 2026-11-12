@@ -24,11 +24,12 @@ Longest idle window of the run sits here (median ~15 min, measured up to 16 h) �
 
 ```bash
 # compaction boundary 0 — before the Step 3d idle gate (compaction-contract.md §Lifecycle)
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR=""
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
 _PRESERVE="pr=$_PR_NUMBER, impl-dir=$_IMPL_DIR, intel=$_IMPL_DIR/pr-intelligence.md, items=$_IMPL_DIR/action-items.jsonl, vars=$_IMPL_DIR/pr-vars.sh"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" --keep-sentinel resolve-keep-items "oss:resolve" "item selection (Step 3d gate)" "$_IMPL_DIR" "$_PRESERVE" "resume: re-read action-items.jsonl + pr-intelligence.md, re-issue Step 3d AskUserQuestion; Steps 6-7a not yet dispatched — Step 5 left the merge staged, resolve it in the Run 2 fan (Step 7b join)"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" --keep-sentinel resolve-keep-items "oss:resolve" "item selection (Step 3d gate)" "$_IMPL_DIR" "$_PRESERVE" "resume: re-read action-items.jsonl + pr-intelligence.md, re-issue Step 3d AskUserQuestion; Steps 6-7a not yet dispatched — Step 5 left the merge staged, resolve it in the Run 2 fan (Step 7b join)"  # timeout: 5000
 ```
 
 The hint line `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. `` goes into the `question` text of Step 3d's first question — Call 1's bulk question (**Bulk question text** below), or the push question on the push-only path. Never as reply text, never Bash stdout: 5.5-family models may return reply text written before a tool call as an empty progress update, and tool output is not reliably shown to the user.
@@ -257,7 +258,7 @@ echo labels > "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}"  # timeout: 3000
 
 <!-- branch: main-path — push (follow-up call in every band; one push-only call only at zero pending with no closed items; omitted when no PR number exists) -->
 
-**Push question** — placed per the slot table above; asked whenever a PR number exists. It records **push intent only**, plus the post-PR action. It is never push authorization: commits do not exist yet, so the scope the push-safety rule (`git-commit.md`, "Never push without explicit user confirmation") requires the user to see — diff stat, commit count, last subject — cannot be shown here. Intent "push" means Step 10 asks the scope-bearing push confirmation; an explicit "don't push" is itself an answer, and Step 10 then skips its question silently. Name what is knowable now — target `$FORK_REMOTE/$HEAD_REF` when Step 4 already ran (`pr`, `pr+report`), otherwise `the head branch of PR #<N>` (`report` mode checks out after this gate) — plus the selected item count and commit mode.
+**Push question** — placed per the slot table above; asked whenever a PR number exists. Pick its form by what is known now. **Run approval form** — `pr` and `pr+report`, where Step 4 already ran, so `FORK_REMOTE` and `HEAD_REF` (their sentinels) and `PR_HEAD_OID` are all known, and both names are plain ones the hook can record (`FORK_REMOTE`: letters, digits, `.`, `_`, `-`; `HEAD_REF` the same plus `/`, never `HEAD`, never a `refs/` name, no `..`, no trailing `/` or `.lock`): the question below *is* the push authorization, Step 10 asks nothing further. **Intent form** — `report` mode, any of those values missing, or a name outside that plain set (the hook would record no token, so Step 10 would ask the user again after a run approval): the 4-option menu below, as before. It records **push intent only**, plus the post-PR action. It is never push authorization: commits do not exist yet, so the scope the push-safety rule (`git-commit.md`, "Never push without explicit user confirmation") requires the user to see — diff stat, commit count, last subject — cannot be shown here. Intent "push" means Step 10 asks the scope-bearing push confirmation; an explicit "don't push" is itself an answer, and Step 10 then skips its question silently. Name what is knowable now — target `$FORK_REMOTE/$HEAD_REF` when Step 4 already ran (`pr`, `pr+report`), otherwise `the head branch of PR #<N>` (`report` mode checks out after this gate) — plus the selected item count and commit mode.
 
 ```text
 Push question — multiSelect: FALSE
@@ -268,6 +269,21 @@ Push question — multiSelect: FALSE
   (d) Don't push — I'll push manually
 ```
 
+Run approval form — it is the `git-push-run` question that foundry's approval hook records: header `git-push-run`, multiSelect FALSE, options exactly `Approve` / `Deny`, question text with exactly one push span and one head span (values read from the sentinels and `PR_HEAD_OID`, never typed from memory; the hook refuses anything else, a fence or an invisible character):
+
+```text
+Push question (run approval) — header: git-push-run
+"Push PR #<N> after the lint/QA gate passes? Approve lets this run push once, without asking again.
+ Push: `git push <FORK_REMOTE> <HEAD_REF>`
+ PR head: `<PR_HEAD_OID>`
+ Remote <FORK_REMOTE> is the PR's head repository <FORK_REPO> (added at push time when missing)
+ Covers this run's <selected item count> item(s), <commit mode> commits on top of that head; valid 12 h."
+  Approve — push once at the end of the run, no second question
+  Deny — don't push; I'll push manually
+```
+
+The post-PR browser action has no slot in this form (a call holds at most 4 questions and the push question already fills the last one) and nothing is asked after Step 3d, so it stays `skip`; the final report's **Link** line is the one-click way to the PR.
+
 Unanswered or dismissed → run **no** push block and **no** post-PR block: the push sentinel stays `unset` and post-PR stays at Step 1's `skip`, so Step 10 asks both push and post-PR at push time exactly as before — no answer is never a silent skip. Otherwise run **exactly one** push block and **exactly one** post-PR block — never edit a block's value (same trap as the commit-mode blocks above: an unedited default silently wins):
 
 | Answer | Push block | Post-PR block |
@@ -277,6 +293,15 @@ Unanswered or dismissed → run **no** push block and **no** post-PR block: the 
 | (c) | skip | open |
 | (d) | skip | skip |
 | unanswered / dismissed | none — stays `unset`, Step 10 asks push + post-PR | none |
+| run approval: Approve | push-run | skip |
+| run approval: Deny | skip | skip |
+
+Push = push-run:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo push-run > "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}"  # read back at Step 10  # timeout: 3000
+```
 
 Push = push:
 

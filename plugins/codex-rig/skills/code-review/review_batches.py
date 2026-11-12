@@ -47,6 +47,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
 #: Match preparation's sibling import boundary for path-based doctest collection.
 SKILL_DIRECTORY = Path(__file__).resolve().parent
 if str(SKILL_DIRECTORY) not in sys.path:

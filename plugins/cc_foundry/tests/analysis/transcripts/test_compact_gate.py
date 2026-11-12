@@ -443,7 +443,13 @@ def _copy_scripts(source_dir: Path, target_dir: Path, names: tuple[str, ...]) ->
     [
         pytest.param((), "compact-gate: continue (foundry gate unavailable)", id="gate-absent"),
         pytest.param(
-            ("compact_gate.py", "cost_analyzer.py", "_context_composition.py", "_codex_composition.py"),
+            (
+                "compact_gate.py",
+                "cost_analyzer.py",
+                "_context_composition.py",
+                "_codex_composition.py",
+                "_report_io.py",
+            ),
             _ADVISE_LINE,
             id="gate-present",
         ),

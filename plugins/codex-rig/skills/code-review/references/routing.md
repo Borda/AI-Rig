@@ -19,6 +19,8 @@ Always:
 
 Required routing signals:
 
+Apply [Improvement claims](improvement-claims.md) when the request, PR title/body or changed documentation claims a material improvement. Set `axis_squeezer=true` for performance claims, including claims without supplied measurements; include the claim and available evidence in its brief. Route behavioral and model-quality claims to the applicable QA/data/scientific axes. Existing permission, independence and fallback rules remain controlling.
+
 - QA risk: `behavior_change`, `bug_fix`, `test_or_error_path`, `data_tensor_boundary`.
 - Challenge risk: `high_candidate`, `unresolved_material_assumption`, `material_no_finding`, `explicit_adversarial`.
 - Conditional axes: `axis_solution_architect`, `axis_security_auditor`, `axis_data_steward`, `axis_cicd_steward`, `axis_linting_expert`, `axis_doc_scribe`, `axis_oss_shepherd`, `axis_squeezer`, `axis_scientist`, `axis_web_explorer`.

@@ -760,6 +760,7 @@ describe("opencode-rig setup global instructions", () => {
     const result = cli(project, ["doctor", "--project"])
     expect(result.status).toBe(0)
     expect(result.stdout).toMatch(/RTK\s+(ok|warn)/)
-    expect(result.stdout).toMatch(/60-99% fewer input tokens/)
+    expect(result.stdout).toMatch(/reduce .*output/)
+    expect(result.stdout).not.toMatch(/\d+[-–]\d+%/)
   })
 })

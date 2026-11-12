@@ -15,11 +15,13 @@ from pathlib import Path
 
 import pytest
 import release_append_marker as ram
+from _oss_shell_plugin import render_shell
+from _skill_source import read_skill_source
 from _text_io import bash_blocks, bash_path
 
 _PLUGIN = Path(__file__).resolve().parents[2]
 _RELEASE = _PLUGIN / "skills/release"
-#: The truth-check probe runs ``${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/symbol_exists_at_ref.py`` from a scratch
+#: The truth-check probe runs ``$PLUGIN_ROOT/bin/symbol_exists_at_ref.py`` from a scratch
 #: repo, where the bare ``plugins/cc_oss`` fallback resolves to nothing; point it at this plugin (forward slashes work
 #: in Git Bash).
 _PROBE_ENV = {**os.environ, "CLAUDE_PLUGIN_ROOT": _PLUGIN.as_posix()}
@@ -39,7 +41,7 @@ _skip_shell_unavailable = pytest.mark.skipif(shutil.which("bash") is None, reaso
 
 def _raw(relative: str) -> str:
     """Read one shipped release-skill file exactly as written."""
-    return (_RELEASE / relative).read_text(encoding="utf-8")
+    return read_skill_source(_RELEASE / relative)
 
 
 def _prose(relative: str) -> str:
@@ -80,7 +82,13 @@ def _session_env(tmp_path: Path, session: str, **extra: str) -> dict[str, str]:
 def _bash(script: str, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """Run ``script`` through Bash in ``cwd`` and capture its output."""
     return subprocess.run(
-        [shutil.which("bash"), "-c", script], cwd=cwd, env=env, capture_output=True, text=True, check=False, timeout=30
+        [shutil.which("bash"), "-c", render_shell(script, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "oss")],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
     )
 
 

@@ -129,19 +129,22 @@ def get_active_install_paths(installed_plugins_json: Path) -> dict[str, Path]:
     if not installed_plugins_json.is_file():
         return {}
     try:
-        data = json.loads(installed_plugins_json.read_text())
-    except (json.JSONDecodeError, OSError):
+        data = json.loads(installed_plugins_json.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+        return {}
+    plugins = data.get("plugins") if isinstance(data, dict) else None
+    if not isinstance(plugins, dict):
         return {}
     active: dict[str, Path] = {}
-    for key, entries in data.get("plugins", {}).items():
-        if "@borda-ai-rig" not in key:
+    for key, entries in plugins.items():
+        if "@borda-ai-rig" not in key or not isinstance(entries, list):
             continue
         plugin = key.split("@")[0]
-        if not entries:
-            continue
-        install_path = entries[-1].get("installPath", "")
-        if install_path:
-            active[plugin] = Path(install_path)
+        for entry in reversed(entries):
+            install_path = entry.get("installPath") if isinstance(entry, dict) else None
+            if isinstance(install_path, str) and install_path:
+                active[plugin] = Path(install_path)
+                break
     return active
 
 
@@ -251,8 +254,13 @@ _COMPUTED_REL_RE = re.compile(r'"?\$\{?([A-Z_]+)\}?\s*/\.\./([^\s"\'`]+\.[a-zA-Z
 #: Pattern 2: $VAR/<file>.ext  e.g. Read "$_FS/task-hygiene.md"
 _COMPUTED_ABS_RE = re.compile(r'"?\$\{?([A-Z_]+)\}?/([a-zA-Z0-9_.-]+\.[a-zA-Z]{1,6})"?')
 
-#: Pattern 3: ${CLAUDE_PLUGIN_ROOT:-plugins/<x>}/bin/<script>  OR  ${CLAUDE_PLUGIN_ROOT}/bin/<script>
-_BIN_SCRIPT_RE = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT(?::-plugins/([a-zA-Z0-9_-]+))?\}/bin/([a-zA-Z0-9_.-]+)")
+#: Pattern 3: bootstrap, resolved-root, historical fallback, or loader-rendered absolute bin/ references.
+_BIN_SCRIPT_RE = re.compile(
+    r"(?:\$\{CLAUDE_PLUGIN_ROOT(?::-plugins/(?P<fallback>[a-zA-Z0-9_-]+))?\}"
+    r"|\$(?P<resolved>PLUGIN_ROOT\b|\{PLUGIN_ROOT\})|(?:[A-Za-z]:)?/[^\n\"'`]*?/plugins/"
+    r"(?:cache/[^/\n\"'`]+/(?P<cache>[a-zA-Z0-9_-]+)/[a-zA-Z0-9_.+-]+"
+    r"|(?P<source>[a-zA-Z0-9_-]+)))/bin/(?P<script>[a-zA-Z0-9_.-]+)"
+)
 
 #: Pattern 4: Read "$X/filename.ext" where X is a variable
 _READ_VAR_RE = re.compile(r'(?:Read|read)\s+"?\$\{?([A-Z_]+)\}?/([a-zA-Z0-9_.-]+\.[a-zA-Z]{1,6})"?')
@@ -467,8 +475,8 @@ def extract_bin_refs(md_file: Path, plugin: str) -> list[tuple[str, str, str, bo
 
     Returns:
         List of (source_file, bin_plugin, script_name, explicit_plugin) tuples where
-        explicit_plugin is True when the plugin was stated via the ``:-plugins/<x>`` fallback
-        form and False when inferred from the owning plugin (bare ``${CLAUDE_PLUGIN_ROOT}``).
+        explicit_plugin is True for resolved or rendered dispatch and the historical
+        ``:-plugins/<x>`` fallback; the plain bootstrap token keeps illustrative-example handling.
 
     Examples:
         >>> import tempfile
@@ -495,12 +503,13 @@ def extract_bin_refs(md_file: Path, plugin: str) -> list[tuple[str, str, str, bo
     results: list[tuple[str, str, str, bool]] = []
     seen: set[tuple[str, str]] = set()
     for m in _BIN_SCRIPT_RE.finditer(text):
-        explicit_plugin = m.group(1) is not None
+        target_plugin = m.group("fallback") or m.group("cache") or m.group("source")
+        explicit_plugin = target_plugin is not None or m.group("resolved") is not None
         # Both the :-fallback folder (e.g. plugins/cc_develop) and the owning
         # plugin folder are cc_-prefixed on disk; normalise to the bare plugin
         # NAME used by cache/registry/subprocess lookups.
-        bin_plugin = _folder_to_name(m.group(1) or plugin)  # no :-fallback → infer from owner
-        script = m.group(2)
+        bin_plugin = _folder_to_name(target_plugin or plugin)
+        script = m.group("script")
         key = (bin_plugin, script)
         if key not in seen:
             seen.add(key)

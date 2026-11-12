@@ -56,7 +56,8 @@ For each in-scope change, check the name appropriate to its category — final n
 - Establish absence through explicit source review of the relevant public surface; if it remains uncertain, keep the claim qualified.
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/symbol_exists_at_ref.py" "$REF" "$SYMBOL" "$PUBLIC_PATH"  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/symbol_exists_at_ref.py" "$REF" "$SYMBOL" "$PUBLIC_PATH"  # timeout: 5000
 ```
 
 Reload `$LAST_TAG` from `${TMPDIR:-/tmp}/release-setup-${CSID}/LAST_TAG` before the baseline probe (Check 41); `$LAST_TAG` is the published boundary, never `$RANGE`'s start in `--append` mode. If unresolved, keep the claim qualified, not baseline-verified. For TypeScript/JavaScript/Go/Rust, inspect a declaration at each ref in `git show <ref>:<path>`; do not count a raw `git grep -w` hit as definition evidence. For a manifest/config claim, use `git grep -nF '<name>' <ref> -- 'pyproject.toml' 'setup.cfg' '*.toml'` to locate candidates at both refs, then confirm the exact key/extra declaration and relevant section; a mention in a comment or value does not count. A command or parse failure is inconclusive, not absence.
@@ -114,12 +115,13 @@ When `CODEMAP_OK` non-zero:
 
 1. Extract changed public symbols (diff-derived, `__init__.py` surface) — fresh shell, so reload `RANGE` here; an empty range makes the extractor exit 0 with no output, which would read as "no changes":
    ```bash
+   PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
    IFS= read -r RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || RANGE=""
    [ -n "$RANGE" ] || { echo "! BLOCKED — release-range sentinel missing; Breaking classification not run (human Classify labels stand, report as unverified)"; exit 1; }
    IFS= read -r SHIPPED_TAGS < "${TMPDIR:-/tmp}/release-setup-${CSID}/SHIPPED_ELSEWHERE_TAGS" 2>/dev/null || SHIPPED_TAGS=""
    [ -z "$SHIPPED_TAGS" ] || RANGE="${SHIPPED_TAGS%% *}..${RANGE##*..}"  # API baseline = newest tag users already hold; LAST_TAG..HEAD would flag backported symbols
-   CHANGED_SYMBOLS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/extract_changed_symbols.py" "$RANGE")  # timeout: 15000
+   CHANGED_SYMBOLS=$(python "$PLUGIN_ROOT/bin/extract_changed_symbols.py" "$RANGE")  # timeout: 15000
    [ -n "$CHANGED_SYMBOLS" ] || { echo "No changed public symbols — skipping Breaking classification"; exit 0; }
    printf '%s\n' "$CHANGED_SYMBOLS"
    ```
@@ -129,6 +131,7 @@ When `CODEMAP_OK` non-zero:
    ```
 3. Classify in one batched pass (one process, one coverage block) — pipe batch output through the classifier:
    ```bash
+   PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
    IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH" 2>/dev/null || BRANCH=""
    IFS= read -r DATE < "${TMPDIR:-/tmp}/release-setup-${CSID}/DATE" 2>/dev/null || DATE=""
@@ -137,7 +140,7 @@ When `CODEMAP_OK` non-zero:
    [ -s "$QUERIES_FILE" ] || { echo "! BLOCKED — $QUERIES_FILE missing or empty; write the step-2 query array first"; exit 1; }
    mkdir -p .temp  # timeout: 5000
    codemap-py query batch "$QUERIES_FILE" 2>/dev/null \
-     | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/classify_breaking.py" > "$BREAKING_FILE"  # timeout: 15000
+     | python "$PLUGIN_ROOT/bin/classify_breaking.py" > "$BREAKING_FILE"  # timeout: 15000
    CLASSIFY_RC=$?
    # rc 2 = batch output not JSON; never publish its error object as a classification
    [ "$CLASSIFY_RC" -eq 0 ] || { echo "! classify_breaking.py rc=$CLASSIFY_RC — Breaking classification failed; human Classify labels stand, report as unverified"; exit 1; }

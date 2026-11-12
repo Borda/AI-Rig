@@ -52,7 +52,7 @@ def packet(skill: str) -> str:
 @pytest.fixture(scope="module")
 def commit_step(skill: str) -> str:
     """Step 12, the opt-in commit offer, up to the fail-fast rules."""
-    return _span(skill, COMMIT_STEP, "## Fail-fast Rules")
+    return _span(skill, COMMIT_STEP, "## Fail-Fast Rules")
 
 
 class TestUpfrontDecisionPacket:
@@ -123,7 +123,7 @@ class TestUpfrontDecisionPacket:
         A packet answer is a commit decision already made; the step may ask again only for a declined, deferred or
         materially changed decision, and the fail-fast rules name the foldable-question violation.
         """
-        fail_fast = _span(skill, "## Fail-fast Rules", "## Quality Gates")
+        fail_fast = _span(skill, "## Fail-Fast Rules", "## Quality Gates")
 
         assert not (
             absent_phrases(

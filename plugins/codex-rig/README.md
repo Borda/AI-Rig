@@ -6,7 +6,7 @@ Codex Rig is OpenAI Codex product in [Borda's AI-Rig](https://github.com/Borda/A
 >
 > Finish and verify the active piece before dependent work. Delegate ready independent pieces with focused context; keep the overall map compact. This keeps far-ahead implementation details out of the active context and makes ownership and closure explicit. [Workflow rules](shared/native-skill-contract.md#proportional-execution).
 
-> Current source version: `0.43.5`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
+> Current source version: `0.44.0`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
 
 > Value at a glance: install one independently verifiable plugin to get evidence-backed workflows, bounded specialist role cards, portable fallbacks, and auditable artifacts without pretending Codex has native persistent-agent selection.
 
@@ -43,14 +43,14 @@ Contributing or want internals? See [DEVELOPMENT.md](DEVELOPMENT.md).
 - **Bounded context:** each specialist receives narrow context pack instead of whole parent thread.
 - **Evidence-backed completion:** workflows write reports under `.reports/codex/<skill>/<canonical-safe-identity>/run-<NNN>/` for bounded validated non-sensitive identity and otherwise under `.reports/codex/<skill>/<timestamp>/`; raw arguments are never serialized into paths. PR reviews and PR-targeted remediation use identity `pr-<number>`. Every workflow validates digest-bound final response after gates and discloses failed gates and confidence limits.
 - **Auditable commit handoffs:** every proposed or created commit records all meaningful changes, concrete impacts, executed verification, and residual limits in commit body.
-- **Readable reports:** Next steps use Owner, Issue and Action columns; verification uses Check, Status and Evidence columns. Verification evidence stays in the same row, with compact `Log` links for existing files; other table paths remain below their tables. Versions 1–12 keep their original rendering. Run directories use atomic unique allocation; collected PR runs retain their readable PR identity and numbered run sequence.
+- **Readable reports:** reports open with a substantive outcome judgment and end with Recommendations / next steps, including recommendations authored in result rows even when diagnosis is complete. Versions and slash-separated prose remain readable. Next steps use Owner, Issue and Action columns; verification uses Check, Status and Evidence columns. Verification evidence stays in the same row, with compact `Log` links for existing files; other table paths remain below their tables. Versions 1–14 keep their original rendering. Run directories use atomic unique allocation; collected PR runs retain their readable PR identity and numbered run sequence.
 - **Cold PR review and remediation:** `$code-review #123` and `$code-remediate #123 +review` preserve current PR evidence and local merge context.
 - **No stale dismissal:** remediation reassesses review concerns against current code after conflict-resolution line changes; `stale` is not a triage or resolution status. Other evidence-backed dispositions are unchanged.
 - **Scoped network access:** shell networking stays blocked by default outside an active profile; see [Network access and GitHub reads](#network-access-and-github-reads).
 - **Calibration:** fixed and behavioral checks measure recall, precision, confidence accuracy, routing leaks, stale assumptions, fixture misuse, unjustified local imports, and incomplete abstractions.
 - **Embedded review findings:** review and remediation enumerate suggestions inside collapsed bot comments individually, retain parent evidence and per-finding identities, reconcile advertised counts before grouping, and track each disposition. Shared locations alone never justify merging distinct obligations.
 - **Safe legacy cleanup:** authenticated, exact-plan removal exists for thin shims created during pre-release development.
-- **Optional codemap-py structural context:** selected workflows probe the public codemap-py CLI for structural facts and fall back to bounded file inspection when Codemap is absent; see [Optional codemap-py structural context](#optional-codemap-py-structural-context).
+- **Optional codemap-py structural context:** selected workflows probe the public codemap-py CLI for structural facts and fall back to bounded file inspection when Codemap is absent; see [Optional codemap-py structural context](#-optional-codemap-py-structural-context).
 
 Work stays focused on the user's goal. Necessary root-cause investigation remains part of the task; separate incidental concerns are surfaced before expanding scope.
 
@@ -80,7 +80,7 @@ codex plugin marketplace add Borda/AI-Rig --sparse .agents/plugins --sparse plug
 codex plugin add codex-rig@borda-ai-rig
 ```
 
-The primary command follows GitHub repository's default branch. The commented form pins immutable release bytes.
+The primary command follows GitHub repository's default branch. The commented form pins immutable release bytes. The example `codex-rig-v0.4.0` predates `scripts/install_github_read_rules.py` and cannot complete the current profile setup or sync workflow; choose a published revision that includes that helper for those workflows.
 
 Start fresh Codex session. Codex discovers plugin's `skills/` and default `hooks/hooks.json`; plugin hooks run only after their current definition is reviewed and trusted.
 
@@ -94,6 +94,8 @@ $codex-rig:audit
 - `doctor` verifies active package, manifest, helpers, role cards, and legacy shim state without writing.
 - The audit workflow checks consuming repository and reports concrete gaps, tracing producer/consumer guarantees through the next ordinary user action. Skill/all audits also emit prompt-efficiency evidence; `axis=value-per-token` accepts a candidate only with matched native/tokenizer evidence, no hard-guard regression, and declared material cost reduction.
 - `$codex-rig:audit` with `axis=consolidate` and a target is advisory: it discovers overlapping instruction intent in configuration, skills and roles, and recommends `keep`, local `sharpen` or scope-preserving `merge-prune`. It edits no sources and opens no fix-selection gate. See [Advisory Consolidation](skills/audit/references/consolidate.md).
+
+Audit accepts `mode=upgrade|adversarial` and reports ranked findings, concrete remediation proposals, gates and coverage limits without a fix-selection checkpoint. Management scans require ripgrep (`rg`) on PATH. Research dispatches its planned specialist wave after optional codebase mapping, including when mapping is inapplicable. Profile reads rows up to 8 MiB and labels selected sessions `session-1`, `session-2`, and so on without exposing input basenames.
 
 The global-instruction installer:
 
@@ -130,7 +132,7 @@ $codex-rig:code-remediate #123 +review
 - A bare PR number, `#number`, PR URL, or natural-language PR target refreshes current online PR items and verified local checkout directly, so it does not require assessed review artifact.
 - Add `+review` to join review with remediation: reuse a current assessed report or perform the needed update/new review, then remediate with online evidence.
 - `+report`, report aliases and explicit paths request existing evidence only.
-- Stale saved and online evidence share one use/update/new decision unless the needed review is already authorized; a fresh fetch alone does not establish review freshness.
+- For requested existing reports, stale source requiring a substantive review decision uses one use/update/new decision unless the needed review is already authorized; a fresh fetch alone does not establish review freshness.
 
 To remediate latest assessed review created in current session without refreshing PR evidence or online comments:
 
@@ -157,7 +159,7 @@ Codex Rig installs 16 skills: 15 workflows plus legacy shim manager.
 
 | Skill                                                    | Purpose                                                                                                                                                                         |
 | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`assess`](skills/assess/SKILL.md)                       | Inspect issue, PR, module, or problem before implementation; emit ranked findings and gates, with self-review inside the final step.                                            |
+| [`assess`](skills/assess/SKILL.md)                       | Inspect issue, PR, module, or problem before implementation; emit ranked findings and gates, with a self-critical gate before the result decision.                              |
 | [`challenge-resolve`](skills/challenge-resolve/SKILL.md) | Independently review and fix a bounded task through convergence rounds, retaining evidence and explicit stop reasons.                                                           |
 | [`audit`](skills/audit/SKILL.md)                         | Detect configuration, workflow, routing, documentation, prompt-efficiency, and quality-gate drift; optionally propose advisory instruction consolidation.                       |
 | [`calibrate`](skills/calibrate/SKILL.md)                 | Run fixed and behavioral checks across packaged skills and roles; score recall, precision, and confidence accuracy.                                                             |
@@ -176,10 +178,20 @@ Codex Rig installs 16 skills: 15 workflows plus legacy shim manager.
 
 ### Execution model
 
+Implementation validates its result candidate before the completion-commit decision; a commit requires passing project-relevant gates and confidence policy with no critical findings. It records the actual commit disposition, revalidates changed result or handoff evidence, then promotes only a validated candidate. Explicit no-commit instructions take precedence.
+
+- **Verification scope:** whitespace checks cover owned paths or the exact reviewed range; audits report subject whitespace as findings. A passing implementation result requires executed tests or a retained, digest-bound user skip decision; terminal closed reviews retain their review checks. Source inspection disables Git fsmonitor and rejects active executable filters instead of silently changing their semantics.
+
+- **Bounded helpers:** review chunk planning supports at most 10,000 files. Shared diff collection and calibration helper subprocesses have 60-second deadlines; source inspections have 30-second deadlines and the live calibration login probe has a 10-second deadline. Timeouts remain explicit failures.
+
 - **Lightweight path:** small understood reversible local implementation and management tasks get a concise plan, a brief self-challenge, bounded owners or indivisible parent execution, then one bounded independent result challenge and relevant verification. Broad work and requested structured reviews retain the detailed workflow.
+
 - **Medium/large work** follows the [proportional execution sequence](shared/native-skill-contract.md#proportional-execution): define and independently challenge one scoped plan, approve it within existing authority, delegate useful bounded disjoint execution or retain indivisible parent execution, implement, then consolidate and verify against every accepted criterion.
+
 - **Authorized execution:** shipped helpers, local preparation, selected edits, and configured checks use current effective grants per [Authorized Workflow Execution](shared/native-skill-contract.md#authorized-workflow-execution). Missing prerequisites are reported as unavailable checks rather than code failures. These contracts neither bypass a runtime denial nor authorize arbitrary unsandboxed interpreters or gate runners.
+
 - **Independence gaps:** if independent coverage is unavailable, permitted work continues and the gap is disclosed without claiming an independent clean review.
+
 - **Final handoff:** every workflow ends with a compact outcome-coupled frame — Outcome, Results, Verification, Remaining, Confidence, Artifact, Recommendations / next steps — defined by `shared/quality-gates.md` and validated by `shared/final-handoff-contract.md`. Replies name the topic or question they answer before giving the outcome. `agent-shims` is the explicit exception: it has no canonical run/result artifact.
 
 **Implement execution architecture** — animated diagram of the lightweight and detailed paths, plan challenges, owner dispatch and gates.
@@ -189,6 +201,7 @@ Codex Rig installs 16 skills: 15 workflows plus legacy shim manager.
 ### Skill notes
 
 - **`challenge-resolve`:** use `$codex-rig:challenge-resolve` with a bounded task, selected source, and acceptance criteria.
+  - Progress tables come only from the ledger helper and include reconciliation of previous dispositions and current carried, repeat-route and new findings for all tiers and security. Old means a known invariant, including closed history, rather than only previous-row carryover. Reviews run before a ledger are disclosed as pre-ledger prose, never invented table rows. Repeated review/fix requests, a second independent review of the same change, or a repeated skill review/fix cycle activate the full loop before the next reviewer dispatch, with its stop rules and user-set round budget.
   - A fresh independent challenger reviews each current-source round and returns structured findings; the parent records signatures in `loop-ledger.json` and shows the validated weighted table before fixes.
   - Any decrease in total open weight converges; equal weight is plateau and increased weight is non-converging. There is no arbitrary three-review cap; recurrence, authority, evidence and stricter caller budgets remain binding.
   - Missing provenance, a stale snapshot, a failed ledger/action gate, or an unexpected reviewer response stops the affected route with findings visible, one recommended action, alternatives, and a user decision.
@@ -283,7 +296,7 @@ Operator rollback is deliberately procedural:
 - The primary goal stays fixed through reviewer setup and artifact repair; auxiliary work cannot count as primary progress, and an open acceptance condition alone is not a stall.
 - Child-agent waits use one blocking `wait_agent` with a 30-minute default per-agent deadline, never `list_agents` or `sleep` polling. Each wait return requires a visible status (completed/expected counts, pending roles, elapsed time, last event or no new progress) before another call.
 - Workflow helpers expose their current options through packaged `--help`; skills batch help checks for helpers already needed on the selected path, and a failed check blocks the affected helper invocation.
-- Targeted pytest runs in fix and acceptance loops add `-p no:xdist` when neither command nor pytest `addopts` requests parallelism, because plugins such as `pytest-rerunfailures` open a localhost socket whenever xdist is installed and the sandbox blocks it. The full suite runs once at the canonical gate; `shared/test_targets.py` picks per-loop tests from the change set.
+- Targeted pytest runs in fix and acceptance loops add `-p no:xdist` when neither command nor pytest `addopts` requests parallelism, because plugins such as `pytest-rerunfailures` open a localhost socket whenever xdist is installed and the sandbox blocks it. The full suite runs once at the canonical gate; `shared/test_targets.py` picks per-loop tests from the change set. When every changed path is user documentation, Code Review, Code Remediate and Challenge Resolve skip the full suite and list it as a zero-weight confidence gap instead.
 
 ## 🔗 Optional codemap-py structural context
 
@@ -295,7 +308,7 @@ Operator rollback is deliberately procedural:
 - **Status:** the adapter reports one of `available`, `absent`, `stale`, `incompatible`, `degraded`, `stale+degraded`, or `skipped`. `skipped` means no Codemap subprocess was selected and is not structural evidence.
 - **Fallback:** absence and incompatibility are non-fatal; the workflow falls back to bounded file inspection. Required means the adapter runs and persists `codemap-context.json`; it never means Codemap must be installed. Codex Rig has zero runtime dependency on it.
 - **Launcher:** when an active installed Codemap skill's launcher is outside PATH, pass its plugin root through `--provider-root`. Explicit `CODEMAP_BIN` retains precedence. The adapter never scans versioned caches or installs dependencies, and provider presence is not proof the index matches the review worktree.
-- **Not applicable:** `manage`, `sync`, `agent-shims`, `calibrate`, and `kaggle` have no Python call-graph subject. Full protocol: `shared/codemap-contract.md`.
+- **Not applicable:** `manage`, `sync`, `agent-shims`, `calibrate`, `profile`, and `kaggle` have no Python call-graph subject. Full protocol: `shared/codemap-contract.md`.
 
 <a id="-quality-gates-and-artifacts"></a>
 
@@ -330,11 +343,13 @@ Completion requires requested output, explainable gate results, unresolved risks
 
 ### Code Review
 
+Reviews assess material improvement claims against revision-bound tests or measurements, distinguish supplied evidence from independent reproduction, and treat unresolved shared-hardware noise as inconclusive rather than proof of a gain or regression.
+
 **Execution architecture** — animated diagram of fans, joins and gates.
 
 ![$codex-rig:code-review execution architecture: fans, joins and gates (animated)](assets/images/code-review-arch.svg)
 
-- **Entry and resume:** New review requests review current source without a reuse/fresh prompt. Explicit resume continues the retained run; completed reuse reruns validation and returns the full summary table and findings with its recorded revision and limits.
+- **Entry and resume:** New review requests review current source without a reuse/fresh prompt. Explicit resume continues supported historical manifest schemas 3–9; schema-2 manifest runs rerun Code Review. Completed reuse reruns validation and returns the full summary table and findings with its recorded revision and limits.
 - **Intake:** `$codex-rig:code-review #123` collects contributor intent from PR title/body, comments/reviews, target-branch evidence, exact local PR head, and locally derived diff before producing a structured review artifact. Collection starts in an atomically allocated run named with a timestamp, PR number and random suffix; local review runs include a portable branch slug and digest instead. Same-target runs retain separate random suffixes; after authoritative `pr.json` succeeds it is promoted to `.reports/codex/code-review/pr-<number>/run-<NNN>/`, and that printed path owns every later artifact.
 - **Close advice:** after collection it may emit an evidence-backed terminal `close` decision for one of `FALSE_GOAL`, `BREAKING_CONDUCT`, `WRONG_SCOPE`, `WRONG_PROVENANCE`, `DUPLICATE`, `UNADDRESSED_REVERT`, `SPAM`, or `ARCHITECTURE_VIOLATION`. Ambiguous evidence always continues to detailed review, and the decision never closes, comments on, merges, or otherwise mutates GitHub.
 - **Checkout:** review creates a detached worktree at the exact PR head and leaves the invoking branch, index, and tracked files untouched. Local working-tree/path reviews use an isolated mirror of changed source. Worktrees separate caller edits but do not enforce immutability.
@@ -354,7 +369,7 @@ Completion requires requested output, explainable gate results, unresolved risks
 - **Long checks:** shared quality gates allow two hours per gate by default, with explicit timeout overrides preserved. Keep progressing tests running beyond 15 minutes. An actual remaining interrupted-check decision uses **Continue** or **Skip** through an eligible native Codex question control; skipped required proof stays incomplete. Missed ordering recovers automatically in the retained review: disclose the lapse, complete useful analysis and normal validation, and never claim retroactive blindness. A historical ordering lapse alone does not prevent completion.
 - **Delivery:** every review handoff uses its standard tables, including clean and preliminary incomplete reviews. Interrupted-check and missed-ordering recovery retains the snapshot and checkpoint tables without implying report validation or promotion. Pending questions and nested remediation retain their existing delivery rules.
 - **Recovery:** when native reviewer controls are unavailable, Code Review has an explicitly approved experimental [isolated local reviewer wave](skills/code-review/local-reviewer-wave.md) that requires a compatible Codex CLI and separate paid-execution approval. Recovery from failed reviewers follows permitted fallback before any terminal handoff; see the [Code Review skill](skills/code-review/SKILL.md) for the full sequence.
-- **Stop hook:** the bundled Stop hook requests at most one diagnostic continuation when review or remediation started without its completion check. It recognizes successful review completion with optional `--codex-home` and `--parent-thread-id` context arguments. Run creation and promotion remain tracked when followed by literal report lookup or Git status/HEAD reads in the same command batch; finalization still requires a separate successful command. Tool discovery does not count as a pending question. A matching native **Continue** answer restores the diagnostic; pending questions, other answers and unknown receipts preserve the pause. It is advisory, reads no review source, and runs no commands. After installing an update, review and trust the changed hook through Codex `/hooks`; see the [Codex hooks reference](https://learn.chatgpt.com/docs/hooks).
+- **Stop hook:** the bundled Stop hook requests at most one diagnostic continuation when review or remediation started without its completion check. It recognizes successful review completion with optional `--codex-home` and `--parent-thread-id` context arguments. Run creation and promotion remain tracked when followed by literal report lookup or Git status/HEAD reads in the same command batch; finalization still requires a separate successful command. Tool discovery does not count as a pending question. A matching native **Continue** answer restores the diagnostic; pending questions, other answers and unknown receipts preserve the pause. Assistant prose containing pause words can also suppress continuation, so this advisory cannot enforce completion against model-controlled text. Startup diagnostic failures disclose only the exception type. It reads no review source and runs no commands. After installing an update, review and trust the changed hook through Codex `/hooks`; see the [Codex hooks reference](https://learn.chatgpt.com/docs/hooks).
 
 ### Code Remediate
 
@@ -371,6 +386,8 @@ Completion requires requested output, explainable gate results, unresolved risks
 - **Closeout:** the one-line outcome names the PR or local scope, initial problem, and verified final state. Partial outcomes lead with completed implementation and checks, then identify unfinished verification and its reason. Missing declared Python dependencies trigger the project's declared environment preparation before an environment-blocked outcome. Final status counts derive from item rows, and failed quality gates remain visible in a valid failed result. Remediation results mark each item `Selected: Yes`, `No`, or `Closed`.
 - **Destination:** remediation uses the original invoking checkout as default final destination; temporary worktrees are announced with path and purpose, and unsafe handoffs stay incomplete with both locations and the blocker. See [worktree lifecycle](shared/native-skill-contract.md#worktree-lifecycle).
 - **Boundary:** the workflow never pushes, comments, merges, or publishes remotely.
+
+Remediation preserves complete local filename inventories even above the ordinary collector output cap; large ignored environments and report trees do not require cleanup. Gate `--project-env` also binds nested uv project commands to the selected environment. Use a disposable environment whenever synchronization must preserve the invoking environment.
 
 ### When things stop
 
@@ -454,11 +471,15 @@ Repository session-policy sync selects native `approvals_reviewer = "auto_review
 
 ## 🎚️ Calibration
 
-The packaged runner supports plugin layout directly:
+Run the packaged launcher from the resolved installed plugin root (`PLUGIN_ROOT` below; substitute its absolute path):
 
 ```bash
-plugins/codex-rig/bin/python plugins/codex-rig/runtime/calibration/run.py --layout plugin --root .
+"PLUGIN_ROOT/bin/python" "PLUGIN_ROOT/runtime/calibration/run.py" --layout plugin --root .
 ```
+
+On native Windows, use `PLUGIN_ROOT/bin/python.cmd`; quote resolved paths for the host shell (PowerShell requires `&` before a quoted executable).
+
+Plugin layout discovers package assets from the runner's own location; `--root` controls report output and Git context. Live classification tasks use disposable temporary workspaces; tool-use tasks use prepared fixture workspaces under the run output.
 
 - It validates packaged skills, role cards, shared contracts, behavior fixtures, accepted routing evidence, confidence scoring, and known workflow leaks, and checks that all fifteen roles have a distinct related task cue in their `Trigger` lines.
 - Calibration measures instruction quality against synthetic cases; it is not evidence that any individual run is correct, and live use requires live observations.
@@ -626,5 +647,3 @@ NO_MKDOCS_2_WARNING=1 python3 -m mkdocs build --strict
 ## 📄 License
 
 Codex Rig is licensed under Apache-2.0. See `LICENSE` and `NOTICE`.
-
-Remediation preserves complete local filename inventories even above the ordinary collector output cap; large ignored environments and report trees do not require cleanup. Gate `--project-env` also binds nested uv project commands to the selected environment. Use a disposable environment whenever synchronization must preserve the invoking environment.

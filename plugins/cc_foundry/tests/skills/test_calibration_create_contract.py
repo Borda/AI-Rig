@@ -94,6 +94,7 @@ def test_routing_uses_local_sources_only_in_local_mode(
     (tmp_path / "calibrate-state-contract/local-mode").write_text(f"{str(local_mode).lower()}\n", encoding="utf-8")
     env = {key: value for key, value in routing_tree.items() if plugin_root_set or key != "CLAUDE_PLUGIN_ROOT"}
     script = _block("calibrate/templates/routing-pipeline-prompt.md", "RUN_DIR=").replace("<TIMESTAMP>", "run")
+    script = script.replace("${CLAUDE_PLUGIN_ROOT}", routing_tree["CLAUDE_PLUGIN_ROOT"])
     result = subprocess.run(["bash", "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=10)
     roster = (tmp_path / ".reports/calibrate/run/routing/roster-files.txt").read_text(encoding="utf-8").splitlines()
     expected = (
@@ -117,9 +118,10 @@ def test_routing_prefers_registered_install_over_newer_cache(tmp_path: Path, rou
         ["bash", "-c", script], cwd=tmp_path, env=routing_tree, capture_output=True, text=True, timeout=10
     )
     assert result.returncode == 0, result.stderr
-    assert (tmp_path / ".reports/calibrate/run/routing/roster-files.txt").read_text(encoding="utf-8").splitlines() == [
-        str(selected / "agents/installed-1.0.0.md")
-    ]
+    # The script lists `<recorded install path>/agents/<file>`: the root verbatim, then a "/" from `find`.
+    expected = f"{selected}/agents/installed-1.0.0.md"
+    roster = (tmp_path / ".reports/calibrate/run/routing/roster-files.txt").read_text(encoding="utf-8").splitlines()
+    assert roster == [expected]
 
 
 def test_rule_trigger_fidelity_is_reported_unmeasured() -> None:
@@ -259,7 +261,7 @@ def test_routing_reports_dropped_orphaned_registry_version(tmp_path: Path, routi
     assert "orphaned" in result.stderr
     assert str(selected) in result.stderr
     assert (tmp_path / ".reports/calibrate/run/routing/roster-files.txt").read_text(encoding="utf-8") == (
-        ".claude/agents/project.md\n"
+        f"{(selected.parent / '2.0.0/agents/installed-2.0.0.md').as_posix()}\n.claude/agents/project.md\n"
     )
 
 
@@ -272,6 +274,7 @@ def test_routing_loader_obeys_persisted_local_mode(
     """Local template edits are used only when the caller persisted its local-mode sentinel."""
     install = tmp_path / ".claude/plugins/cache/borda-ai-rig/foundry/1.0.0"
     shutil.copy2(_PLUGIN / "bin/load_mode.py", install / "bin/load_mode.py")
+    shutil.copy2(_PLUGIN / "bin/render_plugin_root.py", install / "bin/render_plugin_root.py")
     shutil.copy2(_PLUGIN / "bin/resolve_skill_subdir.py", install / "bin/resolve_skill_subdir.py")
     installed_template = install / "skills/calibrate/templates"
     installed_template.mkdir(parents=True)

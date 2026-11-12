@@ -8,13 +8,13 @@ Loaded by Step R0 (executes after R2) when `--researcher`, `--architect`, or `--
 
 1. **Build hypothesis queue** — if `--hypothesis <path>` provided, read as pre-built JSONL queue (skip oracle phase); file is read-only — backfill and `hypothesis_id` tagging happen in memory, never written back. Resuming crashed run with `<RUN_DIR>/hypotheses.jsonl` already on disk → reuse that file as queue, skip oracle phase: re-spawned oracles write a different queue, so checkpointed ids would name other hypotheses. Otherwise spawn oracle agents per active flags — parallel if both set:
 
-   **If `--researcher` set** — spawn `research:scientist` (`maxTurns: 15`):
+   **If `--researcher` set** — spawn `research:scientist` with `name="generate-ml-hypotheses"`, `description="Propose grounded ML experiments"`. Put a 15-turn working budget in the prompt, with `partial: true` and completed work on exhaustion; do not pass `maxTurns` as an Agent() argument:
 
    ```text
    Read the program file and the project codebase. Generate 5–10 ML experiment hypotheses grounded in SOTA literature and the specific metric goal. Write to `<RUN_DIR>/hypotheses.jsonl` — one JSON object per line, each with fields: hypothesis, rationale, confidence (float 0–1), expected_delta, priority (int, 1=highest), source: "oracle", feasible (bool — grounded in the codebase you just read), blocker (str|null, required if feasible=false), codebase_mapping (str — files/classes/functions the change touches). Write your full analysis, reasoning, and Confidence block to `<RUN_DIR>/oracle-researcher.md` using the Write tool. Return ONLY: {"status":"done","file":"<path>","count":N,"feasible":N,"confidence":0.N}
    ```
 
-   **If `--architect` set** — spawn `foundry:solution-architect` (`maxTurns: 15`) as hypothesis generator (not just feasibility annotator):
+   **If `--architect` set** — spawn `foundry:solution-architect` with `name="generate-architecture-hypotheses"`, `description="Propose structural metric improvements"` as hypothesis generator (not just feasibility annotator). Put a 15-turn working budget in the prompt, with `partial: true` and completed work on exhaustion; do not pass `maxTurns` as an Agent() argument:
 
    ```text
    Read the program file and the project codebase. Analyze the architecture, coupling, and structural design. Generate 5–10 architectural optimization hypotheses (refactoring opportunities, coupling reductions, abstraction improvements) that could improve the metric. Write to `<RUN_DIR>/hypotheses-arch.jsonl` — one JSON object per line with the same schema as the research oracle (hypothesis, rationale, confidence, expected_delta, priority, source: "architect", feasible, blocker, codebase_mapping — annotate feasibility yourself from the codebase you just read). Write your full analysis, reasoning, and Confidence block to `<RUN_DIR>/oracle-solution-architect.md` using the Write tool. Return ONLY: {"status":"done","file":"<path>","count":N,"confidence":0.N}

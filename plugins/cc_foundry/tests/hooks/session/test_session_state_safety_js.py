@@ -6,9 +6,11 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -31,6 +33,13 @@ def _filename_supported(name: str) -> bool:
 
 
 _newline_name = pytest.mark.skipif(not _filename_supported("old\nsrc"), reason="filesystem rejects newline names")
+
+
+def _remove_git_tree(path: Path) -> None:
+    """Remove Git metadata after making Windows read-only loose objects writable."""
+    for entry in path.rglob("*"):
+        entry.chmod(entry.stat().st_mode | stat.S_IWUSR)
+    shutil.rmtree(path)
 
 
 def _invoke(hook: str, project: Path, payload: dict, home: Path) -> subprocess.CompletedProcess:
@@ -230,7 +239,23 @@ def _age_tree(root: Path) -> None:
     """Age a fixture and its descendants without relying on filesystem timestamp resolution."""
     old = time.time() - 40 * 24 * 60 * 60
     for entry in [*root.rglob("*"), root]:
-        os.utime(entry, (old, old), follow_symlinks=False)
+        if entry.is_symlink():
+            # Node timestamps the link itself on Windows, where Python's no-follow utime is unavailable.
+            subprocess.run(
+                [
+                    "node",
+                    "-e",
+                    "require('fs').lutimesSync(process.argv[1], Number(process.argv[2]), Number(process.argv[2]));",
+                    str(entry),
+                    str(old),
+                ],
+                check=True,
+                capture_output=True,
+                encoding="utf-8",
+                timeout=10,
+            )
+        else:
+            os.utime(entry, (old, old))
 
 
 def _cleanup(
@@ -334,6 +359,59 @@ def test_cleanup_fails_closed_without_git_inventory(tmp_path: Path) -> None:
 
 
 @_node
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("git_file", "content"),
+    [
+        pytest.param("index", b"invalid index", id="corrupt-index"),
+        pytest.param("config", b"[invalid config", id="corrupt-config"),
+        pytest.param("HEAD", b"invalid head", id="corrupt-head"),
+    ],
+)
+def test_cleanup_preserves_tracked_artifacts_on_repository_error(tmp_path: Path, git_file: str, content: bytes) -> None:
+    """A repository read failure with exit 128 cannot turn tracked artifacts into deletion candidates."""
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    keep = tmp_path / ".cache" / "keep"
+    keep.parent.mkdir()
+    keep.write_text("tracked content", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", ".cache/keep"], check=True, capture_output=True)
+    _age_tree(keep.parent)
+    (tmp_path / ".git" / git_file).write_bytes(content)
+    inventory = subprocess.run(["git", "-C", str(tmp_path), "ls-files", "--cached"], check=False, capture_output=True)
+    assert inventory.returncode == 128
+    _cleanup(tmp_path, fail_git="real")
+    assert keep.read_text(encoding="utf-8") == "tracked content"
+
+
+@_node
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("git_entry", "remove", "directory"),
+    [
+        pytest.param("HEAD", Path.unlink, ".", id="missing-head"),
+        pytest.param("objects", _remove_git_tree, ".", id="missing-objects"),
+        pytest.param("HEAD", Path.unlink, "nested", id="ancestor-marker"),
+    ],
+)
+def test_cleanup_preserves_artifacts_with_incomplete_git_directory(
+    tmp_path: Path, git_entry: str, remove: Callable[[Path], None], directory: str
+) -> None:
+    """A damaged repository marker still prevents treating the working tree as unversioned."""
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    project = tmp_path / directory
+    keep = project / ".cache" / "keep"
+    keep.parent.mkdir(parents=True)
+    keep.write_text("tracked content", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True, capture_output=True)
+    _age_tree(keep.parent)
+    remove(tmp_path / ".git" / git_entry)
+    inventory = subprocess.run(["git", "-C", str(project), "ls-files", "--cached"], check=False, capture_output=True)
+    assert inventory.returncode == 128
+    _cleanup(project, fail_git="real")
+    assert keep.read_text(encoding="utf-8") == "tracked content"
+
+
+@_node
 def test_cleanup_preserves_tracked_directory_contents(tmp_path: Path) -> None:
     """A tracked gitlink protects submodule contents absent from the parent's Git inventory."""
     submodule = tmp_path / ".cache" / "module"
@@ -411,20 +489,22 @@ def test_cleanup_reaps_empty_temp_runs(tmp_path: Path) -> None:
 
 
 def _large_cache(root: Path) -> Path:
-    """Create a subtree larger than the inventory entry budget with an early expired sibling."""
+    """Create an oversized fresh subtree between an expired sibling and an expired, unscanned tail sentinel."""
     cache = root / ".cache"
     large = cache / "large"
     large.mkdir(parents=True)
     (cache / "a-expired").write_text("old", encoding="utf-8")
     for index in range(10020):
         (large / f"entry-{index:05d}").touch()
-    _age_tree(cache)
+    # Keep deletion work small, but age the tail so its survival proves that unscanned data is protected.
+    _age_tree(cache / "a-expired")
+    _age_tree(large / "entry-10019")
     return cache
 
 
 @_node
 def test_cleanup_budget_keeps_partial_progress_and_other_roots(tmp_path: Path) -> None:
-    """An oversized cache preserves unscanned entries while completed runs and inventoried files expire."""
+    """An oversized cache preserves fresh and unscanned entries while expired siblings and completed runs expire."""
     cache = _large_cache(tmp_path)
     run = tmp_path / ".reports" / "audit" / "run"
     run.mkdir(parents=True)
@@ -434,6 +514,7 @@ def test_cleanup_budget_keeps_partial_progress_and_other_roots(tmp_path: Path) -
     assert not run.exists()
     assert not (cache / "a-expired").exists()
     assert (cache / "large" / "entry-10019").exists()
+    assert len(list((cache / "large").iterdir())) == 10020
     errors = (tmp_path / ".claude" / "state" / "hook-errors.jsonl").read_text(encoding="utf-8")
     assert ".cache" in errors
     assert "budget" in errors

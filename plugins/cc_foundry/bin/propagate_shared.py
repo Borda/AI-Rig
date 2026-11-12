@@ -349,6 +349,24 @@ MANIFEST: list[dict[str, object]] = [
         ],
     },
     {
+        "canonical": "plugins/cc_foundry/bin/resolve_plugin_root.py",
+        "copies": [
+            "plugins/cc_oss/bin/resolve_plugin_root.py",
+            "plugins/cc_develop/bin/resolve_plugin_root.py",
+            "plugins/cc_research/bin/resolve_plugin_root.py",
+            "plugins/codemap-py/bin/resolve_plugin_root.py",
+        ],
+    },
+    {
+        "canonical": "plugins/cc_foundry/bin/render_plugin_root.py",
+        "copies": [
+            "plugins/cc_oss/bin/render_plugin_root.py",
+            "plugins/cc_develop/bin/render_plugin_root.py",
+            "plugins/cc_research/bin/render_plugin_root.py",
+            "plugins/codemap-py/bin/render_plugin_root.py",
+        ],
+    },
+    {
         # Fallback `python` command: plugin bin/ sits after the system dirs on the Bash
         # PATH, so this runs only where no real `python` exists. Every plugin whose
         # skills call `python` ships it, so none depends on another plugin for it.

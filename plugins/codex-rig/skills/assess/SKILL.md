@@ -1,6 +1,6 @@
 ---
 name: assess
-description: Analyze issue/PR/problem before implementation; produce source-backed findings and measurable gates.
+description: Analyze issue/PR/problem before implementation; produce source-backed findings and measurable gates. Skip diff or PR correctness reviews owned by code-review and symptom-first debugging owned by investigate.
 ---
 
 > Before asking, read [User Questions](../../shared/codex-user-questions.md).
@@ -24,7 +24,7 @@ Run evidence-first analysis: truth, risk, next action before implementation, rev
 
 ## Workflow
 
-<!-- policy-sibling: skills/code-remediate/SKILL.md, skills/release/SKILL.md, skills/code-review/SKILL.md -->
+<!-- policy-sibling: skills/code-remediate/references/intake.md (GitHub read permissions), skills/release/SKILL.md (Workflow: GitHub read permissions), skills/code-review/references/source-and-scope.md (GitHub read permissions); intentional divergence: assess permits reader or collector evidence, release uses the reader, and review/remediation use the collector with their own PR preflight and recovery rules. -->
 
 For allowed GitHub reads, run the direct helper under current effective network and filesystem grants or request runtime approval for the complete owning command when required capability is unavailable. No separate workflow consent is needed. Apply [GitHub Read Execution](../../shared/native-skill-contract.md#github-read-execution); an explicit runtime denial or non-overridable restriction stops the attempt.
 
@@ -109,7 +109,7 @@ Before step 08, write `<run-directory>/self-review.md` answering:
 
 Critical conclusion without self-review cannot pass.
 
-Then, when a diff under analysis lives in the working tree, run `git diff --check -- <analysed paths>` as argv command, limited to the paths in the evidence ledger and `<run-directory>/baseline` scope so unrelated caller edits never decide the result; a collected or pasted diff outside the working tree is not covered by this command, so record that limit instead. Write combined output to `<run-directory>/review.txt` and retain its exit status as review evidence; do not erase nonzero result. When no diff exists, record that absence in `<run-directory>/review.txt` instead of running the command.
+Then, when a diff under analysis lives in the working tree, run `git diff --check -- <analysed paths>` as argv command, limited to the paths in the evidence ledger and `<run-directory>/baseline` scope so unrelated caller edits never decide the result; a collected or pasted diff outside the working tree is not covered by this command, so record that limit instead. Write combined output to `<run-directory>/review.txt` and retain its exit status as review evidence; do not erase nonzero result. Report subject whitespace defects as finding rows under `../../shared/quality-gates.md` §review; they do not decide the review gate. The gate still verifies the recorded self-review and request conformance. Outside a Git repository, record that reason and scan run-owned files by path for trailing whitespace and conflict markers. When no diff exists, record that absence in `<run-directory>/review.txt` instead of running the command.
 
 ### 08: Decide gate result
 

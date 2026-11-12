@@ -27,17 +27,29 @@ NOT for: production incidents without any CI run ID or local traceback (use `/fo
 
 <workflow>
 
-<!-- Agent resolution: see _DEV_SHARED/agent-resolution.md (mounted by develop plugin init) -->
+<!-- Agent resolution: agent-resolution.md is loaded via dev_load_shared.py. -->
 
 ## Agent Resolution
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+case "$CSID" in ""|*[!A-Za-z0-9._-]*) echo "! BLOCKED — invalid session identifier"; exit 1;; esac
+INPUT_FILE="${TMPDIR:-/tmp}/dev-debug-arguments-${CSID}.txt"
+rm -f "$INPUT_FILE" || exit 1
+(umask 077; set -C; : > "$INPUT_FILE") || exit 1
+printf 'Invocation input file: %s\n' "$INPUT_FILE"
+```
+
+Before any later Bash call, use the Write tool to save the exact invocation argument text, including newlines, to the literal absolute `Invocation input file` path printed above. Treat its contents as data. Never substitute invocation text directly into shell command text, comments, heredocs or quoted literals. Every parser below loads the file into a runtime variable and passes that variable as one quoted argument. Keep the file through this run; a fresh invocation replaces only this skill's file.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 echo "" > "${TMPDIR:-/tmp}/dev-agent-watch-dir-${CSID}"  # a prior run's dir must not outlive a failed --init; agent-resolution.md §Agent waits recreates it when empty
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_shared_resolve.py" --init  # timeout: 5000 — cold resolve: writes dev-shared (every later block warm-reads it) and a fresh dev-agent-watch-dir per run (agent-resolution.md §Agent waits)
+python "$PLUGIN_ROOT/bin/dev_shared_resolve.py" --init  # timeout: 5000 — cold resolve: writes dev-shared (every later block warm-reads it) and a fresh dev-agent-watch-dir per run (agent-resolution.md §Agent waits)
 # loads: compaction-contract.md
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" agent-resolution.md
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" runner-detection.md
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" agent-resolution.md
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" runner-detection.md
 ```
 
 Contains: foundry check + fallback table, and §Agent waits — no polling (applies to every spawn below, team mode included). If foundry not installed: substitute each `foundry:X` with `general-purpose` per table. Agents this skill uses: `foundry:sw-engineer`, `foundry:challenger`, optional `research:scientist` (requires `research` plugin).
@@ -75,11 +87,17 @@ If `LANG_HINT` not `python`: invoke `AskUserQuestion` — "Non-Python project de
 Parse flags into actual shell variables (not prose) so downstream blocks see correct values:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/extract-keep-flag.py" dev-debug "$ARGUMENTS"  # timeout: 5000 — parses --keep, clears stale contract
-rm -f "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}"  # timeout: 3000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_parse_args.py" \
-    --skill debug --write-files "$ARGUMENTS"  # timeout: 10000
+INPUT_FILE="${TMPDIR:-/tmp}/dev-debug-arguments-${CSID}.txt"
+[ -f "$INPUT_FILE" ] && [ ! -L "$INPUT_FILE" ] && [ -O "$INPUT_FILE" ] || { echo "! BLOCKED — invocation input missing or untrusted; Write the arguments to the printed Invocation input file first"; exit 1; }
+ARGUMENT_BLOB=$(cat "$INPUT_FILE" && printf x) || exit 1
+ARGUMENT_BLOB=${ARGUMENT_BLOB%x}  # preserve trailing newlines without evaluating the text
+python "$PLUGIN_ROOT/bin/extract-keep-flag.py" dev-debug "$ARGUMENT_BLOB"  # timeout: 5000 — parses --keep, clears stale contract
+rm -f "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}" "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}.rec" "${TMPDIR:-/tmp}/dev-debug-diag-file-${CSID}"  # timeout: 3000 — fresh invocation only; a resumed step must keep its diagnosis path
+printf 'Hypothesis ledger: %s\nHypothesis record: %s\n' "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}" "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}.rec"
+python "$PLUGIN_ROOT/bin/dev_parse_args.py" \
+    --skill debug --write-files "$ARGUMENT_BLOB"  # timeout: 10000
 # URL normalization + log fetching: §URL Normalization in ci-log-extract.md
 ```
 
@@ -91,9 +109,11 @@ When `--worktree` set, run the investigation in an isolated git worktree so repr
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-debug-worktree-${CSID}" 2>/dev/null; [ "$WORKTREE_ENABLED" = "true" ] || WORKTREE_ENABLED=false
-if [ "$WORKTREE_ENABLED" = "true" ]; then python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" worktree-isolation.md; fi
+printf '%s\n' debug > "${TMPDIR:-/tmp}/dev-worktree-skill-${CSID}"
+if [ "$WORKTREE_ENABLED" = "true" ]; then python "$PLUGIN_ROOT/bin/dev_load_shared.py" worktree-isolation.md; fi
 ```
 
 `WORKTREE_ENABLED=true` → follow §Enter (base off HEAD, `EnterWorktree(path=…)`). **Read-only skill** — obey §Deliverable: the diagnosis file is written to the **main tree** (`$_ORIG_ROOT`) at Step 4 so `/develop:fix` can read it. Else skip — run in main tree (doc not loaded).
@@ -102,10 +122,11 @@ if [ "$WORKTREE_ENABLED" = "true" ]; then python "${CLAUDE_PLUGIN_ROOT:-plugins/
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # skill-specific paths (dev-debug-codemap-*) avoid stale value from a prior feature --codemap run
-CODEMAP_ENABLED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_codemap_gate.py" debug) || exit 1
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" codemap-gates.md
+CODEMAP_ENABLED=$(python "$PLUGIN_ROOT/bin/dev_codemap_gate.py" debug) || exit 1
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" codemap-gates.md
 ```
 
 > loads: codemap-gates.md
@@ -115,9 +136,10 @@ Follow Gate A and Gate B.
 Downstream blocks read back: `IFS= read -r CHALLENGE_ENABLED < "${TMPDIR:-/tmp}/dev-challenge-enabled-${CSID}" 2>/dev/null || CHALLENGE_ENABLED=true`, `IFS= read -r CHALLENGE_FORCED < "${TMPDIR:-/tmp}/dev-challenge-forced-${CSID}" 2>/dev/null || CHALLENGE_FORCED=false`, `IFS= read -r TEAM_MODE < "${TMPDIR:-/tmp}/dev-team-mode-${CSID}" 2>/dev/null || TEAM_MODE=false`, `IFS= read -r CI_RUN_ID < "${TMPDIR:-/tmp}/dev-ci-run-id-${CSID}" 2>/dev/null || CI_RUN_ID=""`.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CI_RUN_ID < "${TMPDIR:-/tmp}/dev-ci-run-id-${CSID}" 2>/dev/null || CI_RUN_ID=""
-if [ -n "$CI_RUN_ID" ]; then python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" ci-log-extract.md; else echo "→ no --ci-run; CI log extract skipped"; fi  # timeout: 5000
+if [ -n "$CI_RUN_ID" ]; then python "$PLUGIN_ROOT/bin/dev_load_shared.py" ci-log-extract.md; else echo "→ no --ci-run; CI log extract skipped"; fi  # timeout: 5000
 ```
 
 `--ci-run` absent → nothing loaded; skip to the unsupported flag check. Else follow §URL Normalization to set `CI_RUN_ID`. If `CI_RUN_ID` set, follow §Log Fetching and §Log Parsing to set `CI_LOG_EVIDENCE`; use it as evidence source in Step 1 instead of local pytest.
@@ -127,11 +149,17 @@ if [ -n "$CI_RUN_ID" ]; then python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/b
 **Mode selection** — debug runs in one of two mutually-exclusive modes; set explicitly before any Step:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+INPUT_FILE="${TMPDIR:-/tmp}/dev-debug-arguments-${CSID}.txt"
+[ -f "$INPUT_FILE" ] && [ ! -L "$INPUT_FILE" ] && [ -O "$INPUT_FILE" ] || { echo "! BLOCKED — invocation input missing or untrusted; Write the arguments to the printed Invocation input file first"; exit 1; }
+ARGUMENT_BLOB=$(cat "$INPUT_FILE" && printf x) || exit 1
+ARGUMENT_BLOB=${ARGUMENT_BLOB%x}  # preserve trailing newlines without evaluating the text
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # strip flags first — "123 --no-challenge" would fail integer detection otherwise
 # --keep-state: no eval; own dev-debug-args prefix, never dev_parse_args.py's dev-debug-clean-args; --inlined: Flag parsing already cleared
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags no-challenge,challenge,team,worktree,no-codemap,codemap --value-flags ci-run,repo,issue --keep-state dev-debug-args --inlined "$ARGUMENTS" >/dev/null  # timeout: 5000
+python "$PLUGIN_ROOT/bin/parse-skill-flags.py" --flags no-challenge,challenge,team,worktree,no-codemap,codemap --value-flags ci-run,repo,issue --keep-state dev-debug-args --inlined -- "$ARGUMENT_BLOB" >/dev/null  # timeout: 5000
 IFS= read -r VALUE_ISSUE < "${TMPDIR:-/tmp}/dev-debug-args-issue-${CSID}" 2>/dev/null || VALUE_ISSUE=""
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/dev-debug-args-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 if [ -n "$VALUE_ISSUE" ] || [[ "$CLEAN_ARGS" =~ ^#?[0-9]+$ ]]; then
@@ -174,9 +202,9 @@ echo "$TS" > "${TMPDIR:-/tmp}/dev-debug-team-ts-${CSID}"  # reload with IFS= rea
 echo "TS=$TS"
 ```
 
-1. `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" preflight-helpers.md` §Team Spawn Template. Confirm `[ROLE_PHRASE]` = symptom text (from `$ARGUMENTS` stripped of flags), `[FILE_SLUG]` = `debug-hypothesis`.
+1. `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; python "${CLAUDE_PLUGIN_ROOT}/bin/dev_load_shared.py" preflight-helpers.md` §Team Spawn Template. Confirm `[ROLE_PHRASE]` = symptom text (from `$ARGUMENTS` stripped of flags), `[FILE_SLUG]` = `debug-hypothesis`.
 2. **Issue mode** (`DEBUG_MODE=issue`): fetch the issue body **before** spawning — run the Step 1 issue-fetch block (`dev_issue_fetch_wrap.py`) and the test-path extraction block, then use the issue title + body as `[ROLE_PHRASE]` in place of the bare number. Teammates given only a number have no evidence to investigate.
-3. Run project detection (`export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" runner-detection.md`) to set `$TEST_CMD` and `$PYTEST_CMD`.
+3. Run project detection (`export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; python "${CLAUDE_PLUGIN_ROOT}/bin/dev_load_shared.py" runner-detection.md`) to set `$TEST_CMD` and `$PYTEST_CMD`.
 4. Use the `TS` printed by the team run-dir block above (sentinel `dev-debug-team-ts-${CSID}`; never a fresh timestamp). Spawn 2-3 `foundry:sw-engineer` agents (model=opus) in parallel — each investigating one independent root-cause hypothesis. Use Team Spawn Template from preflight-helpers: replace `[ROLE_PHRASE]` with symptom, `[FILE_SLUG]` with `debug-hypothesis`, assign each agent a distinct hypothesis number N. The agents run in parallel in this working tree, so every prompt keeps the template's line verbatim: "Read-only investigation: never edit, create or delete tracked files and never run `git stash`, `git checkout`, `git reset` or `git restore` — sibling investigators share this working tree; run reproduction probes in a `mktemp -d` copy or under the run directory; write only your analysis file." (run directory here: `.temp/develop/$TS/`). Each agent writes full output to `.temp/develop/$TS/debug-hypothesis-N-$TS.md` (run-dir timestamp, matching preflight-helpers §Team Spawn Template), returns compact JSON `{"status":"done","file":"<path>","findings":N,"confidence":0.N,"summary":"<one-line description of hypothesis>"}`.
 5. **Coordination**: lead broadcasts `{symptom: <description>, traceback: <key lines>}` to teammates before spawning. After all return, the lead cross-challenges the competing analyses inline — no teammate resume, no new spawn: check each hypothesis's claims against the other teammates' evidence files and note which evidence supports, contradicts, or is left unexplained by it. Convergence rule: select hypothesis with most direct evidence (observable in code or logs); truly tied → invoke `AskUserQuestion` presenting top 2 competing hypotheses.
 6. **Synthesis trace (lead, inline — no spawn)**: after individual teammate reports, lead reads all teammate findings from `.temp/develop/$TS/debug-hypothesis-*.md` (2-3 files already on disk), produces the unified cross-cutting trace map itself — entry point, modules crossed, state mutations, invariant violations across hypotheses. Write to `.temp/develop/$TS/debug-trace-synthesis.md`. A dedicated synthesis agent costs ~120,851 tok fixed overhead for a read-and-merge the lead performs inline in fix's equivalent step — spawn nothing here.
@@ -229,11 +257,12 @@ If codemap-py results returned: prepend `## Structural Context (codemap-py)` blo
 
 ```bash
 # timeout: 6000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # wrapper: cross-repo branch from dev-upstream, persists body to dev-issue-body-${CSID} for next block (avoids re-running gh)
 IFS= read -r _ISSUE_NUM < "${TMPDIR:-/tmp}/dev-debug-issue-num-${CSID}" 2>/dev/null || _ISSUE_NUM=""
 [ -n "$_ISSUE_NUM" ] || { echo "! BLOCKED — dev-debug-issue-num sentinel missing; re-run Mode selection (raw arguments still carry flags)"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_issue_fetch_wrap.py" debug "$_ISSUE_NUM" || echo "⚠ issue fetch failed (exit $?) — proceed without the issue body and say so"
+python "$PLUGIN_ROOT/bin/dev_issue_fetch_wrap.py" debug "$_ISSUE_NUM" || echo "⚠ issue fetch failed (exit $?) — proceed without the issue body and say so"
 ```
 
 ```bash
@@ -254,8 +283,9 @@ Run the repro (empty `$TEST_PATH` → full suite). `dev_run_repro.py` reads the 
 
 ```bash
 # timeout: 600000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_repro.py"
+python "$PLUGIN_ROOT/bin/dev_run_repro.py"
 ```
 
 ```bash
@@ -285,11 +315,12 @@ fi
 
 ```bash
 # timeout: 600000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 TEST_PATH="<failing-test-path>"  # resolved path, e.g. from Grep of symptom keywords under tests/; FULL_SUITE when none located
 case "$TEST_PATH" in *'<'*'>'*|"") echo "! BLOCKED — TEST_PATH unsubstituted; resolve the failing test path (or FULL_SUITE) first"; exit 1;; FULL_SUITE) TEST_PATH="";; esac
 echo "$TEST_PATH" > "${TMPDIR:-/tmp}/dev-debug-test-path-${CSID}"  # persist — later blocks consume it
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_repro.py"  # same repro as above, on the path just persisted
+python "$PLUGIN_ROOT/bin/dev_run_repro.py"  # same repro as above, on the path just persisted
 ```
 
 **Claim-validation gate** — before debugging, validate user's expectation is itself correct. A bug report always contains an implicit or explicit claim: "X should behave like Y". Claim may be wrong — misread docs, misunderstood API contract, incorrect formula, outdated assumption. Fixing a correct implementation to match a wrong expectation wastes effort, introduces regressions.
@@ -309,9 +340,12 @@ Classify claim type and validate accordingly:
 
 ```bash
 # timeout: 5000
-if python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/get_plugin_install_path.py" borda-ai-rig research --registry "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json" >/dev/null 2>&1; then
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+if python "$PLUGIN_ROOT/bin/get_plugin_install_path.py" borda-ai-rig research --registry "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json" >/dev/null; then
     echo "research:scientist available"
 else
+    RESEARCH_RESOLVE_EXIT=$?
+    [ "$RESEARCH_RESOLVE_EXIT" -eq 1 ] || echo "⚠ Research resolution failed (exit $RESEARCH_RESOLVE_EXIT); retain the resolver diagnostic above"
     echo "⚠ Expected value unverified — treating as assumption"
 fi
 ```
@@ -339,12 +373,15 @@ Carry the analysis summary in the diagnosis file. Write the full analysis to `.t
 
 **Flaky-test branch** — symptom intermittent (passes alone, fails in full suite): run binary-search isolation. Resolve the failing test node ID from `$ARGUMENTS` or prior pytest output into `FAILING_TEST_NODE` (e.g. `FAILING_TEST_NODE=tests/foo.py::test_bar`) before executing this block:
 
+> A node-ID hint has the shape `tests?/[^[:space:]]+::test_[^[:space:]]+`; inspect the actual traceback or pytest output and resolve the matching node as data.
+
 ```bash
 # resolve FAILING_TEST_NODE first:
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 if [ -z "$FAILING_TEST_NODE" ]; then
     echo "⚠ FAILING_TEST_NODE not resolved — cannot run polluter isolation; surface failing test node ID first"
 else
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/find-polluter.py" "$FAILING_TEST_NODE"  # timeout: 60000
+    python "$PLUGIN_ROOT/bin/find-polluter.py" "$FAILING_TEST_NODE"  # timeout: 60000
 fi
 ```
 
@@ -368,10 +405,14 @@ Step catches non-obvious causes — ordering dependency, environment-specific st
 
 Before the next real Bash block, stage the resolved `<candidate cause> :: open` line with the Write tool in `${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}.rec`, then append it with this block. Keep candidate text in the staged file, never in shell command text. For multiple verdicts, stage one line per candidate in the same `.rec` file and consume it before staging another batch.
 
+> Use the literal absolute `Hypothesis record` path printed by Flag parsing for every Write call. Restage a candidate's name byte-for-byte when recording a later verdict, including case and whitespace.
+
 ```bash
 # ledger survives compaction via contract — avoids re-testing refuted causes mid-investigation
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/append_ledger.py" "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}"  # timeout: 5000
+[ -s "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}.rec" ] || { echo "! BLOCKED — staged hypothesis record missing; Write to the printed Hypothesis record path before appending"; exit 1; }
+python "$PLUGIN_ROOT/bin/append_ledger.py" "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}" --run-root "${TMPDIR:-/tmp}"  # timeout: 5000
 ```
 
 ## Challenger gate
@@ -391,19 +432,27 @@ Parse result — stage each candidate's resolved verdict as a `<candidate cause>
 - **Concerns only** → add as alternative hypotheses in Step 3; append each new concern to ledger as `:: open (alt)`; continue.
 - **No findings / all refuted** → proceed.
 
+Before the boundary block, Write `.temp/debug/<slug>-evidence.md` using the resolved run slug: include reproduction command and result, confirming and contradicting signals, claim-validation result, current task IDs, and paths to the sw-engineer analysis and any blocker report. In team mode include the saved synthesis and teammate report paths. This note is the completed phase report used after compaction.
+
 ```bash
 # compaction boundary (compaction-contract.md §Lifecycle)
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEBUG_MODE < "${TMPDIR:-/tmp}/dev-debug-mode-${CSID}" 2>/dev/null || _DEBUG_MODE="symptom"
 IFS= read -r _CI_RUN < "${TMPDIR:-/tmp}/dev-ci-run-id-${CSID}" 2>/dev/null || _CI_RUN=""
 IFS= read -r _TEST_PATH < "${TMPDIR:-/tmp}/dev-debug-test-path-${CSID}" 2>/dev/null || _TEST_PATH=""
-_TRIED=$(awk -F ' :: ' '{ if (!($1 in verdict)) order[++n]=$1; verdict[$1]=$0 } END { for (i=1; i<=n; i++) print verdict[order[i]] }' "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}" 2>/dev/null)  # keep every candidate's latest verdict so early refutations survive later events
+IFS= read -r _SLUG < "${TMPDIR:-/tmp}/dev-debug-slug-${CSID}" 2>/dev/null || _SLUG=""
+[ -n "$_SLUG" ] && [ -s ".temp/debug/${_SLUG}-evidence.md" ] || { echo "! BLOCKED — evidence note missing; persist the completed phase report before compaction"; exit 1; }
+_TRIED=$(awk '{ key=$0; sub(/ :: [^:]*$/, "", key); if (key==$0) next; if (!(key in verdict)) order[++n]=key; verdict[key]=$0 } END { for (i=1; i<=n; i++) print verdict[order[i]] }' "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}" 2>/dev/null)  # keep every candidate's latest verdict so early refutations survive later events; split at the final delimiter
 _PRESERVE="mode=$_DEBUG_MODE, ci-run=${_CI_RUN:-none}, test_path=${_TEST_PATH:-full-suite}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" --keep-sentinel dev-debug-keep-items "develop:debug" "hypothesis+handoff (after evidence gathered and pattern analysis)" ".plans/active/" "$_PRESERVE" "state hypothesis with evidence (Step 3) → confirm root cause → write diagnosis → handoff to /develop:fix. Skip any candidate marked refuted/ruled-out in the tried list below." "tried (do NOT re-test refuted/ruled-out)" "$_TRIED" -- calls_ahead=20 "drop=evidence gathering and pattern analysis"  # timeout: 5000
+_PRESERVE="$_PRESERVE; phase-report=.temp/debug/${_SLUG}-evidence.md; analysis=.temp/debug/${_SLUG}-sw-engineer.md; blockers=.temp/debug/${_SLUG}-blockers.md (when present); team synthesis and reports are linked from phase-report"
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" --keep-sentinel dev-debug-keep-items "develop:debug" "hypothesis+handoff (after evidence gathered and pattern analysis)" ".plans/active/" "$_PRESERVE" "state hypothesis with evidence (Step 3) → confirm root cause → write diagnosis → handoff to /develop:fix. Skip any candidate marked refuted/ruled-out in the tried list below." "tried (do NOT re-test refuted/ruled-out)" "$_TRIED" -- calls_ahead=20 "drop=evidence gathering and pattern analysis"  # timeout: 5000
 IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
 [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/compaction_boundary.py" "$_DEV_SHARED"
+python "$PLUGIN_ROOT/bin/compaction_boundary.py" "$_DEV_SHARED"
 ```
+
+Follow the Boundary step printed above before Step 3; reread the preserved evidence note and its linked reports after compaction. Keep all candidates' latest verdicts without a count cap: dropping an early refutation would permit the same cause to be retried.
 
 ## Step 3: Hypothesis and gate
 
@@ -417,8 +466,9 @@ Confidence: high / medium / low
 ```
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" premise-grounding.md  # timeout: 5000
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" premise-grounding.md  # timeout: 5000
 ```
 
 §Premise Grounding Gate. Apply using **debug** context from Skill contexts table. Run before presenting hypothesis — any ungrounded premise in hypothesis produces a fix that addresses wrong mechanism.
@@ -427,7 +477,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" premis
 
 If confidence low: propose targeted probe (minimal script, added log statement, single assertion) to gather missing signal — run before committing to fix. Probe rules out current hypothesis → stage `<cause> :: ruled-out (probe)` with the Write tool in `${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}.rec`, run the Step 2 `append_ledger.py` block, then re-run boundary contract block above before re-hypothesizing — keeps loop guard current so ruled-out cause not revisited.
 
-**Test impact (codemap-py) — hypothesis confirmed** — root cause now names a suspect module (and often a function). Query affected test set once here so `/develop:fix` reuses it instead of re-querying. Gated on `CODEMAP_ENABLED` + `codemap-py query` availability (same gate as Step 1). Assign `SUSPECT` (substitution token, Step 1 head) in the block below as the confirmed hypothesis in dotted qname form: `module.path::function` (fn known) or bare `module.path` (module-level), same derivation as `TARGET_MODULE` (Step 1: strip `src/`, drop `.py`, `/` → `.`):
+**Test impact (codemap-py) — hypothesis confirmed** — root cause now names a suspect module (and often a function). Query affected test set once here; `/develop:fix` reuses a fresh result only for a bare module qname when every changed file belongs to that module. Function qnames, additional changed files (including reproduction tests), stale results or index mismatch trigger live selection in fix. Gated on `CODEMAP_ENABLED` + `codemap-py query` availability (same gate as Step 1). Assign `SUSPECT` (substitution token, Step 1 head) in the block below as the confirmed hypothesis in dotted qname form: `module.path::function` (fn known) or bare `module.path` (module-level), same derivation as `TARGET_MODULE` (Step 1: strip `src/`, drop `.py`, `/` → `.`):
 
 ```bash
 # timeout: 8000
@@ -446,7 +496,7 @@ else
 fi
 ```
 
-Captured JSON carries `pytest_cmd`, `test_files`, top-level `stale`, `index.not_covered`. Written into diagnosis file (Step 4) under marked section so fix reuses a fresh result. Query returns `"error"` or empty → skip silently; fix re-queries.
+Captured JSON carries `pytest_cmd`, `test_files`, top-level `stale`, `index.not_covered`. Written into diagnosis file (Step 4) under marked section so fix can reuse a fresh module-only result under the scope restriction above. Query returns `"error"` or empty → skip silently; fix re-queries.
 
 ## Step 4: Hand off to fix
 
@@ -469,17 +519,22 @@ IFS= read -r SLUG < "${TMPDIR:-/tmp}/dev-debug-slug-${CSID}" 2>/dev/null || SLUG
 # main tree: orig-root sentinel (worktree §Enter) or pwd — /develop:fix must reach this file
 IFS= read -r _DIAG_BASE < "${TMPDIR:-/tmp}/dev-debug-orig-root-${CSID}" 2>/dev/null || _DIAG_BASE="$(pwd)"
 [ -n "$_DIAG_BASE" ] || _DIAG_BASE="$(pwd)"
-DIAG_FILE="$_DIAG_BASE/.plans/active/debug_${SLUG}.md"
-N=2
-while [ -e "$DIAG_FILE" ]; do
-    DIAG_FILE="$_DIAG_BASE/.plans/active/debug_${SLUG}-${N}.md"
-    N=$((N+1))
-done
+IFS= read -r DIAG_FILE < "${TMPDIR:-/tmp}/dev-debug-diag-file-${CSID}" 2>/dev/null || DIAG_FILE=""
+if [ -z "$DIAG_FILE" ]; then
+    DIAG_FILE="$_DIAG_BASE/.plans/active/debug_${SLUG}.md"
+    N=2
+    while [ -e "$DIAG_FILE" ]; do
+        DIAG_FILE="$_DIAG_BASE/.plans/active/debug_${SLUG}-${N}.md"
+        N=$((N+1))
+    done
+fi
 mkdir -p "$_DIAG_BASE/.plans/active"
 echo "$DIAG_FILE" | tee "${TMPDIR:-/tmp}/dev-debug-diag-file-${CSID}"  # later blocks (Test Impact append, handoff) reload it — bash state is lost between calls
 ```
 
 Write `$DIAG_FILE` with this structure:
+
+> A resumed Step 4 reuses the path already selected for this run. If that diagnosis exists, read it and finish missing sections in place; never overwrite its confirmed root cause or allocate a second file merely because the selection block ran again.
 
 > Use one sentence for the confirmed root cause, and list the signals that confirm it under `Evidence`.
 
@@ -509,7 +564,7 @@ Write `$DIAG_FILE` with this structure:
 
 Populate `Reproduction` from the evidence already gathered: test node ID/path from `${TMPDIR:-/tmp}/dev-debug-test-path-${CSID}` and any reproduction test written during probes, runner exit from `${TMPDIR:-/tmp}/dev-gate-exit-${CSID}`, repository override from `${TMPDIR:-/tmp}/dev-upstream-${CSID}`, and mode from `${TMPDIR:-/tmp}/dev-debug-mode-${CSID}`. Read issue ref from `${TMPDIR:-/tmp}/dev-debug-issue-num-${CSID}` only in issue mode; in symptom mode record `none` even if an earlier invocation left that sentinel behind. Record the actual failing node ID when known; an empty test-path sentinel means full-suite, not a missing reproduction test. For CI-only or team investigations without a local test run, record `not run` and the evidence source rather than reusing a prior runner exit. Keep an existing reproduction test's path so the fix handoff can reuse it.
 
-**Append Test Impact section** — only when Step 3 captured a non-empty, non-error result (`${TMPDIR:-/tmp}/dev-debug-test-impact-${CSID}` present). fix reads this to skip re-querying. Records raw JSON plus index `scanned_at` so fix can verify handoff is not older than current index (freshness guard):
+**Append Test Impact section** — only when Step 3 captured a non-empty, non-error result (`${TMPDIR:-/tmp}/dev-debug-test-impact-${CSID}` present). fix reads this to skip re-querying only for the matching module-only scope above. Records raw JSON plus index `scanned_at` so fix can verify handoff is not older than current index (freshness guard):
 
 ````bash
 # timeout: 5000
@@ -525,7 +580,7 @@ if [ -s "$TI_FILE" ] && ! grep -q '"error"' "$TI_FILE"; then
     {
         echo ""
         echo "## Test Impact (codemap-py)"
-        echo "<!-- reused by /develop:fix Step 3 when index_scanned_at still matches the live index and stale != true -->"
+        echo "<!-- reused by /develop:fix Step 3 only for a bare module qname with all changed files in that module, matching live index_scanned_at and stale != true -->"
         echo "- index_scanned_at: ${IDX_SCANNED_AT:-unknown}"
         echo '```json'
         cat "$TI_FILE"
@@ -535,6 +590,13 @@ fi
 ````
 
 Hand off: `-> /develop:fix --diagnosis $DIAG_FILE`. Root cause already known — fix's Step 1 analysis complete.
+
+Clear the contract in the current worktree before calling `ExitWorktree`. The contract reader in `rule-inject.js` resolves `.temp/state` from `process.cwd()`.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+rm -f .temp/state/skill-contract.md "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}" "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}.rec"  # clear contract + ledger — skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
+```
 
 **Worktree exit** — `WORKTREE_ENABLED=true`: diagnosis file already lives in main tree (§Deliverable). Follow `worktree-isolation.md` §Exit — capture branch, call `ExitWorktree(action="keep")`, append `Worktree` block to report. Follow-up `/develop:fix` then runs in main tree against main-tree `$DIAG_FILE`. Never auto-merge.
 
@@ -559,11 +621,6 @@ Evidence: [key signals]
 ```
 
 **Next step** — print as plain text, not a selectable prompt (skill has `disable-model-invocation: true`, no `Skill` tool in `allowed-tools`, so `/develop:fix` cannot be invoked automatically here). Substitute resolved `$DIAG_FILE` path: `-> /develop:fix --diagnosis $DIAG_FILE` (e.g. `/develop:fix --diagnosis .plans/active/debug_<slug>.md`) for user to copy-paste.
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-rm -f .temp/state/skill-contract.md ${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}  # clear contract + ledger — skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
-```
 
 </workflow>
 

@@ -29,6 +29,7 @@ from pathlib import Path
 from shutil import which
 
 from commit_action_item import _sanitize_field
+from resolve_commit_hooks import commit_with_hooks
 
 #: Seconds allowed for the cheap ``git diff --cached`` staged check.
 _PLUMBING_TIMEOUT = 30
@@ -232,15 +233,10 @@ def main(argv: list[str] | None = None) -> int:
         # custom checks routinely exceed a few seconds), so a short timeout would kill git mid-hook.
         # The bound exists only for a hook or signing prompt that waits on input for ever.
         # Matches commit_action_item.py; short timeouts stay only on cheap plumbing calls.
-        result = subprocess.run(  # noqa: S603
-            [git, "commit", "-m", msg],
-            check=False,
-            timeout=_COMMIT_TIMEOUT,
-        )
+        return commit_with_hooks(git, ["commit", "-m", msg], None, _COMMIT_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
         print(f"commit_all_items: git timed out after {exc.timeout} s — no commit created", file=sys.stderr)
         return 1
-    return result.returncode
 
 
 if __name__ == "__main__":

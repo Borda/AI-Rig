@@ -1,0 +1,445 @@
+{
+  "18786": {
+    "number": 18786,
+    "title": "Support saving and loading remote paths with FSDP",
+    "state": "open",
+    "body": "### Bug description\r\n\r\n`FSDPStrategy.load_checkpoint` casts `checkpoint_path` to a `pathlib.Path` [here](https://github.com/Lightning-AI/lightning/blob/master/src/lightning/pytorch/strategies/fsdp.py#L539). This will bork URIs, such as cloud checkpoint paths, e.g. `s3://...`.\r\n\r\nExample:\r\n\r\n```python\r\nfrom pathlib import Path\r\n\r\ncheckpoint_path = \"s3://asd/asd\"\r\nassert Path(checkpoint_path).as_posix() == checkpoint_path\r\n```\r\n\r\nNOTE: I am reporting this merely by looking at the source code; I have yet to confirm this with a test.\r\n\r\n### What version are you seeing the problem on?\r\n\r\nmaster\r\n\r\n### How to reproduce the bug\r\n\r\n```python\r\nfrom lightning.pytorch.strategies import FSDPStrategy\r\n\r\nFSDPStrategy(...).load_checkpoint(\"s3://my/checkpoint\")\r\n```\r\n\r\n\r\n### Error messages and logs\r\n\r\nI believe [this](https://github.com/Lightning-AI/lightning/blob/master/src/lightning/pytorch/strategies/fsdp.py#L620) exception will be raised.\r\n\r\n### Environment\r\n\r\n<details>\r\n  <summary>Current environment</summary>\r\n\r\n```\r\n#- Lightning Component (e.g. Trainer, LightningModule, LightningApp, LightningWork, LightningFlow):\r\n#- PyTorch Lightning Version (e.g., 1.5.0):\r\n#- Lightning App Version (e.g., 0.5.2):\r\n#- PyTorch Version (e.g., 2.0):\r\n#- Python version (e.g., 3.9):\r\n#- OS (e.g., Linux):\r\n#- CUDA/cuDNN version:\r\n#- GPU models and configuration:\r\n#- How you installed Lightning(`conda`, `pip`, source):\r\n#- Running environment of LightningApp (e.g. local, cloud):\r\n```\r\n\r\n</details>\r\n\r\n\r\n### More info\r\n\r\n_No response_\n\ncc @user-53 @user-4 @user-5",
+    "comments": [
+      {
+        "author": "user-4",
+        "body": "@user-3 It isn't documented, so it's considered not supported and so it's not a bug. I'm happy to convert it to a feature request though. \r\n\r\nOur goal here was to build minimally and get the checkpoint loading and saving done well for FSDP. Limiting the scope to the local filesystem is not totally unreasonable in my opinion. It should be possible to extend the logic to make use of fsspec to cover the other cases. \r\n\r\n"
+      },
+      {
+        "author": "user-3",
+        "body": "@user-4 totally makes sense! I was debating whether to file this as a feature request or bug, my apologies!"
+      },
+      {
+        "author": "user-4",
+        "body": "No need to apologize. The request is very good. We know we have some gaps in Lightning in general regarding remote filesystem support and it's good to document them. This reminds me that I need to get back to this one https://github.com/Lightning-AI/lightning/pull/18252 where I got hung up on working on test cases and then other priorities came up.\r\nSo in fact, it's me who needs to apologize 😄 "
+      },
+      {
+        "author": "user-5",
+        "body": "PyTorch is also considering supporting fsspec paths automatically: https://github.com/pytorch/pytorch/issues/118036"
+      },
+      {
+        "author": "user-6",
+        "body": "> PyTorch is also considering supporting fsspec paths automatically: [pytorch/pytorch#118036](https://github.com/pytorch/pytorch/issues/118036)\r\n\r\n@user-4 Do you think we need to extend checkpoint loading & saving for remote filesystem within PyTorch Lightning (if so, I'm happy to open a PR)? Or we just waiting PyTorch to support ?"
+      }
+    ]
+  },
+  "19736": {
+    "number": 19736,
+    "title": "`TensorBoardLogger` fails with remote FS (azure)",
+    "state": "open",
+    "body": "### Bug description\n\nWhen using `TensorBoardLogger` with a `save_dir` pointing to azure blob storage, it will yield a `The blob type is invalid for this operation` error on log calls. Similar behaviour was reported in #18861 for `CSVLogger`.\n\n### What version are you seeing the problem on?\n\nv2.2\n\n### How to reproduce the bug\n\n```python\nimport lightning\r\nfrom lightning.pytorch import loggers\r\nfrom lightning.pytorch.demos import boring_classes\r\nfrom typing import Any\r\n\r\nlog_dir = \"az://<container-name>@<name>.blob.core.windows.net/test/\"\r\n\r\nclass Model(boring_classes.BoringModel):\r\n    def training_step(self, batch: Any, batch_idx: int):\r\n        loss = self.step(batch)\r\n        self.log('loss', loss, on_step=True, logger=True)\r\n        self.logger.log_metrics({\"loss\": loss})\r\n        return {\"loss\": loss}\r\n\r\nif __name__ == '__main__':\r\n    model = Model()\r\n    logger = loggers.TensorBoardLogger(log_dir, name=\"test\")\r\n    trainer = lightning.Trainer(max_epochs=3, logger=logger)\r\n    trainer.fit(model)\n```\n\n\n### Error messages and logs\n\n```\r\nRequestId:6e66d9c5-d01e-0033-375a-8670de000000\r\nTime:2024-04-04T06:33:45.2051891Z\r\nErrorCode:InvalidBlobType\r\nContent: <?xml version=\"1.0\" encoding=\"utf-8\"?><Error><Code>InvalidBlobType</Code><Message>The blob type is invalid for this operation.\r\nRequestId:6e66d9c5-d01e-0033-375a-8670de000000\r\nTime:2024-04-04T06:33:45.2051891Z</Message></Error>\r\n```\n\n### Environment\n\n<details>\r\n  <summary>Current environment</summary>\r\n\r\n* CUDA:\r\n        - GPU:               None\r\n        - available:         False\r\n        - version:           None\r\n* Lightning:\r\n        - lightning:         2.2.1\r\n        - lightning-utilities: 0.10.1\r\n        - pytorch-lightning: 2.2.1\r\n        - torch:             2.2.1\r\n        - torchmetrics:      1.3.2\r\n        - torchvision:       0.17.1\r\n* Packages:\r\n        - absl-py:           2.1.0\r\n        - adlfs:             2024.2.0\r\n        - aiohttp:           3.9.3\r\n        - aiosignal:         1.3.1\r\n        - antlr4-python3-runtime: 4.9.3\r\n        - argcomplete:       3.2.3\r\n        - async-timeout:     4.0.3\r\n        - attrs:             23.2.0\r\n        - azure-core:        1.30.1\r\n        - azure-datalake-store: 0.0.53\r\n        - azure-identity:    1.15.0\r\n        - azure-storage-blob: 12.19.1\r\n        - babel:             2.14.0\r\n        - bandit:            1.7.8\r\n        - black:             24.3.0\r\n        - certifi:           2024.2.2\r\n        - cffi:              1.16.0\r\n        - charset-normalizer: 3.3.2\r\n        - click:             8.1.7\r\n        - colorama:          0.4.6\r\n        - coloredlogs:       15.0.1\r\n        - colorlog:          6.8.2\r\n        - coverage:          7.4.4\r\n        - cryptography:      42.0.5\r\n        - distlib:           0.3.8\r\n        - exceptiongroup:    1.2.0\r\n        - filelock:          3.13.1\r\n        - flatbuffers:       24.3.7\r\n        - frozenlist:        1.4.1\r\n        - fsspec:            2024.3.0\r\n        - ghp-import:        2.1.0\r\n        - ",
+    "comments": [
+      {
+        "author": "user-8",
+        "body": "Same problem with 2.4.0 version"
+      },
+      {
+        "author": "user-8",
+        "body": "it seems that when blob is created with `AzureBlobFile`, it is created with `mode=\"wb\"` and not `mode=\"ab\"`\r\nI've just tested by forcing `mode` to `\"ab\"` at line https://github.com/fsspec/adlfs/blob/560ff7a52ab9fd39744e1382077abbf15c1ed9c6/adlfs/spec.py#L1927 and it works.\r\nSo I don't know why `mode` is set to `\"wb\"` and not `\"ab\"`?"
+      },
+      {
+        "author": "user-8",
+        "body": "I found the problem. A first file (events.out.tfevents.xxxxxx) is openned using `wb` mode. Then the same file, is openned again, but with `ab` mode. However, Azure Blob Storage is not able to open the same `AzureBlobFile` with two different modes. That is why for Azure, mode must be `ab` for all writing operations."
+      },
+      {
+        "author": "user-8",
+        "body": "I found a solution.\r\nCreate a class to force append Azure Blob Storage:\r\n```\r\nfrom adlfs import AzureBlobFileSystem\r\nfrom typing import Optional\r\n\r\nclass AzureAppendBlobFileSystem(AzureBlobFileSystem):\r\n\r\n    def _open(\r\n            self,\r\n            path: str,\r\n            mode: str = \"rb\",\r\n            block_size: int = None,\r\n            autocommit: bool = True,\r\n            cache_options: dict = {},\r\n            cache_type=\"readahead\",\r\n            metadata=None,\r\n            version_id: Optional[str] = None,\r\n            **kwargs,\r\n    ):\r\n        return super()._open(\r\n            path=path,\r\n            mode=\"ab\" if mode == \"wb\" else mode,\r\n            block_size=block_size,\r\n            autocommit=autocommit,\r\n            cache_options=cache_options,\r\n            cache_type=cache_type,\r\n            metadata=metadata,\r\n            version_id=version_id,\r\n            **kwargs\r\n        )\r\n```\r\n\r\nThen register this new class filesystem in registry by doing this:\r\n```\r\nimport light"
+      }
+    ]
+  },
+  "21813": {
+    "number": 21813,
+    "title": "`ModelCheckpoint` deletes *previous run's* checkpoint when remote filesystem",
+    "state": "open",
+    "body": "### Bug description\n\n`ModelCheckpoint` deletes the *previous run's* checkpoint, including the exact file the trainer resumed from, when the checkpoint dirpath is on a remote  (fsspec) filesystem. Authored with the help of an agent but I detected the bug myself.\n\nI continued a training using `Trainer.fit` passing in `ckpt_path`. That run crashed and noticed that the checkpoint I resumed the training from was no longer present in the bucket (R2/S3). It was a `topk` checkpoint. Looking at the code https://github.com/Lightning-AI/pytorch-lightning/blob/4819088b0c6838f0d878b30050d59003305924b8/src/lightning/pytorch/callbacks/model_checkpoint.py#L1007-L1014\n\nit seems intentional since it implies the protection is only for local paths. This PR https://github.com/Lightning-AI/pytorch-lightning/pull/19023 claims to have fixed it but not sure why the guard leaves out non-local file systems. Is it intentional to delete remote, pre-existing checkpoints? \nThe resuming run subsequently crashed and I cant start it again since the original checkpoint is gone 😬 \n\n Sequence:\n\n  1. Run 1 trains with `ModelCheckpoint(dirpath=\"s3://bucket/run1\", every_n_train_steps=N, save_top_k=1, monitor=None)` and dies, leaving\n  `run1/periodic-step=X.ckpt`.\n  2. Run 2 resumes: `trainer.fit(..., ckpt_path=\"s3://bucket/run1/periodic-step=X.ckpt\")` with a **new** dirpath `s3://bucket/run2`.\n  3. At run 2's first periodic save, `run1/periodic-step=X.ckpt` is silently deleted. If it was the only copy (`save_top_k=1`), the previous run's data is  gone.\n\n Cause chain:\n\n  - `ModelCheckpoint.load_state_dict` restores `best_model_path` **unconditionally**, even when it warns that the dirpath changed and skips the other fields.\n  - For `monitor=None`, `_save_none_monitor_checkpoint` uses that restored `best_model_path` as `previous` and consults `_should_remove_checkpoint`.\n  - `_should_remove_checkpoint` returns `True` for any non-local `previous` (`if not _is_local_file_protocol(previous): return True`) *before* the two safety   guards. Per its own docstring, \"not in the current checkpoint directory\" and \"the checkpoint the Trainer resumed from\" only protect when \"the filesystem is local\".\n\n##### Expected behavior\n\nSame as local: a checkpoint outside the callback's own `dirpath` is never deleted.\n\n\n\n### What version are you seeing the problem on?\n\nv2.6\n\n### How to reproduce the bug\n\nSelf-contained — `memory://` is a non-local protocol, so no cloud credentials are needed:\n\n<details>\n\n```python\n  import fsspec, torch\n  from torch.utils.data import DataLoader, TensorDataset\n  import lightning as L\n  from lightning.pytorch.callbacks import ModelCheckpoint\n\n  class Dummy(L.LightningModule):\n      def __init__(self):\n          super().__init__()\n          self.layer = torch.nn.Linear(4, 1)\n      def training_step(self, batch, _):\n          x, y = batch\n          return torch.nn.functional.mse_loss(self.layer(x), y)\n      def configure_optimizers(self):\n          return torch.optim.SGD(self.para",
+    "comments": []
+  },
+  "20406": {
+    "number": 20406,
+    "title": "FSDP full state dict mangles fsspec path",
+    "state": "open",
+    "body": "### Bug description\n\nIn `FSDPStrategy.save_checkpoint`, the `filepath` variable is transformed via\r\nhttps://github.com/Lightning-AI/pytorch-lightning/blob/3627c5bfac704d44c0d055a2cdf6f3f9e3f9e8c1/src/lightning/pytorch/strategies/fsdp.py#L562\r\nThis only makes sense if doing sharded checkpointing, and in fact mangles any legitimate fsspec path that is passed in.\r\n\r\nWhen `self._state_dict_type == \"full\"`,\r\n```\r\nsuper().save_checkpoint(checkpoint=checkpoint, filepath=path)\r\n```\r\nis called, using the normal CheckpointIO workflow, but with the mangled path.\r\n\r\nThe expected behavior should be that if the user chooses full state dict type, CheckpointIO and remote paths should work as usual, but currently full state dict checkpoints cannot be saved to remote paths.\n\n### What version are you seeing the problem on?\n\nv2.4\n\n### How to reproduce the bug\n\n```python\ntrainer = L.Trainer(\r\n        strategy=\"fsdp\"\r\n        default_root_dir=\"s3://example/path\"\r\n    )\r\n\r\ntrainer.fit(model=...)\n```\n\n\n### Error messages and logs\n\n```\r\n# Error messages and logs here please\r\n```\r\n\n\n### Environment\n\n<details>\r\n  <summary>Current environment</summary>\r\n\r\n```\r\n#- PyTorch Lightning Version (e.g., 2.4.0):\r\n#- PyTorch Version (e.g., 2.4):\r\n#- Python version (e.g., 3.12):\r\n#- OS (e.g., Linux):\r\n#- CUDA/cuDNN version:\r\n#- GPU models and configuration:\r\n#- How you installed Lightning(`conda`, `pip`, source):\r\n```\r\n\r\n</details>\r\n\n\n### More info\n\n_No response_",
+    "comments": [
+      {
+        "author": "user-2",
+        "body": "Thank you @user-10 if you could send a complete repro it would speed up the fix"
+      }
+    ]
+  },
+  "18861": {
+    "number": 18861,
+    "title": "`CSVLogger` fails on remote FS on version `2.1.0`",
+    "state": "open",
+    "body": "### Bug description\r\n\r\nWhen using `CSVLogger` and save an experiment on a remote file storage, even though it manages to save core files, like the checkpoints, `metrics.csv` and `hyp.yaml`, in the middle of the first epoch it fails and raise the error `The blob type is invalid for this operation.`\r\n\r\nNote that is not the case with the version of `2.0.0`, which it worked without any issues\r\n\r\nThe issue appears to be generated that some remote FS do not support `append` or `\"a\"` operation: \r\nhttps://github.com/Lightning-AI/lightning/blob/874825857ffc09923407ada36814e11adb66c352/src/lightning/fabric/loggers/csv_logs.py#L231\r\n\r\nChanging the above to only `\"w\"` will resolve the issue, but of course we do have to sent the whole information.\r\nMaybe one way, to not store information on memory, to download the file , append and upload, **only of remote file storages**.\r\n\r\n### What version are you seeing the problem on?\r\n\r\nv2.1\r\n\r\n### How to reproduce the bug\r\n\r\n```python\r\n# main.py\r\n\"\"\"\r\nExecute:\r\n>>> export FSSPEC_ABFS='{\"anon\": false}'\r\n>>> pip install pytorch_lightning adlfs\r\n>>> python main.py\r\n\"\"\"\r\nimport pytorch_lightning as pl\r\nfrom pytorch_lightning.demos import boring_classes\r\n\r\nOUTPUT_DIR = \"az://<container-name>@<name>.blob.core.windows.net/tmp/\"\r\n\r\nclass TestModel(boring_classes.BoringModel):\r\n    def training_step(self, batch, batch_idx):\r\n        loss = self.step(batch)\r\n        self.log(\"train/StepLoss\", loss, prog_bar=True)\r\n        return {\"loss\": loss}\r\n\r\nmodel = TestModel()\r\ntrainer = pl.Trainer(\r\n    max_epochs=10,\r\n    logger=[\r\n        pl.loggers.CSVLogger(save_dir=OUTPUT_DIR),\r\n    ],\r\n)\r\ntrainer.fit(model)\r\n```\r\n\r\n\r\n### Error messages and logs\r\n\r\n```\r\nazure.core.exceptions.ResourceExistsError: The blob type is invalid for this operation.\r\nRequestId:91549e35-001e-0027-3224-077714000000\r\nTime:2023-10-25T09:21:49.3754217Z\r\nErrorCode:InvalidBlobType\r\nContent: <?xml version=\"1.0\" encoding=\"utf-8\"?><Error><Code>InvalidBlobType</Code><Message>The blob type is invalid for this operation.\r\nRequestId:91549e35-001e-0027-3224-077714000000\r\nTime:2023-10-25T09:21:49.3754217Z</Message></Error>```\r\n```\r\n\r\n\r\n### Environment\r\n\r\n<details>\r\n  <summary>Current environment</summary>\r\n\r\n```sh\r\n#- Lightning Component (e.g. Trainer, LightningModule, LightningApp, LightningWork, LightningFlow):\r\n#- PyTorch Lightning Version (e.g., 1.5.0):\r\n#- Lightning App Version (e.g., 0.5.2):\r\n#- PyTorch Version (e.g., 2.0):\r\n#- Python version (e.g., 3.9):\r\n#- OS (e.g., Linux):\r\n#- CUDA/cuDNN version:\r\n#- GPU models and configuration:\r\n#- How you installed Lightning(`conda`, `pip`, source):\r\n#- Running environment of LightningApp (e.g. local, cloud):\r\n```\r\n\r\n</details>\r\n\r\n\r\n### More info\r\n\r\n_No response_\n\ncc @user-53",
+    "comments": [
+      {
+        "author": "user-4",
+        "body": "Thanks for looking into this.\r\n\r\nI want to point out that the CSVLogger should only be used for debugging purposes and barebones logging for trivial stuff, at least that's my opinion from some experience with a variety of loggers. It is not designed to support all kinds of optimizations when logging rows and also it was not designed to write a lot of data to disk or remote locations. For these use cases, we highly recommend using TensorBoardLogger and alike. My opinion is that if it's not a small fix, we shouldn't develop CSVLogger into a fully featured logger, and remote filesystems is in my opinion one of these areas. "
+      },
+      {
+        "author": "user-11",
+        "body": "Hi @user-4, thank you for taking the time 🙏 I do see your point and it makes sense, but I would love to preserve this functionality, since it was working with the older versions, and, as for now, its essential part of my workflow - for now its difficult for me to use the latest lightning version.\r\n\r\nI submitted a small PR, which I hope it fixes the issue without too much effort"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "I was able to reproduce a similar scenario with GCS where metrics were getting overwritten, though it worked fine with S3.\n\n> minimal example\n\n```python\nfrom pytorch_lightning.loggers import CSVLogger\n\npath = \"gs://xxxxxx/pl/\"\n\nlogger = CSVLogger(path)\nlogger.log_metrics({\"loss\": 0.1})\nlogger.log_metrics({\"loss\": 0.2})\nlogger.save()\n\nlogger.log_metrics({\"loss\": 0.3})\nlogger.save()\n```\n\n```sh\n⚡ ~ gsutil cp gs://xxxx/pl/lightning_logs/version_0/metrics.csv - | cat\n0.3,0\n```\n\n<img width=\"1860\" height=\"618\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/bd719b03-e94f-40d0-9cc4-e8f34876ef78\" />"
+      }
+    ]
+  },
+  "20749": {
+    "number": 20749,
+    "title": "fabric FSDP strategy save/load checkpoint does not support s3 url",
+    "state": "open",
+    "body": "### Bug description\n\nOther ParallelStrategy implementations support saving and loading checkpoints from an S3 URL using fsspec. Fabric’s FSDP strategy also uses torch.load and torch.save, which support S3 URLs as well. However, the FSDP wrapper in Fabric [converts the input path](https://github.com/Lightning-AI/pytorch-lightning/blob/0c9d4147e3569e24bf6130e78ae21b136562766e/src/lightning/fabric/strategies/fsdp.py#L440) to a pathlib.Path object. This conversion changes a valid URL like s3://bucket/xxx into an invalid format like s3:/bucket/xxx, effectively breaking the path.\n\nTo resolve this issue, path manipulation should be handled using os.path instead—[as done in TorchCheckpointIO](https://github.com/Lightning-AI/pytorch-lightning/blob/0c9d4147e3569e24bf6130e78ae21b136562766e/src/lightning/fabric/plugins/io/torch_io.py#L57).\n\n### What version are you seeing the problem on?\n\nv2.5\n\n### How to reproduce the bug\n\n```python\n- Use FSDP as the strategy for fabric.\n- Save a checkpoint with `fabric.save(\"s3://xxx\")`\n```\n\n### Error messages and logs\n\n```\n# Error messages and logs here please\n```\n\n\n### Environment\n\n_No response_\n\n### More info\n\n_No response_\n\ncc @user-2 @maintainer-4",
+    "comments": []
+  },
+  "21253": {
+    "number": 21253,
+    "title": "Directly save checkpoint to specified disk location",
+    "state": "open",
+    "body": "### Description & Motivation\n\nCan lightning save the model checkpoints directly to the target location on disk, instead of first writing it to some tmp dir like `/tmp/blah` then trying to move it to the target location?\n\n### Pitch\n\n_No response_\n\n### Alternatives\n\n_No response_\n\n### Additional context\n\n_No response_\n\ncc @user-2 @user-53",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Hi @user-13, thanks for raising this issue. Could you kindly provide a bit more information on how you are saving checkpoints?  Lightning uses an `atomic_save` strategy which saves checkpoints to an in-memory BytesIO buffer, then writes directly to the target file using fsspec transactions, which prevents the creating of incomplete checkpoint. There is nothing in the process that should save to a tmp dir. "
+      },
+      {
+        "author": "user-14",
+        "body": "Hye,\nI was facing the same issue. Apparently the buffer saves in the default `TMPDIR` and copies over to the correct directory. In slurm environments this might lead to `no space left on device` as typically the `home` of these clusters have less memory. The way I got away with such error was to explicitly set a `TMPDIR` to a path which doesnt have storage limitations. If you are using a sbatch script the solution is to add this in your script:\n```{bash}\nexport TMPDIR=/some/path/\n```\n\nIf you are using a normal script and it fails for you using just `TMPDIR=/some/path` on top of your main file would suffice though I have not tested it myself.\n\nHope this resolves most of the issues that people are having for ckpt saving with limited `TMPDIR` space."
+      },
+      {
+        "author": "maintainer-3",
+        "body": "Hi @user-14, thanks for sharing the fix. Btw, can you please help in discovering which line/codeblock might be causing this issue.\n\nhttps://github.com/Lightning-AI/pytorch-lightning/blob/a3a28b3ca840c755947305dfd4d7e7e5a7c6eea4/src/lightning/fabric/utilities/cloud_io.py#L85-L110\n\nAs @maintainer-2 stated, it seems to directly write to the file in a transaction to avoid corrupted files."
+      },
+      {
+        "author": "user-15",
+        "body": "Hi @maintainer-3, I traced the code path that ends up writing to `$TMPDIR`. It's not in Lightning — it's inside fsspec's `LocalFileSystem` transaction implementation. Repro: https://gist.github.com/user-15/00b575e15011fa529a49d7738566d5ef.\n\n**Call chain when `_atomic_save` runs against a local path:**\n\n1. [`cloud_io.py:103`](https://github.com/Lightning-AI/pytorch-lightning/blob/master/src/lightning/fabric/utilities/cloud_io.py#L103) — `with fs.transaction:` sets `fs._intrans = True`\n2. [`cloud_io.py:116`](https://github.com/Lightning-AI/pytorch-lightning/blob/master/src/lightning/fabric/utilities/cloud_io.py#L116) — `fs.open(urlpath, \"wb\")` → `AbstractFileSystem.open()`\n3. `fsspec/spec.py` — `autocommit` defaults to `not self._intrans` → `False` inside the transaction\n4. `fsspec/implementations/local.py` — `LocalFileOpener._open()` with `autocommit=False` calls **`tempfile.mkstemp()`** with no `dir=` argument, so staging lands in `$TMPDIR` (default `/tmp`)\n5. On `__exit__`, the transa"
+      }
+    ]
+  },
+  "18445": {
+    "number": 18445,
+    "title": "Log to remote FS azure fails when LightningModule uses the `self.log` method",
+    "state": "open",
+    "body": "### Bug description\r\n\r\nHi all! While trying to log to a remote file system, specifically in Azure, I found that when my `LightningModule` uses the `self.log` method it fails at the end of the first epoch. Removing the `TensorBoard` logger, this is where the error seemed to be generated from, also did not help as it fails to save the checkpoint of the model.\r\n\r\nStrangely, when the `LightningModule` does not use the `self.log`, it works perfectly (create files, saves config, tfevent and chackpoints) of when the tensorboard package is not installed.\r\n\r\nIt would be great if the `self.log` did not run though tensorboard if I haven't include it in the trainer loggers.\r\n\r\nThe following, for example, works as expected (for the version that is not, please see bellow):\r\n```python3\r\n# main.py\r\n\"\"\"\r\nExecute:\r\n>>> export FSSPEC_ABFS='{\"anon\": false}'\r\n>>> python main.py\r\n\"\"\"\r\n# pip install pytorch_lightning adlfs\r\n# main.py\r\nimport pytorch_lightning as pl\r\nfrom pytorch_lightning.demos import boring_classes\r\n\r\nOUTPUT_DIR = \"az://<container-name>@<name>.blob.core.windows.net/tmp/\"\r\n\r\nclass TestModel(boring_classes.BoringModel):\r\n    def training_step(self, batch, batch_idx):\r\n        loss = self.step(batch)\r\n        self.log(\"train/StepLoss\", loss, prog_bar=True)  # <-- this is the line that causes the issue\r\n        return {\"loss\": loss}\r\n\r\nmodel = TestModel()\r\ntrainer = pl.Trainer(\r\n    max_epochs=10,\r\n    default_root_dir=OUTPUT_DIR,\r\n)\r\ntrainer.fit(model)\r\n```\r\n\r\n### What version are you seeing the problem on?\r\n\r\nmaster\r\n\r\n### How to reproduce the bug\r\n```python3\r\n# pip install pytorch_lightning adlfs tensorboard\r\n# main.py\r\nimport pytorch_lightning as pl\r\nfrom pytorch_lightning.demos import boring_classes\r\n\r\nOUTPUT_DIR = \"az://<container-name>@<name>.blob.core.windows.net/tmp/\"\r\n\r\nclass TestModel(boring_classes.BoringModel):\r\n    def training_step(self, batch, batch_idx):\r\n        loss = self.step(batch)\r\n        self.log(\"train/StepLoss\", loss, prog_bar=True)  # <-- this is the line that causes the issue\r\n        return {\"loss\": loss}\r\n\r\nmodel = TestModel()\r\ntrainer = pl.Trainer(\r\n    max_epochs=10,\r\n    default_root_dir=OUTPUT_DIR,\r\n)\r\ntrainer.fit(model)\r\n```\r\n\r\nOn terminal, execute\r\n```sh\r\n$ export FSSPEC_ABFS='{\"anon\": false}'\r\n$ python main.py\r\n```\r\n\r\n### Error messages and logs\r\n\r\n```sh\r\nazure.core.exceptions.ResourceExistsError: The blob type is invalid for this operation.\r\n```\r\n\r\n\r\n### Environment\r\n\r\n<details>\r\n  <summary>Current environment</summary>\r\n\r\n* CUDA:\r\n        - GPU:               None\r\n        - available:         False\r\n        - version:           None\r\n* Lightning:\r\n        - lightning:         2.1.0rc0\r\n        - lightning-cloud:   0.5.37\r\n        - lightning-utilities: 0.9.0\r\n        - pytorch-lightning: 2.0.7\r\n        - torch:             2.0.1\r\n        - torchmetrics:      1.1.1\r\n* Packages:\r\n        - absl-py:           1.4.0\r\n        - adlfs:             2023.8.0\r\n        - aiohttp:           3.8.5\r\n        - aiosignal:        ",
+    "comments": [
+      {
+        "author": "user-11",
+        "body": "Found a workaround, however the training configuration and hyper-params are not saved, only by setting `logger=[pl.loggers.CSVLogger(save_dir=OUTPUT_DIR)]`:\r\n```py3\r\n# pip install pytorch_lightning adlfs tensorboard\r\n# main.py\r\nimport pytorch_lightning as pl\r\nfrom pytorch_lightning.demos import boring_classes\r\n\r\nOUTPUT_DIR = \"az://<container-name>@<name>.blob.core.windows.net/tmp/\"\r\n\r\nclass TestModel(boring_classes.BoringModel):\r\n    def training_step(self, batch, batch_idx):\r\n        loss = self.step(batch)\r\n        self.log(\"train/StepLoss\", loss, prog_bar=True)\r\n        return {\"loss\": loss}\r\n\r\nmodel = TestModel()\r\ntrainer = pl.Trainer(\r\n    max_epochs=10,\r\n    default_root_dir=OUTPUT_DIR,\r\n    logger=[],\r\n)\r\ntrainer.fit(model)\r\n```"
+      },
+      {
+        "author": "user-7",
+        "body": "I'm having the same issue (`lightning==2.2.1`). The above workaround also doesn't work anymore:\r\n\r\n```\r\nRequestId:6e66d9c5-d01e-0033-375a-8670de000000\r\nTime:2024-04-04T06:33:45.2051891Z\r\nErrorCode:InvalidBlobType\r\nContent: <?xml version=\"1.0\" encoding=\"utf-8\"?><Error><Code>InvalidBlobType</Code><Message>The blob type is invalid for this operation.\r\nRequestId:6e66d9c5-d01e-0033-375a-8670de000000\r\nTime:2024-04-04T06:33:45.2051891Z</Message></Error>\r\n```"
+      }
+    ]
+  },
+  "20280": {
+    "number": 20280,
+    "title": "SLURM resubmission crashes because of multiprocessing error",
+    "state": "open",
+    "body": "### Bug description\n\nHello,\r\n\r\ni am using `SLURMEnvironment` plugin to resubmit jobs automatically. So far it has been working seamlessly\r\non my academic cluster, but recently when the auto-requeue signal is sent, the python script fails because of some multiprocessing error.\r\n\r\nIt appears to me that workers in the dataloader are not shut down correctly.\r\nSetting `num_workers=0` does not solve the issue, the same problem persists.\r\n\r\nI couldn't really find anything online that addresses a similar issue, so I'd be glad to hear any tips on how to overcome this.\r\nThanks!\r\n\r\n\r\n\n\n### What version are you seeing the problem on?\n\nv2.4\n\n### How to reproduce the bug\n\n_No response_\n\n### Error messages and logs\n\n```\r\nEpoch 1235: 100Handling auto-requeue signal: 1\r\nException in thread Thread-3:\r\nTraceback (most recent call last):\r\n  File \"/path/to/env/envs/vhg-torch/lib/python3.9/threading.py\", line 980, in _bootstrap_inner\r\n    self.run()\r\n  File \"/path/to/env/envs/vhg-torch/lib/python3.9/threading.py\", line 917, in run\r\n    self._target(*self._args, **self._kwargs)\r\n  File \"/path/to/env/envs/vhg-torch/lib/python3.9/site-packages/torch/utils/data/_utils/pin_memory.py\", line 54, in _pin_memory_loop\r\n    do_one_step()\r\n  File \"/path/to/env/envs/vhg-torch/lib/python3.9/site-packages/torch/utils/data/_utils/pin_memory.py\", line 31, in do_one_step\r\n    r = in_queue.get(timeout=MP_STATUS_CHECK_INTERVAL)\r\n  File \"/path/to/env/envs/vhg-torch/lib/python3.9/multiprocessing/queues.py\", line 122, in get\r\n    return _ForkingPickler.loads(res)\r\n  File \"/path/to/env/envs/vhg-torch/lib/python3.9/site-packages/torch/multiprocessing/reductions.py\", line 495, in rebuild_storage_fd\r\n    fd = df.detach()\r\n  File \"/path/to/env/envs/vhg-torch/lib/python3.9/multiprocessing/resource_sharer.py\", line 57, in detach\r\n    with _resource_sharer.get_connection(self._id) as conn:\r\n  File \"/path/to/env/envs/vhg-torch/lib/python3.9/multiprocessing/resource_sharer.py\", line 86, in get_connection\r\n    c = Client(address, authkey=process.current_process().authkey)\r\n  File \"/path/to/env/envs/vhg-torch/lib/python3.9/multiprocessing/connection.py\", line 502, in Client\r\n    c = SocketClient(address)\r\n  File \"/path/to/env/envs/vhg-torch/lib/python3.9/multiprocessing/connection.py\", line 630, in SocketClient\r\n    s.connect(address)\r\nFileNotFoundError: [Errno 2] No such file or directory\r\nTraceback (most recent call last):\r\nTraceback (most recent call last):\r\nTraceback (most recent call last):\r\nTraceback (most recent call last):\r\nTraceback (most recent call last):\r\nTraceback (most recent call last):\r\nTraceback (most recent call last):\r\n  File \"/path/to/env/envs/vhg-torch/lib/python3.9/multiprocessing/util.py\", line 300, in _run_finalizers\r\n    finalizer()\r\n  File \"/path/to/env/envs/vhg-torch/lib/python3.9/multiprocessing/util.py\", line 300, in _run_finalizers\r\n    finalizer()\r\n  File \"/path/to/env/envs/vhg-torch/lib/python3.9/multiprocessing/util.py\", line 300, in _run_finalizers\r\n    finalizer()\r\n  ",
+    "comments": [
+      {
+        "author": "user-17",
+        "body": "Exactly same error here.\r\n\r\nAny updates?"
+      },
+      {
+        "author": "user-16",
+        "body": "this one seems to be similar to https://github.com/Lightning-AI/pytorch-lightning/issues/20270\r\ndowngrading to 2.3.1 should help\r\n\r\nother then that there is no solution "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-16 @user-17,\n\nThanks for reporting this! I think this might have been resolved.\n\n**Suggested workarounds:**\n- Upgrade fsspec: `pip install \"fsspec[http]>=2025.5.0\"`\n- Use `pin_memory=False` in your DataLoaders\n- Set checkpoint dir on local storage (same filesystem as `/tmp`)\n\nCould you try with the upgraded `fsspec` and report back if the issue persists?\n\nAlso, could you share a minimal reproducible example that triggers the issue? Even a small script + SLURM config snippet would help us reproduce it on a test cluster."
+      }
+    ]
+  },
+  "16310": {
+    "number": 16310,
+    "title": "MLFlow logger with remote tracking fails with CLI",
+    "state": "open",
+    "body": "### Bug description\r\n\r\nRunning with the LightningCLI, MLflow logger, and `MLFLOW_TRACKING_URI` environment variable set causes an assertion failure with logging. I think using a remote tracking server causes no local log files to be created which the CLI doesn't like.\r\n\r\nI suspect it's a similar issue to #12748.\r\n\r\n### How to reproduce the bug\r\n\r\n```python\r\nfrom pytorch_lightning.cli import LightningCLI\r\nfrom helpers import BoringModel, BoringDataModule\r\n\r\ncli = LightningCLI(\r\n    BoringModel, \r\n    BoringDataModule, \r\n    trainer_defaults=dict(\r\n        max_epochs=1,\r\n        logger=\"pytorch_lightning.loggers.MLFlowLogger\"\r\n    )\r\n)\r\n```\r\n```shell\r\n$ mlflow server\r\n...\r\n$ MLFLOW_TRACKING_URI=http://localhost:5000 python main.py fit\r\n```\r\n\r\n\r\n### Error messages and logs\r\n\r\n```\r\n/home/vscode/.local/lib/python3.10/site-packages/pytorch_lightning/trainer/configuration_validator.py:106: UserWarning: You passed in a `val_dataloader` but have no `validation_step`. Skipping val loop.\r\n  rank_zero_warn(\"You passed in a `val_dataloader` but have no `validation_step`. Skipping val loop.\")\r\nTraceback (most recent call last):\r\n  File \"/workspaces/mlflow_log_error/main.py\", line 4, in <module>\r\n    cli = LightningCLI(\r\n  File \"/home/vscode/.local/lib/python3.10/site-packages/pytorch_lightning/cli.py\", line 354, in __init__\r\n    self._run_subcommand(self.subcommand)\r\n  File \"/home/vscode/.local/lib/python3.10/site-packages/pytorch_lightning/cli.py\", line 665, in _run_subcommand\r\n    fn(**fn_kwargs)\r\n  File \"/home/vscode/.local/lib/python3.10/site-packages/pytorch_lightning/trainer/trainer.py\", line 603, in fit\r\n    call._call_and_handle_interrupt(\r\n  File \"/home/vscode/.local/lib/python3.10/site-packages/pytorch_lightning/trainer/call.py\", line 38, in _call_and_handle_interrupt\r\n    return trainer_fn(*args, **kwargs)\r\n  File \"/home/vscode/.local/lib/python3.10/site-packages/pytorch_lightning/trainer/trainer.py\", line 645, in _fit_impl\r\n    self._run(model, ckpt_path=self.ckpt_path)\r\n  File \"/home/vscode/.local/lib/python3.10/site-packages/pytorch_lightning/trainer/trainer.py\", line 1037, in _run\r\n    self._call_setup_hook()  # allow user to setup lightning_module in accelerator environment\r\n  File \"/home/vscode/.local/lib/python3.10/site-packages/pytorch_lightning/trainer/trainer.py\", line 1285, in _call_setup_hook\r\n    self._call_callback_hooks(\"setup\", stage=fn)\r\n  File \"/home/vscode/.local/lib/python3.10/site-packages/pytorch_lightning/trainer/trainer.py\", line 1380, in _call_callback_hooks\r\n    fn(self, self.lightning_module, *args, **kwargs)\r\n  File \"/home/vscode/.local/lib/python3.10/site-packages/pytorch_lightning/cli.py\", line 216, in setup\r\n    assert log_dir is not None\r\nAssertionError\r\n```\r\n\r\n\r\n### Environment\r\n\r\n```\r\n* CUDA:\r\n        - GPU:               None\r\n        - available:         False\r\n        - version:           11.7\r\n* Lightning:\r\n        - lightning:         1.9.0rc0\r\n        - lightning-cloud:   0.5.16\r\n        - lightning-utilities:",
+    "comments": [
+      {
+        "author": "user-18",
+        "body": "A temporary workaround for this issue is to declare a TensorBoard logger ahead of the MLflow one.\r\nLike so,\r\n```\r\ncli = LightningCLI(\r\n    BoringModel, \r\n    BoringDataModule, \r\n    trainer_defaults=dict(\r\n        max_epochs=1,\r\n        logger=[\r\n            {\r\n                \"class_path\": \"pytorch_lightning.loggers.TensorBoardLogger\", \r\n                \"init_args\": {\r\n                    \"save_dir\": \"tb_logs\",\r\n                }\r\n            },\r\n            \"pytorch_lightning.loggers.MLFlowLogger\"\r\n        ],\r\n    )\r\n)\r\n\r\n``` "
+      },
+      {
+        "author": "user-19",
+        "body": "@user-18 Here is my workaround, which still leverage the goodness of CLI module and its yaml file.\r\n\r\n```\r\ncli = LightningCLI(\r\n    LightningToneClassifier,\r\n    ToneDataModule,\r\n    run=False,\r\n)\r\n\r\nwith open(\"lightning/trainer_config.yaml\", \"r\") as f:\r\n    config = yaml.safe_load(f)\r\nconfig[\"trainer\"][\"logger\"] = MLFlowLogger(\r\n    experiment_name=\"xxxx\",\r\n    tracking_uri=\"xxxx\",\r\n    log_model=True,\r\n)\r\ntrain_dataloader, val_dataloader = prepare_fit_dataloader(cli)\r\ntrainer = Trainer(**config[\"trainer\"])\r\ntrainer.logger.log_hyperparams(config)\r\ntrainer.fit(cli.model, train_dataloader, val_dataloader)\r\n```"
+      },
+      {
+        "author": "user-20",
+        "body": "Hi @user-19 ,\r\n\r\nthank you for your workaround! can you share what is `prepare_fit_dataloader`?"
+      },
+      {
+        "author": "user-4",
+        "body": "The issue surfaces through the usage in LightningCLI because it calls the log dir, but the origin of the problem as suspected by @user-18 is because the save_dir from MLFlowLogger returns None in case tracking is not done locally:\r\n\r\nhttps://github.com/Lightning-AI/lightning/blob/41f0425a8dbd54030c5b711f92340dc8dc41c173/src/lightning/pytorch/loggers/mlflow.py#L299-L301\r\n\r\nTwo possible solutions that come to my mind to address this:\r\n1. Return a default local directory instead of None so LightningCLI can save the config \r\n2. In the LightningCLI, if the value returned by the log dir is None, save the config to a different place (as if there is no logger). "
+      },
+      {
+        "author": "user-21",
+        "body": "> Two possible solutions that come to my mind to address this:\r\n\r\nI can suggest another solution. Implement a custom save config class that saves the config in mlflow as an artifact, instead of saving the config locally. If logging remotely it makes sense to also save the config in the same place."
+      },
+      {
+        "author": "user-22",
+        "body": "A realization of @user-21 idea:\r\n\r\n```python\r\nfrom lightning.pytorch.cli import SaveConfigCallback\r\nclass MLFlowSaveConfigCallback(SaveConfigCallback):\r\n    def __init__(self, parser, config, config_filename='config.yaml', overwrite=False, multifile=False):\r\n        super().__init__(parser, config, config_filename, overwrite, multifile, save_to_log_dir=False)\r\n\r\n    def save_config(self, trainer: Trainer, pl_module: LightningModule, stage: str) -> None:\r\n        # Convert Namespace to dict\r\n        config_dict = vars(self.config)\r\n\r\n        # Log parameters to MLFlow\r\n        pl_module.logger.log_hyperparams(config_dict)\r\n```\r\n\r\n```python\r\ndef cli_compile_main():\r\n    cli = LightningCLI(datamodule_class=PRDataModule, run=False, save_config_callback=MLFlowSaveConfigCallback)\r\n    compiled_model = torch.compile(cli.model)\r\n    cli.trainer.fit(compiled_model, datamodule=cli.datamodule)\r\n    cli.trainer.test(datamodule=cli.datamodule)\r\n```"
+      },
+      {
+        "author": "user-23",
+        "body": "Slight modification of @user-22 if you want to safe the file as yaml\r\n\r\n```python\r\nfrom lightning.pytorch.cli import SaveConfigCallback\r\nfrom lightning import Trainer, LightningModule\r\nimport tempfile\r\n\r\n\r\nclass MLFlowSaveConfigCallback(SaveConfigCallback):\r\n    def __init__(self, parser, config, config_filename='config.yaml', overwrite=False, multifile=False):\r\n        super().__init__(parser, config, config_filename, overwrite, multifile, save_to_log_dir=False)\r\n\r\n    def save_config(self, trainer: Trainer, pl_module: LightningModule, stage: str) -> None:\r\n        # convert namespace to dict\r\n        config_dict = vars(self.config)\r\n\r\n        if trainer.is_global_zero:\r\n            with tempfile.TemporaryDirectory() as tmp_dir:\r\n                config_path = Path(tmp_dir) / 'config.yaml'\r\n                self.parser.save(\r\n                    self.config, config_path, skip_none=False, overwrite=self.overwrite, multifile=self.multifile\r\n                )\r\n                trainer.logge"
+      },
+      {
+        "author": "user-24",
+        "body": "Slight refactoring of @user-23 code with a full example:\r\n\r\n```python\r\nfrom pathlib import Path\r\nimport tempfile\r\n\r\nfrom lightning.pytorch.cli import LightningCLI, SaveConfigCallback\r\nfrom lightning import Trainer, LightningModule\r\n\r\n\r\nclass MLFlowSaveConfigCallback(SaveConfigCallback):\r\n    def __init__(self, parser, config, config_filename='config.yaml', overwrite=False, multifile=False):\r\n        super().__init__(parser, config, config_filename,\r\n                         overwrite, multifile, save_to_log_dir=False)\r\n\r\n    def save_config(self, trainer: Trainer, pl_module: LightningModule, stage: str) -> None:\r\n        if trainer.is_global_zero:\r\n            with tempfile.TemporaryDirectory() as tmp_dir:\r\n                config_path = Path(tmp_dir) / 'config.yaml'\r\n                self.parser.save(\r\n                    self.config, config_path, skip_none=False, overwrite=self.overwrite, multifile=self.multifile\r\n                )\r\n                trainer.logger.experiment.log_artifac"
+      },
+      {
+        "author": "user-25",
+        "body": "I guess saving the config to MLflow is the best approach. It's unfortunate that then the user of the CLI must use MLflow and selecting a different logger from the command line doesn't work.\n\nPerhaps `SaveConfigCallback` should skip saving the config, when `log_dir` is `None`, instead of failing an assertion. There's the `save_to_log_dir` argument, but it's not possible to set it to `False`, except when subclassing."
+      }
+    ]
+  },
+  "17066": {
+    "number": 17066,
+    "title": "SLURM training: training freezes when using `ddp` and torchdata",
+    "state": "open",
+    "body": "### Bug description\r\n\r\nTraining freezes when using `ddp` on slurm cluster (`dp` runs as expected). The dataset is loaded via torchdata from an s3 bucket. Similar behaviour also arises when using webdataset.\r\n\r\nPossibly a linked issue: https://github.com/Lightning-AI/lightning/issues/16893#issue-1602261381 \r\n\r\nError:\r\n\r\nNo Error is thrown\r\n\r\nUPDATE:\r\n\r\nRemoving `val_step` and `test_step` from `pl.LightningModule` gives us the following:\r\n\r\n```\r\nEpoch 0: : 27it [00:10,  2.57it/s, losTraceback (most recent call last):\r\n  File \"/fsx/user-26/code/deep-learning-project-template/project/lit_td.py\", line 152, in <module>\r\n    cli_main()\r\n  File \"/fsx/user-26/code/deep-learning-project-template/project/lit_td.py\", line 148, in cli_main\r\n    trainer.fit(model, datamodule=data)\r\n  File \"/fsx/home-knoriy/miniconda3/envs/clasp/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 608, in fit\r\n    call._call_and_handle_interrupt(\r\n  File \"/fsx/home-knoriy/miniconda3/envs/clasp/lib/python3.9/site-packages/pytorch_lightning/trainer/call.py\", line 38, in _call_and_handle_interrupt\r\n    return trainer_fn(*args, **kwargs)\r\n  File \"/fsx/home-knoriy/miniconda3/envs/clasp/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 650, in _fit_impl\r\n    self._run(model, ckpt_path=self.ckpt_path)\r\n  File \"/fsx/home-knoriy/miniconda3/envs/clasp/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 1112, in _run\r\n    results = self._run_stage()\r\n  File \"/fsx/home-knoriy/miniconda3/envs/clasp/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 1191, in _run_stage\r\n    self._run_train()\r\n  File \"/fsx/home-knoriy/miniconda3/envs/clasp/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 1214, in _run_train\r\n    self.fit_loop.run()\r\n  File \"/fsx/home-knoriy/miniconda3/envs/clasp/lib/python3.9/site-packages/pytorch_lightning/loops/loop.py\", line 200, in run\r\n    self.on_advance_end()\r\n  File \"/fsx/home-knoriy/miniconda3/envs/clasp/lib/python3.9/site-packages/pytorch_lightning/loops/fit_loop.py\", line 295, in on_advance_end\r\n    self.trainer._call_callback_hooks(\"on_train_epoch_end\")\r\n  File \"/fsx/home-knoriy/miniconda3/envs/clasp/lib/python3.9/site-packages/pytorch_lightning/trainer/trainer.py\", line 1394, in _call_callback_hooks\r\n    fn(self, self.lightning_module, *args, **kwargs)\r\n  File \"/fsx/home-knoriy/miniconda3/envs/clasp/lib/python3.9/site-packages/pytorch_lightning/callbacks/model_checkpoint.py\", line 304, in on_train_epoch_end\r\n    self._save_topk_checkpoint(trainer, monitor_candidates)\r\n  File \"/fsx/home-knoriy/miniconda3/envs/clasp/lib/python3.9/site-packages/pytorch_lightning/callbacks/model_checkpoint.py\", line 363, in _save_topk_checkpoint\r\n    self._save_none_monitor_checkpoint(trainer, monitor_candidates)\r\n  File \"/fsx/home-knoriy/miniconda3/envs/clasp/lib/python3.9/site-packages/pytorch_lightning/callbacks/model_checkpoint.py\", line 666, in _save_none_monitor_checkpoint\r\n",
+    "comments": [
+      {
+        "author": "user-27",
+        "body": "Hi @user-26 did you solve this?\r\nI have the same issue since march"
+      },
+      {
+        "author": "user-5",
+        "body": "Ive seen issues that stem from using datapipes with the old dataloader class. Maybe using DataLoader2 from torchdata helps"
+      },
+      {
+        "author": "user-27",
+        "body": "@user-5 for me it crashed randomly after saving checkpoint, sometimes crashed, sometimes no."
+      },
+      {
+        "author": "user-26",
+        "body": "> ```python\r\n> .sharding_filter()\\\r\n> \t\t\t.open_files_by_fsspec(mode='rb')\\\r\n> \t\t\t.load_from_tar() \\\r\n> ```\r\n\r\nA workaround that's worked for me is to move `sharding_filter` below `load_from_tar`. It's not ideal because you are loading data without sharding. But fixed most of the issues.\r\n\r\nTry this:\r\n\r\n```python\r\ndef _create_pipeline(self, data_dir):\r\n        datapipe = torchdata.datapipes.iter.IterableWrapper(data_dir)\\\r\n\t        .shuffle()\\\r\n\t        .open_files_by_fsspec(mode='rb')\\\r\n\t        .load_from_tar() \\\r\n                .sharding_filter() \\\r\n\t        .batch(2) \\\r\n\t        .map(self.to_sampels)\r\n        \r\n        return datapipe\r\n```"
+      },
+      {
+        "author": "user-26",
+        "body": "> Ive seen issues that stem from using datapipes with the old dataloader class. Maybe using DataLoader2 from torchdata helps\r\n\r\nFor me, dataloader2 causes issues when using Reading Services; it leads to freezing and worse performance. The classic dataloader worked best for me when using PL and TorchData.\r\n"
+      },
+      {
+        "author": "user-5",
+        "body": "cc @user-28"
+      },
+      {
+        "author": "user-28",
+        "body": "I think the main problem is unbalanced data sharding across distributed ranks, which causes hanging.\r\nYou can always attach a `fullsync` DataPipe at the end of your pipeline.\r\n\r\n> For me, dataloader2 causes issues when using Reading Services; it leads to freezing and worse performance. The classic dataloader worked best for me when using PL and TorchData.\r\n\r\nCan you pls shed more light on this? In theory and based on our benchmarking, DataLoader2 should perform better than DataLoader."
+      },
+      {
+        "author": "user-26",
+        "body": "> Can you pls shed more light on this? In theory and based on our benchmarking, DataLoader2 should perform better than DataLoader.\r\n\r\nThank you, I'll try adding `fullsync` with dataloader2.\r\n\r\nFeel free to ask for anything I miss here:\r\n\r\nThe cluster manager is `Slurm`; using `openmpi`; PL version `1.9.x`. The data is streamed from cloud storage using `fsspec`. `dataloader2` uses both `DistributedReadingService` and `MultiProcessingReadingService`.  I haven't tested these extensively, but from observations, DataLoader is about ~1.5x to ~2x faster; it seems to play better with PL, and scaling is more consistent. Adding more GPU when using DataLoader2 was slower for me.\r\n\r\nOther observations:\r\n- `.shuffle()` placed after `.load_from_tar()` is extremely slow, reducing `buffer_size` helps.\r\n\r\n@user-28 Does the order of reading services matter?"
+      },
+      {
+        "author": "user-29",
+        "body": "I am having an issue of very slow training after something on the cluster I am using got updated, which I am trying to figure out with the admins, but I can see there are some difference in logs I am getting\r\n\r\nin particular, I am receiving very similar logs as in this post, my nccl logs are:\r\n\r\n\r\n```\r\nNCCL INFO NET/OFI Using aws-ofi-nccl 1.5.0aws\r\n\r\nNCCL INFO NET/OFI Configuring AWS-specific options\r\n\r\nNCCL INFO NET/OFI Setting FI_EFA_FORK_SAFE environment variable to 1\r\n\r\nNCCL INFO NET/OFI Running on p4d.24xlarge platform, NCCL_TOPO_FILE environment variable is already set to /usr/local/cuda-11.3/efa/share/aws-ofi-nccl/xml/p4d-24xl-topo.xml\r\n\r\nNCCL INFO NET/OFI Selected Provider is efa (found 4 nics)\r\n\r\n```\r\n\r\nhowever, previously I was getting the logs:\r\n\r\n```\r\nNCCL INFO NET/OFI Using aws-ofi-nccl 1.4.0aws\r\n\r\nNCCL INFO NET/OFI Running on p4d.24xlarge platform, Setting NCCL_TOPO_FILE environment variable to /usr/local/cuda-11.3/efa/share/aws-ofi-nccl/xml/p4d-24xl-topo.xml\r\n\r\nNCCL INFO"
+      },
+      {
+        "author": "user-26",
+        "body": "Update: \r\n\r\nI've been stepping through the PL code, which looks to happen in the Closure class `pytorch_lightning.loops.optimization.automatic: Closure`. More specifically, line 137 and line 141 when `self._result.loss` is called.\r\n\r\nFurther notes and things that may help isolate this issue:\r\n`sync_dist=True` also causes the freezing"
+      }
+    ]
+  },
+  "8895": {
+    "number": 8895,
+    "title": "Runtime events with support for custom handlers",
+    "state": "open",
+    "body": "## 🚀 Feature\r\n\r\n<!-- A clear and concise description of the feature proposal -->\r\n\r\n### Motivation\r\n\r\nFor large scale Lightning deployments, it is very useful to collect certain types of trainer runtime event into an analytics system, so engineers can monitor the overall healthiness of the deployment, as well as obtain useful information for troubleshooting failed/stuck jobs.\r\n\r\nCurrently, Lightning mainly relies on logging for communicating trainer runtime information to the users. However, logging is not ideal for large scale deployments for the following reasons:\r\n- Many training jobs in large scale deployments are automated, long-running batch jobs. It is impractical to expect the users to notice certain warnings (e.g. API deprecation warning) in a timely fashion.\r\n- The desirable amount of events for debuggability purposes may be too verbose for logging.\r\n- Logging is generally less structured.\r\n\r\n### Pitch\r\n\r\n- Introduce the concept of runtime event in Lightning\r\n- Emit appropriate runtime events at appropriate places (e.g. deprecated API usage)\r\n- Provide a mechanism to register custom handlers for runtime events\r\n    - Ideally, we'd like a mechanism to transparently register default handlers (unlike `Plugin` which requires users to explicitly pass to `Trainer`) which don’t belong in the core trainer directly. This could make Lightning more attractive for larger organizations that relies on shared tooling.\r\n    - The backend registration mechanism of `fsspec` is an ideal candidate solution: https://filesystem-spec.readthedocs.io/en/latest/developer.html#implementing-a-backend\r\n\r\n### Alternatives\r\n\r\n### Additional context\r\nA similar prior feature request: https://github.com/PyTorchLightning/pytorch-lightning/issues/8186\r\n\r\n______________________________________________________________________\r\n\r\n#### If you enjoy Lightning, check out our other projects! ⚡\r\n\r\n<sub>\r\n\r\n- [**Metrics**](https://github.com/PyTorchLightning/metrics): Machine learning metrics for distributed, scalable PyTorch applications.\r\n\r\n- [**Flash**](https://github.com/PyTorchLightning/lightning-flash): The fastest way to get a Lightning baseline! A collection of tasks for fast prototyping, baselining, finetuning and solving problems with deep learning\r\n\r\n- [**Bolts**](https://github.com/PyTorchLightning/lightning-bolts): Pretrained SOTA Deep Learning models, callbacks and more for research and production with PyTorch Lightning and PyTorch\r\n\r\n- [**Lightning Transformers**](https://github.com/PyTorchLightning/lightning-transformers): Flexible interface for high performance research using SOTA Transformers leveraging Pytorch Lightning, Transformers, and Hydra.\r\n\r\n</sub>\r\n",
+    "comments": [
+      {
+        "author": "user-31",
+        "body": "I think this is a great proposal! Making the trainer easier to debug will tremendously benefit both users and developers. \r\n\r\nRegarding the event & event handlers, such a design was also employed for torchelastic here: https://pytorch.org/elastic/0.2.0rc1/events.html (since upstreamed to torch.distributed.elastic)\r\n\r\nWhile Lightning cannot assume the usage of torchelastic, this framing can be beneficial for how we design such a system in Lightning, especially since torchelastic is a mature system.\r\n\r\nThe idea of defining events (with names, types/priority levels, and metadata), event handlers that subscribe to these events, and a registration system like fsspec's to easily enable custom backends that don't belong in the core is very compelling.\r\n\r\nFrom the end user POV, I imagine we could do something like change the debug level and immediately have the full trace of execution across different ranks. This will make debugging issues like collective hangs so much easier, since we can tra"
+      },
+      {
+        "author": "user-5",
+        "body": "Some potential requirements for the events could be:\r\n- Supporting structured data: dataclasses/dictionaries/named tuples\r\n- Supporting text data: human-readable messages\r\n- Supporting handlers to files: JSON, plain text\r\n- Integrating with profilers\r\n- Supporting logging any byte data (artifacts): Either the events are able to serialize these or there's a mechanism to link saved data to an event\r\n\r\n> discussing the internal debugger and removing it from the trainer\r\n\r\nIMO the `InternalDebugger` should be fully removed. It's just there to avoid writting better tests / better structured code :P"
+      },
+      {
+        "author": "user-31",
+        "body": "> IMO the InternalDebugger should be fully removed. It's just there to avoid writting better tests / better structured code :P\r\n \r\n+1 "
+      },
+      {
+        "author": "user-32",
+        "body": "@user-5 Yes, the internal debugger should be fully removed. It caused more pain than helped :) "
+      },
+      {
+        "author": "user-33",
+        "body": "Quick update on this, I'm working on an internal prototype and will post a follow up with more detailed design."
+      },
+      {
+        "author": "user-30",
+        "body": "cc: @user-55 the exception collection feature you are looking into should most likely use the same plugin mechanism as described in the issue."
+      },
+      {
+        "author": "user-32",
+        "body": "Dear @user-33,\r\n\r\nCould you sync with @user-5 about your design (maybe a quick call) ?\r\nI would like to make sure we start to collaborate with proper pairing on both side.\r\n\r\nBest,\r\nT.C   "
+      },
+      {
+        "author": "user-33",
+        "body": "@user-32, sure will reach out to @user-5 when I have something to share :) "
+      },
+      {
+        "author": "user-33",
+        "body": "Hi all, here's the proposal doc for events: https://docs.google.com/document/d/1DwmkGODQRgx0-QQL5HsO_okHI3iRjl1dallyCy85QmE/edit#heading=h.6cp7sicq2fv. Please share your thoughts on the doc :) Thanks!"
+      }
+    ]
+  },
+  "19113": {
+    "number": 19113,
+    "title": "Support saving and loading from remote paths in Fabric",
+    "state": "open",
+    "body": "### Bug description\r\n\r\nHello everyone,\r\n\r\nI am training a model using FSDP with Fabric.\r\n\r\nWhen saving the model to an S3 bucket calling the following function:\r\n```\r\n    fabric.save(\r\n        \"s3://model-training-us/models/experiment/checkpoint\",\r\n        state\r\n    )\r\n```\r\n\r\nI get the following error:\r\n```\r\n───────────────────── Traceback (most recent call last) ──────────────────────╮\r\n│ /vision-language-model/vlm/train_vlm_fabric.py:520 in <module>               │\r\n│                                                                              │\r\n│   517 │                                                                      │\r\n│   518 │   cfg = Config(args)                                                 │\r\n│   519 │                                                                      │\r\n│ ❱ 520 │   main(cfg)                                                          │\r\n│   521                                                                        │\r\n│                                                                              │\r\n│ /vision-language-model/vlm/train_vlm_fabric.py:387 in main                   │\r\n│                                                                              │\r\n│   384 │   │   \"step_count\": 0,                                               │\r\n│   385 │   }                                                                  │\r\n│   386 │                                                                      │\r\n│ ❱ 387 │   fabric.save(                                                       │\r\n│   388 │   │   \"s3://model-training-us/models/experiment1/t │\r\n│   389 │   │   state,                                                         │\r\n│   390 │   )                                                                  │\r\n│                                                                              │\r\n│ /usr/lib/python3/dist-packages/lightning/fabric/fabric.py:738 in save        │\r\n│                                                                              │\r\n│    735 │   │   │   for k, v in filter.items():                               │\r\n│    736 │   │   │   │   if not callable(v):                                   │\r\n│    737 │   │   │   │   │   raise TypeError(f\"Expected `fabric.save(filter=.. │\r\n│ ❱  738 │   │   self._strategy.save_checkpoint(path=path, state=_unwrap_objec │\r\n│    739 │   │   self.barrier()                                                │\r\n│    740 │                                                                     │\r\n│    741 │   def load(                                                         │\r\n│                                                                              │\r\n│ /usr/lib/python3/dist-packages/lightning/fabric/strategies/fsdp.py:498 in    │\r\n│ save_checkpoint                                                              │\r\n│                                                                              │\r\n│   495 │   │   │   │   │   _apply_filter(key, filter or {}, converted, full_s │\r\n│ ",
+    "comments": [
+      {
+        "author": "user-4",
+        "body": "Hey @user-34 \r\n\r\nIt is just not supported / implemented. So therefore it's not really a bug. Generally if it's not documented, you can assume it is not supported. It's definitely something we want, someone just has to do it :)\r\n\r\n\r\n(duplicate of #18786)"
+      }
+    ]
+  },
+  "20348": {
+    "number": 20348,
+    "title": "Add support S3 as a storage option for profiling results",
+    "state": "open",
+    "body": "### Description & Motivation\n\nDescription: Currently, when using the <code>default_root_dir</code> parameter to specify an S3 bucket as the storage location for profiling results, the profiler fails to work due to lack of support for S3 I/O. This limitation prevents users from storing profiling results in a scalable and durable storage solution.\r\n\r\nMotivation: As a user of the Lightning library, I would like to be able to store profiling results in an S3 bucket to take advantage of its scalability, durability, and ease of access. This would enable me to easily collect and analyze profiling data from multiple runs, and share the results with others.\r\n\n\n### Pitch\n\nI propose that the Lightning library be extended to support S3 as a storage option for profiling results. This could be achieved by adding S3 I/O support to the profiler, allowing users to specify an S3 bucket as the <code>default_root_dir</code>. This would enable users to store profiling results in a flexible and scalable storage solution, and would greatly enhance the usability and usefulness of the profiling feature.\n\n### Alternatives\n\n_No response_\n\n### Additional context\n\n_No response_\n\ncc @user-2 @user-53",
+    "comments": []
+  },
+  "19729": {
+    "number": 19729,
+    "title": "`log_dir` contains both forward and backward slashes as path separator when using remote file location as `default_root_dir` on windows",
+    "state": "open",
+    "body": "### Bug description\n\nI am running on Windows OS and storing logs and artifacts on remote location (AWS S3).  \r\n\r\n```python\r\npath_pl_logs = f\"s3://{bucket_name}/pytorch-lightning-logs/{experiment_name}\"\r\ntrainer = pl.Trainer(\r\n    accelerator=\"gpu\",\r\n    devices=1,\r\n    max_epochs=checkpoint_n_epoch,\r\n    default_root_dir=path_pl_logs,\r\n)\r\n```\r\n\r\nWith the following output containing a mixture of forward and backward slashes. This causes problems with the folder structure.\r\n```python\r\ntrainer.log_dir\r\n>> s3://{bucket_name}/pytorch-lightning-logs/{experiment_name}\\lightning_logs\\version_0\r\n```\r\n\r\nIdeally when using a remote location it would not use os.path.join to create folder/filenames but instead just use a forward slash file separator.\r\n\r\n\n\n### What version are you seeing the problem on?\n\nv2.2\n\n### How to reproduce the bug\n\n_No response_\n\n### Error messages and logs\n\n```\r\n# Error messages and logs here please\r\n```\r\n\n\n### Environment\n\n<details>\r\n  <summary>Current environment</summary>\r\n\r\n```\r\n#- Lightning Component (e.g. Trainer, LightningModule, LightningApp, LightningWork, LightningFlow): Trainer\r\n#- PyTorch Lightning Version (e.g., 1.5.0): 2.2.1\r\n#- Lightning App Version (e.g., 0.5.2): \r\n#- PyTorch Version (e.g., 2.0): 2.2.2\r\n#- Python version (e.g., 3.9): 3.11\r\n#- OS (e.g., Linux): Windows 11\r\n#- CUDA/cuDNN version: 12.1\r\n#- GPU models and configuration: NVIDIA RTX A2000 Laptop GPU\r\n#- How you installed Lightning(`conda`, `pip`, source): pipenv\r\n#- Running environment of LightningApp (e.g. local, cloud): local\r\n```\r\n\r\n</details>\r\n\n\n### More info\n\n_No response_\n\ncc @maintainer-4 @user-2 @user-53",
+    "comments": []
+  },
+  "20243": {
+    "number": 20243,
+    "title": "Checkpoints Saving with different permissions to account defaults",
+    "state": "open",
+    "body": "### Bug description\r\n\r\nWhen working on a managed cluster all our files save with \"-rw-r--r--\" permissions. However the checkpoint files from lightning are being saved with \"-rw-------\" permissions. We've gone round in circles trying to debug this and do not understand. Is there anything in the lightning code base that is causing this/is it configurable?\r\n\r\n### Environment\r\n\r\n<details>\r\n  <summary>Current environment</summary>\r\n\r\n```\r\n#- PyTorch Lightning Version (e.g., 2.4.0): 2.4.0\r\n#- PyTorch Version (e.g., 2.4): 2.4\r\n#- Python version (e.g., 3.12): 3.12\r\n#- OS (e.g., Linux): Ubuntu 22\r\n#- CUDA/cuDNN version: 12.5\r\n#- GPU models and configuration: `8xH100`\r\n#- How you installed Lightning(`conda`, `pip`, source): `conda`\r\n```\r\n\r\n</details>\r\n",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "I am going to post a plausible explanation, but I have not been able to synthetic reproduce the issue.\n\nUnder the hood lightning uses `fsspec`:\nhttps://github.com/Lightning-AI/pytorch-lightning/blob/f4e0a19b415be9c75447c13a410672d428c93929/src/lightning/fabric/utilities/cloud_io.py#L73-L74\n`fsspec` uses an transaction mechanism that creates temporary files with restrictive 0o600 permissions (-rw-------) and then moves them to the final location, preserving the restrictive permissions instead of applying the system umask. `ffspecs` does this for security reason, permission preservation and consistent filesystem behavior. This behavior is somewhat mention in the docstring of `ModelCheckpoint`:\nhttps://github.com/Lightning-AI/pytorch-lightning/blob/f4e0a19b415be9c75447c13a410672d428c93929/src/lightning/pytorch/callbacks/model_checkpoint.py#L166-L169\n\nIf you want to change this behavior I recommend a custom `CheckpointIO` plugin with the `save_checkpoint` method altered. Here is the defaul"
+      }
+    ]
+  },
+  "20189": {
+    "number": 20189,
+    "title": "Support IO Type Checkpoints for trainer.fit() in ckpt_path Parameter",
+    "state": "open",
+    "body": "### Description & Motivation\n\nCurrently, PyTorch Lightning supports loading checkpoints using model.load_from_checkpoint(checkpoint_path) where the checkpoint_path parameter can accept IO types. This flexibility is very useful in scenarios where checkpoints are stored in non-standard storage systems (e.g., cloud storage, in-memory storage, etc.).\r\n\r\nHowever, when resuming training with the trainer.fit() method, the ckpt_path parameter does not support IO types. This limitation restricts users to using string paths only, which may not be feasible in all environments.\n\n### Pitch\n\n_No response_\n\n### Alternatives\n\nExtend the functionality of the ckpt_path parameter in the trainer.fit() method to also accept IO types, similar to how load_from_checkpoint() operates. This would involve modifying the internal logic of trainer.fit() to handle IO types appropriately, ensuring consistency with the load_from_checkpoint() method.\n\n### Additional context\n\n_No response_\n\ncc @user-2 @user-53",
+    "comments": []
+  },
+  "20938": {
+    "number": 20938,
+    "title": "Intel GPU support?",
+    "state": "open",
+    "body": "\nDear Lightning team, @user-2, @user-53,\n\nCan you please prioritize Intel GPU support on your development roadmap?\n\nMy students and I have been waiting _years_ for Lightning support on Intel GPUs. I find it disappointing that this hardware remains unsupported despite being fully integrated in PyTorch itself since October 2024.  Due to these continual delays, I have had to start removing Lightning from teaching materials, as well as discourage students from using it, for the simple reason that Lightning prevents students from using the latest hardware on our academic cluster here in Cambridge. More generally, I think not supporting features that are supported natively by PyTorch is frustrating and makes me question the value of higher-level frameworks. I think such frameworks should _expand_ support, if anything, not reduce it.\n\nThere have been various attempts such as #17700 #16834 #20349. I don't understand why these were closed and/or did not receive more internal support.\n\nCould your team please prioritize this?\n\nWe are happy to help test a beta if that would speed things up.\n\n\ncc @user-2 @user-53 @maintainer-4",
+    "comments": [
+      {
+        "author": "user-40",
+        "body": "Are there any working forks for distributed training on Intel GPUs? We've managed to get single GPU to work thus far..."
+      },
+      {
+        "author": "user-41",
+        "body": "@user-40, not yet part of a fork, but I have a package that performs runtime patching to enable lightning for Intel GPUs: [https://github.com/user-41/lightning-xpu](https://github.com/user-41/lightning-xpu).  This includes multi-GPU/multi-node DDP and FSDP.  I've tested for a specific HPC system.  If you try it and submit any issues, I'll do my best to address them."
+      },
+      {
+        "author": "user-42",
+        "body": "Any update on this looking to use my new B50 to train a model."
+      },
+      {
+        "author": "user-43",
+        "body": "I ran into this myself because I wanted to use NeuralForecast at home on my Intel Arc Pro B50, and since NeuralForecast depends on Lightning, the missing XPU support in Lightning was the blocker.\n\nTo get unstuck, I put together a small workaround repo that lets Lightning run on native `torch.xpu` today, and that also works for NeuralForecast:\n\nhttps://github.com/user-43/lightning-neuralforecast-xpu\n\nI tried to keep it very easy to test and reuse. The core path is basically: copy one file (`xpu_lightning.py`) and pass `SingleXPUStrategy(device_index=0)`.\n\nMinimal Lightning example:\n\n```python\nimport pytorch_lightning as L\nfrom xpu_lightning import SingleXPUStrategy\n\ntrainer = L.Trainer(\n    strategy=SingleXPUStrategy(device_index=0),\n    devices=1,\n)\n```\n\nI tested this on both Windows 11 and Ubuntu 25.10 with `torch==2.11.0+xpu`, `pytorch-lightning==2.6.1`, and `neuralforecast==3.1.6`. The repo includes minimal examples and tests for both Lightning and NeuralForecast on native XPU.\n\nThi"
+      },
+      {
+        "author": "maintainer-4",
+        "body": "The main concern for us is we don't have a way to test it, which is why we are hesitant to add upstream support for it."
+      }
+    ]
+  },
+  "4335": {
+    "number": 4335,
+    "title": "Clarify the model checkpoint arguments",
+    "state": "open",
+    "body": "## 🐛 Proposals\r\n\r\nThis is not so much a bug report as an RFC to clarify the `ModelCheckpoint` callback arguments:\r\n- `save_last`: to me, this means that whenever we save a checkpoint, we save a checkpoint with filename `\"last.ckpt\"`. This provides a pre-determined checkpoint name, which is very helpful for resuming from failures. Importantly, it should not determine *when* checkpoints are saved. Currently it's easy to confuse this parameter to mean \"save the checkpoint after the last epoch,\" which I think should be split out as a separate argument. This distinction would also clarify the typing and validation: there's no need for it to be an `Optional[bool]`: either we save a checkpoint as `\"last.ckpt\"` or not. So it could be a regular `bool`. \r\n\r\n- There's an inefficiency right now where we generate the checkpoint dict twice if `save_last=True`. For techniques like ZeRO that deal with sharded optimizer states, each checkpoint dict creation triggers communications across all ranks. Instead, we should gather the checkpoint dict once, and then save to different file paths accordingly (cc @maintainer-4 @user-4 @user-56 @user-46 @user-5 @user-57 @user-58 @user-59, @user-60)\r\n\r\n- `save_top_k`: since `monitor` is `None` by default, this should force `save_top_k` to be -1. The counterargument is that this can cause storage concerns. But I think this is easily correctable on the user-side: configure `save_top_k` + `monitor` \r\n\r\n- `period`: we should rename this as `every_n_epochs`. this opens up extensions for checkpointing after `every_n_steps` during training and checkpointing after a specified time interval. With those extensions in mind, `period` is ambiguous. Another request here is to change the default filename from `\"{epoch}\"` to `\"{epoch}-{global_step}\"` to better support mid-epoch checkpointing\r\n\r\ncc @user-4 @user-5 ",
+    "comments": [
+      {
+        "author": "user-5",
+        "body": "> I'm wondering if we could relax that constraint by giving a warning instead?\r\n\r\nYes! this was already discussed in slack. Feel free to open a PR.\r\n\r\n```\r\nAnanth S Oct 15th at 6:23 AM\r\nWhy does this ModelCheckpoint instantiation raise a misconfiguration error?\r\nIsn't saving the last checkpoint independent of the monitor/topK?\r\n\r\nAdrian  23 days ago\r\n@user-5 do you remember?\r\n\r\nuser-5  22 days ago\r\nBecause monitor=None already saves the last ckpt (but not named last.ckpt) so why would you want to save last again (but named last.ckpt) (edited) \r\n\r\nuser-5  22 days ago\r\nMaybe we should have used the phrase \"is a redundant configuration\" instead of valid\r\n\r\nuser-5  22 days ago\r\nsave_last only makes sense when something is being monitored\r\n\r\nAnanth S  22 days ago\r\ni see. we are using torchelastic for long training runs. using save_last gives us a checkpoint with name last.ckpt , which is a deterministic path name to find and resume training from\r\n\r\nAnanth S  22 days ago\r\nwhat we really want"
+      },
+      {
+        "author": "user-46",
+        "body": "> save_last only makes sense when something is being monitored\r\n\r\nwhy is that??\r\nIMO `save_last` should have nothing to do with the `monitor` or `save_top_k`. why do we have this warning??\r\n\r\nwith\r\n```python\r\nModelCheckpoint(save_last=True, monitor=None, save_top_k=None|0|-1)\r\n```\r\nit raises this warning\r\n\r\nbut I think, with\r\n```python\r\nModelCheckpoint(save_last=True, monitor=anything, save_top_k=anything)\r\n```\r\nit should not raise any warning or exceptions w.r.t to `save_last`"
+      },
+      {
+        "author": "user-5",
+        "body": "> why is that??\r\n\r\nFrom my last comment:\r\n\r\n> Because monitor=None already saves the last ckpt (but not named last.ckpt) so why would you want to save last again (but named last.ckpt)"
+      },
+      {
+        "author": "user-46",
+        "body": "> Because monitor=None already saves the last ckpt (but not named last.ckpt)\r\n\r\noh ok. Then I suggest it should be reverted back to an exception, with an additional condition of `self.save_last and self.save_top_k == -1` since saving the same checkpoint twice doesn't make sense. If one needs to access the last checkpoint, the path available in `besk_k_models` with epoch key. Also, `save_last` should be independent of the monitor, I think."
+      },
+      {
+        "author": "user-4",
+        "body": "the original feature of save_last was to just have a copy of epoch=x.ckpt saved as last.ckpt. This would happen regardless of other settings. See original PR: #1908 and original feature request:  #1658. \r\nThe benefit of having this file is to be able to load/resume the checkpoint programmatically through last.ckpt without the need of knowing what the last epoch was. This is also what @user-31 describes here in the original message. \r\nI hope we can keep this feature as I find it is very useful. \r\n"
+      },
+      {
+        "author": "user-5",
+        "body": "I believe we all get confused because `save_last` can mean two different things.\r\n\r\n1. A copy of the last checkpoint saved (regardless of anything else). This would ideally be a symlink.\r\n2. A checkpoint of the model just before training is over.\r\n\r\nwhere `save_last` corresponds to (2). Note that (1) and (2) are the same thing in some circumstances.\r\n\r\nIn https://github.com/PyTorchLightning/pytorch-lightning/issues/4335#issuecomment-716051864 I propose having (1) and (2) as `symlink_to_last` and `save_on_end` respectively for clarity.\r\n\r\n>  Also, `save_last` should be independent of the monitor, I think.\r\n\r\nIt should if we are talking about (1). If we are talking about (2), it is redundant because if monitor is `None` we will save every validation run."
+      },
+      {
+        "author": "user-47",
+        "body": "@user-5 what is left TODO here?"
+      },
+      {
+        "author": "user-5",
+        "body": "To implement the split described in https://github.com/PyTorchLightning/pytorch-lightning/issues/4335#issuecomment-716051864\r\n\r\nWhich would clarify the arguments, simplify the code, and facilitate custom `ModelCheckpoint` extensions"
+      },
+      {
+        "author": "user-48",
+        "body": "Can we revive this discussion? I was also confused about this. To me, `save_last = True` should mean save the last checkpoint when training finishes. If we are using early stopping, or training finishes normally, save the last. This would also add the `latest` tag to loggers.\r\n\r\n`monitor`, `mode` and `every_n_epochs` / `every_n_steps` should work together for checkpointing every specified frequency. This would add the `best` tag to loggers.\r\n\r\nHave a symlink on latest checkpointed model for failure recovery purposes (which will rely on the `every_n_epochs` / `every_n_steps` setting). This would also add the `latest` tag to loggers, which would link to the same checkpoint as the one `save_last = True` would make if set.\r\n\r\nAlso, right now, `filename` setting only works if `save_last = False`. Otherwise, everything is called `last.cpkt` (unless rename attribute is overriden).\r\n\r\nWith the above, the symlink can be named `last.cpkt`, and the rest of checkpoints whatever `filename` specifie"
+      },
+      {
+        "author": "user-49",
+        "body": "> ModelCheckpoint has become quite complex lately, so we should evaluate splitting it some time in the future.\r\nAny further changes we do should line up with a thought out future API.\r\n\r\nHi @user-5 . I see your proposed argument \"save_on_end\" is really helpful to me since saving model to disk is much more time-consuming than saving to memory. To address the issue I have to write my own ModelCheckpoint. I'm wondering will Lightning enable such functionality provided by save_on_end in the future?\r\n\r\n"
+      }
+    ]
+  },
+  "17037": {
+    "number": 17037,
+    "title": "`TensorBoardLogger` does not save logs correctly on GCS",
+    "state": "open",
+    "body": "### Bug description\r\n\r\n`TensorBoardLogger` records only one scalar when `save_dir` is a GCS URI (e.g., gs://path/to/logs/).\r\n\r\n### How to reproduce the bug\r\n\r\n```python\r\nimport os\r\n\r\nimport pytorch_lightning as pl\r\nfrom pytorch_lightning.loggers import TensorBoardLogger\r\nfrom torch import nn, optim, utils\r\nfrom torchvision.datasets import MNIST\r\nfrom torchvision.transforms import ToTensor\r\n\r\n# define any number of nn.Modules (or use your current ones)\r\nencoder = nn.Sequential(nn.Linear(28 * 28, 64), nn.ReLU(), nn.Linear(64, 3))\r\ndecoder = nn.Sequential(nn.Linear(3, 64), nn.ReLU(), nn.Linear(64, 28 * 28))\r\n\r\n\r\n# define the LightningModule\r\nclass LitAutoEncoder(pl.LightningModule):\r\n    def __init__(self, encoder, decoder):\r\n        super().__init__()\r\n        self.encoder = encoder\r\n        self.decoder = decoder\r\n\r\n    def training_step(self, batch, batch_idx):\r\n        # training_step defines the train loop.\r\n        # it is independent of forward\r\n        x, y = batch\r\n        x = x.view(x.size(0), -1)\r\n        z = self.encoder(x)\r\n        x_hat = self.decoder(z)\r\n        loss = nn.functional.mse_loss(x_hat, x)\r\n        # Logging to TensorBoard (if installed) by default\r\n        self.log(\"train_loss\", loss)\r\n        return loss\r\n\r\n    def configure_optimizers(self):\r\n        optimizer = optim.Adam(self.parameters(), lr=1e-3)\r\n        return optimizer\r\n\r\n\r\n# init the autoencoder\r\nautoencoder = LitAutoEncoder(encoder, decoder)\r\n\r\n# setup data\r\ndataset = MNIST(os.getcwd(), download=True, transform=ToTensor())\r\ntrain_loader = utils.data.DataLoader(dataset)\r\n\r\n# train the model (hint: here are some helpful Trainer arguments for rapid idea iteration)\r\n# logger = TensorBoardLogger('.')\r\nlogger = TensorBoardLogger(\"gs://path/to/logs/\")\r\ntrainer = pl.Trainer(limit_train_batches=100, max_epochs=1, logger=logger)\r\ntrainer.fit(model=autoencoder, train_dataloaders=train_loader)\r\n```\r\n\r\n\r\n### Error messages and logs\r\n\r\nNo explicit error messages. Instead, TensorBoard screenshots are attached below.\r\n\r\n|Save to local|Save to GCS|\r\n|:---:|:---:|\r\n|![](https://user-images.githubusercontent.com/13844767/224485882-1f7b8042-efa3-4c01-aa2d-180926265653.png)|![](https://user-images.githubusercontent.com/13844767/224486263-b867b0cd-8dff-4e9f-9bb7-44cf137ff144.png)|\r\n\r\n### Environment\r\n\r\n<details>\r\n  <summary>Current environment</summary>\r\n\r\n```\r\n* CUDA:\r\n        - GPU:\r\n                - Tesla T4\r\n        - available:         True\r\n        - version:           11.7\r\n* Lightning:\r\n        - lightning-utilities: 0.8.0\r\n        - pytorch-lightning: 1.9.4\r\n        - torch:             1.13.1\r\n        - torchmetrics:      0.11.4\r\n        - torchvision:       0.14.1\r\n* Packages:\r\n        - absl-py:           1.4.0\r\n        - aiohttp:           3.8.4\r\n        - aiosignal:         1.3.1\r\n        - async-timeout:     4.0.2\r\n        - attrs:             22.2.0\r\n        - cachetools:        5.3.0\r\n        - certifi:           2022.12.7\r\n        - charset-normalizer: 3.1.0\r\n    ",
+    "comments": [
+      {
+        "author": "user-50",
+        "body": "Using `tensorboardx` instead of `tensorboard`, the logs are now saved correctly.\r\n```\r\npip uninstall tensorboard\r\npip install tensorboardx\r\n```\r\n\r\nI have not yet investigated whether this issue is caused solely by `tensorboard` or by how Lightning uses `tensorboard`."
+      },
+      {
+        "author": "user-51",
+        "body": "Same issue.\r\nNo error messages. Tensorboard logs look fine when saving locally, but when saving to GCS it only logs a single point and nothing else.\r\nThe remote `events.out.tfevents*` file does get updated, but the file size is only 43 bytes. \r\n\r\nEnv:\r\n```\r\ndebian 10\r\ntorch 2.0.0\r\ntensorboard 2.12.1\r\n```"
+      },
+      {
+        "author": "user-4",
+        "body": "I don't have the ability to debug this, but I just wanted to comment that there is no logic in Lightning that changes the behavior of TensorBoardLogger based on the package. If `tensorboardx` is installed, our TensorBoardLogger will send all calls to that package, otherwise it will go through the regular `tensorboard` package. So I am not sure what the fix should be in Lightning. Does https://github.com/Lightning-AI/lightning/issues/17037#issuecomment-1465561103 fix it for everyone?"
+      },
+      {
+        "author": "user-52",
+        "body": "If you enable debug logs for `gcsfs` (which is used by `tensorboard`, but not by `tensorboardX`, which uses `urllib3`), you'll see something interesting for e.g. `LightningModule.log_dict()`:\r\n\r\n```\r\n'Content-Range': 'bytes 0-46/47' ... 'Content-Length': '47'\r\n'Content-Range': 'bytes 0-53/54' ... 'Content-Length': '54'\r\n'Content-Range': 'bytes 0-56/57' ... 'Content-Length': '57'\r\n'Content-Range': 'bytes 0-56/57' ... 'Content-Length': '57'\r\n'Content-Range': 'bytes 0-58/59' ... 'Content-Length': '59'\r\n'Content-Range': 'bytes 0-57/58' ... 'Content-Length': '58'\r\n'Content-Range': 'bytes 0-57/58' ... 'Content-Length': '58'\r\n'Content-Range': 'bytes 0-54/55' ... 'Content-Length': '55'\r\n'Content-Range': 'bytes 0-53/54' ... 'Content-Length': '54'\r\n'Content-Range': 'bytes 0-43/44' ... 'Content-Length': '44'\r\n```\r\n\r\nIn my case, this results in an events file of 44 bytes, which obviously doesn't have all the data that it should have.\r\n\r\nContrasting this with the debug output from saving checkpoint"
+      },
+      {
+        "author": "user-52",
+        "body": "It turns out that my workaround with overwriting `TensorBoardLogger._experiment` is a bit tricky, because at the very end of my distributed training job additional events files appear (probably as an effect of this `atexit` flushing & closing?), one per node, each having size of 40 B, and the events file that was present before that (with metrics properly written in it) gets overwritten by one of them, making it useless.\r\n\r\nBut if I add `rank_zero_only=True` to `self.log()` and `self.log_dict()`, then this file is not overwritten (although those remaining events files of 40 bytes each still appear, but in such case they seem harmless)."
+      }
+    ]
+  }
+}

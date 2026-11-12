@@ -834,7 +834,9 @@ class TestEditableSourceProvenance:
         overlay or the reviewed worktree, and the first attempt stays archived.
         """
         editable_checkout.link_editable(editable_checkout.selected)
-        editable_checkout.environment["PYTEST_ADDOPTS"] = "-p overlay_probe"
+        editable_checkout.environment["PYTEST_ADDOPTS"] = (
+            f"{editable_checkout.environment.get('PYTEST_ADDOPTS', '')} -p overlay_probe"
+        ).strip()
         editable_checkout.environment["PYTHONDONTWRITEBYTECODE"] = "1"
         failed = editable_checkout.run_tests(output)
         assert failed.returncode == 1
@@ -880,7 +882,9 @@ class TestEditableSourceProvenance:
         """
         editable_checkout.link_editable(editable_checkout.selected)
         marker = tmp_path / "selected-test-ran.txt"
-        editable_checkout.environment.update(extra_environment)
+        editable_checkout.environment["PYTEST_ADDOPTS"] = (
+            f"{editable_checkout.environment.get('PYTEST_ADDOPTS', '')} {extra_environment.get('PYTEST_ADDOPTS', '')}"
+        ).strip()
 
         result = editable_checkout.run_tests(output, pytest_arguments=pytest_arguments)
 

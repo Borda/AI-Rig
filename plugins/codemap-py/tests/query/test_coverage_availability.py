@@ -10,7 +10,7 @@ import sys
 import pytest
 from codemap_py import query
 
-_SCAN_VERSION = 13
+_SCAN_VERSION = 14
 
 
 def _invoke_coverage(index):

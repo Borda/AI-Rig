@@ -10,6 +10,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from _research_shell_plugin import render_shell
 
 _PLUGIN = Path(__file__).resolve().parents[2]
 _RUN = _PLUGIN / "skills/run"
@@ -46,8 +47,9 @@ def test_docker_metric_reloads_config_in_a_fresh_shell(tmp_path: Path, metric: s
     state_dir = tmp_path / ".experiments/state/recovery-run"
     state_dir.mkdir(parents=True)
     config = {} if metric is None else {"metric_cmd": metric}
-    (state_dir / "state.json").write_text(json.dumps({"config": config}), encoding="utf-8")
-    (tmp_path / "research-run-id-fresh-shell").write_text("recovery-run\n", encoding="utf-8")
+    (state_dir / "state.json").write_text(json.dumps({"config": config}), encoding="utf-8", newline="\n")
+    (tmp_path / "research-run-id-fresh-shell").write_text("recovery-run\n", encoding="utf-8", newline="\n")
+    (tmp_path / "research-run-verify-timeout-ms-fresh-shell").write_text("120000\n", encoding="utf-8", newline="\n")
     captured = tmp_path / "wrapper-args"
     env = {key: value for key, value in os.environ.items() if key not in {"METRIC_CMD", "RUN_ID", "CSID"}}
     env.update(
@@ -60,7 +62,15 @@ def test_docker_metric_reloads_config_in_a_fresh_shell(tmp_path: Path, metric: s
         "modes/phase5-metric.md", "bash", "docker_sandbox_run.py"
     )
 
-    result = subprocess.run([_BASH, "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        [_BASH, "-c", render_shell(script, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "research")],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
 
     assert result.returncode == (0 if metric else 1), (result.stdout, result.stderr)
     assert captured.exists() == bool(metric)
@@ -75,7 +85,7 @@ def test_single_metric_failure_cannot_reach_guard_or_comparison() -> None:
     rule = next((line for line in lines if line.startswith("**`metric_repeats` = 1**")), "")
 
     assert "non-zero" in rule
-    assert "exit alone does not invalidate" in rule
+    assert "Any non-zero exit fails even when stdout contains a float" in rule
     assert "finite" in rule
     assert "metric-failed" in rule
     assert "status: reverted" in rule
@@ -219,11 +229,19 @@ def test_team_prompt_requires_program_and_names_policy_sibling() -> None:
 @pytest.mark.parametrize("relative", ["modes/phase5-metric.md", "modes/resume.md"])
 def test_early_state_reads_report_missing_jq(tmp_path: Path, relative: str) -> None:
     """A missing jq must be diagnosed before state reads or any recovery side effects."""
-    (tmp_path / "research-run-id-no-jq").write_text("recovery-run\n", encoding="utf-8")
+    (tmp_path / "research-run-id-no-jq").write_text("recovery-run\n", encoding="utf-8", newline="\n")
     env = dict(os.environ, PATH="", TMPDIR=tmp_path.as_posix(), CLAUDE_CODE_SESSION_ID="no-jq")
     script = _block(relative, "bash", "METRIC_CMD=" if "metric" in relative else "revert_iteration_commit.py")
 
-    result = subprocess.run([_BASH, "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        [_BASH, "-c", render_shell(script, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "research")],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
 
     assert result.returncode == 1
     assert result.stdout.strip() == "! MISSING — jq not on PATH; install jq and retry"
@@ -241,17 +259,18 @@ def test_unlogged_recovery_discards_only_staged_records(tmp_path: Path, team: bo
     run_dir = tmp_path / ("saved team directory" if team else ".experiments/recovery-run")
     run_dir.mkdir(parents=True)
     state = {"iteration": 2, **({"team_mode": {"run_dir": run_dir.as_posix()}} if team else {})}
-    (state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
-    (tmp_path / "research-run-id-recovery").write_text("recovery-run\n", encoding="utf-8")
+    (state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8", newline="\n")
+    (tmp_path / "research-run-id-recovery").write_text("recovery-run\n", encoding="utf-8", newline="\n")
     ledgers = [state_dir / name for name in ("experiments.jsonl", "diary.md", "metric-runs.jsonl")] + [
         run_dir / name for name in ("checkpoint.jsonl", "journal.md", "team-results.jsonl")
     ]
     unrelated = state_dir / "other.rec"
-    unrelated.write_text("preserved", encoding="utf-8")
+    unrelated.write_text("preserved", encoding="utf-8", newline="\n")
     subject = tmp_path / "subject"
     subject.write_text(
         'Revert "experiment(optimize/i3): interrupted"' if already_reverted else "experiment(optimize/i3): interrupted",
         encoding="utf-8",
+        newline="\n",
     )
     calls = tmp_path / "revert-call"
     env = dict(
@@ -267,7 +286,15 @@ def test_unlogged_recovery_discards_only_staged_records(tmp_path: Path, team: bo
 python() { printf '%s\\n' "$*" > "$CALLS"; printf 'Revert "experiment(optimize/i3): interrupted"' > "$HEAD_FILE"; }
 """ + _block("modes/resume.md", "bash", "revert_iteration_commit.py")
 
-    result = subprocess.run([_BASH, "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        [_BASH, "-c", render_shell(script, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "research")],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
 
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert not any(Path(f"{ledger}.rec").exists() for ledger in ledgers)
@@ -280,8 +307,8 @@ python() { printf '%s\\n' "$*" > "$CALLS"; printf 'Revert "experiment(optimize/i
 def _stage_recovery_ledgers(ledgers: list[Path]) -> None:
     """Create distinct logged and staged contents for interrupted iteration recovery."""
     for ledger in ledgers:
-        ledger.write_text("logged\n", encoding="utf-8")
-        Path(f"{ledger}.rec").write_text("uncommitted\n", encoding="utf-8")
+        ledger.write_text("logged\n", encoding="utf-8", newline="\n")
+        Path(f"{ledger}.rec").write_text("uncommitted\n", encoding="utf-8", newline="\n")
 
 
 @pytest.mark.integration
@@ -298,10 +325,10 @@ def test_unlogged_recovery_rejects_unverified_revert(tmp_path: Path, result_subj
     """Recovery cannot log success when rollback fails or leaves an unrelated HEAD."""
     state_dir = tmp_path / ".experiments/state/recovery-run"
     state_dir.mkdir(parents=True)
-    (state_dir / "state.json").write_text('{"iteration":2}', encoding="utf-8")
-    (tmp_path / "research-run-id-recovery").write_text("recovery-run\n", encoding="utf-8")
+    (state_dir / "state.json").write_text('{"iteration":2}', encoding="utf-8", newline="\n")
+    (tmp_path / "research-run-id-recovery").write_text("recovery-run\n", encoding="utf-8", newline="\n")
     subject = tmp_path / "subject"
-    subject.write_text("experiment(optimize/i3): interrupted", encoding="utf-8")
+    subject.write_text("experiment(optimize/i3): interrupted", encoding="utf-8", newline="\n")
     env = dict(
         os.environ,
         TMPDIR=tmp_path.as_posix(),
@@ -314,7 +341,15 @@ def test_unlogged_recovery_rejects_unverified_revert(tmp_path: Path, result_subj
 python() { printf '%s' "$RESULT_SUBJECT" > "$HEAD_FILE"; return "$REVERT_STATUS"; }
 """ + _block("modes/resume.md", "bash", "revert_iteration_commit.py")
 
-    result = subprocess.run([_BASH, "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        [_BASH, "-c", render_shell(script, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "research")],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
 
     assert result.returncode == 1, (result.stdout, result.stderr)
     assert subject.read_text(encoding="utf-8") == result_subject

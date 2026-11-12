@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _develop_shell_plugin import render_shell
 from _develop_text import flat, nested_bash_fences
 
 _DEVELOP = Path(__file__).resolve().parents[2]
@@ -56,6 +57,7 @@ _FENCE_LOCAL_SAFE_VARS = frozenset(
         "PPID",
         "RANDOM",
         "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_PLUGIN_ROOT",
         "IFS",
         "PYTEST_CMD",
         "TEST_CMD",
@@ -194,7 +196,12 @@ def test_fence_checker_recognizes_shell_read_redirect_orders(tmp_path: Path, red
     block = (
         f'INPUT_FILE={shlex.quote(sentinel.as_posix())}\nIFS= read -r RESOLVED {redirects}\nprintf "%s" "$RESOLVED"\n'
     )
-    completed = subprocess.run([shutil.which("bash"), "-c", block], capture_output=True, text=True, check=False)
+    completed = subprocess.run(
+        [shutil.which("bash"), "-c", render_shell(block, _DEVELOP, "develop")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == "resolved"
     assert _fence_unassigned_var_refs(block) == set()

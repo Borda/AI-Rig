@@ -11,6 +11,7 @@ Run this block — it is the single lookup for both modes, and the **only** sanc
 It is also the single intake triage. A report failing the publication contract (`⛔ BLOCKED — incomplete-review-report`) is graded by `find_review_report.py --assess` instead of stopping blind; a standing rejection, an invalid `--pr` or a failed path publication stays `blocked`. Resolve never edits or regenerates the review's report, sidecars or findings to clear a gap — no self-heal. Its only write into a review run stays Step 11's `resolution.jsonl` ledger.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # timeout: 45000 — gate and --assess may each call gh
 _SENTINEL="${TMPDIR:-/tmp}/resolve-report-file-${CSID}"
@@ -33,12 +34,12 @@ esac
 GATE_RC=0
 case "$1:$REPORT_FILE" in
     --report: | --report:.reports/codex/review/*) ;;  # missing or codex-lineage: nothing to gate
-    *) python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" "$@" --path-out "$_SENTINEL" > "$_GATE_OUT"; GATE_RC=$?; cat "$_GATE_OUT" ;;  # timeout: 6000
+    *) python "$PLUGIN_ROOT/bin/find_review_report.py" "$@" --path-out "$_SENTINEL" > "$_GATE_OUT"; GATE_RC=$?; cat "$_GATE_OUT" ;;  # timeout: 6000
 esac
 # exit 1 without the incomplete marker = still-rejected PR, bad --pr or lost path; never swallowed, never triaged
 if [ "$GATE_RC" -ne 0 ]; then
     grep -q 'incomplete-review-report' "$_GATE_OUT" || { echo "REPORT_STATUS=blocked"; rm -f "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"; exit 1; }
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" "$@" --assess --path-out "$_SENTINEL" > "$_GAPS"; ASSESS_RC=$?; cat "$_GAPS"  # timeout: 15000 — may call gh for head_moved
+    python "$PLUGIN_ROOT/bin/find_review_report.py" "$@" --assess --path-out "$_SENTINEL" > "$_GAPS"; ASSESS_RC=$?; cat "$_GAPS"  # timeout: 15000 — may call gh for head_moved
     # degraded-only gaps can still carry REJECT_: premise problem, never consumable
     grep -q '"gate": "Gate: REJECT_' "$_GAPS" && { : > "$_SENTINEL"; echo "! BLOCKED — incomplete review report still records a rejection — address the ground, then rerun /oss:review"; ASSESS_RC=1; }
     [ "$ASSESS_RC" -eq 1 ] && { echo "REPORT_STATUS=blocked"; rm -f "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"; exit 1; }
@@ -47,7 +48,7 @@ if [ "$GATE_RC" -ne 0 ]; then
     if [ "$ASSESS_RC" -ne 0 ] || [ -z "$REPORT_FILE" ] || [ -z "$INTAKE_ACCEPTED" ] || ! [ "$REPORT_FILE" -ef "$INTAKE_ACCEPTED" ]; then
         : > "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"  # paused on the triage question; Intake proceed re-arms it
         # targeted-rerun admissibility comes from fill-gaps' own planner, never re-derived in prose
-        python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/fill_gaps_scope.py" triage --assessment="$_GAPS" --pr="$PR_NUMBER" > "$_RERUN" || : > "$_RERUN"; cat "$_RERUN"  # timeout: 15000
+        python "$PLUGIN_ROOT/bin/fill_gaps_scope.py" triage --assessment="$_GAPS" --pr="$PR_NUMBER" > "$_RERUN" || : > "$_RERUN"; cat "$_RERUN"  # timeout: 15000
         [ "$ASSESS_RC" -eq 0 ] && echo "REPORT_STATUS=gaps" || echo "REPORT_STATUS=gaps-critical"
         echo "GAPS_FILE=$_GAPS"
         echo "RERUN_FILE=$_RERUN"
@@ -110,11 +111,12 @@ Neither rerun invokes `Skill(skill="oss:review", …)` — same reason as the re
 **Intake proceed** — only on **Proceed with valid parts**. It re-grades the published report rather than trusting the earlier answer, so a stray run can never accept a critical or rejecting report:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
 IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
 [ -f "$REPORT_FILE" ] || { echo "! BLOCKED — no consumable report published; Proceed needs zero critical gaps"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --report "$REPORT_FILE" --assess > "${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}" || { echo "! BLOCKED — report has critical gaps; Proceed is not available"; exit 1; }  # timeout: 15000 — may call gh for head_moved
+python "$PLUGIN_ROOT/bin/find_review_report.py" --report "$REPORT_FILE" --assess > "${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}" || { echo "! BLOCKED — report has critical gaps; Proceed is not available"; exit 1; }  # timeout: 15000 — may call gh for head_moved
 grep -q '"gate": "Gate: REJECT_' "${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}" && { echo "! BLOCKED — report records a rejection; Proceed is not available"; exit 1; }
 printf '%s\n' "$REPORT_FILE" > "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}"
 case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "report" > "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" ;; *) echo "$PR_NUMBER" > "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" ;; esac

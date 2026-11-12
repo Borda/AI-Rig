@@ -31,12 +31,11 @@ Step 1 exits non-zero → report its error and stop; never run Step 2 or Step 3.
 
 ```bash
 # timeout: 400000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ_SLUG=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
-# success marker for Step 2 — cleared first so a failed run never inherits an earlier success
-rm -f "${TMPDIR:-/tmp}/codemap-scan-ok-${_CM_PROJ_SLUG}-${CSID}"
-SETUP_STDERR="${TMPDIR:-/tmp}/codemap-setup-err-$$-${CSID}"
-SCAN_STATE_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/setup_scan_env.py" --arguments "$ARGUMENTS" 2>"$SETUP_STDERR")
+SETUP_STDERR=$(mktemp "${TMPDIR:-/tmp}/codemap-setup-err-XXXXXXXX") || exit 1
+SCAN_STATE_FILE=$(python "$PLUGIN_ROOT/bin/setup_scan_env.py" --arguments "$ARGUMENTS" 2>"$SETUP_STDERR")
 _SETUP_RC=$?
 # 5 = $ARGUMENTS rejected — stderr already holds the exact pinned wording; a prefix would bury it
 # Rosters + shell require exact Unknown flag(s) wording; skill-local exit 1 is accepted in shared/capability-contract.md, while CLI syntax errors remain exit 2.
@@ -44,8 +43,11 @@ _SETUP_RC=$?
 if [ "$_SETUP_RC" -ne 0 ] || [ -z "$SCAN_STATE_FILE" ]; then
   printf "! setup_scan_env.py failed"; [ -s "$SETUP_STDERR" ] && printf ": %s" "$(cat "$SETUP_STDERR")"; printf "\n"; exit 1
 fi
-# project-scoped — bare CSID collides across concurrent repos in one session
-printf '%s\n' "$SCAN_STATE_FILE" > "${TMPDIR:-/tmp}/codemap-state-ref-${_CM_PROJ_SLUG}-${CSID}"  # Step 2 reads without knowing PID
+# the helper validates this private 0700 user-owned directory before writing state
+_SCAN_TMP=$(dirname "$SCAN_STATE_FILE")
+# clear before the scan so a failed run never inherits earlier success
+rm -f "${_SCAN_TMP}/codemap-scan-ok-${_CM_PROJ_SLUG}-${CSID}"
+printf 'SCAN_STATE_FILE=%s\n' "$SCAN_STATE_FILE"
 # -O owned-by-uid, ! -L not-symlink — defense-in-depth on mktemp; last check before reading, fails closed on shared-TMPDIR collision
 [ -O "$SCAN_STATE_FILE" ] && [ ! -L "$SCAN_STATE_FILE" ] || { printf "! codemap state file failed ownership/symlink check — aborting\n" >&2; exit 1; }
 unset PROJ_SLUG SCAN_BIN SCAN_ARGS_RAW PROJ_NAME
@@ -61,9 +63,9 @@ while IFS='=' read -r _SK _SV; do
 done < "$SCAN_STATE_FILE"
 [ "${PROJ_SLUG+x}${SCAN_BIN+x}${SCAN_ARGS_RAW+x}${PROJ_NAME+x}" = "xxxx" ] || { printf "! codemap state incomplete — re-run /codemap-py:scan-codebase\n" >&2; exit 1; }
 # NUL-delimited — avoids eval; written by parse_scan_args.py
-_ARGS_FILE="${TMPDIR:-/tmp}/codemap-scan-args-nul-$$-${CSID}"
+_ARGS_FILE="${_SCAN_TMP}/codemap-scan-args-nul-$$-${CSID}"
 # unchecked failure left SCAN_ARGS empty → silent default git-root full scan reported as success
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/parse_scan_args.py" "$SCAN_ARGS_RAW" --nul-output "$_ARGS_FILE" && [ -f "$_ARGS_FILE" ] || { printf "! parse_scan_args.py failed — scan not started\n" >&2; exit 1; }
+python "$PLUGIN_ROOT/bin/parse_scan_args.py" "$SCAN_ARGS_RAW" --nul-output "$_ARGS_FILE" && [ -f "$_ARGS_FILE" ] || { printf "! parse_scan_args.py failed — scan not started\n" >&2; exit 1; }
 SCAN_ARGS=()
 while IFS= read -r -d '' _arg; do
   SCAN_ARGS+=("$_arg")
@@ -72,17 +74,17 @@ rm -f "$_ARGS_FILE"
 # dispatcher, not deprecated scan-index alias (removed ≥1.0.0): alias leases in-engine too (graph.main wraps build+publish in rwgate.write_index) but skips interpreter probe (exit 127, no eligible CPython)
 # SCAN_BIN stays setup_scan_env.py's existence preflight — dispatcher needs same binary
 # PATH-literal first token — expansion-bearing form matches no bare-name allow prefix; absolute launcher = interactive fallback
-command -v codemap-py >/dev/null 2>&1 || { printf "! codemap-py not on PATH — run \"\${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py\" index as one standalone command instead\n" >&2; exit 1; }
+command -v codemap-py >/dev/null 2>&1 || { printf "! codemap-py not on PATH — run \"\$PLUGIN_ROOT/bin/codemap-py\" index as one standalone command instead\n" >&2; exit 1; }
 codemap-py index --timeout 360 "${SCAN_ARGS[@]}"
 # capture rc BEFORE branching — in `if ! cmd; then`, $? = negated compound status (always 0), never scanner's
 _SCAN_RC=$?
 if [ "$_SCAN_RC" -ne 0 ]; then
     printf "! codemap-py index failed (exit %d) — index may be stale or incomplete\n" "$_SCAN_RC"
     # rm sentinel on failure — stale one misleads Step 2
-    rm -f "${TMPDIR:-/tmp}/codemap-incremental-noop-${PROJ_SLUG}-${CSID}"
+    rm -f "${_SCAN_TMP}/codemap-incremental-noop-${PROJ_SLUG}-${CSID}"
     exit 1
 fi
-printf 'ok\n' > "${TMPDIR:-/tmp}/codemap-scan-ok-${_CM_PROJ_SLUG}-${CSID}"
+printf 'ok\n' > "${_SCAN_TMP}/codemap-scan-ok-${_CM_PROJ_SLUG}-${CSID}"
 ```
 
 **`--root` naming**: index uses `basename(<path>)`, unlike default git-root basename. After a custom-root scan, retain exact path printed by scanner as `<emitted-index-path>`. A later query may pass `--root <same-root>` to select that root's canonical index; pass `--index <emitted-index-path> --root <same-root>` to pin the emitted file. `--root` also sets query path resolution and the accepted custom-index boundary. After custom-root scan, verify path via `resolve_index_env.py`. `--root .` handled specially — `setup_scan_env.py` falls back to git-root basename, same as omitting `--root`.
@@ -96,17 +98,21 @@ Writes `<root>/.cache/codemap/<project>.json`, or `$CODEMAP_INDEX_DIR/<project>.
 
 ## Step 2: Report
 
-After scan, read index and report compact summary. Step 2 exits non-zero → report its error and stop; never run Step 3 or print `Index ready`.
+Retain the exact `SCAN_STATE_FILE` path printed by Step 1; substitute it into the next block before execution (shell variables do not persist). All scan handoff/fallback sentinels live beside that state file in the helper-validated private per-user directory, never directly in shared temporary storage. After scan, read index and report compact summary. Step 2 exits non-zero → report its error and stop; never run Step 3 or print `Index ready`.
 
 ```bash
 # timeout: 15000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 _CM_PROJ_SLUG=$(basename "$_GIT_ROOT")
+SCAN_STATE_FILE="<state-file-path-from-Step-1>"
+[ "$SCAN_STATE_FILE" != "<state-file-path-from-Step-1>" ] || { printf "! Substitute the retained Step 1 state path before running this block\n"; exit 1; }
+_SCAN_TMP=$(dirname "$SCAN_STATE_FILE")
+[ -d "$_SCAN_TMP" ] && [ -O "$_SCAN_TMP" ] && [ ! -L "$_SCAN_TMP" ] || { printf "! scan directory failed ownership/symlink check — aborting\n"; exit 1; }
 # Step 1 failed → no success marker → stop; index may not exist
-IFS= read -r _SCAN_OK < "${TMPDIR:-/tmp}/codemap-scan-ok-${_CM_PROJ_SLUG}-${CSID}" 2>/dev/null || _SCAN_OK=""
+IFS= read -r _SCAN_OK < "${_SCAN_TMP}/codemap-scan-ok-${_CM_PROJ_SLUG}-${CSID}" 2>/dev/null || _SCAN_OK=""
 [ "$_SCAN_OK" = "ok" ] || { printf "! Step 1 scan did not succeed — not reporting stats\n"; exit 1; }
-IFS= read -r SCAN_STATE_FILE < "${TMPDIR:-/tmp}/codemap-state-ref-${_CM_PROJ_SLUG}-${CSID}" 2>/dev/null || SCAN_STATE_FILE=""
 [ -n "$SCAN_STATE_FILE" ] && [ -f "$SCAN_STATE_FILE" ] || { printf "! codemap state missing — re-run /codemap-py:scan-codebase\n"; exit 1; }
 [ -O "$SCAN_STATE_FILE" ] && [ ! -L "$SCAN_STATE_FILE" ] || { printf "! codemap state file failed ownership/symlink check — aborting\n" >&2; exit 1; }
 unset PROJ_SLUG SCAN_BIN SCAN_ARGS_RAW PROJ_NAME
@@ -124,19 +130,19 @@ done < "$SCAN_STATE_FILE"
 PROJ_NAME="${PROJ_NAME:-$(basename "$_GIT_ROOT")}"
 # scanner writes <scan-root>/.cache/codemap (graph._resolve_out_path); no --root (or ".") = git root
 # sentinel, not $(…) capture — `>` truncates first, so a failed call never leaves an earlier root
-_ROOT_FILE="${TMPDIR:-/tmp}/codemap-scan-root-${_CM_PROJ_SLUG}-${CSID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/parse_scan_args.py" "$SCAN_ARGS_RAW" --print-root > "$_ROOT_FILE" 2>/dev/null && IFS= read -r _SCAN_ROOT < "$_ROOT_FILE" || _SCAN_ROOT="."
+_ROOT_FILE="${_SCAN_TMP}/codemap-scan-root-${_CM_PROJ_SLUG}-${CSID}"
+python "$PLUGIN_ROOT/bin/parse_scan_args.py" "$SCAN_ARGS_RAW" --print-root > "$_ROOT_FILE" 2>/dev/null && IFS= read -r _SCAN_ROOT < "$_ROOT_FILE" || _SCAN_ROOT="."
 [ "$_SCAN_ROOT" = "." ] && _SCAN_ROOT="$_GIT_ROOT"
 _IDX="${CODEMAP_INDEX_DIR:-${_SCAN_ROOT}/.cache/codemap}"
 if [ -f "${_IDX}/${PROJ_NAME}.json" ]; then
     # scan-stats.py reads SCAN_ARGS env (e.g. --root src/mypackage) for project root
-    SCAN_ARGS="$SCAN_ARGS_RAW" python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/scan-stats.py"
+    SCAN_ARGS="$SCAN_ARGS_RAW" python "$PLUGIN_ROOT/bin/scan-stats.py"
     # rc before noop block — exit 2 (CODEMAP_INDEX_DIR outside allowed roots) previously reported as success
     _STATS_RC=$?
     # --incremental noop check — sentinel set by Step 1 on fallback to full scan
-    if [ -f "${TMPDIR:-/tmp}/codemap-incremental-noop-${PROJ_SLUG}-${CSID}" ]; then
+    if [ -f "${_SCAN_TMP}/codemap-incremental-noop-${PROJ_SLUG}-${CSID}" ]; then
         echo "[codemap] Note: --incremental had no prior index — full scan ran instead"
-        rm -f "${TMPDIR:-/tmp}/codemap-incremental-noop-${PROJ_SLUG}-${CSID}"
+        rm -f "${_SCAN_TMP}/codemap-incremental-noop-${PROJ_SLUG}-${CSID}"
     fi
     [ "$_STATS_RC" -eq 0 ] || { printf "! scan-stats.py failed (exit %d) — index written by Step 1, stats not reported\n" "$_STATS_RC"; exit 1; }
 else

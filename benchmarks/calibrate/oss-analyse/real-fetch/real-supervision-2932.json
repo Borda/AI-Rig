@@ -1,0 +1,498 @@
+{
+  "2318": {
+    "number": 2318,
+    "title": "[Feature]: Geometry-aware dispatch to stop the recurring \"silent AABB\" bug class",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar feature request.\n\n### Feature Description\n\n**What:** A small geometry-aware dispatch layer so detection ops use the geometry each detection actually carries (mask / OBB / box) instead of silently falling back to the axis-aligned `xyxy`.\n\n**Why:** Several recent fixes are the same bug in different functions: code grabs `detections.xyxy` and forgets the real geometry lives in `data[\"xyxyxyxy\"]` (OBB) or `mask`. Because `xyxy` is always present, the wrong answer is the silent default:\n- `Detections.area` returned the AABB area, not the rotated body (#2306)\n- `with_nms` / `with_nmm` dropped crossed OBBs via AABB IoU (#2303)\n- `as_yolo` dropped OBB rotation on export (#2289)\n- `roboflow/inference`: consensus IoU, and stitch / crop corner shifts (https://github.com/roboflow/inference/pull/2420, https://github.com/roboflow/inference/pull/2427, https://github.com/roboflow/inference/pull/2430)\n\nSame root cause each time: `Detections` holds several geometries at once and `xyxy` is just a derived envelope, so every consumer re-implements \"which geometry is the real one?\" and forgetting it fails silently. The next geometry-aware function will hit it again.\n\n**How:** Centralize the dispatch into a few batched helpers and route call sites through them instead of reaching for `xyxy`. No data-model change, keeps the vectorized design, backward compatible. Migration can be incremental, then deprecate the ad-hoc paths.\n\nProposed helpers (batched, no per-detection loops):\n- `detection_iou(a, b)`: dispatches mask / OBB / box IoU\n- `detection_area(det)`: mask sum / shoelace / box area\n- `move_detections(det, offset)`: shifts `xyxy`, `mask`, OBB corners and keypoints together (what #2427 / #2430 each forgot)\n- a `test_op_respects_geometry` contract test that fails when an op can't tell an OBB from its envelope\n\nRollout can be incremental and each step is independent / backward compatible: (1) consolidate the duplicated `move_detections` (pure dedup, no behavior change), (2) the read-only `detection_iou` / `detection_area` dispatch, (3) the contract test.\n\nA first pass suggests more call sites in the same class worth investigating: `get_anchors_coordinates` (and therefore `LineZone` / `PolygonZone`) reads anchors off the envelope rather than the rotated body, `as_coco` and `as_pascal_voc` have no `is_obb` option and drop the rotation on export, `with_nmm` merges to the union envelope while keeping one input's `data[\"xyxyxyxy\"]`, and `DetectionsSmoother` averages `xyxy` without smoothing the oriented corners.\n\n### Example Usage\n\n```python\n# one dispatch per op, instead of every function re-deriving it\ndef detection_area(det):\n    if det.mask is not None:        return det.mask.sum(axis=(1, 2))\n    if \"xyxyxyxy\" in det.data:      return _shoelace(det.data[\"xyxyxyxy\"])\n    return box_area(det.xyxy)\n\n# same shape for detection_iou (mask / OBB / box), plus a geometry-complete\n# m",
+    "comments": [
+      {
+        "author": "user-3",
+        "body": "I think this would be strongest if the shared helper makes the geometry policy explicit per operation, not just an implicit priority order of mask, OBB, then box. Some call sites genuinely need an envelope output for compatibility, while others should be considered wrong if they fall back to `xyxy` when richer geometry is present.\n\nA practical shape could be an internal enum or small strategy object such as `GeometryMode.EXACT`, `GeometryMode.ENVELOPE`, and `GeometryMode.EXPORT_COMPAT`. Then the contract tests can use fixtures where two detections have identical envelopes but different OBB or mask geometry. That catches the silent-AABB class directly and also leaves room for legacy exporters to opt into envelope behavior deliberately instead of accidentally."
+      },
+      {
+        "author": "user-2",
+        "body": "@user-3 I like the explicit policy, my one worry is keeping it out of the public API. A per operation mode argument adds params across many call sites and a concept every user has to learn, which is a lot for a library this lean.\n\nFor almost every op the right policy is just \"exact when richer geometry is present\", which is already the de facto behavior (0.29.0 made `with_nms` and `area` OBB aware). I would keep that as the default and move the decision into one internal geometry resolution helper, so new ops route through it instead of re-deriving from `xyxy` and silently falling back. `EXACT` vs `ENVELOPE` still matters, but as an internal choice at the few ambiguous sites, not a global enum.\n\nFor enforcement, alongside your identical envelope fixtures, a metamorphic test fits well: rotate the detections off axis and require an exact op to give the same NMS keep set and `area`, both rotation invariant on OBB or mask geometry but not on the envelope. One property covers the whole clas"
+      },
+      {
+        "author": "user-4",
+        "body": "Opened https://github.com/roboflow/supervision/pull/2374 - a first slice centralizing the geometry-aware dispatch for `detection_area`/`detection_iou` behind a single internal resolver, with the metamorphic contract test @user-2 suggested. `move_detections` consolidation and the with_nms/with_nmm/as_yolo migration are left as follow-ups per the incremental rollout."
+      },
+      {
+        "author": "user-5",
+        "body": "Is this issue still open ? I want to contribute to it."
+      },
+      {
+        "author": "user-2",
+        "body": "Τook the `get_anchors_coordinates` slice in #2382"
+      },
+      {
+        "author": "user-6",
+        "body": "Hi @user-2! I saw your note about as_coco and as_pascal_voc lacking OBB support and dropping rotation on export. Since #2374 is handling the core area/IoU dispatch and #2382 handled anchors, I would like to take the standalone slice of adding OBB export handling to as_coco and as_pascal_voc. I'll open a focused PR with round-trip unit tests shortly."
+      }
+    ]
+  },
+  "2757": {
+    "number": 2757,
+    "title": "[Bug]: DetectionDataset.as_yolo splits one object into several instances and exports COCO crowd regions as objects",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar bug report.\n\n### Bug\n\n#2702 fixed holes in 0.31.0; this issue is about multi-part objects and `iscrowd`, which are unchanged in 0.31.0. Related: #1209, where a maintainer said multiple polygons in one annotation should load as a single mask (loading now does this, but `as_yolo` splits the mask again on export), and #373, where disjoint masks were noted as unsupported.\n\nWhen a COCO dataset is loaded with `from_coco(..., force_masks=True)` and saved with `as_yolo`, every external contour of a mask becomes its own YOLO line. An object made of two polygons (for example a person cut by an occluder) becomes two objects. COCO crowd regions (`iscrowd: 1`) are kept as ordinary objects, although COCO evaluation treats them as ignore regions. Nothing is logged in either case.\n\nOn COCO val2017 this changes the instance count of the YOLO export, and a model trained or evaluated on the export sees extra small objects and crowd blobs as positives.\n\n**Output of the example below:**\n```\n0 0.35000 0.05000 0.35000 0.15000 0.45000 0.15000 0.45000 0.05000\n0 0.05000 0.05000 0.05000 0.15000 0.15000 0.15000 0.15000 0.05000\n0 0.05000 0.40000 0.05000 0.49000 0.34000 0.49000 0.34000 0.40000\n```\nThree instances from two annotations: the two parts of annotation 1 are separate objects, and the crowd region is an object.\n\n**Expected:**\n- One line per annotation. YOLO segmentation has no multi-polygon form, so the parts need to be joined (Ultralytics' `merge_multi_segment` does this) or, at least, the split should be logged.\n- Crowd regions skipped by default or behind an option, with a warning either way.\n\nFound while auditing COCO converters for a study of annotation-format conversion (preprint to follow). Happy to open a PR if you tell me which behaviour you prefer.\n\n### Environment\n\nReproduced on supervision 0.30.9 and 0.31.0 (latest), pycocotools 2.0.11, opencv-python 4.14.0, numpy 2.4.6, Python 3.13, Linux\n\n### Minimal Reproducible Example\n\n```python\nimport json, tempfile\nfrom pathlib import Path\nimport numpy as np, cv2\nfrom pycocotools import mask as mu\nimport supervision as sv\n\ndef rle(m):\n    r = mu.encode(np.asfortranarray(m.astype(np.uint8)))\n    return {\"size\": r[\"size\"], \"counts\": r[\"counts\"].decode()}\n\ntmp = Path(tempfile.mkdtemp()); (tmp / \"images\").mkdir()\ncv2.imwrite(str(tmp / \"images\" / \"a.jpg\"), np.zeros((100, 100, 3), np.uint8))\ncrowd = np.zeros((100, 100)); crowd[40:50, 5:35] = 1\ncoco = {\"images\": [{\"id\": 1, \"file_name\": \"a.jpg\", \"width\": 100, \"height\": 100}],\n        \"categories\": [{\"id\": 1, \"name\": \"person\"}],\n        \"annotations\": [\n          # one object, two polygons\n          {\"id\": 1, \"image_id\": 1, \"category_id\": 1, \"iscrowd\": 0, \"area\": 200.0, \"bbox\": [5, 5, 40, 10],\n           \"segmentation\": [[5, 5, 15, 5, 15, 15, 5, 15], [35, 5, 45, 5, 45, 15, 35, 15]]},\n          # a crowd region\n          {\"id\": 2, \"image_id\": 1, \"category_id\": 1, \"iscrowd\": 1, \"ar",
+    "comments": [
+      {
+        "author": "user-7",
+        "body": "One more related finding, in case it helps: supervision rasterizes COCO polygons with `cv2.fillPoly` after rounding (`dataset/formats/coco.py` L154–157, `detection/utils/converters.py` L103), which fills every pixel the outline touches, so the mask is about one pixel larger on the right and bottom than pycocotools' rasterization. Tracing the mask back to a polygon then moves the right and bottom edges in by about one pixel. For polygon input the two roughly cancel; for RLE input, which is decoded exactly, only the shrink remains. On COCO val2017 with the same masks stored as RLE, `as_yolo` output had mask IoU < 0.9 with the source for 44.8% of non-crowd objects, against 13.8% for the polygon input (mostly small objects). In `as_pascal_voc` the box comes from the traced polygon when masks are present (`pascal_voc.py` L193), so the same shrink partly offsets the +1 on xmax/ymax from #2756.\n\nMinimal reproduction (supervision 0.30.9 and 0.31.0):\n\n```python\nimport json, tempfile\nfrom pathli"
+      },
+      {
+        "author": "user-8",
+        "body": "@user-7, thanks for the detailed audit. If you aren't planning a PR yourself, I'd like to take the two `as_yolo` parts of this. The rasterization difference you added in the comment is already being worked on in #2714, so I'd leave that there.\n\nConfirmed on `develop`: `detections_to_yolo_annotations` writes one line per polygon from `approximate_mask_with_polygons`, and `from_coco` stores `iscrowd` in `data` by default, but the YOLO exporter never reads it.\n\nProposed behaviour, for @maintainer-2 to confirm before I start:\n\n1. **One line per annotation.** Join a mask's connected components into a single polygon with zero-width seams, the way Ultralytics' `merge_multi_segment` does, so the YOLO instance count matches the source. This extends what `bridge_holes=True` does for holes; the difference is that these seams cross background, but since each is walked out and back, it adds no area. A test would check that the exported polygon decodes back to the same parts.\n2. **Crowd regions.** S"
+      },
+      {
+        "author": "user-9",
+        "body": "Hi! I see the `as_yolo` part is already being handled. Would a separate PR for the polygon rounding in `dataset/formats/coco.py` (coordinates rounded before `cv2.fillPoly`, which shifts mask boundaries) be welcome? Plan: rasterize with sub-pixel precision (e.g. `fillPoly` with a `shift`), plus tests comparing mask area/IoU against the expected polygon."
+      },
+      {
+        "author": "user-7",
+        "body": "@user-8 Thanks for picking this up. For what it's worth, Datumaro just resolved the same crowd question by skipping crowd regions in YOLO export by default and logging a warning with the count (open-edge-platform/datumaro#2221). That seems a good default here too, since YOLO has no ignore regions."
+      }
+    ]
+  },
+  "1388": {
+    "number": 1388,
+    "title": "Create new cookbook for utilizing supervision methods to easily create YOLO datasets for training",
+    "state": "open",
+    "body": "### Search before asking\n\n- [X] I have searched the Supervision [issues](https://github.com/roboflow/supervision/issues) and found no similar feature requests.\n\n\n### Description\n\nI find myself creating dataset structures and split in train, valid, test and images, labels folders multiple times. The whole process could easily be automated.\n\n### Use case\n\nThere are methods that currently exist to load a dataset `sv.DetectionDataset.from_yolo()`, split in selected ratio `sv.DetectionDataset.split()` and export to YOLO format `sv.DetectionDataset.to_yolo()`.\r\n\r\nNevertheless, in creation of YOLO model training dataset structure, someone must write a custom split in train/valid/test (because `split()` is able to split only in two parts), and also create manually the train/valid/test folders needed for the preparation of the dataset. (As of my knowledge ultralytics YOLO models require by default to have train/valid folders that contain valid and not empty annotations, test folder can be empty).\r\n\r\n For that reason I propose a new method to be added in `sv.DetectionDataset` which will combine the arguments of `from_yolo(), split(), to_yolo()` and will run the whole backend for creating train/valid/test folder and images/labels subfolders along with data.yaml file.\r\n\r\nAt this current point I have developed an implementation of such method which provides the ability to the user to create a YOLO dataset structure with a single line of code. An example of executing such a process can be seen in the following example:\r\n\r\n```\r\nimport supervision as sv\r\n\r\ndataset_directory = \"/path/to/directory\"\r\n\r\nsv.DetectionDataset.create_yolo_dataset(\r\n    images_directory_path=f\"{dataset_directory}/images\",\r\n    annotations_directory_path=f\"{dataset_directory}/labels\",\r\n    data_yaml_path=f\"{dataset_directory}/data.yaml\",\r\n    train_ratio=0.7,\r\n    valid_ratio=0.15,\r\n    folders_export_path=f\"{dataset_directory}\",\r\n    data_yaml_export_path = f\"{dataset_directory}/data.yaml\",\r\n)\r\n```\n\n### Additional\n\n- The `test_ratio` is automatically calculated based on the `train_ratio, valid_ratio`.\r\n- The arguments provided in the example are all mandatory arguments to be passed.\r\n- The user can provide any additional optional argument incorporated in `from_yolo(), split(), to_yolo()`.\r\n\r\nLet me know if you like this idea, and if you want to submit a PR with the initial implementation.\n\n### Are you willing to submit a PR?\n\n- [X] Yes I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Cześć @user-10 👋🏻 \r\n\r\nTo be honest, I would really prefer not to treat YOLO differently than other data formats. The Supervision API aims to provide reusable building blocks like `sv.DetectionDataset.split` or `sv.DetectionDataset.as_yolo` that you can compose together. To be honest, that sounds like the expected usage of supervision."
+      },
+      {
+        "author": "user-10",
+        "body": "@maintainer-1 That is a fact, I was thinking about that it is \"too much\" automation. Maybe I could create a cookbook similar to 'Serialise Detections to a CSV File' and 'Serialise Detections to a JSON File', guiding and combining the aforementioned methods to construct a YOLO dataset easily."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "I think the cookbook makes a lot more sense. We also released [this](https://supervision.roboflow.com/develop/how_to/process_datasets/) how-to guide last week. MAybe you could reuse some of those code snippet in your cookbook?\r\n\r\n"
+      },
+      {
+        "author": "user-10",
+        "body": "Yeah sure!"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-10 should I expect cookbook PR? ;)"
+      },
+      {
+        "author": "user-10",
+        "body": "@maintainer-1 Yes, but not immediately, i don't have it ready now. I will work for it mostly this weekend."
+      },
+      {
+        "author": "user-10",
+        "body": "@maintainer-1 I have ready the cookbook. I think we use first proceed with PR #1422 , so we can test the notebook properly, because in the final stage I run `model.train()` and it raises an error due to not proper `data.yaml` format."
+      },
+      {
+        "author": "user-11",
+        "body": "Hi, I’d like to take this as a cookbook following maintainer-1’s direction (compose from_yolo > split twice > as_yolo, then write the final data.yaml with train/val/test paths), in the style of the serialisation cookbooks. @user-10, are you still working on it? If so I’m happy to review or help instead. If I don’t hear back in a few days, I’ll start on it."
+      }
+    ]
+  },
+  "2702": {
+    "number": 2702,
+    "title": "[Bug]: DetectionDataset.as_yolo / as_pascal_voc / as_labelme write a mask with a hole as two instances",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar bug report.\n\n### Bug\n\n**What's the bug?**\nA mask that contains a hole (for example a ring, or any SAM mask with an interior gap) is exported as two\ninstances of the same class: one for the outer contour and one for the hole.\nsv.mask_to_polygons uses cv2 RETR_TREE and discards the hierarchy, so hole contours come back as ordinary\npolygons, and approximate_mask_with_polygons passes them straight to the writers.\n\n**Expected behavior:**\nOne instance per mask. as_coco already handles this (it uses RLE for masks with holes).\n\n**Actual behavior:**\nas_yolo writes two label lines, as_pascal_voc two <object> elements and as_labelme two shapes. Reloading the\nYOLO export gives two instances with areas [2500, 480] instead of one instance of 2100 px (the outer polygon\nis also filled, so the hole is lost). as_createml never writes masks, so it is not affected.\n\n**Error/Traceback (if any):**\n```python\n# No error: the export succeeds but writes the wrong labels.\n```\n\n### Environment\n\n- Supervision: 0.31.0.dev0 (develop @ 69cb843)\n- Python: 3.11\n- OS: macOS 15 (arm64)\n\n### Minimal Reproducible Example\n\n```python\nimport tempfile\nfrom pathlib import Path\n\nimport numpy as np\nfrom PIL import Image\nimport supervision as sv\n\nm = np.zeros((100, 150), bool)\nm[10:60, 10:60] = True\nm[25:45, 25:45] = False  # a hole; mask area is 2100\n\nroot = Path(tempfile.mkdtemp())\n(root / \"images\").mkdir()\np = str(root / \"images\" / \"a.png\")\nImage.fromarray(np.zeros((100, 150, 3), np.uint8)).save(p)\n\ndet = sv.Detections(xyxy=np.array([[10, 10, 59, 59]], float), mask=m[None], class_id=np.array([0]))\nds = sv.DetectionDataset(classes=[\"ring\"], images=[p], annotations={p: det})\nds.as_yolo(str(root / \"y/images\"), str(root / \"y/labels\"), str(root / \"y/data.yaml\"))\n\nprint(len((root / \"y/labels/a.txt\").read_text().splitlines()))  # 2, expected 1\nr = sv.DetectionDataset.from_yolo(\n    str(root / \"y/images\"), str(root / \"y/labels\"), str(root / \"y/data.yaml\"), force_masks=True\n)\nd = next(iter(r.annotations.values()))\nprint(len(d), [int(x.sum()) for x in d.mask])  # 2 [2500, 480], expected 1 [2100]\n```\n\n### Are you willing to submit a PR?\n\n- [x] Yes I'd like to help by submitting a PR!",
+    "comments": []
+  },
+  "1438": {
+    "number": 1438,
+    "title": "[KeypointsDataset] - create a new dataset format to load keypoints",
+    "state": "open",
+    "body": "### Description\r\n\r\nSupervision can currently load object detection, instance segmentation, and classification datasets. Let's add the ability to handle keypoint datasets. The sv.KeypointDataset should offer the same functionalities as [sv.DetectionDataset](https://supervision.roboflow.com/latest/datasets/core/) and [sv.ClassificationDataset](https://supervision.roboflow.com/latest/datasets/core/#supervision.dataset.core.ClassificationDataset), including `merge`, `split`, `__getitem__`, `__iter__`, `from_yolo`, and `as_yolo`.\r\n\r\n### Additional\r\n\r\n- Note: Please share a Google Colab with minimal code to test the new feature. We know it's additional work, but it will speed up the review process. The reviewer must test each change. Setting up a local environment to do this is time-consuming. Please ensure that Google Colab can be accessed without any issues (make it public). Thank you! 🙏🏻 ",
+    "comments": [
+      {
+        "author": "user-13",
+        "body": "Hi @maintainer-1 👋 \r\n\r\nI was analyzing the issue and understood that KeypointsDataset will be similar to DetectionDataset, with the difference being the type of annotations.\r\n\r\n```\r\nclasses: List[str],\r\nimages: Union[List[str], Dict[str, np.ndarray]],\r\nannotations: Dict[str, KeyPoints]\r\n```\r\n\r\nIf this is a correct understanding then I will like to work on this issue.\r\n"
+      },
+      {
+        "author": "user-14",
+        "body": "Let's only implement the new, lazy-loaded, non-deprecated API, with `images: List[str]`. This will save work in the future."
+      },
+      {
+        "author": "user-14",
+        "body": "@user-13, I also made this template, which should help with starting your colab: [Colab Template](https://colab.research.google.com/drive/1rin7WrS-UvVIe-_Gfxmu-yVslGphOq89?usp=sharing).\r\nFeel free to use as much or as little of it as you wish 😉 \r\n"
+      },
+      {
+        "author": "user-13",
+        "body": "Hi @user-14  👋\r\n\r\nI also noticed the deprecated warning in the Datasets classes, and the clarification around `images: List[str]` is helpful. \r\n\r\nThank you for sharing the Colab template 😎 . It will be helpful, and I will suggest adding some similar Colab templates to the contribution guide."
+      },
+      {
+        "author": "user-15",
+        "body": "@user-13 Did you happen to take this up? I was thinking of reviewing this to evaluate whether it is something I can take up to attempt."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-15 👋🏻 if you are up for the task I'm happy to assign it to you ;)"
+      },
+      {
+        "author": "user-13",
+        "body": "Hi @maintainer-1 and @user-15  👋🏻\n\n@maintainer-1 There is a PR pending for review for this issue: https://github.com/roboflow/supervision/pull/1477"
+      }
+    ]
+  },
+  "2747": {
+    "number": 2747,
+    "title": "[Bug]: `as_pascal_voc` truncates fractional box corners instead of rounding them",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar bug report.\n\n### Bug\n\n`DetectionDataset.as_pascal_voc` writes `<bndbox>` corners with `str(int(x))` (`src/supervision/dataset/formats/pascal_voc.py`, `object_to_pascal_voc`), which truncates instead of rounding. A fractional box loses up to a full pixel at every corner. `[10.9, 10.9, 20.9, 20.9]` is written as `11 11 21 21` (1-indexed) instead of `12 12 22 22`.\n\nThe common case is a YOLO → VOC conversion. `from_yolo` reads normalized 6-decimal labels back as floats a hair off the integer pixel, so truncation moves whole corners. With the integer box `[0, 0, 37, 29]` on a 640×480 image, written by Ultralytics as `0 0.028906 0.030208 0.057813 0.060417`:\n\n- `from_yolo` gives `[-0.00032, -0.00024, 37.0, 28.99992]`\n- `as_pascal_voc` writes `xmin=0 ymin=0 xmax=38 ymax=29`. `xmin=0` is outside 1-indexed VOC, and `ymax` lost a pixel.\n- `from_pascal_voc` reads that back as `[-1, -1, 37, 28]`\n\n**Expected:** each corner goes to the nearest integer pixel, `xmin=1 ymin=1 xmax=38 ymax=30`, which reads back as `[0, 0, 37, 29]`. The loader in the same module already keeps decimals (#2568), so the writer is the only lossy step.\n\n### Environment\n\n- supervision `develop` @ 927dfeb05 (0.31.0)\n- macOS arm64, Python 3.12.13, NumPy 2.3.1\n\n### Minimal Reproducible Example\n\n```python\nimport numpy as np\nimport supervision as sv\nfrom supervision.dataset.formats.pascal_voc import object_to_pascal_voc\n\nelem = object_to_pascal_voc(np.array([10.9, 10.9, 20.9, 20.9]), name=\"cat\")\nprint([elem.find(f\"bndbox/{t}\").text for t in (\"xmin\", \"ymin\", \"xmax\", \"ymax\")])\n# ['11', '11', '21', '21']   expected ['12', '12', '22', '22']\n```\n\n### Are you willing to submit a PR?\n\n- [x] Yes I'd like to help by submitting a PR!\n",
+    "comments": []
+  },
+  "2756": {
+    "number": 2756,
+    "title": "[Bug]: as_pascal_voc adds 1 to xmax and ymax; the VOC devkit needs the +1 on xmin and ymin only (complements #2747)",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar bug report.\n\n### Bug\n\n#2747 (with PR #2748) covers the `int()` truncation in the same function; this issue is about the remaining part, the +1 on xmax and ymax, which #2748 keeps.\n\n`dataset/formats/pascal_voc.py` (line 72 in 0.30.9 and 0.31.0) adds 1 to all four coordinates before writing, citing #144 (\"Pascal VOC coordinates are 1-indexed\"). In the VOC devkit convention, pixel indices are 1-based and **inclusive**: a box covering 0-based pixels x0 .. x0+w-1 is written `xmin = x0 + 1`, `xmax = x0 + w`, so a box with `xmin=1, xmax=W` covers the whole image. Only xmin and ymin need the +1. Adding it to xmax and ymax makes every exported box one pixel wider and taller for readers that follow the devkit, such as Detectron2's `pascal_voc.py` loader, which subtracts 1 from xmin and ymin only.\n\nsupervision's reader subtracts 1 from all four coordinates (`xyxy_arr -= 1`), so a supervision -> supervision round trip looks exact, and the problem only appears when another tool reads the files. Reader and writer would need to change together.\n\nThis also affects #2747: with PR #2748, the 0-based box `[0, 0, 37, 29]` is written as `1 1 38 30`, but its devkit encoding is `1 1 37 29`. Integer boxes, which rounding does not change, are all one pixel too large on the right and bottom.\n\nIn our audit of COCO val2017 read with the devkit convention, 30% of the boxes exported by `as_pascal_voc` had IoU below 0.9 with their source box, most of them small objects; both the truncation and the +1 on xmax/ymax contribute, and #2748 removes only the first.\n\n**Output of the example below:** `<xmin>11</xmin> <ymin>21</ymin> <xmax>41</xmax> <ymax>61</ymax>`. The devkit encoding of COCO box x=10, y=20, w=30, h=40 is 11, 21, 40, 60.\n\n**Expected:** add 1 to xmin and ymin only when writing, and subtract 1 from xmin and ymin only when reading. Since #2748 is already changing this function, it may be simplest to fold the change into it. If the current behaviour is kept for compatibility with existing supervision files, a note in the docs would help.\n\nFound while auditing COCO converters for a study of annotation-format conversion (preprint to follow). Happy to open a PR.\n\n### Environment\n\nReproduced on supervision 0.30.9 and 0.31.0 (latest), Python 3.13, Linux.\n\n\n### Minimal Reproducible Example\n\n```python\nimport json, tempfile\nfrom pathlib import Path\nimport numpy as np, cv2\nimport supervision as sv\n\ntmp = Path(tempfile.mkdtemp()); (tmp / \"images\").mkdir()\ncv2.imwrite(str(tmp / \"images\" / \"a.jpg\"), np.zeros((100, 100, 3), np.uint8))\ncoco = {\"images\": [{\"id\": 1, \"file_name\": \"a.jpg\", \"width\": 100, \"height\": 100}],\n        \"categories\": [{\"id\": 1, \"name\": \"box\"}],\n        \"annotations\": [{\"id\": 1, \"image_id\": 1, \"category_id\": 1, \"bbox\": [10, 20, 30, 40], \"area\": 1200, \"iscrowd\": 0}]}\n(tmp / \"ann.json\").write_text(json.dumps(coco))\nds = sv.DetectionDataset.from_coco(str(tmp / \"images\"), str",
+    "comments": []
+  },
+  "2544": {
+    "number": 2544,
+    "title": "[Bug]: from_pascal_voc fails on images with no objects since 0.28.0",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar bug report.\n\n### Bug\n\n**What's the bug?**\n\n`DetectionDataset.from_pascal_voc` fails as soon as the dataset contains an image with no objects in it. A Pascal VOC XML file with a `<size>` block but no `<object>` entries is perfectly normal (it is how negative images are stored), but loading a directory that contains one raises an error and the whole dataset is lost.\n\nThe library's own exporter writes exactly this kind of file. `as_pascal_voc` on a dataset with an empty `Detections` produces an XML with no `<object>`, and `from_pascal_voc` then refuses to read it back, so the export and import are no longer a round trip.\n\nThis worked in 0.27.0 and earlier. It has been broken since 0.28.0 and is still broken on `develop`.\n\n**Where it comes from**\n\nIn `src/supervision/dataset/formats/pascal_voc.py`, `detections_from_xml_obj` builds `class_id` like this:\n\n```python\nclass_id = np.array(\n    [extended_classes.index(class_name) for class_name in class_names]\n)\n```\n\nWhen there are no objects, `class_names` is empty and `np.array([])` has dtype `float64` rather than an integer dtype. The `Detections` object itself accepts that, but `DetectionDataset.__init__` does not:\n\n- In 0.28.0 through 0.29.1 it indexes the class name array with `class_id` to fill in `class_name`, and NumPy rejects a float array as an index.\n- On `develop` the dtype check added in #2410 catches it first and raises a `ValueError` instead.\n\nThe YOLO and COCO loaders both pass `dtype=int` when building `class_id`, so they load negative images fine. The VOC loader is the only one that does not.\n\n**Expected behavior:**\n\nAn XML file with no objects should load as an empty `Detections` with an integer `class_id`, the same way an empty YOLO label file or a COCO image with no annotations does. Exporting a dataset with `as_pascal_voc` and loading it again with `from_pascal_voc` should give back the same dataset.\n\n**Actual behavior:**\n\nOn `develop`:\n\n```\nValueError: Detection annotation for image '.../images/empty.jpg' contains non-integer class_id values with dtype float64.\n```\n\nOn 0.28.0, 0.29.0 and 0.29.1:\n\n```\n  File \".../supervision/dataset/core.py\", line 92, in __init__\n    annotation.data[CLASS_NAME_DATA_FIELD] = np_classes[\nIndexError: arrays used as indices must be of integer (or boolean) type\n```\n\nOn 0.27.0, 0.26.1 and 0.25.1 the script below prints `load ok, images: 2 classes: ['cat']` and `round trip ok`.\n\n### Environment\n\n- Supervision: `develop` (f55a1a9c), also reproduced on 0.29.1, 0.29.0 and 0.28.0. Works on 0.27.0 and earlier.\n- Python: 3.12.11\n- OS: macOS\n\n### Minimal Reproducible Example\n\nThe script builds a tiny VOC dataset in a temp directory with two images: one that has a single `cat` box and one that has nothing in it. It then tries to load the dataset, and separately checks that the library's own export of an empty annotation can be loaded back.\n\n```python\nimport tempfile\nfrom ",
+    "comments": [
+      {
+        "author": "user-17",
+        "body": "Hello! I'd love to take this on and submit a PR to resolve this Pascal VOC parsing bug. I'll make sure class_id is safely cast to an integer type to handle empty/negative images properly."
+      },
+      {
+        "author": "user-16",
+        "body": "Closing this. After filing I checked the current develop branch and found this was already fixed in #2463, which shipped in 0.30.0. My reproduction ran against an older checkout. Sorry for the noise."
+      }
+    ]
+  },
+  "1085": {
+    "number": 1085,
+    "title": "Bug during `as_coco()` conversion for segmentation (+ solution)",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [X] I have searched the Supervision [issues](https://github.com/roboflow/supervision/issues) and found no similar bug report.\n\n\n### Bug\n\nCe problème fait suite au travail fait sur mon précédent issue #1052 \r\n\r\n`results.as_coco(annotations_path=\"test_coco/\", min_image_area_percentage=0.01,)`\r\n>IndexError: list index out of range\r\n\r\nThe problem is due to the fact that in certain cases, the mask returned by GroundedSam is completely inconsistent (less than 3 pixels for example). In this specific case, the function approximate_mask_with_polygons() (as_coco() > detections_to_coco_annotations() > approximate_mask_with_polygons()) returns an empty array.\r\n\r\nSo, the line \r\n```py\r\nlist(approximate_mask_with_polygons(\r\n             mask=mask,\r\n             min_image_area_percentage=min_image_area_percentage,\r\n             max_image_area_percentage=max_image_area_percentage,\r\n             approximation_percentage=approximation_percentage,\r\n         )[0].flatten()\r\n``` \r\ncauses my error, because there is no item '0' in an empty list.\r\n\r\nI will propose a fix following the writing of this issue.\r\n\r\nI changed the architecture of the as_coco() function to be the same as the as_yolo() and as_pascal_voc() architecture.\n\n### Environment\n\nSupervision 0.19.0\n\n### Minimal Reproducible Example\n\n```py\r\nfrom autodistill_grounded_sam import GroundedSAM\r\nfrom autodistill.detection import CaptionOntology\r\nfrom pathlib import Path\r\nimport supervision as sv\r\nimport os\r\nimport shutil\r\n```\r\n```py\r\n# Put the cat image on your input directory\r\n# Put your input directory path\r\ninput_dir = \"/home/ggiret/Téléchargements/chat\"\r\noutput_dir = \"test/\"\r\n```\r\n```py\r\nif os.path.exists(output_dir):\r\n    shutil.rmtree(output_dir)\r\n\r\nclasses = {\"cat\": \"a cat\",}\r\n\r\nbase_model = GroundedSAM(\r\n    ontology=CaptionOntology(\r\n        classes\r\n    ),\r\n    box_threshold = 0.005\r\n)\r\n```\r\n```py\r\nresults = base_model.label(\r\n        input_folder=input_dir,\r\n        extension=\".png\",\r\n        output_folder=output_dir, \r\n        record_confidence=True)\r\n```\r\n```py\r\nresults.as_coco(annotations_path=\"test_coco/\", min_image_area_percentage=0.01,)\r\n```\r\n\r\nImage to use : \r\n![téléchargement (4)](https://github.com/roboflow/supervision/assets/44434482/9a417299-2d41-47ac-8378-61762dc3108e)\r\n\n\n### Additional\n\nIn the code that I am going to propose, as_coco() will record either the BoundingBoxes coordinates or the Segmentation coordinates, but not both at the same time.\n\n### Are you willing to submit a PR?\n\n- [X] Yes I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "user-19",
+        "body": "hey @user-14, if this issue's still open then can I take this up as well as I think I may have a solution to it!"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-36 👋🏻 Honestly, I don't know if this bug still exists. Additionally, it seems that the bug is rather related to the `autodistill` project and not `supervision`. "
+      },
+      {
+        "author": "user-18",
+        "body": "Hi @maintainer-1 @user-36 \r\n\r\nThe Supervision library has evolved a lot since this bug was discovered.\r\nIt is indeed possible that this bug no longer exists. To test this, it would be necessary to run the bug reproduction case that I had shared in the issue ticket.\r\n\r\nAt the time, I had already proposed a fix solution for this one (in the associated PR). Since then, I have moved the PR to draft, because I do not know if the bug still exists.\r\n\r\nHowever, the bug mentioned came from the Supervision library and not from Autodistill."
+      },
+      {
+        "author": "user-20",
+        "body": "@user-18  The bug is still present. I tested it with the latest 0.26.rc04"
+      },
+      {
+        "author": "user-21",
+        "body": "Bug still present 0.26.1\n```\nFile \"/home/ubuntu/dev/ml-segmentation/.venv/lib/python3.13/site-packages/supervision/dataset/core.py\", line 625, in as_coco\n    save_coco_annotations(\n    ~~~~~~~~~~~~~~~~~~~~~^\n        dataset=self,\n        ^^^^^^^^^^^^^\n    ...<3 lines>...\n        approximation_percentage=approximation_percentage,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/ubuntu/dev/ml-segmentation/.venv/lib/python3.13/site-packages/supervision/dataset/formats/coco.py\", line 294, in save_coco_annotations\n    coco_annotation, annotation_id = detections_to_coco_annotations(\n                                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^\n        detections=annotation,\n        ^^^^^^^^^^^^^^^^^^^^^^\n    ...<4 lines>...\n        approximation_percentage=approximation_percentage,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/ubuntu/dev/ml-segmentation/.venv/lib/python3.13/site-packages/supervision/dataset/for"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Hi @user-18 — apologies for the very long delay here. The empty polygon crash is fixed on `develop` via #1086 (merged 2026-02-20) and will ship in the next release. You can test now with `pip install git+https://github.com/roboflow/supervision.git@develop`. Closing as fixed. @user-20 and @user-21 — tagging you since you confirmed this was still present in 0.26.1; the fix is coming in the next release. Please reopen if the issue persists."
+      }
+    ]
+  },
+  "2288": {
+    "number": 2288,
+    "title": "[Bug]: `DetectionDataset.as_yolo` silently drops OBB rotation",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the issues and discussions and found no similar bug report.\n\n### Bug\n\n`DetectionDataset.from_yolo` has an `is_obb=True` flag but `DetectionDataset.as_yolo` does not. The save path silently drops the OBB rotation and writes axis-aligned bbox lines instead.\n\n`from_yolo(is_obb=True)` parses the 9-token OBB lines correctly and stores the four corners in `detections.data[\"xyxyxyxy\"]`. But `detections_to_yolo_annotations` only loops over `xyxy` and `mask` - it never reads `xyxyxyxy`:\n\nhttps://github.com/roboflow/supervision/blob/0c67942d32a650eee0ae13ec123587256ace3903/src/supervision/dataset/formats/yolo.py#L251-L290\n\nSo after a typical `from_yolo -> split -> as_yolo` flow, the saved labels contain 5 tokens per line instead of 9, and training a YOLO-OBB model on them just sees axis-aligned boxes.\n\nRe-loading the saved file with `is_obb=True` also crashes the validator, since the loader expects 9 tokens and finds 5:\n\n```\nValueError: First dimension of np.ndarray for key 'xyxyxyxy' must have size 1\n```\n\nExpected: `as_yolo` accepts `is_obb=True` and serializes the corners from `data[\"xyxyxyxy\"]` as 9-token OBB lines.\n\nActual: no `is_obb` parameter; OBB corners are dropped on save.\n\n\n### Environment\n\n- Supervision: `0.29.0.dev`\n- Python: 3.12.13\n- OS: macOS 26.3\n\n### Minimal Reproducible Example\n\n```python\nimport os, tempfile, numpy as np, cv2\nimport supervision as sv\n\nwith tempfile.TemporaryDirectory() as tmp:\n    img_dir = os.path.join(tmp, \"imgs\"); os.makedirs(img_dir)\n    lbl_dir = os.path.join(tmp, \"labels\"); os.makedirs(lbl_dir)\n    cv2.imwrite(os.path.join(img_dir, \"i.jpg\"), np.zeros((100, 100, 3), np.uint8))\n\n    # Rotated rhombus - not axis-aligned\n    with open(os.path.join(lbl_dir, \"i.txt\"), \"w\") as f:\n        f.write(\"0 0.5 0.1 0.9 0.5 0.5 0.9 0.1 0.5\\n\")\n    with open(os.path.join(tmp, \"data.yaml\"), \"w\") as f:\n        f.write(\"names: ['thing']\\nnc: 1\\n\")\n\n    ds = sv.DetectionDataset.from_yolo(\n        images_directory_path=img_dir,\n        annotations_directory_path=lbl_dir,\n        data_yaml_path=os.path.join(tmp, \"data.yaml\"),\n        is_obb=True,\n    )\n\n    out = os.path.join(tmp, \"out_labels\"); os.makedirs(out)\n    out_yaml = os.path.join(tmp, \"out.yaml\")\n    ds.as_yolo(annotations_directory_path=out, data_yaml_path=out_yaml)\n\n    with open(os.path.join(out, \"i.txt\")) as f:\n        print(\"Saved:  \", f.read().strip())\n    # Saved:   0 0.50000 0.50000 0.80000 0.80000     5 tokens, rotation gone\n    # Original: 0 0.5 0.1 0.9 0.5 0.5 0.9 0.1 0.5   9 tokens\n\n    # Re-loading the saved file with is_obb=True crashes:\n    sv.DetectionDataset.from_yolo(\n        images_directory_path=img_dir,\n        annotations_directory_path=out,\n        data_yaml_path=out_yaml,\n        is_obb=True,\n    )\n    # ValueError: First dimension of np.ndarray for key 'xyxyxyxy' must have size 1\n```\n\n\n### Are you willing to submit a PR?\n\n- [x] Yes I'd like to help by submitting a PR!",
+    "comments": []
+  },
+  "615": {
+    "number": 615,
+    "title": " Can use as_yolo convert coco2yolo to segmentation data  format ?",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [X] I have searched the Supervision [issues](https://github.com/roboflow/supervision/issues) and found no similar bug report.\n\n\n### Bug\n\n\r\nuse this script the conversion format is incorrect\r\n[https://docs.ultralytics.com/datasets/segment/coco/#dataset-yaml](url)\r\n```\r\nimport supervision as sv\r\n\r\nsv.DetectionDataset.from_coco(\r\n    images_directory_path= r\"C:\\Users\\loong\\Downloads\\Car\\valid\",\r\n    annotations_path=r\"C:\\Users\\loong\\Downloads\\Car\\valid\\_annotations.coco.json\",\r\n    force_masks=True\r\n).as_yolo(\r\n    images_directory_path=r\"C:\\Users\\loong\\Downloads\\Car_yolo\\val\\images\",\r\n    annotations_directory_path=r\"C:\\Users\\loong\\Downloads\\Car_yolo\\val\\labels\",\r\n    data_yaml_path=r\"C:\\Users\\loong\\Downloads\\Car_yolo\\data.yaml\"\r\n)\r\n```\n\n### Environment\n\n_No response_\n\n### Minimal Reproducible Example\n\n_No response_\n\n### Additional\n\n_No response_\n\n### Are you willing to submit a PR?\n\n- [ ] Yes I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-22 👋🏻 Thanks for your interest in Supervision. Could you be a bit more specific? What do you mean by incorrect? "
+      },
+      {
+        "author": "user-22",
+        "body": "> Hi @user-22 👋🏻 Thanks for your interest in Supervision. Could you be a bit more specific? What do you mean by incorrect?\r\n\r\nyeap,I want to use Ultralytics' YOLOv8 to train a segmentation algorithm, but the provided function seems to convert COCO dataset into YOLO format. Could you please help me how to convert it into the required format for segmentation dataset?\r\n\r\nPlease refer to for details:\r\n[https://github.com/roboflow/supervision/issues/267#issuecomment-1821974837](url)\r\n\r\n"
+      },
+      {
+        "author": "user-22",
+        "body": "> Hi @user-22 👋🏻 Thanks for your interest in Supervision. Could you be a bit more specific? What do you mean by incorrect?\r\n\r\nUsing this script looks just converted to yolo object detection format, not segmentation data set format requirements\r\n```\r\nimport supervision as sv\r\n\r\nsv.DetectionDataset.from_coco(\r\n    images_directory_path= r\"C:\\Users\\loong\\Downloads\\Car\\valid\",\r\n    annotations_path=r\"C:\\Users\\loong\\Downloads\\Car\\valid\\_annotations.coco.json\",\r\n    force_masks=True\r\n).as_yolo(\r\n    images_directory_path=r\"C:\\Users\\loong\\Downloads\\Car_yolo\\val\\images\",\r\n    annotations_directory_path=r\"C:\\Users\\loong\\Downloads\\Car_yolo\\val\\labels\",\r\n    data_yaml_path=r\"C:\\Users\\loong\\Downloads\\Car_yolo\\data.yaml\"\r\n)\r\n```"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-22 so if you examine the `txt` file that is produced as a result of conversion it contain box coordinates not segmentation coordinates? Could you paste here content of one of those files? "
+      },
+      {
+        "author": "user-22",
+        "body": "> @user-22 so if you examine the `txt` file that is produced as a result of conversion it contain box coordinates not segmentation coordinates? Could you paste here content of one of those files?\r\n\r\nYes, the conversion of YAML and labels TXT files do not meet the segmentation dataset format requirements\r\n\r\nyaml file：\r\n```\r\n\r\nnc: 2\r\nnames: [Car, Car]\r\n\r\n```\r\n\r\nlabes txt file :\r\n```\r\n1 0.50625 0.24844 0.50469 0.25000 0.50000 0.25000 0.49844 0.25156 0.49375 0.25156 0.49219 0.25312 0.48750 0.25312 0.48594 0.25469 0.48125 0.25469 0.47969 0.25625 0.47500 0.25625 0.47344 0.25781 0.47031 0.25781 0.46875 0.25938 0.46406 0.25938 0.46250 0.26094 0.45781 0.26094 0.45625 0.26250 0.45156 0.26250 0.45000 0.26406 0.44531 0.26406 0.44375 0.26562 0.43906 0.26562 0.43750 0.26719 0.43281 0.26719 0.43125 0.26875 0.42969 0.26875 0.42500 0.27344 0.42344 0.27344 0.41406 0.28281 0.41250 0.28281 0.40469 0.29063 0.40313 0.29063 0.38906 0.30469 0.38906 0.30625 0.37188 0.32344 0.37188 0.32500 0.35469 0.34219 0.354"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-22 👋🏻 is this still a problem? "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Hi @user-22 — apologies for not circling back on this. It's been over a year since the last activity. The dataset conversion pipeline has seen significant work since then. If the segmentation format output is still an issue on the current version (0.27.0), please reopen with a fresh example and we'll take another look. Closing as stale for now."
+      }
+    ]
+  },
+  "1270": {
+    "number": 1270,
+    "title": "Is DetectionDataset intended behavior to store all images?",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [X] I have searched the Supervision [issues](https://github.com/roboflow/supervision/issues) and found no similar feature requests.\n\n\n### Question\n\nHi! :wave: \r\n\r\nI found that supervision was using >40GB of RAM in my system when using `DectectionDataset` to save a relatively large dataset as_yolo. I realized that the `DectectionDataset` uses a [dictionary to map](https://github.com/roboflow/supervision/blob/7f78f93407a13a9f73ef547af85dbda29f857b08/supervision/dataset/core.py#L62) the image name to the image, which is stored in memory. \r\n\r\nI wanted to ask if this is the expected behavior since it could lead to take all the available RAM when dealing with some datasets. \r\nIf it is not, maybe it could store a reference path to the original image that is only opened when exporting the dataset.\r\n\r\nAs an example of this behavior I used this skeleton script:\r\n```python\r\nfor image_name in list_images:\r\n    image = cv2.imread(join(images_path, image_name))\r\n    detection = get_detection_from_file(gt_file_path)\r\n\r\n    images[image_name] = image\r\n    annotations[image_name] = detection\r\n\r\ndataset = sv.DetectionDataset(\r\n        classes=classes,\r\n        images=images,\r\n        annotations=annotations,\r\n    )\r\ndataset.as_yolo(annotations_directory_path=output_gt_path, images_directory_path=output_images_path)\r\n```\n\n### Additional\n\n_No response_",
+    "comments": [
+      {
+        "author": "user-14",
+        "body": "Hi @user-23 👋 \r\n\r\nYou've hit on something very high in our priorities list.\r\nIn the next `supervision` release we'd like to start implementing a more efficient data loader.\r\n\r\nYou can find some context here if it's something that catches your interest: #316 \r\n\r\n"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-14 and @user-23, I'm closing this issue and marking it as duplicate."
+      },
+      {
+        "author": "user-23",
+        "body": "Perfect! I didn't find that issue, thanks @user-14 for the clarification. If you need anything, glad to help!"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "For now, we will work with @user-14, as we know, to design the proper API. Once we will create the first dataset loader (probably for YOLO format), you can pick the next one (COCO or PASCAL)."
+      }
+    ]
+  },
+  "1052": {
+    "number": 1052,
+    "title": "DetectionDataset.from_yolo bad conversion with autodistill_grounded_sam DetectionDataset object",
+    "state": "closed",
+    "body": "### Search before asking\r\n\r\n- [X] I have searched the Supervision [issues](https://github.com/roboflow/supervision/issues) and found no similar bug report.\r\n\r\n\r\n### Bug\r\n\r\nThe sv.DetectionDataset.from_yolo function has abnormal behavior when processing DetectionDataset objects from autodistil_grounded_sam\r\n\r\nWhen I use sv.DetectionDataset.from_yolo on a dataset generated via `base_model.label` (base_model being GroundedSAM), I get a different detection number of the object returned by `base_model.label`, whereas this is supposed to only carry out a conversion.\r\n\r\nNote that I did the test with a GroundingDino base_model, and I did not encounter the problem.\r\n\r\nThe detections returned can be lower or higher than the basic detections (900 maximum according to what I have experienced with a confidence of 0.00)\r\n\r\n### Environment\r\n\r\nSupervision = 0.19.0\r\n\r\n### Minimal Reproducible Example\r\n\r\n```py\r\nfrom autodistill_grounded_sam import GroundedSAM\r\nfrom autodistill.detection import CaptionOntology\r\nfrom pathlib import Path\r\nimport supervision as sv\r\n```\r\n\r\n```py\r\nbase_model = GroundedSAM(\r\n    ontology=CaptionOntology(\r\n        {\r\n            \"screen\": \"a computer screen\",\r\n        }\r\n    ),\r\n    box_threshold = 0.00\r\n)\r\n```\r\n\r\n```py\r\n# Put the cat image on your input directory\r\n# Put your input directory path\r\ninput_dir = \"/home/ggiret/Téléchargements/chat\"\r\noutput_dir = \"test/\"\r\n```\r\n\r\n```py\r\nresults = base_model.label(\r\n        input_folder=input_dir,\r\n        extension=\".png\",\r\n        output_folder=output_dir, \r\n        record_confidence=True)\r\n```\r\n\r\n```py\r\n# Put the correct image name if the name changed\r\nlen(results.annotations['images.png'].class_id)\r\n```\r\n> 900\r\n\r\n```py\r\nsv_dataset = sv.DetectionDataset.from_yolo(\r\n        images_directory_path=Path(output_dir).joinpath(\"images\"),\r\n        annotations_directory_path=Path(output_dir).joinpath(\"annotations\"),\r\n        data_yaml_path=Path(output_dir).joinpath(\"data.yaml\"))\r\n```\r\n\r\n```py\r\n# Put the correct image name if the name changed\r\nlen(sv_dataset.annotations['test/images/images.jpg'].class_id)\r\n```\r\n> 1100\r\n\r\n### Additional\r\n\r\n![images.png](https://github.com/roboflow/supervision/assets/44434482/02105793-a783-4c1f-a974-fd71696a76b2)\r\nThis is the image I used for the 1100 number of class_id result.\r\n\r\n### Are you willing to submit a PR?\r\n\r\n- [ ] Yes I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-18 👋🏻 The reason might be the disconnected masks generated by GroundedSAM - that is, two separate masks represent one bounding box. The YOLO format does not allow for such a situation, so such objects are split and saved separately. As a result, you end up with more objects."
+      },
+      {
+        "author": "user-18",
+        "body": "@maintainer-1 \r\nThis may indeed be a reason.\r\nBut in some cases, I also end up with fewer items.\r\n"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-18 because sometimes you get detection that gets removed because it is too large or too small. There might be a bug. But I need to see a concrete, reproducible example of something working wrong. "
+      },
+      {
+        "author": "user-18",
+        "body": "In fact, my goal is to directly convert the dataset into a format that CVAT supports.\r\nCVAT does not support segmentation with the YOLO format, so in any case I will not use it as such.\r\nI will convert to COCO format via Supervision, I will import the annotations to CVAT, and export them to YOLO format from CVAT.\r\nThen I will compare them with the result of the label function of autodistill_grounded_sam.\r\n\r\nI will get back to you if there is a difference already on that (probably on the autodistill_grounded_sam repo if there is a problem).\r\n\r\nIndeed, there is certainly a bug with the from_yolo for an object generated with autodistill_grounded_sam, but I have no application case to verify the veracity of this (because I am not going to use it as a result)."
+      },
+      {
+        "author": "user-18",
+        "body": "@maintainer-1 \r\nEdit:\r\n\r\nI face the same problem with the .as_coco() function to put my dataset in coco format. Except that here, the function crashes ~~because of the difference in detection (1100 versus 900) for the cat image given above.\r\nFor other images it doesn't crash, but potentially the problem is just underwater.~~\r\n\r\nI get the error with any image\r\n\r\nMy first conclusion is that we cannot export a dataset generated via Grounded SAM (autodistill_grounded_sam) at the moment.\r\n\r\n```py\r\n# use the code above\r\nresults.as_coco(\r\n         #images_directory_path=os.path.join(\"temp_result_coco\", 'images'),\r\n         annotations_path=os.path.join(\"temp_result_coco\", 'labels.json'))\r\n```\r\n> 2024-03-27 10:28:06.724 Uncaught app exception\r\nTraceback (most recent call last):\r\n   File \"/home/ggiret/miniconda3/envs/deeplabel/lib/python3.10/site-packages/streamlit/runtime/scriptrunner/script_runner.py\", line 542, in _run_script\r\n     exec(code, module.__dict__)\r\n   File \"/home/ggiret/Documents"
+      },
+      {
+        "author": "user-18",
+        "body": "Could modifying autodistill's `label` function theoretically fix the problem?\r\n\r\nBy ensuring that the base conversion is done in COCO and not in YOLO (COCO has more information, so it is simpler to convert COCO to another annotation than the reverse).\r\n\r\n```py\r\n# By modifying this code for example, with as_coco instead of as_yolo\r\n         dataset.as_yolo(\r\n             output_folder + \"/images\",\r\n             output_folder + \"/annotations\",\r\n             min_image_area_percentage=0.01,\r\n             data_yaml_path=output_folder + \"/data.yaml\",\r\n         )\r\n```\r\n\r\nCould this work?"
+      },
+      {
+        "author": "user-18",
+        "body": "No longer working with the from_yolo function, I close the issue.\r\nI will reopen this issue if I notice an actual bug with this function."
+      }
+    ]
+  },
+  "373": {
+    "number": 373,
+    "title": "Is there a way to save a Dataset natively, without polygon conversions?",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [X] I have searched the Supervision [issues](https://github.com/roboflow/supervision/issues) and found no similar feature requests.\n\n\n### Question\n\nIs there a way to save a Dataset natively, without polygon conversions? Would be great If there would be a way to save the dataset with the masks as a zip, all save formats (coco, yolo, voc) do some processing. Ideally there would be a way to natively save a dataset (maybe as a ZIP file).\r\n\r\nMy usecase is experimenting to get the polygon conversion when saving as yolo after a run just right and writing some custom code for it, so it would be helpful to have the \"raw\" state with the masks saved somewhere.\n\n### Additional\n\nI might just have overlooked some obvious way of saving the dataset... Otherwise it is a feature request I guess.",
+    "comments": [
+      {
+        "author": "user-26",
+        "body": "Hi, @maintainer-1, \r\n\r\nUsing the script [general_json2yolo.py](https://github.com/user-26/Rectlabel-support/blob/master/general_json2yolo.py), you can convert the RLE mask with holes to the YOLO segmentation format.\r\n\r\nThe RLE mask is converted to a parent polygon and a child polygon using `cv2.findContours()`.\r\nThe parent polygon points are sorted in clockwise order. \r\nThe child polygon points are sorted in counterclockwise order.\r\nDetect the nearest point in the parent polygon and in the child polygon.\r\nConnect those 2 points with narrow 2 lines.\r\nSo that the polygon with a hole is saved in the YOLO segmentation format.\r\n\r\n```\r\ndef is_clockwise(contour):\r\n    value = 0\r\n    num = len(contour)\r\n    for i, point in enumerate(contour):\r\n        p1 = contour[i]\r\n        if i < num - 1:\r\n            p2 = contour[i + 1]\r\n        else:\r\n            p2 = contour[0]\r\n        value += (p2[0][0] - p1[0][0]) * (p2[0][1] + p1[0][1]);\r\n    return value < 0\r\n\r\ndef get_merge_point_idx(contour1, cont"
+      },
+      {
+        "author": "user-26",
+        "body": "Thanks for reviewing our script.\r\nWe checked whether YOLO can train polygon masks with holes with a small dataset.\r\n\r\n[Donut images and YOLO segmentation text files](https://github.com/user-26/donut) to confirm that YOLO can train polygon masks with holes.\r\n\r\n![mak-E-6fFmT1kAw-unsplash](https://github.com/ultralytics/JSON2YOLO/assets/1954306/aeba1a78-f51b-46fd-8939-878aae541bb9)\r\n\r\n![aldrin-rachman-pradana-Ilt3lUJP-EA-unsplash](https://github.com/ultralytics/JSON2YOLO/assets/1954306/f3d23fc9-c34e-4fe1-a3eb-7b528dfdacd8)\r\n\r\n![brooke-lark-5BbB3WPi128-unsplash](https://github.com/ultralytics/JSON2YOLO/assets/1954306/d1ff30ee-d87d-4ab3-833d-34bcddef00cc)\r\n\r\n![xandreasw-NH2S3zVPMaE-unsplash](https://github.com/ultralytics/JSON2YOLO/assets/1954306/d850947f-66f1-434f-8edf-9aa86c6eced6)\r\n\r\n\r\n"
+      },
+      {
+        "author": "user-24",
+        "body": "Thanks @user-26. Having a look currently and it seems to work great :)"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi, @user-26 👋🏻 Thanks a lot for that! 🙏🏻 Making that doable with Supervision is definitely on our roadmap. We simply do not have enough capacity to take care of it now. \r\n\r\nIf any of you would like to help us out an contribute, I would be really grateful. "
+      },
+      {
+        "author": "user-24",
+        "body": "@maintainer-1 @user-26 I´ve tested the code and incorporated it into supervision. Working on a PR."
+      },
+      {
+        "author": "user-24",
+        "body": "Added the PR (excuse the sample image): https://github.com/roboflow/supervision/pull/630"
+      },
+      {
+        "author": "user-26",
+        "body": "Hi @maintainer-1, I am sorry for late reply. I was working on the PR for ultralytics/JSON2YOLO.\r\nhttps://github.com/ultralytics/JSON2YOLO/pull/61\r\nNow I started working on your supervision code to implement the COCO RLE to YOLO feature.\r\n\r\nHi @user-24, thanks for implementing my code onto supervision. I will read and check with my dataset."
+      },
+      {
+        "author": "user-26",
+        "body": "I am trying to implement features which are implemented on [JSON2YOLO](https://github.com/user-26/JSON2YOLO).\r\nThe script has `merge_multi_segment()` and merges multiple polygons into one.\r\n\r\nDoes supervision correspond to multiple polygons in the COCO format?\r\nIt looks that it does not work and has an error in the function `coco_annotations_to_detections()` in the script `supervision/dataset/formats/coco.py`.\r\n\r\n```\r\npolygons = [\r\n    np.reshape(\r\n        np.asarray(image_annotation[\"segmentation\"], dtype=np.int32), (-1, 2)\r\n    )\r\n    for image_annotation in image_annotations\r\n]\r\n```\r\n\r\nCOCO file with multiple polygons.\r\n\r\n```\r\n\"annotations\": [\r\n    {\r\n        \"area\": 594425,\r\n        \"bbox\": [328, 834, 780, 2250],\r\n        \"category_id\": 1,\r\n        \"id\": 1,\r\n        \"image_id\": 1,\r\n        \"iscrowd\": 0,\r\n        \"segmentation\": [\r\n            [495, 987, 497, 984, 501, 983, 500, 978, 498, 962, 503, 937, 503, 926, 532, 877, 569, 849, 620, 834, 701, 838, 767, 860, 790, 931, 803, 963, "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "We just opened a new issue https://github.com/roboflow/supervision/issues/1114 where we proposed adding RLE support to Supervision datasets. To keep it clean and prevent duplications, I'm closing this issue. Also, if any of you would be willing to help us out with implementation, let us know! 🙏🏻   "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-26 we do not support disjointed masks for now, but we are actually working on the PR that may add this https://github.com/roboflow/supervision/pull/1086"
+      }
+    ]
+  },
+  "267": {
+    "number": 267,
+    "title": "\"Killed\" during dataset convert from COCO to YOLO format ",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [X] I have searched the Supervision [issues](https://github.com/roboflow/supervision/issues) and found no similar bug report.\n\n\n### Bug\n\ngetting \"Killed\" error while converting dataset from coco to yolo (the code is given bellow):\r\n\r\n![Screenshot from 2023-08-04 16-02-16](https://github.com/roboflow/supervision/assets/110226730/533f07a9-784a-4a7c-90b2-053f304fd974)\r\n\r\ni tried to split manually big dataset in smaller parts (3 parts) and then didn't get error, but in .YAML file i got different classes positions in \"names\" part\r\n```\r\nnames: [truck, car, medium car, bus, motorcycle]\r\n```\r\nand \r\n```\r\nnames: [bus, car, medium car, truck, motorcycle]\r\n```\r\n\r\nany suggestions? Thank you in advance!\n\n### Environment\n\n- python 3.9.13\r\n- Ubuntu 20.04\r\n- supervision 0.12.0\n\n### Minimal Reproducible Example\n\n```\r\nimport supervision as sv\r\n\r\nds = sv.DetectionDataset.from_coco(\r\n    images_directory_path='/home/droneteam/detectron2_for_labeling/codes_for_testing_seg_model/500_datasetas_pirmam_mokymui/all_dataset',\r\n    annotations_path='/home/droneteam/detectron2_for_labeling/codes_for_testing_seg_model/500_datasetas_pirmam_mokymui/all_dataset.json',\r\n    force_masks=True\r\n)\r\n\r\ntrain_ds, test_ds = ds.split(split_ratio=0.8, random_state=42, shuffle=True)\r\n\r\ntrain_ds.as_yolo(\r\n    images_directory_path='/home/droneteam/detectron2_for_labeling/codes_for_testing_seg_model/500_datasetas_pirmam_mokymui/all_yolo/train/images',\r\n    annotations_directory_path='/home/droneteam/detectron2_for_labeling/codes_for_testing_seg_model/500_datasetas_pirmam_mokymui/all_yolo/train_/labels',\r\n    data_yaml_path='/home/droneteam/detectron2_for_labeling/codes_for_testing_seg_model/500_datasetas_pirmam_mokymui/train_copy_parts/data_train.yaml'\r\n\r\n)\r\n\r\ntest_ds.as_yolo(\r\n    images_directory_path='/home/droneteam/detectron2_for_labeling/codes_for_testing_seg_model/500_datasetas_pirmam_mokymui/all_yolo/test/images',\r\n    annotations_directory_path='/home/droneteam/detectron2_for_labeling/codes_for_testing_seg_model/500_datasetas_pirmam_mokymui/all_yolo/test/labels',\r\n    data_yaml_path='/home/droneteam/detectron2_for_labeling/codes_for_testing_seg_model/500_datasetas_pirmam_mokymui/train_copy_parts/data_test.yaml'\r\n\r\n)\r\n```\r\n\n\n### Additional\n\n_No response_\n\n### Are you willing to submit a PR?\n\n- [ ] Yes I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "user-27",
+        "body": "> @user-27, thanks a lot for helping us to understand what's happening. Could you help us a bit more and check the `categories` key in `coco_part1.json`, `coco_part2.json`, and `coco_part3.json`.\r\n> \r\n> Please paste `categories` for each JSON here. If categories are precisely the same in each JSON, then we have a problem.\r\n\r\nYou are right! In my coco_part1.json and coco_part2.json categories are not in the same sequence! \r\n\r\nOkeyy... So i used bad converter from LABELME to COCO (when splitted dataset to 3 separates), don't know why it mixed categories sequence.. \r\n\r\nThank you for that info! \r\nLooking forward to converting the full dataset without needing to split it into separate parts!"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-27 🔥 Awesome that we managed to get to the bottom of this problem. \r\n\r\n> Looking forward to converting the full dataset without needing to split it into separate parts!\r\n\r\nWe will need to introduce lazy loading of images to make that happen. It is on our roadmap. I'll pin this issue there to keep track of that problem. \r\n\r\nI'll close the issue for now."
+      },
+      {
+        "author": "user-30",
+        "body": "@maintainer-1 Can't we just save the dataset in pandas dataset then retrieve it batch by batch?  "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-30 👋🏻 Could you elaborate? "
+      },
+      {
+        "author": "user-30",
+        "body": "Hello @maintainer-1 \r\nhope you are well\r\nI am new to this community So I might be wrong here and\r\nIf I want to create a dataset of images using roboflow will it save a generator object or whole dataset?"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-30 👋🏻 No worries. I'm happy to explain. For now, you will always load the whole dataset, but we are thinking about adding a generator option. "
+      },
+      {
+        "author": "user-30",
+        "body": "> Hi @user-30 👋🏻 No worries. I'm happy to explain. For now, you will always load the whole dataset, but we are thinking about adding a generator option. \n\nCan I try adding that option if you don't mind? @maintainer-1 "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-30, there is already the [issue](https://github.com/roboflow/supervision/issues/316) and [PR](https://github.com/roboflow/supervision/pull/353), but I didn't have time to review it yet."
+      },
+      {
+        "author": "user-22",
+        "body": "@maintainer-1   i use this datasets with 1 label [ https://universe.roboflow.com/naumov-igor-segmentation/car-segmetarion](url)：\r\n\r\n![image](https://github.com/roboflow/supervision/assets/40717349/cf6522cf-6e68-4b6c-bbe1-bfbf38c9c853)\r\n\r\nbut i use this script coco2yolo，but i got 2 labeles\r\n\r\n```\r\nimport supervision as sv\r\n\r\nsv.DetectionDataset.from_coco(\r\n    images_directory_path= r\"C:\\Users\\loong\\Downloads\\Car\\valid\",\r\n    annotations_path=r\"C:\\Users\\loong\\Downloads\\Car\\valid\\_annotations.coco.json\",\r\n    force_masks=True\r\n).as_yolo(\r\n    images_directory_path=r\"C:\\Users\\loong\\Downloads\\Car_yolo\\val\\images\",\r\n    annotations_directory_path=r\"C:\\Users\\loong\\Downloads\\Car_yolo\\val\\labels\",\r\n    data_yaml_path=r\"C:\\Users\\loong\\Downloads\\Car_yolo\\data.yaml\"\r\n)\r\n```\r\n![image](https://github.com/roboflow/supervision/assets/40717349/fe495c3b-7ed8-4f8b-b586-3fef8e5ca988)\r\n\r\nand the generated format doesn't seem right either\r\n\r\n![image](https://github.com/roboflow/supervision/assets/40717349/"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-22 👋🏻 I'm happy to help out. I just responded to your [issue](https://github.com/roboflow/supervision/issues/615). Let's move the conversation there. "
+      }
+    ]
+  },
+  "916": {
+    "number": 916,
+    "title": "This application failed to start because no Qt platform plugin could be initialized",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [X] I have searched the Supervision [issues](https://github.com/roboflow/supervision/issues) and found no similar feature requests.\n\n\n### Question\n\nplease hekp me sove this\r\n\n\n### Additional\n\n(venv2) pratik@DESKTOP-8QUD4SD:~/supervision/examples/speed_estimation$   python yolo_nas_example.py \\\r\n  --source_video_path data/vehicles.mp4 \\\r\n  --target_video_path data/vehicles-result.mp4 \\\r\n  --confidence_threshold 0.3 \\\r\n  --iou_threshold 0.5\r\nThe console stream is logged into /home/pratik/sg_logs/console.log\r\n[2024-02-17 16:42:16] INFO - crash_tips_setup.py - Crash tips is enabled. You can set your environment variable to CRASH_HANDLER=FALSE to disable it\r\n[2024-02-17 16:42:16] WARNING - __init__.py - Failed to import pytorch_quantization\r\n[2024-02-17 16:42:19] WARNING - calibrator.py - Failed to import pytorch_quantization\r\n[2024-02-17 16:42:19] WARNING - export.py - Failed to import pytorch_quantization\r\n[2024-02-17 16:42:19] WARNING - selective_quantization_utils.py - Failed to import pytorch_quantization\r\n[2024-02-17 16:42:19] INFO - checkpoint_utils.py - License Notification: YOLO-NAS pre-trained weights are subjected to the specific license terms and conditions detailed in\r\nhttps://github.com/Deci-AI/super-gradients/blob/master/LICENSE.YOLONAS.md\r\nBy downloading the pre-trained weight files you agree to comply with these terms.\r\n[2024-02-17 16:42:23] INFO - checkpoint_utils.py - Successfully loaded pretrained weights for architecture yolo_nas_l\r\n[2024-02-17 16:42:23] INFO - pipelines.py - Fusing some of the model's layers. If this takes too much memory, you can deactivate it by setting `fuse_model=False`\r\nqt.qpa.xcb: could not connect to display\r\nqt.qpa.plugin: Could not load the Qt platform plugin \"xcb\" in \"/home/pratik/supervision/examples/speed_estimation/venv2/lib/python3.10/site-packages/cv2/qt/plugins\" even though it was found.\r\nThis application failed to start because no Qt platform plugin could be initialized. Reinstalling the application may fix this problem.\r\n\r\nAvailable platform plugins are: xcb.\r\n\r\nAborted",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-31 👋🏻 \r\n\r\nLet's start by converting this issue into a discussion and placing it in the Q&A section."
+      }
+    ]
+  },
+  "285": {
+    "number": 285,
+    "title": "Wrong COCO format while exporting a `sv.DetectionDataset` using its `as_coco` method",
+    "state": "closed",
+    "body": "### The Issue:\r\nI export some annotations using:\r\n ```python\r\nsv.DetectionDataset(\r\n    classes=CLASSES,\r\n    images=images,\r\n    annotations=annotations\r\n).as_coco(\r\n    annotations_path=ANNOTATIONS_PATH,\r\n    min_image_area_percentage=0,\r\n    max_image_area_percentage=1.,\r\n    approximation_percentage=0\r\n)\r\n```\r\nThe resulting `.json` is created successfully. \r\nThen, loading the annotations using `pycocotools` and plotting annotations of an image:\r\n```python\r\nfrom pycocotools.coco import COCO\r\ncoco=COCO(ANNOTATIONS_PATH)\r\n\r\nimgId = 42  # an arbitrary image id\r\nfile_name = coco.loadImgs(imgId)[0][\"file_name\"]\r\n\r\nimg = plt.imread(file_name)\r\nplt.imshow(img)\r\nplt.axis(\"off\")\r\n\r\nannIds = coco.getAnnIds(imgIds=imgId, iscrowd=None)\r\nanns = coco.loadAnns(annIds)\r\ncoco.showAnns(anns, draw_bbox=True)\r\n```\r\nwhich plots wrong annotations for the given `imgId`: the annotations (box & mask) is seen bottom-right and it seems that there is a mismatch between the image and its annotations. \r\n![image](https://github.com/roboflow/supervision/assets/40141130/2b277d28-7487-49cf-a624-11b31f6e508b)\r\n\r\nActually, for any `imgId`, we have the same issue: the image is shown correctly but the annotations are not. Interestingly, the annotations (`annIds`) are always the same for different `imgId`'s. In my case, there is only 1 box & mask per image and for various values of `imgId`, the `annIds` are always equal to `1`.\r\n\r\n### The Cause:\r\nThe `annIds` are not unique among all the annotations (the \"id\" in \"annotations\" in COCO format). \r\nI presume they have to be unique among all annotation id's ([see the following issue](https://github.com/cocodataset/cocoapi/issues/95#issuecomment-448038572)). \r\n\r\nHowever, the current implementation resets the ***annotation id*** to 1 for each image:\r\nhttps://github.com/roboflow/supervision/blob/4f79d29934ebfbb59d4cb789b70e8e451f545332/supervision/dataset/formats/coco.py#L202\r\n\r\n\r\n### The (possible) Fix:\r\nSimply changing `label_id` to `annotation_id` in the following line will assign a unique id for each annotation:\r\nhttps://github.com/roboflow/supervision/blob/4f79d29934ebfbb59d4cb789b70e8e451f545332/supervision/dataset/formats/coco.py#L218\r\n\r\nI would be glad to open a PR.\r\n",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-32 👋🏻 \r\n\r\nI don't think the problem originates in `image_id, annotation_id = 1, 1`.\r\n\r\nTake a look at rest of the function:\r\n\r\n```python\r\nimage_id, annotation_id = 1, 1\r\n    for image_name, image in images.items():\r\n        image_height, image_width, _ = image.shape\r\n\r\n        coco_image = {\r\n            \"id\": image_id,\r\n            \"license\": 1,\r\n            \"file_name\": image_name,\r\n            \"height\": image_height,\r\n            \"width\": image_width,\r\n            \"date_captured\": datetime.now().strftime(\"%m/%d/%Y,%H:%M:%S\"),\r\n        }\r\n\r\n        coco_images.append(coco_image)\r\n        detections = annotations[image_name]\r\n\r\n        coco_annotation, label_id = detections_to_coco_annotations(\r\n            detections=detections,\r\n            image_id=image_id,\r\n            annotation_id=annotation_id,\r\n            min_image_area_percentage=min_image_area_percentage,\r\n            max_image_area_percentage=max_image_area_percentage,\r\n            approximation_percentage=approx"
+      },
+      {
+        "author": "user-32",
+        "body": "Hi @maintainer-1, thanks for the reply :hugs: \r\n\r\n`image_id` is updated without any problem.\r\n`annotation_id` is updated inside `detections_to_coco_annotations`:\r\nhttps://github.com/roboflow/supervision/blob/6f427b9ca41ff0a4a638bfd6d1da679fac065436/supervision/dataset/formats/coco.py#L131\r\nhowever, it starts from 1 for every new image, which yields non-unique `annotation_id`'s throughout the whole annotations, e.g.:\r\n```python\r\n\"annotations\": [\r\n   {\r\n    \"id\": 1, \r\n    \"image_id\": 1, \r\n    ...,\r\n  },\r\n   {\r\n    \"id\": 2, \r\n    \"image_id\": 1, \r\n    ...,\r\n  }\r\n   {\r\n    \"id\": 1,   # --> `annotation_id` starts from 1 again\r\n    \"image_id\": 2, \r\n    ...,\r\n  }\r\n   {\r\n    \"id\": 1,   # --> and again\r\n    \"image_id\": 3, \r\n    ...,\r\n  }\r\n]\r\n```\r\n\r\nI presume that `pycocotools` expects the `annotation_id`'s to be unique. Hence, if we replace:\r\n```coco_annotation, label_id = detections_to_coco_annotations(... ``` \r\nwith ```coco_annotation, annotation_id = detections_to_coco_annotations(...```\r\nthe"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-32 could you share some minimal dataset before and after conversion to demonstrate the issue? I’d love to gain some more understanding. "
+      },
+      {
+        "author": "user-32",
+        "body": "@maintainer-1 here's a link to a [Colab notebook](https://colab.research.google.com/drive/1LdHPNi7hdrJXaRVnNe5ZithMIVNr-6WW?usp=sharing) where I demonstrate the issue. \r\nAfter running all the cells, there is a `sample_coco.json` file, which should look like this:\r\n![image](https://github.com/roboflow/supervision/assets/40141130/aa87e7e3-ccef-4c2e-87e0-ab35e4c23509)\r\n\r\nAs seen, for every `image_id`, the `annotation_id` starts from `1`, resulting in non-unique `annotation_id`'s throughout the whole annotations."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-32 👋🏻! Thanks a lot for the example. 🙏🏻 It's confirmed we have a bug. We missed that as [`sv.Detection.Dataset.from_coco`](https://roboflow.github.io/supervision/dataset/core/#supervision.dataset.core.DetectionDataset.from_coco) does not care about `annotation_id`, so everything loaded as expected. \r\n\r\nYou mentioned that you would be keen to submit a fix. IS that still the case?\r\n\r\nI also noticed that you asked a question in the notebook:\r\n\r\n> We store the `images` & `annotations` in the memory as shown above. But, as the number of images increase, we run out of memory. Is there any other efficient way you would recommend?\r\n\r\nKeeping the `annotations` in RAM is not a problem, but keeping `images` can be a massive problem with larger datasets. We plan to introduce lazy loading.  "
+      },
+      {
+        "author": "user-32",
+        "body": "Hi @maintainer-1 👋🏻!\r\nYes, sure, I will submit a fix soon!\r\nAlso, thanks for the reply, looking forward to it."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-32 awesome! I can't wait to see that! "
+      }
+    ]
+  },
+  "205": {
+    "number": 205,
+    "title": "coco segmentation data for polygon should be [polygon,] not polygon",
+    "state": "closed",
+    "body": "thanks for this great project, but I found that supervision export coco as :\r\n\r\n```\r\n\"segmentation\":  polygon,\r\n```\r\nhttps://github.com/roboflow/supervision/blob/20954a299660a1f227a772a0a7cd253761ddb9da/supervision/dataset/formats/coco.py#L127\r\n\r\nbut coco official [data format](https://cocodataset.org/#format-data:~:text=%22segmentation%22,RLE%20or%20%5Bpolygon%5D%2C) is :\r\n```\r\n\"segmentation\":  [polygon],\r\n```\r\neven only one polygon, it should be a list of polygons.\r\n\r\nthe third party like fifityone may not support this format.\r\n\r\nthat's all, thanks again.",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "@user-33, if you'd be able to provide us with a reproducible example I'd be super grateful. We will definitely work on appropriate fixes. "
+      },
+      {
+        "author": "user-33",
+        "body": "https://colab.research.google.com/drive/1DL-rbH6OCZ7k0VSN0hPaMh7PmJCdrtym?usp=sharing\r\n\r\nIn my tests, SV did make changes to the data structure, but sv seems to be compatible with this change. But as I mentioned above some third-party tools may report errors due to changes in data structures\r\n\r\n![image](https://github.com/roboflow/supervision/assets/31528034/9ba138be-caa3-4487-b6c9-eead141d8fff)\r\n\r\noriginal_coco.json:\r\n```\r\n{\r\n    \"info\": {\r\n        \"contributor\": \"xxx\",\r\n        \"date_created\": \"2023-07-21 09:20:23\",\r\n        \"description\": \"\",\r\n        \"url\": \"\",\r\n        \"version\": \"1.0\",\r\n        \"year\": 2023\r\n    },\r\n    \"licenses\": [\r\n        {\r\n            \"url\": \"http://creativecommons.org/licenses/by-nc-sa/2.0/\",\r\n            \"id\": 1,\r\n            \"name\": \"Attribution-NonCommercial-ShareAlike License\"\r\n        }\r\n    ],\r\n    \"images\": [\r\n\r\n        {\r\n            \"id\": 1664512,\r\n            \"width\": 1080,\r\n            \"height\": 607,\r\n            \"file_name\": \"241295174_80216414"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Looks legit @user-33! I'm reopening the issue. Would you like to help us work on the fix?  "
+      },
+      {
+        "author": "user-34",
+        "body": "@maintainer-1 I would like to take on this looks fairly easy. \r\nYou can also test with your data and I will test based on this one as well\r\n\r\n"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-34 feel free to take a look! I'm a bit surprised we mutate the structure. 😮"
+      },
+      {
+        "author": "user-33",
+        "body": "> @maintainer-1 I would like to take on this looks fairly easy. You can also test with your data and I will test based on this one as well\r\n\r\nYes, the affected code may be only one or two lines, so the original maintainer may be able to deal with this issue more quickly.\r\n\r\nIn addition, due to different time zones, my reply may not be so timely. happy weekend😂"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-33, no worries! We will try to understand and solve the problem. Thanks again for bringing this to our attention. "
+      },
+      {
+        "author": "user-35",
+        "body": "@maintainer-1 @user-33 I was able to reproduce this issue in colab \r\nhttps://colab.research.google.com/drive/1E2H8MkgFjMeJznOLUc6npaAQuFkRRz7-?usp=sharing\r\n\r\nBut want to reproduce it locally to deep dive into why the shape seems to be changing. \r\nCan someone point me to the sample dataset used in the example notebooks?  "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-35 👋🏻! Yup! Here it is: https://universe.roboflow.com/athanasios-kokkinhs-iqro0/aedespupaeheads "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi, @user-33 👋🏻! I hope you are well. It looks like @user-35 submitted PR with the fix for this issue #225. Could you test it to make sure we are correct this time?"
+      }
+    ]
+  }
+}

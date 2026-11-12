@@ -84,12 +84,18 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import ModuleType
 from typing import Any
 
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
 #: Directory containing this helper and its sibling modules, added to `sys.path` for file-path loading.
 SHARED_DIRECTORY = Path(__file__).resolve().parent
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
 import final_handoff  # noqa: E402
+
+#: Maximum bytes accepted from the append-only remediation event ledger.
+MAX_LEDGER_BYTES = 16 * 1024 * 1024
 
 #: Item fields that identify a review item and are carried over unchanged when metadata is merged.
 IDENTITY_FIELDS = ("input_item_id", "item_name", "item_type", "severity", "selectable", "sources")
@@ -263,9 +269,13 @@ def read_events(run: Path) -> list[dict[str, Any]]:
     path = run / EVENTS_LEDGER
     if not path.is_file():
         return []
+    with path.open("rb") as stream:
+        content = stream.read(MAX_LEDGER_BYTES + 1)
+    if len(content) > MAX_LEDGER_BYTES:
+        raise DeriveError("events-ledger-oversized")
     items, buckets = _known_identities(run)
     events = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate(content.decode("utf-8").splitlines(), 1):
         if not line.strip():
             continue
         try:
@@ -1026,7 +1036,7 @@ def derive_handoff(
         {"check": check.get("id"), "status": check.get("status"), "evidence": check.get("stdout")} for check in checks
     ]
     handoff["confidence"] = _confidence_block(metadata, score)
-    handoff["presentation_version"] = 14
+    handoff["presentation_version"] = 15
     if handoff.get("skill") != "code-remediate":
         handoff["artifacts"] = _result_artifact(handoff.get("artifacts") or [], artifact_path)
         if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed":
@@ -1158,7 +1168,7 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
         raise DeriveError("review-action-notes-identity-mismatch")
     if any(len(cells) not in {4, 5} or authored_status.get(cells[0]) != cells[-1] for cells in parsed[2:]):
         raise DeriveError("review-action-notes-status-mismatch")
-    if handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12, 13, 14}:
+    if handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12, 13, 14, 15}:
         detail_sections = list(re.finditer(r"(?ms)^## Finding Details[^\S\r\n]*\r?\n.*?(?=^## |\Z)", notes))
         if len(detail_sections) > 1:
             raise DeriveError("review-report-details-ambiguous")
@@ -1172,9 +1182,9 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
         rows,
         by_id,
         metadata.get("reviewer_assessments") is not None,
-        role_only=handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12, 13, 14},
+        role_only=handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12, 13, 14, 15},
     )
-    if handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12, 13, 14}:
+    if handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12, 13, 14, 15}:
         # Keep authored prose byte-exact while owning one deterministic, complete detail section.
         notes = notes_path.read_bytes().decode("utf-8")
         details = final_handoff.render_review_report_details(handoff) + "\n"

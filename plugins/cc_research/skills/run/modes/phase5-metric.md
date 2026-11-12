@@ -16,17 +16,20 @@ echo "VERIFY_TIMEOUT_MS=$VERIFY_TIMEOUT_MS"
 **If `sandbox_mode = "docker"`**:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 command -v jq >/dev/null 2>&1 || { echo "! MISSING — jq not on PATH; install jq and retry"; exit 1; }
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
 [ -n "$RUN_ID" ] || { echo "! BLOCKED — Phase 5: run-id sentinel missing"; exit 1; }
-METRIC_CMD=$(jq -r '.config.metric_cmd // empty' ".experiments/state/$RUN_ID/state.json") || { echo "! BLOCKED — Phase 5: state.json unreadable"; exit 1; }
+METRIC_CMD=$(jq -b -r '.config.metric_cmd // empty' ".experiments/state/$RUN_ID/state.json") || { echo "! BLOCKED — Phase 5: state.json unreadable"; exit 1; }
 [ -n "$METRIC_CMD" ] || { echo "! BLOCKED — Phase 5: config.metric_cmd missing from state.json"; exit 1; }
+IFS= read -r VERIFY_TIMEOUT_MS < "${TMPDIR:-/tmp}/research-run-verify-timeout-ms-${CSID}" 2>/dev/null || VERIFY_TIMEOUT_MS=""
+[ -n "$VERIFY_TIMEOUT_MS" ] || { echo "! BLOCKED — R2 verify-timeout sentinel missing"; exit 1; }
 IFS= read -r _CFG_NET < "${TMPDIR:-/tmp}/research-run-sandbox-network-${CSID}" 2>/dev/null || _CFG_NET=""
-SANDBOX_NETWORK="${SANDBOX_NETWORK:-${_CFG_NET:-none}}" python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/docker_sandbox_run.py" --mode verify "$METRIC_CMD"
+SANDBOX_NETWORK="${SANDBOX_NETWORK:-${_CFG_NET:-none}}" SANDBOX_TIMEOUT_SEC="$((VERIFY_TIMEOUT_MS / 1000))" python "$PLUGIN_ROOT/bin/docker_sandbox_run.py" --mode verify "$METRIC_CMD"
 ```
 
-Wrapper mounts project read-only, `.experiments` read-write, runs under `python:3.11-slim` with read-only rootfs, dropped Linux caps, `no-new-privileges` (network via `SANDBOX_NETWORK`, default `none`). In-container quotas `--cpus 2 --memory 2g --pids-limit 512` (override via `SANDBOX_CPUS` / `SANDBOX_MEMORY` / `SANDBOX_PIDS_LIMIT`; loosen or tighten, never disable); host-side kill after `SANDBOX_TIMEOUT_SEC` (default 600). Each call starts a fresh container. Use Bash tool `timeout` parameter (not shell `timeout`): `timeout: $VERIFY_TIMEOUT_MS`.
+Wrapper mounts project read-only, `.experiments` read-write, runs under `python:3.11-slim` with read-only rootfs, dropped Linux caps, `no-new-privileges` (network via `SANDBOX_NETWORK`, default `none`). In-container quotas `--cpus 2 --memory 2g --pids-limit 512` (override via `SANDBOX_CPUS` / `SANDBOX_MEMORY` / `SANDBOX_PIDS_LIMIT`; loosen or tighten, never disable); host-side kill uses the persisted metric timeout through `SANDBOX_TIMEOUT_SEC`. Each call starts a fresh container. Use Bash tool `timeout` parameter (not shell `timeout`): `timeout: $VERIFY_TIMEOUT_MS`, plus 30 seconds for Docker cleanup; the metric's execution cap stays unchanged.
 
 **If `sandbox_mode = "local"`**: Run `metric_cmd` via Bash (`timeout: $VERIFY_TIMEOUT_MS`). Not shell `timeout`. Different CWD → separate `cd <path>` call first. Complex metric parsing → write parser to `.experiments/state/<run-id>/scripts/parse-metric-<i>.py`, run with `python <path>` — no inline one-liner.
 
@@ -66,17 +69,44 @@ Runtime copy without `.git` (e.g. Drive-mounted) → compare sha256 of every fil
 
 <!-- Colab assertions: MCP calls, not Bash — exempt from the script-file rule; correct as inline cells. -->
 
-**`metric_repeats` = 1** (default) — require a finite float from the configured metric output, not a stray number in a traceback or diagnostic. A non-zero exit alone does not invalidate a usable metric, preserving `run/SKILL.md`'s exit-code rule. A crash without a usable metric, missing float, or non-finite value is `metric-failed`: run the revert block below, record `status: reverted`, `metric: null`, and decision `metric-failed`; skip Phases 6–7 and continue at Phase 7a, then Phase 8. Never compare a failed measurement with `best_metric`. Timeout keeps the `status: timeout` handling below; Docker wrapper exit 2 follows R2's unsupported-command stop. R2's precondition probe instead shows the failed output and stops — no iteration exists to revert.
+**Colab metric deadline** — execute the metric through this cell after the identity checks, once per sample. Substitute the command as a JSON string literal and the persisted timeout as an integer; do not interpolate command text into Python code. MCP's own request timeout is not the metric deadline. The runtime cell kills the command's process group on expiry and reports `METRIC_TIMEOUT=1`; apply the same timeout-revert block below (R2 instead stops without a revert):
+
+```python
+import os
+import signal
+import subprocess
+import sys
+
+command = <JSON string literal for config.metric_cmd>
+metric_timeout_sec = <positive integer config.metric_timeout_sec>
+if not isinstance(command, str) or not command or type(metric_timeout_sec) is not int or metric_timeout_sec <= 0:
+    raise ValueError("metric command and timeout must be resolved before execution")
+process = subprocess.Popen(["bash", "-c", command], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+try:
+    stdout, stderr = process.communicate(timeout=metric_timeout_sec)
+except subprocess.TimeoutExpired:
+    os.killpg(process.pid, signal.SIGKILL)
+    stdout, stderr = process.communicate()
+    print("METRIC_TIMEOUT=1")
+print(stdout, end="")
+print(stderr, end="", file=sys.stderr)
+print(f"METRIC_EXIT={process.returncode}")
+```
+
+For Colab, use the printed `METRIC_EXIT` as the command's exit status, never the MCP request's success status. `METRIC_TIMEOUT=1` takes precedence over all printed numbers and routes to timeout recovery.
+
+**`metric_repeats` = 1** (default) — require exit 0 and a finite float from the configured metric output, not a stray number in a traceback or diagnostic. Any non-zero exit fails even when stdout contains a float, matching judge, repeated runs and fortify. A crash, missing float, or non-finite value is `metric-failed`: run the revert block below, record `status: reverted`, `metric: null`, and decision `metric-failed`; skip Phases 6–7 and continue at Phase 7a, then Phase 8. Never compare a failed measurement with `best_metric`. Timeout keeps the `status: timeout` handling below; Docker wrapper exit 2 follows R2's unsupported-command stop. R2's precondition probe instead shows the failed output and stops — no iteration exists to revert.
 
 **`metric_repeats` > 1** (state.json `config`) — run the route above that many times, each run its own call under `timeout: $VERIFY_TIMEOUT_MS`; never one call looping over runs, which would squeeze every run into one timeout. With `--colab` the GPU and code-identity checks run once, before the first run. After each run Write one line `{"iteration":<I>,"metric":<float or null>,"exit":<code>}` to `.experiments/state/<run-id>/metric-runs.jsonl.rec` with the Write tool (`<I>` = the `iteration=` Phase 0 printed), then run:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
 IFS= read -r I < "${TMPDIR:-/tmp}/research-run-iter-${CSID}" 2>/dev/null || I=""
 [ -n "$RUN_ID" ] && [ -n "$I" ] || { echo "! BLOCKED — Phase 5: run-id or iteration sentinel missing; metric-runs.jsonl.rec left in place"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/append_ledger.py" ".experiments/state/$RUN_ID/metric-runs.jsonl"  # timeout: 5000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/run_metric_stats.py" status ".experiments/state/$RUN_ID" --iteration "$I"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/append_ledger.py" ".experiments/state/$RUN_ID/metric-runs.jsonl"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/run_metric_stats.py" status ".experiments/state/$RUN_ID" --iteration "$I"  # timeout: 5000
 ```
 
 | Marker | Next |
@@ -90,9 +120,10 @@ The ledger, never memory, is the cursor: after a compaction between runs, `statu
 Timeout expires → append `status: timeout`, then revert only if not already reverted this iteration (same script as SKILL.md §Phase 7 double-revert guard):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r I < "${TMPDIR:-/tmp}/research-run-iter-${CSID}" 2>/dev/null || I=""  # written by run Phase 0
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/revert_iteration_commit.py" --iteration "$I" --phase 5  # timeout: 15000 — reverts HEAD only if its subject starts with `experiment(optimize/i${I}):` (revert subjects embed the original, so never a substring match); unset $I → ! BLOCKED, exit 1
+python "$PLUGIN_ROOT/bin/revert_iteration_commit.py" --iteration "$I" --phase 5  # timeout: 15000 — reverts HEAD only if its subject starts with `experiment(optimize/i${I}):` (revert subjects embed the original, so never a substring match); unset $I → ! BLOCKED, exit 1
 ```
 
 Continue loop.

@@ -159,7 +159,7 @@ def read_relative(root_fd: int, value: object, expected: str, maximum: int = MAX
             next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory_fd)
             os.close(directory_fd)
             directory_fd = next_fd
-        file_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory_fd)
+        file_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=directory_fd)
         try:
             return read_fd(file_fd, maximum)
         finally:
@@ -179,7 +179,7 @@ def open_absolute_executable(value: object) -> tuple[Path, int, str]:
     if not isinstance(value, str) or not os.path.isabs(value) or "\x00" in value:
         raise RoleUnavailable("invalid-codex-binary")
     path = Path(value)
-    file_fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    file_fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
     try:
         metadata = os.fstat(file_fd)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o111 == 0:
@@ -192,7 +192,7 @@ def open_absolute_executable(value: object) -> tuple[Path, int, str]:
 
 def executable_is_unchanged(path: Path, original_fd: int, expected_digest: str) -> bool:
     """Detect an in-place or pathname replacement of a bound executable."""
-    current_fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    current_fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
     try:
         original = os.fstat(original_fd)
         current = os.fstat(current_fd)
@@ -209,7 +209,9 @@ def executable_is_unchanged(path: Path, original_fd: int, expected_digest: str) 
 
 def run_bounded(command: list[str], timeout: float = 10.0) -> tuple[int, bytes, bytes]:
     """Run a child while enforcing stdout and stderr limits during capture."""
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)  # noqa: S603 - argv list, no shell
+    process = subprocess.Popen(  # noqa: S603 - argv list, no shell
+        command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
     if process.stdout is None:
         raise RuntimeError("process.stdout must not be None")
     if process.stderr is None:
@@ -250,8 +252,10 @@ def run_bounded(command: list[str], timeout: float = 10.0) -> tuple[int, bytes, 
         process.stderr.close()
 
 
-def active_plugin_root(codex_binary: Path, codex_home: Path, version: str) -> Path:
+def active_plugin_root(codex_binary: Path, codex_home: Path, version: str, codex_fd: int, codex_digest: str) -> Path:
     """Derive the enabled package root from the observed Codex cache contract."""
+    if not executable_is_unchanged(codex_binary, codex_fd, codex_digest):
+        raise RoleUnavailable("codex-binary-transition")
     returncode, stdout, _ = run_bounded([str(codex_binary), "plugin", "list", "--marketplace", MARKETPLACE, "--json"])
     if returncode != 0:
         raise RoleUnavailable("active-package-oracle-failed")
@@ -390,7 +394,7 @@ def load_verified_role(args: argparse.Namespace) -> tuple[bytes, str]:
             if not codex_home_raw or not os.path.isabs(codex_home_raw):
                 raise RoleUnavailable("codex-home-invalid")
             codex_home = Path(codex_home_raw).absolute()
-            active_root = active_plugin_root(codex_binary, codex_home, version)
+            active_root = active_plugin_root(codex_binary, codex_home, version, codex_fd, codex_digest)
             if not active_root_matches(root_fd, active_root):
                 raise RoleUnavailable("active-package-mismatch")
 
@@ -413,7 +417,7 @@ def load_verified_role(args: argparse.Namespace) -> tuple[bytes, str]:
 
             # Refuse output if a normal concurrent runtime or cache update changed
             # either identity after the initial active-package decision.
-            active_root = active_plugin_root(codex_binary, codex_home, version)
+            active_root = active_plugin_root(codex_binary, codex_home, version, codex_fd, codex_digest)
             if not active_root_matches(root_fd, active_root):
                 raise RoleUnavailable("active-package-transition")
             if not executable_is_unchanged(codex_binary, codex_fd, codex_digest):

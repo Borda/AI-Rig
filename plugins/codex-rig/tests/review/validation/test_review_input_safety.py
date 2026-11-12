@@ -11,8 +11,115 @@ from unittest.mock import Mock
 
 import pytest
 from _modules import load_module
+from _platform import FILE_SYMLINKS_AVAILABLE
 
 SKILL = Path(__file__).resolve().parents[3] / "skills/code-review"
+
+
+def _dispatch_plan(tmp_path: Path, coordinate: str) -> Path:
+    """Create a complete renderable plan with an explicitly selected context coordinate."""
+    run = tmp_path / "run"
+    run.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("Frozen review evidence", encoding="utf-8")
+    context_path = {"relative": "../outside.md", "absolute": str(outside), "symlink": "context.md"}[coordinate]
+    if coordinate == "symlink":
+        (run / context_path).symlink_to(outside)
+    plan = run / "inspection-plan.json"
+    plan.write_text(
+        json.dumps({"contexts": [{"role_id": "reviewer", "context_path": context_path, "context_sha256": "a" * 64}]}),
+        encoding="utf-8",
+    )
+    return plan
+
+
+@pytest.mark.parametrize(
+    "coordinate",
+    [
+        "relative",
+        "absolute",
+        pytest.param(
+            "symlink", marks=pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="file symlinks unavailable")
+        ),
+    ],
+)
+def test_prepare_rejects_context_escape_before_rendering(
+    tmp_path: Path, coordinate: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plan cannot make dispatch preparation read evidence outside its own directory."""
+    prepare = load_module("review_dispatch_bound_prepare", SKILL / "review_prepare.py")
+    plan = _dispatch_plan(tmp_path, coordinate)
+    reader = Mock(wraps=prepare.review_context.dispatch_message)
+    monkeypatch.setattr(prepare.review_context, "dispatch_message", reader)
+    with pytest.raises(ValueError, match="review-context-outside-plan"):
+        prepare._dispatch_message(plan, "reviewer")
+    reader.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "coordinate",
+    [
+        "relative",
+        "absolute",
+        pytest.param(
+            "symlink", marks=pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="file symlinks unavailable")
+        ),
+    ],
+)
+def test_native_validation_rejects_context_escape_before_rendering(
+    validator: ModuleType, tmp_path: Path, coordinate: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Native recipe reconstruction rejects escaped contexts before invoking the historical reader."""
+    plan = _dispatch_plan(tmp_path, coordinate)
+    globals_ = validator._native_dispatch_message.__globals__
+    reader = Mock(wraps=globals_["dispatch_message"])
+    monkeypatch.setitem(globals_, "dispatch_message", reader)
+    with pytest.raises(SystemExit, match="review-context-outside-plan"):
+        validator._native_dispatch_message(
+            {"schema_version": 6, "context_reader_python": sys.executable}, plan, "reviewer", 1
+        )
+    reader.assert_not_called()
+
+
+def test_dispatch_callers_preserve_contained_context_recipes(validator: ModuleType, tmp_path: Path) -> None:
+    """Contained context plans retain the exact compact and historical dispatch recipes."""
+    prepare = load_module("review_dispatch_valid_prepare", SKILL / "review_prepare.py")
+    context = tmp_path / "context.md"
+    context.write_text("Frozen review evidence", encoding="utf-8")
+    plan = tmp_path / "inspection-plan.json"
+    plan.write_text(
+        json.dumps({"contexts": [{"role_id": "reviewer", "context_path": context.name, "context_sha256": "a" * 64}]}),
+        encoding="utf-8",
+    )
+    message = prepare.review_context.dispatch_message(plan, "reviewer", provenance_header=False)
+    assert prepare._dispatch_message(plan, "reviewer") == prepare._compact_dispatch_message(message, "a" * 64)
+    historical = prepare.review_context.dispatch_message(plan, "reviewer", _all_page_calls=False, _include_workdir=True)
+    assert (
+        validator._native_dispatch_message(
+            {"schema_version": 6, "context_reader_python": sys.executable}, plan, "reviewer", 1
+        )
+        == historical
+    )
+
+
+@pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="file symlinks unavailable")
+def test_native_validation_checks_selected_historical_plan_directory(validator: ModuleType, tmp_path: Path) -> None:
+    """A valid retained context cannot authorize an escaped context at the original recipe coordinate."""
+    original = _dispatch_plan(tmp_path, "symlink")
+    retained = tmp_path / "retained"
+    retained.mkdir()
+    plan = retained / original.name
+    plan.write_bytes(original.read_bytes())
+    (retained / "context.md").write_text("Frozen review evidence", encoding="utf-8")
+    manifest = {
+        "schema_version": 8,
+        "dispatch_protocol": "paged-context-v6",
+        "original_plan_path": str(original),
+        "context_reader_python": sys.executable,
+        "context_reader_path": str(SKILL / "review_context.py"),
+    }
+    with pytest.raises(SystemExit, match="review-context-outside-plan"):
+        validator._native_dispatch_message(manifest, plan, "reviewer", 1)
 
 
 @pytest.fixture

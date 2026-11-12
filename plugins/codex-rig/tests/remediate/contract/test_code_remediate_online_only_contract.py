@@ -173,7 +173,7 @@ class TestBarePullRequestIntake:
         A bare PR has current online evidence as its findings source, so it must not fail or request a code review
         merely because no assessed review artifact exists.
         """
-        fail_fast = _section(skill, "## Fail-fast Rules", "## Quality Gates")
+        fail_fast = _section(skill, "## Fail-Fast Rules", "## Quality Gates")
 
         assert (
             missing_phrases(
@@ -285,7 +285,7 @@ class TestRequestedReviewDecision:
 
     def test_missing_requested_report_blocks_continuation_until_explicit_decision(self, skill: str) -> None:
         """Fail-fast guidance cannot silently bypass a requested review."""
-        fail_fast = _section(skill, "## Fail-fast Rules", "## Quality Gates")
+        fail_fast = _section(skill, "## Fail-Fast Rules", "## Quality Gates")
 
         assert (
             missing_phrases(skill, ("ask only for the missing finding evidence or selection",)),

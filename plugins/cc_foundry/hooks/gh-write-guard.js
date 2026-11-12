@@ -232,7 +232,7 @@ const VALUE_FLAGS = new Set(["-R", "--repo"]);
 // Flags that take a value after a group word, in that group only (gh 2.102 `gh codespace ports --help`).
 const GROUP_VALUE_FLAGS = { codespace: new Set(["-c", "--codespace"]) };
 
-// `gh api` options (gh 2.102 `gh api --help`), by how they take a value.
+// `gh api` options (gh 2.104 `gh api --help`), by how they take a value.
 const API_VALUE_SHORT = { H: "header", p: "preview", q: "jq", t: "template", X: "method", f: "raw-field", F: "field" };
 const API_BOOL_SHORT = { i: "include", h: "help" };
 const API_VALUE_LONG = new Set([
@@ -247,7 +247,7 @@ const API_VALUE_LONG = new Set([
   "raw-field",
   "template",
 ]);
-const API_BOOL_LONG = new Set(["help", "include", "paginate", "silent", "slurp", "verbose"]);
+const API_BOOL_LONG = new Set(["allow-escape-sequences", "help", "include", "paginate", "silent", "slurp", "verbose"]);
 // The one method a read may name (case ignored): under it gh sends -f/-F fields as query parameters.
 const READ_METHOD = "GET";
 // A GraphQL query the command text shows: an operation opening with `query` or a bare selection set.
@@ -653,7 +653,7 @@ process.stdin.on("end", () => {
   } catch {
     process.exit(0); // nothing to inspect: normal permission handling
   }
-  if (!data || data.tool_name !== "Bash") process.exit(0);
+  if (!data || (data.tool_name !== "Bash" && data.tool_name !== "Monitor")) process.exit(0);
   const command = (data.tool_input && data.tool_input.command) || "";
   if (typeof command !== "string" || command === "") process.exit(0);
 

@@ -59,6 +59,7 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 
@@ -145,6 +146,132 @@ def canonical_diff_environment() -> dict[str, str]:
     return environment
 
 
+def reject_executable_filters(repository: Path, *, environment: dict[str, str] | None = None) -> None:
+    """Refuse executable clean/process/smudge filters without changing built-in normalization semantics.
+
+    Diff, status and filtered hashing may execute these commands even with textconv and external diff disabled. Refusing
+    the repository preserves legitimate filter semantics for a separately isolated workflow.
+    """
+    prefix = [
+        "git",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        f"core.hooksPath={os.devnull}",
+        "--no-pager",
+        "-C",
+        os.fspath(repository),
+    ]
+    try:
+        completed = subprocess.run(  # noqa: S603 - argv list, no shell
+            [
+                *prefix,
+                "config",
+                "--null",
+                "--get-regexp",
+                r"^filter\..*\.(clean|process|smudge)$",
+            ],
+            capture_output=True,
+            check=False,
+            timeout=GIT_TIMEOUT_SECONDS,
+            env=environment,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("git-filter-config-read-timed-out") from error
+    if completed.returncode not in {0, 1}:
+        raise RuntimeError("git-filter-config-read-failed")
+    executable = {
+        record.partition(b"\n")[0][len(b"filter.") :].rsplit(b".", 1)[0]
+        for record in completed.stdout.split(b"\0")
+        if record.partition(b"\n")[2].strip()
+    }
+    if not executable:
+        return
+    try:
+        inventory = subprocess.run(  # noqa: S603 - fixed Git argv, shell disabled
+            [*prefix, "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+            capture_output=True,
+            check=False,
+            timeout=GIT_TIMEOUT_SECONDS,
+            env=environment,
+        )
+        attributes = subprocess.run(  # noqa: S603 - fixed Git argv, paths passed on stdin
+            [*prefix, "check-attr", "--stdin", "-z", "filter"],
+            input=inventory.stdout,
+            capture_output=True,
+            check=False,
+            timeout=GIT_TIMEOUT_SECONDS,
+            env=environment,
+        )
+        cached_attributes = subprocess.run(  # noqa: S603 - fixed Git argv, paths passed on stdin
+            [*prefix, "check-attr", "--cached", "--stdin", "-z", "filter"],
+            input=inventory.stdout,
+            capture_output=True,
+            check=False,
+            timeout=GIT_TIMEOUT_SECONDS,
+            env=environment,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("git-filter-config-read-timed-out") from error
+    if inventory.returncode or attributes.returncode or cached_attributes.returncode:
+        raise RuntimeError("git-filter-config-read-failed")
+    fields = attributes.stdout.split(b"\0")
+    cached_fields = cached_attributes.stdout.split(b"\0")
+    head_fields = _head_filter_attributes(prefix, environment).split(b"\0")
+    if any(value in executable for value in (*fields[2::3], *cached_fields[2::3], *head_fields[2::3])):
+        raise RuntimeError("git-executable-filter-forbidden")
+
+
+def _head_filter_attributes(prefix: list[str], environment: dict[str, str] | None) -> bytes:
+    """Inspect checkout attributes in HEAD using a private temporary index on older Git versions too.
+
+    Staged deletions can hide both attribute declarations and paths from current index/worktree inventories. Reading
+    HEAD into a temporary index preserves the source index and avoids a newer check-attr --source prerequisite.
+    """
+    try:
+        head = subprocess.run(  # noqa: S603 - fixed Git argv
+            [*prefix, "rev-parse", "--verify", "--quiet", "HEAD"],
+            capture_output=True,
+            check=False,
+            timeout=GIT_TIMEOUT_SECONDS,
+            env=environment,
+        )
+        if head.returncode == 1:
+            return b""
+        if head.returncode:
+            raise RuntimeError("git-filter-config-read-failed")
+        inventory = subprocess.run(  # noqa: S603 - fixed Git argv
+            [*prefix, "ls-tree", "-r", "--name-only", "-z", "HEAD"],
+            capture_output=True,
+            check=False,
+            timeout=GIT_TIMEOUT_SECONDS,
+            env=environment,
+        )
+        with tempfile.TemporaryDirectory(prefix="codex-rig-filter-index-") as scratch:
+            isolated = dict(os.environ if environment is None else environment)
+            isolated["GIT_INDEX_FILE"] = os.fspath(Path(scratch) / "index")
+            index = subprocess.run(  # noqa: S603 - only the temporary index is written
+                [*prefix, "read-tree", "HEAD"],
+                capture_output=True,
+                check=False,
+                timeout=GIT_TIMEOUT_SECONDS,
+                env=isolated,
+            )
+            attributes = subprocess.run(  # noqa: S603 - paths passed on stdin
+                [*prefix, "check-attr", "--cached", "--stdin", "-z", "filter"],
+                input=inventory.stdout,
+                capture_output=True,
+                check=False,
+                timeout=GIT_TIMEOUT_SECONDS,
+                env=isolated,
+            )
+        if inventory.returncode or index.returncode or attributes.returncode:
+            raise RuntimeError("git-filter-config-read-failed")
+        return attributes.stdout
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("git-filter-config-read-timed-out") from error
+
+
 def run_git(arguments: tuple[str, ...], output: Path) -> int:
     """Run one Git argv vector and write its stdout bytes unchanged."""
     with output.open("wb") as stream:
@@ -179,6 +306,7 @@ def _valid_commit_target(target: str, output: Path) -> bool:
 
 def collect_diff(scope: str, target: str, output: Path) -> int:
     """Collect the requested diff scope into the canonical artifact set."""
+    reject_executable_filters(Path.cwd())
     output.mkdir(parents=True, exist_ok=True)
     status = run_git(("status", "--short"), output / "status.txt")
     if status != 0:
@@ -638,6 +766,7 @@ def collect_review_worktree(repository: Path, output: Path) -> dict[str, object]
     The invoking checkout remains untouched. A failure leaves the detached worktree for diagnosis rather than deleting
     potentially modified source.
     """
+    reject_executable_filters(repository)
     root = _repository_root(repository)
     report = output.resolve(strict=False)
     review = report.with_name(f"{report.name}-review-worktree")
@@ -758,6 +887,8 @@ def verify_review_worktree(output: Path) -> None:
     source = Path(receipt["source_worktree"])
     if review.resolve() != report.with_name(f"{report.name}-review-worktree") or review.resolve() == source.resolve():
         raise RuntimeError("Review worktree path no longer matches receipt")
+    reject_executable_filters(source)
+    reject_executable_filters(review)
     # The four identity probes are independent; outcomes are settled in the original check order below.
     topology = _git_attempts(
         [

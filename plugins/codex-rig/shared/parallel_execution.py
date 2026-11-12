@@ -70,6 +70,9 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, NamedTuple
 
+#: Maximum bytes accepted from each runtime rollout ledger.
+MAX_LEDGER_BYTES = 64 * 1024 * 1024
+
 #: Schema revision of the parallel-execution preflight records.
 SCHEMA_VERSION = 1
 #: Schema revision of the parallel-execution runtime records.
@@ -891,9 +894,16 @@ def validate_execution_manifest(manifest: dict[str, object], *, run_dir: Path, r
 def _runtime_rows(path: Path, label: str) -> list[dict[str, Any]]:
     """Load one current rollout JSONL file, rejecting malformed record envelopes."""
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        with path.open("rb") as stream:
+            content = stream.read(MAX_LEDGER_BYTES + 1)
     except OSError as error:
         raise ValueError(f"runtime-{label}-missing") from error
+    if len(content) > MAX_LEDGER_BYTES:
+        raise ValueError(f"runtime-{label}-oversized")
+    try:
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        raise ValueError(f"runtime-{label}-invalid") from error
     if not lines:
         raise ValueError(f"runtime-{label}-invalid")
     rows: list[dict[str, Any]] = []

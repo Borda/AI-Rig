@@ -18,6 +18,8 @@ Covered scenarios:
 
 from __future__ import annotations
 
+import getpass
+import hashlib
 import os
 import re
 import shlex
@@ -145,7 +147,7 @@ def _tmpfile_shapes(tmpdir: Path) -> list[str]:
     Returns:
         Sorted names with the PID and the state-file suffix replaced by placeholders.
     """
-    masked = (re.sub(r"-\d+-", "-<pid>-", p.name) for p in tmpdir.iterdir())
+    masked = (re.sub(r"-\d+-", "-<pid>-", p.name) for p in tmpdir.rglob("*") if p.is_file())
     return sorted(re.sub(r"^codemap-scan-state-.*$", "codemap-scan-state-<rand>", name) for name in masked)
 
 
@@ -169,9 +171,12 @@ def _isolated_tmpdir(tmp_path: Path) -> Path:
     Returns:
         Directory path passed as ``TMPDIR`` to the script.
     """
-    d = tmp_path / "tmp"
-    d.mkdir()
-    return d
+    base = tmp_path / "tmp"
+    base.mkdir()
+    user = str(os.getuid()) if hasattr(os, "getuid") else hashlib.sha256(getpass.getuser().encode()).hexdigest()[:16]
+    directory = base / f"codemap-scan-{user}"
+    directory.mkdir(mode=0o700)
+    return directory
 
 
 @pytest.fixture(name="run_setup")
@@ -188,7 +193,7 @@ def _run_setup_factory(
         *args: str, plugin_root: Path | str = PLUGIN_ROOT, extra_env: dict[str, str] | None = None
     ) -> subprocess.CompletedProcess[str]:
         """Run the entry point with ``CLAUDE_PLUGIN_ROOT``, ``TMPDIR`` and any extra variables set."""
-        env = {"CLAUDE_PLUGIN_ROOT": str(plugin_root), "TMPDIR": str(isolated_tmpdir), **(extra_env or {})}
+        env = {"CLAUDE_PLUGIN_ROOT": str(plugin_root), "TMPDIR": str(isolated_tmpdir.parent), **(extra_env or {})}
         return _run_setup(launcher, *args, env=env, cwd=str(fake_repo))
 
     return run

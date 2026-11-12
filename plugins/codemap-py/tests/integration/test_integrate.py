@@ -140,6 +140,12 @@ def _repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path_class: str) -> P
     root = _build_repo(tmp_path, path_class=path_class)
     monkeypatch.chdir(root)
     monkeypatch.setattr(integration.native, "_native_json_probe", lambda argv: None)
+    real_git_dirty = integration.apply_sync._git_dirty
+    monkeypatch.setattr(
+        integration.apply_sync,
+        "_git_dirty",
+        lambda root, rel: real_git_dirty(root, rel) if (root / ".git").is_dir() else False,
+    )
     return root
 
 

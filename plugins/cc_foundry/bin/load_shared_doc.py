@@ -22,6 +22,8 @@ a bare ``python ...`` invocation does not.
 Failure behaviour: a ``! BREAKING`` line on stdout and exit 1 — where the inline
 form leaked a raw ``cat: No such file or directory`` to stderr with the same
 non-zero exit.
+Only the literal bootstrap token is rendered to the validated owning root;
+documents without that token remain byte-identical.
 
 ``--optional`` is for a doc whose absence the caller already tolerates (the Codex
 pre-pass: the step is skipped when its instructions are not installed). A missing
@@ -30,7 +32,8 @@ and exits 0 with no doc output, the warn-and-skip the inline ``[ -f ] || printf`
 guard it replaces gave. Argument errors still exit 2: they are caller bugs.
 
 Usage:
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" [--optional] <plugin> <subdir> <file.md>
+    PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+    python "$PLUGIN_ROOT/bin/load_shared_doc.py" [--optional] <plugin> <subdir> <file.md>
 
 Arguments:
     plugin  Plugin short-name (e.g. ``foundry``, ``oss``) — no ``cc_`` prefix.
@@ -41,7 +44,7 @@ Exit codes:
     0  Success — file content written to stdout (or, with ``--optional``, a doc was missing and a warning printed)
     1  Subdirectory or file not found (never with ``--optional``)
     2  Argument error
-"""
+"""  # noqa: W505 - the guarded bootstrap command is intentionally one physical line
 
 from __future__ import annotations
 
@@ -52,6 +55,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from load_mode import validate_file_name
+from render_plugin_root import render_file
 from resolve_shared_path import _validate_plugin, _validate_subdir
 from resolve_shared_path import resolve as resolve_shared
 
@@ -139,8 +143,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"! BREAKING: {args.file} not found in {target.parent.as_posix()} — re-install the {args.plugin} plugin")
         return 1
 
-    # Byte-for-byte passthrough — matches `cat`, no encoding or newline rewriting.
-    sys.stdout.buffer.write(target.read_bytes())
+    try:
+        content = render_file(target, plugin_name=args.plugin)
+    except (OSError, ValueError) as exc:
+        print(f"! BREAKING: {exc} — re-install the {args.plugin} plugin")
+        return 1
+    sys.stdout.buffer.write(content)
     sys.stdout.buffer.flush()
     return 0
 

@@ -23,16 +23,28 @@ from _bench_common.presentation import (  # noqa: E402
 _ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def test_live_legend_panel_is_120_columns() -> None:
+@pytest.mark.parametrize("term", ["dumb", "unknown", "xterm-256color"])
+@pytest.mark.parametrize("force_color", [False, True])
+@pytest.mark.parametrize("legacy_windows", [False, True])
+@pytest.mark.parametrize("lines", ["", "40"])
+def test_live_legend_panel_is_120_columns(
+    monkeypatch: pytest.MonkeyPatch, term: str, force_color: bool, legacy_windows: bool, lines: str
+) -> None:
     """Every provider gets a 120-column panel without truncating its legend body.
 
     A forced-colour console renders one legend body; after the colour codes are stripped, the top rule, body row and
     bottom rule must all span the full 120 columns so provider legends line up on one terminal width.
     """
     stream = io.StringIO()
+    monkeypatch.setenv("TERM", term)
+    monkeypatch.setenv("LINES", lines)
+    monkeypatch.delenv("TTY_COMPATIBLE", raising=False)
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.setattr(stream, "isatty", lambda: True)
+    monkeypatch.setattr("rich.console.detect_legacy_windows", lambda: legacy_windows)
     body = "Legend content " + "x" * 90
 
-    print_legend([body], console=benchmark_console(file=stream, force_color=True))
+    print_legend([body], console=benchmark_console(file=stream, force_color=force_color))
 
     visible = _ANSI_SGR.sub("", stream.getvalue()).splitlines()
     assert {len(line) for line in visible} == {120}

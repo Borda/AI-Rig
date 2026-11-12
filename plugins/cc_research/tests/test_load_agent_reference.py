@@ -19,6 +19,25 @@ main = _mod.main
 _DEGRADED = "degraded: fragment unavailable"
 
 
+@pytest.mark.parametrize("invalid_version", ["1999", "0.33.1.1", "1.0.0-01"])
+def test_cache_skips_non_semver_directories(home: Path, invalid_version: str) -> None:
+    """Stray digit-bearing directories cannot outrank a valid installed release."""
+    cache = home / ".claude/plugins/cache/example/research"
+    valid = cache / "0.33.1/references/scientist"
+    valid.mkdir(parents=True)
+    (cache / invalid_version / "references/scientist").mkdir(parents=True)
+    assert _mod._cached_sidecar("scientist") == valid
+
+
+def test_release_outranks_its_prerelease(home: Path) -> None:
+    """SemVer release precedence wins over a numerically suffixed prerelease."""
+    cache = home / ".claude/plugins/cache/example/research"
+    release = cache / "1.0.0/references/scientist"
+    release.mkdir(parents=True)
+    (cache / "1.0.0-rc.99/references/scientist").mkdir(parents=True)
+    assert _mod._cached_sidecar("scientist") == release
+
+
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point ``HOME``/``USERPROFILE`` at an empty directory so the real plugin cache is never consulted."""
@@ -137,21 +156,35 @@ def cwd_tree(tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
 class TestCwdFallback:
     """The cwd-relative source-tree fallback used when ``CLAUDE_PLUGIN_ROOT`` is unset."""
 
-    def test_notice_names_the_unset_root(self, cwd_tree: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_notice_names_the_unset_root(
+        self, home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Inside the research source repository, reading ``plugins/cc_research`` from the cwd is announced on stderr.
 
         Even there the cwd tier is local-dev only, so the fallback must not be silent.
         """
-        manifest = cwd_tree / "plugins" / "cc_research" / ".claude-plugin" / "plugin.json"
-        manifest.parent.mkdir(parents=True)
-        manifest.write_text('{"name": "research"}', encoding="utf-8")
+        root = Path(_mod.__file__).resolve().parent.parent
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+        monkeypatch.chdir(root.parent.parent)
 
-        code = main(["load-agent-reference.py", "scientist", "frag.md", _DEGRADED])
+        code = main(["load-agent-reference.py", "scientist", "ml-concepts.md", _DEGRADED])
 
         captured = capsys.readouterr()
         assert code == 0
-        assert captured.out == "from cwd\n"
+        assert captured.out == (root / "references" / "scientist" / "ml-concepts.md").read_text(encoding="utf-8")
         assert "CLAUDE_PLUGIN_ROOT unset" in captured.err
+
+    def test_forged_manifest_cannot_authorize_cwd_text(
+        self, cwd_tree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A source manifest planted beside untrusted references cannot make the loader read them."""
+        manifest = cwd_tree / "plugins" / "cc_research" / ".claude-plugin" / "plugin.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text('{"name": "research"}', encoding="utf-8")
+        assert main(["load-agent-reference.py", "scientist", "frag.md", _DEGRADED]) == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "! BLOCKED" in captured.err
 
     def test_untrusted_cwd_tree_blocks_without_install(
         self, cwd_tree: Path, capsys: pytest.CaptureFixture[str]

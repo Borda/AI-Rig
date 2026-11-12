@@ -69,6 +69,7 @@ def _run_wrapper(harness: HarnessGit, *arguments: str) -> subprocess.CompletedPr
         [str(BASH), harness.wrapper.as_posix(), *arguments],
         cwd=harness.repository,
         env=harness.environment,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         check=False,
@@ -129,6 +130,105 @@ def test_wrapper_blocks_network_git(harness_git: HarnessGit, arguments: list[str
 
     Allowed option prefixes (``-C``, ``--literal-pathspecs``, formatting ``-c``) must not smuggle a network subcommand
     or an aliased push past the offline boundary; each is refused with the harness exit code and message.
+    """
+    completed = _run_wrapper(harness_git, *arguments)
+
+    assert completed.returncode == _BLOCKED_EXIT
+    assert "blocked by offline Codex harness" in completed.stderr
+
+
+_FILTER_SCAN_PREFIX = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "--no-pager", "-C", "."]
+
+
+@_requires_bash
+@pytest.mark.integration
+class TestCollectorHardeningPrefixes:
+    """The diff collector's hardening options pass the wrapper by exact token and reach real Git intact.
+
+    The collector runs every Git call with ``-c core.fsmonitor=false`` and its executable-filter scan adds ``-c
+    core.hooksPath=<null device> --no-pager -C <repository>``; refusing them made the offline harness fail its
+    ``collect-diff`` selftest with six missing artifacts.
+    """
+
+    @pytest.mark.parametrize(
+        ("arguments", "expected_output"),
+        [
+            pytest.param(["-c", "core.fsmonitor=false", "status", "--short"], "tracked.txt", id="status"),
+            pytest.param(
+                ["-c", "core.fsmonitor=false", "-c", "core.quotePath=true", "diff", "--binary", "HEAD"],
+                "-before\n+after",
+                id="diff-with-formatting-config",
+            ),
+            pytest.param(
+                ["-c", "core.fsmonitor=false", "-C", ".", "--literal-pathspecs", "rev-parse", "--show-toplevel"],
+                "repository",
+                id="toplevel",
+            ),
+            pytest.param(
+                ["-c", "core.fsmonitor=false", "-C", ".", "ls-files", "--others", "--exclude-standard"],
+                "untracked.txt",
+                id="untracked",
+            ),
+            pytest.param([*_FILTER_SCAN_PREFIX, "rev-parse", "--verify", "--quiet", "HEAD"], "", id="head-lookup"),
+            pytest.param(
+                [*_FILTER_SCAN_PREFIX, "ls-tree", "-r", "--name-only", "-z", "HEAD"], "tracked.txt", id="tree"
+            ),
+            pytest.param([*_FILTER_SCAN_PREFIX, "check-attr", "--stdin", "-z", "filter"], "", id="attributes"),
+            pytest.param(
+                [*_FILTER_SCAN_PREFIX, "check-attr", "--cached", "--stdin", "-z", "filter"], "", id="cached-attributes"
+            ),
+        ],
+    )
+    def test_collector_calls_reach_real_git(
+        self, harness_git: HarnessGit, arguments: list[str], expected_output: str
+    ) -> None:
+        """Each Git call the collector issues for the working-tree scope succeeds through the wrapper.
+
+        Every shape runs against the fixture repository, which has one edited tracked file and one untracked file.
+        """
+        completed = _run_wrapper(harness_git, *arguments)
+
+        assert completed.returncode == 0, completed.stderr
+        assert "blocked by offline Codex harness" not in completed.stderr
+        assert expected_output in completed.stdout
+
+    def test_filter_config_scan_reads_without_a_match(self, harness_git: HarnessGit) -> None:
+        """The read-only filter-configuration scan runs; no configured filter is Git's exit code 1.
+
+        The fixture configures no filters, so the scan matches nothing, which the collector accepts as clean.
+        """
+        completed = _run_wrapper(
+            harness_git,
+            *_FILTER_SCAN_PREFIX,
+            "config",
+            "--null",
+            "--get-regexp",
+            r"^filter\..*\.(clean|process|smudge)$",
+        )
+
+        assert completed.returncode == 1, completed.stderr
+        assert "blocked by offline Codex harness" not in completed.stderr
+
+
+@_requires_bash
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param(["-c", "core.fsmonitor=true", "status"], id="fsmonitor-enabled"),
+        pytest.param(["-c", "core.fsmonitor=false", "fetch"], id="fsmonitor-fetch"),
+        pytest.param(["-c", "core.fsmonitor=false", "-c", "alias.send=push", "send"], id="fsmonitor-alias"),
+        pytest.param(["-c", "core.hooksPath=/tmp/hooks", "--no-pager", "status"], id="other-hooks-path"),
+        pytest.param([*_FILTER_SCAN_PREFIX, "fetch"], id="scan-prefix-fetch"),
+        pytest.param([*_FILTER_SCAN_PREFIX, "config", "user.name", "Changed"], id="scan-prefix-config-write"),
+        pytest.param([*_FILTER_SCAN_PREFIX, "read-tree", "--reset", "HEAD"], id="scan-prefix-read-tree-reset"),
+        pytest.param([*_FILTER_SCAN_PREFIX, "ls-tree", "HEAD"], id="scan-prefix-ls-tree-other-shape"),
+    ],
+)
+def test_wrapper_blocks_widened_hardening_prefixes(harness_git: HarnessGit, arguments: list[str]) -> None:
+    """Keep the hardening prefixes exact: they must not widen the offline allowlist.
+
+    A changed option value, a network subcommand or a write-capable form behind an admitted prefix is still refused with
+    the harness exit code and message.
     """
     completed = _run_wrapper(harness_git, *arguments)
 

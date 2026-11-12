@@ -1,11 +1,11 @@
 ---
 name: Rig Investigate
-description: Reproduce a failure and narrow it to an evidence-backed root cause before fixing.
+description: Reproduce a failure and narrow it to an evidence-backed root cause before fixing. Use for bugs, CI failures, and unexplained behavior. NOT for implementing the fix.
 ---
 
 # Rig Investigate
 
-> Read [Evidence rules](../../references/evidence.md). A plausible explanation is not a root cause.
+> Read [Evidence rules](../../references/evidence.md). A plausible explanation is not a root cause. Follow [Role dispatch](../../references/evidence.md#role-dispatch) for native-agent fallback and stop on reported scope violations; use the shared [Optional command compression](../../references/evidence.md#optional-command-compression) guidance for read-heavy commands.
 
 ## Input
 

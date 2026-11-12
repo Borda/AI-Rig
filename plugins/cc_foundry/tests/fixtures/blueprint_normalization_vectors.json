@@ -3276,6 +3276,86 @@
       "expected": true,
       "id": "integer-param-quoted-name-assigns-path",
       "input": "export \"SECONDS\"=1,PATH=1"
+    },
+    {
+      "expected": true,
+      "id": "unquoted-command-table-remains-live",
+      "input": "echo BASH_CMDS=x"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-zsh-flags-remain-live",
+      "input": "echo $'${(e)x}'"
+    },
+    {
+      "expected": false,
+      "id": "fixed-single-regex-data",
+      "input": "grep -E '(^|/)(skills|commands|hooks)/' paths.txt"
+    },
+    {
+      "expected": false,
+      "id": "fixed-double-regex-data",
+      "input": "grep -E \"(^|/)(skills|commands|hooks)/\" paths.txt"
+    },
+    {
+      "expected": false,
+      "id": "fixed-concatenated-regex-data",
+      "input": "grep -E '(^|/)(skills|'\"commands\"'|hooks)/' paths.txt"
+    },
+    {
+      "expected": true,
+      "id": "live-quoted-command",
+      "input": "'hash' -p /bin/echo probe"
+    },
+    {
+      "expected": true,
+      "id": "live-quoted-table-declaration",
+      "input": "typeset 'commands[probe]=/bin/echo'"
+    },
+    {
+      "expected": true,
+      "id": "live-double-table-read",
+      "input": "echo \"${commands[probe]}\""
+    },
+    {
+      "expected": true,
+      "id": "live-table-write-substitution",
+      "input": "grep -E \"$(typeset commands[probe]=/bin/echo)\" paths.txt"
+    },
+    {
+      "expected": true,
+      "id": "git-config-exec-alias",
+      "input": "git -c alias.inspect='!echo unsafe' inspect"
+    },
+    {
+      "expected": true,
+      "id": "git-config-env",
+      "input": "git --config-env=core.sshCommand=VALUE status"
+    },
+    {
+      "expected": true,
+      "id": "git-global-C-before-config",
+      "input": "git -C repo -c core.pager=echo status"
+    },
+    {
+      "expected": false,
+      "id": "git-config-spelling-as-data",
+      "input": "git log --grep=-c"
+    },
+    {
+      "expected": true,
+      "id": "git-ssh-command-assignment",
+      "input": "GIT_SSH_COMMAND='echo unsafe' git status"
+    },
+    {
+      "expected": true,
+      "id": "git-env-read-sensitive-target",
+      "input": "read -r GIT_SSH_COMMAND < input"
+    },
+    {
+      "expected": false,
+      "id": "git-config-name-data",
+      "input": "grep -E 'GIT_SSH_COMMAND=value' paths.txt"
     }
   ],
   "literal_builtin_operands": [
@@ -3470,6 +3550,28 @@
         "echo \"${PATH:=x}\"",
         "printf '%s' \"${PATH:=x}\"",
         "x=$(printf '%s' '${PATH:=x}'); eval \"$x\""
+      ]
+    },
+    {
+      "id": "ordinary-quoted-regex-and-execution-config",
+      "inert": [
+        "grep -E '(^|/)(skills|commands|hooks)/' paths.txt",
+        "grep -E \"(^|/)(skills|commands|hooks)/\" paths.txt",
+        "grep -E '(^|/)(skills|'\"commands\"'|hooks)/' paths.txt",
+        "grep -E 'GIT_SSH_COMMAND=value' paths.txt"
+      ],
+      "live": [
+        "echo BASH_CMDS=x",
+        "echo $'${(e)x}'",
+        "'hash' -p /bin/echo probe",
+        "typeset 'commands[probe]=/bin/echo'",
+        "echo \"${commands[probe]}\"",
+        "grep -E \"$(typeset commands[probe]=/bin/echo)\" paths.txt",
+        "git -c alias.inspect='!echo unsafe' inspect",
+        "git --config-env=core.sshCommand=VALUE status",
+        "git -C repo -c core.pager=echo status",
+        "GIT_SSH_COMMAND='echo unsafe' git status",
+        "read -r GIT_SSH_COMMAND < input"
       ]
     }
   ],

@@ -70,6 +70,9 @@ import sys
 from pathlib import Path
 from typing import Any, NamedTuple
 
+#: Maximum bytes accepted from a previous run's resolution ledger.
+MAX_LEDGER_BYTES = 16 * 1024 * 1024
+
 
 def _read_pr_identity(pr_path: Path) -> tuple[str, str, bool] | None:
     """Read a PR identity without mistaking malformed collector output for a match."""
@@ -642,7 +645,11 @@ def prior_resolutions(run_dir: Path) -> dict[str, Any]:
     ledger = prior / RESOLUTION_LEDGER
     latest: dict[str, dict[str, Any]] = {}
     invalid = 0
-    for line in ledger.read_text(encoding="utf-8").splitlines():
+    with ledger.open("rb") as stream:
+        content = stream.read(MAX_LEDGER_BYTES + 1)
+    if len(content) > MAX_LEDGER_BYTES:
+        raise ValueError("prior-resolutions-ledger-oversized")
+    for line in content.decode("utf-8").splitlines():
         if not line.strip():
             continue
         try:

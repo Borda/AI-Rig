@@ -48,10 +48,14 @@ from pathlib import Path
 _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
+_BIN = str(Path(__file__).resolve().parent)
+if _BIN not in sys.path:
+    sys.path.insert(0, _BIN)
 
-from codemap_py import rwgate  # noqa: E402  (needs the sys.path insert above)
+from codemap_py import index_paths, rwgate  # noqa: E402  (needs the sys.path insert above)
 from codemap_py.scanner.discovery import fingerprint_file_hashes, get_file_hashes  # noqa: E402
 from codemap_py.scanner.exclusions import _load_exclusions  # noqa: E402
+from smoke_test_index import _is_user_owned, _validate_index_path  # noqa: E402
 
 _GIT_TIMEOUT = 5
 # DoS guard, held at the query engine's own ceiling (``query._MAX_INDEX_SIZE_BYTES``).
@@ -360,6 +364,8 @@ def _read_index_or_failure(index_path: Path) -> tuple[dict | None, tuple[dict, i
         return None, _result("no_index", f"index read gate unavailable: {exc}")
     if index is None:
         return None, _result("no_index", f"index unreadable or oversized: {index_path}")
+    if not isinstance(index.get("file_shas", {}), dict):
+        return None, _result("no_index", "file_shas must be an object")
     return index, None
 
 
@@ -561,12 +567,31 @@ def check_currency(index_path: Path, root: Path) -> tuple[dict, int]:
     Returns:
         Tuple of (result_dict, exit_code).
     """
-    index, failure = _read_index_or_failure(index_path)
+    validated = _validate_index_path(str(index_path))
+    if validated is None:
+        candidate = index_path.expanduser().resolve()
+        # Resolve the default identity without override collision diagnostics, which read the index before admission.
+        # The override uses the resolver's same flat project basename; only this exact file gains eligibility.
+        identity = index_paths.resolve_index(root=root, index_dir_override=None)
+        override = os.environ.get("CODEMAP_INDEX_DIR")
+        index_dir = Path(override).expanduser().resolve() if override else identity.index_dir
+        expected = (index_dir / identity.index_path.name).resolve()
+        # Match the scanner's default in-root cache boundary while allowing explicitly selected external overrides.
+        contained = bool(override) or expected.parent.is_relative_to(identity.root)
+        if contained and candidate == expected and candidate.is_file() and _is_user_owned(candidate):
+            validated = candidate
+    if validated is None:
+        return _result("no_index", "index not found, not owned, or outside allowed roots and canonical root index")
+    index, failure = _read_index_or_failure(validated)
     if failure is not None:
         return failure
 
     stored_root = index.get("scan_root")
-    if isinstance(stored_root, str) and Path(stored_root).resolve() != root.resolve():
+    if isinstance(stored_root, str) and (
+        index.get("scan_root_key") != index_paths.root_key(root.resolve())
+        if stored_root == "."
+        else Path(stored_root).resolve() != root.resolve()
+    ):
         return _result("stale", "index scan_root differs from the requested source root")
     if index.get("source_fingerprint"):
         return _source_fingerprint_result(index, root)

@@ -8,12 +8,15 @@ linkage (``evolution_changelog``), SZZ blame evidence (``evolution_blame``), the
 
 Subcommands:
 
-``scope --args "<CLEAN_ARGS>" --project-root DIR [--break-lock false|true|confirmed]``
+``scope --args "<CLEAN_ARGS>" --project-root DIR [--break-lock false|true|confirmed] [--tag-prefix P]``
     Resolve the target and its store root, sync the dedicated clone under the store lock (only when the target is not
     the current checkout), index every release (read-only) and decide whether the user must choose the scan scope.
     Prints ``KEY=value`` lines (``EVO_ROOT``, ``RELEASES``, ``FIRST``, ``LAST``, ``PRERELEASES``, ``EST_FIXES``,
     ``EST_COST``, ``SAVED_SCOPE``, ``NEWER``, ``ASK_SCOPE``, ``SCOPE_FILE``) and writes the ``analyse-evo-root`` and
-    ``analyse-evo-scope`` session sentinels.
+    ``analyse-evo-scope`` session sentinels. ``--tag-prefix`` scans one package of a monorepo whose tags carry a prefix
+    (``pkg-v1.2.0``): only those tags are releases, and the package gets its own store and report folder
+    (``<repo>.pkg-<prefix>``). The prefix is saved in the store's ``target.json``, so ``run`` and ``ingest`` need no
+    flag.
 
 ``run --root DIR --project-root DIR --today YYYY-MM-DD [--full B] [--adjudicate B] [--bug-labels "a,b"]``
     Take the store lock and run the pipeline: resume unfinished fixes, extend to new releases, recompute records whose
@@ -43,6 +46,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -63,6 +67,8 @@ from _evolution_common import (
     canonical_json,
     column_kind,
     parse_version,
+    read_bounded_bytes,
+    read_bounded_text,
     resolve_store_root,
     run_git,
 )
@@ -90,14 +96,17 @@ from evolution_store import (
     adjudication_key,
     append_adjudication,
     append_fix_result,
+    append_fix_results,
     break_lock,
     build_prompt,
+    compact_store,
     load_adjudications,
     load_store,
     paths_from_root,
     plan_work,
     read_manifest,
     read_overrides,
+    refuse_if_tracked,
     release_lock,
     reset_store,
     validate_verdict,
@@ -161,7 +170,7 @@ def _sentinel(name: str) -> Path:
 def _read_sentinel(name: str) -> str:
     """Return the first line of a session sentinel, or an empty string."""
     try:
-        lines = _sentinel(name).read_text(encoding="utf-8").splitlines()
+        lines = read_bounded_text(_sentinel(name)).splitlines()
     except OSError:
         return ""
     return lines[0].strip() if lines else ""
@@ -300,7 +309,7 @@ def _load_target(paths: StorePaths) -> dict[str, Any]:
     path = paths.root / TARGET_FILE
     if not path.is_file():
         raise Blocked("evolution scope step has not run for this store; rerun the scope step")
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(read_bounded_text(path))
 
 
 def _weights(paths: StorePaths) -> tuple[dict[str, float], float, bool]:
@@ -308,7 +317,7 @@ def _weights(paths: StorePaths) -> tuple[dict[str, float], float, bool]:
     defaults."""
     path = paths.root / WEIGHTS_FILE
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(read_bounded_text(path))
     except (OSError, ValueError):
         return dict(DEFAULT_WEIGHTS), DEFAULT_THRESHOLD, True
     if not isinstance(data, dict) or data.get("evaluated") is not True:
@@ -325,7 +334,7 @@ def _estimate_fixes(repo: Path, index: dict[str, Any]) -> int:
     """Estimate the fix count: changelog "Fixed" bullets when a changelog exists, else ``fix`` commits."""
     found = discover_changelog(repo)
     if found.get("path"):
-        text = (repo / found["path"]).read_text(encoding="utf-8", errors="replace")
+        text = read_bounded_text(repo / found["path"], errors="replace")
         sections = parse_changelog(text, found.get("format") or "md")
         counted = sum(len(section.get("fixed", [])) for section in sections.values())
         if counted:
@@ -354,12 +363,35 @@ def _scope_decision(
     return "", True, newer
 
 
+_TAG_PREFIX = re.compile(r"[A-Za-z0-9._@/+-]{0,64}")
+
+
+def _tag_prefix(text: str) -> str:
+    """Return the validated package tag prefix of a monorepo scan (empty for a plain repository)."""
+    prefix = text.strip()
+    if not _TAG_PREFIX.fullmatch(prefix) or ".." in prefix:
+        raise Blocked(f"unsafe --tag-prefix {prefix!r}: use up to 64 letters, digits and . _ @ / + -")
+    return prefix
+
+
+def _store_parts(parts: list[str], prefix: str) -> list[str]:
+    """Return the store path components: one store per package of a monorepo, so scopes and rows never mix."""
+    if not prefix:
+        return parts
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", prefix).strip("-._")
+    if not slug:
+        raise Blocked(f"--tag-prefix {prefix!r} has no letters or digits to name its store")
+    return [*parts[:-1], f"{parts[-1]}.pkg-{slug}"]
+
+
 def cmd_scope(args: argparse.Namespace) -> int:
     """Run the ``scope`` subcommand."""
     project = Path(args.project_root).resolve()
     target, rng = parse_scan_args(args.args)
+    prefix = _tag_prefix(args.tag_prefix)
     info = resolve_target(target, project)
-    paths = resolve_store_root(project / ".evolution", info["parts"])
+    paths = resolve_store_root(project / ".evolution", _store_parts(info["parts"], prefix))
+    refuse_if_tracked(paths, project)
     paths.root.mkdir(parents=True, exist_ok=True)
     (paths.root / SCOPE_FILE).unlink(missing_ok=True)
     if info["dedicated"]:
@@ -370,12 +402,12 @@ def cmd_scope(args: argparse.Namespace) -> int:
         repo = Path(info["checkout"])
     if is_shallow(repo):
         raise Blocked(f"{repo} is a shallow clone; run `git fetch --unshallow` there first")
-    index = build_release_index(repo)
+    index = build_release_index(repo, prefix)
     if not _stable(index):
         raise Blocked("no stable release tag found; evolution needs at least one release")
     if rng:
         resolve_scope(rng, None, index)
-    atomic_write_json(paths.root / TARGET_FILE, {**info, "repo_dir": str(repo)})
+    atomic_write_json(paths.root / TARGET_FILE, {**info, "repo_dir": str(repo), "tag_prefix": prefix})
     manifest = read_manifest(paths)
     saved = manifest.get("scope") if manifest else None
     value, ask, newer = _scope_decision(index, saved, rng)
@@ -415,7 +447,7 @@ def _scope_value(paths: StorePaths) -> str:
         return value
     path = paths.root / SCOPE_FILE
     if path.is_file():
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = read_bounded_text(path).splitlines()
         if lines and lines[0].strip():
             return lines[0].strip()
     raise Blocked("no scan scope chosen; pass v1->v2 or answer the scope question")
@@ -555,7 +587,7 @@ def _changelog_state(repo: Path) -> str:
     for name in names:
         path = repo / name if name else None
         if path is not None and path.is_file() and not path.is_symlink():
-            digest.update(name.encode("utf-8") + b"\0" + hashlib.sha256(path.read_bytes()).digest())
+            digest.update(name.encode("utf-8") + b"\0" + hashlib.sha256(read_bounded_bytes(path)).digest())
     return digest.hexdigest()
 
 
@@ -581,7 +613,7 @@ def _entries_key(repo: Path, index: dict[str, Any], gh_available: bool) -> str:
 def _cached_entries(paths: StorePaths, key: str) -> dict[str, Any] | None:
     """Return the entries stored by the previous run when its key matches; None otherwise or on any read failure."""
     try:
-        stored = json.loads(paths.index.read_text(encoding="utf-8"))
+        stored = json.loads(read_bounded_text(paths.index))
     except (OSError, ValueError):
         return None
     if not isinstance(stored, dict) or stored.get("schema_version") != SCHEMA_VERSION:
@@ -601,7 +633,7 @@ def _prepare(paths: StorePaths, target: dict[str, Any], scope_value: str, full: 
     manifest = read_manifest(paths)
     if full:
         reset_store(paths)
-    index = build_release_index(repo)
+    index = build_release_index(repo, str(target.get("tag_prefix") or ""))
     identity = _identity(repo, target["parts"])
     if manifest and manifest.get("identity") != identity:
         raise Blocked(f"store {paths.root} belongs to a different repository; use another target or delete the store")
@@ -611,6 +643,9 @@ def _prepare(paths: StorePaths, target: dict[str, Any], scope_value: str, full: 
     entries = _cached_entries(paths, entries_key)
     if entries is None:
         entries = build_entries(repo, index, gh_available=gh_available)
+        # A failed GitHub lookup leaves local-only entries; an empty key never matches, so the next run rebuilds them.
+        if any(str(warning).startswith("gh lookup failed") for warning in entries.get("warnings", [])):
+            entries_key = ""
     order = {rel["version"]: rel["order"] for rel in index["releases"]}
     _fold_prereleases(entries["fixes"], index)
     fixes = [fix for fix in entries["fixes"] if _in_scope(order, fix["release"], scope)]
@@ -642,6 +677,7 @@ def _score_pipeline(paths: StorePaths, prep: dict[str, Any], adjudicate: bool) -
         "score_kw": {"weights": weights, "threshold": threshold},
     }
     fps = {fix["entry_id"]: evidence_fingerprint(prep["repo"], fix) for fix in fixes}
+    compact_store(paths)
     stored = load_store(paths)
     plan = plan_work(fixes, fps, stored, scores_fp={})
     evidence = dict(stored["evidence"])
@@ -653,9 +689,9 @@ def _score_pipeline(paths: StorePaths, prep: dict[str, Any], adjudicate: bool) -
     verdicts, requests = _adjudication_plan(base, ctx)
     rows = score_rows(fixes, evidence, columns, sha_map, prep["index"], verdicts, overrides, weights, threshold)
     current = load_store(paths)["rows"]
-    for row in rows:
-        if _changed(current.get(row["fix_id"]), row):
-            append_fix_result(paths, evidence[row["fix_id"]], row)
+    changed = [(evidence[row["fix_id"]], row) for row in rows if _changed(current.get(row["fix_id"]), row)]
+    append_fix_results(paths, changed)
+    compact_store(paths)
     return {
         "rows": rows,
         "columns": columns,
@@ -673,7 +709,7 @@ def _plugin_version() -> str:
     """Return this plugin's version from its manifest, or ``unknown``."""
     path = Path(__file__).resolve().parents[1] / ".claude-plugin" / "plugin.json"
     try:
-        return str(json.loads(path.read_text(encoding="utf-8")).get("version", "unknown"))
+        return str(json.loads(read_bounded_text(path)).get("version", "unknown"))
     except (OSError, ValueError):
         return "unknown"
 
@@ -696,6 +732,7 @@ def _manifest(prep: dict[str, Any], scored: dict[str, Any], labels: str) -> dict
         "plugin_version": _plugin_version(),
         "algo_versions": dict(ALGO_VERSIONS),
         "index_fingerprint": prep["index"]["fingerprint"],
+        **({"tag_prefix": prep["index"]["tag_prefix"]} if prep["index"].get("tag_prefix") else {}),
         "fixes": len(scored["rows"]),
         "columns": sum(1 for col in scored["columns"] if col.get("kind") in REAL_KINDS),
     }
@@ -735,7 +772,8 @@ def _report_meta(ctx: dict[str, Any], report_md: Path) -> dict[str, str]:
 def _render(ctx: dict[str, Any], project: Path) -> tuple[Path, Path]:
     """Render the report files and return ``(report.md, report.html)`` paths."""
     parts = ctx["target"]["parts"]
-    out_dir = project / ".reports" / "analyse" / "evolution" / f"{'-'.join(parts)}-{ctx['today']}"
+    package = _store_parts(parts, str(ctx["target"].get("tag_prefix") or ""))
+    out_dir = project / ".reports" / "analyse" / "evolution" / f"{'-'.join(package)}-{ctx['today']}"
     out_dir.mkdir(parents=True, exist_ok=True)
     repo = {"host": parts[0], "owner": parts[1] if len(parts) > 2 else "", "repo": parts[-1]}
     report = {
@@ -766,6 +804,7 @@ def _warnings(prep: dict[str, Any], scored: dict[str, Any], target: dict[str, An
 
 def execute_run(paths: StorePaths, project: Path, opts: dict[str, Any]) -> dict[str, Any]:
     """Run the locked pipeline and render; return the printed results."""
+    refuse_if_tracked(paths, project)
     target = _load_target(paths)
     scope_value = _scope_value(paths)
     with store_lock(paths):
@@ -830,10 +869,10 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def ingest_verdicts(paths: StorePaths) -> tuple[int, int]:
     """Validate and store adjudicator verdicts; return ``(stored, rejected)``."""
-    requests = json.loads((paths.root / ADJ_REQUEST_FILE).read_text(encoding="utf-8"))
+    requests = json.loads(read_bounded_text(paths.root / ADJ_REQUEST_FILE))
     by_key = {req["key"]: req for req in requests}
     verdicts_path = paths.root / ADJ_VERDICTS_FILE
-    items = json.loads(verdicts_path.read_text(encoding="utf-8")) if verdicts_path.is_file() else []
+    items = json.loads(read_bounded_text(verdicts_path)) if verdicts_path.is_file() else []
     stored = rejected = 0
     with store_lock(paths):
         for item in items if isinstance(items, list) else []:
@@ -866,7 +905,7 @@ def cmd_render_request(args: argparse.Namespace) -> int:
     fixes, so calibration fixtures and replays use the production prompt byte for byte.
     """
     try:
-        specs = json.loads(Path(args.spec).read_text(encoding="utf-8"))
+        specs = json.loads(read_bounded_text(Path(args.spec)))
     except (OSError, ValueError) as exc:
         raise EvolutionError(f"cannot read spec {args.spec}: {exc}") from exc
     if not isinstance(specs, list) or not specs:
@@ -902,6 +941,7 @@ def cmd_render_request(args: argparse.Namespace) -> int:
 def cmd_ingest(args: argparse.Namespace) -> int:
     """Run the ``ingest`` subcommand: store verdicts, then rerun the pipeline without new blame."""
     paths = paths_from_root(Path(args.root))
+    refuse_if_tracked(paths, Path(args.project_root).resolve())
     stored, rejected = ingest_verdicts(paths)
     _emit("VERDICTS_STORED", stored)
     _emit("VERDICTS_REJECTED", rejected)
@@ -924,6 +964,7 @@ def build_parser() -> argparse.ArgumentParser:
     scope.add_argument("--args", default="", help="CLEAN_ARGS blob starting with 'evolution'")
     scope.add_argument("--project-root", default=".", help="project directory holding .evolution/ and .reports/")
     scope.add_argument("--break-lock", default="false", help="false | true | confirmed (remove a held lock)")
+    scope.add_argument("--tag-prefix", default="", help="monorepo package tag prefix, e.g. 'pkg-v' or 'pkg@'")
     for name in ("run", "ingest"):
         cmd = sub.add_parser(name, help=f"{name} the evolution pipeline under the store lock")
         cmd.add_argument("--root", required=True, help="store root printed by the scope step (EVO_ROOT)")
@@ -955,7 +996,7 @@ def main(argv: list[str] | None = None) -> int:
     except (StoreVersionError, StoreTrackedError) as exc:
         print(f"! BLOCKED — {exc}")
         return EXIT_BLOCKED
-    except EvolutionError as exc:
+    except (EvolutionError, ValueError) as exc:
         print(f"! BLOCKED — {exc}")
         return EXIT_BLOCKED
 

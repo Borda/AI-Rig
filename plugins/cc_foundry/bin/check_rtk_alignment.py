@@ -33,8 +33,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-#: Matches the ``RTK_PREFIXES = [...]`` array in the hook source, capturing its body.
-_PREFIX_ARRAY = re.compile(r"RTK_PREFIXES\s*=\s*\[([^\]]*)\]", re.DOTALL)
+#: Matches the start of the ``RTK_PREFIXES = [...]`` array in the hook source.
+_PREFIX_ARRAY = re.compile(r"RTK_PREFIXES\s*=\s*\[")
 #: Matches a single- or double-quoted string, capturing its contents.
 _QUOTED = re.compile(r"""["']([^"']+)["']""")
 #: `rtk --help` lists subcommands indented two to four spaces.
@@ -53,7 +53,8 @@ def hook_prefixes(hook: Path) -> list[str]:
     match = _PREFIX_ARRAY.search(source)
     if not match:
         return []
-    return _QUOTED.findall(match.group(1))
+    end = source.find("]", match.end())
+    return _QUOTED.findall(source[match.end() : end]) if end >= 0 else []
 
 
 def help_commands(help_text: str) -> set[str]:

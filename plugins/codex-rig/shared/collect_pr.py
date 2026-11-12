@@ -23,9 +23,9 @@ original branch recovery. Fork recovery stops for the remediation workflow's bou
 directory is supported because the collector removes its own prior evidence before starting a new attempt; a prior
 report-adjacent review worktree is reused only when it remains clean and bound to the same repository and exact commit.
 Each temporary fallback gets a fresh private parent; its path is retained in the checkout evidence. Every fallback
-worktree and its private parent are retained, including on failure, and may be removed by the run owner with
-``git worktree remove <recorded-worktree>`` and removal of its empty private parent. A failed creation may leave only
-an empty private parent for the run owner to remove.
+worktree and its private parent are retained, including on failure, and may be removed by the run owner with ``git
+worktree remove <recorded-worktree>`` and removal of its empty private parent. A failed creation may leave only an empty
+private parent for the run owner to remove.
 
 ## Used by
 
@@ -65,6 +65,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NamedTuple
 from urllib.parse import urlparse
+
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
 
 # Keep this executable helper importable when pytest discovers it as a module.
 #: Directory containing this helper and its sibling modules, added to `sys.path` for file-path loading.

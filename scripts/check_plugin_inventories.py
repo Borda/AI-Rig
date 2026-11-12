@@ -29,6 +29,7 @@ INVESTIGATOR_SITES = frozenset(
         "plugins/cc_develop/skills/fix/modes/team-mode.md",
         "plugins/cc_develop/skills/debug/SKILL.md",
         "plugins/cc_oss/skills/review/SKILL.md",
+        "plugins/cc_oss/skills/review/modes/scope-context.md",
     }
 )
 _INVESTIGATOR_LINE = re.compile(r"sw-engineer.*hypothes|hypothes.*sw-engineer", re.IGNORECASE)

@@ -15,7 +15,7 @@ Usage:
     python dev_run_dir.py [--sentinel <name>] [--persist <skill>]
 
 Output (stdout):
-    Relative path of the created run directory.
+    Path of the created run directory, absolute with ``--persist`` so it survives a worktree cwd change.
 
 Exit codes:
     0 — always (matches bash behaviour)
@@ -255,7 +255,7 @@ def persist_dev_dir(skill: str, run_dir: Path) -> Path | None:
         True
     """
     slug = _SAFE_NAME_RE.sub("", skill)
-    return write_sentinel(f"dev-{slug}-dev-dir", run_dir.as_posix()) if slug else None
+    return write_sentinel(f"dev-{slug}-dev-dir", run_dir.resolve().as_posix()) if slug else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -284,6 +284,8 @@ def main(argv: list[str] | None = None) -> int:
 
     ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
     run_dir = Path(".developments") / ts
+    if args.persist:
+        run_dir = run_dir.resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     if args.persist and persist_dev_dir(args.persist, run_dir) is None:
         print(f"dev_run_dir: could not persist dev-dir sentinel for {args.persist!r}", file=sys.stderr)

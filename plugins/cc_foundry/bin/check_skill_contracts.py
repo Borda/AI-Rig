@@ -1,13 +1,14 @@
 #!/usr/bin/env python
-"""check_skill_contracts.py — structural contract checks over skill Markdown for /foundry:audit.
+"""Check structural contracts in skill Markdown for /foundry:audit.
 
 Replaces two inline check blocks:
 
-``--check 23b``  a ``# timeout: N`` comment with no shell enforcement beside it,
+``--check 23b``  with ``--standalone``, a ``# timeout: N`` comment with no shell enforcement beside it,
                  a ``subprocess.*`` call with no ``timeout=``, and a ``bin/``
-                 script that calls subprocess without exposing ``--timeout``.
-                 Lines invoking ``python`` are exempt from the first scan: the
-                 script's own ``--timeout`` default enforces internally.
+                 script without a caller override or fixed enforced deadlines.
+                 Config commands default to Bash-tool calls: their annotations
+                 supply tool timeouts, not standalone enforcement. A Python
+                 command name alone does not prove an internal deadline.
 ``--check 32f``  a ``modes/<name>.md`` that is both referenced from its
                  ``SKILL.md`` and duplicated inline in it — the "extraction done
                  but inline twin survived" topology. Check 32a covers the
@@ -17,7 +18,7 @@ Both keep the wording the audit severity table maps onto. 23b findings still get
 a model pass afterwards to drop lines inside illustrative example blocks.
 
 Usage:
-    check_skill_contracts.py --check {23b,32f} [--root <dir>] [--local]
+    check_skill_contracts.py --check {23b,32f} [--root <dir>] [--local] [--standalone]
 
 Exit codes:
     0   always — findings are reported on stdout with their severity markers,
@@ -29,8 +30,11 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import ast
+import math
 import re
 import sys
+from collections import Counter
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -76,14 +80,16 @@ def _config_files(root: Path) -> list[Path]:
     return sorted(found)
 
 
-def unenforced_timeouts(path: Path, lines: list[str]) -> list[str]:
-    """Return findings for `# timeout:` comments with no shell timeout beside them."""
+def unenforced_timeouts(path: Path, lines: list[str], *, bash_tool: bool = True) -> list[str]:
+    """Report standalone annotations lacking enforcement; Bash-tool hints need no wrapper."""
+    if bash_tool:
+        return []
     findings = []
     for number, line in enumerate(lines, start=1):
         stripped = line.strip()
         if not _TIMEOUT_COMMENT.search(line) or stripped.startswith("#"):
             continue
-        if _SHELL_TIMEOUT.search(line) or "python " in line:
+        if _SHELL_TIMEOUT.search(line):
             continue
         findings.append(f"{path.as_posix()}:{number}:{line}")
     return findings
@@ -117,8 +123,48 @@ def untimed_subprocess(path: Path, lines: list[str]) -> list[str]:
     return findings
 
 
+def _fixed_deadlines(tree: ast.Module) -> bool:
+    """Recognize subprocess calls whose timeout is a positive literal or one immutable numeric constant."""
+    stored = Counter(
+        node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    )
+    parameters = {node.arg for node in ast.walk(tree) if isinstance(node, ast.arg)}
+    constants = {
+        node.targets[0].id: node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and stored[node.targets[0].id] == 1
+        and node.targets[0].id not in parameters
+    }
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "subprocess"
+        and node.func.attr in {"run", "call", "check_output", "check_call", "Popen"}
+    ]
+    return bool(calls) and all(_bounded_call(call, constants) for call in calls)
+
+
+def _bounded_call(call: ast.Call, constants: dict[str, ast.expr]) -> bool:
+    """Check a subprocess timeout without treating None, zero or dynamic values as deadlines."""
+    value = next((keyword.value for keyword in call.keywords if keyword.arg == "timeout"), None)
+    if isinstance(value, ast.Name):
+        value = constants.get(value.id)
+    return (
+        isinstance(value, ast.Constant)
+        and type(value.value) in (int, float)
+        and value.value > 0
+        and math.isfinite(value.value)
+    )
+
+
 def missing_timeout_flag(path: Path, text: str) -> str | None:
-    """Return a finding when a subprocess-using script exposes no --timeout flag.
+    """Report missing caller overrides unless every subprocess has a fixed enforced deadline.
 
     The exemption matches an ``add_argument(... "--timeout" ...)`` call, not a bare ``--timeout`` anywhere in the file.
     Every script here documents ``[--timeout SECS]`` in its module docstring, so a substring test would exempt the whole
@@ -126,22 +172,32 @@ def missing_timeout_flag(path: Path, text: str) -> str | None:
     """
     if "subprocess." not in text or _TIMEOUT_ARGUMENT.search(text):
         return None
+    try:
+        if _fixed_deadlines(ast.parse(text)):
+            return None
+    except (SyntaxError, RecursionError, OverflowError):
+        pass
     return (
         f"  {path.as_posix()}: --timeout argparse argument absent; "
-        "add with default= matching call site # timeout: N ÷ 1000"
+        "verify fixed internal deadlines or expose a caller override with default= matching call site # timeout: N ÷ 1000"
     )
 
 
-def check_timeouts(root: Path) -> None:
+def check_timeouts(root: Path, *, bash_tool: bool = True) -> None:
     """Check 23b — timeout enforcement across config files and bin/ scripts."""
-    print("=== Check 23b: # timeout: comment without shell enforcement ===")
+    print("=== Check 23b: standalone # timeout: comment without enforcement ===")
+    if bash_tool:
+        print("  Bash-tool annotations supply tool timeout values; standalone enforcement scan not requested")
     findings = 0
     for path in _config_files(root):
-        for line in unenforced_timeouts(path, _read_lines(path)):
+        for line in unenforced_timeouts(path, _read_lines(path), bash_tool=bash_tool):
             print(line)
             findings += 1
     if findings:
-        print("  hint: prepend 'timeout S' (S = ms ÷ 1000) — e.g. 'timeout 5 $(command 2>/dev/null || echo fallback)'")
+        print(
+            "  hint: distinguish a Bash-tool timeout hint from an execution deadline; "
+            "use the tool timeout for tool calls, or enforce a portable subprocess deadline for non-tool execution"
+        )
 
     print("=== Check 23b: Python subprocess missing timeout= ===")
     scripts = sorted(p for p in root.glob("*/bin/*.py") if p.is_file())
@@ -152,8 +208,8 @@ def check_timeouts(root: Path) -> None:
             sub_findings += 1
     if sub_findings:
         print(
-            "  hint: add timeout=args.timeout to every subprocess call; "
-            "--timeout default must equal call site # timeout: N ÷ 1000"
+            "  hint: add a finite timeout= to every blocking subprocess call; "
+            "expose --timeout only for caller overrides, with default= matching call site # timeout: N ÷ 1000"
         )
 
     print("=== Check 23b: Python --timeout default compliance ===")
@@ -224,11 +280,12 @@ def main() -> int:
     parser.add_argument("--check", choices=("23b", "32f"), required=True)
     parser.add_argument("--root", default="plugins", help="scope root for the scan")
     parser.add_argument("--local", action="store_true", help="a plugin source tree is present")
+    parser.add_argument("--standalone", action="store_true", help="scan annotated commands as non-tool execution")
     args = parser.parse_args()
 
     root = Path(args.root)
     if args.check == "23b":
-        check_timeouts(root)
+        check_timeouts(root, bash_tool=not args.standalone)
     else:
         check_mode_shadows(root, local=args.local)
     return 0

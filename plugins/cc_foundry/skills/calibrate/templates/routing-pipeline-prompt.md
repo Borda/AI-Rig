@@ -22,19 +22,18 @@ IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2
 if [ "$LOCAL_MODE" = "true" ]; then
     find plugins -mindepth 3 -maxdepth 3 -path "*/agents/*.md" 2>/dev/null | sort > "$RUN_DIR/roster-files.txt"
 else
-    _FB="${CLAUDE_PLUGIN_ROOT:-}"
-    [ -n "$_FB" ] || _FB=$(ls -td ~/.claude/plugins/cache/borda-ai-rig/foundry/*/ 2>/dev/null | head -1)
-    [ -n "$_FB" ] || _FB=plugins/cc_foundry
+    _FB="${CLAUDE_PLUGIN_ROOT}"
     [ -f "$_FB/bin/resolve_plugin_root.py" ] || {
         echo "! BLOCKED — resolver unavailable"
         printf '%s\n' '{"ts":"<TIMESTAMP>","target":"routing","mode":"<MODE>","routing_accuracy":null,"confusion_rate":null,"hard_accuracy":null,"auto_invoke_accuracy":null,"problems":0,"verdict":"incomplete","confused_pairs":[],"gaps":["resolver unavailable"]}' > "$RUN_DIR/result.jsonl"
         exit 1
     }
+    PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
     # one version dir per plugin — the cache retains every prior version, so an unfiltered scan duplicates each agent
     for P in ~/.claude/plugins/cache/borda-ai-rig/*/; do
         [ -d "$P" ] || continue
         PLUGIN_NAME=${P%/}; PLUGIN_NAME=${PLUGIN_NAME##*/}
-        V=$(python "$_FB/bin/resolve_plugin_root.py" --plugin-name "$PLUGIN_NAME") || continue
+        V=$(python "$PLUGIN_ROOT/bin/resolve_plugin_root.py" --plugin-name "$PLUGIN_NAME") || continue
         [ -e "$V/.orphaned_at" ] && { echo "Skipping orphaned plugin version: $V" >&2; continue; }
         find "$V/agents" -maxdepth 1 -name "*.md" 2>/dev/null
     done | sort > "$RUN_DIR/roster-files.txt"

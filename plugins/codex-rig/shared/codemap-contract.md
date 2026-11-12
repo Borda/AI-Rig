@@ -149,6 +149,16 @@ Adaptive route kinds are closed consumer vocabulary: `central` (`central`), `cal
 
 ## Route selection per skill
 
+Map direct, all, or production caller questions to `callers`; use `blast` only for explicitly transitive caller questions.
+
+At the structural-context decision point, apply these skill-specific skip conditions:
+
+- `implement`: Use `skip` for exact localized edit with no unresolved structural fact.
+- `investigate`: Use `skip` when failure is localized and no structural fact is unresolved.
+- `optimize`: Use `skip` for exact localized optimization with no unresolved structural fact.
+
+Use matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) for one unresolved fact, and `standard` for broad or unknown scope. An explicit user or tool request for structural evidence overrides `skip`.
+
 Passing `--query-kind` is per-workflow decision, not migration every consumer owes. The default keeps category batch, so skill that does not select route is fully specified rather than unfinished. This table is record of each skill's choice; skill that starts or stops selecting routes must move rows here in same change.
 
 | Skill | Category | Route selection | Why |

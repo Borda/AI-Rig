@@ -3,6 +3,7 @@ name: setup
 description: "Post-install setup for the develop plugin. Run once after installing on a new machine, or after a plugin version upgrade, to deliver this plugin's rules/*.md into ~/.claude/rules/ as namespaced symlinks and merge its own permissions.allow and permissions.deny entries into ~/.claude/settings.json. TRIGGER when: user installed or upgraded the develop plugin and its rules are not loading, or its deny rules are not blocking; phrases: 'set up develop', 'develop rules not loading', 'merge develop permissions', 'after upgrading develop'. SKIP: statusLine/TEAM_PROTOCOL/plugin-cache setup (use /foundry:setup (requires `foundry` plugin)); editing rule content (edit the plugin source)."
 argument-hint: '[--approve]'
 allowed-tools: Bash, AskUserQuestion
+disable-model-invocation: true
 effort: low
 ---
 
@@ -29,7 +30,7 @@ NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `
 <inputs>
 
 - **No arguments** — interactive; prompts before replacing a conflicting destination.
-- **`--approve`** — non-interactive; replaces conflicting destinations without asking. Used by `make sync-claude`.
+- **`--approve`** — non-interactive; replaces conflicting links without asking and preserves real user files. Used by `make sync-claude`.
 
 </inputs>
 
@@ -52,7 +53,7 @@ printf "  Python: %s\n" "$(python --version 2>&1)"
 `$CLAUDE_PLUGIN_ROOT` is the installed plugin version. `sync_rules.py` re-validates it (manifest exists, parses, declares `develop`; `rules/` is a real directory holding ≥1 non-empty regular `*.md`) and aborts before touching anything on any check failure.
 
 ```bash
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}"
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name develop --plugin-root "$PLUGIN_ROOT" --dry-run  # timeout: 15000
 ```
 
@@ -60,14 +61,21 @@ Non-zero exit → print stderr verbatim and stop; nothing was modified.
 
 ## Step 3: Apply
 
-Run without `--dry-run`. Add `--approve` only when `APPROVE_ALL=true`:
+Run without `--dry-run`. When `APPROVE_ALL=false`, run this fixed block:
 
 ```bash
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}"
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name develop --plugin-root "$PLUGIN_ROOT"  # timeout: 15000
 ```
 
-Output lines, one per destination: `linked:` · `unchanged:` · `replaced (--approve):` · `removed obsolete:` · `conflict, kept as-is:` · `FAILED:`.
+When `APPROVE_ALL=true`, run this fixed block instead:
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name develop --plugin-root "$PLUGIN_ROOT" --approve  # timeout: 15000
+```
+
+Output lines, one per destination: `linked:` · `unchanged:` · `replaced (explicit approval):` · `removed obsolete:` · `conflict, kept as-is:` · `FAILED:`.
 
 Ownership proved before any replace or remove: existing link must resolve under current plugin root, or the same `~/.claude/plugins/cache/<marketplace>/develop/` lineage as current install. A link into another marketplace, another plugin, a source checkout, or a dotfiles tree never adopted — path substrings aren't evidence of ownership.
 
@@ -75,15 +83,20 @@ Ownership proved before any replace or remove: existing link must resolve under 
 
 No `conflict, kept as-is:` lines → skip to Step 5.
 
-`APPROVE_ALL=true` → conflicts were already replaced in Step 3; skip to Step 5.
+`APPROVE_ALL=true` with remaining conflicts → report them as undelivered and stop; do not assume replacement succeeded.
 
 Otherwise invoke `AskUserQuestion`, listing each conflicting destination and its current state:
 
 - (a) **Keep them** — those rules stay undelivered
-- (b) **Replace all with plugin links** ★ recommended — existing content is overwritten
+- (b) **Replace all with plugin links** ★ recommended — real user files are backed up beside the destination before replacement
 - (c) **Abort** — leave everything as it is
 
-On **(b)**, re-run Step 3's command with `--approve` appended and report the resulting `replaced (--approve):` lines. On (a) or (c), report which rules remain undelivered.
+On **(b)**, run this fixed replacement block only after the user explicitly chooses replacement, then report the resulting `replaced (explicit approval):` lines and sibling `<destination>.bak-<timestamp>` backups. `--approve` alone preserves real user files. On (a) or (c), report which rules remain undelivered.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name develop --plugin-root "$PLUGIN_ROOT" --approve --replace-user-files  # timeout: 15000
+```
 
 ## Step 5: Merge permissions.allow and permissions.deny
 
@@ -108,8 +121,8 @@ Before merging, remove exactly the entries in `permissions-allow-retired.json`: 
 Writes merged `permissions.allow` and `permissions.deny` arrays via `merge_settings_permissions.py` — one atomic write covers both arrays, so allow never lands without deny. A missing or invalid shipped file aborts the block with settings unchanged:
 
 ```bash
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow-file "$PLUGIN_ROOT/.claude-plugin/permissions-allow-retired.json" --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow-file "$PLUGIN_ROOT/.claude-plugin/permissions-allow-retired.json" --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
 Writeback happens in-bash above (atomic rename). Report from the script's two output lines: "Added N new permissions.allow entries (M already present)." plus the total retired allow entries removed (`dropped`), and "Added N new permissions.deny entries (M already present)."

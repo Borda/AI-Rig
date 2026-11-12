@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 import setup_release_dir as srd
+from _skill_source import read_skill_source
 
 _RELEASE = Path(__file__).resolve().parents[2] / "skills/release"
 _PYPROJECT = b"[project]\nname = 'keep'\n"
@@ -28,7 +29,7 @@ def changelog(tmp_path: Path) -> Path:
 
 def _prose(relative: str) -> str:
     """Read one shipped release-skill file with whitespace runs collapsed so phrase checks ignore wrapping."""
-    return " ".join((_RELEASE / relative).read_text(encoding="utf-8").split())
+    return " ".join(read_skill_source(_RELEASE / relative).split())
 
 
 def _write_files(root: Path, files: dict[str, bytes]) -> None:

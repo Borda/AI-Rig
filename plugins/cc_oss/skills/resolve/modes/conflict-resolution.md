@@ -48,7 +48,9 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -n "${FORK_REMOTE:-}" ] || { IFS= read -r FORK_REMOTE < "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}" 2>/dev/null || FORK_REMOTE=""; }
 [ -n "$BASE_REF" ] && [ -n "$HEAD_REF" ] || { echo "! BLOCKED — Step 5: BASE_REF/HEAD_REF unresolved — refusing to merge an unknown target"; exit 1; }
 # 1. update source branch (ff-only; non-ff = force-pushed, use local)
-git pull "${FORK_REMOTE:-origin}" "$HEAD_REF" --ff-only 2>/dev/null \
+[ -n "${REMOTE_HEAD_REF:-}" ] || { IFS= read -r REMOTE_HEAD_REF < "${TMPDIR:-/tmp}/resolve-remote-head-ref-${CSID}" 2>/dev/null || REMOTE_HEAD_REF=""; }
+[ -n "$REMOTE_HEAD_REF" ] || { echo "! BLOCKED — remote PR head unresolved"; exit 1; }
+git pull "${FORK_REMOTE:-origin}" "$REMOTE_HEAD_REF" --ff-only 2>/dev/null \
     || echo "⚠ PR branch not fast-forwardable — proceeding with local state"  # timeout: 6000
 # 2. update target branch — remote-tracking ref (required), then the local branch (ff-only, best effort)
 git fetch origin "$BASE_REF" || { echo "! BLOCKED — fetch origin/$BASE_REF failed — cannot guarantee base is current; check network/auth and retry"; exit 1; }  # timeout: 6000
@@ -100,7 +102,12 @@ Write the file→task map in one Write tool call to `$IMPL_DIR/conflict-tasks.ts
 No conflicted files → `MERGE_STATE=in-progress`: complete the merge here; `MERGE_STATE=up-to-date`: nothing to commit, skip the commit:
 
 ```bash
-git commit --no-edit # timeout: 6000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+export RESOLVE_APPROVED_HOOKS=""
+[ ! -f "$IMPL_DIR/approved-hooks.txt" ] || IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" || RESOLVE_APPROVED_HOOKS=""
+python "$PLUGIN_ROOT/bin/resolve_commit_hooks.py" --commit-merge # timeout: 6000
 ```
 
 Report clean merge (or already up to date). Steps 6–7 and the Step 7b join become no-ops — return to Run 1 (await the `INTEL_AGENT` envelope, then Step 3c).
@@ -211,7 +218,12 @@ RESOLVED_FILES=$(git diff --cached --name-only 2>/dev/null)
 Complete merge (editor-safe, produces proper 2-parent merge commit):
 
 ```bash
-git commit --no-edit # timeout: 6000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+export RESOLVE_APPROVED_HOOKS=""
+[ ! -f "$IMPL_DIR/approved-hooks.txt" ] || IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" || RESOLVE_APPROVED_HOOKS=""
+python "$PLUGIN_ROOT/bin/resolve_commit_hooks.py" --commit-merge # timeout: 6000
 ```
 
 Print conflict report:

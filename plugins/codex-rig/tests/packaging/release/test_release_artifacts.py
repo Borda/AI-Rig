@@ -177,7 +177,15 @@ def release_run(tmp_path: Path, text_newline_default: None, release_source_templ
             }
         )
     (tmp_path / "gates.json").write_text(
-        json.dumps({"checks": checks, "checks_failed": [], "status": "pass"}), encoding="utf-8"
+        json.dumps(
+            {
+                "checks": checks,
+                "checks_failed": [],
+                "status": "pass",
+                "source": {"worktree": (tmp_path / "source").as_posix(), "expected_head": head},
+            }
+        ),
+        encoding="utf-8",
     )
     evidence = {
         "change-table.md": "Candidate fix mapped to source and public notes.",
@@ -1399,6 +1407,38 @@ class TestReleaseSource:
         with pytest.raises(SystemExit, match="release-gate-source"):
             validate_run(validator, release_run)
 
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            pytest.param(lambda gates: gates.pop("source"), id="missing-source"),
+            pytest.param(lambda gates: gates["source"].pop("worktree"), id="missing-worktree"),
+            pytest.param(lambda gates: gates["source"].update(worktree="source"), id="relative-worktree"),
+        ],
+    )
+    def test_missing_or_relative_gate_repository_is_rejected(
+        self, validator: ModuleType, release_run: Run, mutate: Callable[[dict[str, Any]], object]
+    ) -> None:
+        """A passing release must identify the executed checkout with an absolute repository path."""
+        path = release_run[0] / "gates.json"
+        gates = json.loads(path.read_text(encoding="utf-8"))
+        mutate(gates)
+        path.write_text(json.dumps(gates), encoding="utf-8")
+
+        with pytest.raises(SystemExit, match="release-gate-repository-missing"):
+            validate_run(validator, release_run)
+
+    def test_gate_repository_mismatch_is_rejected(self, validator: ModuleType, release_run: Run) -> None:
+        """A gate observation from another checkout cannot certify the aggregate release repository."""
+        path = release_run[0] / "gates.json"
+        gates = json.loads(path.read_text(encoding="utf-8"))
+        next(check for check in gates["checks"] if check["id"] == "tests")["source"]["worktree"] = (
+            release_run[0] / "other-source"
+        ).as_posix()
+        path.write_text(json.dumps(gates), encoding="utf-8")
+
+        with pytest.raises(SystemExit, match="release-gate-source:tests:repository"):
+            validate_run(validator, release_run)
+
     @pytest.mark.parametrize("head", [None, "", "main", "abc", "a" * 41])
     def test_passing_release_requires_pinned_full_head(
         self, validator: ModuleType, release_run: Run, head: object
@@ -1481,6 +1521,7 @@ class TestReleaseSource:
         )
         assert completed.returncode == 0, completed.stderr
         recorded = json.loads((directory / "gates.json").read_text(encoding="utf-8"))
+        assert recorded["source"] == {"worktree": repository.resolve().as_posix(), "expected_head": head}
         assert all(
             check["source"]["after"] == {"head": head, "status": "", "ignored": "[]"} for check in recorded["checks"]
         )

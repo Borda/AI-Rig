@@ -4,6 +4,8 @@
 
 ## Resolve Report — PR #[PR number]
 
+**Link**: [PR_HTML_URL, bare https URL; omit this line when the run has no PR]
+
 ### Contribution
 
 [Contribution summary]
@@ -90,7 +92,7 @@
 
 ## Confidence
 
-<!-- format per quality-gates.md: Score 0.N, Gaps bullets, Refinements N passes (omit if 0) -->
+<!-- format per quality-gates.md: Score 0.N, Gaps bullets, Refinements N passes (omit if 0); Step 9 DOCS_ONLY=true adds `- (-0.00) full test suite not run — documentation-only change` -->
 
 **Score**: 0.NN — [high ≥0.9 | moderate 0.85–0.9 | low \<0.85 ⚠]
 

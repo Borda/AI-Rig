@@ -1,0 +1,533 @@
+{
+  "7490": {
+    "number": 7490,
+    "title": "deform_conv2d for mps",
+    "state": "open",
+    "body": "### 🐛 Describe the bug\n\nNotImplementedError: The operator torchvision::deform_conv2d is not currently implemented for the MPS device.\n\n### Versions\n\nPyTorch version: 1.12.1\r\nIs debug build: False\r\nCUDA used to build PyTorch: None\r\nROCM used to build PyTorch: N/A\r\n\r\nOS: macOS 13.3 (x86_64)\r\nGCC version: Could not collect\r\nClang version: 14.0.3 (clang-1403.0.22.14.1)\r\nCMake version: Could not collect\r\nLibc version: N/A\r\n\r\nPython version: 3.10.9 (main, Mar  1 2023, 12:33:47) [Clang 14.0.6 ] (64-bit runtime)\r\nPython platform: macOS-10.16-x86_64-i386-64bit\r\nIs CUDA available: False\r\nCUDA runtime version: No CUDA\r\nCUDA_MODULE_LOADING set to: N/A\r\nGPU models and configuration: No CUDA\r\nNvidia driver version: No CUDA\r\ncuDNN version: No CUDA\r\nHIP runtime version: N/A\r\nMIOpen runtime version: N/A\r\nIs XNNPACK available: True\r\n\r\nCPU:\r\nApple M2\r\n\r\nVersions of relevant libraries:\r\n[pip3] flake8==6.0.0\r\n[pip3] mypy-extensions==0.4.3\r\n[pip3] numpy==1.23.5\r\n[pip3] numpydoc==1.5.0\r\n[pip3] torch==1.12.1\r\n[conda] numpy                     1.23.5          py310he50c29a_0  \r\n[conda] numpy-base                1.23.5          py310h992e150_0  \r\n[conda] numpydoc                  1.5.0           py310hecd8cb5_0  \r\n[conda] pytorch                   1.12.1          cpu_py310h64f2f56_1 ",
+    "comments": [
+      {
+        "author": "user-3",
+        "body": "Yes, please add mps support for this ops.\r\nThank you :-)"
+      },
+      {
+        "author": "user-4",
+        "body": "I also am interested in this"
+      },
+      {
+        "author": "user-3",
+        "body": "I have been working on implementing MPS support for the deform_conv2d operator.\r\nAll implementation tests are passing, but critically, the assert_close in TestDeformConv::test_forward fails.\r\nI have gone over my mps kernel and metal operator implementations countless times but just can't seem to nail the bug. \r\nAlso, I'm very new to open source and don't quite know how best to proceed. \r\nPlease let me know if anyone wants to get involved or just to point me in the right direction for next steps.\r\nThanks."
+      },
+      {
+        "author": "user-4",
+        "body": "@user-3 I'm excited to see this op working.  How does the assertion fail? Is there more description on how the test fails? Can you compare the output? Are there any relevant links to the code or failed test that others can look at?"
+      },
+      {
+        "author": "user-4",
+        "body": "I'm linking the op from the MPS tracker to this issue: https://github.com/users/kulinseth/projects/1/views/1?pane=issue&itemId=66759476"
+      },
+      {
+        "author": "user-3",
+        "body": "> @user-3 I'm excited to see this op working. How does the assertion fail? Is there more description on how the test fails? Can you compare the output? Are there any relevant links to the code or failed test that others can look at?\r\n\r\nThanks for your quick reply.\r\n\r\n\"How does the assertion fail?\" \r\ntorch.testing.assert_close compares the result from the expected_fn function with the output of the operator and fails if the two results are too far appart, given a tolerance value for the parameters rtol and atol.\r\n \r\n\"Are there any relevant links to the code or failed test that others can look at?\"\r\nYes. Can you advise me as how best to post the output of the tests? It's rather a lot and not sure if I just dump the raw output in a comment or via a document.\r\nDo you recommend sharing a link to my working branch?"
+      },
+      {
+        "author": "user-5",
+        "body": "> I have been working on implementing MPS support for the deform_conv2d operator. All implementation tests are passing, but critically, the assert_close in TestDeformConv::test_forward fails. I have gone over my mps kernel and metal operator implementations countless times but just can't seem to nail the bug. Also, I'm very new to open source and don't quite know how best to proceed. Please let me know if anyone wants to get involved or just to point me in the right direction for next steps. Thanks.\r\n\r\nThis is such exciting news, I hope you can do it, and thanks to your efforts we will finally be able to use Bria2.0 and BiRefNet models on macOS!"
+      },
+      {
+        "author": "user-6",
+        "body": "Interested as well, based on the release of [briaai/RMBG-2.0](https://huggingface.co/briaai/RMBG-2.0/blob/549faadfe8cbab4dbeac6aaff693e7010d682c94/birefnet.py#L1233)"
+      },
+      {
+        "author": "user-3",
+        "body": "Just dropped a PR:\nDeform conv2d mps support #9026"
+      }
+    ]
+  },
+  "2134": {
+    "number": 2134,
+    "title": "About RegisterOperators in C++",
+    "state": "open",
+    "body": "## 🐛 Bug\r\nI'm testing about jit in C++ ( libtorch )\r\n\r\nMy test cases\r\n```\r\nint main(int argc, const char* argv[]) {\r\n    auto& ops = torch::jit::getAllOperators();\r\n    std::cout << \"torch jit operators\\n\";\r\n    for (auto& op: ops) {\r\n        auto& name = op->schema().name();\r\n        if (name.find(\"torchvision\") != std::string::npos)\r\n            std::cout << \"op : \" << op->schema().name() << \"\\n\";\r\n    }\r\n    std::cout << \"\\n\";\r\n    return 0;\r\n}\r\n\r\n>>> torch jit operators\r\n```\r\n\r\nExpected (I changed some codes in vision)\r\n```\r\n>>> torch jit operators\r\nop : torchvision::_cuda_version\r\nop : torchvision::deform_conv2d\r\nop : torchvision::ps_roi_pool\r\nop : torchvision::ps_roi_align\r\nop : torchvision::_new_empty_tensor_op\r\nop : torchvision::roi_pool\r\nop : torchvision::roi_align\r\nop : torchvision::nms\r\n```\r\n\r\nIn 1st case, seems no jit opeators registry on libtorch.\r\n\r\nIs this only occurs my env? or some codes are wrong?\r\n\r\nBecause I checked expected output when I changed srcs.\r\n\r\n## Environment\r\n\r\nInstall command follows on `reamdme`\r\n\r\ntorch 1.5.0 and torchvision 0.6.0\r\n",
+    "comments": [
+      {
+        "author": "user-9",
+        "body": "cc'ing @user-22 too"
+      },
+      {
+        "author": "user-10",
+        "body": "@user-9 true, late night thoughts should be left for the morning 😅\r\n\r\nI think it is a bit unreasonable to expect the operators to be registered just by linking the library without even including a single header. Is that really a common case?\r\n\r\nWhat about the following?\r\n* Have the user include any header from the library, even just `vision.h`\r\n* Document in the README that if you are only planning to use torchvision ops, you must either include something or add\r\n`set_target_properties(exe PROPERTIES LINK_WHAT_YOU_USE TRUE)` to the torchvision consumer target.\r\n\r\nIf you think that is still not acceptable, I will copy the code from `caffe2_interface_library` macro.\r\n"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-10 \r\n\r\nThanks for the discussion. After seeing the discussion here, I think it might be preferable to follow PyTorch's convention.\r\n\r\n@user-10 can you clarify why we would need to copy the code from `caffe2_interface_library`, instead of just passing `--no-as-needed`?"
+      },
+      {
+        "author": "user-10",
+        "body": "@maintainer-1 because if we really want this behavior\r\n* it should be done for windows, mac and linux\r\n* We want to limit it to torchvision only, so we need to add `\"-Wl,--no-as-needed,libtorchvision.so,-Wl,--as-needed\"`\r\n* If we can, it would be good not to tie ourselves into requiring that torchvision be built as a shared library\r\n\r\n`caffe2_interface_library` mostly solves these problems, although it is not completely correct either because it assumes that the user target has `--no-as-needed` enabled by default, which may not be the case and be a source of other issues."
+      },
+      {
+        "author": "user-9",
+        "body": "I agree that writing the relevant cmake code portably is not so easy. I am a bit curious how the `#include` trick would work; since I feel like you still have to use the symbols somehow, just externing this isn't enough. (Maybe if the header sets some weak symbol)?"
+      },
+      {
+        "author": "user-10",
+        "body": "@user-9 yes, that's what I had in mind when I mentioned inline variables.\r\nIn the `vision.h` header, we could have something like:\r\n```cpp\r\n#if (defined __cpp_inline_variables) || __cplusplus >= 201703L\r\n#define VISION_INLINE_VARIABLE inline\r\n#else\r\n#ifdef _MSC_VER\r\n#define VISION_INLINE_VARIABLE __declspec(selectany)\r\n#else\r\n#define VISION_INLINE_VARIABLE __attribute__((weak))\r\n#endif\r\n#endif\r\n\r\nnamespace vision {\r\nnamespace impl {\r\nint RegisterOps() noexcept;\r\nVISION_INLINE_VARIABLE int dummy = RegisterOps();\r\n}\r\n}\r\n```\r\nAnd that should be enough to ensure that the library is loaded (RegisterOps is defined in a cpp file), and that the code is run only once."
+      },
+      {
+        "author": "user-9",
+        "body": "It feels a bit dirty doing this, but I'm willing to give it a try. "
+      },
+      {
+        "author": "user-11",
+        "body": "Hi. I am a maintainer of the Homebrew package manager. We have been struggling to update to pytorch 2.1.0 and torchvision 0.16.0 since a few weeks now. Both build fine, but we have a small test that fails to run for torchvision.\r\n\r\nWe build the following binary as a small test:\r\n\r\n```\r\n#include <assert.h>\r\n#include <torch/script.h>\r\n#include <torch/torch.h>\r\n#include <torchvision/vision.h>\r\nint main() {\r\n  auto& ops = torch::jit::getAllOperatorsFor(torch::jit::Symbol::fromQualString(\"torchvision::nms\"));\r\n  assert(ops.size() == 1);\r\n}\r\n```\r\nWe are then building / linking with:\r\n```\r\nusr/bin/g++-11 -std=c++17 test.cpp -o test -fopenmp -I/home/linuxbrew/.linuxbrew/opt/pytorch/include -I/home/linuxbrew/.linuxbrew/opt/pytorch/include/torch/csrc/api/include -I/home/linuxbrew/.linuxbrew/Cellar/torchvision/0.16.0/include -L/home/linuxbrew/.linuxbrew/opt/pytorch/lib -Wl,-rpath,/home/linuxbrew/.linuxbrew/opt/pytorch/lib -ltorch -ltorch_cpu -lc10 -Wl,--whole-archive -L/home/linuxbrew/.linuxbrew/"
+      },
+      {
+        "author": "user-9",
+        "body": "You need `--no-as-needed`"
+      },
+      {
+        "author": "user-11",
+        "body": "Cool; thanks that worked! :) "
+      }
+    ]
+  },
+  "6394": {
+    "number": 6394,
+    "title": "String parameter cannot be passed to `torchvision.ops.deform_conv2d`",
+    "state": "open",
+    "body": "### 🐛 Describe the bug\n\n## Bug Explanation\r\nThe current implementation of `torchvision.ops.deform_conv2d` implicitly assumes that padding is passed as a tuple or an integer, this means that if the padding is passed as either \"same\" or \"valid\" then torchvision is going to parse it as `padding = (\"same\")`.\r\n\r\n\r\n## Sample Code\r\n``` python\r\nimport torch\r\n\r\nX = torch.randn((1,3,5,5))\r\ntorchvision.ops.deform_conv2d(\r\n            X,\r\n            torch.randn([1, 2 * 1 * 3 * 3, 3, 3]), #offset\r\n            torch.randn([1, 3, 3, 3]),\r\n            torch.randn([1]),\r\n            stride=1,\r\n            padding=\"zero\",\r\n            dilation=1,\r\n            mask=None,\r\n        )\r\n```\r\n## Stacktrace\r\n```\r\n---------------------------------------------------------------------------\r\nValueError                                Traceback (most recent call last)\r\nd:\\Documents\\Python Scripts\\test.ipynb Cell 13 in <cell line: 2>()\r\n      [1](vscode-notebook-cell:/d%3A/Documents/Python%20Scripts/test.ipynb#X14sZmlsZQ%3D%3D?line=0) X = torch.randn((1,3,5,5))\r\n----> [2](vscode-notebook-cell:/d%3A/Documents/Python%20Scripts/test.ipynb#X14sZmlsZQ%3D%3D?line=1) torchvision.ops.deform_conv2d(\r\n      [3](vscode-notebook-cell:/d%3A/Documents/Python%20Scripts/test.ipynb#X14sZmlsZQ%3D%3D?line=2)             X,\r\n      [4](vscode-notebook-cell:/d%3A/Documents/Python%20Scripts/test.ipynb#X14sZmlsZQ%3D%3D?line=3)             torch.randn([1, 2 * 1 * 3 * 3, 3, 3]), #offset\r\n      [5](vscode-notebook-cell:/d%3A/Documents/Python%20Scripts/test.ipynb#X14sZmlsZQ%3D%3D?line=4)             torch.randn([1, 3, 3, 3]),\r\n      [6](vscode-notebook-cell:/d%3A/Documents/Python%20Scripts/test.ipynb#X14sZmlsZQ%3D%3D?line=5)             torch.randn([1]),\r\n      [7](vscode-notebook-cell:/d%3A/Documents/Python%20Scripts/test.ipynb#X14sZmlsZQ%3D%3D?line=6)             stride=1,\r\n      [8](vscode-notebook-cell:/d%3A/Documents/Python%20Scripts/test.ipynb#X14sZmlsZQ%3D%3D?line=7)             padding=\"zero\",\r\n      [9](vscode-notebook-cell:/d%3A/Documents/Python%20Scripts/test.ipynb#X14sZmlsZQ%3D%3D?line=8)             dilation=1,\r\n     [10](vscode-notebook-cell:/d%3A/Documents/Python%20Scripts/test.ipynb#X14sZmlsZQ%3D%3D?line=9)             mask=None,\r\n     [11](vscode-notebook-cell:/d%3A/Documents/Python%20Scripts/test.ipynb#X14sZmlsZQ%3D%3D?line=10)         )\r\n\r\nFile d:\\Installations\\Anaconda\\lib\\site-packages\\torchvision\\ops\\deform_conv.py:77, in deform_conv2d(input, offset, weight, bias, stride, padding, dilation, mask)\r\n     74     bias = torch.zeros(out_channels, device=input.device, dtype=input.dtype)\r\n     76 stride_h, stride_w = _pair(stride)\r\n---> 77 pad_h, pad_w = _pair(padding)\r\n     78 dil_h, dil_w = _pair(dilation)\r\n     79 weights_h, weights_w = weight.shape[-2:]\r\n\r\nValueError: too many values to unpack (expected 2)\r\n```\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\n\n### Versions\n\n```\r\nCollecting environment information...\r\nPyTorch version: 1.12.1\r\nIs debug build",
+    "comments": [
+      {
+        "author": "user-13",
+        "body": "Hi @user-12, thanks for raising this.\r\n\r\nI don't want to argue semantics but TorchVision quite explicitly declares that expected inputs for paddings is either an integer or a Tuple of ints:\r\nhttps://github.com/pytorch/vision/blob/93c85bbcc31f8d5a052daf06f2f91f39697af1a4/torchvision/ops/deform_conv.py#L14-L23\r\n\r\nCurrently it doesn't support strings (`{'same', 'valid'}`). Perhaps that's a worth expansion and possibly we would have to follow the [same approach](https://github.com/pytorch/pytorch/blob/357b7d589c9c451f4850449b9313d8b857ae7140/torch/nn/modules/conv.py#L47) as `_ConvNd` from PyTorch Core. It's not within our plans to do this now but if you are interested in sending a PR, we can certainly review it."
+      },
+      {
+        "author": "user-12",
+        "body": "Thank you for the response, \r\nI've began working on a possible PR, however, after dissecting the code it seems that there is no possibility, from the python library all the way down to the CUDA kernel, to have a padding with an uneven number of pixels, for example: `left_pad = 1, right_pad = 2`.\r\n\r\nWould the implementation of this enhancement require the rewriting of both CPU & CUDA kernels to take into account this padding in the same way that `_ConvND` does?\r\n\r\nCan we get away with a call to `F.pad()` as the implementation of `_ConvND` seems to be suggesting?\r\n\r\nI'm asking you this since I've seen that you're the one responsible for the implementation of the kernels and therefore you would have knowledge regarding the performance impact of complicating the padding in C++ vs calling `F.pad()` on Python."
+      },
+      {
+        "author": "user-13",
+        "body": "@user-12 This is a great question. Unfortunately I don't know the answer and we would probably need to dig deep on how the specific kernel is designed. I will need to find the bandwidth for such a thing as I'm a bit swamped at the moment. So if you continue work on this feature, keep in mind I might not be able to review or merge it.\r\n\r\n> I'm asking you this since I've seen that you're the one responsible for the implementation of the kernels and therefore you would have knowledge regarding\r\n\r\nUnfortunately this is not true. We did a major refactoring of the C++ codebase at one point, to ensure that there is proper encapsulation and that we follow the latest practices from Dispatcher. Though I tried to rewrite as little parts as possible during the refactoring, unfortunately Github was unable to understand this on the diff and thus when you git blame you see me as the Uber author of all kernels. That's far from truth."
+      }
+    ]
+  },
+  "2066": {
+    "number": 2066,
+    "title": "does deformable conv support export to onnx?",
+    "state": "open",
+    "body": "Does deformable conv support export to onnx or not?",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Not at the moment. Contributions welcome"
+      },
+      {
+        "author": "user-15",
+        "body": "> Not at the moment. Contributions welcome\r\n\r\n@maintainer-1 \r\nI implemented ONNX exporter for `deform_conv2d` with *pure* ONNX operators, i.e. no custom layers, in my repository [`deform_conv2d_onnx_exporter`](https://github.com/user-15/deform_conv2d_onnx_exporter).\r\n\r\nMy module, `deform_conv2d_onnx_exporter`, registers ONNX operator for `torchvision::deform_conv2d`.\r\nBecause the latest version of ONNX does not support `deform_conv2d` natively, I had to implement my module using `GatherND` and other operators.\r\nTherefore, the performance of my module is not very good, but good enough for me.\r\nIt requires opset version 12 and later because it uses version 12 `GatherND` and `Clip` operators.\r\n\r\nIs this helpful for this project?\r\nIf yes, I would like to create a pull request to this project.\r\n\r\nRegards,\r\nMurase"
+      },
+      {
+        "author": "user-16",
+        "body": "> > Not at the moment. Contributions welcome\r\n> \r\n> @maintainer-1 I implemented ONNX exporter for `deform_conv2d` with _pure_ ONNX operators, i.e. no custom layers, in my repository [`deform_conv2d_onnx_exporter`](https://github.com/user-15/deform_conv2d_onnx_exporter).\r\n> \r\n> My module, `deform_conv2d_onnx_exporter`, registers ONNX operator for `torchvision::deform_conv2d`. Because the latest version of ONNX does not support `deform_conv2d` natively, I had to implement my module using `GatherND` and other operators. Therefore, the performance of my module is not very good, but good enough for me. It requires opset version 12 and later because it uses version 12 `GatherND` and `Clip` operators.\r\n> \r\n> Is this helpful for this project? If yes, I would like to create a pull request to this project.\r\n> \r\n> Regards, Murase\r\n\r\nHi @user-15,\r\n\r\nThanks for the contribution. I do not see the repository. Is the link broken? \r\n\r\nThanks"
+      },
+      {
+        "author": "user-15",
+        "body": "I re-published [deform-conv2d-onnx-exporter](https://pypi.org/project/deform-conv2d-onnx-exporter/)."
+      },
+      {
+        "author": "user-17",
+        "body": "> I re-published [deform-conv2d-onnx-exporter](https://pypi.org/project/deform-conv2d-onnx-exporter/).\r\n\r\n  File \"D:\\ProgramData\\anaconda3\\envs\\propainter\\lib\\site-packages\\deform_conv2d_onnx_exporter.py\", line 66, in tensor\r\n    return g.op(\"Constant\", value_t=torch.tensor(value, dtype=dtype))\r\nTypeError: an integer is required (got type NoneType) \r\n(Occurred when translating deform_conv2d)."
+      },
+      {
+        "author": "user-18",
+        "body": "There is now native support for DeformConv in ONNX. So how to export model into onnx without getting an error \"torchvision::deform_conv2d unimplemented\"?"
+      },
+      {
+        "author": "user-19",
+        "body": "torch.onnx.errors.UnsupportedOperatorError: ONNX export failed on an operator with unrecognized namespace torchvision::deform_conv2d I am still getting this even this should be now be supported? https://onnx.ai/onnx/operators/onnx__DeformConv.html#deformconv-22   should it be deformconv2d nor deformconv? "
+      },
+      {
+        "author": "user-20",
+        "body": "@maintainer-1 \nI am encountering same issue during translation `torchvision::deform_conv2d` to ONNX. Is there a known solution?\nA guide on how to integrate this conversion into the export pipeline would be really appreciated."
+      }
+    ]
+  },
+  "8966": {
+    "number": 8966,
+    "title": "deform_conv2d on MPS.",
+    "state": "open",
+    "body": "### 🚀 The feature\n\nI want the deform_conv2d to be able to run on MPS(Apple Silicon) natively not falling back to CPU.\n\n### Motivation, pitch\n\nI want to use this on MAC:\n\n`return torchvision.ops.deform_conv2d(x, offset, self.weight, self.bias, \n                                             self.stride, self.padding,\n                                             self.dilation, mask)`\n\n### Alternatives\n\n_No response_\n\n### Additional context\n\n_No response_",
+    "comments": [
+      {
+        "author": "user-6",
+        "body": "Duplicate of [deform_conv2d for mps #7490 ](https://github.com/pytorch/vision/issues/7490)"
+      }
+    ]
+  },
+  "5464": {
+    "number": 5464,
+    "title": "Single Channel GaussianBlur over 23x23 kernels fails on Windows",
+    "state": "open",
+    "body": "### 🐛 Describe the bug\r\n\r\nSee https://app.circleci.com/pipelines/github/pytorch/vision/14951/workflows/dd6ed737-f31d-4baa-8f42-9e69d55650aa/jobs/1205316\r\n\r\nFor some reason the same code works with CUDA-11.1, but fails with 11.3, which makes me highly suspicious of bug in cuDNN side\r\n\r\n<details>\r\n<summary>cuda-memcheck reports invalid memory access in `cudnnConvolutionForward ` call</summary>\r\n\r\n```\r\n(C:\\Users\\circleci\\project\\env) C:\\Users\\circleci\\project\\test>\"c:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v10.1\\bin\\cuda-memcheck.exe\" pytest test_transforms_tensor.py -k test_gaussian_blur[1-meth_kwargs1\r\n========= CUDA-MEMCHECK\r\n================================================================================== test session starts ===================================================================================\r\nplatform win32 -- Python 3.8.12, pytest-6.2.5, py-1.11.0, pluggy-1.0.0\r\nrootdir: C:\\Users\\circleci\\project, configfile: pytest.ini\r\nplugins: cov-3.0.0, mock-3.6.1\r\ncollected 3066 items / 3064 deselected / 2 selected\r\n\r\ntest_transforms_tensor.py .FE                                                                                                                                                       [100%]\r\n\r\n========================================================================================= ERRORS =========================================================================================\r\n______________________________________________________________ ERROR at teardown of test_gaussian_blur[1-meth_kwargs1-cuda] ______________________________________________________________\r\nTraceback (most recent call last):\r\n  File \"C:\\Users\\circleci\\project\\test\\conftest.py\", line 104, in prevent_leaking_rng\r\n    torch.cuda.set_rng_state(cuda_rng_state)\r\n  File \"C:\\Users\\circleci\\project\\env\\lib\\site-packages\\torch\\cuda\\random.py\", line 64, in set_rng_state\r\n    _lazy_call(cb)\r\n  File \"C:\\Users\\circleci\\project\\env\\lib\\site-packages\\torch\\cuda\\__init__.py\", line 155, in _lazy_call\r\n    callable()\r\n  File \"C:\\Users\\circleci\\project\\env\\lib\\site-packages\\torch\\cuda\\random.py\", line 62, in cb\r\n    default_generator.set_state(new_state_copy)\r\nRuntimeError: CUDA error: unspecified launch failure\r\n======================================================================================== FAILURES ========================================================================================\r\n________________________________________________________________________ test_gaussian_blur[1-meth_kwargs1-cuda] _________________________________________________________________________\r\nTraceback (most recent call last):\r\n  File \"C:\\Users\\circleci\\project\\test\\test_transforms_tensor.py\", line 963, in test_gaussian_blur\r\n    _test_class_op(\r\n  File \"C:\\Users\\circleci\\project\\test\\test_transforms_tensor.py\", line 85, in _test_class_op\r\n    _test_transform_vs_scripted_on_batch(f, scripted_fn, batch_tensors)\r\n  File \"C:\\Users\\circleci\\project\\test\\test_transforms_tensor.py\", l",
+    "comments": [
+      {
+        "author": "user-13",
+        "body": "@user-22 Thanks for your investigation at https://github.com/pytorch/vision/pull/5451#issuecomment-1049549925. The gaussianblur uses conv2d so this bug has the potential of being quite significant. I saw that on your analysis you seemed to be familiar with similar previous bugs, could you link to some of them to get more context of what you suspect?\r\n\r\n@maintainer-4 @user-53 @user-54 FYI Nikita [disabled](https://github.com/pytorch/vision/blob/e5a5f0be08ec1302e13e1c97c2b11b5442e160b0/test/test_transforms_tensor.py#L962-L971) the `test_gaussian_blur` test for the specific configuration to restore the CI while the issue is being investigated. We should restore it once the issue is fixed.\r\n\r\n\r\n\r\n"
+      },
+      {
+        "author": "user-22",
+        "body": "@user-13 move just exposed the bug that existed for a while, but indeed the test code indicates that problem is somewhere in pytorch core, as test simply calls `torch.nn.conv2d`\r\n@user-23 , @user-34 do you recall something of the nature?\r\n\r\n"
+      },
+      {
+        "author": "user-23",
+        "body": "Based on the `compute-sanitizer` output it's clearly an illegal memory access. I haven't seen one in this kernel so far, but will try to repro and forward to cuDNN."
+      }
+    ]
+  },
+  "4899": {
+    "number": 4899,
+    "title": "RuntimeError: offset output dims: (160, 160) - computed output dims: (80, 80)",
+    "state": "open",
+    "body": "### 🐛 Describe the bug\n\nI run source build pytorch(torch==1.10.0) and torchvision(torchvision==0.12.0). \r\ntrain code snippet:\r\n```\r\n                from torchvision.ops import DeformConv2d as ModulatedDeformConv\r\n                conv_op = ModulatedDeformConv\r\n                offset_channels = 27\r\n                self.conv2_offset = nn.Conv2d(\r\n                    planes, deformable_groups * offset_channels,\r\n                    kernel_size=3,\r\n                    padding=1)\r\n                self.conv2 = conv_op(\r\n                    planes, planes, kernel_size=3, padding=1, stride=stride,\r\n                    groups=deformable_groups, bias=False)\r\n\r\n                offset_mask = self.conv2_offset(out)\r\n                offset = offset_mask[:, :18, :, :]\r\n                mask = offset_mask[:, -9:, :, :].sigmoid()\r\n                out = self.conv2(out, offset, mask)\r\n```\r\ntensor shape below:\r\n```\r\n(Pdb) offset_mask.shape                                                                                                                                                                  \r\n    torch.Size([16, 27, 160, 160])                                                                                                                                                           \r\n(Pdb) offset.shape                                                                                                                                                                       \r\n    torch.Size([16, 18, 160, 160])                                                                                                                                                           \r\n(Pdb) mask.shape                                                                                                                                                                         \r\n    torch.Size([16, 9, 160, 160])                                                                                                                                                            \r\n(Pdb) self.conv2.__doc__                                                                                                                                                                 \r\n    '\\n    See :func:`deform_conv2d`.\\n    '                                                                                                                                                 \r\n(Pdb) out.shape                                                                                                                                                                          \r\n    torch.Size([16, 128, 160, 160])                                                                                                                                                          \r\n```\r\n\r\nWhen training(run `out = self.conv2(out, offset, mask)` this line), issue the error below, pls help me, tks. \r\n```\r\nTraceback (most recent call last):                                             ",
+    "comments": [
+      {
+        "author": "user-24",
+        "body": "Is anyone here?"
+      },
+      {
+        "author": "user-24",
+        "body": "@user-61 @user-62 @user-9 @user-63 Can you help me?"
+      },
+      {
+        "author": "user-13",
+        "body": "@user-24 Thanks for raising this.\r\n\r\nUnfortunately the information included on the bug report is not enough to reproduce the problem. If you submit a snippet that fully reproduces the problem, it would be easier for us to help.\r\n\r\nHaving said that, it seems to me that either he mask or the offset dimensions don't match the expected ones. Unfortunately it's not possible to tell which one fails because the error message is the same (I'll send a PR in a bit to fix this):\r\nhttps://github.com/pytorch/vision/blob/ae87c1e46df6fb404654935c82e15013d56b7aa8/torchvision/csrc/ops/cpu/deform_conv2d_kernel.cpp#L950-L975\r\n\r\nYour snippet doesn't contain information about all parameters (`stride`, ` deformable_groups` etc), so it's hard to point out what's wrong but my guess is that you use a stride of 2 which means the output dims are expected to be different to what you provide. The estimation of the dimensions can be seen here:\r\nhttps://github.com/pytorch/vision/blob/ae87c1e46df6fb404654935c82e15013"
+      },
+      {
+        "author": "user-24",
+        "body": "@user-13 When I was training, I called [DB/backbones/resnet.py L298](https://github.com/MhLiao/DB/blob/9505b9d8f884a58fe90b884ce239a37f3b1cf404/backbones/resnet.py?_pjax=%23js-repo-pjax-container%2C%20div%5Bitemtype%3D%22http%3A%2F%2Fschema.org%2FSoftwareSourceCode%22%5D%20main%2C%20%5Bdata-pjax-container%5D#L298)，and then replaced L55 and L126 with `from torchvision.ops import DeformConv2d as ModulatedDeformConv`。\r\n\r\nPlease help me take a look. If you need other relevant information, you can call me at any time. tks ha."
+      },
+      {
+        "author": "user-24",
+        "body": "Because the original code in the DB uses the cuda version of dcn and I only have a CPU, I want to use the dcn operator in torchvision."
+      },
+      {
+        "author": "user-13",
+        "body": "@user-24 Unfortunately, it's hard to help without a minimal snippet with no external dependencies that reproduces the problem. If that's something you can't provide, I recommend ensuring that the offset and mask dimensions you provide to the layer match the expected values of the kernel listed. I posted the snippet that estimates them for the CPU kernel above but the same happens on GPU."
+      },
+      {
+        "author": "user-25",
+        "body": "@user-24 \r\nI had the same problem when I was using DB++ and doing the same replaced(L55 and L126 with from torchvision.ops import DeformConv2d as ModulatedDeformConv)\r\nubuntu 20.04\r\npytorch 1.8.2 \r\ncuda 11.1\r\n\r\nto solve, I modified L58 aand L129 (add stride=stride for self.conv2_offset=nn.Conv2d(...))\r\nself.conv2_offset = nn.Conv2d(planes, deformable_groups * offset_channels, kernel_size=3, padding=1)\r\nto\r\nself.conv2_offset = nn.Conv2d(planes, deformable_groups * offset_channels, kernel_size=3, padding=1, stride=stride)\r\n\r\nThen it works fine, the pretrained model loading is ok and model prediction result is also correct\r\nBut I don't know exactly what the reason is and whether this modification is completely correct"
+      }
+    ]
+  },
+  "1982": {
+    "number": 1982,
+    "title": "Missing second order derivatives for operations like RoIAlign and DeformConv",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nThe `RoIAlign` operation and `DeformConv2d` operation do not support second order derivatives right now. Thus when trying to compute higher order derivatives (a common case in meta learning), it raises an error. \r\n\r\n\r\nA snippet to demonstrate this:\r\n```\r\nimport torch\r\nimport torch.nn as nn\r\nimport torch.autograd as autograd\r\nfrom torchvision.ops import DeformConv2d\r\n\r\nnormal_conv = nn.Conv2d(3, 5, 3, 1, 1).cuda()\r\ndeform_conv = DeformConv2d(3, 5, 3, 1, 1).cuda()\r\n\r\ninput = torch.rand(1, 3, 10, 10, requires_grad=True).cuda()\r\noffset = torch.rand(1, 2*1*3*3, 10, 10, requires_grad=True).cuda()\r\n\r\n# verify gradient of gradient for normal conv\r\nout1 = normal_conv(input)\r\ngrad = autograd.grad(out1.sum(), input, create_graph=True)\r\nloss = sum(g.sum() for g in grad)\r\nloss.backward() # this works fine\r\nprint('Succeed in computing second order derivative for normal convs')\r\n\r\n# deform conv\r\nout2 = deform_conv(input, offset)\r\ngrad = autograd.grad(out2.sum(), [input, offset], create_graph=True)\r\nloss = sum(g.sum() for g in grad)\r\nloss.backward() # an error happens here\r\n```\r\n\r\n## Expected behavior\r\n\r\nCompute second order derivatives for these ops as well. \r\n\r\n## Environment\r\n\r\nPyTorch version: 1.4.0\r\nIs debug build: No\r\nCUDA used to build PyTorch: 10.0\r\n\r\nOS: Ubuntu 18.04.4 LTS\r\nGCC version: (Ubuntu 7.5.0-3ubuntu1~18.04) 7.5.0\r\nCMake version: version 3.10.2\r\n\r\nPython version: 3.7\r\nIs CUDA available: Yes\r\nCUDA runtime version: 10.0.130\r\nGPU models and configuration: GPU 0: GeForce RTX 2080 Ti\r\nNvidia driver version: 430.50\r\ncuDNN version: Could not collect\r\n\r\nVersions of relevant libraries:\r\n[pip3] numpy==1.17.2\r\n[conda] blas                      1.0                         mkl\r\n[conda] mkl                       2020.0                      166\r\n[conda] mkl-service               2.3.0            py37he904b0f_0\r\n[conda] mkl_fft                   1.0.15           py37ha843d7b_0\r\n[conda] mkl_random                1.1.0            py37hd6b4f25_0\r\n[conda] pytorch                   1.4.0           py3.7_cuda10.0.130_cudnn7.6.3_0    pytorch\r\n[conda] torchvision               0.5.0                py37_cu100    pytorch\r\n\r\n\r\n## Additional context\r\nI would be happy to help if someone can point out how to modify the code to support second order derivative. \r\n",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Hi,\r\n\r\nThanks for the bug report.\r\nIndeed, torchvision operators do not currently support second-order derivatives.\r\nIt would be great to add support for it, but it would require quite some work, involving implementing things inn C++ / CUDA most probably.\r\n\r\nThe location for the current C++ kernels are in https://github.com/pytorch/vision/tree/master/torchvision/csrc\r\n\r\nWe would be happy to accept PRs adding higher-order derivative to torchvision ops"
+      },
+      {
+        "author": "user-26",
+        "body": "@maintainer-1 \r\nwould you mind also pointing me where the second order derivative is achieved in modules like standard conv and what sort of api do I need to implement to support it? That would be very useful. "
+      },
+      {
+        "author": "user-26",
+        "body": "I see, so it's basically write the backward call into another Function class that also has a backward function. I will try into implement one and do some test. "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hi,\r\n\r\nSorry for the delay. So, I think that for DeformableConv2d, the easiest would be to split it a bit further into the `unfold` / `im2col` and the matmul. The only ops that require custom double-backprop is `im2col`, as all the others already have it supported.\r\nThis would make it easier to implement."
+      },
+      {
+        "author": "user-27",
+        "body": "Hi, I also face the problem of calculating the second derivative for ROIAlign. Have you got the way to do double backward for RoIAlign?"
+      }
+    ]
+  },
+  "9094": {
+    "number": 9094,
+    "title": "double backwards on deform_conv2d not supporte",
+    "state": "open",
+    "body": "### 🐛 Describe the bug\n\nI encountered an error stating \"operation not supported during the second backpropagation\" when using deformable convolution and meta-learning. Can this issue be resolved?\nclass DeformConv2D_v2(nn.Module):\n    def __init__(self, inc, outc, kernel_size=3, padding=1, stride=1):\n        super().__init__()\n        self.in_channels = inc\n        self.out_channels = outc\n        self.kernel_size = kernel_size\n        self.padding = padding\n\n        self.conv = nn.Conv2d(inc, outc, kernel_size, stride=stride, padding=padding) #原卷积\n \n        self.conv_offset = nn.Conv2d(inc, 2*(kernel_size**2), kernel_size, stride=stride, padding=padding)\n        init_offset = torch.Tensor(np.zeros([2*(kernel_size**2), inc, kernel_size, kernel_size]))\n        self.conv_offset.weight = torch.nn.Parameter(init_offset) #初始化为0\n \n        self.conv_mask = nn.Conv2d(inc, kernel_size**2, kernel_size, stride=stride, padding=padding)\n        init_mask = torch.Tensor(np.zeros([kernel_size**2, inc, kernel_size, kernel_size])+np.array([0.5]))\n        self.conv_mask.weight = torch.nn.Parameter(init_mask) #初始化为0.5\n \n    def forward(self, x):\n        offset = self.conv_offset(x)\n        # print(x.shape,offset.shape, self.conv.weight.shape)\n        mask = torch.sigmoid(self.conv_mask(x)) #保证在0到1之间\n        out = torchvision.ops.deform_conv2d(input=x, offset=offset, \n                                            weight=self.conv.weight, \n                                             mask=mask, padding=(self.padding, self.padding))\n        return out\n\n### Versions\n\n  File \"/home/cxg3004_jbs/code/Distill_model/train_cd_sd_cb.py\", line 821, in <module>\n    train(config, model, train_data_loader, optimizer, scheduler, config.loss_list, snr, psnr, ssim, inner_objective, outer_objective,\n  File \"/home/cxg3004_jbs/code/Distill_model/train_cd_sd_cb.py\", line 394, in train\n    optimizer_target.meta_backward(state, model_source)\n  File \"/home/cxg3004_jbs/code/Distill_model/utils/meta_optimizers.py\", line 113, in meta_backward\n    X.backward()                                                    \n  File \"/home/cxg3004_jbs/.conda/envs/jbs2/lib/python3.8/site-packages/torch/_tensor.py\", line 487, in backward\n    torch.autograd.backward(\n  File \"/home/cxg3004_jbs/.conda/envs/jbs2/lib/python3.8/site-packages/torch/autograd/__init__.py\", line 200, in backward\n    Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass\ndouble backwards on deform_conv2d not supported",
+    "comments": [
+      {
+        "author": "maintainer-3",
+        "body": "Hey @user-64 thank you for posting, and apologies for the delayed response. Could you please provide a minimal reproducible example so that I can replicate the issue on my end? I don’t have access to your local files located at \"/home/cxg3004_jbs/...\", and I’m also unsure how the `DeformConv2D_v2` class is being used within the rest of your training loop. If you could share a minimal code snippet that clearly outlines the problem, it would greatly help me in debugging and providing you with effective support."
+      }
+    ]
+  },
+  "8679": {
+    "number": 8679,
+    "title": "[RFC] Intel GPU (XPU) Support with Triton Implementation",
+    "state": "open",
+    "body": "# 🚀  1. The feature\r\n\r\nThis RFC proposes using Triton language to implement Intel GPU (`torch.xpu`) kernels.\r\n\r\n## 1.1. Motivation\r\nThis RFC aims to discuss the XPU kernel implementation with the Triton language. The Triton kernel will contain most of the device-agnostic logic, and the device-specific logic will be implemented separately.\r\n\r\nThe only package requirement for this is `triton` package. However, as triton is by default the requirements of `torch`, we could ignore this package requirements in `torchvision`.\r\n\r\n# 2. Op List\r\n- [ ] nms\r\n- [ ] roi pool\r\n- [ ] roi align\r\n- [ ] ps roi pool\r\n- [ ] ps roi align\r\n- [ ] deform_conv2d\r\n\r\n# 3. File Structure\r\n\r\n```Python\r\ntorchvision\r\n├── csrc\r\n│   └── ops   # This will contain the current op registration in C++, will be no change\r\n│       └── nms.cpp\r\n└── ops        # This folder is pure Python\r\n  ├── triton # The shared Triton kernel implementation. It won't register the kernel.\r\n  │   └── nms_kernel.py\r\n  └── xpu    # The device-specific kernel implementation and registration\r\n    └── nms_kernel.py\r\n```\r\n\r\n# 4. Details\r\n\r\n## 4.1. Register Custom Kernel Implementation\r\nThe kernel implementation consists of two parts. Firstly, we aim to use Triton to implement device-agnostic logic to cover as much of the logic as possible. Secondly, we will use ATen operations for the logic that Triton does not support and device-specific logics.\r\n\r\n### 4.1.1. Triton Kernel Implementation\r\nTo extend the generality, we propose to implement the main logic using the Triton language. This is device-agnostic. As long as the device/platform support Triton, the Triton kernel should work.\r\n\r\n```Python\r\n# torchvision/ops/triton/nms_kernel.py\r\n@triton.jit\r\ndef triton_nms_kernel(boxes, scores, output_ptr, threshold, num_boxes, BLOCK_SIZE: tl.constexpr):\r\n  pid = tl.program_id(0)\r\n  block_start = pid * BLOCK_SIZE\r\n  offsets = block_start + tl.arange(0, BLOCK_SIZE)\r\n  ...\r\n```\r\n\r\n### 4.1.2. XPU Kernel Implementation and Registration\r\n\r\nThis will implement device specific logic. There are two aspects:\r\n1. Triton unsupported ops. For example, tensor initialization, argsort, etc.\r\n2. Device-specific Triton configuration. This would affect the performance of the kernel (e.g., pass Triton config to the kernel).\r\n\r\nThe developer will have to wrap the above logic into a custom kernel and register the kernel to PyTorch using `torch.library.register_kernel(kernel_name, device)`.\r\n\r\n```Python\r\n# torchvision/ops/xpu/nms_kernel.py\r\n\r\n@torch.library.register_kernel(\"torchvision::nms\", \"xpu\")\r\ndef xpu_custom_nms_triton_kernel(boxes: Tensor, scores: Tensor, threshold: float) -> Tensor:\r\n  # 1 : Perform operations that Triton doesn't support:\r\n  # - Tensor initialization, which may be device-specific\r\n  output = torch.ones(num_boxes, dtype=torch.int32, device=boxes.device)\r\n  # - Use ATen calls for Triton unsupported ops (argsort in this case)\r\n  order = torch.argsort(scores, descending=True)\r\n  boxes = boxes[order]\r\n  ...\r\n\r\n  # 2 : Call",
+    "comments": [
+      {
+        "author": "user-30",
+        "body": "@maintainer-4 , may I know your comments?"
+      },
+      {
+        "author": "user-31",
+        "body": "This is interesting! ❤️ "
+      }
+    ]
+  },
+  "9455": {
+    "number": 9455,
+    "title": "Source builds on macOS/Linux missing OpenMP flags — at::parallel_for silently falls back to sequential",
+    "state": "open",
+    "body": "## Bug\n\nWhen building torchvision from source, `setup.py` does not pass OpenMP compile/link flags (`-fopenmp`, `-lomp`/`-lgomp`) to the C++ extension build. This means **any torchvision C++ kernel that calls `at::parallel_for` will silently fall back to sequential execution**, because `at::parallel_for` is a header-only template (`ATen/Parallel.h`) whose `#pragma omp parallel` directives are compiled into the calling translation unit (`_C.so`), not into `libtorch_cpu`.\n\n### Why this hasn't been a problem until now\n\nI checked every file under `torchvision/csrc/ops/cpu/` on the current `main` branch:\n\n| File | `at::parallel_for` | `#pragma omp` |\n|------|-------------------|---------------|\n| `deform_conv2d_kernel.cpp` | ❌ | ❌ |\n| `nms_kernel.cpp` | ❌ | ❌ |\n| `roi_align_kernel.cpp` | ❌ | commented out |\n| `roi_pool_kernel.cpp` | ❌ | ❌ |\n| `ps_roi_align_kernel.cpp` | ❌ | ❌ |\n| `ps_roi_pool_kernel.cpp` | ❌ | ❌ |\n| `box_iou_rotated_kernel.cpp` | ❌ | ❌ |\n\nNo existing torchvision C++ code directly uses OpenMP parallelism, so the missing flags had no observable effect. The pre-built pip/conda wheels are built via CI scripts that handle OpenMP separately.\n\n### Why it matters now\n\nPR #9442 introduces `at::parallel_for` to the `deform_conv2d` CPU forward kernel — the first direct usage in torchvision's codebase. Without the compile/link flags, source builds get **0% speedup** from the parallelization while the change is designed to deliver **2.5–3.0×**.\n\nI confirmed this on Apple M2 (macOS ARM, 4 threads). Thread scaling with and without OpenMP flags:\n\n**Without `-fopenmp` (current `setup.py`):**\n```\nThreads      s32-b1     s32-b4     s64-b1     s64-b4\n----------------------------------------------------\n1              2.99      16.76      78.12     324.52\n4              2.65      16.14      75.25     313.23   ← no scaling\n```\n\n**With `-fopenmp` + `-lomp`:**\n```\nThreads      s32-b1     s32-b4     s64-b1     s64-b4\n----------------------------------------------------\n1              2.91      15.71      75.60     310.34\n4              1.07       5.36      30.33     121.75   ← scales as expected\n```\n\n### Proposed fix\n\nAdd OpenMP flags to `setup.py`:\n\n```diff\n--- a/setup.py\n+++ b/setup.py\n@@ -130,6 +130,12 @@ def get_macros_and_flags():\n         if sysconfig.get_config_var(\"Py_GIL_DISABLED\"):\n             extra_compile_args[\"cxx\"].append(\"-DPy_GIL_DISABLED\")\n \n+    if sys.platform == \"darwin\":\n+        extra_compile_args[\"cxx\"].append(\"-Xpreprocessor\")\n+        extra_compile_args[\"cxx\"].append(\"-fopenmp\")\n+    elif sys.platform != \"win32\":\n+        extra_compile_args[\"cxx\"].append(\"-fopenmp\")\n+\n     if DEBUG:\n         extra_compile_args[\"cxx\"].append(\"-g\")\n         extra_compile_args[\"cxx\"].append(\"-O0\")\n@@ -183,12 +189,22 @@ def make_C_extension():\n             sources += mps_sources\n \n     define_macros, extra_compile_args = get_macros_and_flags()\n+\n+    extra_link_args = []\n+    if sys.platform == \"darwin\":\n+        # Link against libomp shipped with PyTorch",
+    "comments": [
+      {
+        "author": "user-33",
+        "body": "Hi, I'd like to work on this as my first open source contribution. I'll add the OpenMP flags to setup.py as described in the proposed fix."
+      }
+    ]
+  },
+  "6589": {
+    "number": 6589,
+    "title": "`fasterrcnn_resnet50_fpn` Windows GPU tests failing on CUDA 11.6",
+    "state": "open",
+    "body": "### 🐛 Describe the bug\r\n\r\nAfter the removal of CUDA 11.3 and the setting of 11.6 as default the tests at `fasterrcnn_resnet50_fpn` started [failing](https://app.circleci.com/pipelines/github/pytorch/vision/20144/workflows/7dc88095-fe04-43a7-8c3f-64193a9f2661/jobs/1637810) across all python versions:\r\n```\r\nTraceback (most recent call last):\r\n  File \"C:\\Users\\circleci\\project\\test\\test_models.py\", line 775, in check_out\r\n    _assert_expected(output, model_name, prec=prec)\r\n  File \"C:\\Users\\circleci\\project\\test\\test_models.py\", line 117, in _assert_expected\r\n    torch.testing.assert_close(output, expected, rtol=rtol, atol=atol, check_dtype=False, check_device=False)\r\n  File \"C:\\Users\\circleci\\project\\env\\lib\\site-packages\\torch\\testing\\_comparison.py\", line 1342, in assert_close\r\n    assert_equal(\r\n  File \"C:\\Users\\circleci\\project\\env\\lib\\site-packages\\torch\\testing\\_comparison.py\", line 1093, in assert_equal\r\n    raise error_metas[0].to_error(msg)\r\nAssertionError: Tensor-likes are not close!\r\n\r\nMismatched elements: 61 / 80 (76.2%)\r\nGreatest absolute difference: 182.7935028076172 at index (9, 1) (up to 0.01 allowed)\r\nGreatest relative difference: inf at index (1, 0) (up to 0.01 allowed)\r\n\r\nThe failure occurred for item [0]['boxes']\r\n\r\nDuring handling of the above exception, another exception occurred:\r\n\r\nTraceback (most recent call last):\r\n  File \"C:\\Users\\circleci\\project\\test\\test_models.py\", line 803, in test_detection_model\r\n    full_validation &= check_out(out)\r\n  File \"C:\\Users\\circleci\\project\\test\\test_models.py\", line 783, in check_out\r\n    torch.testing.assert_close(\r\n  File \"C:\\Users\\circleci\\project\\env\\lib\\site-packages\\torch\\testing\\_comparison.py\", line 1342, in assert_close\r\n    assert_equal(\r\n  File \"C:\\Users\\circleci\\project\\env\\lib\\site-packages\\torch\\testing\\_comparison.py\", line 1093, in assert_equal\r\n    raise error_metas[0].to_error(msg)\r\nAssertionError: Tensor-likes are not close!\r\n\r\nMismatched elements: 1 / 20 (5.0%)\r\nGreatest absolute difference: 0.019545435905456543 at index (19,) (up to 0.01 allowed)\r\nGreatest relative difference: 0.026511636142229424 at index (19,) (up to 0.01 allowed)\r\n```\r\n\r\nThe failure occurs only on Windows. The Linux tests pass fine.\r\n\r\n### Versions\r\n\r\nTorchVision latest main branch\r\n\r\ncc @user-68 @user-22 @user-23 ",
+    "comments": [
+      {
+        "author": "user-13",
+        "body": "@user-22 I don't think it is related to nvjpeg. The data loaded to the model are random tensors with fixed seed so there is no IO op in this test. I wonder if something in CUDA 11.6 could be affecting one of the kernels of Core?"
+      },
+      {
+        "author": "user-34",
+        "body": "Can you get a kineto trace of the kernels run during the test with 11.3 and 11.6? Then we can compare them and see what changes. @user-22  the cudnn version is the same for 11.3 and 11.6 builds?"
+      },
+      {
+        "author": "user-22",
+        "body": "@user-34 they should be the same, lets see if I can reproduce this failure using nightly builds of torch and vision"
+      },
+      {
+        "author": "user-22",
+        "body": "Ok, I did a little bit of digging: \r\n- Same CuDNN version is used between 11.3 and 11.6\r\n```\r\n(c:\\Users\\circleci\\project\\env) C:\\Users\\circleci>python -c \"import torch;print(torch.__version__, torch.version.cuda, torch.backends.cudnn.version())\"\r\n1.13.0.dev20220915+cu116 11.6 8302\r\n\r\n\r\n(c:\\Users\\circleci\\project\\env) C:\\Users\\circleci>python -c \"import torch;print(torch.__version__, torch.version.cuda, torch.backends.cudnn.version())\"\r\n1.13.0.dev20220914+cu113 11.3 8302\r\n```\r\n\r\nBut the test itself is skipped, when running on CUDA-11.3 windows, from [here](https://app.circleci.com/pipelines/github/pytorch/vision/20135/workflows/4bd14931-962b-4344-a465-f74ffe7b51e8/jobs/1636941/steps):\r\n```\r\n++ echo CUDA_VERSION is 11.3\r\n...\r\ntest/test_models.py::test_detection_model[cuda-fasterrcnn_resnet50_fpn] SKIPPED [ 79%]\r\ntest/test_models.py::test_detection_model[cuda-fasterrcnn_resnet50_fpn_v2] SKIPPED [ 79%]\r\n```"
+      },
+      {
+        "author": "user-34",
+        "body": "Interesting, so not a regression then?"
+      },
+      {
+        "author": "user-13",
+        "body": "OK, I know this can be confusing but the tests are marked as skipped because we couldn't fully validate their output. If we are able to partially validate the results (due to the unstable sort on postprocessing) instead of marking the test as \"SUCCESS\" we mark it as \"SKIPPED\" because part of it couldn't be executed. If any of the less strict tests fail, then we mark is as \"FAIL\". So the execution was not really skipped on CUDA-11.3, just partially validated. On the other hand, on CUDA-11.6 the run is marked as failed because we can certainly say it doesn't match the expected result.\r\n\r\nYou can verify this by looking further up on the log:\r\n```\r\ntest/test_models.py::test_detection_model[cuda-fasterrcnn_mobilenet_v3_large_320_fpn]\r\ntest/test_models.py::test_detection_model[cuda-fasterrcnn_mobilenet_v3_large_fpn]\r\ntest/test_models.py::test_detection_model[cuda-fasterrcnn_resnet50_fpn]\r\ntest/test_models.py::test_detection_model[cuda-fasterrcnn_resnet50_fpn_v2]\r\ntest/test_models.py::test_de"
+      },
+      {
+        "author": "user-22",
+        "body": "Ok, did a bit more digging: 11.3 and 11.6 on Windows produce identical results for regular inference, but slightly different when autocast is enabled:\r\nhttps://github.com/pytorch/vision/blob/2f32fe82f21017c56ac8c09aa7388d0d87dca574/test/test_models.py#L799-L803\r\n\r\nAnd for CUDA-11.3 `(output[0][\"scores\"]-expected[0][\"scores\"]).abs().max() ` is `0.0104`, while for 11.6 it's `0.0195`, i.e. it feels like it could either be declared as flaky, or we can just increase tolerance for the failure on Windows"
+      },
+      {
+        "author": "user-22",
+        "body": "Checking if something like that will do: https://github.com/pytorch/vision/pull/6601"
+      },
+      {
+        "author": "user-13",
+        "body": "@user-22 Thanks Nikita for checking the output on Windows hardware. Increasing tolerance is a reasonable remedy. I wonder if we should escalate this to the Nvidia colleagues to investigate the underlying issue on the kernels that causes this. There could be an underlying bug affecting mixed precision ops. cc @user-23 "
+      },
+      {
+        "author": "user-13",
+        "body": "Similar [breakage](https://app.circleci.com/pipelines/github/pytorch/vision/21450/workflows/4be7edd5-b185-463a-a9c8-2180ecbbfb7d/jobs/1739252) on `maskrcnn_resnet50_fpn_v2` but on `unittest_linux_gpu_py3.7` this time."
+      }
+    ]
+  },
+  "6885": {
+    "number": 6885,
+    "title": "The backward calculation results of DCN in some cases are inconsistent with the DCN of mmcv.",
+    "state": "open",
+    "body": "### 🐛 Describe the bug\n\nWhen I used torchvision.ops.deform_conv2d to build DCNv2, I found that the calculation result of backward was inconsistent with mmcv's DCNv2.\r\nAs far as I know, DCNv2 can be constructed through torchvision's deform_conv2d interface as follows:\r\n(refer to https://github.com/open-mmlab/mmcv/blob/master/mmcv/ops/modulated_deform_conv.py)\r\n```python\r\nimport torch\r\nimport torch.nn as nn\r\nfrom torchvision.ops import deform_conv2d as tv_deform_conv2d\r\n\r\nclass ModulatedDeformConv2d_tv(nn.modules.Module):\r\n    def __init__(self,\r\n                 in_channels: int,\r\n                 out_channels: int,\r\n                 kernel_size: Union[int, Tuple[int]],\r\n                 stride: int = 1,\r\n                 padding: int = 0,\r\n                 dilation: int = 1,\r\n                 groups: int = 1,\r\n                 deform_groups: int = 1,\r\n                 bias: Union[bool, str] = True):\r\n        super(ModulatedDeformConv2d_tv, self).__init__()\r\n        self.in_channels  = in_channels\r\n        self.out_channels = out_channels\r\n        self.kernel_size  = _pair(kernel_size)\r\n        self.stride       = _pair(stride)\r\n        self.padding      = _pair(padding)\r\n        self.dilation     = _pair(dilation)\r\n        self.groups   = groups\r\n        self.deform_groups = deform_groups\r\n        self.weight = nn.Parameter(torch.Tensor(\r\n            out_channels, in_channels, *self.kernel_size))\r\n        if bias:\r\n            self.bias = nn.Parameter(torch.Tensor(out_channels))\r\n        else:\r\n            self.register_parameter('bias', None)\r\n        self.conv_offset = nn.Conv2d(\r\n            self.in_channels,\r\n            self.deform_groups * 3 * self.kernel_size[0] * self.kernel_size[1],\r\n            kernel_size=self.kernel_size,\r\n            stride=self.stride,\r\n            padding=self.padding,\r\n            bias=True)\r\n        self.init_weights()\r\n    def init_weights(self):\r\n        n = self.in_channels\r\n        for k in self.kernel_size:\r\n            n *= k\r\n        stdv = 1. / math.sqrt(n)\r\n        self.weight.data.uniform_(-stdv, stdv)\r\n        if self.bias is not None:\r\n            self.bias.data.zero_()\r\n        self.conv_offset.weight.data.zero_()\r\n        self.conv_offset.bias.data.zero_()\r\n    def forward(self, x):\r\n        out = self.conv_offset(x)\r\n        o1, o2, mask = torch.chunk(out, 3, dim=1)\r\n        offset = torch.cat((o1, o2), dim=1)\r\n        mask = torch.sigmoid(mask)\r\n        return tv_deform_conv2d(x, offset, self.weight,\r\n                                bias=self.bias, stride=self.stride,\r\n                                padding=self.padding, dilation=self.dilation,\r\n                                mask=mask)\r\n```\r\nNext, I tested it in mmcv's test case. Test case location:\r\nhttps://github.com/open-mmlab/mmcv/blob/master/tests/test_ops/test_modulated_deform_conv.py\r\n\r\nI tested with **ModulatedDeformConv2d_tv** as described above in place of **ModulatedDeformConv2dPack** in _test_modulated_deform_conv.py_.\r\n```python\r\nd",
+    "comments": [
+      {
+        "author": "user-35",
+        "body": "Recently, I read the cpu kernel of deform_conv2d, and compared it with the implementation of the original author's DCN \r\n hub (torchvision's implementation modified from this), specifically these two files:\r\n\r\ntorchvision: \r\nhttps://github.com/pytorch/vision/blob/main/torchvision/csrc/ops/cpu/deform_conv2d_kernel.cpp\r\nThe original author's implementation:\r\nhttps://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/blob/mmdetection/mmdet/ops/dcn/src/deform_conv_cuda_kernel.cu\r\n\r\nI found that the original author added the consideration of boundary value <=-1 when calculating mask_val and offset_val through bilinear sampling.\r\n```c++\r\n// mask_val calculating of  original author\r\n//https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/blob/mmdetection/mmdet/ops/dcn/src/deform_conv_cuda_kernel.cu#L222 \r\n       if (h_im > -1 && w_im > -1 && h_im < height && w_im < width) {\r\n          val = deformable_im2col_bilinear(data_im_ptr, width, height, width, h_im, w_im);\r\n        }\r\n`"
+      },
+      {
+        "author": "user-36",
+        "body": " https://github.com/open-mmlab/mmcv/blob/master/mmcv/ops/modulated_deform_conv.py   \r\nThe logic of  mmcv version  seems more reasonable"
+      }
+    ]
+  },
+  "9414": {
+    "number": 9414,
+    "title": "DefaultBoxGenerator device mismatch: torch.cat fails when model is on CUDA (CPU vs cuda:0) Body:",
+    "state": "open",
+    "body": "### 🐛 Describe the bug\n\nWhen an SSD model using DefaultBoxGenerator runs on CUDA, forward can raise:\n\n_RuntimeError: Expected all tensors to be on the same device, but found at least two devices, cpu and cuda:0! (when checking argument for argument tensors in method wrapper_cat)_\n\nThe failure happens in anchor_utils.py inside DefaultBoxGenerator._grid_default_boxes, at torch.cat((shifts, wh_pairs), dim=1).\n\n**To Reproduce**\n- Use scripted **ssd300_vgg16** model that uses DefaultBoxGenerator\n- Put the model and inputs on CUDA: model.cuda(), input tensors on cuda:0.\n- Call model(images) (or run a detection forward pass).\n- The error occurs during anchor/default-box generation.\n\n**Root cause**\n\n- _wh_pairs are always on CPU\nIn DefaultBoxGenerator.__init__, _generate_wh_pairs() is called with default device=torch.device(\"cpu\"), so every tensor in self._wh_pairs stays on CPU.\n\n- _grid_default_boxes does not take a device\nIt only receives dtype. It builds shifts_x / shifts_y with torch.arange(...).to(dtype=dtype) and no device=, so they are created on the current/default device (e.g. CUDA when the model is on GPU).\n\nSo when building default_box = torch.cat((shifts, wh_pairs), dim=1):\n1. shifts is on the feature-map device (e.g. cuda:0),\n2. wh_pairs comes from self._wh_pairs[k], which is on CPU,\nhence the CPU vs CUDA mismatch.\n\n**Expected behavior**\nDefault boxes should be computed entirely on the same device as the feature maps (e.g. CUDA when the model is on GPU), so torch.cat and the rest of the forward pass succeed.\n\n**Suggested fix**\n- Thread the feature-map device from forward into _grid_default_boxes (e.g. add a device argument).\n- In _grid_default_boxes:\n1. Create shifts_x / shifts_y on that device (e.g. torch.arange(..., device=device) then .to(dtype=dtype)).\n2. Use self._wh_pairs[k].to(dtype=dtype, device=device) (with the same clamp logic as now) before repeat and torch.cat.\n\n**Traceback (TorchScript / original)**\n```\nTraceback of TorchScript, serialized code (most recent call last):\n  File \"code/__torch__/torchvision/models/detection/anchor_utils.py\", line 73, in forward\n        _wh_pair = _wh_pairs1[k]\n      wh_pairs = torch.repeat(_wh_pair, [torch.mul(f_k[0], f_k[1]), 1])\n      default_box = torch.cat([shifts, wh_pairs], 1)\n                    ~~~~~~~~~ <--- HERE\n      _22 = torch.append(_12, default_box)\n    return torch.cat(_12)\n\nTraceback of TorchScript, original code (most recent call last):\n  File \".../torchvision/models/detection/anchor_utils.py\", line 232, in forward\n            wh_pairs = _wh_pair.repeat((f_k[0] * f_k[1]), 1)\n            default_box = torch.cat((shifts, wh_pairs), dim=1)\n                          ~~~~~~~~~ <--- HERE\n            default_boxes.append(default_box)\nRuntimeError: Expected all tensors to be on the same device, but found at least two devices, cpu and cuda:0! (when checking argument for argument tensors in method wrapper_cat)\n```\n\n### Versions\n\nCollecting environment information...\nPyTorch version: 2.9.0+c",
+    "comments": [
+      {
+        "author": "user-38",
+        "body": "Hi @user-37 ,   \n\nThanks for raising this issue. Your analysis makes sense. \n\nSince TorchScript is deprecated and we are not actively maintaining the model detection module, we won't prioritize a fix for this. \n\nHowever, I tried reproducing the error on torch 2.12.0.dev and torchvision 0.26.0a0 but wasn't able to trigger it. The error may differ across versions. You might want to try updating your PyTorch/torchvision versions. And feel free to share your reproducing example with codes when you open an issue. \n"
+      }
+    ]
+  },
+  "9029": {
+    "number": 9029,
+    "title": "Rotation sampling grid is undesireably low-res",
+    "state": "open",
+    "body": "### 🐛 Describe the bug\n\nhttps://github.com/pytorch/vision/blob/f799a5348d990de02f9189d9496f369bacfe5cf3/torchvision/transforms/_functional_tensor.py#L594\n\nThis function that creates the resampling grid will use the default tensor dtype. If this is bfloat16/float16 and the image is sufficiently large (over 250x250 px), this results in significant quantizing that seems undesirable. The output will look extremely subsampled from the original. This would not occur if the dtype was higher precision.\n\nMy suggestion would be to update these linspace to either be `dtype=theta.dtype` or explicitly `dtype=torch.float32` to prevent this from happening.\n\n### Versions\n\nCurrent",
+    "comments": [
+      {
+        "author": "maintainer-4",
+        "body": "Thanks for the report @user-39 . This area of the transforms isn't actively developed / maintained anymore. We are now supporting the `torchvision.transforms.v2` namespace. Can you please clarify whether you're observing the same issue with the utilities in v2? Also, can you please provide a  minimal reproducing example, to give us an idea of which public APIs are impacted? Thank you"
+      },
+      {
+        "author": "user-39",
+        "body": "v2 has a similar issue though it may not be exactly the same. depending on the type of input, the sampling grid will be lower resolution than makes sense resulting in blocky outputs. You can especially see it on the border of the image.\n\n```python\n>>> import cv2\n>>> import torch\n>>> from torchvision.transforms.v2 import functional as tvf\n>>> img = cv2.imread(\"lenna.png\")\n>>> cv2.imshow(\"lenna\", img)\n>>> cv2.waitKey(0)\n```\n![Image](https://github.com/user-attachments/assets/2537a375-df61-4090-b7a5-74eadcc036b9)\n\n```python\n>>> img_t = torch.as_tensor(img)\n>>> img2 = tvf.rotate(img_t.to(dtype=torch.float32, device=\"cuda\").permute(2, 0, 1), 10).permute(1, 2, 0).to(dtype=torch.uint8, device=\"cpu\")\n>>> cv2.imshow(\"lenna2\", img2.numpy())\n>>> cv2.waitKey(0)\n```\n![Image](https://github.com/user-attachments/assets/7b42c4bd-a1b4-468c-bba9-71e5903d3c40)\n\n```python\n>>> img2 = tvf.rotate(img_t.to(dtype=torch.bfloat16, device=\"cuda\").permute(2, 0, 1), 10).permute(1, 2, 0).to(dtype=torch.uint8, device"
+      },
+      {
+        "author": "user-40",
+        "body": "Have you tried using a different interpolation method? I tried your code usinig `interpolation=tvf.InterpolationMethod.BILINEAR` and got improved results.\n\nfloat32:\n<img width=\"514\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/9511b33a-9c0c-4edb-b7b0-3b5317f5d3c2\" />\n\nbfloat16:\n<img width=\"512\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/f0b23fef-ba8e-41b1-8d92-3cd09b097b39\" />"
+      }
+    ]
+  },
+  "7675": {
+    "number": 7675,
+    "title": "Add Fused Separable Convolution",
+    "state": "open",
+    "body": "### 🚀 The feature\r\n\r\nAdd a fused separable convolution op for fast Gaussian blur, and many other kernels.\r\n\r\n```py\r\nops.separable_conv2d(x, fx, fy, stride=1, padding=0)\r\nops.separable_conv_transposed2d(x, fx, fy, stride=1, padding=0)\r\nops.separable_conv3d(x, fx, fy, fz, stride=1, padding=0)\r\nops.separable_conv_transposed3d(x, fx, fy, fz, bias=b, stride=1, padding=0)\r\n```\r\n\r\n### Motivation, pitch\r\n\r\nMany filters can be implemented as separable filters. Gaussian, sinc, sobel, etc.\r\n\r\nRight now the approach is to launch multiple consecutive `F.conv2d`, but this is often slower than a single full filter due to the overhead of kernel launch, memory writes, etc.\r\n\r\nSeparable convolutions can be written as a single CUDA kernel.\r\n\r\nI believe there is already a function in CUDA, see: https://developer.download.nvidia.com/compute/cuda/1.1-Beta/x86_64_website/projects/convolutionSeparable/doc/convolutionSeparable.pdf\r\n\r\n### Alternatives\r\n\r\n_No response_\r\n\r\n### Additional context\r\n\r\n_No response_",
+    "comments": []
+  },
+  "6240": {
+    "number": 6240,
+    "title": "Compilation error with cuda",
+    "state": "open",
+    "body": "### 🐛 Describe the bug\n\nWhen compiling vision with cuda enabled I am getting following error\r\nCMake Error at /usr/local/share/cmake-3.22/Modules/CMakeTestCUDACompiler.cmake:56 (message):\r\n   The CUDA compiler\r\n     \"/usr/bin/nvcc\"\r\nis not able to compile a simple test program.\r\n\r\nI was able to compile the library after adding following in CMakeLists.txt after if(WITH_CUDA) \r\nset(CMAKE_CUDA_COMPILER \"/usr/local/cuda-11.1/bin/nvcc\").\r\n\n\n### Versions\n\nPyTorch version: 1.8.2+cu111\r\nIs debug build: False\r\nCUDA used to build PyTorch: 11.1\r\nROCM used to build PyTorch: N/A\r\n\r\nOS: Ubuntu 20.04.4 LTS (x86_64)\r\nGCC version: (Ubuntu 9.4.0-1ubuntu1~20.04.1) 9.4.0\r\nClang version: 10.0.0-4ubuntu1 \r\nCMake version: version 3.22.5\r\nLibc version: glibc-2.17\r\n\r\nPython version: 3.6.13 |Anaconda, Inc.| (default, Jun  4 2021, 14:25:59)  [GCC 7.5.0] (64-bit runtime)\r\nPython platform: Linux-5.14.0-1044-oem-x86_64-with-debian-bullseye-sid\r\nIs CUDA available: True\r\nCUDA runtime version: 11.1.74\r\nGPU models and configuration: GPU 0: NVIDIA T600 Laptop GPU\r\nNvidia driver version: 510.73.05\r\ncuDNN version: Probably one of the following:\r\n/usr/lib/x86_64-linux-gnu/libcudnn.so.8.3.2\r\n/usr/lib/x86_64-linux-gnu/libcudnn_adv_infer.so.8.3.2\r\n/usr/lib/x86_64-linux-gnu/libcudnn_adv_train.so.8.3.2\r\n/usr/lib/x86_64-linux-gnu/libcudnn_cnn_infer.so.8.3.2\r\n/usr/lib/x86_64-linux-gnu/libcudnn_cnn_train.so.8.3.2\r\n/usr/lib/x86_64-linux-gnu/libcudnn_ops_infer.so.8.3.2\r\n/usr/lib/x86_64-linux-gnu/libcudnn_ops_train.so.8.3.2\r\n/usr/local/cuda-11.1/targets/x86_64-linux/lib/libcudnn.so.8.1.1\r\n/usr/local/cuda-11.1/targets/x86_64-linux/lib/libcudnn_adv_infer.so.8.1.1\r\n/usr/local/cuda-11.1/targets/x86_64-linux/lib/libcudnn_adv_train.so.8.1.1\r\n/usr/local/cuda-11.1/targets/x86_64-linux/lib/libcudnn_cnn_infer.so.8.1.1\r\n/usr/local/cuda-11.1/targets/x86_64-linux/lib/libcudnn_cnn_train.so.8.1.1\r\n/usr/local/cuda-11.1/targets/x86_64-linux/lib/libcudnn_ops_infer.so.8.1.1\r\n/usr/local/cuda-11.1/targets/x86_64-linux/lib/libcudnn_ops_train.so.8.1.1\r\nHIP runtime version: N/A\r\nMIOpen runtime version: N/A\r\nIs XNNPACK available: True\r\n\r\nVersions of relevant libraries:\r\n[pip3] mypy-extensions==0.4.3\r\n[pip3] numpy==1.19.5\r\n[pip3] numpy-quaternion==2021.11.4.15.26.3\r\n[pip3] numpy-ros==0.1.3\r\n[pip3] torch==1.8.2+cu111\r\n[pip3] torchaudio==0.8.2\r\n[pip3] torchvision==0.9.2+cu111\r\n[conda] blas                      1.0                         mkl    conda-forge\r\n[conda] cudatoolkit               10.1.243             h6bb024c_0    anaconda\r\n[conda] libblas                   3.8.0                    14_mkl    conda-forge\r\n[conda] libcblas                  3.8.0                    14_mkl    conda-forge\r\n[conda] liblapack                 3.8.0                    14_mkl    conda-forge\r\n[conda] mkl                       2019.4                      243    anaconda\r\n[conda] mkl-service               2.3.0            py36he904b0f_0    anaconda\r\n[conda] mkl_fft                   1.2.0            py36h23d657b_0    anaconda\r\n[conda] mkl_ra",
+    "comments": [
+      {
+        "author": "user-43",
+        "body": "Do you have `CUDA_HOME`set? "
+      },
+      {
+        "author": "user-42",
+        "body": "No, I haven't set CUDA_HOME"
+      },
+      {
+        "author": "user-43",
+        "body": "Please set CUDA_HOME and try the build without your local change. \r\n`export CUDA_HOME=/usr/local/cuda-11.1`\r\n"
+      },
+      {
+        "author": "user-42",
+        "body": "Tried it and I am having same error. I need to set CMAKE_CUDA_COMPILER in CMakeLists.txt"
+      },
+      {
+        "author": "user-43",
+        "body": "Do you have multiple installations of CUDA?"
+      },
+      {
+        "author": "user-44",
+        "body": "@user-42 Have you managed to resolve the issue?"
+      }
+    ]
+  },
+  "2001": {
+    "number": 2001,
+    "title": "nvcc fatal : unknown option 'Wall' during 'make' torchvision with -DWITH_CUDA=ON",
+    "state": "open",
+    "body": "Hey!\r\n\r\nI try to make vision with CUDA but I get error during make procedure:\r\nMy cuda compilation tools: realease 10.0, V10.0.130\r\n\r\nMake error output:\r\n[ 25%] Building CUDA object CMakeFiles/torchvision.dir/torchvision/csrc/cuda/ROIAlign_cuda.cu.o\r\nCMakeFiles/torchvision.dir/build.make:296: recipe for target 'CMakeFiles/torchvision.dir/torchvision/csrc/cuda/PSROIPool_cuda.cu.o' failed\r\nmake[2]: *** [CMakeFiles/torchvision.dir/torchvision/csrc/cuda/PSROIPool_cuda.cu.o] Error 1\r\nmake[2]: *** Waiting for unfinished jobs....\r\nnvcc fatal   : Unknown option 'Wall'\r\nnvcc fatal   : Unknown option 'Wall'\r\nnvcc fatal   : Unknown option 'Wall'\r\nCMakeFiles/torchvision.dir/build.make:270: recipe for target 'CMakeFiles/torchvision.dir/torchvision/csrc/cuda/DeformConv_cuda.cu.o' failed\r\nmake[2]: *** [CMakeFiles/torchvision.dir/torchvision/csrc/cuda/DeformConv_cuda.cu.o] Error 1\r\nCMakeFiles/torchvision.dir/build.make:322: recipe for target 'CMakeFiles/torchvision.dir/torchvision/csrc/cuda/ROIPool_cuda.cu.o' failed\r\nmake[2]: *** [CMakeFiles/torchvision.dir/torchvision/csrc/cuda/ROIPool_cuda.cu.o] Error 1\r\nCMakeFiles/torchvision.dir/build.make:335: recipe for target 'CMakeFiles/torchvision.dir/torchvision/csrc/cuda/nms_cuda.cu.o' failed\r\nmake[2]: *** [CMakeFiles/torchvision.dir/torchvision/csrc/cuda/nms_cuda.cu.o] Error 1\r\nnvcc fatal   : Unknown option 'Wall'\r\nCMakeFiles/torchvision.dir/build.make:283: recipe for target 'CMakeFiles/torchvision.dir/torchvision/csrc/cuda/PSROIAlign_cuda.cu.o' failed\r\nmake[2]: *** [CMakeFiles/torchvision.dir/torchvision/csrc/cuda/PSROIAlign_cuda.cu.o] Error 1\r\nnvcc fatal   : Unknown option 'Wall'\r\nCMakeFiles/torchvision.dir/build.make:309: recipe for target 'CMakeFiles/torchvision.dir/torchvision/csrc/cuda/ROIAlign_cuda.cu.o' failed\r\nmake[2]: *** [CMakeFiles/torchvision.dir/torchvision/csrc/cuda/ROIAlign_cuda.cu.o] Error 1\r\nCMakeFiles/Makefile2:75: recipe for target 'CMakeFiles/torchvision.dir/all' failed\r\nmake[1]: *** [CMakeFiles/torchvision.dir/all] Error 2\r\nMakefile:129: recipe for target 'all' failed\r\nmake: *** [all] Error 2\r\n\r\nP.S.\r\nI was able to fix this error after remove \"-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wno-write-strings -Wno-unknown-pragmas -Wno-missing-braces -fopenmp\" params in flags.make",
+    "comments": [
+      {
+        "author": "user-10",
+        "body": "Did you build pytorch yourself or are you using a nightly build? The latest stable is 1.4.\r\nIt seems that the only supported prebuilt versions of cuda are 9.2 and 10.1, but you are using 10.0. I have never tried compiling on anything other than 10.1, so maybe try to switch to cuda 10.1."
+      },
+      {
+        "author": "user-46",
+        "body": "@user-45 The CMakelists works.\r\n@user-10 Yes, 1.4 is stable, but to use torch::index, we have to build nightly build.\r\nAnyway, thanks for your all patience and enthusiasm."
+      },
+      {
+        "author": "user-10",
+        "body": "@user-46 Which CMakeLists works? Master's or the one posted by @user-45 ?\r\nHappy to help :)"
+      },
+      {
+        "author": "user-46",
+        "body": "@user-10 tow-names works.\r\njust add these lines to the end of the CMakeLists.txt\r\n```\r\nset_property(TARGET torch_cuda PROPERTY INTERFACE_COMPILE_OPTIONS \"\")  \r\nset_property(TARGET torch_cpu PROPERTY INTERFACE_COMPILE_OPTIONS \"\")\r\n```"
+      },
+      {
+        "author": "user-10",
+        "body": "That is not a proper fix though. I am not sure where those two targets (torch_cuda and torch_cpu) are coming from. Indeed, if I try to add those two lines at the end of my CMakeLists.txt I get the following error:\r\n```\r\nCMake Error at CMakeLists.txt:80 (set_property):\r\n  set_property could not find TARGET torch_cuda.  Perhaps it has not yet been\r\n  created.\r\n\r\n\r\nCMake Error at CMakeLists.txt:81 (set_property):\r\n  set_property could not find TARGET torch_cpu.  Perhaps it has not yet been\r\n  created.\r\n```\r\nIt could be that master pytorch is broken, I would try to open an issue there...\r\n"
+      },
+      {
+        "author": "user-46",
+        "body": "@user-10 I am using https://download.pytorch.org/libtorch/nightly/cu92/libtorch-cxx11-abi-shared-with-deps-latest.zip to build vison. You can have a try. Cmake 3.13.2."
+      },
+      {
+        "author": "user-10",
+        "body": "Yep. Confirmed also with 1.6.0.dev20200409+cu101\r\nI will open an issue on pytorch."
+      },
+      {
+        "author": "user-10",
+        "body": "Hey @user-45 and @user-46, I have opened a pr against pytorch: https://github.com/pytorch/pytorch/pull/36945\r\n\r\nCould you let me know if that indeed fixes the problem?"
+      },
+      {
+        "author": "user-47",
+        "body": "I got the same issue too. Is there a PR yet ?"
+      },
+      {
+        "author": "user-45",
+        "body": "@user-47 Actually I don't know.\r\nI just removed the flags -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wno-write-strings -Wno-unknown-pragmas -Wno-missing-braces -fopenmp from flags.make"
+      }
+    ]
+  },
+  "8703": {
+    "number": 8703,
+    "title": "Contribution Proposal: ScatterND Implementation for PyTorch",
+    "state": "open",
+    "body": "### 🚀 The feature\n\nHey everyone, I’m Ali, a software engineer from Nuro, and we’ve been working on migrating a lot of vision models from tensorflow to pytorch. One particularly critical operation for these vision models is tf.tensor_scatter_nd_update , and its reduction counterparts (e.g. tf.tensor_scatter_nd_min, tf.tensor_scatter_nd_max , etc). \r\n\r\nWe'd like to offer to implement a robust implementation of ScatterND in pytorch. Some details:\r\n- Uses only native torch layers, and is fully statically shaped\r\n- Supports batching with torch.vmap if desired\r\n- Really performant when used with torch.compile & torch-xla\r\n\r\nI've attached sample implementations in the 'Additional context section'.\n\n### Motivation, pitch\n\nThe ScatterND operation was a major roadblock for the tensorflow => pytorch migration for Nuro. If this operation is widely available, more organizations might be encouraged to adopt pytorch (rather than JAX, which is the default migration path from tensorflow). \n\n### Alternatives\n\nThere are a few scatter_nd implementations scattered (pardon the pun) around the web but none seem to be perfect.\r\n\r\nhttps://github.com/rusty1s/pytorch_scatter, this one uses custom CUDA kernels which isn't easy to use or maintain\r\nhttps://gist.github.com/airalcorn2/c7846d6fcb58a30b25ea6d97e16fe025, this implementation has a bug\r\nhttps://gist.github.com/Ending2015a/b034ebbedc55fec1d8ec3b7230a95f1e, doesn't support batching, or have static shapes which is important for torch.compile/torch-xla\r\n\n\n### Additional context\n\nForum post: https://discuss.pytorch.org/t/contribution-proposal-scatternd-implementation-for-pytorch/211874/1\r\n\r\n(sample implementation) https://gist.github.com/user-48/2e3d9650461f302a541235e33d7cded2\r\n(simple test) https://gist.github.com/user-48/a4a22736a14414404b45b17f62da9c2d\r\n\r\nWe also have extensive testing implemented that we're willing to contribute.",
+    "comments": [
+      {
+        "author": "user-31",
+        "body": "Thanks for the proposal! \n\n\n~Isn't pytorch main repo a better suitable for this function??~ \nI see you had already opened a pr there as well.\n\n\nHow is this transformation used in computer vision? Could you give a small example ?? \n\n"
+      },
+      {
+        "author": "user-48",
+        "body": "Yeah, I opened a PR in the main torch repo, but the response was that we already have scatter-reduce & index_put, and this operation is a little more vision specific.\r\n\r\nThe main vision application is around lidar voxelization ([example](https://medium.com/@ghimire.aiesecer/voxel-fitting-on-lidar-point-cloud-713b2c7b1f3d)). When transforming lidar points to a voxel grid, we compute each lidar point's voxel, then scatter it via sparse updates to a large grid. Most applications of voxelization also require a reduction to handle duplicate points to generate the maximum feature values for each voxel grid.  "
+      },
+      {
+        "author": "user-31",
+        "body": "I appreciate the proposal and don't want to hold it back. However, I'm not entirely sure if torchvision is the right place for this, as it currently lacks any voxel or specific 3D computer vision operations or losses. But who knows—maybe this could be the start of something new!"
+      },
+      {
+        "author": "user-48",
+        "body": "Yeah, there are a ton of 3D specific utilities that can be built from this, including lidar voxelization itself! Theoretically, if we can start up a 3D/voxel library in torchvision Nuro would be happy to help contribute and help build it up. Let me know!"
+      },
+      {
+        "author": "user-31",
+        "body": "I guess for having operations for 3d data, we will need a detailed RFC and approval from the maintainers. \n\nOn side note, pytorch3d would be better suited for this. (Sorry for redirecting you to yet another repository) :p"
+      }
+    ]
+  },
+  "949": {
+    "number": 949,
+    "title": "torchvision[cuda10] installs default pytorch build, instead of cuda10 build",
+    "state": "open",
+    "body": "torchvision and pytorch are required to be built in similar environment.\r\nCurrently, when calling pip-install on cuda10 build of torchvision, (if torch is not already installed) it implicitly installs the default Pytorch build, which - as of today - is built against cuda9, resulting in raising an error during run-time.\r\n\r\ne.g.\r\n`pip install torchvision[cuda10_package] torch[cuda10_package]` - will work\r\nbut:\r\n``pip install torchvision[cuda10_package];\r\npip install torch[cuda10_package]``\r\nor similarily, ``pip install torch[cuda10_package] torchvision; pip install --force torchvision[cuda10_package]``\r\nwill not. (order matters)\r\n\r\nCan the requirements of each build be specified in such a way that pip will automatically look for the matching build of pytorch?\r\nAlternatively, is it possible for pip to independently decide the correct build based on environment variables?",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Good question. I think that with conda everything should work out fine, given that we have separated out the CUDA version into a different package.\r\n\r\nI don't know how to solve the `pip` issue though. @user-50 do you have an idea?"
+      },
+      {
+        "author": "user-50",
+        "body": "@user-49 can you say what EXACT commands you are using in each case. It's not clear to me what you have tried, so getting clarity on that will help me understand what's going on."
+      },
+      {
+        "author": "user-49",
+        "body": "@user-50 The following installation scenarios will fail to run on cuda10 system:\r\n1.\r\n``pip install https://download.pytorch.org/whl/cu100/torchvision-0.3.0-cp36-cp36m-linux_x86_64.whl;\r\npip install https://download.pytorch.org/whl/cu100/torch-1.1.0-cp36-cp36m-linux_x86_64.whl``\r\n2.\r\n``pip install https://download.pytorch.org/whl/cu100/torch-1.1.0-cp36-cp36m-linux_x86_64.whl torchvision; pip install --force https://download.pytorch.org/whl/cu100/torchvision-0.3.0-cp36-cp36m-linux_x86_64.whl``\r\n\r\nEdit: 2nd example."
+      },
+      {
+        "author": "user-50",
+        "body": "hmmm, yea there isn't a easy pip fix to it, but there **is** a way to fix this. I opened an issue on PyTorch to address it, but it will take a bit of effort from my side https://github.com/pytorch/pytorch/issues/19990"
+      },
+      {
+        "author": "user-51",
+        "body": "I ran into this issue over the weekend.  It does have some consequences, as it causes some of the example PyTorch models (like the fast style transfer code sample) to fail to train.  Unfortunately, I don't have the exact error message at hand, but it was a runtime error related to the CUBLAS library.  It triggers on the features.bmm call in the gram_matrix function of the utils.py file (line 25).  \r\n\r\nHowever, I did find a temporary workaround.  The official PyTorch site says to install torch first, then torchvision.  If you reverse the install commands, then the incorrect version of torch will be installed with torchvision.  Running the torch install command then overwrites the wrong torch version with the correct one.  I haven't tested it thoroughly, but it does cause torch.version.cuda to report the correct version number (10.0.130) and the fast style transfer code starts to train."
+      },
+      {
+        "author": "user-52",
+        "body": "I just ran into (mostly) the same problem, although the versions are different since it's been three years . When I used the command given in [pytorch's instructions](https://pytorch.org/get-started/locally/) for Linux (Ubuntu 22.10), Stable (1.12.1), and CUDA 11.6:\r\n\r\n`pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu116`\r\n\r\nit installed the right version of `torchvision` (0.31.1+cu116) to get CUDA 11.6 but the older CUDA version for `torch` (1.12.1+cu102). @user-69's solution of re-installing torch by itself fixed it. Perhaps the documentation should be annotated in case people run into this again.\r\n"
+      }
+    ]
+  }
+}

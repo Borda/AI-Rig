@@ -19,6 +19,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 from collections.abc import Callable, Iterator
 from datetime import datetime, timezone
@@ -42,6 +43,223 @@ _loader.exec_module(cic)
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
+
+
+def _directory_symlink_available() -> bool:
+    """Probe directory symlink creation and traversal on the current host."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        target, link = root / "target", root / "link"
+        target.mkdir()
+        try:
+            link.symlink_to(target, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            return False
+        return link.is_symlink() and link.is_dir()
+
+
+_skip_directory_symlink_unavailable = pytest.mark.skipif(
+    not _directory_symlink_available(), reason="directory symlink creation is unavailable on this host"
+)
+
+
+def test_malformed_file_shas_returns_status(tmp_path: Path) -> None:
+    """A list-shaped hash table yields status JSON rather than an AttributeError."""
+    path = tmp_path / "index.json"
+    path.write_text('{"file_shas":[]}', encoding="utf-8")
+    result, code = cic.check_currency(path, tmp_path)
+    assert code == 2
+    assert result["status"] == "no_index"
+    assert "file_shas" in result["reason"]
+
+
+def test_malformed_file_shas_in_fingerprint_returns_status(tmp_path: Path) -> None:
+    """Fingerprint-bearing indexes receive the same shape validation as legacy indexes."""
+    path = tmp_path / "index.json"
+    path.write_text('{"source_fingerprint":"bad","file_shas":[]}', encoding="utf-8")
+    result, code = cic.check_currency(path, tmp_path)
+    assert code == 2
+    assert result["status"] == "no_index"
+    assert "file_shas" in result["reason"]
+
+
+def test_foreign_index_rejected_before_lease(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An index outside the allowed roots must not create coordination state beside itself."""
+    home, cwd, tempdir = tmp_path / "home", tmp_path / "cwd", tmp_path / "temp"
+    home.mkdir()
+    cwd.mkdir()
+    tempdir.mkdir()
+    index = home / "private.json"
+    index.write_text('{"file_shas":{}}', encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tempdir))
+    result, code = cic.check_currency(index, cwd)
+    assert code == 2
+    assert result["status"] == "no_index"
+    assert "outside allowed roots" in result["reason"]
+    assert not (home / ".index-rw").exists()
+
+
+@pytest.mark.parametrize(
+    ("working_directory", "index_relative", "override"),
+    [
+        pytest.param("project/nested", "project/.cache/codemap/project.json", "", id="nested-cwd"),
+        pytest.param("elsewhere", "project/.cache/codemap/project.json", "", id="explicit-root"),
+        pytest.param("elsewhere", "override/project.json", "override", id="explicit-override"),
+    ],
+)
+def test_canonical_index_outside_cwd_is_read_under_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    gate_events: list[str],
+    working_directory: str,
+    index_relative: str,
+    override: str,
+) -> None:
+    """The root's exact index remains usable from nested or unrelated working directories."""
+    root = tmp_path / "project"
+    cwd = tmp_path / working_directory
+    cwd.mkdir(parents=True)
+    root.mkdir(exist_ok=True)
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setenv("CODEMAP_INDEX_DIR", str(tmp_path / override) if override else "")
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "allowed-temp"))
+    index = tmp_path / index_relative
+    _write_index(
+        index,
+        _minimal_index(scan_root=str(root), file_shas={}, source_fingerprint=cic.fingerprint_file_hashes({})),
+    )
+
+    result, code = cic.check_currency(index, root)
+
+    assert (result["status"], code) == ("current", 0)
+    assert gate_events == ["reader_acquire", "reader_release"]
+
+
+@_skip_directory_symlink_unavailable
+@pytest.mark.parametrize(
+    ("target_relative", "override", "expected_status", "expected_code", "expected_events"),
+    [
+        pytest.param(
+            "project/cache-store", "", "current", 0, ["reader_acquire", "reader_release"], id="inside-root-cache-alias"
+        ),
+        pytest.param("external-cache", "", "no_index", 2, [], id="outside-root-cache-refused"),
+        pytest.param(
+            "external-cache",
+            "project/.cache/codemap",
+            "current",
+            0,
+            ["reader_acquire", "reader_release"],
+            id="explicit-override-authorizes-external-cache",
+        ),
+    ],
+)
+def test_canonical_cache_alias_respects_scanner_root_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    gate_events: list[str],
+    target_relative: str,
+    override: str,
+    expected_status: str,
+    expected_code: int,
+    expected_events: list[str],
+) -> None:
+    """Default cache aliases stay inside the root; explicit overrides may select an external cache."""
+    root = tmp_path / "project"
+    cwd = root / "nested"
+    cwd.mkdir(parents=True)
+    target = tmp_path / target_relative
+    target.mkdir(parents=True)
+    (root / ".cache").symlink_to(target, target_is_directory=True)
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setenv("CODEMAP_INDEX_DIR", str(tmp_path / override) if override else "")
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "allowed-temp"))
+    index = root / ".cache/codemap/project.json"
+    _write_index(
+        index,
+        _minimal_index(scan_root=str(root), file_shas={}, source_fingerprint=cic.fingerprint_file_hashes({})),
+    )
+
+    result, code = cic.check_currency(index, root)
+
+    assert (result["status"], code) == (expected_status, expected_code)
+    assert gate_events == expected_events
+
+
+def test_override_neighbor_is_rejected_without_reading_canonical_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gate_events: list[str]
+) -> None:
+    """An unrelated neighbor cannot trigger the resolver's collision read before admission."""
+    root, cwd = tmp_path / "project", tmp_path / "elsewhere"
+    root.mkdir()
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setenv("CODEMAP_INDEX_DIR", str(tmp_path / "override"))
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "allowed-temp"))
+    canonical = tmp_path / "override/project.json"
+    _write_index(canonical, _minimal_index(scan_root=str(root)))
+    neighbor = canonical.with_name("private.json")
+    _write_index(neighbor, _minimal_index())
+
+    result, code = cic.check_currency(neighbor, root)
+
+    assert (result["status"], code) == ("no_index", 2)
+    assert gate_events == []
+    assert not (canonical.parent / ".index-rw").exists()
+
+
+def test_canonical_index_for_another_root_remains_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gate_events: list[str]
+) -> None:
+    """Exact path admission does not bypass the stored source-root identity check."""
+    root, cwd = tmp_path / "project", tmp_path / "elsewhere"
+    root.mkdir()
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setenv("CODEMAP_INDEX_DIR", "")
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "allowed-temp"))
+    index = root / ".cache/codemap/project.json"
+    _write_index(index, _minimal_index(scan_root=str(tmp_path / "other")))
+
+    result, code = cic.check_currency(index, root)
+
+    assert (result["status"], code) == ("stale", 1)
+    assert "scan_root differs" in result["reason"]
+    assert gate_events == ["reader_acquire", "reader_release"]
+
+
+def test_canonical_index_owned_by_another_user_is_rejected_before_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gate_events: list[str]
+) -> None:
+    """Canonical path selection does not authorize a file belonging to another user."""
+    root, cwd = tmp_path / "project", tmp_path / "elsewhere"
+    root.mkdir()
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setenv("CODEMAP_INDEX_DIR", "")
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "allowed-temp"))
+    index = root / ".cache/codemap/project.json"
+    _write_index(index, _minimal_index(scan_root=str(root)))
+    foreign_uid = index.stat().st_uid + 1
+    monkeypatch.setattr(os, "getuid", lambda: foreign_uid, raising=False)
+
+    result, code = cic.check_currency(index, root)
+
+    assert (result["status"], code) == ("no_index", 2)
+    assert gate_events == []
+    assert not (index.parent / ".index-rw").exists()
 
 
 # ---------------------------------------------------------------------------

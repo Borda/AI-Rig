@@ -7,10 +7,10 @@
  */
 
 import { randomUUID } from "node:crypto"
-import { appendFileSync, chmodSync, existsSync, rmSync, writeFileSync } from "node:fs"
-import { isAbsolute, join, relative, resolve, sep } from "node:path"
+import { appendFileSync, chmodSync, existsSync, lstatSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import type { Plugin } from "@opencode/plugin"
-import { sha256File } from "../digest.ts"
+import { sha256, sha256File } from "../digest.ts"
 import { dispatchRole, ROLE_IDS, type RoleId } from "../dispatch.ts"
 import { doctorReport, installedAgentStatus, resolveAgentDirs, staleRuns } from "../doctor.ts"
 import { collectCommitScope, collectScope, detectDrift, refreshScope } from "../evidence.ts"
@@ -22,7 +22,7 @@ import {
   type Finding,
   type FindingsDocument,
 } from "../findings.ts"
-import { detectGates, runGates, type GateSpec } from "../gates.ts"
+import { detectGates, runGate, type GateResult, type GateSpec } from "../gates.ts"
 import { grantPath, readGrant, revokeGrant, writeGrant } from "../git-grant.ts"
 import {
   appendLoopRecord,
@@ -84,6 +84,12 @@ function resolveInsideProject(projectRoot: string, path: string): string {
   if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new Error(`path escapes the project: ${path}`)
   }
+  let ancestor = absolute
+  while (!lstatSync(ancestor, { throwIfNoEntry: false })) ancestor = dirname(ancestor)
+  const physical = relative(realpathSync(projectRoot), realpathSync(ancestor))
+  if (physical === ".." || physical.startsWith(`..${sep}`) || isAbsolute(physical)) {
+    throw new Error(`path resolves outside the project: ${path}`)
+  }
   return absolute
 }
 
@@ -98,7 +104,7 @@ function fileRecords(projectRoot: string, paths: readonly string[], allowDeleted
           (entry) => entry.path === canonical && entry.status.includes("D"),
         )
       ) {
-        return { path, sha256: "" }
+        return { path, sha256: sha256("") }
       }
       throw new Error(`evidence path does not exist: ${path}`)
     }
@@ -112,6 +118,64 @@ function resolveRun(paths: RigPaths, sessionID: string, runId: string | undefine
   const skill = skillForRun(paths.artifactRoot, id)
   if (!skill) throw new Error(`unknown run: ${id}`)
   return loadRun(paths, skill, id)
+}
+
+/** Read and validate the inventory whose exact bytes the run recorded. */
+function readFindings(paths: RigPaths, run: RunRecord): FindingsDocument {
+  if (!run.findings) throw new Error(`findings artifact is missing for run ${run.run_id}`)
+  const path = resolveInsideProject(paths.projectRoot, run.findings.path)
+  const document = readJsonIfExists<FindingsDocument>(path)
+  if (
+    !document ||
+    document.schema !== 1 ||
+    document.run_id !== run.run_id ||
+    document.target_digest !== run.scope.digest
+  ) {
+    throw new Error(`invalid findings artifact for run ${run.run_id}`)
+  }
+  if (sha256File(path) !== run.findings.digest) throw new Error(`findings artifact changed for run ${run.run_id}`)
+  if (
+    run.skill === "rig-remediate" &&
+    (document.source_run_id !== run.source_run_id || document.source_digest !== run.source_findings?.digest)
+  ) {
+    throw new Error("remediation findings do not match the bound source inventory")
+  }
+  return { ...document, findings: validateFindings(document.findings) }
+}
+
+/** Resolve a completed review and its immutable inventory for remediation. */
+function sourceInventory(
+  paths: RigPaths,
+  sessionID: string,
+  runId: string,
+): { run: RunRecord; document: FindingsDocument } {
+  const run = resolveRun(paths, sessionID, runId)
+  if (run.skill !== "rig-review" || run.status !== "completed" || run.review?.source_digest !== run.scope.digest)
+    throw new Error("source_run_id must name a completed rig-review run")
+  return { run, document: readFindings(paths, run) }
+}
+
+/** Bind implementation to the bytes independently reviewed by a completed planning run. */
+function reviewedPlan(
+  paths: RigPaths,
+  sessionID: string,
+  runId: string,
+  planPath: string,
+): NonNullable<RunRecord["plan"]> {
+  const source = resolveRun(paths, sessionID, runId)
+  if (source.skill !== "rig-plan" || source.status !== "completed" || !source.plan || !source.review) {
+    throw new Error("plan_run_id must name a completed independently reviewed rig-plan run")
+  }
+  const path = resolveInsideProject(paths.projectRoot, planPath)
+  if (
+    path !== resolveInsideProject(paths.projectRoot, source.plan.path) ||
+    source.review.plan_digest !== source.plan.digest ||
+    source.review.source_digest !== source.scope.digest ||
+    sha256File(path) !== source.plan.digest
+  ) {
+    throw new Error("plan bytes or independent review no longer match the completed plan run")
+  }
+  return { path: planPath, digest: source.plan.digest, run_id: source.run_id }
 }
 
 /** Keep evidence mutations inside the active phase of a run. */
@@ -163,6 +227,10 @@ interface EvidenceInput {
   readonly paths?: readonly string[]
   readonly commit?: string
   readonly plan_path?: string
+  readonly plan_run_id?: string
+  readonly plan_digest?: string
+  readonly trivial_plan?: string
+  readonly source_run_id?: string
   readonly gate_exemption?: string
   readonly inputs?: readonly string[]
   readonly outputs?: readonly string[]
@@ -184,6 +252,7 @@ interface GateInput {
 interface FindingsInput {
   readonly action: "write" | "read"
   readonly run_id?: string
+  readonly source_run_id?: string
   readonly axes?: readonly string[]
   readonly aspects?: readonly string[]
   readonly coverage?: readonly string[]
@@ -237,9 +306,29 @@ const EVIDENCE_INPUT = {
     },
     commit: { type: "string", description: "Collect scope from this commit instead of the working tree. Immutable." },
     plan_path: { type: "string", description: "Plan file to bind by digest. The plan text itself is not copied." },
+    plan_run_id: {
+      type: "string",
+      description:
+        "Completed rig-plan run that reviewed this unchanged plan. Required for nontrivial implementation start.",
+    },
+    plan_digest: {
+      type: "string",
+      description:
+        "Exact plan digest assessed by the independent rig-plan reviewer. Required when recording plan review.",
+    },
+    trivial_plan: {
+      type: "string",
+      description:
+        "Inline mini-plan for a trivial implementation, including scope and verification. Alternative to plan_path and plan_run_id at start.",
+    },
+    source_run_id: {
+      type: "string",
+      description: "Completed rig-review inventory to reconcile. Required for remediation start.",
+    },
     gate_exemption: {
       type: "string",
-      description: "Reason no configured gate applies. Only for a project with no detectable gate.",
+      description:
+        "Reason no configured gate applies. Only for a project with no detectable gate, or a documentation-only rig-remediate scope whose detected gates all run the test suite.",
     },
     inputs: { ...strArray, description: "Files read as authoritative evidence. Must exist." },
     outputs: {
@@ -285,6 +374,10 @@ const FINDINGS_INPUT = {
       description: "write merges a validated inventory; read returns it.",
     },
     run_id: { type: "string", description: "Run that owns the findings artifact." },
+    source_run_id: {
+      type: "string",
+      description: "Source review run bound at remediation start. Required for remediation writes; cannot change.",
+    },
     axes: { ...strArray, description: "Review axes that actually ran." },
     aspects: { ...strArray, description: "Alias for axes (review aspects). Use axes/aspects as appropriate." },
     coverage: { ...strArray, description: "Files or areas actually covered." },
@@ -362,7 +455,7 @@ const GRANT_INPUT = {
     confirm: {
       type: "string",
       description:
-        "The user's own approval words, naming local commits and the excluded operations. Required by approve.",
+        "The user's literal Approve always answer after the plain-local-commit scope and exclusions were shown. Required by approve.",
     },
     scope_acknowledged: {
       type: "boolean",
@@ -444,19 +537,47 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           const scope = input.commit
             ? collectCommitScope(paths.projectRoot, input.commit, input.paths ?? [])
             : collectScope(paths.projectRoot, input.paths ?? [])
-          let plan: { path: string; digest: string } | undefined
+          let plan: RunRecord["plan"]
           if (input.plan_path) {
             const absolute = resolveInsideProject(paths.projectRoot, input.plan_path)
             if (!existsSync(absolute)) throw new Error(`plan does not exist: ${input.plan_path}`)
             plan = { path: input.plan_path, digest: sha256File(absolute) }
           }
+          if (input.skill === "rig-implement") {
+            if (input.trivial_plan?.trim()) {
+              if (plan || input.plan_run_id) throw new Error("choose a trivial_plan or a reviewed plan, not both")
+            } else {
+              if (!input.plan_run_id || !input.plan_path)
+                throw new Error("implementation requires plan_path and plan_run_id, or an explicit trivial_plan")
+              plan = reviewedPlan(paths, context.sessionID, input.plan_run_id, input.plan_path)
+            }
+          }
+          let source: Pick<RunRecord, "source_run_id" | "source_findings"> = {}
+          if (input.skill === "rig-remediate") {
+            if (!input.source_run_id) throw new Error("remediation start requires source_run_id")
+            const inventory = sourceInventory(paths, context.sessionID, input.source_run_id)
+            source = {
+              source_run_id: inventory.run.run_id,
+              source_findings: {
+                digest: inventory.run.findings!.digest,
+                ids: inventory.document.findings.map((finding) => finding.id),
+              },
+            }
+          }
           const run = createRun(paths, { skill: input.skill, scope, ...(plan ? { plan } : {}) })
           const created: RunRecord = {
             ...run,
+            ...source,
+            ...(input.trivial_plan?.trim() ? { trivial_plan: input.trivial_plan.trim() } : {}),
             ...(input.gate_exemption ? { gate_exemption: input.gate_exemption } : {}),
           }
-          save(created)
-          rememberRun(paths.artifactRoot, context.sessionID, { runId: created.run_id, skill: created.skill })
+          try {
+            save(created)
+            rememberRun(paths.artifactRoot, context.sessionID, { runId: created.run_id, skill: created.skill })
+          } catch (error) {
+            save({ ...created, status: "failed", stop_reason: "session registration failed" })
+            throw error
+          }
           return {
             content: `Run started.\n${runSummary(created)}\n\nScope entries: ${created.scope.entries.length}`,
             metadata: { run_id: created.run_id, scope_digest: created.scope.digest },
@@ -517,9 +638,14 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           }
           let plan = run.plan
           if (input.plan_path) {
+            if (run.skill === "rig-implement")
+              throw new Error("an implementation plan is frozen at start; begin a replacement run to change it")
             const absolute = resolveInsideProject(paths.projectRoot, input.plan_path)
             if (!existsSync(absolute)) throw new Error(`plan does not exist: ${input.plan_path}`)
             plan = { path: input.plan_path, digest: sha256File(absolute) }
+          }
+          if (run.skill === "rig-plan" && input.reviewer && !input.plan_digest?.trim()) {
+            throw new Error("recording plan review requires plan_digest: the exact bytes the reviewer assessed")
           }
           const updated: RunRecord = {
             ...run,
@@ -529,7 +655,14 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
             limits: [...run.limits, ...(input.limits ?? [])],
             confidence: input.confidence ?? run.confidence,
             ...(input.reviewer
-              ? { review: { run_id: run.run_id, reviewer: input.reviewer, source_digest: run.scope.digest } }
+              ? {
+                  review: {
+                    run_id: run.run_id,
+                    reviewer: input.reviewer,
+                    source_digest: run.scope.digest,
+                    ...(run.skill === "rig-plan" ? { plan_digest: input.plan_digest } : {}),
+                  },
+                }
               : {}),
           }
           save(updated)
@@ -544,7 +677,48 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
 
         // finalize
         const drift = detectDrift(paths.projectRoot, run.scope)
-        const result = finalizeRun(run, { drift })
+        let planDigest: string | undefined
+        let sourceDigest: string | undefined
+        let actualFindings: readonly Finding[] | undefined
+        const bindingProblems: string[] = []
+        try {
+          if (run.plan) {
+            planDigest = sha256File(resolveInsideProject(paths.projectRoot, run.plan.path))
+            if (run.skill === "rig-implement") {
+              if (!run.plan.run_id) throw new Error("implementation plan provenance is missing")
+              const current = reviewedPlan(paths, context.sessionID, run.plan.run_id, run.plan.path)
+              if (current.digest !== run.plan.digest) throw new Error("implementation plan binding changed")
+            }
+          }
+          if (run.skill === "rig-remediate" && run.source_run_id) {
+            const inventory = sourceInventory(paths, context.sessionID, run.source_run_id)
+            sourceDigest = inventory.run.findings!.digest
+            if (
+              run.source_findings &&
+              json([...run.source_findings.ids].sort()) !==
+                json(inventory.document.findings.map((finding) => finding.id).sort())
+            ) {
+              throw new Error("source findings inventory IDs changed")
+            }
+          }
+          if (run.findings) actualFindings = readFindings(paths, run).findings
+        } catch (error) {
+          bindingProblems.push(error instanceof Error ? error.message : String(error))
+        }
+        const checked = finalizeRun(run, {
+          drift,
+          plan_digest: planDigest,
+          source_findings_digest: sourceDigest,
+          findings: actualFindings,
+        })
+        const result = bindingProblems.length
+          ? {
+              ...checked,
+              ok: false,
+              status: checked.ok ? ("in_progress" as const) : checked.status,
+              problems: [...checked.problems, ...bindingProblems],
+            }
+          : checked
         if (!result.ok) {
           const failed: RunRecord = { ...run, status: result.status }
           if (run.status === "in_progress") save(failed)
@@ -639,35 +813,31 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         if (detectDrift(paths.projectRoot, approvedScope) || run.scope.digest !== approvedScope.digest)
           throw new Error("run scope changed during approval; refresh the scope and request gate approval again")
         const timeout = input.timeout_ms ?? options.gateTimeoutMs
-        const samples = runGates(selected, paths.projectRoot, files, timeout)
-        const drift = detectDrift(paths.projectRoot, run.scope)
-        const sourceDigest = drift ? refreshScope(paths.projectRoot, run.scope).digest : run.scope.digest
+        const samples: GateResult[] = []
+        const directory = ensureDir(join(paths.runsRoot, run.skill, run.run_id, "gates"))
+        let drift = false
+        for (const spec of selected) {
+          samples.push(await runGate(spec, paths.projectRoot, files, timeout, directory))
+          // Retain intermediate drift even if a later gate restores the original bytes.
+          drift = detectDrift(paths.projectRoot, run.scope) || drift
+        }
+        // A rewriting batch may validate different bytes in each gate. Preserve
+        // its samples without certifying any scope, including a later reversion.
         const results = samples.map((result) => ({
           ...result,
-          receipt: { ...result.receipt, source_digest: sourceDigest },
+          receipt: {
+            ...result.receipt,
+            log_path: result.log_path,
+            ...(drift ? {} : { source_digest: run.scope.digest }),
+          },
         }))
-        const directory = ensureDir(join(paths.runsRoot, run.skill, run.run_id, "gates"))
         for (const result of results) {
           const sample = `${safeName(result.receipt.id)}-${randomUUID()}`
-          const log = [
-            `# ${result.receipt.id}`,
-            `command: ${result.receipt.command}`,
-            `source: ${result.receipt.source}`,
-            `status: ${result.receipt.status}`,
-            `exit_code: ${String(result.receipt.exit_code)}`,
-            `duration_ms: ${result.receipt.duration_ms}`,
-            `stdout_sha256: ${result.receipt.stdout_sha256}`,
-            `stderr_sha256: ${result.receipt.stderr_sha256}`,
-            "",
-            result.receipt.tail,
-            "",
-          ].join("\n")
           writeFileSync(join(directory, `${sample}.json`), `${json(result.receipt)}\n`, {
             encoding: "utf8",
             flag: "wx",
             mode: 0o600,
           })
-          writeFileSync(join(directory, `${sample}.log`), log, { encoding: "utf8", flag: "wx", mode: 0o600 })
           appendFileSync(join(directory, "receipts.jsonl"), `${JSON.stringify(result.receipt)}\n`, {
             encoding: "utf8",
             mode: 0o600,
@@ -686,7 +856,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
             gateTable(updated),
             "",
             drift
-              ? "Source changed while gates ran. Receipts carry the live digest and do not certify the saved scope; refresh the scope and rerun gates."
+              ? "Source changed while gates ran. Receipts do not certify a source digest; refresh the scope and rerun gates."
               : failed.length === 0
                 ? "All recorded gates passed."
                 : `FAILED: ${failed.map((receipt) => receipt.id).join(", ")}. Fix the cause and rerun the same gate; do not retry unchanged.`,
@@ -714,10 +884,19 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
 
         if (input.action === "read") {
           if (!existing) throw new Error(`no findings artifact for run ${run.run_id}`)
-          return { content: json(existing), metadata: { run_id: run.run_id } }
+          return { content: json(readFindings(paths, run)), metadata: { run_id: run.run_id } }
         }
 
         requireInProgress(run)
+        if (run.skill === "rig-remediate") {
+          if (!input.source_run_id || input.source_run_id !== run.source_run_id) {
+            throw new Error("remediation write requires the source_run_id bound at start")
+          }
+          const source = sourceInventory(paths, context.sessionID, input.source_run_id)
+          if (source.run.findings!.digest !== run.source_findings?.digest) {
+            throw new Error("source findings changed after remediation start; begin a replacement run")
+          }
+        }
         if (!input.findings)
           throw new Error("write requires findings: an array, empty only when review genuinely found nothing")
         const incoming = validateFindings(input.findings)
@@ -771,6 +950,9 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           axes: normalizedAxes,
           coverage,
           findings: merged,
+          ...(run.source_run_id
+            ? { source_run_id: run.source_run_id, source_digest: run.source_findings?.digest }
+            : {}),
         }
         ensureDir(directory)
         writeJsonAtomic(path, document)
@@ -977,6 +1159,8 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           if (input.scope_acknowledged !== true) {
             throw new Error("approve requires scope_acknowledged=true after the user accepted the grant exclusions")
           }
+          if (input.confirm !== "Approve always")
+            throw new Error("persistent grants require literal Approve always confirmation")
           await ctx.permission.assert({
             sessionID: context.sessionID,
             agent: context.agent,
@@ -985,7 +1169,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
             resources: [path],
             metadata: { scope: "local-git" },
           })
-          const record = writeGrant(commonDir)
+          const record = writeGrant(commonDir, input.confirm)
           return {
             content: `Local Git grant recorded at ${path}.\n${json(record)}\nIt covers plain local commits in every worktree of this repository. It never covers push, force, history rewriting, destructive operations, or authentication changes.`,
             metadata: { status: "granted", path },
@@ -1044,8 +1228,15 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           ),
         )
         return {
-          content: `role: ${result.role}\nsession: ${result.session_id}\n\n${result.text}`,
-          metadata: { role: result.role, session_id: result.session_id },
+          content: `role: ${result.role}\nsession: ${result.session_id}\n\n${result.text}\n\nWorkspace checks do not verify ignored untracked trees or submodule working-tree content.${result.scope_violation ? "\nScope violation: stop dependent work and resolve the reported changes before continuing." : ""}`,
+          metadata: {
+            role: result.role,
+            session_id: result.session_id,
+            scope_violation: result.scope_violation,
+            violations: result.violations,
+            workspace_unverified: result.workspace_unverified,
+            observed_concurrently: result.observed_concurrently,
+          },
         }
       },
     })

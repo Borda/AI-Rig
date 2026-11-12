@@ -17,8 +17,7 @@ Output (stdout):
 Exit codes:
     0 — summary printed (or ``No modules indexed.``)
     1 — index file missing or larger than the size cap
-    2 — ``--root`` (from SCAN_ARGS) escapes the project root, or
-        ``CODEMAP_INDEX_DIR`` resolves outside allowed cache roots
+    2 — ``CODEMAP_INDEX_DIR`` cannot be resolved
 """
 
 from __future__ import annotations
@@ -41,7 +40,7 @@ MAX_SCAN_ARGS = 4096  # chars — cap SCAN_ARGS before shlex.split to bound pars
 def _resolve_root(scan_args: str, timeout: int = 15) -> str:
     """Return project root: ``--root`` arg → git toplevel → cwd.
 
-    ``--root`` is validated against CWD to block directory traversal via SCAN_ARGS.
+    Explicit roots may be outside CWD, matching the scanner's root selector.
 
     Raises:
         ValueError: if ``scan_args`` exceeds ``MAX_SCAN_ARGS`` characters — a pathologically large value would make
@@ -53,12 +52,7 @@ def _resolve_root(scan_args: str, timeout: int = 15) -> str:
         args = shlex.split(scan_args) if scan_args else []
         i = args.index("--root")
         root = args[i + 1]
-        abs_root = Path(root).resolve()
-        cwd = Path.cwd().resolve()
-        if not abs_root.is_relative_to(cwd):
-            print(f"scan-stats: --root path outside project root: {abs_root}", file=sys.stderr)
-            sys.exit(2)
-        return str(abs_root)
+        return str(Path(root).resolve())
 
     try:
         return (
@@ -74,62 +68,24 @@ def _resolve_root(scan_args: str, timeout: int = 15) -> str:
         return os.getcwd()
 
 
-def _allowed_index_roots() -> tuple[Path, ...]:
-    """Return allowed root directories for CODEMAP_INDEX_DIR validation (CWE-22).
-
-    Returns:
-        Tuple of resolved base paths: the default cache dir under ``~/.cache/codemap``
-        and the project-local ``.cache/codemap`` under the git root (or cwd).
-    """
-    home_cache = (Path(os.path.expanduser("~")) / ".cache" / "codemap").resolve()
-    try:
-        git_root = (
-            subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
-                stderr=subprocess.DEVNULL,
-                timeout=5,
-            )
-            .decode()
-            .strip()
-        )
-        project_cache = (Path(git_root) / ".cache" / "codemap").resolve()
-    except Exception:
-        project_cache = (Path.cwd() / ".cache" / "codemap").resolve()
-    return (home_cache, project_cache)
-
-
-def _validate_index_dir(custom_dir: str) -> bool:
-    """Return True when ``custom_dir`` resolves within an allowed cache root (CWE-22).
-
-    An attacker-controlled ``CODEMAP_INDEX_DIR`` could point ``json.load`` at an
-    arbitrary filesystem path. This check restricts it to the two expected locations.
-
-    Args:
-        custom_dir: Raw value of the ``CODEMAP_INDEX_DIR`` environment variable.
-
-    Returns:
-        True if resolved path is within an allowed root; False otherwise.
-    """
-    resolved = Path(os.path.abspath(custom_dir)).resolve()
-    return any(resolved.is_relative_to(root) for root in _allowed_index_roots())
-
-
 def _load_index(root: str) -> dict:
-    """Load codemap index; exit 1 if missing or if CODEMAP_INDEX_DIR fails the path-containment check.
+    """Load a codemap index from the selected cache directory.
 
     Respects ``CODEMAP_INDEX_DIR`` env var — when set, reads ``$CODEMAP_INDEX_DIR/<proj>.json`` instead of
-    ``<root>/.cache/codemap/<proj>.json``. ``CODEMAP_INDEX_DIR`` is validated against allowed roots before use (CWE-22).
+    ``<root>/.cache/codemap/<proj>.json``. Any resolvable directory is accepted, matching ``resolve_proj_index.py``.
+    Exit 1 when the index is missing or oversized, or 2 when the override cannot be resolved.
     """
     proj = os.path.basename(root)
     custom_dir = os.environ.get("CODEMAP_INDEX_DIR")
     if custom_dir:
-        if not _validate_index_dir(custom_dir):
+        try:
+            index_dir = str(Path(custom_dir).expanduser().resolve())
+        except (OSError, RuntimeError):
             print(
-                f"scan-stats: CODEMAP_INDEX_DIR resolves outside allowed cache roots: {custom_dir!r}",
+                f"scan-stats: CODEMAP_INDEX_DIR cannot be resolved: {custom_dir!r}",
                 file=sys.stderr,
             )
             sys.exit(2)
-        index_dir = custom_dir
     else:
         index_dir = os.path.join(root, ".cache", "codemap")
     index_path = os.path.join(index_dir, f"{proj}.json")

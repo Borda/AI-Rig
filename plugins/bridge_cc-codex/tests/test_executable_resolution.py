@@ -10,7 +10,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from unittest import mock
 
@@ -25,11 +25,23 @@ import bridge_diagnose  # noqa: E402
 import bridge_setup  # noqa: E402
 
 
+def _windows_path(path: Path) -> str:
+    """Map a real fixture path onto a fully absolute synthetic Windows drive."""
+    return str(PureWindowsPath("C:/", *path.parts[1:]))
+
+
 @pytest.fixture
 def windows_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Simulate a Windows host whose working directory is `tmp_path`; the caller sets PATH and PATHEXT."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(bridge_call.sys, "platform", "win32")
+    real_isfile = os.path.isfile
+
+    def isfile(candidate: str) -> bool:
+        """Translate synthetic Windows candidates at the real filesystem boundary."""
+        return real_isfile(Path(tmp_path.anchor, *PureWindowsPath(candidate).parts[1:]))
+
+    monkeypatch.setattr(bridge_call.os.path, "isfile", isfile)
     return tmp_path
 
 
@@ -53,11 +65,11 @@ def test_windows_lookup_ignores_planted_current_directory_executable(
     (windows_host / f"{name}.EXE").touch()
     expected = trusted / f"{name}.EXE"
     expected.touch()
-    monkeypatch.setenv("PATH", f';.;.\\;"{trusted}";;')
+    monkeypatch.setenv("PATH", f';.;.\\;"{_windows_path(trusted)}";;')
     monkeypatch.setenv("PATHEXT", ".EXE;.CMD")
 
-    assert bridge_call._resolve_executable(name) == str(expected)
-    assert bridge_call._resolved_command([name, "--version"]) == [str(expected), "--version"]
+    assert bridge_call._resolve_executable(name) == _windows_path(expected)
+    assert bridge_call._resolved_command([name, "--version"]) == [_windows_path(expected), "--version"]
 
 
 @pytest.mark.parametrize("name", ["codex", "codex.CMD"])
@@ -71,10 +83,12 @@ def test_windows_lookup_applies_pathext_in_order(
     (windows_host / "codex.EXE").touch()
     expected = windows_host / "codex.CMD"
     expected.touch()
-    monkeypatch.setenv("PATH", str(windows_host))
+    monkeypatch.setenv("PATH", _windows_path(windows_host))
     monkeypatch.setenv("PATHEXT", ".CMD;.EXE")
 
-    assert bridge_call._resolve_executable(name) == str(expected)
+    assert bridge_call._resolve_executable(name) == _windows_path(expected)
+    with pytest.raises(OSError, match="batch"):
+        bridge_call._resolved_command([name, "--version"])
 
 
 class TestMissingWindowsTool:
@@ -149,17 +163,17 @@ def test_windows_setup_and_diagnosis_launch_only_the_path_peer(
 ) -> None:
     """Every setup probe, mutation, login and static doctor spawns the absolute PATH peer, never the cwd one.
 
-    A planted `claude.EXE` sits in cwd while the real `claude.CMD` lives in the trusted PATH directory; each launch path
+    A planted `claude.EXE` sits in cwd while another `claude.EXE` lives in the trusted PATH directory; each launch path
     must pass the trusted absolute path as argv[0].
     """
     (windows_host / "claude.EXE").touch()
-    peer = trusted / "claude.CMD"
+    peer = trusted / "claude.EXE"
     peer.touch()
-    monkeypatch.setenv("PATH", f";.;{trusted}")
+    monkeypatch.setenv("PATH", f";.;{_windows_path(trusted)}")
     monkeypatch.setenv("PATHEXT", ".CMD;.EXE")
 
     assert launch()
-    assert [call.args[0][0] for call in mock_run.call_args_list] == [str(peer)]
+    assert [call.args[0][0] for call in mock_run.call_args_list] == [_windows_path(peer)]
 
 
 @mock.patch(
@@ -178,7 +192,7 @@ def test_windows_peer_spawn_uses_the_path_peer_with_child_credentials(
     (windows_host / "claude.EXE").touch()
     peer = trusted / "claude.EXE"
     peer.touch()
-    monkeypatch.setenv("PATH", f";.;{trusted}")
+    monkeypatch.setenv("PATH", f";.;{_windows_path(trusted)}")
     monkeypatch.setenv("PATHEXT", ".EXE")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-provider-key")
 
@@ -186,24 +200,24 @@ def test_windows_peer_spawn_uses_the_path_peer_with_child_credentials(
 
     assert result.returncode == 0
     mock_popen.assert_called_once()
-    assert mock_popen.call_args.args[0] == [str(peer), "--version"]
+    assert mock_popen.call_args.args[0] == [_windows_path(peer), "--version"]
     assert mock_popen.call_args.kwargs["cwd"] == windows_host
     assert mock_popen.call_args.kwargs["env"]["ANTHROPIC_API_KEY"] == "test-provider-key"
 
 
 class TestPosixLookup:
-    """POSIX lookup resolves relative PATH entries to absolute, executable files."""
+    """POSIX lookup uses absolute PATH entries and checks executable permissions."""
 
     @pytest.fixture(autouse=True)
     def posix_host(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Simulate a POSIX host with an empty entry, `.` and a relative `trusted` entry on PATH."""
+        """Simulate a POSIX host with ignored cwd entries and one absolute trusted PATH directory."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(bridge_call.sys, "platform", "linux")
-        monkeypatch.setenv("PATH", f"{os.pathsep}.{os.pathsep}trusted")
+        monkeypatch.setenv("PATH", os.pathsep.join(("", ".", "relative", str(tmp_path / "trusted"))))
         (tmp_path / "trusted").mkdir()
 
     def test_returns_absolute_executable_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A relative PATH entry becomes an absolute path to the executable file."""
+        """An absolute PATH entry returns its executable without searching cwd entries."""
         executable = tmp_path / "trusted" / "peer"
         executable.touch()
         executable.chmod(0o755)

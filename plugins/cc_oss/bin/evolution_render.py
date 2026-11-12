@@ -10,8 +10,9 @@ Purpose:
 Views:
     The *soft* view spreads one unit of weight per fix over the features that explain it (it feeds the Sankey, the
     release heatmap, age buckets and residue). The *binary* view counts a fix for a feature when its score reaches
-    the threshold (it feeds the matrix and the most-fixed ranking). The totals differ by design; every caption says
-    which view it shows.
+    the threshold and its strongest signal is blame, changelog text, an LLM verdict or a manual override; symbol,
+    file and inherited overlap never link (it feeds the matrix and the most-fixed ranking). The totals differ by
+    design; every caption says which view it shows.
 
 Hardening:
     All text goes through ``html.escape`` or XML escaping, control characters and U+2028/U+2029 are replaced,
@@ -78,7 +79,7 @@ _BAD_URL_CHARS = re.compile(r"[\s\"'<>\\\x00-\x1f\x7f]")
 LINE_SEPARATOR: Final = chr(0x2028)
 PARAGRAPH_SEPARATOR: Final = chr(0x2029)
 _CONTROL = re.compile("[\\x00-\\x08\\x0b-\\x1f\\x7f-\\x9f" + LINE_SEPARATOR + PARAGRAPH_SEPARATOR + "]")
-_MD_SPECIAL = re.compile(r"([\\`*_\[\]()!#~|])")
+_MD_SPECIAL = re.compile(r"([\\`*_\[\]()!#~|:.])")
 _FORMULA_LEAD = ("=", "+", "-", "@")
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -175,7 +176,7 @@ def repo_prefix(repo: dict[str, Any]) -> str | None:
     """Return ``https://github.com/<owner>/<repo>/`` for a well-formed repo identity, else ``None``."""
     owner = repo.get("owner")
     name = repo.get("repo") or repo.get("name")
-    if isinstance(owner, str) and isinstance(name, str) and _SAFE_PART.match(owner) and _SAFE_PART.match(name):
+    if isinstance(owner, str) and isinstance(name, str) and _SAFE_PART.fullmatch(owner) and _SAFE_PART.fullmatch(name):
         return f"https://github.com/{owner}/{name}/"
     return None
 

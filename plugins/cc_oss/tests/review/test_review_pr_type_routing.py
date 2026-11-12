@@ -16,11 +16,12 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _skill_source import read_skill_source
 
 _REVIEW = Path(__file__).resolve().parents[2] / "skills" / "review"
 _STEP0_BLOCK = next(
     block
-    for block in re.findall(r"```bash\n(.*?)```", (_REVIEW / "SKILL.md").read_text(encoding="utf-8"), re.DOTALL)
+    for block in re.findall(r"```bash\n(.*?)```", read_skill_source(_REVIEW / "SKILL.md"), re.DOTALL)
     if "_TEST_CI_COUNT=" in block
 )
 _SCOPE_BLOCK = next(

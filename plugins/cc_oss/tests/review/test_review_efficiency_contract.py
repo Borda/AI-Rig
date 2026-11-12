@@ -16,6 +16,8 @@ from functools import cache
 from pathlib import Path
 
 import pytest
+from _oss_shell_plugin import render_shell
+from _skill_source import read_skill_source
 from _text_io import bash_path
 
 _REVIEW = Path(__file__).resolve().parents[2] / "skills/review"
@@ -28,9 +30,7 @@ _skip_no_bash = pytest.mark.skipif(_BASH is None, reason="the wake-up check is B
 @cache
 def _skill() -> str:
     """Read the review skill; the shipped text is immutable during a run."""
-    return (_REVIEW / "SKILL.md").read_text(encoding="utf-8") + (_REVIEW / "modes/post-agent.md").read_text(
-        encoding="utf-8"
-    )
+    return read_skill_source(_REVIEW / "SKILL.md") + (_REVIEW / "modes/post-agent.md").read_text(encoding="utf-8")
 
 
 #: (section start, section end, marker that only exists while the baseline question is still asked there)
@@ -71,7 +71,7 @@ def test_codemap_gate_asks_only_for_the_lazy_preference() -> None:
     The skill loads the shared gates document; that document must keep the automatic default, the explicit lazy
     preference, the autobuild opt-out and the force-off detection command.
     """
-    assert 'cat "$_OSS_SHARED/codemap-gates.md"' in _skill()
+    assert 'python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_SHARED/codemap-gates.md"' in _skill()
     gates = (_SHARED / "codemap-gates.md").read_text(encoding="utf-8")
     assert "Gate A prepares automatically by default" in gates
     assert "`LAZY_CODEMAP` is the explicit confirm-first preference" in gates
@@ -144,7 +144,7 @@ class TestNoPolling:
             f"{bash_path(run_dir)}\n", encoding="utf-8", newline="\n"
         )
         result = subprocess.run(
-            [_BASH, "-c", block],
+            [_BASH, "-c", render_shell(block, _PLUGIN, "oss")],
             cwd=tmp_path,
             env=os.environ
             | {
@@ -249,7 +249,7 @@ python() { printf '%s\\n' "$*" > "$TMPDIR/detected"; }
     section = _skill().split("## Step 1:", 1)[1].split("### File scope detection", 1)[0]
     script += _preparation_fences(section)
     result = subprocess.run(
-        [_BASH, "-c", script],
+        [_BASH, "-c", render_shell(script, _PLUGIN, "oss")],
         cwd=tmp_path,
         env=os.environ
         | {

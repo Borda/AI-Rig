@@ -330,3 +330,55 @@ def test_flagged_symlink_compares_literal_destination(
     snapshot = gates.inspect_source(repository)
 
     assert (gates.source_guard_error(snapshot, snapshot["head"]) is None) is clean
+
+
+@_skip_without_symlinks
+@pytest.mark.integration
+@pytest.mark.parametrize("symlinks", [True, False])
+def test_flagged_symlink_file_kind_respects_git_configuration(
+    gates: ModuleType, flagged_symlink_repository: Path, symlinks: bool
+) -> None:
+    """Identical regular-file bytes replace a symlink only when Git emulates symlinks."""
+    repository = flagged_symlink_repository
+    subprocess.run(
+        ["git", "config", "core.symlinks", str(symlinks).lower()], cwd=repository, check=True, capture_output=True
+    )
+    link = repository / "link.py"
+    link.unlink()
+    link.write_bytes(b"tracked.py")
+    snapshot = gates.inspect_source(repository)
+
+    assert snapshot["status"] == ""
+    assert (gates.source_guard_error(snapshot, snapshot["head"]) is None) is (not symlinks)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("filemode", [True, False])
+def test_flagged_executable_mode_respects_git_configuration(
+    gates: ModuleType, repository: Path, filemode: bool
+) -> None:
+    """A concealed executable-bit change is rejected when Git tracks executable semantics."""
+    subprocess.run(
+        ["git", "config", "core.filemode", str(filemode).lower()], cwd=repository, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "update-index", "--chmod=+x", "--", "tracked.py"], cwd=repository, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "commit", "-qm", "executable fixture\n\nCo-authored-by: Codex <codex@openai.com>"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "update-index", "--assume-unchanged", "--", "tracked.py"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    # Keeping the physical file non-executable also exercises hosts that cannot toggle executable bits.
+    (repository / "tracked.py").chmod(0o644)
+    snapshot = gates.inspect_source(repository)
+
+    assert snapshot["status"] == ""
+    assert (gates.source_guard_error(snapshot, snapshot["head"]) is None) is (not filemode)

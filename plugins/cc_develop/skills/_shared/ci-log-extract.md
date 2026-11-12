@@ -15,6 +15,7 @@ Accept any of:
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CI_RUN_ID < "${TMPDIR:-/tmp}/dev-ci-run-id-${CSID}" 2>/dev/null || CI_RUN_ID=""
 _RAW_CI="$CI_RUN_ID"
@@ -28,7 +29,7 @@ if [[ "$_CI_PATH" =~ ^(www\.)?github\.com/([^/]+/[^/]+)/actions/runs/([0-9]+)(/a
 fi
 # digits-only gate: the value reaches gh argv, so an option-shaped value must fail here
 case "$CI_RUN_ID" in ''|*[!0-9]*) printf "! --ci-run is neither a run ID nor an Actions run URL with /runs/<digits>: %s\n" "$_RAW_CI"; exit 1;; esac
-[ -z "$CI_REPO" ] || python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_ci_log_fence.py" "--check-repo=$CI_REPO" || exit 1
+[ -z "$CI_REPO" ] || python "$PLUGIN_ROOT/bin/dev_ci_log_fence.py" "--check-repo=$CI_REPO" || exit 1
 echo "$CI_RUN_ID" > "${TMPDIR:-/tmp}/dev-ci-run-number-${CSID}"
 echo "$CI_REPO" > "${TMPDIR:-/tmp}/dev-ci-repo-${CSID}"
 echo "$CI_ATTEMPT" > "${TMPDIR:-/tmp}/dev-ci-attempt-${CSID}"
@@ -42,6 +43,7 @@ One self-contained block: fetch, strip noise, fall back, print. Non-zero `gh` ex
 
 ```bash
 # timeout: 45000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CI_RUN_ID < "${TMPDIR:-/tmp}/dev-ci-run-number-${CSID}" 2>/dev/null || CI_RUN_ID=""
 [ -n "$CI_RUN_ID" ] || { echo "! dev-ci-run-number missing — run §URL Normalization first"; exit 1; }
@@ -61,7 +63,7 @@ if ! grep -qE 'FAILED|ERROR|error:|Traceback' "$CI_LOG"; then
 fi
 [ -s "$CI_LOG" ] || echo "! CI log unavailable for run $CI_RUN_ID — fall back to local pytest if possible"
 wc -l "$CI_LOG"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_ci_log_fence.py" "$CI_LOG" --label "github actions log" --preview-lines 200
+python "$PLUGIN_ROOT/bin/dev_ci_log_fence.py" "$CI_LOG" --label "github actions log" --preview-lines 200
 ```
 
 ## §Log Parsing

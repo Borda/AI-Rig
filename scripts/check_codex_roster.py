@@ -94,6 +94,7 @@ CHALLENGE_RESOLVE_CASES = frozenset(
         "adversarial-loop-premature-progress-table",
         "adversarial-loop-five-step-convergence",
         "adversarial-loop-closure-and-discovery",
+        "adversarial-loop-repeated-review-trigger",
         "challenge-resolve-large-scope-premature-stop",
     }
 )

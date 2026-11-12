@@ -13,7 +13,7 @@ See also: [bin/ Script Principles](../../README.md#bin-script-principles) in plu
 
 ## Language Policy (canonical — reproduced verbatim from `plugins/CLAUDE.md`)
 
-- `bin/` — optional: standalone executables (`.sh`, `.py`) auto-added to Bash `PATH` by Claude Code; invoked via `${CLAUDE_PLUGIN_ROOT}/bin/<script>` inside skills
+- `bin/` — optional: standalone executables (`.sh`, `.py`) auto-added to Bash `PATH` by Claude Code; invoked via `python "$PLUGIN_ROOT/bin/<script>"` after the consuming plugin's guarded resolver prologue inside skills
   - **Language policy — `bin/`**: Python default (minimum 3.10); bash only for enumerated cases: (1) plugin install-path resolution, (2) `$ARGUMENTS` parsing where bash regex shorter and quoting-safe, (3) `find | sort | head` pipelines with no business logic
     - Python scripts: type hints, module docstring, `if __name__ == "__main__"` guard; ruff-format 120-char line length (pre-commit enforced); aggregate related print output into single `print()` using `\n`/`\t`; pure functions (no I/O, no subprocess, no env-var reads) → `doctest` in docstring; anything with I/O/subprocess/argv → `pytest` with `capsys`/`monkeypatch` in `tests/` alongside `bin/`
     - bin/ scope: deterministic transforms only (parse args, resolve paths, compute one value); decision flow, branching prompts, agent-dispatch logic stays in SKILL.md prose
@@ -150,7 +150,7 @@ When all hold: delete script (and its test file if present), replace call-site w
 4. Score < 2? Inline acceptable — stop here.
 5. Score 2–3? Prefer bin/ (MEDIUM verdict); use language policy to pick bash vs Python.
 6. Score ≥ 4? bin/ required (HIGH verdict); use language policy; write tests.
-7. Wire into consumer — before commit: edit consumer SKILL.md, replace inline twin with `"${CLAUDE_PLUGIN_ROOT}/bin/<script>" …`; run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_orphaned_bin.py"`; must exit 0.
+7. Wire into consumer — before commit: edit consumer SKILL.md, add its guarded resolver prologue and replace the inline twin with `python "$PLUGIN_ROOT/bin/<script>" …`; run `python "$PLUGIN_ROOT/bin/check_orphaned_bin.py"` after the foundry guarded resolver prologue; must exit 0.
 
 > **A consumer never reaches into another plugin's `bin/`.** `${CLAUDE_PLUGIN_ROOT}` must resolve to the **consuming** plugin — script must exist in that plugin's own `bin/`. Script two plugins both need is **duplicated**: add `propagate_shared.py` MANIFEST entry (canonical in owning plugin), copies stay byte-identical. Precedent: `find-polluter.py`, canonical in foundry, copied to `cc_develop/bin/` — `develop:debug` previously derived `$_FOUNDRY_BIN` path from resolver output, so flaky-test isolation silently vanished on develop-only install. Rule + rationale: `plugins/CLAUDE.md` §Self-Contained `_shared`; audit Check 27 fails new reach-ins.
 
@@ -159,12 +159,15 @@ When all hold: delete script (and its test file if present), replace call-site w
 How to invoke bin/ scripts from `.md` files:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 # timeout enforced via annotation
-RESULT=$("${CLAUDE_PLUGIN_ROOT}/bin/<script-name>.sh" arg1 arg2 2>/dev/null || echo "fallback-value")  # timeout: 5000
+RESULT=$("$PLUGIN_ROOT/bin/<script-name>.sh" arg1 arg2 2>/dev/null || echo "fallback-value")  # timeout: 5000
 
 # timeout enforced by --timeout default inside script
-RESULT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/<script-name>.py" arg1 arg2)
+RESULT=$(python "$PLUGIN_ROOT/bin/<script-name>.py" arg1 arg2)
 ```
+
+Use the consuming plugin's manifest name in `--plugin-name`. Host-loaded skills and agents receive bootstrap-token substitution; loaded fragments must pass through the owning plugin's loader or `render_plugin_root.py` before execution.
 
 ## Script Output Routing
 
@@ -201,9 +204,10 @@ sys.exit(0)
 ```
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 # skill — exit-code check only; no parsing
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/myplugin}/bin/resolve.py" "myplugin-resolve" ...  # timeout: 5000
+python "$PLUGIN_ROOT/bin/<script-name>.py" "myplugin-resolve" ...  # timeout: 5000
 ```
 
 ```bash
@@ -238,11 +242,12 @@ Every bin/ executable called from SKILL.md with `# timeout: N` comment must enfo
 **Bash scripts** — use `# timeout: N` annotation; do NOT wrap with `timeout S` shell command:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 # ✓ — Claude Code kills Bash tool after N ms; annotation is correct
-RESULT=$("${CLAUDE_PLUGIN_ROOT}/bin/<script>.sh" args 2>/dev/null || echo "fallback")  # timeout: 5000
+RESULT=$("$PLUGIN_ROOT/bin/<script>.sh" args 2>/dev/null || echo "fallback")  # timeout: 5000
 
 # ✗ timeout S inside $() redundant with # timeout: N — not allow-listed (permission prompt), same threshold + fork overhead
-RESULT=$(timeout 5 "${CLAUDE_PLUGIN_ROOT}/bin/<script>.sh" args 2>/dev/null || echo "fallback")  # timeout: 5000
+RESULT=$(timeout 5 "$PLUGIN_ROOT/bin/<script>.sh" args 2>/dev/null || echo "fallback")  # timeout: 5000
 ```
 
 Note: `timeout S` IS valid for scripts invoked outside Claude Code (CI pipelines, standalone shell, pytest helpers). In SKILL.md context only: use `# timeout: N`.
@@ -250,11 +255,12 @@ Note: `timeout S` IS valid for scripts invoked outside Claude Code (CI pipelines
 **Python scripts** — add `--timeout SECS` argparse argument; scripts doing subprocess/network I/O must pass it to every blocking call. `--timeout` optional at call site — default value must equal N ÷ 1000 (from calling SKILL.md `# timeout: N` annotation). Shell `timeout S` wrapper not required for Python scripts; argparse default enforces budget internally:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 # ✓ — --timeout default enforces budget; no shell wrapper needed
-RESULT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/<script>.py" args)  # timeout: 5000
+RESULT=$(python "$PLUGIN_ROOT/bin/<script>.py" args)  # timeout: 5000
 
 # ✓ — explicit override for different budget
-RESULT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/<script>.py" --timeout 30 args)  # timeout: 30000
+RESULT=$(python "$PLUGIN_ROOT/bin/<script>.py" --timeout 30 args)  # timeout: 30000
 ```
 
 ```python
@@ -289,7 +295,7 @@ Minimum required structure for any new Python bin/ script:
 """script-name.py — one-line description.
 
 Usage:
-    python "${CLAUDE_PLUGIN_ROOT}/bin/<script-name>.py" <required-arg> [--flag]
+    python "$PLUGIN_ROOT/bin/<script-name>.py" <required-arg> [--flag]
 """
 
 from __future__ import annotations
@@ -459,7 +465,7 @@ Applies to `bin/` scripts only — inline SKILL.md blocks stay bash (inline Pyth
 1. Identify bash script in `bin/` meeting a trigger
 2. Rewrite as Python using the Python Script Skeleton above — preserve CLI interface (arg names, exit codes, stdout contract)
 3. Add `pytest` test file in `tests/test_<script_name>.py` — cover all branches that triggered escalation plus happy path
-4. Replace invocation in source SKILL.md (Bash block or prose reference) with `python "${CLAUDE_PLUGIN_ROOT}/bin/<script_name>.py" ...`
+4. Replace invocation in source SKILL.md (Bash block or prose reference) with `python "$PLUGIN_ROOT/bin/<script_name>.py" ...`
 5. Delete old `.sh` file
 6. Delegate to **foundry:linting-expert** (ruff + mypy) and **foundry:qa-specialist** (edge-case matrix) per Quality Agents section
 
@@ -507,7 +513,7 @@ APPLY_DEADLINE_S=${APPLY_DEADLINE_S:-600}
 
 When `foundry:manage create skill <name>` scaffolds a new SKILL.md, include this instruction:
 
-> Before writing any fenced code block, run `cat "$_FOUNDRY_SHARED/bin-authoring-guide.md"` via Bash tool and apply extraction gate. Write bin/ script directly if verdict MEDIUM or HIGH. Any bin/ script returning 2+ values: apply §Script Output Routing — write each value to `${TMPDIR:-/tmp}/<skill>-<name>-${CSID}` file; never `eval` stdout.
+> Before writing any fenced code block, run `PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT; python "$PLUGIN_ROOT/bin/load_shared_doc.py" foundry skills/_shared bin-authoring-guide.md` via Bash tool and apply extraction gate. Write bin/ script directly if verdict MEDIUM or HIGH. Any bin/ script returning 2+ values: apply §Script Output Routing — write each value to `${TMPDIR:-/tmp}/<skill>-<name>-${CSID}` file; never `eval` stdout.
 
 ## Integration with Check 33 Auto-Fix
 

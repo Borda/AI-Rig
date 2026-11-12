@@ -1,11 +1,11 @@
 ---
 name: Rig Challenge
-description: Run a bounded adversarial convergence loop with independent challengers and a strict-decrease stop rule.
+description: Run a bounded adversarial convergence loop with an independent challenger, validated findings, fixes, independent re-assessment, and a stop reason. Use for risky or security-sensitive changes. NOT for routine edits.
 ---
 
 # Rig Challenge
 
-> Read [Evidence rules](../../references/evidence.md) and [Convergence](../../references/convergence.md).
+> Read [Evidence rules](../../references/evidence.md) and [Convergence](../../references/convergence.md). Follow [Role dispatch](../../references/evidence.md#role-dispatch) for native-agent fallback and stop on reported scope violations.
 
 ## Input
 
@@ -25,7 +25,7 @@ description: Run a bounded adversarial convergence loop with independent challen
    - Increasing total: non-converging; stop.
 7. **Print progress.** After each validated round, print the cumulative table returned by `rig_loop` per [Convergence](../../references/convergence.md).
 8. **Run configured gates.** Use `rig_gate` (`action: "detect"`), then run all configured gates with `action: "run"`, even when the baseline has no findings and no fixes were made. When no gate is configured, perform the recorded manual substitute. If there is neither a configured gate nor a recorded exemption, report the missing gate and stop; do not claim completion. If any gate fails, do not finalize the loop; treat the failure as a finding, fix it, refresh the scope with `rig_evidence` (`action: "refresh"`, `message` giving the reason), and return to step 5 for an independent reassessment before rerunning gates.
-9. **Finalize.** Record the terminal stop reason with `rig_loop` (`action: "finalize"`, `reviewer`, `stop_reason`, and a `note` for authority, drift, or unavailable-reviewer stops) and finalize the run. Security or critical residue blocks finalization; any stop other than convergence leaves the run blocked.
+9. **Finalize.** Record the terminal stop reason with `rig_loop` (`action: "finalize"`, `reviewer`, `stop_reason`, and a `note` for authority, drift, or unavailable-reviewer stops); `reviewer` may be omitted for an unavailable-reviewer stop when no independent reviewer was available. Recording a stop does not complete the run. Call `rig_evidence` with `action: "finalize"` only for convergence backed by the required review and gates. Security or critical residue blocks completion; any stop other than convergence leaves the run blocked and requires a replacement run rather than refresh to resume work.
 
 ## Rules
 

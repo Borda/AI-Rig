@@ -43,19 +43,34 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
 import sys
+import tempfile
+import threading
 import time
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, BinaryIO, NamedTuple
 
-from live_contract import Layout, build_prompt, candidate_findings, prompt_sha256, role_context, task_contract_sha256
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
+from live_contract import (  # noqa: E402
+    Layout,
+    build_prompt,
+    candidate_findings,
+    prompt_sha256,
+    role_context,
+    task_contract_sha256,
+)
 
 #: Label of the normalized token-cost formula, recorded with each live record's estimated cost.
 PRICING_REF = "normalized-token-v1:uncached+0.1*cached+4*output"
+MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 
 
 class BoundedProcessResult(NamedTuple):
@@ -86,6 +101,12 @@ def _read_json(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _validate_path_component(value: str) -> None:
+    """Require a portable single-component route, role, or workspace label."""
+    if not isinstance(value, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", value) is None:
+        raise ValueError(f"invalid path component: {value!r}")
+
+
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     """Write one stable, human-readable JSON snapshot."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -106,6 +127,8 @@ def _write_input_snapshot(
     The returned root contains the global and registered role instructions used to build every prompt. Scoring against
     this snapshot remains reproducible even when the project files change during a long-running campaign.
     """
+    for role in roles:
+        _validate_path_component(role)
     inputs_dir = out_dir / "inputs"
     if inputs_dir.exists():
         raise FileExistsError(f"calibration input snapshot already exists: {inputs_dir}")
@@ -178,6 +201,7 @@ def _validate_response(response: dict[str, Any]) -> None:
 
 def _prepare_workspace(out_dir: Path, label: str, fixture_files: dict[str, str]) -> Path:
     """Create one isolated fixture workspace without accepting path traversal."""
+    _validate_path_component(label)
     workspace = (out_dir / "workspaces" / label).resolve()
     workspace_root = (out_dir / "workspaces").resolve()
     if workspace.exists():
@@ -235,14 +259,18 @@ def _require_local_subscription_run() -> None:
     """Fail unless paid execution is local and uses ChatGPT subscription auth."""
     if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
         raise SystemExit("live-paid-run-disabled-in-ci")
-    if os.environ.get("OPENAI_API_KEY"):
+    if os.environ.get("OPENAI_API_KEY") or os.environ.get("CODEX_API_KEY"):
         raise SystemExit("live-paid-run-api-key-auth-disallowed")
-    status = subprocess.run(
-        ["codex", "login", "status"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        status = subprocess.run(
+            ["codex", "login", "status"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise SystemExit("live-paid-run-login-status-timeout") from error
     output = f"{status.stdout}\n{status.stderr}"
     if status.returncode != 0 or "Logged in using ChatGPT" not in output:
         raise SystemExit("live-paid-run-requires-chatgpt-subscription-login")
@@ -275,7 +303,10 @@ def _signal_process_tree(process: subprocess.Popen[str], force: bool) -> str | N
 
 
 def _terminate_process_group(
-    process: subprocess.Popen[str], timeout_seconds: int, initial_timeout: subprocess.TimeoutExpired
+    process: subprocess.Popen[str],
+    timeout_seconds: int,
+    initial_timeout: subprocess.TimeoutExpired,
+    reason: str | None = None,
 ) -> tuple[str, str]:
     """Attempt bounded process-tree cleanup while preserving timeout output and cleanup failures.
 
@@ -283,7 +314,7 @@ def _terminate_process_group(
     attempts preserve cumulative output. If tree cleanup or pipe draining fails, stderr explicitly records the unproven
     cleanup instead of blocking indefinitely or implying descendants were terminated.
     """
-    notes = [f"timeout after {timeout_seconds} seconds"]
+    notes = [reason or f"timeout after {timeout_seconds} seconds"]
     stdout, stderr = initial_timeout.output, initial_timeout.stderr
     for force in (False, True):
         cleanup_note = _signal_process_tree(process, force)
@@ -303,44 +334,110 @@ def _terminate_process_group(
     return stdout or "", f"{stderr or ''}\n" + "\n".join(notes) + "\n"
 
 
+def _capture_output(stream: BinaryIO, name: str, captured: dict[str, str], exceeded: threading.Event) -> None:
+    """Stream one pipe to a capped temporary file before decoding its bounded contents."""
+    with tempfile.TemporaryFile() as output:
+        try:
+            with stream:
+                while chunk := stream.read(65536):
+                    remaining = MAX_OUTPUT_BYTES - output.tell()
+                    output.write(chunk[:remaining])
+                    if len(chunk) > remaining:
+                        exceeded.set()
+                        break
+        except OSError as error:
+            captured[f"{name}-error"] = f"output capture failed: {error}"
+            exceeded.set()
+        output.seek(0)
+        captured[name] = output.read().decode("utf-8", errors="replace")
+
+
+def _wait_for_process(
+    process: subprocess.Popen, readers: list[threading.Thread], exceeded: threading.Event, deadline: float
+) -> str | None:
+    """Wait for the process and its pipes within the same output and wall-clock budgets."""
+    while process.poll() is None or any(reader.is_alive() for reader in readers):
+        if exceeded.wait(timeout=0.05):
+            return "output limit exceeded"
+        if time.monotonic() >= deadline:
+            return "timeout"
+    return "output limit exceeded" if exceeded.is_set() else None
+
+
+def _finish_capture(process: subprocess.Popen, readers: list[threading.Thread]) -> str:
+    """Bound pipe draining even when descendants retain handles after their parent exits."""
+    for reader in readers:
+        reader.join(timeout=2)
+    notes: list[str] = []
+    for force in (False, True):
+        if not any(reader.is_alive() for reader in readers):
+            return "\n".join(notes)
+        note = _signal_process_tree(process, force)
+        if note:
+            notes.append(note)
+        for reader in readers:
+            reader.join(timeout=2)
+    notes.append("output drain incomplete; process-tree cleanup unproven")
+    return "\n".join(notes)
+
+
 def _run_bounded_process(
     argv: list[str],
     cwd: Path | None,
     timeout_seconds: int,
     stdin: int | None = None,
+    env: dict[str, str] | None = None,
 ) -> BoundedProcessResult:
-    """Run one child process under a hard timeout and capture everything it produced.
+    """Run one child process with a hard timeout and capped disk-backed output capture.
 
     The child starts in its own session. Timeout cleanup targets its POSIX process group or Windows process tree,
     with bounded escalation and pipe draining. A timed-out run reports exit code 124, preserves captured output,
-    and records any unproven cleanup in ``stderr``.
+    and records any unproven cleanup in ``stderr``. Exceeding four MiB on either output stream fails with exit 125;
+    revisit this ceiling only when a real calibration response is truncated at that limit.
 
     Args:
         argv: Executable and arguments to run; never passed through a shell.
         cwd: Working directory for the child, or ``None`` to inherit the runner's own.
         timeout_seconds: Wall-clock budget before the escalating termination sequence starts.
         stdin: Standard-input disposition, e.g. ``subprocess.DEVNULL``; ``None`` inherits the runner's stdin.
+        env: Explicit environment for untrusted gates; ``None`` inherits the model runner's authentication.
     """
     started = time.monotonic()
     process = subprocess.Popen(  # noqa: S603 - argv list, no shell
         argv,
         cwd=cwd,
-        text=True,
         stdin=stdin,
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
     )
-    try:
-        stdout, stderr = process.communicate(timeout=timeout_seconds)
-        exit_code = process.returncode
-    except subprocess.TimeoutExpired as error:
-        stdout, stderr = _terminate_process_group(process, timeout_seconds, error)
-        exit_code = 124
-    if isinstance(stdout, bytes):
-        stdout = stdout.decode(errors="replace")
-    if isinstance(stderr, bytes):
-        stderr = stderr.decode(errors="replace")
+    captured: dict[str, str] = {}
+    exceeded = threading.Event()
+    readers = [
+        threading.Thread(target=_capture_output, args=(stream, name, captured, exceeded), daemon=True)
+        for stream, name in ((process.stdout, "stdout"), (process.stderr, "stderr"))
+    ]
+    for reader in readers:
+        reader.start()
+    # Reader threads own the pipes; communicate must only wait during process-tree cleanup.
+    process.stdout = process.stderr = None
+    reason = _wait_for_process(process, readers, exceeded, started + timeout_seconds)
+    notes = ""
+    if reason:
+        _, notes = _terminate_process_group(
+            process,
+            timeout_seconds,
+            subprocess.TimeoutExpired(argv, timeout_seconds),
+            reason=None if reason == "timeout" else reason,
+        )
+    cleanup = _finish_capture(process, readers)
+    exit_code = 124 if reason == "timeout" else 125 if exceeded.is_set() or cleanup else process.returncode
+    if exceeded.is_set() and "output limit exceeded" not in notes:
+        notes += "\noutput limit exceeded\n"
+    stdout = captured.get("stdout", "")
+    stderr = captured.get("stderr", "") + notes + cleanup
+    stderr += "\n".join(value for key, value in captured.items() if key.endswith("-error"))
     elapsed_ms = round((time.monotonic() - started) * 1000)
     return BoundedProcessResult(stdout or "", stderr or "", exit_code, elapsed_ms)
 
@@ -396,11 +493,12 @@ def _run_model(request: ModelCallRequest) -> tuple[dict[str, Any], dict[str, int
     stdout, stderr, exit_code, latency_ms = call
     events.write_text(stdout, encoding="utf-8")
     stderr_path.write_text(stderr, encoding="utf-8")
-    response = _read_json(last_message) if exit_code == 0 and last_message.exists() else {}
+    response: dict[str, Any] = {}
     if exit_code == 0:
         try:
+            response = _read_json(last_message) if last_message.exists() else {}
             _validate_response(response)
-        except ValueError as exc:
+        except (OSError, ValueError, TypeError, RecursionError) as exc:
             stderr_path.write_text(f"{stderr}\n{exc}\n", encoding="utf-8")
             exit_code = 1
             response = {}
@@ -408,7 +506,7 @@ def _run_model(request: ModelCallRequest) -> tuple[dict[str, Any], dict[str, int
     if stdout.strip():
         try:
             usage = _usage_from_jsonl(stdout)
-        except (json.JSONDecodeError, ValueError) as exc:
+        except (ValueError, TypeError, RecursionError) as exc:
             stderr_path.write_text(f"{stderr}\n{exc}\n", encoding="utf-8")
             exit_code = exit_code or 1
     return response, usage, latency_ms, exit_code
@@ -429,7 +527,14 @@ def _run_gate(request: GateRunRequest) -> int:
     argv = shlex.split(request.command)
     if not argv:
         raise ValueError("tool-use task needs a non-empty gate_command")
-    gate = _run_bounded_process(argv, request.work_dir, request.timeout_seconds)
+    with tempfile.TemporaryDirectory(prefix="calibration-gate-home-") as login_home:
+        env = {
+            key: os.environ[key]
+            for key in ("PATH", "SystemRoot", "SYSTEMROOT", "COMSPEC", "PATHEXT", "TEMP", "TMP")
+            if key in os.environ
+        }
+        env.update(HOME=login_home, USERPROFILE=login_home, CODEX_HOME=login_home)
+        gate = _run_bounded_process(argv, request.work_dir, request.timeout_seconds, stdin=subprocess.DEVNULL, env=env)
     (request.out_dir / f"{request.label}.gate.txt").write_text(
         f"command={argv!r}\nexit_code={gate.exit_code}\nelapsed_ms={gate.elapsed_ms}\n\n"
         f"stdout:\n{gate.stdout}\n\nstderr:\n{gate.stderr}",
@@ -507,7 +612,7 @@ def main() -> int:
         "--root",
         type=Path,
         default=Path.cwd(),
-        help="Consuming project root used as the read-only classification workspace.",
+        help="Project root containing source-layout role instructions; classification uses an empty workspace.",
     )
     parser.add_argument("--route", action="append", default=[], help="Route ID to run; repeat to select multiple.")
     parser.add_argument("--campaigns", type=int, help="Campaign count override; defaults to route policy.")
@@ -531,6 +636,7 @@ def main() -> int:
         raise ValueError(f"unknown routes: {unknown_routes}")
     # The host owns model availability; reject malformed identifiers before constructing its argv.
     for route_id in selected_routes:
+        _validate_path_component(route_id)
         for field in ("baseline_model", "candidate_model"):
             model = policy[route_id].get(field)
             if (
@@ -551,6 +657,7 @@ def main() -> int:
             role = task.get("role")
             if not isinstance(role, str) or not role:
                 raise ValueError(f"live task role missing: {route_id}:{index}")
+            _validate_path_component(role)
             role_context(context_root, role, args.layout)
             roles.add(role)
     required_campaigns = max(policy[route]["min_campaigns"] for route in selected_routes)
@@ -618,23 +725,25 @@ def main() -> int:
                     model = route[f"{pair_role}_model"]
                     label = f"c{campaign_index}-{route_id}-{index}-{pair_role}"
                     if evidence_scope == "tool-use":
-                        work_dir = _prepare_workspace(args.out, label, task["fixture_files"])
+                        workspace = nullcontext(_prepare_workspace(args.out, label, task["fixture_files"]))
                         sandbox = "workspace-write"
                     else:
-                        work_dir = args.root.resolve()
+                        workspace = tempfile.TemporaryDirectory(prefix="calibration-classification-")
                         sandbox = "read-only"
-                    response, usage, latency_ms, exit_code = _run_model(
-                        ModelCallRequest(
-                            work_dir=work_dir,
-                            out_dir=args.out,
-                            label=label,
-                            timeout_seconds=args.timeout_seconds,
-                            prompt=prompt,
-                            model=model,
-                            effort=route["effort"],
-                            sandbox=sandbox,
+                    with workspace as workspace_path:
+                        work_dir = Path(workspace_path)
+                        response, usage, latency_ms, exit_code = _run_model(
+                            ModelCallRequest(
+                                work_dir=work_dir,
+                                out_dir=args.out,
+                                label=label,
+                                timeout_seconds=args.timeout_seconds,
+                                prompt=prompt,
+                                model=model,
+                                effort=route["effort"],
+                                sandbox=sandbox,
+                            )
                         )
-                    )
                     gate_exit_code = (
                         _run_gate(
                             GateRunRequest(

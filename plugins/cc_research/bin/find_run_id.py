@@ -75,7 +75,7 @@ def _load_state(state_file: Path) -> dict | None:
     try:
         with state_file.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError, ArithmeticError, RecursionError):
         return None
     if not isinstance(data, dict):
         return None

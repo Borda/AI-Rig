@@ -24,12 +24,13 @@ Deregister the project hook from each existing file of `.claude/settings.json` a
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 HOOK_NAME="<name>"        # e.g. "rtk-rewrite" — no .js suffix
 case "$HOOK_NAME" in *'<'*'>'*|"") echo "! BLOCKED — hook name not substituted"; exit 1;; esac
 command -v jq >/dev/null || { echo "! BLOCKED — jq is required for hook verification"; exit 1; }
 for HOOK_SETTINGS in .claude/settings.json .claude/settings.local.json; do
     [ -e "$HOOK_SETTINGS" ] || [ -L "$HOOK_SETTINGS" ] || continue
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/remove_hook_from_registry.py" \
+    python "$PLUGIN_ROOT/bin/remove_hook_from_registry.py" \
         --json-file "$HOOK_SETTINGS" \
         --hook-name "$HOOK_NAME" \
         --match path || exit 1

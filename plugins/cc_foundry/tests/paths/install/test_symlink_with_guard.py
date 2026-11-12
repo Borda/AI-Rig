@@ -72,6 +72,28 @@ def _stale_root(plugin: Path, version: str = "0.39.0") -> Path:
     return plugin.parent / version
 
 
+@pytest.mark.parametrize("source_version", ["0.40.0", "0.39.0"])
+def test_scan_keeps_owned_fallback_copy_out_of_conflicts(env: tuple[Path, Path], source_version: str) -> None:
+    """A copy carrying its owned source sidecar needs no user replacement prompt."""
+    plugin, home = env
+    destination = home / ".claude" / "rules" / "foundry-current.md"
+    destination.write_text("previous installed copy\n", encoding="utf-8")
+    source = plugin.parent / source_version / "rules" / "current.md"
+    sidecar = destination.parent / f".{destination.name}.sourced_from"
+    sidecar.write_text(source.relative_to(home / ".claude").as_posix() + "\n", encoding="utf-8")
+    assert scan(plugin, home, _MARKER) == []
+
+
+def test_scan_preserves_foreign_fallback_copy_conflict(env: tuple[Path, Path]) -> None:
+    """An unrelated provenance sidecar does not authorize replacing a user's file."""
+    plugin, home = env
+    destination = home / ".claude" / "rules" / "foundry-current.md"
+    destination.write_text("user configuration\n", encoding="utf-8")
+    sidecar = destination.parent / f".{destination.name}.sourced_from"
+    sidecar.write_text("dotfiles/current.md\n", encoding="utf-8")
+    assert len(scan(plugin, home, _MARKER)) == 1
+
+
 def _ln(target: str, link: Path) -> None:
     """Create a symlink with an arbitrary text target (no exists-check)."""
     link.symlink_to(target)
@@ -200,7 +222,7 @@ class TestCleanup:
             # Foundry-managed skill symlink under a non-current root.
             pytest.param(
                 "skills/oldskill",
-                lambda plugin, home: "/old/borda-ai-rig/foundry/0.10.0/skills/oldskill",
+                lambda plugin, home: str(_stale_root(plugin) / "skills/oldskill"),
                 "removed user-level skill link: oldskill",
                 id="stale-skill-link",
             ),
@@ -223,7 +245,7 @@ class TestCleanup:
             # Foundry-managed agent symlink under a non-current root is removed unconditionally.
             pytest.param(
                 "agents/sw-engineer.md",
-                lambda plugin, home: "/old/borda-ai-rig/foundry/0.10.0/agents/sw-engineer.md",
+                lambda plugin, home: str(_stale_root(plugin) / "agents/sw-engineer.md"),
                 "removed obsolete agent: sw-engineer.md",
                 id="stale-foundry-agent-symlink",
             ),
@@ -568,19 +590,18 @@ class TestMain:
         assert rc == 1
         assert "is not a directory" in capsys.readouterr().err
 
-    def test_custom_marker_respected(self, env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]) -> None:
-        """A custom ownership marker is used when purging skill links.
-
-        The rules and TEAM_PROTOCOL scopes ignore the marker entirely — they are destinations foundry writes, so they
-        demand the stricter path-lineage proof instead.
-        """
+    def test_custom_marker_does_not_authorize_foreign_skill_removal(
+        self, env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A custom marker cannot authorize deleting a foreign skill link."""
         plugin, home = env
         _ln("/x/custom-marker/0.1/skills/curator", home / ".claude" / "skills" / "curator")
 
         rc = main(["cleanup", "--plugin-root", str(plugin), "--home", str(home), "--marker", "custom-marker/"])
 
         assert rc == 0
-        assert "  removed user-level skill link: curator" in capsys.readouterr().out
+        assert capsys.readouterr().out == ""
+        assert (home / ".claude/skills/curator").is_symlink()
 
     def test_marker_does_not_authorise_rule_deletion(
         self, env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]

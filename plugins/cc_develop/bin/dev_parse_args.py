@@ -399,6 +399,8 @@ _KEEP_ENTRY: tuple[FlagSpec, str | None] = (_spec(SpecType.STR, "keep", "KEEP_IT
 SKILL_SPECS: dict[str, list[tuple[FlagSpec, str | None]]] = {
     "feature": [
         _KEEP_ENTRY,
+        (_spec(SpecType.STR, "plan", "PLAN_FILE", ""), None),
+        (_spec(SpecType.STR, "issue", "ISSUE_REF", ""), None),
         (_spec(SpecType.NEG_BOOL, "no-challenge", "CHALLENGE_ENABLED", "true"), "dev-challenge-enabled"),
         (_spec(SpecType.BOOL, "challenge", "CHALLENGE_FORCED", "false"), "dev-challenge-forced"),
         (_spec(SpecType.BOOL, "team", "TEAM_MODE", "false"), "dev-team-mode"),
@@ -410,6 +412,8 @@ SKILL_SPECS: dict[str, list[tuple[FlagSpec, str | None]]] = {
     ],
     "fix": [
         _KEEP_ENTRY,
+        (_spec(SpecType.STR, "plan", "PLAN_FILE", ""), None),
+        (_spec(SpecType.STR, "diagnosis", "DIAG_FILE", ""), None),
         (_spec(SpecType.NEG_BOOL, "no-challenge", "CHALLENGE_ENABLED", "true"), "dev-challenge-enabled"),
         (_spec(SpecType.BOOL, "challenge", "CHALLENGE_FORCED", "false"), "dev-challenge-forced"),
         (_spec(SpecType.BOOL, "accept-no-plan", "ACCEPT_NO_PLAN", "false"), "dev-accept-no-plan"),
@@ -420,6 +424,7 @@ SKILL_SPECS: dict[str, list[tuple[FlagSpec, str | None]]] = {
     ],
     "debug": [
         _KEEP_ENTRY,
+        (_spec(SpecType.STR, "issue", "ISSUE_REF", ""), None),
         (_spec(SpecType.NEG_BOOL, "no-challenge", "CHALLENGE_ENABLED", "true"), "dev-challenge-enabled"),
         (_spec(SpecType.BOOL, "challenge", "CHALLENGE_FORCED", "false"), "dev-challenge-forced"),
         (_spec(SpecType.BOOL, "team", "TEAM_MODE", "false"), "dev-team-mode"),
@@ -430,6 +435,7 @@ SKILL_SPECS: dict[str, list[tuple[FlagSpec, str | None]]] = {
     ],
     "refactor": [
         _KEEP_ENTRY,
+        (_spec(SpecType.STR, "plan", "PLAN_FILE", ""), None),
         (_spec(SpecType.NEG_BOOL, "no-challenge", "CHALLENGE_ENABLED", "true"), "dev-challenge-enabled"),
         (_spec(SpecType.BOOL, "challenge", "CHALLENGE_FORCED", "false"), "dev-challenge-forced"),
         (_spec(SpecType.BOOL, "team", "TEAM_MODE", "false"), "dev-team-mode"),
@@ -437,7 +443,6 @@ SKILL_SPECS: dict[str, list[tuple[FlagSpec, str | None]]] = {
         (_spec(SpecType.NEG_BOOL, "no-batch", "BATCH_ENABLED", "true"), None),
         (_spec(SpecType.BOOL, "accept-no-plan", "ACCEPT_NO_PLAN", "false"), "dev-accept-no-plan"),
         (_spec(SpecType.CODEMAP, "", "CODEMAP_RAW", "auto"), "dev-codemap-raw"),
-        (_spec(SpecType.STR, "repo", "REPO_NAME", ""), "dev-upstream"),
     ],
     "plan": [
         (_spec(SpecType.NEG_BOOL, "no-challenge", "CHALLENGE_ENABLED", "true"), "dev-challenge-enabled"),

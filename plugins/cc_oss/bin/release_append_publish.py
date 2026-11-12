@@ -1,10 +1,11 @@
 """Publish validated release notes candidates without replaying partial writes.
 
-Purpose: Stage release artifacts and finish an interrupted multi-file promotion. Scope: Local plain and append notes
-artifacts in one repository working tree. Usage: ``release_append_publish.py check|begin|seal|publish|recover`` from the
-repository root. Outputs: Candidate directory, live release files, and a temporary recovery journal. Failure: Refuses
-changed source, live bytes, candidates, symlinks, or pending promotion. Used by: ``skills/release/SKILL.md`` and
-``modes/release-draft-template.md``.
+Purpose:
+    Stage release artifacts and finish an interrupted multi-file promotion. Scope: Local plain and append notes
+    artifacts in one repository working tree. Usage: ``release_append_publish.py check|begin|seal|publish|recover`` from
+    the repository root. Outputs: Candidate directory, live release files, and a temporary recovery journal. Failure:
+    Refuses changed source, live bytes, candidates, symlinks, or pending promotion. Used by: ``skills/release/SKILL.md``
+    and ``modes/release-draft-template.md``.
 
 The journal records exact old and candidate digests before the first replacement. The stage retains exact original bytes
 for interrupted promotion recovery. Source drift switches the journal to rollback; recovery resumes that decision after
@@ -21,6 +22,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -35,6 +37,7 @@ from release_append_marker import refuse_legacy, state_relative, unique_root_com
 ARTIFACTS = ("DRAFT.md", "SUMMARY.md", "MIGRATION.md")
 #: Name prefix of the staging directory ``begin`` creates; seal, publish and recovery refuse any other directory name.
 _STAGE_PREFIX = "release-append-stage-"
+_SHA_RE = re.compile(r"[0-9a-f]{7,64}")
 
 
 def _is_own_stage(root: Path, stage: Path) -> bool:
@@ -341,8 +344,10 @@ def begin(
     if expected_head is not None and expected_head != head_sha:
         raise ValueError("HEAD changed after release gather")
     if marker_sha is not None:
+        if not _SHA_RE.fullmatch(marker_sha):
+            raise ValueError("invalid marker SHA")
         marker_commit = subprocess.run(  # noqa: S603 - argv list, no shell
-            ["git", "merge-base", "--is-ancestor", marker_sha, head_sha],  # noqa: S607 - git resolved via PATH on purpose
+            ["git", "merge-base", "--is-ancestor", "--end-of-options", marker_sha, head_sha],  # noqa: S607 - git resolved via PATH on purpose
             cwd=root,
             capture_output=True,
             check=False,

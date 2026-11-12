@@ -17,9 +17,9 @@ Resolution mirrors the idiom, so a migrated block reads the same directory as on
 
 * **Warm** — the ``dev-shared-<CSID>`` sentinel ``dev_shared_resolve.py --init`` wrote at skill start, read through
   ``dev_run_dir.read_sentinel`` (same name derivation and ownership check as the writer). Used when it names an existing
-  directory.
-* **Cold** — ``dev_shared_resolve.resolve_shared_path()``: the newest non-orphaned cached develop version, then the
-  source-tree ``plugins/cc_develop/skills/_shared``. Reached when the sentinel is missing, untrusted, or stale. The
+  directory matching the current authoritative root selection.
+* **Cold** — ``dev_shared_resolve.resolve_shared_path()``: install record, then newest non-orphaned cached develop
+  version, then the source-tree ``plugins/cc_develop/skills/_shared``. The
   source tree is relative to the working directory, so it is used only inside the develop source repository
   (``dev_shared_resolve.source_repo_marker_present``); anywhere else the load prints one ``! BREAKING`` line and exits
   1, with or without ``--optional``, instead of printing another repository's text as protocol.
@@ -27,15 +27,20 @@ Resolution mirrors the idiom, so a migrated block reads the same directory as on
 The sentinel name carries ``$CSID``, else ``$CLAUDE_CODE_SESSION_ID``, else ``shared``; the cold start runs with
 ``CSID`` exported, so the calling block exports it too.
 
-Output: the document's bytes on stdout, unchanged (same as ``cat``). A missing document prints one
+Output: document bytes on stdout, with only the literal bootstrap token rendered to its validated owning root.
+A missing document prints one
 ``! BREAKING`` line and exits 1; with ``--optional`` it prints one ``⚠ WARNING … — skipping`` line and exits 0, for a
 step the caller already skips when its document is absent. A document name that is not a plain file name exits 2.
 
 Usage:
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" [--optional] <file.md>
+    PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+    python "$PLUGIN_ROOT/bin/dev_load_shared.py" [--optional] <file.md>
+
+With ``--qs-dir``, persist the selected directory as ``qs-shared-dir-<CSID>`` through the private session writer
+before printing the document, so later quality-stack sibling fences resolve the same directory. A failed write exits 1.
 
 <!-- file: dev_load_shared.py — consumers: develop skills that load a skills/_shared document -->
-"""
+"""  # noqa: W505 - the guarded bootstrap command is intentionally one physical line
 
 from __future__ import annotations
 
@@ -43,12 +48,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from dev_run_dir import read_sentinel  # sibling bin/ script; session-scoped, ownership-checked sentinel reads
+from dev_run_dir import read_sentinel, write_sentinel  # sibling bin/ script; ownership-checked session state
 from dev_shared_resolve import (  # sibling bin/ script; cold resolution of this plugin's _shared
     SOURCE_FALLBACK,
     resolve_shared_path,
     source_repo_marker_present,
 )
+from render_plugin_root import render_file
 
 #: Sentinel base name ``dev_shared_resolve.py --init`` writes the resolved ``skills/_shared`` path under.
 _SHARED_SENTINEL = "dev-shared"
@@ -102,12 +108,10 @@ def shared_dir() -> Path:
         >>> with tempfile.TemporaryDirectory() as scratch:
         ...     _ = (Path(scratch) / "dev-shared-doc").write_text(scratch + "\\n", encoding="utf-8")
         ...     with mock.patch.dict(os.environ, {"TMPDIR": scratch, "CSID": "doc"}):
-        ...         shared_dir() == Path(scratch)
+        ...         with mock.patch.dict(shared_dir.__globals__, {"resolve_shared_path": lambda: scratch}):
+        ...             shared_dir() == Path(scratch)
         True
     """
-    warm = read_sentinel(_SHARED_SENTINEL)
-    if warm and Path(warm).is_dir():
-        return Path(warm)
     cold = resolve_shared_path()
     # The cold resolver returns the cwd source tree unchecked; outside the source repo it is another repository's text.
     if cold == SOURCE_FALLBACK and not source_repo_marker_present():
@@ -115,7 +119,11 @@ def shared_dir() -> Path:
             "no installed develop plugin, and the working directory is not the develop plugin source repository "
             f"(no plugins/cc_develop/.claude-plugin/plugin.json naming develop) — refusing to read {cold}"
         )
-    return Path(cold)
+    selected = Path(cold)
+    warm = read_sentinel(_SHARED_SENTINEL)
+    if warm and Path(warm).is_dir() and Path(warm).resolve() == selected.resolve():
+        return Path(warm)
+    return selected
 
 
 def _emit(line: str) -> None:
@@ -144,6 +152,9 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="A missing document prints one warning line and exits 0 instead of failing.",
     )
+    parser.add_argument(
+        "--qs-dir", action="store_true", help="Persist the loaded directory for quality-stack sibling fences."
+    )
     return parser
 
 
@@ -166,18 +177,25 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         directory = shared_dir()
-    except UntrustedSharedDirError as exc:
+    except (UntrustedSharedDirError, ValueError) as exc:
         _emit(f"! BREAKING: {exc} — {_REINSTALL_HINT}")
         return 1
     target = directory / args.doc
     try:
         # Read directly rather than checking first: a directory or an unreadable file fails here the same way.
-        content = target.read_bytes()
+        content = render_file(target, plugin_name="develop")
     except OSError:
         if args.optional:
             _emit(f"⚠ WARNING: {args.doc} not found in {target.parent.as_posix()} — skipping")
             return 0
         _emit(f"! BREAKING: {args.doc} not found in {target.parent.as_posix()} — {_REINSTALL_HINT}")
+        return 1
+    except ValueError as exc:
+        _emit(f"! BREAKING: {exc} — {_REINSTALL_HINT}")
+        return 1
+
+    if args.qs_dir and write_sentinel("qs-shared-dir", str(directory.resolve())) is None:
+        _emit("! BREAKING: quality-stack directory could not be persisted — refusing to load")
         return 1
 
     # Byte-for-byte passthrough — matches `cat`, no encoding or newline rewriting.

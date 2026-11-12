@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from codemap_py import rwgate
+from codemap_py import index_paths, rwgate
 
 _RUNTIMES = ["claude", "codex", "direct"]
 _skip_no_sigalrm = pytest.mark.skipif(
@@ -65,7 +65,7 @@ def _assert_single_target_record(caller: Path, target: Path, log_relative: str, 
     """Assert exactly one record landed in the target's log directory and none in the caller's."""
     records = _records(target / log_relative)
     assert len(records) == 1
-    assert records[0]["project"] == target.resolve().as_posix()
+    assert records[0]["project"] == index_paths.root_key(target.resolve())
     assert records[0]["runtime"] == runtime
     assert records[0]["session"] == "target-session"
     assert records[0]["exit_code"] == exit_code
@@ -166,9 +166,11 @@ def test_partial_root_parsing_keeps_argparse_precedence(
     assert error in result.stderr
     records = _records(logs)
     assert len(records) == 1
-    assert records[0]["project"] == (caller if owner == "caller" else target).resolve().as_posix()
+    assert records[0]["project"] == index_paths.root_key((caller if owner == "caller" else target).resolve())
     assert records[0]["exit_code"] == 2
-    assert records[0]["argv"] == argv
+    assert records[0]["argv"] == [
+        argument.format(caller="." if owner == "caller" else "<external-path>", target=".") for argument in arguments
+    ]
 
 
 @pytest.mark.integration
@@ -204,7 +206,7 @@ def test_logs_one_terminal_record(
     assert len(records) == 1, records
     record = records[0]
     assert record["runtime"] == runtime
-    assert record["project"] == root.resolve().as_posix()
+    assert record["project"] == index_paths.root_key(root.resolve())
     assert record["cmd"] == command
     assert record["argv"] == arguments
     assert record["exit_code"] == exit_code

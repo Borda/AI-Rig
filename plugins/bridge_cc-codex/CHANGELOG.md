@@ -1,16 +1,40 @@
 # Changelog
 
+## 0.13.0
+
+- Windows artifact retention uses complete opened-file identities, so Python 3.12 and 3.13 can prune completed evidence without rejecting unchanged files as linked or changed.
+- Usage reporting and health records:
+  - Add offline, explicit-workspace usage reporting with provider-specific token accounting and evidence-gap diagnostics; retain observed models, release/runtime provenance and ordered attempt metadata locally. Scope peer work and reuse parent-prepared verification evidence without expanding permissions or adding model calls.
+  - Preserve final warnings and incomplete-work details in private workspace-local result reports, link health records directly to transcripts and incidents, and retain whole-call elapsed time plus observed failed-retry usage. Accounting adds no model calls or network traffic; storage failures remain nonblocking and never replay peer work.
+  - Health rows and result reports also record when each call started, the byte size of the outgoing task and returned answer, the detached job id, and per-attempt start and end times, exit code, timeout flag and output sizes, so one request and answer round trip can be replayed in either direction from local evidence alone. Fields are additive with schema version 1 unchanged. `bridge_usage.py --calls` lists each call with the expected fields it lacks and keeps Codex cost and model as unknowns, never backfilling legacy rows.
+  - Health ledger rotation and appends are serialized by a lock with a 2 second timeout, so concurrent bridge calls no longer interleave rows. Each live diagnostic probe gets a distinct run id instead of a shared one, so repeated probes no longer collide as conflicting duplicates.
+- A timed-out `low`-effort advise or review call is no longer retried at `minimal` when the target's supported efforts are unknown. Codex accepts `minimal` only where the model advertises it and Claude maps it back to `low`, so the retry either was rejected, turning a timeout into an unsupported-effort block, or repeated the level that had just timed out.
+- Completed bridge job artifacts under `.temp/bridge` older than 30 days or beyond the newest 200 are now pruned automatically after each call, together with the reports and transcripts they reference; queued or running jobs and anything they reference are never removed. `health.jsonl` rotates at 5 MiB, keeping one previous generation as `health.jsonl.1`. Pruning refuses linked or aliased members and, if maintenance fails, skips with a nonblocking warning instead of failing the bridge call.
+- Peer task text and tool access are bounded:
+  - New `--untrusted-task` flag (MCP argument `untrusted_task`, a boolean) fences the task text inside a randomly tokenised block and tells the peer to treat it as data only, never as instructions or authority. The Claude and Codex advise, review and implement skills now set it whenever the task carries text from PR comments, issue bodies, web pages or other external sources.
+  - The task and file boundaries are tighter. Peer prompts are passed through stdin instead of the command line, and `--task-file` must be a single-link regular file inside the workspace or a generated scratch file in the temporary directory, opened without following links and refused for `/proc` and `/dev`. CLI `--timeout-seconds` is capped per verb (700 seconds for `implement`, 350 for `advise` and `review`), write-capable CLI calls need a valid project workspace, and no more than 4 background jobs can be unresolved at once, with admission serialised by a launch lock.
+  - The Claude peer now runs with an explicit tool allowlist (`Read`, `Glob`, `Grep`, plus `Edit`, `Write` and `NotebookEdit` only for write verbs) and with MCP tools disallowed. A failed background supervisor launch now marks the job `failed` instead of leaving it queued.
+- After a `stalled` job, the implement skills now edit the workspace only once the peer is confirmed terminated (terminal peer status or confirmed cancellation) or the original hard cutoff has passed. `stalled` and `cancel_requested` alone no longer count as confirmation.
+- Windows batch shims and task files:
+  - Windows batch peer shims (`.cmd` and `.bat`) are now refused with an error asking for a native executable. This is covered by argv-level tests on macOS only and has no Windows end-to-end verification. `PATH` lookup now ignores non-absolute entries on every platform.
+  - On Windows the advise, review and implement skills dispatch only with `--task-file`, so task text no longer reaches a batch shim on the command line.
+  - The Windows batch-shim check reads the executable suffix with `PureWindowsPath`, so the transport-budget and process checks no longer raise `NotImplementedError` on Python 3.10 and 3.11 when a test or host reports `os.name == "nt"`; the crash had ended the shared pytest run with exit code 3.
+- The effort policy now lets a calling skill choose `minimal` for a trivial lookup or one-line mechanical confirmation when effort is omitted. The setup and consent helpers now state that their terminal check is an interaction requirement, not human authentication, because a model-controlled process can allocate a PTY and grant consent itself; run them outside model-controlled tools.
+- The `bin/python` fallback launcher now ignores empty and relative `PATH` entries when it looks for a Python 3.10 or newer interpreter, so a `python` placed in the current directory or another relative location is no longer run by accident.
+
 ## 0.12.6
 
-- A timed-out `low`-effort advise or review call is no longer retried at `minimal` when the target's supported efforts are unknown. Codex accepts `minimal` only where the model advertises it and Claude maps it back to `low`, so the retry either was rejected, turning a timeout into an unsupported-effort block, or repeated the level that had just timed out.
-- `/bridge:implement` now requires explicit consent for every dispatch that is not a direct user invocation: a direct `/bridge:implement` call consents only to its exact task, workspace (the current directory when omitted) and network mode (`none` when omitted). Any dispatch from an orchestrating skill or agent asks through a question naming the change, absolute workspace and network mode, unless a recorded user approval for the same scope is cited. A subagent without that recorded approval in its brief returns `blocked` instead of dispatching.
-- Detached `/bridge:implement` jobs now report the absolute workspace together with the job identifier, so later `/bridge:status`, `/bridge:result` and `/bridge:cancel` calls resolve the same workspace even after a directory change.
+- `/bridge:implement` consent and job reporting:
+  - Requires explicit consent for every dispatch that is not a direct user invocation: a direct `/bridge:implement` call consents only to its exact task, workspace (the current directory when omitted) and network mode (`none` when omitted). Any dispatch from an orchestrating skill or agent asks through a question naming the change, absolute workspace and network mode, unless a recorded user approval for the same scope is cited. A subagent without that recorded approval in its brief returns `blocked` instead of dispatching.
+  - Detached `/bridge:implement` jobs now report the absolute workspace together with the job identifier, so later `/bridge:status`, `/bridge:result` and `/bridge:cancel` calls resolve the same workspace even after a directory change.
 - Long or unauthored task text for `/bridge:advise`, `/bridge:review` and `/bridge:implement` is now moved into a scratch task file written with the Write tool at a session-scoped path in the host temporary directory, outside the workspace, created by a new `bin/bridge_task_path.py` helper. A `--task-file` the caller supplies is passed through untouched and never deleted; the skill removes only scratch files it created. `/bridge:advise`, `/bridge:review` and `/bridge:implement` now also advertise `--run-id`, and `/bridge:review` advertises `--task-file`.
-- `/bridge:review` now refuses a call that combines inline instructions with `--task-file` instead of silently dropping one, and treats option-shaped tokens inside quoted text it did not author as task data, not options.
-- `/bridge:review` states its worst-case wall time correctly as twice the hard cutoff plus termination and drain reserve, asks for a foreground Bash timeout at least 20 seconds above it, and tells synchronous skill or subagent callers to use a soft budget of at most 230 seconds. A confidence gap or unavailable check is no longer treated as authority for another review pass.
+- `/bridge:review` input handling and timing:
+  - Refuses a call that combines inline instructions with `--task-file` instead of silently dropping one, and treats option-shaped tokens inside quoted text it did not author as task data, not options.
+  - States its worst-case wall time correctly as twice the hard cutoff plus termination and drain reserve, asks for a foreground Bash timeout at least 20 seconds above it, and tells synchronous skill or subagent callers to use a soft budget of at most 230 seconds. A confidence gap or unavailable check is no longer treated as authority for another review pass.
 - `/bridge:setup` now ends its turn after printing each operator command (configure, authenticate, verify-live) and re-checks state only after the user reports it finished. The question text states the 300-second approval deadline, measured from plan issuance. An `approval-expired` result gets one fresh-approval recovery per stage with a new plan and new approval; a second expiry stops.
-- `/bridge:status` and the operations guide now treat `cancel_requested` as still in progress, so a job being cancelled is no longer reported as finished waiting. On Windows, `/bridge:status` and `/bridge:result` give a concrete deadline (launch budget times 1.2, plus 9 seconds drain and 120 seconds startup grace) after which to stop waiting and report incomplete work, since a stalled job may never be flagged.
-- `/bridge:result` reports a `partial_output` fragment from an output-limit result only as an unverified fragment used to scope a smaller follow-up task, never as findings or a verdict.
+- `/bridge:status` and `/bridge:result` report job state more carefully:
+  - `/bridge:status` and the operations guide now treat `cancel_requested` as still in progress, so a job being cancelled is no longer reported as finished waiting. On Windows, `/bridge:status` and `/bridge:result` give a concrete deadline (launch budget times 1.2, plus 9 seconds drain and 120 seconds startup grace) after which to stop waiting and report incomplete work, since a stalled job may never be flagged.
+  - `/bridge:result` reports a `partial_output` fragment from an output-limit result only as an unverified fragment used to scope a smaller follow-up task, never as findings or a verdict.
 
 ## 0.12.5
 
@@ -38,34 +62,41 @@
 
 - Resolve peer CLIs and subprocess utilities to absolute paths from PATH, skipping empty and dot entries and honoring Windows PATHEXT, so a planted executable in the checkout cannot receive child credentials through implicit current-directory lookup.
 - ! BREAKING — non-interactive consent grants now need operator proof: `bridge_consent.py grant --approve` runs only in the operator's terminal or with a one-time token (valid 5 minutes, consumed by one grant) passed as `BRIDGE_OPERATOR_TOKEN`; otherwise it exits 2 and writes nothing. Add `bridge_consent.py issue-token` (terminal only) to mint the token and `$bridge:setup --approve-claude-consent --consent-token <token>` to pass it. Setup's `--approve <digest>` likewise executes only from the operator terminal.
-- Make `make sync` skip the consent stage with a notice (exit 0) when there is no terminal and no token; an invalid token still exits 2.
-- Split the peer child's environment allowlist per host, so a Codex child no longer receives Claude provider variables and the reverse; `BRIDGE_CHILD_ENV_EXTRA` still names extra variables.
-- Keep the task text out of the detached supervisor's argv, so other local users can no longer read task content, which may carry repository context, from the process list.
+- Setup hardening:
+  - Make `make sync` skip the consent stage with a notice (exit 0) when there is no terminal and no token; an invalid token still exits 2.
+  - Require a fresh `all` setup plan with no pending operations before `verify-live` counts as evidence, so a stale or half-configured setup can no longer pass as live-verified.
+  - Refuse a root, home, agent-configuration or credential folder as `bridge_setup.py --workspace` for every action except `check`, so approvals and the live probe's artifacts can no longer land there.
+  - Treat a setup mutation lock older than one hour as abandoned by a crashed or killed setup run and replace it, so the next approved setup of that host setting proceeds instead of reporting `mutation-locked-or-repeat-fault` forever; the lock now records its holder's PID and start time.
+  - Read only the newest 8 MiB of the per-user setup journals instead of refusing a larger file, so approvals and mutations keep working after long use rather than failing permanently once a journal outgrows the bound.
+- Peer child isolation:
+  - Split the peer child's environment allowlist per host, so a Codex child no longer receives Claude provider variables and the reverse; `BRIDGE_CHILD_ENV_EXTRA` still names extra variables.
+  - Keep the task text out of the detached supervisor's argv, so other local users can no longer read task content, which may carry repository context, from the process list.
+  - Run the post-write `git status` with `core.fsmonitor` disabled so a write-capable child cannot execute a repository hook through it.
 - Create artifacts with `0700` directories and `0600` files, so other local users can no longer read job transcripts and results.
-- Run the post-write `git status` with `core.fsmonitor` disabled so a write-capable child cannot execute a repository hook through it.
-- Bound `--task-file` reads at 16 KiB and refuse anything but a regular file, so a huge file, FIFO or device can no longer hang or flood a call.
-- Validate model, session and run identifiers before they reach child argv, so a crafted value cannot smuggle an extra option into the peer command.
-- Refuse workspaces inside user credential directories (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.docker`) and, outside Windows, `/etc`.
-- Surface a failed detached job's error in `status` and `result` instead of a bare state.
-- Report a terminal failed state even when a cancel marker exists, so a job that failed while a cancel was pending no longer shows `cancel_requested` and keeps a caller polling forever.
-- Stop sending a second `SIGKILL` once the cleanup grace finds the process group empty, avoiding a signal to a recycled group id.
-- Require a fresh `all` setup plan with no pending operations before `verify-live` counts as evidence, so a stale or half-configured setup can no longer pass as live-verified.
-- Add `effort` frontmatter to the seven Claude skills, so each runs at its declared reasoning effort instead of inheriting the session's.
-- Add `[--workspace PATH]` hints to the `cancel`, `status`, `result`, `advise`, `review` and `implement` skills, and document the lifecycle states (`queued`, `running`, `cancel_requested`, `finished`, `cancelled`, `failed`, `stalled`, `missing`).
-- Document the foreground timeout: worst case is `--timeout-seconds` × 2.4 (hard cutoff × 1.2, plus one lower-effort retry), so foreground calls set a Bash `timeout` above it.
+- Bounded, symlink-safe file reads:
+  - Bound `--task-file` reads at 16 KiB and refuse anything but a regular file, so a huge file, FIFO or device can no longer hang or flood a call.
+  - Read job records and cancel markers without following a symlink and up to 1 MiB, so a swapped-in link, FIFO or huge file can no longer steer or stall a supervisor.
+  - Make `bridge_diagnose.py` skip a `health.jsonl` that is a symlink, hard link or other non-regular file and tolerate undecodable bytes, so a planted link can no longer pull another file's records into the health summary or stall diagnosis.
+- Identifier validation:
+  - Validate model, session and run identifiers before they reach child argv, so a crafted value cannot smuggle an extra option into the peer command.
+  - Apply the CLI's identifier rule to the MCP `model` and `run_id` arguments, so a dash-led or free-text value is refused before it reaches the Claude child.
+- Workspace binding limits:
+  - Refuse workspaces inside user credential directories (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.docker`) and, outside Windows, `/etc`.
+  - Require a project marker (such as `.git` or `pyproject.toml`) in the bound folder or an ancestor below the home before `bridge_implement` runs, so a write-capable Claude run can no longer be rooted in an arbitrary non-project folder; advise and review are unchanged.
+- Job status and cleanup:
+  - Surface a failed detached job's error in `status` and `result` instead of a bare state.
+  - Report a terminal failed state even when a cancel marker exists, so a job that failed while a cancel was pending no longer shows `cancel_requested` and keeps a caller polling forever.
+  - Stop sending a second `SIGKILL` once the cleanup grace finds the process group empty, avoiding a signal to a recycled group id.
+  - Report a running job as `stalled` when `ps` shows its recorded PID now owned by another user or younger than the supervisor, so a recycled PID no longer keeps a dead job polling as `running` (POSIX; Windows keeps the existence check).
+  - Send no group signal for a child whose leader is reaped and whose group is gone, and never repeat one after an output-limit stop, so cleanup cannot reach a recycled process group.
+- Claude skill definitions:
+  - Add `effort` frontmatter to the seven Claude skills, so each runs at its declared reasoning effort instead of inheriting the session's.
+  - Add `[--workspace PATH]` hints to the `cancel`, `status`, `result`, `advise`, `review` and `implement` skills, and document the lifecycle states (`queued`, `running`, `cancel_requested`, `finished`, `cancelled`, `failed`, `stalled`, `missing`).
+  - Document the foreground timeout: worst case is `--timeout-seconds` × 2.4 (hard cutoff × 1.2, plus one lower-effort retry), so foreground calls set a Bash `timeout` above it.
+  - Grant the Claude `setup` skill the `Write` and `AskUserQuestion` tools it already uses, for its operations report and approval gates.
+  - Carry the Claude `setup` approval in the question text (action, operation count, full digest and the operations file path) instead of option previews, so the approved digest stays visible when reply text before the question arrives empty.
 - Route `--task-file` for text containing a backtick, `$`, double quote or backslash, and report a `status=error` object (exit 2) as a refused invocation.
-- Grant the Claude `setup` skill the `Write` and `AskUserQuestion` tools it already uses, for its operations report and approval gates.
-- Require a project marker (such as `.git` or `pyproject.toml`) in the bound folder or an ancestor below the home before `bridge_implement` runs, so a write-capable Claude run can no longer be rooted in an arbitrary non-project folder; advise and review are unchanged.
-- Refuse a root, home, agent-configuration or credential folder as `bridge_setup.py --workspace` for every action except `check`, so approvals and the live probe's artifacts can no longer land there.
-- Apply the CLI's identifier rule to the MCP `model` and `run_id` arguments, so a dash-led or free-text value is refused before it reaches the Claude child.
-- Read job records and cancel markers without following a symlink and up to 1 MiB, so a swapped-in link, FIFO or huge file can no longer steer or stall a supervisor.
-- Report a running job as `stalled` when `ps` shows its recorded PID now owned by another user or younger than the supervisor, so a recycled PID no longer keeps a dead job polling as `running` (POSIX; Windows keeps the existence check).
-- Send no group signal for a child whose leader is reaped and whose group is gone, and never repeat one after an output-limit stop, so cleanup cannot reach a recycled process group.
 - Name any change to `.git/hooks`, `.git/config`, `.gitattributes`, `.claude`, `.mcp.json` or `.codex` in an `implement` result's findings, so a planted hook or host setting is visible even when the peer does not report it.
-- Carry the Claude `setup` approval in the question text (action, operation count, full digest and the operations file path) instead of option previews, so the approved digest stays visible when reply text before the question arrives empty.
-- Treat a setup mutation lock older than one hour as abandoned by a crashed or killed setup run and replace it, so the next approved setup of that host setting proceeds instead of reporting `mutation-locked-or-repeat-fault` forever; the lock now records its holder's PID and start time.
-- Read only the newest 8 MiB of the per-user setup journals instead of refusing a larger file, so approvals and mutations keep working after long use rather than failing permanently once a journal outgrows the bound.
-- Make `bridge_diagnose.py` skip a `health.jsonl` that is a symlink, hard link or other non-regular file and tolerate undecodable bytes, so a planted link can no longer pull another file's records into the health summary or stall diagnosis.
 - Split `config.toml` into statements in one pass when granting or revoking consent, so a config with a long multi-line array or string no longer takes minutes (a 20,000-line array took over three minutes).
 
 ## 0.11.1
@@ -148,10 +179,12 @@
 
 - Breaking change: the Codex Bridge starts without a project folder. Use `bridge_bind_workspace` to select a folder in a native form and confirm its resolved path; every subsequent executable call requires the current `binding_id`. Rebinding or changed folder identity invalidates previous authority. This selects the project without granting editing or paid-call approval.
 - Advance the Bridge status schema from `1.0` to `2.0` and report the actual negotiated native-form protocol. Status identifies an unbound process honestly; the installed launch folder is never used as project authority.
-- Validate runtime artifact paths against the confirmed project before reading or writing them; reject escaped directories and linked file destinations, and preserve pre-existing files when temporary creation fails.
-- Terminate and reap launched children when validation, reader setup or supervision fails, then drain started readers before propagating the original failure.
-- Ship an independently installed local question tool using Codex's native terminal form: one scope-bound request, an explicit correlated answer, and no asynchronous question-text duplication. Unsupported clients and cancelled or malformed replies grant no consent.
-- Recognize explicit conversational approval or denial for one unchanged, unambiguous pending Codex decision; preserve ambiguity, supersession, exact-token/digest, and runtime-permission boundaries. Synchronize empty-final and supported async-schema guidance.
+- Runtime process and artifact safety:
+  - Validate runtime artifact paths against the confirmed project before reading or writing them; reject escaped directories and linked file destinations, and preserve pre-existing files when temporary creation fails.
+  - Terminate and reap launched children when validation, reader setup or supervision fails, then drain started readers before propagating the original failure.
+- Native Codex questions in the local tool:
+  - Ship an independently installed local question tool using Codex's native terminal form: one scope-bound request, an explicit correlated answer, and no asynchronous question-text duplication. Unsupported clients and cancelled or malformed replies grant no consent.
+  - Recognize explicit conversational approval or denial for one unchanged, unambiguous pending Codex decision; preserve ambiguity, supersession, exact-token/digest, and runtime-permission boundaries. Synchronize empty-final and supported async-schema guidance.
 
 ## 0.5.10
 
@@ -198,10 +231,11 @@
 
 ## 0.5.0
 
-- Add capability-aware native Codex questions across every Codex skill: prefer permitted synchronous controls for required decisions, asynchronous controls for independent follow-ups or lossless fallback, and plain chat when unsupported.
-- Use Approve/Deny for conversational authorization while preserving exact-digest and runtime permission boundaries. Bind delayed answers to immutable scope, reject superseded/duplicate replies, retain all feasible choices, and avoid duplicate live prompts.
-- Ship plugin-local question guidance and regression coverage; preserve existing authorization and host-specific behavior without changing installed settings or requiring a Codex upgrade.
-- Label one evidence-backed first choice `(Recommended)` in option-based questions; preserve canonical answers, exact confirmation syntax, and explicit consent.
+- Native Codex questions:
+  - Add capability-aware native Codex questions across every Codex skill: prefer permitted synchronous controls for required decisions, asynchronous controls for independent follow-ups or lossless fallback, and plain chat when unsupported.
+  - Use Approve/Deny for conversational authorization while preserving exact-digest and runtime permission boundaries. Bind delayed answers to immutable scope, reject superseded/duplicate replies, retain all feasible choices, and avoid duplicate live prompts.
+  - Ship plugin-local question guidance and regression coverage; preserve existing authorization and host-specific behavior without changing installed settings or requiring a Codex upgrade.
+  - Label one evidence-backed first choice `(Recommended)` in option-based questions; preserve canonical answers, exact confirmation syntax, and explicit consent.
 
 All notable changes to `bridge_CC-Codex` are documented here.
 
@@ -214,8 +248,9 @@ All notable changes to `bridge_CC-Codex` are documented here.
 ## 0.4.0
 
 - Reap the child leader after Windows tree termination and POSIX kill fallbacks so timeout, cancellation, and output-limit results retain the actual exit code. Bound the wait and diagnose unavailable status without fabricating success.
-- Build the peer child's environment from an allowlist instead of inheriting the caller's: base process keys, provider authentication keys, and on Windows the interpreter start-up keys survive; unrelated API keys, cloud credentials, and the session's inter-agent messaging variables no longer reach a peer process.
-- Add `BRIDGE_CHILD_ENV_EXTRA`, a comma-separated list of additional variable names to allow through, for hosts whose proxy or enterprise provider path needs variables the fixed sets cannot anticipate.
+- Peer child environment:
+  - Build the peer child's environment from an allowlist instead of inheriting the caller's: base process keys, provider authentication keys, and on Windows the interpreter start-up keys survive; unrelated API keys, cloud credentials, and the session's inter-agent messaging variables no longer reach a peer process.
+  - Add `BRIDGE_CHILD_ENV_EXTRA`, a comma-separated list of additional variable names to allow through, for hosts whose proxy or enterprise provider path needs variables the fixed sets cannot anticipate.
 - ! BREAKING — pin `sandbox_workspace_write.network_access=false` on every Codex invocation, so the bridge's egress posture no longer depends on the installed Codex version's default. A Codex `implement` that installed a dependency, refreshed a lockfile, or ran a network-touching hook now fails inside the sandbox.
 - Document the sandbox mode, egress, environment, and quota posture in `docs/security.md`, including that the egress control is Codex-side only and has no Claude-child equivalent.
 
@@ -232,15 +267,16 @@ All notable changes to `bridge_CC-Codex` are documented here.
 
 ## 0.3.0
 
-- Make `/bridge:setup` and `$bridge:setup` truthful approval-bound lifecycle entrypoints with default `action=all target=peer scope=auto live=prompt` behavior.
-- Add credential-free setup planning, HMAC-authenticated expiring one-use action approvals, separate no-capture provider-owned authentication, approval-bound live verification, post-configuration reinspection, user-scoped mutation locks and sanitized records, bounded rollback metadata, and explicit bootstrap/fresh-session boundaries.
+- Setup lifecycle:
+  - Make `/bridge:setup` and `$bridge:setup` truthful approval-bound lifecycle entrypoints with default `action=all target=peer scope=auto live=prompt` behavior.
+  - Add credential-free setup planning, HMAC-authenticated expiring one-use action approvals, separate no-capture provider-owned authentication, approval-bound live verification, post-configuration reinspection, user-scoped mutation locks and sanitized records, bounded rollback metadata, and explicit bootstrap/fresh-session boundaries.
+  - Gate host CLIs on a minimum supported version instead of an exact pin, so routine CLI self-updates no longer fail every setup action as `unsupported-version`.
+  - Report the denial for an empty trailing `--approve` from the actually parsed arguments, keep `verify-live` plans empty under `live=skip`, and reject a zero-exit `Not logged in` Codex status as unauthenticated.
+  - Give the approved marketplace install a network-sized timeout, expire recorded operation failures after a bounded retry window, and extend the setup-result schema to cover the sensitive-input rejection placeholders.
+  - Fingerprint the complete installed payload including `.mcp.json` and the CLI baseline, report missing payload members before the baseline loads, derive the MCP-reported version from the plugin manifest, and report the status workspace in canonical POSIX form.
+  - Update both host manifests and maintainer documentation for the setup contract.
 - Add the zero-provider read-only `bridge_status` MCP tool for sanitized session/workspace evidence and keep setup results in a dedicated schema separate from model envelopes.
 - Keep ordinary synchronization static-only: no setup skill, model call, approval token, authentication, repair, restart, or provider call.
-- Gate host CLIs on a minimum supported version instead of an exact pin, so routine CLI self-updates no longer fail every setup action as `unsupported-version`.
-- Report the denial for an empty trailing `--approve` from the actually parsed arguments, keep `verify-live` plans empty under `live=skip`, and reject a zero-exit `Not logged in` Codex status as unauthenticated.
-- Give the approved marketplace install a network-sized timeout, expire recorded operation failures after a bounded retry window, and extend the setup-result schema to cover the sensitive-input rejection placeholders.
-- Fingerprint the complete installed payload including `.mcp.json` and the CLI baseline, report missing payload members before the baseline loads, derive the MCP-reported version from the plugin manifest, and report the status workspace in canonical POSIX form.
-- Update both host manifests and maintainer documentation for the setup contract.
 
 ## 0.2.1
 

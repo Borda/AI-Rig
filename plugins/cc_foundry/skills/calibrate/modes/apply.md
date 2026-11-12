@@ -69,9 +69,10 @@ For each target, check the selected proposal path (canonical or historical). Col
 **`<AGENT_FILE>` and `<PROPOSAL_PATH>` resolution**: before spawning, resolve file paths for each target from project source tree (`plugins/`) — same three-tier ladder whether or not `--local` was passed. `<AGENT_FILE>` is a write target (curator Edits it): must never resolve to `.claude/agents/` (never created by `/foundry:setup`) or installed plugin cache under `$HOME/.claude/` — those are read-only surfaces, not write targets:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_agent_file.py" --name "<name>" --timestamp "<SELECTED_TIMESTAMP>" --run-slug "<RUN_SLUG>" $( [ "$LOCAL_MODE" = "true" ] && echo "--local" )  # timeout: 10000
+python "$PLUGIN_ROOT/bin/resolve_agent_file.py" --name "<name>" --timestamp "<SELECTED_TIMESTAMP>" --run-slug "<RUN_SLUG>" $( [ "$LOCAL_MODE" = "true" ] && echo "--local" )  # timeout: 10000
 ```
 
 `<name>` = the target (`foundry:curator`, `/oss:analyse`); `<RUN_SLUG>` = its canonical safe directory, always supplied, including ordinary agent targets (`foundry-curator`) and mode-level domains (`oss-analyse-vitality` resolves `/oss:analyse`); `<SELECTED_TIMESTAMP>` comes from that target's saved mapping. The script prints `agent-file=` and `proposal-path=` on stdout; use `agent-file=` for the destination. Its synthesized `proposal-path=` is canonical: retain the saved selected proposal path for a historical match rather than replacing it with that output. Empty `agent-file=` means resolution failed: skip that target — don't spawn curator for it — the warning script already printed covers it. Never fall through to a cache path for a write target.
@@ -99,9 +100,10 @@ After processing all edits return **only** this compact JSON:
 **Completion handling** — like Step 3, these spawns run in the background: use the session's `${TMPDIR:-/tmp}/calibrate-state-${CSID}/apply` as `APPLY_RUN_DIR`, creating it before dispatch. Issue the batch and, in the same response, Write `<APPLY_RUN_DIR>/agent-watch-apply-<batch>.tsv` (`<target>\t-\t600` per subagent, APPLY_TIMEOUT_S); end turn, resume on completion notifications and run this deadline check once per notification (`_FOUNDRY_SHARED/agent-spawn-protocol.md`) — never a waiting tool, a poll loop or a filler call. This state is independent of historical targets' timestamps and needs no benchmark timestamp sentinel. A subagent that returns nothing after notification: record `{"status":"timed_out","target":"<TARGET>"}`, print with ⏱, still counted in the final table — never silently dropped from the summary.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 APPLY_RUN_DIR="${TMPDIR:-/tmp}/calibrate-state-${CSID}/apply"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$APPLY_RUN_DIR"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/agent_watch.py" --state-dir "$APPLY_RUN_DIR"  # timeout: 5000
 ```
 
 After all subagents complete, collect JSON results and print final summary:
@@ -113,7 +115,7 @@ After all subagents complete, collect JSON results and print final summary:
 |-------------|-------------------------------|---------|---------|
 | sw-engineer | plugins/cc_foundry/agents/sw-engineer.md | 2       | 0       |
 
-→ Run /calibrate <targets> to verify improvement.
+→ Run /foundry:calibrate <targets> to verify improvement.
 ```
 
 Mark "Apply findings" completed.

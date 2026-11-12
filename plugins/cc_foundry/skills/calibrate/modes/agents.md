@@ -34,9 +34,10 @@ Per agent in domain table (after exclusions), spawn one `general-purpose` pipeli
 Load the pipeline template first — no `~/.claude/skills/` copy exists (setup symlinks only `rules/*.md` and `TEAM_PROTOCOL.md`):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate templates pipeline-prompt.md $([ "$LOCAL_MODE" = "true" ] && echo --local)  # timeout: 5000
+python "$PLUGIN_ROOT/bin/load_mode.py" calibrate templates pipeline-prompt.md $([ "$LOCAL_MODE" = "true" ] && echo --local)  # timeout: 5000
 ```
 
 Each subagent gets the pipeline template printed above, substitutions:
@@ -48,6 +49,7 @@ Each subagent gets the pipeline template printed above, substitutions:
 - `<MODE>` = `fast` or `full`
 - `<AB_MODE>` = `true` or `false` — whether to run A/B variant scoring against `general-purpose` baseline (see pipeline-prompt.md Phase 2b)
 - `<LOCAL_MODE>` = `true` or `false` — from `--local` flag; when true pipeline resolves target file from source tree
+- `<TARGET_SOURCE_PATH>` = Step 1's concrete source file from the manifest-declared agents directory; retain this exact path through dispatch instead of reconstructing it from the agent name
 - `<TARGET_LABEL>` = `<TARGET>`; `<RUN_SLUG>` = SKILL.md Step 1's safe-slug conversion (e.g. `foundry:sw-engineer` → `foundry-sw-engineer`)
 - `<PROBLEM_SET_VERSION>` = SKILL.md constant `PROBLEM_SET_VERSION`
 - `<FLOORS_ARG>`, `<TEMPLATE_SECTIONS_NOT_FP>`, `<SEV_LABEL>` = empty unless the agent's domain entry sets `scale_chars:`, `template_sections_not_fp:` or `sev_label:` (keys as in `skills.md`)

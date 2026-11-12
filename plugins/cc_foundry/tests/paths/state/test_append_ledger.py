@@ -16,9 +16,11 @@ _symlinks = pytest.mark.skipif(not _symlinks_supported(), reason="symlink creati
 
 
 @pytest.fixture
-def ledger(tmp_path: Path) -> Path:
+def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Ledger holding one earlier record, as a run would have after its first iteration."""
-    path = tmp_path / "experiments.jsonl"
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / ".reports" / "experiments.jsonl"
+    path.parent.mkdir()
     path.write_bytes(b'{"iteration":0}\n')
     return path
 
@@ -40,7 +42,7 @@ class TestStagedRecords:
         """The staged file is deleted, so the next Write creates it fresh instead of overwriting an unread file."""
         staged = ledger.with_name("experiments.jsonl.rec")
         staged.write_bytes(b'{"iteration":1}\n')
-        al.main([str(ledger)])
+        al.main([str(ledger), "--run-root", str(ledger.parent)])
         assert not staged.exists()
 
     def test_terminates_record_missing_newline(self, ledger: Path) -> None:
@@ -50,9 +52,9 @@ class TestStagedRecords:
         """
         staged = ledger.with_name("experiments.jsonl.rec")
         staged.write_bytes(b'{"iteration":1}')
-        al.main([str(ledger)])
+        al.main([str(ledger), "--run-root", str(ledger.parent)])
         staged.write_bytes(b'{"iteration":2}')
-        al.main([str(ledger)])
+        al.main([str(ledger), "--run-root", str(ledger.parent)])
         assert ledger.read_bytes().splitlines() == [b'{"iteration":0}', b'{"iteration":1}', b'{"iteration":2}']
 
     def test_sweeps_parallel_writer_files_in_name_order(self, ledger: Path) -> None:
@@ -63,18 +65,19 @@ class TestStagedRecords:
         """
         ledger.with_name("experiments.jsonl.b.rec").write_bytes(b'{"w":"b"}\n')
         ledger.with_name("experiments.jsonl.a.rec").write_bytes(b'{"w":"a"}\n')
-        al.main([str(ledger)])
+        al.main([str(ledger), "--run-root", str(ledger.parent)])
         assert ledger.read_bytes().splitlines()[1:] == [b'{"w":"a"}', b'{"w":"b"}']
 
-    def test_creates_absent_ledger(self, tmp_path: Path) -> None:
+    def test_creates_absent_ledger(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """The first staged record creates the ledger, so callers need no separate initial Write.
 
         The ledger path does not exist yet, only its parent directory does; the flush must create the file itself.
         """
-        ledger = tmp_path / "nested" / "log.jsonl"
-        ledger.parent.mkdir()
+        monkeypatch.chdir(tmp_path)
+        ledger = tmp_path / ".reports" / "nested" / "log.jsonl"
+        ledger.parent.mkdir(parents=True)
         ledger.with_name("log.jsonl.rec").write_bytes(b"x\n")
-        assert al.main([str(ledger)]) == 0
+        assert al.main([str(ledger), "--run-root", str(ledger.parent)]) == 0
         assert ledger.read_bytes() == b"x\n"
 
     def test_nothing_staged_is_a_clean_no_op(self, ledger: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -83,7 +86,7 @@ class TestStagedRecords:
         A skill may flush on every iteration even when a step staged nothing; that must be a harmless no-op that reports
         it, not an error or an empty-line append.
         """
-        assert al.main([str(ledger)]) == 0
+        assert al.main([str(ledger), "--run-root", str(ledger.parent)]) == 0
         assert ledger.read_bytes() == b'{"iteration":0}\n'
         assert "nothing staged" in capsys.readouterr().out
 
@@ -91,37 +94,42 @@ class TestStagedRecords:
 class TestFromSources:
     """Covers ``--from``, used when the records already exist as files on disk."""
 
-    def test_appends_sources_and_keeps_them(self, ledger: Path, tmp_path: Path) -> None:
+    def test_appends_sources_and_keeps_them(self, ledger: Path) -> None:
         """Source files are appended in argument order and left in place for their own run directory.
 
         The first source lacks a trailing newline; its record must still end up on its own line before the second.
         """
-        first, second = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+        first, second = ledger.parent / "a.jsonl", ledger.parent / "b.jsonl"
         first.write_bytes(b'{"t":"a"}')
         second.write_bytes(b'{"t":"b"}\n')
-        assert al.main([str(ledger), "--from", str(first), str(second)]) == 0
+        assert al.main([str(ledger), "--run-root", str(ledger.parent), "--from", str(first), str(second)]) == 0
         assert ledger.read_bytes().splitlines()[1:] == [b'{"t":"a"}', b'{"t":"b"}']
         assert first.exists()
 
-    def test_skips_missing_source(self, ledger: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_skips_missing_source(self, ledger: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """An unmatched shell glob arrives as a literal path; it is reported, not fatal.
 
         When no run produced a result file the shell passes the pattern through unexpanded; the flush must warn on
         stderr and still exit 0 so an empty batch does not abort the skill.
         """
-        assert al.main([str(ledger), "--from", str(tmp_path / "*" / "result.jsonl")]) == 0
+        assert (
+            al.main(
+                [str(ledger), "--run-root", str(ledger.parent), "--from", str(ledger.parent / "*" / "result.jsonl")]
+            )
+            == 0
+        )
         assert "skipped missing source" in capsys.readouterr().err
 
-    def test_leaves_staged_records_alone(self, ledger: Path, tmp_path: Path) -> None:
+    def test_leaves_staged_records_alone(self, ledger: Path) -> None:
         """A ``--from`` call never consumes a ``.rec`` another step staged for its own flush.
 
         Only the plain staged-flush form owns `.rec` files; mixing the two forms must not eat a pending record.
         """
         staged = ledger.with_name("experiments.jsonl.rec")
         staged.write_bytes(b"pending\n")
-        source = tmp_path / "r.jsonl"
+        source = ledger.parent / "r.jsonl"
         source.write_bytes(b"r\n")
-        al.main([str(ledger), "--from", str(source)])
+        al.main([str(ledger), "--run-root", str(ledger.parent), "--from", str(source)])
         assert staged.exists()
 
 
@@ -140,7 +148,7 @@ def test_linked_paths_are_refused(linked: str, tmp_path: Path) -> None:
     link.symlink_to(paths[linked], target_is_directory=linked == "parent")
     ledger_arg = {"ledger": link, "source": ledger, "parent": link / ledger.name}[linked]
     source_arg = link if linked == "source" else source
-    assert al.main([str(ledger_arg), "--from", str(source_arg)]) == 1
+    assert al.main(["--run-root", str(tmp_path), str(ledger_arg), "--from", str(source_arg)]) == 1
     assert ledger.read_bytes() == b"before\n"
 
 
@@ -149,7 +157,7 @@ def test_missing_ledger_parent_is_not_created(tmp_path: Path) -> None:
     ledger = tmp_path / "missing" / "ledger.jsonl"
     source = tmp_path / "source.jsonl"
     source.write_bytes(b"record\n")
-    assert al.main([str(ledger), "--from", str(source)]) == 1
+    assert al.main(["--run-root", str(ledger.parent), str(ledger), "--from", str(source)]) == 1
     assert not ledger.parent.exists()
 
 
@@ -162,7 +170,7 @@ def test_instruction_source_is_not_a_ledger(tmp_path: Path, monkeypatch: pytest.
     ledger.write_bytes(b"instructions\n")
     staged = ledger.with_name(ledger.name + ".rec")
     staged.write_bytes(b"record\n")
-    assert al.main([str(ledger)]) == 1
+    assert al.main(["--run-root", str(ledger.parent), str(ledger)]) == 1
     assert ledger.read_bytes() == b"instructions\n"
     assert staged.exists()
 
@@ -190,6 +198,7 @@ def test_artifact_ledger_above_cwd_remains_appendable(
     project = tmp_path / "project"
     cwd = project / cwd_relative
     cwd.mkdir(parents=True)
+    (project / ".git").mkdir()
     ledger = project / ".experiments" / "run" / "metric-runs.jsonl"
     ledger.parent.mkdir(parents=True, exist_ok=True)
     ledger.with_name(ledger.name + ".rec").write_bytes(b"record\n")
@@ -211,5 +220,5 @@ def test_nonartifact_ledger_outside_cwd_and_temp_is_refused(tmp_path: Path, monk
     monkeypatch.chdir(cwd)
     monkeypatch.setattr(al.tempfile, "gettempdir", lambda: str(tmp_path / "system-temp"))
 
-    assert al.main([str(ledger)]) == 1
+    assert al.main(["--run-root", str(ledger.parent), str(ledger)]) == 1
     assert staged.exists()

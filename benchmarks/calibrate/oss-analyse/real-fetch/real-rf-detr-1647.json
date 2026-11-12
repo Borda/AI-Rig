@@ -1,0 +1,616 @@
+{
+  "1024": {
+    "number": 1024,
+    "title": "Expand model export format support",
+    "state": "open",
+    "body": "# Expand model export format support\n\n> **Updated 2026-07-30** — re-audited against `develop` @ `c3294a5` (version `1.9.0`). Since this issue was opened, the TFLite runtime failure has been fixed, TensorRT has been promoted to a first-class `format=`, and ExecuTorch + native CoreML have landed. Original text preserved where still accurate; per-format sections now cite the PR that added the capability and the release that shipped it.\n\n## Context\n\nRF-DETR now exposes five first-class export formats through `RFDETR.export(format=...)`. This issue audits the broader CV deployment ecosystem, records current coverage on `develop`, and tracks the remaining gaps.\n\nIndustry-share figures below are directional estimates, not precise telemetry — they aggregate signals from the Ultralytics export ecosystem, ONNX/TensorRT/CoreML deployment surveys, edge-AI framework reviews, and visible community usage.\n\n## Current state in `develop`\n\nVerified by inspection of `src/rfdetr/export/` and `RFDETR.export()` in `src/rfdetr/detr.py`:\n\n- `RFDETR.export(format=...)` accepts `\"onnx\"` (default), `\"tflite\"`, `\"tensorrt\"` (alias `\"trt\"`), `\"executorch\"` (alias `\"pte\"`), and `\"coreml\"` (`detr.py:1431`).\n- `src/rfdetr/export/` is now a package with per-backend subpackages: `_onnx/`, `_tflite/`, `_tensorrt.py`, `_executorch/`, `_coreml/`, plus a shared `ExporterProtocol` in `protocols.py` and dispatch in `_backend.py`.\n- **The TFLite runtime failure flagged in the original issue is resolved.** Fixed by #1041 (onnx2tf 2.4) and #1054 (ONNX-level GridSample rewrite), both released in **1.7.0**; numerical parity with `predict()` closed by #1131 in **1.8.2**.\n- TensorRT is no longer a `--tensorrt` CLI post-step shelling out to `trtexec` — it builds through the TensorRT Python API via `polygraphy` (#853, **1.9.0**).\n- TorchScript remains in-process only via `optimize_for_inference(compile=True)` → `torch.jit.trace`. Not a saveable export format. Unchanged.\n- Optional dependency groups in `pyproject.toml`: `[onnx]`, `[tensorrt]`, `[tensorrt-bench]`, `[tflite]`, `[executorch]`, `[coreml]`.\n- Unreleased on `develop`: `output_name` + unified artifact naming across all backends (#1250).\n\n## Overview\n\n| Format | Status on `develop` (1.9.0) | Added by | Released in | Est. industry share | RF-DETR architectural risk |\n| --- | --- | --- | --- | --- | --- |\n| **ONNX** | ✅ First-class | pre-existing | — | ~30% (server) | Low — `F.grid_sample` exports cleanly |\n| **TensorRT** | ✅ First-class `format=\"tensorrt\"` | #853, #1231 | 1.9.0 | ~30% (server) | Low — no custom plugins |\n| **TFLite / LiteRT** | ✅ Functional (FP32/FP16/INT8) | #920, #1041, #1054, #1131 | 1.7.0 / 1.8.2 | ~30% (edge) | Medium — GridSample rewrite carries the path |\n| **ExecuTorch** (umbrella) | ✅ First-class `format=\"executorch\"` | #1142 | 1.9.0 | ~3–5% (edge, growing) | Medium — fixed batch only |\n| ├ `backend=\"xnnpack\"` | ✅ Portable CPU, fp32 | #1142 | 1.9.0 | — (spans all edge CPU) | Low |\n| ├ `backend=\"coreml\"` | ✅ ANE/",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Worth noting that the quantization stuff can be tricky with a lot of these! :) but super cool initiative "
+      },
+      {
+        "author": "user-3",
+        "body": "Hi, I would be interested in owning the CoreML pipeline -- I work off a M2 setup which should allow me to run some benchmarks, even if slower. "
+      },
+      {
+        "author": "user-4",
+        "body": "> Hi, I would be interested in owning the CoreML pipeline -- I work off a M2 setup which should allow me to run some benchmarks, even if slower.\n\nHi @user-3, I've been working on an ExecuTorch part, which itself accepts CoreML as a backend, and I have already tested a few workarounds to support all quantizations for all rfdetr tasks. That includes reworking forward pass to keep tensors rank-5 or lower during export, as well as additional converter-side magic to make kp, seg, and int8 work properly (don't yet know if that might be relevant). I still need some checks to do, but expect to push the final changes tomorrow. You can check it here: https://github.com/roboflow/rf-detr/pull/1142"
+      },
+      {
+        "author": "user-3",
+        "body": "@maintainer-1 — before I pick up CoreML: #1142 seems to cover a lot via ExecuTorch + CoreML backend, but there still could be some utility from providing a `format=\"coreml\"` (native `.mlpackage`, no ExecuTorch/C++ deps) for users who want standard Core ML / Xcode integration. Still a priority, or is Apple covered after #1142 is merged?"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Let's also add a page in the docs comparing latency on sample devices and general recommendations on which export format to use for what platform..."
+      },
+      {
+        "author": "user-5",
+        "body": "Hi @maintainer-1 - I'd like to pick up the TensorRT INT8 item (Remaining work `item #1` / P1 `item #6`).\n\nStarting with an investigation pass rather than a PR: I'll measure AP and latency on\nCOCO val2017 for fp16 vs INT8 on Blackwell/sm_120 (RTX 5070), sweeping\n\n- **quantization scope** — full model, backbone-only, backbone+encoder, and MHA\n  excluded, to find where the accuracy actually breaks;\n- **Q/DQ op types** — MatMul/Conv/Gemm only vs everything, since Q/DQ on\n  LayerNorm/Add/Mul tends to break Myelin's fused kernels;\n- **calibration** — entropy vs max vs percentile, and calibration images drawn from\n  train2017 (not val2017, to keep the eval clean);\n- **model size** — Nano and Small, at the default resolution and one larger one,\n  batch 1 and 8, to check whether the AP/latency tradeoff holds as the model grows.\n\nTRT 10+/11 dropped `BuilderFlag.INT8` and the calibrator API, so this is the explicit\nQ/DQ route only. I'll also record the minimum TensorRT version that works on sm_12"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "> I'd like to pick up the TensorRT INT8 item\n\n@user-5 Sure, go ahead! 🚀 "
+      },
+      {
+        "author": "user-5",
+        "body": "> > I'd like to pick up the TensorRT INT8 item\n> \n> [@user-5](https://github.com/user-5) Sure, go ahead! 🚀\n\nHi @maintainer-1,\n\n**TL;DR**: INT8 works today, no plugins and no new dependencies. But, **I don't recommend shipping it as a\nlatency feature:** the **best config is still 13% slower than FP16**.\n\n## Setup\n\nRTX 5070 (sm_120, 12 GB), TensorRT 11.3.0.99, onnxruntime-gpu 1.30.0, `develop` @ `32085128`. TensorRT 11\nhas no `BuilderFlag.INT8` and no calibrator API, so explicit Q/DQ only. Engines build through\n`TensorRTExporter.build_engine()`, not `trtexec`. Calibration on 128 train2017 images, AP on all 5000\nval2017 images.\n\nEvery row below comes from one shared pass: each batch is decoded once and fed to all eight engines in\nturn, so AP and latency are measured under identical conditions rather than in separate runs. Latency is\n5 repeats per batch, wall time around `TRTInference.__call__` with `torch.cuda.synchronize()` on both\nsides, reported per image. The same FP16 engine measured"
+      },
+      {
+        "author": "user-6",
+        "body": "Following the export-format tracker: #1521 adds `format=\"coreai\"`, an Apple Core AI `.aimodel` for iOS, iPadOS and macOS 27, through `torch.export` and `coreai-torch`, with detection, segmentation and keypoint parity tests. They also run on GitHub's macOS 27 `xcode-27` runner, where only the CPU lane is available to Core AI. On an M5 Pro its float32 latency matches the native CoreML export (Nano 7.4 ms vs 7.7 ms on the GPU) and every eager detection is reproduced.\n\nThree data points from the same measurements that are relevant to the CoreML row here:\n\n- The `e2e_coreml` and `test_coreml_ane.py` suites pass on the macOS 27.0 release (26A428) with coremltools 9.0 and torch 2.14.0 (22 passed), so the #1487 fix holds there.\n- On the M5 Pro the default `ComputeUnit.ALL` puts a float16 `.mlpackage` on the GPU, not the Neural Engine: Nano 3.4 ms under `ALL` against 6.8 ms under `CPU_AND_NE`, and the GPU keeps 39/39 detections on five public images where `CPU_AND_NE` keeps 37/39 (min IoU 0.67)"
+      },
+      {
+        "author": "user-5",
+        "body": "> > > I'd like to pick up the TensorRT INT8 item\n> > \n> > \n> > [@user-5](https://github.com/user-5) Sure, go ahead! 🚀\n> \n> Hi [@maintainer-1](https://github.com/maintainer-1),\n> \n> **TL;DR**: INT8 works today, no plugins and no new dependencies. But, **I don't recommend shipping it as a latency feature:** the **best config is still 13% slower than FP16**.\n> \n> ## Setup\n> RTX 5070 (sm_120, 12 GB), TensorRT 11.3.0.99, onnxruntime-gpu 1.30.0, `develop` @ `32085128`. TensorRT 11 has no `BuilderFlag.INT8` and no calibrator API, so explicit Q/DQ only. Engines build through `TensorRTExporter.build_engine()`, not `trtexec`. Calibration on 128 train2017 images, AP on all 5000 val2017 images.\n> \n> Every row below comes from one shared pass: each batch is decoded once and fed to all eight engines in turn, so AP and latency are measured under identical conditions rather than in separate runs. Latency is 5 repeats per batch, wall time around `TRTInference.__call__` with `torch.cuda.synchronize()` o"
+      }
+    ]
+  },
+  "1555": {
+    "number": 1555,
+    "title": "Explore temporal feature caching for faster video inference",
+    "state": "open",
+    "body": "### Search before asking\n\n- [ ] Confirm that no existing issue covers this request before submitting.\n\n*This check remains unconfirmed in the draft.*\n\n### Description\n\nCould we explore an optional video-inference mode that **reuses backbone calculations between consecutive frames**, updating regions that have changed rather than recomputing everything?\n\nThe [current forward path](https://github.com/roboflow/rf-detr/blob/develop/src/rfdetr/models/lwdetr.py) runs the image through the backbone and then the decoder. The proposed exploration would introduce reuse across frames, primarily inside the backbone, while keeping the decoder unchanged initially.\n\nThis is a feasibility request, not a proposal for a drop-in LLM-style KV cache. The question is whether **temporal feature reuse—including, potentially, attention keys and values—can reduce actual inference latency with an acceptable accuracy trade-off**.\n\n### Use case\n\nReal-time detection on continuous video streams, particularly fixed-camera or low-motion scenes where much of the image changes little between frames.\n\nThe goal would be to produce detections on every frame with less computation, rather than simply skipping frames. A useful evaluation should also cover camera movement and newly appearing objects, not just easy, mostly static scenes.\n\n### Additional\n\n#### Possible scope\n\n| Stage | What to explore, in plain English | Initial role |\n|---|---|---|\n| **Backbone: attention keys and values** | Recalculate these intermediate values only for regions selected for an update. | A narrow comparison experiment. |\n| **Backbone: broader intermediate features** | Reuse additional feature-processing results for regions with little change, rather than caching only keys and values. | Main direction to investigate. |\n| **Decoder and prediction heads** | Run normally on every frame using the updated and cached backbone output. | Keep unchanged initially. |\n\nCaching only keys and values would still leave the attention calculation and feed-forward processing to run unless those operations are also modified. This is why broader feature reuse seems worth comparing against KV-only caching.\n\nRelevant code: [DINOv2 backbone with windowed attention](https://github.com/roboflow/rf-detr/blob/develop/src/rfdetr/models/backbone/dinov2_with_windowed_attn.py).\n\n#### Important limitation\n\nThe DINOv2 backbone implementation includes windowed and full-image attention. Consequently, an unchanged patch of pixels can still acquire different internal features when something elsewhere changes.\n\n**A pixel-difference mask alone would not guarantee valid feature reuse.** The prototype should therefore treat reuse as potentially approximate and evaluate how errors accumulate.\n\n#### Suggested exploration\n\n1. **Profile the baseline.** Identify which backbone operations dominate runtime and where selective updates could actually avoid work. The update decision should happen before the expensive calculation—not after running the full ",
+    "comments": [
+      {
+        "author": "user-5",
+        "body": "@maintainer-1 **TL;DR:** single-stream gains are at most 1.07x for the whole model (Small, estimated, on GPU time under CUDA graphs; the encoder step is slower through a plain `execute_async_v3` call); with batched streams a C++ TensorRT plugin that updates the state in place and fuses the gate ops saves real time (Small, batch 8: estimated whole model 1.22x faster at K=25% and 2.07x at K=12.5%; K = share of tokens recomputed per block), at a fidelity cost that a box-mask policy reduces. Throwaway prototype; details, limits and where each of your questions is answered below.\n\n### What I ran\n\n- `develop @ d9319e22` (the box-mask, window-skip and plugin experiments ran at `5f441831`; model code identical), RF-DETR Nano and Small, fp16. RTX 5070 (12 GB, sm_120) under WSL2, torch 2.14.0+cu130, TensorRT 10.16.1.11, transformers 5.17.0, supervision 0.30.4.\n- The [10 supervision video assets](https://github.com/roboflow/supervision/blob/develop/src/supervision/assets/list.py) (`basketball-1`,"
+      }
+    ]
+  },
+  "170": {
+    "number": 170,
+    "title": "Slow inference time",
+    "state": "open",
+    "body": "Hi, I am testing the latency of the model RFDETRBase at different platform. (Quadro GV100 and A800), the latency of inference time are 0.25s and 0.14s. which is much slower then the reported speed. Is that normal speed of rf-detr?\n\nthe timer is calcuated as follows:\n\n```\nimage = Image.open(\"/vepfs-sf/wtp2/R-Human/images_resized/video3_frame_00068_204.00s.jpg\")\ntime1 = time.time()\nfor _ in range(10):\n    detections = model.predict(image, threshold=0.5)\nprint(\"Inference time:\", (time.time() - time1) / 10)\n```\n",
+    "comments": [
+      {
+        "author": "user-9",
+        "body": "Good evening @maintainer-3,\n\nThat sounds like a solid plan!\nI'll be working on that documentation and will create a PR once I believe it is good enough.\nIs there a \"deadline\" indication? (E.g., in one to two weeks)\n"
+      },
+      {
+        "author": "maintainer-3",
+        "body": "@user-9 the sooner the better. It can be really rough. I can help you out with structuring it properly. I mostly care about the steps to follow. "
+      },
+      {
+        "author": "user-9",
+        "body": "Good afternoon @maintainer-3,\n\nI have quite a busy weekend. \nSo, I'll most likely start working on it Sunday evening/Monday morning.\nI expect the rough draft to be done Monday morning."
+      },
+      {
+        "author": "user-10",
+        "body": "Hi @user-9 , how has the real-time performance (in FPS) been for the base and large models on your Jetson so far?\n\n"
+      },
+      {
+        "author": "maintainer-3",
+        "body": "@user-9 that sounds perfect! Thank you! 🙏🏻  "
+      },
+      {
+        "author": "user-11",
+        "body": "Did anyone also have such a poor inference speed on ONNX? On my macbook m2 max I'm getting ~300ms using Base and testing test.jpg (5 inferences with some warmup). \n\nI'm using CoreML provider:\n`CoreMLExecutionProvider::GetCapability, number of partitions supported by CoreML: 90 number of nodes in the graph: 913 number of nodes supported by CoreML: 737`. \n\nIt's slower than on CPUExecutionProvider (~200ms). With pytorch MPS is ok (~80ms) but still like 8x slower than official yolov9-m. \n\n"
+      },
+      {
+        "author": "user-9",
+        "body": "Good afternoon @user-45,\n\n> [!IMPORTANT]\n> The custom models mentioned below have been trained on an `resolution` of 1120! (e.g., `model = RFDETRBase(resolution=1120)`). This significantly \n> reduces the FPS. (Might be a factor 3-4)\n\nOn the Jetson Orin Nano (8 GB developer kit) TensorRT optimized:\nFPS with RF-DETR-B is 5.5 FPS and with RF-DETR-L it is 2.4 FPS."
+      },
+      {
+        "author": "user-9",
+        "body": "Good afternoon @user-11,\n\nDid have the issue of running out of VRAM when using the `CUDAExecutionProvider` on a Jetson Orin Nano 8GB device.\n(RF-DETR-B and RF-DETR-L with resolution=1120).\n\nDid you use the `CUDAExecutionProvider` on your m2 max?"
+      },
+      {
+        "author": "user-12",
+        "body": "@user-11 we've done no work to optimize the ONNX graph for apple silicon and we've also noticed slower than expected times. Addressing that is on our list!"
+      },
+      {
+        "author": "user-13",
+        "body": "check my onnx implementation in both python and cpp, it has achieved 100 fps with nano model fp16 on jetson orin nano using tensorrt provider, and 40 fps using cuda provider, it has exporting scripts and benchmarking scripts\n\nhttps://github.com/user-13/RF-DETR-ONNX"
+      }
+    ]
+  },
+  "434": {
+    "number": 434,
+    "title": "Finetuned RFDETR-small model outputs detection with high IOU",
+    "state": "open",
+    "body": "Hi! We have finetuned a RFDETR-small model for object detection of a single custom class. In most cases it works very well, but there's an environment in which the model frequently outputs two detections for a single ground truth object in the image that have a very high IOU (>0.9). Our use case involves object counting so this is a breaking issue.\n\nSpecifically, We have trained a RFDETR-small model (with `rfdetr=1.3.0`) exported the model to onnx (opset 16) and are doing inference via a [Triton inference server (v2.49)](https://github.com/triton-inference-server/server/releases/tag/v2.49.0) with `onnxruntime=1.18`.\n\nThe obvious answer is to apply NMS postprocessing to resolve this, but since not requiring NMS (and the inference speed gain is brings) is one of the selling points of using RFDETR over YOLO I was wondering to what degree this is expected behavior or not! The expected number of detections per image for our use case is limited (<20) so the the NMS overhead would be minimal as well.",
+    "comments": [
+      {
+        "author": "user-12",
+        "body": "That can happen if it doesn't finish training. How long are you training it for?\n\nAlso, I highly recommend using opset 17 or later so you get explicit representation of the layernorm. This is important for fp16 but may just be more stable in general. "
+      },
+      {
+        "author": "user-14",
+        "body": "Aha interesting. We indeed only trained it for 20 epochs because the dataset is not that challenging and we're already having a near-perfect score after 20 epochs. I'll try training for longer and see if the behavior still occurs. \n\nCan I assume that once the loss curves converge we are done training and this should no longer happen? \n\n(Opset 16 was used because it has to run on an older device as well where we currently cannot upgrade the triton server to a more recent version)"
+      },
+      {
+        "author": "user-12",
+        "body": "Loss will be minimized when this behavior doesn't occur, so ideally once it converges it is in that minimal state such that it won't. But hard to say a priori of course"
+      },
+      {
+        "author": "user-12",
+        "body": "If the issue continues, I'd recommend trying the medium model at the small resolution. Impact to runtime will be slight, and it may have an easier time with this case for some interesting theoretical reasons. If you try that experiment please let me know the result!!"
+      },
+      {
+        "author": "user-14",
+        "body": "We have trained the small model for longer now (85 epochs until loss converged and early stopping kicked in). We have also bumped to opset 17 where we possible. Over the past two week we have definitely seen a decrease in the occurrence of this behavior, but it sporadically still happens. Just to be safe we will be implementing NMS as an additional postprocessing step.\n\nWe have yet to try the medium model at 512x512 resolution. I'm curious what the impact is of the training the models at their non-native, documented resolution in terms of accuracy and performance? Would you expect finetuning the medium model at resolutions different from 576x576 to be on par with finetuning with a preprocessing step that resizes to the native resolution?"
+      },
+      {
+        "author": "user-12",
+        "body": "These models were all discovered with NAS and finetuned (see the newly released paper for details) so other resolutions were very much within domain until the final stage. I don't have specific numbers but it's probably safe, just not Pareto optimal on COCO. But we show that running NAS directly on other datasets is better than transferring optimal COCO architectures so this may be one of those cases. \n\nAre the boxes exactly the same but with different labels? Or do they just have very high overlap but not exactly the same "
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hey — checking in on this one. Is this still an issue on the latest version (v1.6.1)? If so, let us know and we'll keep investigating. If not, we'll close this out to keep the tracker tidy. Feel free to reopen anytime if it resurfaces!"
+      },
+      {
+        "author": "user-14",
+        "body": "Thanks for the follow-up @maintainer-1. I'll bump the version, retrain and try again. Have the model weights/training regime been updated since `v1.3.0`?"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Good question, and I don't since I joined with 1.4 and it implemented md5 to track it...\n@maintainer-2 would know better 🦝 "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "There have been some changes but all in the name of improving efficiency while keeping behavior the same"
+      }
+    ]
+  },
+  "905": {
+    "number": 905,
+    "title": "ONNX inference support in predict() and better export naming",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR [issues](https://github.com/roboflow/rf-detr/issues) and found no similar feature requests.\n\n\n### Description\n\nTwo improvements to the ONNX workflow:\n\n**1. Export naming** — Currently `model.export()` always saves as `inference_model.onnx` regardless of variant. Exporting RFDETRNano and RFDETRMedium to the same directory overwrites the file. The filename should include the variant name (e.g. `rfdetr-nano.onnx`, `rfdetr-medium.onnx`).\n\n**2. ONNX predict** — After exporting a model to ONNX, there's no built-in way to run inference with it. Users have to handle preprocessing, ONNX Runtime session management, and postprocessing on their own. `predict()` should work with ONNX files directly, returning the same `sv.Detections` output as the PyTorch path.\n\nProposed workflow:\n```python\n# Export — filename includes variant\nmodel = RFDETRMedium()\nmodel.export(output_dir=\"output\")  # → output/rfdetr-medium.onnx\n\n# Inference with ONNX — same API as PyTorch\nmodel = RFDETRMedium(weights=\"output/rfdetr-medium.onnx\")\ndetections = model.predict(\"image.jpg\", threshold=0.5)\n```\n\n### Use case\n\nAnyone deploying RF-DETR with ONNX Runtime currently has to write their own inference code with duplicate preprocessing and postprocessing logic. This makes it harder to move from training to deployment.\n\nWith built-in ONNX predict:\n- Same `predict()` API works for both PyTorch and ONNX models\n- Returns `sv.Detections` regardless of backend\n- Enables lighter deployment without the full PyTorch dependency\n- Lays the groundwork for future backend support (TensorRT, OpenVINO)\n\n### Additional\n\n_No response_\n\n### Are you willing to submit a PR?\n\n- [x] Yes I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "user-16",
+        "body": "Yes, ONNX inference support in `predict()` would be helpful. An example C++ code snippet for edge deployment would also be useful.\n\nPRs #133 and #76 did some work on this topic, but they have not been merged yet. What I found is that a code snippet for using ONNX Runtime was added to the [documentation](https://rfdetr.roboflow.com/develop/learn/export/#onnx-runtime), and there is also this [GitHub repo](https://github.com/PierreMarieCurie/rf-detr-onnx) with ONNX inference code in Python."
+      }
+    ]
+  },
+  "955": {
+    "number": 955,
+    "title": "Latency on Jetson Thor (fp16/fp8/int8)",
+    "state": "open",
+    "body": "The latency results in the paper were published based on a T4 GPU running an FP16 TensorRT engine. I get the same (slightly better) results on my local machine, which has a slightly better GPU than a T4, so everything is as expected.\nHowever, I have a question regarding the int8/fp8 latency. I experimented with quantization to int8 and fp8 (ptq with https://nvidia.github.io/Model-Optimizer/guides/1_quantization.html ), and in both cases, the latency results did not move much. For reference, I am using XLarge seg model with resolution 624. I get maybe a 5-10% improvement in latency from fp16 to both fp8/int8. Is that expected for this DETR-based architecture?\n\nI also shipped the model to NVIDIA Jetson Thor, and I get around 22 ms latency measure for the fp16 trt version of xlarge seg model, and about 20ms for both fp8/int8 versions. Again, not the improvement I was expecting.\n\nI benchmarked the latency the same way as the authors proposed in https://github.com/roboflow/single_artifact_benchmarking/tree/main.\n\nHas anybody had similar experiences? It seems that the numbers advertised by NVIDIA (fp8 and lower) are based on theoretical results that are not often observed in empirical runs..",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "What TRT version are you running on the Thor?"
+      },
+      {
+        "author": "user-17",
+        "body": "I’m running version 10.15.1.29 locally and 10.13.3.9 on Thor. Did you test the model on Thor maybe?\n\nI should note that the model forward pass takes around 19 ms (22 ms I talked about earlier is the e2e latency including postprocessing) for the FP16 XLarge seg version on Thor.\n\nFor the fp8 version, I profiled the layers while running TRT inference. It seems that most parts of the architecture get a slight speedup, except for the backbone ViT component - which is actually slower in FP8 than in FP16. I think this is due to the softmax in the attention, which cannot reliably use lower precision. However, I expected better performance overall from transformer-based architectures on these new nvidia devices.\n\n"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Yeah we did test on Thor and I believe I saw better numbers than that. If you wouldn't mind would you try the nano detector with your pipeline?"
+      },
+      {
+        "author": "user-17",
+        "body": "I tried running Nano (segmentation) at a resolution of 312x312 now. I’m getting around 11 ms TRT inference latency (forward pass) in fp16. One difference is that I baked the preprocessing (imagenet normalization and resizing to 312) directly into the ONNX graph before building the TRT engine, so this is also included in the measurement. However, it is not the bottleneck."
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Interesting. Iirc I got <2ms with the nano detector just measuring the raw forward in TRT. Would expect seg to be closer to that range. "
+      },
+      {
+        "author": "user-17",
+        "body": "I think I’ve found the reason for perf discrepancy. I was evaluating in normal mode on Thor, but after switching to max mode, I’m now seeing around 3ms for nano segmentor. Can you confirm that you also used max mode during your evals? Also, with what TRT version did you eval on Thor?"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Oh yes that is probably the difference :) IIRC we used max mode, similar to how we max the clocks for benchmarking in the AAB repo. I don't remember exact TRT but importantly it was >10.3 "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "3ms sounds pretty reasonable to me tbh, esp if baking in the resample "
+      },
+      {
+        "author": "user-17",
+        "body": "Ok thanks for the input. Also, after upgrading TRT from 10.13 to 10.14 (10.14. release notes state MHA performance optimization), the latency was further reduced by 0.5ms on nano segmentor."
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Yeah one fun thing about using transformer based architectures here is that, while CNNs have been deeply optimized already, attention on GPU and other accelerators is still improving, so over time RF-DETR just gets faster for free while other models are less likely to change. \n\nIt's nice that we directly benefit from improvements in LLM land! :) "
+      }
+    ]
+  },
+  "173": {
+    "number": 173,
+    "title": "Cannot Export to Tesnorflow or Tflite to run on mobile",
+    "state": "open",
+    "body": "ONNX-TF only supports up to opset 13 for some operators (like Where), but\nYour model uses operators (like aten::scaled_dot_product_attention) that are only supported in ONNX opset 14 or higher.\nSummary of your situation:\n\nIf you export with opset 13: PyTorch cannot export your model because it uses newer operators.\nIf you export with opset 16: ONNX-TF cannot convert your model because it does not support some ops at that version.",
+    "comments": [
+      {
+        "author": "user-20",
+        "body": "seems to work for me, will test on device and update.\nthanks !"
+      },
+      {
+        "author": "user-19",
+        "body": "> seems to work for me, will test on device and update. thanks !\n\nhow is the performance of the tflite model in mobile device?"
+      },
+      {
+        "author": "user-18",
+        "body": "Awesome thank you!"
+      },
+      {
+        "author": "user-21",
+        "body": "@user-20 do you have any update for us, how it performs on Android with tflite format? Would be very interesting. \nThx"
+      },
+      {
+        "author": "user-20",
+        "body": "Guys, im also very curious, but the latest tests shows that we are lost accuracy during double converting from pytorch to tflite via onnx especially for quantized variant. Tested on qnx and performance is not much bigger then yolov5 with fp16 in compare.\nNot tested on Android, but here a plenty of work to do before real benchmarking which i have no time for now."
+      },
+      {
+        "author": "user-22",
+        "body": "Hi guys, Im also very interested in this, do anyone have an update on this?"
+      },
+      {
+        "author": "user-23",
+        "body": "Also curious on updates if anyone has experimented with Android/iOS, how is the performance on mobile devices? "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Someone on our team got nano to hit 120 fps on iPhone 16"
+      },
+      {
+        "author": "user-23",
+        "body": "@maintainer-2 Could you share some more details? Was it exported to ONNX or CoreML format? I suppose it was utilizing iPhone 16 GPU or NPU, because it's hard to believe those numbers are on CPU alone? \n\nI'm curious to see how it generalizes across different modern and older mobile phones, as (specifically in the Android world of mobile devices) there are thousands of varying hardware combinations out there, which will most likely still cause some devices to fallback to CPU inference, if the device does not have fancy modern NPUs/GPUs, which would support the exported Opset for example...\n\nAt least from what I tested on Samsung Galaxy A14, and Oneplus Nord 4 devices, the exported Nano variant ONNX took around 700ms on the CPU alone. Neither of the devices were able to run the ONNX model on GPU. (Have to say that I did not spend much time trying to get GPU inference to work)\n\n(The 700ms approximate time was measured after a single warm-up/initialization (~2.5 second) run excluded, and th"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "@user-46 wanna chime in? Not sure if you're actively checking GitHub nowadays \n\nIirc he did a good amount of work and it was CoreML"
+      }
+    ]
+  },
+  "1414": {
+    "number": 1414,
+    "title": "Issue with drawing overlapping bounding boxes during the prediction phase after training a multiclass detection using RF-DETR",
+    "state": "open",
+    "body": "I trained an RF-DETR model using my own dataset. When I run predictions using the model I obtained after training, I get multiple overlapping bounding boxes (sometimes overlapping for the same class, sometimes for different classes). I know that RF-DETR is an NMS-free model, but how can I resolve this issue?\n\n@maintainer-1 \n\n<img width=\"114\" height=\"121\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/63e60435-29fb-4bf9-b963-499dcc9d14dc\" />\n\n<img width=\"133\" height=\"121\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/ce0f6071-0f32-4137-97db-2f9e52b22bdd\" />",
+    "comments": [
+      {
+        "author": "user-25",
+        "body": "Hi @user-24 :\n\nThis looks like duplicate model predictions rather than a problem in the drawing code. You are correct that RF-DETR does not apply NMS inside `predict()`: post-processing ranks the scores for all query/class pairs, keeps the top `num_select`, and then applies the confidence threshold. So one query can appear with two labels, while two different queries can still predict almost the same box. The one-to-one matching trains the model to avoid this, but it is learned behaviour rather than a hard inference constraint.\n\nTwo things are worth checking first. In #187, training from 10 to 20 epochs reduced the duplicates. In #434, the reporter went from 20 to 85 epochs and also changed the ONNX opset where possible; the duplicates became less frequent but still happened. This means loss convergence alone is not enough to confirm they are gone... it would be useful to measure on validation how often pairs above your confidence threshold have IoU > 0.9.\n\nAlso, the [FAQ](https://rfde"
+      },
+      {
+        "author": "user-26",
+        "body": "Have you tried adjusting the confidence threshold for the bounding boxes? That might help reduce the overlaps.\n"
+      },
+      {
+        "author": "user-24",
+        "body": "Yes, I tried it. Nothing changed."
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Usually training longer helps the model converge such that these kinds of things stop happening"
+      },
+      {
+        "author": "user-24",
+        "body": "> Usually training longer helps the model converge such that these kinds of things stop happening\n\nWhat exactly do you mean by long-term education?"
+      }
+    ]
+  },
+  "1599": {
+    "number": 1599,
+    "title": "Unexpected confidence sensitivity to small image translations in RF-DETR Segmentation",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR issues and found no similar bug report.\n\n\n### Bug\n\nHi,\n\nI am observing a strong sensitivity of **RF-DETR Segmentation confidence scores to very small translations of the input image**.\n\nMy original images are high resolution, so I need to split them into **512 × 512 tiles with 0.25 overlap** before training and inference.\n\nThe main issue is that the predicted **masks and bounding boxes remain correct**, while the classification confidence can change dramatically after shifting the same image by only a few pixels.\n\n---\n\n\n## Problem\n\nFor the same 512 × 512 tile, I apply small integer translations:\n\n```text\ndx, dy ∈ [-24, +24] pixels\n```\n\nThe translation is applied before RF-DETR preprocessing.\n\nImportant details:\n\n- integer pixel translations\n- no interpolation during the shift\n- reflection padding\n- objects near image borders are excluded\n- the same object is matched using IoU\n- inference threshold during the sweep is `0.001`\n\nA typical result can look like:\n\n```text\ndx =  0 px  -> confidence ≈ 0.91\ndx =  1 px  -> confidence ≈ 0.90\ndx =  2 px  -> confidence ≈ 0.86\ndx =  3 px  -> confidence ≈ 0.79\n...\ndx = 11 px  -> confidence ≈ 0.49\ndx = 12 px  -> confidence ≈ 0.88\ndx = 13 px  -> confidence ≈ 0.86\n...\ndx = 24 px  -> confidence ≈ 0.89\n```\n\nIn more extreme examples I have seen confidence change approximately from:\n\n```text\n0.80 -> 0.003\n```\n\nafter only a small translation.\n\n---\n\n## Localization remains stable\n\nThe surprising part is that the localization usually remains correct.\n\nFor the same shifted object I can still obtain approximately:\n\n```text\nbbox IoU ≈ 0.90 - 0.95\nmask IoU ≈ 0.90 - 0.95\n```\n\nwhile the classification confidence changes substantially.\n\nConceptually:\n\n```text\nOriginal:\ncorrect bbox + correct mask + confidence 0.90\n\nShifted a few pixels:\ncorrect bbox + correct mask + confidence 0.05\n```\n\nSo this looks mainly like a **classification-confidence instability**, rather than a localization failure.\n\n---\n\n## Apparent periodic behaviour\n\nThe confidence changes also show an approximately **8 pixel periodicity** in the original 512 × 512 tile coordinates.\n\nMy configuration is:\n\n```text\nTile size:             512 × 512\nRF-DETR resolution:    768 × 768\nResize factor:         1.5\nPatch size:            12 model pixels\n```\n\nTherefore:\n\n```text\n12 / 1.5 = 8 input pixels\n```\n\nThis appears to match the observed period quite closely.\n\nBecause of this, I suspect the behaviour may be related to the patch/token grid, positional encoding, or the interaction between resizing and patch alignment.\n\nI am not claiming this is definitely the root cause, but the correlation seems significant.\n\n---\n\n## Evaluation methodology\n\nFor each selected validation object:\n\n1. Start from a baseline detection with confidence >= 0.80.\n2. Require enough distance from the image borders.\n3. Translate the image using integer `(dx, dy)`.\n4. Run RF-DETR again.\n5. Shift the expected bounding box by the same `(dx, dy)`.",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Pretty weird. Can you show the image with and without the shift?"
+      },
+      {
+        "author": "user-28",
+        "body": "I could reproduce this with the pretrained COCO checkpoints (rf-detr `develop` @ `eca736a`, CPU and MPS). I took 10 COCO val2017 images as 512×512 tiles, applied integer shifts from -32 to +32 px, ran `predict(threshold=0.001)`, and matched objects across shifts by class and box IoU after undoing the shift.\n\nThe ~8 px period you saw is the backbone's patch grid. The period follows patch size × (input size / model resolution) in every configuration I tried:\n\n| Model, tile → resolution | Predicted period (px) | Measured, spectral peak (px) |\n|---|---|---|\n| RFDETRSeg2XLarge, 512 → 768 | 8.00 | 7.94 |\n| RFDETRSeg2XLarge, 512 → 576 (`shape`) | 10.67 | 10.67 |\n| RFDETRSeg2XLarge, 768 → 768 (no resize) | 12.00 | 12.05 |\n| RFDETRLarge (detection), 512 → 704 | 11.64 | 11.51 |\n| RFDETRLarge, 704 → 704 | 16.00 | 16.00 |\n\n- It isn't segmentation-specific. With RFDETRLarge, one person goes 0.71 → 0.27 → 0.69 over a 16 px shift while box IoU stays at 0.94 or above, the same \"correct box, collapsing"
+      }
+    ]
+  },
+  "780": {
+    "number": 780,
+    "title": "RF-DETR Seg + SAHI: still missing cells in dense tiles, and inference is too slow (1900–2200px) — tuning & speedup advice?",
+    "state": "open",
+    "body": "### Summary\nI'm using **RF-DETR instance segmentation** on relatively large images (e.g. **1900×1400**, **2000×2000**, **2200×2200**) with very dense cells(500~1500 per image).\n- **RF-DETR inference is fast**, but due to the **segmentation query/prediction cap** it misses many instances in dense scenes.\n- **SAHI sliced inference** improves recall, but:\n  1) **inference becomes too slow** (many tile forward passes + merge/postprocess), and  \n  2) **even with SAHI I still miss some cells** in very dense regions (I suspect some tiles still contain too many instances and hit the per-tile cap / filtering, or merge/postprocess suppresses predictions).\n\nMy goal is to keep RF-DETR and get SAHI-like recall **with much higher throughput**, and also understand **how to choose SAHI slicing parameters** so dense tiles don't miss objects.\n\n---\n\n### Input images\n- Typical image sizes:\n  - 1900×1400\n  - 2000×2000\n  - 2200×2200\n- Dense instances per image: <fill: e.g. 500 ~ 1500+>\n- Objects: small cells (crowded / overlapping)\n\n---\n\n### Environment\n- CPU: Ryzen 9700 (target deployment also includes i7 11th-gen)\n- RAM: 64GB (target deployment also includes 16GB)\n- GPU: 5090 32GB (target deployment \"CPU-only\", or low GPU)\n- rfdetr model: **Nano** (recommendations welcome: M/L/XL/2XL)\n- Inference runtime: **ONNX Runtime in C#** (deployment),\n---\n\n### Current pipeline\n1) Resize to model resolution\n2) Run SAHI sliced inference\n   - slice size: **384×384**\n   - overlap ratio: **0.1 ~ 0.3**\n3) Merge tile predictions back to full image\n\n---\n\n### Timing (current bottleneck)\n- SAHI tiling: **~ 1 hour 22 min per 1000 images**\n  - (~4.92 sec/image average)\n\nI’d appreciate advice on what to measure to pinpoint the bottleneck:\n- model forward vs preprocessing vs merge/postprocess vs Python overhead, etc.\n\n---\n\n### Questions\n1) **SAHI slicing parameters for dense scenes (to avoid misses)**\n   - How should I choose **slice size / overlap** so that dense tiles do not still miss cells?\n   - Is it expected that if a **single tile** contains more instances than the seg cap, RF-DETR will still miss some even under SAHI?\n   - Any rule-of-thumb for cell-like crowded small objects?\n\n2) **Best SAHI merge/postprocess settings for crowded small objects**\n   - For dense scenes, what postprocess settings are recommended (NMS vs NMM/GREEDYNMM, IOU vs IOS, thresholds) to avoid suppressing true positives?\n\n3) **Throughput optimization**\n   - What are the biggest wins to speed up RF-DETR+SAHI inference?\n     - batching tiles on GPU / batching in general\n     - reducing merge/postprocess cost\n     - choosing slice size to reduce tile count while keeping recall\n     - model-side optimizations (fp16, compile, etc.)\n\n4) **References / prior art**\n   - Are there examples/issues/repos where people successfully used **RF-DETR + SAHI** for dense instance segmentation (or similar crowded small-object setups)?\n   - If yes, could you point me to configs or recommended practices?\n\n---\n\n### Goal\nA practical ",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "The nano seg model has an upper bound of 100 objects. Check the configs https://github.com/roboflow/rf-detr/blob/develop/src/rfdetr/config.py and you will see different num queries for different models, a result of NAS search on COCO. If you want to maximize objects per run, you could substitute in the XL and run at a lower resolution than native to get latency goals. \n\nI'd also recommend deployment with TensorRT for speed. \n\nIf NMS in SAHI appears to be suppressing too much, it may be a result of doing NMS via box rather than mask. "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "ONNX in particular is very bad at running transformer based models in our experience "
+      },
+      {
+        "author": "user-30",
+        "body": "> ONNX in particular is very bad at running transformer based models in our experience\n\nif so could you please recommend an alternative format? I am usually using ONNX file to predict objects on C# based programs"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "We like TensorRT. ONNX does have a TensorRT backend, though we do find benefit using TRT directly. But I should've been more clear, their CUDA backend in particular is not well optimized for transformers. "
+      },
+      {
+        "author": "user-29",
+        "body": "> The nano seg model has an upper bound of 100 objects. Check the configs https://github.com/roboflow/rf-detr/blob/develop/src/rfdetr/config.py and you will see different num queries for different models, a result of NAS search on COCO. If you want to maximize objects per run, you could substitute in the XL and run at a lower resolution than native to get latency goals.\n> \n> I'd also recommend deployment with TensorRT for speed.\n> \n> If NMS in SAHI appears to be suppressing too much, it may be a result of doing NMS via box rather than mask.\n\nThanks for the advice.\nI’ve actually tried the M, L, and XL models before, and since they all struggled with the same issues, I figured it wasn't a model-specific problem. That’s why I switched to Nano—to cut down on processing time—though I only later realized it has a 100-object limit. I appreciate you recommending the XL model again.\n\nIt seems TensorRT is the way to go for speeding things up. Also, thanks for pointing out potential issues with t"
+      },
+      {
+        "author": "user-17",
+        "body": "@user-29 Did you implement TensorRT version with dynamic batching for SAHI? I want to implement dynamic batching to support batched patches that are part of the SAHI at the inference, but RF-DETR does not support dynamic batching export.\n\nDoing inference for each patch in a sequential manner slows things down extremely, trying to solve that problem. (I posted my issue in https://github.com/roboflow/rf-detr/issues/376 )"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "@user-29 got it. we have clients who use larger seg models with more than 100 objects per image and have success, so I think we have evidence that it CAN work in that case. but unf there's no rf100vl for seg so we can't study the behavior as thoroughly as we did with object detection. if it still is struggling after the model change I would love to try to better understand why\n\n@user-17 we haven't made a dynamic batching implementation, kind of hard for some technical reasons as we merge different axis into the batch dimension at certain points. it definitely can be refactored such that this isn't an issue but we haven't spent the time to do it yet. if you know how many slices your SAHI approach will produce ahead of time, why can't you generate a model with the relevant fixed batch size?"
+      },
+      {
+        "author": "user-29",
+        "body": "@user-17 \nNot yet. I do want to explore batching for SAHI, but for now I’m prioritizing other ways to reduce latency first.\n\nIn my case, the input image sizes are fairly constrained, so instead of going fully dynamic, I’ll probably use SAHI with a fixed number of slices. My current idea is to use that fixed slice count as the batch size in RF-DETR, and I’m checking which parts of RF-DETR need to be modified to support that.\n\nRight now I’m porting SAHI to C++, moving the pipeline to ONNX/OpenVINO, and using OpenVINO on Intel iGPU. The original SAHI Python + RF-DETR pipeline took about 70 seconds, but with SAHI C++ + quantized RF-DETR on OpenVINO I’ve reduced it to about 1.8 seconds.\n\nMy final goal is around 200ms~20ms"
+      },
+      {
+        "author": "user-17",
+        "body": "@maintainer-2  Thanks for the suggestion, I was looking at dynamic batching because of some other project requirements - but I did generate a model with a fixed batch size. I exported with batch_size=5 (4 SAHI slices + 1 resized full image, so that I have one forward pass for all elements), then built the TensorRT engine with a matching optimization profile.\n\nBatching works correctly, but the speedup is minimal. I wrote a diagnostic script that isolates raw TRT execute_async_v3 time (no python or postprocessing overhead) and measured that batching only gives ~13% latency improvement over running 5 sequential inferences, but scales near-linearly. \n\nSetup: RF-DETR XLarge segmentation, TensorRT FP16, 624 resolution, RTX 5070 (12 GB). The engine input shape is (5, 3, 1000, 630) with preprocessing (resize + normalize) baked into the ONNX graph.\n\n I expected larger improvements, is this expected for RF-DETR's architecture design?\n\n@user-29  Curious if you've seen similar scaling behavior on "
+      },
+      {
+        "author": "user-31",
+        "body": "@user-29 did you have a look at [this](https://github.com/hamdiboukamcha/RF-DETR-CPP-TENSORRT) repo? Seems optimised for fast inference and from the readme image demo with car on parking lots, it seems it can detect pretty small objects. I did not try it myself (yet) but looks promising."
+      }
+    ]
+  },
+  "906": {
+    "number": 906,
+    "title": "Accuracy Drop While Trying to Detect Moving Objects",
+    "state": "open",
+    "body": "Hi,\nI trained a RFDETRMedium object detection model to detect some objects, and one of them are some metal rods.\nMy image sizes are 1920x1080 and I have trained it for 100 epochs. I have trained with an without blur and motion blur augmentations from roboflow.\n\nThe results are good, but when someone moves the rod, the rod gets blurred a bit (Still somewhat clearly visible). At these points, the detections are not proper and is not getting detected properly.\nI have added images of rods that are moving also for training, but still no improvement. Could someone advise me on how to proceed for better detections of moving objects. Should I :\n\n1) Resize the whole image to model input resolution (576x576) before training\n2)Crop the images to 640x640 and give to training\nOr is there any other proper way?\n\nAlso, I was inferring with the following link:\nhttps://rfdetr.roboflow.com/latest/learn/run/detection/#run-on-video-webcam-or-rtsp-stream\n\nHere, the frame is converted to RGB using\nframe_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)\n\nIs this step necessary or can we directly give frame_bgr?\n",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "I'd recommend adjusting the exposure on your camera to reduce motion blur"
+      },
+      {
+        "author": "user-32",
+        "body": "I have tried that also. I tried increasing the shutter speed of the camera. Improvement is there, but still it  does not get detected properly\n"
+      },
+      {
+        "author": "user-33",
+        "body": "This could be a problem with the dinov2 feature extractor as opposed to the RFDETR model, as movement blur causes important features of an object to disappear. To confirm this you could do an experiment and visualise outputs of pure Dinov2 to see if the object is still somewhat identifiable during movement frames. "
+      },
+      {
+        "author": "user-32",
+        "body": "Hi. I tried this. So when I did this with size 224x224 input size for Dinov2, the object in motion was not that clear. But when i increase the input size, the object in motion is much more clearer"
+      },
+      {
+        "author": "user-33",
+        "body": "You could also try cropping your original image into 224x224 sections, then it wont do any downscaling on the input"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Honestly I think the best thing here is to increase the amount of training images that show blur or reduce the presence of blur at test time. If those are satisfied I don't really know of any reason it wouldn't work. \n\nHow many blur images do you have in the train set vs non blur?"
+      }
+    ]
+  },
+  "976": {
+    "number": 976,
+    "title": "Overlapping masks issue",
+    "state": "open",
+    "body": "Hello,\n\nI have been doing some test with the segmentation model and I am running into an issue.\nI have some cases where and object will be partially in front of another one and right now the model is giving me a mask for the whole item that is behind the forward one, causing two masks that have overlap.\nIs there anything I can do about this? When testing with some YOLO models I never saw this issue using the same dataset. ",
+    "comments": [
+      {
+        "author": "user-34",
+        "body": "@maintainer-2 The first model I trained was without the maxDets. This model shows the same behavior. "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Oh got it. Super interesting! First real 'failure' mode I remember seeing :) \n\nFor how many epochs did it train?"
+      },
+      {
+        "author": "user-34",
+        "body": "I think around 30 epochs, then the early stop kicked in. I also notice that if I run the model with the same input I sometimes get different results.  Sometimes it misses some boxes that the next run it sees without a problem and quite a high score."
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Oh that shouldn't happen. The results should always be the same between forward passes with the same weights. How are you running it?"
+      },
+      {
+        "author": "user-34",
+        "body": "I am running the model using Openvino. I think the issue was the fp16 rounding on the GPU. If I force fp32 it seems to be consistent."
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Oh interesting. Fp16 can cause issues if the runtime doesn't handle it correctly. Is the issue still present in fp32?"
+      },
+      {
+        "author": "user-34",
+        "body": "In fp16 it sometimes misses some objects even if I use the same picture a couple of times. One time it sees it a few times not. fp32 the results seem stable."
+      },
+      {
+        "author": "maintainer-2",
+        "body": "I'm wondering if the above masking issue that started this thread happens in fp32 or if it's only in fp16?"
+      },
+      {
+        "author": "user-34",
+        "body": "Also happens in fp32. Is always like this. It is never the correct way"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Oh I see, I misunderstood your earlier comment. \n\nWould you mind trying training in 1.4.1?"
+      }
+    ]
+  },
+  "650": {
+    "number": 650,
+    "title": "Looking for an optimal way to run RF-DETR (for performance comparision)",
+    "state": "open",
+    "body": "I am working on my master's thesis where I compare YOLO an RFDETR in terms of quality & performance. The quality claims from your paper indeed seem to happen in my case, however in case of performance it seems to be slower than yolov11-small (vs rfdetr-nano): \n\n<img width=\"2481\" height=\"432\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/a3bd0a29-7d34-4a84-a51e-19c728b0b3b1\" />\nIt might be due to how i calculate timings, but i want to compare E2E results as it seems to be more relevant way than just forward pass.\nIf you could tell me how to optimally run rfdetr for inference of batches of images it would be great, tried it myself with poorer performance than without batching (or maybe there is other way to speed it up? ) ",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Worth noting that RF-DETR models use different resolutions than YOLO models so pinning to a given resolution is not doctor comparable. For example, RF-DETR nano is meant to run at 384, so if you pin it to 640 alongside the YOLO you'll get significantly slower inference than expected. \n\nWe recommend using our open source benchmarking tool for measuring end to end performance of different models. It deals with a lot of inconsistencies in the literature, from measuring accuracy in fp32 and latency in fp16, to timing NMS, to dealing with GPU power throttling. For more details please refer to the RF-DETR paper. https://github.com/roboflow/single_artifact_benchmarking"
+      },
+      {
+        "author": "user-36",
+        "body": "Okay, that makes a lot more sense now. I didn't know that rfdetr is supposed to run in diffferent resolution. \nMy problem with using an external benchmark tool is that it is not useful in terms of the generic usage of a model.\nAs I could technically measure forward() passes for each of the models, but just forward passes do not tell us the actual fps achievable by the models. \nSo I have 3 more questions regarding this case:\n1. If I run inference on some vidoes i notice that rfdetr (on my end at least) seems to be slower than yolo, and I think that what matters is an E2E latency in the final code provided, right? \n2. It is interesting to me that in the case of yolo the resolution seems not make much of a difference (1600 being sligihtly slower than 640), which is surprising to me. Do you know whether it is due to a difference in architecture or some other reason? \n3. What is the recommended way of converting RF-Detr models to Onyx for performance improvement? "
+      },
+      {
+        "author": "maintainer-2",
+        "body": "The point of the benchmark repo is to measure latency from image received to useable result on the GPU, ignoring all the other infrastructure choices one might make. From that perspective it's agnostic of your other code but still end to end, which is I think the most fair way to measure a model :) \n\n1. Are you controlling for the resolution you're passing in for each frame?\n\n2. YOLO models do scale runtime significantly with resolution. It may be that the bottleneck in your code is not the model forward pass. \n\n3. There's a .export method in this repo. Worth noting that ONNX CUDA backend does not handle transformers well. We suggest using TRT"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Hey — checking in on this one. Is this still an issue on the latest version (v1.6.1)? If so, let us know and we'll keep investigating. If not, we'll close this out to keep the tracker tidy. Feel free to reopen anytime if it resurfaces!"
+      },
+      {
+        "author": "user-36",
+        "body": "Hello, I contacted you on linkedin, i think it would be much easier to get some other contact to communicate then only in this thread.\nthanks"
+      }
+    ]
+  },
+  "480": {
+    "number": 480,
+    "title": "Benchmark RF-DETR against YOLO11",
+    "state": "open",
+    "body": "I would like to benchmark RF-DETR against YOLO11, basically reproducing the same benchmark as in the official blog (latency vs. mAP): https://blog.roboflow.com/rf-detr/\n\nAre the settings available somewhere for reproducing these results for training both model families? Or how could I set up a \"fair\" benchmark between them. I suppose the \"resolution\" parameter in RF-DETR should be similar to the \"imgsz\" one in ultralytics YOLO? ",
+    "comments": [
+      {
+        "author": "user-12",
+        "body": "YOLO models are designed for 640 resolution and RF-DETR models use variable resolution so equalizing on that would be wrong. \n\nThat repo is correct for reproducing the numbers! It's what we used. Though I'm not sure we've added public checkpoints for all the RF-DETR model sizes yet. \n\nWe see decay in YOLO11 because they do validation with a multi label NMS but inference with single label, and because the model decays in fp16, as discussed in our paper. They also don't include NMS in their latency numbers, nor do they include generating masks from prototypes, both of which are required to make us of the model output so we consider them important to include in latency. RF-DETR does not require NMS and includes generating masks as part of latency. "
+      },
+      {
+        "author": "user-37",
+        "body": "> YOLO models are designed for 640 resolution and RF-DETR models use variable resolution so equalizing on that would be wrong.\n> \n> That repo is correct for reproducing the numbers! It's what we used. Though I'm not sure we've added public checkpoints for all the RF-DETR model sizes yet.\n> \n> We see decay in YOLO11 because they do validation with a multi label NMS but inference with single label, and because the model decays in fp16, as discussed in our paper. They also don't include NMS in their latency numbers, nor do they include generating masks from prototypes, both of which are required to make us of the model output so we consider them important to include in latency. RF-DETR does not require NMS and includes generating masks as part of latency.\n\nThanks! I'll take a closer look at that repo. With what parameters do you think I should train an RFDETR model (and what size), to make the comparison with a YOLO11 model (size x, imgsz=1280, batch=32) as fair as possible?"
+      },
+      {
+        "author": "user-12",
+        "body": "We haven't had time to release our larger models so no fair comparison is directly available. You might consider trying RF-DETR medium at 1280x1280 in the interim, but I'd check the latency in fp16 TRT and see if they're similar before running it. Not sure they will be. "
+      },
+      {
+        "author": "user-37",
+        "body": "> at 1280x1280 in the interim\n\nWhat exactly do you mean here, and how would you recommend doing this practically?\n\nI'm mostly interested in a mAP comparison at this moment."
+      },
+      {
+        "author": "user-36",
+        "body": "You can just pass parameter         resolution=1280 to get this "
+      },
+      {
+        "author": "user-36",
+        "body": "> We haven't had time to release our larger models so no fair comparison is directly available. You might consider trying RF-DETR medium at 1280x1280 in the interim, but I'd check the latency in fp16 TRT and see if they're similar before running it. Not sure they will be.\n\n\nCould you please explain why you do not use Large in such a case as it is above, even though the large is 640x640? Or you think that either will be good  for this comparision? \n"
+      },
+      {
+        "author": "user-12",
+        "body": "The RF-DETR large in this repo is an older version and not the same as the large architecture we talk about in the paper or we're going to release. It's also 560. You could use that if you want but we haven't tested it on downstream transfer so I don't want to make claims about how it'll do :) "
+      },
+      {
+        "author": "user-37",
+        "body": "> You can just pass parameter resolution=1280 to get this\n\nI thought equalizing on resolution as in `model = RFDETRLarge(resolution=1280)` would be the wrong approach, or was this what you meant with \"interim\" @user-12 ?"
+      },
+      {
+        "author": "user-12",
+        "body": "I mean it won't be exactly the same but I don't know what the latency for yolo running at 1280 is off the top of my head and equalizing the model is a decent proxy, though the rf-detr will likely be slower. depends on how rigorous you're trying to be"
+      },
+      {
+        "author": "user-38",
+        "body": "For my pov, rfdternano with 384 size has 25 to 30ms average inférence time. This is also with openvino under frigate without nms with an igpu.\nYolo11 and yolo26 has 11ms with the same configuration"
+      }
+    ]
+  },
+  "1631": {
+    "number": 1631,
+    "title": "Half-precision keypoint trace fusion returns NaN scores for finite predictions",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR issues and found no similar bug report.\n\n#1192 fixes a later score-normalization overflow; this failure occurs earlier in the covariance trace calculation.\n\n### Bug\n\nFinite keypoint predictions can produce a NaN detection score during float16 inference. A subsequent `scores > threshold` comparison drops the detection. With the same inputs, float32/float64 return a finite score above the threshold. Bfloat16 also loses reduction precision in this example.\n\nIn `_keypoint_log_mean_trace`, `sigmoid(-20)` rounds to zero in float16. The `1e-12` clamp floor also rounds to zero, so both weighted `logsumexp` terms become `-inf`; their subtraction returns NaN.\n\nThe precision-Cholesky parameters in the reproduction represent identity covariance, whose trace is 2. Equal findability weights cancel in the mean, so the expected log trace is `log(2)`. With object logit 4 and the default `trace_alpha=0.2`, the expected normalized score is approximately 0.460885.\n\n### Environment\n\n- RF-DETR `1.12.0.dev` from develop at `2cdb8cd7db249a2919e3964631b96102aecd0d72`. The affected file is unchanged on current develop `8cb29175f1710eabc651ddcfa23e13c685ac6a5e`.\n- Windows 11, Python 3.13.3, PyTorch 2.14.0+cpu for the reproduction and focused tests.\n- I also ran this reproduction using the exact `PostProcess` class source from the latest release tag, `1.11.2`, with identical results in that CPU environment. This was source execution, rather than a separate installed-wheel test.\n- CUDA helper checks and timings: PyTorch 2.11.0+cu130, NVIDIA GeForce RTX 5080 Laptop GPU.\n\n### Minimal reproducible example\n\nThis needs no model download. All supplied model-output values are finite.\n\n```python\nimport torch\nfrom rfdetr.models.postprocess import PostProcess\n\nfor dtype in (torch.float16, torch.bfloat16, torch.float32, torch.float64):\n    keypoints = torch.zeros(1, 1, 2, 8, dtype=dtype)\n    keypoints[..., :2] = 0.5\n    keypoints[..., 2] = -20.0\n    outputs = {\n        \"pred_logits\": torch.full((1, 1, 1), 4.0, dtype=dtype),\n        \"pred_boxes\": torch.full((1, 1, 4), 0.5, dtype=dtype),\n        \"pred_keypoints\": keypoints,\n    }\n    result = PostProcess(num_select=1, num_keypoints_per_class=[2])(\n        outputs, torch.tensor([[48, 64]])\n    )[0]\n    print(dtype, result[\"scores\"][0].item(), (result[\"scores\"] > 0.3).sum().item())\n```\n\nActual output (dtype, score, retained detections):\n\n```text\ntorch.float16 nan 0\ntorch.bfloat16 0.45703125 1\ntorch.float32 0.4608851671218872 1\ntorch.float64 0.4608852454923251 1\n```\n\n### Proposed fix and additional consumption\n\nI have a focused local correction that performs the helper's half/bfloat calculations in float32:\n\n```python\nif active_keypoints.dtype in (torch.float16, torch.bfloat16):\n    active_keypoints = active_keypoints.float()\n```\n\nThe existing assignment boundaries preserve public output dtypes. Float32/float64 calculations, thresholds, checkpoint fields and defaults stay unchanged",
+    "comments": [
+      {
+        "author": "user-39",
+        "body": "Thanks for assigning this. I opened draft PR [#1632](https://github.com/roboflow/rf-detr/pull/1632) with the focused fix and regression tests. The PR documents the inherited Windows validation failures and the measured float32 working-memory cost."
+      },
+      {
+        "author": "user-40",
+        "body": "The recent #1631 issue isolates the overflow in score-normalization as the trigger for NaN values during float16 inference, and the reproduction clearly shows the covariance trace step failing. Understanding the underlying https://maine-license-plate.org/plate-types/ for numerical stability can steer developers toward safer casting choices. Your observation that sigmoid(-20) and the 1e-12 clamp both round to zero explains the -inf subtraction that produces NaN. With trace_alpha 0.2 the expected normalized score is about 0.46, confirming the calculations. Tightening precision handling should eliminate these drops in future runs."
+      }
+    ]
+  },
+  "1531": {
+    "number": 1531,
+    "title": "Val/test mAP counts detections inside COCO crowd regions as false positives",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR [issues](https://github.com/roboflow/rf-detr/issues) and found no similar bug report.\n\n### Bug\n\nRunning `evaluate()` with the pretrained Nano on COCO val2017 gives 48.0 mAP, while the README lists 48.4. I recorded the exact predictions the metric callback scored and ran them through pycocotools too:\n\n```\nrf-detr evaluate():             mAP 0.4802   mAP50 0.6689   mAP75 0.5135\npycocotools, same predictions:  mAP 0.4842   mAP50 0.6755   mAP75 0.5177\n```\n\nSame predictions, same `maxDets=[1, 10, 500]`, so the difference is in how they're scored.\n\nIt comes down to crowd annotations. `ConvertCoco` drops every `iscrowd=1` annotation, which is what training needs, but `COCOEvalCallback` builds its ground truth from those same targets. So when the model finds a person inside a crowd region there's nothing to match it against, and it counts as a false positive. pycocotools ignores those detections instead. The metric backends already handle `iscrowd`, it's just always 0 by the time it reaches them.\n\nval2017 has 446 crowd annotations on 411 images. Any COCO-format dataset with crowd labels is affected. Roboflow and YOLO exports don't have them, so their scores don't change.\n\n### Environment\n\n- RF-DETR `develop` @ 62f7f8f6\n- Ubuntu 22.04, Python 3.12.13\n- torch 2.14.0 (run on CPU), pytorch-lightning 2.6.6, faster-coco-eval 1.8.0, pycocotools 2.0.11\n\n### Minimal Reproducible Example\n\nThe crowd annotation never makes it into the target:\n\n```python\nfrom rfdetr.datasets.coco import CocoDetection\n\nDATA = \"/path/to/coco\"\ndataset = CocoDetection(f\"{DATA}/val2017\", f\"{DATA}/annotations/instances_val2017.json\", transforms=None)\ncrowd = [a for a in dataset.coco.anns.values() if a[\"iscrowd\"]]\nprint(\"val2017 crowd annotations:\", len(crowd), \"on\", len({a[\"image_id\"] for a in crowd}), \"images\")\nimage_id = crowd[0][\"image_id\"]\nanns = dataset.coco.imgToAnns[image_id]\n_, target = dataset[dataset.ids.index(image_id)]\nprint(f\"image {image_id}: {len(anns)} annotations in the JSON, {sum(a['iscrowd'] for a in anns)} of them crowd\")\nprint(f\"target: {len(target['labels'])} boxes, iscrowd.sum() = {int(target['iscrowd'].sum())}\")\n```\n\n```\nval2017 crowd annotations: 446 on 411 images\nimage 448263: 16 annotations in the JSON, 1 of them crowd\ntarget: 15 boxes, iscrowd.sum() = 0\n```\n\n<details>\n<summary>Script for the mAP comparison above (about 10 minutes on CPU)</summary>\n\n```python\nimport torch\nfrom faster_coco_eval import COCO, COCOeval_faster\n\nfrom rfdetr import RFDETRNano\nfrom rfdetr.training.callbacks.coco_eval import COCOEvalCallback\n\nCOCO_DIR = \"/path/to/coco\"  # val2017/ + annotations/instances_val2017.json\ntorch.set_num_threads(12)\n\n# Record the predictions the metric callback scores, to score the same predictions with pycocotools.\ndetections = []\noriginal_hook = COCOEvalCallback.on_validation_batch_end\n\n\ndef record(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):\n    for result, target in zip(ou",
+    "comments": []
+  },
+  "1453": {
+    "number": 1453,
+    "title": "build_engine(fp16=True) silently builds an FP32 engine on TensorRT 11",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR issues and found no similar bug report.\n\n\n### Bug\n\n> **Related to #1214, filed deliberately rather than as an oversight.** #1214 reported this same\n> breakage and was closed on 2026-07-29 with *\"if you still observe these issues, pls feel free to\n> reopen it\"*. I am not its author, so I cannot reopen it — this is a fresh report taking up that\n> invitation, with measurements on an L4 and proof of the engine's actual precision. Glad to have\n> this closed as a duplicate if you would rather reopen #1214 instead. Details in *Additional*.\n\n**Executed Colab notebook with all outputs (NVIDIA L4):**\nhttps://colab.research.google.com/drive/1wRDsTbAV800_gFZHzyjP5bUm7tAy7YWO?usp=sharing\n\n### What happens\n\n`pip install rfdetr[tensorrt]` resolves to TensorRT 11 today — the extra declares `tensorrt>=8.6.1`\nwith no upper bound. On TensorRT 11, `build_engine(..., fp16=True)` logs one warning, **exits 0, and\nwrites an FP32 engine**. Nothing raises. The engine loads, runs, and can be benchmarked — and the\nnumber is an FP32 number.\n\nMeasured on an **NVIDIA L4**, `rfdetr` **1.10.1**, `rfdetr-small` @ 512², batch 1, TensorRT 11.2.1.2.\nEngine forward only, 50 warmup + 300 CUDA-event-timed runs:\n\n| Engine | Bytes | % layer I/O tensors in Half | mean ms |\n|---|---|---|---|\n| `build_engine(fp16=True)` | 119,688,644 | **0.00** | **8.407** |\n| same graph cast to FP16, built strongly typed | 65,059,180 | 86.87 | **2.170** |\n\n**3.87× slower** than the FP16 the caller asked for. Anyone benchmarking RF-DETR against other\ndetectors publishes an FP32 latency labelled FP16.\n\nBuild log — the downgrade is visible, but non-fatal:\n\n```\n[WARNING] rf-detr - TensorRT 11.2.1.2 does not expose the FP16 builder flag; building an FP32 engine instead. Pass fp16=False to silence this warning.\n[INFO]    rf-detr - Building TensorRT engine (fp16=False) from /content/export/rfdetr-small.onnx\n    Flags | [STRONGLY_TYPED]\n[I] Finished engine building in 19.516 seconds\n[I] Saving engine to /content/export/rfdetr-small_fp32.trt     <- exit 0\n```\n\nCredit where due: the `_fp32` suffix means the artifact on disk is honestly named. The problem is\nthat `fp16=True` was requested and silently not delivered.\n\n### Root cause\n\nTensorRT 11 removed weak typing. `BuilderFlag.FP16`, `BuilderFlag.INT8`,\n`Builder.platform_has_fast_fp16`, `IInt8Calibrator` and `NetworkDefinitionCreationFlag.EXPLICIT_BATCH`\nare all gone. Every network is strongly typed, and **precision is taken from the dtypes in the ONNX\ngraph**, not from builder flags. Verified on the L4:\n\n```python\ntensorrt: 11.2.1.2\nBuilderFlag.FP16: False\nplatform_has_fast_fp16: False\nnetwork flags: ['PREFER_AOT_PYTHON_PLUGINS', 'PREFER_JIT_PYTHON_PLUGINS', 'STRONGLY_TYPED']\n```\n\n`src/rfdetr/export/_tensorrt.py:132` (line 132 in the released 1.10.1 wheel) probes for the flag and\ndowngrades when it is absent:\n\n```python\nif not hasattr(trt.BuilderFlag, \"FP16\"):\n    logger.warning(\n        \"TensorRT %s does ",
+    "comments": [
+      {
+        "author": "user-42",
+        "body": "I will take this issue. Please assign it to me.\n\nThe problem is that `build_engine(fp16=True)` does not raise an error when TensorRT 11 silently builds an FP32 engine. I will first check the code where `build_engine` is defined. The goal is to ensure it raises an exception or logs a clear error if `fp16=True` is requested but not supported. I will also verify the TensorRT version check to ensure it correctly identifies unsupported features. The fix will likely involve adding a version check and raising an error if FP16 is not available.\n"
+      },
+      {
+        "author": "user-5",
+        "body": "@maintainer-1 — I opened this issue and already have a working branch for it — tests passing on CPU, no public API change. Posting the approach here before a PR in case you'd rather steer it differently. @user-42, note the direction below goes further than erroring out: it actually builds the FP16 engine on TRT 11.\n\n**Root cause.** TensorRT 11 is strongly typed: `BuilderFlag.FP16` is gone and precision comes from the ONNX graph. `build_engine(fp16=True)` sets no flag and returns an FP32 engine named `_fp16.trt` — measured 3.87x slower than the FP16 that was requested.\n\n**Approaches I evaluated**\n\n| Approach | Verdict |\n| --- | --- |\n| Raise / warn + downgrade to FP32 | Rejected — makes the bug visible but leaves TRT 11 with no FP16 at all |\n| Hand-roll the cast on plain `onnx`, per the #1054 GridSample precedent | Rejected — my 28-line prototype passes `onnx.checker` but fails strict type inference (`Inferred elem type differs: (10) vs (1)`), exactly what the TRT 11 parser rejects. A c"
+      },
+      {
+        "author": "user-42",
+        "body": "Sounds like you've got a solid approach there. Let me know if there's anything specific you need from my side to help move this forward.\n"
+      }
+    ]
+  },
+  "1541": {
+    "number": 1541,
+    "title": "TensorRT export: a missing `tensorrt` is only reported after the ONNX export, and a dynamic-batch ONNX builds a batch-1 engine",
+    "state": "closed",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR issues and found no similar bug report.\n\n\n### Bug\n\n\nTwo problems in `format=\"tensorrt\"` / `TensorRTExporter.build_engine` on `develop @ 1985300a`.\n\n**1. A missing `tensorrt` is only reported after the ONNX file has been written, with the wrong advice.**\n\n`pip install \"rfdetr[onnx]\"` installs [Polygraphy](https://pypi.org/project/polygraphy/), which imports `tensorrt` lazily. So `_IS_TENSORRT_AVAILABLE` (`src/rfdetr/export/_tensorrt/exporter.py:57`) is `True` on a host with no TensorRT, and `_require_tensorrt()` (`:826`) checks a polygraphy symbol, not `tensorrt`. `RFDETR.export(format=\"tensorrt\")` runs the full ONNX export first. Only then does it fail, inside Polygraphy, which suggests auto-installing instead of `pip install rfdetr[tensorrt]`:\n\n```\n[INFO] rf-detr - Successfully exported ONNX model to: out/rfdetr-nano.onnx\n[INFO] rf-detr - Converting ONNX model to TensorRT engine\n[!] Module: 'tensorrt' is required but could not be imported.\n    Note: Error was: import of tensorrt halted; None in sys.modules\n    You can set POLYGRAPHY_AUTOINSTALL_DEPS=1 in your environment variables to allow Polygraphy to automatically install missing modules.\npolygraphy.exception.exception.PolygraphyException: Module: 'tensorrt' is required but could not be imported.\n```\n\nThe existing check also sits inside `build_engine`, after `OnnxExporter` has run (`exporter.py:719` vs `:771`). So even when it does fire (polygraphy missing too), the user has already paid for the ONNX export.\n\n**2. A dynamic-batch ONNX file built without `dynamic_batch` silently becomes a batch-1 engine.**\n\nOn the documented path for converting an already-exported `.onnx` (`docs/exports/tensorrt.md`, \"Python API Conversion\"), `build_engine` passes no optimization profile unless `dynamic_batch=True` (`exporter.py:890-894`). Polygraphy then fills every `-1` dimension with 1 and only warns, and rfdetr reports success:\n\n```\n[W] Input tensor: input (dtype=DataType.FLOAT, shape=(-1, 3, 384, 384)) | No shapes provided; Will use shape: [1, 3, 384, 384] for min/opt/max in profile.\n[INFO] rf-detr - Successfully built TensorRT engine: dyn/rfdetr-nano_fp32.trt\n# engine inspected afterwards with tensorrt.Runtime: get_tensor_profile_shape(\"input\", 0)\n[(1, 3, 384, 384), (1, 3, 384, 384), (1, 3, 384, 384)]\n```\n\nThe engine then rejects every batch other than 1 at runtime. The opposite mismatch (`dynamic_batch=True` on a static graph) already raises a `ValueError` (`exporter.py:929-933`). `RFDETR.export(format=\"tensorrt\")` is not affected, since it passes one `dynamic_batch` to both stages; only direct `build_engine` callers are.\n\n**Why CI does not catch either.** CPU CI installs neither polygraphy nor tensorrt, so the unit tests fake the whole polygraphy chain, and the only dependency test patches `engine_from_network = None`. The GPU TensorRT job always installs both packages. No test builds a dynamic ONNX without `dynamic_batch`.\n\n\n### Environment\n\n",
+    "comments": []
+  },
+  "1626": {
+    "number": 1626,
+    "title": "Suggestion: apply separate ``threshold`` for each class_name when run prediction",
+    "state": "open",
+    "body": "### Search before asking\n\n- [x] I have searched the RF-DETR [issues](https://github.com/roboflow/rf-detr/issues) and found no similar feature requests.\n\n\n### Description\n\nHi,\nIn fact, after training we don't get the same recall rate for all objects. Therefore in prediction, we logically don't apply the same threshold for all classes. At this stage we use a trick: use very low threshold to get all probability and filter them later with their conf values. \nI'd like to do it directly when run ``model.predict`` by accepting threshold in list ``threshold: float | list[float]``. If the ``threshold`` comes as a float, apply this threshold for all class IDs; else if ``threshold`` comes as a list and ``len(threshold)==len(class_names)`` we apply separate threshold to each class ID accordingly in order\nExample:\nEither\n`detections= model.predict(image, threshold= 0.45, device= device)`\nor\n`detections= model.predict(image, threshold=[0.40, 055, 0.45], device= device`)\n\n\n### Use case\n\n_No response_\n\n### Additional\n\n_No response_\n\n### Are you willing to submit a PR?\n\n- [ ] Yes I'd like to help by submitting a PR!",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "That could solve. Could you share specific examples of how we could benefit from this multi-threshold schema? IN theory, I see the potential, but it would be better if we could solidify it and also later have a cookbook showcase the benefit"
+      },
+      {
+        "author": "user-30",
+        "body": "@maintainer-1,\nI can share the way I analyze. You can repeat with hard dataset\nIn my case that you can see in the attached histogram charts\n**Step 1**. Train dataset with objects D1, D3 and D13 --> get the best checkpoint\n**Step 2.** Run prediction on a number of test images with ``threshold=0.1``\n**Step 3.** Manually check these images and returned labels and collect information of each detected: true-positive (D1, D3, D13), false-positive (D^1, D^3, D^13) and ``conf `` of each bouding box.\n**Step 4.** Visualize in histogram charts (I use minitab) each pair of ``true-positive`` and ``false-positive``: X-axis stands for conf, Y-axis stands for counting --> we can see 2 partially-overlapped bell curves \n**Step 5.** Find the optimal border between 2 distributions based on: acceptable ``recall`` and ``precision``. In my study: D1 threshold is 0.34; D3 threshold is 0.255; D13 threshold is 0.405\n\nBriefly, optimal thresholds of D1, D3 and D13 objects are different. Hope my explanation is cle"
+      },
+      {
+        "author": "user-5",
+        "body": "Thanks @user-30 for the example, that makes sense for your case.\n\nProposal: accept `threshold: float | list[float]` in `predict`. A list must have length `len(model.class_names)`, and each detection is kept when its score exceeds the threshold for its class. The float form is unchanged.\n\n@maintainer-1, if this design works for you, could you please assign the issue to me ^^."
+      }
+    ]
+  },
+  "172": {
+    "number": 172,
+    "title": "export to CoreML",
+    "state": "open",
+    "body": "I did try to export to CoreML to try to run on edge devices but failed (most likely on model tracing)\n\nThe reason I want CoreML rather than ONNXRuntime is that ONNXRuntime 1.21.0 doesn't have MPS provider and current support for CoreML (NPU) provider is not finished and slow (`\"number of partitions supported by CoreML: 90 number of nodes in the graph: 913 number of nodes supported by CoreML: 737\"`). On my macbook m2 max original version with MPS is not bad (`~70ms` per inference on test.jpg) but on ONNXRuntime with CoreML provider `~290ms` (I guess too many not supported OPs and too many partitions).\n\n\nFailed model tracing output:\n\n```\nTracing the PyTorch model ...\n`loss_type=None` was set in the config but it is unrecognised.Using the default loss: `ForCausalLMLoss`.\nTracerWarning: Iterating over a tensor might cause the trace to be incorrect. Passing a tensor of different shape won't change the number of iterations executed (and might lead to errors or silently give incorrect results).\nTracerWarning: Iterating over a tensor might cause the trace to be incorrect. Passing a tensor of different shape won't change the number of iterations executed (and might lead to errors or silently give incorrect results).\nTracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!\nTracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!\nTracerWarning: torch.as_tensor results are registered as constants in the trace. You can safely ignore this warning if you use this function to create tensors out of constant variables that would be the same every time you call this function. In any other case, this might cause the trace to be incorrect.\nTracerWarning: Iterating over a tensor might cause the trace to be incorrect. Passing a tensor of different shape won't change the number of iterations executed (and might lead to errors or silently give incorrect results).\nUserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument. (Triggered internally at /Users/runner/work/pytorch/pytorch/pytorch/aten/src/ATen/native/TensorShape.cpp:3638.)\nTracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!\nTracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might",
+    "comments": [
+      {
+        "author": "user-43",
+        "body": "Hello @user-11, FYI, recently @user-46 created a draft/PR: https://github.com/roboflow/rf-detr/pull/257"
+      },
+      {
+        "author": "maintainer-4",
+        "body": "The CoreMLExecutionProvider is [included in the default `onnxruntime` wheels](https://github.com/microsoft/onnxruntime/pull/17844) for MacOS since the 1.17 release last year. You should get MPS acceleration by enabling it in the settings. We do this [by default in `inference` here](https://github.com/roboflow/inference/blob/main/inference/core/env.py#L350C55-L350C67).\n\nNote that [you cannot pass the MPS through to Docker on MacOS](https://github.com/pytorch/pytorch/issues/81224) so need to run outside of a container to get the speedup."
+      },
+      {
+        "author": "user-11",
+        "body": "@maintainer-4 I haven't tested yet this export to CoreML but overall even though having `CoreMLExecutionProvider` in onnxruntime as delegate is nice to have from my experience with playing with different vision models onnxruntime with CoreML delegate was never as fast when model converted directly to CoreML.\n\nI guess onnxruntime don't implement all supported ANE operators / conversions. Even when using onnxruntime tool (https://onnxruntime.ai/docs/tutorials/mobile/helpers/model-usability-checker.html) most of the time its showed some operators were not supported or there was too many partitions. \n\nFor this reason I think it is still worth to have support for native CoreML models. And I think the end goal is to execute not just on MPS but on ANE (Apple neural engine) as many graph part as possible. I'm mostly interested on inference on smartphones that don't have many GPU cores but e.g. my old iphone 13 mini have still very fast NPU the same as my macbook m2 max."
+      },
+      {
+        "author": "user-44",
+        "body": "in case you're still interested, I made it work for me. Have a look at my fork (https://github.com/user-44/rf-detr).\nI didn't use the repository environment so you might have to play around a bit until you get the imports of coremltools right but other than that it seems to work.\n\nA big issue was that it didn't allow to convert to CoreML if there is a 6 dimensional tensor as CoreML only supports up to rank 5.\nThat's why I had to refactor the deformable attention.\n\nAlso, for some reason it failed to compile in swift when I exported it to FP16, so try with FP32 first."
+      },
+      {
+        "author": "user-6",
+        "body": "I found https://github.com/user-47/rf-detr-to-coreml by @user-47 - thanks for putting that up!\n\nI'm using that with PyTorch 2.11 and am getting good results. There was one more issue in coremltools I had to monkey-patch for now - https://github.com/apple/coremltools/pull/2665 .\n\nIs there any interest to add direct coreml export testing here in the core `rfdetr` package to support that and make sure it works moving forward? Maybe patch C or also A/B could be in scope for the core package ( see [HERE](https://github.com/user-47/rf-detr-to-coreml?tab=readme-ov-file#solution-monkey-patch-overlay) )?"
+      },
+      {
+        "author": "user-6",
+        "body": "For anyone landing here: `RFDETR.export(format=\"coreml\")` has produced a native `.mlpackage` since 1.9.0 (#1235), with no third-party exporter or coremltools patches needed, and #1521 adds `format=\"coreai\"` for Apple's Core AI framework on iOS, iPadOS and macOS 27. Maybe this issue can be closed?"
+      }
+    ]
+  }
+}

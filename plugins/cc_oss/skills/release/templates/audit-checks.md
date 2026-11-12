@@ -2,10 +2,11 @@
 
 ### Data gathering (Checks 1, 2, 3, 4a, 4b, 5, 6 + gh-auth preflight)
 
-In `bin/run_audit_checks.py` — emits sectioned output (`--- check: <name> ---` banners): repo state (`git status`, unreleased commits), CI health (`gh run list`), open issues+PRs, files changed in range, version-declaration grep, release-blocking TODO/FIXME/HACK grep, pip-audit CVE scan. Invokes `bin/parse_audit_json.py` to summarize pip-audit JSON. One fence: `TARGET`, `RANGE` and `$AUDIT_OUT` die at the fence boundary, so scope resolution, the scan and the pip-audit signal all run here:
+In `bin/run_audit_checks.py` — emits sectioned output (`--- check: <name> ---` banners): repo state (`git status`, unreleased commits), CI health (`gh run list`), open issues+PRs, files changed in range, version-declaration grep, release-blocking TODO/FIXME/HACK grep, pip-audit CVE scan of the shipped dependency set (never the host environment). Invokes `bin/parse_audit_json.py` to summarize pip-audit JSON. One fence: `TARGET`, `RANGE` and `$AUDIT_OUT` die at the fence boundary, so scope resolution, the scan and the pip-audit signal all run here:
 
 ```bash
 # loads: run_audit_checks.py, parse_audit_json.py
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # Mode Detection's parse-skill-flags.py run (same flag list) left CLEAN_ARGS in its sentinel; no re-parse
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/release-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
@@ -19,10 +20,10 @@ fi
 echo "audit scope: target=${TARGET:-none} range=$RANGE"
 IFS= read -r SHIPPED_TAGS < "${TMPDIR:-/tmp}/release-setup-${CSID}/SHIPPED_ELSEWHERE_TAGS" 2>/dev/null || SHIPPED_TAGS=""
 [ -z "$SHIPPED_TAGS" ] || echo "! off-branch tags already shipped: $SHIPPED_TAGS - unreleased-commit and changed-file sections below include their backports; read them against release-shipped-${CSID}"
-AUDIT_OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/run_audit_checks.py" \
+AUDIT_OUT=$(python "$PLUGIN_ROOT/bin/run_audit_checks.py" \
     --repo "$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)" \
     ${TARGET:+--tag "$TARGET"} \
-    ${RANGE:+--range "$RANGE"})  # timeout: 60000
+    ${RANGE:+--range "$RANGE"})  # timeout: 300000
 AUDIT_RC=$?
 echo "$AUDIT_OUT"
 echo "audit-rc: $AUDIT_RC"
@@ -59,17 +60,18 @@ All version declarations in `version-consistency` section must match. `$TARGET` 
 
 `PIP_AUDIT_MISSING=1` → invoke `AskUserQuestion`: "pip-audit not installed — CVE dependency scan will be skipped. Install now (`pip install pip-audit`) and rerun the scan?" Options: (a) Skip CVE check for this run (b) Install and rerun — Recommended.
 
-- **Install and rerun**: install, re-run only CVE step (no need to re-run full data-gathering script — gh/git checks already in `$AUDIT_OUT`):
+- **Install and rerun**: install, then re-run the data-gathering block above unchanged — never a bare `pip-audit`, which scans its own environment, not the shipped set. Only the new `## dependency CVE scan:` section matters; gh/git output repeats unchanged:
   ```bash
   pip install pip-audit  # timeout: 90000
-  pip-audit --format=json | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse_audit_json.py"  # timeout: 30000
   ```
   Fill Dependency CVEs row with real `N deps, M vulns` result, same as any successful scan.
 - **Skip**: Dependency CVEs row stays `⚠ pip-audit not installed — CVE scan skipped` — informational soft gap, same convention as Phase 1a's "target version unknown" case (`modes/audit.md`): never added to Findings summary table as own finding, doesn't block `READY` alone.
 
 ### Check 6 scope: new versus pre-existing CVEs
 
-**Only packages the release ships count.** `--runtime-from pyproject.toml` limits the scan to `[project].dependencies`, optional-dependency groups not named `dev`/`test`/`tests`/`testing`/`doc`/`docs`/`lint`/`typing`/`bench`/`benchmark`, and their transitive runtime requirements from installed metadata. `[dependency-groups]`, test, docs and other dev tooling never count: vulnerable ones print as `| not shipped: P [pkgs]`, are shown as an informational Detail note, and add no finding. A project with no runtime dependencies therefore has an empty shipped set and a clean CVE row. `| scope: unknown` (no readable `[project]` table, dynamic dependencies, or a runtime dependency not installed) means every installed package was scanned; mark the row `⚠` and say the shipped set could not be established.
+**Only packages the release ships count — never the host environment.** With `uv.lock`, `run_audit_checks.py` exports the locked runtime set to `pylock.toml` and audits it with `pip-audit --locked`: `[project].dependencies`, optional-dependency groups not named `dev`/`test`/`tests`/`testing`/`doc`/`docs`/`lint`/`typing`/`bench`/`benchmark`, their transitive requirements, no project itself, no dev or `[tool.uv] default-groups` groups. The export uses `uv export --locked`, so a lock out of date with `pyproject.toml` is skipped rather than audited, and `pylock.toml` keeps packages gated by environment markers, so the result does not depend on the auditing machine's Python or OS. Without a lock, the `[project]` dependencies plus non-dev extras are written to a requirements file and resolved by pip-audit (unlocked: newest allowed versions, markers follow the scanning interpreter). `[dependency-groups]`, test, docs and other dev tooling never count. A project with no runtime dependencies scans an empty set and reads clean.
+
+The output starts with `scan-target: <what was scanned>`; copy it into the row detail, and mark the row `⚠` when it says `unlocked`. `scan-skipped: <reason>` (no readable `[project]` table, dynamic dependencies without a lock, `uv.lock` present but `uv` missing, `uv export` failed or the lock is out of date, or a scan step timed out) means nothing was scanned: row `⚠ CVE scan skipped — <reason>`, an informational soft gap like the missing-pip-audit one, never a finding and never a scan of installed packages. A `| skipped: K [pkgs]` suffix on the scan line lists requirements pip-audit could not audit (URL or local paths); they are not in `N deps`: mark the row `⚠` and name them.
 
 `bin/run_audit_checks.py` splits the scan by `$RANGE`: a vulnerable package whose requirement or lock entry was added or version-changed in the range's `pyproject.toml`, `uv.lock`, `poetry.lock`, `requirements*.txt` or `setup.cfg` diff is **new**; every other vulnerable package is **pre-existing**. The scan line reads `N deps, M vulns | new: K [pkgs] | pre-existing: P [pkgs]`.
 
@@ -117,6 +119,7 @@ Date: [date] | Range: [last-tag]..HEAD ([N] commits)
 | CHANGELOG entry  | ✓ Present / ✗ Missing | [section name or "add [Unreleased]"] |
 | Changelog scope  | ✓ Clean / ✗ N flagged | [scope evidence] |
 | Changelog evidence | ✓ All sourced / ⚠ N unsourced | [unsourced bullets] |
+| Unreleased leftovers | ✓ None / ✗ N hits | [`path:line: marker` rows from `scan_unreleased_leftovers.py`] |
 | Version consistent  | ✓ / ⚠ Mismatch | [files and values] |
 | Dependency CVEs     | ✓ Clean / ⚠ N pre-existing vulns / ✗ N new vulns | [package names, new first] |
 | Scheduled removals  | ✓ All removed / ✗ N still present | [symbol names with `remove_in` version] |

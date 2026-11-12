@@ -83,6 +83,15 @@ class TestIsReferenced:
             pytest.param("notes.txt", "references foo.py", False, id="non-markdown-ignored"),
             pytest.param("skills/SKILL.md", "python bin/foo.py", True, id="python-bin-foo.py"),
             pytest.param(
+                "skills/SKILL.md", 'python "$PLUGIN_ROOT/bin/foo.py"', True, id="resolved-plugin-root-reference"
+            ),
+            pytest.param(
+                "skills/SKILL.md",
+                'python "C:/Users/user/.claude/plugins/cache/borda-ai-rig/demo/1.0.0/bin/foo.py"',
+                True,
+                id="rendered-windows-reference",
+            ),
+            pytest.param(
                 "skills/SKILL.md",
                 'python "${CLAUDE_PLUGIN_ROOT}/bin/foo.py"',
                 True,

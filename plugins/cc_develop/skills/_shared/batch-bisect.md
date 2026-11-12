@@ -5,6 +5,7 @@
 Edit N's isolated patch is the diff between its own pre-snapshot and the next edit's pre-snapshot — never the cumulative pre-snapshot alone, and never `git apply -R` on a snapshot that predates edits other than N. The batch's edit count is derived once (never left to prose), then a real loop assigns `N` and computes every patch up front — nothing here waits for a "calling procedure" to substitute `N` by hand:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r BATCH_ID < "${TMPDIR:-/tmp}/dev-batch-id-${CSID}" 2>/dev/null || BATCH_ID=""
 IFS= read -r _N_TOTAL < "${TMPDIR:-/tmp}/dev-batch-n-${CSID}" 2>/dev/null || _N_TOTAL=0
@@ -19,7 +20,7 @@ for N in $(seq 1 "$_BATCH_EDITS"); do
 done
 IFS= read -r _SKILL < "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}" 2>/dev/null || _SKILL="feature"
 IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-${_SKILL}-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --check-record "${DEV_DIR:-.developments}/test-targets.jsonl" --expect-exit 1 --save-failures "${TMPDIR:-/tmp}/dev-batch-failures-${BATCH_ID}-${CSID}" || exit 1
+python "$PLUGIN_ROOT/bin/dev_test_targets.py" --check-record "${DEV_DIR:-.developments}/test-targets.jsonl" --expect-exit 1 --save-failures "${TMPDIR:-/tmp}/dev-batch-failures-${BATCH_ID}-${CSID}" || exit 1
 ```
 
 1. Split the candidate range in half, initially the whole batch.
@@ -31,6 +32,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --che
 
 ```bash
 # timeout: 600000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r BATCH_ID < "${TMPDIR:-/tmp}/dev-batch-id-${CSID}" 2>/dev/null || BATCH_ID=""
 IFS= read -r _BATCH_EDITS < "${TMPDIR:-/tmp}/dev-batch-edits-${BATCH_ID}-${CSID}" 2>/dev/null || _BATCH_EDITS=0
@@ -54,7 +56,7 @@ run_prefix() {
     _HALF_DIR="${DEV_DIR:-.developments}/bisect-${BATCH_ID}-${_LIMIT}"
     _TRIAL_EXIT=2
     if mkdir -p "$_HALF_DIR" && : > "$_HALF_DIR/test-targets.jsonl"; then
-        python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill "$_SKILL" --tests-from "$_TARGETS" --run --record-dir "$_HALF_DIR"
+        python "$PLUGIN_ROOT/bin/dev_test_targets.py" --skill "$_SKILL" --tests-from "$_TARGETS" --run --record-dir "$_HALF_DIR"
         _TRIAL_EXIT=$?
     fi
     while [ -s "$_REVERTED" ]; do
@@ -63,7 +65,7 @@ run_prefix() {
         sed '$d' "$_REVERTED" > "$_REVERTED.next" && mv "$_REVERTED.next" "$_REVERTED" || return 2
     done
     case "$_TRIAL_EXIT" in 0|1) ;; *) echo "! bisect: runner error $_TRIAL_EXIT; all edits restored"; return 2;; esac
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --check-record "$_HALF_DIR/test-targets.jsonl" --expect-exit "$_TRIAL_EXIT" || return 2
+    python "$PLUGIN_ROOT/bin/dev_test_targets.py" --check-record "$_HALF_DIR/test-targets.jsonl" --expect-exit "$_TRIAL_EXIT" || return 2
     return "$_TRIAL_EXIT"
 }
 if [ "$_LOW" -lt "$_HIGH" ]; then
@@ -154,6 +156,7 @@ echo "Restarted isolation: $_NEXT_BATCH; $N fresh snapshots"
 7. Only after all patches are restored and the complete repaired batch passes, write the batch size and clear identity — the only place either happens on a failure branch, mirroring Batch run's success gate. Two fences, never one: a fence containing `rm -f` is flagged `is_dangerous` and declined whole before any manifest lookup, so the write and the clear stay split exactly as in Batch run above. Run the clear fence only if the verification/write fence succeeds. The size sentinel reads `_SKILL` the same way — never a literal `<skill>` placeholder:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r BATCH_ID < "${TMPDIR:-/tmp}/dev-batch-id-${CSID}" 2>/dev/null || BATCH_ID=""
 IFS= read -r _BATCH_EDITS < "${TMPDIR:-/tmp}/dev-batch-edits-${BATCH_ID}-${CSID}" 2>/dev/null || _BATCH_EDITS=1
@@ -162,8 +165,8 @@ IFS= read -r _SKILL < "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}" 2>/dev/null || _
 IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-${_SKILL}-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
 _VERIFY_DIR="${DEV_DIR:-.developments}/bisect-${BATCH_ID}-full"
 mkdir -p "$_VERIFY_DIR" && : > "$_VERIFY_DIR/test-targets.jsonl" || exit 1
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill "$_SKILL" --run --record-dir "$_VERIFY_DIR" || { echo "! bisect: complete batch still fails; preserve edits and identity"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --check-record "$_VERIFY_DIR/test-targets.jsonl" --expect-exit 0 || exit 1
+python "$PLUGIN_ROOT/bin/dev_test_targets.py" --skill "$_SKILL" --run --record-dir "$_VERIFY_DIR" || { echo "! bisect: complete batch still fails; preserve edits and identity"; exit 1; }
+python "$PLUGIN_ROOT/bin/dev_test_targets.py" --check-record "$_VERIFY_DIR/test-targets.jsonl" --expect-exit 0 || exit 1
 echo "$_BATCH_EDITS" > "${TMPDIR:-/tmp}/dev-${_SKILL}-batch-size-${CSID}"
 ```
 

@@ -14,7 +14,9 @@ import sys
 from pathlib import Path
 
 import pytest
+from _oss_shell_plugin import render_shell
 from _resolve_source import read_resolve_source
+from _skill_source import read_skill_source
 from _text_io import bash_block_after, bash_path
 
 _RESOLVE = Path(__file__).resolve().parents[3] / "skills/resolve"
@@ -74,7 +76,14 @@ def _run_block(block: str, cwd: Path, tmp_path: Path, session: str) -> subproces
         "TMPDIR": str(tmp_path),
         "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
     }
-    return subprocess.run([_BASH, "-c", block], cwd=cwd, env=env, capture_output=True, text=True, check=False)
+    return subprocess.run(
+        [_BASH, "-c", render_shell(block, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "oss")],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 class TestTaskBudget:
@@ -203,7 +212,7 @@ class TestNoPolling:
 
     def test_review_shares_the_rule(self) -> None:
         """Oss:review spawns the same way, so it carries the same prohibition and immediate ⏱ on a missing file."""
-        review = " ".join((_REVIEW / "SKILL.md").read_text(encoding="utf-8").split())
+        review = " ".join(read_skill_source(_REVIEW / "SKILL.md").split())
         assert "never call `ScheduleWakeup`, `ListAgents`, or a `Monitor` loop" in review
         assert "is ⏱ `timed_out` at once" in review
 

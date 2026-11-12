@@ -64,3 +64,46 @@ Rules:
 - **Genuine-recommendation gate**: show markers only when the choice is a real, open decision **and** the model has a real leaning (a correct/better answer exists). Omit markers entirely when: (a) pure user-taste, no right answer (theme, naming preference); (b) the crossroad is fixed/given/forced — one viable path, outcome predetermined, or the option only confirms a decision already made. A marker on a non-decision is noise — never fake a recommendation or a spread. (If the choice is fully forced, prefer not asking at all — see AskUserQuestion "genuinely the user's to make".)
 - **Widening gate**: before marking an option that widens a permission, sandbox, network or approval grant as recommended, read what the grant actually admits (profile definition, installer refusals, enforcement docs) and name its side effects in that option's `description`. A recommendation marker on an unread widening is an ungrounded premise.
 - Applies globally — all skills, agents, model-generated questions
+
+## Re: Anchor
+
+> Cross-file navigation: “§Reply Visibility below” in this section means `communication.md` §Reply Visibility in the parent rule (`../communication.md`).
+
+Start every reply with Unicode box header containing one-line summary, then response body, then closing `▓` footer line.
+
+Example (actual template — copy structure, replace bracketed text):
+
+```
+╔════════════════════════════════════════════════════════════╗
+║  Re: [one-sentence summary of what was asked]              ║
+╚════════════════════════════════════════════════════════════╝
+
+[full response here]
+
+▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+```
+
+**Rules:**
+
+- Box: 62 chars total — `╔` + 60 `═` + `╗`; bottom `╚` + 60 `═` + `╝`; summary line `║` + two spaces + summary text + pad to 60 + `║`
+- Summary: neutral factual gist of what user asked — not full restatement, no labels; never a pipe char (corrupts box borders)
+- Footer: exactly 62 `▓` chars — matches box width, signals end of reply
+- No exceptions except the two Exemptions in §Reply Visibility below — any other response not opening with `╔` is non-compliant
+- Tables, code blocks, bold headers work normally in body — no per-line prefix conflicts
+
+## Execution Failure Signaling
+
+Unable to execute or proceed with any part of a request (unsupported flag, `disable-model-invocation` block, parse error, missing prerequisite, permission denied, tool unavailable): lead with a bold failure block — never bury it at the end, never silently skip it.
+
+```
+**! BLOCKED — [one-line reason]**
+**! UNSUPPORTED — [what and why]**
+**! MISSING — [what is needed]**
+```
+
+Block is FIRST content, not a footnote; state what was asked, what can't proceed, what alternative exists. Applies to partial failures too — if 3 of 4 sub-tasks fail, flag the 3 at top before reporting the 1 success. Never substitute grey prose ("note: X was skipped") — that's what gets missed.
+
+## Artifact Framing
+
+- **Verbal summary as skeleton**: user verbal summary = output skeleton — mirror order, abstraction level, named examples verbatim; no added info user didn't mention; source material (README, code) fill explicit gaps only; preserve quotable phrases exact, no paraphrasing
+- **Format-label register**: translate the format label (Slack message, PR description, executive summary, etc.) to its implied register before writing — per-format register rules: `_full/communication.md`. When format ambiguous, ask one question before writing.

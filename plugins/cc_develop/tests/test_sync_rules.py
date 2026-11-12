@@ -71,7 +71,17 @@ def _installed_root(
         '.claude/plugins/cache/borda-ai-rig/develop/0.19.0'
     """
     root = home / ".claude" / "plugins" / "cache" / marketplace / plugin / version
-    return _make_plugin(root, name=plugin, rules=rules)
+    _make_plugin(root, name=plugin, rules=rules)
+    _record_install(home, root, plugin, marketplace)
+    return root
+
+
+def _record_install(home: Path, root: Path, plugin: str, marketplace: str = MARKETPLACE) -> None:
+    """Record a plugin's first fixture installation without activating later stale roots."""
+    registry = home / ".claude" / "plugins" / "installed_plugins.json"
+    data = json.loads(registry.read_text(encoding="utf-8")) if registry.exists() else {"plugins": {}}
+    data["plugins"].setdefault(f"{plugin}@{marketplace}", [{"installPath": str(root)}])
+    registry.write_text(json.dumps(data), encoding="utf-8")
 
 
 def _dest(home: Path, source_name: str = "quality-gates.md", plugin: str = PLUGIN) -> Path:
@@ -161,6 +171,7 @@ class TestInstall:
         Without the plugin prefix the second sync would overwrite the first plugin's rule.
         """
         oss = _make_plugin(home / ".claude" / "plugins" / "cache" / MARKETPLACE / "oss" / "0.25.0", name="oss")
+        _record_install(home, oss, "oss")
         sync(PLUGIN, root, home)
         sync("oss", oss, home)
         assert Path(read_link_target(_dest(home))).parent.parent == root
@@ -254,12 +265,15 @@ class TestConflicts:
         assert (result.conflicts, result.unchanged) == ([], [_DEST_NAME])
         assert _dest(home).resolve() == root / "rules" / "quality-gates.md"
 
-    def test_approve_replaces_conflicts(self, home: Path, root: Path) -> None:
-        """With ``approve=True`` a conflicting real file is replaced by the plugin link and reported as replaced."""
+    def test_explicit_choice_replaces_real_file(self, home: Path, root: Path) -> None:
+        """An explicit user-file replacement backs up the real file before installing the plugin link."""
         _dest(home).write_text("user content\n", encoding="utf-8")
-        result = sync(PLUGIN, root, home, approve=True)
+        result = sync(PLUGIN, root, home, replace_user_files=True)
         assert result.replaced == [_DEST_NAME]
         assert Path(read_link_target(_dest(home))) == root / "rules" / "quality-gates.md"
+        backups = list(_dest(home).parent.glob(f"{_DEST_NAME}.bak-*"))
+        assert len(backups) == 1
+        assert backups[0].read_text(encoding="utf-8") == "user content\n"
 
 
 class TestPruning:

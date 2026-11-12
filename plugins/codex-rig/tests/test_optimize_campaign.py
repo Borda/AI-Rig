@@ -72,6 +72,67 @@ def _load(path: Path, name: str) -> ModuleType:
     return load_module(name, path)
 
 
+def test_snapshot_git_reads_have_bounded_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Snapshot reads cannot wait indefinitely for a Git subprocess."""
+    module = _load(HELPER, "campaign_process_bounds")
+    calls = []
+
+    def read_output(arguments: list[str], **kwargs: object) -> bytes:
+        """Capture the actual Git invocation without starting an external process."""
+        calls.append((arguments, kwargs))
+        return b"revision"
+
+    monkeypatch.setattr(module.subprocess, "check_output", read_output)
+    assert module.git(tmp_path, "rev-parse", "HEAD") == b"revision"
+    assert calls[0][0][:3] == ["git", "-c", "core.fsmonitor=false"]
+    assert 0 < calls[0][1]["timeout"] <= 60
+
+
+def test_campaign_git_timeout_has_stable_diagnostic(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A hung snapshot command exits with a bounded error instead of leaking its argv."""
+    module = _load(HELPER, "campaign_process_bounds")
+    settings = tmp_path / "config.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "goal": "Reduce cost",
+                "metric_cmd": "measure",
+                "guard_cmd": "verify",
+                "metric_direction": "lower",
+                "max_iterations": 1,
+                "scope_files": ["value.txt"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def read_output(arguments: list[str], **kwargs: object) -> bytes:
+        """Represent a child that exhausted its runtime bound."""
+        raise subprocess.TimeoutExpired(["private-command"], 30)
+
+    monkeypatch.setattr(module.subprocess, "check_output", read_output)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(HELPER),
+            "snapshot",
+            "--run-dir",
+            str(tmp_path / "run"),
+            "--root",
+            str(tmp_path),
+            "--config",
+            str(settings),
+        ],
+    )
+    with pytest.raises(SystemExit) as stopped:
+        module.main()
+    assert stopped.value.code == 1
+    assert capsys.readouterr().err == "optimize-campaign: git-timeout\n"
+
+
 @pytest.fixture
 def campaign(tmp_path: Path) -> tuple[Path, Path, Path]:
     """Create a real committed source tree and an external campaign directory."""

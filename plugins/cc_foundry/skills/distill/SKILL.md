@@ -1,6 +1,6 @@
 ---
 name: distill
-description: One-time snapshot extracting patterns from work history and accumulated lessons, distills into concrete improvements — new agent/skill suggestions, memory pruning, consolidating lessons into rules/agent updates, or performing bin/ extraction from /audit --efficiency candidates. Roster boundary analysis → /foundry:audit agents (Check 46).
+description: One-time snapshot extracting patterns from work history and accumulated lessons, distills into concrete improvements — new agent/skill suggestions, memory pruning, consolidating lessons into rules/agent updates, or performing bin/ extraction from /foundry:audit --efficiency candidates. Roster boundary analysis → /foundry:audit agents (Check 46).
 argument-hint: '[prune | memory | executables [<run-dir-or-report-path>] | "external <url-or-path>" | "<recurring task description>"] [--project] [--eager] [--keep "<items>"]'
 disable-model-invocation: true
 allowed-tools: Read, Edit, Bash, Glob, Grep, Write, AskUserQuestion, Agent, WebFetch, TaskCreate, TaskUpdate, TaskList
@@ -30,7 +30,7 @@ NOT for single-file edits or quality checks — use `/foundry:audit` for config 
 
 <compaction>
 - Key boundary 1: end of Step 2 frequency heuristics (default mode only — prune/memory/external/executables exit early), before Step 3 gap analysis.
-- Preserve at boundary 1: EAGER flag, ARGUMENTS (stripped), no run-dir (default mode is stateless).
+- Preserve at boundary 1: EAGER flag, ARGUMENTS_FINAL (stripped), no run-dir (default mode is stateless).
 - Terminal paths: end of Step 5 report (default mode); end of Memory Pruning mode (both eager and standard branches).
 </compaction>
 
@@ -39,19 +39,34 @@ NOT for single-file edits or quality checks — use `/foundry:audit` for config 
 **Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags eager,project --keep-state distill-state --out-file "${TMPDIR:-/tmp}/distill-state-${CSID}/keep-items" "$ARGUMENTS" >/dev/null  # timeout: 5000 — no eval; distill-state-<flag>-${CSID} sentinels, keep-items into the state dir it makes, clears stale contract
+python "$PLUGIN_ROOT/bin/parse-skill-flags.py" --flags eager,project --keep-state distill-state --out-file "${TMPDIR:-/tmp}/distill-state-${CSID}/keep-items" -- "$ARGUMENTS" >/dev/null  # timeout: 5000 — no eval; distill-state-<flag>-${CSID} sentinels, keep-items into the state dir it makes, clears stale contract
 IFS= read -r EAGER < "${TMPDIR:-/tmp}/distill-state-eager-${CSID}" 2>/dev/null || EAGER=false
 IFS= read -r PROJECT_FLAG < "${TMPDIR:-/tmp}/distill-state-project-${CSID}" 2>/dev/null || PROJECT_FLAG=false
-IFS= read -r ARGUMENTS < "${TMPDIR:-/tmp}/distill-state-clean-args-${CSID}" 2>/dev/null || ARGUMENTS=""
+IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/distill-state-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 echo "EAGER=$EAGER"  # shell vars don't persist across Bash calls — read from stdout
 echo "PROJECT_FLAG=$PROJECT_FLAG"
-echo "ARGUMENTS_FINAL=$ARGUMENTS"
+echo "ARGUMENTS_FINAL=$CLEAN_ARGS"
 ```
 
-> **Note**: `EAGER`, `PROJECT_FLAG` and stripped `ARGUMENTS` are set by this Bash block, but shell variable state does **not** persist across separate Bash() tool calls. After this block runs, read its stdout (`EAGER=true/false`, `PROJECT_FLAG=true/false`, `ARGUMENTS_FINAL=...`), carry those values as model-context references for all subsequent mode dispatch and threshold decisions. Do not rely on `$EAGER`/`$PROJECT_FLAG` as live shell variables in later steps — substitute the literal value read from stdout. `PROJECT_FLAG=true`: mode must run interactive picker before operating.
+> **Note**: `EAGER`, `PROJECT_FLAG` and stripped `CLEAN_ARGS` are set by this Bash block, but shell variable state does **not** persist across separate Bash() tool calls. After this block runs, read its stdout (`EAGER=true/false`, `PROJECT_FLAG=true/false`, `ARGUMENTS_FINAL=...`), carry those values as model-context references for all subsequent mode dispatch and threshold decisions. Do not rely on `$EAGER`/`$PROJECT_FLAG` as live shell variables in later steps — substitute the literal value read from stdout. `PROJECT_FLAG=true`: mode must run interactive picker before operating.
 
 <!-- ../../assets/images/distill-arch.svg diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+
+## Mode dispatch — before inventory
+
+> **Mode-token normalization** — all mode dispatches below compare against the **first whitespace-delimited token** of stripped `ARGUMENTS_FINAL` from stdout (after flag removal). Use this single rule consistently; don't rely on exact equality of the full `$ARGUMENTS` string — trailing flags/spaces from prior parsing may differ.
+
+**`--project` scope check** (run before the mode checks below): if `PROJECT_FLAG` (read from stdout above) is `true` and the first token is not `prune` or `memory`, print `` ⚠ `--project` ignored — it applies only to `prune` and `memory` modes. `` once and repeat it in the final reply (a mid-run print can arrive as an empty progress update), then continue with normal dispatch below.
+
+**If first token equals `executables`** (i.e. `executables` alone or `executables <path>`, NOT a path or word that merely starts with the string `executables`): skip Steps 1–5 entirely and go to "Mode: Executables Extraction" below.
+
+**If first token equals `prune`**: skip Steps 1–5 entirely and go to "Mode: Memory Pruning" below.
+
+**If first token equals `memory`**: skip Steps 1–5 entirely and go to "Mode: Memory Distillation" below.
+
+**If first token equals `external`** (i.e. `external <source>`, NOT a word that merely starts with the string `external`): a second token is **required** — it is the source to analyse. No second token: print `` ! MISSING — `external` needs a source: `/foundry:distill external <url-or-path>`. `` and stop; do not enter the mode, do not guess a source, do not fall back to default-mode analysis. Second token present: skip Steps 1–5 entirely and go to "Mode: External Distillation" below; that mode collects the live inventory at E7.
 
 ## Step 1: Inventory existing agents and skills
 
@@ -63,9 +78,10 @@ Use Glob tool to enumerate agents and skills across all sources — project-loca
 
 ```bash
 # timeout: 30000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 find "$HOME/.claude/plugins/cache" -mindepth 2 -maxdepth 2 -type d 2>/dev/null | while IFS= read -r p; do
     m="${p%/*}"; m="${m##*/}"
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_plugin_root.py" --plugin-name "${p##*/}" --marketplace "$m" 2>/dev/null | sed "s|^|PLUGIN_ROOT: ${p##*/} |"
+    python "$PLUGIN_ROOT/bin/resolve_plugin_root.py" --plugin-name "${p##*/}" --marketplace "$m" 2>/dev/null | sed "s|^|PLUGIN_ROOT: ${p##*/} |"
 done
 ```
 
@@ -75,33 +91,21 @@ For each agent/skill found, extract: name, description, tools, purpose. Tag each
 
 ## Step 2: Analyze work patterns
 
-> **Mode-token normalization** — all mode dispatches below compare against the **first whitespace-delimited token** of stripped `ARGUMENTS` (after `--eager` removal). Use this single rule consistently; don't rely on exact equality of the full `$ARGUMENTS` string — trailing flags/spaces from prior parsing may differ.
-
-**`--project` scope check** (run before the mode checks below): if `PROJECT_FLAG` (read from stdout above) is `true` and the first token is not `prune` or `memory`, print `` ⚠ `--project` ignored — it applies only to `prune` and `memory` modes. `` once and repeat it in the final reply (a mid-run print can arrive as an empty progress update), then continue with normal dispatch below.
-
-**If first token equals `executables`** (i.e. `executables` alone or `executables <path>`, NOT a path or word that merely starts with the string `executables`): skip Steps 2–5 entirely and go to "Mode: Executables Extraction" below.
-
-**If first token equals `prune`**: skip Steps 2–5 entirely and go to "Mode: Memory Pruning" below.
-
-**If first token equals `memory`**: skip Steps 2–5 entirely and go to "Mode: Memory Distillation" below.
-
-**If first token equals `external`** (i.e. `external <source>`, NOT a word that merely starts with the string `external`): a second token is **required** — it is the source to analyse. No second token: print `` ! MISSING — `external` needs a source: `/foundry:distill external <url-or-path>`. `` and stop; do not enter the mode, do not guess a source, do not fall back to default-mode analysis. Second token present: skip Steps 2–5 entirely and go to "Mode: External Distillation" below.
-
-Otherwise, look for signals of repetitive or specialist work. First three git commands independent — run in parallel:
+Look for signals of repetitive or specialist work. Guard each independent git command with `git rev-parse --is-inside-work-tree >/dev/null 2>&1` before running it; outside a repository, report git history unavailable and continue with task and lesson evidence. First three git commands independent — run in parallel:
 
 ```bash
 # timeout: 3000
 # --- run these three in parallel ---
-git log --oneline -50
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then git log --oneline -50; else echo "git history unavailable"; fi
 
-git log --name-only --pretty="" -30 | sort | uniq -c | sort -rn | head -20
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then git log --name-only --pretty="" -30 | sort | uniq -c | sort -rn | head -20; else echo "git history unavailable"; fi
 
-git log --oneline -100 | cut -d' ' -f2 | sort | uniq -c | sort -rn | head -15
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then git log --oneline -100 | cut -d' ' -f2 | sort | uniq -c | sort -rn | head -15; else echo "git history unavailable"; fi
 ```
 
 Then use Glob tool (pattern `todo_*.md`, path `.plans/active/`) to list active task files; read each with Read tool. Also read `.notes/lessons.md` (if exists) for task history and conversation hints.
 
-If `$ARGUMENTS` provided, use as additional context for pattern analysis.
+If `ARGUMENTS_FINAL` from the parse stdout is non-empty, use it as additional context for pattern analysis.
 
 ### Frequency Heuristics
 
@@ -117,9 +121,10 @@ With `--eager` (lower thresholds):
 - Domain-specific threshold unchanged
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _PRESERVE="run-dir=n/a"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" --keep-file "${TMPDIR:-/tmp}/distill-state-${CSID}/keep-items" "foundry:distill" "gap-analysis (after work-pattern scan)" "n/a" "$_PRESERVE" "gap analysis (Step 3) → duplication check (Step 4) → report (Step 5)"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" --keep-file "${TMPDIR:-/tmp}/distill-state-${CSID}/keep-items" "foundry:distill" "gap-analysis (after work-pattern scan)" "n/a" "$_PRESERVE" "gap analysis (Step 3) → duplication check (Step 4) → report (Step 5)"  # timeout: 5000
 ```
 
 ## Step 3: Gap analysis
@@ -197,7 +202,8 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 ## Mode: Memory Pruning — only when first token is `prune`
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" distill modes prune.md --fallback-source  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/load_mode.py" distill modes prune.md --fallback-source  # timeout: 5000
 ```
 
 Execute the mode loaded above.
@@ -205,7 +211,8 @@ Execute the mode loaded above.
 ## Mode: Memory Distillation — only when first token is `memory`
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" distill modes memory.md --fallback-source  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/load_mode.py" distill modes memory.md --fallback-source  # timeout: 5000
 ```
 
 Execute the mode loaded above.
@@ -213,7 +220,8 @@ Execute the mode loaded above.
 ## Mode: External Distillation — only when first token is `external`
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" distill modes external.md --fallback-source  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/load_mode.py" distill modes external.md --fallback-source  # timeout: 5000
 ```
 
 Execute the mode loaded above.
@@ -221,7 +229,8 @@ Execute the mode loaded above.
 ## Mode: Executables Extraction — only when first token is `executables`
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" distill modes executables.md --fallback-source  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/load_mode.py" distill modes executables.md --fallback-source  # timeout: 5000
 ```
 
 Execute the mode loaded above.
@@ -246,7 +255,7 @@ Execute the mode loaded above.
   - Security findings in reviews for non-auth code: foundry:qa-specialist teammate scope too broad; narrow it
   - Model tier mismatches (e.g. heavy analysis assigned to `sonnet` teammates): flag for tier adjustment
 
-- **`external` mode calibration**: two concrete GT fixture cases defined in calibrate skills mode file — find via `find "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}" -maxdepth 5 -path "*/calibrate/modes/skills.md" 2>/dev/null | head -1` with fallback to `plugins/cc_foundry/skills/calibrate/modes/skills.md`:
+- **`external` mode calibration**: two concrete GT fixture cases defined in calibrate skills mode file — find via `find "${CLAUDE_PLUGIN_ROOT}" -maxdepth 5 -path "*/calibrate/modes/skills.md" 2>/dev/null | head -1` with fallback to `plugins/cc_foundry/skills/calibrate/modes/skills.md`:
 
   - **caveman plugin** — narrow, self-contained communication mode, no local structural overlap: GT install-as-is recommended, Group A empty or thin
   - **Karpathy autoresearch** — research automation tool, strong overlap with `research:` plugin structure: GT Group A candidates map to research plugin, digest recommended, install-as-is not triggered
@@ -257,6 +266,6 @@ Execute the mode loaded above.
   - Suggestion accepted for new agent/skill: `/foundry:manage create` to scaffold and register it
   - Suggestion to enhance existing: edit agent/skill directly (project `.claude/` edits apply at once; plugin-source edits reach `~/.claude/` only via plugin update/reinstall, after which `/foundry:setup` re-merges plugin settings/rules)
   - `memory` proposals applied: `/foundry:audit rules` to verify new rule files structurally sound
-  - `executables` extraction complete: plugin `bin/` scripts reach `~/.claude/` via plugin update/reinstall; run `/foundry:audit --efficiency` to confirm `clusters == 0`
+  - `executables` extraction complete: plugin `bin/` scripts reach `~/.claude/` via plugin update/reinstall; run `/foundry:audit --efficiency` to confirm `extract_count == 0`
 
 </notes>

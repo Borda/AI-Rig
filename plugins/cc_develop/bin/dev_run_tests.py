@@ -44,7 +44,7 @@ from shutil import which
 
 from dev_run_dir import read_sentinel, write_sentinel
 from dev_run_repro import failure_reported, run_tail
-from run_pytest_short import _PYTEST_ALLOWLIST
+from run_pytest_short import _PYTEST_ALLOWLIST, _validate_target_in_cwd
 
 #: Status for "no test command ran" (sysexits ``EX_USAGE``), distinct from every status a test runner returns.
 EXIT_NO_RUN = 64
@@ -108,7 +108,31 @@ def _parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
         parser.error("--tail must be non-negative")
     if options.mode == "suite" and extra:
         parser.error("suite does not accept extra arguments")
+    if options.mode == "pytest":
+        _validate_pytest_args(extra, parser)
     return options, extra
+
+
+def _validate_pytest_args(args: list[str], parser: _Parser) -> None:
+    """Allow skill-used pytest flags while fencing every path-bearing argument to the project."""
+    flags = {"-q", "-qq", "-v", "-vv", "-x", "--exitfirst", "--co", "--collect-only", "--doctest-modules"}
+    flags.update(f"--tb={style}" for style in ("short", "long", "auto", "line", "native", "no"))
+    flags.add("--cov-report=term-missing")
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "-p" and args[index + 1 : index + 2] in (["no:cacheprovider"], ["no:xdist"]):
+            index += 2
+            continue
+        if arg not in flags:
+            target = arg.removeprefix("--cov=") if arg.startswith("--cov=") else arg
+            if not target:
+                parser.error("pytest target must not be empty")
+            try:
+                _validate_target_in_cwd(target)
+            except SystemExit:
+                parser.error("pytest argument is not an allowed flag or project target")
+        index += 1
 
 
 def _emit(text: str, *, end: str = "\n") -> None:

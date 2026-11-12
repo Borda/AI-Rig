@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Full-sweep quality audit of .claude/ config — cross-references, permissions, inventory drift, model tiers, docs freshness. Scope tokens select what to audit; --upgrade applies docs-sourced improvements; --adversarial runs foundry:challenger + Codex adversarial review; --efficiency sweeps model tiers, token bloat, spawn patterns, boilerplate duplication, and bin/ extraction candidates (extraction performed separately via /foundry:distill executables); --consolidate proposes merging overlapping narrow rules into fewer broader ones and sharpening overlapping skill notes and agent clauses (advisory, edits nothing). Fix level chosen via conditional follow-up gate after report.
+description: Full-sweep quality audit of .claude/ config — cross-references, permissions, model tiers, docs freshness. Scope tokens select what to audit; --upgrade applies docs-sourced improvements; --adversarial runs foundry:challenger + Codex adversarial review; --efficiency sweeps model tiers, token bloat, spawn patterns, boilerplate duplication, and bin/ extraction candidates (extraction performed separately via /foundry:distill executables); --consolidate proposes merging overlapping narrow rules into fewer broader ones and sharpening overlapping skill notes and agent clauses (advisory, edits nothing). Fix level chosen via conditional follow-up gate after report.
 argument-hint: '[<scope>...] [--local] [--upgrade | --adversarial | --efficiency | --consolidate] [--measured] [--fast] [--skip-gate] [--keep "<items>"]'
 disable-model-invocation: true
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, WebFetch, Skill, TaskCreate, TaskUpdate, TaskList, AskUserQuestion
@@ -9,7 +9,7 @@ effort: high
 
 <objective>
 
-Full-sweep audit of `.claude/` config + all `plugins/*/` files: agents, skills, rules, settings.json, hooks. Spawns `foundry:curator` per-file, aggregates system-wide for cross-file issues — infinite loops, inventory drift, missing permissions, interop breaks. Reports findings; fix level from follow-up gate.
+Full-sweep audit of `.claude/` config + all `plugins/*/` files: agents, skills, rules, settings.json, hooks. Spawns `foundry:curator` per-file, aggregates system-wide for cross-file issues — infinite loops, missing permissions, interop breaks. Reports findings; fix level from follow-up gate.
 
 </objective>
 
@@ -112,8 +112,9 @@ Surface progress at milestones: after system-wide checks ("✓ Checks 1-20 compl
 The helper resolves tier-2 aliases to their actual directory names in `scope=` and persists `LOCAL_MODE=true` before any mode dispatch, preserving flags and the quoted `--keep` value. Pass `$ARGUMENTS` unchanged.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/audit_preflight.py" --arguments "$ARGUMENTS" || exit $?  # timeout: 20000
+python "$PLUGIN_ROOT/bin/audit_preflight.py" --arguments "$ARGUMENTS" || exit $?  # timeout: 20000
 : > "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir"
 : > "${TMPDIR:-/tmp}/audit-state-${CSID}/unscanned-plugins"
 ```
@@ -127,9 +128,10 @@ If `.claude/` is missing in setup mode, abort immediately; source scopes (`LOCAL
 **State re-derivation across Bash blocks** — Claude Code spawns a fresh shell per Bash() call; variables set in pre-flight are LOST in Steps 2–11. Every Bash block in subsequent steps that uses `LOCAL_MODE` or `AUDIT_TPL` must re-read them from the persisted state files:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-IFS= read -r AUDIT_TPL < "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || AUDIT_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
+IFS= read -r AUDIT_TPL < "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || AUDIT_TPL=$(python "$PLUGIN_ROOT/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
 ```
 
 Place these three lines at the top of every Bash block in Steps 2–11 that references either variable.
@@ -143,13 +145,20 @@ Skip entirely when pre-flight printed `dispatch=mode:consolidate`.
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 : > "${TMPDIR:-/tmp}/audit-state-${CSID}/precommit-validate.txt"
+VALIDATION_EXIT=0
+printf 'validation_status=not-configured\n' > "${TMPDIR:-/tmp}/audit-state-${CSID}/precommit-status.txt"
 if [ -f .pre-commit-config.yaml ]; then
     if command -v pre-commit >/dev/null 2>&1; then
         pre-commit validate-config .pre-commit-config.yaml > "${TMPDIR:-/tmp}/audit-state-${CSID}/precommit-validate.txt" 2>&1 # timeout: 15000
+        VALIDATION_EXIT=$?
+        printf 'validation_status=%s\n' "$VALIDATION_EXIT" > "${TMPDIR:-/tmp}/audit-state-${CSID}/precommit-status.txt"
     else
-        printf '⚠ pre-commit unavailable — config validation skipped\n'
+        printf 'validation_status=unavailable\n' > "${TMPDIR:-/tmp}/audit-state-${CSID}/precommit-status.txt"
+        printf '⚠ pre-commit unavailable — config validation skipped\n' > "${TMPDIR:-/tmp}/audit-state-${CSID}/precommit-validate.txt"
+        cat "${TMPDIR:-/tmp}/audit-state-${CSID}/precommit-validate.txt"
     fi
 fi
+(exit "$VALIDATION_EXIT")
 ```
 
 This validates configuration only; do not execute auto-fixing hooks in a report-first sweep. The output is persisted in `${TMPDIR:-/tmp}/audit-state-${CSID}/precommit-validate.txt` for the Step 5 consolidator. Report a nonzero validation result as a preflight finding, never cache it as success or claim files are clean. Step 1b supplies the deterministic structural checks. Run any source-changing hooks only as part of an authorized fix pass.
@@ -161,19 +170,20 @@ If pre-commit not configured, skip silently.
 Run the zero-LLM checker driver — the same deterministic checkers pre-commit enforces, aggregated into one reproducible findings file. These results are **authoritative** for their check classes: Steps 3–4 (LLM curator + judgment checks) must NOT re-derive them in prose — treat them as already-verified and spend model tokens only on judgment.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # timeout: 140000
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 STATIC_SCOPE=$( [ "$LOCAL_MODE" = true ] && echo plugins || echo .claude )
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/audit_churn.py" --limit 300 --path plugins \
+python "$PLUGIN_ROOT/bin/audit_churn.py" --limit 300 --path plugins \
     > "${TMPDIR:-/tmp}/audit-state-${CSID}/churn-signal.json" 2>/dev/null  # timeout: 20000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/audit_static.py" --scan-dir "$STATIC_SCOPE" \
+python "$PLUGIN_ROOT/bin/audit_static.py" --scan-dir "$STATIC_SCOPE" \
     --jsonl "${TMPDIR:-/tmp}/audit-state-${CSID}/static-findings.jsonl"  # timeout: 120000
 ```
 
 The block also runs the Step 1c churn pass (independent of the static pass; its output is only read in Steps 3 and 7).
 
-Covered deterministically by the driver (map to legacy check IDs — do NOT re-run these as prose): **14a** tag symmetry · **14b** fence symmetry · **14c** README drift · **14d** mode-dispatch integrity · **14e** cross-plugin shared-file drift · **43** bash-variable persistence · **42** spawn-prompt `$VAR` (checks-skills-sweep.md) · **32d** orphaned bin/ scripts · **cli-flag-drift** SKILL.md flags vs argparse (`check_cli_flag_drift.py`, checks-index 42) · **R3** bin/computed-path reference integrity · **agent-plugin-root** `${CLAUDE_PLUGIN_ROOT:-…}` default in `agents/*.md`, which an agent prompt never substitutes (`check_agent_plugin_root.py`). Whole-repo checks (orphaned-bin, routing-links, shared-drift) always scope to `plugins/` regardless of `STATIC_SCOPE`; driver most complete in `--local` mode. Step 5 merges `static-findings.jsonl` into aggregate.
+Covered deterministically by the driver (map to legacy check IDs — do NOT re-run these as prose): **14a** tag symmetry · **14b** fence symmetry · **14c** README drift · **14d** mode-dispatch integrity · **14e** cross-plugin shared-file drift · **43** bash-variable persistence · **42** spawn-prompt `$VAR` (checks-skills-sweep.md) · **32d** orphaned bin/ scripts · **cli-flag-drift** SKILL.md flags vs argparse (`check_cli_flag_drift.py`, checks-index 42) · **R3** bin/computed-path reference integrity · **agent-plugin-root** defaulted bootstrap tokens in skills, agents, modes, templates and references, which the host and literal renderer never substitute (`check_agent_plugin_root.py`). Whole-repo checks (orphaned-bin, routing-links, shared-drift) always scope to `plugins/` regardless of `STATIC_SCOPE`; driver most complete in `--local` mode. Step 5 merges `static-findings.jsonl` into aggregate.
 
 > **Layer-1 recall is benchmarked** — `tests/audit/test_audit_static.py` plants a known defect per scope-aware class and asserts the driver catches every one (100% mechanical recall), so this pass is trusted, not assumed.
 
@@ -190,9 +200,10 @@ Enumerate everything in scope with built-in tools. Run all Glob calls in paralle
 **Plugin layout resolution** (`--local`/`plugins` scope — multi-plugin source tree, mandatory before the fixed-pattern Globs below): don't assume every plugin uses `skills/`+`agents/` — a plugin can override the convention in its own manifest (e.g. `plugins/codemap-py/.claude-plugin/plugin.json` declares `"skills": "./claude-skills/"`, not `./skills/`; a fixed `*/skills/*/SKILL.md` glob silently never matches). Resolve each plugin's real dir names first:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-[ "$LOCAL_MODE" != "true" ] || python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/plugin_layout.py" plugins  # timeout: 5000
+[ "$LOCAL_MODE" != "true" ] || python "$PLUGIN_ROOT/bin/plugin_layout.py" plugins  # timeout: 5000
 ```
 
 For every `PLUGIN_LAYOUT:` line, use its `skills=`/`agents=` value (not hardcoded `skills`/`agents`) when Globbing that plugin below — e.g. `codemap-py` prints `skills=claude-skills`, so Glob `claude-skills/*/SKILL.md` under `plugins/codemap-py/`, not `skills/*/SKILL.md`. Plugins with no manifest override resolve to the same `skills`/`agents` names the fixed patterns already assume — no behavior change. **`codex-skills/`-style dirs for non-Claude-Code runtimes intentionally excluded** — only the manifest-declared path is authoritative; a heuristic `*skill*` match would also sweep in skill dirs for a different agent runtime, producing false positives against Claude Code's frontmatter schema.
@@ -219,7 +230,7 @@ For every `PLUGIN_LAYOUT:` line, use its `skills=`/`agents=` value (not hardcode
 - **Skills (project-local — secondary)**: Glob tool, pattern `skills/*/SKILL.md`, path `.claude/`
 - **Rules / Settings / Hooks**: same as without `--local` (`.claude/`)
 
-Merge into single flat inventory. When `LOCAL_MODE=true` and same logical name in both `plugins/` and `.claude/`, prefer plugin source — skip `.claude/` duplicate. Record full paths — Step 3 cross-reference checks depend on current inventory. If MEMORY.md not updated since last agent/skill added/removed, run live disk scan, not cached roster. Stale inventory = primary cause of false-negative cross-reference findings.
+Merge into single flat inventory. When `LOCAL_MODE=true` and same logical name in both `plugins/` and `.claude/`, prefer plugin source — skip `.claude/` duplicate. Record full paths — Step 3 cross-reference checks depend on current inventory. Always use the live disk scan. Stale inventory = primary cause of false-negative cross-reference findings.
 
 **Coverage reconciliation** (bare `plugins` scope, or default full sweep with `--local` — mandatory, not optional; **NOT** `plugins <name>` / tier-2 single-plugin scope, see narrowed check below): a plugin contributing zero files to the inventory is invisible to every downstream check and must never pass as a silent clean sweep — same failure shape as a check that always no-ops: absence of findings misread as absence of problems. Base set for this comparison is **every directory under `plugins/`**, not just ones that produced a `PLUGIN_LAYOUT:` line above — a plugin with a missing or malformed `plugin.json` contributes no `PLUGIN_LAYOUT:` line either, so comparing against that subset would make it invisible again:
 
@@ -271,7 +282,7 @@ cat "$_UNSCANNED"
 - `setup`/`plugin` (bare) scope — no agent/skill collection from plugins; see setup/plugin notes below
 - Full sweep (no scope) — collect per `LOCAL_MODE` source selection above
 
-**Setup scope**: when `$SCOPE` is `setup`, also collect `${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/skills/setup/SKILL.md` for Step 3 foundry:curator spawn — only per-file spawn in setup scope. Checks I1–I3 (from `checks-install.md`) run in Step 4 against `~/.claude/` to validate post-install user state.
+**Setup scope**: when `$SCOPE` is `setup`, also collect `${CLAUDE_PLUGIN_ROOT}/skills/setup/SKILL.md` for Step 3 foundry:curator spawn — only per-file spawn in setup scope. Checks I1–I3 (from `checks-install.md`) run in Step 4 against `~/.claude/` to validate post-install user state.
 
 **`plugins <name>` scope**: resolve `plugins/<name>/` first, then `plugins/cc_<name>/`, then a plugin root with matching manifest `name` — abort `! BREAKING: no plugin directory resolved for <name>` only if none match. Collect the resolved root's `<skills-dir>/setup/SKILL.md` when present plus all its manifest-declared agents/skills. **`plugins` (no name)**: iterate every subdir under `plugins/` — do not filter by literal `agents/`/`skills/` dir presence; PLUGIN_LAYOUT resolution above already covers plugins declaring a non-standard skills/agents path via their own manifest.
 
@@ -309,13 +320,14 @@ For workflow-bearing targets, the default holistic pass checks declared inputs a
 Set up the run directory once before spawning any agents:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-RUN_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/make_run_dir.py" .reports/audit)  # timeout: 5000
+RUN_DIR=$(python "$PLUGIN_ROOT/bin/make_run_dir.py" .reports/audit)  # timeout: 5000
 [ -z "$RUN_DIR" ] && { printf "! BREAKING: make_run_dir.py returned empty path — check Python availability and write permission on .reports/\n"; exit 1; }
 echo "Run dir: $RUN_DIR"
 echo "$RUN_DIR" > "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit templates curator-prompt.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
+python "$PLUGIN_ROOT/bin/load_mode.py" audit templates curator-prompt.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
 ```
 
 Spawn **foundry:curator** agents in batches of up to `EFFECTIVE_BATCH` (grouping algorithm above) — or one batch if scope ≤ `EFFECTIVE_BATCH`. Each spawn prompt must:
@@ -337,10 +349,11 @@ After spawns complete: short summaries in context; use to identify files with fi
 **Health monitoring** (CLAUDE.md §6, `$_FS/agent-spawn-protocol.md` §Deadlines): in the response that spawns a curator wave, Write `$RUN_DIR/agent-watch-<wave>.tsv` — one row per batch, `<batch name>\t-\t900` (envelope-only — a batch writes several slug files) (Steps 4 docs-freshness `300`, Step 5b passes `600`, fix-mode agents `900`). End the turn — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a probe, or a "waiting" line. On each completion or idle notification, before reading any output, run once:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null || RUN_DIR=""
 [ -n "$RUN_DIR" ] || { echo "! BLOCKED — audit run-dir sentinel missing; cannot check agent deadlines"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/agent_watch.py" --state-dir "$RUN_DIR"  # timeout: 5000
 ```
 
 `done`, or an envelope-only row whose notification carried its envelope → read it · notification arrived without its envelope or output (empty/missing) → mark `timed_out` now, surface with ⏱ in final report, never wait further · open rows without a notification → end the turn. Never omit timed-out agents; a ⏱ never answers or skips the follow-up gate or a `! BREAKING` acknowledgment.
@@ -348,9 +361,10 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-di
 ## Steps 4–5b: System-wide checks, aggregate, low-confidence remediation
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes steps-4-5-7.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
+python "$PLUGIN_ROOT/bin/load_mode.py" audit modes steps-4-5-7.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
 ```
 
 > loads: modes/steps-4-5-7.md (§Step 4–5b and §Step 7)
@@ -360,7 +374,8 @@ Execute §Step 4–5b loaded above — system-wide checks (scope-dispatched), ag
 ## Step 6: Cross-validate critical findings
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" --optional foundry skills/_shared cross-validation-protocol.md  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/load_shared_doc.py" --optional foundry skills/_shared cross-validation-protocol.md  # timeout: 5000
 ```
 
 Protocol text printed above: follow it. A `⚠ WARNING` line instead = doc missing → skip cross-validation.
@@ -376,9 +391,10 @@ Execute §Step 7 of `steps-4-5-7.md` (loaded above in Steps 4–5b) — persists
 Runs **only** when the user picked a fix option (a–c) from the Step 7 follow-up gate or already authorized a concrete fix scope as defined under Follow-up gate. In the latter case, use that granted scope as the dispatch input without another question; do not broaden it or infer decisions for NON_AUTO_FIXABLE items. Resolve the modes dir, load `fix.md`, then execute it inline — it carries Step 8 (delegate fixes to subagents), Step 9 (codex cross-file check), and Step 10 (re-audit + convergence loop), then returns here to Step 11:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes fix.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
+python "$PLUGIN_ROOT/bin/load_mode.py" audit modes fix.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
 ```
 
 > loads: modes/fix.md Execute Steps 8–10 loaded above inline (state on disk in `summary.jsonl`, `$RUN_DIR`, `$AUDIT_TPL`). On convergence (clean or 5-pass limit), continue to Step 11 below. If no fix option was picked and no fix scope was already authorized, skip directly to Step 11.
@@ -388,10 +404,11 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes 
 <!-- loads: report-template.md -->
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null || RUN_DIR=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit templates report-template.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
+python "$PLUGIN_ROOT/bin/load_mode.py" audit templates report-template.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
 ```
 
 **Step 11a — assemble and persist** — assemble the complete audit report following the template and instructions loaded above, then **Write it to `$RUN_DIR/report.md`** using the Write tool. Set the template's `Path:` field to that same real path. This Write is mandatory, not optional: the terminal step below reads the header back from this file, and the report is the run's only durable artifact once the session ends. Skipping it leaves `Path:` pointing at a file that was never created.
@@ -411,9 +428,10 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 **Trigger**: `/foundry:audit --upgrade`
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes upgrade.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
+python "$PLUGIN_ROOT/bin/load_mode.py" audit modes upgrade.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
 ```
 
 Execute the mode loaded above.
@@ -423,9 +441,10 @@ Execute the mode loaded above.
 **Trigger**: `/foundry:audit [<scope>...] --adversarial`
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes adversarial.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
+python "$PLUGIN_ROOT/bin/load_mode.py" audit modes adversarial.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
 ```
 
 Execute the mode loaded above.
@@ -435,9 +454,10 @@ Execute the mode loaded above.
 **Trigger**: `/foundry:audit [<scope>...] --efficiency`
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes efficiency.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
+python "$PLUGIN_ROOT/bin/load_mode.py" audit modes efficiency.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
 ```
 
 Execute the mode loaded above.
@@ -447,15 +467,16 @@ Execute the mode loaded above.
 **Trigger**: `/foundry:audit [<scope>...] --consolidate` — advisory, edits nothing, skips Step 1, Steps 1b–11 and the follow-up gate.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes consolidate.md --local  # timeout: 5000
+python "$PLUGIN_ROOT/bin/load_mode.py" audit modes consolidate.md --local  # timeout: 5000
 ```
 
 Execute the mode loaded above.
 
 ## Combined-run output isolation
 
-When `--adversarial` and `--efficiency` both run in the same invocation: mint the run directory once using Step 3's setup before either mode starts. Pass that literal parent RUN_DIR explicitly in each mode's execution context, retain its run-dir sentinel, and skip any second run-directory setup; never invoke Pre-flight again between modes. Each mode writes finding files to its own subdirectory to prevent overwrite — `$RUN_DIR/adversarial/` for adversarial output, `$RUN_DIR/efficiency/` for efficiency output. Step 5 consolidator reads both subdirs. Apply the Follow-up gate once after both complete, using merged finding counts.
+When `--adversarial` and `--efficiency` both run in the same invocation: mint the run directory once using Step 3's setup before either mode starts. Pass that literal parent RUN_DIR explicitly in each mode's execution context, retain its run-dir sentinel, and skip any second run-directory setup; never invoke Pre-flight again between modes. Each mode writes finding files to its own subdirectory to prevent overwrite — `$RUN_DIR/adversarial/` for adversarial output, `$RUN_DIR/efficiency/` for efficiency output. After efficiency Phase C stages its rows, return to adversarial Phase C for the sole Step 5 canonical-writer dispatch; it reads both subdirs once and merges the stages. Apply the conditional Follow-up gate once after canonical files exist, using merged finding counts.
 
 ## Follow-up gate
 
@@ -469,7 +490,7 @@ An already-authorized fix scope requires an explicit user instruction in this se
 
 **Mandatory options (when a fix-scope question is required, never omit)**:
 
-- (a) label: `Fix auto-fixable (Recommended)` — auto-fix critical, high, medium, and low findings (skip NON_AUTO_FIXABLE systemic issues)
+- (a) label: `Fix auto-fixable (Recommended)` — auto-fix security, critical, high, medium, and low findings (skip NON_AUTO_FIXABLE systemic issues)
 - (c) label: `Fix ALL` — collect all NON_AUTO_FIXABLE decisions upfront (max 4 `AskUserQuestion` calls), then run one integrated fix pass covering auto-fixable + resolved systemic items + lows; most thorough option
 - (d) label: `Skip` — decline path; present in every layout, never replaced
 
@@ -521,7 +542,7 @@ After completing `--upgrade`, `--adversarial`, or `--efficiency`: apply the same
 
 - **Paths must be portable**: `.claude/` for project-relative, `~/` or `$HOME/` for home — never literal `/Users/<name>/` or `/home/<name>/` (anti-examples only); applies to ALL config files incl. `settings.json`
 
-- **Bash error logging**: if bash block in Pre-flight or Step 4 fails unexpectedly, stage one JSONL record in `.notes/logs/audit-errors.jsonl.rec` with the Write tool (`{"ts":"<ISO>","check":"<N>","error":"<message>"}`), then run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/append_ledger.py" .notes/logs/audit-errors.jsonl` per Growing Ledgers for post-mortem — never swallow errors silently.
+- **Bash error logging**: if bash block in Pre-flight or Step 4 fails unexpectedly, resolve `<ERROR_ROOT>` to this invocation's run directory when available, otherwise its `${TMPDIR:-/tmp}/audit-state-${CSID}` directory (create it if missing). Ensure `.notes/logs/` exists. Stage one JSONL record in `<ERROR_ROOT>/audit-errors.jsonl.rec` with the Write tool (`{"ts":"<ISO>","check":"<N>","error":"<message>"}`), then run `python "${CLAUDE_PLUGIN_ROOT}/bin/append_ledger.py" .notes/logs/audit-errors.jsonl --run-root "<ERROR_ROOT>" --history-root .notes/logs --from "<ERROR_ROOT>/audit-errors.jsonl.rec"` per Growing Ledgers for post-mortem — never swallow errors silently. Substitute the literal root before dispatch; retain the staged record as diagnostic evidence.
 
 - **Parallel execution rule**: after Step 2, launch Step 4's bash checks and docs-freshness web-explorer alongside the first curator wave. All opus spawns share `CAP_OPUS`, including Step 3 batches and Step 4 group curators: queue Step 3 first, then Step 4 group curators; dispatch at most `min(WAVE_STEP, CAP_OPUS)` per wave and wait for that wave to return before the next. Below that bound, launch all due curators together. Aggregation (Step 5) waits for both steps. Bash checks consume no agent slots; web-explorer uses the separate `CAP_SONNET` pool and may run concurrently.
 

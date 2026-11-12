@@ -19,11 +19,12 @@ Spawn with:
 Before spawning, freeze the output path once and pass that exact literal path to shepherd:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PR_NUM < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || PR_NUM=""
 [ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in REVIEW_FILE) REVIEW_FILE=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
 # Direct-report mode stores a report path in the PR tag; derive its PR number from the report instead.
-[[ "$PR_NUM" =~ ^[0-9]+$ ]] || PR_NUM=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/extract_review_pr.py" "$REVIEW_FILE")  # timeout: 5000
+[[ "$PR_NUM" =~ ^[0-9]+$ ]] || PR_NUM=$(python "$PLUGIN_ROOT/bin/extract_review_pr.py" "$REVIEW_FILE")  # timeout: 5000
 [[ "$PR_NUM" =~ ^[0-9]+$ ]] || { echo "! BLOCKED — reply PR number unavailable"; exit 1; }
 mkdir -p .temp
 REPLY_OUT="$(pwd)/.temp/output-reply-${PR_NUM}-$(date -u +%Y-%m-%d).md"

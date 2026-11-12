@@ -4,10 +4,10 @@
 
 ## Check 24 — Skill sequence compatibility
 
-Skill `<notes>` and `<workflow>` sections often document multi-skill chains (e.g., `→ /audit`, `suggested next: /brainstorm breakdown <file>`). Check verifies documented sequences internally consistent:
+Skill `<notes>` and `<workflow>` sections often document multi-skill chains (e.g., `→ /foundry:audit`, `suggested next: /foundry:brainstorm breakdown <file>`). Check verifies documented sequences internally consistent:
 
 - **24a (target existence)**: every skill referenced in documented chain exists on disk — root skills under `.claude/skills/<name>/`, plugin skills under the root whose `.claude-plugin/plugin.json` declares the routing name (in `skills/` or `claude-skills/`)
-- **24b (argument plausibility)**: when suggestion includes explicit argument (e.g., `→ /audit fix`), that argument must appear as substring in target skill's `argument-hint:` frontmatter (case-insensitive)
+- **24b (argument plausibility)**: when suggestion includes explicit argument (e.g., `→ /foundry:audit fix`), that argument must appear as substring in target skill's `argument-hint:` frontmatter (case-insensitive)
 
 **Step 1 — Extract sequence references**:
 
@@ -36,7 +36,7 @@ Missing target → **[high]**: `Sequence reference /<name> in <file> resolves to
 
 **Step 3 — Argument plausibility (Check 24b)**:
 
-For references with trailing argument token (e.g., `--adversarial` in `/audit --adversarial`, `breakdown` in `/brainstorm breakdown`):
+For references with trailing argument token (e.g., `--adversarial` in `/foundry:audit --adversarial`, `breakdown` in `/foundry:brainstorm breakdown`):
 
 1. Read target skill's frontmatter `argument-hint:` (Glob-resolved path, first 5 lines)
 2. If argument token does NOT appear as case-insensitive substring of `argument-hint` → **[medium]**: `Sequence argument '<arg>' absent from /<name> argument-hint: '<hint>'`

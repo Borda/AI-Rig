@@ -64,15 +64,19 @@ import subprocess
 import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
-from adversarial_loop import ledger_digest, load_ledger, rounds_path, validate_ledger
-from collect_diff import (
+from adversarial_loop import ledger_digest, load_ledger, rounds_path, validate_ledger  # noqa: E402
+from collect_diff import (  # noqa: E402
     canonical_diff_arguments,
     canonical_diff_environment,
     capture_source_snapshot,
     diff_sections,
     reject_gitlink_changes,
 )
+from parallel_worktrees import PilotError, _verify_worktree_gitfile  # noqa: E402
 
 #: Default per-chunk size budget, in bytes, for the --budget-bytes planner option.
 DEFAULT_BUDGET_BYTES = 1_000_000
@@ -743,7 +747,14 @@ def check(
         for _ in filter(None, prefix.split("/")):
             trusted = trusted.parent
     if manifest["repository"] != trusted.as_posix():
-        raise ValueError("chunk-source-repository-mismatch")
+        if manifest.get("origin_repository") != trusted.as_posix():
+            raise ValueError("chunk-source-repository-mismatch")
+        # A scoped mirror is eligible only through the invoking origin's reciprocal Git registration.
+        # Check the gitfile before any command can execute in the manifest-selected directory.
+        try:
+            _verify_worktree_gitfile(trusted, Path(manifest["repository"]))
+        except PilotError as error:
+            raise ValueError("chunk-source-repository-mismatch") from error
     _check_source_repositories(root, manifest)
     if "diff_base_oid" in manifest:
         base = manifest["diff_base_oid"]

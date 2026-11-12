@@ -190,7 +190,7 @@ def _dated_repo(tmp_path: Path) -> Path:
     return root
 
 
-@pytest.fixture(name="reset_query_caches")
+@pytest.fixture(name="reset_query_caches", autouse=True)
 def _reset_query_caches(monkeypatch: pytest.MonkeyPatch) -> None:
     """Clear the module-level git/staleness memos so each in-process test starts cold.
 
@@ -198,6 +198,7 @@ def _reset_query_caches(monkeypatch: pytest.MonkeyPatch) -> None:
     inside a single pytest process those would otherwise leak between tests.
     """
     monkeypatch.setattr(query.index_io, "_file_shas_cache", None)
+    monkeypatch.setattr(query.index_io, "_fingerprint_root", None)
     monkeypatch.setattr(query.coverage, "_coverage_cache", None)
     monkeypatch.setattr(query.index_io, "_git_root_cache", None)
     monkeypatch.setattr(query.index_io, "_git_root_resolved", False)

@@ -265,20 +265,18 @@ class TestProjectLabel:
     @pytest.mark.parametrize(
         ("dirname", "expected"),
         [
-            pytest.param(
-                str(Path.home()).replace("/", "-").replace("\\", "-") + "-Workspace-demo",
-                "Workspace-demo",
-                id="strips-home",
-            ),
+            pytest.param("{home}-Workspace-demo", "Workspace-demo", id="strips-home"),
             pytest.param("-some-other-slug", "-some-other-slug", id="non-matching-prefix-unchanged"),
         ],
     )
     def test_strips_home_prefix_only(self, dirname: str, expected: str) -> None:
         """The real ``Path.home()`` slug is stripped to a short portable label; any other directory name passes through.
 
-        The home slug is computed from the running host so the test carries no user-specific path.
+        The home slug is computed when the test runs, from the home the function itself reads, so the test carries no
+        user-specific path and stays correct when a fixture changes ``HOME`` after collection.
         """
-        assert ca._project_label(dirname) == expected
+        home_slug = str(Path.home()).replace("/", "-").replace("\\", "-")
+        assert ca._project_label(dirname.format(home=home_slug)) == expected
 
 
 class TestDiscoverSessions:

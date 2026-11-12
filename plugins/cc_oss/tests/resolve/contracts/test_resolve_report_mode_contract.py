@@ -9,19 +9,25 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from unittest import mock
 
 import pytest
+from _oss_shell_plugin import render_shell
 from _resolve_source import read_resolve_source
+from _skill_source import read_skill_source
 from _text_io import bash_block_after, bash_path, write_lf
 
 _RESOLVE = Path(__file__).resolve().parents[3] / "skills" / "resolve"
+_PLUGIN = _RESOLVE.parents[1]
 _BASH = shutil.which("bash")
 _ZSH = shutil.which("zsh")
 _DISPATCH_PHASES = ("prelude", "phase1", "phase2", "phase3")
 _REPORT_MODE = "modes/report-intelligence.md"
 _QA_GATE = "modes/lint-qa-gate.md"
 _LOCAL_REPORT_REF = "n/a (local report)\n"
+_REAL_RUN = subprocess.run
 #: The Bash tool runs the login shell — zsh on macOS, which never sets ``BASH_REMATCH`` — so header parsing runs both.
 _SHELLS = [
     pytest.param(_BASH, id="bash", marks=pytest.mark.skipif(_BASH is None, reason="bash not installed")),
@@ -76,7 +82,18 @@ def _python_path() -> str:
 
 def _run(block: str, cwd: Path, env: dict[str, str], shell: str | None = None) -> subprocess.CompletedProcess[str]:
     """Execute a shipped block in a fresh shell (Bash unless given), as a separate Bash tool call would."""
-    return subprocess.run([shell or _BASH, "-c", block], cwd=cwd, env=env, capture_output=True, text=True, check=False)
+    # Keep long recipes out of Windows command arguments and outside the repository whose Git diff they inspect.
+    with tempfile.TemporaryDirectory(prefix="oss-report-shell-") as scratch:
+        script = Path(scratch) / "recipe.sh"
+        write_lf(script, render_shell(block, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "oss"))
+        return subprocess.run(
+            [shell or _BASH, bash_path(script)],
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            encoding="utf-8",
+            check=False,
+        )
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -84,6 +101,13 @@ def _git(repo: Path, *args: str) -> str:
     identity = ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]
     done = subprocess.run(["git", "-C", str(repo), *identity, *args], check=True, capture_output=True, text=True)
     return done.stdout.strip()
+
+
+def _truncate_dash_c(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    """Model Windows command argument truncation while retaining real shell execution."""
+    if len(args) > 2 and args[1] == "-c":
+        args = [*args[:2], args[2][:8191], *args[3:]]
+    return _REAL_RUN(args, **kwargs)
 
 
 def _stub_plugin(tmp_path: Path, script: str, body: str) -> Path:
@@ -460,7 +484,7 @@ class TestReportModeFlow:
         """
         dispatch = " ".join(_dispatch().split())
         skill = _prose("SKILL.md")
-        review = " ".join((_RESOLVE.parent / "review" / "SKILL.md").read_text(encoding="utf-8").split())
+        review = " ".join(read_skill_source(_RESOLVE.parent / "review" / "SKILL.md").split())
         consolidator_file = _RESOLVE.parent / "review" / "templates" / "consolidator-prompt.md"
         consolidator = " ".join(consolidator_file.read_text(encoding="utf-8").split())
         step11 = skill[skill.index("## Step 11") :]
@@ -515,6 +539,19 @@ class TestStep8Guards:
 
 class TestCodexDirectCommit:
     """Pin the Codex direct-commit rule that credits each commit before the item ledger."""
+
+    @_requires_bash
+    @mock.patch("subprocess.run", autospec=True, side_effect=_truncate_dash_c)
+    def test_runner_preserves_long_composed_script(self, mock_run: mock.Mock, tmp_path: Path) -> None:
+        """Long rendered recipes survive a host that truncates shell command arguments."""
+        payload = "retained proof — " * 600
+        block = f"_PROOF='{payload}'\nprintf '%s\\n' \"$_PROOF\"\n"
+
+        result = _run(block, tmp_path, _env(tmp_path, "long-recipe"))
+
+        assert mock_run.called
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stdout == payload + "\n"
 
     def test_each_commit_requires_credit_and_success_before_item_ledger(self) -> None:
         """A failed Codex-direct commit must leave no completed per-item record.
@@ -579,12 +616,15 @@ class TestCodexDirectCommit:
 """
         env = _env(tmp_path, session, CLAUDE_PLUGIN_ROOT=str(plugin), PATH=_python_path())
         result = _run(jq_crlf + fence, repo, env)
-        assert result.returncode != 0
-        assert "C1 per-item commit failed" in result.stdout
-        assert not (impl_dir / "c1-item-summary.tsv").exists()
-        assert not (impl_dir / "c1-item-files.tsv").exists()
-        assert (impl_dir / "c1-item-current.txt").read_text(encoding="utf-8") == "1\n"  # kept for the rerun
-        assert source.read_text(encoding="utf-8") == "after\n"
+        composed = render_shell(jq_crlf + fence, plugin, "oss")
+        tail = "\n".join(repr(line) for line in composed.splitlines(keepends=True)[-25:])
+        diagnostic = f"exit code: {result.returncode}\nstderr:\n{result.stderr}\nlast 25 script lines:\n{tail}"
+        assert result.returncode != 0, diagnostic
+        assert "C1 per-item commit failed" in result.stdout, diagnostic
+        assert not (impl_dir / "c1-item-summary.tsv").exists(), diagnostic
+        assert not (impl_dir / "c1-item-files.tsv").exists(), diagnostic
+        assert (impl_dir / "c1-item-current.txt").read_text(encoding="utf-8") == "1\n", diagnostic  # kept for the rerun
+        assert source.read_text(encoding="utf-8") == "after\n", diagnostic
 
 
 class TestFinalReport:

@@ -44,15 +44,17 @@ When `plugins/cc_foundry/.claude-plugin/permissions-allow.json` is absent, skip 
 
    ```bash
    # timeout: 15000
+   PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
    PERM_RULE="<rule>"
    case "$PERM_RULE" in *'<'*'>'*|"") echo "! BLOCKED — <rule> not substituted"; exit 1;; esac
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/jq_write.py" .claude/settings.json '.permissions.allow += [$rule]' --arg rule "$PERM_RULE" || exit 1
+   python "$PLUGIN_ROOT/bin/jq_write.py" .claude/settings.json '.permissions.allow += [$rule]' --arg rule "$PERM_RULE" || exit 1
    ```
 
 3. Only for **Ship with foundry**, also append to the plugin **source** `permissions-allow.json` so `/foundry:setup` syncs it to `~/.claude/settings.json` after reinstall. Project-only skips this write even when the source file exists:
 
    ```bash
    # timeout: 5000
+   PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
    PERM_RULE="<rule>"
    case "$PERM_RULE" in *'<'*'>'*|"") echo "! BLOCKED — <rule> not substituted"; exit 1;; esac
    SHIP_PERMISSION="<true-or-false>"
@@ -60,7 +62,7 @@ When `plugins/cc_foundry/.claude-plugin/permissions-allow.json` is absent, skip 
    PERM_FILE="plugins/cc_foundry/.claude-plugin/permissions-allow.json"
    if [ "$SHIP_PERMISSION" = true ]; then
        [ -f "$PERM_FILE" ] || { echo "! BLOCKED — permission source file missing"; exit 1; }
-       python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/jq_write.py" "$PERM_FILE" '. += [$rule] | unique' --arg rule "$PERM_RULE" || exit 1
+       python "$PLUGIN_ROOT/bin/jq_write.py" "$PERM_FILE" '. += [$rule] | unique' --arg rule "$PERM_RULE" || exit 1
    fi
    ```
 
@@ -76,9 +78,10 @@ When `plugins/cc_foundry/.claude-plugin/permissions-allow.json` is absent, skip 
 
    ```bash
    # timeout: 5000
+   PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
    PERM_RULE="<rule>"
    case "$PERM_RULE" in *'<'*'>'*|"") echo "! BLOCKED — <rule> not substituted"; exit 1;; esac
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/verify_perm.py" "$PERM_RULE" .claude/settings.json .claude/permissions-guide.md present || exit 1
+   python "$PLUGIN_ROOT/bin/verify_perm.py" "$PERM_RULE" .claude/settings.json .claude/permissions-guide.md present || exit 1
    # Exits 0 if both consistent; prints "settings: OK|MISSING" + "guide: OK|MISSING"
    ```
 
@@ -90,9 +93,10 @@ Removes rule from both `settings.json` and `permissions-guide.md` atomically.
 
    ```bash
    # timeout: 15000
+   PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
    PERM_RULE="<rule>"
    case "$PERM_RULE" in *'<'*'>'*|"") echo "! BLOCKED — <rule> not substituted"; exit 1;; esac
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/jq_write.py" .claude/settings.json 'del(.permissions.allow[] | select(. == $rule))' --arg rule "$PERM_RULE" || exit 1
+   python "$PLUGIN_ROOT/bin/jq_write.py" .claude/settings.json 'del(.permissions.allow[] | select(. == $rule))' --arg rule "$PERM_RULE" || exit 1
    ```
 
 2. Update `permissions-guide.md` — use Edit tool to remove table row containing `` `<rule>` ``.
@@ -101,8 +105,9 @@ Removes rule from both `settings.json` and `permissions-guide.md` atomically.
 
    ```bash
    # timeout: 5000
+   PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
    PERM_RULE="<rule>"
    case "$PERM_RULE" in *'<'*'>'*|"") echo "! BLOCKED — <rule> not substituted"; exit 1;; esac
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/verify_perm.py" "$PERM_RULE" .claude/settings.json .claude/permissions-guide.md absent || exit 1
+   python "$PLUGIN_ROOT/bin/verify_perm.py" "$PERM_RULE" .claude/settings.json .claude/permissions-guide.md absent || exit 1
    # Exits 0 if both consistent; prints "settings: OK|STILL_PRESENT" + "guide: OK|STILL_PRESENT"
    ```

@@ -55,6 +55,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
 # The hook runs from the installed plugin cache; loading the installer parser must not write bytecode there.
 if __name__ == "__main__":
     sys.dont_write_bytecode = True
@@ -168,7 +171,7 @@ def _global_root_notice(root: Path) -> str | None:
         if not agents.is_file():
             return None
         managed, rendered = _managed_block_root(root, agents)
-    except (OSError, ImportError, RuntimeError, SyntaxError):
+    except Exception:
         return None
     if not managed:
         return None
@@ -219,8 +222,10 @@ def main() -> int:
             message = _health_message(result, classification)
         print(_response(_joined(message, root_notice)))
         return 0
-    except (OSError, subprocess.TimeoutExpired, ValueError, json.JSONDecodeError) as error:
-        unavailable = f"Codex Rig shim health check unavailable: {error}. Run $codex-rig:agent-shims doctor."
+    except Exception as error:
+        unavailable = (
+            f"Codex Rig shim health check unavailable: {type(error).__name__}. Run $codex-rig:agent-shims doctor."
+        )
         print(_response(_joined(unavailable, root_notice)))
         return 0
 

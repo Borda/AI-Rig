@@ -171,6 +171,24 @@ def _assessed_pr(tmp_path: Path) -> Path:
         )
     metadata = result["metadata"]
     del metadata["review_status"], metadata["close_decision"]
+    gates_path = run / "gates.json"
+    gates = json.loads(gates_path.read_text(encoding="utf-8"))
+    tests_gate = next(check for check in gates["checks"] if check["id"] == "tests")
+    approval_path = run / "tests-skip-decision.json"
+    approval_path.write_text(
+        json.dumps(
+            {
+                "decision": "skip-tests",
+                "reason": tests_gate["reason"],
+                "evidence": "Fixture user approves skipping code tests for this spelling-only review.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run / "checks").mkdir(exist_ok=True)
+    approval = _module(PLUGIN_ROOT / "shared/gate_test_approval.py")
+    tests_gate["approval"] = approval.retain_approval(approval_path, run, tests_gate["reason"])
+    gates_path.write_text(json.dumps(gates), encoding="utf-8")
     metadata.update(
         {
             "review_decision": {

@@ -1,13 +1,15 @@
 """Measure observable context composition in Claude Code and Codex transcript windows.
 
-Purpose: Expose context overhead alongside the existing session cost analyzer. Scope: Read main and subagent JSONL
-transcripts independently; Claude usage totals     use analyzer message-id dedupe and cache-duration accounting. Codex
-rollouts     use a sibling token-only parser with response-id or cumulative-event dedupe. Usage: Imported by
-cost_analyzer.py for --composition; the caller supplies its     module so discovery, selection, usage parsing and output
-retain one owner. Outputs: Markdown lines with per-window context, attachment and tool-result     measurements, Read
-repetitions, hook injections and likely cache rebuilds.     Claude sessions include logged compactions and gate
-estimates versus realised windows. Failure: Missing sessions or usage return 1.     Malformed JSON lines are skipped
-with a warning; filesystem errors propagate. Used by: cost_analyzer.main and the context-composition regression tests.
+Purpose:
+    Expose context overhead alongside the existing session cost analyzer. Scope: Read main and subagent JSONL
+    transcripts independently; Claude usage totals     use analyzer message-id dedupe and cache-duration accounting.
+    Codex rollouts     use a sibling token-only parser with response-id or cumulative-event dedupe. Usage: Imported by
+    cost_analyzer.py for --composition; the caller supplies its     module so discovery, selection, usage parsing and
+    output retain one owner. Outputs: Markdown lines with per-window context, attachment and tool-result
+    measurements, Read repetitions, hook injections and likely cache rebuilds.     Claude sessions include logged
+    compactions and gate estimates versus realised windows. Failure: Missing sessions or usage return 1.     Malformed
+    JSON lines are skipped with a warning; filesystem errors propagate. Used by: cost_analyzer.main and the context-
+    composition regression tests.
 
 Attachment bytes are UTF-8 payload bytes, excluding transcript metadata. Tool tokens are estimates, because transcripts
 do not expose their exact tokenization. Measurements describe content observed within each window, not an exact
@@ -22,6 +24,7 @@ import json
 import math
 import sys
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
@@ -168,9 +171,8 @@ def _warn_row(path: Path, number: int, error: Exception) -> None:
     sys.stderr.write(f"warning: {kind} at {path}:{number}; skipped ({error})\n")
 
 
-def _read_numbered_rows(path: Path, analyzer: ModuleType) -> list[tuple[int, dict]]:
+def _read_numbered_rows(path: Path, analyzer: ModuleType, *, warn: bool = True) -> Iterator[tuple[int, dict]]:
     """Read fully validated transcript objects, so observers never meet a shape that fails midway through a row."""
-    rows = []
     with path.open(encoding="utf-8", errors="replace") as handle:
         for number, line in enumerate(handle, 1):
             try:
@@ -187,10 +189,10 @@ def _read_numbered_rows(path: Path, analyzer: ModuleType) -> list[tuple[int, dic
                 if error:
                     raise ValueError(error)
             except (ValueError, TypeError, AttributeError, RecursionError) as error:
-                _warn_row(path, number, error)
+                if warn:
+                    _warn_row(path, number, error)
                 continue
-            rows.append((number, row))
-    return rows
+            yield number, row
 
 
 def _bounded_number(value: object, limit: int) -> bool:
@@ -397,11 +399,10 @@ def analyze_transcript(path: Path, analyzer: ModuleType) -> list[Window]:
     starts a new window. Subagent transcripts must be analyzed separately because their context lifetimes are
     independent.
     """
-    rows = [row for _, row in _read_numbered_rows(path, analyzer)]
-    explicit = any(_is_compaction(row) for row in rows)
+    explicit = any(_is_compaction(row) for _, row in _read_numbered_rows(path, analyzer, warn=False))
     state = TranscriptState()
     # Rows were validated whole; an exception here is a defect and stays visible instead of leaving partial state.
-    for row in rows:
+    for _, row in _read_numbered_rows(path, analyzer):
         if _is_compaction(row):
             _new_window(state, "compaction record")
         _observe_call(row, state, analyzer, explicit)

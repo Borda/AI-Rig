@@ -17,6 +17,7 @@ In `prepare` and `audit` modes, delegate gather/explore/validate to subagent via
    ```
 2. Assert variables before spawning:
    ```bash
+   PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
    # reload every asserted var — fresh shell (Check 41)
    IFS= read -r SKILL_DIR < "${TMPDIR:-/tmp}/release-setup-${CSID}/SKILL_DIR" 2>/dev/null || SKILL_DIR=""
@@ -31,7 +32,7 @@ In `prepare` and `audit` modes, delegate gather/explore/validate to subagent via
    GATHER_FILE=".temp/release-gather-$BRANCH-$DATE.md"
    [ -n "$GATHER_FILE" ] && [ -n "$WAIVED_FILE" ] && [ -n "$REPO_ROOT" ] && [ -n "$RANGE" ] || { echo "Error: GATHER_FILE, WAIVED_FILE, REPO_ROOT, or RANGE is empty — verify Shared setup and Gather changes completed"; exit 1; }  # timeout: 5000
    # LAST_TAG empty is valid (first-ever release, no prior tag) — gather-prompt.md's baseline check handles it, never asserted here
-   OSS_BIN="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin"  # resolved here, passed absolute: the gather subagent's shell has no CLAUDE_PLUGIN_ROOT
+   OSS_BIN="$PLUGIN_ROOT/bin"  # resolved here, passed absolute: the gather subagent's shell has no CLAUDE_PLUGIN_ROOT
    echo "REPO_ROOT=$REPO_ROOT RANGE=$RANGE GATHER_FILE=$GATHER_FILE WAIVED_FILE=$WAIVED_FILE LAST_TAG=$LAST_TAG OSS_BIN=$OSS_BIN SHIPPED_TAGS=$SHIPPED_TAGS SHIPPED_FILE=$SHIPPED_FILE"  # literal values for the template substitution below
    cat "$SKILL_DIR/templates/gather-prompt.md"  # timeout: 5000
    ```
@@ -85,6 +86,7 @@ printf '%s\n' "$UNCONFIRMED_BREAKING" > "${TMPDIR:-/tmp}/release-unconfirmed-bre
 Pre-compute output paths and persist for downstream reload (fresh shell, Check 41):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # fresh shell loses vars between blocks (Check 41)
 IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH" 2>/dev/null || BRANCH=""
@@ -102,7 +104,7 @@ echo "${CHANGELOG_AUDIT_FILE:-}" > "${TMPDIR:-/tmp}/release-changelog-audit-${CS
 echo "${CONTRIBUTORS_FILE:-}" > "${TMPDIR:-/tmp}/release-contributors-${CSID}"
 # reload SKILL_DIR (Check 41)
 IFS= read -r SKILL_DIR < "${TMPDIR:-/tmp}/release-setup-${CSID}/SKILL_DIR" 2>/dev/null || SKILL_DIR=""
-cat "$SKILL_DIR/modes/changelog-audit-prompt.md"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$SKILL_DIR/modes/changelog-audit-prompt.md"  # timeout: 5000
 ```
 
 <!-- loads: modes/changelog-audit-prompt.md -->
@@ -112,10 +114,11 @@ Prompt (loaded above) — substitute `$RELEASE_MODE`, `$VERSION` along with the 
 Validate both envelopes: with the Write tool, save Agent A's and Agent B's returned one-line JSON envelopes verbatim to `${TMPDIR:-/tmp}/release-envelope-a-${CSID}` and `${TMPDIR:-/tmp}/release-envelope-b-${CSID}`; the block reloads them:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r ENVELOPE_A < "${TMPDIR:-/tmp}/release-envelope-a-${CSID}" 2>/dev/null || ENVELOPE_A=""
 IFS= read -r ENVELOPE_B < "${TMPDIR:-/tmp}/release-envelope-b-${CSID}" 2>/dev/null || ENVELOPE_B=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse_release_envelopes.py" --envelope-a "$ENVELOPE_A" --envelope-b "$ENVELOPE_B"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/parse_release_envelopes.py" --envelope-a "$ENVELOPE_A" --envelope-b "$ENVELOPE_B"  # timeout: 5000
 ```
 
 `$SCOPE_FLAGGED` > 0 → read the "Scope check" section of `$CHANGELOG_AUDIT_FILE`; every row there (critical = already-released commit landed a second time, medium = unreviewed branch merge) must reach the Findings summary table in `audit`/`prepare` modes — see `templates/audit-checks.md` Output, "Changelog scope" row — never left inside the audit file only. This is the check the reviewer needs surfaced before approving the PR, not something to bury in a report nobody opens. Same rule for the printed `unsourced` count: > 0 → copy each "unsourced entry" row from `$CHANGELOG_AUDIT_FILE` into the "Changelog evidence" row of the Findings summary (`templates/audit-checks.md`).

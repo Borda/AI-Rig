@@ -19,7 +19,9 @@ whole rendered response: a combined response whose unrelated sub-result carried
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
 import sys
 from pathlib import Path
 
@@ -132,22 +134,47 @@ def complete_for_target(response: object, target: str) -> bool:
     return coverage.get("query_complete") is True or coverage.get("exhaustive") is True
 
 
+def _append_modules(sentinel: Path, dotted: str) -> None:
+    """Append module names only to a newly created or identity-checked regular sentinel.
+
+    Planted symlinks are rejected before exclusive creation, which can follow dangling links on Windows. Existing files
+    use O_NOFOLLOW where available and must match the inspected file identity before writing, including on platforms
+    without O_NOFOLLOW. Nonblocking opens let raced FIFOs fail open rather than hanging.
+    """
+    if sentinel.is_symlink():
+        return
+    previous = None
+    flags = os.O_WRONLY | os.O_APPEND
+    try:
+        descriptor = os.open(sentinel, flags | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        previous = sentinel.lstat()
+        if not stat.S_ISREG(previous.st_mode):
+            return
+        descriptor = os.open(sentinel, flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(descriptor, "a", encoding="utf-8") as stream:
+        if previous is not None and not os.path.samestat(previous, os.fstat(stream.fileno())):
+            return
+        stream.write(f"{dotted}\n{dotted.replace('.', '/')}\n")
+
+
 def record(sentinel: Path, payload: dict) -> None:
     """Append the dotted and slashed module names when a query result is exhaustive."""
-    command = str((payload.get("tool_input") or {}).get("command", ""))
+    tool_input = payload.get("tool_input")
+    command = str(tool_input.get("command", "")) if isinstance(tool_input, dict) else ""
     if not _QUERY.search(command):
         return
     target = _TARGET.search(command)
     if target is None or not complete_for_target(payload.get("tool_response"), target.group(1)):
         return
     dotted = target.group(1).split("::", 1)[0]
-    with sentinel.open("a", encoding="utf-8") as stream:
-        stream.write(f"{dotted}\n{dotted.replace('.', '/')}\n")
+    _append_modules(sentinel, dotted)
 
 
 def invalidate(sentinel: Path, payload: dict) -> None:
     """Drop the sentinel after an edit that can change the import graph."""
-    edited = str((payload.get("tool_input") or {}).get("file_path", ""))
+    tool_input = payload.get("tool_input")
+    edited = str(tool_input.get("file_path", "")) if isinstance(tool_input, dict) else ""
     if edited and not edited.endswith(_SOURCE_SUFFIXES):
         return
     sentinel.unlink(missing_ok=True)

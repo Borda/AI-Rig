@@ -59,7 +59,9 @@ _PR_NUMBER_RE: Final = re.compile(r"^\s*(report\s+)?#?(\d+)(\s+report)?\s*$")
 #: group(3) captures the PR number from a .../pull/N path. A pasted PR link often carries a tab or
 #: thread tail (``/files``, ``/commits``, ``#discussion_r123``, ``?diff=split``); the tail is accepted
 #: and dropped so PR_URL is the canonical PR reference ``gh`` understands.
-_PR_URL_RE: Final = re.compile(r"^\s*(report\s+)?(https://github\.com/\S+?/pull/(\d+))(?:[/#?]\S*)?(\s+report)?\s*$")
+_PR_URL_RE: Final = re.compile(
+    r"^\s*(report\s+)?(https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/(\d+))(?:[/#?]\S*)?(\s+report)?\s*$"
+)
 #: Any other github.com URL (plain repo link, issue link) still routes on PR_URL alone with PR_NUMBER
 #: empty — downstream gates then report ``n/a`` instead of handing the URL to comment dispatch.
 _GH_URL_RE: Final = re.compile(r"^\s*(report\s+)?(https://github\.com/\S+?)(\s+report)?\s*$")
@@ -166,11 +168,15 @@ def main(argv: list[str]) -> int:
             description="Parse oss:resolve $ARGUMENTS, emit shell variable assignments for eval.",
         ).parse_args(argv)  # prints help, exits 0
 
-    arguments = " ".join(argv)
+    null_output = len(argv) == 2 and argv[0] == "--null"
+    arguments = argv[1] if null_output else " ".join(argv)
     parsed = parse_resolve_args(arguments)
     # Bash reads these assignments one line at a time; Windows CRLF leaves a stray carriage return in each value.
     sys.stdout.reconfigure(newline="\n")
-    print(_emit(parsed))
+    if null_output:
+        sys.stdout.write("".join(f"{key}\0{value}\0" for key, value in parsed.items()))
+    else:
+        print(_emit(parsed))
     return 0
 
 

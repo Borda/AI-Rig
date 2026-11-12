@@ -66,7 +66,8 @@ esac
 Load rules pipeline template via Bash (not Read tool — Bash grant is version-proof):
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate templates rules-pipeline-prompt.md --fallback-source  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/load_mode.py" calibrate templates rules-pipeline-prompt.md --fallback-source  # timeout: 5000
 ```
 
 For each rule file, substitute `<RULE_BASENAME>`, `<RULE_PATH>`, and `<RULE_DIR>` from the values derived above, `<RULE_CONTENT>` with that file's full text, `<TIMESTAMP>`, `<MODE>`, `<N>`, and `<CHILD_BATCH>` with `1`, then spawn **single** `general-purpose` pipeline subagent with `model="sonnet"` within SKILL.md's session-wide spawn budget.
@@ -101,7 +102,7 @@ After table, for each non-calibrated rule print `proposal.md` content (wording s
 
 ### Follow-up chain
 
-- `under-enforced` (adherence < 0.80): reword directive to imperative mood with concrete action, re-run `/calibrate rules` to verify
+- `under-enforced` (adherence < 0.80): reword directive to imperative mood with concrete action, re-run `/foundry:calibrate rules` to verify
 - `outcome-gap` (adherence ≥ 0.80 but outcome < 0.80): directive vague at behavioral level; add concrete example or constraint, re-run
 - Persistent failures after rewording: split rule into more focused directives. Max 3 re-run cycles; if rule still non-calibrated after third, surface persistent failures to user for manual review.
 

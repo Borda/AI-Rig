@@ -20,11 +20,20 @@ import sys
 import tempfile
 from pathlib import Path
 
+from _sentinel_io import write_private_text
+
 #: Directory names never searched for a changelog (dependency and tooling trees).
 _SKIP_DIRS: frozenset[str] = frozenset({"node_modules", ".venv", "vendor", ".git"})
 
 #: Path printed when the repository has no changelog yet.
 DEFAULT_CHANGELOG = "CHANGELOG.md"
+
+
+def _regular_changelog(path: Path) -> bool:
+    """Return whether a changelog file exists without following symlinks."""
+    if path.is_symlink() or path.parent.is_symlink():
+        raise ValueError(f"changelog path must not traverse a symlink: {path}")
+    return path.is_file()
 
 
 def resolve_changelog(repo_root: Path) -> str:
@@ -36,6 +45,9 @@ def resolve_changelog(repo_root: Path) -> str:
     Returns:
         POSIX-style relative path of the first match, or ``CHANGELOG.md`` when none exists.
 
+    Raises:
+        ValueError: A selected changelog or searched directory is a symlink.
+
     Examples:
         >>> import tempfile
         >>> with tempfile.TemporaryDirectory() as tmp:
@@ -43,10 +55,12 @@ def resolve_changelog(repo_root: Path) -> str:
         'CHANGELOG.md'
     """
     for candidate in (DEFAULT_CHANGELOG, "docs/CHANGELOG.md"):
-        if (repo_root / candidate).is_file():
+        if _regular_changelog(repo_root / candidate):
             return candidate
-    for directory in sorted(p for p in repo_root.iterdir() if p.is_dir() and p.name not in _SKIP_DIRS):
-        matches = sorted(p for p in directory.iterdir() if p.is_file() and p.name.startswith("CHANGELOG"))
+    for directory in sorted(p for p in repo_root.iterdir() if p.name not in _SKIP_DIRS):
+        if directory.is_symlink() or not directory.is_dir():
+            continue
+        matches = sorted(p for p in directory.iterdir() if p.name.startswith("CHANGELOG") and _regular_changelog(p))
         if matches:
             return matches[0].relative_to(repo_root).as_posix()
     return DEFAULT_CHANGELOG
@@ -66,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
         argv: Command-line arguments; ``None`` reads ``sys.argv``.
 
     Returns:
-        ``0`` on success, ``1`` when the repository root is not a directory.
+        ``0`` on success, ``1`` when the repository root is not a directory or the search encounters a symlink.
     """
     parser = argparse.ArgumentParser(description="Resolve the repository CHANGELOG path (relative to the repo root).")
     parser.add_argument("--repo-root", default=".", help="repository root to search (default: current directory)")
@@ -76,9 +90,13 @@ def main(argv: list[str] | None = None) -> int:
     if not root.is_dir():
         print(f"Error: repo root not a directory: {root}", file=sys.stderr)
         return 1
-    resolved = resolve_changelog(root)
+    try:
+        resolved = resolve_changelog(root)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
     if args.write_sentinel:
-        _sentinel_path().write_text(resolved + "\n", encoding="utf-8", newline="\n")
+        write_private_text(_sentinel_path(), resolved + "\n")
     print(resolved)
     return 0
 

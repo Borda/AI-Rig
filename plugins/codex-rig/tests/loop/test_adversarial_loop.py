@@ -12,6 +12,7 @@ import hashlib
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from itertools import pairwise
 from pathlib import Path
 from types import ModuleType
@@ -769,6 +770,132 @@ class TestCliSummary:
 
 class TestCliProgress:
     """The ``--progress`` table printed on stderr."""
+
+    def test_reconciles_closed_history_and_repeat_routes(self, tmp_path: Path) -> None:
+        """Separate new routes to closed invariants from findings that survived the previous review."""
+        prior = [
+            _finding(name, "security", evidence=[f"invariant: {name}"])
+            for name in ("boundary", "destination", "source", "consumer")
+        ]
+        closed = [item | {"disposition": "verified-fixed"} for item in prior]
+        remaining = [_finding(name, "security") for name in ("parse", "validate", "dispatch")]
+        ledger = _ledger(
+            _round(1, [*prior, _finding("capacity", "security")]),
+            _round(2, [*closed, _finding("capacity", "security", "verified-fixed"), *remaining]),
+            _round(
+                3,
+                closed
+                + [_finding("capacity", "security", "verified-fixed")]
+                + [item | {"disposition": "rejected", "evidence": ["Counterevidence retained"]} for item in remaining]
+                + [item | {"signature": f"alternate-{item['signature']}"} for item in prior]
+                + [_finding("discovery", "security")],
+            ),
+        )
+        ledger_path = tmp_path / "ledger.json"
+        write_json(ledger_path, ledger)
+
+        result = _cli(ledger_path, "--progress", "--plateau-kind")
+
+        assert result.returncode == 0, result.stderr
+        assert "| 3 | 4 + 1 |" in result.stderr
+        expected = (
+            "previous open 3 -> verified-fixed 0, rejected 3, still open 0; "
+            "carried 0 + repeat route 4 + new 1 = open now 5"
+        )
+        assert f"Reconciliation round 3: all tiers: {expected}; security: {expected}." in result.stderr
+        assert result.stderr.count("Reconciliation round") == 2
+        assert "old = repeat of a known invariant, not necessarily carried from the previous row" in result.stderr
+        assert "plateau-kind: mixed" in result.stderr
+        assert json.loads(result.stdout)["reason"] == "nonconverging"
+
+    def test_reconciles_persisting_and_pending_findings(self, tmp_path: Path) -> None:
+        """Count pending verification and a sibling route to a still-open invariant as carried."""
+        ledger = _ledger(
+            _round(1, [_finding("boundary", "security", evidence=["invariant: boundary"]), _finding("source")]),
+            _round(
+                2,
+                [
+                    _finding("boundary", "security", "fixed-pending-verification", evidence=["invariant: boundary"]),
+                    _finding("source", disposition="verified-fixed"),
+                    _finding("sibling", "security", evidence=["invariant: boundary"]),
+                ],
+            ),
+        )
+        ledger_path = tmp_path / "ledger.json"
+        write_json(ledger_path, ledger)
+
+        result = _cli(ledger_path, "--progress")
+
+        assert result.returncode == 0, result.stderr
+        assert "all tiers: previous open 2 -> verified-fixed 1, rejected 0, still open 1; carried 2" in result.stderr
+        assert "security: previous open 1 -> verified-fixed 0, rejected 0, still open 1; carried 2" in result.stderr
+        assert result.stderr.count("+ repeat route 0 + new 0 = open now 2") == 2
+
+    def test_baseline_has_legend_without_reconciliation(self, tmp_path: Path) -> None:
+        """Explain historical identity in the first table without inventing a previous review."""
+        ledger_path = tmp_path / "ledger.json"
+        write_json(ledger_path, _ledger(_round(1, [_finding("boundary")])))
+
+        result = _cli(ledger_path, "--progress")
+
+        assert result.returncode == 0
+        assert "Reconciliation round" not in result.stderr
+        assert (
+            "old = repeat of a known invariant (signature or `invariant:` evidence seen in any prior completed "
+            "round, including closed findings), not necessarily carried from the previous row"
+        ) in result.stderr
+        assert "weights: security 20, critical 10, high 6, medium 4, low 2, nit 1." in result.stderr
+
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            pytest.param(
+                lambda source: source.replace("previous_open=len(prior)", "previous_open=len(prior) + 1"),
+                id="previous-dispositions",
+            ),
+            pytest.param(
+                lambda source: source.replace("open_now=len(current_open)", "open_now=len(current_open) + 1"),
+                id="current-open-partition",
+            ),
+            pytest.param(
+                lambda source: source.replace("carried=carried,", "carried=carried + 1,").replace(
+                    "open_now=len(current_open)", "open_now=len(current_open) + 1"
+                ),
+                id="table-old-split",
+            ),
+            pytest.param(
+                lambda source: source.replace("new=new,", "new=new + 1,").replace(
+                    "open_now=len(current_open)", "open_now=len(current_open) + 1"
+                ),
+                id="table-new-split",
+            ),
+        ],
+    )
+    def test_corrupt_reconciliation_sum_fails_cli(self, tmp_path: Path, mutate: Callable[[str], str]) -> None:
+        """Refuse a corrupt count before printing a misleading table or a valid JSON summary."""
+        ledger_path = tmp_path / "ledger.json"
+        write_json(
+            ledger_path,
+            _ledger(_round(1, [_finding("boundary")]), _round(2, [_finding("boundary", disposition="verified-fixed")])),
+        )
+        # Mutate only a private copy: exercise the real CLI without replacing its internal counting boundary.
+        source = LEDGER_PATH.read_text(encoding="utf-8")
+        changed = mutate(source)
+        assert changed != source
+        script = tmp_path / "adversarial_loop.py"
+        script.write_text(changed, encoding="utf-8", newline="\n")
+
+        result = subprocess.run(
+            [sys.executable, str(script), "--ledger", str(ledger_path), "--progress"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert "progress-reconciliation-invalid" in result.stderr
+        assert _PROGRESS_HEADER not in result.stderr
 
     def test_reprints_history_and_splits_old_new_weights(self, loop: ModuleType, tmp_path: Path) -> None:
         """Append a reviewed row without changing earlier rows, JSON, or stop decisions.

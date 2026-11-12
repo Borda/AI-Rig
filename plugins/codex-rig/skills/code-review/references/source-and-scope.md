@@ -2,7 +2,7 @@
 
 ## Workflow (Exact Commands)
 
-<!-- policy-sibling: skills/assess/SKILL.md, skills/code-remediate/SKILL.md, skills/release/SKILL.md -->
+<!-- policy-sibling: skills/assess/SKILL.md (Workflow: GitHub read permissions), skills/code-remediate/references/intake.md (GitHub read permissions), skills/release/SKILL.md (Workflow: GitHub read permissions); intentional divergence: review uses the collector with a read-only isolated checkout and review-specific recovery, remediation uses its attached checkout, assess permits reader or collector evidence, and release uses the reader. -->
 
 For allowed GitHub reads, run the direct collector under current effective network and filesystem grants or request runtime approval for the complete owning command when required capability is unavailable. No separate workflow consent is needed. Apply [GitHub Read Execution](../../../shared/native-skill-contract.md#github-read-execution); runtime permission and denial remain authoritative.
 
@@ -119,7 +119,7 @@ Classify diff; write `<run-directory>/scope.txt`:
 - `TRIVIAL`: no public API/config/security/ML behavior touched, \<3 files, \<50 changed lines.
 - `LOCAL`: one subsystem or 3-7 files; local context explains behavior.
 - `BROAD`: 8+ files, cross-subsystem change, dependency/config change, or unclear ownership.
-- `HIGH_RISK`: release, security, auth, credentials, deserialization, data pipeline, ML tensor math, CI/CD, or migration behavior, based on evidence beyond public-API touch alone. The mechanical risk floor also raises a change to `HIGH_RISK` when a changed path names `oauth`, `token`, `secret`, `jwt` or `crypto`, a `Dockerfile`, or a GitHub Actions action file, so ordinary lexer or tokenizer modules named `token` accept the larger fan-out.
+- `HIGH_RISK`: release, security, auth, credentials, deserialization, data pipeline, ML tensor math, CI/CD, or migration behavior, based on evidence beyond public-API touch alone. The mechanical risk floor also raises a change to `HIGH_RISK` when a changed path names `oauth`, `token`/`tokens`, `secret`/`secrets`, `jwt` or `crypto`, a `Dockerfile`, or a file under `.github/workflows/` or `.github/actions/`, so ordinary lexer or tokenizer modules named `token` accept the larger fan-out.
 
 Risk categories determine review depth and specialist preference; they do not grant execution permission or independently prove sandbox, approval policy, or provenance. Public API compatibility remains normal T1 review axis and may elevate tier when verified breaking, migration, or release evidence requires it.
 

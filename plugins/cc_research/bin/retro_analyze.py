@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import math
 import os
 import sys
 import tempfile
@@ -170,7 +171,7 @@ def run_wilcoxon(
 
     Raises:
         ValueError: if ``direction`` is not a legal :class:`Direction` value or the score
-            lengths differ.
+            lengths differ, or ``alpha`` is outside the open interval (0, 1).
 
     Examples:
         >>> # Insufficient data (< 6 paired samples) returns a reason rather than a p-value.
@@ -187,6 +188,8 @@ def run_wilcoxon(
             ...
         ValueError: direction must be 'higher' or 'lower', got: 'sideways'
     """
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be strictly between 0 and 1")
     try:
         direction = Direction(direction)
     except ValueError:
@@ -269,7 +272,7 @@ def _extract_scores(records: list[dict[str, Any]], baseline_label: str) -> tuple
 
     Baseline record is the first entry with ``status == baseline_label`` (default label per retro SKILL.md is
     ``"baseline"``). Candidate records are every entry with ``status == "kept"``. Records lacking a numeric ``metric``
-    are skipped.
+    are skipped. Boolean and non-finite numeric metrics raise ``ValueError``.
     """
     baseline_metric: float | None = None
     candidates: list[float] = []
@@ -278,11 +281,17 @@ def _extract_scores(records: list[dict[str, Any]], baseline_label: str) -> tuple
         metric = rec.get("metric")
         if not isinstance(metric, int | float):
             continue
+        try:
+            number = float(metric)
+        except OverflowError:
+            raise ValueError("metric must be a finite number") from None
+        if isinstance(metric, bool) or not math.isfinite(number):
+            raise ValueError("metric must be a finite number, not a boolean or NaN/Infinity")
         if baseline_metric is None and status == baseline_label:
-            baseline_metric = float(metric)
+            baseline_metric = number
             continue
         if status == "kept":
-            candidates.append(float(metric))
+            candidates.append(number)
     if baseline_metric is None:
         raise ValueError(f"no baseline record found (looking for status == {baseline_label!r})")
     return baseline_metric, candidates
@@ -353,12 +362,16 @@ def main(argv: list[str] | None = None) -> int:
     # one-sample signed-rank test, not a paired Wilcoxon (no per-iteration matched
     # baseline exists in the JSONL). See module docstring.
     baseline_repeated = [baseline_metric] * len(candidate_scores)
-    result = run_wilcoxon(
-        baseline_repeated,
-        candidate_scores,
-        alpha=args.alpha,
-        direction=Direction(args.direction),
-    )
+    try:
+        result = run_wilcoxon(
+            baseline_repeated,
+            candidate_scores,
+            alpha=args.alpha,
+            direction=Direction(args.direction),
+        )
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}))
+        return 2
     print(json.dumps(result.as_payload()))
     return 0 if result.significant else 1
 

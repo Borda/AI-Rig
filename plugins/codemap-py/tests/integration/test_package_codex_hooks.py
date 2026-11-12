@@ -37,6 +37,8 @@ def candidate(tmp_path: Path) -> Path:
     mode_map = _BUILD._git_exec_modes(_PLUGIN_ROOT)
     # Include the owned new payload before commit without staging the caller's index.
     for relative in (
+        "bin/resolve_plugin_root.py",
+        "bin/render_plugin_root.py",
         "shared/codex-user-questions.md",
         "shared/codex-user-questions-details.md",
         "shared/user_questions_mcp.py",

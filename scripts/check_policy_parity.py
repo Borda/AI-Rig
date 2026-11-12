@@ -63,6 +63,10 @@ PROPORTIONAL_TRIGGER = (
     "Before planning or implementation, including small parent-owned tasks, resolve + Read "
     "`_full/quality-gates.md` §Proportional Execution; its full policy binds as if inline."
 )
+_BOUND_QUALITY_SECTION = re.compile(
+    r"^>\s*Before applying(?: this section)?,? (?:resolve \+ )?Read `_full/quality-gates\.md` §(.+?)"
+    r"(?:\. Every instruction there is binding as if inline here\.|; binding inline\.)"
+)
 _NAMED_RULE = re.compile(r"^\s*(?:[-*]|\d+\.)\s+\*\*(.+?)\*\*")
 _LIST_ITEM = re.compile(r"^(?:>\s*)?-\s")
 _ROUTING_COMMAND = re.compile(r"`(git grep -n -I -i -E [^`]+)`")
@@ -342,12 +346,29 @@ def named_rules(body: str) -> set[str]:
 
 
 def _delivered_text(root: Path, plugin: str) -> str:
-    """Return one plugin's rule text, with foundry's bound Proportional Execution detail and any delta appended."""
+    """Return one plugin's rule text with foundry's bound full sections and any delta appended.
+
+    Raise :class:`ParityError` when a bound full section is missing.
+    """
     rule = f"plugins/{plugin}/rules/{QUALITY_RULE}"
     text = _read(root, rule)
-    if plugin == "cc_foundry" and PROPORTIONAL_TRIGGER in sections(text).get("Proportional Execution", ""):
-        body = sections(_read(root, f"plugins/{plugin}/rules/_full/{QUALITY_RULE}")).get("Proportional Execution", "")
-        text = f"{text}\n## Proportional Execution\n\n{body}\n"
+    if plugin == "cc_foundry":
+        stub = sections(text)
+        bound = {
+            match.group(1)
+            for body in stub.values()
+            for line in body.splitlines()
+            if (match := _BOUND_QUALITY_SECTION.match(line))
+        }
+        if PROPORTIONAL_TRIGGER in stub.get("Proportional Execution", ""):
+            bound.add("Proportional Execution")
+        if bound:
+            full_rule = f"plugins/{plugin}/rules/_full/{QUALITY_RULE}"
+            full = sections(_read(root, full_rule))
+            for heading in sorted(bound):
+                if heading not in full:
+                    raise ParityError(f"bound section §{heading} not found in {full_rule}")
+                text = f"{text}\n## {heading}\n\n{full[heading]}\n"
     delta = root / f"plugins/{plugin}/rules/{QUALITY_DELTA}"
     return f"{text}\n{delta.read_text(encoding='utf-8')}" if delta.is_file() else text
 

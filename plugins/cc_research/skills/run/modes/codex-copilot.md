@@ -26,9 +26,10 @@ mkdir -p ".experiments/state/${RUN_ID}"  # timeout: 3000
 **Gate check** — reload the counters at the top of every Phase 2c, before deciding anything (bash state dies between calls; context memory dies at compaction). A missing file reads as `0/0`, so an interrupted run resumes with a fresh budget rather than a hard stop:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/codex_state.py" read --state ".experiments/state/${RUN_ID}/codex-state"  # timeout: 5000 — prints CODEX_ITER, CODEX_NOOP_STREAK, CODEX_DISABLED (true once the streak reaches 2); missing file reads 0/0
+python "$PLUGIN_ROOT/bin/codex_state.py" read --state ".experiments/state/${RUN_ID}/codex-state"  # timeout: 5000 — prints CODEX_ITER, CODEX_NOOP_STREAK, CODEX_DISABLED (true once the streak reaches 2); missing file reads 0/0
 ```
 
 Gate fail (`CODEX_DISABLED=true` or `CODEX_ITER >= MAX_CODEX_RUNS`): skip Phase 2c, continue to Phase 3.
@@ -42,6 +43,8 @@ Else print narration, update R5b before Agent call:
 TaskUpdate R5b subject: `R5b: Codex co-pilot — iter N/max_iterations running`, status: `in_progress`
 
 Codex runs a second pass in the same iteration, on the working tree Phase 2 left. Claude's edit is uncommitted and **undecided** here — Phases 3–7 have not run — so nothing is "kept" or "reverted" yet. Both passes form one change set: Phase 3 reconciles the changed paths of both against `scope_files` (a Codex path outside scope fails the combined scope check like any other), Phase 4 commits them as one experiment commit, and Phase 7 compares the single result against `best_metric`. "delta ≥ 0.1%" = delta against `best_metric`, not the previous Claude iteration. The combined change is kept only if delta ≥ 0.1% AND guard passes; one keep/revert decision covers both passes, so per-pass attribution comes from the diary entry, not from the delta.
+
+> **Clean-tree exception.** Phase 2c deliberately runs `bridge:implement` on a tree holding Claude's uncommitted Phase 2 edit as a sanctioned exception to the clean-tree step of the Write-Delegation Checklist, so Claude and Codex edits are reviewed together as one combined change set. All other checklist steps remain in force: keep the owned paths bounded by `scope_files`, retain the iteration-start SHA snapshot and Phase 3 scope check, read the full combined diff yourself and run the actual proof commands; the bridge never commits, and the lead owns Phase 4's single experiment commit.
 
 - Claude Phase 2 **edited** the tree: Codex builds on that uncommitted work.
 - Claude Phase 2 **no-op** (no edit): Codex attempts a fresh change on the clean tree.
@@ -63,17 +66,19 @@ After Codex completes (any outcome):
 Codex produced **no code changes** (`codex-no-op`) — streak grows:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/codex_state.py" bump --state ".experiments/state/${RUN_ID}/codex-state" --outcome noop  # timeout: 5000 — re-reads the file, codex_iter + 1, noop_streak + 1; prints the new counters
+python "$PLUGIN_ROOT/bin/codex_state.py" bump --state ".experiments/state/${RUN_ID}/codex-state" --outcome noop  # timeout: 5000 — re-reads the file, codex_iter + 1, noop_streak + 1; prints the new counters
 ```
 
 Codex **proposed a change** (kept, reverted, or still under evaluation) — streak resets:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/codex_state.py" bump --state ".experiments/state/${RUN_ID}/codex-state" --outcome productive  # timeout: 5000 — re-reads the file, codex_iter + 1, noop_streak reset to 0; prints the new counters
+python "$PLUGIN_ROOT/bin/codex_state.py" bump --state ".experiments/state/${RUN_ID}/codex-state" --outcome productive  # timeout: 5000 — re-reads the file, codex_iter + 1, noop_streak reset to 0; prints the new counters
 ```
 
 Streak reaching 2 is what disables Codex for the rest of the run — the gate check above derives that, so nothing else needs writing.

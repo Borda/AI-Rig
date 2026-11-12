@@ -8,6 +8,7 @@
  * the user edited.
  */
 
+import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
@@ -20,7 +21,7 @@ const PACKAGE_ROOT = resolve(HERE, "..")
 const RESOURCES = join(PACKAGE_ROOT, "src", "resources")
 const STAMP = /^<!-- opencode-rig: v(\S+) sha256:([a-f0-9]{64}) -->$/
 const BLOCK_BEGIN_PREFIX = "<!-- opencode-rig:delivery-principles begin sha256="
-const BLOCK_BEGIN_PATTERN = /<!-- opencode-rig:delivery-principles begin sha256=([a-f0-9]{64}) -->\n/
+const BLOCK_BEGIN_PATTERN = /<!-- opencode-rig:delivery-principles begin sha256=([a-f0-9]{64}) -->\r?\n/
 const BLOCK_END = "<!-- opencode-rig:delivery-principles end -->"
 const MAX_CLAUDE_INSTRUCTIONS_BYTES = 1024 * 1024
 const INSTRUCTIONS_MODE = 0o600
@@ -38,12 +39,12 @@ Commands:
   check           Verify the installed agents and report the permission and instructions state
   upgrade         Alias for setup --upgrade
   remove          Remove agent files and the global instructions block that carry an opencode-rig stamp
-  doctor          Report install and environment health
+  doctor          Report install and environment health (install checks only)
   print-config    Print the recommended opencode.jsonc snippet without writing it
   version         Print the package version
 
 Options:
-  --project       Target .opencode/agents and the project's opencode.json(c) here
+  --project       Target .opencode/agents and opencode.json(c) at the Git root (cwd outside Git)
   --global        Target the user-wide config directory (default)
   --check         Verify only; never write
   --upgrade       Rewrite stamped files whose content changed
@@ -54,17 +55,46 @@ Options:
   --agents-only   Install or verify the role agents only; skip the permission merge and the
                   global delivery-principles instructions block
   --assets        Doctor: also curate shipped skill and role cards
+  --version       Print the package version
   -h, --help      Show this help
 `
+
+const SETUP_FLAGS = [
+  "--project",
+  "--global",
+  "--check",
+  "--upgrade",
+  "--force",
+  "--adopt-claude-instructions",
+  "--agents-only",
+]
+const COMMAND_FLAGS = {
+  setup: SETUP_FLAGS,
+  init: SETUP_FLAGS,
+  upgrade: SETUP_FLAGS,
+  check: ["--project", "--global", "--agents-only", "--adopt-claude-instructions"],
+  remove: ["--project", "--global"],
+  doctor: ["--project", "--global", "--assets"],
+  "print-config": [],
+  version: [],
+  help: [],
+}
 
 function parseArgs(argv) {
   const flags = new Set()
   let command = ""
   for (const arg of argv) {
     if (arg === "-h") flags.add("--help")
-    else if (arg.startsWith("--")) flags.add(arg)
+    else if (arg === "--version" && !command) command = "version"
+    else if (arg.startsWith("-")) flags.add(arg)
     else if (!command) command = arg
     else throw new Error(`unexpected argument: ${arg}`)
+  }
+  const allowed = Object.hasOwn(COMMAND_FLAGS, command) ? COMMAND_FLAGS[command] : []
+  for (const flag of flags) {
+    if (flag !== "--help" && !allowed.includes(flag)) {
+      throw new Error(`unknown option '${flag}' for ${command || "help"}`)
+    }
   }
   return { command, flags }
 }
@@ -115,15 +145,15 @@ function claudeInstructionsPath() {
  * lstat on the leaf alone is not enough: `mkdir` and `writeFile` follow a symlinked directory,
  * so a link planted above the target lands the privileged write somewhere else.
  */
-function assertSafeTarget(path) {
-  const base = resolve(homeDir())
+function assertSafeTarget(path, root = homeDir()) {
+  const base = resolve(root)
   const parent = resolve(dirname(path))
   const rel = relative(base, parent)
   if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new Error(`target is outside the home directory: ${parent}`)
+    throw new Error(`target is outside the base directory: ${parent}`)
   }
   let current = base
-  for (const part of rel === "" ? [] : rel.split(sep)) {
+  for (const part of ["", ...(rel === "" ? [] : rel.split(sep))]) {
     current = join(current, part)
     let stats
     try {
@@ -135,6 +165,7 @@ function assertSafeTarget(path) {
     if (stats.isSymbolicLink()) throw new Error(`${current} is a symlink; refusing to write through it`)
     if (!stats.isDirectory()) throw new Error(`${current} is not a directory; refusing to write through it`)
   }
+  if (targetKind(path) === "symlink") throw new Error(`${path} is a symlink; refusing to write through it`)
 }
 
 /** Classify a target path without following a final symlink. */
@@ -170,12 +201,13 @@ function findManagedBlock(text) {
   const endIndex = text.indexOf(BLOCK_END, bodyStart)
   if (endIndex < 0) return { state: "malformed" }
   const body = text.slice(bodyStart, endIndex)
-  if (sha256(body) !== match[1]) return { state: "modified" }
+  if (sha256(body.replace(/\r\n/g, "\n")) !== match[1]) return { state: "modified" }
   const afterEnd = endIndex + BLOCK_END.length
+  const newline = /^\r?\n/.exec(text.slice(afterEnd))?.[0] ?? ""
   return {
     state: "present",
     start: match.index,
-    end: text[afterEnd] === "\n" ? afterEnd + 1 : afterEnd,
+    end: afterEnd + newline.length,
     body,
   }
 }
@@ -226,7 +258,10 @@ function readClaudeInstructions() {
 
 /** Append adopted Claude content to a post-block body without losing its newline boundary. */
 function withAdopted(body, adopted) {
-  if (adopted === "" || body.endsWith(adopted)) return body
+  if (adopted === "") return body
+  const found = findManagedBlock(body)
+  const suffix = found.state === "present" ? body.slice(found.end) : body
+  if (suffix.includes(adopted)) return body
   const separator = body === "" || body.endsWith("\n") ? "" : "\n"
   return `${body}${separator}${adopted}`
 }
@@ -316,7 +351,9 @@ function installGlobalInstructions(flags) {
     return 0
   }
 
-  const base = `${existing.slice(0, found.start)}${managedBlock(principlesBody())}${existing.slice(found.end)}`
+  const newline = existing.slice(found.start, found.end).includes("\r\n") ? "\r\n" : "\n"
+  const replacement = managedBlock(principlesBody()).replace(/\n/g, newline)
+  const base = `${existing.slice(0, found.start)}${replacement}${existing.slice(found.end)}`
   // An existing block must not make the opt-in a no-op: a missing or changed Claude copy is
   // appended after the user's content instead of being silently ignored.
   const updated = withAdopted(base, adopt ? adoptedText : "")
@@ -364,7 +401,8 @@ function removeGlobalInstructions() {
   let prefix = existing.slice(0, found.start)
   let suffix = existing.slice(found.end)
   // Setup inserts exactly one newline before an appended block; strip only that byte.
-  if (prefix !== "" && prefix.endsWith("\n")) prefix = prefix.slice(0, -1)
+  if (prefix.endsWith("\r\n")) prefix = prefix.slice(0, -2)
+  else if (prefix.endsWith("\n")) prefix = prefix.slice(0, -1)
   const claude = readClaudeInstructions()
   const adopted = claude.state === "file" ? claude.text : undefined
   if (adopted !== undefined && suffix === adopted) suffix = ""
@@ -391,8 +429,18 @@ function commandExists(name) {
   return false
 }
 
+/** Resolve the project the host discovers without accepting Git environment redirects. */
+function projectRoot() {
+  const env = { ...process.env }
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("GIT_")) delete env[key]
+  }
+  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", env })
+  return result.status === 0 && result.stdout.trim() ? result.stdout.trim() : process.cwd()
+}
+
 function targetDir(flags) {
-  if (flags.has("--project")) return join(process.cwd(), ".opencode", "agents")
+  if (flags.has("--project")) return join(projectRoot(), ".opencode", "agents")
   return join(configRoot(), "agents")
 }
 
@@ -468,6 +516,8 @@ function stripStamp(content) {
 
 function install(flags) {
   const dir = targetDir(flags)
+  const base = flags.has("--project") ? projectRoot() : configRoot()
+  assertSafeTarget(dir, base)
   const specs = loadAgentSpecs()
   // One ruleset drives both the merged configuration and the rules every agent carries.
   const shipped = loadPermissions()
@@ -486,6 +536,13 @@ function install(flags) {
 
   for (const spec of specs) {
     const path = join(dir, `${spec.name}.md`)
+    try {
+      assertSafeTarget(path, base)
+    } catch (error) {
+      problems += 1
+      console.log(`CONFLICT ${spec.name}: ${error.message}`)
+      continue
+    }
     const rendered = renderAgent(spec, shipped)
     const exists = existsSync(path)
     const current = exists ? readFileSync(path, "utf8") : undefined
@@ -551,6 +608,7 @@ function install(flags) {
   const extra = existsSync(dir)
     ? readdirSync(dir)
         .filter((file) => file.endsWith(".md"))
+        .filter((file) => targetKind(join(dir, file)) === "file")
         .filter((file) => !specs.some((spec) => `${spec.name}.md` === file))
         .filter((file) => {
           const content = readFileSync(join(dir, file), "utf8")
@@ -571,6 +629,7 @@ function install(flags) {
   if (!agentsOnly) {
     const configPath = configTarget(flags)
     try {
+      assertSafeTarget(configPath, base)
       if (!existsSync(configPath)) {
         if (checkOnly) {
           console.log(`PERMS    ${configPath}: not merged (run init)`)
@@ -624,11 +683,14 @@ function install(flags) {
 
 function remove(flags) {
   const dir = targetDir(flags)
+  const base = flags.has("--project") ? projectRoot() : configRoot()
+  assertSafeTarget(dir, base)
   let removed = 0
   let skipped = 0
   if (existsSync(dir)) {
     for (const file of readdirSync(dir).filter((entry) => entry.endsWith(".md"))) {
       const path = join(dir, file)
+      assertSafeTarget(path, base)
       const content = readFileSync(path, "utf8")
       if (readStamp(content)) {
         rmSync(path)
@@ -757,6 +819,8 @@ function assetReport() {
 
 function doctor(flags) {
   const dir = targetDir(flags)
+  const base = flags.has("--project") ? projectRoot() : configRoot()
+  assertSafeTarget(dir, base)
   const specs = loadAgentSpecs()
   const lines = []
   let ok = true
@@ -767,14 +831,14 @@ function doctor(flags) {
   }
 
   lines.push(`opencode-rig ${VERSION}`)
+  lines.push("INFO  install checks only; use rig_doctor for full project and runtime health")
+  lines.push("INFO  --assets checks shipped files only; rig_doctor also checks the runtime skill manifest")
   lines.push(`node ${process.version}`)
   lines.push(`package ${PACKAGE_ROOT}`)
   if (commandExists("rtk")) {
-    lines.push("RTK   ok: rtk is on PATH; prefix read-heavy commands with it for roughly 60-99% fewer input tokens")
+    lines.push("RTK   ok: rtk is on PATH; optionally prefix read-heavy commands with it to reduce output")
   } else {
-    lines.push(
-      "RTK   warn: rtk is not on PATH (optional); it reduces read-heavy command output for roughly 60-99% fewer input tokens",
-    )
+    lines.push("RTK   warn: rtk is not on PATH (optional); it can reduce read-heavy command output")
   }
   if (existsSync(join(RESOURCES, "agents.json"))) pass("shipped resources present")
   else fail("shipped resources are missing; reinstall the package")
@@ -783,13 +847,16 @@ function doctor(flags) {
   else {
     for (const spec of specs) {
       const path = join(dir, `${spec.name}.md`)
+      assertSafeTarget(path, base)
       if (!existsSync(path)) {
         fail(`agents: ${spec.name} is missing`)
         continue
       }
-      const stamp = readStamp(readFileSync(path, "utf8"))
+      const content = readFileSync(path, "utf8")
+      const stamp = readStamp(content)
       if (!stamp) fail(`agents: ${spec.name} has no opencode-rig stamp`)
       else if (stamp.version !== VERSION) fail(`agents: ${spec.name} is v${stamp.version}, expected v${VERSION}`)
+      else if (sha256(stripStamp(content)) !== stamp.digest) fail(`agents: ${spec.name} has local edits`)
       else pass(`agents: ${spec.name} v${stamp.version}`)
     }
   }
@@ -807,18 +874,51 @@ function doctor(flags) {
   if (existsSync(configPath) || existsSync(configJson)) pass("global OpenCode config exists")
   else lines.push("INFO  no global opencode.json(c); add the plugin with: opencode plugin add " + NAME)
 
-  const gitignore = join(process.cwd(), ".gitignore")
-  if (
-    existsSync(gitignore) &&
-    readFileSync(gitignore, "utf8")
-      .split("\n")
-      .some((line) => line.trim() === ".opencode-rig/")
-  ) {
-    pass("artifact root is gitignored")
-  } else lines.push("WARN  add '.opencode-rig/' to .gitignore")
+  const root = projectRoot()
+  const artifacts = configuredArtifacts(root)
+  const artifactPath = relative(root, resolve(root, artifacts)).split(sep).join("/") + "/"
+  const ignored = spawnSync(
+    "git",
+    ["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "check-ignore", "-q", "--", artifactPath],
+    {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 5000,
+      env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith("GIT_"))),
+    },
+  )
+  if (ignored.status === 0) pass(`artifact root is gitignored: ${artifactPath}`)
+  else lines.push(`WARN  add '${artifactPath}' to .gitignore`)
 
   console.log([ok ? "opencode-rig doctor: healthy" : "opencode-rig doctor: problems found", ...lines].join("\n"))
   return ok ? 0 : 1
+}
+
+/** Read the artifact option from global configuration, then project overrides. */
+function configuredArtifacts(root) {
+  let artifacts = ".opencode-rig"
+  for (const directory of [configRoot(), root]) {
+    const path = ["opencode.jsonc", "opencode.json"].map((name) => join(directory, name)).find(existsSync)
+    if (!path) continue
+    const errors = []
+    const config = parse(readFileSync(path, "utf8"), errors, { allowTrailingComma: true, disallowComments: false })
+    if (errors.length) throw new Error(`invalid OpenCode configuration: ${path}`)
+    for (const plugin of config?.plugins ?? []) {
+      if (
+        typeof plugin?.package === "string" &&
+        /^opencode-rig(?:@|$)/.test(plugin.package) &&
+        plugin.options?.artifacts !== undefined
+      ) {
+        if (typeof plugin.options.artifacts !== "string" || !plugin.options.artifacts.trim())
+          throw new Error("artifacts must be a non-empty string")
+        artifacts = plugin.options.artifacts
+      }
+    }
+  }
+  const rel = relative(root, resolve(root, artifacts))
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
+    throw new Error("artifacts must stay inside the project")
+  return artifacts
 }
 
 /** Read the shipped ruleset: the single source for `print-config` and the `init` merge. */
@@ -904,7 +1004,7 @@ function mergePermissions(text, shipped) {
  * is a new file created, and then it is the `opencode.jsonc` the host's own writer prefers.
  */
 function configTarget(flags) {
-  const base = flags.has("--project") ? process.cwd() : configRoot()
+  const base = flags.has("--project") ? projectRoot() : configRoot()
   const jsonc = join(base, "opencode.jsonc")
   const json = join(base, "opencode.json")
   if (existsSync(jsonc)) return jsonc
@@ -944,6 +1044,7 @@ function main(argv) {
     parsed = parseArgs(argv)
   } catch (error) {
     console.error(`opencode-rig: ${error.message}`)
+    console.error(HELP)
     return 2
   }
   const { command, flags } = parsed
@@ -952,7 +1053,7 @@ function main(argv) {
     return 0
   }
   try {
-    if (command === "version" || command === "--version") {
+    if (command === "version") {
       console.log(VERSION)
       return 0
     }

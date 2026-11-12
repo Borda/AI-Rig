@@ -1,14 +1,18 @@
 #!/usr/bin/env python
 """Create a release directory and protect existing draft artifacts before prepare writes.
 
-Purpose: Prepare release artifact paths while preserving the previous drafts. Scope: One local release directory and a
-validated changelog target. Usage: ``setup_release_dir.py RELEASE_DIR CHANGELOG_FILE`` from the release prepare step.
-Outputs: Creates RELEASE_DIR and its parents, links CHANGELOG.md, and copies existing artifacts to ``.bak`` siblings
-before later phases overwrite them. ``--validate-only`` checks all paths without writes before the changelog audit.
-Refuses linked changelog inputs, unrelated changelog names, linked artifact sources, and occupied release changelog
-paths before changing any release artifact. Failure: Returns 1 for missing or unsafe arguments and occupied release
-changelog paths. Ordinary filesystem errors propagate. Used by: ``skills/release/modes/prepare.md`` before its artifact
-writing phases.
+Purpose:
+    Prepare release artifact paths while preserving the previous drafts. Scope: One local release directory and a
+    validated changelog target. Usage: ``setup_release_dir.py RELEASE_DIR CHANGELOG_FILE`` from the release prepare
+    step.
+
+Outputs:
+    Creates RELEASE_DIR and its parents, links CHANGELOG.md, and copies existing artifacts to ``.bak`` siblings before
+    later phases overwrite them. ``--validate-only`` checks all paths without writes before the changelog audit. Refuses
+    linked changelog inputs, unrelated changelog names, linked artifact sources, and occupied release changelog paths
+    before changing any release artifact. Failure: Returns 1 for missing or unsafe arguments and occupied release
+    changelog paths. Ordinary filesystem errors propagate. Used by: ``skills/release/modes/prepare.md`` before its
+    artifact writing phases.
 
 Re-running prepare for the same version is legitimate (post-audit-fix retry); silently overwriting hand-edited notes is
 destructive, hence the backups. A prior CHANGELOG.md symlink may be re-linked on re-run; a regular file is preserved and

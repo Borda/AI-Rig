@@ -60,11 +60,11 @@ def shell(tmp_path: Path, request: pytest.FixtureRequest) -> tuple[Path, dict[st
     sentinels.mkdir()
     env = os.environ.copy()
     env.update(
-        TMPDIR=str(sentinels),
+        TMPDIR=sentinels.as_posix(),
         CLAUDE_CODE_SESSION_ID="workflow-test",
-        CLAUDE_PLUGIN_ROOT=str(_PLUGIN),
-        TEST_PYTHON=sys.executable,
-        TEST_SHELL=request.param,
+        CLAUDE_PLUGIN_ROOT=_PLUGIN.as_posix(),
+        TEST_PYTHON=Path(sys.executable).as_posix(),
+        TEST_SHELL=shutil.which(request.param),
     )
     return tmp_path, env
 
@@ -81,6 +81,7 @@ def _run(block: str, shell: tuple[Path, dict[str, str]], prelude: str = "") -> s
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
 
@@ -92,7 +93,7 @@ def test_non_python_input_never_enters_file_profiling(shell: tuple[Path, dict[st
     A Markdown or text file containing Python-like content must not be classified as a script to execute.
     """
     cwd, env = shell
-    (cwd / filename).write_text('__main__\nraise RuntimeError("document executed")\n', encoding="utf-8")
+    (cwd / filename).write_text('__main__\nraise RuntimeError("document executed")\n', encoding="utf-8", newline="\n")
     env["ARGUMENTS"] = filename
 
     result = _run(_block("plan", "NONFLAG_TOKEN_COUNT="), shell)
@@ -108,7 +109,7 @@ def test_python_input_retains_output_override(shell: tuple[Path, dict[str, str]]
     An existing script followed by a Markdown output path must keep both file classification and the explicit output.
     """
     cwd, env = shell
-    (cwd / "train.py").write_text('if __name__ == "__main__":\n    pass\n', encoding="utf-8")
+    (cwd / "train.py").write_text('if __name__ == "__main__":\n    pass\n', encoding="utf-8", newline="\n")
     env["ARGUMENTS"] = "train.py result.md"
 
     result = _run(_block("plan", "NONFLAG_TOKEN_COUNT="), shell)
@@ -126,8 +127,12 @@ def test_profile_block_rejects_document_even_with_stale_file_sentinel(
     """
     cwd, env = shell
     document = cwd / "program.md"
-    document.write_text('if __name__ == "__main__":\n    open("EXECUTED", "w").close()\n', encoding="utf-8")
-    (Path(env["TMPDIR"]) / "research-plan-file-arg-workflow-test").write_text("program.md\n", encoding="utf-8")
+    document.write_text(
+        'if __name__ == "__main__":\n    open("EXECUTED", "w").close()\n', encoding="utf-8", newline="\n"
+    )
+    (Path(env["TMPDIR"]) / "research-plan-file-arg-workflow-test").write_text(
+        "program.md\n", encoding="utf-8", newline="\n"
+    )
 
     result = _run(_block("plan", "python -m cProfile"), shell)
 
@@ -176,8 +181,10 @@ def test_profile_eligibility_is_checked_without_execution(
     A library or document reaches goal entry without a profiling consent stop; a runnable Python script needs consent.
     """
     cwd, env = shell
-    (cwd / filename).write_text(content + '\nopen("EXECUTED", "w").close()\n', encoding="utf-8")
-    (Path(env["TMPDIR"]) / "research-plan-file-arg-workflow-test").write_text(filename + "\n", encoding="utf-8")
+    (cwd / filename).write_text(content + '\nopen("EXECUTED", "w").close()\n', encoding="utf-8", newline="\n")
+    (Path(env["TMPDIR"]) / "research-plan-file-arg-workflow-test").write_text(
+        filename + "\n", encoding="utf-8", newline="\n"
+    )
 
     result = _run(_block("plan", "PROFILE_ELIGIBLE=false"), shell)
 
@@ -286,7 +293,7 @@ def test_kaggle_downloads_selected_sample_or_skips_absent_sample(
     """
     cwd, env = shell
     sentinels = Path(env["TMPDIR"])
-    (sentinels / "kaggle-competition-name-workflow-test").write_text("example\n", encoding="utf-8")
+    (sentinels / "kaggle-competition-name-workflow-test").write_text("example\n", encoding="utf-8", newline="\n")
     env["EXPECTED_SAMPLE"] = sample
     env["LISTING_ROWS"] = listing_rows
     stub = (
@@ -316,10 +323,14 @@ def test_ambiguous_samples_print_all_candidates(shell: tuple[Path, dict[str, str
     Neither ambiguous file may be downloaded until the operator resolves the format from the displayed candidates.
     """
     cwd, env = shell
-    (Path(env["TMPDIR"]) / "kaggle-competition-name-workflow-test").write_text("example\n", encoding="utf-8")
+    (Path(env["TMPDIR"]) / "kaggle-competition-name-workflow-test").write_text(
+        "example\n", encoding="utf-8", newline="\n"
+    )
     listing = cwd / ".temp/kaggle/example-files.csv"
     listing.parent.mkdir(parents=True)
-    listing.write_text("name,size\nSampleSubmission.csv,12\nsample_submission_alt.csv,13\n", encoding="utf-8")
+    listing.write_text(
+        "name,size\nSampleSubmission.csv,12\nsample_submission_alt.csv,13\n", encoding="utf-8", newline="\n"
+    )
 
     result = _run(_block("kaggle", "kaggle competitions download"), shell, "kaggle() { return 99; }\n")
 
@@ -335,11 +346,15 @@ def test_sample_override_resolves_ambiguity_without_trailing_newline(shell: tupl
     A Write-tool file without a final newline must still select its exact mixed-case filename.
     """
     cwd, env = shell
-    (Path(env["TMPDIR"]) / "kaggle-competition-name-workflow-test").write_text("example\n", encoding="utf-8")
+    (Path(env["TMPDIR"]) / "kaggle-competition-name-workflow-test").write_text(
+        "example\n", encoding="utf-8", newline="\n"
+    )
     listing = cwd / ".temp/kaggle/example-files.csv"
     listing.parent.mkdir(parents=True)
-    listing.write_text("name,size\nSampleSubmission.csv,12\nsample_submission_alt.csv,13\n", encoding="utf-8")
-    listing.with_name("example-sample-file.txt").write_text("SampleSubmission.csv", encoding="utf-8")
+    listing.write_text(
+        "name,size\nSampleSubmission.csv,12\nsample_submission_alt.csv,13\n", encoding="utf-8", newline="\n"
+    )
+    listing.with_name("example-sample-file.txt").write_text("SampleSubmission.csv", encoding="utf-8", newline="\n")
 
     result = _run(
         _block("kaggle", "kaggle competitions download"),
@@ -360,8 +375,8 @@ def test_sample_download_rejects_invalid_slug(shell: tuple[Path, dict[str, str]]
     """
     cwd, env = shell
     sentinels = Path(env["TMPDIR"])
-    (sentinels / "kaggle-competition-name-workflow-test").write_text("example\n", encoding="utf-8")
-    (sentinels / "kaggle-slug-workflow-test").write_text(slug + "\n", encoding="utf-8")
+    (sentinels / "kaggle-competition-name-workflow-test").write_text("example\n", encoding="utf-8", newline="\n")
+    (sentinels / "kaggle-slug-workflow-test").write_text(slug + "\n", encoding="utf-8", newline="\n")
 
     result = _run(_block("kaggle", "kaggle competitions download"), shell, "kaggle() { touch DOWNLOADED; }\n")
 
@@ -378,7 +393,7 @@ def test_sample_download_preserves_listing_slug_across_shells(shell: tuple[Path,
     """
     cwd, env = shell
     sentinels = Path(env["TMPDIR"])
-    (sentinels / "kaggle-competition-name-workflow-test").write_text("notebook\n", encoding="utf-8")
+    (sentinels / "kaggle-competition-name-workflow-test").write_text("notebook\n", encoding="utf-8", newline="\n")
     env["KAGGLE_SLUG"] = "actual-competition"
     listing = _run(
         _block("kaggle", "kaggle competitions files"),
@@ -405,10 +420,10 @@ def test_sample_failure_keeps_cli_diagnostic_without_guessing_cause(shell: tuple
     """
     cwd, env = shell
     sentinels = Path(env["TMPDIR"])
-    (sentinels / "kaggle-competition-name-workflow-test").write_text("example\n", encoding="utf-8")
+    (sentinels / "kaggle-competition-name-workflow-test").write_text("example\n", encoding="utf-8", newline="\n")
     listing = cwd / ".temp/kaggle/example-files.csv"
     listing.parent.mkdir(parents=True)
-    listing.write_text("name,size\nSampleSubmission.csv,12\n", encoding="utf-8")
+    listing.write_text("name,size\nSampleSubmission.csv,12\n", encoding="utf-8", newline="\n")
 
     result = _run(
         _block("kaggle", "kaggle competitions download"),
@@ -430,10 +445,10 @@ def test_sample_zip_is_extracted_before_reading_header(shell: tuple[Path, dict[s
     """
     cwd, env = shell
     sentinels = Path(env["TMPDIR"])
-    (sentinels / "kaggle-competition-name-workflow-test").write_text("example\n", encoding="utf-8")
+    (sentinels / "kaggle-competition-name-workflow-test").write_text("example\n", encoding="utf-8", newline="\n")
     listing = cwd / ".temp/kaggle/example-files.csv"
     listing.parent.mkdir(parents=True)
-    listing.write_text("name,size\nSampleSubmission.csv,12\n", encoding="utf-8")
+    listing.write_text("name,size\nSampleSubmission.csv,12\n", encoding="utf-8", newline="\n")
     data = cwd / ".experiments/kaggle/data/example"
     data.mkdir(parents=True)
     with zipfile.ZipFile(data / "SampleSubmission.csv.zip", "w") as archive:
@@ -456,8 +471,8 @@ def test_editor_reloads_output_and_prints_path_without_code_cli(
     """
     _, env = shell
     sentinels = Path(env["TMPDIR"])
-    (sentinels / "kaggle-competition-name-workflow-test").write_text("example\n", encoding="utf-8")
-    (sentinels / "kaggle-inference-only-workflow-test").write_text(inference + "\n", encoding="utf-8")
+    (sentinels / "kaggle-competition-name-workflow-test").write_text("example\n", encoding="utf-8", newline="\n")
+    (sentinels / "kaggle-inference-only-workflow-test").write_text(inference + "\n", encoding="utf-8", newline="\n")
     stub = 'command() { case "$*" in "-v code") return 1;; *) builtin command "$@";; esac; }\n'
 
     result = _run(_block("kaggle", "command -v code"), shell, stub)
@@ -474,8 +489,8 @@ def test_editor_launch_receives_rehydrated_notebook_path(shell: tuple[Path, dict
     """
     cwd, env = shell
     sentinels = Path(env["TMPDIR"])
-    (sentinels / "kaggle-competition-name-workflow-test").write_text("example\n", encoding="utf-8")
-    (sentinels / "kaggle-inference-only-workflow-test").write_text("true\n", encoding="utf-8")
+    (sentinels / "kaggle-competition-name-workflow-test").write_text("example\n", encoding="utf-8", newline="\n")
+    (sentinels / "kaggle-inference-only-workflow-test").write_text("true\n", encoding="utf-8", newline="\n")
 
     result = _run(_block("kaggle", "command -v code"), shell, 'code() { printf "%s\\n" "$@" > editor-args; }\n')
 

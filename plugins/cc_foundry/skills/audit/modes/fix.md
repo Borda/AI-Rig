@@ -47,7 +47,7 @@ Parallel-safe examples: typos, hardcoded `/Users/` paths (replacement `~/`), mis
 
 **Sequential (cross-file dependent)**: any finding where the fix must read another file to determine correct replacement, OR where another concurrent fix writes to a file this fix reads from.
 
-Sequential examples: broken cross-reference (must verify target name on current disk), inventory drift (must read MEMORY.md), README sync (must read agent/skill source files).
+Sequential examples: broken cross-reference (must verify target name on current disk), README sync (must read agent/skill source files).
 
 **Two-phase dispatch**:
 
@@ -58,7 +58,6 @@ Sequential examples: broken cross-reference (must verify target name on current 
   | Category | Reads from | Serialization rule |
   | -- | -- | -- |
   | broken-cross-ref | target agent/skill file | serialize after any fix that renames/moves target |
-  | inventory-drift | MEMORY.md | serialize after any fix that adds/removes agents or skills |
   | README-sync | agent/skill source files | serialize after any fix that modifies an agent/skill file |
   | orphaned-ref | disk agent/skill inventory | serialize after any fix that adds/removes agents or skills |
 
@@ -100,10 +99,11 @@ After the Step 7 selection or existing scoped authorization: finding count > 10,
 **Gate failure fallback**: for each fixed file outside `fast_path`, require both approved `<RUN_DIR>/fix-pass-<N>/gate-<file-slug>-<actor>.md` verdicts for its pass; if either is absent, surface `⚠ GATE-SKIPPED — sub-agent did not perform adversarial gate; review fixes manually before merging.` in the Step 11 final report, not only as reply text before further tool calls. Gate files are not required for files recorded under `fast_path` in `fix-summary.md` (mechanical, single-file, no CRITICAL/HIGH — see `audit-fix-prompt.md` §Gate fast path).
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-IFS= read -r AUDIT_TPL < "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || AUDIT_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
-cat "$AUDIT_TPL/audit-fix-prompt.md"
+IFS= read -r AUDIT_TPL < "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || AUDIT_TPL=$(python "$PLUGIN_ROOT/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
+python "$PLUGIN_ROOT/bin/load_mode.py" audit templates audit-fix-prompt.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )
 echo "AUDIT_TPL=$AUDIT_TPL"
 ```
 
@@ -139,11 +139,12 @@ After inline fix agents complete, collect results and run Steps 9–10. The dedi
 After Step 8 fix agents complete, before foundry:curator re-audit:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_bridge.py" --status > "${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status" 2>/dev/null || echo "absent" > "${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/check_bridge.py" --status > "${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status" 2>/dev/null || echo "absent" > "${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status"  # timeout: 5000
 IFS= read -r CODEX_STATUS < "${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status" || CODEX_STATUS="absent"
 [ "$CODEX_STATUS" = "available" ] && printf 'CODEX_AVAILABLE=%s\n' true || printf 'CODEX_AVAILABLE=%s\n' false  # timeout: 5000
-[ "$CODEX_STATUS" = "available" ] && python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" --optional foundry skills/_shared codex-prepass.md  # timeout: 5000
+[ "$CODEX_STATUS" = "available" ] && python "$PLUGIN_ROOT/bin/load_shared_doc.py" --optional foundry skills/_shared codex-prepass.md  # timeout: 5000
 ```
 
 Printed `CODEX_AVAILABLE=true` and the codex-prepass.md text printed above (a `⚠ WARNING` line instead = doc missing → skip, as Otherwise): follow codex-prepass.md instructions above, applied to combined diff of Step 8 fixes. Otherwise: `echo "⚠ codex plugin not available — skipping codex pass"`
@@ -170,7 +171,7 @@ Audit-fix sub-agent (when used) must apply this loop internally — instruct it 
 
 **Cross-file re-validation**: after per-file re-audit, re-run Step 4 checks sensitive to modified files:
 
-- Check 1 (inventory drift) — if any agent or skill file modified
+- Check 1 (inventory discovery) — if any agent or skill file modified
 - Check 2 (README vs disk) — if any agent or skill added, renamed, or deleted
 - Check 14a (structural tag symmetry) — if any agent or skill file modified
 - Check 14b (code fence symmetry) — if any agent or skill file modified

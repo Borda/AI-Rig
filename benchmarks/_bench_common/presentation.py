@@ -271,7 +271,7 @@ def benchmark_console(file: Any = None, *, force_color: bool = False) -> Any:
     """
     from rich.console import Console
 
-    return Console(
+    console = Console(
         file=file,
         force_terminal=True if force_color else None,
         highlight=False,
@@ -279,6 +279,10 @@ def benchmark_console(file: Any = None, *, force_color: bool = False) -> Any:
         soft_wrap=False,
         width=BENCHMARK_OUTPUT_WIDTH,
     )
+    if console.width != BENCHMARK_OUTPUT_WIDTH:
+        # Correct Rich's dumb-terminal fallback and its margin when both dimensions are supplied.
+        console.size = (BENCHMARK_OUTPUT_WIDTH + console.legacy_windows, console.height)
+    return console
 
 
 def print_legend(body_lines: Sequence[str], *, console: Any) -> None:

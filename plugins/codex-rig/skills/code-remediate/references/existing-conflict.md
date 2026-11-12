@@ -1,6 +1,6 @@
 # Existing merge or conflict recovery
 
-<!-- policy-sibling: shared/native-skill-contract.md (Local merge approval), assets/AGENTS.md (commit rules), shared/commit-response-template.md (Merge Commit Proof), skills/code-remediate/SKILL.md (target integration) -->
+<!-- policy-sibling: shared/native-skill-contract.md (Local merge approval), assets/AGENTS.md (commit rules), shared/commit-response-template.md (Merge Commit Proof), skills/code-remediate/references/selection.md (step 03: target integration); intentional divergence: this recovery route requires task-owned merge evidence or an explicit decision for pre-existing conflicts, while step 03 starts a newly authorized target integration. -->
 
 Explain an unmerged entry such as `UU` as "This local file still contains an unresolved merge conflict, so I cannot safely switch this working copy to the PR version yet." Keep it separate from a failed remote fetch: resolving the conflict does not prove the fetch will succeed. Do not claim a pull caused the conflict or that the merge belongs to this task without evidence.
 

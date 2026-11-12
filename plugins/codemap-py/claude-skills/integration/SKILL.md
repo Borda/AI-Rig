@@ -68,7 +68,8 @@ First, if the request is a structural query (callers, callees, imports, symbol l
 Each block below runs as written. Optional flags are appended only when the user asked for them; a value the block needs arrives through a variable whose unsubstituted `<placeholder>` aborts the block.
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate audit  # timeout: 15000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
+"$PLUGIN_ROOT/bin/codemap-py" integrate audit  # timeout: 15000
 ```
 
 Optional: `--runtime <r>`, `--json`, `--since YYYY-MM-DD`.
@@ -76,7 +77,8 @@ Optional: `--runtime <r>`, `--json`, `--since YYYY-MM-DD`.
 **`audit`** — bounded read-only inspection: provider/consumer versions, observed provider content identity, managed blocks, active consumer guidance reachability/content, index identity, runtime-scoped logs, usage, findings. Reports `pass`, `warn`, or `fail`; never invokes `plan`, `apply`, `sync`, `index`, query self-heal, native plugin-manager mutation, or global-instruction installation. Missing/unreachable/outdated active guidance reports as `consumer_query_guidance_missing`, `consumer_query_guidance_unreachable`, or `consumer_query_guidance_drift`, treated as source maintenance, not proof of active wiring. Same-version content mismatch = high-severity drift; native listing without session provenance = `session_catalog: unobservable`. Codex supplies runtime-scoped CLI/tool shards but no skill-start hook; host hooks expose no token usage. Report these evidence limits; never claim live fresh-session activation or token savings. `--json` emits schema 2 (`codemap-py.integration.v2`); `--since` filters telemetry by date. Default text; JSON for downstream reasoning.
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate plan  # timeout: 15000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
+"$PLUGIN_ROOT/bin/codemap-py" integrate plan  # timeout: 15000
 ```
 
 Optional: `--runtime <r>`, `--consumers <csv>`, `--source <s>`, `--out <artifact>`.
@@ -85,24 +87,26 @@ Optional: `--runtime <r>`, `--consumers <csv>`, `--source <s>`, `--out <artifact
 
 ```bash
 # timeout: 30000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 PLAN="<plan artifact path>"
 PLAN_SHA="<approved plan SHA-256>"
 case "$PLAN" in *'<'*'>'*|"") echo "! BLOCKED — substitute PLAN with the plan artifact path"; exit 1 ;; esac
 case "$PLAN_SHA" in *'<'*'>'*|"") echo "! BLOCKED — substitute PLAN_SHA with the SHA-256 the user approved"; exit 1 ;; esac
-"${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate apply --plan "$PLAN" --approve "$PLAN_SHA"
+"$PLUGIN_ROOT/bin/codemap-py" integrate apply --plan "$PLAN" --approve "$PLAN_SHA"
 ```
 
 **`apply`** — requires `--plan` + `--approve <sha256>` matching shown plan. Before execution, Read the saved plan artifact and print its full operation list and summary + SHA-256 once as the last reply text before calling `AskUserQuestion`; never in an option preview. The question text carries a plain summary (separate fields with actual newlines): "Apply this plan?\\nTargets: <consumers>; operations: <count>\\nPlan SHA-256: <sha256>\\n→ <artifact>", at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout, or code fence. Preserve the exact hash and name the plan artifact path. Options carry labels and one-line descriptions, no previews: (a) Approve — run `apply` with exact SHA-256, (b) Cancel — leave the plan unapplied; preserve order and keep the recommended option second. Never construct/pass `--approve` without explicit confirmation. Maintainer/source-checkout operation; immutable-release users normally use `audit`, `sync`, `demo`. `apply` never runs reported native reinstall commands; `sync` never rewrites consumer source.
 
 ```bash
 # timeout: 60000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 SOURCE="<local-candidate or release>"
 PLAN="<plan artifact path>"
 PLAN_SHA="<approved plan SHA-256>"
 case "$SOURCE" in local-candidate|release) ;; *) echo "! BLOCKED — SOURCE must be local-candidate or release"; exit 1 ;; esac
 case "$PLAN" in *'<'*'>'*|"") echo "! BLOCKED — substitute PLAN with the plan artifact path"; exit 1 ;; esac
 case "$PLAN_SHA" in *'<'*'>'*|"") echo "! BLOCKED — substitute PLAN_SHA with the SHA-256 the user approved"; exit 1 ;; esac
-"${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate sync --source "$SOURCE" --plan "$PLAN" --approve "$PLAN_SHA"
+"$PLUGIN_ROOT/bin/codemap-py" integrate sync --source "$SOURCE" --plan "$PLAN" --approve "$PLAN_SHA"
 ```
 
 Optional: `--runtime <r>`.
@@ -110,7 +114,8 @@ Optional: `--runtime <r>`.
 **`sync`** — same gate as `apply`: Read the saved plan artifact, print its full operation list and summary + SHA-256 once as the last reply text before `AskUserQuestion`, and carry targets, operation count, exact SHA-256, and plan artifact path in question text before passing `--approve`. At most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout, or code fence; options carry labels and one-line descriptions, no previews, in the same order as `apply`, with the recommended option second. Also requires `--source {local-candidate,release}`. After successful Claude-consumer or `codemap-py` install/reinstall, say: "Run `/reload-plugins` (or start a fresh session) before relying on the updated plugin — this session's tool list was resolved before the update." If `--runtime` included `codex` and synced `codex-rig`/`codemap-py`, add: "Start a new Codex session before relying on the updated plugin there too."
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate demo  # timeout: 20000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
+"$PLUGIN_ROOT/bin/codemap-py" integrate demo  # timeout: 20000
 ```
 
 Optional: `--runtime <r>`.

@@ -189,6 +189,8 @@ def stale_root_warning(root: Path, config_dir: Path | None = None) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     """Resolve and print an installed plugin path."""
+    sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+    sys.stderr.reconfigure(encoding="utf-8", newline="\n")
     parser = argparse.ArgumentParser(
         prog="get_plugin_install_path",
         description="Resolve a plugin's current installPath from Claude Code's installed_plugins.json.",

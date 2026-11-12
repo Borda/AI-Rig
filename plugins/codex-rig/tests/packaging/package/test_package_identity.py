@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
+import py_compile
+import runpy
 import stat
 from collections.abc import Callable
 from pathlib import Path
@@ -85,6 +88,87 @@ def make_package(tmp_path: Path) -> Callable[..., Path]:
 @pytest.mark.packaging
 class TestVerifyPackage:
     """``verify_package`` accepts only a package that matches its manifest exactly."""
+
+    @pytest.mark.parametrize("directory", ["__pycache__", "scripts/__pycache__"])
+    def test_accepts_unrecorded_bytecode_cache(
+        self, identity: ModuleType, make_package: Callable[..., Path], directory: str
+    ) -> None:
+        """Interpreter cache files do not change a package's verified source identity."""
+        root = make_package()
+        cache = root / directory / "x.cpython-312.pyc"
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(b"untrusted bytecode")
+
+        result = identity.verify_package(root, enforce_modes=ENFORCE_MODES)
+
+        assert result.files_verified == 2
+        assert result.version == "1.2.3"
+
+    def test_verified_helper_runs_source_with_planted_bytecode_present(
+        self, identity: ModuleType, make_package: Callable[..., Path]
+    ) -> None:
+        """A verified helper's source executes while an unchecked-hash bytecode cache remains inert."""
+        root = make_package()
+        helper = root / "helper.py"
+        helper.write_bytes(b"result = 'verified source'\n")
+        manifest_path = root / "package-manifest.json"
+        manifest = json.loads(manifest_path.read_bytes())
+        manifest["files"].append(
+            {
+                "path": "helper.py",
+                "sha256": hashlib.sha256(helper.read_bytes()).hexdigest(),
+                "mode": f"{stat.S_IMODE(helper.stat().st_mode):04o}",
+            }
+        )
+        manifest["files"].sort(key=lambda record: record["path"])
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        marker = root.with_name(root.name + "-executed")
+        planted = root.with_name(root.name + "-planted.py")
+        planted.write_text(
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\nresult = 'cached'\n",
+            encoding="utf-8",
+        )
+        cache = helper.parent / "__pycache__" / Path(importlib.util.cache_from_source(str(helper))).name
+        cache.parent.mkdir()
+        py_compile.compile(
+            str(planted),
+            cfile=str(cache),
+            invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH,
+            doraise=True,
+        )
+
+        verified = identity.verify_package(root, enforce_modes=ENFORCE_MODES)
+        namespace = runpy.run_path(str(helper))
+
+        assert verified.files_verified == 3
+        assert namespace["result"] == "verified source"
+        assert not marker.exists()
+
+    @pytest.mark.parametrize("relative", ["payload.txt", ".hidden.pyc", "nested/payload.pyc"])
+    def test_rejects_noncache_payload_inside_bytecode_directory(
+        self, identity: ModuleType, make_package: Callable[..., Path], relative: str
+    ) -> None:
+        """Cache exclusions cannot conceal hidden files, non-bytecode files, or nested payloads."""
+        root = make_package()
+        payload = root / "scripts" / "__pycache__" / relative
+        payload.parent.mkdir(parents=True)
+        payload.write_bytes(b"unrecorded")
+
+        with pytest.raises(identity.PackageIdentityError, match="unexpected bytecode cache"):
+            identity.verify_package(root, enforce_modes=ENFORCE_MODES)
+
+    @pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="host cannot create file symlinks")
+    def test_rejects_link_inside_bytecode_directory(
+        self, identity: ModuleType, make_package: Callable[..., Path]
+    ) -> None:
+        """A cache file symlink remains unsafe even when its name ends in .pyc."""
+        root = make_package()
+        cache = root / "__pycache__" / "payload.pyc"
+        cache.parent.mkdir()
+        cache.symlink_to(root / "payload.txt")
+
+        with pytest.raises(identity.PackageIdentityError, match="unsafe package node"):
+            identity.verify_package(root, enforce_modes=ENFORCE_MODES)
 
     def test_checks_hashes_without_path_read_bytes(
         self, identity: ModuleType, make_package: Callable[..., Path], monkeypatch: pytest.MonkeyPatch

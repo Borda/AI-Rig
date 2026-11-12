@@ -229,16 +229,32 @@ class TestRenderResultRows:
         assert _ANSI_CODE.sub("", stream.getvalue()) == row
         assert ("\x1b[" in stream.getvalue()) == (terminal or force_color)
 
-    def test_replayed_legend_panel_matches_the_shared_benchmark_width(self) -> None:
+    @pytest.mark.parametrize("term", ["dumb", "unknown", "xterm-256color"])
+    @pytest.mark.parametrize("force_color", [False, True])
+    @pytest.mark.parametrize("legacy_windows", [False, True])
+    @pytest.mark.parametrize("lines", ["", "40"])
+    def test_replayed_legend_panel_matches_the_shared_benchmark_width(
+        self, monkeypatch: pytest.MonkeyPatch, term: str, force_color: bool, legacy_windows: bool, lines: str
+    ) -> None:
         """Archived legends replay at 120 columns regardless of the detected terminal width.
 
         Replaying a log on a narrow or wide terminal must draw the same box, so every panel line is exactly the shared
         benchmark width.
         """
-        rendered = _render(f"{LEGEND_OPEN_RULE}\n  status: done\n{LEGEND_CLOSE_RULE}\n", force_color=True)
+        monkeypatch.setenv("TERM", term)
+        monkeypatch.setenv("LINES", lines)
+        monkeypatch.setattr("rich.console.detect_legacy_windows", lambda: legacy_windows)
+        stream = io.StringIO()
+        monkeypatch.setattr(stream, "isatty", lambda: True)
+        codex_runtime.render_result_rows(
+            [f"{LEGEND_OPEN_RULE}\n", "  status: done\n", f"{LEGEND_CLOSE_RULE}\n"], stream, force_color=force_color
+        )
+        rendered = stream.getvalue()
 
         visible = [_ANSI_CODE.sub("", line) for line in rendered.splitlines()]
-        assert [line[0] for line in visible] == ["╭", "│", "╰"]
+        assert [line[0] for line in visible] == (
+            ["┌", "│", "└"] if legacy_windows and not force_color else ["╭", "│", "╰"]
+        )
         assert {len(line) for line in visible} == {120}
         assert BENCHMARK_OUTPUT_WIDTH == 120
 

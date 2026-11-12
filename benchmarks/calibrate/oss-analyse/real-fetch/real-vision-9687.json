@@ -1,0 +1,481 @@
+{
+  "441": {
+    "number": 441,
+    "title": "[proposal] Move dataset tar/zip extraction and integrity checking of multiple files to utils.py",
+    "state": "open",
+    "body": "Datasets such as CIFAR / MNIST / etc have download / integrity logic that is useful for reimplementing custom user datasets (such as https://github.com/user-4/metriclearningbench/blob/master/cars196.py, https://github.com/user-4/metriclearningbench/blob/master/cub2011.py, https://github.com/user-4/metriclearningbench/blob/master/stanford_online_products.py)\r\n\r\nI propose moving it to `torchvision/datasets/utils.py` functions like downloading and extracting tarballs / zipfiles / plain files; checking integrity by md5 of a file list if it is provided.\r\n\r\nCurrently avoiding duplication leads to quirky subclassing of ImageFolder, Cifar10 etc.",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "I agree with this.\r\nI think the only reason why we haven't done this yet is that each dataset has its own particularity. But a clean and concise function that handles all the above cases would be awesome to have!"
+      },
+      {
+        "author": "user-5",
+        "body": "I think it would be good to come up with a fixed list of functionality which should be factored out into utils so this can be tackled as a fixed-scope piece of work rather than a general refactor. Happy to do so once it's established."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "I had a quick look at it, and I have the impression that most of the basic functionality is already present under `.utils.py`: downloading and integrity checking.\r\n\r\nThe current integrity checking/downloading code that we have in each dataset is very minimal and specific to each dataset, so it's unclear to me if we can further factor it out without making these functions overly complex."
+      },
+      {
+        "author": "user-4",
+        "body": "Currently `utils.py`, does not include functionality to extract a tarball or a zip archive and to check integrity of multiple files as routinely done in datasets (boiler-plate loops needed).\r\n\r\nMany Dataset impl code consist only of this archive extraction logic, so even considering it is a small number of lines of code, it takes easily 60% of code. Feel free to take a look at https://github.com/user-4/metriclearningbench/blob/master/cars196.py, https://github.com/user-4/metriclearningbench/blob/master/cub2011.py, https://github.com/user-4/metriclearningbench/blob/master/stanford_online_products.py"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "I'm not sure it's worth the added complexity. But I'm happy to see a proposal that keeps the simplicity of the current functions while allowing those cases to be handled."
+      },
+      {
+        "author": "user-6",
+        "body": "I'd like to make a somewhat similar proposal: implement dataset downloading through command line, something like the following:\r\n\r\n```sh\r\n# Download MNIST into \"datadir\"\r\npython -m torchvision.datasets MNIST datadir\r\n```"
+      }
+    ]
+  },
+  "2676": {
+    "number": 2676,
+    "title": "toy video datasets for generative models",
+    "state": "open",
+    "body": "## 🚀 Feature\r\nAdding toy video datasets for generative models such as Moving MNIST and Robonet\r\n\r\n## Motivation\r\n\r\nThe currently available video datasets are suitable for recognition and not synthesis. It would be nice if you add simple toy video datasets such as Moving MNIST.\n\ncc @user-8",
+    "comments": [
+      {
+        "author": "user-8",
+        "body": "Hi @user-7, we are currently in the process of defining some guidelines for adding datasets (https://github.com/pytorch/vision/pull/2663). Right now the only metric we use is the number of citations:\r\n\r\n- Moving MNIST: [1602](https://scholar.google.com/scholar?cites=6890473943204323716)\r\n- Robonet: [18](https://scholar.google.com/scholar?cites=11745841201248720978)\r\n\r\nBased on this I think Robonet is not yet mature enough (released in late 2019) to be added. Moving MNIST on the other hand seems suitable. @maintainer-1  ?"
+      },
+      {
+        "author": "user-7",
+        "body": "Hi @user-8 , \r\nBAIR (https://sites.google.com/view/sna-visual-mpc/) would be another option."
+      },
+      {
+        "author": "user-9",
+        "body": "@user-7 thanks for the feature request ! After discussing this with @maintainer-1 , we would like to add Moving MNIST dataset. Please, discuss with @user-8 if you would like to help us and send a PR.\r\n\r\nConcerning Robonet and BAIR dataset, they seem to be very specific for robotics and probably not yet mature (considering the number of citations as a critrion). I wonder if those datasets can't be opened with existing generic dataset classes like [ImageFolder](https://github.com/pytorch/vision/blob/master/torchvision/datasets/folder.py#L191) ? "
+      },
+      {
+        "author": "user-7",
+        "body": "Thanks, @user-9 and @user-8.\r\n\r\nI have not worked with BAIR dataset yet. Apparently it's been used for generative and predictive methods (such as this one https://arxiv.org/abs/1903.01434).\r\nBut I think starting with Moving MNIST would be a safe start on such datasets."
+      }
+    ]
+  },
+  "947": {
+    "number": 947,
+    "title": "Read COCO dataset from ZIP file?",
+    "state": "open",
+    "body": "For large datasets on e.g. university clusters, where your data storage is an NFS mount, reading individual files can be slow. It also doesn't support reading ahead. In the cloud, you typically have SSD storage, but unzipping the dataset still takes time.\r\n\r\nWould you be open to receiving a pull request that reads the COCO dataset from its zipped version? It adds around 10 lines in the COCO Detection class, and adds another Python file for reading ZIP files in a fork-safe manner (so it works with distributed training).",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "You mean that all the images are in a `zip` file?\r\nAnd how would the structure of the reading be? Does it unzip it all locally, or read the zipped file without uncompressing it all?\r\n\r\nIn general, I don't see why this would be something specific to the COCO dataset. But finding a generic way of supporting this for all datasets is something that would be great to have."
+      },
+      {
+        "author": "user-10",
+        "body": "Yes, all the images are in a zip file and they are read without unzipping. With the constraint (added by me) that the ZIP file shouldn't use compression (which is the case for COCO).\r\nNote that ZIP files are suited for this because they have an index. For tar files, it isn't very efficient because you need to walk over the entire file first to build an index.\r\nI'll first create something just for COCO, and then we can look at which other datasets are stored as ZIP files."
+      },
+      {
+        "author": "user-10",
+        "body": "This could easily apply to the following datasets as well (because they are stored as ZIP files):\r\n- celeba\r\n- omniglot\r\n- phototour (though not really, because it does postprocessing on the files after extraction)"
+      }
+    ]
+  },
+  "1139": {
+    "number": 1139,
+    "title": "VGGFace2 dataset",
+    "state": "open",
+    "body": "@maintainer-1 how would you like to go about this?\r\n\r\nCurrently, I preprocess VGGFace2 by cropping out the face from each image using the provided bounding box csv. After doing that, I load it as an ImageFolder dataset.\r\n\r\nVGGFace2 also has a bunch of other CSVs that annotate gender, age group, and facial landmarks.\r\n\r\nI propose we allow users to specify the targets they want (such as ID, gender, age, bounding box etc.) and have a `crop_bb=False` if they only want the face.\r\n\r\nWhat do you think?",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "@user-11 I think we should keep the original data that we have downloaded from the website.\r\n\r\nAny cropping or other options should be done on the fly on the dataset, and can be selected via arguments in the constructor.\r\n\r\nThoughts?"
+      },
+      {
+        "author": "user-11",
+        "body": "Yeah I agree. That would be more consistent with the format of the other datasets.\r\n\r\nI was also preprocessing the dataset to make it more manageable in size (8 GB cropped vs 36 GB original). Maybe we could have a preprocess helper function for users that might want to use it.\r\n\r\nI shall send a PR for VGGFace2 soon."
+      },
+      {
+        "author": "maintainer-1",
+        "body": ">  was also preprocessing the dataset to make it more manageable in size (8 GB cropped vs 36 GB original). Maybe we could have a preprocess helper function for users that might want to use it.\r\n\r\nLet's just leave the unprocessed file as is, I think it's fine."
+      }
+    ]
+  },
+  "7152": {
+    "number": 7152,
+    "title": "Using AIStore with built-in prototype datasets",
+    "state": "open",
+    "body": "### 📚 The doc issue\r\n\r\nHi, I'd like to be able to download prototype datasets to my AIStore cluster and use `AISFileLister`, `AISFileLoader`.\r\n\r\nAlso, how can I gain access to `CifarFileReader` and associated functions if my resource is AIStore? For example, currently I did the following:\r\n- created an AIStore cluster\r\n- downloaded data (cifar10) locally\r\n- put data in aistore\r\n- Created initial dp with `AISFileLister`, `AISFileLoader`\r\n- copied and pasted all the functions and classes defined in [the cifar file](https://github.com/pytorch/vision/blob/main/torchvision/prototype/datasets/_builtin/cifar.py) to be able to use `Filter(dp, _is_data_file)`, `Mapper(dp, _unpickle)`, `CifarFileReader(dp, labels_key=\"labels\")`, `Mapper(dp, _prepare_sample)`\r\n\r\n-----\r\n\r\nMy final script is below, but I assume there must be a way to make it more concise?\r\n\r\n\r\n```python\r\n\r\nfrom torchdata.datapipes.iter import AISFileLister, AISFileLoader\r\n\r\n# list of prefixes which contain data\r\nimage_prefix = [\"ais://cifar10/\"]\r\n\r\n# Listing all files starting with these prefixes on AIStore\r\ndp_urls = AISFileLister(url=\"http://localhost:51080\", source_datapipe=image_prefix)\r\n\r\n# list obj urls\r\nprint(list(dp_urls))\r\n\r\n# loading data using AISFileLoader\r\ndp = AISFileLoader(url=\"http://localhost:51080\", source_datapipe=dp_urls)\r\n\r\n\r\nimport io\r\nimport pathlib\r\nimport pickle\r\nfrom typing import Any, BinaryIO, cast, Dict, Iterator, List, Optional, Tuple, Union\r\n\r\nimport numpy as np\r\nimport torch\r\nfrom torchdata.datapipes.iter import TarArchiveLoader, Filter, IterDataPipe, Mapper\r\nfrom torchvision.prototype.datapoints import Image, Label\r\nfrom torchvision.prototype.datasets.utils._internal import (\r\n    hint_sharding,\r\n    hint_shuffling,\r\n    path_comparator,\r\n    read_categories_file,\r\n)\r\n\r\nclass CifarFileReader(IterDataPipe[Tuple[np.ndarray, int]]):\r\n    def __init__(self, datapipe: IterDataPipe[Dict[str, Any]], *, labels_key: str) -> None:\r\n        self.datapipe = datapipe\r\n        self.labels_key = labels_key\r\n\r\n    def __iter__(self) -> Iterator[Tuple[np.ndarray, int]]:\r\n        for mapping in self.datapipe:\r\n            image_arrays = mapping[\"data\"].reshape((-1, 3, 32, 32))\r\n            category_idcs = mapping[self.labels_key]\r\n            yield from iter(zip(image_arrays, category_idcs))\r\n\r\ncategories = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']\r\n\r\nsplit = \"train\"\r\n\r\ndef _is_data_file(data: Tuple[str, Any]) -> bool:\r\n    path = pathlib.Path(data[0])\r\n    return path.name.startswith(\"data\" if split == \"train\" else \"test\")\r\n\r\ndef _unpickle(data: Tuple[str, io.BytesIO]) -> Dict[str, Any]:\r\n    _, file = data\r\n    content = cast(Dict[str, Any], pickle.load(file, encoding=\"latin1\"))\r\n    file.close()\r\n    return content\r\n\r\ndef _prepare_sample(data: Tuple[np.ndarray, int]) -> Dict[str, Any]:\r\n    image_array, category_idx = data\r\n    return dict(\r\n        image=Image(image_array),\r\n        label=Label(category_idx, categories=catego",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Hi @user-12 ,\r\n\r\nSorry, I don't really understand what the problem is. Is there any failure?\r\n\r\nMy current understanding of your question is \"How do I make datapipes work with AIStore\" but this is probably a question that should be directed to the datapipe or AIStore projects directly."
+      },
+      {
+        "author": "user-8",
+        "body": "IIUC, the request is the same as #7147 but for CIFAR? To summarize, you want a way to change the source where we are loading the dataset from, rather than hardcoding the local loading, right?\r\n\r\nUnfortunately, there currently is no way to do so and in the foreseeable future nothing in the same direction is planned. If you are ok with hacky solutions, I detailed in https://github.com/pytorch/vision/issues/7147#issuecomment-1410607978 how I would monkey patch our logic to get custom local loading going. Replacing this with custom loading from another source should also be doable. Let me know if you encounter issues and I might be able to point you in the right direction."
+      },
+      {
+        "author": "user-12",
+        "body": "@user-8 Thanks, yeah I guess it's essentially the same request. I'd like to use everything from the CIFAR pipeline except for where the dataset is loaded from, without needing to copy/paste all of the code. For example just being able to import the `CifarFileReader` would be nice.\r\n\r\nI was able to get this working using the method you described, but am hoping a cleaner solution becomes available in the future. It does seem less clean than ideal to need to copy/paste all that code to load local cifar, coco, etc. data."
+      }
+    ]
+  },
+  "5865": {
+    "number": 5865,
+    "title": "Error Downloading Kinetics 400 dataset",
+    "state": "open",
+    "body": "### 🐛 Describe the bug\r\n\r\nError in downloading Kinetics 400 dataset. Download stops at training set tar file 121 (full k400 dataset is 200+ tar files).\r\n\r\nI know this isn't a problem with the disk being out of write space. This has happened twice with different users and environments.\r\n\r\nNot seeing this exact error raised as an issue anywhere else. Seems something is wrong with one of the downloaded files? Any ideas or workaround would be greatly appreciated! \r\n\r\nThank you!!!!!\r\n\r\nCode to produce Error:\r\n```\r\nimport torchvision\r\nkinetics_path = '~/kinetics400'\r\nkinetics400_dataset = torchvision.datasets.Kinetics(root=kinetics_path, \r\n                                                    frames_per_clip=5,\r\n                                                    num_classes='400',\r\n                                                    download=True)\r\n```\r\n\r\nLast part of error message (top of message is cut off, sorry.)\r\n```\r\nTraceback (most recent call last):\r\n  File \"/bsdir/donwload_kinetics.py\", line 4, in <module>\r\n    kinetics400_dataset = torchvision.datasets.Kinetics(root=kinetics_path,\r\n  File \"/bsdir/miniconda3/envs/torch_cuda_11_3/lib/python3.9/site-packages/torchvision/datasets/kinetics.py\", line 127, in __init__\r\n    self.download_and_process_videos()\r\n  File \"/bsdir/miniconda3/envs/torch_cuda_11_3/lib/python3.9/site-packages/torchvision/datasets/kinetics.py\", line 152, in download_and_process_videos\r\n    self._download_videos()\r\n  File \"/bsdir/miniconda3/envs/torch_cuda_11_3/lib/python3.9/site-packages/torchvision/datasets/kinetics.py\", line 184, in _download_videos\r\n    download_and_extract_archive(line, tar_path, self.split_folder)\r\n  File \"/bsdir/miniconda3/envs/torch_cuda_11_3/lib/python3.9/site-packages/torchvision/datasets/utils.py\", line 431, in download_and_extract_archive\r\n    extract_archive(archive, extract_root, remove_finished)\r\n  File \"/bsdir/miniconda3/envs/torch_cuda_11_3/lib/python3.9/site-packages/torchvision/datasets/utils.py\", line 408, in extract_archive\r\n    extractor(from_path, to_path, compression)\r\n  File \"/bsdir/miniconda3/envs/torch_cuda_11_3/lib/python3.9/site-packages/torchvision/datasets/utils.py\", line 271, in _extract_tar\r\n    with tarfile.open(from_path, f\"r:{compression[1:]}\" if compression else \"r\") as tar:\r\n  File \"/bsdir/miniconda3/envs/torch_cuda_11_3/lib/python3.9/tarfile.py\", line 1629, in open\r\n    return func(name, filemode, fileobj, **kwargs)\r\n  File \"/bsdir/miniconda3/envs/torch_cuda_11_3/lib/python3.9/tarfile.py\", line 1686, in gzopen\r\n    raise ReadError(\"not a gzip file\")\r\ntarfile.ReadError: not a gzip file\r\n````\r\n\r\n### Versions\r\n\r\nPyTorch version: 1.11.0\r\nIs debug build: False\r\nCUDA used to build PyTorch: 11.3\r\nROCM used to build PyTorch: N/A\r\n\r\nOS: Ubuntu 16.04.7 LTS (x86_64)\r\nGCC version: (Ubuntu 5.4.0-6ubuntu1~16.04.12) 5.4.0 20160609\r\nClang version: Could not collect\r\nCMake version: version 3.5.1\r\nLibc version: glibc-2.23\r\n\r\nPython version: 3.9.7 (default, Sep 16 2021, 13:09:58)  [GCC 7.5.0] ",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "@user-8 would you have time to look into this by any chance?"
+      },
+      {
+        "author": "user-8",
+        "body": "Reproduction\r\n\r\n```py\r\nfrom torchvision.datasets.utils import download_and_extract_archive\r\n\r\ndownload_and_extract_archive(\"https://s3.amazonaws.com/kinetics/400/train/part_120.tar.gz\", \".\")\r\n```\r\n\r\nIt seems the archive was not compressed, but we are trying to decompress it."
+      },
+      {
+        "author": "user-8",
+        "body": "This was reported in https://github.com/cvdfoundation/kinetics-dataset/issues/21 almost 5 months ago. "
+      },
+      {
+        "author": "user-8",
+        "body": "Here is a patch that fixes the extraction for the offending archive:\r\n\r\n```diff\r\ndiff --git a/torchvision/datasets/kinetics.py b/torchvision/datasets/kinetics.py\r\nindex 651dbdc15..15a78a989 100644\r\n--- a/torchvision/datasets/kinetics.py\r\n+++ b/torchvision/datasets/kinetics.py\r\n@@ -1,7 +1,8 @@\r\n import csv\r\n import os\r\n+import tarfile\r\n import time\r\n-import urllib\r\n+import urllib.parse\r\n import warnings\r\n from functools import partial\r\n from multiprocessing import Pool\r\n@@ -182,8 +183,28 @@ class Kinetics(VisionDataset):\r\n             list_video_urls = [urllib.parse.quote(line, safe=\"/,:\") for line in file.read().splitlines()]\r\n \r\n         if self.num_download_workers == 1:\r\n-            for line in list_video_urls:\r\n-                download_and_extract_archive(line, tar_path, self.split_folder)\r\n+            for url in list_video_urls:\r\n+                name = urllib.parse.urlparse(url).path.split(\"/\")[-1]\r\n+                # See https://github.com/cvdfoundation/kinetics-dataset/issue"
+      },
+      {
+        "author": "user-13",
+        "body": "OK that sounds good, thank you @user-8 !!!"
+      },
+      {
+        "author": "user-8",
+        "body": "This was fixed upstream in cvdfoundation/kinetics-dataset#21, so we should be good. @user-13 could you see if it also works for you?"
+      },
+      {
+        "author": "user-14",
+        "body": "This should be solved on Kinetics' side I think."
+      }
+    ]
+  },
+  "6363": {
+    "number": 6363,
+    "title": "download datasets using bittorrent",
+    "state": "open",
+    "body": "### 🚀 The feature, motivation and pitch\n\nI'm the sysadmin of one of the servers that hosts datasets that appear on `torch.datasets` (`DTD`, `FGVCAircraft`, `Flowers102`, and `OxfordIIITPet`) . We're happy that our stuff is so widely used but that's also taking a hit on other stuff on the server and the downloads sometimes take a very long time.\r\n\r\nWe've prepared torrents for some of our datasets, uploaded them to [academic torrents](https://academictorrents.com/), and recommend to use it over http. I was wondering if it was possible to add the option to download datasets over bittorrent.\n\n### Alternatives\n\n_No response_\n\n### Additional context\n\n_No response_\n\ncc @user-8 @user-42",
+    "comments": [
+      {
+        "author": "user-4",
+        "body": "Related on reducing the load on dataset servers: https://github.com/pytorch/pytorch/issues/68320 is about downloading/caching the model weights, but in the first run, would multiple DDP ranks also download the dataset multiple times?"
+      },
+      {
+        "author": "user-15",
+        "body": "> Related on reducing the load on dataset servers: pytorch/pytorch#68320 is about downloading/caching the model weights, but in the first run, would multiple DDP ranks also download the dataset multiple times?\r\n\r\nThis would explain the server logs. When the user agent is `\"pytorch/vision\"` I often see a few connections from the same IP address around the same time trying to download the same file. I have always assumed that these were very very impatient users and been wondering if whether I should reduce or increase the throttle to solve this. Here's an example from our logs (sorted by IP address - redacted ip address):\r\n\r\n```\r\n# readcted ip \r\nredacted-ip-address#1 - - [29/Jul/2022:11:08:48 +0100] GET /~vgg/data/pets/images.tar.gz HTTP/1.1 200 327399 - pytorch/vision\r\nredacted-ip-address#1 - - [29/Jul/2022:11:08:49 +0100] GET /~vgg/data/pets/images.tar.gz HTTP/1.1 200 245479 - pytorch/vision\r\nredacted-ip-address#1 - - [29/Jul/2022:11:09:11 +0100] GET /~vgg/data/pets/images.tar.gz HTTP"
+      },
+      {
+        "author": "user-16",
+        "body": "Moving to vision as the datasets in question are from there."
+      },
+      {
+        "author": "user-4",
+        "body": "@user-16 Please also note the more shared issue https://github.com/pytorch/pytorch/issues/68320, and also given that download utilities are used across libraries, it may make sense to develop them in Core. Another related issue on supporting other download backends is https://github.com/pytorch/pytorch/issues/73466"
+      }
+    ]
+  },
+  "4633": {
+    "number": 4633,
+    "title": "Feature Request for torchvision ImageFolder using/inheriting DatasetFolder",
+    "state": "open",
+    "body": "I came across a feature other users also demanded as may be seen in pytorch forums.\r\nFor a detailed problem Description and how to solve it see here in a discussion from users, @user-18 and me:\r\nhttps://discuss.pytorch.org/t/how-to-sample-images-belonging-to-particular-classes/43776/9\r\n\r\nIn short: Using ImageFolder, which inherits from DatasetFolder, is limiting the user to retrieve a whole dataset from a folder, instead of just using some classes/dirs of the folder structure. Even though one can implement a custom find_classes() method or rather call it a function if one passes it an overwritten DatasetFolder custom implementation, this is often hidden to the user, since one only uses ImageFolder which uses DatasetFolder under the hood. \r\n\r\nFor users getting this wrong also see the pytorch discussion from the [link ](https://discuss.pytorch.org/t/how-to-sample-images-belonging-to-particular-classes/43776/9) above in the forum, where @user-18 and I figured out that it would be nice to be able to just pass such a function that only selects a subset of a folder structure directly by passing an optional function to the ImageFolder.\r\n\r\nThe line I am talking about in current torchvision DatasetFolder implementation, where subsets from a folder may be retrieved, by overwriting this function:\r\nhttps://github.com/pytorch/vision/blob/fba4f42e3bc24b7b2c6cad09b6db653ac73dc6b7/torchvision/datasets/folder.py#L144\r\n\r\nMy Suggestion for this improvement that users can use only a subset of a folder structure in ImageFolder looks as follows as also stated in the pytorch forum:\r\n\r\n\r\n```\r\ndef find_classes(directory: str, desired_class_names: List) -> Tuple[List[str], Dict[str, int]]:\r\n    \"\"\"Finds the class folders in a dataset.\"\"\"\r\n    classes = sorted(entry.name for entry in os.scandir(directory) if entry.is_dir())\r\n    classes = classes [desired_class_names] # TODO: do something like this line! Not tested it yet!\r\n    if not classes:\r\n        raise FileNotFoundError(f\"Couldn't find any class folder in {directory}.\")\r\n\r\n    class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}\r\n    return classes, class_to_idx\r\n```\r\n\r\nCurrent implementation suggest overwriting the function as follows within DatasetFolder, but most Users tend to be using ImageFolder as I inferred from posts.\r\n\r\nhttps://github.com/pytorch/vision/blob/fba4f42e3bc24b7b2c6cad09b6db653ac73dc6b7/torchvision/datasets/folder.py#L191-L218\r\n\r\n\r\nAlso as stated @user-18 suggested to make it possible to pass a function to ImageFolder directly instead of overwriting DatasetFolder. Regarding this i have no code to suggest but it might be trivial by just passing parameters.\n\ncc @user-8",
+    "comments": [
+      {
+        "author": "user-18",
+        "body": "Thanks for creating the feature request and discussion here @user-17!\r\n\r\nA quick summary from my point of view:\r\nFiltering out specific classes can be done by e.g. \r\n* creating a new root folder with sym links to the desired folders only\r\n* creating a custom `Dataset` (and using the `DatasetFolder` class as its base)\r\n\r\nAdding a the feature into `DatasetFolder` to \"filter\" out classes, samples, etc. might be a bit overkill as I'm currently also unsure how flexible this approach would need to be.\r\nSince the `DatasetFolder` already provides the ability to pass a custom `loader` to it, adding `find_classes` as another argument to it, might be an easy way to allow the user-defined filtering.\r\n\r\n\r\n"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "I'm not sure I fully understand the point  about this being hard to do with `ImageDataset`?\r\n\r\nAs you noted `ImageDataset` inherits from `DatasetFolder` so it's perfectly possible for someone to inherit from `ImageDataset` and to overwrite `find_classes()` to obtain the desired feature.\r\n\r\nIf you think this is not obvious for users, maybe it's just a matter of writing more explicit docs?"
+      },
+      {
+        "author": "user-17",
+        "body": "@maintainer-2 Thanks for these remarks! This is a really good point! Maybe a lot of users just oversaw the opportunity. I just saw, that about 3,5k users viewed the post on PyTorch forums I referred to and a lot of colleagues of myself were not aware of this option.\r\nThanks for the recommendation!\r\n\r\nSince I have little experience with contributing to API documents, could someone suggest the proceeding, if this would be a solution?\r\nBest regards,\r\nNico"
+      },
+      {
+        "author": "user-8",
+        "body": "Reminder to self: add functionality to exclude folders to `torchvision.prototype.datasets.from_image_folder`."
+      },
+      {
+        "author": "maintainer-2",
+        "body": ">  I just saw, that about 3,5k users viewed the post on PyTorch forums I referred to and a lot of colleagues of myself were not aware of this option.\r\n\r\nI think that's mostly because these discussions predate the 0.10 release which is only a few months old, where we made the overriding of `find_classes()` publicly available.\r\n\r\n> Since I have little experience with contributing to API documents, could someone suggest the proceeding, if this would be a solution?\r\n\r\nThe current docs for the ImageDataset are here: https://pytorch.org/vision/stable/datasets.html#torchvision.datasets.ImageFolder\r\n\r\nwhere we say \r\n\r\n> This class inherits from DatasetFolder so the same methods can be overridden to customize the dataset.\r\n\r\nIf you think there's a more obvious way to expose this, you're welcome to submit a PR :)\r\n\r\nThe actual file you'll need to edit is https://github.com/pytorch/vision/blob/main/torchvision/datasets/folder.py#L271:L271\r\n\r\nand our contrributing guide is here :) https://github.c"
+      }
+    ]
+  },
+  "9536": {
+    "number": 9536,
+    "title": "datasets: CIFAR10 download slow",
+    "state": "open",
+    "body": "I've noticed recently that the server that hosts CIFAR10 seems to be having bad issues (noticed first on June 23, 2026, and it has become progressively worse).\n\nIt currently takes me 57 minutes to download the 162MB tarball.  There seem to be a few redirects happening.\n\nhttps://github.com/pytorch/vision/blob/4c0fc5acbd973346330aad1695599ba3f9b13352/torchvision/datasets/cifar.py#L32\n\nCan the server be fixed, or can this URL be redirected elsewhere?  (Maybe every AI-generated test script across the globe is pointing to this and just hammering the server... ?)",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "sorry we don't own the servers or own any dataset, we just direct to them. "
+      }
+    ]
+  },
+  "1064": {
+    "number": 1064,
+    "title": "Accounting for class_id in cityscapes dataset",
+    "state": "open",
+    "body": "Hi, \r\n\r\nIn the dataset class for `Cityscapes`, the classes with their meta-data is mentioned as a namedtuple. However, this information is not used anywhere. Especially for semantic segmenation, the train_id should be used to convert the pixel value (of the label image) to the training label. \r\n\r\nIs this planned to be added anytime soon? \r\n\r\nEdit: There seems to have been a commit that does something like this and that hasn't been merged.\r\nhttps://github.com/pytorch/vision/pull/1025/commits/39a7a2fb6015792b6c32fd7ee3eeac9774f712a4\r\n ",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "For now, I'd recommend adding a `transform` that modifies the label to the desired format.\r\n\r\nBefore merging something like the PR you mentioned, we need to have a more structured way of addressing this."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "also cc @user-21 , as you have sent the original PRs"
+      },
+      {
+        "author": "user-21",
+        "body": "I would also recommend using a transform even when having some helper methods available.\r\nFor example like here: https://github.com/user-21/pytorch-GoogLeNet-FCN/blob/master/googlenet_fcn/datasets/transforms/transforms.py#L32-L37"
+      },
+      {
+        "author": "user-20",
+        "body": "@user-21 Thanks for the link! Thats looks great for my use!\r\n\r\n@maintainer-1 What do mean by **structured way**  that you mentioned?\r\n\r\n"
+      },
+      {
+        "author": "user-22",
+        "body": "Seconding @user-21 approach.\r\n\r\nI've been doing something similar-ish (but keeping the ID logic within the transform) - also using dual transforms logic.\r\n\r\n```python\r\nclass ConvertCityscapesIds(object):\r\n    \"\"\"Converts Cityscape masks - adds an ignore index\"\"\"\r\n\r\n    def __init__(self, ignore_index):\r\n        self.ignore_index = ignore_index\r\n\r\n        self.id_to_trainid = {-1: ignore_index, 0: ignore_index, 1: ignore_index, 2: ignore_index, 3: ignore_index,\r\n                              4: ignore_index, 5: ignore_index, 6: ignore_index, 7: 0, 8: 1, 9: ignore_index,\r\n                              10: ignore_index, 11: 2, 12: 3, 13: 4, 14: ignore_index, 15: ignore_index, 16: ignore_index,\r\n                              17: 5, 18: ignore_index, 19: 6, 20: 7, 21: 8, 22: 9, 23: 10, 24: 11, 25: 12, 26: 13, 27: 14,\r\n                              28: 15, 29: ignore_index, 30: ignore_index, 31: 16, 32: 17, 33: 18}\r\n\r\n    def __call__(self, image, target):\r\n\r\n        target_copy = target.clo"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Yes, the way @user-22 is how I do it myself as well.\r\n\r\n@user-20 by structured way, I meant a similar comment as in https://github.com/pytorch/vision/issues/1067#issuecomment-507599030"
+      }
+    ]
+  },
+  "448": {
+    "number": 448,
+    "title": "Bug: torchvision/transforms/functional/to_pil_image always converts 1-channel (gray) FloatTensor images to 8-bit unsigned int",
+    "state": "open",
+    "body": "- OS: Ubuntu 16.04.4 LTS x64\r\n- PyTorch version: 0.3.0\r\n- Torchvision version: 0.2.0\r\n- How you installed PyTorch (conda, pip, source): conda\r\n- Python version: 3\r\n- CUDA/cuDNN version: 8.0\r\n- GPU models and configuration: Titan X (Maxwell)\r\n\r\nERROR:\r\n**ValueError: Incorrect mode (<class 'float'>) supplied for input type <class 'numpy.dtype'>. Should be L**\r\n\r\nThe *torchvision* transform **ToPILImage(mode=float)** will always break for input of type *torch.FloatTensor*\r\n**ToPILImage()** uses the internal function **to_pil_image** found in *torchvision/transforms/functional.py*\r\n\r\nIn *https://github.com/pytorch/vision/blob/master/torchvision/transforms/functional.py*:\r\nLine 104 checks if the input is of type *torch.FloatTensor*\r\nIf so, line 105 scales the input by 255, but then converts it to **byte**\r\nLines 113-127 check if the user-specified mode is the expected mode, and throws an error if not.\r\nThe expected mode is assigned by **npimg.dtype**, which return **np.uint8** if line 105 is executed \r\n\r\nI believe the bug can be fixed by changing line 105 from:\r\n**pic = pic.mul(255).byte()**\r\n-to-\r\n**pic = pic.mul(255)**\r\n\r\n**Test script:**\r\nimport torch\r\nfrom torchvision import transforms\r\na = torch.FloatTensor(1,64,64)\r\ntform = transforms.Compose([transforms.ToPILImage(mode='F')])\r\nb = tform(a)\r\n\r\nPlease let me know if I am in error. \r\nThank you.\r\n\r\n",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Hi @user-23 ,\r\n\r\nI'm currently looking for datasets from other domains, like medical imagery, astronomy / etc, which do have images but which are in specialized formats.\r\nI've never worked with those kinds of data, so having an idea of what's out there will definitely help."
+      },
+      {
+        "author": "user-23",
+        "body": "Hey @maintainer-1 ,\r\n\r\nI've worked with multi-spectral satellite and medical image data previously, but those datasets are not publicly available. \r\nInstead, I asked some colleagues to provide me with public analogues, and they referred me to an IARPA satellite database with 8-band multispectral TIFF images (downloaded through Amazon AWS):\r\nhttps://www.iarpa.gov/challenges/fmow.html\r\n\r\nI actually opened this issue not because I was dealing with an uncommon dataset type, but because I was attempting to do some simple image processing on intermediate outputs during training.\r\nDuring training, my data was 3-band RGB data represented as a `torch.FloatTensor ` composed of  `float`s, and I wanted to convert `ToPILImage(mode='F')` to take advantage of functions like resize and Gaussian blurring.\r\nBut I was having trouble with vanishing gradients when converting back and forth with strict controls on range and data type.\r\nAs I mentioned earlier, I was able to solve the problem on my end. But t"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "I see.\r\nIn those cases, I think it might have been better for you to leverage functions that support backprop, like `interpolate` (for image resizing), `conv2d` for blurring and `grid_sample` for generic warpings on the image.\r\n\r\nI think we might want to make torchvision support backpropagation, and possibly avoid the need of converting back and forth to PIL images or numpy arrays. I think we are getting there with better support for `interpolate` and `grid_sample`, but it still need to be wrapped up more nicely (to avoid having to create the transformation flow yourself, which can be error-prone).\r\n\r\nAnd thanks for the dataset!"
+      },
+      {
+        "author": "user-23",
+        "body": "Just so I understand, functions like `conv2d` and `grid_sample` allow the user to define the function values? \r\nFor example, if I want to define and apply my own blurring kernel rather than _learning_ a blurring kernel, `conv2d` allows me to do that?"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "yes, definitely! If you want your kernel to be fixed, you can do something like\r\n```python\r\nclass GaussianBlur(nn.Module):\r\n    def __init__(self, ...):\r\n        super(...)\r\n        self.register_buffer('filter', torch.rand(1, 1, 3, 3))\r\n\r\n    def forward(self, input):\r\n        return F.conv2d(input, self.filter, ...)\r\n```"
+      },
+      {
+        "author": "user-23",
+        "body": "Excellent. Thank you very much."
+      },
+      {
+        "author": "user-25",
+        "body": "Would it be possible to document this behavior in relevant places until this issue gets resolved?\r\n\r\nI encountered this issue when using the `FakeData` dataset and got unexpected results and went on debugging my own code until I stumbled onto this discussion, so it would probably be helpful to others as well to put a warning there."
+      },
+      {
+        "author": "user-26",
+        "body": "@user-25 - I'll flag this for follow-up to make a decision on this"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "@user-25 I agree, I think we should improve the documentation of `to_pil_image` to make it explicit what are the conversions we do.\r\n\r\nWould you mind sending a PR improving the documentation?"
+      },
+      {
+        "author": "user-23",
+        "body": "Thanks for the help with this a while back. I have a follow up question:\r\n\r\nIs there a list of torchvision functions that are supported by autograd? \r\nIs it safe to assume that any class/function that inherits from `torch.nn.Module` supports backprop?\r\nFor example, would `GaussianBlur` defined here support backprop on tensor input?\r\nhttps://pytorch.org/vision/stable/_modules/torchvision/transforms/transforms.html#GaussianBlur\r\n\r\nI'm trying to figure out which transformation functions I can avoid re-implementing myself."
+      }
+    ]
+  },
+  "1643": {
+    "number": 1643,
+    "title": "process.wait(0) when traing faster_rcnn",
+    "state": "open",
+    "body": "<img width=\"575\" alt=\"662FE0EB-CD0B-4FED-B036-CB5964218D31\" src=\"https://user-images.githubusercontent.com/12228641/70307884-10176480-1845-11ea-93d6-d0e6ccae08ca.png\">\r\n\r\nI use the [provided code ](https://github.com/pytorch/vision/blob/master/references/detection/train.py) to train my data using faster_rcnn on 2 GPUs. The program always stops at epoch 27(just stop, no more output), and when I use `ctrl+c` to interrupt the program, the content is as shown in the pic.",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Hi,\r\n\r\nThis is weird. I'm not sure if you are facing a deadlock (which could be due to several reasons), or if something else is happening.\r\n\r\nWhen your program stopped, were the GPUs running at 100% utilization?"
+      },
+      {
+        "author": "user-27",
+        "body": "@maintainer-1 yes, 100%. I didn't change the setting about thread in train.py, just making a custom dataset using h5py."
+      },
+      {
+        "author": "maintainer-1",
+        "body": "This makes me think that you should check if your install of `h5py` is thread-safe.\r\nIf not, then it might cause issues with dataloading.\r\n\r\nAlso, if that's not the case, then debugging a CUDA deadlock is very annoying. Some information about it can be found in https://github.com/pytorch/vision/issues/1148\r\n\r\nJust to cross this out, does the code deadlock if running on the standard COCO dataset?"
+      }
+    ]
+  },
+  "2877": {
+    "number": 2877,
+    "title": "COVID-19 library in torchvision",
+    "state": "open",
+    "body": "## 🚀 Feature\r\nLibrary of models and dataset interfaces for COVID-19 models\r\n\r\n## Motivation\r\n\r\nThere are quite a few models (feature extractors, mask segmentation, classifiers) for COVID-19, both in pytorch and tensorflow. They use different datasets, making it hard to scientists to compare results and extend their findings. It would be good to (re-implement) at least some models and dataset interfaces as a library in torchvision\r\n\r\n## Pitch\r\n\r\nSimilar to the `models` and `datasets` in torchvision: `models` for the published models (see below), at least those that come with pretrained weights (e.g. COVIDNet-CT), and `datasets` for open-source labelled dataset interfaces: eg. CNCB-CT, UCSD, MedSeg, Zenodo, especially mask extraction.\r\n\r\n## Alternatives\r\n\r\nNone that I know of\r\n\r\n## Additional context\r\n\r\nSome candidates include COVIDNet (x-rays), COVIDNet-CT (ct-scans), COVNet (ct-scans), JCS (ct-scans). \r\n\n\ncc @user-8",
+    "comments": [
+      {
+        "author": "user-9",
+        "body": "@user-28 thanks for proposing this Feature Request. For instance, project maintainers/owners are working on defining the rules of what can be added as model or dataset. This detailed information will be exposed in CONTRIBUTING guide (https://github.com/pytorch/vision/pull/2663). cc @maintainer-1 \r\n\r\nAs alternatives, I can think of MONAI: https://github.com/Project-MONAI/MONAI \r\nnevertheless handling medical imagery is also a direction that torchvision would like to support..."
+      },
+      {
+        "author": "user-28",
+        "body": "> @user-28 thanks for proposing this Feature Request. For instance, project maintainers/owners are working on defining the rules of what can be added as model or dataset. This detailed information will be exposed in CONTRIBUTING guide (#2663). cc @maintainer-1\r\n> \r\n> As alternatives, I can think of MONAI: https://github.com/Project-MONAI/MONAI\r\n> nevertheless handling medical imagery is also a direction that torchvision would like to support...\r\n\r\nWhat I mean is for example take [this ](https://github.com/UCSD-AI4H/COVID-CT/blob/master/baseline%20methods/DenseNet169/DenseNet_predict.py) or [this](https://github.com/haydengunraj/COVIDNet-CT/blob/master/run_covidnet_ct.py) model and implement them as a part of torchvision library, so that they could be instantiated like VGG or ResNet, e.g. through `covid_models` package, with pretrained weights, etc. Same with the datasets.  "
+      },
+      {
+        "author": "user-29",
+        "body": "I guess an easy way could be to publish weights to `torch hub`. People can simply instantiate `alexnet` or `vgg` from torchvision and load the weights using `torch.hub.load()`.\r\n\r\n\r\n"
+      },
+      {
+        "author": "user-30",
+        "body": "Alexnet, VGG are proven architectures, and e.g. VGG is very frequently used in transfer learning.\r\nThere are hundreds of new networks, but as long as they don't provide a clear reusable architecture,\r\ni don't see any point to incorporate it into a core library. Torch hub is perfect for this.\r\nAs these covid networks trained on very specific dataset, often not even too diverse dataset,\r\ni don't see that they could be generic enough for an inclusion. \r\n\r\nWhat would be the advantage of having these networks in torchvision, instead of torch.hub? \r\nThe only point i see is publicity, but no offense, i haven't read anything in these models which would\r\nraised them clearly above average. \r\n"
+      }
+    ]
+  },
+  "5601": {
+    "number": 5601,
+    "title": "Return only images from `torchvision.dataset` datasets",
+    "state": "open",
+    "body": "### 🚀 The feature\n\n`torchvision.dataset` datasets should provide an option (e.g., a constructor argument) to return only the image (i.e., rather than an image and target pair).\r\n\n\n### Motivation, pitch\n\nI work on compression research and would like to use `torchvision.dataset` datasets but, as of now, they are too cumbersome to use because they provide more input than what is needed by my models (i.e., images and targets rather than just images).\n\n### Alternatives\n\nIt is entirely possible a straightforward alternative exists! If so, I’d love to read about it!\n\n### Additional context\n\nI suspect this would also be welcome by any other community working on image to image methods.\n\ncc @user-8",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Thanks for the proposal @user-31 \r\n\r\nWe are currently in the process of re-designing our datasets, and in the new design you would be able to get only the images (or any other info that you care about) without having to handle the targets.\r\n\r\nBut for now unfortunately that is not possible. Perhaps a workaround for you for now would be to wrap our datasets into some custom class that removes the targets in an overridden `__getitem__(self, index)` method?"
+      },
+      {
+        "author": "user-32",
+        "body": "In addition to Nicolas' proposal, you could also create a \"transform\" that receives inputs, unpacks it and returns only the images. This transform should be the first applied to your data."
+      },
+      {
+        "author": "user-33",
+        "body": "I am missing a related feature, namely to load only the targets of a vision dataset (e.g. to do a stratified split or compute class weights). Loading images can be quite expensive, in particular when they have to be downloaded first, so the transform approach does not help in this case.\n\nRight now, for my datasets I introduced additional methods `get_target(index)` / `get_targets(indices)` to get the targets separately. However it would be nice to have a uniform interface that works with PyTorch datasets as well."
+      }
+    ]
+  },
+  "9050": {
+    "number": 9050,
+    "title": "Add Unlabeled Image Dataset for Unsupervised Training",
+    "state": "open",
+    "body": "### 🚀 The feature\n\nI’m proposing to add a dataset class for unsupervised learning (e.g., generative models), where the dataset consists of a flat folder of unlabeled images.\n\nIntroduce a new class, e.g. ```UnlabeledImageDataset```, that:\n- Accepts a flat folder of image files\n- Returns only images (no labels)\n- Follows ```ImageFolder``` conventions where applicable\n- Resides in ```torchvision/datasets/folder.py``` and reuses existing utilities\n- Introducing a new class avoids increasing complexity in ```ImageFolder```\n\n### Motivation, pitch\n\n```torchvision.datasets.ImageFolder``` and ```DatasetFolder``` are designed for supervised tasks, requiring a specific directory structure and class-label mappings. In unsupervised scenarios, I end up writing custom datasets for this case. A built-in dataset would improve usability and consistency across the PyTorch ecosystem.\n\nThis feature request is similar in spirit to [Issue #660](https://github.com/pytorch/vision/issues/660), where a user suggested supporting unlabeled or unsupervised datasets. The use case remains common, and a lightweight, built-in solution would reduce boilerplate and improve consistency.\n\n\n### Alternatives\n\nAn alternative would be to have an \"unsupervised\" mode for ```ImageFolder``` as suggested in  [Issue #660](https://github.com/pytorch/vision/issues/660). But that would result in increased complexity in this class as pointed out in the comment of the issue.\n\n### Additional context\n\nIt feels like this functionality belongs in a common library especially that ```ImageFolder``` is already present in ```torchvision```.\n",
+    "comments": [
+      {
+        "author": "user-34",
+        "body": "Would you be open to adding this? I’d be happy to contribute a PR if there’s interest.\n\nThanks!"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Thanks for the feature request @user-34 .  Can you share a bit more about the API you have in mind? Naively this sounds like a shallow wrapper around `Pathlib.glob()`?"
+      },
+      {
+        "author": "user-34",
+        "body": "I was thinking about sth like this:\n```python\nfrom pathlib import Path\nfrom torchvision.io import read_image, ImageReadMode\n\nclass UnlabeledImageFolder:\n\n    def __init__(self, root_dir, patterns=('**/*.jpg', '**/*.png'), transform=None):\n        self.root = Path(root_dir)\n        self.images = []\n        for pattern in patterns:\n            self.images.extend(self.root.glob(pattern))\n        self.transform = transform\n\n    def __len__(self):\n        return len(self.images)\n\n    def __getitem__(self, i):\n        img = read_image(self.images[i], ImageReadMode.RGB)\n        if self.transform:\n            img = self.transform(img)\n        return img\n```\n\nIt uses glob allowing for multiple patterns, loads the image and performs optional transformation.\n\nOne more idea is to unify the ```ImageFolder``` API, it could, depending on init parameters, internally instantiate ```LabeledImageFolder``` or ```UnlabeledImageFolder```. This way both implementations would be separate and user would see si"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Thanks for the details. I think this is reasonable but I hope we can support that with the existing `ImageFolder` or `DatasetFolder`, perhaps with some minor modifications. Can you check if  `allow_empty=True` supports what you need already?"
+      },
+      {
+        "author": "user-34",
+        "body": "```DatasetFolder``` and ```ImageFolder``` that extends it assume certain\ndirectory structure where subdirectories of the dataset root directory are\nconsidered to be classes. Then dataset returns (input, target) pairs. I was\nhoping to be able to also work with datasets where there are no targets,\nie. only the image is returned by ```__getitem__```.\n\nHere is general view of this in the code:\n```python\nclass DatasetFolder(VisionDataset):\n\n    ...\n\n    def find_classes(self, directory: Union[str, Path]) -> tuple[list[str], dict[str, int]]:\n        \"\"\"Find the class folders in a dataset structured as follows::\n\n            directory/\n            ├── class_x\n            │   ├── xxx.ext\n            │   ├── xxy.ext\n            │   └── ...\n            │       └── xxz.ext\n            └── class_y\n                ├── 123.ext\n                ├── nsdf3.ext\n                └── ...\n                └── asd932_.ext\n        \n            ...\n        \n        \"\"\"\n\nclass ImageFolder(DatasetFolder):\n    ...\n"
+      },
+      {
+        "author": "maintainer-2",
+        "body": "Hi @user-34 , sorry for the late reply.\n\nOK, I'm happy to consider a PR for this. If you submit it, please make sure to write a test similar to https://github.com/pytorch/vision/blob/98f8b3757c0648724064ca95434b18281c43c5f6/test/test_datasets.py#L1737C1-L1737C2\n\nTo keep the API as close as possible to `ImageFolder`, let's have the `loader` parameter as well. On the default `patterns`, I think it should be `None` and basically be the combination of all\n\nhttps://github.com/pytorch/vision/blob/98f8b3757c0648724064ca95434b18281c43c5f6/torchvision/datasets/folder.py#L257\n\nSo something like\n```py\nif patterns is None:\n    patterns = [f\"{**/*{ext}\" for ext in IMG_EXTENSIONS]\n```"
+      },
+      {
+        "author": "user-35",
+        "body": "Hi, this issue has been open for a while. I would like to contribute. Will submit a PR once it's ready. LMK if someone is already working on this. I will follow the above details for my implementation. "
+      }
+    ]
+  },
+  "2619": {
+    "number": 2619,
+    "title": "get_coco_api_from_dataset returns wrong dataset",
+    "state": "open",
+    "body": "## 🐛 Bug\r\n\r\nI tried to train a detector on a custom dataset (using https://pytorch.org/tutorials/intermediate/torchvision_tutorial.html) and the training is stuck on 60% of precision. So I started looking at the source code and noticed that get_coco_api_from_dataset() is probably doing the wrong thing. In case the Subset is used for train and test datasets, it returns its original dataset. Problem is that it returns the entire dataset, not just the test dataset, which is the part of the entire dataset. This results in slow down when building a needless full Coco dataset for evaluation. It also updates coco_evaluator in evaluate() with wrong stats because of conflicting \"image_id\". According to the tutorial \"image_id\" is unique inside one data set and this is why the dataset \"index\" is used. This all results in invalid evaluation stats presented during training.\r\n\r\n## To Reproduce\r\n\r\nSteps to reproduce the behavior:\r\nNo reproducing is needed.\r\n\r\n@torch.no_grad()\r\ndef evaluate(model, data_loader, device):\r\n        ...\r\n---> coco = get_coco_api_from_dataset(data_loader.dataset) # this returns full dataset\r\n        ...\r\n        res = {target[\"image_id\"].item(): output for target, output in zip(targets, outputs)}\r\n        evaluator_time = time.time()\r\n---> coco_evaluator.update(res) # invalid target is updated\r\n        ...\r\n        return coco_evaluator\r\n\r\n\r\n## Expected behavior\r\n\r\nSubset dataset should be used in get_coco_api_from_dataset()\r\n\r\n## Environment\r\n\r\nCollecting environment information...\r\nPyTorch version: 1.6.0\r\nTorchvision: 0.7.0\r\nIs debug build: N/A\r\nCUDA used to build PyTorch: N/A\r\n\r\nOS: Ubuntu 20.04 LTS (x86_64)\r\nGCC version: (Ubuntu 9.3.0-10ubuntu2) 9.3.0\r\nClang version: Not used\r\nCMake version: version 3.16.3\r\n\r\nPython version: 3.8 (64-bit runtime)\r\nIs CUDA available: yes\r\nCUDA runtime version: 11.0.2-1\r\nGPU models and configuration: GPU 0: GeForce GTX 1080 Ti\r\nNvidia driver version: 450.51.05\r\ncuDNN version: /usr/lib/x86_64-linux-gnu/libcudnn.so.7.4.2\r\n\r\nVersions of relevant libraries:\r\n[pip3] numpy==1.17.4\r\n[conda] Not used\r\n",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Hi,\r\n\r\nThanks for opening the issue. I see that you already closed it, would you like to comment a bit on it?\r\n\r\nWe could indeed make the `get_coco_api_from_dataset` more generic by only considering the subset, similar to what we do for the aspect ratio computation in https://github.com/pytorch/vision/blob/fc69c22576cbccb59c581ddbaca4dedbdb279688/references/detection/group_by_aspect_ratio.py#L154-L176\r\n\r\nBut I'm not sure if this is necessary for Subset, because IIRC the current evaluation code handles this correctly."
+      },
+      {
+        "author": "user-37",
+        "body": "@maintainer-1 I just ran into this issue as well while roughly following https://pytorch.org/tutorials/intermediate/torchvision_tutorial.html. The issue I am seeing is using `torch.utils.data.Subset`. For example, I have the following code:\r\n```\r\ndataset_test = torch.utils.data.Subset(dataset, indices[50:100])\r\ndata_loader_test = torch.utils.data.DataLoader(\r\n    dataset_test, batch_size=1, shuffle=False, num_workers=4,\r\n    collate_fn=utils.collate_fn)\r\nget_coco_api_from_dataset(data_loader_test.dataset)\r\n```\r\nThis is triggering https://github.com/pytorch/vision/blob/13b35ffaa5167f3713ea7a53c43395d90b3a7cbc/references/detection/coco_utils.py#L202-L203 and therefore calling `return convert_to_coco_api(data_loader_test.dataset.dataset)`. However, `len(data_loader_test.dataset.dataset)` is 13000+ (my entire dataset).\r\n\r\nI'm guessing there was a reason for this `isinstance()` check, but in my case I just want to have it call  `return convert_to_coco_api(data_loader_test.dataset)`\r\n"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "Yes, this is a known simplification, and we could make it truly consider the subset of the code.\r\n\r\nIIRC the reason why I did this simplification was that if we had a subset of a COCO dataset, we didn't need to iterate over the sub dataset to create the index, as it was already done, saving some time during early development.\r\nBut this code is fundamentally wrong and we should fix it."
+      }
+    ]
+  },
+  "5250": {
+    "number": 5250,
+    "title": "Add kinetics dataset to use new video reading API",
+    "state": "open",
+    "body": "Currently, kinetics video dataset uses the old video reading API. Adding support for new video reading API would enable users to choose between CPU and GPU decoding functionality.",
+    "comments": []
+  },
+  "1227": {
+    "number": 1227,
+    "title": "Consistent argument names for video datasets and VideoClips class",
+    "state": "open",
+    "body": "First of all, the new support for Video data is amazing. Really useful. 😃 \r\n\r\nJust when I was going through the code of the video datasets and utilities, I found this a bit confusing.\r\n\r\nSample Dataset:\r\nhttps://github.com/pytorch/vision/blob/8635be94d1216f10fb8302da89233bd86445e449/torchvision/datasets/ucf101.py#L27-L36\r\n\r\n`VideoClips` class: \r\nhttps://github.com/pytorch/vision/blob/8635be94d1216f10fb8302da89233bd86445e449/torchvision/datasets/video_utils.py#L43-L49\r\n\r\nFrom what I understand, the argument `frames_per_clip` from the dataset is the same as `clip_length_in_frames` from the `VideoClips` class. \r\n\r\nSimilarly, `step_between_clips` <-> `frames_between_clips`.\r\n\r\nIs there a reason for this difference. Or did I understand it wrong?\r\n\r\nWould it be better if both, the video datasets and the `VideoClips` class had consistent arguments? \r\n\r\nIn my opinion, `frames_per_clip` looks better than `clip_length_in_frames`.\r\nAnd `frames_between_clips` can be favored over `step_between_clips` since the former feels more intuitive.\r\n\r\nAny suggestions? @maintainer-1 ",
+    "comments": [
+      {
+        "author": "maintainer-1",
+        "body": "Good catch, having different names is indeed not great and we should strive to have a single name.\r\n\r\nI should have unified those naming differences before the release, but I didn't know which one to pick and I ended up forgetting.\r\n\r\nI'm yet unsure about which names are better though. @user-14 do you have any opinions here?"
+      },
+      {
+        "author": "user-14",
+        "body": "I think `clip_length_in_frames` and `frames_between_clips` make more sense, but I'm open for discussion :)\r\n\r\n\r\n"
+      },
+      {
+        "author": "maintainer-1",
+        "body": "So, from the current discussion, @user-14 prefers the names that are currently used in `VideoClips`. I like them because they are very explicit, but they are a bit too long maybe.\r\n\r\nOne action point would then be to modify the 3 datasets (UCF101, Kinetics400 and HMDB51) to take the same names as `VideoClips`, while keeping proper deprecation warning for the old names.\r\n\r\nThoughts?"
+      },
+      {
+        "author": "user-14",
+        "body": "Sounds good to me. "
+      },
+      {
+        "author": "user-40",
+        "body": "I find it a bit confusing what frame_rate means. At first I thought it means fps, however in the init function of VideoClips, frame_rate is passed to \"compute_clips\" and the documentations for this function names the 3rd parameter \"dilation\":\r\n```\r\nArguments:\r\n            num_frames (int): number of frames for the clip\r\n            step (int): distance between two clips\r\n            dilation (int): distance between two consecutive frames\r\n                in a clip\r\n        \"\"\"\r\n```\r\n\r\nIf I want to sample every second frame, i.e. 32 frames in the original video become 1 clip of 16 frames, what should frame_rate be?"
+      }
+    ]
+  },
+  "4364": {
+    "number": 4364,
+    "title": "Add AVA dataset",
+    "state": "open",
+    "body": "### 🚀 The feature\r\n\r\nAdd the AVA dataset ([AVA: A Large-Scale Database for Aesthetic Visual Analysis](http://refbase.cvc.uab.es/files/MMP2012a.pdf)) in TorchVision.\r\n\r\n### Motivation, pitch\r\n\r\nIt currently has [+600 citations](https://scholar.google.com/scholar?cites=4890286335335387755&as_sdt=2005&sciodt=0,5&hl=en). It's a commonly used dataset for image Aesthetics score prediction which is used for building image ranking models. It might be worth including it so that we can provide some Learn-to-rank examples using TorchVision.\r\n\r\n\r\ncc @user-8",
+    "comments": [
+      {
+        "author": "user-14",
+        "body": "Can do. "
+      },
+      {
+        "author": "user-14",
+        "body": "@user-32 @user-8 I'll wait with the implementation until the new datapipes as that would require a rework anyways. "
+      }
+    ]
+  },
+  "8630": {
+    "number": 8630,
+    "title": "Use COCO Mask Parsing from pycocotools",
+    "state": "open",
+    "body": "### 🚀 The feature\n\nThe CocoDetection v2 transform wrapper attempts to decode the mask itself, but pycocotools provides a high performance implementation already. We have had to copy from master, this `_dataset_wrapper.py` because of a bug related to the handling of these masks that was fixed in master but not installable using `pip` yet.\r\n\r\nhttps://github.com/pytorch/vision/blob/main/torchvision/tv_tensors/_dataset_wrapper.py#L402\r\n\r\nSeeing `torchvision.datasets.CocoDetection` has `self.coco` as a `COCO()` object, let's use it.\r\n\r\n```python\r\n       coco_ann = dataset.coco.imgToAnns[image_id]\r\n\r\n        if \"masks\" in target_keys:\r\n            target[\"masks\"] = tv_tensors.Mask(\r\n                    torch.stack([\r\n                        torch.from_numpy(dataset.coco.annToMask(ann))\r\n                        for ann in coco_ann\r\n                    ])\r\n                )\r\n```\r\n\n\n### Motivation, pitch\n\nThere have already been bugs related to this, and there's no need to reinvent the wheel. Instead, let's use the existing implementation.\n\n### Alternatives\n\n_No response_\n\n### Additional context\n\n_No response_",
+    "comments": [
+      {
+        "author": "maintainer-2",
+        "body": "Thanks for opening the issue @user-41 . I'm happy for you to open a PR and see if the tests are passing"
+      }
+    ]
+  }
+}

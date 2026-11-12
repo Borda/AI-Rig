@@ -6,6 +6,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _oss_shell_plugin import render_shell
+from _skill_source import read_skill_source
 
 _SKILL = Path(__file__).resolve().parents[2] / "skills/release/SKILL.md"
 _RECORD = {
@@ -32,7 +34,7 @@ _skip_shell_unavailable = pytest.mark.skipif(
 def _gather_snippet() -> str:
     """Return the first bash fence of the release skill that calls the batched PR-association helper."""
     fences, current = [], None
-    for line in _SKILL.read_text(encoding="utf-8").splitlines(keepends=True):
+    for line in read_skill_source(_SKILL).splitlines(keepends=True):
         if current is None:
             if line.strip() == "```bash":
                 current = []
@@ -63,7 +65,9 @@ RANGE=candidate-range
         [
             shutil.which("bash"),
             "-c",
-            'scenario="$1"; record="$2"; calls="$3"\n' + boundaries + _gather_snippet(),
+            render_shell(
+                'scenario="$1"; record="$2"; calls="$3"\n' + boundaries + _gather_snippet(), tmp_path / "plug", "oss"
+            ),
             "release-contract",
             scenario,
             json.dumps(_RECORD),
@@ -77,7 +81,7 @@ RANGE=candidate-range
             "PATH": "/usr/bin:/bin",
             "TMPDIR": str(tmp_path),
             "CLAUDE_CODE_SESSION_ID": "contract",
-            "CLAUDE_PLUGIN_ROOT": "plug",
+            "CLAUDE_PLUGIN_ROOT": str(tmp_path / "plug"),
         },
     )
     return completed, calls
@@ -89,6 +93,7 @@ def _recorded_call(calls: Path) -> tuple[list[str], str]:
     The exclusion file is reduced to its name like the offset file: both live below the per-test temporary directory.
     """
     argv = calls.read_text(encoding="utf-8").split()
+    argv[0] = Path(argv[0]).relative_to(calls.parent).as_posix()
     flag_at = argv.index("--exclude-file")
     argv[flag_at + 1] = Path(argv[flag_at + 1]).name
     return argv[:-1], Path(argv[-1]).name

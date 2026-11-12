@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, utimesSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { sha256File } from "../../src/digest.ts"
 import { Project, createHarness } from "../helpers/harness.ts"
 
 function changedProject(files: Record<string, string> = { "src/a.ts": "export const a = 1\n" }): Project {
@@ -49,7 +50,12 @@ describe("rig_evidence", () => {
     const project = changedProject()
     const harness = await createHarness(project, { gates: ["true"] })
 
-    const started = await harness.call("rig_evidence", { action: "start", skill: "rig-implement", paths: ["src"] })
+    const started = await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: "Update the scoped return value and run its regression.",
+      paths: ["src"],
+    })
     expect(started.content).toMatch(/Run started/)
     const runId = started.metadata.run_id as string
     expect(runId).toMatch(/Z-[0-9a-f]{4}$/)
@@ -105,7 +111,12 @@ describe("rig_evidence", () => {
 
   it("refuses to finalize without a gate receipt", async () => {
     const harness = await createHarness(changedProject(), { gates: ["true"] })
-    await harness.call("rig_evidence", { action: "start", skill: "rig-implement", paths: ["src"] })
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: "Update the scoped return value and run its regression.",
+      paths: ["src"],
+    })
     const result = await harness.call("rig_evidence", { action: "finalize" })
     expect(result.metadata).toMatchObject({ ok: false, status: "in_progress" })
     expect(result.content).toMatch(/no passing gate receipt/)
@@ -114,7 +125,12 @@ describe("rig_evidence", () => {
   it("marks a run stale when source changes after the scope was recorded", async () => {
     const project = changedProject()
     const harness = await createHarness(project, { gates: ["true"] })
-    await harness.call("rig_evidence", { action: "start", skill: "rig-implement", paths: ["src"] })
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: "Update the scoped return value and run its regression.",
+      paths: ["src"],
+    })
     await harness.call("rig_gate", { action: "run" })
     project.write("src/a.ts", "export const a = 3\n")
     const result = await harness.call("rig_evidence", { action: "finalize" })
@@ -146,6 +162,7 @@ describe("rig_evidence", () => {
     const recorded = await harness.call("rig_evidence", {
       action: "record",
       plan_path: "plan.md",
+      plan_digest: sha256File(project.path("plan.md")),
       reviewer: "rig-challenger",
     })
     expect(recorded.content).toMatch(/plan: plan.md/)
@@ -188,7 +205,12 @@ describe("rig_gate", () => {
   it("records a passing proof and a failing exit code", async () => {
     const project = changedProject()
     const harness = await createHarness(project, { gates: ["true", "false"] })
-    await harness.call("rig_evidence", { action: "start", skill: "rig-implement", paths: ["src"] })
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: "Update the scoped return value and run its regression.",
+      paths: ["src"],
+    })
 
     const passing = await harness.call("rig_gate", { action: "run", names: ["configured-1"] })
     expect(passing.metadata.failed).toEqual([])
@@ -203,7 +225,12 @@ describe("rig_gate", () => {
 
   it("rejects an unknown gate name", async () => {
     const harness = await createHarness(changedProject(), { gates: ["true"] })
-    await harness.call("rig_evidence", { action: "start", skill: "rig-implement", paths: ["src"] })
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: "Update the scoped return value and run its regression.",
+      paths: ["src"],
+    })
     await expect(harness.call("rig_gate", { action: "run", names: ["nope"] })).rejects.toThrow(
       /unknown gate\(s\): nope/,
     )
@@ -211,7 +238,12 @@ describe("rig_gate", () => {
 
   it("rejects a run when no gate is configured", async () => {
     const harness = await createHarness(changedProject())
-    await harness.call("rig_evidence", { action: "start", skill: "rig-implement", paths: ["src"] })
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: "Update the scoped return value and run its regression.",
+      paths: ["src"],
+    })
     await expect(harness.call("rig_gate", { action: "run" })).rejects.toThrow(/no configured gates detected/)
   })
 })
@@ -509,7 +541,7 @@ describe("rig_git_grant", () => {
 
     const approved = await harness.call("rig_git_grant", {
       action: "approve",
-      confirm: "yes, allow plain local commits",
+      confirm: "Approve always",
       scope_acknowledged: true,
     })
     expect(approved.metadata.status).toBe("granted")

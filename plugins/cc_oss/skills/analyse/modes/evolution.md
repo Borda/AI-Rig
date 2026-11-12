@@ -7,10 +7,12 @@ Deterministic pipeline in `bin/evolution_scan.py` (index → changelog linkage �
 ## E1 — Scope (read-only index; clone sync under store lock)
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 IFS= read -r BREAK_LOCK < "${TMPDIR:-/tmp}/analyse-break-lock-${CSID}" 2>/dev/null || BREAK_LOCK=false
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/evolution_scan.py" scope --args "$CLEAN_ARGS" --project-root "$PWD" --break-lock "$BREAK_LOCK"  # timeout: 900000
+IFS= read -r TAG_PREFIX < "${TMPDIR:-/tmp}/analyse-tag-prefix-${CSID}" 2>/dev/null || TAG_PREFIX=""
+python "$PLUGIN_ROOT/bin/evolution_scan.py" scope --args "$CLEAN_ARGS" --project-root "$PWD" --break-lock "$BREAK_LOCK" --tag-prefix "$TAG_PREFIX"  # timeout: 900000
 ```
 
 Prints `KEY=value` lines; writes sentinels `analyse-evo-root-${CSID}` (store root) and `analyse-evo-scope-${CSID}` (resolved scope, empty when the user must choose). Exit 2 = `! BLOCKED` line printed (shallow clone, no release tags, identity mismatch, lock held, unsafe store path) → relay it verbatim and stop; no report, no 6a question.
@@ -18,9 +20,11 @@ Prints `KEY=value` lines; writes sentinels `analyse-evo-root-${CSID}` (store roo
 - `LOCK_HELD=…` with `--break-lock` given → `AskUserQuestion` header `evolution-lock`: holder shown, options `remove lock` / `abort`. `remove lock` → rerun E1 block with `BREAK_LOCK` confirmed:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/evolution_scan.py" scope --args "$CLEAN_ARGS" --project-root "$PWD" --break-lock confirmed  # timeout: 900000
+IFS= read -r TAG_PREFIX < "${TMPDIR:-/tmp}/analyse-tag-prefix-${CSID}" 2>/dev/null || TAG_PREFIX=""
+python "$PLUGIN_ROOT/bin/evolution_scan.py" scope --args "$CLEAN_ARGS" --project-root "$PWD" --break-lock confirmed --tag-prefix "$TAG_PREFIX"  # timeout: 900000
 ```
 
 - `ASK_SCOPE=true` → `AskUserQuestion` header `evolution-scope` (never `oss-analyse`), asked now — after indexing, before the run takes the lock and before any report path exists. Question ≤6 plain lines: release count, first/last version, pre-release count, `EST_COST` line, saved scope + newer releases when `SAVED_SCOPE` set. Options: `all stable` · `last N stable` (N from the user's reply: integer 1..`RELEASES`) · `custom v1->v2` (two indexed versions, older first) · when `SAVED_SCOPE` set: `extend saved scope`. Write the chosen value — `all`, `last:<N>`, `<v1>-><v2>` or `extend` — as one line with the Write tool to the `SCOPE_FILE` path the block printed. Invalid reply → ask once more, then stop.
@@ -29,6 +33,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/evolution_scan.py" scope --arg
 ## E2 — Run
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r EVO_ROOT < "${TMPDIR:-/tmp}/analyse-evo-root-${CSID}" 2>/dev/null || EVO_ROOT=""
 IFS= read -r TODAY < "${TMPDIR:-/tmp}/analyse-today-${CSID}" 2>/dev/null || TODAY=$(date +%Y-%m-%d)
@@ -36,7 +41,7 @@ IFS= read -r FULL < "${TMPDIR:-/tmp}/analyse-full-${CSID}" 2>/dev/null || FULL=f
 IFS= read -r ADJUDICATE < "${TMPDIR:-/tmp}/analyse-adjudicate-${CSID}" 2>/dev/null || ADJUDICATE=false
 IFS= read -r BUG_LABELS < "${TMPDIR:-/tmp}/analyse-bug-labels-${CSID}" 2>/dev/null || BUG_LABELS=""
 [ -n "$EVO_ROOT" ] || { echo "! BLOCKED — evolution store root unresolved; rerun E1"; exit 2; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/evolution_scan.py" run --root "$EVO_ROOT" --project-root "$PWD" --today "$TODAY" --full "$FULL" --adjudicate "$ADJUDICATE" --bug-labels "$BUG_LABELS"  # timeout: 3600000
+python "$PLUGIN_ROOT/bin/evolution_scan.py" run --root "$EVO_ROOT" --project-root "$PWD" --today "$TODAY" --full "$FULL" --adjudicate "$ADJUDICATE" --bug-labels "$BUG_LABELS"  # timeout: 3600000
 ```
 
 Reads the scope from the `analyse-evo-scope-${CSID}` sentinel or the `SCOPE_FILE` answer. Writes `.reports/analyse/evolution/<host>-<owner>-<repo>-<TODAY>/report.md` (YAML header) + `report.html`, `heatmap.svg`, `burnup.svg`, and rewrites the `analyse-report-file-${CSID}` sentinel to `report.md` (enforce-analyse-header.js gates 6a on it). Prints `REPORT_FILE=`, `HTML_FILE=`, `ADJ_PENDING=<n>`, `ADJ_REQUEST=<path>`. Exit 2 → relay `! BLOCKED` verbatim, stop. Long first scans: budget-limited fixes land in `timed_out` and are retried by the next run — say so, never hide it.
@@ -65,10 +70,11 @@ Agent(
 Replace `<ADJ_REQUEST>` / `<ADJ_REQUEST dir>` with runtime values before spawning. Spawn, end the turn, resume on the notification; at wake-up run the SKILL.md Step 7 `agent_watch.py` block once. Missing/empty verdicts → ⏱, rows stay `unadjudicated` (retried next run). Then ingest (validates every verdict against its candidate set, stores by key, rescores with zero blame, re-renders):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r EVO_ROOT < "${TMPDIR:-/tmp}/analyse-evo-root-${CSID}" 2>/dev/null || EVO_ROOT=""
 IFS= read -r TODAY < "${TMPDIR:-/tmp}/analyse-today-${CSID}" 2>/dev/null || TODAY=$(date +%Y-%m-%d)
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/evolution_scan.py" ingest --root "$EVO_ROOT" --project-root "$PWD" --today "$TODAY"  # timeout: 600000
+python "$PLUGIN_ROOT/bin/evolution_scan.py" ingest --root "$EVO_ROOT" --project-root "$PWD" --today "$TODAY"  # timeout: 600000
 ```
 
 ## E4 — Delivery
@@ -79,7 +85,13 @@ Report already written by the script — no analysis to terminal. Delivery block
 
 <notes>
 
-- Phase 0 gate: weights/threshold provisional until hand-labelled real-repo evaluation passes (`python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/evolution_eval.py" evaluate --labels <csv> --rows <store>/store/rows.jsonl`); report + manifest carry the provisional flag until then.
+- Evaluation gate: weights/threshold provisional until hand-labelled real-repo evaluation passes (`python "${CLAUDE_PLUGIN_ROOT}/bin/evolution_eval.py" evaluate --labels <csv> --rows <store>/store/rows.jsonl`); report + manifest carry the provisional flag until then.
+- Binary view links only cells whose strongest method is in `LINK_METHODS` (`_evolution_common.py`: blame, blame-context, text, llm, manual) and whose raw score reaches the threshold; symbol, file and inherited cells keep soft weight only. `evolution_eval.py` applies the same rule when it re-decides links from raw scores. Its `--top-k N` keeps only the N best-scored links per fix, and a repo with under 15 labelled pairs reports `gated: false` (`pass` null) instead of a verdict.
+- Heuristic classification (releases without a changelog section) takes `feat:`/`fix:` prefixes first, then PR labels; a feature-labelled PR also carrying a refactor/cleanup/chore label, or whose title reads as a refactor, rename, tidy-up or "replace X with Y", is not a feature column.
+- Entry sources, in order: the changelog file or towncrier fragments, then GitHub Release notes for a release left without entries (GitHub only; the run warns which releases used them), then commit prefixes and PR labels. A bullet directly under a version heading, with no subsection, is classified by its first words; one that names no kind is left out and counted in a warning. Subsections such as Documentation or Contributors are ignored.
+- A pull request landed by rebase has one commit per original commit and none names the PR: they are found through GitHub's commit-to-PR association (asked once per release, only for an entry whose PR no local commit names). A `Reapply "<subject> (#N)"` commit belongs to PR `N`.
+- A heuristic (commit) column whose commit exactly one changelog column of the same kind also names is folded into it, the earlier release canonical and the other an alias; fix rows are never folded.
+- Monorepo: `--tag-prefix "<p>"` (`pkg-v` for `pkg-v1.2.0`, `pkg@` for `pkg@1.2.0`) keeps only that package's tags as releases and gives the package its own store (`<repo>.pkg-<prefix>`) and report folder. The prefix is saved with the store, so `run` and `ingest` need no flag; give scope ranges as bare versions (`1.0.0->1.2.0`). Commit ranges still contain other packages' commits, so a package works best when its releases have changelog sections: heuristic classification of an uncovered release would also read sibling packages' commits.
 - Open bugs = approximation (current labels, timeline close/reopen); GitHub only; absent in git-only mode.
 - Corrections: `<store root>/overrides.csv`, `fix_id,column_id,assert|deny,note`; orphans reported, never re-pointed.
 - `--full` deletes `store/` only; clone, overrides, saved LLM verdicts kept.

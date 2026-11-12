@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from _hook_env import _hook_tmp_base
+from _hook_env import _hook_state_base
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
@@ -42,13 +42,13 @@ def _strip_ansi(s: str) -> str:
 def _sid() -> Iterator[str]:
     """Yield a unique session id; clean its ``claude-state-<id>`` dir on teardown.
 
-    Base resolved via ``_hook_tmp_base()`` so teardown targets the same directory the hook's ``getSentinelDir()`` writes
-    on this platform. The hook's state base is machine-global, so the id is random: a name derived from the test would
+    Base resolved via ``_hook_state_base()`` so teardown targets the directory the hook's ``getSentinelDir()`` writes on
+    this platform. The hook's state base is machine-global, so the id is random: a name derived from the test would
     collide with a concurrent pytest session running the same test.
     """
     s = f"pytest-{uuid.uuid4().hex}"
     yield s
-    shutil.rmtree(_hook_tmp_base() / f"claude-state-{s}", ignore_errors=True)
+    shutil.rmtree(_hook_state_base() / f"claude-state-{s}", ignore_errors=True)
 
 
 @pytest.fixture(name="tmp_home")
@@ -106,7 +106,7 @@ def _write_agent(
     ``last_active`` is included only when provided so tests can exercise both the legacy (since-only) records and the
     refreshed (last_active-bearing) ones.
     """
-    d = _hook_tmp_base() / f"claude-state-{sid}" / "agents"
+    d = _hook_state_base() / f"claude-state-{sid}" / "agents"
     d.mkdir(parents=True, exist_ok=True)
     record: dict = {"id": agent_id, "type": agent_type, "model": "opus", "color": None, "since": since}
     if last_active is not None:
@@ -128,7 +128,7 @@ def _write_tool(
     ``last`` and ``inflight`` are written only when provided, so tests can exercise both records written by an older
     hook version (``since`` only) and current ones.
     """
-    d = _hook_tmp_base() / f"claude-state-{sid}" / "tools"
+    d = _hook_state_base() / f"claude-state-{sid}" / "tools"
     d.mkdir(parents=True, exist_ok=True)
     record: dict = {"tool": tool, "since": since, "count": count}
     if last is not None:
@@ -140,7 +140,7 @@ def _write_tool(
 
 def _write_codex(sid: str, tool_use_id: str, *, since: str) -> None:
     """Write a codex/<id>.json file under the per-session state dir."""
-    d = _hook_tmp_base() / f"claude-state-{sid}" / "codex"
+    d = _hook_state_base() / f"claude-state-{sid}" / "codex"
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{tool_use_id}.json").write_text(
         json.dumps({"id": tool_use_id, "since": since, "type": "rescue"}),

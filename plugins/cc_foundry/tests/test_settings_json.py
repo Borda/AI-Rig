@@ -69,9 +69,10 @@ def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def defaults(settings: Path) -> Path:
+def defaults(settings: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Provide an env-defaults document next to the settings file, holding one new default ``new=1``."""
     path = settings.parent / "defaults.json"
+    monkeypatch.setattr(settings_json, "_PLUGIN_ROOT", settings.parent)
     path.write_text('{"new":"1"}', encoding="utf-8")
     return path
 
@@ -148,7 +149,25 @@ class TestWriters:
     @pytest.mark.parametrize(
         ("operation", "options", "data", "expected"),
         [
-            pytest.param("delete-hooks", [], {"hooks": {"old": True}}, {}, id="delete-hooks"),
+            pytest.param(
+                "filter-foundry-hooks",
+                ["--root", str(PLUGIN), "--apply"],
+                {
+                    "hooks": {
+                        "Stop": [
+                            {
+                                "matcher": "*",
+                                "hooks": [
+                                    {"command": f'node "{PLUGIN.as_posix()}/hooks/task-log.js"'},
+                                    {"command": "echo keep"},
+                                ],
+                            }
+                        ]
+                    }
+                },
+                {"hooks": {"Stop": [{"matcher": "*", "hooks": [{"command": "echo keep"}]}]}},
+                id="filter-owned-hooks-preserve-user",
+            ),
             pytest.param(
                 "set-statusline",
                 ["--command", 'node "cache v2/statusline.js"'],
@@ -172,9 +191,9 @@ class TestWriters:
             ),
             pytest.param(
                 "set-advisor",
-                ["--model", "chosen"],
+                ["--model", "opus"],
                 {"advisorModel": "old"},
-                {"advisorModel": "chosen"},
+                {"advisorModel": "opus"},
                 id="set-advisor",
             ),
         ],
@@ -293,9 +312,9 @@ class TestWriteLocation:
         link.symlink_to(settings)
         monkeypatch.setenv("HOME", str(home))
         monkeypatch.setenv("USERPROFILE", str(settings.parent / "other-home"))
-        assert settings_json.main(["set-advisor", "~/.claude/settings.json", "--model", "chosen"]) == 0
+        assert settings_json.main(["set-advisor", "~/.claude/settings.json", "--model", "opus"]) == 0
         assert link.is_symlink()
-        assert json.loads(settings.read_text(encoding="utf-8")) == {"theme": "dark", "advisorModel": "chosen"}
+        assert json.loads(settings.read_text(encoding="utf-8")) == {"theme": "dark", "advisorModel": "opus"}
 
     def test_rejects_outside_write_root(self, settings: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A settings file outside cwd, TMPDIR and the user settings root stays untouched.
@@ -312,7 +331,7 @@ class TestWriteLocation:
         monkeypatch.setenv("TMPDIR", str(tmpdir))
         monkeypatch.chdir(project)
         original = settings.read_bytes()
-        assert settings_json.main(["set-advisor", str(settings), "--model", "chosen"]) == 2
+        assert settings_json.main(["set-advisor", str(settings), "--model", "opus"]) == 2
         assert settings.read_bytes() == original
 
 
@@ -342,7 +361,7 @@ class TestAtomicReplacement:
                 assert source != foreign_temp
                 assert destination == settings.resolve()
                 assert settings.read_bytes() == original
-                assert json.loads(source.read_text(encoding="utf-8")) == {"theme": "dark", "advisorModel": "chosen"}
+                assert json.loads(source.read_text(encoding="utf-8")) == {"theme": "dark", "advisorModel": "opus"}
                 observed.append(source)
                 if fail_replace:
                     raise OSError("rename refused")
@@ -361,7 +380,7 @@ class TestAtomicReplacement:
     @pytest.mark.parametrize(
         ("fail_replace", "exit_code", "advisor", "bytes_unchanged"),
         [
-            pytest.param(False, 0, "chosen", False, id="rename-succeeds"),
+            pytest.param(False, 0, "opus", False, id="rename-succeeds"),
             pytest.param(True, 2, None, True, id="rename-refused"),
         ],
     )
@@ -381,7 +400,7 @@ class TestAtomicReplacement:
         exactly as they were.
         """
         probe = replace_spy(fail_replace)
-        assert settings_json.main(["set-advisor", str(settings), "--model", "chosen"]) == exit_code
+        assert settings_json.main(["set-advisor", str(settings), "--model", "opus"]) == exit_code
         assert len(probe["observed"]) == 1
         assert not probe["observed"][0].exists()
         assert probe["foreign_temp"].read_text(encoding="utf-8") == "foreign"
@@ -396,7 +415,7 @@ class TestAtomicReplacement:
     ("step", "index", "message"),
     [
         pytest.param(3, 1, "stripping hooks", id="hooks-failure"),
-        pytest.param(4, 1, "updating statusLine", id="statusline-failure"),
+        pytest.param(4, 2, "updating statusLine", id="statusline-failure"),
         pytest.param(7, 1, "updating enabledPlugins", id="plugins-failure"),
         pytest.param(7, 2, "merging env defaults", id="env-failure"),
         pytest.param(8, 2, "updating advisorModel", id="advisor-failure"),
@@ -417,7 +436,7 @@ def test_setup_writer_failure_keeps_message_and_bytes(tmp_path: Path, step: int,
         json.dumps({"plugins": {"bridge@borda-ai-rig": [{"installPath": tmp_path.as_posix()}]}}), encoding="utf-8"
     )
     (tmp_path / "setup-plugin-root-settings-failure").write_text(PLUGIN.as_posix() + "\n", encoding="utf-8")
-    (tmp_path / "foundry-setup-adv-settings-failure").write_text("chosen\n", encoding="utf-8")
+    (tmp_path / "foundry-setup-adv-settings-failure").write_text("opus\n", encoding="utf-8")
     block = _setup_step_blocks(step)[index]
     prefix = f'python() {{ "{Path(sys.executable).as_posix()}" "$@"; }}\n'
     result = subprocess.run(
@@ -449,12 +468,24 @@ class _SetupRunner:
         self.settings = home / ".claude/settings.json"
         self.settings.parent.mkdir(parents=True)
         self.settings.write_text(
-            json.dumps({"hooks": {}, "env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "0"}, "theme": "dark"}), encoding="utf-8"
+            json.dumps(
+                {
+                    "hooks": {"Stop": [{"hooks": [{"command": 'node "${CLAUDE_PLUGIN_ROOT}/hooks/task-log.js"'}]}]},
+                    "env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "0"},
+                    "theme": "dark",
+                }
+            ),
+            encoding="utf-8",
         )
-        self.installed = home / ".claude/plugins/cache/foundry"
+        self.installed = home / ".claude/plugins/cache/borda-ai-rig/foundry/1.0.0"
         shutil.copytree(PLUGIN / ".claude-plugin", self.installed / ".claude-plugin")
         (self.installed / "bin").mkdir()
-        for script in ("settings_json.py", "merge_settings_permissions.py", "get_plugin_install_path.py"):
+        for script in (
+            "settings_json.py",
+            "merge_settings_permissions.py",
+            "get_plugin_install_path.py",
+            "resolve_plugin_root.py",
+        ):
             shutil.copy2(PLUGIN / "bin" / script, self.installed / "bin" / script)
         shutil.copy2(PLUGIN / "permissions-guide.md", self.installed / "permissions-guide.md")
         shutil.copytree(PLUGIN / "hooks", self.installed / "hooks")
@@ -465,7 +496,7 @@ class _SetupRunner:
         self.project = tmp_path / "project"
         (self.project / ".git").mkdir(parents=True)
         (self.project / ".claude").mkdir()
-        (self.project / ".claude/settings.json").write_text('{"advisorModel":"chosen-advisor"}', encoding="utf-8")
+        (self.project / ".claude/settings.json").write_text('{"advisorModel":"opus"}', encoding="utf-8")
         (tmp_path / "setup-plugin-root-settings-test").write_text(self.installed.as_posix() + "\n", encoding="utf-8")
         self.env = {
             **os.environ,
@@ -504,18 +535,19 @@ class _SetupRunner:
     def first_run(self) -> dict:
         """Run setup on settings that need every change, then return the advisor probe flag and resulting settings."""
         self.run(3, 0)
-        assert self.run(3, 1).strip() == "foundry: 0, user: 0"
+        assert self.run(3, 1).strip() == "foundry: 1, user: 0"
         assert "hooks" in json.loads(self.settings.read_text(encoding="utf-8"))
         self.run(3, 2)
-        assert self.run(3, 1).strip() == "removed: 0, kept: 0"
+        assert self.run(3, 1).strip() == "removed: 1, kept: 0"
         self.run(4, 0, 1)
-        self.run(4, 1)
+        assert self.run(4, 1).strip() == "STATUSLINE_OWNED=1"
+        self.run(4, 2)
         self.run(5, 0)
         self.run_all(6)
         self.run(7, 0, 1)
         self.run(7, 1)
         self.run(7, 2)
-        advisor_seen = "ADV=chosen-advisor" in self.run(8, 0)
+        advisor_seen = "ADV=opus" in self.run(8, 0)
         self.run(8, 1, 1)
         self.run(8, 2)
         self.run(9, 0)
@@ -529,7 +561,7 @@ class _SetupRunner:
         self.run_all(6)
         self.run(7, 0)
         self.run(7, 2)
-        advisor_seen = "ADV=chosen-advisor" in self.run(8, 0)
+        advisor_seen = "ADV=opus" in self.run(8, 0)
         self.run(8, 1)
         self.run(9, 0)
         return {"advisor_seen": advisor_seen, "data": json.loads(self.settings.read_text(encoding="utf-8"))}
@@ -554,7 +586,7 @@ def test_setup_json_blocks_without_jq(tmp_path: Path) -> None:
         "hooks_present": False,
         "env": {**defaults, "CLAUDE_CODE_ENABLE_TODO_TOOLS": "0"},
         "bridge_enabled": True,
-        "advisor": "chosen-advisor",
+        "advisor": "opus",
         "statusline": {
             "async": True,
             "type": "command",

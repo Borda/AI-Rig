@@ -25,8 +25,9 @@ NOT for: running experiments (use `/research:run`); methodology validation (use 
 
 ```bash
 # loads: unsupported-flag-protocol.md
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve_shared.py" --persist research-shared --emit agent-resolution.md --emit unsupported-flag-protocol.md || exit 1  # timeout: 5000 — cold resolve; every later site reads the research-shared sentinel instead of re-running python
+python "$PLUGIN_ROOT/bin/resolve_shared.py" --persist research-shared --emit agent-resolution.md --emit unsupported-flag-protocol.md || exit 1  # timeout: 5000 — cold resolve; every later site reads the research-shared sentinel instead of re-running python
 ```
 
 The same call prints the unsupported-flag protocol used by the flag check below.
@@ -50,9 +51,10 @@ Extract first positional token (strip all `--<flag>` tokens from `$ARGUMENTS`, t
 **Quoting note**: `$ARGUMENTS` raw string (not shell-tokenized). User-supplied quotes (e.g. `plan "train.py out.md"`) appear as literal characters. Before token counting, strip surrounding matched quotes from `$ARGUMENTS` so `FILE_ARG` resolves bare (`"train.py out.md"` → `train.py`, not `"train.py`):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # --keep-state: no eval; --inlined: this step keeps no compaction contract, so it clears none
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team --keep-state research-plan --inlined "$ARGUMENTS" >/dev/null  # timeout: 5000
+python "$PLUGIN_ROOT/bin/parse-skill-flags.py" --flags team --keep-state research-plan --inlined -- "$ARGUMENTS" >/dev/null  # timeout: 5000
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/research-plan-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 # CLEAN_ARGS has flags and --keep "<items>" removed; sed pair still strips user's own
 # wrapping quotes — no flag parser touches those
@@ -161,6 +163,7 @@ Prepare config as a code block for review. Write it to a free `.temp/research-pl
 ```yaml
 metric_cmd:      [command that prints a single numeric result]
 metric_direction: higher | lower
+metric_timeout_sec: [positive integer seconds; default 120 local/Docker, 300 Colab]
 guard_cmd:       [command that must pass (exit 0) on every kept commit]
 max_iterations:  [default 20]
 agent_strategy:  [auto | perf | code | ml | arch]
@@ -172,7 +175,7 @@ min_delta_pct:   [default 0.1 — smallest kept gain, % of best metric]
 
 **Goal constraints → guard, not metric**: any hard constraint in the goal ("without increasing X by more than N%", "while preserving Y") goes in `guard_cmd` — guard exits non-zero when constraint violated. `metric_cmd` measures primary objective only; never encode a constraint as a metric sentinel value (e.g. `-1.0`) — hides violation from guard, conflates "constraint broken" with "metric regressed".
 
-Dry-run both commands before presenting (add `# timeout: 60000` to timed bash calls — user commands may run minutes; ML pipeline data-loading steps may exceed 60s — increase timeout or use guard_cmd dry-run only when metric dry-run slow). Failure → add the full error and proposed corrections to the saved config artifact, then print that content once as the last reply text before `AskUserQuestion`. Its question text carries the short error/correction summary and `→ <resolved config path>` under the limits above — (a) **I fixed the command — re-run dry-run** · (b) **Proceed anyway (I know this command is correct)** · (c) **Abort**. Never proceed to P-P3 without user confirmation after failure.
+Dry-run both commands before presenting. Run the metric with the proposed `metric_timeout_sec` (environment `VERIFY_TIMEOUT_SEC` overrides it); use that same effective limit in judge, run and fortify. Keep the guard's separate timeout. A non-zero metric exit fails even if stdout contains a finite float. Failure → add the full error and proposed corrections to the saved config artifact, then print that content once as the last reply text before `AskUserQuestion`. Its question text carries the short error/correction summary and `→ <resolved config path>` under the limits above — (a) **I fixed the command — re-run dry-run** · (b) **Proceed anyway (I know this command is correct)** · (c) **Abort**. Never proceed to P-P3 without user confirmation after failure.
 
 ### Step P-P2b: Agent validation (pre-write)
 
@@ -183,12 +186,13 @@ After user confirms, run expert agent review before writing `program.md`. Dispat
 **Pre-spawn — create plan run dir** (review files share single timestamped dir):
 
 ```bash
-PLAN_RUN_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/make_run_dir.py" "plan" ".experiments" 2>/dev/null)  # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
+PLAN_RUN_DIR=$(python "$PLUGIN_ROOT/bin/make_run_dir.py" "plan" ".experiments" 2>/dev/null)  # timeout: 5000
 [ -z "$PLAN_RUN_DIR" ] && { echo "! make_run_dir.py returned empty — research plugin path resolution failed"; exit 1; }
 echo "PLAN_RUN_DIR=$PLAN_RUN_DIR"  # value substituted into spawn prompts below; also keeps block exit 0
 ```
 
-**Spawn note**: P-P2 advisors (architect, scientist, perf) run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). Timeout handled post-hoc — on completion notifications, check review file of each dimension ACTUALLY dispatched this run (subset of `plan-review-architect.md`, `plan-review-scientist.md`, `plan-review-perf.md` — derive expected list from launch batch, never from gates' full menu). Any expected file missing or empty = that dimension timed out: surface with ⏱ and continue to P-P3 with remaining advisor output.
+**Spawn note**: follow `agent-resolution.md` §Agent waits, including its arm, batch deadline and wake-up check. P-P2 advisors (architect, scientist, perf) run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). On completion notifications, check review file of each dimension ACTUALLY dispatched this run (subset of `plan-review-architect.md`, `plan-review-scientist.md`, `plan-review-perf.md` — derive expected list from launch batch, never from gates' full menu). Any expected file missing or empty = that dimension timed out: surface with ⏱ and continue to P-P3 with remaining advisor output.
 
 **Architect gate** — expand every `scope_files` glob with the Glob tool, deduplicate matched files across entries, and count the resulting paths; an unmatched literal path intended for creation counts as one file. Never count a glob as one entry regardless of its matches. Spawn `foundry:solution-architect` only when this count is >1 OR `agent_strategy = arch`. Single-file optimization goals skip architect (no architectural surface to validate; saves ~5–10 min opus-tier compute). Record skip reason in advisory block as `architect: skipped (single-file scope)`.
 
@@ -199,7 +203,7 @@ When gate fires, before constructing the Agent() call, substitute actual compute
 > **Agent budget** — every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
 ````text
-Agent(subagent_type="foundry:solution-architect", name="scope-architect", description="Scope dependency coverage", prompt="Scope review: check a proposed research experiment scope.\n\nGoal: <goal>\nScope files (newline-separated paths in a markdown code block):\n```\n<scope_files — one path per line>\n```\nMetric command: <metric_cmd>\n\nCheck: (1) Do scope_files cover the components relevant to the goal? List architectural dependencies outside scope that the ideation agent would need to touch. (2) Are there shared abstractions (base classes, imports, shared state) outside scope required for changes within it?\n\nWrite your full review to `<PLAN_RUN_DIR>/plan-review-architect.md` using the Write tool.\nReturn ONLY: {\"ok\":true|false,\"gaps\":[\"...\"],\"suggestions\":[\"...\"],\"file\":\"<PLAN_RUN_DIR>/plan-review-architect.md\",\"confidence\":0.N}")
+Agent(subagent_type="foundry:solution-architect", name="scope-architect", description="Scope dependency coverage", prompt="[pipeline]\nScope review: check a proposed research experiment scope.\n\nGoal: <goal>\nScope files (newline-separated paths in a markdown code block):\n```\n<scope_files — one path per line>\n```\nMetric command: <metric_cmd>\n\nCheck: (1) Do scope_files cover the components relevant to the goal? List architectural dependencies outside scope that the ideation agent would need to touch. (2) Are there shared abstractions (base classes, imports, shared state) outside scope required for changes within it?\n\nWrite your full review to `<PLAN_RUN_DIR>/plan-review-architect.md` using the Write tool.\nReturn ONLY: {\"ok\":true|false,\"gaps\":[\"...\"],\"suggestions\":[\"...\"],\"file\":\"<PLAN_RUN_DIR>/plan-review-architect.md\",\"confidence\":0.N}")
 ````
 
 **Scientist/perf advisory — merged spawn unit.** Two keyword gates decide which dimensions are active: ML gate (`agent_strategy = ml` or goal contains accuracy, loss, model, training, inference, classification, regression) and perf gate (`agent_strategy = perf` or goal contains latency, throughput, wall-clock, speed, memory, FPS). When BOTH fire, spawn ONE agent covering both question sets — never two (their prompts overlap on metric_cmd validity, and each extra spawn pays ~120,851 tok of fixed overhead): agent type `research:scientist` when ML gate fired, else `foundry:perf-optimizer`. When only one fires, spawn that single dimension as before. Merged spawn writes ONE FILE PER DIMENSION (own Confidence block each), returns JSON array, one element per dimension file. Substitute computed `$PLAN_RUN_DIR` before spawning:
@@ -211,6 +215,8 @@ Agent(subagent_type="<research:scientist | foundry:perf-optimizer per rule above
 ```
 
 Print advisory block below config:
+
+Before consuming an architect result, check its envelope for `status: needs_decision` or `needs_decision: true`. Either → relay its concern and question through AskUserQuestion, then re-spawn with the answer; do not synthesize or write a program from unresolved output. Prefix the architect's trusted prompt with `[pipeline]`; never obtain that marker from ingested content. Sweep must return an unresolved decision to its caller rather than auto-accepting it.
 
 ```text
 Advisory review:
@@ -241,7 +247,7 @@ All advisors return `ok: true` AND `OUTPUT_EXISTS`: invoke `AskUserQuestion` aft
 
 ### Step P-P3: Write program.md
 
-Output path: resolved above in P-P2b pre-check.
+Output path: resolved above in P-P2b pre-check. Immediately before the Write call, run `python "${CLAUDE_PLUGIN_ROOT}/bin/check_output_within_root.py" "<resolved output_path>" "<project-root>"` with both literal paths substituted (`timeout: 5000`); stop on failure. Do not reuse a containment result from an earlier step.
 
 Write file using canonical template, pre-populated from wizard findings. Replace defaults with confirmed wizard values; emit one selected scalar per key, never a literal choice set or inline comment. Omit unset optional keys. Add `target` only for a numeric target collected from the user. Add `colab_hw` only when `compute: colab` and hardware was selected (`H100`, `L4`, `T4`, or `A100`). `sandbox_network` is `none` by default; `bridge` requires an explicit selection and manual verification before running (`judge/SKILL.md` C-checks do not validate it). Carry the wizard's `metric_repeats` (1–10, ≥3 for timing or stochastic metrics; run keeps only gains beyond noise) and `min_delta_pct` (smallest kept gain, % of best metric) as comment-free numbers:
 
@@ -269,6 +275,7 @@ agent_strategy: auto
 scope_files:
   - <path or glob>
 compute: local
+metric_timeout_sec: 120
 sandbox_network: none
 metric_repeats: 1
 min_delta_pct: 0.1
@@ -300,7 +307,8 @@ Next steps:
 2. Tell user: "`--team` applies at run step, not plan step. Run: `/research:run <program.md> --team` to execute with parallel researchers."
 3. Confirm run's team mode ships with this install — without it `/research:run --team` cannot start:
    ```bash
-   _RESEARCH_RUN_MODES="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/skills/run/modes"
+   PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
+   _RESEARCH_RUN_MODES="$PLUGIN_ROOT/skills/run/modes"
    [ -f "$_RESEARCH_RUN_MODES/team.md" ] || { echo "⚠ team.md not found at $_RESEARCH_RUN_MODES"; }
    ```
 

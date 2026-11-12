@@ -6,11 +6,12 @@
  * later reader can audit what actually ran.
  */
 
-import { spawnSync } from "node:child_process"
-import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs"
+import { spawn, type ChildProcess } from "node:child_process"
+import { createHash, randomUUID } from "node:crypto"
+import { closeSync, existsSync, lstatSync, openSync, readFileSync, realpathSync, writeSync } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
-import { sha256 } from "./digest.ts"
 import type { GateReceipt } from "./run.ts"
+import { ensureDir } from "./util/fsx.ts"
 
 export interface GateSpec {
   readonly id: string
@@ -22,6 +23,7 @@ export interface GateSpec {
 export interface GateResult {
   readonly spec: GateSpec
   readonly receipt: GateReceipt
+  readonly log_path: string
 }
 
 export class GateError extends Error {
@@ -133,16 +135,16 @@ export function detectGates(projectRoot: string, explicit: readonly string[]): G
   return []
 }
 
-function tailOf(stdout: string, stderr: string, limit = 4_000): string {
-  const combined = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n")
-  return combined.length <= limit ? combined : combined.slice(-limit)
-}
-
 /** Refuse file arguments that escape the project, including through symlinks. */
 function resolveInsideProject(projectRoot: string, file: string): string {
   const absolute = resolve(projectRoot, file)
   const rel = relative(resolve(projectRoot), absolute)
-  if (file.split(sep).includes("..") || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+  if (
+    file.split(sep === "\\" ? /[\\/]/ : "/").includes("..") ||
+    rel === ".." ||
+    rel.startsWith(`..${sep}`) ||
+    isAbsolute(rel)
+  ) {
     throw new GateError(`file escapes the project: ${file}`)
   }
   let physical: string
@@ -173,7 +175,13 @@ function preCommitArgs(spec: GateSpec, cwd: string, files: readonly string[]): s
 /**
  * Execute one gate with bounded runtime and literal file arguments for pre-commit.
  */
-export function runGate(spec: GateSpec, cwd: string, files: readonly string[], timeoutMs: number): GateResult {
+export function runGate(
+  spec: GateSpec,
+  cwd: string,
+  files: readonly string[],
+  timeoutMs: number,
+  logDirectory = join(cwd, ".opencode-rig", "gates"),
+): Promise<GateResult> {
   timeoutMs = Math.trunc(timeoutMs)
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 3_600_000) {
     throw new GateError("timeout must be an integer between 1000 and 3600000 milliseconds")
@@ -182,39 +190,135 @@ export function runGate(spec: GateSpec, cwd: string, files: readonly string[], t
   const command = spec.needsFiles
     ? `pre-commit ${args.map((arg) => (/^[a-zA-Z0-9_./:-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", `'"'"'`)}'`)).join(" ")}`
     : spec.command
-  const started = Date.now()
-  const result = spawnSync(spec.needsFiles ? "pre-commit" : command, args, {
-    cwd,
-    shell: !spec.needsFiles,
-    encoding: "utf8",
-    timeout: timeoutMs,
-    maxBuffer: 16 * 1024 * 1024,
-  })
-  const stdout = result.stdout ?? ""
-  const stderr = result.stderr ?? ""
-  const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT"
-  const receipt: GateReceipt = {
-    id: spec.id,
-    command,
-    source: spec.source,
-    status: timedOut ? "failed" : result.status === 0 ? "passed" : "failed",
-    exit_code: result.status,
-    duration_ms: Date.now() - started,
-    stdout_sha256: sha256(stdout),
-    stderr_sha256: sha256(stderr),
-    tail: tailOf(stdout, stderr),
-    ...(timedOut ? { reason: "timeout" } : result.error ? { reason: result.error.message } : {}),
-  }
-  return { spec, receipt }
+  const logPath = join(ensureDir(logDirectory), `${slug(spec.id)}-${randomUUID()}.log`)
+  return executeGate(spec, cwd, args, command, timeoutMs, logPath)
 }
 
-export function runGates(
+/** Stop the gate process tree where process groups are available. */
+function terminateGate(child: ChildProcess, signal: NodeJS.Signals): void {
+  try {
+    if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal)
+    else if (child.pid) {
+      const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+        timeout: 1_000,
+      })
+      let fallbackRequested = false
+      const fallback = () => {
+        if (fallbackRequested) return
+        fallbackRequested = true
+        child.kill(signal)
+      }
+      killer.once("error", fallback)
+      killer.once("close", (code) => {
+        if (code !== 0) fallback()
+      })
+      killer.unref?.()
+    } else child.kill(signal)
+  } catch {
+    // An exited process needs no further signal.
+  }
+}
+
+/** Capture complete output on disk while retaining only hashes and a bounded tail in memory. */
+function executeGate(
+  spec: GateSpec,
+  cwd: string,
+  args: string[],
+  command: string,
+  timeoutMs: number,
+  logPath: string,
+): Promise<GateResult> {
+  const descriptor = openSync(logPath, "wx", 0o600)
+  const started = Date.now()
+  return new Promise((done) => {
+    const child = spawn(spec.needsFiles ? "pre-commit" : command, args, {
+      cwd,
+      shell: !spec.needsFiles,
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    const hashes = { stdout: createHash("sha256"), stderr: createHash("sha256") }
+    let tail = Buffer.alloc(0)
+    let failure: NodeJS.ErrnoException | undefined
+    let cutoff: ReturnType<typeof setTimeout> | undefined
+    let finished = false
+    const finish = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (finished) return
+      finished = true
+      clearTimeout(timer)
+      clearTimeout(cutoff)
+      closeSync(descriptor)
+      const reason =
+        failure?.code === "ETIMEDOUT" ? "timeout" : (failure?.message ?? (signal ? `signal: ${signal}` : undefined))
+      done({
+        spec,
+        log_path: logPath,
+        receipt: {
+          id: spec.id,
+          command,
+          source: spec.source,
+          status: !failure && code === 0 ? "passed" : "failed",
+          exit_code: code,
+          duration_ms: Date.now() - started,
+          stdout_sha256: hashes.stdout.digest("hex"),
+          stderr_sha256: hashes.stderr.digest("hex"),
+          tail: tail.toString("utf8").trim(),
+          ...(reason ? { reason } : {}),
+        },
+      })
+    }
+    const timer = setTimeout(() => {
+      failure = Object.assign(new Error("gate timed out"), { code: "ETIMEDOUT" })
+      terminateGate(child, "SIGTERM")
+      cutoff = setTimeout(() => {
+        terminateGate(child, "SIGKILL")
+        child.stdout?.destroy()
+        child.stderr?.destroy()
+        const diagnostic = Buffer.from(
+          "\nGate timeout: process termination could not be confirmed; verify or stop it before editing its files.\n",
+        )
+        tail = Buffer.concat([tail, diagnostic]).subarray(-4_000)
+        try {
+          writeSync(descriptor, diagnostic)
+        } catch {
+          /* Preserve the timeout receipt if the log failed. */
+        }
+        child.unref?.()
+        finish(null, null)
+      }, 1_000)
+    }, timeoutMs)
+    for (const stream of ["stdout", "stderr"] as const) {
+      child[stream]?.on("data", (chunk: Buffer) => {
+        if (finished) return
+        hashes[stream].update(chunk)
+        tail = Buffer.concat([tail, chunk]).subarray(-4_000)
+        try {
+          writeSync(descriptor, chunk)
+        } catch (error) {
+          failure = error as NodeJS.ErrnoException
+          terminateGate(child, "SIGKILL")
+        }
+      })
+    }
+    child.on("error", (error) => {
+      if (!finished && failure?.code !== "ETIMEDOUT") failure = error
+    })
+    child.on("close", finish)
+  })
+}
+
+export async function runGates(
   specs: readonly GateSpec[],
   cwd: string,
   files: readonly string[],
   timeoutMs: number,
-): GateResult[] {
+  logDirectory?: string,
+): Promise<GateResult[]> {
   if (specs.length === 0)
     throw new GateError("no configured gates detected; record gate_exemption instead of inventing one")
-  return specs.map((spec) => runGate(spec, cwd, files, timeoutMs))
+  const results: GateResult[] = []
+  for (const spec of specs) results.push(await runGate(spec, cwd, files, timeoutMs, logDirectory))
+  return results
 }

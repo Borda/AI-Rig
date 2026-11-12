@@ -22,6 +22,17 @@ _CODEX_SENTINEL = "resolve-preflight-CODEX_AVAILABLE-shared"
 _GH_SENTINEL = "resolve-preflight-GH_OK-shared"
 
 
+def test_preflight_instructions_report_fetch_failure() -> None:
+    """The preflight stop identifies the fetch failure without implying a pull or merge occurred."""
+    mode = Path(rp.__file__).parents[1] / "skills/resolve/modes/preflight.md"
+    lines = mode.read_text(encoding="utf-8").splitlines()
+    failure_contract = next(line for line in lines if line.startswith("- Writes `CODEX_AVAILABLE`"))
+    stop_command = next(line for line in lines if line.startswith('[ "$_PREFLIGHT_RC" -ne 0 ]'))
+    assert "`git fetch` failure" in failure_contract
+    assert "git fetch failure" in stop_command
+    assert "pull" not in failure_contract + stop_command
+
+
 def _dispatch(responses: dict[str, tuple[int, str]]) -> Any:
     """Build a subprocess.run fake dispatching on the binary name + first subcommand; unknown commands succeed."""
 

@@ -140,7 +140,12 @@ BUDGETS = (
     # rule, so a lazy home ships symptom patches, stale-format repair demands and self-created process blockers as
     # successful outcomes. The delivered principles are the shipped block in `plugins/codex-rig/shared/`, and the
     # sibling hosts carry the same words.
-    Budget("plugins/codex-rig/assets/AGENTS.md", 42735),
+    # Raised by 391 bytes for the policy-sibling marker that `plugins/CLAUDE.md` requires on every copy of a restated
+    # policy (174 bytes) and for text already added after the previous raise without one (217 bytes). The marker must
+    # sit in this file itself, so it cannot move to a lazily loaded home.
+    # Raised from 43126 by 467 bytes for the always-on loop trigger: a lazily loaded rule cannot fire a loop
+    # that starts before it is read. The shortened trigger leaves no budget headroom.
+    Budget("plugins/codex-rig/assets/AGENTS.md", 43593),
 )
 
 

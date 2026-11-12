@@ -227,8 +227,8 @@ class TestCommentSegments:
     """Segment validation skips whole-line comments.
 
     Every plugin bash block carries `# timeout: N` annotations on their own lines. Before this was handled, one such
-    line put `#` in first-token position and rejected the whole block — measured on 107 of 790 real blueprint blocks, of
-    which 28 were otherwise fully allowable.
+    line put `#` in first-token position and rejected the whole block — measured on 107 of 790 real blueprint blocks,
+    of which 28 were otherwise fully allowable.
     """
 
     @pytest.mark.parametrize(
@@ -342,9 +342,9 @@ class TestReviewedBypasses:
     def test_ansi_c_quoting_is_refused_outright(self, command: str) -> None:
         """Reject shell quoting that desynchronizes the quote parser.
 
-        bash unescapes `\\'` inside `$'…'`, ending the string at a different quote than the masker believes. The toggle
-        count drifts, a `;` gets masked away, and the hook sees one `echo` segment where bash runs two commands. No
-        blueprint idiom uses ANSI-C quoting, so it fails closed.
+        bash unescapes `\\'` inside `$'…'`, ending the string at a different quote than the masker believes. The
+        toggle count drifts, a `;` gets masked away, and the hook sees one `echo` segment where bash runs two commands.
+        No blueprint idiom uses ANSI-C quoting, so it fails closed.
         """
         result = _run(f"{READ_FORM}\n{command}")
         assert result == {}, f"{command!r} STILL ALLOWED — ANSI-C desync: {result}"
@@ -772,9 +772,9 @@ class TestTraversalMatching:
         """Separators absent from an allow-list neighbour class must not admit traversal.
 
         A first attempt at this check enumerated the characters a traversal may open at, which let every character
-        omitted from that class through — `cat {a,../etc/passwd}` brace-expands to read `../etc/passwd` and was allowed.
-        The check is now default-reject, exempting only a `..` flanked by word characters, so an unlisted separator
-        fails closed instead.
+        omitted from that class through — `cat {a,../etc/passwd}` brace-expands to read `../etc/passwd` and was
+        allowed. The check is now default-reject, exempting only a `..` flanked by word characters, so an unlisted
+        separator fails closed instead.
         """
         result = _run(command)
         assert result == {}, f"{command!r} STILL ALLOWED — traversal bypass: {result}"

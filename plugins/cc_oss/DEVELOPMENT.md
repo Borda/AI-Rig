@@ -630,7 +630,7 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 | `mint_finding_ids.py` | Give each review finding a stable id (section slug plus file and title hash) that survives line drift. |
 | `parse-resolve-args.py` | Parse `/oss:resolve` arguments into shell assignments. |
 | `parse-skill-flags.py` | Parse shared skill flags into shell assignments; `--keep-state <prefix>` also writes per-session sentinels and clears a stale contract, so skills read values without `eval`. |
-| `parse_audit_json.py` | Summarize `pip-audit` JSON as dependency and vulnerability counts, split new versus pre-existing with `--introduced`, limited to shipped packages with `--runtime-from`. |
+| `parse_audit_json.py` | Summarize `pip-audit` JSON as dependency and vulnerability counts, split new versus pre-existing with `--introduced`, listing requirements pip-audit skipped; `shipped_extra_groups` and `shipped_requirements` read the shipped dependency set from `pyproject.toml` for the release scan. |
 | `resolve_pr_refs.py` | Resolve the default branch and the PR's head/base/fork metadata before checkout; branch names that git would read as an option are rejected. `--local-base` is the no-PR path (report mode, comment dispatch) that publishes only the default branch as the QA diff base. |
 | `resolve_preflight.py` | Verify tools, authentication, remote state, and native temporary preflight output before resolve. |
 | `resolve_test_plan.py` | Pick targeted tests for a change (codemap test-impact, else path heuristics) and the repo's full-suite command. |

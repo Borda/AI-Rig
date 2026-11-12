@@ -86,7 +86,7 @@ For `campaign`, noisy metrics, GPU/ML performance, or correctness-sensitive code
 
 No fan-out for one small measured change with stable metric/guard. Never let specialist change metric/guard scripts unless explicitly in `scope_files` and measurement-integrity risk recorded.
 
-**Structural context (optional)**: when `scope_files` resolves to Python module/symbol, select one task-neutral route and probe codemap-py once before first iteration: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Use `skip` for exact localized optimization with no unresolved structural fact, matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) for one unresolved fact, `standard` for broad or unknown scope. Map direct, all, or production caller questions to `callers`; use `blast` only for explicitly transitive caller questions. An explicit user or tool request for structural evidence overrides `skip`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with hypothesis above. Persist result once here, before step 04 applies any change; any triggered specialist consumes `<run-directory>/codemap-context.json`; added queries only under the contract's bounded `Specialist follow-up queries` rule.
+**Structural context (optional)**: when `scope_files` resolves to Python module/symbol, select one task-neutral route and probe codemap-py once before first iteration: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Read and apply [Route selection per skill](../../shared/codemap-contract.md#route-selection-per-skill) for this route decision. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with hypothesis above. Persist result once here, before step 04 applies any change; any triggered specialist consumes `<run-directory>/codemap-context.json`; added queries only under the contract's bounded `Specialist follow-up queries` rule.
 
 Machine-readable iteration log, `single` and non-checkpointed `campaign` only: `<run-directory>/experiments.jsonl` is created once, after step 07 decides keep or revert for the final iteration. Do not create it here; a checkpointed campaign's `campaign.py init` creates its own ledger and fails if the file exists.
 
@@ -164,7 +164,7 @@ Managed structured Results cells must match the bound attempts or measurements, 
 Required:
 
 - `tests`: guard command or impacted tests.
-- `review`: metric comparison, rollback decision, relevant campaign ledger, `git diff --check`.
+- `review`: metric comparison, rollback decision, relevant campaign ledger, and the scoped whitespace check from `../../shared/quality-gates.md` §review (`git diff --check -- <run-owned paths>` or the exact reviewed range). Outside a Git repository, record that reason and scan run-owned files by path for trailing whitespace and conflict markers while retaining the other review checks.
 - `artifact`: shared validator confirms comparison, experiments JSONL, gate logs, result JSON shape.
 
 Recommended:

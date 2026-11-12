@@ -23,10 +23,10 @@ const path = require("path");
 const SENTINEL_PREFIX = "dev-review-report-dir-";
 // File the Step 5 consolidator writes into $REPORT_DIR.
 const REPORT_FILENAME = "review-report.md";
-// Step 2 always builds "$_REPORT_BASE/.reports/review/$TIMESTAMP" ($_REPORT_BASE
+// Step 2 always builds "$_REPORT_BASE/.reports/develop-review/$TIMESTAMP" ($_REPORT_BASE
 // is the main tree even under --worktree); requiring the marker keeps the hook
 // from acting on a sentinel holding anything else.
-const REPORT_DIR_PARTS = [".reports", "review"];
+const REPORT_DIR_PARTS = [".reports", "develop-review"];
 // Enforcement window measured from the sentinel's mtime (see KNOWN LIMITATION).
 const STALE_MS = 2 * 60 * 60 * 1000;
 
@@ -91,9 +91,9 @@ function isReportPath(value, reportParts) {
   );
 }
 
-/** True when `value` has the shape Step 2 writes: absolute path under .reports/review/. */
+/** Accept the current report namespace and still-active reports created before relocation. */
 function isReviewReportDir(value) {
-  return isReportPath(value, REPORT_DIR_PARTS);
+  return isReportPath(value, REPORT_DIR_PARTS) || isReportPath(value, [".reports", "review"]);
 }
 
 /**
@@ -102,11 +102,20 @@ function isReviewReportDir(value) {
  */
 function activeReportDir(sentinelPath, now) {
   let content;
+  let fd;
   try {
-    if (now - fs.statSync(sentinelPath).mtimeMs > STALE_MS) return null;
-    content = fs.readFileSync(sentinelPath, "utf8");
+    const stat = fs.lstatSync(sentinelPath);
+    if (!stat.isFile() || stat.nlink !== 1 || (typeof process.getuid === "function" && stat.uid !== process.getuid()))
+      return null;
+    if (now - stat.mtimeMs > STALE_MS || stat.mtimeMs > now) return null;
+    fd = fs.openSync(sentinelPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const opened = fs.fstatSync(fd);
+    if (opened.dev !== stat.dev || opened.ino !== stat.ino) return null;
+    content = fs.readFileSync(fd, "utf8");
   } catch (_) {
     return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
   const reportDir = content.split("\n")[0].trim();
   if (!isReviewReportDir(reportDir)) return null;

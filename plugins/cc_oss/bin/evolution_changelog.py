@@ -33,6 +33,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -98,11 +99,17 @@ UNRELEASED: Final = "unreleased"
 _CONFIDENCE_EXACT: Final = 1.0
 _CONFIDENCE_TEXT_CAP: Final = 0.4
 _CONFIDENCE_HEURISTIC: Final = 0.5
+#: Most side-branch commits one merge commit may add to a column; a longer side branch is a branch merge, not a PR.
+_MERGED_LIMIT: Final = 100
 #: Text match acceptance: at least this many shared tokens covering at least this share of the entry's tokens.
 _TEXT_MIN_SHARED: Final = 2
 _TEXT_MIN_COVERAGE: Final = 0.5
 #: Aliases per GitHub GraphQL request.
 _GH_BATCH: Final = 25
+#: Attempts per lookup and the pause that grows with each one; only a network-level ``gh`` failure is retried.
+_GH_ATTEMPTS: Final = 3
+_GH_BACKOFF_SECONDS: Final = 2.0
+_GH_NETWORK_FAILURE: Final = "gh api graphql exited"
 #: Versions named in one summary warning before it is cut short with "...".
 _WARN_LIST_MAX: Final = 5
 #: Timeout for ``git log`` over a whole release range (larger than the per-call default).
@@ -112,6 +119,14 @@ _CONVENTIONAL_KIND: Final = {"fix": "fix", "bugfix": "fix", "hotfix": "fix", "fe
 #: PR labels (lower case) that classify an otherwise unprefixed commit.
 _FIX_LABELS: Final = frozenset({*DEFAULT_BUG_LABELS, "fix", "bugfix", "regression"})
 _FEATURE_LABELS: Final = frozenset({"feature", "enhancement", "type: feature", "kind/feature", "type/feature"})
+#: Labels and title shapes of a change that adds no capability; a pull request carrying them is not a feature column.
+_REFACTOR_LABELS: Final = frozenset(
+    {"refactor", "refactoring", "cleanup", "chore", "maintenance", "housekeeping", "type: refactor", "kind/cleanup"}
+)
+_REFACTOR_TITLE: Final = re.compile(
+    r"\b(?:refactor\w*|clean[- ]?ups?|tidy\w*|rename[ds]?|reformat\w*|remove unused|replace\b.{1,40}?\bwith)\b",
+    re.IGNORECASE,
+)
 #: Words too common to make two texts look related.
 _STOPWORDS: Final = frozenset(
     "the and for with from into when that this than then not are was were has have its now all any can fix fixed "
@@ -126,6 +141,8 @@ _HASH_REF = re.compile(r"(?<![\w/&#])#(\d{1,7})\b")
 _GH_REF = re.compile(r"\bgh-(\d{1,7})\b", re.IGNORECASE)
 _URL_REF = re.compile(r"https?://[^\s)\]>]+?/(?P<slug>[\w.-]+/[\w.-]+)/(?P<kind>pull|issues)/(?P<num>\d{1,7})\b")
 _SQUASH_PR = re.compile(r"\(#(?P<n>\d{1,7})\)\s*$")
+#: ``Reapply "<original subject>"`` as written by ``git revert`` of a revert; the quoted subject ends in the PR number.
+_REAPPLY = re.compile(r'^Reapply "(?P<inner>.+)"(?:\s+\(#\d{1,7}\))?\s*$')
 _MERGE_PR = re.compile(r"^Merge pull request #(?P<n>\d{1,7})\b")
 _CONVENTIONAL = re.compile(r"^(?P<type>[A-Za-z]+)(?:\([^)]*\))?!?:\s*(?P<rest>.*)$")
 _REGRESSION = re.compile(
@@ -139,6 +156,10 @@ _VERSION_TOKEN = re.compile(
     re.IGNORECASE,
 )
 _UNRELEASED_WORD = re.compile(r"\bunreleased\b", re.IGNORECASE)
+#: Heading GitHub puts over its generated release notes: a mixed list, never one kind of change.
+_WHATS_CHANGED = re.compile(r"what['\u2019]?s changed", re.IGNORECASE)
+#: Most release lists the client reads: 100 per page, up to 50 pages.
+_GH_RELEASE_PAGES: Final = 50
 _ATX = re.compile(r"^ {0,3}(?P<hashes>#{1,6})\s+(?P<text>.*)")
 _SETEXT = re.compile(r"^ {0,3}(?:={3,}|-{3,})\s*$")
 _FENCE = re.compile(r"^ {0,3}(?:```|~~~)")
@@ -152,6 +173,34 @@ _SUBSECTION_RULES: Final = (
     ("changed", re.compile(r"\b(?:deprecat\w*|remov\w*|breaking)\b")),
     ("added", re.compile(r"\b(?:add(?:ed|s|itions?)?|new|features?)\b")),
     ("changed", re.compile(r"\b(?:chang\w*|improv\w*|enhancement\w*|performance)\b")),
+)
+#: Leading words that classify a bullet written outside any subsection, tried in this order; no match drops the bullet.
+_FLAT_RULES: Final = (
+    (
+        "fixed",
+        re.compile(
+            r"^(?:fix(?:e[sd])?|bug ?fix(?:es)?|resolv(?:e|es|ed)|correct(?:s|ed)?|repair(?:s|ed)?|patch(?:es|ed)?)\b"
+            r"|\bno longer\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "added",
+        re.compile(
+            r"^(?:add(?:s|ed)?|introduc(?:e|es|ed)|new|support(?:s|ed)?|implement(?:s|ed)?|provide[sd]?"
+            r"|enabl(?:e|es|ed)|allow(?:s|ed)?)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "changed",
+        re.compile(
+            r"^(?:chang(?:e|es|ed)|update[sd]?|improv(?:e|es|ed)|remov(?:e|es|ed)|deprecat(?:e|es|ed)"
+            r"|renam(?:e|es|ed)|replac(?:e|es|ed)|switch(?:es|ed)?|mov(?:e|es|ed)|refactor(?:s|ed)?|rework(?:s|ed)?"
+            r"|drop(?:s|ped)?)\b|^(?:\S+\s+){0,11}now\b|\binstead of\b",
+            re.IGNORECASE,
+        ),
+    ),
 )
 #: Towncrier fragment ``<ref>.<type>[.<counter>][.<ext>]``; an extension alone (``notes.txt``) is not a type.
 _FRAGMENT_NAME = re.compile(
@@ -377,10 +426,18 @@ def _heading_version(clean: str) -> str | None:
 def _subsection_bucket(text: str) -> str | None:
     """Map a subsection title (Added, Bug Fixes, Deprecations and Removals, ...) to its bucket, or None."""
     words = " ".join(re.findall(r"[a-z]+", text.lower()))
-    if not words or len(words.split()) > 4:
+    if not words or len(words.split()) > 4 or "contributor" in words:
         return None
     for bucket, pattern in _SUBSECTION_RULES:
         if pattern.search(words):
+            return bucket
+    return None
+
+
+def _flat_bucket(text: str) -> str | None:
+    """Return the bucket a bullet outside any subsection belongs to, judged by its leading words, or None."""
+    for bucket, pattern in _FLAT_RULES:
+        if pattern.search(text):
             return bucket
     return None
 
@@ -390,22 +447,33 @@ class _SectionParser:
     """Line-event state machine collecting bullets per version and bucket.
 
     Version headings are recognised at or above the level of the first version heading; deeper headings are subsections.
-    Bullets outside a recognised subsection are dropped. Indented lines, nested bullets and lazy continuation lines join
-    the open bullet.
+    Bullets under an unrecognised subsection (Documentation, Internal, ...) are dropped. Bullets directly under a
+    version heading, with no subsection at all, are classified by their leading words (:func:`_flat_bucket`) and counted
+    in ``flat_kept`` or ``flat_left``. Indented lines, nested bullets and lazy continuation lines join the open bullet.
     """
 
     out: dict[str, Buckets] = field(default_factory=dict)
     version: str | None = None
     version_level: int | None = None
     bucket: str | None = None
+    subsection: bool = False
     parts: list[str] | None = None
     top_indent: int | None = None
     after_blank: bool = False
+    flat_kept: int = 0
+    flat_left: int = 0
 
     def flush(self) -> None:
         """Close the open bullet and store it under the current version and bucket."""
-        if self.parts and self.version is not None and self.bucket is not None:
-            self.out[self.version][self.bucket].append(" ".join(" ".join(self.parts).split()))
+        if self.parts and self.version is not None:
+            text = " ".join(" ".join(self.parts).split())
+            bucket = self.bucket
+            if bucket is None and not self.subsection:
+                bucket = _flat_bucket(text)
+                self.flat_kept += bucket is not None
+                self.flat_left += bucket is None
+            if bucket is not None:
+                self.out[self.version][bucket].append(text)
         self.parts = None
 
     def heading(self, level: int, text: str) -> None:
@@ -416,13 +484,15 @@ class _SectionParser:
         at_version_depth = self.version_level is None or level <= self.version_level
         version = _heading_version(clean) if at_version_depth else None
         if version is not None:
-            self.version, self.bucket = version, None
+            self.version, self.bucket, self.subsection = version, None, False
             self.version_level = level if self.version_level is None else self.version_level
             self.out.setdefault(version, {bucket: [] for bucket in _BUCKETS})
         elif self.version_level is not None and level <= self.version_level:
             self.version, self.bucket = None, None
+        elif _WHATS_CHANGED.fullmatch(clean):
+            self.bucket, self.subsection = None, False
         else:
-            self.bucket = _subsection_bucket(clean)
+            self.bucket, self.subsection = _subsection_bucket(clean), True
 
     def line(self, text: str) -> None:
         """Handle one non-heading line."""
@@ -436,6 +506,7 @@ class _SectionParser:
         if pseudo is not None:
             self.flush()
             self.bucket, self.top_indent = _subsection_bucket(pseudo.group("a") or pseudo.group("b")), None
+            self.subsection = True
         else:
             self._body_line(text, indent)
         self.after_blank = False
@@ -494,14 +565,19 @@ def parse_changelog(text: str, fmt: str, *, warnings: list[str] | None = None) -
     if truncated and warnings is not None:
         warnings.append(f"changelog: truncated {truncated} line(s) to {MAX_ENTRY_LINE_CHARS} characters")
     lines = [line[:MAX_ENTRY_LINE_CHARS] for line in lines]
-    if fmt == "md":
-        return _SectionParser().feed(_md_events(lines))
-    if fmt == "rst":
-        return _SectionParser().feed(_rst_events(lines))
-    if fmt == "txt":
-        markdown = _SectionParser().feed(_md_events(lines))
-        return markdown or _SectionParser().feed(_rst_events(lines))
-    raise ValueError(f"unsupported changelog format {fmt!r}; expected md, rst or txt")
+    if fmt not in ("md", "rst", "txt"):
+        raise ValueError(f"unsupported changelog format {fmt!r}; expected md, rst or txt")
+    parser = _SectionParser()
+    parsed = parser.feed(_md_events(lines) if fmt in ("md", "txt") else _rst_events(lines))
+    if fmt == "txt" and not parsed:
+        parser = _SectionParser()
+        parsed = parser.feed(_rst_events(lines))
+    if parser.flat_kept + parser.flat_left and warnings is not None:
+        warnings.append(
+            f"changelog: {parser.flat_kept + parser.flat_left} bullet(s) outside Added/Changed/Fixed sections; "
+            f"{parser.flat_kept} classified by leading words, {parser.flat_left} left out"
+        )
+    return parsed
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -624,12 +700,19 @@ class _GhCli:
         """Run one lookup, converting every ``gh`` failure into :class:`GitHubUnavailable`."""
         import gh_batch_query as ghq
 
-        try:
-            if self._slug is None:
-                self._slug = ghq.resolve_repo(None, self.root)
-            return build(ghq, *self._slug)
-        except (ghq.QueryError, ValueError, OSError, KeyError, TypeError) as exc:
-            raise GitHubUnavailable(str(exc)) from exc
+        for attempt in range(1, _GH_ATTEMPTS + 1):
+            try:
+                if self._slug is None:
+                    self._slug = ghq.resolve_repo(None, self.root)
+                return build(ghq, *self._slug)
+            except ghq.QueryError as exc:
+                # A timeout or dropped connection often clears on its own; an error the API returned never does.
+                if attempt == _GH_ATTEMPTS or not str(exc).startswith(_GH_NETWORK_FAILURE):
+                    raise GitHubUnavailable(str(exc)) from exc
+                time.sleep(_GH_BACKOFF_SECONDS * attempt)
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                raise GitHubUnavailable(str(exc)) from exc
+        raise GitHubUnavailable("no attempt was made")
 
     def items(self, numbers: list[int]) -> dict[int, GhItem]:
         """Resolve numbers to issues or pull requests in batched GraphQL requests."""
@@ -641,6 +724,31 @@ class _GhCli:
                 data = ghq.run_graphql(_items_query(batch), owner, name, self.root)
                 found.update({n: item for n in batch if (item := _parse_item(data.get(f"n{n}"))) is not None})
             return found
+
+        return self._call(build)
+
+    def release_bodies(self) -> dict[str, str]:
+        """Return the notes of every GitHub Release by tag name, newest first, paging until the list ends."""
+
+        def build(ghq: Any, owner: str, name: str) -> dict[str, str]:
+            """Page through the repository's releases and collect tag name to description."""
+            found: dict[str, str] = {}
+            cursor = "null"
+            for _ in range(_GH_RELEASE_PAGES):
+                query = (
+                    "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { "
+                    f"releases(first: 100, after: {cursor}, orderBy: {{field: CREATED_AT, direction: DESC}}) "
+                    "{ nodes { tagName description } pageInfo { hasNextPage endCursor } } } }"
+                )
+                data = ghq.run_graphql(query, owner, name, self.root).get("releases") or {}
+                for node in _nodes(data):
+                    if isinstance(node.get("tagName"), str) and isinstance(node.get("description"), str):
+                        found[node["tagName"]] = node["description"]
+                page = data.get("pageInfo") or {}
+                if not page.get("hasNextPage"):
+                    return found
+                cursor = json.dumps(str(page.get("endCursor")))
+            raise GitHubUnavailable(f"more than {_GH_RELEASE_PAGES * 100} GitHub Releases")
 
         return self._call(build)
 
@@ -691,6 +799,17 @@ class _GhSession:
             self._items.update({number: found.get(number) for number in missing})
         return {number: item for number in wanted if (item := self._items.get(number)) is not None}
 
+    def release_bodies(self) -> dict[str, str]:
+        """Return GitHub Release notes by tag; empty when GitHub is unavailable or the client cannot list releases."""
+        lookup = getattr(self.client, "release_bodies", None)
+        if lookup is None:
+            return {}
+        try:
+            return dict(lookup())
+        except GitHubUnavailable as exc:
+            self._fail(exc)
+            return {}
+
     def commit_prs(self, shas: list[str]) -> dict[str, list[int]]:
         """Return pull request numbers per commit; empty when GitHub is unavailable."""
         if not shas or self.client is None:
@@ -716,12 +835,15 @@ class _Commit:
         parents: Parent SHAs, first parent first.
         title: Subject, or the pull request title (first body line) of a GitHub merge commit.
         pr: Pull request number read locally from a ``(#N)`` subject suffix or ``Merge pull request #N``.
+        reapplies: Pull request number of the original change when the subject is ``Reapply "<subject> (#N)"``: the
+            commit re-adds that pull request's lines after a revert.
     """
 
     sha: str
     parents: tuple[str, ...]
     title: str
     pr: int | None
+    reapplies: int | None = None
 
 
 @dataclass(eq=False)
@@ -733,6 +855,7 @@ class _Release:
     line: str
     commits: list[_Commit]
     first_parent: list[str]
+    tag: str = ""
 
 
 def _make_commit(sha: str, parents: list[str], subject: str, body: str) -> _Commit:
@@ -742,7 +865,15 @@ def _make_commit(sha: str, parents: list[str], subject: str, body: str) -> _Comm
         title = next((line.strip() for line in body.splitlines() if line.strip()), subject)
         return _Commit(sha, tuple(parents), title, int(merge.group("n")))
     squash = _SQUASH_PR.search(subject)
-    return _Commit(sha, tuple(parents), subject, int(squash.group("n")) if squash else None)
+    reapply = _REAPPLY.match(subject)
+    original = _SQUASH_PR.search(reapply.group("inner")) if reapply else None
+    return _Commit(
+        sha,
+        tuple(parents),
+        subject,
+        int(squash.group("n")) if squash else None,
+        int(original.group("n")) if original else None,
+    )
 
 
 def _parse_log(text: str) -> list[_Commit]:
@@ -820,7 +951,8 @@ def _build_releases(root: Path, index: dict[str, Any]) -> dict[str, _Release]:
     for record in records:
         version, line, tip = record["version"], str(record["line"]), _checked_sha(record["sha"])
         commits = [data[sha] for sha in shipped.get((line, version), []) if sha in data]
-        releases.append(_Release(version, int(record["order"]), line, commits, _first_parent_chain(tip, commits)))
+        chain = _first_parent_chain(tip, commits)
+        releases.append(_Release(version, int(record["order"]), line, commits, chain, str(record.get("tag") or "")))
     out = {release.version: release for release in releases}
     out[UNRELEASED] = _unreleased_release(
         head.get("sha"), [data[sha] for sha in pending if sha in data], data, releases
@@ -875,6 +1007,19 @@ class _GitObjects:
         fields = [part for part in out.split("\x00") if part]
         pairs = zip(fields[0::2], fields[1::2])
         return sorted({path for status, path in pairs if status[:1] in ("A", "M", "T")})
+
+    def merged_commits(self, sha: str) -> list[str]:
+        """Return the commits a merge commit brought in from its side branch; empty for any other commit.
+
+        A pull request merged with a merge commit keeps its own branch commits, and blame points at those, never at the
+        merge. A side branch longer than :data:`_MERGED_LIMIT` is a branch merge, not one pull request, and is ignored.
+        """
+        parents = self.parents.get(sha)
+        if parents is None or len(parents) < 2:
+            return []
+        out = run_git(self.root, "rev-list", f"--max-count={_MERGED_LIMIT + 2}", f"{parents[0]}..{sha}").split()
+        side = [line for line in out if line != sha and _SHA_FULL.match(line)]
+        return side if len(side) <= _MERGED_LIMIT else []
 
     def existing_commits(self, tokens: Iterable[str]) -> dict[str, str]:
         """Resolve SHA-like tokens to full commit SHAs in one ``cat-file`` call; non-commits are absent."""
@@ -984,10 +1129,12 @@ def _conventional_kind(title: str) -> str | None:
 
 
 def _label_kind(labels: Iterable[str]) -> str | None:
-    """Return ``fix``/``feature`` from PR labels (fix labels win), else None."""
+    """Return ``fix``/``feature`` from PR labels (fix labels win, then refactor labels), else None."""
     lowered = {label.lower() for label in labels}
     if lowered & _FIX_LABELS:
         return "fix"
+    if lowered & _REFACTOR_LABELS:
+        return None
     return "feature" if lowered & _FEATURE_LABELS else None
 
 
@@ -999,7 +1146,8 @@ def _heuristic_drafts(
     drafts: list[_Draft] = []
     for position, sha in enumerate(reversed(release.first_parent)):
         commit = by_sha[sha]
-        kind = _conventional_kind(commit.title) or label_kinds.get(sha)
+        labelled = None if _REFACTOR_TITLE.search(commit.title) else label_kinds.get(sha)
+        kind = _conventional_kind(commit.title) or labelled
         patch = objects.patch_id(sha) if kind else None
         if kind is None or patch is None:
             continue
@@ -1084,11 +1232,29 @@ class _Linker:
         self.gh = gh
         self.local: dict[int, list[str]] = {}
         self.releases_of: dict[str, set[str]] = {}
+        self._via_gh: dict[str, dict[int, list[str]]] = {}
         for release in releases.values():
             for commit in release.commits:
                 self.releases_of.setdefault(commit.sha, set()).add(release.version)
-                if commit.pr is not None and commit.sha not in self.local.get(commit.pr, []):
-                    self.local.setdefault(commit.pr, []).append(commit.sha)
+                for number in (commit.pr, commit.reapplies):
+                    if number is not None and commit.sha not in self.local.get(number, []):
+                        self.local.setdefault(number, []).append(commit.sha)
+
+    def _gh_pr_commits(self, version: str, number: int) -> list[str]:
+        """Return the commits of release ``version`` that GitHub associates with pull request ``number``.
+
+        A rebase-merged pull request lands one commit per original commit, none of them naming the number, and GitHub
+        reports only the last as the merge commit. Asking GitHub per commit of the release, once, finds the rest.
+        Commits that already name their pull request are not asked about.
+        """
+        if version not in self._via_gh:
+            unnamed = [commit.sha for commit in self.releases[version].commits if commit.pr is None]
+            mapping: dict[int, list[str]] = {}
+            for sha, found in self.gh.commit_prs(unnamed).items():
+                for found_number in found:
+                    mapping.setdefault(found_number, []).append(sha)
+            self._via_gh[version] = mapping
+        return self._via_gh[version].get(number, [])
 
     def _prefer_own(self, draft: _Draft, commits: list[str]) -> list[str]:
         """Keep commits inside the draft's own release range; else those shipped in an earlier release; else none.
@@ -1156,6 +1322,7 @@ class _Linker:
             elif item is not None and item.kind == "pr":
                 merge = [item.merge_commit] if item.merge_commit in existing else []
                 commits += merge or [sha for sha in item.commits if sha in existing]
+                commits += self._gh_pr_commits(draft.release, number)
         return self._prefer_own(draft, commits)
 
     def _issue_commits(self, draft: _Draft, items: dict[int, GhItem], existing: set[str]) -> list[str]:
@@ -1222,6 +1389,31 @@ def _fold_aliases(drafts: list[_Draft], order_of: dict[str, int]) -> tuple[list[
     return [draft for draft in drafts if draft.entry_id not in aliases], aliases
 
 
+def _fold_covered_heuristics(drafts: list[_Draft], order_of: dict[str, int], aliases: dict[str, str]) -> list[_Draft]:
+    """Fold a heuristic column into the one changelog column of its kind whose commits include the heuristic commit.
+
+    A release without a changelog section yields a ``commit/<patch-id>`` column from the commit that a later release's
+    changelog entry also names (usually with the pull request's follow-up commits, so patch-id sets differ and the
+    backport fold misses it). One feature then appears as two columns and one of them is always a false link. The
+    earlier release stays canonical, like the backport fold. A commit named by several changelog entries is ambiguous
+    and folds nothing. Fixes keep their IDs because labels and rows reference them. ``aliases`` is updated in place.
+    """
+    changelog = [d for d in drafts if d.source == SOURCE_CHANGELOG and d.kind != "fix"]
+    folded: set[str] = set()
+    for heuristic in (d for d in drafts if d.source == SOURCE_HEURISTIC and d.kind != "fix"):
+        owners = [d for d in changelog if d.kind == heuristic.kind and set(heuristic.commits) <= set(d.commits)]
+        if len(owners) != 1 or owners[0].release == heuristic.release:
+            continue
+        owner = owners[0]
+        target, other = sorted((owner, heuristic), key=lambda d: order_of[d.release])
+        _absorb(target, other, take_commits=True)
+        target.aliases += [other.entry_id, *other.aliases]
+        for alias in (other.entry_id, *other.aliases):
+            aliases[alias] = target.entry_id
+        folded.add(other.entry_id)
+    return [d for d in drafts if d.entry_id not in folded]
+
+
 def _attach_footprints(repo: Path, columns: list[_Draft], objects: _GitObjects) -> None:
     """Fill files and symbols of every column from its commits (features: added symbols; changes: added or changed)."""
     for column in columns:
@@ -1230,6 +1422,16 @@ def _attach_footprints(repo: Path, columns: list[_Draft], objects: _GitObjects) 
         column.symbols = sorted(
             {name for sha in column.commits for name in python_symbols_changed(repo, sha, added_only=added_only)}
         )
+
+
+def _expand_merged_commits(columns: list[_Draft], objects: _GitObjects) -> None:
+    """Add the branch commits of every merge commit in a column, so blame that lands on them reaches the feature.
+
+    Runs after the footprint is read: files and symbols stay those of the merge diff, only the commit set grows.
+    """
+    for column in columns:
+        merged = [sha for commit in column.commits for sha in objects.merged_commits(commit)]
+        column.commits = list(dict.fromkeys([*column.commits, *merged]))
 
 
 def _version_lookup(releases: dict[str, _Release]) -> dict[Any, str]:
@@ -1364,6 +1566,38 @@ def _load_sections(
     return sections
 
 
+def _add_release_bodies(
+    sections: dict[str, Buckets], releases: dict[str, _Release], gh: _GhSession, warnings: list[str]
+) -> None:
+    """Fill releases that have no changelog entries from their GitHub Release notes, the last changelog source.
+
+    The notes are parsed like a one-release changelog: headings are demoted a level so a leading ``#`` title cannot end
+    the section, GitHub's ``What's Changed`` list is read bullet by bullet, and a release whose notes yield no entry
+    stays uncovered (heuristic commit classification).
+    """
+    missing = [
+        release
+        for release in releases.values()
+        if release.version != UNRELEASED and release.tag and not any((sections.get(release.version) or {}).values())
+    ]
+    if not missing or not gh.active:
+        return
+    bodies = gh.release_bodies()
+    used: list[str] = []
+    for release in sorted(missing, key=lambda item: item.order):
+        body = bodies.get(release.tag)
+        if not body:
+            continue
+        demoted = re.sub(r"(?m)^(#{1,5})(?=\s)", r"#\1", body.replace("\r\n", "\n"))
+        buckets = parse_changelog(f"# {release.version}\n\n{demoted}\n", "md").get(release.version)
+        if buckets and any(buckets.values()):
+            sections[release.version] = buckets
+            used.append(release.version)
+    if used:
+        shown = ", ".join(used[:_WARN_LIST_MAX]) + (", ..." if len(used) > _WARN_LIST_MAX else "")
+        warnings.append(f"{len(used)} release(s) without a changelog section read from GitHub Release notes: {shown}")
+
+
 def _draft_all(
     releases: dict[str, _Release],
     sections: dict[str, Buckets],
@@ -1380,8 +1614,8 @@ def _draft_all(
     if empty:
         shown = ", ".join(empty[:_WARN_LIST_MAX]) + (", ..." if len(empty) > _WARN_LIST_MAX else "")
         warnings.append(
-            f"{len(empty)} changelog sections have no Added/Changed/Fixed subsection entries (unsectioned bullets "
-            f"are not classified); heuristic commit classification used for: {shown}"
+            f"{len(empty)} changelog sections have no Added/Changed/Fixed entries (no bullet sits in such a subsection "
+            f"or names its kind in its first words); heuristic commit classification used for: {shown}"
         )
     label_kinds = _label_kinds(uncovered, gh)
     drafts: list[_Draft] = []
@@ -1430,15 +1664,19 @@ def build_entries(
     gh = _github_session(root, gh_available, github, warnings)
     objects = _GitObjects(root, releases)
     slug = _origin_slug(root)
-    drafts = _draft_all(releases, _load_sections(root, found, releases, warnings), gh, objects, (slug, warnings))
+    sections = _load_sections(root, found, releases, warnings)
+    _add_release_bodies(sections, releases, gh, warnings)
+    drafts = _draft_all(releases, sections, gh, objects, (slug, warnings))
     _Linker(releases, objects, gh).link_all(drafts)
     for draft in drafts:
         draft.patch_ids = draft.patch_ids or objects.patch_ids(draft.commits)
     drafts, aliases = _fold_aliases(_merge_same_ids(drafts, order_of), order_of)
+    drafts = _fold_covered_heuristics(drafts, order_of, aliases)
     drafts.sort(key=lambda d: (order_of[d.release], d.position, d.entry_id))
     fixes = [draft for draft in drafts if draft.kind == "fix"]
     columns = [draft for draft in drafts if draft.kind != "fix"]
     _attach_footprints(root, columns, objects)
+    _expand_merged_commits(columns, objects)
     _attach_text_refs(fixes, columns, order_of, _version_lookup(releases))
     return {
         "fixes": [_record(draft, order_of) for draft in fixes],

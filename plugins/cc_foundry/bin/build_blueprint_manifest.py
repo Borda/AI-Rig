@@ -202,11 +202,15 @@ Options:
 Output:
     ``<scan-dir>/<plugin>/blueprint-manifest.json`` per plugin::
 
-        {"schema": 1, "plugin": "cc_foundry@0.46.2",
+        {"schema": 2, "plugin": "cc_foundry@0.46.2",
          "entries": {"<sha256>": {"kind": "block", "src": "skills/audit/SKILL.md:120"}}}
 
     ``src`` is provenance, not an exact locator: command entries point at the opening
-    fence line of the block they came from.
+    fence line of the block they came from. Schema two adds ``template`` to records
+    containing the literal bootstrap token; its normalized source text hashes to
+    the entry's existing key. The hook verifies that binding and indexes only the
+    command rendered with its independently trusted owning-plugin root. Schema one
+    remains a historical digest-only reader in the hook.
 
 Exit codes:
     0   success (``--update`` wrote or confirmed; ``--check`` found no drift)
@@ -304,12 +308,50 @@ SCAN_ROOT_FILES: tuple[str, ...] = ("CLAUDE.md",)
 #: File name of the generated manifest, written inside each plugin directory.
 MANIFEST_NAME = "blueprint-manifest.json"
 #: Schema revision stored in the manifest's ``schema`` field.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Guard against pathological inputs that would exhaust heap memory when read in one
 # shot. 10 MB is well above any realistic Markdown file.
 #: Files larger than this many bytes (10 MiB) are skipped when scanning.
 _MAX_FILE_SIZE = 10 * 1024 * 1024
+
+# The shipped fenced-block corpus reaches 17 with this conservative delimiter scan.
+# Keep recursive shell readers far below the Windows native-stack ceiling. Revisit
+# only when a real block needs more than 32 nested delimiters.
+_MAX_SHELL_NESTING = 32
+
+
+def _check_shell_nesting(text: str) -> None:
+    """Reject excessive delimiter nesting iteratively before invoking shell readers.
+
+    Bound both raw delimiters (including quoted data) and live shell nesting. The latter prevents quoted or escaped
+    closers from concealing nested substitutions. This is a conservative resource bound, not a shell grammar validator.
+    """
+    stack: list[str] = []
+    live: list[tuple[str, str | None]] = []
+    quote: str | None = None
+    escaped = False
+    closing = {"(": ")", "{": "}", "[": "]"}
+    for index, char in enumerate(text):
+        if char in closing:
+            stack.append(closing[char])
+        elif stack and char == stack[-1]:
+            stack.pop()
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+        elif quote is not None and char == quote:
+            quote = None
+        elif quote is None and char in "'\"":
+            quote = char
+        elif char in closing and (quote is None or (quote == '"' and index > 0 and text[index - 1] == "$")):
+            live.append((closing[char], quote))
+            quote = None
+        elif quote is None and live and char == live[-1][0]:
+            _, quote = live.pop()
+        if max(len(stack), len(live)) > _MAX_SHELL_NESTING:
+            raise RecursionError("shell nesting exceeds the parser limit")
 
 
 @dataclass(frozen=True)
@@ -728,6 +770,10 @@ _VARIABLE_PREFIX = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Z
 #: Any ``$NAME`` or ``${NAME…}`` reference in a path word, capturing the name.
 _VARIABLE_NAME = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)")
 _PLUGIN_ROOT_DEFAULT = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT:-plugins/[A-Za-z0-9_-]+\}")
+_PLUGIN_BOOTSTRAP = re.compile(
+    r'PLUGIN_ROOT=\$\(python "\$\{CLAUDE_PLUGIN_ROOT\}/bin/resolve_plugin_root\.py"'
+    r" --plugin-name ([A-Za-z0-9_-]+)\) \|\| exit \$\?; export PLUGIN_ROOT"
+)
 #: Variables a session state path may name without the entry having set them: the temp root and the session token.
 _STATE_PATH_VARIABLES = frozenset({"$TMPDIR", "$CSID"})
 #: Operands ``cp`` may never take: the filesystem root or the home directory itself.
@@ -870,6 +916,7 @@ def _python_use(args: list[str], known: frozenset[str]) -> str | None:
 #: A script whose file name says it commits, deletes, reverts or unlinks something.
 _MUTATING_HELPER = re.compile(
     r"^(?:commit|purge|remove|revert|delete|reset|prune|unlink|wipe|drop|uninstall)_|symlink|clean"
+    r"|^(?:resolve_commit_hooks|retro_scan|run_config_command)\.py$"
 )
 #: Mutating plugin helpers the manifest admits, each with the guard that bounds what it changes. The danger check sees
 #: only the command line, never what a script does, so a helper whose name matches :data:`_MUTATING_HELPER` stays out
@@ -893,7 +940,24 @@ _MUTATING_HELPERS = {
     ),
     "purge_plugin_cache.py": "deletes only orphaned plugin cache versions; --apply is opt-in, --protect keeps live ones",
     "remove_hook_from_registry.py": "drops one named hook from a hooks registry JSON file",
+    "resolve_commit_hooks.py": (
+        "oss:resolve: inspection only reads hook/configuration files; --commit-merge requires MERGE_HEAD and"
+        " commits the existing merge index, never pushes; hooks are disabled unless RESOLVE_APPROVED_HOOKS"
+        " matches the displayed fingerprint; approved formatter recovery restages only selected paths and"
+        " retries once, refusing recovery after unrelated worktree or index changes"
+    ),
+    "retro_scan.py": (
+        "research:retro: reads the sanitized JSONL history and creates the supplied --out-dir; writes only"
+        " dead-iters.json and suspicious-jumps.json beneath that directory, supplied as the caller's RUN_DIR;"
+        " does not alter the input ledger or experiment state"
+    ),
     "revert_iteration_commit.py": "reverts HEAD only when its subject is this iteration's experiment commit",
+    "run_config_command.py": (
+        "research:fortify: executes config.metric_cmd or config.guard_cmd from bounded run state, or an explicit"
+        " variant override, through Bash in the inherited working directory; uses the metric timeout (including"
+        " VERIFY_TIMEOUT_SEC) or fixed 360-second guard deadline; POSIX timeout cleanup kills the process group,"
+        " while Windows kills only the direct child; command effects require the caller's execution approval"
+    ),
     "symlink_with_guard.py": "removes only foundry-managed symlinks whose targets no longer exist",
 }
 
@@ -1784,30 +1848,50 @@ def _trusted_variables(text: str) -> frozenset[str]:
     return frozenset(trusted)
 
 
+def _bootstrap_plugin(text: str) -> str | None:
+    """Identify the exact guarded root assignment when no later text overwrites its output."""
+    first, _, remaining = text.partition("\n")
+    match = _PLUGIN_BOOTSTRAP.fullmatch(first)
+    references_removed = re.sub(r"\$(?:PLUGIN_ROOT\b|\{PLUGIN_ROOT\})", "", remaining)
+    # A colon label is not a variable name; retain braced parameter operators such as ${PLUGIN_ROOT:=...}.
+    references_removed = re.sub(r"(?<![\w${])PLUGIN_ROOT:", "", references_removed)
+    if match is None or re.search(r"\bPLUGIN_ROOT\b", references_removed):
+        return None
+    return match.group(1)
+
+
+def _owned_script_path(value: str, trusted: set[str]) -> bool:
+    """Validate that every dynamic component of a script path comes from an owned plugin root."""
+    path = _PLUGIN_ROOT_DEFAULT.sub("$CLAUDE_PLUGIN_ROOT", value.strip('"'))
+    prefix = _VARIABLE_PREFIX.match(path)
+    root = next((part for part in prefix.groups() if part), "") if prefix else ""
+    return (
+        root in trusted
+        and set(_VARIABLE_NAME.findall(path)) <= trusted
+        and ".." not in path
+        and not any(char in path for char in "`('")
+        and _helper_use(path, frozenset(f"@python:{item}" for item in trusted)) is None
+    )
+
+
 def _python_script_variables(text: str) -> frozenset[str]:
     """Identify script operands assigned exclusively from plugin-owned paths."""
     assignments = _ASSIGNMENT_WORD.findall(text)
     forbidden = set(_FOR_VARIABLE.findall(text))
+    if not _bootstrap_plugin(text):
+        forbidden.add("PLUGIN_ROOT")
     for match in _READ_TARGETS.finditer(text):
         forbidden.update(match.group(1).split())
     anchors = {"CLAUDE_PLUGIN_ROOT"} - forbidden - {name for name, _ in assignments}
+    if "CLAUDE_PLUGIN_ROOT" in anchors and _bootstrap_plugin(text):
+        anchors.add("PLUGIN_ROOT")
+        assignments = [(name, value) for name, value in assignments if name != "PLUGIN_ROOT"]
     trusted = anchors
     for _ in range(len(assignments) + 1):
         good: set[str] = set()
         bad = set(forbidden)
         for name, value in assignments:
-            path = _PLUGIN_ROOT_DEFAULT.sub("$CLAUDE_PLUGIN_ROOT", value.strip('"'))
-            prefix = _VARIABLE_PREFIX.match(path)
-            root = next((part for part in prefix.groups() if part), "") if prefix else ""
-            named = set(_VARIABLE_NAME.findall(path))
-            valid = (
-                root in trusted
-                and named <= trusted
-                and ".." not in path
-                and not any(char in path for char in "`('")
-                and _helper_use(path, frozenset(f"@python:{item}" for item in trusted)) is None
-            )
-            (good if valid else bad).add(name)
+            (good if _owned_script_path(value, trusted) else bad).add(name)
         updated = anchors | (good - bad)
         if updated == trusted:
             break
@@ -1861,6 +1945,7 @@ def is_excluded(command: str) -> bool:
         >>> is_excluded("mv a b")
         True
     """
+    _check_shell_nesting(command)
     return is_dangerous(command) or unlisted_command(command) is not None
 
 
@@ -1959,15 +2044,21 @@ def _read_markdown(filepath: str) -> str | None:
 
 def _record(entries: dict[str, dict[str, str]], text: str, src: str, kind: str) -> None:
     """Record one digest, keeping the first source that produced it."""
-    entries.setdefault(sha256_text(text), {"kind": kind, "src": src})
+    record = {"kind": kind, "src": src}
+    if "${CLAUDE_PLUGIN_ROOT}" in text:
+        record["template"] = text
+    entries.setdefault(sha256_text(text), record)
 
 
-def block_entries(normalized: str, src: str) -> tuple[dict[str, dict[str, str]], int]:
+def block_entries(
+    normalized: str, src: str, *, plugin_name: str | None = None
+) -> tuple[dict[str, dict[str, str]], int]:
     """Build the manifest entries contributed by one normalized bash block.
 
     Args:
         normalized: Block text already passed through :func:`normalize`.
         src: Provenance pointer shared by every entry from this block.
+        plugin_name: Owning plugin identity, when generating an installed plugin's manifest.
 
     A block holding a data heredoc gets no entry (:func:`has_data_heredoc`). A line becomes an entry of its own only
     when it is a complete command (:func:`is_complete_command`); an incomplete line is withheld without counting as
@@ -1999,8 +2090,12 @@ def block_entries(normalized: str, src: str) -> tuple[dict[str, dict[str, str]],
         >>> [record["kind"] for record in entries.values()], dropped
         (['block', 'command'], 0)
     """
+    _check_shell_nesting(normalized)
     entries: dict[str, dict[str, str]] = {}
     dropped = 0
+    bootstrap = _bootstrap_plugin(normalized)
+    if plugin_name is not None and bootstrap is not None and bootstrap != plugin_name:
+        return entries, 1
     if has_data_heredoc(normalized):
         return entries, 1
     if is_excluded(normalized):
@@ -2032,10 +2127,16 @@ def build_plugin(plugin_dir: Path) -> tuple[dict[str, object], int]:
     Examples:
         >>> manifest, dropped = build_plugin(Path("/nonexistent-plugin"))
         >>> manifest["schema"], manifest["entries"], dropped
-        (1, {}, 0)
+        (2, {}, 0)
     """
     entries: dict[str, dict[str, str]] = {}
     dropped = 0
+    try:
+        metadata = json.loads((plugin_dir / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        name = metadata.get("name") if isinstance(metadata, dict) else None
+        plugin_name = name if isinstance(name, str) else ""
+    except (OSError, ValueError):
+        plugin_name = ""
     for filepath in collect_md_files(plugin_dir):
         text = _read_markdown(filepath)
         if text is None:
@@ -2052,7 +2153,9 @@ def build_plugin(plugin_dir: Path) -> tuple[dict[str, object], int]:
             if aliases_escaped_blank(raw_content):
                 dropped += 1
                 continue
-            found, block_dropped = block_entries(normalized, posix_src(relative, block.line_start))
+            found, block_dropped = block_entries(
+                normalized, posix_src(relative, block.line_start), plugin_name=plugin_name
+            )
             dropped += block_dropped
             for digest, record in found.items():
                 entries.setdefault(digest, record)

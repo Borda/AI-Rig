@@ -103,7 +103,7 @@ def _run(block: str, tmp_path: Path, env: dict[str, str], prelude: str = "") -> 
         [_BASH, "-c", prelude + "\n" + block],
         cwd=tmp_path,
         env=env,
-        text=True,
+        encoding="utf-8",
         capture_output=True,
         check=False,
         timeout=30,
@@ -188,15 +188,17 @@ def test_scraper_invalid_input_returns_error_before_auth(
 @_SHELL_AVAILABLE
 def test_scraper_auth_failure_returns_error_without_truncation(tmp_path: Path, shell_env: dict[str, str]) -> None:
     """Auth failure returns a valid envelope even when the output path contains JSON-sensitive characters."""
-    data_file = tmp_path / 'raw "data".jsonl'
+    # Native Windows separators need JSON escaping; POSIX permits a literal backslash in the filename.
+    data_file = tmp_path / ("raw data.jsonl" if sys.platform == "win32" else r"raw \data.jsonl")
     data_file.write_text("keep snapshot\n", encoding="utf-8")
     _sentinels(tmp_path, data_file)
+    (tmp_path / f"vitality-data-file-{_SESSION}").write_text(str(data_file) + "\n", encoding="utf-8", newline="\n")
     shell_env["AUTH_RC"] = "1"
     result = _run(_bash_block("gh-scraper", "## Step 1 — Setup"), tmp_path, shell_env, _GH_STUB)
     assert result.returncode != 0
     envelope = json.loads(result.stdout.splitlines()[-1])
     assert envelope["status"] == "error"
-    assert envelope["file"] == data_file.as_posix()
+    assert envelope["file"] == str(data_file)
     assert envelope["error"]
     assert data_file.read_text(encoding="utf-8") == "keep snapshot\n"
     assert (tmp_path / "gh-calls").read_text(encoding="utf-8").splitlines() == ["auth status --hostname github.com"]
@@ -285,15 +287,17 @@ def test_scraper_advisory_failure_does_not_abort_setup(
 @_SHELL_AVAILABLE
 def test_scraper_auth_error_envelope_needs_no_external_jq(tmp_path: Path, shell_env: dict[str, str]) -> None:
     """Setup failure still returns JSON and preserves the snapshot when jq is unavailable."""
-    data_file = tmp_path / 'raw "data".jsonl'
+    # Native Windows separators need JSON escaping; POSIX permits a literal backslash in the filename.
+    data_file = tmp_path / ("raw data.jsonl" if sys.platform == "win32" else r"raw \data.jsonl")
     data_file.write_text("keep snapshot\n", encoding="utf-8")
     _sentinels(tmp_path, data_file)
+    (tmp_path / f"vitality-data-file-{_SESSION}").write_text(str(data_file) + "\n", encoding="utf-8", newline="\n")
     shell_env["AUTH_RC"] = "1"
     result = _run(_bash_block("gh-scraper", "## Step 1 — Setup"), tmp_path, shell_env, _GH_STUB + _NO_JQ_STUB)
     assert result.returncode != 0
     assert json.loads(result.stdout) == {
         "status": "error",
-        "file": data_file.as_posix(),
+        "file": str(data_file),
         "error": "not authenticated — run gh auth login --hostname github.com",
     }
     assert data_file.read_text(encoding="utf-8") == "keep snapshot\n"

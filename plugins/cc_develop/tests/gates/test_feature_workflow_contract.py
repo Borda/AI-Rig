@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _develop_shell_plugin import render_shell
 from _develop_text import bash_blocks
 
 _PLUGIN = Path(__file__).resolve().parents[2]
@@ -26,11 +27,16 @@ def _block(relative: str, marker: str) -> str:
 def _run(block: str, tmp_path: Path, session: str = "feature-workflow") -> subprocess.CompletedProcess[str]:
     """Run a shipped block with real helpers and private session state, without inherited session identities."""
     env = {key: value for key, value in os.environ.items() if key not in {"CSID", "CLAUDE_CODE_SESSION_ID"}}
-    env.update(TMPDIR=tmp_path.as_posix(), CLAUDE_PLUGIN_ROOT=_PLUGIN.as_posix())
+    env.update(TMPDIR=tmp_path.as_posix(), CLAUDE_PLUGIN_ROOT=_PLUGIN.as_posix(), PYTHONIOENCODING="utf-8")
     setup = f'python() {{ {shlex.quote(sys.executable)} "$@"; }}\n'
     setup += f"export CLAUDE_CODE_SESSION_ID={shlex.quote(session)}\n" if session else ""
     return subprocess.run(
-        [_BASH, "-c", setup + block], cwd=tmp_path, env=env, capture_output=True, text=True, check=False
+        [_BASH, "-c", render_shell(setup + block, Path(env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "develop")],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        encoding="utf-8",
+        check=False,
     )
 
 
@@ -51,7 +57,7 @@ def _run(block: str, tmp_path: Path, session: str = "feature-workflow") -> subpr
 )
 def test_baseline_stops_before_tdd_on_failure(tmp_path: Path, status: int, verdict: str, continues: bool) -> None:
     """Only passed or empty baselines reach the next action; runner errors differ from test failures."""
-    (tmp_path / "dev-pytest-cmd-feature-workflow").write_text("pytest\n", encoding="utf-8")
+    (tmp_path / "dev-pytest-cmd-feature-workflow").write_text("pytest\n", encoding="utf-8", newline="\n")
     block = _block("SKILL.md", 'run_pytest_short.py" "$PYTEST_CMD" <target_test_dir>')
     block = block.replace("<target_test_dir>", "tests")
     result = _run(f"python() {{ return {status}; }}\n" + block + "\necho TDD_CONTINUED\n", tmp_path)
@@ -71,9 +77,9 @@ def test_baseline_stops_before_tdd_on_failure(tmp_path: Path, status: int, verdi
 )
 def test_safety_caps_stop_the_next_action(tmp_path: Path, cycle: int, start: int, batch: int, warning: str) -> None:
     """Caps stop at their boundaries, retain batch accounting, and permit another cycle below both limits."""
-    (tmp_path / "dev-feature-tdd-cycle-feature-workflow").write_text(f"{cycle}\n", encoding="utf-8")
-    (tmp_path / "dev-feature-tdd-start-feature-workflow").write_text(f"{start}\n", encoding="utf-8")
-    (tmp_path / "dev-feature-batch-size-feature-workflow").write_text(f"{batch}\n", encoding="utf-8")
+    (tmp_path / "dev-feature-tdd-cycle-feature-workflow").write_text(f"{cycle}\n", encoding="utf-8", newline="\n")
+    (tmp_path / "dev-feature-tdd-start-feature-workflow").write_text(f"{start}\n", encoding="utf-8", newline="\n")
+    (tmp_path / "dev-feature-batch-size-feature-workflow").write_text(f"{batch}\n", encoding="utf-8", newline="\n")
     block = _block("SKILL.md", "TDD_CYCLE=$((")
     lines = block.splitlines()
     begin = next(index for index, line in enumerate(lines) if line.startswith("IFS= read -r TDD_CYCLE"))
@@ -88,11 +94,12 @@ def test_safety_caps_stop_the_next_action(tmp_path: Path, cycle: int, start: int
 @_skip_no_bash
 def test_team_setup_exports_the_shell_fallback_session(tmp_path: Path) -> None:
     """Without a harness session id, the real setup helper writes the sentinels the next shell block reads."""
-    block = _block("modes/team-mode.md", "bin/dev_setup_worktree_wrap.py")
+    block = _block("modes/team-mode.md", "bin/dev_setup_worktree_wrap.py") + '\nprintf "%s\\n" "$PPID"\n'
     result = _run(block, tmp_path, session="")
     assert result.returncode == 0, result.stderr
-    assert (tmp_path / f"dev-feature-team-ts-{os.getpid()}").read_text().strip() == result.stdout.splitlines()[0]
-    assert (tmp_path / f"dev-feature-team-dir-{os.getpid()}").read_text().strip() == result.stdout.splitlines()[1]
+    timestamp, run_dir, session = result.stdout.splitlines()
+    assert (tmp_path / f"dev-feature-team-ts-{session}").read_text().strip() == timestamp
+    assert (tmp_path / f"dev-feature-team-dir-{session}").read_text().strip() == run_dir
     assert (tmp_path / result.stdout.splitlines()[1]).is_dir()
 
 

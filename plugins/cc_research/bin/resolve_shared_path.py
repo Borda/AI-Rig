@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""resolve_shared_path.py — canonical plugin shared-dir resolver (Windows-portable).
+"""Resolve a plugin's shared directory across portable install locations.
 
 Resolves a plugin's ``<subdir>`` (typically ``skills/_shared``) via tiered cascade.
 Replaces the near-identical bash scripts ``resolve-shared-path.sh`` and
@@ -9,7 +9,7 @@ implementation usable on Linux, macOS, and Windows alike.
 Tier cascade
 ------------
 * **Tier 0** — ``CLAUDE_PLUGIN_ROOT`` env var set AND ``$CLAUDE_PLUGIN_ROOT/<subdir>``
-  is a directory → print that path, exit 0. Fastest path: runtime is already
+  is a directory inside the marketplace cache → print that path, exit 0. Fastest path: runtime is already
   inside the active plugin install.
 * **Tier 1** — Locate ``get_plugin_install_path.py`` (canonical foundry helper),
   invoke it for the requested plugin, and validate that ``<installPath>/<subdir>``
@@ -28,7 +28,8 @@ Tier cascade
   ``codemap-py`` (warn to stderr). Relative to the working directory, so each
   candidate is used only when the working directory is that plugin's own source
   repository: ``plugins/<dir>/.claude-plugin/plugin.json`` must parse as a JSON
-  object whose ``name`` equals ``<plugin>``. Anywhere else that tree is the text
+  object whose ``name`` equals ``<plugin>`` and its parent directory must equal
+  the plugin collection containing this executing resolver. Anywhere else that tree is the text
   of whatever repository the session was opened in, so it is skipped and the
   cascade ends at the not-found exit.
 
@@ -82,33 +83,41 @@ _PLUGIN_RE = re.compile(r"[a-zA-Z0-9_-]+")
 _SUBDIR_RE = re.compile(r"[a-zA-Z0-9_/-]+")
 #: Marketplace name under which plugins are cached, used to locate the plugin cache directory.
 _MARKETPLACE = "borda-ai-rig"
+_SEMVER_RE = re.compile(
+    r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+)
+_VersionKey = tuple[int, int, int, bool, tuple[tuple[bool, int | str], ...]]
 
 
-def _version_key(name: str) -> list[int]:
-    """Extract numeric version components for semver-aware sorting.
-
-    Pure helper replacing ``sort -V`` from bash. Lifts every contiguous
-    digit run from the version dir name into an integer list, so
-    ``0.20.0`` sorts above ``0.9.9`` (digit-run aware, not lexical).
-    Non-numeric segments are dropped entirely.
+def _version_key(name: str) -> _VersionKey | None:
+    """Return strict SemVer precedence, ignoring build metadata, or None for invalid names.
 
     Args:
         name: Directory name to key on (e.g. ``"0.20.0"``).
 
     Returns:
-        List of integers extracted from ``name`` in left-to-right order.
+        Core version, release flag and typed prerelease identifiers, or ``None``.
 
     Examples:
-        >>> _version_key("0.20.0")
-        [0, 20, 0]
         >>> _version_key("0.9.9") < _version_key("0.20.0")
         True
-        >>> _version_key("1.2.3rc4")
-        [1, 2, 3, 4]
-        >>> _version_key("nonsense")
-        []
+        >>> _version_key("1.2.3-rc.4") < _version_key("1.2.3")
+        True
+        >>> _version_key("1.2.3rc4") is None
+        True
     """
-    return [int(t) for t in re.findall(r"\d+", name)]
+    match = _SEMVER_RE.fullmatch(name)
+    if match is None:
+        return None
+    major, minor, patch, prerelease = match.groups()
+    identifiers = prerelease.split(".") if prerelease is not None else []
+    if any(part.isdigit() and len(part) > 1 and part.startswith("0") for part in identifiers):
+        return None
+    # The type flag keeps numeric identifiers before text, avoiding mixed int/string comparisons.
+    parts = tuple((not part.isdigit(), int(part) if part.isdigit() else part) for part in identifiers)
+    return int(major), int(minor), int(patch), prerelease is None, parts
 
 
 def _validate_plugin(plugin: str) -> None:
@@ -224,7 +233,7 @@ def _locate_helper(home: Path, env_root: str | None) -> Path | None:
     another plugin therefore looks up that plugin's helper, so no plugin depends
     on a sibling being installed (``plugins/CLAUDE.md`` §Self-Contained ``_shared``).
 
-    1. ``$CLAUDE_PLUGIN_ROOT/bin/get_plugin_install_path.py`` when env set.
+    1. ``$CLAUDE_PLUGIN_ROOT/bin/get_plugin_install_path.py`` when confined to the marketplace cache.
     2. Newest semver under ``<cache>/<own-plugin>/*/bin/get_plugin_install_path.py``.
     3. The helper shipped in this script's own ``bin/`` directory.
 
@@ -241,19 +250,23 @@ def _locate_helper(home: Path, env_root: str | None) -> Path | None:
     Returns:
         Path to the helper script when found, else ``None``.
     """
-    if env_root:
+    if env_root and Path(env_root).resolve().is_relative_to(_cache_root(home).resolve()):
         candidate = Path(env_root) / "bin" / "get_plugin_install_path.py"
-        if candidate.is_file():
+        if candidate.is_file() and candidate.resolve().is_relative_to(_cache_root(home).resolve()):
             return candidate
     own_plugin_dir = Path(__file__).resolve().parent.parent
     own_cache = _cache_root(home) / _own_plugin_name(own_plugin_dir)
     if own_cache.is_dir():
         versions = [
-            v for v in own_cache.iterdir() if v.is_dir() and (v / "bin" / "get_plugin_install_path.py").is_file()
+            (key, v)
+            for v in own_cache.iterdir()
+            if v.is_dir()
+            and (key := _version_key(v.name)) is not None
+            and (v / "bin" / "get_plugin_install_path.py").is_file()
         ]
         if versions:
-            versions.sort(key=lambda p: _version_key(p.name))
-            return versions[-1] / "bin" / "get_plugin_install_path.py"
+            versions.sort(key=lambda pair: pair[0])
+            return versions[-1][1] / "bin" / "get_plugin_install_path.py"
     own_helper = Path(__file__).resolve().with_name("get_plugin_install_path.py")
     if own_helper.is_file():
         return own_helper
@@ -333,15 +346,18 @@ def _tier2_cache(home: Path, plugin: str, subdir: str) -> Path | None:
     plugin_cache = _cache_root(home) / plugin
     if not plugin_cache.is_dir():
         return None
-    candidates: list[tuple[list[int], Path]] = []
+    candidates: list[tuple[_VersionKey, Path]] = []
     for version_dir in plugin_cache.iterdir():
         if not version_dir.is_dir():
             continue
         if (version_dir / ".orphaned_at").exists():
             continue
+        key = _version_key(version_dir.name)
+        if key is None:
+            continue
         target = version_dir / subdir
         if target.is_dir():
-            candidates.append((_version_key(version_dir.name), target))
+            candidates.append((key, target))
     if not candidates:
         return None
     candidates.sort(key=lambda pair: pair[0])
@@ -362,14 +378,15 @@ def _source_dirs(plugin: str) -> tuple[Path, Path]:
 
 
 def _is_own_source_checkout(plugin_dir: Path, plugin: str) -> bool:
-    """Report whether ``plugin_dir`` is ``plugin``'s own source checkout, judged by its manifest.
+    """Report whether ``plugin_dir`` belongs to this resolver's source repository and names ``plugin``.
 
     Args:
         plugin_dir: Candidate plugin root, relative to the working directory.
         plugin: Plugin short-name the manifest must carry.
 
     Returns:
-        ``True`` when ``.claude-plugin/plugin.json`` parses as a JSON object whose ``name`` is exactly ``plugin``.
+        ``True`` when the candidate belongs to the executing resolver's plugin collection and its manifest names
+        exactly ``plugin``. A manifest copied into an unrelated working directory supplies no source authority.
 
     Examples:
         >>> import tempfile
@@ -379,8 +396,10 @@ def _is_own_source_checkout(plugin_dir: Path, plugin: str) -> bool:
         ...     manifest.parent.mkdir()
         ...     _ = manifest.write_text('{"name": "oss"}', encoding="utf-8")
         ...     (before, _is_own_source_checkout(Path(d), "oss"), _is_own_source_checkout(Path(d), "foundry"))
-        (False, True, False)
+        (False, False, False)
     """
+    if plugin_dir.resolve().parent != Path(__file__).resolve().parents[2]:
+        return False
     try:
         manifest = json.loads((plugin_dir / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -411,7 +430,7 @@ def resolve(plugin: str, subdir: str, *, home: Path | None = None, env_root: str
         >>> import os, tempfile
         >>> from pathlib import Path
         >>> with tempfile.TemporaryDirectory() as d:
-        ...     root = Path(d) / "plugin_install"
+        ...     root = _cache_root(Path(d)) / "foundry" / "1.0.0"
         ...     (root / "skills" / "_shared").mkdir(parents=True)
         ...     path, tier = resolve(
         ...         "foundry", "skills/_shared",
@@ -422,7 +441,7 @@ def resolve(plugin: str, subdir: str, *, home: Path | None = None, env_root: str
     """
     home = home if home is not None else Path.home()
     env_root = env_root if env_root is not None else os.environ.get("CLAUDE_PLUGIN_ROOT", "")
-    if env_root:
+    if env_root and Path(env_root).resolve().is_relative_to(_cache_root(home).resolve()):
         # Only use env_root when it belongs to the requested plugin.
         # Without this check, an OSS caller requesting 'foundry skills/_shared'
         # would get the OSS _shared dir back when CLAUDE_PLUGIN_ROOT points at OSS.
@@ -469,6 +488,7 @@ def main(argv: list[str] | None = None) -> int:
         Process exit code (0 success, 1 absent, 2 argument error).
     """
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+    sys.stderr.reconfigure(encoding="utf-8", newline="\n")
     parser = argparse.ArgumentParser(
         prog="resolve_shared_path",
         description="Resolve a plugin's <subdir> via tiered cache + registry cascade.",
@@ -489,8 +509,9 @@ def main(argv: list[str] | None = None) -> int:
     if tier == -1 and refused:
         print(
             f"! resolve_shared_path: {args.plugin} not found in registry or cache, and the working directory is not the "
-            f"{args.plugin} plugin source repository (no {refused[0].as_posix()}/.claude-plugin/plugin.json naming "
-            f"{args.plugin}) — refusing to read {(refused[0] / args.subdir).as_posix()}; "
+            f"{args.plugin} plugin source repository ({refused[0].as_posix()}/.claude-plugin/plugin.json must name "
+            f"{args.plugin} inside this resolver's source tree) — refusing to read "
+            f"{(refused[0] / args.subdir).as_posix()}; "
             f"install {args.plugin}@{_MARKETPLACE}",
             file=sys.stderr,
         )

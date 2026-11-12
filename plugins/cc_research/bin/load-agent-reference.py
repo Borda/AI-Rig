@@ -21,7 +21,8 @@ import re
 import sys
 from pathlib import Path
 
-from resolve_shared import source_repo_marker_present  # sibling bin/ script; same source-repository gate
+from render_plugin_root import render_file
+from resolve_shared import _version_key, source_repo_marker_present  # sibling bin/ script; same cache/source gate
 
 #: Allowed shape of an agent name used to build a reference path: letters, digits, underscore and hyphen only.
 _AGENT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -58,16 +59,6 @@ def _is_safe_fragment(value: str) -> bool:
     return bool(_FRAGMENT_RE.fullmatch(value))
 
 
-def _version_key(name: str) -> list[int]:
-    """Sort key for a cache version directory name: its digit runs as integers.
-
-    Examples:
-        >>> _version_key("0.9.0") < _version_key("0.29.0")
-        True
-    """
-    return [int(run) for run in re.findall(r"\d+", name)]
-
-
 def _cached_sidecar(agent: str) -> Path | None:
     """Newest non-orphaned installed-cache dir ``<marketplace>/research/<version>/references/<agent>``.
 
@@ -78,7 +69,9 @@ def _cached_sidecar(agent: str) -> Path | None:
     candidates = [
         sidecar
         for sidecar in cache.glob(f"*/research/*/references/{agent}")
-        if sidecar.is_dir() and not (sidecar.parent.parent / ".orphaned_at").exists()
+        if sidecar.is_dir()
+        and _version_key(sidecar.parent.parent.name) is not None
+        and not (sidecar.parent.parent / ".orphaned_at").exists()
     ]
     if not candidates:
         return None
@@ -143,14 +136,19 @@ def main(argv: list[str]) -> int:
     # Bytes, as `cat` does: fragments are markdown but nothing here needs to decode them,
     # and a re-encode would risk altering content the caller pastes verbatim.
     try:
-        payload = (directory / fragment).read_bytes()
+        payload = render_file(directory / fragment, plugin_name="research")
     except OSError:
         print(degraded)
         return 0
+    except ValueError as exc:
+        print(f"! BLOCKED — {exc}", file=sys.stderr)
+        return 1
     sys.stdout.buffer.write(payload)
     sys.stdout.buffer.flush()
     return 0
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+    sys.stderr.reconfigure(encoding="utf-8", newline="\n")
     sys.exit(main(sys.argv))

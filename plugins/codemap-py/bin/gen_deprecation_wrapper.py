@@ -37,10 +37,12 @@ from __future__ import annotations
 
 import argparse
 import ast
+import io
 import json
 import keyword
 import sys
 import textwrap
+import tokenize
 from enum import Enum
 
 
@@ -332,11 +334,16 @@ def _decorator_func_name(decorator: str) -> str:
         parsed = ast.parse(decorator[1:], mode="eval")
     except SyntaxError as exc:
         raise ValueError(f"--decorator is not a valid Python expression: {decorator!r}") from exc
+    if any(
+        token.type == tokenize.NAME and not token.string.isascii()
+        for token in tokenize.generate_tokens(io.StringIO(decorator[1:]).readline)
+    ):
+        raise ValueError(f"--decorator identifiers must be ASCII: {decorator!r}")
     call = parsed.body
     if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
         raise ValueError(f"--decorator must be a single call to a bare name, e.g. '@deprecated(...)': {decorator!r}")
     values = (*call.args, *(kw.value for kw in call.keywords))
-    if any(not _is_safe_arg_node(value) for value in values):
+    if any(kw.arg is None for kw in call.keywords) or any(not _is_safe_arg_node(value) for value in values):
         raise ValueError(f"--decorator arguments must be names, attributes, or constants only: {decorator!r}")
     return call.func.id
 

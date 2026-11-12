@@ -10,6 +10,7 @@ import functools
 from pathlib import Path
 
 import pytest
+from _skill_source import read_skill_source
 
 _RELEASE = Path(__file__).resolve().parents[2] / "skills/release"
 
@@ -45,7 +46,7 @@ _ASKS = [
 @functools.cache
 def _skill() -> str:
     """Read the release skill once."""
-    return (_RELEASE / "SKILL.md").read_text(encoding="utf-8")
+    return read_skill_source(_RELEASE / "SKILL.md")
 
 
 @pytest.mark.parametrize(("relative", "marker"), _ASKS)
@@ -56,7 +57,7 @@ def test_baseline_ask_kept_next_to_tool_name(relative: str, marker: str) -> None
     at its own step, so front-loading would change what the user sees when answering. The check looks one line either
     side of the marker, so it does not depend on how a paragraph is wrapped.
     """
-    lines = (_RELEASE / relative).read_text(encoding="utf-8").splitlines()
+    lines = read_skill_source(_RELEASE / relative).splitlines()
     hits = [number for number, line in enumerate(lines) if marker in line]
     assert hits, marker
     assert "AskUserQuestion" in "\n".join(lines[max(0, hits[0] - 1) : hits[0] + 2])

@@ -126,3 +126,48 @@ def test_check27_optional_foundry_gate(tmp_path: Path, mutate: Callable[[str], s
         else [f"{skill_path.as_posix()}:{flagged_line}:{gate.splitlines()[flagged_line - 1]}"]
     )
     assert (result.returncode, result.stderr, result.stdout.splitlines()) == (0, "", expected)
+
+
+@pytest.mark.integration
+@_skip_check27_tools_unavailable
+@pytest.mark.parametrize(
+    ("command", "foreign"),
+    [
+        pytest.param(
+            'PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) '
+            "|| exit $?; export PLUGIN_ROOT",
+            True,
+            id="foreign-resolver",
+        ),
+        pytest.param(
+            'PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) '
+            "|| exit $?; export PLUGIN_ROOT",
+            False,
+            id="own-resolver",
+        ),
+        pytest.param(
+            'python "/home/user/.claude/plugins/cache/borda-ai-rig/foundry/1.0.0/bin/helper.py"',
+            True,
+            id="foreign-rendered-root",
+        ),
+        pytest.param(
+            'python "/home/user/.claude/plugins/cache/borda-ai-rig/oss/1.0.0/bin/helper.py"',
+            False,
+            id="own-rendered-root",
+        ),
+    ],
+)
+def test_check27_resolved_and_rendered_root_ownership(tmp_path: Path, command: str, foreign: bool) -> None:
+    """The actual audit reports migrated foreign roots while keeping own-plugin helper calls valid."""
+    source = Path("plugins/cc_oss/skills/provider/SKILL.md")
+    skill = tmp_path / source
+    skill.parent.mkdir(parents=True)
+    (tmp_path / "plugins/cc_foundry/skills").mkdir(parents=True)
+    skill.write_text(command + "\n", encoding="utf-8")
+
+    result = subprocess.run(
+        ["bash", "-c", _check27_sibling_reach_in_command()], cwd=tmp_path, capture_output=True, text=True, check=False
+    )
+
+    expected = [f"{source.as_posix()}:1:{command}"] if foreign else []
+    assert (result.returncode, result.stderr, result.stdout.splitlines()) == (0, "", expected)

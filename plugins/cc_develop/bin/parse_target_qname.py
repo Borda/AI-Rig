@@ -18,7 +18,7 @@ Sentinels written (newline-terminated — the ``IFS= read -r`` reload contract n
 
 Exit codes:
     0 — sentinels written
-    1 — sentinel write failed
+    1 — oversized arguments or sentinel write failed
     2 — argument error (argparse default)
 """
 
@@ -33,8 +33,11 @@ from pathlib import Path
 
 from dev_run_dir import write_atomic  # sibling bin/ script; atomic, link-safe sentinel writes
 
-#: Same shape as the inline ``grep -oE`` it replaces: dotted module, ``::``, bare function name.
-_QNAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*::[A-Za-z_][A-Za-z0-9_]*")
+#: Candidate module runs for the same dotted-module, ``::``, bare-function spelling as the original ``grep -oE``.
+_QNAME_RE = re.compile(r"[A-Za-z0-9_.]+")
+_FUNCTION_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+MAX_ARGUMENT_CHARS = 65536
 
 #: Unset or unknown route falls back to the legacy batch (contract in _shared/codemap-context.md).
 _DEFAULT_QUERY_KIND = "standard"
@@ -49,6 +52,9 @@ def split_qname(arguments: str) -> tuple[str, str, str]:
     Returns:
         ``(module, function, qualified)``; three empty strings when no token is present.
 
+    Raises:
+        ValueError: When the argument string exceeds 65536 characters.
+
     Examples:
         >>> split_qname("pkg.mod::do_thing --issue 42")
         ('pkg.mod', 'do_thing', 'pkg.mod::do_thing')
@@ -57,12 +63,18 @@ def split_qname(arguments: str) -> tuple[str, str, str]:
         >>> split_qname("a.b::f and c.d::g")
         ('a.b', 'f', 'a.b::f')
     """
-    match = _QNAME_RE.search(arguments)
-    if not match:
-        return "", "", ""
-    qualified = match.group(0)
-    module, _, function = qualified.partition("::")
-    return module, function, qualified
+    if len(arguments) > MAX_ARGUMENT_CHARS:
+        raise ValueError(f"arguments exceed {MAX_ARGUMENT_CHARS} characters")
+    # Consume entire candidate runs so a missing delimiter cannot retry at every suffix.
+    for candidate in _QNAME_RE.finditer(arguments):
+        module = candidate.group(0)
+        start = re.search(r"[A-Za-z_]", module)
+        if start and arguments.startswith("::", candidate.end()):
+            function = _FUNCTION_RE.match(arguments, candidate.end() + 2)
+            if function:
+                module = module[start.start() :]
+                return module, function.group(0), f"{module}::{function.group(0)}"
+    return "", "", ""
 
 
 def _sentinel_dir() -> Path:
@@ -102,7 +114,11 @@ def main(argv: list[str] | None = None) -> int:
         query_kind = _DEFAULT_QUERY_KIND
         print(f"! CODEMAP_QUERY_KIND unresolved — using {_DEFAULT_QUERY_KIND} structural context")
 
-    module, function, qualified = split_qname(args.arguments)
+    try:
+        module, function, qualified = split_qname(args.arguments)
+    except ValueError as exc:
+        print(f"parse_target_qname: {exc}", file=sys.stderr)
+        return 1
 
     tmp = _sentinel_dir()
     csid = _session_token()

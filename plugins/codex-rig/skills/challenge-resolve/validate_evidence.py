@@ -61,6 +61,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
 #: Directory containing this validator, used to locate the plugin root.
 SKILL_DIRECTORY = Path(__file__).resolve().parent
 #: Root of the Codex Rig plugin, from which role cards and the code-review validator are read.

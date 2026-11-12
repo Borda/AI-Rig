@@ -49,8 +49,8 @@ Root `AGENTS.md` and the shipped Codex Rig global template (`plugins/codex-rig/a
 - Every file must work after `claude plugin install <name>@borda-ai-rig`.
 - Assume only the installed plugin path, never the source tree.
 - Do not hardcode sibling-plugin paths, `plugins/<name>/` directories, or absolute user or temporary paths.
-- Use `~/`, `$(git rev-parse --show-toplevel)`, or `$CLAUDE_PLUGIN_ROOT` as appropriate.
-- Use a bare `plugins/` path only as the final fallback after resolving the installed cache path.
+- Each executable Claude block begins `PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name <plugin>) || exit $?; export PLUGIN_ROOT`, then calls helpers as `python "$PLUGIN_ROOT/bin/<name>.py"`. The host substitutes the plain token in skills and agents; loaders render it in loaded fragments. Never use defaulted tokens or cwd-relative bootstrap paths.
+- The shared resolver selects the install record before validated cache versions; source fallback is last and restricted to its own AI-Rig checkout with cwd inside that checkout. Use a plugin loader or `render_plugin_root.py` for fragments containing executable bootstrap tokens; `cat` is only for token-free documents. Codex recipes retain their explicit portable-launcher policy.
 - Codex agent waits follow [Agent Waits](codex-rig/shared/native-skill-contract.md#agent-waits), including blocking waits, status reporting and the owning workflow's deadline. Claude `Agent()` background notifications and health monitoring follow [Claude installability](CLAUDE.md#installability); they do not govern Codex waits.
 
 ## Independent Plugins and Cross-References
@@ -129,6 +129,7 @@ A plugin may ship animated SVG diagrams of its runs, blocking gates, agent fan-o
 - Pure test, CI, and documentation changes need no changelog entry unless they change shipped product or plugin behavior.
 - Every changelog bullet states what changed and its user-visible impact. A bare file or mechanism name ("Sync report-header-table.js", "update helper", "refactor") says nothing; name the behaviour, and trace each claim to the diff.
 - Changelog shape is a plain list: every line of a section is a `- ` entry or a sub-entry of one, with no free paragraph before, between or after entries and no blank lines between items. One entry per topic: a few related sentences saying what changed and its user-visible impact, compact but complete. Sub-bullets only enumerate parallel items. No rationale, implementation mechanics or long example lists; compress, never drop a change. Match the released sections below.
+- Changelog target section: new entries go only into the section of the pending commit's own version — the `## <version>` heading equal to the bumped value, or a declared `Unreleased` section when the file has one — at the top. Pick it from `HEAD`, never from the nearest surrounding text: a section whose heading already exists in `HEAD`'s changelog (the top one included) is released history, so open the new heading above it instead of appending; when amending a commit that already carries the bump, its baseline is that commit's parent and its own top section is the pending one. Never add or reword a bullet in an older section; a change that needs one is a new bullet in the pending section.
 - Each touched plugin is evaluated independently, and one commit applies at most one bump per plugin.
 - Before changing a version, run `git diff HEAD --name-only -- plugins/<name>/` and stop with no bump when every changed path is under `tests/`, or the only additional path is the generated package manifest updated for those tests.
 - Otherwise read the baseline with `git show HEAD:plugins/<name>/.claude-plugin/plugin.json | grep version` and the on-disk version with `grep version plugins/<name>/.claude-plugin/plugin.json`; stop if disk already differs from HEAD.
@@ -145,6 +146,18 @@ A plugin may ship animated SVG diagrams of its runs, blocking gates, agent fan-o
 - A feature that adds a permission gate, approval question or stop first diffs its gate list against `HEAD` behaviour; an operation that ran without a stop at `HEAD` keeps running without one unless the user asked for the new stop.
 - Default to relaxed; tighten only with a concrete, user-accepted justification. Push stays always-ask and force push forbidden; no other git class gains an always-ask stop.
 - `plugins/CLAUDE.md` §Permission Gates — Diff Against HEAD holds the Claude counterpart.
+
+## Shell-Text Guards — What Not To Do
+
+Repository-maintainer rules for the opencode-rig shell guard; not applicable to shipped user content.
+
+- Never enumerate bypass strings to grow the guard: repeated reviews grew it from about 328 to about 2800, then about 3400 lines and kept finding holes in new spellings.
+- Add quiet classes only with a positive model: a short explicit allowed-program-and-option table, never a known-bad deny-list, because quiet needs understood behaviour.
+- Say in user docs: text classifier = speed bump, not security boundary; further hardening needs sandboxing or isolation because string rules cannot enforce it.
+- Fix a review budget first; when spent, document limits and open gaps instead of widening, because spelling enumeration does not converge.
+- Read-only entries never gain write options; programs that write or run code leave the list, because names do not establish safety.
+- Resolve program identity in one function for every lookup; no second raw-spelling match, because divergent identity creates bypasses.
+- No round, finding, probe or task numbers in test names, titles, labels, markers or comments; name by scope and behaviour and merge into scope-named files, because evidence must stand alone.
 
 ## Verification
 

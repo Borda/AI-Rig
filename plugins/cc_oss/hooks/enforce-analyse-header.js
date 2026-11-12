@@ -110,11 +110,20 @@ function resolveReportFile(value, cwd) {
  */
 function activeReportFile(sentinelPath, cwd, now) {
   let content;
+  let fd;
   try {
-    if (now - fs.statSync(sentinelPath).mtimeMs > STALE_MS) return null;
-    content = fs.readFileSync(sentinelPath, "utf8");
+    const stat = fs.lstatSync(sentinelPath);
+    if (!stat.isFile() || stat.nlink !== 1 || (typeof process.getuid === "function" && stat.uid !== process.getuid()))
+      return null;
+    if (now - stat.mtimeMs > STALE_MS || stat.mtimeMs > now) return null;
+    fd = fs.openSync(sentinelPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const opened = fs.fstatSync(fd);
+    if (opened.dev !== stat.dev || opened.ino !== stat.ino) return null;
+    content = fs.readFileSync(fd, "utf8");
   } catch (_) {
     return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
   return resolveReportFile(content.split("\n")[0].trim(), cwd);
 }

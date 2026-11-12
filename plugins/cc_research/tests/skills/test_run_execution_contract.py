@@ -120,13 +120,15 @@ def test_fresh_shell_uses_persisted_compute_timeout(
     state_dir = tmp_path / ".experiments" / "state" / "run-test"
     state_dir.mkdir(parents=True)
     state = {"config": {"compute": compute}, "flags": {"compute": flag_compute}}
-    (state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
-    (tmp_path / "research-run-id-test-session").write_text("run-test\n", encoding="utf-8")
+    (state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8", newline="\n")
+    (tmp_path / "research-run-id-test-session").write_text("run-test\n", encoding="utf-8", newline="\n")
     env = {key: value for key, value in os.environ.items() if key not in {"compute", "VERIFY_TIMEOUT_SEC"}}
-    env.update({"TMPDIR": str(tmp_path), "CLAUDE_CODE_SESSION_ID": "test-session"})
+    env.update({"TMPDIR": tmp_path.as_posix(), "CLAUDE_CODE_SESSION_ID": "test-session"})
     env.update({"VERIFY_TIMEOUT_SEC": override} if override is not None else {})
     block = _bash_block(_section("### Step R2:", "### Step R3:"), "VERIFY_TIMEOUT_MS=$((")
-    result = subprocess.run([_BASH, "-c", block], cwd=tmp_path, env=env, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        [_BASH, "-c", block], cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8", check=False
+    )
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "research-run-verify-timeout-ms-test-session").read_text().strip() == expected
 
@@ -142,12 +144,14 @@ def test_docker_rejection_is_reported_before_float_parsing() -> None:
 
 
 def test_metric_exit_two_does_not_imply_a_wrapper_rejection() -> None:
-    """A metric with usable stdout retains the documented nonzero-exit behavior."""
+    """A nonzero metric fails without being confused with a wrapper preparation rejection."""
     lines = _section("### Step R2:", "### Step R3:")
     metric = next(line for line in lines if line.startswith("03."))
     assert "docker_sandbox_run.py:" in metric
     assert "container command's own exit 2" in metric
     assert "usable float" in metric
+    assert "failed metric" in metric
+    assert "Require exit 0" in metric
 
 
 def test_raw_step_delta_is_distinct_from_baseline_percentage() -> None:

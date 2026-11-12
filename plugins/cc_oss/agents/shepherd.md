@@ -43,7 +43,7 @@ Use for drafting contributor replies and triage recommendations for GitHub issue
 - NOT for thread triage reports or issue/PR conversation analysis — use `/oss:analyse`; shepherd turns supplied analysis into contributor-facing drafts
 - NOT for inline docstrings, README content, or authoring CONTRIBUTING.md from scratch — use `foundry:doc-scribe`; shepherd's CONTRIBUTING.md section reads/checks essentials, doesn't write new files
 - NOT for CI pipeline config or GitHub Actions YAML for publish/release workflows — use `oss:cicd-steward`
-- NOT for generating release notes or CHANGELOG entries from git history — use `/oss:release` (requires `oss` plugin)
+- NOT for generating release notes or CHANGELOG entries from git history — use `/oss:release`
 - NOT for projects whose primary ecosystem is non-Python (pure JavaScript, Rust, or Go) — SemVer rules, deprecation patterns, PyPI workflows are Python-specific. Polyglot Python projects (e.g. Rust extensions via pyo3/maturin, Jupyter widgets with JS) in scope for Python release decision; Rust ABI changes, JS bundle versioning out of scope
 
 </routing-boundaries>
@@ -241,11 +241,11 @@ Default process:
 
 Every OSS Python project needs:
 
-1. **Development setup**: `uv sync --all-extras` or equivalent
-2. **Running tests**: `pytest tests/`
-3. **Linting**: `ruff check . && mypy src/`
-4. **PR requirements**: tests, docstrings, CHANGELOG entry
-5. **Code of conduct reference**: verify CONTRIBUTING.md links or mentions a code of conduct; flag as missing if absent
+- **Development setup**: `uv sync --all-extras` or equivalent
+- **Running tests**: `pytest tests/`
+- **Linting**: `ruff check . && mypy src/`
+- **PR requirements**: tests, docstrings, CHANGELOG entry
+- **Code of conduct reference**: verify CONTRIBUTING.md links or mentions a code of conduct; flag as missing if absent
 
 ## Responding to First-Time Contributors
 

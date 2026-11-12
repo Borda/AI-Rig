@@ -31,12 +31,14 @@ printing the path, so each skill replaces a four-line resolve-and-echo block wit
 
 Tier cascade
 ------------
-* **Tier 1** — Cache semver scan under
+* **Tier 1** — The common root resolver selects the newest valid install record.
+* **Tier 2** — Strict cache semver scan under
   ``~/.claude/plugins/cache/borda-ai-rig/<plugin>/*/skills/_shared``,
   skipping versions marked ``.orphaned_at``.
-* **Tier 2** — Source-tree fallback ``plugins/cc_develop/skills/_shared`` relative to the working directory (with
+* **Tier 3** — Source-tree fallback ``plugins/cc_develop/skills/_shared`` inside the executing resolver's checkout (with
   stderr warning). The CLI uses it only when the working directory carries
-  ``plugins/cc_develop/.claude-plugin/plugin.json`` whose ``name`` is ``develop`` — this plugin's own source
+  ``plugins/cc_develop/.claude-plugin/plugin.json`` whose ``name`` is ``develop`` and that plugin directory resolves to
+  the executing script's own plugin root — this plugin's own source
   repository. Anywhere else that tree is the text of whatever repository the session was opened in, and skills ``cat``
   protocol files from it, so the CLI fails closed instead.
 
@@ -46,7 +48,6 @@ Tier cascade
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import shutil
 import sys
@@ -54,6 +55,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dev_run_dir import write_sentinel  # sibling bin/ script; atomic, link-safe sentinel writes
+from resolve_plugin_root import resolve as resolve_plugin_root
+from resolve_plugin_root import source_root
 
 #: Marketplace directory name under the Claude plugin cache in which installed plugin versions are searched.
 _MARKETPLACE = "borda-ai-rig"
@@ -116,39 +119,11 @@ def _cache_root(home: Path) -> Path:
     return home / ".claude" / "plugins" / "cache" / _MARKETPLACE
 
 
-def _resolve_plugin_shared(plugin: str, home: Path) -> str | None:
-    """Cache scan for ``<plugin>/skills/_shared`` skipping orphaned dirs.
-
-    Args:
-        plugin: Plugin short-name (``develop`` or ``foundry``).
-        home: User home directory.
-
-    Returns:
-        Resolved cache path string, or ``None`` if cache has no usable hit.
-    """
-    plugin_cache = _cache_root(home) / plugin
-    if not plugin_cache.is_dir():
-        return None
-    candidates: list[tuple[list[int], Path]] = []
-    for version_dir in plugin_cache.iterdir():
-        if not version_dir.is_dir():
-            continue
-        if (version_dir / ".orphaned_at").exists():
-            continue
-        target = version_dir / _SHARED_SUBDIR
-        if target.is_dir():
-            candidates.append((_version_key(version_dir.name), target))
-    if not candidates:
-        return None
-    candidates.sort(key=lambda pair: pair[0])
-    return str(candidates[-1][1])
-
-
 def resolve_shared_path(home: Path | None = None) -> str:
     """Resolve this plugin's own ``skills/_shared`` path.
 
-    Tier 1: cache scan via :func:`_resolve_plugin_shared`.
-    Tier 2: source-tree fallback ``plugins/cc_develop/skills/_shared``, returned unchecked. Only the CLI gates it on
+    The common root resolver selects registry, cache, then own-checkout source.
+    The unresolved source-tree fallback string is returned unchecked. Only the CLI gates it on
     :func:`source_repo_marker_present`; an in-process caller reading files from the returned path must apply that
     gate itself.
 
@@ -177,10 +152,18 @@ def _locate(home: Path | None) -> tuple[str, bool]:
         ``(path, from_cache)``; ``from_cache`` is ``False`` for the working-directory source fallback.
     """
     home = home if home is not None else Path.home()
-    dev_path = _resolve_plugin_shared("develop", home)
-    if dev_path is not None:
-        return dev_path, True
-    return SOURCE_FALLBACK, False
+    root = resolve_plugin_root(
+        home, _MARKETPLACE, _PLUGIN, resolver_file=Path(__file__).with_name("resolve_plugin_root.py")
+    )
+    if root is None:
+        return SOURCE_FALLBACK, False
+    installed = Path(root).is_relative_to(_cache_root(home).parent)
+    if not installed and Path.cwd().resolve() == Path(root).parents[1]:
+        return SOURCE_FALLBACK, False
+    target = Path(root) / _SHARED_SUBDIR
+    if not target.resolve().is_relative_to(Path(root)):
+        raise ValueError("shared directory escapes selected plugin root")
+    return target.as_posix(), installed
 
 
 def source_repo_marker_present(cwd: Path | None = None) -> bool:
@@ -188,13 +171,13 @@ def source_repo_marker_present(cwd: Path | None = None) -> bool:
 
     The source-tree tier reads ``plugins/cc_develop/skills/_shared`` relative to the working directory. Outside this
     plugin's source repository that tree belongs to whatever repository the session was opened in, so it is trusted
-    only when the same directory also carries ``plugins/cc_develop/.claude-plugin/plugin.json`` naming ``develop``.
+    only when that plugin root is the executing script's own root and carries a manifest naming ``develop``.
 
     Args:
         cwd: Directory to inspect; defaults to ``Path.cwd()``.
 
     Returns:
-        ``True`` when the manifest exists, parses as a JSON object, and its ``name`` is exactly ``develop``.
+        ``True`` when the source root matches this script and its manifest names ``develop``.
 
     Examples:
         >>> import tempfile
@@ -204,14 +187,9 @@ def source_repo_marker_present(cwd: Path | None = None) -> bool:
         ...     manifest.parent.mkdir(parents=True)
         ...     _ = manifest.write_text('{"name": "develop"}', encoding="utf-8")
         ...     (before, source_repo_marker_present(Path(d)))
-        (False, True)
+        (False, False)
     """
-    manifest = (cwd if cwd is not None else Path.cwd()) / "plugins" / f"cc_{_PLUGIN}" / ".claude-plugin" / "plugin.json"
-    try:
-        data = json.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    return isinstance(data, dict) and data.get("name") == _PLUGIN
+    return source_root(_PLUGIN, resolver_file=Path(__file__).with_name("resolve_plugin_root.py"), cwd=cwd) is not None
 
 
 def persist_run_sentinels(shared: str, cwd: Path | None = None, now: datetime | None = None) -> bool:
@@ -258,13 +236,17 @@ def main(argv: list[str] | None = None) -> int:
         help="persist dev-shared and a fresh dev-agent-watch-dir sentinel instead of printing the path",
     )
     args = parser.parse_args(argv)
-    path, from_cache = _locate(None)
+    try:
+        path, from_cache = _locate(None)
+    except ValueError as exc:
+        print(f"! dev_shared_resolve: {exc}", file=sys.stderr)
+        return 1
     if not from_cache:
         # Skills `cat` protocol files from this directory; in a repository under analysis it is that repository's text.
         if not source_repo_marker_present():
             print(
                 f"! dev_shared_resolve: no installed develop plugin, and the working directory is not the develop "
-                f"plugin source repository (no plugins/cc_{_PLUGIN}/.claude-plugin/plugin.json naming {_PLUGIN}) — "
+                "plugin source repository anchored to this script — "
                 f"refusing to read {path} from it; install develop@borda-ai-rig",
                 file=sys.stderr,
             )

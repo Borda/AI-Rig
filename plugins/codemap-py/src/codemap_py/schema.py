@@ -13,7 +13,7 @@ from typing import TypedDict
 
 # Increment when persisted index data changes query semantics incompatibly.
 #: Schema version stamped into newly written indexes, incremented on incompatible semantic changes.
-SCAN_VERSION: int = 13
+SCAN_VERSION: int = 14
 
 # Per-feature minimum index versions.
 # v4 and v5 were design epochs shipped together in one release (SCAN_VERSION 4–10).
@@ -33,6 +33,10 @@ COVERAGE_MIN_VER: int = 10  # v5.4 — coverage_pct, covered_by per symbol (requ
 ENTITY_TYPE_MIN_VER: int = 11  # v5.5 — entity_type ("pkg"|"test"|"docs"|"example"), package (top-level name)
 SYMBOL_ALIASES_MIN_VER: int = 12  # v5.6 — alias-aware reverse-call graph
 
+# v14 stores project-relative mock patch files and relative scan-root coordinates.
+# Source fingerprints include the schema generation, so older indexes rebuild
+# before incremental reuse or digest-based currency checks.
+#
 # v5.6 adds root ``symbol_aliases``: ``module::local_name -> canonical module::symbol``
 # for statically proven top-level ``from ... import ...`` aliases. It changes reverse-call
 # query semantics, so the persisted-index generation advances to v12 and old indexes rebuild.

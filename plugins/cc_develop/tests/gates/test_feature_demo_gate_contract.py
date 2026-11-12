@@ -15,6 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from _develop_shell_plugin import render_shell
 from _develop_text import bash_blocks
 
 _SKILL = Path(__file__).resolve().parents[2] / "skills/feature/SKILL.md"
@@ -42,7 +43,14 @@ def _run(
         "CLAUDE_PLUGIN_ROOT": _SKILL.parents[2].as_posix(),
         **(extra_env or {}),
     }
-    return subprocess.run([_BASH, "-c", block], capture_output=True, encoding="utf-8", env=env, cwd=cwd, check=False)
+    return subprocess.run(
+        [_BASH, "-c", render_shell(block, _SKILL.parents[2], "develop")],
+        capture_output=True,
+        encoding="utf-8",
+        env=env,
+        cwd=cwd,
+        check=False,
+    )
 
 
 @pytest.fixture

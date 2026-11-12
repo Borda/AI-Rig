@@ -15,3 +15,11 @@ Foundry **not** installed: substitute `foundry:X` with `general-purpose`, prepen
 | `foundry:challenger` | `general-purpose` | `opus` | `You are an adversarial reviewer. Challenge the proposed plan or design across 5 dimensions: Assumptions, Missing Cases, Security Risks, Architectural Concerns, Complexity Creep. Apply a refutation step — try to disprove each challenge before keeping it. Report only challenges that survive refutation.` |
 
 Skills with `--team` mode: fallback agents work, lower quality. Apply fallback only to agents the skill actually dispatches.
+
+## Task hygiene
+
+Task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone: every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block. Workflow-specific task names and timing remain with the consuming skill.
+
+## Agent budget
+
+Each spawn costs ~120,851 tok fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call. Measured on a real PR review: 11 agents, ~55% of the whole bill. Work under ~73 calls is cheaper done inline: spawn nothing for work displacement alone; isolation-motivated spawns (adversarial reviewer, distinct specialist role, model tier, worktree) run regardless of size. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion: `partial: true` plus what was finished.

@@ -590,7 +590,7 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
     assets = _contract(_GLOBAL_POLICY)
     template = _contract(_COMMIT_TEMPLATE)
     packet = _between(_REMEDIATE_SKILL, "### Upfront Decision Packet", "### 06:")
-    commit = _between(_REMEDIATE_SKILL, "### 12:", "## Fail-fast Rules")
+    commit = _between(_REMEDIATE_SKILL, "### 12:", "## Fail-Fast Rules")
 
     assert (
         missing_phrases(
@@ -1387,7 +1387,7 @@ def test_upfront_grouping_does_not_trigger_early_commit_failure() -> None:
     The commit-grouping preference may be asked up front, so selecting a commit mode early must not fail the run; only
     staging or committing before gates, result validation and a bound commit plan may.
     """
-    fail_fast = _between(_REMEDIATE_SKILL, "## Fail-fast Rules", "## Quality Gates")
+    fail_fast = _between(_REMEDIATE_SKILL, "## Fail-Fast Rules", "## Quality Gates")
 
     assert (
         missing_phrases(
@@ -1414,7 +1414,7 @@ def test_rule_43a_distinguishes_automatic_requested_and_integration_commits() ->
     skill = _contract(_REMEDIATE_SKILL)
     rule = skill.split("43a.", 1)[1].split("43b.", 1)[0]
     result = _between(_REMEDIATE_SKILL, "### 11:", "### 12:")
-    commit = _between(_REMEDIATE_SKILL, "### 12:", "## Fail-fast Rules")
+    commit = _between(_REMEDIATE_SKILL, "### 12:", "## Fail-Fast Rules")
     template = _contract(_COMMIT_TEMPLATE)
     shared_checks = (
         "Run and report required checks and retain their evidence",

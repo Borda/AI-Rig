@@ -26,6 +26,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -39,10 +40,11 @@ def is_valid_repo(repo: str) -> bool:
     """Report whether ``repo`` has the ``[HOST/]OWNER/REPO`` shape ``gh --repo`` accepts.
 
     The override can come from a shared-temp sentinel, so it is checked before it reaches ``gh``'s argv. Only
-    ``[A-Za-z0-9_.-]`` segments are allowed, none starting with ``-`` and none consisting of dots alone.
+    ``[A-Za-z0-9_.-]`` segments are allowed, none starting with ``-`` and none consisting of dots alone. An explicit
+    host must be ``github.com`` or the host the caller configured with ``GH_HOST``.
 
     Examples:
-        >>> is_valid_repo("owner/repo"), is_valid_repo("ghe.example.com/owner/repo"), is_valid_repo("o/.github")
+        >>> is_valid_repo("owner/repo"), is_valid_repo("github.com/owner/repo"), is_valid_repo("o/.github")
         (True, True, True)
         >>> is_valid_repo("repo"), is_valid_repo("-x/repo"), is_valid_repo("../repo"), is_valid_repo("a/b/c/d")
         (False, False, False, False)
@@ -50,6 +52,8 @@ def is_valid_repo(repo: str) -> bool:
         (False, False, False)
     """
     parts = repo.split("/")
+    if len(parts) == 3 and parts[0].lower() not in {"github.com", os.environ.get("GH_HOST", "").lower()}:
+        return False
     return 2 <= len(parts) <= 3 and all(_REPO_SEGMENT.fullmatch(part) and part.strip(".") for part in parts)
 
 
@@ -113,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     raw_str = positional[0] if positional else ""
     raw = raw_str.split()[0] if raw_str.strip() else ""
     issue_num = raw[1:] if raw.startswith("#") else raw
-    if not issue_num or not issue_num.isdigit():
+    if not re.fullmatch(r"[0-9]+", issue_num):
         print(f"issue-fetch: invalid issue number: '{issue_num}'", file=sys.stderr)
         return 1
     if repo and not is_valid_repo(repo):

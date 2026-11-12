@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""write_skill_contract.py — write the compaction-boundary contract the PreCompact hook appends verbatim.
+"""Write the compaction contract that the PreCompact hook appends verbatim.
 
 Only the skeleton is shared. `preserve` and `next` stay bespoke per boundary by design
 (compaction.md §Verbatim-file principle) — this script parameterises the mkdir + write
@@ -22,7 +22,7 @@ Usage: python write_skill_contract.py [KEEP] <skill> <phase> <run-dir> <preserve
   `--keep-sentinel <name>` names the flat session sentinel `${TMPDIR}/<name>-${CSID}` (TMPDIR falls back
   to the platform temp dir, CSID to CLAUDE_CODE_SESSION_ID, then "shared"); `<name>` is a bare file-name
   stem (letters, digits, `.`, `_`, `-`), never a path.
-  `--keep-file <path>` names the file itself, for keep items that live inside a per-session state
+  `--keep-file <path>` names a keep-items sentinel inside a per-session state
   directory (`${TMPDIR}/<skill>-state-${CSID}/keep-items`) a flat name cannot address; the caller's
   shell expands the path, a relative one resolves against the working directory.
   Callers keep their own sentinel reads: the `${_OUT}`-style values must expand in the
@@ -44,6 +44,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 from contextlib import suppress
@@ -65,12 +66,20 @@ _USAGE = (
 #: Leading option naming the flat session sentinel that holds the user's `--keep` items.
 _KEEP_SENTINEL_FLAG = "--keep-sentinel"
 
-#: Leading option naming the file that holds the user's `--keep` items, wherever it lives.
+#: Leading option naming the session state sentinel that holds the user's `--keep` items.
 _KEEP_FILE_FLAG = "--keep-file"
 _KEEP_FLAGS = (_KEEP_SENTINEL_FLAG, _KEEP_FILE_FLAG)
 
 #: A sentinel name is a bare file-name stem; anything path-like could read outside the temp dir.
 _SENTINEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def _session_id() -> str:
+    """Return the session token, refusing path-shaped values before constructing a sentinel."""
+    csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
+    if _SENTINEL_NAME.fullmatch(csid) is None:
+        raise ValueError("session token must be a bare file-name stem")
+    return csid
 
 
 def _sentinel_path(name: str) -> Path:
@@ -85,8 +94,22 @@ def _sentinel_path(name: str) -> Path:
     """
     tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
     tmp_root = os.environ.get("TMPDIR") or tmp_fallback
-    csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
-    return Path(tmp_root) / f"{name}-{csid}"
+    return Path(tmp_root).resolve() / f"{name}-{_session_id()}"
+
+
+def _keep_file_path(raw: str) -> Path:
+    """Confine an explicit keep file to the current session's temporary state sentinel."""
+    path = Path(raw)
+    suffix = f"-state-{_session_id()}"
+    stem = path.parent.name.removesuffix(suffix)
+    if (
+        path.name != "keep-items"
+        or not path.parent.name.endswith(suffix)
+        or _SENTINEL_NAME.fullmatch(stem) is None
+        or path.resolve() != _sentinel_path(f"{stem}-state") / "keep-items"
+    ):
+        raise ValueError("--keep-file must name TMPDIR/<skill>-state-<session>/keep-items")
+    return path
 
 
 def _split_keep_option(args: list[str]) -> tuple[list[str], Path | None]:
@@ -97,7 +120,8 @@ def _split_keep_option(args: list[str]) -> tuple[list[str], Path | None]:
     reason a second keep option right after the first is an error, never a skill name.
 
     Examples:
-        >>> rest, keep_path = _split_keep_option(["--keep-file", "state/keep-items", "develop:fix"])
+        >>> path = _sentinel_path("example-state") / "keep-items"
+        >>> rest, keep_path = _split_keep_option(["--keep-file", str(path), "develop:fix"])
         >>> rest, keep_path.name
         (['develop:fix'], 'keep-items')
         >>> _split_keep_option(["develop:fix", "--keep-file", "x"])
@@ -115,7 +139,7 @@ def _split_keep_option(args: list[str]) -> tuple[list[str], Path | None]:
     else:
         if not args[1]:
             raise ValueError(f"{flag} requires a non-empty path")
-        keep_path = Path(args[1])
+        keep_path = _keep_file_path(args[1])
     rest = args[2:]
     if rest and rest[0] in _KEEP_FLAGS:
         raise ValueError(f"{_KEEP_SENTINEL_FLAG} and {_KEEP_FILE_FLAG} are alternatives; pass one")
@@ -126,7 +150,8 @@ def _read_keep_items(path: Path) -> str:
     """Return the first line of the keep file, or an empty string when it is absent.
 
     Mirrors the shell read-back ``IFS= read -r _KEEP < "<file>" || _KEEP=""``: the first newline-terminated
-    line, surrounding whitespace kept. A missing, unreadable or newline-less file is no keep items, as there
+    line of at most 8192 bytes including its newline, surrounding whitespace kept. A missing, unreadable,
+    oversized or newline-less file is no keep items, as there
     (``read`` exits non-zero at end of file without a newline and the idiom's default empties the value);
     ``extract-keep-flag.py`` always writes the trailing newline. Two deliberate differences, both for the
     contract rather than for fidelity:
@@ -140,7 +165,16 @@ def _read_keep_items(path: Path) -> str:
     """
     try:
         # bytes, not read_text: text mode translates a bare CR to a newline and would hide the no-newline case
-        text = path.read_bytes().decode("utf-8", errors="replace")
+        if not stat.S_ISREG(path.lstat().st_mode):
+            return ""
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        with os.fdopen(os.open(path, flags), "rb") as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                return ""
+            raw = handle.readline(8193)
+            if len(raw) > 8192:
+                return ""
+            text = raw.decode("utf-8", errors="replace")
     except OSError:
         return ""
     line, newline, _ = text.partition("\n")
@@ -201,15 +235,16 @@ def _parse_metadata(args: list[str]) -> tuple[list[str], str]:
 def _state_dir_problem() -> str:
     """Return why the state directory cannot be trusted, or an empty string.
 
-    ``.temp`` and ``.temp/state`` may be links to somewhere else, but not to another place inside the tree: the contract
-    is replaced and removed there by name, and a link into the instruction sources would let that reach one.
+    ``.temp`` and ``.temp/state`` may resolve only inside the project's .temp or .reports directories: the contract is
+    replaced and removed there by name, so neither external targets nor instruction sources are allowed.
     """
     root = Path.cwd().resolve()
     state = (root / ".temp" / "state").resolve()
-    allowed = state.is_relative_to(root) is False or any(
-        state.is_relative_to(root / top) for top in (".temp", ".reports")
-    )
-    return "" if allowed else f".temp/state resolves to {state}, inside the tree but outside .temp/ and .reports/"
+    allowed = any(state.is_relative_to(root / top) for top in (".temp", ".reports"))
+    if allowed:
+        return ""
+    location = "inside the tree but outside .temp/ and .reports/" if state.is_relative_to(root) else "outside the tree"
+    return f".temp/state resolves to {state}, {location}"
 
 
 def _atomic_write(path: Path, raw: bytes) -> None:
@@ -228,6 +263,9 @@ def _atomic_write(path: Path, raw: bytes) -> None:
 
 def _write_contract(contract: str) -> int:
     """Atomically write LF bytes, then stamp the intended bytes for this session."""
+    if problem := _state_dir_problem():
+        print(f"write_skill_contract: cannot write {_CONTRACT}: {problem}", file=sys.stderr)
+        return 1
     try:
         _CONTRACT.parent.mkdir(parents=True, exist_ok=True)
         raw = contract.encode("utf-8")

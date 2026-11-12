@@ -10,14 +10,16 @@ Fetch full PR metadata in one call:
 
 ```bash
 gh pr view <PR_NUMBER> \
-    --json number,title,body,author,labels,isDraft,state,headRefName,baseRefName,headRepositoryOwner,headRepository,isCrossRepository,url,closingIssuesReferences
+    --json number,title,body,author,labels,isDraft,state,headRefName,headRefOid,baseRefName,headRepositoryOwner,headRepository,isCrossRepository,url,closingIssuesReferences
 ```
 
 Extract and record:
 
 - `HEAD_REF` — source branch name (`.headRefName`)
+- `PR_HEAD_OID` — full commit id of the PR head (`.headRefOid`); the Step 3d run approval question names it
 - `BASE_REF` — target branch name (`.baseRefName`, e.g. `main`, `develop`)
 - `PR_AUTHOR` — contributor's GitHub login (`.author.login`)
+- `PR_HTML_URL` — full PR URL (`.url`), printed as a bare link under the final report heading; distinct from the preflight and checkout `PR_URL`
 - `HEAD_REPO_OWNER` — owner of fork/head repo (`.headRepositoryOwner.login`)
 - `BASE_REPO_OWNER` — owner of base repo; from `.url` via `split("/")[3]` or `gh repo view --json owner -q .owner.login`
 - `IS_FORK` — `.isCrossRepository` (`true` = fork PR, `false` = same-repo branch)
@@ -74,11 +76,12 @@ Raw PR discussion — conversation comments, formal reviews, inline code comment
 Create `$IMPL_DIR/intel-args.txt` with the Write tool — three lines, `pr=<PR_NUMBER>`, `repo=<BASE_REPO_OWNER>/<REPO_NAME>`, `issues=<CLOSING_ISSUES>` (comma-separated `N` or `OWNER/NAME#N` entries, empty when none) — then run this block unedited:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; Step 3b setup never ran"; exit 1; }
 # values arrive through the Write-tool file, never as placeholders: block text stays invariant for the blueprint manifest
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/fetch_pr_intel.py" --args-file "$IMPL_DIR/intel-args.txt" --out "$IMPL_DIR"  # timeout: 180000
+python "$PLUGIN_ROOT/bin/fetch_pr_intel.py" --args-file "$IMPL_DIR/intel-args.txt" --out "$IMPL_DIR"  # timeout: 180000
 ```
 
 Success is exit 0 with one JSON summary line on stdout (counts, `resolved_threads_ok`, `commits_ok`); that line is all the orchestrator needs, the thread itself stays in `$IMPL_DIR/pr-intel-raw.jsonl`. Anything else — exit 1 (an argument is invalid; stderr names which), exit 2 (`! BLOCKED — required PR fetch failed`, including its 150 s time budget), a traceback, a killed call, or no summary line — means no valid file: surface the message and stop, never spawn the classifier. The script deletes any earlier `pr-intel-raw.jsonl` before it fetches, so a retry or failure can never leave stale data to read. `resolved_threads_ok: false` (surfaced by the `unknown` thread-count warning below) or `commits_ok: false` (no commit evidence, so items stay `pending`) is not a stop.
@@ -254,11 +257,12 @@ while IFS='=' read -r _SK _SV || [ -n "$_SK" ]; do _SV=${_SV#\'}; _SV=${_SV%\'};
 Read `$IMPL_DIR/pr-intelligence.md`, then save its Sources block + motivation at the top of `$IMPL_DIR/action-items-table.md`, above the action item table. Write every row before the call and print the headed table exactly once as the last text of the reply message that issues Step 3d’s AskUserQuestion, never in an option’s `preview`, never Bash/tool stdout (SKILL.md Step 3d **Items in the question text**). Q1 lists pending items as plain lines, or the top items, pending counts by type and that path past the 1,500-character whole-question budget; options carry no preview. In `pr + report` mode Step 3c’s merged Sources block and merged table replace this Sources block and table; print only the merged one. This is the only ACTION_ITEMS table in pure `pr` mode; Output-Routing `.temp` diversion does **not** apply (selection-driving, read-in-context; canonical exemption in SKILL.md Step 3c). Orchestrator context now holds *classified* table (~500–1000 tokens) rather than raw PR thread (often 5000–20000+ tokens on active PRs). Later steps read per-item details from `$IMPL_DIR/action-items.jsonl` when `full_comment_text` or other fields needed: create `$IMPL_DIR/item-ids-now.txt` with the Write tool (the item ids to read, space-separated), then run this block unedited — one record per id:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; Step 1 never ran"; exit 1; }
 # ids from a Write-tool file, never a placeholder: block text stays invariant for the blueprint manifest
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/filter_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --ids-file "$IMPL_DIR/item-ids-now.txt" --hint "create it with the Write tool (item ids, space-separated)"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/filter_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --ids-file "$IMPL_DIR/item-ids-now.txt" --hint "create it with the Write tool (item ids, space-separated)"  # timeout: 5000
 ```
 
 ### `[question]` item handling

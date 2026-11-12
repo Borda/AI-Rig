@@ -49,6 +49,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
 SHARED_DIRECTORY = Path(__file__).resolve().parents[2] / "shared"
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))

@@ -5,8 +5,8 @@ Two modes, one per Step-1 argument-parsing stage of ``oss:analyse``:
 
 ``--mode classify``
     Decide whether ``CLEAN_ARGS`` names a direct report path (``*.md`` that is neither a ``vitality``/``ecosystem``/
-    ``evolution`` keyword nor a plan/todo file) and make sure the ``analyse-today`` sentinel exists so later steps cannot straddle a
-    midnight rollover.
+    ``evolution`` keyword nor a plan/todo file) and make sure the ``analyse-today`` sentinel exists so later steps
+    cannot straddle a midnight rollover.
 
 ``--mode vitality`` (default)
     For a ``vitality`` invocation, resolve ``owner/repo`` from the explicit argument, from ``gh repo view``, or from the
@@ -30,6 +30,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -39,6 +40,7 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Final
+from urllib.parse import urlsplit
 
 #: Sibling import: bin/ is not a package. Putting it on the path resolves the private writer whether this file runs as
 #: a script, under the test conftest, or as a doctest module.
@@ -268,7 +270,7 @@ def repo_from_argument(extra: str) -> str:
             )
         stripped = _GITHUB_PREFIX_RE.sub("", extra, count=1)
         return "/".join(stripped.split("/")[:2]) if "/" in stripped else stripped
-    if _REPO_SLUG_RE.match(extra):
+    if _REPO_SLUG_RE.fullmatch(extra):
         return extra
     raise _Abort(
         0,
@@ -289,12 +291,24 @@ def repo_from_context(timeout: int) -> str:
     Raises:
         _Abort: with exit code 0 when the remote is not GitHub or no remote exists at all.
     """
-    repo = _run(["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], timeout)
-    if repo:
+    raw = _run(["gh", "repo", "view", "--json", "nameWithOwner,url"], timeout)
+    if raw:
+        try:
+            data = json.loads(raw)
+            host = urlsplit(data["url"]).hostname
+            repo = data["nameWithOwner"]
+        except (ValueError, TypeError, KeyError):
+            raise _Abort(0, "⚠ Cannot verify GitHub repository host from gh context.") from None
+        if host != "github.com" or not isinstance(repo, str) or not _REPO_SLUG_RE.fullmatch(repo):
+            raise _Abort(0, "⚠ This skill supports public GitHub only (github.com).")
         return repo
     remote = _run(["git", "remote", "get-url", "origin"], timeout)
-    if "github.com" in remote:
-        return re.sub(r"\.git$", "", _REMOTE_HOST_RE.sub("", remote))
+    match = re.fullmatch(
+        r"(?:https?://github\.com/|(?:[^@/:]+@)?github\.com:|ssh://git@github\.com/)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?",
+        remote,
+    )
+    if match:
+        return match[1]
     if remote:
         raise _Abort(
             0,

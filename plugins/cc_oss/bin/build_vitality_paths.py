@@ -29,6 +29,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Final
 
+from _sentinel_io import write_private_text
+
 #: Glob, relative to the home directory, locating installed oss plugin manifests in the Claude plugin cache.
 _VERSION_GLOB: Final = ".claude/plugins/cache/borda-ai-rig/oss/*/.claude-plugin/plugin.json"
 _SEMVER_RE: Final = re.compile(
@@ -96,7 +98,7 @@ def _write_sentinel(name: str, value: str) -> None:
     if _DRY_RUN:
         print(f"[dry-run] would write {name}={value}")
         return
-    _sentinel_path(name).write_text(f"{value}\n", encoding="utf-8", newline="\n")
+    write_private_text(_sentinel_path(name), f"{value}\n")
 
 
 def _run(cmd: list[str], timeout: int, fallback: str) -> str:

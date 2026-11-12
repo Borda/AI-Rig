@@ -48,10 +48,11 @@ mkdir -p "$WATCH_DIR" && echo "WATCH_DIR=$WATCH_DIR"  # timeout: 5000
 Check — once per wake-up:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r WATCH_DIR < "${TMPDIR:-/tmp}/research-agent-watch-dir-${CSID}" 2>/dev/null || WATCH_DIR=""
 [ -n "$WATCH_DIR" ] || { echo "! BLOCKED — agent-watch dir sentinel missing; run the arm block before spawning"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/agent_watch.py" --state-dir "$WATCH_DIR"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/agent_watch.py" --state-dir "$WATCH_DIR"  # timeout: 5000
 ```
 
 A deadline is enforced at the next wake-up — another agent's notification or a user message — since nothing else can wake a waiting run; the check then reports every agent past its deadline at once.

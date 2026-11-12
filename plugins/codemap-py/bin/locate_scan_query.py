@@ -96,7 +96,7 @@ def locate_scan_query() -> Path:
         result = _find_executable(plugin_root_path / "bin" / "scan-query")
         # Containment guard — the resolved candidate must stay inside plugin_root; a planted
         # symlink at bin/scan-query that escapes the plugin root is rejected, falling through to Tier 3.
-        if result:
+        if result and plugin_root_path == Path(__file__).resolve().parent.parent:
             try:
                 if result.resolve().is_relative_to(plugin_root_path):
                     return result

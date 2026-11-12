@@ -40,7 +40,8 @@ Medical-imaging checklist:
 Verify zero patient overlap between splits with `verify_patient_split.py` from `bin/`:
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/verify_patient_split.py" \
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/verify_patient_split.py" \
     --train splits/train.csv --test splits/test.csv
 ```
 

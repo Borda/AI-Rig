@@ -66,7 +66,7 @@ The gh-write and push guards read printed text as shell source only where it rea
 
 Known limitation: arithmetic over a variable whose value carries outside text (for example, `n=$(…); [[ n -eq 0 ]]` or `$((n))`) is not judged; bash and zsh re-evaluate the value as an arithmetic expression, which could assign a variable, and this behaviour predates the closed lists and remains outside the classifier's scope.
 
-The trust statement shifts from "this shape looks safe" to "this exact text exists in a reviewed, versioned plugin file": a command that captures output is covered once it matches a blueprint entry byte-for-byte; any deviation (hand-typed, adapted, or reordered) misses and still prompts, which is the intended fail-closed behavior for non-blueprinted code.
+The trust statement shifts from "this shape looks safe" to "this exact text exists in a reviewed, versioned plugin file": a command that captures output is covered once it matches a blueprint entry byte-for-byte; any deviation (hand-typed, adapted, or reordered) misses and still prompts, which is the intended fail-closed behavior for non-blueprinted code. Entries containing the plain `${CLAUDE_PLUGIN_ROOT}` bootstrap token also bind their normalized source template to its SHA-256 key. The hook verifies that binding and renders only its independently trusted owning-plugin root into an in-memory exact lookup; it never rewrites the incoming command. Each helper block starts `PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name <plugin>) || exit $?; export PLUGIN_ROOT`; helper-only fragments depending on that assignment are not independently auto-allowed.
 
 `github-read-allow.js` decides by **gh read**: it auto-allows a command whose every part is an allowlisted `gh` read (`gh pr view`, `gh issue list`, a `gh api` GET, a GraphQL query the text shows), in every session and spawned agent, with no grant or record; a gh write is never allowed here and `gh-write-guard.js` gates it.
 
@@ -88,15 +88,16 @@ Four things this log deliberately does not do:
 Read and prune it with the shipped verifier:
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" verify
-python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" prune --older-than 30 --dry-run
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/verify_blueprint_audit.py" verify
+python "$PLUGIN_ROOT/bin/verify_blueprint_audit.py" prune --older-than 30 --dry-run
 ```
 
 `verify` exits 1 only when a record's own hash fails; torn framing from concurrent appends and every classification finding are warnings. `prune` is the only thing in the system that deletes a log file, is never run by a hook, and never prunes `_no-session.jsonl` by age — a growing one means the host stopped sending a session id, which is a regression to investigate. Nothing schedules `prune`; run it from your own scheduler if you want retention automatic.
 
 `RIG_AUDIT=0` disables audit writing everywhere. It disables logging only: every module is still evaluated and the same permission decision is still emitted.
 
-Both hooks were validated against *committed text* — the share of shipped blueprint blocks each covers. That is a different population from the commands sessions actually execute, so measure the second before trusting it: `python "${CLAUDE_PLUGIN_ROOT}/bin/audit_hook_coverage.py" --since <hook-ship-date> --skills-only` replays every Bash call in the local transcripts through the installed hooks and reports the split by mechanism. Pass `--since`, or sessions predating a hook drag the rate toward zero; the denominator counts every Bash call, including ad-hoc ones no blueprint ever produced, so the result is a floor rather than a verdict.
+Both hooks were validated against *committed text* — the share of shipped blueprint blocks each covers. That is a different population from the commands sessions actually execute, so measure the second before trusting it: after the guarded resolver prologue, `python "$PLUGIN_ROOT/bin/audit_hook_coverage.py" --since <hook-ship-date> --skills-only` replays every Bash call in the local transcripts through the installed hooks and reports the split by mechanism. Pass `--since`, or sessions predating a hook drag the rate toward zero; the denominator counts every Bash call, including ad-hoc ones no blueprint ever produced, so the result is a floor rather than a verdict.
 
 ## Web
 
@@ -156,7 +157,7 @@ Both hooks were validated against *committed text* — the share of shipped blue
 | `Bash(jq:*)` | Query and transform JSON | Parse API responses, inspect settings.json, filter JSONL logs |
 | `Bash(date:*)` | Print or format current date/time | Timestamp log entries, generate dated filenames |
 | `Bash(which:*)` | Locate executable on PATH | Verify tool installed before invoking |
-| `Bash(comm:*)` | Compare two sorted files line by line | `/audit` Check 1: diff on-disk agent/skill names against MEMORY.md roster |
+| `Bash(comm:*)` | Compare two sorted files line by line | `/oss:resolve`: compare worktree lists before and after cleanup to detect unreported leftovers (requires `oss` plugin) |
 | `Bash(mktemp:*)` | Create temporary file with unique name | Create temp files for safe content comparison before overwriting |
 | `Bash(touch:*)` | Create file or update modification time | `/audit` health monitoring: create per-agent checkpoint files for stall detection |
 | `Bash(printf:*)` | Formatted output; auto-allow lanes accept only literal string formats, `%%` and `\n`/`\t`/`\\` escapes | Print audit and setup text without numeric evaluation or general escape decoding |

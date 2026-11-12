@@ -171,7 +171,7 @@ class TestPlanNamespace:
         namespace.mkdir()
         self._point_sentinel_at(tmp_env, namespace)
 
-        assert dev_codemap_gate._resolve_paths("plan", tmp_env, _CSID) == (
+        assert dev_codemap_gate._resolve_paths("plan", tmp_env) == (
             namespace / "codemap-raw",
             namespace / "codemap-enabled",
         )
@@ -184,7 +184,7 @@ class TestPlanNamespace:
         namespace = tmp_env / f"dev-plan-42-{_CSID}"
         self._point_sentinel_at(tmp_env, namespace)
 
-        assert dev_codemap_gate._resolve_paths("plan", tmp_env, _CSID) == (
+        assert dev_codemap_gate._resolve_paths("plan", tmp_env) == (
             namespace / "codemap-raw",
             namespace / "codemap-enabled",
         )
@@ -204,7 +204,7 @@ class TestPlanNamespace:
         self._point_sentinel_at(tmp_env, tmp_env / relative)
 
         with pytest.raises(SystemExit) as raised:
-            dev_codemap_gate._resolve_paths("plan", tmp_env, _CSID)
+            dev_codemap_gate._resolve_paths("plan", tmp_env)
 
         assert raised.value.code == 1
 
@@ -222,7 +222,7 @@ class TestPlanNamespace:
         self._point_sentinel_at(tmp_env, namespace)
 
         with pytest.raises(SystemExit) as raised:
-            dev_codemap_gate._resolve_paths("plan", tmp_env, _CSID)
+            dev_codemap_gate._resolve_paths("plan", tmp_env)
 
         assert raised.value.code == 1
 
@@ -234,7 +234,7 @@ class TestPlanNamespace:
         _report_foreign_owner(monkeypatch, namespace)
 
         with pytest.raises(SystemExit) as raised:
-            dev_codemap_gate._resolve_paths("plan", tmp_env, _CSID)
+            dev_codemap_gate._resolve_paths("plan", tmp_env)
 
         assert raised.value.code == 1
 
@@ -245,7 +245,7 @@ class TestPlanNamespace:
         self._point_sentinel_at(tmp_env, namespace)
 
         with pytest.raises(SystemExit) as raised:
-            dev_codemap_gate._resolve_paths("plan", tmp_env, _CSID)
+            dev_codemap_gate._resolve_paths("plan", tmp_env)
 
         assert raised.value.code == 1
 

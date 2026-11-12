@@ -38,6 +38,7 @@ NOT for: finding all callers of a function (use `/codemap-py:query-code fn-rdeps
 
 ```bash
 # timeout: 10000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || basename "$PWD")
 
@@ -46,7 +47,7 @@ _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/nul
 command -v codemap-py >/dev/null 2>&1 || { echo "codemap-py not on PATH — install the codemap-py plugin, or invoke its bin/codemap-py launcher as one standalone command"; exit 1; }
 
 # git-root-anchored, not CWD-relative — resolve_proj_index.py resolves the same pair the engine uses (index_paths.py); a hand-rolled path here disagreed from a subdirectory
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/resolve_index_env.py" --output-prefix "codemap-${_CM_PROJ}" 2>/dev/null
+python "$PLUGIN_ROOT/bin/resolve_index_env.py" --output-prefix "codemap-${_CM_PROJ}" 2>/dev/null
 IFS= read -r INDEX < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-index-${CSID}" 2>/dev/null || INDEX=""
 [ -n "$INDEX" ] || { echo "! resolve_index_env.py failed — check Python availability and CLAUDE_PLUGIN_ROOT"; exit 1; }
 
@@ -95,13 +96,14 @@ After build/refresh, re-verify index; the block's last command is Step 1's argum
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || basename "$PWD")
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/resolve_index_env.py" --output-prefix "codemap-${_CM_PROJ}" 2>/dev/null
+python "$PLUGIN_ROOT/bin/resolve_index_env.py" --output-prefix "codemap-${_CM_PROJ}" 2>/dev/null
 IFS= read -r INDEX < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-index-${CSID}" 2>/dev/null || INDEX=""
 [ -n "$INDEX" ] && [ -f "$INDEX" ] || { printf "! Index not found after refresh at %s — check CODEMAP_INDEX_DIR or re-run /codemap-py:scan-codebase\n" "${INDEX:-<unresolved>}"; exit 1; }
 # shlex tokens + exact-token flag match: awk/grep split sent a leading --no-mocks as the target
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/parse_test_impact_args.py" --output-prefix "codemap-${_CM_PROJ}" --arguments="$ARGUMENTS"
+python "$PLUGIN_ROOT/bin/parse_test_impact_args.py" --output-prefix "codemap-${_CM_PROJ}" --arguments="$ARGUMENTS"
 ```
 
 ## Step 1 — Parse arguments
@@ -112,13 +114,14 @@ First run `codemap-py query diff-impact` to inspect tracked staged and unstaged 
 
 ```bash
 # timeout: 120000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || basename "$PWD")
 _TI_DIFF="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-ti-diff-${CSID}"
 _TI_DIFF_ERR="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-ti-diff-stderr-${CSID}"
 codemap-py query diff-impact >"$_TI_DIFF" 2>"$_TI_DIFF_ERR"
 _TI_RC=$?
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/summarize_test_impact.py" --diff-impact --rc "$_TI_RC" --stderr-file "$_TI_DIFF_ERR" --output-prefix "codemap-${_CM_PROJ}" <"$_TI_DIFF" || printf 'whole-change analysis unavailable\n'
+python "$PLUGIN_ROOT/bin/summarize_test_impact.py" --diff-impact --rc "$_TI_RC" --stderr-file "$_TI_DIFF_ERR" --output-prefix "codemap-${_CM_PROJ}" <"$_TI_DIFF" || printf 'whole-change analysis unavailable\n'
 ```
 
 Nonzero exit or unparsable JSON → report the diagnostic plus `whole-change analysis unavailable` and continue with the question route below; never render an empty test set from that failure or reuse the captured file for a union. Surface `unmapped_files` and every `changed_modules[].errors` entry as coverage gaps, including when continuing with the question route. The union can omit failed test-impact subqueries without listing their errors: always label it a static selection, never proof of complete coverage, and retain the dynamic-dispatch/hook/string-dispatch caveat even when `index.not_covered` is absent.
@@ -127,9 +130,10 @@ For the whole-change route with `--no-mocks`, do not use the default diff union 
 
 ```bash
 # timeout: 120000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || basename "$PWD")
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/test_impact_union.py" "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-ti-diff-${CSID}" || exit 1
+python "$PLUGIN_ROOT/bin/test_impact_union.py" "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-ti-diff-${CSID}" || exit 1
 ```
 
 With zero or one changed Python file, or when whole-change analysis is unavailable, continue with the existing question route:
@@ -141,12 +145,13 @@ After an answer, record the target before Step 2; the text substitution guard ap
 
 ```bash
 # timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || basename "$PWD")
 QNAME="<answer from AskUserQuestion>"
 case "$QNAME" in *'<'*'>'*|"") echo "! BLOCKED — target placeholder not substituted; ask again"; exit 1;; esac
 # answer + original flags: re-parsing the answer alone rewrites ti-mocks empty, dropping --no-mocks
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/parse_test_impact_args.py" --output-prefix "codemap-${_CM_PROJ}" --arguments="$QNAME $ARGUMENTS"
+python "$PLUGIN_ROOT/bin/parse_test_impact_args.py" --output-prefix "codemap-${_CM_PROJ}" --arguments="$QNAME $ARGUMENTS"
 ```
 
 **Multi-symbol guard**: `$ARGUMENTS` may contain multiple targets (e.g. `mypackage.auth::validate mypackage.auth::parse`). Helper keeps first non-flag token; when more remain it prints `⚠ test-impact accepts one symbol at a time — using first token only: $QNAME. Run separately for each remaining symbol.` — relay verbatim.
@@ -155,6 +160,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/parse_test_impact_args.py"
 
 ```bash
 # timeout: 10000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || basename "$PWD")
 IFS= read -r QNAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-ti-qname-${CSID}" 2>/dev/null || QNAME=""
@@ -166,7 +172,7 @@ RESULT=$(codemap-py query test-impact "$QNAME" $MOCKS_FLAG 2>"$_TI_ERR")
 _TI_RC=$?
 [ "$_TI_RC" -eq 0 ] || printf "! test-impact query failed (exit %d) — this is NOT a 'no affected tests' result; do not report an empty test set\n" "$_TI_RC" >&2
 # one parse, no per-field `|| echo` defaults (forged total=0); error JSON is on stdout, so routing reads it there
-printf '%s' "$RESULT" | python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/summarize_test_impact.py" --rc "$_TI_RC" --stderr-file "$_TI_ERR" --output-prefix "codemap-${_CM_PROJ}" || exit 1
+printf '%s' "$RESULT" | python "$PLUGIN_ROOT/bin/summarize_test_impact.py" --rc "$_TI_RC" --stderr-file "$_TI_ERR" --output-prefix "codemap-${_CM_PROJ}" || exit 1
 ```
 
 On success the helper prints a summary — Step 3 renders from it only:
@@ -256,7 +262,8 @@ Output routing: if `total >= 5`, print free non-colliding path (`<TI_OUT>` below
 ```bash
 # timeout: 3000
 # never overwrite — same-day re-run on another target would replace unrelated report; helper appends -2, -3, … until free
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/anti_overwrite_path.py" .temp output-test-impact --branch-date
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/anti_overwrite_path.py" .temp output-test-impact --branch-date
 ```
 
 Write the report with Write: a YAML `---` block first (`Title: Test impact — <qname>`, `Date`, `Scope: <qname>`, `Focus: static test impact`, `Agents: none`, `Outcome: <total> affected test files`, `Confidence: complete` or `incomplete/stale` per the caveat, `Next steps: run the printed pytest command`, `Path: <TI_OUT>`), then the template above.

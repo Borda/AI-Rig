@@ -3,13 +3,15 @@
 from functools import cache
 from pathlib import Path
 
+from _skill_source import read_skill_source
+
 _REVIEW = Path(__file__).resolve().parents[2] / "skills/review"
 
 
 @cache
 def _read(relative: str) -> str:
     """Read one shipped review file; the text is immutable during a run."""
-    return (_REVIEW / relative).read_text(encoding="utf-8")
+    return read_skill_source(_REVIEW / relative)
 
 
 def test_normal_and_terminal_publications_show_frozen_sha() -> None:

@@ -1,6 +1,6 @@
 ---
 name: Rig Doctor
-description: Check opencode-rig install health and report exact remediation steps.
+description: Check opencode-rig install health, including plugin load, version synchronization, agent installation, Git grant, artifact root, and detected gates. Use when a workflow or tool is unavailable. Also curates shipped cards (assets) and deletes stale runs only through explicitly confirmed cleanup. NOT for editing configuration or fixing files.
 ---
 
 # Rig Doctor
@@ -17,7 +17,7 @@ Run `rig_doctor` with `action: "report"` and interpret the report. Diagnosis is 
 - Configured gates are detectable.
 - Stale run directories older than the configured TTL are reported.
 
-Use `action: "assets"` (CLI: `opencode-rig doctor --assets`) to curate the shipped cards: `rig.json` roster agreement, skill frontmatter and headings, relative reference links, duplicated prose, and oversized skill or role cards. Roster drift and dead links fail; duplication and size warn.
+Use `action: "assets"` (CLI: `opencode-rig doctor --assets`) to curate the shipped cards: `rig.json` roster agreement, skill frontmatter and headings, relative reference links, duplicated prose, and oversized skill or role cards. Roster drift and dead links fail; the in-session tool also fails a frontmatter description that differs from the routing manifest. Duplication and size warn.
 
 ## Response
 

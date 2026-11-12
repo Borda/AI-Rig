@@ -28,6 +28,12 @@ symlinked into a dotfiles tree still passes; the replace then lands on the link'
 target, keeping the link and the target's existing permission bits (the shell ``mv`` this
 replaces swapped the link for a regular file).
 
+The existing lock covers comparison, backup and replacement. A semantic no-op keeps
+the settings bytes and timestamp unchanged and creates no backup. Before a changed
+write, the helper saves the original bytes in a private sibling
+``.<settings-name>.permissions-backup-<timestamp>-<unique>.bak`` and keeps the newest
+five helper backups after replacement; ordinary user backups are never pruned.
+
 Usage:
     merge_settings_permissions.py --allow <file> [--drop-allow <rule>]... [--drop-allow-file <file>]
     merge_settings_permissions.py --deny <file> [--retire-deny-file <file>]
@@ -46,9 +52,11 @@ Options:
 Output (stdout), one line per merged key, for the setup report:
     permissions.allow: added N, already present M, dropped K
     permissions.deny: added N, already present M, retired K
+    settings: unchanged
+    settings: updated; backup <path> (when changed, instead of unchanged)
 
 Exit codes:
-    0 — merged and written (also when nothing changed)
+    0 — merged and written, or unchanged without a write or backup
     1 — settings or source file missing, unreadable, invalid JSON, or wrong shape; settings unchanged
     2 — bad arguments (argparse), or neither --allow nor --deny given
     4 — settings path empty or outside the ``~/.claude/`` write root
@@ -57,6 +65,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -73,6 +82,7 @@ from typing import Any
 #: Default target: the user-level settings file Claude Code reads.
 _DEFAULT_SETTINGS = "~/.claude/settings.json"
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+_BACKUP_LIMIT = 5
 _RULE_RE = re.compile(r"(?P<tool>[A-Za-z][A-Za-z0-9_.-]*\*?)(?:\((?P<specifier>[^\x00-\x1f\x7f]+)\))?")
 
 
@@ -376,6 +386,41 @@ def _settings_permissions(settings: Any) -> tuple[dict[str, Any], dict[str, Any]
     return settings, permissions
 
 
+def _backup_settings(target: Path) -> Path:
+    """Save the exact pre-merge bytes in a unique, private sibling before replacement."""
+    backup: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=target.parent,
+            prefix=f".{target.name}.permissions-backup-{time.time_ns()}-",
+            suffix=".bak",
+            delete=False,
+        ) as handle:
+            backup = Path(handle.name)
+            handle.write(target.read_bytes())
+        return backup
+    except OSError:
+        if backup is not None:
+            backup.unlink(missing_ok=True)
+        raise
+
+
+def _prune_backups(target: Path) -> None:
+    """Retain five regular helper backups without following links or touching user backup names."""
+    pattern = re.compile(rf"\.{re.escape(target.name)}\.permissions-backup-[0-9]+-[a-z0-9_]+\.bak")
+    try:
+        backups = [
+            path
+            for path in target.parent.iterdir()
+            if pattern.fullmatch(path.name) and not path.is_symlink() and path.is_file()
+        ]
+        backups.sort(key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True)
+        for path in backups[_BACKUP_LIMIT:]:
+            path.unlink()
+    except OSError as exc:
+        print(f"! merge_settings_permissions: settings updated, backup retention failed: {exc}", file=sys.stderr)
+
+
 def run(args: argparse.Namespace) -> int:
     """Load, merge and write; return the process exit code."""
     try:
@@ -398,7 +443,8 @@ def run(args: argparse.Namespace) -> int:
 
 def _merge_settings(target: Path, args: argparse.Namespace) -> list[str]:
     """Merge both permission arrays while the caller holds the settings lock."""
-    settings, permissions = _settings_permissions(_load_json(target, "settings"))
+    original = _load_json(target, "settings")
+    settings, permissions = _settings_permissions(copy.deepcopy(original))
     report: list[str] = []
     if args.allow is not None:
         shipped = _load_rule_list(_option_path(args.allow, "allow file"), "allow file", allow=True)
@@ -422,8 +468,14 @@ def _merge_settings(target: Path, args: argparse.Namespace) -> list[str]:
         report.append(
             f"permissions.deny: added {counts.added}, already present {counts.present}, retired {counts.removed}"
         )
+    if _jq_compare(original, settings) == 0:
+        report.append("settings: unchanged")
+        return report
+    backup = _backup_settings(target)
     # jq prints two-space indented JSON with non-ASCII kept raw; the shell form added one trailing newline.
     _atomic_replace(target, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+    _prune_backups(target)
+    report.append(f"settings: updated; backup {backup.as_posix()}")
     return report
 
 

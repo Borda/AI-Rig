@@ -1,7 +1,7 @@
 """Execute the setup JSON validators with jq absent from command lookup.
 
 Both setup skills validate the merged ``settings.json`` with a one-line check that must still work on a machine without
-``jq``. The foundry skill additionally restores the backup when the check fails; the oss skill leaves that to the user.
+``jq``. Foundry restores its manual backup on failure; oss reports failure for inspection of its helper-owned backup.
 """
 
 from __future__ import annotations
@@ -58,11 +58,11 @@ def test_setup_validation_without_jq(
     expected_rc: int,
     expected_settings: str,
 ) -> None:
-    """Preserve a valid merge without jq and retain the real parse-failure restore path.
+    """Preserve a valid merge without jq and retain each setup's documented parse-failure path.
 
     Scenario: the setup skill's validation line runs in bash with ``jq`` hidden from lookup (PATH holds only an empty
-    sentinel dir). A valid merged file is kept; an invalid one fails the check and the backup is restored, so a broken
-    ``settings.json`` is never left in place.
+    sentinel dir). A valid merged file is kept; an invalid one fails the check. Foundry restores its manual backup,
+    while oss leaves recovery to inspection rather than overwriting a later settings change with a shell copy.
     """
     setup = (_PLUGINS / plugin / "skills/setup/SKILL.md").read_text(encoding="utf-8")
     validation = next(line for line in setup.splitlines() if line.startswith(("jq empty ", "python -m json.tool ")))
@@ -89,4 +89,4 @@ def test_setup_validation_without_jq(
     script = prelude + build_script(setup, validation)
     result = subprocess.run([_BASH, "-c", script], env=env, capture_output=True, text=True, check=False)
     assert result.returncode == expected_rc, result.stderr
-    assert settings.read_text(encoding="utf-8") == expected_settings
+    assert settings.read_text(encoding="utf-8") == (merged if plugin == "cc_oss" else expected_settings)

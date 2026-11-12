@@ -2,6 +2,9 @@
 rem codemap-py Windows launcher (plan §7.3/§7.4): probe an eligible CPython, run
 rem the single Python entry. Windows never depends on Bash.
 setlocal
+set "NoDefaultCurrentDirectoryInExePath=1"
+REM CODEMAP_PYTHON and PATH must name trusted interpreters; relative entries trust the working directory.
+REM Callers must not pass untrusted free text through %*.
 set "HERE=%~dp0"
 set "ENTRY=%HERE%..\scripts\codemap_py_entry.py"
 set "PROBE=import sys;v=sys.version_info;raise SystemExit(0 if sys.implementation.name=='cpython' and v.major==3 and 11<=v.minor<15 else 127)"

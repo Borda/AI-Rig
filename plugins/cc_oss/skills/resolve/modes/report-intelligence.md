@@ -80,6 +80,7 @@ printf '%s\n' "$IMPL_DIR" > "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}"  # timeou
 Pick the findings file, mint ids for a parsed legacy report, then build `$IMPL_DIR/action-items.jsonl` deterministically. `merge_action_items.py` assigns ids 1.. in surviving findings order, maps severity to `[report][req]`/`[report][suggest]` per the taxonomy's **Severity → Resolve Type** table (`### [blocking] Critical` → `[req]` at any severity), and carries `finding_id`, `source_file` and `verify_file` through for Step 8, plus `verify_verdict: CONFIRMED` only for findings from the review's own `findings.jsonl` that name a verifier file. A `merged_into` row folds into its single new survivor's item, adding no item of its own: the item lists `merged_finding_ids`, appends each merged row's text, takes the group's highest severity and becomes `[req]` when any member alone would be. Re-running it skips findings already present by `finding_id` or `merged_finding_ids`:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
@@ -88,7 +89,7 @@ IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null |
 IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_DEGRADED=""
 # the script picks findings.jsonl beside the report (else mints the parsed $IMPL_DIR copy) and persists its path;
 # --intake-accepted admits only the report accepted at Gap triage (report-intake.md), compared by file identity (relative vs absolute spelling)
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --report-file "$REPORT_FILE" --impl-dir "$IMPL_DIR" --persist-findings "${TMPDIR:-/tmp}/resolve-findings-file-${CSID}" --intake-accepted "$INTAKE_DEGRADED"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --report-file "$REPORT_FILE" --impl-dir "$IMPL_DIR" --persist-findings "${TMPDIR:-/tmp}/resolve-findings-file-${CSID}" --intake-accepted "$INTAKE_DEGRADED"  # timeout: 5000
 ```
 
 - Zero findings leave an empty `action-items.jsonl`.
@@ -133,8 +134,9 @@ Two distinct retained proof classes may reduce Part 1 without skipping repair as
 **`BASE_REF` derivation (no-PR path)** — report mode without PR# skips Step 4, so it must publish the local default branch to the same sentinel Step 4 writes for a PR. Step 9 reloads this state in its own shell; an unknown base blocks QA rather than selecting an empty diff range. Comment dispatch reaches the same lint/QA gate from Step 12 and publishes the base with this same helper (`comment-dispatch.md`).
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_pr_refs.py" --local-base  # timeout: 15000
+python "$PLUGIN_ROOT/bin/resolve_pr_refs.py" --local-base  # timeout: 15000
 ```
 
 Exit 1 prints `⛔ Cannot determine a valid origin default branch for report QA` (the helper's message reads `…for QA`) → stop: the helper tries `origin/HEAD`, then `git remote show origin`, and refuses an invalid name; QA cannot run without a base.

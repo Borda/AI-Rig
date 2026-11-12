@@ -57,6 +57,7 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from codemap_py import scanner  # noqa: E402  (resolve from the installed plugin)
+from codemap_py.index_paths import root_key  # noqa: E402
 from codemap_py.scanner.discovery import fingerprint_file_hashes  # noqa: E402
 from codemap_py.scanner.docs_xrefs import _CONFIG_SCAN_PATTERNS  # noqa: E402
 
@@ -90,7 +91,7 @@ STARTED_NOTE = " - refresh started"
 #: early; whatever it captures is still a JSON string body, so `_json_unescape` decodes it.
 _HEADER_FIELD_RES = {
     name: re.compile(rf'"{name}"\s*:\s*"((?:[^"\\]|\\.)*)"')
-    for name in ("git_sha", "scanned_at", "scan_root", "source_fingerprint")
+    for name in ("git_sha", "scanned_at", "scan_root", "scan_root_key", "source_fingerprint")
 }
 
 
@@ -115,7 +116,7 @@ def read_timestamp(path: Path) -> int | None:
 def write_timestamp(path: Path) -> None:
     """Best-effort write of the current timestamp to a hook sentinel file."""
     try:
-        path.write_text(str(now_ms()), encoding="utf-8")
+        _hookutil.write_sentinel(path, str(now_ms()))
     except OSError:
         pass
 
@@ -213,7 +214,7 @@ def write_session_marker(root: Path, session_id: str) -> None:
         runtime = _hookutil.runtime()
         marker = root / ".cache" / "codemap" / f"current-session-{runtime}.json"
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(json.dumps({"session_id": session_id, "ts": now_ms()}) + "\n", encoding="utf-8")
+        _hookutil.write_sentinel(marker, json.dumps({"session_id": session_id, "ts": now_ms()}) + "\n")
     except OSError:
         pass
 
@@ -295,6 +296,14 @@ def header_fields(index_path: Path) -> dict[str, str]:
         match = pattern.search(header)
         fields[name] = _json_unescape(match.group(1)) if match else ""
     return fields
+
+
+def index_matches_root(fields: dict[str, str], root: Path) -> bool:
+    """Validate path-free root provenance while retaining legacy absolute-root indexes."""
+    raw = fields["scan_root"]
+    if raw == ".":
+        return fields.get("scan_root_key") == root_key(root.resolve())
+    return bool(raw) and Path(raw).is_absolute() and Path(raw).resolve() == root.resolve()
 
 
 def module_count(index_path: Path, size: int) -> int | str:
@@ -417,7 +426,7 @@ def refresh_settled(record: Path, fingerprint: str) -> bool:
 def write_refresh_record(record: Path, fingerprint: str) -> None:
     """Best-effort ``spawned`` record of the fingerprint a refresh is about to index, with the spawn time."""
     try:
-        record.write_text(f"{fingerprint}\n{now_ms()}\nspawned", encoding="utf-8")
+        _hookutil.write_sentinel(record, f"{fingerprint}\n{now_ms()}\nspawned")
     except OSError:
         pass
 
@@ -576,7 +585,7 @@ def stale_refresh_note(
     if refresh_settled(record, fingerprint):
         fields = header_fields(index_path)
         if (
-            fields["scan_root"] == str(root.resolve())
+            index_matches_root(fields, root)
             and fields["git_sha"] == head
             and fields["source_fingerprint"]
             and refresh_fingerprint(root, head, fields["source_fingerprint"]) == fingerprint
@@ -604,7 +613,7 @@ def collapse_stale_notice(project: str, session: str, git_sha: str, currency: st
     if previous is not None and previous[1:] == (git_sha, currency) and timestamp - previous[0] < SESSION_TTL_MS:
         return True
     try:
-        flag.write_text(json.dumps([timestamp, git_sha, currency]), encoding="utf-8")
+        _hookutil.write_sentinel(flag, json.dumps([timestamp, git_sha, currency]))
     except OSError:
         pass
     if previous is None or timestamp - previous[0] >= SESSION_TTL_MS:
@@ -642,8 +651,7 @@ def main() -> int:
             return 0
         fields = header_fields(index_path)
         git_sha = fields["git_sha"]
-        raw_root = fields["scan_root"]
-        same_root = bool(raw_root) and Path(raw_root).is_absolute() and Path(raw_root).resolve() == root.resolve()
+        same_root = index_matches_root(fields, root)
         head = git_output(["rev-parse", "HEAD"], root)
         source_fingerprint = fingerprint_file_hashes(scanner.get_file_hashes(root, scanner._load_exclusions(root)))
         # Header provenance follows the same bytes the scanner parsed; Git dirtiness alone cannot say whether a

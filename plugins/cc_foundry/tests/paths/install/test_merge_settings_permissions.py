@@ -366,6 +366,7 @@ class TestMergeContract:
         assert capsys.readouterr().out.splitlines() == [
             "permissions.allow: added 2, already present 1, dropped 1",
             "permissions.deny: added 2, already present 0, retired 1",
+            f"settings: updated; backup {next(user_settings.parent.glob('.settings.json.permissions-backup-*.bak')).as_posix()}",
         ]
 
     def test_keeps_user_rule_order(self, shipped: dict[str, Path], user_settings: Path) -> None:
@@ -814,11 +815,7 @@ def test_setup_merges_rules_from_the_resolved_cache_version(tmp_path: Path, user
     call = next(
         line for line in skill.read_text(encoding="utf-8").splitlines() if "bin/merge_settings_permissions.py" in line
     )
-    command = (
-        call.split(" || ", 1)[0]
-        .replace("${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}", str(old))
-        .replace("$PLUGIN_ROOT", str(current))
-    )
+    command = call.split(" || ", 1)[0].replace("$PLUGIN_ROOT", str(current))
     arguments = shlex.split(command)
     result = subprocess.run([sys.executable, *arguments[1:]], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
@@ -826,3 +823,57 @@ def test_setup_merges_rules_from_the_resolved_cache_version(tmp_path: Path, user
         "allow": ["Read"],
         "deny": ["Bash(*)"],
     }
+
+
+def test_unchanged_merge_preserves_original_bytes_and_mtime(user_settings: Path, shipped: dict[str, Path]) -> None:
+    """An idempotent merge retains formatting, file identity and timestamp without creating a backup."""
+    original = b'{"permissions":{"allow":["Read"]},"model":"custom"}'
+    user_settings.write_bytes(original)
+    shipped["allow"].write_text('["Read"]', encoding="utf-8")
+    before = user_settings.stat()
+
+    assert msp.main(["--allow", str(shipped["allow"])]) == 0
+    after = user_settings.stat()
+    assert user_settings.read_bytes() == original
+    assert after.st_mtime_ns == before.st_mtime_ns
+    assert after.st_ino == before.st_ino
+    assert list(user_settings.parent.glob(".settings.json.permissions-backup-*.bak")) == []
+
+
+def test_changed_merge_backs_up_original_bytes(
+    user_settings: Path, shipped: dict[str, Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A changed merge saves a private, byte-exact backup and reports its location."""
+    original = b'{"model":"custom"}'
+    user_settings.write_bytes(original)
+
+    assert msp.main(["--allow", str(shipped["allow"])]) == 0
+    backups = list(user_settings.parent.glob(".settings.json.permissions-backup-*.bak"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == original
+    assert backups[0].as_posix() in capsys.readouterr().out
+    assert json.loads(user_settings.read_bytes())["model"] == "custom"
+
+
+def _merge_allow_revisions(user_settings: Path, allow: Path) -> list[int]:
+    """Exercise seven distinct merges so retention sees real helper-created backups."""
+    statuses = []
+    for index in range(7):
+        allow.write_text(json.dumps([f"Read(revision-{index})"]), encoding="utf-8")
+        statuses.append(msp.main(["--settings", str(user_settings), "--allow", str(allow)]))
+    return statuses
+
+
+def test_permission_backups_are_bounded_without_deleting_user_backups(
+    user_settings: Path, shipped: dict[str, Path]
+) -> None:
+    """Only the newest five helper backups survive; ordinary user backups remain untouched."""
+    user_settings.write_bytes(b"{}")
+    user_backup = user_settings.with_name("settings.json.bak-personal")
+    user_backup.write_bytes(b"keep me")
+
+    assert _merge_allow_revisions(user_settings, shipped["allow"]) == [0] * 7
+    backups = list(user_settings.parent.glob(".settings.json.permissions-backup-*.bak"))
+    assert len(backups) == 5
+    assert sorted(len(json.loads(path.read_bytes())["permissions"]["allow"]) for path in backups) == [2, 3, 4, 5, 6]
+    assert user_backup.read_bytes() == b"keep me"

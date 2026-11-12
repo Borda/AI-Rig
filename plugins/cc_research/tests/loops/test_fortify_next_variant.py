@@ -324,7 +324,7 @@ class TestMainCleanupRegistration:
         assert code == 0
         assert (sentinels / "fortify-variant-name-testsess").read_text(encoding="utf-8") == "variant-no-augmentation\n"
         accumulator = fortify / "worktree-paths.txt"
-        assert accumulator.read_text(encoding="utf-8") == f"{fortify}/worktrees/variant-no-augmentation\n"
+        assert accumulator.read_text(encoding="utf-8") == f"{fortify.as_posix()}/worktrees/variant-no-augmentation\n"
         assert "→ variant 2/2: variant-no-augmentation" in capsys.readouterr().out
 
     def test_ignores_pointer_sentinel(self, env: tuple[Path, Path]) -> None:
@@ -338,7 +338,9 @@ class TestMainCleanupRegistration:
 
         assert code == 0
         assert not elsewhere.exists()
-        assert (fortify / "worktree-paths.txt").read_text(encoding="utf-8") == f"{fortify}/worktrees/variant-alpha\n"
+        assert (fortify / "worktree-paths.txt").read_text(
+            encoding="utf-8"
+        ) == f"{fortify.as_posix()}/worktrees/variant-alpha\n"
 
     def test_fortify_worktree_env_override(self, env: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
         """An ambient ``FORTIFY_WORKTREE`` cannot replace the selected variant's cleanup path."""

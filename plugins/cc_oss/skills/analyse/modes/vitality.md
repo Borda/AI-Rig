@@ -2,7 +2,7 @@
 
 <workflow>
 
-**Task hygiene**: call TaskList first; close orphaned tasks from prior runs. **Zero bookkeeping-only turns**: every `TaskCreate`/`TaskUpdate` below rides in the response that carries the next real tool call (one phase's `completed` with the next phase's first call). **Task tracking**: TaskCreate tasks for each major phase before starting, all in one response: "Step 1 Data Fetch", "Step 2 Axis Scoring (3 parallel)", "Step 3 Assemble Scores", "Step 4 Report", "Step 5 Codex Review", "Step 6 Adversarial Rework Loop", "Step 7 Terminal Output"; mark each in_progress/completed as you go. **In `--quick` mode** (QUICK_MODE=true): omit the "Step 5 Codex Review" and "Step 6 Adversarial Rework Loop" tasks — they are skipped.
+**Task hygiene**: follow `agent-resolution.md` §Task hygiene loaded by SKILL.md. **Zero bookkeeping-only turns**: every `TaskCreate`/`TaskUpdate` below rides in the response that carries the next real tool call (one phase's `completed` with the next phase's first call), without additional timing exceptions. **Task tracking**: TaskCreate tasks for each major phase before starting, all in one response: "Step 1 Data Fetch", "Step 2 Axis Scoring (3 parallel)", "Step 3 Assemble Scores", "Step 4 Report", "Step 5 Codex Review", "Step 6 Adversarial Rework Loop", "Step 7 Terminal Output"; mark each in_progress/completed as you go. **In `--quick` mode** (QUICK_MODE=true): omit the "Step 5 Codex Review" and "Step 6 Adversarial Rework Loop" tasks — they are skipped.
 
 ## Step 1 — Data Fetch
 
@@ -34,7 +34,7 @@ echo "$RUN_TS" > "${TMPDIR:-/tmp}/vitality-run-ts-${CSID}"
 
 **Spawn**:
 
-> **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing — work-displacement only; an isolation-motivated spawn (adversarial reviewer, distinct specialist role, model tier, worktree) runs regardless of size. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
+> **Agent budget** — follow `agent-resolution.md` §Agent budget loaded by SKILL.md.
 
 > `Agent(subagent_type="oss:gh-scraper", name="gh-scraper", description="Fetch repo vitality data", prompt="Fetch raw GitHub vitality data using the caller's session sentinels.")`
 
@@ -58,7 +58,7 @@ Spawn all 3 `oss:repo-warden` agents simultaneously in single response:
 >
 > `Agent(subagent_type="oss:repo-warden", name="repo-warden-C", description="Score axes 3, 9", prompt="AXIS_GROUP=C")`
 
-**Health monitoring** — SKILL.md §Health monitoring: in this spawn response write `<WATCH_DIR>/agent-watch-score.tsv` with one row per agent (`repo-warden-A<TAB>$PARTIAL_A<TAB>1800`, same for B and C, paths expanded). Never poll — no periodic `find`, no `ScheduleWakeup`, `ListAgents` or `Monitor` loop. At each completion notification, parse the returned envelope before checking for a partial file or running the SKILL.md watch block. `status: "declined"` → surface `declined` and its `reason`, including a Step 1 missing-sentinel failure; no partial file is expected, so do not label it `timed_out`. Stop before Step 3 assembly and report the affected group and input to repair. Otherwise run the watch block: `timed_out`, or a notification without its partial file → read the tail of any partial output; surface with ⏱ now.
+**Health monitoring** — SKILL.md §Health monitoring: in this spawn response write `<WATCH_DIR>/agent-watch-score.tsv` with one row per agent (`repo-warden-A<TAB>$PARTIAL_A<TAB>1800`, same for B and C, paths expanded). Follow SKILL.md §Health monitoring for the wait discipline. At each completion notification, parse the returned envelope before checking for a partial file or running the SKILL.md watch block. `status: "declined"` → surface `declined` and its `reason`, including a Step 1 missing-sentinel failure; no partial file is expected, so do not label it `timed_out`. Stop before Step 3 assembly and report the affected group and input to repair. Otherwise run the watch block: `timed_out`, or a notification without its partial file → read the tail of any partial output; surface with ⏱ now.
 
 Collect all 3 agents' results on their notifications. Verify all 3 partial files exist: `$PARTIAL_A`, `$PARTIAL_B`, `$PARTIAL_C`.
 
@@ -79,6 +79,7 @@ echo "$SCORING_FILE" > "${TMPDIR:-/tmp}/vitality-scoring-file-${CSID}"  # persis
 ```
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload vars (Check 41)
 IFS= read -r PARTIAL_A < "${TMPDIR:-/tmp}/vitality-partial-a-${CSID}" 2>/dev/null || PARTIAL_A=""
@@ -86,17 +87,18 @@ IFS= read -r PARTIAL_B < "${TMPDIR:-/tmp}/vitality-partial-b-${CSID}" 2>/dev/nul
 IFS= read -r PARTIAL_C < "${TMPDIR:-/tmp}/vitality-partial-c-${CSID}" 2>/dev/null || PARTIAL_C=""
 IFS= read -r SCORING_FILE < "${TMPDIR:-/tmp}/vitality-scoring-file-${CSID}" 2>/dev/null || SCORING_FILE=""
 IFS= read -r SCORES_FILE < "${TMPDIR:-/tmp}/vitality-scores-file-${CSID}" 2>/dev/null || SCORES_FILE=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/assemble_vitality_scores.py" \
+python "$PLUGIN_ROOT/bin/assemble_vitality_scores.py" \
     "$PARTIAL_A" "$PARTIAL_B" "$PARTIAL_C" "$SCORING_FILE" "$SCORES_FILE"  # timeout: 15000
 ```
 
 Extract variables from `$SCORES_FILE` for use in Steps 4–7:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload SCORES_FILE (Check 41)
 IFS= read -r SCORES_FILE < "${TMPDIR:-/tmp}/vitality-scores-file-${CSID}" 2>/dev/null || SCORES_FILE=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/extract_vitality_vars.py" --keep-state vitality-vars "$SCORES_FILE" || exit $?  # timeout: 5000
+python "$PLUGIN_ROOT/bin/extract_vitality_vars.py" --keep-state vitality-vars "$SCORES_FILE" || exit $?  # timeout: 5000
 IFS= read -r ANALYSIS_NOW < "${TMPDIR:-/tmp}/vitality-vars-analysis-now-${CSID}" 2>/dev/null || ANALYSIS_NOW=""
 IFS= read -r OVERALL_CONFIDENCE < "${TMPDIR:-/tmp}/vitality-vars-overall-confidence-${CSID}" 2>/dev/null || OVERALL_CONFIDENCE=""
 IFS= read -r HEALTH_SCORE_PCT < "${TMPDIR:-/tmp}/vitality-vars-health-score-pct-${CSID}" 2>/dev/null || HEALTH_SCORE_PCT=""
@@ -148,7 +150,9 @@ IFS= read -r AXIS9_CONF < "${TMPDIR:-/tmp}/vitality-vars-axis9-conf-${CSID}" 2>/
 IFS= read -r AXIS9_STATUS < "${TMPDIR:-/tmp}/vitality-vars-axis9-status-${CSID}" 2>/dev/null || AXIS9_STATUS=""
 IFS= read -r AXIS9_SIGNAL < "${TMPDIR:-/tmp}/vitality-vars-axis9-signal-${CSID}" 2>/dev/null || AXIS9_SIGNAL=""
 IFS= read -r WEIGHT_9 < "${TMPDIR:-/tmp}/vitality-vars-weight-9-${CSID}" 2>/dev/null || WEIGHT_9=""
-echo "[vitality] scorer complete: health=${HEALTH_SCORE_PCT}% conf=${OVERALL_CONFIDENCE} passes=${TOTAL_PASSES}"
+HEALTH_DISPLAY="${HEALTH_SCORE_PCT}%"
+[ "$HEALTH_SCORE_PCT" != "-1" ] || HEALTH_DISPLAY="--"
+echo "[vitality] scorer complete: health=${HEALTH_DISPLAY} conf=${OVERALL_CONFIDENCE} passes=${TOTAL_PASSES}"
 ```
 
 TaskUpdate "Step 3 Assemble Scores" completed.
@@ -156,13 +160,14 @@ TaskUpdate "Step 3 Assemble Scores" completed.
 ## Step 4 — Report Generation
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload GH_OWNER/GH_REPO (Check 41) — empty pair names an unfindable report
 IFS= read -r GH_OWNER < "${TMPDIR:-/tmp}/vitality-gh-owner-${CSID}" 2>/dev/null || GH_OWNER=""
 IFS= read -r GH_REPO < "${TMPDIR:-/tmp}/vitality-gh-repo-${CSID}" 2>/dev/null || GH_REPO=""
 # --quick: reload from Step1 flag parse (Check 41) — skips Steps 5+6 (codex review, adversarial loop)
 IFS= read -r QUICK_MODE < "${TMPDIR:-/tmp}/analyse-quick-mode-${CSID}" 2>/dev/null || QUICK_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/build_vitality_paths.py" --owner "$GH_OWNER" --repo "$GH_REPO" --quick "$QUICK_MODE"  # timeout: 10000
+python "$PLUGIN_ROOT/bin/build_vitality_paths.py" --owner "$GH_OWNER" --repo "$GH_REPO" --quick "$QUICK_MODE"  # timeout: 10000
 ```
 
 > `--quick` note: in quick mode the single-pass scorecard is un-reviewed — confidence carries a −0.10 review Gap (Confidence anchor below) and the report's Adversarial Review section records "skipped (--quick)". Rerun without `--quick` for a merge/release-grade assessment.
@@ -180,11 +185,12 @@ REPORT_TPL="$_OSS_ANALYSE/templates/vitality-report.md"
 **Structural signals (optional, codemap)** — populate the template's `### Structural Constraints` block from index-wide data:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload _OSS_ANALYSE (Check 41)
 IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev/null || _OSS_ANALYSE=""
 [ -z "$_OSS_ANALYSE" ] && _OSS_ANALYSE="plugins/cc_oss/skills/analyse"
-cat "$_OSS_ANALYSE/modes/codemap-signals.md"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_ANALYSE/modes/codemap-signals.md"  # timeout: 5000
 ```
 
 Run its **Detect** block (loaded above), then **Signal B** (open-PR conflict/duplicate candidates) and **Signal C** (Structural Constraints). Signal B fetches changed-file lists for open PRs (bounded by `PR_FILES_CAP`), does pairwise file overlap, and — when `CM_ENABLED=true` — adds `coupled`-based hidden-conflict pairs; surface `PRSET_CANDIDATES` pairs in report. Signal C uses parsed `central[]` / `collision_count` / `degraded` / `stale` to fill template's `### Structural Constraints` bullets. `CM_ENABLED=false`: Signal B still runs direct file-overlap layer (no codemap needed); Signal C fills Structural Constraints block with single "structural index unavailable" bullet — never leave empty, never block.
@@ -219,6 +225,7 @@ IFS= read -r QUICK_MODE < "${TMPDIR:-/tmp}/analyse-quick-mode-${CSID}" 2>/dev/nu
 **Otherwise**:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload _OSS_ANALYSE (Check 41)
 IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev/null || _OSS_ANALYSE=""
@@ -231,7 +238,7 @@ IFS= read -r RUN_TS < "${TMPDIR:-/tmp}/vitality-run-ts-${CSID}" 2>/dev/null || R
 REVIEW_DIR=".reports/analyse/vitality/${GH_OWNER}-${GH_REPO}/${RUN_TS}-review"
 REWORK_ITER=0
 REWORK_MAX=2
-CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/check_bridge.py" --status 2>/dev/null || echo "absent")  # timeout: 5000
+CODEX_STATUS=$(python "$PLUGIN_ROOT/bin/check_bridge.py" --status 2>/dev/null || echo "absent")  # timeout: 5000
 [ "$CODEX_STATUS" = "available" ] && CODEX_AVAILABLE=1 || CODEX_AVAILABLE=0
 echo "$REVIEW_DIR" > "${TMPDIR:-/tmp}/vitality-review-dir-${CSID}"
 echo "$REWORK_ITER" > "${TMPDIR:-/tmp}/vitality-rework-iter-${CSID}"
@@ -289,6 +296,8 @@ _(Omit Passes line when TOTAL_PASSES=1 — no retry loop needed.)_
 {2–3 sentences: overall health verdict, single top strength, single top risk. Example: "Project is in healthy condition (72%) with strong CI/CD and responsive maintainers. Contributor bus factor of 1 is the primary risk — a single maintainer departure could stall development. Dependency update automation is absent, leaving security hygiene dependent on manual effort."}
 
 **Health Score:** {XX}% {🟢/🟡/🔴} · {N} healthy · {N} warning · {N} critical · {N} unavailable (⚪)
+When `HEALTH_SCORE_PCT=-1`, render `**Health Score:** -- ⚪ — every axis unavailable`; never append `%` or assign a health band.
+
 _(Band by rule, the axis score bands applied to the printed percentage, rounded to one decimal: 🟢 ≥ 70% · 🟡 40–69.9% · 🔴 < 40%. When OVERALL_CONFIDENCE < 0.7 prefix this line with: `⚠ LOW CONFIDENCE ({OVERALL_CONFIDENCE:.2f}) — directional only`)_
 **Aggregate:**   {XX}% (mean main + Codex) — omit line when CODEX_AVAILABLE=0
 **Rework:**      {REWORK_ITER} iteration(s) — omit line when REWORK_ITER=0
@@ -325,7 +334,7 @@ If Axis 3 specifically ⚪: `⚠ Axis 3 (contributor health, wt 10%) unavailable
 
 Block must begin with `# Repo Vitality — {GH_OWNER}/{GH_REPO}` title and close with `---` on own line. Do not print full analysis to terminal. Full Conf/Weight columns and per-axis detail in report file only.
 
-**Confidence anchor** (SKILL.md Step 6b): the response's `## Confidence` block assesses this scorecard. Start **Score** at `OVERALL_CONFIDENCE`, the mean per-axis `conf` that `bin/vitality_extract.py` derives from listed degraders only (`vitality-scoring.md` §Confidence — Listed Degraders Only), and carry `1.0 − OVERALL_CONFIDENCE` as one Gap naming the lowest-conf axes. Deduct further only for a gap that can move a band, the Health Score or the Top Risk:
+**Confidence anchor** (SKILL.md Step 6b): the response's `## Confidence` block assesses this scorecard. Start **Score** at `OVERALL_CONFIDENCE`, the mean per-axis `conf` that `bin/vitality_extract.py` derives from listed degraders only (`vitality-scoring.md` §Confidence — Listed Degraders Only), and carry `1.0 − OVERALL_CONFIDENCE` as one Gap naming the lowest-conf axes. Score = `OVERALL_CONFIDENCE` minus the deductions below, so the Gaps sum to `1.0 − Score`. Deduct further only for a condition listed below; any other gap, including one that only *could* change a band, the Health Score or the Top Risk, is `(-0.00)`:
 
 - a `partial` fetch envelope: cap Score at 0.70 (Step 1)
 - each ⚪ axis: −0.05
@@ -333,7 +342,7 @@ Block must begin with `# Repo Vitality — {GH_OWNER}/{GH_REPO}` title and close
 - Steps 5–6 not run in full mode: −0.10; a run whose contract excludes Steps 5–6 (no spawns allowed) records them as a `(-0.00)` Gap instead
 - `--quick` (review skipped by design): −0.10
 
-Small samples, truncation and data inconsistencies that move no band stay `(-0.00)` Gaps.
+Every other gap stays `(-0.00)`: small samples, truncation, data inconsistencies, scoring-method limits (hand scoring, unre-derived clause logic), degrader interpretation and judgement labels. A Gap whose own text says the band stays is `(-0.00)` by definition.
 
 </workflow>
 

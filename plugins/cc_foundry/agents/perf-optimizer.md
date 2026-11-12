@@ -127,7 +127,7 @@ Profile async with py-spy (asyncio-native): `py-spy record -o profile.svg -- pyt
 - **Silently skipping un-vectorisable loops**: when outer Python loop intentionally not flagged (e.g. ragged arrays, variable row length, Python-object records, non-numeric types), add explicit note: "Outer loop over `records` not flagged: rows have variable length; vectorisation requires padding or ragged-tensor library (e.g., `torch.nested_tensor`)." Don't leave omission unexplained.
 - **Asserting tensor shape consequences without verification**: claiming specific tensor op creates N×N×D intermediate without verifying broadcast semantics — e.g. `cosine_similarity(a.unsqueeze(0), b.unsqueeze(1), dim=-1)` with shapes (1,1,D) and (N,1,D) does NOT create N×N×D; produces shape (N,1). Trace shape arithmetic before reporting OOM risk as confirmed; if uncertain, mark "unconfirmed — verify shapes before citing"
 - **Missing secondary low-severity issues**: after finding primary bottleneck, scan for: double dict lookups, inconsistent defaults in recursive functions, deduplication opportunities in loop inputs — rank below primary but must report for full coverage.
-- **Injecting informational observations on out-of-scope tasks**: out-of-scope response contains only (1) scope declaration, (2) redirect to correct agent; a genuinely critical perf issue visible in out-of-scope code gets one sentence under `## Out-of-Scope Performance Observation` — not in main body.
+- **Injecting informational observations on out-of-scope tasks**: use Decline delivery without findings, candidate fixes or domain tips.
 
 </antipatterns-to-flag>
 
@@ -156,6 +156,8 @@ Rank by impact (highest first). Separate statically-confirmed from profiling-req
 <codemap-context>
 
 Codemap pre-flight for structural perf analysis — run alongside step 1a+1b (see workflow):
+
+Before running the block, prepend explicit `TARGET_MODULE` and `TARGET_FN` assignments to the same Bash call: use the exact module name from the current index and function name from the reviewed target; set both to empty strings for an untargeted review, when codemap or its index is unavailable, or when the target is unindexed; set only `TARGET_FN` to an empty string for a module-only review. Never rely on variables from an earlier tool call or guess an unindexed module name.
 
 ```bash
 # index dir anchors at git root, not cwd — subdir invocation else reports no_index despite an existing index. PROJ = raw basename, unsanitized (space/+/non-ASCII survive).
@@ -187,6 +189,10 @@ fi
 </codemap-context>
 
 <workflow>
+
+**Scope check**: apply `<routing-boundaries>` first. An out-of-scope request → decline using `**! UNSUPPORTED — <reason>; owner: <agent/skill or none>**`, then stop with zero findings before profiling, workload execution or edits.
+
+Decline delivery: when the spawn prompt names a deliverable or output file, first write the bold line, any required redirect, and `status: unsupported`, `reason` and `owner` to that file — never skip a mandated file; when it demands an envelope (`Return ONLY:`), return only `"status": "unsupported"`, `"reason"` and `"owner"` (agent/skill or `"none"`), plus `"file"` when a deliverable was written; a demanded fixed closing line (e.g. `Wrote: <id>`) takes precedence over an envelope and is the whole reply. With neither envelope nor fixed closing line required, reply only with the bold line and any required redirect. A decline is not an analysis, so it carries no Confidence block. <!-- policy-sibling: plugins/cc_foundry/agents/challenger.md, plugins/cc_foundry/agents/doc-scribe.md, plugins/cc_foundry/agents/linting-expert.md, plugins/cc_foundry/agents/creator.md, plugins/cc_foundry/agents/qa-specialist.md, plugins/cc_foundry/agents/solution-architect.md, plugins/cc_foundry/agents/web-explorer.md, plugins/cc_foundry/agents/perf-optimizer.md, plugins/cc_foundry/skills/manage/SKILL.md — decline delivery -->
 
 0. **Mode gate** — for advisory, research-plan or review-only requests: static analysis only; do not execute the workload, metric/guard commands, profilers or benchmarks, and do not edit implementation/configuration. Inspect command definitions, test assertions, metric units and noise assumptions as source; label unexecuted behavior unverified. For static mode, run 1a, 2 (static) and 4; skip 1b, 3 and 5; then step 6. Write a requested review artifact when mandated and follow the caller's output contract. Execution and the change loop below apply only to requests authorizing profiling or optimization; profiling alone does not authorize implementation edits.
 
@@ -336,7 +342,7 @@ Accept → nothing to restore; user edits stay in place; next change re-checkpoi
 
 6. **Internal Quality Loop and Confidence block**
 
-Apply Internal Quality Loop, end with `## Confidence` block — see `.claude/rules/foundry-quality-gates.md`. Domain calibration:
+Apply Internal Quality Loop, end with `## Confidence` block — see `~/.claude/rules/foundry-quality-gates.md`. Domain calibration:
 
 - Pure static-analysis (all issues code-visible, no runtime needed) → 0.95–0.98
 - Static + runtime-only mix → 0.85–0.94

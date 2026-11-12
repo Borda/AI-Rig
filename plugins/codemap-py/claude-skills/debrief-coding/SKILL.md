@@ -21,19 +21,21 @@ NOT for: validating codemap installation health/integration (use `/codemap-py:in
 - `--since <YYYY-MM-DD>` — filter to records on or after this date (default: all)
 - `--session <id>` — filter to a single session UUID
 - `--anonymize` — run `anonymize.py` on the filtered copy of every log shard, all three layers (CLI, skill, tool), before aggregation; replaces qualified names with stable pseudonyms; keeps salt in `<log root>/.salt` (never in output). Output lands in a fresh run-scoped `.cache/codemap/export/<UTC stamp>/` preserving runtime topology, shard session stems pseudonymized.
-- `--output <path>` — write report to this path (default: `.reports/codemap/debrief-<YYYY-MM-DD>.md` at the project root, `-2`, `-3`, … appended when taken — never overwrite)
+- `--output <path>` — select a report path within the project root; relative paths resolve from that root. Default: `.reports/codemap/debrief-<YYYY-MM-DD>.md`. Both explicit and default paths append `-2`, `-3`, … when taken — never overwrite; paths resolving outside the project are rejected.
 
 ## Step 1: Compute statistics
 
 One helper does all reading, filtering, anonymization and aggregation. Never Read shards yourself: a busy tree holds hundreds of shards (millions of tokens); Read truncates large shards, so a hand-built report rests on a partial dataset with estimated numbers.
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/debrief_stats.py" --arguments="$ARGUMENTS"  # timeout: 120000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/debrief_stats.py" --arguments="$ARGUMENTS"  # timeout: 120000
 ```
 
 - Exit `1` → no shards under the resolved log root only when stderr starts with `No codemap telemetry found`: relay its message; stop. Any other exit `1` is a helper crash: relay stderr and stop; never report it as absent telemetry.
-- Exit `2` → bad flag (`Unknown flag(s)`, missing value, `--since` not `YYYY-MM-DD`): relay its `!` line; stop.
+- Exit `2` → bad arguments (`Unknown flag(s)`, missing value, `--since` not `YYYY-MM-DD`, output outside the project) or telemetry over its byte/record cap: relay its `!` line; stop.
 - Exit `3` → `anonymize.py` or `join_avoidance.py` hung past its time cap; the scratch copy is already removed: relay its `!` line; stop.
+- Exit `4` → requested anonymization failed: relay its `!` line and stop; write no report and never fall back to raw statistics.
 - Exit `0` → one JSON object on stdout; Steps 2–3 use only it.
 
 What the helper does, in order (so the JSON reads right):
@@ -42,7 +44,7 @@ What the helper does, in order (so the JSON reads right):
 - **Shards**: legacy flat shards + recursive `claude/`, `codex/`, `direct/` trees; CLI `cli_<session>.jsonl`, skill `skills_<session>.jsonl`, tool `tools_<session>.jsonl`. Flat shards = unattributed legacy evidence (`unattributed` runtime). `token_measurement` unavailable: host hooks provide no token usage.
 - **Filters before anything else**: `--since` against `ts` (unparsable `ts` dropped, counted in `ts_unparsable_excluded`), `--session` against raw `session`, into a private scratch copy preserving topology. Malformed lines counted in `malformed_lines`, never silently included.
 - **`--session` + `--anonymize`**: session filter runs on raw shards *before* anonymizing — anonymize.py pseudonymizes `session`/`hook_session` to `sym_...` values a raw UUID cannot match. The scratch copy is deleted after the run; never written to export or beside `.salt`.
-- **Anonymized mode** (`dataset: "anonymized"`) is active iff anonymize.py exited 0 **and** wrote at least one `-anon.jsonl` into this run's export dir — never just whether `--anonymize` was passed, never an older export (earlier exports stay out of this report). Otherwise `dataset: "raw"`, `anonymize.ok: false`, `anonymize.message` says why: warn in the report. All layers are read from the export when active — CLI `cli*-anon.jsonl`, skill `skills*-anon.jsonl`, tool `tools*-anon.jsonl`; raw `tools_*.jsonl` would leak verbatim Grep/Glob patterns and Read paths (`target`) into a shareable report. In anonymized mode `filters.session` is redacted; never copy `log_root` or a raw session id into the report.
+- **Anonymized mode** (`dataset: "anonymized"`) is active iff anonymize.py exited 0 **and** wrote at least one `-anon.jsonl` into this run's export dir — never just whether `--anonymize` was passed, never an older export (earlier exports stay out of this report). Requested anonymization that does not meet both conditions exits `4` without statistics or a report path. `dataset: "raw"` is valid only when anonymization was not requested. All layers are read from the export when active — CLI `cli*-anon.jsonl`, skill `skills*-anon.jsonl`, tool `tools*-anon.jsonl`; raw `tools_*.jsonl` would leak verbatim Grep/Glob patterns and Read paths (`target`) into a shareable report. In anonymized mode `filters.session` is redacted; never copy `log_root` or a raw session id into the report.
 - **`--session` guard**: `session_not_found_in` lists layers with no record for that session — expected (e.g. skills logs only skill events), not data loss. Report "session not found in <layer>".
 - **Module-overlap proxy**: `join_avoidance.py` runs on the same filtered (or anonymized) dataset → `module_overlap`; never all-history results for a filtered report.
 
@@ -84,7 +86,7 @@ Tool fields (`layer: "tool"`, `log-tool-use.py`): `ts`, `layer`, `runtime`, `v`,
 
 ## Step 3: Write report
 
-Output: the JSON's `report_path` (`--output` verbatim, else the first free `.reports/codemap/debrief-<YYYY-MM-DD>[-N].md`; parent dir already created). Create it via Write:
+Output: the JSON's `report_path` (the first free project-contained explicit or default `.reports/codemap/debrief-<YYYY-MM-DD>[-N].md` path; parent dir already created). Create it via Write:
 
 ```markdown
 ---
@@ -153,8 +155,8 @@ Print report path on completion.
 
 ## Security note
 
-Logs stay local in the log root (default `.cache/codemap/logs/`). `<log root>/.salt` must stay local; never share with anonymized output. Anonymized logs are shareable; pseudonyms irreversible without salt.
+Logs stay local in the log root (default `.cache/codemap/logs/`). `<log root>/.salt` must stay local; never share with anonymized output. Review scrubbed logs before sharing; pseudonyms do not provide a complete privacy guarantee.
 
-Anonymization scrubs a documented, bounded field set: `session`/`hook_session` (stable pseudonyms); qualified names embedded in `error`/`stderr` free text; `intent`, `target`, `search_path`, `project`, and the identity-bearing `result` fields `module`/`qname`/`qualified_name`/`index_path`/`path`/`caller`/`callee` (every identifier token, not only dotted ones); each element of `imported_by`/`changed_modules`; and every `argv` token. This is a field denylist, not a schema-complete guarantee — anonymize.py's own docstring notes a future query-result shape introducing an identifying field name not on this list passes through unscrubbed until added. Never describe anonymized output as fully de-identified or a complete privacy guarantee — describe it as scrubbed for the fields above.
+Anonymization scrubs a documented, bounded field set: `session`/`hook_session` (stable pseudonyms); every identifying token (including paths and bare names) in `error`/`stderr` free text; `intent`, `target`, `search_path`, `project`, and the identity-bearing `result` fields `module`/`qname`/`qualified_name`/`index_path`/`path`/`caller`/`callee` (every identifier token, not only dotted ones); each element of `imported_by`/`changed_modules`; and every `argv` token. This is a field denylist, not a schema-complete guarantee — anonymize.py's own docstring notes a future query-result shape introducing an identifying field name not on this list passes through unscrubbed until added. Never describe anonymized output as fully de-identified or a complete privacy guarantee — describe it as scrubbed for the fields above.
 
 </workflow>

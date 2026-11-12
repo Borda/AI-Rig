@@ -42,12 +42,15 @@ import argparse
 import hashlib
 import json
 import os
+import runpy
 import stat
 import sys
 from pathlib import Path
 from typing import Any
 
-from _package_identity import verify_package
+# Explicit source loading keeps unverified cached bytecode outside the package trust boundary.
+_identity = runpy.run_path(str(Path(__file__).with_name("_package_identity.py")))
+verify_package = _identity["verify_package"]
 
 #: Root directory of the codex-rig plugin package, derived from this script's location.
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -95,9 +98,9 @@ ROLE_IDS = (
 #: Role card frontmatter keys that must be non-empty and are recorded as the role's runtime settings.
 RUNTIME_KEYS = ("model_reasoning_effort", "approval_policy", "sandbox_mode")
 #: Directory names skipped when inventorying package files (caches and generated report folders).
-EXCLUDED_PARTS = frozenset({"__pycache__", ".pytest_cache", ".reports"})
+EXCLUDED_PARTS = _identity["EXCLUDED_PARTS"]
 #: File names skipped when inventorying package files, including the manifest that records the inventory.
-EXCLUDED_FILES = frozenset({".coverage", "package-manifest.json"})
+EXCLUDED_FILES = frozenset({".coverage", "package-manifest.json", "package-manifest.json.tmp"})
 
 
 def sha256(payload: bytes) -> str:
@@ -137,13 +140,15 @@ def iter_payload_files() -> list[Path]:
     casefold_paths: set[str] = set()
     for path in sorted(PACKAGE_ROOT.rglob("*")):
         relative = path.relative_to(PACKAGE_ROOT)
-        if path.name in EXCLUDED_FILES or any(part in EXCLUDED_PARTS for part in relative.parts):
+        if relative.as_posix() in EXCLUDED_FILES or relative.parts[0] in EXCLUDED_PARTS - {"__pycache__"}:
             continue
         if path.is_symlink():
             raise ValueError(f"symlink payload forbidden: {relative.as_posix()}")
         if not path.is_file():
             continue
         normalized = relative.as_posix()
+        if _identity["is_bytecode_cache"](normalized):
+            continue
         folded = normalized.casefold()
         if folded in casefold_paths:
             raise ValueError(f"case-colliding payload path: {normalized}")
@@ -227,15 +232,7 @@ def build_manifest() -> dict[str, Any]:
             "sha256": sha256(generator.read_bytes()),
         },
         "files": [file_record(path) for path in payload_files],
-        "excluded": [
-            "__pycache__",
-            ".pytest_cache",
-            ".reports",
-            ".coverage",
-            ".mcp.json",
-            "hooks",
-            "skills/agent-shims",
-        ],
+        "excluded": sorted(EXCLUDED_PARTS | EXCLUDED_FILES),
     }
 
 
@@ -296,7 +293,8 @@ def main() -> None:
         print("Package manifest is current.")
         return
     temporary = MANIFEST_PATH.with_suffix(".json.tmp")
-    temporary.write_bytes(expected)
+    with temporary.open("xb") as stream:
+        stream.write(expected)
     os.replace(temporary, MANIFEST_PATH)
     print(f"Updated package manifest: {MANIFEST_PATH.relative_to(PACKAGE_ROOT)}")
 

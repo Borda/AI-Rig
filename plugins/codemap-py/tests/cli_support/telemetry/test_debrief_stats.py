@@ -151,13 +151,38 @@ class TestAnonymize:
         stats = _run(capsys, "--anonymize", "--session", _SESSION)
 
         assert stats["dataset"] == "anonymized", stats["anonymize"]
-        assert Path(stats["anonymize"]["export_dir"]).parent == project / ".cache" / "codemap" / "export"
+        assert (project / stats["anonymize"]["export_dir"]).parent == project / ".cache" / "codemap" / "export"
         assert "fn-rdeps" not in stats["cohorts"]["0.40.0"]["cli"]["subcommands"]
         assert stats["filters"]["session"] != _SESSION
 
 
 class TestFailureExits:
     """Documented non-zero exits: a hung sibling helper (3) and an empty log root (1)."""
+
+    def test_anonymizer_failure_stops_without_report_path(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A real failed anonymizer must never produce statistics from raw fallback data."""
+        fake_bin = project / "failed-bin"
+        fake_bin.mkdir()
+        (fake_bin / "anonymize.py").write_text("raise SystemExit(1)\n", encoding="utf-8")
+        monkeypatch.setattr(debrief_stats, "_BIN_DIR", fake_bin)
+        result = debrief_stats.main(["--anonymize", "--session", _SESSION, "--output", "private/report-anon.md"])
+        captured = capsys.readouterr()
+        assert result == 4
+        assert captured.out == ""
+        assert _SESSION not in captured.err
+        assert "anonymization failed" in captured.err
+        assert not (project / "private").exists()
+
+    def test_anonymized_stats_omit_absolute_log_and_export_paths(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Successful anonymization keeps local log and export locations out of the report data."""
+        stats = _run(capsys, "--anonymize")
+        assert not Path(stats["log_root"]).is_absolute()
+        assert not Path(stats["anonymize"]["export_dir"]).is_absolute()
+        assert str(project) not in json.dumps({key: value for key, value in stats.items() if key != "report_path"})
 
     def test_hung_helper_exits_three_and_removes_scratch(
         self, project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

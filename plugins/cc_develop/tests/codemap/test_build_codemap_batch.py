@@ -10,6 +10,10 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from unittest import mock
 
@@ -17,6 +21,51 @@ import build_codemap_batch as bcb
 import pytest
 
 _CENTRAL = {"cmd": "central", "args": ["--top", "5"]}
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash required to execute the skill's batch assignment")
+def test_refactor_recipe_places_batch_in_run_directory(tmp_path: Path) -> None:
+    """The refactor recipe produces an output accepted by the run-artifact fence."""
+    run_dir = tmp_path / ".developments"
+    run_dir.mkdir()
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    (temp / "dev-refactor-dev-dir-batch-recipe").write_text(str(run_dir) + "\n", encoding="utf-8", newline="\n")
+    lines = (Path(bcb.__file__).parent.parent / "skills/refactor/SKILL.md").read_text(encoding="utf-8").splitlines()
+    assignment = next(line for line in lines if line.lstrip().startswith("_BATCH_REQ="))
+    reload_line = next(line for line in lines if line.startswith("IFS= read -r DEV_DIR <"))
+    result = subprocess.run(
+        [
+            shutil.which("bash"),
+            "-c",
+            f'{reload_line}\n{assignment}\n"$1" "$2" "$_BATCH_REQ" --modules pkg.mod',
+            "recipe",
+            sys.executable,
+            bcb.__file__,
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "TMPDIR": str(temp), "CSID": "batch-recipe"},
+        capture_output=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads((run_dir / "codemap-rdeps-batch.json").read_text(encoding="utf-8"))[0] == _CENTRAL
+
+
+@pytest.mark.parametrize("destination", ["source.py", "scratch/batch.json"])
+def test_rejects_output_outside_run_directory(
+    destination: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An artifact cannot overwrite project sources or arbitrary files in the session temp directory."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("CSID", "batch-fence")
+    out = tmp_path / destination
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("preserve", encoding="utf-8")
+    assert bcb.main([str(out), "--modules", "pkg.mod"]) == 1
+    assert out.read_text(encoding="utf-8") == "preserve"
 
 
 class TestBuildBatchRequest:
@@ -70,9 +119,14 @@ class TestMain:
     """Write a query request and report its derived modules."""
 
     @pytest.fixture(name="out")
-    def _out_fixture(self, tmp_path: Path) -> Path:
-        """Return the request path every ``main`` call writes to."""
-        return tmp_path / "batch.json"
+    def _out_fixture(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        """Return the request path under the standalone run-artifact directory."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+        monkeypatch.setenv("CSID", "batch-output")
+        run_dir = tmp_path / ".developments"
+        run_dir.mkdir()
+        return run_dir / "batch.json"
 
     @pytest.mark.parametrize(
         ("diff_files", "printed", "rdeps_args"),

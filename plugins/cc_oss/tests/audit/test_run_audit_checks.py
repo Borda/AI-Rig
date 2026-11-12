@@ -387,3 +387,212 @@ class TestIntroducedDependencies:
         addition would silently downgrade a regression and a false hit would block a clean release.
         """
         assert rac._introduced_dependencies(diff) == expected
+
+
+_REAL_RUN = subprocess.run
+_VULN_JSON = '{"dependencies": [{"name": "requests", "version": "2.19.0", "vulns": [{"id": "PYSEC-2018-28"}]}]}'
+_SHIPPED_PYPROJECT = '[project]\nname = "demo"\nversion = "1"\ndependencies = ["requests==2.19.0"]\n'
+_EXTRAS_PYPROJECT = _SHIPPED_PYPROJECT + '[project.optional-dependencies]\nextra1 = ["pyyaml==5.3"]\ndev = ["pytest"]\n'
+_DYNAMIC_PYPROJECT = '[project]\nname = "demo"\nversion = "1"\ndynamic = ["dependencies"]\n'
+
+
+def _cve_dispatch(
+    calls: list[list[str]],
+    *,
+    uv_rc: int = 0,
+    audit_rc: int = 1,
+    audit_out: str = _VULN_JSON,
+    timeout_on: str = "",
+    requirements: list[str] | None = None,
+    lock_text: str = "[[packages]]\n",
+) -> Callable[..., subprocess.CompletedProcess[str]]:
+    """Build a ``subprocess.run`` stub for the CVE scan that records every command in ``calls``.
+
+    ``pip-audit`` exits 1 by default, as the real tool does whenever it finds a vulnerability. A successful ``uv`` run
+    writes the ``-o`` file it is asked for, and the contents of a ``-r`` requirements file are appended to
+    ``requirements`` at call time (the scan deletes its temp directory afterwards). The tool named by ``timeout_on``
+    raises ``TimeoutExpired``. The summary parser runs for real so the printed scan line is the production one.
+    """
+
+    def _fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        """Answer uv, pip-audit and git with canned output; run everything else for real."""
+        calls.append(list(cmd))
+        name = Path(cmd[0]).name
+        if name == timeout_on:
+            raise subprocess.TimeoutExpired(cmd, 1)
+        if name == "uv" and uv_rc == 0:
+            Path(cmd[cmd.index("-o") + 1]).write_text(lock_text)
+        if name == "pip-audit" and requirements is not None and "-r" in cmd:
+            requirements.append(Path(cmd[cmd.index("-r") + 1]).read_text())
+        canned = {
+            "uv": (uv_rc, ""),
+            "pip-audit": (audit_rc, audit_out),
+            "git": (0, ""),
+        }.get(name)
+        return (
+            subprocess.CompletedProcess(cmd, *canned, stderr=f"{name} failed") if canned else _REAL_RUN(cmd, **kwargs)
+        )
+
+    return _fake_run
+
+
+class TestDependencyCveScan:
+    """_check_code_signals: the CVE scan covers the dependency set the release ships, never the host environment."""
+
+    def test_scans_locked_export_and_keeps_findings_on_exit_one(
+        self, audit: SimpleNamespace, repo_dir: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A vulnerable locked dependency is reported although pip-audit exits 1 for it.
+
+        pip-audit signals "vulnerabilities found" with exit 1 and still prints complete JSON, so treating a non-zero
+        exit as a parse failure discards exactly the findings a release audit exists to surface.
+        """
+        (repo_dir / "pyproject.toml").write_text(_SHIPPED_PYPROJECT)
+        (repo_dir / "uv.lock").write_text("")
+        calls: list[list[str]] = []
+        audit.run.side_effect = _cve_dispatch(calls)
+        rac._check_code_signals("git", "v1.0.0..HEAD")
+        out = capsys.readouterr().out
+        audit_cmd = next(c for c in calls if Path(c[0]).name == "pip-audit")
+        assert ("--locked" in audit_cmd, "-r" in audit_cmd, "1 vulns" in out, "JSON parsing failed" in out) == (
+            True,
+            False,
+            True,
+            False,
+        )
+
+    def test_reports_clean_for_a_lock_without_runtime_packages(
+        self, audit: SimpleNamespace, repo_dir: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A project with no runtime dependencies reads clean, and pip-audit never sees the package-less lock.
+
+        pip-audit errors on a lockfile with no packages ("missing packages in lockfile"), which would turn a project
+        that ships nothing into a failed scan on every release.
+        """
+        (repo_dir / "pyproject.toml").write_text('[project]\nname = "demo"\nversion = "1"\n')
+        (repo_dir / "uv.lock").write_text("")
+        calls: list[list[str]] = []
+        audit.run.side_effect = _cve_dispatch(calls, lock_text="packages = []\n")
+        rac._check_code_signals("git", "v1.0.0..HEAD")
+        ran_pip_audit = any(Path(c[0]).name == "pip-audit" for c in calls)
+        assert (ran_pip_audit, "0 deps, 0 vulns" in capsys.readouterr().out) == (False, True)
+
+    def test_exports_shipped_extras_without_dev_groups(self, audit: SimpleNamespace, repo_dir: Path) -> None:
+        """The locked export is current, marker-independent and limited to shipped groups.
+
+        A shipped extra missing from the export would hide its vulnerabilities; a dev or default group in it would turn
+        test and docs tooling into release findings; a stale lock would audit a different set than the release ships; a
+        requirements-format export would drop packages whose markers do not match the auditing machine.
+        """
+        (repo_dir / "pyproject.toml").write_text(_EXTRAS_PYPROJECT)
+        (repo_dir / "uv.lock").write_text("")
+        calls: list[list[str]] = []
+        audit.run.side_effect = _cve_dispatch(calls)
+        rac._check_code_signals("git", "v1.0.0..HEAD")
+        export_cmd = next(c for c in calls if Path(c[0]).name == "uv")
+        flags = {"--locked", "--no-dev", "--no-default-groups", "--extra=extra1", "pylock.toml"}
+        assert (flags <= set(export_cmd), "--frozen" in export_cmd, "--extra=dev" in export_cmd) == (True, False, False)
+
+    def test_audits_declared_requirements_without_lock(
+        self, audit: SimpleNamespace, repo_dir: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Without ``uv.lock`` the core and non-dev extra requirements are audited, not the installed packages.
+
+        A bare ``pip-audit`` call inspects whichever environment the tool runs in, and its own project mode ignores
+        extras, so the declared requirements are handed over as a file.
+        """
+        (repo_dir / "pyproject.toml").write_text(_EXTRAS_PYPROJECT)
+        calls: list[list[str]] = []
+        requirements: list[str] = []
+        audit.run.side_effect = _cve_dispatch(calls, requirements=requirements)
+        rac._check_code_signals("git", "v1.0.0..HEAD")
+        out = capsys.readouterr().out
+        assert (requirements, "scan-target: pyproject.toml" in out) == (["requests==2.19.0\npyyaml==5.3\n"], True)
+
+    @pytest.mark.parametrize(
+        ("pyproject", "uv_rc", "reason"),
+        [
+            pytest.param("", 0, "no readable [project] table", id="no-project-table"),
+            pytest.param(_SHIPPED_PYPROJECT, 1, "uv export of uv.lock failed (uv failed)", id="uv-export-fails"),
+        ],
+    )
+    def test_skips_scan_when_shipped_set_is_unavailable(
+        self,
+        audit: SimpleNamespace,
+        repo_dir: Path,
+        capsys: pytest.CaptureFixture[str],
+        pyproject: str,
+        uv_rc: int,
+        reason: str,
+    ) -> None:
+        """No readable shipped set means an announced skip with its cause, never a scan of the host environment.
+
+        Scanning whatever happens to be installed would report vulnerabilities in packages the release never ships and
+        miss the ones it does.
+        """
+        (repo_dir / "pyproject.toml").write_text(pyproject)
+        (repo_dir / "uv.lock").write_text("")
+        calls: list[list[str]] = []
+        audit.run.side_effect = _cve_dispatch(calls, uv_rc=uv_rc)
+        rac._check_code_signals("git", "v1.0.0..HEAD")
+        ran_pip_audit = any(Path(c[0]).name == "pip-audit" for c in calls)
+        assert (ran_pip_audit, f"scan-skipped: {reason}" in capsys.readouterr().out.replace("; ", ";")) == (False, True)
+
+    def test_skips_unlocked_scan_for_dynamic_dependencies(
+        self, audit: SimpleNamespace, repo_dir: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Dynamic dependencies cannot be read statically, so nothing is scanned rather than an empty set reading
+        clean."""
+        (repo_dir / "pyproject.toml").write_text(_DYNAMIC_PYPROJECT)
+        calls: list[list[str]] = []
+        audit.run.side_effect = _cve_dispatch(calls)
+        rac._check_code_signals("git", "v1.0.0..HEAD")
+        ran_pip_audit = any(Path(c[0]).name == "pip-audit" for c in calls)
+        assert (ran_pip_audit, "scan-skipped: pyproject.toml dependencies are dynamic" in capsys.readouterr().out) == (
+            False,
+            True,
+        )
+
+    def test_skips_scan_when_lock_exists_but_uv_is_missing(
+        self, audit: SimpleNamespace, repo_dir: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A lock that cannot be read is not replaced by an unlocked scan of different versions.
+
+        Resolving the declared requirements would audit the newest allowed versions, so a vulnerable pinned version
+        would read clean.
+        """
+        (repo_dir / "pyproject.toml").write_text(_SHIPPED_PYPROJECT)
+        (repo_dir / "uv.lock").write_text("")
+        audit.which.side_effect = lambda cmd: None if cmd == "uv" else f"/fake/{cmd}"
+        calls: list[list[str]] = []
+        audit.run.side_effect = _cve_dispatch(calls)
+        rac._check_code_signals("git", "v1.0.0..HEAD")
+        ran_pip_audit = any(Path(c[0]).name == "pip-audit" for c in calls)
+        assert (ran_pip_audit, "scan-skipped: uv.lock present but uv not installed" in capsys.readouterr().out) == (
+            False,
+            True,
+        )
+
+    def test_skips_scan_when_pip_audit_times_out(
+        self, audit: SimpleNamespace, repo_dir: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A timed-out scan step is announced as a skip instead of aborting the whole audit with a traceback.
+
+        The CVE scan is the last data-gathering check, so an uncaught timeout would also drop the closing banner the
+        release agent waits for.
+        """
+        (repo_dir / "pyproject.toml").write_text(_SHIPPED_PYPROJECT)
+        (repo_dir / "uv.lock").write_text("")
+        audit.run.side_effect = _cve_dispatch([], timeout_on="pip-audit")
+        rac._check_code_signals("git", "v1.0.0..HEAD")
+        assert "scan-skipped: pip-audit timed out after 120s" in capsys.readouterr().out
+
+    def test_reports_failed_scan_when_pip_audit_crashes(
+        self, audit: SimpleNamespace, repo_dir: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An exit code above 1 with no JSON is a failed scan carrying pip-audit's own reason, not a clean one."""
+        (repo_dir / "pyproject.toml").write_text(_SHIPPED_PYPROJECT)
+        (repo_dir / "uv.lock").write_text("")
+        audit.run.side_effect = _cve_dispatch([], audit_rc=2, audit_out="")
+        rac._check_code_signals("git", "v1.0.0..HEAD")
+        assert "JSON parsing failed (exit 2: pip-audit failed)" in capsys.readouterr().out

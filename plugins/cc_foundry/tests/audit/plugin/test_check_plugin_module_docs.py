@@ -90,7 +90,7 @@ class TestRun:
         "source",
         [
             pytest.param(b"# calf\xe9\n", id="non-utf8-source"),
-            pytest.param(("value = " + "+".join(["1"] * 10000)).encode(), id="deep-ast"),
+            pytest.param(("value = " + "(" * 1000 + "1" + ")" * 1000).encode(), id="deep-ast"),
         ],
     )
     def test_unreadable_module_does_not_abort_other_findings(self, tmp_path: Path, source: bytes) -> None:

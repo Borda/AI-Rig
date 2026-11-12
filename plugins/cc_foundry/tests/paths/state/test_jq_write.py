@@ -192,7 +192,7 @@ class TestRunJqWriteHappyPath:
         assert json.loads(target.read_text(encoding="utf-8")) == expected
 
     def test_tmp_file_cleaned_up_on_success(self, json_target: Callable[[object], Path]) -> None:
-        """The temporary output is gone after a successful write, leaving only the target in its directory.
+        """The temporary output is gone after a successful write, leaving the target and its stable lock.
 
         A leftover dotfile beside the target would accumulate with every settings write.
         """
@@ -200,7 +200,7 @@ class TestRunJqWriteHappyPath:
 
         jq_write.run_jq_write(target, ".", [])
 
-        assert _dir_names(target.parent) == ["obj.json"]
+        assert _dir_names(target.parent) == [".obj.json.lock", "obj.json"]
 
 
 class TestRunJqWriteErrorPaths:
@@ -257,7 +257,7 @@ class TestRunJqWriteErrorPaths:
         rc = jq_write.run_jq_write(target, ".bad(", [])
 
         assert rc == 2
-        assert _dir_names(target.parent) == ["obj.json"]
+        assert _dir_names(target.parent) == [".obj.json.lock", "obj.json"]
         assert target.read_text(encoding="utf-8") == "{}"
         assert "jq filter failed" in capsys.readouterr().err
 
@@ -274,7 +274,7 @@ class TestRunJqWriteErrorPaths:
         rc = jq_write.run_jq_write(target, ".", [])
 
         assert rc == 2
-        assert _dir_names(target.parent) == ["obj.json"]
+        assert _dir_names(target.parent) == [".obj.json.lock", "obj.json"]
         assert "jq invocation failed" in capsys.readouterr().err
 
 
@@ -457,7 +457,7 @@ class TestSettingsWriteSupport:
 
         assert rc == 2
         assert target.read_text(encoding="utf-8") == '{"a": 1}'
-        assert _dir_names(roots["cwd"]) == ["obj.json"]
+        assert _dir_names(roots["cwd"]) == [".obj.json.lock", "obj.json"]
 
     @pytest.mark.parametrize(
         "extras",

@@ -1,8 +1,7 @@
 """Guard how develop:review reports a claim blocked by a missing or out-of-spec Python package.
 
-develop:review executes no code, so unlike oss:review it cannot close such a gap with an ephemeral overlay run. The
-consolidator must keep the gap with that concrete reason and the declaring spec, never install anything, and name the
-targeted run that would close it.
+Review agents may run installed static analyzers and dependency audits without fixes, but never execute reviewed code or
+install packages. The consolidator retains unavailable checks with their declaring spec and closing route.
 """
 
 from __future__ import annotations
@@ -17,11 +16,11 @@ _CONSOLIDATOR = Path(__file__).resolve().parents[2] / "skills/review/templates/c
 @pytest.mark.parametrize(
     "marker",
     [
-        pytest.param("develop:review executes no code", id="read-only-reason"),
-        pytest.param("`not run: develop:review is read-only`", id="gap-reason-literal"),
-        pytest.param("the declaring spec `file:line`", id="declaring-spec-cited"),
+        pytest.param("Review agents do not execute reviewed code, examples or tests", id="read-only-reason"),
+        pytest.param("state the unavailable check, package", id="gap-reason-literal"),
+        pytest.param("declaring spec `file:line`", id="declaring-spec-cited"),
         pytest.param("never close it by installing anything", id="no-install"),
-        pytest.param("name the targeted test run that would close it under `Next steps`", id="closing-route"),
+        pytest.param("name the targeted check that would close it under `Next steps`", id="closing-route"),
     ],
 )
 def test_package_gap_stays_with_read_only_reason(marker: str) -> None:

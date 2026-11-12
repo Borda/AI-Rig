@@ -285,15 +285,24 @@ def _status_result(
     }
 
 
-def _request_from_arguments(verb: str, arguments: dict[str, Any], trusted_workspace: Path) -> Request:
-    """Create a reverse-direction request from MCP tool arguments."""
-    allowed = {"task", "model", "effort", "timeout_seconds", "depth", "run_id", "supported_efforts"}
-    extra = set(arguments) - allowed
-    if extra:
-        raise ValueError(f"unsupported tool arguments: {', '.join(sorted(extra))}")
+def _task_from_arguments(arguments: dict[str, Any]) -> tuple[str, bool]:
+    """Validate task text together with its caller-supplied trust designation."""
     task = arguments.get("task")
     if not isinstance(task, str) or not task.strip():
         raise ValueError("task must be a non-empty string")
+    untrusted_task = arguments.get("untrusted_task", False)
+    if not isinstance(untrusted_task, bool):
+        raise ValueError("untrusted_task must be a boolean")
+    return task, untrusted_task
+
+
+def _request_from_arguments(verb: str, arguments: dict[str, Any], trusted_workspace: Path) -> Request:
+    """Create a reverse-direction request from MCP tool arguments."""
+    allowed = {"task", "model", "effort", "timeout_seconds", "depth", "run_id", "supported_efforts", "untrusted_task"}
+    extra = set(arguments) - allowed
+    if extra:
+        raise ValueError(f"unsupported tool arguments: {', '.join(sorted(extra))}")
+    task, untrusted_task = _task_from_arguments(arguments)
     depth = arguments.get("depth", 0)
     if isinstance(depth, bool) or not isinstance(depth, int) or depth < 0:
         raise ValueError("depth must be a non-negative integer")
@@ -335,6 +344,7 @@ def _request_from_arguments(verb: str, arguments: dict[str, Any], trusted_worksp
         None,
         None,
         tuple(supported),
+        untrusted_task=untrusted_task,
     )
     validate_request_transport_budget(request)
     return request

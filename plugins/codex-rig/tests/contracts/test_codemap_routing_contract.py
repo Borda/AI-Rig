@@ -155,6 +155,28 @@ _REQUIRED_PROBE_HEADINGS = {
 class TestContractClauses:
     """The Codemap contract keeps the clauses that bound follow-ups, provider preparation, and degradation."""
 
+    @pytest.mark.parametrize(
+        "phrase",
+        [
+            "Map direct, all, or production caller questions to `callers`; "
+            "use `blast` only for explicitly transitive caller questions.",
+            "`implement`: Use `skip` for exact localized edit with no unresolved structural fact.",
+            "`investigate`: Use `skip` when failure is localized and no structural fact is unresolved.",
+            "`optimize`: Use `skip` for exact localized optimization with no unresolved structural fact.",
+            "matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) "
+            "for one unresolved fact",
+            "`standard` for broad or unknown scope",
+            "An explicit user or tool request for structural evidence overrides `skip`.",
+        ],
+    )
+    def test_route_section_preserves_adaptive_decisions(self, phrase: str) -> None:
+        """Keep caller depth, skill-specific skip conditions, and explicit evidence requests in the bound section."""
+        lines = CONTRACT_PATH.read_text(encoding="utf-8").splitlines()
+        start = lines.index(_ROUTE_HEADING) + 1
+        end = next((index for index in range(start, len(lines)) if lines[index].startswith("## ")), len(lines))
+
+        assert phrase in flat("\n".join(lines[start:end]))
+
     @pytest.mark.parametrize("phrase", _FOLLOW_UP_CAP_PHRASES)
     def test_caps_only_specialist_follow_ups_and_keeps_metadata_limits(self, contract: str, phrase: str) -> None:
         """Keep workflow facts uncapped while bounding each specialist's follow-up queries at the adapter's limit.
@@ -258,6 +280,19 @@ class TestContractClauses:
 
 class TestSkillInvocations:
     """The skills that bind a structural-context probe invoke the adapter the way the contract requires."""
+
+    @pytest.mark.parametrize("skill", ["implement", "investigate", "optimize"])
+    def test_adaptive_probe_binds_shared_route_rules(self, invocations: dict[str, str], skill: str) -> None:
+        """Require each adaptive probe to load the shared route rules at its existing decision point."""
+        line = invocations[skill]
+        binding = (
+            "Read and apply [Route selection per skill](../../shared/codemap-contract.md#route-selection-per-skill)"
+        )
+
+        assert binding in line
+        assert (
+            line.index(_ADAPTER_INVOCATION) < line.index(binding) < line.index("Per `../../shared/codemap-contract.md`")
+        )
 
     def test_challenge_resolve_prepares_structural_evidence_before_freezing_review(self) -> None:
         """Prevent independent challenges from omitting unresolved Python caller and test scope.

@@ -1,6 +1,6 @@
 ---
 name: calibrate
-description: Calibrate skills/role cards for leaks/gaps with recall, precision, and confidence-accuracy checks.
+description: Calibrate skills/role cards for leaks/gaps with recall, precision, and confidence-accuracy checks. Skip configuration and workflow-contract audits owned by audit.
 ---
 
 > Before asking, read [User Questions](../../shared/codex-user-questions.md).
@@ -24,7 +24,7 @@ The runner always scores the full packaged task set; it has no scope, pace, appl
 
 ## Workflow
 
-Installed plugin runs use `--layout plugin --root <consuming-project>`. The runner discovers package assets from its own file location under `runtime/calibration`, `skills`, `roles`, `shared`; `--root` controls only report output, Git context, read-only classification work. It must not fall back to source checkout or project `.codex`.
+Installed plugin runs use `--layout plugin --root <consuming-project>`. The runner discovers package assets from its own file location under `runtime/calibration`, `skills`, `roles`, `shared`; `--root` controls only report output and Git context. Live classification tasks use disposable temporary workspaces; tool-use tasks use prepared fixture workspaces under the run output. It must not fall back to source checkout or project `.codex`.
 
 Legacy: `--layout source --root <source-project>` validates only a project that still keeps `.codex/agents`, `.codex/calibration`, and `.codex/skills/_shared`; without them every agent check fails `missing-agent-file`, so a package-only source tree uses `--layout plugin`. Never mix source agents, sync manifests, or project registration checks into installed-plugin result.
 
@@ -36,9 +36,9 @@ Legacy: `--layout source --root <source-project>` validates only a project that 
 
 - Require `source`, `run_id`, `observed_at`. `source=live-*` also needs route; campaign/pair IDs; pair/registered role; actual model/effort; recomputable prompt/task-contract SHA-256; task type/scope; input/cached/output tokens; latency; outcome; tool/check failures; normalized cost; pricing reference. Each complete campaign exactly matches case/role/type/scope signatures in `live-ab-tasks.json`; substituted task, fixture, gate, prompt input fails.
 
-### 04: Inspect `../../runtime/calibration/run.py --help`, then run plugin layout against the consuming project
+### 04: Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/runtime/calibration/run.py --help`, then run plugin layout against the consuming project
 
-Use `--require-live-routes` only for strict-live gate. Default offline scoring remains fixture-backed and makes no paid model calls. Composition/outcome checks reject known redundant orchestration, conflicting active instructions, false progress stalls, and premature review plateaus; they are bounded regressions rather than a general natural-language policy proof. Historical observations stay archived. Fresh paired route evidence requires a separately supplied policy and authorized collection.
+Use `--require-live-routes` only for strict-live gate. Invoke calibration helpers through `PLUGIN_ROOT/bin/python`; on native Windows use `PLUGIN_ROOT/bin/python.cmd`. Default offline scoring remains fixture-backed and makes no paid model calls. Composition/outcome checks reject known redundant orchestration, conflicting active instructions, false progress stalls, and premature review plateaus; they are bounded regressions rather than a general natural-language policy proof. Historical observations stay archived. Fresh paired route evidence requires a separately supplied policy and authorized collection.
 
 ### 05: Inspect `checks_failed`, `leaks_found`, and `behavioral`
 
@@ -66,7 +66,7 @@ Use `--require-live-routes` only for strict-live gate. Default offline scoring r
 
 ### 10: Write the validated skill-level artifact when this skill wraps the runner
 
-Follow `../../shared/helper-cli-contract.md`/authoritative help. Gate intent: ruff lint/format calibration+skills, explicit no-typed-target reason, calibration tests when calibration code changes, else explicit skip reason, clean diff. The validator's `calibrate` entry lists no required files, so runner evidence under `.reports/codex/calibration/<timestamp>/` is reviewer-checked: confirm it yourself before promotion. Write `CALIBRATE_METADATA`, validate `calibrate`, promote only validated candidate.
+Follow `../../shared/helper-cli-contract.md`/authoritative help. Gate intent: ruff lint/format calibration+skills, explicit no-typed-target reason, calibration tests when calibration code changes, else explicit skip reason, clean diff under the [shared whitespace-scoping rule](../../shared/quality-gates.md#required-checks), retaining the other review checks. The validator's `calibrate` entry lists no required files, so runner evidence under `.reports/codex/calibration/<timestamp>/` is reviewer-checked: confirm it yourself before promotion. Write `CALIBRATE_METADATA`, validate `calibrate`, promote only validated candidate.
 
 ## Native Contract Checks
 
@@ -119,7 +119,7 @@ Role checks:
 
 Required checks:
 
-- `calibration`: `../../runtime/calibration/run.py --layout plugin --root <consuming-project>`.
+- `calibration`: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/runtime/calibration/run.py --layout plugin --root <consuming-project>`.
 - `behavioral-version-policy`: compare the shipped case-set integer `schema_version` with `git show HEAD:<path>` for its own path in a source checkout: same or exactly one commit-relative version step; a new family starts at 1. The dirty tree stays committed or one-next version until commit. Installed plugin layout records an explicit immutable-fixture installed-cache skip; source layout with no `.codex/calibration/behavioral-cases.json` records an explicit missing-source-fixture skip, not a completed check.
 - `review`: inspect failed patterns, leaks, behavioral gaps, stale fixtures before recommendations.
 

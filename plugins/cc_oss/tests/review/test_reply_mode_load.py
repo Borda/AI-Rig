@@ -16,6 +16,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _oss_shell_plugin import render_shell
+from _skill_source import read_skill_source
+from render_plugin_root import render_document
 
 _PLUGIN = Path(__file__).resolve().parents[2]
 _REVIEW_DIR = _PLUGIN / "skills" / "review"
@@ -26,7 +29,7 @@ _skip_bash_unavailable = pytest.mark.skipif(shutil.which("bash") is None, reason
 
 def _reply_load_block() -> str:
     """Return the shipped fenced Bash block in review SKILL.md that prints ``modes/reply.md``."""
-    text = (_REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
+    text = read_skill_source(_REVIEW_DIR / "SKILL.md")
     blocks = re.findall(r"^```bash\n(.*?)^```", text, flags=re.MULTILINE | re.DOTALL)
     return next(block for block in blocks if "modes/reply.md" in block)
 
@@ -51,7 +54,11 @@ def test_reply_draft_loads_despite_stale_flags_sentinel(stale_flags_tmpdir: Path
     environment.update({"TMPDIR": str(stale_flags_tmpdir), "CLAUDE_CODE_SESSION_ID": _SESSION})
 
     completed = subprocess.run(
-        [shutil.which("bash"), "-c", _reply_load_block()],
+        [
+            shutil.which("bash"),
+            "-c",
+            render_shell(_reply_load_block(), Path(environment.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "oss"),
+        ],
         cwd=stale_flags_tmpdir,
         env=environment,
         capture_output=True,
@@ -61,4 +68,6 @@ def test_reply_draft_loads_despite_stale_flags_sentinel(stale_flags_tmpdir: Path
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout == (_REVIEW_DIR / "modes" / "reply.md").read_text(encoding="utf-8")
+    assert completed.stdout == render_document(
+        (_REVIEW_DIR / "modes" / "reply.md").read_text(encoding="utf-8"), _PLUGIN
+    )

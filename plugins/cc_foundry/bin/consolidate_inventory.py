@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""consolidate_inventory.py — inventory instruction sections and vet merge clusters, for /foundry:audit --consolidate.
+"""Inventory instruction sections and vet merge clusters for /foundry:audit --consolidate.
 
 Four subcommands, all read-only toward the instruction sources (only ``--out``, ``--review-inputs`` and the
 obligation files beside the proposals are written):
@@ -32,6 +32,37 @@ obligation files beside the proposals are written):
     class; write each remaining proposal's obligation map beside it; and write the inputs the reviewer needs.
 
 Token estimate is ``bytes / 3``, the convention in ``plugins/CLAUDE.md`` §Length Unit Convention.
+
+Settlement contract:
+    Merge-prune proposals need an eligible, non-lazy load group, a survivor belonging to the cluster, a UTF-8 proposal
+    shorter than the original members, and a complete obligation map. Every map entry carries ``original``, ``from``,
+    ``to`` and ``modal_preserved: true``; every member, including the survivor, is covered, and each destination text
+    occurs in the proposal. Cited headings must survive in the resulting whole files or their citing files must be
+    listed under ``repoint``. Merge-prune carries no side ``edits``: its proposal is the complete reviewed change.
+    A blocked merge becomes sharpen advice, which stays unvalidated without a concrete edit list.
+
+    Sharpen edits name member files and line ranges wholly inside their cluster sections, clear of blocked sections.
+    Overlapping edits are rejected. Removed text comes from the source lines, and the resulting whole files are parsed
+    again to protect cited headings. A lazy-group edit transferring at least 20 whitespace-folded characters between
+    files is marked ``crosses_files`` for independent review. Only a pure addition with no replaced text or duplicate
+    addition can skip review; moves, replacements and all other edit shapes require it.
+
+    Judgments are strict typed records and correspond one-to-one to clusters marked ``judge``. Unknown, duplicate,
+    ineligible or malformed judgments are rejected; absent judgments remain ``unjudged``. Settlement revalidates the
+    inventory, source digests, citations, shared membership and the vetted report's own cluster membership, floor and
+    cap before using its derived decisions. Reviews bind to the change digest and original source hashes; a verdict
+    for different bytes cannot validate the current proposal. ``weakens`` rejects a change; ``loses`` retains the
+    original content, and advice alone never becomes ready to apply.
+
+    Savings are priced separately by load class: ``always`` per session, ``scoped`` per session touching matching
+    files, and ``lazy`` per invocation. No invocation frequency is estimated, so lazy savings are not summed with
+    always-loaded savings. Surviving merges write ``proposals/<id>.obligations.json``; obsolete obligation files are
+    removed. Outstanding reviewer inputs contain every unvalidated merge-prune and sharpen requiring review, with
+    the exact change digest, locations, citations and proposal or edits, excluding the judge's reasoning.
+
+    Output paths are confined to run artifacts under the tree's ``.temp/`` or ``.reports/``, or the external system
+    temporary directory. After inventory, later steps write only within its run directory. Atomic replacement uses
+    exclusive staging files, so a pre-existing symlink or hard link at an output name cannot redirect the write.
 
 Usage:
     consolidate_inventory.py inventory [--root <repo>] [--kinds rules,skills,agents] [--out <file>]

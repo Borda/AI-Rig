@@ -50,7 +50,7 @@ Three tiers — pick by what the dir holds:
 
 ## Orchestrator contract
 
-1. **Do NOT read agent files back into main context** — delegate to consolidator agent instead
+1. **Do NOT read agent files back into main context** — delegate to consolidator agent instead. Exception: `develop:review` requires the parent to inspect candidate evidence for every severity before consolidation, validate new/materially strengthened claims and the final envelope before delivery, and read finding files directly when the consolidator is unavailable.
 2. Collect compact envelopes from each spawn (tiny — stay in context)
 3. Use envelopes to decide which files need further action (e.g. files with critical findings)
 4. Spawn **consolidator agent** to read all `<RUN_DIR>/*.md`, write final report
@@ -59,7 +59,7 @@ Three tiers — pick by what the dir holds:
 
 - **4+ agent files** → mandatory consolidator; reads all files, writes final report
 - **2–3 agent files** → orchestrator may read directly **only if** total expected content \<2K tokens
-- Consolidator type: same domain as lead reviewer (`foundry:sw-engineer` for code review, `foundry:curator` for config audit)
+- Consolidator type: same domain as lead reviewer (`foundry:sw-engineer` for code review, `foundry:curator` for config audit). Exception: `develop:review` uses `general-purpose` for synthesis only; source judgments and final acceptance remain with the parent.
 
 ## Consolidator prompt template
 
@@ -70,7 +70,7 @@ Return ONLY a compact JSON envelope on your final line — nothing else after it
 {"status":"done","findings":N,"severity":{"critical":N,"high":N,"medium":N,"low":N},"file":"<output path>","confidence":0.N,"summary":"<one-line description of what was found>"}
 ```
 
-Main context receives only the envelope JSON.
+Main context receives only the envelope JSON, except for the required `develop:review` parent validation and consolidator-unavailable fallback above.
 
 ## Envelope fields reference
 
@@ -79,7 +79,7 @@ Main context receives only the envelope JSON.
 | `status` | yes | `"done"`, `"done_with_concerns"`, `"needs_context"`, `"unsupported"`, `"timed_out"`, `"error"` |
 | `findings` | yes | total finding count (0 if none) |
 | `severity` | yes | `{"critical":N,"high":N,"medium":N,"low":N}` |
-| `file` | yes | absolute path to written findings file |
+| `file` | yes | absolute path to written findings file; `develop:review` may return a prescribed repository-relative handover or report path, resolved against the reviewed repository root |
 | `confidence` | yes | agent self-reported confidence (0–1) |
 | `summary` | yes | one-line description of what found/done |
 
@@ -104,6 +104,6 @@ Orchestrator handling by status:
 
 ## Reference implementation
 
-`/oss:review` and `/develop:review` = canonical examples of three-tier convention — intermediate agent handover files in `.temp/review/<timestamp>/`. Final report: `.reports/review/pr-<N>/run-<NNN>/review-report.md` for `/oss:review` (PR-scoped, so `ls .reports/review/pr-<N>/` finds every run for that PR); `.reports/review/<timestamp>/review-report.md` for `/develop:review` (no PR number to key on — local file/diff target).
+`/oss:review` and `/develop:review` = canonical examples of three-tier convention — intermediate agent handover files in `.temp/review/<timestamp>/`. Final report: `.reports/review/pr-<N>/run-<NNN>/review-report.md` for `/oss:review` (PR-scoped, so `ls .reports/review/pr-<N>/` finds every run for that PR); `.reports/develop-review/<timestamp>/review-report.md` for `/develop:review` (no PR number to key on — local file/diff target).
 
 `/calibrate`, `/audit` predate this convention — mix intermediate and final in `.reports/<skill>/`. Treat as legacy patterns, not examples to follow. Migration pending.

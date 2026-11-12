@@ -7,12 +7,13 @@
 B3a — list the projects whose sessions ran a flagged skill in the last 30 days (tab-separated `project`, `sessions`, `last_active`, `current`; a project's Claude worktrees count under it):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null || RUN_DIR=""
 IFS= read -r MEASURED < "${TMPDIR:-/tmp}/audit-state-${CSID}/measured" 2>/dev/null || MEASURED="false"
 [ "$MEASURED" = "true" ] && [ -n "$RUN_DIR" ] || { echo "Phase B3 skipped — no --measured"; exit 0; }
 echo "RUN_DIR=$RUN_DIR"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/efficiency_measured.py" --list-projects --scan-file "$RUN_DIR/efficiency-scan.txt" --since 30d || echo "Phase B3: no project has a session that ran a flagged skill in the window, or the listing failed (see stderr) — measured evidence absent"  # timeout: 120000
+python "$PLUGIN_ROOT/bin/efficiency_measured.py" --list-projects --scan-file "$RUN_DIR/efficiency-scan.txt" --since 30d || echo "Phase B3: no project has a session that ran a flagged skill in the window, or the listing failed (see stderr) — measured evidence absent"  # timeout: 120000
 ```
 
 B3b — skip when B3a printed `Phase B3 skipped` or listed no project (a `skipped <id>: <Error>` stderr line only names an unreadable transcript and does not skip). Otherwise ask once: `AskUserQuestion`, `multiSelect: true`, header `B3 projects`, question `Measure which projects' transcripts for model-switch cost?` (plain lines, no table; session counts come from the B3a listing). At most 4 options: the current project (`current` = `yes`) second, the rest by session count; more than 4 listed → last option `All listed projects`; exactly one listed → add `None`. Label = the project name exactly as listed, nothing added (it is written to the file, so never `(Recommended)`); description = `N sessions, last <date>`, plus `current project, recommended` for the current one. Write the chosen names, one per line and nothing else, to `<RUN_DIR>/measured-projects.txt` (`RUN_DIR` as B3a printed it; `All listed projects` writes every listed name; an "Other" answer is written as typed). `None` or nothing chosen → write an empty file, so an earlier pass's choice is never reused; B3c then skips. The collector exits 2 on a name with no transcript directory, stopping the pass rather than measuring another set.
@@ -20,11 +21,12 @@ B3b — skip when B3a printed `Phase B3 skipped` or listed no project (a `skippe
 B3c — measure the chosen projects and record the run:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null || RUN_DIR=""
 IFS= read -r MEASURED < "${TMPDIR:-/tmp}/audit-state-${CSID}/measured" 2>/dev/null || MEASURED="false"
 [ "$MEASURED" = "true" ] && [ -s "$RUN_DIR/measured-projects.txt" ] || { echo "Phase B3 skipped — no projects chosen"; exit 0; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/efficiency_measured.py" --scan-file "$RUN_DIR/efficiency-scan.txt" --projects-file "$RUN_DIR/measured-projects.txt" --since 30d --record --output "$RUN_DIR/measured-efficiency.md"  # timeout: 120000
+python "$PLUGIN_ROOT/bin/efficiency_measured.py" --scan-file "$RUN_DIR/efficiency-scan.txt" --projects-file "$RUN_DIR/measured-projects.txt" --since 30d --record --output "$RUN_DIR/measured-efficiency.md"  # timeout: 120000
 _RC=$?
 case "$_RC" in 0) ;; 1) echo "Phase B3: no session in the chosen projects ran a flagged skill in the window — measured evidence absent" ;; *) echo "⚠ Phase B3 failed (exit $_RC) — measured evidence missing; say so in the report" ;; esac
 ```

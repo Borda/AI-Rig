@@ -7,12 +7,12 @@
  * changed under the requested paths or were named directly become in-scope.
  */
 
-import { spawnSync } from "node:child_process"
 import { isUtf8 } from "node:buffer"
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { scopeDigest, sha256, type ScopeEntry } from "./digest.ts"
 import type { ScopeRecord } from "./run.ts"
+import { runGit } from "./util/git.ts"
 
 const EMPTY_SHA256 = sha256("")
 const MAX_WALK_FILES = 5_000
@@ -24,15 +24,7 @@ function git(cwd: string, args: readonly string[]): string | undefined {
 
 /** Run Git without environment redirection or executable filesystem monitors. */
 function gitBuffer(cwd: string, args: readonly string[], discover = false): Buffer | undefined {
-  const env = { ...process.env }
-  for (const key of Object.keys(env)) {
-    if (key.toUpperCase().startsWith("GIT_")) delete env[key]
-  }
-  const result = spawnSync("git", ["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", ...args], {
-    cwd,
-    env: { ...env, LC_ALL: "C" },
-    maxBuffer: 64 * 1024 * 1024,
-  })
+  const result = runGit(cwd, args, { timeout: 10_000 })
   if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ENOBUFS")
     throw new Error("Git output exceeded the 64 MiB limit; evidence collection aborted")
   if (result.error) throw new Error(`cannot run Git for evidence: ${result.error.message}`)
@@ -82,10 +74,12 @@ function walk(root: string, current: string, out: string[]): void {
   }
 }
 
-function collectChanged(cwd: string, paths: readonly string[]): ScopeEntry[] {
+/** Collect changed entries and keep rename origins separate from deletion evidence. */
+function collectChanged(cwd: string, paths: readonly string[]): { entries: ScopeEntry[]; renameOrigins: Set<string> } {
+  const renameOrigins = new Set<string>()
   // Plain directories keep explicit filesystem scopes; failed repository status never certifies an empty scope.
   const repository = gitBuffer(cwd, ["rev-parse", "--is-inside-work-tree"], true)
-  if (repository === undefined) return []
+  if (repository === undefined) return { entries: [], renameOrigins }
   const status = gitBuffer(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"])
   if (status === undefined) throw new Error("cannot collect working-tree status: Git status failed")
   const records = nulRecords(status)
@@ -94,19 +88,27 @@ function collectChanged(cwd: string, paths: readonly string[]): ScopeEntry[] {
     const record = records[index]
     if (!record?.length) continue
     const code = record.subarray(0, 2).toString("ascii")
-    const rawPath = record.subarray(3)
-    const path = evidencePath(rawPath)
-    if (/[RC]/.test(code)) index += 1
-    if (paths.length > 0 && !paths.some((prefix) => prefix === "." || path === prefix || path.startsWith(`${prefix}/`)))
-      continue
-    const deleted = code.includes("D")
-    entries.push({
-      path,
-      status: code,
-      sha256: deleted ? EMPTY_SHA256 : hashChangedFile(cwd, rawPath),
-    })
+    const origin = /[RC]/.test(code) ? records[++index] : undefined
+    if (code.includes("R") && origin) renameOrigins.add(evidencePath(origin))
+    const candidates = [
+      { rawPath: record.subarray(3), status: code },
+      ...(code.includes("R") && origin ? [{ rawPath: origin, status: "D" }] : []),
+    ]
+    for (const candidate of candidates) {
+      const path = evidencePath(candidate.rawPath)
+      if (
+        paths.length > 0 &&
+        !paths.some((prefix) => prefix === "." || path === prefix || path.startsWith(`${prefix}/`))
+      )
+        continue
+      entries.push({
+        path,
+        status: candidate.status,
+        sha256: candidate.status.includes("D") ? EMPTY_SHA256 : hashChangedFile(cwd, candidate.rawPath),
+      })
+    }
   }
-  return entries
+  return { entries, renameOrigins }
 }
 
 /** Split Git's NUL-delimited output without decoding filename bytes. */
@@ -138,11 +140,18 @@ function hashChangedFile(cwd: string, path: Buffer): string {
   return sha256(readFileSync(absolute))
 }
 
-function collectExplicit(cwd: string, paths: readonly string[], changed: readonly ScopeEntry[]): ScopeEntry[] {
+/** Collect explicit paths, rejecting missing rename origins before allowing deletions. */
+function collectExplicit(
+  cwd: string,
+  paths: readonly string[],
+  changed: readonly ScopeEntry[],
+  renameOrigins: ReadonlySet<string>,
+): ScopeEntry[] {
   const files: string[] = []
   for (const path of paths) {
     const absolute = resolveScopePath(cwd, path)
     if (!existsSync(absolute)) {
+      if (renameOrigins.has(path)) throw new Error(`scope path was renamed away: ${path}`)
       if (
         changed.some(
           (entry) => (entry.path === path || entry.path.startsWith(`${path}/`)) && entry.status.includes("D"),
@@ -180,8 +189,8 @@ export function scopeBase(cwd: string): string | null {
  */
 export function collectScope(cwd: string, paths: readonly string[] = []): ScopeRecord {
   const normalizedPaths = normalizePaths(cwd, paths)
-  const changed = collectChanged(cwd, normalizedPaths)
-  const entries = mergeEntries(changed, collectExplicit(cwd, normalizedPaths, changed))
+  const { entries: changed, renameOrigins } = collectChanged(cwd, normalizedPaths)
+  const entries = mergeEntries(changed, collectExplicit(cwd, normalizedPaths, changed, renameOrigins))
   return {
     base: scopeBase(cwd),
     paths: normalizedPaths,

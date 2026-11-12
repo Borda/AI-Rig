@@ -1,11 +1,11 @@
 ---
 name: Rig Plan
-description: Produce a frozen implementation plan with owned paths, configured gates, risks, and acceptance criteria.
+description: Produce a frozen implementation plan with owned paths, configured gates, risks, and acceptance criteria before code changes. Use for a multi-file or ambiguous change. NOT for a one-line edit or a read-only question.
 ---
 
 # Rig Plan
 
-> Read [Evidence rules](../../references/evidence.md) before writing any factual claim.
+> Read [Evidence rules](../../references/evidence.md) before writing any factual claim. Follow [Role dispatch](../../references/evidence.md#role-dispatch) for native-agent fallback and stop on reported scope violations.
 
 Produce one plan that implementation can execute without re-deciding scope.
 
@@ -24,8 +24,8 @@ Produce one plan that implementation can execute without re-deciding scope.
 5. **Reconcile owned paths.** For each `in-scope` row, name its owned path, its consumer, and the check that proves it still works. The table and the owned-path list must reconcile both ways: every owned path has an `in-scope` row, and every `in-scope` row names a path.
 6. **Derive the delegation brief.** Never hand-write it. Disjoint `in-scope` rows become parallel workstreams with one owner per path; rows that share a path are serialised as prerequisites.
 7. **Write the plan** to `<run-dir>/plan.md` with: a `revision` counter, the verdict table, a "Verdict changes since the previous revision" section, the derived workstreams, goal, scope classification, numbered steps, owned paths, gates, risks, rollback, acceptance criteria, and explicit non-goals.
-8. **Challenge the plan once.** Dispatch `rig-challenger` (native subagent when installed, otherwise `rig_dispatch`) with the plan, verdict table, source digests, and acceptance criteria. Accept only findings that cite source.
-9. **Freeze it.** Record the plan with `rig_evidence` (`action: "record"`, `plan_path`, and `reviewer` naming the independent challenger) and finalize.
+8. **Challenge the plan once.** Compute the current plan file's SHA-256 and dispatch `rig-challenger` (native subagent when installed, otherwise `rig_dispatch`) with those exact plan bytes and digest, verdict table, source digests, and acceptance criteria. Accept only findings that cite source. If the plan changes after the challenge, the revised bytes require an independent challenge before freezing.
+9. **Freeze it.** Record the plan with `rig_evidence` (`action: "record"`, `plan_path`, `plan_digest` containing the exact digest assessed by the independent challenger, and `reviewer` naming that challenger) and finalize. Finalization rejects a digest mismatch between reviewed, bound, and current plan bytes; never replace the reviewed digest with one from unreviewed edits.
 
 ## Rules
 

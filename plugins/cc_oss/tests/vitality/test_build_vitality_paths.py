@@ -17,6 +17,12 @@ import build_vitality_paths as bvp
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def reset_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate CLI dry-run state from other tests in the same worker."""
+    monkeypatch.setattr(bvp, "_DRY_RUN", False)
+
+
 def _answer(git_out: str, bridge_out: str, returncode: int = 0) -> Callable[..., subprocess.CompletedProcess[str]]:
     """Return a ``subprocess.run`` stand-in answering the git lookup with ``git_out`` and the bridge probe otherwise."""
 

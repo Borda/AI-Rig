@@ -48,6 +48,10 @@ def setup_home(tmp_path: Path, request: pytest.FixtureRequest) -> dict[str, str]
     (installed / ".claude-plugin/plugin.json").write_text('{"name":"foundry"}', encoding="utf-8")
     (installed / "hooks").mkdir()
     (installed / "hooks/statusline.js").write_text("", encoding="utf-8")
+    (installed / "bin").mkdir()
+    canonical = _PLUGIN.parent / "cc_oss/bin/parse-skill-flags.py"
+    parser = canonical if canonical.is_file() else _PLUGIN / "bin/parse-skill-flags.py"
+    shutil.copyfile(parser, installed / "bin/parse-skill-flags.py")
     (tmp_path / ".claude/plugins/installed_plugins.json").write_text(
         json.dumps({"plugins": {"foundry@borda-ai-rig": [{"installPath": installed.as_posix()}]}}), encoding="utf-8"
     )
@@ -87,6 +91,22 @@ def _apply_hook_filter(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     selected = _run(env, blocks[2])
     assert selected.returncode == 0, selected.stderr
     return _run(env, blocks[1])
+
+
+def test_hook_cleanup_uses_the_scoped_settings_helper() -> None:
+    """Setup delegates hook classification to its guarded helper instead of importing private writers."""
+    lines = _blocks("## Step 3:")[1].splitlines()
+    command = next(line for line in lines if "filter-foundry-hooks" in line)
+    assert 'settings_json.py" filter-foundry-hooks ~/.claude/settings.json' in command
+    assert '--root "$PLUGIN_ROOT" "$HOOK_FILTER_MODE"' in command
+    assert not any("from settings_json import" in line for line in lines)
+
+
+def test_statusline_merge_uses_the_ownership_probe() -> None:
+    """Setup checks executed hook ownership before choosing whether a stale status line can be replaced."""
+    blocks = _blocks("## Step 4:")
+    command = next(line for block in blocks for line in block.splitlines() if "statusline-owned" in line)
+    assert 'settings_json.py" statusline-owned ~/.claude/settings.json --root "$PLUGIN_ROOT"' in command
 
 
 @pytest.mark.integration
@@ -397,6 +417,8 @@ def test_setup_blocks_when_only_python3_is_available(setup_home: dict[str, str])
     result = _run(setup_home, _blocks("## Setup block")[0], prefix)
     assert result.returncode == 1, (result.stdout, result.stderr)
     assert "! BLOCKED — later steps call bare python; python3 works but python does not" in result.stdout
+    assert "shipped bin/python launcher" in result.stdout
+    assert "pending" not in result.stdout
     assert not list((Path(setup_home["HOME"]) / ".claude").glob("settings.json.bak-*"))
 
 

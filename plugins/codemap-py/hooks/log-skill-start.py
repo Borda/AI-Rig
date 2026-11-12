@@ -72,7 +72,7 @@ def resolve_session(session_file: Path) -> str:
         return session
     session = str(uuid.uuid4())
     try:
-        session_file.write_text(session, encoding="utf-8")
+        _hookutil.write_sentinel(session_file, session)
     except OSError:
         pass
     return session
@@ -106,7 +106,7 @@ def main() -> int:
             "runtime": _hookutil.runtime(),
             "v": _hookutil.plugin_version(),
             "session": session,
-            "project": _hookutil.project_root().as_posix(),
+            "project": _hookutil.project_key(),
             "skill": skill,
             "event": "start",
             "intent": str(tool_input.get("args", ""))[:300],

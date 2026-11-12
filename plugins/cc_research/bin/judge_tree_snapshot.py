@@ -1,15 +1,26 @@
 #!/usr/bin/env python3
 """Record working-tree evidence around approved judge validation commands.
 
-Purpose: detect content and index drift without modifying project files.
-Scope: staged, unstaged and untracked dirty paths, nested repositories, and
-    ignored experiment state outside the current judge run directory.
-Usage: judge_tree_snapshot.py RUN_DIR before|after, from the project repository.
-Outputs: dirty-before.json and dirty-after.json in the existing run directory,
-    plus a changed-path summary on stdout after comparison.
-Failure: return non-zero for unavailable evidence or an existing before snapshot;
-    preserve that original baseline. Drift itself is reported with exit zero.
-Used by: research:judge J4, including judge iterations in research:sweep.
+Purpose:
+    detect content and index drift without modifying project files.
+
+Scope:
+    staged, unstaged and untracked dirty paths, nested repositories, and ignored experiment state outside the current
+    judge run directory.
+
+Usage:
+    judge_tree_snapshot.py RUN_DIR before|after, from the project repository.
+
+Outputs:
+    dirty-before.json and dirty-after.json in the existing run directory, plus a changed-path summary on stdout after
+    comparison.
+
+Failure:
+    return non-zero for unavailable evidence or an existing before snapshot; preserve that original baseline. Drift
+    itself is reported with exit zero.
+
+Used by:
+    research:judge J4, including judge iterations in research:sweep.
 """
 
 from __future__ import annotations
@@ -119,4 +130,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+    sys.stderr.reconfigure(encoding="utf-8", newline="\n")
     raise SystemExit(main())

@@ -55,6 +55,8 @@ def _wire(
             return done(stdout=remote_show) if remote_show else done(returncode=1)
         if cmd[:2] == ["git", "rev-parse"]:
             return done(stdout="feature-branch" if "--abbrev-ref" in cmd else head)
+        if cmd == ["git", "branch", "--show-current"]:
+            return done(stdout="feature-branch")
         if cmd[0] == "gh":
             return done(stdout=json.dumps(pr_meta)) if pr_meta is not None else done(returncode=1)
         return done(returncode=1)
@@ -255,10 +257,17 @@ class TestMain:
         self, tmp_sentinels: Path, run: mock.MagicMock, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """A PR whose head is the default branch is refused before any sentinel is written."""
-        _wire(run, default_ref="refs/remotes/origin/main", pr_meta=_meta(headRefName="main"))
+        _wire(run, default_ref="refs/remotes/origin/main", pr_meta=_meta(headRefName="main", isCrossRepository=False))
         assert rpr.main(["--pr", "42"]) == 1
         assert "equals default branch" in capsys.readouterr().out
         assert not (tmp_sentinels / "resolve-head-ref-shared").exists()
+
+    def test_fork_default_head_uses_local_alias(self, tmp_sentinels: Path, run: mock.MagicMock) -> None:
+        """A fork's main branch stays the remote destination while checkout uses a distinct local branch."""
+        _wire(run, default_ref="refs/remotes/origin/main", pr_meta=_meta(headRefName="main"))
+        assert rpr.main(["--pr", "42"]) == 0
+        assert read_shared_sentinel(tmp_sentinels, "resolve-head-ref") == "pr-42-main"
+        assert read_shared_sentinel(tmp_sentinels, "resolve-remote-head-ref") == "main"
 
     @pytest.mark.parametrize(
         ("overrides", "label"),

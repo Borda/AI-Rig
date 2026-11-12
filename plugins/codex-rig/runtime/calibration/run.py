@@ -17,7 +17,8 @@ by ``run_live_ab.py``.
 
 run ``python runtime/calibration/run.py --layout plugin`` from the plugin root after changing skills, agents, or
 calibration data. Use the source layout when checking a repository checkout and the plugin layout when validating files
-as they will be installed and packaged.
+as they will be installed and packaged. Source layout requires a trusted ``--root``: it imports and executes that
+checkout's helper scripts and fixture gate commands with the current user's privileges.
 
 ## Used by
 
@@ -54,7 +55,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from live_contract import Layout, build_prompt, candidate_findings, prompt_sha256, role_context, task_contract_sha256
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
+from live_contract import (  # noqa: E402
+    Layout,
+    build_prompt,
+    candidate_findings,
+    prompt_sha256,
+    role_context,
+    task_contract_sha256,
+)
+
+#: Maximum duration of each local helper, Git lookup, or syntax-check subprocess.
+SUBPROCESS_TIMEOUT_SECONDS = 60
 
 #: Skill names the calibration run requires to be packaged and covered by the task and case files.
 SKILLS = (
@@ -289,6 +303,8 @@ class Paths:
         shared_dir = asset_root / ("shared" if layout == "plugin" else "skills/_shared")
         base_timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
         reports_dir = project_root / ".reports" / "codex" / "calibration"
+        if not reports_dir.resolve().is_relative_to(project_root):
+            raise ValueError("report directory escapes project root")
         for attempt in range(100):
             timestamp = base_timestamp if attempt == 0 else f"{base_timestamp}-{attempt:02d}"
             out_dir = reports_dir / timestamp
@@ -457,9 +473,16 @@ def frontmatter_setting(file: Path, key: str) -> str | None:
 
 def role_file(run: CalibrationRun, role: str) -> Path:
     """Return the canonical role file for the active layout."""
+    validate_path_component(role)
     if run.paths.layout == "plugin":
         return run.paths.roles_dir / role / "ROLE.md"
     return run.paths.roles_dir / f"{role}.toml"
+
+
+def validate_path_component(value: str) -> None:
+    """Require a portable single-component role or route identifier."""
+    if not isinstance(value, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", value) is None:
+        raise ValueError(f"invalid path component: {value!r}")
 
 
 def role_setting(run: CalibrationRun, file: Path, key: str) -> str | None:
@@ -611,12 +634,9 @@ def check_accepted_route_evidence(run: CalibrationRun) -> None:
 
 def _head_path_exists(repository: Path, path: str) -> bool:
     """Distinguish an absent HEAD path from a failed Git tree lookup."""
-    result = subprocess.run(  # noqa: S603 - argv list, no shell
-        ["git", "ls-tree", "-r", "--name-only", "HEAD", "--", path],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+    result = run_command(
+        ["git", "ls-tree", "-r", "--name-only", "HEAD", "--", path],
         cwd=repository,
-        text=True,
-        capture_output=True,
-        check=False,
     )
     if result.returncode != 0:
         raise OSError("HEAD path lookup failed")
@@ -647,12 +667,9 @@ def check_behavioral_cases_version(run: CalibrationRun) -> None:
         run.append_check(f"behavioral-version=skipped:{reason}")
         return
     try:
-        git_root = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
+        git_root = run_command(
+            ["git", "rev-parse", "--show-toplevel"],
             cwd=cases.parent,
-            text=True,
-            capture_output=True,
-            check=False,
         )
     except OSError:
         run.fail_and_leak("behavioral-version-policy", "behavioral-version-gap:Git checkout lookup failed")
@@ -687,12 +704,9 @@ def check_behavioral_cases_version(run: CalibrationRun) -> None:
     head_content = None
     if case_tracked:
         try:
-            head_cases = subprocess.run(  # noqa: S603 - argv list, no shell
-                ["git", "show", f"HEAD:{case_path}"],  # noqa: S607 - git resolved via PATH on purpose
+            head_cases = run_command(
+                ["git", "show", f"HEAD:{case_path}"],
                 cwd=repository,
-                text=True,
-                capture_output=True,
-                check=False,
             )
         except OSError:
             run.fail_and_leak("behavioral-version-policy", "behavioral-version-gap:HEAD fixture read failed")
@@ -847,6 +861,7 @@ def _active_policy_statements(text: str) -> list[str]:
     This bounded classifier recognizes sentence, semicolon, and current-clause contrast boundaries; it does not infer
     arbitrary prose intent. A colon introducing a historical quotation remains within that historical clause.
     """
+    text = "\n".join(" ".join(line.split()) for line in text.splitlines())
     boundary = (
         r"\n|(?<=[.!?])\s+|;\s*|"
         r"(?:,\s*(?:(?:but|while|whereas|however|yet|and)\s*,?\s*)?|"
@@ -866,12 +881,14 @@ def workflow_policy_findings(policy: str, implementation: str) -> list[str]:
     stop wording plus the required lightweight implementation branch; executable outcome checks separately cover helper
     behavior.
     """
+    if workflow_input_too_large(policy) or workflow_input_too_large(implementation):
+        return ["workflow-input-too-large"]
     findings: list[str] = []
     active_lines = _active_policy_statements(policy)
     if any(re.search(r"gpt-[0-5](?:[.\s-]|$)", line, re.I) for line in active_lines):
         findings.append("obsolete-runtime-model")
     if re.search(
-        r"(?:open structural finding|same open signature in consecutive reviews)[^\n]*stop(?:s)? (?:a )?clean claim",
+        r"(?:open structural finding|same open signature in consecutive reviews)[^\n]{0,4096}stop(?:s)? (?:a )?clean claim",
         "\n".join(active_lines),
         re.I,
     ):
@@ -896,7 +913,7 @@ def workflow_policy_findings(policy: str, implementation: str) -> list[str]:
     positions = [lightweight.find(stage) for stage in stages]
     ordered = all(position >= 0 for position in positions) and positions == sorted(positions)
     mandatory_roles = re.search(
-        r"(?:always require|required roles|must (?:spawn|delegate|use))[^\n]*(?:sw-engineer|qa-specialist|doc-scribe)",
+        r"(?:always require|required roles|must (?:spawn|delegate|use))[^\n]{0,4096}(?:sw-engineer|qa-specialist|doc-scribe)",
         implementation,
         re.I,
     )
@@ -907,6 +924,8 @@ def workflow_policy_findings(policy: str, implementation: str) -> list[str]:
 
 def workflow_summary_findings(summary: str) -> list[str]:
     """Recognize known public summary contradictions while preserving generic write approvals and archives."""
+    if workflow_input_too_large(summary):
+        return ["workflow-input-too-large"]
     summary = "\n".join(_active_policy_statements(summary))
     findings: list[str] = []
     if re.search(r"regardless of their progress flags", summary, re.I):
@@ -924,12 +943,25 @@ def workflow_summary_findings(summary: str) -> list[str]:
     ):
         findings.append("review-half-score-contradiction")
     if re.search(
-        r"Code Review also has separate instruction-bounded native inspection route:[^\n]*instructed not to use child tools|New native specialist manifests use schema 6|Text-only reviewers receive source, diff, and evidence inline",
+        r"Code Review also has separate instruction-bounded native inspection route:[^\n]{0,4096}instructed not to use child tools|New native specialist manifests use schema 6|Text-only reviewers receive source, diff, and evidence inline",
         summary,
         re.I,
     ):
         findings.append("native-review-delivery-contradiction")
     return findings
+
+
+def workflow_input_too_large(text: str) -> bool:
+    """Bound both the complete policy scan and the regex work on any one line."""
+    return len(text) > 262144 or any(len(line) > 4096 for line in text.splitlines())
+
+
+def read_workflow_text(path: Path) -> str:
+    """Read enough policy text to detect oversized inputs without loading an unbounded file."""
+    if not path.exists():
+        return ""
+    with path.open(encoding="utf-8") as handle:
+        return handle.read(262145)
 
 
 def check_workflow_outcomes(run: CalibrationRun) -> None:
@@ -1132,14 +1164,14 @@ def check_workflow_prevention(run: CalibrationRun) -> None:
         if path.exists()
     )
     implementation = run.paths.skills_dir / "implement/SKILL.md"
-    implementation_text = implementation.read_text(encoding="utf-8") if implementation.exists() else ""
+    implementation_text = read_workflow_text(implementation)
     if not policies:
         run.fail_and_leak("workflow-prevention", "workflow-policy-missing:active-policy")
     for path in policies:
         if not path.exists():
             run.fail_and_leak("workflow-prevention", f"workflow-policy-missing:{path}")
             continue
-        findings = workflow_policy_findings(path.read_text(encoding="utf-8"), implementation_text)
+        findings = workflow_policy_findings(read_workflow_text(path), implementation_text)
         for finding in findings:
             run.fail_and_leak("workflow-prevention", f"workflow-policy:{finding}:{path}")
         if not findings:
@@ -1149,7 +1181,7 @@ def check_workflow_prevention(run: CalibrationRun) -> None:
     for path in sorted(summaries):
         if not path.exists():
             continue
-        findings = workflow_summary_findings(path.read_text(encoding="utf-8"))
+        findings = workflow_summary_findings(read_workflow_text(path))
         for finding in findings:
             run.fail_and_leak("workflow-prevention", f"workflow-summary:{finding}:{path}")
         if not findings:
@@ -1276,6 +1308,7 @@ def check_fixed_task_and_behavioral_rosters(run: CalibrationRun) -> None:
             raise ValueError(f"task skill roster mismatch: {sorted(task_skills ^ set(SKILLS))}")
 
         cases_payload = json.loads(run.paths.behavioral_cases.read_text(encoding="utf-8"))
+        validate_behavioral_thresholds(cases_payload)
         case_targets = {case.get("target") for case in cases_payload.get("cases", []) if isinstance(case, dict)}
         missing_targets = sorted(set(SKILLS) - case_targets)
         if missing_targets:
@@ -1287,6 +1320,24 @@ def check_fixed_task_and_behavioral_rosters(run: CalibrationRun) -> None:
         run.fail_and_leak("fixed-task-set", f"fixed-task-roster-invalid:{exc}")
         return
     run.append_check("fixed-task-roster=ok")
+
+
+def validate_behavioral_thresholds(payload: dict[str, Any]) -> None:
+    """Require finite numeric thresholds for every behavioral acceptance metric."""
+    thresholds = payload.get("thresholds")
+    if not isinstance(thresholds, dict):
+        raise ValueError("behavioral thresholds must be an object")
+    for key in (
+        "min_observations",
+        "min_recall",
+        "min_precision",
+        "max_confidence_mae",
+        "max_mean_overconfidence",
+        "min_negative_specificity",
+    ):
+        value = thresholds.get(key)
+        if type(value) not in (int, float) or not math.isfinite(value):
+            raise ValueError(f"behavioral threshold missing or invalid: {key}")
 
 
 def validate_recurrence_case_contract(cases_payload: dict[str, Any]) -> None:
@@ -1573,15 +1624,20 @@ def run_command(
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a command and return captured text output."""
-    return subprocess.run(  # noqa: S603 - argv list, no shell
-        [str(arg) for arg in args],
-        cwd=cwd,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    """Run a bounded local command, returning status 124 when its deadline expires."""
+    argv = [str(arg) for arg in args]
+    try:
+        return subprocess.run(  # noqa: S603 - argv list, no shell
+            argv,
+            cwd=cwd,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=SUBPROCESS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(argv, 124, "", "calibration-command-timeout")
 
 
 def check_python_syntax(run: CalibrationRun, path: Path, label: str) -> None:
@@ -1591,12 +1647,9 @@ def check_python_syntax(run: CalibrationRun, path: Path, label: str) -> None:
         return
     env = os.environ.copy()
     env["PYTHONPYCACHEPREFIX"] = str(run.paths.out_dir / "pycache")
-    result = subprocess.run(  # noqa: S603 - argv list, no shell
+    result = run_command(
         [sys.executable, "-m", "py_compile", str(path)],
-        text=True,
-        capture_output=True,
         env=env,
-        check=False,
     )
     if result.returncode != 0:
         run.fail_and_leak("shared-script-selftests", f"shared-script-syntax:{label}")
@@ -1691,6 +1744,14 @@ def check_shared_scripts(run: CalibrationRun) -> None:
 
 
 def run_selftests(run: CalibrationRun) -> None:
+    """Record malformed selftest fixtures as failures while preserving the final calibration result."""
+    try:
+        _run_selftests(run)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError) as error:
+        run.fail_and_leak("shared-script-selftests", f"selftest-input-invalid:{error}")
+
+
+def _run_selftests(run: CalibrationRun) -> None:
     """Run smoke tests for shared helpers that are safe offline."""
     selftest_dir = run.paths.out_dir / "selftest"
     selftest_dir.mkdir(parents=True, exist_ok=True)
@@ -1980,6 +2041,24 @@ def synthetic_live_guard_policy(run: CalibrationRun, live_dir: Path) -> Path:
     return path
 
 
+def offline_live_environment(live_dir: Path) -> dict[str, str]:
+    """Keep paid-guard selftests unable to reach a real Codex executable or stored login."""
+    stub_dir = live_dir / "offline-bin"
+    stub_dir.mkdir(parents=True, exist_ok=True)
+    stub = stub_dir / ("codex.cmd" if sys.platform == "win32" else "codex")
+    stub.write_text("@exit /b 97\n" if sys.platform == "win32" else "#!/bin/sh\nexit 97\n", encoding="utf-8")
+    stub.chmod(0o700)
+    login_home = live_dir / "offline-home"
+    login_home.mkdir(parents=True, exist_ok=True)
+    env = {
+        key: os.environ[key]
+        for key in ("SystemRoot", "SYSTEMROOT", "COMSPEC", "PATHEXT", "TEMP", "TMP")
+        if key in os.environ
+    }
+    env.update(PATH=str(stub_dir.resolve()), HOME=str(login_home.resolve()), CODEX_HOME=str(login_home.resolve()))
+    return env
+
+
 def selftest_live_ab_contract_archived_policy_guard(run: CalibrationRun, live_dir: Path) -> bool:
     """Verify archived assignments still reach the CI guard without running or writing paid work."""
     out = live_dir / "archive-blocked-run"
@@ -2002,7 +2081,12 @@ def selftest_live_ab_contract_archived_policy_guard(run: CalibrationRun, live_di
             "--confirm-paid-run",
             "chatgpt-subscription",
         ],
-        env={**os.environ, "CI": "1", "GITHUB_ACTIONS": "1", "OPENAI_API_KEY": "selftest-must-not-be-used"},
+        env={
+            **offline_live_environment(live_dir),
+            "CI": "1",
+            "GITHUB_ACTIONS": "1",
+            "OPENAI_API_KEY": "selftest-must-not-be-used",
+        },
     )
     if result.returncode == 0 or "live-paid-run-disabled-in-ci" not in result.stderr or out.exists():
         run.fail_and_leak("shared-script-selftests", "selftest-failed:live-ab-archived-policy-guard")
@@ -2080,7 +2164,7 @@ def selftest_live_ab_contract_paid_guards(run: CalibrationRun, live_dir: Path, p
         "chatgpt-subscription",
     ]
     ci_out = live_dir / "ci-blocked-run"
-    ci_env = {**os.environ, "CI": "1", "GITHUB_ACTIONS": "1", "OPENAI_API_KEY": ""}
+    ci_env = {**offline_live_environment(live_dir), "CI": "1", "GITHUB_ACTIONS": "1", "OPENAI_API_KEY": ""}
     ci_blocked = run_command([*paid_args, "--out", ci_out], env=ci_env)
     if ci_blocked.returncode == 0 or "live-paid-run-disabled-in-ci" not in ci_blocked.stderr or ci_out.exists():
         run.fail_and_leak("shared-script-selftests", "selftest-failed:live-ab-ci-paid-guard")
@@ -2089,7 +2173,7 @@ def selftest_live_ab_contract_paid_guards(run: CalibrationRun, live_dir: Path, p
 
     api_out = live_dir / "api-key-blocked-run"
     api_env = {
-        **os.environ,
+        **offline_live_environment(live_dir),
         "CI": "",
         "GITHUB_ACTIONS": "",
         "OPENAI_API_KEY": "selftest-must-not-be-used",
@@ -2213,12 +2297,9 @@ def selftest_live_ab_contract_observation_rows(
                 case = fixture.cases[task["case_id"]]
                 evidence_scope = task.get("evidence_scope", "classification")
                 if evidence_scope == "tool-use" and campaign_index == 1:
+                    validate_path_component(route_id)
                     fixture_dir = fixture.live_dir / "fixtures" / route_id
-                    fixture_dir.mkdir(parents=True, exist_ok=True)
-                    for relative, content in task["fixture_files"].items():
-                        destination = fixture_dir / relative
-                        destination.parent.mkdir(parents=True, exist_ok=True)
-                        destination.write_text(content, encoding="utf-8")
+                    write_fixture_files(fixture_dir, task["fixture_files"])
                     gate = run_command(gate_argv(task["gate_command"]), cwd=fixture_dir)
                     if gate.returncode == 0:
                         run.fail_and_leak("shared-script-selftests", f"selftest-vacuous:live-ab-fixture:{route_id}")
@@ -3324,6 +3405,26 @@ def selftest_validate_artifacts(run: CalibrationRun, selftest_dir: Path) -> None
             run.fail_and_leak("shared-script-selftests", "selftest-failed:run-gates-not-applicable")
 
 
+def write_fixture_files(fixture_dir: Path, fixture_files: dict[str, str]) -> None:
+    """Write a selftest fixture only within its resolved workspace."""
+    fixture_dir = fixture_dir.resolve()
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    for relative, content in fixture_files.items():
+        destination = (fixture_dir / relative).resolve()
+        if not destination.is_relative_to(fixture_dir):
+            raise ValueError(f"fixture path escapes workspace: {relative!r}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(content, encoding="utf-8")
+
+
+def benchmark_matches(pattern: str, text: str) -> bool:
+    """Match optional benchmark patterns, falling back to literal text for malformed regexes."""
+    try:
+        return re.search(pattern, text, flags=re.IGNORECASE) is not None
+    except re.error:
+        return pattern.lower() in text.lower()
+
+
 def run_benchmark_pattern_checks(run: CalibrationRun) -> None:
     """Record wording hints without treating regex matches as proof of instruction semantics."""
     if not run.paths.benchmarks.exists():
@@ -3345,7 +3446,7 @@ def run_benchmark_pattern_checks(run: CalibrationRun) -> None:
         for reference in sorted((path.parent / "references").glob("*.md")):
             text += "\n" + read_text(reference)
         for pattern in patterns:
-            if re.search(pattern, text, flags=re.IGNORECASE) is None:
+            if not benchmark_matches(pattern, text):
                 run.append_check(f"advisory:benchmark-skill-miss:{skill}:{pattern}")
     if run.paths.layout == "plugin":
         run.append_check("benchmark-agent-patterns=covered-by-role-card-contract")
@@ -3356,7 +3457,7 @@ def run_benchmark_pattern_checks(run: CalibrationRun) -> None:
         path = role_file(run, agent)
         text = read_text(path)
         for pattern in patterns:
-            if re.search(pattern, text, flags=re.IGNORECASE) is None:
+            if not benchmark_matches(pattern, text):
                 run.append_check(f"advisory:benchmark-agent-miss:{agent}:{pattern}")
 
 
@@ -3728,7 +3829,8 @@ def main() -> int:
         "--layout",
         choices=[layout.value for layout in Layout],
         default=Layout.PLUGIN.value,
-        help="Asset layout: source reads project .codex; plugin reads the installed package.",
+        help="Asset layout: source executes helpers and gate commands from --root; use only trusted checkouts. "
+        "Plugin reads the installed package.",
     )
     parser.add_argument(
         "--root",

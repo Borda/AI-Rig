@@ -239,6 +239,28 @@ class TestMainCommitPrs:
 class TestMainArguments:
     """Covers argument validation and fail-closed exits of ``main``."""
 
+    def test_exclusion_file_read_once_for_entire_range(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Read one exclusion snapshot for the range and omit shipped commits before batching."""
+        batches = _fake_run(monkeypatch, [SHA_A, SHA_B, SHA_C])
+        excluded = tmp_path / "excluded.tsv"
+        excluded.write_text(f"{SHA_B}\tshipped\n", encoding="utf-8")
+        read_text = Path.read_text
+        reads: list[Path] = []
+
+        def record_read(path: Path, *args: object, **kwargs: object) -> str:
+            """Record real text-file reads while retaining the file's actual content."""
+            reads.append(path)
+            return read_text(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", record_read)
+        assert ghq.main([*RANGE_ARGS, "--exclude-file", str(excluded)]) == 0
+        assert reads == [excluded]
+        assert batches == [[SHA_A, SHA_C]]
+        records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        assert [record["commit"] for record in records] == [SHA_A, SHA_C]
+
     def test_rejects_option_shaped_range(self, capsys: pytest.CaptureFixture[str]) -> None:
         """A range beginning with ``-`` could smuggle a git option and is refused before any call.
 

@@ -38,6 +38,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from _report_io import write_report
+
 #: Tool names treated as local work when bucketing time; unknown tools also fall into this bucket.
 _LOCAL_TOOLS = frozenset(
     {
@@ -788,7 +790,6 @@ def main(argv: list[str] | None = None) -> int:
     else:
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
         out = Path(f".reports/profile/{stamp}/report.md")
-    out.parent.mkdir(parents=True, exist_ok=True)
     report = render_report(
         sessions,
         skill_events,
@@ -797,7 +798,7 @@ def main(argv: list[str] | None = None) -> int:
         warnings=warnings,
         output_hint=str(out),
     )
-    out.write_text(report, encoding="utf-8")
+    write_report(out, report)
     enc = getattr(sys.stdout, "encoding", None) or "utf-8"
     try:
         "→".encode(enc)

@@ -96,9 +96,20 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const crypto = require("crypto");
 
 function getSentinelDir() {
-  return process.platform === "win32" ? os.tmpdir() : "/tmp";
+  const user =
+    typeof process.getuid === "function"
+      ? process.getuid()
+      : crypto.createHash("sha256").update(os.userInfo().username).digest("hex");
+  const dir = path.join(process.env.TMPDIR || os.tmpdir(), `claude-state-user-${user}`);
+  try {
+    if (!ownedDirectory(dir)) throw new Error("unsafe state directory");
+  } catch (err) {
+    if (err.code !== "ENOENT") throw err;
+  }
+  return dir;
 }
 
 /** Remove terminal controls from labels while preserving renderer-owned ANSI codes. */
@@ -122,9 +133,12 @@ process.stdin.on("end", () => {
     const { model, workspace, context_window, cost, session_id, effort } = JSON.parse(raw);
 
     // Session-scoped temp dir — mirrors the layout written by task-log.js.
-    // Falls back to 'default' for older Claude Code versions without session_id.
-    const sid = (session_id || "default").replace(/[^a-zA-Z0-9_-]/g, "_");
-    const tmpDir = path.join(getSentinelDir(), `claude-state-${sid}`);
+    // Missing identities render model and cost without another session's activity.
+    const sid = typeof session_id === "string" && /^[a-zA-Z0-9_-]+$/.test(session_id) ? session_id : null;
+    const tmpDir = path.join(
+      getSentinelDir(),
+      sid ? `claude-state-${sid}` : `.missing-session-${crypto.randomBytes(16).toString("hex")}`,
+    );
 
     const modelName = model?.display_name || model?.id || "";
     // Thinking effort: hook payload has `effort` as a top-level field with a `.level` sub-property.

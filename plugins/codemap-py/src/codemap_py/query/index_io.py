@@ -358,7 +358,7 @@ def _valid_module_collections(module: dict) -> bool:
 
 def _index_entries_reason(index: dict) -> str | None:
     """Reject malformed query records before they reach command-specific handlers."""
-    if not _valid_scan_root(index.get("scan_root")):
+    if not _valid_scan_root(index.get("scan_root"), index.get("scan_root_key")):
         return "invalid_entries"
     for module in index["modules"]:
         if not isinstance(module, dict) or not isinstance(module.get("name"), str):
@@ -373,7 +373,7 @@ def _index_entries_reason(index: dict) -> str | None:
     return None
 
 
-def _valid_scan_root(root: object) -> bool:
+def _valid_scan_root(root: object, key: object = None) -> bool:
     """Check optional root metadata lexically without resolving an untrusted location."""
     if root is None:
         return True
@@ -381,7 +381,7 @@ def _valid_scan_root(root: object) -> bool:
         return False
     if PureWindowsPath(root).drive.startswith("\\\\"):
         return False
-    return True
+    return root != "." or (isinstance(key, str) and len(key) == 64 and all(char in "0123456789abcdef" for char in key))
 
 
 def _missing_index(path: Path) -> None:
@@ -1219,14 +1219,20 @@ def _resolve_project_root(explicit_root: Path | None, index: dict) -> Path:
         return queried
     if not isinstance(stored, str) or PureWindowsPath(stored).drive.startswith("\\\\"):
         return queried
-    stored_path = Path(stored).absolute()
+    stored_path = (
+        Path(stored).absolute()
+        if stored != "."
+        else (queried if index.get("scan_root_key") == index_paths.root_key(queried) else None)
+    )
     if stored_path in (query_path, queried):
         return stored_path.resolve()
     loaded = Path(state._LOADED_INDEX_PATH).absolute()
     if loaded.parent.name == "codemap" and loaded.parent.parent.name == ".cache":
         cache_root = loaded.parent.parent.parent
-        if stored_path in (cache_root, cache_root.resolve()):
-            return stored_path.resolve()
+        if stored_path in (cache_root, cache_root.resolve()) or (
+            stored == "." and index.get("scan_root_key") == index_paths.root_key(cache_root.resolve())
+        ):
+            return cache_root.resolve()
     return queried
 
 
@@ -1250,6 +1256,8 @@ def _detect_root_mismatch(explicit_root: Path | None, index: dict) -> bool:
         return True
     query_path = (explicit_root if explicit_root is not None else (_get_git_root_cached() or Path.cwd())).absolute()
     queried = query_path.resolve()
+    if stored == ".":
+        return index.get("scan_root_key") != index_paths.root_key(queried)
     stored_path = Path(stored).absolute()
     if stored_path not in (query_path, queried):
         return True

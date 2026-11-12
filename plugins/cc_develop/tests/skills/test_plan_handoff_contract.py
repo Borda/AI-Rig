@@ -21,18 +21,20 @@ def test_plan_filename_matches_inline_scheme_and_never_overwrites(tmp_path: Path
     """Two invocations with the same timestamp preserve both plans under the inline filename convention."""
     namespace = tmp_path / "namespace"
     namespace.mkdir()
-    (namespace / "clean-args").write_text("improve caching in data loader\n", encoding="utf-8")
-    (tmp_path / "dev-plan-ns-current-filename").write_text(namespace.as_posix() + "\n", encoding="utf-8")
+    (namespace / "clean-args").write_text("improve caching in data loader\n", encoding="utf-8", newline="\n")
+    (tmp_path / "dev-plan-ns-current-filename").write_text(namespace.as_posix() + "\n", encoding="utf-8", newline="\n")
     block = next(block for block in bash_fences(_PLAN.read_text(encoding="utf-8")) if "SLUG=" in block)
     env = {**os.environ, "TMPDIR": tmp_path.as_posix(), "CLAUDE_CODE_SESSION_ID": "filename"}
     block = 'date() { printf "2026-01-02T03-04-05Z\\n"; }\n' + block
-    first_run = subprocess.run([_BASH, "-c", block], cwd=tmp_path, env=env, capture_output=True, text=True, check=False)
+    first_run = subprocess.run(
+        [_BASH, "-c", block], cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8", check=False
+    )
     assert first_run.returncode == 0, first_run.stderr
     first_path = (namespace / "plan-file").read_text().strip()
     assert first_path == ".plans/active/plan-improve-caching-data-loader-2026-01-02T03-04-05Z.md"
     (tmp_path / first_path).write_text("original plan", encoding="utf-8")
     second_run = subprocess.run(
-        [_BASH, "-c", block], cwd=tmp_path, env=env, capture_output=True, text=True, check=False
+        [_BASH, "-c", block], cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8", check=False
     )
     assert second_run.returncode == 0, second_run.stderr
     assert (namespace / "plan-file").read_text().strip() == first_path.removesuffix(".md") + "-2.md"

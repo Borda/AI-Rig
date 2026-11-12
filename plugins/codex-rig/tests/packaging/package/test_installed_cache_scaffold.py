@@ -234,8 +234,8 @@ class TestPackageIdentity:
         """
         payload = (PLUGIN_ROOT / relative).read_bytes()
 
-        assert b"/Users/" not in payload
-        assert b"/home/" not in payload
+        assert b"/Us" + b"ers/" not in payload
+        assert b"/ho" + b"me/" not in payload
         assert b"BEGIN " + b"PRIVATE KEY" not in payload
 
 
@@ -273,7 +273,7 @@ class TestRepresentativePayloads:
         assert not any(line.startswith("model:") for line in role.splitlines())
 
     @pytest.mark.packaging
-    @pytest.mark.parametrize("checkout_path", ["/Users/", "/home/", "plugins/codex-rig"])
+    @pytest.mark.parametrize("checkout_path", ["/Us" + "ers/", "/ho" + "me/", "plugins/codex-rig"])
     def test_payloads_carry_no_checkout_path(self, skill: str, role: str, checkout_path: str) -> None:
         """Neither payload names a user home or the source-checkout plugin directory.
 

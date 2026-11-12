@@ -33,20 +33,37 @@ def test_review_preserves_caller_owned_task_files() -> None:
     assert "never put unauthored text in a Bash heredoc, echo or printf argument" in transport
 
 
-def test_synchronous_review_has_room_for_retry_below_foreground_cap() -> None:
+@pytest.mark.parametrize("verb", ["advise", "review"])
+def test_synchronous_read_only_call_has_room_for_retry_below_foreground_cap(verb: str) -> None:
     """A synchronous subagent caller must receive its envelope before foreground Bash expires."""
-    lines = (SKILLS / "review/SKILL.md").read_text(encoding="utf-8").splitlines()
+    lines = (SKILLS / verb / "SKILL.md").read_text(encoding="utf-8").splitlines()
     branch = next(line for line in lines if "For synchronous skill or subagent callers" in line)
     budget = int(re.search(r"`--timeout-seconds (\d+)`", branch).group(1))
     bash_timeout = int(re.search(r"Bash `timeout` of (\d+) seconds", branch).group(1))
     factor = _supervisor_constant("bridge_call.py", "CHILD_TIMEOUT_MULTIPLIER")
     drain = _supervisor_constant("bridge_mcp.py", "TERMINATION_DRAIN_SECONDS")
-    attempts = _supervisor_constant("bridge_mcp.py", "_MAX_ATTEMPTS_BY_VERB")["review"]
+    attempts = _supervisor_constant("bridge_mcp.py", "_MAX_ATTEMPTS_BY_VERB")[verb]
     ceiling = int(re.search(r"soft budget at most (\d+) seconds", branch).group(1))
     assert attempts * (budget * factor + drain) + 20 <= bash_timeout < 600
     assert budget <= ceiling
     assert attempts * (ceiling * factor + drain) + 20 <= bash_timeout
     assert "Worst-case wall time is `2 × (1.2 × --timeout-seconds + 9 seconds)`" in branch
+    assert "never use background Bash for these callers" in branch
+    assert "do not silently replace a caller-supplied budget" in branch
+
+
+def test_synchronous_implementation_has_room_for_cleanup_below_foreground_cap() -> None:
+    """A synchronous write caller needs its final envelope before Bash's foreground deadline."""
+    lines = (SKILLS / "implement/SKILL.md").read_text(encoding="utf-8").splitlines()
+    branch = next(line for line in lines if "For synchronous skill or subagent callers" in line)
+    budget = int(re.search(r"`--timeout-seconds (\d+)`", branch).group(1))
+    bash_timeout = int(re.search(r"Bash `timeout` of (\d+) seconds", branch).group(1))
+    factor = _supervisor_constant("bridge_call.py", "CHILD_TIMEOUT_MULTIPLIER")
+    drain = _supervisor_constant("bridge_mcp.py", "TERMINATION_DRAIN_SECONDS")
+    ceiling = int(re.search(r"soft budget at most (\d+) seconds", branch).group(1))
+    assert budget * factor + drain + 20 <= bash_timeout < 600
+    assert budget <= ceiling
+    assert ceiling * factor + drain + 20 <= bash_timeout
     assert "never use background Bash for these callers" in branch
     assert "do not silently replace a caller-supplied budget" in branch
 

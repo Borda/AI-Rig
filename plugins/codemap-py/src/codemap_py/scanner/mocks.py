@@ -140,7 +140,7 @@ def extract_mock_patches(tree: ast.Module, filepath: Path) -> list[dict]:
 
     Args:
         tree: parsed AST of the module.
-        filepath: filesystem path of the test module (recorded in each entry).
+        filepath: project-relative path of the test module (recorded in each entry).
 
     Returns:
         List of dicts, one per detected patch site, in source order.
@@ -154,7 +154,7 @@ def extract_mock_patches(tree: ast.Module, filepath: Path) -> list[dict]:
         >>> result[0]["form"]
         'decorator'
     """
-    collector = _PatchCollector(name_map=_patch_object_name_map(tree), file_str=str(filepath))
+    collector = _PatchCollector(name_map=_patch_object_name_map(tree), file_str=filepath.as_posix())
 
     # Walk decorators of every function/async-function/class definition.
     decorator_call_ids: set[int] = set()

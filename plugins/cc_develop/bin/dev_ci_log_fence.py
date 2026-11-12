@@ -1,17 +1,28 @@
 #!/usr/bin/env python
 """Preserve CI logs as labelled untrusted evidence with a complete preview fence.
 
-Purpose: Prevent contributor-controlled CI output from becoming instructions during handoff.
-Scope: Local UTF-8 log files and repository identifiers supplied by the CI extraction protocol.
-Usage: python dev_ci_log_fence.py LOG --label "github actions log" --preview-lines 200
-       python dev_ci_log_fence.py --check-repo OWNER/REPO
-Outputs: Replace LOG with the complete fenced evidence and print a separately fenced preview.
-Failure: Invalid arguments or repository names exit 2; unreadable or unwritable logs exit 2.
-Used by: Develop shared CI log extraction, after fetching and stripping raw job output.
+Purpose:
+    Prevent contributor-controlled CI output from becoming instructions during handoff.
 
-Each fence receives a fresh token. Closing-marker lookalikes inside the log are defused before
-rendering. Preview limits apply to raw lines before fencing, so both delimiters always survive.
-Stdout is explicitly UTF-8 even when the host terminal defaults to a narrower encoding.
+Scope:
+    Local UTF-8 log files and repository identifiers supplied by the CI extraction protocol.
+
+Usage:
+    python dev_ci_log_fence.py LOG --label "github actions log" --preview-lines 200
+    python dev_ci_log_fence.py --check-repo OWNER/REPO
+
+Outputs:
+    Replace LOG with the complete fenced evidence and print a separately fenced preview.
+
+Failure:
+    Invalid arguments or repository names exit 2; unreadable or unwritable logs exit 2.
+
+Used by:
+    Develop shared CI log extraction, after fetching and stripping raw job output.
+
+Each fence receives a fresh token. Closing-marker lookalikes inside the log are defused before rendering. Preview limits
+apply to raw lines before fencing, so both delimiters always survive. Stdout is explicitly UTF-8 even when the host
+terminal defaults to a narrower encoding.
 """
 
 from __future__ import annotations

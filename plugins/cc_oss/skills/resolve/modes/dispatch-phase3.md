@@ -8,17 +8,20 @@
 
 ### Phase 3: Merge-back — sequential, orchestrator-owned
 
+Commit helpers retain the parent-owned hook approval and bounded formatter recovery from `dispatch-prelude.md`. Reload this run's approval before each grouped or bulk commit. A helper failure preserves the incomplete group/items and tree for inspection; never bypass hooks or add another retry.
+
 **HEAD fingerprint check** — every Phase 2 worktree was pinned to `phase2-base-sha` at step 0 (a chain link to a tip descending from it, §Spawn base); verify the PR branch hasn't moved under us while Phase 2 ran. A move past `phase2-base-sha` means an external write (human push, or a run that slipped the mutex) landed during Phase 2 — cherry-picks still apply (they replay each diff onto the current tip), but overlapping edits now surface as conflicts, so surface the drift rather than stack silently. A move that stops at `phase2-base-sha` happened before Phase 2 spawned (C1's `each` commits): the worktrees already sit on it, so it is reported as such, never as drift. Either way `resolve-base-sha` is re-pointed to the current tip — the merge fence's guard and combined reset anchor on it.
 
 Precompute every specialist's original pre-cherry-pick patch-id first, in its own fenced block. `extract_commit_shas.py ledger` validates every ledger row before the check below consumes its output; a non-zero exit blocks the check even when earlier rows produced a partial list. Keep the check block's guard reads shared with every other fence (`plugins/CLAUDE.md` §Blueprint Blocks). `$IMPL_DIR/phase2-plan-shas.txt`/`phase2-plan-ids.txt` are fixed paths under `IMPL_DIR`, overwritten every run — no `mktemp`/`rm -f` needed, so nothing here trips the manifest generator's destructive-command filter either:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; cannot verify stranded picks before the HEAD-fingerprint check below"; exit 1; }
 : > "$IMPL_DIR/phase2-plan-shas.txt"
 if [ -s "$IMPL_DIR/phase2-commits.jsonl" ]; then
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/extract_commit_shas.py" ledger "$IMPL_DIR/phase2-commits.jsonl" > "$IMPL_DIR/phase2-plan-shas.txt" \
+    python "$PLUGIN_ROOT/bin/extract_commit_shas.py" ledger "$IMPL_DIR/phase2-commits.jsonl" > "$IMPL_DIR/phase2-plan-shas.txt" \
         || { echo "! BLOCKED — phase2-commits.jsonl unparsable or holds an empty sha; cannot verify stranded picks safely"; exit 1; }  # timeout: 5000 — a truncated or empty-sha read here must not silently pass the stranded-pick check below on a partial list
 fi
 ```
@@ -88,12 +91,13 @@ Build the cherry-pick plan in **original `SELECTED_ITEMS` priority order**, inte
 - Never hand-derive it with a sed transform: codemap names a package `__init__.py` after the package (`pkg`, not `pkg.__init__`), so a sed guess silently mismatches the centrality keys and scores 0.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
 [ -f "$IMPL_DIR/selected-items.txt" ] && IFS= read -r SELECTED_ITEMS < "$IMPL_DIR/selected-items.txt" || SELECTED_ITEMS=""
 rm -f "$IMPL_DIR/merge-plan.json"  # a stale plan from an earlier attempt must never be inherited by the merge fence below — cleared before the call, not just left to a failed overwrite
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/build_merge_plan.py" \
+python "$PLUGIN_ROOT/bin/build_merge_plan.py" \
     --commits "$IMPL_DIR/phase2-commits.jsonl" --action-items "$IMPL_DIR/action-items.jsonl" \
     --priority-order "$SELECTED_ITEMS" --out "$IMPL_DIR/merge-plan.json" \
     --codemap-maps "$IMPL_DIR/codemap-maps.json" \
@@ -111,6 +115,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/build_merge_plan.py" \
 - Missing maps (no `codemap-py query` / query failure) → flag omitted, plan applies in priority order unchanged.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -f "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" ] && IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" || COMMIT_MODE="unset"
@@ -156,7 +161,7 @@ fi
 # list, no CHERRY_PICK_HEAD, no recovery route — so it must be caught before the cherry-pick runs.
 if [ -s "$IMPL_DIR/c1-deferred-files.txt" ] && [ -s "$PLAN_FILE" ]; then
     _SHAS_FILE=$(mktemp)  # timeout: 3000
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/extract_commit_shas.py" plan "$PLAN_FILE" > "$_SHAS_FILE"  # timeout: 5000 — no 2>/dev/null: a read/parse failure here must surface, not silently read as "no shas, no overlap"
+    python "$PLUGIN_ROOT/bin/extract_commit_shas.py" plan "$PLAN_FILE" > "$_SHAS_FILE"  # timeout: 5000 — no 2>/dev/null: a read/parse failure here must surface, not silently read as "no shas, no overlap"
     [ $? -eq 0 ] || { echo "! BLOCKED — overlap guard: failed to read plan shas from $PLAN_FILE"; rm -f "$_SHAS_FILE"; exit 1; }
     # -z (NUL-delimited) is required, not cosmetic: a bare `for _f in $(...)` word-splits on
     # IFS, so a path containing a space is silently missed on one side and falsely flagged as an
@@ -181,7 +186,7 @@ if [ -s "$IMPL_DIR/c1-deferred-files.txt" ] && [ -s "$PLAN_FILE" ]; then
     _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
     # normalize both sides (strip a leading ./, resolve an absolute path relative to repo root) before
     # comparing — a leading-./ or absolute form on either side is otherwise a real overlap that misses
-    _OVERLAP=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/compare_deferred_files.py" "$_ROOT" "$_DIFF_FILES" "$IMPL_DIR/c1-deferred-files.txt")
+    _OVERLAP=$(python "$PLUGIN_ROOT/bin/compare_deferred_files.py" "$_ROOT" "$_DIFF_FILES" "$IMPL_DIR/c1-deferred-files.txt")
     _OVERLAP_RC=$?  # timeout: 5000 — a bad-encoding line or other read failure inside this comparison must abort, not read as an empty (no-overlap) result
     rm -f "$_DIFF_FILES"
     [ "$_OVERLAP_RC" -eq 0 ] || { echo "! BLOCKED — overlap guard: comparison failed (rc=$_OVERLAP_RC) — cannot verify C1/Phase-2 file disjointedness safely"; exit 1; }
@@ -210,7 +215,7 @@ fi
 # the two-word form relies on the shell field-splitting the expansion result, which bash does
 # but zsh does not (no SH_WORD_SPLIT by default) — under zsh the whole `--base-sha abc123` arrives
 # as ONE argv word and argparse rejects it (rc=2), so Phase 3 never cherry-picks anything.
-_MERGE_OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_specialist_batch.py" \
+_MERGE_OUT=$(python "$PLUGIN_ROOT/bin/merge_specialist_batch.py" \
     --plan "$PLAN_FILE" --commit-mode "$COMMIT_MODE" \
     ${CENTRALITY_FILE:+--centrality-file="$CENTRALITY_FILE"} \
     ${_BASE_SHA:+--base-sha="$_BASE_SHA"})  # timeout: 30000 — same base on every pass (first or resumed) so the combined reset always collapses the WHOLE plan, not just this call's entries
@@ -292,10 +297,11 @@ fi
 - `remaining` is read straight from `merge-result.json` by `build_merge_plan.py --resume-from`, never typed in by hand — an operator substituting the wrong thing (or nothing) for a placeholder was the exact mechanism that let a legitimately-empty `remaining` become indistinguishable from a mistake:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/build_merge_plan.py" \
+python "$PLUGIN_ROOT/bin/build_merge_plan.py" \
     --commits "$IMPL_DIR/phase2-commits.jsonl" --action-items "$IMPL_DIR/action-items.jsonl" \
     --resume-from "$IMPL_DIR/merge-result.json" --out "$IMPL_DIR/merge-plan.json" \
     --codemap-maps "$IMPL_DIR/codemap-maps.json"; _RC=$?  # timeout: 10000 — exit 3 = merge-result.json absent, unreadable or without a "remaining" list; an empty "remaining":[] still needs to run: build_merge_plan.py writes a valid empty plan `[]`, and the resumed merge fence call below must still execute (with --base-sha, applying nothing) to trigger the collapse — see run_plan's base_sha docstring
@@ -439,6 +445,7 @@ Group items by topic label. For each unique topic group (ordered by first item I
 - An id in neither source (rejected, skipped, or a stalled Phase-2 group) is warned and excluded from this group rather than hard-blocking the commit:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
@@ -489,7 +496,9 @@ _BUILD_ARGS=(--build-group --topic "$_TOPIC" --summaries-file "$IMPL_DIR/group-s
 [ "${CODEX_AVAILABLE:-false}" = "true" ] && _BUILD_ARGS+=(--codex)
 _GROUP_FILES=()
 while IFS= read -r _f; do [ -n "$_f" ] && _GROUP_FILES+=("$_f"); done < "$IMPL_DIR/group-files.txt"
-if python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_action_item.py" "${_BUILD_ARGS[@]}" \
+export RESOLVE_APPROVED_HOOKS=""
+IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" 2>/dev/null || RESOLVE_APPROVED_HOOKS=""
+if python "$PLUGIN_ROOT/bin/commit_action_item.py" "${_BUILD_ARGS[@]}" \
     --files "${_GROUP_FILES[@]}"; then  # timeout: 10000
     echo ok > "$IMPL_DIR/group-commit-status.txt"
 else
@@ -537,6 +546,7 @@ esac
 **After loop — `COMMIT_MODE=all` only**: derive counters from `CHALLENGE_LOG`, create single commit:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
 IFS= read -r PR_REF < "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}" 2>/dev/null || PR_REF=""
@@ -555,7 +565,9 @@ N_AS_SUGGESTED=$(grep -ciE '^id[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]+resolu
 N_SELF_RESOLVED=$(grep -ciE '^id[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]+resolution[[:space:]]*=[[:space:]]*self-resolved' "$IMPL_DIR/challenge-log.txt" 2>/dev/null || :); N_SELF_RESOLVED=${N_SELF_RESOLVED:-0}
 N_REJECTED=$(grep -ciE '^id[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]+resolution[[:space:]]*=[[:space:]]*rejected' "$IMPL_DIR/challenge-log.txt" 2>/dev/null || :); N_REJECTED=${N_REJECTED:-0}  # same anchored pattern as _REJECTED_IDS below — must agree with it or the printed count and the actually-closed ids diverge
 SUMMARIES_FILE=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_all_items.py" "$PR_REF" "$N_AS_SUGGESTED" "$N_SELF_RESOLVED" "$N_REJECTED" "$SUMMARIES_FILE" $( [ "${CODEX_AVAILABLE:-false}" = "true" ] && echo "--codex" )  # timeout: 10000
+export RESOLVE_APPROVED_HOOKS=""
+IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" 2>/dev/null || RESOLVE_APPROVED_HOOKS=""
+python "$PLUGIN_ROOT/bin/commit_all_items.py" "$PR_REF" "$N_AS_SUGGESTED" "$N_SELF_RESOLVED" "$N_REJECTED" "$SUMMARIES_FILE" $( [ "${CODEX_AVAILABLE:-false}" = "true" ] && echo "--codex" )  # timeout: 10000
 ```
 
 After the commit succeeds, flip only selected items with an implementation record to completed (deferred from per-item loop body where commit had not yet happened). A Phase 2 commit record or a Git-verified C1 file record is required for each id; the clean Phase 3 result proves the recorded Phase 2 work was merged before the bulk commit. A selected item absent from both ledgers remains `in_progress` for the straggler gate. Exclude ids already closed above (REJECT, `skipped-items.txt`). The persisted `selected-items.txt` is authoritative for scope; task ids still come from `item-tasks.tsv`:

@@ -8,7 +8,7 @@ paths:
 
 ### Verbatim-file principle
 
-Must-keep details (run-dir, task IDs, key decisions, report paths) go in `.temp/state/skill-contract.md` — not relied on in prose summary. PreCompact hook (`task-log.js`) appends contract file **verbatim** to `session-context.md`; only owner-verified block is authoritative.
+Must-keep details (run-dir, task IDs, key decisions, report paths) go in `.temp/state/skill-contract.md` — not relied on in prose summary. PreCompact hook (`task-log.js`) appends only the owner-verified contract file **verbatim** to `session-context.md`; unverified and foreign-session contracts are not saved.
 
 Prose Compact Instructions remain best-effort. Don't over-promise zero loss for anything not in contract.
 

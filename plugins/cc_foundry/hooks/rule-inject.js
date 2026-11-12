@@ -208,7 +208,8 @@ function skillContractContext(payload) {
     contract.state === "verified"
       ? "Skill contract, verified: written by this session; confirm the skill is still active before resuming"
       : "Skill contract, unverified: no matching owner stamp; confirm with the user before resuming";
-  const full = `${header}\n\n${contract.body}`;
+  const boundary = `untrusted-${crypto.randomBytes(16).toString("hex")}`;
+  const full = `${header}\n\n<${boundary}>\n${contract.body}</${boundary}>`;
   return full.length <= INJECT_CAP ? full : `${header}\n\nRead ${contract.file} (too long to inject).`;
 }
 

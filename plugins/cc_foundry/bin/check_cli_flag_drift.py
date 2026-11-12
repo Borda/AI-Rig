@@ -237,7 +237,7 @@ def iter_argparse_script_sources(plugins_dir: Path) -> list[tuple[Path, str, set
             try:
                 source = script.read_text(encoding="utf-8", errors="replace")
                 flags = extract_argparse_flags(source)
-            except (OSError, SyntaxError):
+            except (OSError, SyntaxError, RecursionError):
                 continue
             if flags is not None:
                 found.append((script, source, flags))
@@ -286,7 +286,7 @@ def usage_block_lines(source: str) -> list[str]:
     """
     try:
         docstring = ast.get_docstring(ast.parse(source))
-    except SyntaxError:
+    except (SyntaxError, RecursionError):
         return []
     if not docstring:
         return []

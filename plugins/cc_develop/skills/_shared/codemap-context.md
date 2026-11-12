@@ -6,7 +6,8 @@
 
 ```bash
 # gate before resolve: absent CLI spawns nothing; && chain keeps set -e off resolver exit 1
-command -v codemap-py >/dev/null 2>&1 && _CODEMAP_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/resolve_shared_path.py" codemap-py claude-skills/_shared 2>/dev/null) && cat "$_CODEMAP_SHARED/codemap-context.md" 2>/dev/null || echo "codemap contract absent — use fallback below"
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+command -v codemap-py >/dev/null 2>&1 && _CODEMAP_SHARED=$(python "$PLUGIN_ROOT/bin/resolve_shared_path.py" codemap-py claude-skills/_shared 2>/dev/null) && cat "$_CODEMAP_SHARED/codemap-context.md" 2>/dev/null || echo "codemap contract absent — use fallback below"
 ```
 
 Contract (version as loaded) — follow §Batch pre-flight pattern (run with `TARGET_MODULE`/`TARGET_FN`/`CODEMAP_QUERY_KIND`), §Evidence-line contract, §Coverage metadata, §Targeted-edit pattern, §Effort-tier guidance.
@@ -36,10 +37,11 @@ Note: `foundry:sw-engineer` also carries its own `<codemap_context>` pre-flight 
 Contract §Extended scan defines risk tiers (`>=5` HIGH, `1–4` MODERATE, `0` LOW). Develop's batch producer:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
 if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/codemap_scan.py" --source=diff  # timeout: 15000
+python "$PLUGIN_ROOT/bin/codemap_scan.py" --source=diff  # timeout: 15000
 ```
 
 > Interpret: `rdeps` output = external callers affected; `coupled` output = co-change pairs.
@@ -48,7 +50,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/codemap_scan.py" --source=
 
 ## Review-pipeline injection (oss:review, develop:review)
 
-Review orchestrators run v5 pre-flight queries **per changed module** before spawning dimension agents, persist structured output, pass to each agent as `CODEMAP_CONTEXT` so agents skip only equivalent structural retrieval. Pre-flight queries (module-level only — a name-only changed-files list can't supply the `module::fn` qnames `fn-rdeps`/`fn-blast` need; bare-module fn-\* calls failed 100% in production, usage audit F1; fn-level returns once diff-hunk qname derivation lands — audit plan P1.2b):
+Review orchestrators run v5 pre-flight queries **per changed module** before spawning dimension agents, persist structured output, pass to each agent as `CODEMAP_CONTEXT` so agents skip only equivalent structural retrieval. Pre-flight queries are module-level only: a name-only changed-files list cannot supply the `module::fn` qualified names required by `fn-rdeps` and `fn-blast`. Derive function-qualified names from changed hunks before using function-level queries:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"

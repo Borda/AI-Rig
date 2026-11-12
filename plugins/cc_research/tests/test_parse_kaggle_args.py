@@ -44,6 +44,14 @@ class TestParseModes:
     """Mode-flag precedence resolved from the raw ``$ARGUMENTS`` string."""
 
     @pytest.mark.parametrize(
+        "arguments",
+        ['comp "--eda-only"', 'comp --keep "--inference-only --offline-setup"', 'comp --resume "--eda-only.py"'],
+    )
+    def test_quoted_values_do_not_enable_modes(self, arguments: str) -> None:
+        """Flag-shaped text in descriptions or option values cannot change notebook mode."""
+        assert parse_modes(arguments) == (False, False, False)
+
+    @pytest.mark.parametrize(
         ("arguments", "expected"),
         [
             pytest.param("comp", (False, False, False), id="plain"),
@@ -65,6 +73,16 @@ class TestParseModes:
 
 class TestMain:
     """Sentinels, printed summary and side effects of ``main()``."""
+
+    def test_conflict_recovery_retains_explicit_offline_flag(self, project: Path) -> None:
+        """The conflict branch can restore the explicit flag without rereading raw shell text."""
+        assert main(["--", "titanic --eda-only --inference-only --offline-setup"]) == 0
+        assert _sentinel(project, "explicit-offline-setup") == "true\n"
+
+    def test_quoted_offline_flag_is_not_explicit(self, project: Path) -> None:
+        """Quoted prose cannot select offline setup during conflict recovery."""
+        assert main(["--", 'titanic --eda-only --inference-only --keep "--offline-setup"']) == 0
+        assert _sentinel(project, "explicit-offline-setup") == "false\n"
 
     def test_writes_sentinels_and_creates_dirs(self, project: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A full argument string yields one sentinel per field, the ``.experiments/kaggle`` dir and a summary.

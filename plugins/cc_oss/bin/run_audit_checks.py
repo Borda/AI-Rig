@@ -15,6 +15,8 @@ Defaults:
             or the initial commit when no tags exist.
 
 Dependency CVE scope:
+    The scan covers the dependencies the release ships (``uv.lock`` export, else the ``pyproject.toml`` project path),
+    never the host environment, and announces ``scan-skipped:`` when no shipped set exists.
     The CVE line splits vulnerable packages into ``new`` (added or changed in a manifest/lock diff over the
     range) and ``pre-existing``; templates/audit-checks.md maps new to a critical finding, pre-existing to a warning.
 
@@ -38,12 +40,14 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from shutil import which
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fetch_alert_context
+import parse_audit_json
 
 #: Matches lines that declare a package version (``__version__`` or ``version =``).
 _VERSION_RE: re.Pattern[str] = re.compile(r"__version__|^version\s*=", re.MULTILINE)
@@ -443,6 +447,103 @@ def _introduced_dependencies(diff_text: str) -> set[str]:
     return {re.sub(r"[-_.]+", "-", n).lower() for n in names}
 
 
+#: pip-audit exit codes that still carry a complete JSON report: 0 clean, 1 vulnerabilities found.
+_PIP_AUDIT_OK_EXITS = (0, 1)
+
+
+def _first_line(text: str) -> str:
+    """Return the first non-blank line of ``text`` (stripped), or an empty string."""
+    return next((line.strip() for line in text.splitlines() if line.strip()), "")
+
+
+def _spawn(cmd: list[str], timeout: int) -> tuple[subprocess.CompletedProcess[str] | None, str]:
+    """Run one CVE-scan step; a timeout or launch failure becomes a reason instead of aborting the whole audit."""
+    name = Path(cmd[0]).name
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=timeout)  # noqa: S603
+    except subprocess.TimeoutExpired:
+        return None, f"{name} timed out after {timeout}s"
+    except OSError as exc:
+        return None, f"{name} could not start: {exc}"
+    return proc, ""
+
+
+def _audit_locked(pip_audit: str, uv: str, extras: list[str]) -> tuple[subprocess.CompletedProcess[str] | None, str]:
+    """Audit the ``uv.lock`` runtime set through a ``pylock.toml`` export.
+
+    ``pylock.toml`` carries every package regardless of environment markers, so the result does not vary with the Python
+    version or OS of the machine running the audit (a requirements export would lose marker-gated packages).
+    ``--locked`` fails on a lock that is out of date with ``pyproject.toml`` instead of auditing it, and ``--no-default-
+    groups`` keeps groups listed in ``[tool.uv] default-groups`` out beside ``--no-dev``.
+    """
+    flags = ["--locked", "--no-dev", "--no-default-groups", "--no-emit-project", "--format", "pylock.toml"]
+    with tempfile.TemporaryDirectory() as tmp:
+        lock = Path(tmp) / "pylock.toml"
+        export, why = _spawn([uv, "export", *flags, *(f"--extra={g}" for g in extras), "-o", str(lock)], 120)
+        if export is None:
+            return None, why
+        if export.returncode != 0 or not lock.is_file():
+            return None, f"uv export of uv.lock failed ({_first_line(export.stderr) or 'no output'})"
+        target = f"uv.lock export (no dev groups; extras: {', '.join(extras) or 'none'})"
+        # uv writes one [[packages]] table per package; pip-audit errors on a lock without any, so an empty runtime set
+        # is reported as clean here instead of reaching it.
+        if "[[packages]]" not in lock.read_text(encoding="utf-8"):
+            return subprocess.CompletedProcess([], 0, stdout='{"dependencies": []}', stderr=""), target
+        proc, why = _spawn([pip_audit, "--locked", tmp, "--format=json"], 120)
+    return (proc, target) if proc else (None, why)
+
+
+def _audit_declared(pip_audit: str, pyproject: Path) -> tuple[subprocess.CompletedProcess[str] | None, str]:
+    """Audit the requirements ``pyproject.toml`` declares (core plus non-dev extras) when there is no lock.
+
+    pip-audit's own project mode reads neither extras nor dynamic dependencies, so the declared requirements are written
+    to a requirements file and resolved by pip-audit. Dynamic dependencies cannot be read statically and mean nothing is
+    scanned rather than an empty set reading clean.
+    """
+    reqs = parse_audit_json.shipped_requirements(pyproject)
+    if reqs is None:
+        return None, "pyproject.toml dependencies are dynamic or unreadable, so no shipped dependency set"
+    with tempfile.TemporaryDirectory() as tmp:
+        req = Path(tmp) / "requirements.txt"
+        req.write_text("\n".join(reqs) + "\n", encoding="utf-8")
+        proc, why = _spawn([pip_audit, "-r", str(req), "--format=json"], 180)
+    return (
+        (proc, "pyproject.toml requirements (unlocked; markers follow the scanning interpreter)")
+        if proc
+        else (
+            None,
+            why,
+        )
+    )
+
+
+def _run_pip_audit(pip_audit: str) -> tuple[subprocess.CompletedProcess[str] | None, str]:
+    """Audit the dependencies the project ships, never the environment ``pip-audit`` happens to run in.
+
+    A bare ``pip-audit`` inspects its own installed packages, which are neither the release's locked versions nor its
+    declared set. With ``uv.lock`` the locked runtime set is audited (:func:`_audit_locked`); without a lock the
+    declared requirements are (:func:`_audit_declared`). A lock without ``uv`` to read it is never replaced by an
+    unlocked scan, which would audit different versions than the release pins.
+
+    Args:
+        pip_audit: Resolved path to the ``pip-audit`` executable.
+
+    Returns:
+        ``(completed process, description of what was scanned)``, or ``(None, reason)`` when no shipped dependency
+        set can be established and nothing was scanned.
+    """
+    pyproject = Path("pyproject.toml")
+    extras = parse_audit_json.shipped_extra_groups(pyproject)
+    if extras is None:
+        return None, "no readable [project] table in pyproject.toml, so no shipped dependency set"
+    if not Path("uv.lock").is_file():
+        return _audit_declared(pip_audit, pyproject)
+    uv = which("uv")
+    if not uv:
+        return None, "uv.lock present but uv not installed, so the locked dependency set is unknown"
+    return _audit_locked(pip_audit, uv, extras)
+
+
 def _check_code_signals(git: str, range_arg: str) -> None:
     """Print release-blocking code signals and the dependency CVE scan, split by release-range scope."""
     print("--- check: code-signals ---")
@@ -452,18 +553,15 @@ def _check_code_signals(git: str, range_arg: str) -> None:
     pip_audit = which("pip-audit")
     if pip_audit:
         parse_script = Path(__file__).parent / "parse_audit_json.py"
-        audit_proc = subprocess.run(  # noqa: S603
-            [pip_audit, "--format=json"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=120,
-        )
+        audit_proc, target = _run_pip_audit(pip_audit)
         diff_text = _run([git, "diff", "-U2", range_arg, "--", *_DEP_MANIFESTS], timeout=20)
         introduced = ",".join(sorted(_introduced_dependencies(diff_text)))
-        if audit_proc.returncode == 0 and parse_script.is_file():
+        if audit_proc is None:
+            print(f"scan-skipped: {target}")
+        # pip-audit exits 1 when it finds vulnerabilities and still prints the full JSON; only a higher code is a crash.
+        elif audit_proc.returncode in _PIP_AUDIT_OK_EXITS and parse_script.is_file():
             parse_proc = subprocess.run(  # noqa: S603
-                [sys.executable, str(parse_script), "--introduced", introduced, "--runtime-from", "pyproject.toml"],
+                [sys.executable, str(parse_script), "--introduced", introduced],
                 input=audit_proc.stdout,
                 capture_output=True,
                 text=True,
@@ -471,11 +569,15 @@ def _check_code_signals(git: str, range_arg: str) -> None:
                 timeout=10,
             )
             if parse_proc.returncode == 0:
+                print(f"scan-target: {target}")
                 print(parse_proc.stdout, end="")
             else:
-                print("pip-audit ran but JSON parsing failed")
+                print(f"pip-audit ran but JSON parsing failed ({_first_line(audit_proc.stderr) or 'no stderr'})")
         else:
-            print("pip-audit ran but JSON parsing failed")
+            print(
+                f"pip-audit ran but JSON parsing failed (exit {audit_proc.returncode}: "
+                f"{_first_line(audit_proc.stderr) or 'no stderr'})"
+            )
     else:
         print(PIP_AUDIT_MISSING_SIGNAL)
         print("pip-audit not installed — CVE scan skipped; install with: pip install pip-audit")

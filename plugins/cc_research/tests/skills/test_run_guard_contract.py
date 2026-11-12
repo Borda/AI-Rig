@@ -10,8 +10,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _research_shell_plugin import render_shell
 
 _RUN = Path(__file__).resolve().parents[2] / "skills/run"
+_PLUGIN = _RUN.parents[1]
 _BASH = shutil.which("bash")
 _JQ = shutil.which("jq")
 _shell_available = pytest.mark.skipif(not _BASH or not _JQ, reason="run shell blocks require Bash and jq")
@@ -38,9 +40,9 @@ def _block(relative: str, start: str, end: str, marker: str) -> str:
 @pytest.fixture
 def shell_env(tmp_path: Path) -> dict[str, str]:
     """Prepare isolated sentinels and an environment without values from a previous shell."""
-    (tmp_path / "research-run-id-fresh-guard").write_text("guard-run\n", encoding="utf-8")
-    (tmp_path / "research-run-verify-timeout-ms-fresh-guard").write_text("120000\n", encoding="utf-8")
-    (tmp_path / "research-run-sandbox-network-fresh-guard").write_text("bridge\n", encoding="utf-8")
+    (tmp_path / "research-run-id-fresh-guard").write_text("guard-run\n", encoding="utf-8", newline="\n")
+    (tmp_path / "research-run-verify-timeout-ms-fresh-guard").write_text("120000\n", encoding="utf-8", newline="\n")
+    (tmp_path / "research-run-sandbox-network-fresh-guard").write_text("bridge\n", encoding="utf-8", newline="\n")
     env = {
         key: value
         for key, value in os.environ.items()
@@ -69,12 +71,18 @@ def test_docker_guard_reloads_config_in_a_fresh_shell(
     state_dir = tmp_path / ".experiments/state/guard-run"
     state_dir.mkdir(parents=True)
     config = {} if guard is None else {"guard_cmd": guard}
-    (state_dir / "state.json").write_text(json.dumps({"config": config}), encoding="utf-8")
+    (state_dir / "state.json").write_text(json.dumps({"config": config}), encoding="utf-8", newline="\n")
     block = _block("SKILL.md", start, end, ".config.guard_cmd")
     script = 'python() { printf "%s\\n" "$SANDBOX_NETWORK" "$@" > "$CAPTURE"; }\n' + block
 
     result = subprocess.run(
-        [_BASH, "-c", script], cwd=tmp_path, env=shell_env, capture_output=True, text=True, check=False
+        [_BASH, "-c", render_shell(script, Path(shell_env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "research")],
+        cwd=tmp_path,
+        env=shell_env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
     )
 
     captured = tmp_path / "wrapper-args"
@@ -109,7 +117,13 @@ def test_docker_guard_checks_jq_before_reading_state(
     )
 
     result = subprocess.run(
-        [_BASH, "-c", script], cwd=tmp_path, env=shell_env, capture_output=True, text=True, check=False
+        [_BASH, "-c", render_shell(script, Path(shell_env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "research")],
+        cwd=tmp_path,
+        env=shell_env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
     )
 
     assert result.returncode == 1
@@ -130,7 +144,13 @@ def test_docker_exploration_assigns_and_validates_the_returned_script(
     script = 'python() { printf "%s\\n" "$@" > "$CAPTURE"; }\n' + block
 
     result = subprocess.run(
-        [_BASH, "-c", script], cwd=tmp_path, env=shell_env, capture_output=True, text=True, check=False
+        [_BASH, "-c", render_shell(script, Path(shell_env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "research")],
+        cwd=tmp_path,
+        env=shell_env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
     )
 
     valid = script_name == "explore validation.py"
@@ -148,11 +168,20 @@ def test_rework_sha_survives_a_fresh_shell_before_scope_check(tmp_path: Path, sh
     """Fold agent commits into the saved experiment before invoking the scope helper."""
     save = _block("SKILL.md", "#### Phase 7 —", "#### Phase 7a", "git rev-parse HEAD >")
     saved = subprocess.run(
-        [_BASH, "-c", 'git() { printf "experiment-sha\\n"; }\n' + save],
+        [
+            _BASH,
+            "-c",
+            render_shell(
+                'git() { printf "experiment-sha\\n"; }\n' + save,
+                Path(shell_env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))),
+                "research",
+            ),
+        ],
         cwd=tmp_path,
         env=shell_env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
     assert saved.returncode == 0, saved.stderr
@@ -165,7 +194,13 @@ def test_rework_sha_survives_a_fresh_shell_before_scope_check(tmp_path: Path, sh
     )
 
     result = subprocess.run(
-        [_BASH, "-c", script], cwd=tmp_path, env=shell_env, capture_output=True, text=True, check=False
+        [_BASH, "-c", render_shell(script, Path(shell_env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "research")],
+        cwd=tmp_path,
+        env=shell_env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
     )
 
     assert result.returncode == 0, (result.stdout, result.stderr)
@@ -185,7 +220,13 @@ def test_rework_without_a_saved_sha_stops_before_folding(tmp_path: Path, shell_e
     )
 
     result = subprocess.run(
-        [_BASH, "-c", script], cwd=tmp_path, env=shell_env, capture_output=True, text=True, check=False
+        [_BASH, "-c", render_shell(script, Path(shell_env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "research")],
+        cwd=tmp_path,
+        env=shell_env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
     )
 
     assert result.returncode == 1
@@ -197,7 +238,7 @@ def test_rework_without_a_saved_sha_stops_before_folding(tmp_path: Path, shell_e
 @_shell_available
 def test_rework_fold_failure_stops_before_scope_check(tmp_path: Path, shell_env: dict[str, str]) -> None:
     """A failed fold cannot hide committed agent edits from the porcelain scope check."""
-    (tmp_path / "research-run-rework-sha-fresh-guard").write_text("experiment-sha\n", encoding="utf-8")
+    (tmp_path / "research-run-rework-sha-fresh-guard").write_text("experiment-sha\n", encoding="utf-8", newline="\n")
     block = _block("SKILL.md", "#### Phase 7 —", "#### Phase 7a", "check_iteration_scope.py")
     script = (
         'git() { case "$1" in rev-parse) printf "agent-sha\\n" ;; reset) return 1 ;; esac; }\n'
@@ -205,7 +246,13 @@ def test_rework_fold_failure_stops_before_scope_check(tmp_path: Path, shell_env:
     )
 
     result = subprocess.run(
-        [_BASH, "-c", script], cwd=tmp_path, env=shell_env, capture_output=True, text=True, check=False
+        [_BASH, "-c", render_shell(script, Path(shell_env.get("CLAUDE_PLUGIN_ROOT", str(_PLUGIN))), "research")],
+        cwd=tmp_path,
+        env=shell_env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
     )
 
     assert result.returncode == 1

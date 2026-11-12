@@ -14,8 +14,9 @@ import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 PACKAGE_SAFE_TEST_MARKER = "installed_plugin"
-INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS = 180
-INSTALLED_PACKAGE_SHARDS = 4
+#: Keep the measured Windows acceptance bound while sharing expensive fixture variants across shards and workers.
+INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS = 240
+INSTALLED_PACKAGE_SHARDS = 8
 #: Checkout-only entries a copied package payload must neither ship nor grow while its tests run.
 CHECKOUT_CONTEXT_NAMES = ("Makefile", ".github", ".git")
 
@@ -72,7 +73,7 @@ def _run_package_safe_selection(installed_root: Path, shard: int) -> subprocess.
                 "-n",
                 "2",
                 "--dist",
-                "worksteal",
+                "loadgroup",
                 "--strict-markers",
                 "--durations=20",
                 "-m",
@@ -108,9 +109,9 @@ def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Pa
     scoring. The complete worktree module carries the marker because the shipped lifecycle contract requires it. A
     separate source-checkout suite retains the valid sync, CI-harness, and Git metadata contracts.
 
-    Four deterministic partitions cover every selected node exactly once. Each partition runs with two child workers and
-    work stealing, keeping subprocess-heavy lifecycle coverage within independently bounded acceptance tests as the
-    installed suite grows. Partitioning never changes marker membership or skips Windows cases.
+    Eight deterministic partitions cover every selected node exactly once. Each runs with two child workers; explicit
+    fixture groups stay on one shard and worker so expensive lifecycle setup is shared by its receipt checks.
+    Partitioning never changes marker membership or skips Windows cases.
 
     The outer deadline includes package copying and child cleanup; sharing the child's deadline lets the Windows pytest-
     timeout thread terminate the worker before subprocess.run can reap and report a timed-out selection.
@@ -148,7 +149,7 @@ def test_installed_package_timeout_prints_partial_streams_and_preserves_exceptio
     """A child timeout prints its partial stdout/stderr and re-raises the original ``TimeoutExpired`` unchanged.
 
     ``subprocess.run`` is the only boundary mocked; it raises a timeout carrying undecodable partial output. The shard
-    command shape (two workers, work stealing, the child deadline) is the contract the mock records.
+    command shape (two workers, fixture grouping, the child deadline) is the contract the mock records.
     """
     error = subprocess.TimeoutExpired([sys.executable, "-m", "pytest"], 180, b"completed case\n\xff", b"child stderr\n")
     mock_run.side_effect = error
@@ -158,7 +159,7 @@ def test_installed_package_timeout_prints_partial_streams_and_preserves_exceptio
 
     command = mock_run.call_args.args[0]
     assert command[command.index("-n") + 1] == "2"
-    assert command[command.index("--dist") + 1] == "worksteal"
+    assert command[command.index("--dist") + 1] == "loadgroup"
     assert mock_run.call_args.kwargs["timeout"] == INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS
     assert raised.value is error
     output = capsys.readouterr().out

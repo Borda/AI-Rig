@@ -113,6 +113,16 @@ def test_v13_normalization_rejects_unrelated_legacy_change(
         assert_v13_index_delta(scan_pair.old_index, new)
 
 
+@pytest.mark.parametrize("field", ["mock_patches", "subprocess_calls"])
+def test_relative_coordinate_delta_rejects_changed_file(scan_pair: ScanPair, field: str) -> None:
+    """Exact relative-coordinate conversion still rejects a corrupted source-file reference."""
+    new = copy.deepcopy(scan_pair.new_index)
+    record = next(record for module in new["modules"] for record in module.get(field, []))
+    record["file"] += ".wrong"
+    with pytest.raises(AssertionError):
+        assert_v13_index_delta(scan_pair.old_index, new)
+
+
 @pytest.fixture(name="scan_pair", scope="module", params=PATH_CLASSES)
 def _scan_pair(
     tmp_path_factory: pytest.TempPathFactory, old_scan_index: Path, request: pytest.FixtureRequest

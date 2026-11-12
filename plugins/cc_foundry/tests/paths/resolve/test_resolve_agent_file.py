@@ -6,11 +6,13 @@ rules, and the CLI output contract.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 import resolve_agent_file as raf
+from _hook_env import _symlinks_supported
 
 
 def _write_agent_files(root: Path, dirs: tuple[str, ...], filename: str = "a.md") -> None:
@@ -87,6 +89,89 @@ class TestResolve:
         """
         assert raf.resolve("foundry", "agents/absent.md", root=tmp_path) is None
 
+    @pytest.mark.parametrize(
+        ("host", "rel", "declared", "suffix"),
+        [
+            pytest.param(".claude-plugin", "agents/a.md", "custom-agents", "a.md", id="claude-agent-alias"),
+            pytest.param(".claude-plugin", "skills/a/SKILL.md", "custom-skills", "a/SKILL.md", id="claude-skill-alias"),
+            pytest.param(".codex-plugin", "agents/a.md", "custom-agents", "a.md", id="codex-agent-alias"),
+        ],
+    )
+    def test_manifest_alias_and_declared_directory(
+        self, tmp_path: Path, host: str, rel: str, declared: str, suffix: str
+    ) -> None:
+        """Manifest plugin names and relative directories determine calibration destinations."""
+        plugin = tmp_path / "unrelated-folder"
+        manifest = plugin / host / "plugin.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(json.dumps({"name": "foundry", rel.split("/")[0]: f"./{declared}/"}), encoding="utf-8")
+        target = plugin / declared / suffix
+        target.parent.mkdir(parents=True)
+        target.write_text("target", encoding="utf-8")
+        assert raf.resolve("foundry", rel, root=tmp_path) == target
+
+    def test_manifest_name_prevents_wrong_qualified_match(self, tmp_path: Path) -> None:
+        """A folder resembling the requested plugin cannot override its different manifest identity."""
+        _write_agent_files(tmp_path, ("cc_foundry",))
+        manifest = tmp_path / "cc_foundry/.claude-plugin/plugin.json"
+        manifest.parent.mkdir()
+        manifest.write_text('{"name": "other"}', encoding="utf-8")
+        assert raf.resolve("foundry", "agents/a.md", root=tmp_path) is None
+
+    def test_claude_manifest_takes_precedence(self, tmp_path: Path) -> None:
+        """A Codex manifest never overrides an existing Claude manifest."""
+        _write_agent_files(tmp_path, ("cc_foundry",))
+        claude = tmp_path / "cc_foundry/.claude-plugin/plugin.json"
+        claude.parent.mkdir()
+        claude.write_text('{"name": "other"}', encoding="utf-8")
+        codex = tmp_path / "cc_foundry/.codex-plugin/plugin.json"
+        codex.parent.mkdir()
+        codex.write_text('{"name": "foundry"}', encoding="utf-8")
+        assert raf.resolve("foundry", "agents/a.md", root=tmp_path) is None
+
+    @pytest.mark.parametrize(
+        "declared",
+        ["../outside", "/agents", "C:/agents", ".", "", pytest.param(["agents"], id="list-directory"), None],
+    )
+    def test_invalid_declared_directory_does_not_fall_back(self, tmp_path: Path, declared: object) -> None:
+        """An invalid declared directory cannot silently select the conventional agents directory."""
+        _write_agent_files(tmp_path, ("cc_foundry",))
+        manifest = tmp_path / "cc_foundry/.claude-plugin/plugin.json"
+        manifest.parent.mkdir()
+        manifest.write_text(json.dumps({"name": "foundry", "agents": declared}), encoding="utf-8")
+        assert raf.resolve("foundry", "agents/a.md", root=tmp_path) is None
+
+    @pytest.mark.skipif(not _symlinks_supported(), reason="This process cannot create source target symlinks")
+    def test_resolved_destination_stays_inside_plugin(self, tmp_path: Path) -> None:
+        """A source target reached through an escaping symlink is never returned for editing."""
+        _write_agent_files(tmp_path, ("outside",))
+        plugin = tmp_path / "plugins/cc_foundry"
+        (plugin / "agents").mkdir(parents=True)
+        (plugin / "agents/a.md").symlink_to(tmp_path / "outside/agents/a.md")
+        assert raf.resolve("foundry", "agents/a.md", root=tmp_path / "plugins") is None
+
+
+@pytest.mark.parametrize("declared", ["agents", "../outside"])
+def test_known_manifest_without_target_cannot_select_other_plugin(tmp_path: Path, declared: str) -> None:
+    """A known plugin's missing or invalid target cannot redirect edits to a legacy namesake."""
+    manifest = tmp_path / "own/.claude-plugin/plugin.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps({"name": "foundry", "agents": declared}), encoding="utf-8")
+    _write_agent_files(tmp_path, ("other",))
+
+    assert raf.resolve("foundry", "agents/a.md", root=tmp_path) is None
+
+
+@pytest.mark.skipif(not _symlinks_supported(), reason="This process cannot create plugin directory symlinks")
+def test_plugin_directory_cannot_escape_source_root(tmp_path: Path) -> None:
+    """A linked plugin directory outside the source tree is never an apply destination."""
+    _write_agent_files(tmp_path, ("outside",))
+    root = tmp_path / "plugins"
+    root.mkdir()
+    (root / "cc_foundry").symlink_to(tmp_path / "outside", target_is_directory=True)
+
+    assert raf.resolve("foundry", "agents/a.md", root=root) is None
+
 
 class TestCli:
     """Covers stdout contract and exit codes."""
@@ -108,7 +193,9 @@ class TestCli:
     @pytest.mark.parametrize(
         ("run_slug", "expected"),
         [
-            pytest.param("", "proposal-path=.reports/calibrate/TS/oss:analyse/proposal.md", id="empty-slug-keeps-target"),
+            pytest.param(
+                "", "proposal-path=.reports/calibrate/TS/oss:analyse/proposal.md", id="empty-slug-keeps-target"
+            ),
             pytest.param(
                 "oss:analyse-vitality",
                 "proposal-path=.reports/calibrate/TS/oss:analyse-vitality/proposal.md",

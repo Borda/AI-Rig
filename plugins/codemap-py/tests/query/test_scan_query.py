@@ -28,6 +28,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from codemap_py import index_paths
 
 
 def _load_scan_query():
@@ -763,15 +764,15 @@ class TestScanRoot:
     """scan_root stored in index + ``--root`` flag for file-path resolution."""
 
     def test_scan_root_stored_in_index(self, project):
-        """Scan-index stores absolute scan_root in index JSON.
+        """Scan-index stores a relative scan root with its path-free project identity.
 
-        The module-scoped fixture project is indexed once; the saved JSON must carry the resolved absolute root so later
-        queries from another directory can find the source files.
+        The saved JSON anchors later source lookups without retaining the resolved host path.
         """
         root, index_path = project
         data = json.loads(index_path.read_text())
         assert "scan_root" in data, "scan_root key missing from index"
-        assert data["scan_root"] == str(root.resolve())
+        assert data["scan_root"] == "."
+        assert data["scan_root_key"] == index_paths.root_key(root.resolve())
 
     def test_symbol_resolves_via_scan_root(self, tmp_path, scan_index, scan_query):
         """Scan-query resolves file paths via the stored scan_root even when the CWD differs.
@@ -3246,7 +3247,7 @@ class TestSubprocessDeps:
 
         assert len(calls) == 1
         assert calls[0]["target_module"] == expected_target
-        assert calls[0]["file"] == str(src)
+        assert calls[0]["file"] == src.relative_to(tmp_path).as_posix()
         assert calls[0]["line"] == caller_source.count("\n")  # the launch is each snippet's last line
 
     def test_unresolvable_script_skipped(self, tmp_path, capsys):
@@ -3598,7 +3599,7 @@ class TestCoverageScanIntegration:
         index_path = _build_index(scan_index, root, "--with-coverage", str(cov_path))
 
         index = json.loads(index_path.read_text())
-        assert index["scan_version"] == 13
+        assert index["scan_version"] == 14
         mod = next(m for m in index["modules"] if m["name"] == "mymod")
         foo = next(s for s in mod["symbols"] if s["qualified_name"] == "foo")
         bar = next(s for s in mod["symbols"] if s["qualified_name"] == "bar")

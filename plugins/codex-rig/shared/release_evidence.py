@@ -55,7 +55,10 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from run_gates import terminate_process
+# A source file cannot contain a bytecode cache directory.
+sys.pycache_prefix = str(Path(__file__).resolve())
+
+from run_gates import terminate_process  # noqa: E402
 
 #: Pattern for a full git commit hash, either 40 hex characters (SHA-1) or 64 (SHA-256).
 _SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
@@ -66,6 +69,17 @@ _EXCLUSION_BASES = {"legal-restriction", "privacy-request", "verified-duplicate"
 _MARKDOWN_LINE_LIMIT = 4096
 _CREDIT_DESCRIPTION = re.compile(r"(?:[ \t]+[—–-][ \t]+|:[ \t]+)")
 _CREDIT_MARKERS = re.compile(r"\*+|_+")
+#: Disable repository-controlled execution hooks for all release Git reads.
+_GIT_PREFIX = [
+    "git",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    f"core.hooksPath={os.devnull}",
+    "--no-pager",
+    "-c",
+    "i18n.logOutputEncoding=utf-8",
+]
 
 
 def _fail(reason: str) -> None:
@@ -80,8 +94,10 @@ def _sha256(path: Path) -> str:
 
 def _git_completed(repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """Run one Git command with UTF-8 decoded output and leave the exit status to the caller."""
+    if args and args[0] == "show":
+        args = ("show", "--no-textconv", "--no-ext-diff", *args[1:])
     return subprocess.run(  # noqa: S603 - argv list, no shell
-        ["git", "-c", "i18n.logOutputEncoding=utf-8", *args],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+        [*_GIT_PREFIX, *args],
         cwd=repository,
         capture_output=True,
         text=True,
@@ -124,7 +140,7 @@ def _rev_parse(repository: Path, probe: str, answers: dict[str, str]) -> str:
 def _is_ancestor(repository: Path, ancestor: str, descendant: str) -> bool:
     """Return whether one verified Git object is reachable from another."""
     completed = subprocess.run(  # noqa: S603 - argv list, no shell
-        ["git", "merge-base", "--is-ancestor", ancestor, descendant],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+        [*_GIT_PREFIX, "merge-base", "--is-ancestor", ancestor, descendant],
         cwd=repository,
         capture_output=True,
         text=True,
@@ -140,14 +156,16 @@ def _is_ancestor(repository: Path, ancestor: str, descendant: str) -> bool:
 def _patch_id(repository: Path, sha: str) -> str:
     """Return a stable patch ID without decoding or rewriting the patch's file bytes."""
     patch = subprocess.run(  # noqa: S603 - argv list, no shell
-        ["git", "show", "--format=", "--no-ext-diff", sha],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+        [*_GIT_PREFIX, "show", "--format=", "--no-ext-diff", "--no-textconv", sha],
         cwd=repository,
         capture_output=True,
         check=False,
     )
     if patch.returncode:
         _fail("git:show")
-    stable = subprocess.run(["git", "patch-id", "--stable"], input=patch.stdout, capture_output=True, check=False)  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+    stable = subprocess.run(  # noqa: S603 - fixed Git argv, patch passed on stdin
+        [*_GIT_PREFIX, "patch-id", "--stable"], cwd=repository, input=patch.stdout, capture_output=True, check=False
+    )
     if stable.returncode or not stable.stdout.strip():
         _fail("patch-id")
     return stable.stdout.split()[0].decode("ascii")
@@ -155,7 +173,12 @@ def _patch_id(repository: Path, sha: str) -> str:
 
 def _blob_sha256(repository: Path, sha: str, path: str) -> str | None:
     """Return one tree blob digest, or ``None`` when the path is absent from that tree."""
-    completed = subprocess.run(["git", "show", f"{sha}:{path}"], cwd=repository, capture_output=True, check=False)  # noqa: S603, S607 - argv list, no shell; tool resolved via PATH on purpose
+    completed = subprocess.run(  # noqa: S603 - fixed Git argv, revision is one operand
+        [*_GIT_PREFIX, "show", "--no-textconv", "--no-ext-diff", f"{sha}:{path}"],
+        cwd=repository,
+        capture_output=True,
+        check=False,
+    )
     if completed.returncode == 0:
         return hashlib.sha256(completed.stdout).hexdigest()
     if completed.returncode == 128:
@@ -1112,9 +1135,16 @@ def _validate_demo(receipt: dict[str, Any], artifacts: dict[str, Path]) -> None:
         _fail("demo-python")
 
 
-def validate_release_evidence(metadata: dict[str, Any], out_dir: Path, requested_artifacts: set[str]) -> None:
+def validate_release_evidence(
+    metadata: dict[str, Any], out_dir: Path, requested_artifacts: set[str], *, expected_repository: Path | None = None
+) -> None:
     """Validate the release-specific receipt required for a passing contract-v1 result."""
     receipt = _require_receipt(metadata)
+    if expected_repository is None:
+        _fail("repository-source-missing")
+    raw_repository = receipt.get("repository")
+    if not isinstance(raw_repository, str) or Path(raw_repository).resolve() != expected_repository.resolve():
+        _fail("repository-source-mismatch")
     repository, candidates, included = _validate_scope(receipt, metadata)
     _validate_scope_record(out_dir, receipt, metadata["release_head"], candidates)
     if not requested_artifacts:

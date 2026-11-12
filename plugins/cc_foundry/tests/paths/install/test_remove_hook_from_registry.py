@@ -15,6 +15,13 @@ from pathlib import Path
 import pytest
 import remove_hook_from_registry as rhfr
 
+
+@pytest.fixture(autouse=True)
+def _project_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run registry rewrites inside the test's own project boundary."""
+    monkeypatch.chdir(tmp_path)
+
+
 _SAMPLE_REGISTRY: dict = {
     "permissions": {"allow": ["Bash(jq:*)"]},
     "hooks": {

@@ -19,9 +19,11 @@ consumers: hooks/{seed-session,log-tool-use,log-skill-start,guard-redundant-scan
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import stat
 import tempfile
 from pathlib import Path
 
@@ -232,3 +234,39 @@ def tmp_dir() -> Path:
         True
     """
     return Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
+
+
+def write_sentinel(path: Path, content: str) -> None:
+    """Replace sentinel content only after opening an owned, identity-checked regular file.
+
+    Planted symlinks are rejected before exclusive creation, which can follow dangling links on Windows. Existing files
+    are opened without truncation and checked against their inspected identity before any bytes change, including on
+    platforms without O_NOFOLLOW. Nonblocking opens prevent raced FIFOs from hanging a hook. Filesystem errors remain
+    with the hook's existing fail-open boundary.
+    """
+    if path.is_symlink():
+        raise OSError(f"sentinel is not a regular file: {path}")
+    previous = None
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        previous = path.lstat()
+        if not stat.S_ISREG(previous.st_mode):
+            raise OSError(f"sentinel is not a regular file: {path}") from None
+        descriptor = os.open(path, os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or (previous is not None and not os.path.samestat(previous, info)):
+            raise OSError(f"sentinel changed while opening: {path}")
+        if hasattr(os, "getuid") and info.st_uid != os.getuid():
+            raise OSError(f"sentinel is owned by another user: {path}")
+        stream.truncate(0)
+        stream.write(content)
+
+
+def project_key(cwd: Path | None = None) -> str:
+    """Return the path-free project identity used by codemap telemetry's root_key."""
+    identity = str(project_root(cwd))
+    if os.name == "nt":
+        identity = identity.replace("/", "\\").casefold()
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()

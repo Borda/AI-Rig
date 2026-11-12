@@ -15,8 +15,9 @@ Usage:
         --train splits/train.csv --test splits/test.csv
 
 Exit codes:
-    0   verification ran (regardless of overlap presence — caller inspects stdout).
-    2   input error (missing file, missing column, pandas import failure).
+    0   no patient overlap between two splits with usable identifiers.
+    1   patient overlap detected.
+    2   input error (unreadable CSV, missing column, no usable identifiers, pandas import failure).
 
 Note:
     Pandas is the canonical reader used by the original inline block; this script
@@ -26,21 +27,15 @@ Note:
 from __future__ import annotations
 
 import argparse
-import os
 import sys
-import tempfile
 from pathlib import Path
 
 
 def _validate_csv_path(raw: str) -> Path | None:
     """Resolve and validate that ``raw`` stays within a safe base directory.
 
-    Permitted base directories (any one is sufficient):
-      * The current working directory (treated as the project root)
-      * The project's ``.experiments`` subdirectory
-      * ``~/.claude/projects`` (per-project session data; narrower than the
-        full ``~/.claude`` tree — )
-      * The OS temporary directory — needed for pytest ``tmp_path`` runs.
+    The current working directory is the project root. Resolved inputs must remain within it, including inputs in
+    ``.experiments``; symlinks pointing outside the project are rejected.
 
     Args:
         raw: Raw value from ``--train`` or ``--test``.
@@ -55,19 +50,7 @@ def _validate_csv_path(raw: str) -> Path | None:
     if not candidate.is_file():
         return None
     project_root = Path.cwd().resolve()
-    allowed_roots = [
-        project_root,
-        (project_root / ".experiments").resolve(),
-        (Path(os.path.expanduser("~")) / ".claude" / "projects").resolve(),
-        Path(tempfile.gettempdir()).resolve(),
-    ]
-    for root in allowed_roots:
-        try:
-            candidate.relative_to(root)
-        except ValueError:
-            continue
-        return candidate
-    return None
+    return candidate if candidate.is_relative_to(project_root) else None
 
 
 def format_verdict(overlap_count: int) -> str:
@@ -110,12 +93,14 @@ def compute_overlap(train_csv: Path, test_csv: Path, column: str = "patient_id")
         column: Column name to compute the intersection on (default ``"patient_id"``).
 
     Returns:
-        Number of distinct values present in both splits' ``column``.
+        Number of distinct identifiers shared after stripping whitespace and case folding. Null and blank identifiers
+        are dropped, with counts reported on stderr.
 
     Raises:
         FileNotFoundError: if either CSV path does not exist.
         KeyError: if ``column`` is absent from either CSV.
         ImportError: if pandas is not installed.
+        ValueError: if a CSV is malformed or either split has no usable identifiers.
     """
     try:
         import pandas as pd
@@ -133,9 +118,18 @@ def compute_overlap(train_csv: Path, test_csv: Path, column: str = "patient_id")
 
     # Load only the identifier column: a split CSV is often a full feature table, and reading every column of it just
     # to intersect one would hold the whole dataset in memory.
-    train_ids = set(pd.read_csv(train_csv, usecols=[column])[column])
-    test_ids = set(pd.read_csv(test_csv, usecols=[column])[column])
-    return len(train_ids & test_ids)
+    splits: list[set[str]] = []
+    for label, path in (("train", train_csv), ("test", test_csv)):
+        raw = pd.read_csv(path, usecols=[column], dtype=str)[column]
+        ids = raw.dropna().str.strip().str.casefold()
+        ids = ids[ids.ne("")]
+        dropped = len(raw) - len(ids)
+        if dropped:
+            print(f"{label}: dropped {dropped} null or blank patient identifiers", file=sys.stderr)
+        if ids.empty:
+            raise ValueError(f"{label} CSV has no usable patient identifiers")
+        splits.append(set(ids))
+    return len(splits[0] & splits[1])
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -165,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         argv: Optional argv list (for testing); defaults to ``sys.argv[1:]``.
 
     Returns:
-        Process exit code (0 on success, 2 on input error).
+        Process exit code (0 for disjoint splits, 1 for overlap, 2 on input error).
     """
     args = _parse_args(argv)
     train_path = _validate_csv_path(str(args.train))
@@ -173,18 +167,17 @@ def main(argv: list[str] | None = None) -> int:
     for label, raw, validated in (("train", args.train, train_path), ("test", args.test, test_path)):
         if validated is None:
             print(
-                f"error: {label} CSV not found or outside allowed roots "
-                f"(project root, .experiments/, ~/.claude/projects, tempdir): {raw}",
+                f"error: {label} CSV not found or outside allowed roots (project root): {raw}",
                 file=sys.stderr,
             )
             return 2
     try:
         overlap = compute_overlap(train_path, test_path, column=args.column)
-    except (FileNotFoundError, KeyError, ImportError) as exc:
+    except (OSError, ValueError, KeyError, ImportError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     print(format_verdict(overlap))
-    return 0
+    return 1 if overlap else 0
 
 
 if __name__ == "__main__":

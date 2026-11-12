@@ -9,9 +9,12 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _oss_shell_plugin import render_shell
+from _skill_source import read_skill_source
 from _text_io import bash_path
 
 _REVIEW = Path(__file__).resolve().parents[2] / "skills/review"
+_PLUGIN = _REVIEW.parents[1]
 _BASH = shutil.which("bash")
 _ZSH = shutil.which("zsh")
 _skip_no_bash = pytest.mark.skipif(_BASH is None, reason="Review recipes require Bash")
@@ -22,7 +25,7 @@ def _block(relative: str, marker: str) -> str:
     """Extract a fenced recipe by a unique line marker."""
     blocks: list[str] = []
     active: list[str] | None = None
-    for line in (_REVIEW / relative).read_text(encoding="utf-8").splitlines():
+    for line in read_skill_source(_REVIEW / relative).splitlines():
         if line == "```bash":
             active = []
         elif line == "```" and active is not None:
@@ -36,7 +39,7 @@ def _block(relative: str, marker: str) -> str:
 def _run(tmp_path: Path, script: str, shell: str | None = _BASH, **values: str) -> subprocess.CompletedProcess[str]:
     """Execute a shipped recipe with isolated sentinel storage and external command doubles."""
     return subprocess.run(
-        [shell, "-c", script],
+        [shell, "-c", render_shell(script, _PLUGIN, "oss")],
         cwd=tmp_path,
         env=os.environ
         | {"TMPDIR": bash_path(tmp_path), "CLAUDE_CODE_SESSION_ID": "safety", "CSID": "safety", **values},
@@ -438,10 +441,10 @@ def test_worktree_is_detached_at_snapshot_head(snapshot: Path, tmp_path: Path) -
     stub = """
 git() {
   printf '%s\\n' "$*" >> "$TMPDIR/git-calls"
-  case "$*" in 'rev-parse --show-toplevel') pwd ;; 'worktree add --detach '*) return 0 ;; *) return 92 ;; esac
+  case "$*" in 'rev-parse --show-toplevel') printf '%s\\n' "$PROJECT_ROOT" ;; 'worktree add --detach '*) return 0 ;; *) return 92 ;; esac
 }
 """
-    result = _run(tmp_path, stub + _block("SKILL.md", "git worktree add --detach"))
+    result = _run(tmp_path, stub + _block("SKILL.md", "git worktree add --detach"), PROJECT_ROOT=tmp_path.as_posix())
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / "git-calls").read_text().splitlines()[1].endswith(" " + _SHA)
     worktree = Path((tmp_path / "oss-review-wt-safety").read_text().strip())
@@ -486,8 +489,9 @@ def local_pr(snapshot: Path, tmp_path: Path) -> tuple[Path, Path, str, str]:
     _git(tmp_path, "init", "--bare", str(fork))
     checkout = tmp_path / "work dir"
     _git(tmp_path, "clone", str(remote), str(checkout))
-    _git(checkout, "remote", "set-url", "origin", str(fork))
-    _git(checkout, "remote", "add", "upstream", str(remote))
+    _git(checkout, "config", "core.autocrlf", "false")
+    _git(checkout, "remote", "set-url", "origin", fork.as_posix())
+    _git(checkout, "remote", "add", "upstream", remote.as_posix())
     _git(checkout, "config", "protocol.allow", "never")
     _git(checkout, "config", "protocol.file.allow", "always")
     meta = json.loads((snapshot / "pr-meta.json").read_text())

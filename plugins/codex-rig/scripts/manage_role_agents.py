@@ -45,6 +45,7 @@ import hashlib
 import hmac
 import json
 import os
+import runpy
 import shutil
 import stat
 import subprocess
@@ -94,6 +95,25 @@ MARKETPLACE = "borda-ai-rig"
 PLUGIN_NAME = "codex-rig"
 #: Largest executable, in bytes (512 MiB), that will be read when digesting the Python or Codex binary.
 MAX_BINARY_BYTES = 512 * 1024 * 1024
+#: Maximum metadata content copied for one disposable active-package diagnosis.
+MAX_DOCTOR_METADATA_BYTES = 64 * 1024 * 1024
+#: Maximum metadata nodes copied for one disposable active-package diagnosis.
+MAX_DOCTOR_METADATA_ENTRIES = 20_000
+
+# Load the identity anchor and lifecycle graph from source, never unverified cached bytecode.
+_identity = runpy.run_path(str(Path(__file__).with_name("_package_identity.py")))
+if sys.platform.startswith(SUPPORTED_PLATFORMS):
+    for _module_name in (
+        "generate_roles",
+        "_agent_shim_lifecycle",
+        "_agent_shim_journal",
+        "_agent_shim_posix",
+        "_agent_shim_observe",
+        "_agent_shim_plan",
+        "_agent_shim_approval",
+        "_agent_shim_transaction",
+    ):
+        _identity["_load_source_module"](_module_name)
 
 # Unsupported hosts must reach the stable refusal protocol without importing
 # lifecycle modules whose POSIX primitives are intentionally unavailable there.
@@ -224,14 +244,105 @@ def _digest_regular_executable(path: Path, label: str) -> tuple[Path, str]:
     return canonical, digest.hexdigest()
 
 
+def _windows_path_executable(command: str) -> str | None:
+    """Search absolute PATH candidates without admitting the current directory."""
+    current = Path.cwd().resolve()
+    for value in os.get_exec_path():
+        directory = Path(value).resolve()
+        if directory == current:
+            continue
+        discovered = shutil.which(str(directory / command))
+        if discovered is None:
+            # Python 3.10/3.11 which does not expand PATHEXT for an absolute candidate.
+            extensions = os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD"
+            for extension in extensions.split(";"):
+                discovered = shutil.which(str(directory / (command + extension)))
+                if discovered is not None:
+                    break
+        if discovered is not None and Path(discovered).resolve().parent != current:
+            return discovered
+    return None
+
+
 def _codex_executable(explicit: Path | None) -> Path:
     """Resolve the configured or PATH-selected Codex executable name."""
     if explicit is not None:
         return explicit
-    discovered = shutil.which("codex")
+    discovered = _windows_path_executable("codex") if sys.platform == "win32" else shutil.which("codex")
     if discovered is None:
         raise ValueError("Codex executable is unavailable on PATH")
     return Path(discovered)
+
+
+def _copy_doctor_file(source: Path, destination: Path, remaining: int) -> int:
+    """Copy one bounded ordinary metadata file without following a replacement link."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = os.open(source, flags)
+    with os.fdopen(descriptor, "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError("Codex metadata file is not regular")
+        if metadata.st_size > remaining:
+            raise OSError("Codex metadata byte limit exceeded")
+        payload = stream.read(remaining + 1)
+    if len(payload) > remaining:
+        raise OSError("Codex metadata byte limit exceeded")
+    with destination.open("xb") as stream:
+        stream.write(payload)
+    destination.chmod(0o600)
+    return len(payload)
+
+
+def _copy_doctor_metadata(codex_home: Path, sandbox_home: Path) -> None:
+    """Copy only configuration, marketplace index, and installed-version manifests for the listing oracle.
+
+    The CLI identifies installed versions from cache directories and resolves their marketplace through its index.
+    Runtime payloads and marketplace checkout contents are not listing inputs and can exceed the metadata budget. Every
+    selected ancestor must be an ordinary directory; links are never reproduced into the disposable home.
+    """
+    patterns = (
+        ("config.toml",),
+        ("plugins", "cache", MARKETPLACE, PLUGIN_NAME, "*", ".codex-plugin", "plugin.json"),
+        (".tmp", "marketplaces", MARKETPLACE, ".agents", "plugins", "marketplace.json"),
+    )
+    pending = [(Path(), pattern) for pattern in patterns]
+    copied_bytes = 0
+    copied_entries = 0
+    while pending:
+        relative, pattern = pending.pop()
+        source = codex_home / relative
+        if pattern[0] == "*":
+            # Only version directory names are discovered; their runtime trees are never traversed.
+            with os.scandir(source) as entries:
+                for entry in entries:
+                    copied_entries += 1
+                    if copied_entries + len(pending) > MAX_DOCTOR_METADATA_ENTRIES:
+                        raise OSError("Codex metadata entry limit exceeded")
+                    mode = entry.stat(follow_symlinks=False).st_mode
+                    if stat.S_ISLNK(mode):
+                        raise OSError(f"Codex metadata directory is not ordinary: {relative / entry.name}")
+                    if stat.S_ISDIR(mode):
+                        pending.append((relative, (entry.name, *pattern[1:])))
+            continue
+        relative /= pattern[0]
+        source = codex_home / relative
+        try:
+            mode = source.lstat().st_mode
+        except FileNotFoundError:
+            continue
+        copied_entries += 1
+        if copied_entries > MAX_DOCTOR_METADATA_ENTRIES:
+            raise OSError("Codex metadata entry limit exceeded")
+        destination = sandbox_home / relative
+        if len(pattern) > 1:
+            if not stat.S_ISDIR(mode):
+                raise OSError(f"Codex metadata directory is not ordinary: {relative}")
+            destination.mkdir(mode=0o700, exist_ok=True)
+            pending.append((relative, pattern[1:]))
+            continue
+        if not stat.S_ISREG(mode):
+            raise OSError(f"Codex metadata file is not ordinary: {relative}")
+        copied_bytes += _copy_doctor_file(source, destination, MAX_DOCTOR_METADATA_BYTES - copied_bytes)
 
 
 def _active_package_check(
@@ -249,18 +360,7 @@ def _active_package_check(
         with tempfile.TemporaryDirectory(prefix="codex-rig-doctor-") as temporary:
             sandbox_home = Path(temporary)
             sandbox_home.chmod(0o700)
-            config = codex_home / "config.toml"
-            if config.exists():
-                if not stat.S_ISREG(config.lstat().st_mode):
-                    return CheckResult("degraded", "Codex config is not a regular file")
-                shutil.copyfile(config, sandbox_home / "config.toml")
-                (sandbox_home / "config.toml").chmod(0o600)
-            for relative in (Path("plugins"), Path(".tmp") / "marketplaces"):
-                source = codex_home / relative
-                if source.is_dir():
-                    if not stat.S_ISDIR(source.lstat().st_mode):
-                        return CheckResult("degraded", f"Codex metadata root is linked: {relative}")
-                    shutil.copytree(source, sandbox_home / relative, symlinks=True)
+            _copy_doctor_metadata(codex_home, sandbox_home)
             environment = os.environ.copy()
             environment["CODEX_HOME"] = str(sandbox_home)
             completed = subprocess.run(  # noqa: S603 - argv list, no shell
@@ -351,7 +451,7 @@ def _diagnose_windows(
     check_active_package: bool,
 ) -> DiagnosticResult:
     """Run portable Windows package, executable, and shim-inventory checks."""
-    from _package_identity import verify_package
+    verify_package = _identity["verify_package"]
 
     home = codex_home.resolve(strict=True)
     root = plugin_root.resolve(strict=True)
@@ -1308,8 +1408,14 @@ def main(argv: list[str] | None = None) -> int:
         if plan.approval is None:
             print(json.dumps({"action": action.value, "classification": "complete", "writes": 0}, sort_keys=True))
             return 0
+        generated_roles = {role.role_id: role for role in plan.roster.roles}
         intents = [
-            {"role_id": operation.role_id, "intent": operation.intent}
+            {
+                "role_id": operation.role_id,
+                "intent": operation.intent,
+                "shim_sha256": generated_roles[operation.role_id].file_hash,
+                "shim": generated_roles[operation.role_id].shim_bytes.decode("utf-8"),
+            }
             for operation in plan.candidate.operations
             if operation.intent != "noop"
         ]

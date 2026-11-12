@@ -121,7 +121,7 @@ class TestTier0EnvHit:
 
         Scenario: the install root exported by Claude Code already contains the requested ``skills/_shared`` directory.
         """
-        root = tmp_path / "plugin_install"
+        root = _foundry_cache(tmp_path) / "1.0.0"
         (root / "skills" / "_shared").mkdir(parents=True)
         path, tier = resolve_shared_path.resolve("foundry", "skills/_shared", home=tmp_path, env_root=str(root))
         assert tier == 0
@@ -134,8 +134,8 @@ class TestTier0EnvHit:
         Scenario: the install root exists without the requested subdir, there is no cache and no source tree under the
         working directory. Resolution falls through to the not-found tier and returns the unresolved source path.
         """
-        root = tmp_path / "plugin_install"
-        root.mkdir()
+        root = _foundry_cache(tmp_path) / "1.0.0"
+        root.mkdir(parents=True)
         monkeypatch.chdir(tmp_path)  # isolate CWD so the relative source-tree tier cannot hit the real checkout
         path, tier = resolve_shared_path.resolve("foundry", "skills/_shared", home=tmp_path, env_root=str(root))
         assert tier == -1
@@ -147,7 +147,7 @@ class TestTier0EnvHit:
         Scenario: ``CLAUDE_PLUGIN_ROOT`` points at an install holding the subdir. The CLI prints just that path and
         writes nothing to stderr.
         """
-        root = cli_env / "plugin_install"
+        root = _foundry_cache(cli_env) / "1.0.0"
         (root / "skills" / "_shared").mkdir(parents=True)
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(root))
         rc = resolve_shared_path.main(["foundry", "skills/_shared"])
@@ -160,6 +160,14 @@ class TestTier0EnvHit:
 @pytest.mark.usefixtures("no_registry")
 class TestTier2Cache:
     """Tier 2 — cache semver scan with orphan filtering."""
+
+    @pytest.mark.parametrize("other", ["1.0.0-rc.9", "garbage999", "99.0", "99.0.0-01"])
+    def test_release_beats_prerelease_and_invalid_cache_names(self, tmp_path: Path, other: str) -> None:
+        """A valid final release wins over its prerelease and invalid cache directory names."""
+        release = _foundry_cache(tmp_path) / "1.0.0" / "skills/_shared"
+        release.mkdir(parents=True)
+        (_foundry_cache(tmp_path) / other / "skills/_shared").mkdir(parents=True)
+        assert resolve_shared_path._tier2_cache(tmp_path, "foundry", "skills/_shared") == release
 
     def test_cache_hit_picks_highest_semver(self, tmp_path: Path) -> None:
         """Multiple versions present → newest by semver returned.
@@ -341,6 +349,9 @@ class TestTier3SourceFallback:
         """
         (tmp_path / "plugins" / source_dir / "skills" / "_shared").mkdir(parents=True)
         _write_file(tmp_path, f"plugins/{source_dir}/.claude-plugin/plugin.json", json.dumps({"name": plugin}))
+        monkeypatch.setattr(
+            resolve_shared_path, "__file__", str(tmp_path / "plugins/cc_foundry/bin/resolve_shared_path.py")
+        )
         monkeypatch.chdir(tmp_path)
         path, tier = resolve_shared_path.resolve(plugin, "skills/_shared", home=tmp_path, env_root="")
         assert tier == 3
@@ -390,7 +401,9 @@ class TestTier3SourceFallback:
         assert captured.out == ""
         assert "not the foundry plugin source repository" in captured.err
 
-    def test_main_tier3_warns_and_exits_0(self, cli_env: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_main_tier3_warns_and_exits_0(
+        self, cli_env: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Warn while returning a successful source-tree fallback.
 
         Scenario: the working directory is foundry's own source checkout (manifest present). The CLI prints the
@@ -398,6 +411,9 @@ class TestTier3SourceFallback:
         """
         (cli_env / "plugins" / "cc_foundry" / "skills" / "_shared").mkdir(parents=True)
         _write_file(cli_env, "plugins/cc_foundry/.claude-plugin/plugin.json", '{"name": "foundry"}')
+        monkeypatch.setattr(
+            resolve_shared_path, "__file__", str(cli_env / "plugins/cc_foundry/bin/resolve_shared_path.py")
+        )
         rc = resolve_shared_path.main(["foundry", "skills/_shared"])
         captured = capsys.readouterr()
         assert rc == 0
@@ -421,24 +437,30 @@ class TestAbsentEverywhere:
 
 
 class TestVersionKey:
-    """Semver sort key — verify ``sort -V`` equivalence."""
+    """Validate SemVer precedence independently of cache directory names."""
+
+    @pytest.mark.parametrize("name", ["1.2.3rc4", "1.2", "01.2.3", "1.2.3-01", "1.2.3+", "", "garbage999"])
+    def test_invalid_versions_are_rejected(self, name: str) -> None:
+        """Reject directory names that do not follow strict SemVer syntax."""
+        assert resolve_shared_path._version_key(name) is None
 
     @pytest.mark.parametrize(
-        ("name", "expected"),
+        ("older", "newer"),
         [
-            pytest.param("0.20.0", [0, 20, 0], id="0.20.0"),
-            pytest.param("0.9.9", [0, 9, 9], id="0.9.9"),
-            pytest.param("1.2.3rc4", [1, 2, 3, 4], id="1.2.3rc4"),
-            pytest.param("", [], id="empty"),
-            pytest.param("nonsense", [], id="nonsense"),
+            pytest.param("1.0.0-rc.9", "1.0.0", id="release-beats-prerelease"),
+            pytest.param("1.0.0-alpha", "1.0.0-beta", id="lexical-identifiers"),
+            pytest.param("1.0.0-9", "1.0.0-alpha", id="numeric-before-lexical"),
+            pytest.param("1.0.0-rc.9", "1.0.0-rc.10", id="numeric-identifiers"),
+            pytest.param("1.0.0-alpha", "1.0.0-alpha.1", id="shorter-prerelease"),
         ],
     )
-    def test_extracts_digit_runs(self, name: str, expected: list[int]) -> None:
-        """Extract contiguous version digits as integers.
+    def test_prerelease_precedence(self, older: str, newer: str) -> None:
+        """Order prereleases using SemVer identifiers and prefer final releases."""
+        assert resolve_shared_path._version_key(older) < resolve_shared_path._version_key(newer)
 
-        Scenario: plain semver, a release-candidate suffix, an empty name and a name with no digits.
-        """
-        assert resolve_shared_path._version_key(name) == expected
+    def test_build_metadata_does_not_change_precedence(self) -> None:
+        """Build identifiers never affect precedence, including numeric build identifiers."""
+        assert resolve_shared_path._version_key("1.2.3+build.999") == resolve_shared_path._version_key("1.2.3+0")
 
     def test_sorts_numerically_not_lexically(self) -> None:
         """Sort ``0.9.9`` below ``0.20.0`` (digit-run aware, not lexical).
@@ -447,3 +469,14 @@ class TestVersionKey:
         load a stale install.
         """
         assert resolve_shared_path._version_key("0.9.9") < resolve_shared_path._version_key("0.20.0")
+
+
+@pytest.mark.parametrize("other", ["1.0.0-rc.9", "garbage999", "99.0", "99.0.0-01"])
+def test_helper_cache_selection_uses_valid_semver(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, other: str) -> None:
+    """The executable helper search rejects invalid versions and prefers final releases."""
+    resolver = tmp_path / "source/cc_foundry/bin/resolve_shared_path.py"
+    monkeypatch.setattr(resolve_shared_path, "__file__", str(resolver))
+    release = _foundry_cache(tmp_path) / "1.0.0/bin/get_plugin_install_path.py"
+    _write_file(release.parent, release.name, "release")
+    _write_file(_foundry_cache(tmp_path) / other, "bin/get_plugin_install_path.py", "other")
+    assert resolve_shared_path._locate_helper(tmp_path, "") == release

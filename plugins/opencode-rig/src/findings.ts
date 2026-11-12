@@ -37,6 +37,8 @@ export interface FindingsDocument {
   readonly axes: readonly string[]
   readonly coverage: readonly string[]
   readonly findings: readonly Finding[]
+  readonly source_run_id?: string
+  readonly source_digest?: string
 }
 
 export interface BucketCounts {
@@ -107,4 +109,17 @@ export function openBlocking(findings: readonly Finding[]): Finding[] {
   return findings.filter(
     (finding) => finding.status === "open" && (finding.severity === "security" || finding.severity === "critical"),
   )
+}
+
+/** Require a terminal, explained disposition for every finding inherited from a review. */
+export function reconciliationProblems(sourceIds: readonly string[], findings: readonly Finding[]): string[] {
+  const inventory = new Map(findings.map((finding) => [finding.id, finding]))
+  const problems: string[] = []
+  for (const id of sourceIds) {
+    const finding = inventory.get(id)
+    if (!finding) problems.push(`source finding ${id} is missing from the remediation inventory`)
+    else if (finding.status === "open") problems.push(`source finding ${id} is still open`)
+    else if (!finding.disposition?.trim()) problems.push(`source finding ${id} has no terminal disposition`)
+  }
+  return problems
 }

@@ -14,6 +14,7 @@ import zlib
 from pathlib import Path
 
 import pytest
+from _research_shell_plugin import render_shell
 
 _PLUGIN = Path(__file__).resolve().parents[2]
 _SKILL = _PLUGIN / "skills/judge/SKILL.md"
@@ -79,7 +80,8 @@ def test_docker_validation_has_no_host_fallback() -> None:
 def test_validation_uses_run_timeout_instead_of_six_minutes() -> None:
     """A slow local metric cannot pass judge under a larger default than run."""
     lines = _section("## Step J4:", "## Step J5a:")
-    assert any('VERIFY_TIMEOUT_SEC="${VERIFY_TIMEOUT_SEC:-120}"' in line for line in lines)
+    assert any('VERIFY_TIMEOUT_SEC="${VERIFY_TIMEOUT_SEC:-$_PROGRAM_TIMEOUT}"' in line for line in lines)
+    assert any("metric_timeout_sec" in line and "default 120" in line for line in lines)
     assert any("timeout: $VERIFY_TIMEOUT_MS" in line for line in lines)
     assert not any("timeout: 360000" in line for line in lines)
 
@@ -181,16 +183,20 @@ def _snapshot(repo: Path, run_dir: Path, phase: str) -> subprocess.CompletedProc
     return subprocess.run(
         [sys.executable, str(helper), str(run_dir), phase],
         cwd=repo,
-        env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1"},
+        env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "PYTHONIOENCODING": "cp1252"},
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=15,
     )
 
 
 @pytest.mark.integration
 def test_snapshot_detects_overwrite_without_status_change(dirty_repo: tuple[Path, Path]) -> None:
-    """An already-untracked file remains ?? after overwrite, but its content change is reported."""
+    """An already-untracked file remains ??
+
+    after overwrite, but its content change is reported.
+    """
     repo, run_dir = dirty_repo
     before = _snapshot(repo, run_dir, "before")
     (repo / "notes.txt").write_text("overwritten content\n", encoding="utf-8")
@@ -257,11 +263,12 @@ def test_docker_route_rejects_shell_composition_before_host_execution(tmp_path: 
     python_path = Path(sys.executable).as_posix()
     script = script.replace(" python ", f' "{python_path}" ')
     result = subprocess.run(
-        [_BASH, "-c", script],
+        [_BASH, "-c", render_shell(script, _PLUGIN, "research")],
         env={**os.environ, "CLAUDE_PLUGIN_ROOT": _PLUGIN.as_posix()},
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=15,
     )
     assert result.returncode == 2, (result.stdout, result.stderr)
@@ -414,7 +421,14 @@ def test_docker_route_rejects_each_unsubstituted_placeholder(tmp_path: Path, mis
     script = script.replace(
         "<VERIFY_TIMEOUT_SEC>", replacements["<VERIFY_TIMEOUT_SEC>"] if missing != "<VERIFY_TIMEOUT_SEC>" else missing
     )
-    result = subprocess.run([_BASH, "-c", script], cwd=tmp_path, capture_output=True, text=True, timeout=15)
+    result = subprocess.run(
+        [_BASH, "-c", render_shell(script, _PLUGIN, "research")],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
+    )
     assert result.returncode == 1, (result.stdout, result.stderr)
     assert "not substituted" in result.stdout
     assert "can't open file" not in result.stderr
@@ -428,10 +442,11 @@ def test_docker_tool_timeout_leaves_cleanup_headroom(seconds: str) -> None:
     lines = _section("## Step J4:", "## Step J5a:")
     block = next(block for block in _bash_blocks(lines) if "VERIFY_TIMEOUT_MS=$((" in block)
     result = subprocess.run(
-        [_BASH, "-c", block],
+        [_BASH, "-c", render_shell(block, _PLUGIN, "research")],
         env={**os.environ, "VERIFY_TIMEOUT_SEC": seconds},
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=5,
     )
     assert result.returncode == 0, result.stderr
