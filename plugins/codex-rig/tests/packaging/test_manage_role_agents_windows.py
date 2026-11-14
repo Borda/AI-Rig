@@ -77,7 +77,9 @@ class TestSimulatedWindows:
         reported as win32; the candidate is inventoried but not adopted, and no file in the tree changes.
         """
         plugin_root = tmp_path / "plugin"
-        shutil.copytree(PLUGIN_ROOT, plugin_root, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
+        shutil.copytree(
+            PLUGIN_ROOT, plugin_root, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".reports")
+        )
         codex_home = tmp_path / "codex-home"
         agents = codex_home / "agents"
         agents.mkdir(parents=True)

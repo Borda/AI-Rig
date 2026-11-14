@@ -1017,3 +1017,23 @@ def test_ordering_recovery_routes_to_preliminary_table_delivery() -> None:
     assert "zero findings" in interrupted
     assert "does not require promotion" in interrupted
     assert "pending question" in interrupted
+
+
+def test_exhausted_direct_retry_loads_fallback_before_recovery_question() -> None:
+    """A partial replacement must reach authorized parent recovery before offering a restart."""
+    routing = (CODE_REVIEW_SKILL.parent / "references/routing.md").read_text(encoding="utf-8").splitlines()
+    start = routing.index("#### Direct retry")
+    retry = routing[start:]
+    continuation = next(line for line in retry if "If the replacement still reports missing coverage" in line)
+    assert "[Incomplete review decision](report-recovery.md#incomplete-review-decision)" in continuation
+    assert "before asking" in continuation
+    assert "stops only the replacement route" in continuation
+    assert "verified source" in continuation
+    assert "explicit independence requirement" in continuation
+    assert "every required axis" in continuation
+    assert "Never offer `New review` or `Resume last one` solely" in continuation
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8").splitlines()
+    assembled = next(line for line in skill if line.startswith("After joining,"))
+    assert "Exhausted replacement recovery" in assembled
+    assert "BROAD" in assembled
+    assert "HIGH_RISK" in assembled

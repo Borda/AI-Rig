@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from _artifact_files import read_json, read_jsonl
-from test_review_prepare import HELPER, _review_inputs, _write_jsonl
+from test_review_prepare import HELPER, _remove_review_input_templates, _review_inputs, _write_jsonl
 
 OPAQUE_MESSAGE = "gAAAA-retained-host-opaque-message"
 OTHER_CHILD_MESSAGE = "gAAAA-other-child-message"
@@ -365,10 +366,10 @@ def _deliver_opaque(home: Path, message: str, first_token: str | None, followup_
 
 
 def _partial_direct_evidence(
-    tmp_path: Path, *, source_name: str = "widget.py", coverage_path: str | None = None
+    evidence: tuple[Path, Path], *, source_name: str = "widget.py", coverage_path: str | None = None
 ) -> tuple[Path, Path, list[dict], str]:
     """Retain an authentic partial first task alongside completed unaffected roles."""
-    run, home = _direct_evidence(tmp_path, source_name=source_name)
+    run, home = evidence
     original = _child_final(home)
     missing_path = coverage_path if coverage_path is not None else source_name
     child = _edit_rollouts(
@@ -398,16 +399,50 @@ _skip_without_control_names = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(scope="module")
+def prepared_evidence(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
+    """Prepare ordinary native evidence once per worker and retain its complete pristine filesystem.
+
+    Absolute source paths and Git worktree links bind this evidence to its original location. Every consumer restores
+    that same location, including Git administration, rather than relocating receipts or bypassing source validation.
+    Source-mutating cases retain private fixtures.
+    """
+    root = tmp_path_factory.mktemp("direct-evidence")
+    _direct_evidence(root)
+    snapshot = tmp_path_factory.mktemp("direct-evidence-snapshot") / "pristine"
+    shutil.copytree(root, snapshot, symlinks=True)
+    return root, snapshot
+
+
 @pytest.fixture
-def evidence(tmp_path: Path) -> tuple[Path, Path]:
-    """Prepare a direct review (run directory, Codex home) with ordinary completed native child evidence."""
+def evidence(prepared_evidence: tuple[Path, Path]) -> Generator[tuple[Path, Path], None, None]:
+    """Give each test pristine real direct evidence at its bound paths, restoring all files after use."""
+    root, snapshot = prepared_evidence
+    try:
+        yield root / "review", root / "codex-home"
+    finally:
+        # Removing the whole tree also clears new retry/session files and Git index changes between consumers.
+        _remove_review_input_templates(root)
+        shutil.copytree(snapshot, root, symlinks=True)
+
+
+@pytest.fixture
+def private_evidence(tmp_path: Path) -> tuple[Path, Path]:
+    """Prepare isolated evidence for tests that deliberately modify the reviewed source."""
     return _direct_evidence(tmp_path)
 
 
 @pytest.fixture
-def partial_run(tmp_path: Path) -> SimpleNamespace:
+def partial_run(evidence: tuple[Path, Path]) -> SimpleNamespace:
     """Direct review whose first role reported an honest source gap and was assembled for recovery."""
-    run, home, child, original = _partial_direct_evidence(tmp_path)
+    run, home, child, original = _partial_direct_evidence(evidence)
+    return SimpleNamespace(run=run, home=home, child=child, final=original, role=_first_role(run))
+
+
+@pytest.fixture
+def private_partial_run(private_evidence: tuple[Path, Path]) -> SimpleNamespace:
+    """Prepare isolated partial evidence for source mutation and origin-refusal scenarios."""
+    run, home, child, original = _partial_direct_evidence(private_evidence)
     return SimpleNamespace(run=run, home=home, child=child, final=original, role=_first_role(run))
 
 
@@ -550,9 +585,9 @@ class TestDirectAssembly:
         assert result.returncode != 0
         assert not (run / "specialist-manifest.json").exists()
 
-    def test_rejects_changed_source(self, evidence: tuple[Path, Path]) -> None:
+    def test_rejects_changed_source(self, private_evidence: tuple[Path, Path]) -> None:
         """A checkout edited after the children read it cannot back accepted specialist coverage."""
-        run, home = evidence
+        run, home = private_evidence
         _change_source(run)
 
         result = _assemble_direct(run, home)
@@ -616,12 +651,12 @@ class TestDirectAssembly:
         assert result.returncode == 0, result.stderr
         assert (run / "specialist-manifest.json").read_bytes() == manifest
 
-    def test_promotion_rechecks_source_after_assembly(self, evidence: tuple[Path, Path]) -> None:
+    def test_promotion_rechecks_source_after_assembly(self, private_evidence: tuple[Path, Path]) -> None:
         """A valid manifest cannot approve a checkout changed after child results were assembled.
 
         Assembly succeeds first; only then is the checkout edited, and the shipped manifest validator must notice.
         """
-        run, home = evidence
+        run, home = private_evidence
         assembled = _assemble_direct(run, home)
         assert assembled.returncode == 0, assembled.stderr
         _change_source(run)
@@ -809,7 +844,9 @@ class TestDirectCoverage:
         A partial report names the unreachable path in several spellings; the recovery summary must attribute the gap to
         the assigned path only, and the affected role must stay eligible for a bounded retry.
         """
-        run, home, _, _ = _partial_direct_evidence(tmp_path, source_name=source_name, coverage_path=coverage_path)
+        run, home, _, _ = _partial_direct_evidence(
+            _direct_evidence(tmp_path, source_name=source_name), source_name=source_name, coverage_path=coverage_path
+        )
         role = _first_role(run)
 
         assembled = _assemble_direct(run, home)
@@ -947,10 +984,10 @@ class TestDirectRetry:
         ],
     )
     def test_partial_retry_rejects_changed_or_ineligible_origin(
-        self, partial_run: SimpleNamespace, damage: Callable[[Path, str], object]
+        self, private_partial_run: SimpleNamespace, damage: Callable[[Path, str], object]
     ) -> None:
         """Source changes, promoted results, and fabricated gap text cannot authorize replacement."""
-        run, home, role = partial_run.run, partial_run.home, partial_run.role
+        run, home, role = private_partial_run.run, private_partial_run.home, private_partial_run.role
         damage(run, role)
 
         rejected = _retry_direct(run, home, role)

@@ -4,7 +4,7 @@
 // PURPOSE
 //   Renders a two-line live status display in the Claude Code terminal, refreshed
 //   on every hook event.  Gives an at-a-glance view of model, cost, context usage,
-//   active subagents (incl. codex:* subagents) and current tool activity.
+//   active subagents, running Codex bridge calls and current tool activity.
 //
 // HOW IT WORKS
 //   1. Parse stdin JSON for model, workspace, context_window, cost, session_id, and effort
@@ -19,7 +19,7 @@
 //      bright yellow; shows "none" when idle (consistent with agents/tools segments)
 //   5. Build Line 2 agent segment (🤖): read state/agents/*.json; skip entries idle > 10 min
 //      (worktree agents, real last_active signal) or > 30 min (non-worktree agents, no per-agent
-//      liveness signal exists — see line ~228); group by type; color from frontmatter; codex:* here
+//      liveness signal exists — see line ~228); group by type; color from frontmatter
 //   6. Build Line 2 tool segment (🛠️): read state/tools/*.json; skip entries whose last call is
 //      older than 30 s, unless a call is still in flight (10-min cap); render per-type call counts
 //      with fixed TOOL_COLORS palette
@@ -31,7 +31,7 @@
 //
 //   Line 2 — runtime activity (skills shown only when active; agents/tools always shown):
 //     [⚡ <skill> │] 🤖 N <type> [×N], …  │  🛠️ <tools>
-//     codex:* subagents shown in 🤖 alongside other agents
+//     🧠 codex:<advise|review|implement>[(bg)] [×N] shown only while a bridge_call.py run is active
 //
 // LINE 1 DETAILS
 //   model       display_name or id from session JSON, with " (effort.level)" suffix when
@@ -54,7 +54,7 @@
 //               No count shown — only one skill active per session at a time.
 //               No age gate — relies on PostToolUse cleanup; SessionEnd wipes any crash remnants.
 //   🤖 agents   reads /tmp/claude-state-<session_id>/agents/*.json written by task-log.js
-//               SubagentStart/Stop. Groups by type; all agents (incl. codex:*) shown in their
+//               SubagentStart/Stop. Groups by type; all agents shown in their
 //               declared color (from agent frontmatter color: field); general-purpose gray.
 //               Safety-net: ignores entries idle too long, measured from last_active (last tool
 //               activity, worktree agents only) ?? since (dispatch time). Worktree agents get a
@@ -266,8 +266,7 @@ process.stdin.on("end", () => {
     // Line 2 — agents (always shown, even when 0)
     try {
       const agentsDir = path.join(tmpDir, "agents");
-      // Tolerate a missing agents/ dir — a session may have codex/ entries but no agents/ yet;
-      // an unguarded readdirSync would throw and short-circuit the codex merge below.
+      // Tolerate a missing agents/ dir — a fresh session has none until the first agent starts.
       let files = [];
       try {
         files = fs.readdirSync(agentsDir).filter((f) => f.endsWith(".json"));
@@ -291,20 +290,6 @@ process.stdin.on("end", () => {
           return [];
         }
       });
-      // codex:* subagents are tracked in a sibling codex/ dir (written by task-log.js on
-      // Skill(codex:*)/Agent(codex:*)), not agents/. Merge them so they render in 🤖 as the
-      // header comment promises. Dedup by id in case a codex agent also lands in agents/.
-      try {
-        const seenIds = new Set(allAgents.map((a) => a.id).filter(Boolean));
-        const codexDir = path.join(tmpDir, "codex");
-        for (const f of fs.readdirSync(codexDir).filter((cf) => cf.endsWith(".json"))) {
-          try {
-            const c = JSON.parse(fs.readFileSync(path.join(codexDir, f), "utf8"));
-            if (c.id && seenIds.has(c.id)) continue;
-            allAgents.push({ id: c.id, type: `codex:${c.type}`, model: "codex", color: "cyan", since: c.since });
-          } catch (_) {}
-        }
-      } catch (_) {}
       const agents = allAgents.filter((a) => {
         const freshness = a.last_active || a.since;
         if (!freshness) return true;
@@ -353,6 +338,197 @@ process.stdin.on("end", () => {
     } catch (_) {
       agentsPart = `\x1b[35m🤖\x1b[0m \x1b[2mnone\x1b[0m`;
     }
+
+    // Line 2 — Codex bridge runs (🧠, shown only while one is active). A run is a Bash call to
+    // bridge_call.py advise|review|implement, recorded by task-log.js in codex/. Not an agent and not a
+    // native tool, so it gets its own segment: `codex:<verb>`, `(bg)` for background or detached runs.
+    // Reaping: a detached run follows its job record (<workspace>/.temp/bridge/jobs/<job_id>.json) and drops
+    // on a terminal status, and a background Bash run follows the host's task output file: it drops once the
+    // file carries `[exited with code N]` (also for a launch that died early) and a file without it keeps the run.
+    // Only a run with no readable output file is ended by the bridge's final report in its workspace (each report
+    // ends one run, the closest launch of its verb). Every run
+    // also drops at an age cap derived from its --timeout-seconds or the verb's default (hard
+    // cutoff 1.2x + 9 s per attempt, two attempts for advise/review), the backstop when no signal arrives. A
+    // foreground run is capped at the 10-min foreground Bash ceiling, which bounds an orphan left by a call denied
+    // or interrupted before PostToolUse.
+    let codexPart = "";
+    try {
+      const codexDir = path.join(tmpDir, "codex");
+      // Soft budgets bridge_call.py applies when --timeout-seconds is absent (DEFAULT_TIMEOUTS there).
+      const CODEX_DEFAULT_TIMEOUT_S = { advise: 120, review: 300, implement: 600 };
+      const CODEX_FOREGROUND_MAX_AGE_MS = 10 * 60 * 1000; // foreground Bash ceiling; no live foreground run is older
+      const CODEX_MAX_AGE_CEILING_MS = 60 * 60 * 1000;
+      const CODEX_TERMINAL = new Set(["finished", "cancelled", "failed"]);
+      const CODEX_VERBS = new Set(["advise", "review", "implement"]);
+      // The host closes a task's output file with one of these as its last line: after the process exits, or when the
+      // task is stopped (observed with TaskStop). Only a final line counts, never the same text inside the output.
+      const CODEX_EXIT_MARKER = /(?:\[exited with code -?\d+\]|\[killed\])\s*$/;
+      const CODEX_DETACHED_START_SLACK_MS = 90 * 1000; // supervisor start slack (60 s in the bridge) plus margin
+      // Contents of a regular file (at most `max` bytes; the last `max` bytes when `tail`), or null for anything else.
+      // Files under a workspace come from the project, so a symlink to a FIFO or a device must never be opened for
+      // reading: lstat, O_NOFOLLOW and O_NONBLOCK keep the renderer from blocking on it.
+      const readRegular = (file, max, tail = false) => {
+        let fd;
+        try {
+          if (!fs.lstatSync(file).isFile()) return null;
+          fd = fs.openSync(
+            file,
+            fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0),
+          );
+          const st = fs.fstatSync(fd);
+          if (!st.isFile() || (!tail && st.size > max)) return null;
+          const len = Math.min(st.size, max);
+          const buf = Buffer.alloc(len);
+          fs.readSync(fd, buf, 0, len, st.size - len);
+          return buf.toString("utf8");
+        } catch (_) {
+          return null;
+        } finally {
+          if (fd !== undefined) {
+            try {
+              fs.closeSync(fd);
+            } catch (_) {}
+          }
+        }
+      };
+      // Every run record counts, ended or not: an ended run still owns its final report, so a report is never
+      // charged to a different run. `over` marks a run that no longer shows.
+      const all = [];
+      const consumed = new Set(); // run ids of finished foreground runs, recorded by task-log.js
+      for (const f of fs.readdirSync(codexDir).filter((cf) => cf.endsWith(".json"))) {
+        try {
+          const c = JSON.parse(fs.readFileSync(path.join(codexDir, f), "utf8"));
+          if (c.kind === "consumed" && typeof c.run_id === "string") consumed.add(c.run_id);
+          if (c.kind !== "run" || !CODEX_VERBS.has(c.type)) continue; // legacy Skill-level entries never render
+          const launchedMs = Date.parse(c.launched); // background runs: real dispatch time, set at PostToolUse
+          c.startMs = Number.isFinite(launchedMs) ? launchedMs : Date.parse(c.since);
+          if (!Number.isFinite(c.startMs)) continue;
+          const given = Number(c.timeout_s);
+          const timeoutS = Number.isFinite(given) && given > 0 ? given : CODEX_DEFAULT_TIMEOUT_S[c.type];
+          const attempts = c.type === "implement" ? 1 : 2;
+          let maxAge = Math.min(CODEX_MAX_AGE_CEILING_MS, (attempts * (1.2 * timeoutS + 9) + 30) * 1000);
+          if (c.detached) maxAge = Math.min(CODEX_MAX_AGE_CEILING_MS, maxAge + CODEX_DETACHED_START_SLACK_MS);
+          if (!c.bg) maxAge = Math.min(maxAge, CODEX_FOREGROUND_MAX_AGE_MS);
+          c.over = now - c.startMs >= maxAge;
+          if (
+            !c.over &&
+            c.detached &&
+            typeof c.job_id === "string" &&
+            /^[0-9a-fA-F-]{36}$/.test(c.job_id) &&
+            typeof c.workspace === "string" &&
+            path.isAbsolute(c.workspace)
+          ) {
+            const jobFile = path.join(c.workspace, ".temp", "bridge", "jobs", `${c.job_id}.json`);
+            let job = null;
+            try {
+              fs.lstatSync(jobFile);
+              const text = readRegular(jobFile, 256 * 1024);
+              job = text === null ? null : JSON.parse(text);
+            } catch (err) {
+              if (err.code === "ENOENT") c.over = true; // record pruned → job is over
+            }
+            if (job && CODEX_TERMINAL.has(job.status)) c.over = true;
+            else if (job) c.followsJob = true; // a live job record is authoritative; no need to look for a report
+          }
+          // The host creates the task output file at launch and closes it with `[exited with code N]` (after the
+          // bridge's JSON envelope) when the process ends, even for a launch that died on an argument error before
+          // writing a final report, or with `[killed]` when the task is stopped. A file without a closing marker
+          // means the run is still going, whatever else is in it, so it is authoritative: no final report can end
+          // the run, the derived age cap no longer applies (only the ceiling), and an ended run's id is marked
+          // consumed.
+          if (c.bg && !c.detached && Array.isArray(c.output_files)) {
+            for (const p of c.output_files.slice(0, 4)) {
+              if (typeof p !== "string" || !path.isAbsolute(p) || !p.endsWith(".output")) continue;
+              const tail = readRegular(p, 8192, true);
+              if (tail === null) continue; // no such file under this temp-base guess
+              c.hasOutputFile = true;
+              if (CODEX_EXIT_MARKER.test(tail)) {
+                c.over = true;
+                const runId = /"run_id"\s*:\s*"([0-9a-fA-F-]{36})"/.exec(tail);
+                if (runId) consumed.add(runId[1]);
+              } else {
+                c.over = now - c.startMs >= CODEX_MAX_AGE_CEILING_MS;
+              }
+              break;
+            }
+          }
+          all.push(c);
+        } catch (_) {}
+      }
+      // A background Bash run has no completion hook, but the bridge writes result-<finish ns>-<id>.json into the
+      // run's workspace when Codex ends. Each report ends at most one run: by exact --run-id, else the same-verb run
+      // launched closest before the report's start. Reports of detached jobs (job_id) and of finished foreground
+      // runs (consumed) belong to other runs and never match.
+      const claimants = all.filter(
+        (c) => c.bg && !c.detached && typeof c.workspace === "string" && path.isAbsolute(c.workspace),
+      );
+      for (const c of claimants) {
+        try {
+          c.wsKey = fs.realpathSync(c.workspace); // one workspace spelled two ways must be one group
+        } catch (_) {
+          c.wsKey = c.workspace;
+        }
+      }
+      // Reports are only read for a workspace that still holds a run nothing else can place: a run that is still
+      // showing and has no output file. Every other run's end is already known.
+      const earliestByWorkspace = new Map();
+      for (const c of claimants) {
+        if (c.over || c.hasOutputFile) continue;
+        const earliest = earliestByWorkspace.get(c.wsKey);
+        if (earliest === undefined || c.startMs < earliest) earliestByWorkspace.set(c.wsKey, c.startMs);
+      }
+      for (const [workspace, earliestMs] of earliestByWorkspace) {
+        const reports = [];
+        try {
+          const dir = path.join(workspace, ".temp", "bridge");
+          for (const name of fs.readdirSync(dir)) {
+            const m = /^result-(\d{10,})-[0-9a-f]+\.json$/.exec(name);
+            if (!m || Number(m[1].slice(0, -6)) < earliestMs - 2000) continue; // name carries the finish time in ns
+            try {
+              const text = readRegular(path.join(dir, name), 256 * 1024);
+              if (text === null) continue;
+              const r = JSON.parse(text);
+              if (r.job_id || consumed.has(r.run_id)) continue;
+              reports.push({ verb: r.verb, runId: r.run_id, startedMs: Number(r.started_at) * 1000 });
+            } catch (_) {}
+          }
+        } catch (_) {}
+        reports.sort((a, b) => a.startedMs - b.startedMs);
+        const runs = claimants.filter((c) => c.wsKey === workspace);
+        for (const r of reports) {
+          const scored = [];
+          for (const c of runs) {
+            if (c.matched || c.type !== r.verb) continue;
+            const lag = r.startedMs - c.startMs; // the bridge starts shortly after the launch
+            if (c.run_id ? c.run_id !== r.runId : lag < -3000 || lag > 20000) continue;
+            scored.push({ c, score: c.run_id ? -1 : Math.abs(lag) }); // exact id first, then the closest launch
+          }
+          scored.sort((a, b) => a.score - b.score);
+          // Two launches within half a second of the report's start cannot be told apart: end neither rather than
+          // risk hiding the run that is still going (each then waits for its age cap).
+          if (!scored.length || (scored.length > 1 && scored[0].score >= 0 && scored[1].score - scored[0].score < 500))
+            continue;
+          scored[0].c.matched = true;
+          if (!scored[0].c.hasOutputFile) scored[0].c.over = true; // a run with a live output file is judged by it
+        }
+      }
+      const groups = new Map();
+      for (const c of all) {
+        if (c.over) continue;
+        const key = `${c.type}${c.bg ? "/bg" : ""}`;
+        if (!groups.has(key)) groups.set(key, { type: c.type, bg: !!c.bg, count: 0 });
+        groups.get(key).count++;
+      }
+      if (groups.size > 0) {
+        const items = [...groups.values()]
+          .sort((a, b) => a.type.localeCompare(b.type) || Number(a.bg) - Number(b.bg))
+          .map(({ type, bg, count }) => {
+            const label = `codex:${type}${bg ? "(bg)" : ""}${count > 1 ? `×${count}` : ""}`;
+            return `\x1b[36m${stripControl(label)}\x1b[0m`; // cyan
+          });
+        codexPart = `\x1b[36m🧠\x1b[0m ${items.join(", ")}`;
+      }
+    } catch (_) {}
 
     // Line 2 — tool activity segment (always shown, even when idle)
     let toolLine = "";
@@ -435,6 +611,7 @@ process.stdin.on("end", () => {
     const line2Parts = [];
     line2Parts.push(skillsPart);
     line2Parts.push(agentsPart);
+    if (codexPart) line2Parts.push(codexPart);
     line2Parts.push(toolLine);
     const line2 = line2Parts.join(` \x1b[2m│\x1b[0m `);
     const lines = [line1, line2];

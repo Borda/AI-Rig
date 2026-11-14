@@ -7,7 +7,7 @@
 //   other hooks (statusline.js) read to render the live status line:
 //
 //     agents/   — which subagents are currently running
-//     codex/    — which codex plugin sessions are active
+//     codex/    — which Codex bridge runs (bridge_call.py advise|review|implement) are active
 //     skills/   — which Skill() calls are currently in flight
 //     tools/    — which tool types fired in the current turn (for the 🔧 line)
 //     timings/  — in-flight start markers for per-tool wall-clock timing
@@ -18,11 +18,14 @@
 // HOW IT WORKS
 //   1. Parse stdin JSON for hook_event_name, tool_name, tool_input, agent_id, agent_type, session_id
 //   2. Resolve per-session temp dir at /tmp/claude-state-<session_id>/ for ephemeral state
-//   3. PreToolUse: log Task/Agent/Skill invocations to invocations.jsonl; open a codex session
-//      file in state/codex/ for codex:* skills; increment per-tool-type counter in state/tools/
+//   3. PreToolUse: log Task/Agent/Skill invocations to invocations.jsonl; open a codex run file in
+//      state/codex/ for a Bash call to bridge_call.py (the real Codex run — the Skill() call only returns
+//      instructions) and keep it out of the Bash counter; increment per-tool-type counter in state/tools/
 //      (stamps last + inflight); write a timing start marker (tool name, args summary, timestamp)
 //      to state/timings/
-//   4. PostToolUse: close the codex session file when Skill(codex:*) completes; release the
+//   4. PostToolUse: close the codex run file when a foreground bridge call completes and note its run id as
+//      consumed (background Bash and detached --background runs stay, stamped with launch time and task
+//      output path; the statusline reaps them by job status, output, final report or age); release the
 //      tool's inflight slot; read the timing start marker, compute duration_ms, append to
 //      timings.jsonl, delete marker
 //   5. PostToolUseFailure: same as PostToolUse timing + inflight path but records status "error"
@@ -44,8 +47,8 @@
 //
 //   PreToolUse
 //     • Logs Task/Agent and Skill invocations to invocations.jsonl.
-//     • Opens a codex session file when Skill(codex:*) or Agent(codex:*) starts
-//       (keyed by tool_use_id so concurrent sessions don't collide).
+//     • Opens a codex run file when a Bash command runs `bridge_call.py advise|review|implement`
+//       (keyed by tool_use_id so concurrent runs don't collide; records verb, bg/detached, workspace).
 //     • Writes/increments a per-tool-type file in state/tools/ for the 🔧 display.
 //       Uses a fixed 30s window (since = window start, not last call) so count resets
 //       after a >30s gap. Agent and Task calls excluded — tracked via SubagentStart/Stop.
@@ -59,8 +62,11 @@
 //       agent_id), so a still-working long-running agent isn't reaped by the staleness filter.
 //
 //   PostToolUse
-//     • Closes the codex session file when Skill(codex:*) or Agent(codex:*) completes,
-//       so the 🤖 counter drops back to zero immediately after the run finishes.
+//     • Closes the codex run file when a foreground bridge call completes (its run_id from stdout is kept as a
+//       consumed marker); a background Bash or detached `--background` run keeps it, re-stamped with its launch
+//       time (background Bash also stores the host's task output path; detached runs store the job_id from stdout).
+//     • Stop and SubagentStop clear foreground codex records of the main agent / that subagent (orphans of a
+//       denied or interrupted call).
 //     • Decrements the tool's `inflight` slot and re-stamps `last` in state/tools/, so a
 //       finished call stops holding the 🔧 segment open beyond its 30s freshness window.
 //     • Reads the timing start marker written by PreToolUse, computes wall-clock duration,
@@ -134,7 +140,7 @@
 //   ~/.claude/logs/timings.jsonl        — append-only per-tool timing log {ts, project, tool, args, tool_use_id, session_id, duration_ms, status, model}
 //   ~/.claude/logs/compactions.jsonl    — append-only PreCompact/PostCompact metadata {event, session_id, trigger, has_custom_instructions or summary_len, ts}
 //   /tmp/claude-state-<session_id>/agents/<id>.json     — one file per active subagent
-//   /tmp/claude-state-<session_id>/codex/<id>.json      — one file per active codex plugin session
+//   /tmp/claude-state-<session_id>/codex/<id>.json      — one file per active Codex bridge run {id, kind, type, bg, detached, workspace, timeout_s, agent_id, launched?, output_files?, job_id?}
 //   /tmp/claude-state-<session_id>/skills/<id>.json     — one file per in-flight Skill() call
 //   /tmp/claude-state-<session_id>/tools/<tool>.json    — one file per tool type, current turn only {tool, since, last, count, inflight}
 //   /tmp/claude-state-<session_id>/queue/<ts>.json      — one file per pending user input (cleared on Stop)
@@ -596,6 +602,8 @@ process.stdin.on("end", () => {
     const ts = new Date().toISOString();
 
     if (hook_event_name === "PreToolUse") {
+      // A Codex run is the Bash call to bridge_call.py, not the Skill() call that only returns instructions.
+      const bridgeCall = tool_name === "Bash" ? parseBridgeCall(tool_input, data.cwd) : null;
       if (tool_name === "Task" || tool_name === "Agent") {
         const agentType = tool_input?.subagent_type || "unknown";
         const desc = tool_input?.description || "";
@@ -650,17 +658,6 @@ process.stdin.on("end", () => {
         const skill = tool_input?.skill || "unknown";
         const args = maskSecrets(tool_input?.args || "");
         appendLog(logFile, globalLogsDir, { ts, project: projectSlug, event: "invoked", tool: "Skill", skill, args });
-        // Track bridge-backed Codex skills for statusline display (tool_use_id is the stable key).
-        if (skill && skill.startsWith("bridge:") && safeId(data.tool_use_id)) {
-          try {
-            fs.mkdirSync(codexDir, { recursive: true });
-            const shortName = skill.slice("bridge:".length);
-            writeStateFile(
-              path.join(codexDir, `${data.tool_use_id}.json`),
-              JSON.stringify({ id: data.tool_use_id, since: ts, type: shortName }),
-            );
-          } catch (_) {}
-        }
         // Track active skills for statusline display (keyed by tool_use_id)
         if (safeId(data.tool_use_id)) {
           try {
@@ -671,11 +668,28 @@ process.stdin.on("end", () => {
             );
           } catch (_) {}
         }
+      } else if (bridgeCall && safeId(data.tool_use_id)) {
+        // Codex run for the statusline codex segment, keyed by tool_use_id. Foreground runs are removed at
+        // PostToolUse; background and detached runs outlive it (see PostToolUse) and are reaped by the renderer.
+        try {
+          fs.mkdirSync(codexDir, { recursive: true });
+          writeStateFile(
+            path.join(codexDir, `${data.tool_use_id}.json`),
+            JSON.stringify({
+              id: data.tool_use_id,
+              kind: "run",
+              since: ts,
+              ...bridgeCall,
+              agent_id: typeof data.agent_id === "string" && safeId(data.agent_id) ? data.agent_id : null, // null = main agent
+            }),
+          );
+        } catch (_) {}
       }
       // Track all tool calls for statusline tool-activity line (count per type within 30s fixed window).
       // Fixed window: since = start of window (not last call) → count resets after 30s gap.
       // Exclude Agent/Task — those are tracked separately via PreToolUse/PostToolUse → state/agents/
-      if (safeId(tool_name) && tool_name !== "Agent" && tool_name !== "Task") {
+      // Exclude Codex runs — the statusline codex segment owns them; counting them as Bash shows one run twice.
+      if (safeId(tool_name) && tool_name !== "Agent" && tool_name !== "Task" && !bridgeCall) {
         try {
           fs.mkdirSync(toolsDir, { recursive: true });
           const toolFile = path.join(toolsDir, `${tool_name}.json`);
@@ -726,15 +740,13 @@ process.stdin.on("end", () => {
         } catch (_) {}
       }
     } else if (hook_event_name === "PostToolUse") {
-      // Remove bridge-backed Codex session tracking when the Skill call completes.
-      releaseToolInflight(toolsDir, tool_name);
+      // The record PreToolUse stored decides the run's lifecycle; a re-parse of this event's tool_input is only the
+      // fallback, since a PostToolUse payload may omit run_in_background (see the Agent pending/ marker above).
+      const bridgeCall =
+        tool_name === "Bash" ? readCodexRun(codexDir, data.tool_use_id) || parseBridgeCall(tool_input, data.cwd) : null;
+      if (!bridgeCall) releaseToolInflight(toolsDir, tool_name); // Codex runs never took an inflight slot
       if (safeId(data.tool_use_id)) {
-        const isCodexSkill = tool_name === "Skill" && tool_input?.skill?.startsWith("bridge:");
-        if (isCodexSkill) {
-          try {
-            fs.unlinkSync(path.join(codexDir, `${data.tool_use_id}.json`));
-          } catch (_) {}
-        }
+        if (bridgeCall) finishCodexRun(codexDir, data, bridgeCall);
         // Foreground Agent() calls complete when PostToolUse fires → delete the PreToolUse entry so
         // the 🤖 counter drops promptly. Background agents (run_in_background) return at *dispatch*,
         // so PostToolUse fires while the agent is still running — keep agents/ + pending/ so the agent
@@ -774,8 +786,16 @@ process.stdin.on("end", () => {
       }
     } else if (hook_event_name === "PostToolUseFailure") {
       // Same as PostToolUse timing but marks status "error".
-      releaseToolInflight(toolsDir, tool_name);
+      const failedBridgeCall =
+        tool_name === "Bash" ? readCodexRun(codexDir, data.tool_use_id) || parseBridgeCall(tool_input, data.cwd) : null;
+      if (!failedBridgeCall) releaseToolInflight(toolsDir, tool_name);
       if (safeId(data.tool_use_id)) {
+        // A failed launch leaves no running Codex job, so drop the entry even for background runs.
+        if (failedBridgeCall) {
+          try {
+            fs.unlinkSync(path.join(codexDir, `${data.tool_use_id}.json`));
+          } catch (_) {}
+        }
         // Remove skill tracking entry on failure too
         if (tool_name === "Skill") {
           try {
@@ -849,7 +869,6 @@ process.stdin.on("end", () => {
             JSON.stringify({ id, type: resolvedType || "unknown", model, color, since: ts }),
           );
         }
-        // Bridge-backed Codex execution uses Skill calls, not Agent events.
       } catch (_) {}
     } else if (hook_event_name === "SubagentStop") {
       // Delete the per-agent file; read stored type first for accurate completion logging
@@ -864,11 +883,9 @@ process.stdin.on("end", () => {
       try {
         if (!safeId(id)) throw new Error("invalid agent identifier");
         fs.unlinkSync(path.join(agentsDir, `${id}.json`));
-        // Also clean up any bridge skill entry keyed by this lifecycle id.
-        try {
-          fs.unlinkSync(path.join(codexDir, `${id}.json`));
-        } catch (_) {}
       } catch (_) {}
+      // A stopped subagent has no foreground call in flight: drop any run record it left behind.
+      if (safeId(id)) clearForegroundRuns(codexDir, id);
       // Capture last assistant message (up to 500 chars) for post-mortem debugging
       const lastMsg = maskSecrets(data.last_assistant_message || "").slice(0, 500) || undefined;
       appendLog(logFile, globalLogsDir, {
@@ -1068,6 +1085,9 @@ process.stdin.on("end", () => {
           }
         }
       } catch (_) {}
+      // A foreground Codex run is gone once the turn ends; one still recorded was denied or interrupted before
+      // PostToolUse. Only the main agent's records go: a background subagent's call may still be running.
+      clearForegroundRuns(codexDir, null);
       // Clean orphaned skill entries — PostToolUse handles normal Skill() completions;
       // Stop catches any left over from interrupted/crashed turns (tool_use_id entries only).
       // current-skill.json is intentionally NOT cleared here — it persists across turns.
@@ -1272,6 +1292,389 @@ function touchAgentLastActive(cwd, agentsDir) {
     rec.last_active = new Date().toISOString();
     writeStateFile(agentFile, JSON.stringify(rec));
   } catch (_) {} // agent file gone (agent finished) or unreadable — nothing to refresh
+}
+
+// ── Codex bridge runs ───────────────────────────────────────────────────────────────────────────────
+// Option names of bridge_call.py advise|review|implement (argparse accepts any unique prefix of a long option).
+const BRIDGE_VERBS = ["advise", "review", "implement"];
+const BRIDGE_VALUE_OPTIONS = [
+  "--task",
+  "--task-file",
+  "--model",
+  "--effort",
+  "--timeout-seconds",
+  "--session-id",
+  "--depth",
+  "--network",
+  "--run-id",
+  "--workspace",
+  "--job-id",
+];
+const BRIDGE_FLAG_OPTIONS = ["--untrusted-task", "--background", "--supervisor"];
+const BRIDGE_PYTHON_RE = /^(?:python[\d.]*|py)(?:\.exe|\.cmd)?$/i;
+
+/**
+ * Split a shell command into segments of words on unquoted `&&`, `||`, `;`, `|`, `&` and newlines.
+ *
+ * Quotes and backslashes are honoured so text inside a quoted argument (a task, a commit message) stays one word and
+ * is never mistaken for an option or a command; heredoc bodies are skipped. Parentheses and backticks also end a
+ * segment, so a call inside `$(...)` or a subshell is still found. Expansions are not evaluated.
+ */
+function shellSegments(command) {
+  const segments = [];
+  const heredocs = [];
+  let words = [];
+  let word = null; // null = no word started; "" = an empty quoted word
+  let quote = null;
+  const endWord = () => {
+    if (word !== null) words.push(word);
+    word = null;
+  };
+  const endSegment = () => {
+    endWord();
+    if (words.length) segments.push(words);
+    words = [];
+  };
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (quote === "$'") {
+      // ANSI-C quoting: a backslash escapes the next character, including a quote.
+      if (ch === "\\") word += command[++i] ?? "";
+      else if (ch === "'") quote = null;
+      else word += ch;
+    } else if (quote === "'") {
+      if (ch === "'") quote = null;
+      else word += ch;
+    } else if (quote === '"') {
+      if (ch === '"') quote = null;
+      else if (ch === "\\" && '"\\$`'.includes(command[i + 1] ?? "")) word += command[++i];
+      else word += ch;
+    } else if (ch === "#" && word === null) {
+      // A comment runs to the end of the line; its quotes and words are never code.
+      while (i + 1 < command.length && command[i + 1] !== "\n") i++;
+    } else if (ch === "$" && command[i + 1] === "'") {
+      quote = "$'";
+      word = word ?? "";
+      i++;
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+      word = word ?? "";
+    } else if (ch === "\\" && i + 1 < command.length) {
+      i++;
+      if (command[i] !== "\n") word = (word ?? "") + command[i]; // backslash-newline continues the line
+    } else if (ch === "<" && command[i + 1] === "<" && command[i + 2] !== "<") {
+      // Heredoc: its body is data, skipped at the next newline, never read as commands.
+      let j = i + 2;
+      const strip = command[j] === "-";
+      if (strip) j++;
+      while (command[j] === " " || command[j] === "\t") j++;
+      // A bare or backslashed delimiter starts with a letter or underscore (`<<2` is arithmetic, `$((1<<2))`, not a
+      // heredoc); a quoted one may hold any text.
+      const m = /^(?:'([^'\n]+)'|"([^"\n]+)"|\\?([A-Za-z_][A-Za-z0-9_.-]*))/.exec(command.slice(j));
+      endWord();
+      if (m) {
+        heredocs.push({ delim: m[1] ?? m[2] ?? m[3], strip });
+        i = j + m[0].length - 1;
+      } else {
+        i = j - 1;
+      }
+    } else if (ch === "\n") {
+      endSegment();
+      for (const { delim, strip } of heredocs.splice(0)) {
+        let pos = i + 1;
+        while (pos < command.length) {
+          let end = command.indexOf("\n", pos);
+          if (end < 0) end = command.length;
+          const line = command.slice(pos, end);
+          pos = end + 1;
+          i = end;
+          if ((strip ? line.replace(/^\t+/, "") : line) === delim) break;
+        }
+      }
+    } else if (";|&()`".includes(ch)) {
+      endSegment(); // a subshell or command substitution starts its own segment, so a call inside it is still seen
+    } else if (/\s/.test(ch)) {
+      endWord();
+    } else {
+      word = (word ?? "") + ch;
+    }
+  }
+  endSegment();
+  return segments;
+}
+
+// Words that run the next command without being it, and the options each skips before the command word.
+const SHELL_PREFIX_WORDS = new Set([
+  "if",
+  "elif",
+  "while",
+  "until",
+  "then",
+  "do",
+  "else",
+  "!",
+  "{",
+  "command",
+  "exec",
+  "nohup",
+  "time",
+  "env",
+  "xargs",
+]);
+const SHELL_PROGRAMS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
+const PYTHON_VALUE_OPTIONS = new Set(["-X", "-W", "-c", "-m"]);
+// Value-taking options of the wrappers that precede the interpreter.
+const UV_VALUE_OPTIONS = new Set([
+  "--with",
+  "--with-editable",
+  "--with-requirements",
+  "--python",
+  "-p",
+  "--project",
+  "--directory",
+  "--env-file",
+  "--group",
+  "--extra",
+  "--index",
+  "--package",
+  "-w",
+]);
+const TIMEOUT_VALUE_OPTIONS = new Set(["-s", "--signal", "-k", "--kill-after"]);
+const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const REDIRECT_OPERATOR_RE = /^\d*(?:>>?|<)$/; // `>` whose target is the next word
+const REDIRECT_WORD_RE = /^\d*(?:>>?|<)&?\S/; // `2>/dev/null`, `>out`, `2>&1`
+const wordBase = (w) => w.split(/[\\/]/).pop();
+
+/**
+ * Index of the command word of a segment, after assignments, redirections, shell keywords and wrapper programs.
+ *
+ * Skips `VAR=val`, redirections, `if`/`while`/`then`..., `env`/`command`/`exec`/`nohup`/`time`/`xargs` with their
+ * options, `uv run` with its options, `timeout [options] <duration>` and `nice`.
+ */
+function commandIndex(words) {
+  let i = 0;
+  while (i < words.length) {
+    const w = wordBase(words[i]);
+    if (ASSIGNMENT_RE.test(words[i])) {
+      i++;
+    } else if (REDIRECT_OPERATOR_RE.test(words[i])) {
+      i += 2;
+    } else if (REDIRECT_WORD_RE.test(words[i])) {
+      i++;
+    } else if (SHELL_PREFIX_WORDS.has(w)) {
+      i++;
+      while (i < words.length && (words[i].startsWith("-") || ASSIGNMENT_RE.test(words[i])))
+        i += w === "env" && (words[i] === "-u" || words[i] === "-C") ? 2 : 1;
+    } else if (w === "uv" && words[i + 1] === "run") {
+      i += 2;
+      while (i < words.length && words[i].startsWith("-")) i += UV_VALUE_OPTIONS.has(words[i]) ? 2 : 1;
+    } else if (w === "timeout" || w === "nice") {
+      i++;
+      while (i < words.length && (words[i].startsWith("-") || /^[0-9.]+[smhd]?$/.test(words[i]))) {
+        const takesValue = w === "timeout" ? TIMEOUT_VALUE_OPTIONS.has(words[i]) : words[i] === "-n";
+        i += takesValue ? 2 : 1;
+      }
+    } else {
+      break;
+    }
+  }
+  return i;
+}
+
+/**
+ * Segments of a command, plus those of any `bash|sh -c '<script>'` string it runs (to a depth of two).
+ *
+ * A quoted script is one word to the tokenizer, so a real call wrapped in `bash -c` is only found by re-reading it.
+ */
+function commandSegments(command, depth = 0) {
+  const out = [];
+  for (const words of shellSegments(command)) {
+    out.push(words);
+    const at = commandIndex(words);
+    if (depth < 2 && at < words.length && SHELL_PROGRAMS.has(wordBase(words[at]))) {
+      const c = words.findIndex((w, k) => k > at && /^-[A-Za-z]*c$/.test(w));
+      if (c >= 0 && c + 1 < words.length) out.push(...commandSegments(words[c + 1], depth + 1));
+    }
+  }
+  return out;
+}
+
+/**
+ * Index of the `bridge_call.py` word when the segment's command is `<python> [options] bridge_call.py <verb>`.
+ *
+ * Text that only mentions the script (`echo python bridge_call.py review`, `grep -r python bridge_call.py review`)
+ * never matches, because the interpreter must be the segment's command word.
+ */
+function findBridgeScript(words) {
+  const base = wordBase;
+  let i = commandIndex(words);
+  if (i >= words.length || !BRIDGE_PYTHON_RE.test(base(words[i]))) return -1;
+  i++;
+  while (i < words.length && words[i].startsWith("-")) {
+    // `-X opt`/`-W opt` take a value; -c/-m run something other than the bridge script, so they never match.
+    if (words[i] === "-c" || words[i] === "-m") return -1;
+    i += PYTHON_VALUE_OPTIONS.has(words[i]) ? 2 : 1;
+  }
+  return i < words.length && base(words[i]) === "bridge_call.py" && BRIDGE_VERBS.includes(words[i + 1]) ? i : -1;
+}
+
+/** Resolve a typed long option to its full bridge name, honouring argparse's exact-then-unique-prefix rule. */
+function resolveBridgeOption(name) {
+  const known = [...BRIDGE_VALUE_OPTIONS, ...BRIDGE_FLAG_OPTIONS];
+  if (known.includes(name)) return name;
+  const matches = known.filter((k) => k.startsWith(name));
+  return matches.length === 1 ? matches[0] : null;
+}
+
+/**
+ * Describe a Bash call that runs a Codex bridge verb, or return null for any other command.
+ *
+ * The run is identified from the command's own words: an interpreter word, then `bridge_call.py`, then a verb, so
+ * `git commit -m "... bridge_call.py review ..."` and `echo bridge_call.py review` are not runs. Options are read only
+ * from the words after the verb, with a value-taking option consuming its value, so flag-shaped text inside `--task`
+ * never counts. `bg` is true when the run outlives its Bash call (background Bash or a detached `--background` job),
+ * so the statusline keeps it visible after PostToolUse. `workspace` is the textual `--workspace` resolved against
+ * `cwd`; `timeout_s` is null when no valid `--timeout-seconds` was given and the renderer applies the verb default.
+ */
+function parseBridgeCall(toolInput, cwd) {
+  const command = typeof toolInput?.command === "string" ? toolInput.command : "";
+  if (!command.includes("bridge_call.py")) return null;
+  const home = typeof cwd === "string" && path.isAbsolute(cwd) ? cwd : process.cwd();
+  let dir = home; // working directory the segment runs in, following literal `cd` segments; null once unknown
+  for (const words of commandSegments(command)) {
+    const at = findBridgeScript(words);
+    if (at < 0) {
+      const c = commandIndex(words);
+      if (c < words.length && words[c] === "cd") {
+        const target = words[c + 1] === "--" ? words[c + 2] : words[c + 1];
+        dir = dir && target && !/[$`~*?]/.test(target) && target !== "-" ? path.resolve(dir, target) : null;
+      }
+      continue;
+    }
+    const opts = {};
+    for (let j = at + 2; j < words.length; j++) {
+      const word = words[j];
+      if (!word.startsWith("--")) continue;
+      const eq = word.indexOf("=");
+      const name = resolveBridgeOption(eq < 0 ? word : word.slice(0, eq));
+      if (!name) continue;
+      if (BRIDGE_FLAG_OPTIONS.includes(name)) opts[name] = true;
+      else if (eq >= 0) opts[name] = word.slice(eq + 1);
+      else if (j + 1 < words.length) opts[name] = words[++j];
+    }
+    const detached = opts["--background"] === true;
+    const given =
+      typeof opts["--workspace"] === "string" && !/[$`]/.test(opts["--workspace"]) ? opts["--workspace"] : ".";
+    const workspace = path.resolve(dir ?? home, given);
+    const timeout = Number(opts["--timeout-seconds"]);
+    return {
+      type: words[at + 1],
+      bg: detached || toolInput?.run_in_background === true,
+      detached,
+      workspace,
+      timeout_s: Number.isFinite(timeout) && timeout > 0 ? timeout : null,
+      run_id: typeof opts["--run-id"] === "string" ? opts["--run-id"] : null,
+    };
+  }
+  return null;
+}
+
+/** Read the codex run record PreToolUse stored for this call, or null when none exists. */
+function readCodexRun(codexDir, toolUseId) {
+  if (!safeId(toolUseId)) return null;
+  try {
+    const rec = JSON.parse(fs.readFileSync(path.join(codexDir, `${toolUseId}.json`), "utf8"));
+    return rec && rec.kind === "run" ? rec : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Path the host streams a background Bash task's output to, per candidate temp base; empty when unknown. */
+function backgroundOutputFiles(data, taskId) {
+  if (typeof taskId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(taskId)) return [];
+  if (typeof process.getuid !== "function" || typeof data.transcript_path !== "string") return [];
+  const sid = data.session_id;
+  if (typeof sid !== "string" || !safeId(sid)) return [];
+  // The host names the task dir by the same cwd slug it uses for the transcript's project dir.
+  const slug = path.basename(path.dirname(data.transcript_path));
+  if (!slug || slug === "." || slug === path.sep) return [];
+  const bases = new Set(["/tmp", os.tmpdir()]);
+  return [...bases].map((b) => path.join(b, `claude-${process.getuid()}`, slug, sid, "tasks", `${taskId}.output`));
+}
+
+/**
+ * Close a Codex run at PostToolUse. A foreground run ends with the call, and its run id is recorded as consumed so
+ * its final report is never charged to a background run. A background Bash run stays and is re-stamped with its
+ * real launch time (PreToolUse may precede a permission wait) and the host's task output file, which stays empty
+ * until the bridge exits, even when it dies before writing a report. A detached run also records its job id, but
+ * only when the job record exists under the guessed workspace, so a wrongly guessed workspace falls back to the
+ * age cap instead of reading as "job over".
+ */
+function finishCodexRun(codexDir, data, run) {
+  const file = path.join(codexDir, `${data.tool_use_id}.json`);
+  const response = data.tool_response;
+  const text =
+    typeof response === "string" ? response : JSON.stringify(response?.stdout ?? response?.output ?? response ?? "");
+  // A foreground call the host moved to the background mid-run reports its task id here; it is still running.
+  const backgrounded = run.bg || typeof response?.backgroundTaskId === "string";
+  if (!backgrounded) {
+    try {
+      fs.unlinkSync(file);
+    } catch (_) {}
+    const runId = /"run_id\\?"\s*:\s*\\?"([0-9a-fA-F-]{36})\\?"/.exec(text);
+    if (runId) {
+      try {
+        writeStateFile(
+          path.join(codexDir, `consumed-${runId[1]}.json`),
+          JSON.stringify({ kind: "consumed", run_id: runId[1] }),
+        );
+      } catch (_) {}
+    }
+    return;
+  }
+  try {
+    const rec = JSON.parse(fs.readFileSync(file, "utf8"));
+    rec.bg = true;
+    rec.launched = new Date().toISOString();
+    if (!run.detached) {
+      const files = backgroundOutputFiles(data, response?.backgroundTaskId);
+      if (files.length) rec.output_files = files;
+    } else {
+      const id = /"job_id\\?"\s*:\s*\\?"([0-9a-fA-F-]{36})\\?"/.exec(text);
+      // The textual workspace can be wrong (`$VAR`, a `cd` the parser could not follow), so the session cwd is
+      // probed too; the job is followed from wherever its record exists. Payload shape without stdout, or a job
+      // found nowhere: the renderer falls back to its age cap.
+      const candidates = [run.workspace, typeof data.cwd === "string" ? data.cwd : null].filter(
+        (w) => typeof w === "string" && path.isAbsolute(w),
+      );
+      const found =
+        id && candidates.find((w) => fs.existsSync(path.join(w, ".temp", "bridge", "jobs", `${id[1]}.json`)));
+      if (found) {
+        rec.job_id = id[1];
+        rec.workspace = found;
+      }
+    }
+    writeStateFile(file, JSON.stringify(rec));
+  } catch (_) {}
+}
+
+/**
+ * Remove run records of calls that never reached PostToolUse (denied, interrupted) for one agent.
+ *
+ * A foreground record is over with its turn. A background or detached record only counts once PostToolUse stamped its
+ * launch; one without `launched` was never dispatched, so no process exists for it.
+ */
+function clearForegroundRuns(codexDir, agentId) {
+  try {
+    for (const f of fs.readdirSync(codexDir)) {
+      try {
+        const rec = JSON.parse(fs.readFileSync(path.join(codexDir, f), "utf8"));
+        if (rec && rec.kind === "run" && (!rec.bg || !rec.launched) && (rec.agent_id ?? null) === agentId)
+          fs.unlinkSync(path.join(codexDir, f));
+      } catch (_) {}
+    }
+  } catch (_) {}
 }
 
 // Release one inflight slot on state/tools/<tool>.json when a tool call returns, and re-stamp `last`

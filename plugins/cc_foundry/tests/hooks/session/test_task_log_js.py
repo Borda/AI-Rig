@@ -9,8 +9,8 @@ Three behavioural areas are covered:
 
 * **Agent lifecycle** — ``PreToolUse`` / ``PostToolUse`` for ``Agent()``
   plus ``SubagentStart`` / ``SubagentStop`` events.
-* **Codex tracking** — ``Skill(bridge:*)`` creates a codex file consumed
-  by the status line and cleaned up on ``PostToolUse``.
+* **Codex tracking** — a Bash ``bridge_call.py advise|review|implement`` call creates a codex file consumed by the
+  status line; foreground runs are cleaned up on ``PostToolUse``, background and detached runs outlive it.
 * **Tool counting** — non-Agent ``PreToolUse`` increments a per-tool
   counter file used by the status line's tool-activity segment.
 
@@ -171,36 +171,71 @@ def _post_skill(sid: str, tool_use_id: str, skill: str) -> dict:
     }
 
 
-def _pre_bash(sid: str, tool_use_id: str) -> dict:
+def _pre_bash(
+    sid: str,
+    tool_use_id: str,
+    command: str = "echo hi",
+    *,
+    run_in_background: bool = False,
+    cwd: str | None = None,
+) -> dict:
     """Build a ``PreToolUse`` payload for a ``Bash`` call.
 
     Examples:
         >>> _pre_bash("s", "u")["tool_name"]
         'Bash'
     """
-    return {
+    tool_input: dict = {"command": command}
+    if run_in_background:
+        tool_input["run_in_background"] = True
+    payload: dict = {
         "hook_event_name": "PreToolUse",
         "tool_name": "Bash",
-        "tool_input": {"command": "echo hi"},
+        "tool_input": tool_input,
         "tool_use_id": tool_use_id,
         "session_id": sid,
     }
+    if cwd is not None:
+        payload["cwd"] = cwd
+    return payload
 
 
-def _post_bash(sid: str, tool_use_id: str, *, failed: bool = False) -> dict:
+def _post_bash(
+    sid: str,
+    tool_use_id: str,
+    command: str = "echo hi",
+    *,
+    failed: bool = False,
+    run_in_background: bool = False,
+    tool_response: object = None,
+    cwd: str | None = None,
+) -> dict:
     """Build a ``PostToolUse`` (or ``PostToolUseFailure``) payload for a ``Bash`` call.
 
     Examples:
         >>> _post_bash("s", "u", failed=True)["hook_event_name"]
         'PostToolUseFailure'
     """
-    return {
+    tool_input: dict = {"command": command}
+    if run_in_background:
+        tool_input["run_in_background"] = True
+    payload: dict = {
         "hook_event_name": "PostToolUseFailure" if failed else "PostToolUse",
         "tool_name": "Bash",
-        "tool_input": {"command": "echo hi"},
+        "tool_input": tool_input,
         "tool_use_id": tool_use_id,
         "session_id": sid,
     }
+    if tool_response is not None:
+        payload["tool_response"] = tool_response
+    if cwd is not None:
+        payload["cwd"] = cwd
+    return payload
+
+
+#: Bridge verb command the hook must recognise; the interpreter path and the option order mirror the bridge skills.
+_BRIDGE_REVIEW = 'python "/plug/bin/bridge_call.py" review --task "check it" --timeout-seconds 60 --workspace /ws/proj'
+_JOB_ID = "0b1f6c4e-5d2a-4c8e-9a41-7d3e2f1a8b90"
 
 
 def _pre_tool_with_cwd(sid: str, tool_use_id: str, cwd: str, tool_name: str = "Read") -> dict:
@@ -472,41 +507,516 @@ class TestAgentLifecycle:
 
 
 class TestCodexTracking:
-    """task-log.js: bridge Skill tracking under state/codex/."""
+    """task-log.js: Codex runs (Bash ``bridge_call.py`` calls) tracked under state/codex/.
 
-    def test_codex_skill_pre_creates_codex_file(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
-        """PreToolUse for bridge Skill writes codex/<tool_use_id>.json.
+    A ``Skill(bridge:*)`` call only returns instructions; the Codex run is the Bash call that follows, often in the
+    background, so that Bash call is what the status line must follow.
+    """
 
-        The status line reads this file to show that a Codex run is active while the bridge skill executes.
+    def test_bridge_skill_call_is_not_a_codex_run(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
+        """PreToolUse for a bridge Skill writes no codex file, since no Codex process exists yet.
+
+        The Skill call returns before Codex starts, so tracking it would show a run that is not running.
         """
-        tool_use_id = "tu-cdx-pre"
+        result = run_hook("task-log.js", _pre_skill(sid, "tu-cdx-skill", skill="bridge:review"), home=tmp_home)
 
-        result = run_hook(
+        assert result.returncode == 0, result.stderr
+        assert not (state_dir(sid) / "codex" / "tu-cdx-skill.json").exists()
+
+    @pytest.mark.parametrize("verb", ["advise", "review", "implement"])
+    def test_bridge_verb_bash_call_opens_codex_run(
+        self, sid: str, tmp_home: Path, run_hook, state_dir, verb: str
+    ) -> None:
+        """A Bash call running ``bridge_call.py <verb>`` writes codex/<tool_use_id>.json naming the verb.
+
+        The verb is what lets the status line tell an advice, a review and an implementation run apart.
+        """
+        command = f'python "/plug/bin/bridge_call.py" {verb} --task "q"'
+
+        result = run_hook("task-log.js", _pre_bash(sid, "tu-cdx-run", command), home=tmp_home)
+
+        assert result.returncode == 0, result.stderr
+        record = json.loads((state_dir(sid) / "codex" / "tu-cdx-run.json").read_text(encoding="utf-8"))
+        assert (record["kind"], record["type"], record["bg"], record["detached"]) == ("run", verb, False, False)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param('python "/plug/bin/bridge_call.py" status --job-id x', id="status-verb"),
+            pytest.param('python "/plug/bin/bridge_call.py" result --job-id x', id="result-verb"),
+            pytest.param('python "/plug/bin/bridge_call.py" cancel --job-id x', id="cancel-verb"),
+            pytest.param("grep review /plug/bin/bridge_call.py", id="grep-on-the-script"),
+            pytest.param("echo hi", id="unrelated-command"),
+        ],
+    )
+    def test_other_commands_open_no_codex_run(
+        self, sid: str, tmp_home: Path, run_hook, state_dir, command: str
+    ) -> None:
+        """Job lifecycle verbs and unrelated Bash commands do not start a Codex run.
+
+        Only advise, review and implement start Codex; status/result/cancel only read a job that already exists.
+        """
+        result = run_hook("task-log.js", _pre_bash(sid, "tu-cdx-none", command), home=tmp_home)
+
+        assert result.returncode == 0, result.stderr
+        assert not (state_dir(sid) / "codex" / "tu-cdx-none.json").exists()
+
+    def test_codex_run_records_timeout_and_workspace(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
+        """The run record keeps its timeout and an absolute workspace so the renderer can bound and follow it.
+
+        A relative ``--workspace .`` resolves against the Bash call's cwd, matching where the bridge itself resolves it.
+        """
+        command = 'python "/plug/bin/bridge_call.py" review --task "q" --timeout-seconds 90 --workspace .'
+
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-rec", command, cwd=str(tmp_home)), home=tmp_home)
+
+        record = json.loads((state_dir(sid) / "codex" / "tu-cdx-rec.json").read_text(encoding="utf-8"))
+        assert record["timeout_s"] == 90
+        assert Path(record["workspace"]) == tmp_home
+
+    @pytest.mark.parametrize("failed", [pytest.param(False, id="ok"), pytest.param(True, id="error")])
+    def test_foreground_codex_run_closes_with_its_call(
+        self, sid: str, tmp_home: Path, run_hook, state_dir, failed: bool
+    ) -> None:
+        """A foreground Codex call removes its codex file at PostToolUse and PostToolUseFailure.
+
+        The run ends with the Bash call, so the indicator must disappear at once instead of lingering.
+        """
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-fg", _BRIDGE_REVIEW), home=tmp_home)
+        assert (state_dir(sid) / "codex" / "tu-cdx-fg.json").exists()
+
+        result = run_hook("task-log.js", _post_bash(sid, "tu-cdx-fg", _BRIDGE_REVIEW, failed=failed), home=tmp_home)
+
+        assert result.returncode == 0, result.stderr
+        assert not (state_dir(sid) / "codex" / "tu-cdx-fg.json").exists()
+
+    def test_background_bash_codex_run_survives_post_tool_use(
+        self, sid: str, tmp_home: Path, run_hook, state_dir
+    ) -> None:
+        """A ``run_in_background`` Bash Codex run stays after PostToolUse, which fires at dispatch.
+
+        PostToolUse for a background Bash call arrives while Codex is still running; deleting there would hide the run.
+        """
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-bg", _BRIDGE_REVIEW, run_in_background=True), home=tmp_home)
+
+        run_hook("task-log.js", _post_bash(sid, "tu-cdx-bg", _BRIDGE_REVIEW, run_in_background=True), home=tmp_home)
+
+        record = json.loads((state_dir(sid) / "codex" / "tu-cdx-bg.json").read_text(encoding="utf-8"))
+        assert (record["bg"], record["detached"]) == (True, False)
+
+    def test_failed_background_launch_removes_codex_run(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
+        """A background Codex call whose Bash launch fails drops its codex file.
+
+        A launch failure means no Codex process exists, so the entry must not wait for the renderer's age cap.
+        """
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-bgf", _BRIDGE_REVIEW, run_in_background=True), home=tmp_home)
+
+        run_hook(
             "task-log.js",
-            _pre_skill(sid, tool_use_id, skill="bridge:review"),
+            _post_bash(sid, "tu-cdx-bgf", _BRIDGE_REVIEW, failed=True, run_in_background=True),
             home=tmp_home,
         )
 
-        assert result.returncode == 0, result.stderr
-        assert (state_dir(sid) / "codex" / f"{tool_use_id}.json").exists()
+        assert not (state_dir(sid) / "codex" / "tu-cdx-bgf.json").exists()
 
-    def test_codex_skill_post_removes_codex_file(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
-        """PostToolUse for bridge Skill removes the codex tracking file.
+    @pytest.mark.parametrize(
+        ("tool_response", "record_exists", "expect_job_id"),
+        [
+            pytest.param(
+                {"stdout": json.dumps({"job_id": _JOB_ID, "status": "queued"})}, True, True, id="stdout-object"
+            ),
+            pytest.param(json.dumps({"job_id": _JOB_ID, "status": "queued"}), True, True, id="plain-string"),
+            pytest.param({"stdout": "not json"}, True, False, id="no-job-id-in-output"),
+            pytest.param(None, True, False, id="payload-without-response"),
+            # The workspace is only a textual guess (a `cd` prefix or `$PWD` makes it wrong): with no job record there,
+            # the id is not stored, so the renderer cannot mistake the missing record for "job finished".
+            pytest.param(
+                {"stdout": json.dumps({"job_id": _JOB_ID})}, False, False, id="record-not-under-guessed-workspace"
+            ),
+        ],
+    )
+    def test_detached_codex_run_stays_and_records_verified_job_id(
+        self,
+        sid: str,
+        tmp_home: Path,
+        tmp_path: Path,
+        run_hook,
+        state_dir,
+        tool_response: object,
+        record_exists: bool,
+        expect_job_id: bool,
+    ) -> None:
+        """A ``--background`` run outlives its launch call and keeps the job id only when its record is found.
 
-        Once the bridge skill returns, the Codex activity indicator must disappear instead of lingering.
+        The job record is the only signal that a detached run ended; without a verified job id the entry stays and the
+        renderer falls back to its age cap.
         """
-        tool_use_id = "tu-cdx-post"
-        run_hook("task-log.js", _pre_skill(sid, tool_use_id, skill="bridge:review"), home=tmp_home)
-        assert (state_dir(sid) / "codex" / f"{tool_use_id}.json").exists()
+        workspace = tmp_path / "ws"
+        if record_exists:
+            (workspace / ".temp" / "bridge" / "jobs").mkdir(parents=True)
+            (workspace / ".temp" / "bridge" / "jobs" / f"{_JOB_ID}.json").write_text("{}", encoding="utf-8")
+        spelled = workspace.as_posix()
+        command = f'python "/plug/bin/bridge_call.py" implement --task t --background --workspace {spelled}'
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-det", command), home=tmp_home)
 
-        result = run_hook(
+        run_hook("task-log.js", _post_bash(sid, "tu-cdx-det", command, tool_response=tool_response), home=tmp_home)
+
+        record = json.loads((state_dir(sid) / "codex" / "tu-cdx-det.json").read_text(encoding="utf-8"))
+        assert record["detached"] is True
+        assert record.get("job_id") == (_JOB_ID if expect_job_id else None)
+
+    def test_codex_run_is_not_counted_as_bash(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
+        """A Codex run neither adds to nor releases the Bash counter, so a concurrent Bash call keeps its slot.
+
+        Counting the run as Bash would show one run twice, and releasing a slot it never took would shorten a real Bash
+        call's in-flight visibility.
+        """
+        run_hook("task-log.js", _pre_bash(sid, "tu-bash-plain"), home=tmp_home)
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-cnt", _BRIDGE_REVIEW), home=tmp_home)
+
+        run_hook("task-log.js", _post_bash(sid, "tu-cdx-cnt", _BRIDGE_REVIEW), home=tmp_home)
+
+        data = json.loads((state_dir(sid) / "tools" / "Bash.json").read_text(encoding="utf-8"))
+        assert (data["count"], data["inflight"]) == (1, 1)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param('git commit -m "make bridge_call.py implement accept --background"', id="commit-message"),
+            pytest.param("echo bridge_call.py review --background", id="echo-text"),
+            pytest.param("echo python bridge_call.py review --task q", id="echo-with-interpreter"),
+            pytest.param("printf '%s\\n' python3 /p/bin/bridge_call.py advise", id="printf-with-interpreter"),
+            pytest.param("grep -r python bridge_call.py review", id="grep-with-interpreter"),
+            pytest.param("ls # python bridge_call.py review --task q", id="trailing-comment"),
+            pytest.param("# python bridge_call.py review\nls", id="comment-line"),
+            pytest.param("echo $'it\\'s; python bridge_call.py review --task q'", id="ansi-c-quoting"),
+            pytest.param("cat <<'END TEXT'\npython bridge_call.py review\nEND TEXT", id="spaced-heredoc-body"),
+            pytest.param("bash -c 'echo python bridge_call.py review'", id="bash-c-echo"),
+            pytest.param('python -c "print(1)" # python bridge_call.py status', id="comment-text"),
+            pytest.param('python "/plug/bin/bridge_call.py" status --job-id x', id="lifecycle-verb"),
+        ],
+    )
+    def test_text_mentioning_a_bridge_call_is_not_a_codex_run(
+        self, sid: str, tmp_home: Path, run_hook, state_dir, command: str
+    ) -> None:
+        """A command that only mentions ``bridge_call.py <verb>`` in text is neither a run nor missing from Bash.
+
+        The run is identified from the command's own words (interpreter, script, verb); text inside a quoted argument or
+        after ``echo`` must neither leave a ghost entry nor drop the call out of the Bash counter.
+        """
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-text", command, run_in_background=True), home=tmp_home)
+
+        assert not (state_dir(sid) / "codex" / "tu-cdx-text.json").exists()
+        assert json.loads((state_dir(sid) / "tools" / "Bash.json").read_text(encoding="utf-8"))["count"] == 1
+
+    @pytest.mark.parametrize(
+        ("command", "detached", "timeout_s"),
+        [
+            # Flag-shaped text inside the quoted --task value is data, not an option.
+            pytest.param(
+                'python "/p/bin/bridge_call.py" implement --task "add a --background option --timeout-seconds 5"',
+                False,
+                None,
+                id="flags-inside-task-text",
+            ),
+            pytest.param(
+                'python "/p/bin/bridge_call.py" review --timeout-seconds 230.5 --task q', False, 230.5, id="float"
+            ),
+            pytest.param(
+                'python "/p/bin/bridge_call.py" review --timeout-seconds=45 --task q', False, 45, id="equals-form"
+            ),
+            # argparse accepts a unique prefix of a long option.
+            pytest.param(
+                'python "/p/bin/bridge_call.py" implement --back --timeout 90 --task q', True, 90, id="abbreviated"
+            ),
+            pytest.param(
+                "cd sub && python3 /p/bin/bridge_call.py advise --task q", False, None, id="after-cd-and-python3"
+            ),
+            pytest.param(
+                'python "/p/bin/bridge_call.py" review --task q 2>&1 | tail -5', False, None, id="piped-output"
+            ),
+        ],
+    )
+    def test_options_are_read_from_the_invocation_words(
+        self,
+        sid: str,
+        tmp_home: Path,
+        run_hook,
+        state_dir,
+        command: str,
+        detached: bool,
+        timeout_s: float | None,
+    ) -> None:
+        """Flags, float and abbreviated options are read from the bridge call's own words.
+
+        A task that merely contains ``--background`` must not turn a foreground run into a long-lived ghost, and a float
+        or abbreviated ``--timeout-seconds`` must still bound the run instead of falling back to the default.
+        """
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-opt", command), home=tmp_home)
+
+        record = json.loads((state_dir(sid) / "codex" / "tu-cdx-opt.json").read_text(encoding="utf-8"))
+        assert (record["detached"], record["timeout_s"]) == (detached, timeout_s)
+
+    def test_post_tool_use_without_background_flag_keeps_the_stored_run(
+        self, sid: str, tmp_home: Path, run_hook, state_dir
+    ) -> None:
+        """A background run stays at PostToolUse even when that event's tool_input omits ``run_in_background``.
+
+        PreToolUse stored ``bg``; the lifecycle follows that record, so a payload that drops the flag cannot delete a
+        still-running run at dispatch (the symptom this work fixes).
+        """
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-store", _BRIDGE_REVIEW, run_in_background=True), home=tmp_home)
+
+        run_hook("task-log.js", _post_bash(sid, "tu-cdx-store", _BRIDGE_REVIEW), home=tmp_home)
+
+        assert (state_dir(sid) / "codex" / "tu-cdx-store.json").exists()
+
+    def test_heredoc_body_mentioning_a_bridge_call_is_not_a_run(
+        self, sid: str, tmp_home: Path, run_hook, state_dir
+    ) -> None:
+        """Text inside a heredoc body (a commit message) is data, so a mentioned bridge call is not a run.
+
+        A commit message written through ``git commit -F- <<EOF`` can quote a full bridge command; reading it as a
+        command would leave a ``(bg)`` ghost and drop the commit from the Bash counter.
+        """
+        command = "git commit -F- <<'EOF'\nnote: python bridge_call.py review --background\nEOF"
+
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-hd", command, run_in_background=True), home=tmp_home)
+
+        assert not (state_dir(sid) / "codex" / "tu-cdx-hd.json").exists()
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param('out=$(python3 "/p/bin/bridge_call.py" review --task q)', id="command-substitution"),
+            pytest.param('out=`python3 "/p/bin/bridge_call.py" review --task q`', id="backticks"),
+            pytest.param('(python3 "/p/bin/bridge_call.py" review --task q)', id="subshell"),
+            pytest.param("cat <<EOF\nbody\nEOF\npython3 /p/bin/bridge_call.py review --task q", id="after-heredoc"),
+            pytest.param("python -u /p/bin/bridge_call.py review --task q", id="interpreter-option"),
+            pytest.param("python3 -X utf8 /p/bin/bridge_call.py review --task q", id="interpreter-option-with-value"),
+            pytest.param("env X=1 python3 /p/bin/bridge_call.py review --task q", id="env-prefix"),
+            pytest.param("env -u CLAUDECODE python3 /p/bin/bridge_call.py review --task q", id="env-unset-option"),
+            pytest.param("FOO=1 BAR=2 python3 /p/bin/bridge_call.py review --task q", id="assignment-prefix"),
+            pytest.param("uv run python /p/bin/bridge_call.py review --task q", id="uv-run"),
+            pytest.param("timeout 600 python3 /p/bin/bridge_call.py review --task q", id="timeout-prefix"),
+            pytest.param("x=$((1<<2))\npython3 /p/bin/bridge_call.py review --task q", id="after-arithmetic-shift"),
+            pytest.param("ls # don't\npython3 /p/bin/bridge_call.py review --task q", id="after-apostrophe-comment"),
+            pytest.param("timeout -s KILL 300 python3 /p/bin/bridge_call.py review --task q", id="timeout-signal"),
+            pytest.param("timeout -k 5 300 python3 /p/bin/bridge_call.py review --task q", id="timeout-kill-after"),
+            pytest.param("uv run --with requests python /p/bin/bridge_call.py review --task q", id="uv-run-with"),
+            pytest.param("if python3 /p/bin/bridge_call.py review --task q; then echo ok; fi", id="if-condition"),
+            pytest.param("while python3 /p/bin/bridge_call.py review --task q; do break; done", id="while-condition"),
+            pytest.param("2>/dev/null python3 /p/bin/bridge_call.py review --task q", id="leading-redirect"),
+            pytest.param("bash -c 'python3 /p/bin/bridge_call.py review --task q'", id="bash-c"),
+            pytest.param(
+                "cat <<'END TEXT'\nbody\nEND TEXT\npython3 /p/bin/bridge_call.py review --task q", id="spaced-heredoc"
+            ),
+        ],
+    )
+    def test_call_inside_a_substitution_or_after_a_heredoc_is_a_run(
+        self, sid: str, tmp_home: Path, run_hook, state_dir, command: str
+    ) -> None:
+        """A real bridge call is found inside ``$(...)``, backticks, a subshell, or after a heredoc body."""
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-sub", command), home=tmp_home)
+
+        record = json.loads((state_dir(sid) / "codex" / "tu-cdx-sub.json").read_text(encoding="utf-8"))
+        assert record["type"] == "review"
+
+    def test_run_id_option_is_recorded(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
+        """An explicit ``--run-id`` is kept so the renderer can match the bridge's final report to this exact run."""
+        command = 'python3 "/p/bin/bridge_call.py" review --task q --run-id my-run-7'
+
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-rid", command), home=tmp_home)
+
+        record = json.loads((state_dir(sid) / "codex" / "tu-cdx-rid.json").read_text(encoding="utf-8"))
+        assert record["run_id"] == "my-run-7"
+
+    @pytest.mark.skipif(not hasattr(os, "getuid"), reason="the host task dir is keyed by the POSIX uid")
+    def test_background_launch_records_launch_time_and_task_output_file(
+        self, sid: str, tmp_home: Path, run_hook, state_dir
+    ) -> None:
+        """A background run is re-stamped at dispatch and keeps the host's task output path.
+
+        The captured background ``PostToolUse`` carries ``backgroundTaskId``; the output file stays empty until the
+        bridge exits, which lets the renderer end a run whose launch died before it wrote any report.
+        """
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-bgo", _BRIDGE_REVIEW, run_in_background=True), home=tmp_home)
+        post = _post_bash(
+            sid,
+            "tu-cdx-bgo",
+            _BRIDGE_REVIEW,
+            run_in_background=True,
+            tool_response={"backgroundTaskId": "bt1abc", "stdout": ""},
+        )
+        post["transcript_path"] = f"/home/u/.claude/projects/-proj-slug/{sid}.jsonl"
+
+        run_hook("task-log.js", post, home=tmp_home)
+
+        record = json.loads((state_dir(sid) / "codex" / "tu-cdx-bgo.json").read_text(encoding="utf-8"))
+        assert "launched" in record
+        assert Path(record["output_files"][0]).parts[-4:] == ("-proj-slug", sid, "tasks", "bt1abc.output")
+
+    @pytest.mark.parametrize(
+        ("prefix", "expected"),
+        [
+            pytest.param("cd sub && ", "sub", id="relative-cd"),
+            pytest.param("cd -- sub; ", "sub", id="cd-with-double-dash"),
+            pytest.param("cd sub && cd inner && ", "sub/inner", id="two-cds"),
+            pytest.param("", "", id="no-cd"),
+        ],
+    )
+    def test_workspace_follows_a_literal_cd(
+        self, sid: str, tmp_home: Path, run_hook, state_dir, prefix: str, expected: str
+    ) -> None:
+        """A literal ``cd`` before the bridge call moves the workspace the run is recorded under.
+
+        The bridge resolves ``--workspace`` (default ``.``) against the directory it runs in, so reading it against the
+        session cwd alone would look for a detached job record in the wrong place.
+        """
+        command = f'{prefix}python3 "/p/bin/bridge_call.py" implement --task t --background'
+
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-cd", command, cwd=str(tmp_home)), home=tmp_home)
+
+        record = json.loads((state_dir(sid) / "codex" / "tu-cdx-cd.json").read_text(encoding="utf-8"))
+        assert Path(record["workspace"]) == tmp_home / expected
+
+    def test_detached_job_is_found_under_the_session_cwd_when_the_workspace_is_a_variable(
+        self, sid: str, tmp_home: Path, tmp_path: Path, run_hook, state_dir
+    ) -> None:
+        """A workspace given as ``$(pwd)`` is probed against the session cwd, where the job record then is.
+
+        The text cannot be evaluated, so the run records the workspace it can resolve and PostToolUse also looks under
+        the session cwd; the run follows the job from wherever the record exists.
+        """
+        workspace = tmp_path / "ws"
+        (workspace / ".temp" / "bridge" / "jobs").mkdir(parents=True)
+        (workspace / ".temp" / "bridge" / "jobs" / f"{_JOB_ID}.json").write_text("{}", encoding="utf-8")
+        command = 'python3 "/p/bin/bridge_call.py" implement --task t --background --workspace "$(pwd)"'
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-pwd", command, cwd=str(workspace)), home=tmp_home)
+
+        run_hook(
             "task-log.js",
-            _post_skill(sid, tool_use_id, skill="bridge:review"),
+            _post_bash(
+                sid,
+                "tu-cdx-pwd",
+                command,
+                tool_response={"stdout": json.dumps({"job_id": _JOB_ID})},
+                cwd=str(workspace),
+            ),
             home=tmp_home,
         )
 
-        assert result.returncode == 0, result.stderr
-        assert not (state_dir(sid) / "codex" / f"{tool_use_id}.json").exists()
+        record = json.loads((state_dir(sid) / "codex" / "tu-cdx-pwd.json").read_text(encoding="utf-8"))
+        assert (record["job_id"], Path(record["workspace"])) == (_JOB_ID, workspace)
+
+    def test_foreground_call_moved_to_the_background_stays(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
+        """A foreground run whose PostToolUse carries ``backgroundTaskId`` is kept as a background run.
+
+        If the host moves a running call to the background, its completion event reports the task id while Codex is
+        still running; deleting the record would hide the run.
+        """
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-moved", _BRIDGE_REVIEW), home=tmp_home)
+
+        run_hook(
+            "task-log.js",
+            _post_bash(sid, "tu-cdx-moved", _BRIDGE_REVIEW, tool_response={"backgroundTaskId": "bt7", "stdout": ""}),
+            home=tmp_home,
+        )
+
+        record = json.loads((state_dir(sid) / "codex" / "tu-cdx-moved.json").read_text(encoding="utf-8"))
+        assert (record["bg"], "launched" in record) == (True, True)
+
+    def test_finished_foreground_run_records_its_run_id_as_consumed(
+        self, sid: str, tmp_home: Path, run_hook, state_dir
+    ) -> None:
+        """A foreground run leaves its run id behind, so the renderer never charges its report to a background run."""
+        run_id = "bf1ce6cb-7828-4139-a772-7b6dc5bb4ad2"
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-cons", _BRIDGE_REVIEW), home=tmp_home)
+
+        run_hook(
+            "task-log.js",
+            _post_bash(sid, "tu-cdx-cons", _BRIDGE_REVIEW, tool_response={"stdout": json.dumps({"run_id": run_id})}),
+            home=tmp_home,
+        )
+
+        consumed = json.loads((state_dir(sid) / "codex" / f"consumed-{run_id}.json").read_text(encoding="utf-8"))
+        assert consumed == {"kind": "consumed", "run_id": run_id}
+
+    @pytest.mark.parametrize(
+        ("agent_id", "expected"),
+        [pytest.param(None, None, id="main-agent"), pytest.param("agent-7", "agent-7", id="subagent")],
+    )
+    def test_run_record_keeps_the_launching_agent(
+        self, sid: str, tmp_home: Path, run_hook, state_dir, agent_id: str | None, expected: str | None
+    ) -> None:
+        """The run record names the subagent that launched it, or null for the main agent.
+
+        Stop and SubagentStop use it to clear only the orphans that belong to the agent that has just ended.
+        """
+        pre = _pre_bash(sid, "tu-cdx-own", _BRIDGE_REVIEW)
+        if agent_id is not None:
+            pre["agent_id"] = agent_id
+
+        run_hook("task-log.js", pre, home=tmp_home)
+
+        record = json.loads((state_dir(sid) / "codex" / "tu-cdx-own.json").read_text(encoding="utf-8"))
+        assert record["agent_id"] == expected
+
+    def test_stop_clears_main_agent_foreground_orphans_only(
+        self, sid: str, tmp_home: Path, run_hook, state_dir
+    ) -> None:
+        """Stop removes the main agent's foreground record, keeping a subagent's run and a background run.
+
+        A foreground call denied or interrupted before PostToolUse leaves a record that no event removes; a background
+        subagent may still be mid-call when the main turn stops, and a background run outlives the turn by design.
+        """
+        sub = _pre_bash(sid, "tu-cdx-sub", _BRIDGE_REVIEW)
+        sub["agent_id"] = "agent-7"
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-main", _BRIDGE_REVIEW), home=tmp_home)
+        run_hook("task-log.js", sub, home=tmp_home)
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-bgrun", _BRIDGE_REVIEW, run_in_background=True), home=tmp_home)
+        run_hook("task-log.js", _post_bash(sid, "tu-cdx-bgrun", _BRIDGE_REVIEW, run_in_background=True), home=tmp_home)
+
+        run_hook("task-log.js", {"hook_event_name": "Stop", "session_id": sid}, home=tmp_home)
+
+        codex = state_dir(sid) / "codex"
+        assert sorted(p.name for p in codex.glob("*.json")) == ["tu-cdx-bgrun.json", "tu-cdx-sub.json"]
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param(_BRIDGE_REVIEW, id="background-bash"),
+            pytest.param('python "/plug/bin/bridge_call.py" implement --task t --background', id="detached-launcher"),
+        ],
+    )
+    def test_stop_clears_a_background_run_that_was_never_dispatched(
+        self, sid: str, tmp_home: Path, run_hook, state_dir, command: str
+    ) -> None:
+        """A background or detached call denied before PostToolUse leaves no process, so Stop removes its record.
+
+        Dispatched runs carry the launch stamp PostToolUse writes; a record without one never started anything.
+        """
+        run_hook("task-log.js", _pre_bash(sid, "tu-cdx-denied", command, run_in_background=True), home=tmp_home)
+
+        run_hook("task-log.js", {"hook_event_name": "Stop", "session_id": sid}, home=tmp_home)
+
+        assert not (state_dir(sid) / "codex" / "tu-cdx-denied.json").exists()
+
+    def test_subagent_stop_clears_that_agents_foreground_run(
+        self, sid: str, tmp_home: Path, run_hook, state_dir
+    ) -> None:
+        """SubagentStop removes the stopped subagent's foreground record and leaves another agent's run alone."""
+        mine = _pre_bash(sid, "tu-cdx-mine", _BRIDGE_REVIEW)
+        mine["agent_id"] = "agent-7"
+        other = _pre_bash(sid, "tu-cdx-other", _BRIDGE_REVIEW)
+        other["agent_id"] = "agent-8"
+        run_hook("task-log.js", mine, home=tmp_home)
+        run_hook("task-log.js", other, home=tmp_home)
+
+        run_hook("task-log.js", _subagent_stop(sid, "agent-7"), home=tmp_home)
+
+        codex = state_dir(sid) / "codex"
+        assert sorted(p.name for p in codex.glob("*.json")) == ["tu-cdx-other.json"]
 
 
 class TestToolCounting:

@@ -28,8 +28,12 @@
 //   transcript proof): after its force ban and a dry-run pass, one push of this branch at this HEAD
 //   to a configured remote name — `git push [-u] [<remote>] [HEAD|<branch>][:<branch>]`, a
 //   substitution printing the current branch, `git lfs push <remote> <branch>` — run from the
-//   checkout itself, alone in its command; a delete, prune, `--all`, `--tags`, `--follow-tags`,
-//   another ref, a URL/path/variable destination, `cd`/`pushd`/`popd`, `-C`/`GIT_DIR`, inline config
+//   checkout itself, alone in its command; or, for a worktree the session is not in, as
+//   `git -C <absolute directory> push …` (one `-C`, on the one push), when the question shows that same
+//   command in one inline code span: the token then binds that worktree's branch and HEAD (`questionPushWorktree`;
+//   a branch is checked out in one worktree, so no path is stored); a delete, prune, `--all`, `--tags`,
+//   `--follow-tags`, another ref, a URL/path/variable destination, `cd`/`pushd`/`popd`, any other `-C` use,
+//   `--git-dir`/`--work-tree`/`GIT_DIR`, inline config
 //   redirecting the push, send-pack/http-push/subtree push, a second push, a repeating construct or
 //   git that moves HEAD beside it is blocked (the user runs it by hand where no approval can cover
 //   it; commit-guard.js header decides). A force push is never allowed: the force ban runs before
@@ -292,7 +296,7 @@ const SCOPES = Object.freeze([
       "another branch or HEAD",
       "a delete, prune, --all, --tags or mirror push",
       "a URL or path destination",
-      "a push from another checkout or after cd/pushd",
+      "a push from another checkout than the approved branch's, or after cd/pushd",
       "a spawned agent's call",
     ],
     revokeAnswer: "Deny",
@@ -521,6 +525,21 @@ function gitLocation(cwd, env) {
  * @returns {{dir: string}|{reason: string}}
  */
 function recordDirectory(cwd, env = process.env) {
+  const found = checkoutRoot(cwd, env);
+  return found.reason ? found : { dir: found.dir };
+}
+
+/**
+ * The git common dir and the work tree root of the checkout holding `cwd`, bound to the session project, or a reason.
+ *
+ * Same location checks as `recordDirectory`; the work tree root names the checkout itself, which differs between the
+ * main checkout and each linked worktree of one common dir.
+ *
+ * @param {string|undefined} cwd Directory inside the checkout.
+ * @param {object} [env] Environment; CLAUDE_PROJECT_DIR binds the result to that project.
+ * @returns {{dir: string, toplevel: string}|{reason: string}}
+ */
+function checkoutRoot(cwd, env = process.env) {
   const here = gitLocation(cwd || process.cwd(), env);
   if (here.reason) return here;
   const project = env && env.CLAUDE_PROJECT_DIR;
@@ -531,7 +550,28 @@ function recordDirectory(cwd, env = process.env) {
       return { reason: "the git common directory is not the session project's" };
     }
   }
-  return { dir: here.commonDir };
+  return { dir: here.commonDir, toplevel: here.toplevel };
+}
+
+/**
+ * The checkout holding `dir` when it shares the git common dir of the session checkout at `cwd`, or a reason.
+ *
+ * A worktree push names its checkout with `-C`: it must belong to the session's own project whether or not
+ * CLAUDE_PROJECT_DIR is set, so a `-C` into another repository, even one with a branch of the same name, finds nothing.
+ *
+ * @param {string} dir Directory named by `git -C <dir>`.
+ * @param {string|undefined} cwd Session directory (hook payload `cwd`).
+ * @param {object} [env] Environment.
+ * @returns {{dir: string, toplevel: string}|{reason: string}}
+ */
+function siblingCheckout(dir, cwd, env = process.env) {
+  const target = checkoutRoot(dir, env);
+  if (target.reason) return { reason: `the \`-C\` directory is no checkout of this project: ${target.reason}` };
+  const session = checkoutRoot(cwd, env);
+  if (session.reason || session.dir !== target.dir) {
+    return { reason: "the `-C` directory is no checkout of the session's project (another git common directory)" };
+  }
+  return target;
 }
 
 /**
@@ -595,12 +635,77 @@ function isAncestor(cwd, ancestor, descendant, env = process.env) {
 
 // ── Push token ────────────────────────────────────────────────────────────────
 
+// A command span of a `git-push` question that names the checkout pushed: `git -C <absolute directory> push …`.
+const PUSH_WORKTREE_SPAN = /^git\s+-C\s/;
+// `git -C` anywhere in the question text, in a span or not.
+const GIT_DASH_C = /\bgit\s+-C\b/;
+// A `-C` directory word is taken literally only without any character a shell may quote, split, expand or comment (a
+// space too: the lexer's two readings split a quoted space differently), and not as an option or `=cmd`. The guard
+// (commit-guard.js) and the writer judge the raw spelling alike, so the writer never records a push the guard refuses.
+const UNSAFE_DIRECTORY_WORD = /[\s"'`$\\*?[\]{}()<>|&;^!#~]|^[-=]/;
+const DIRECTORY_SPELLING =
+  "a worktree path with a space, quote, backslash, glob or variable cannot be pushed through the guard (on Windows " +
+  "write it with forward slashes); give the user the push to run by hand";
+
+/**
+ * The checkout a `git-push` question names with a `git -C <dir> push …` span, or why it names none it can approve.
+ *
+ * No such span: `{dir: null}`, the push runs from the session cwd. At most one span, on one line, plain text (the
+ * strict word reader of the gh question: no operator, variable, glob, tilde or hidden character outside quotes), and
+ * `git -C <absolute directory> push` in that order.
+ *
+ * @param {string} question Question text the user answered.
+ * @returns {{dir: string|null}|{reason: string}}
+ */
+function questionPushWorktree(question) {
+  const named = inlineCodeSpans(String(question)).filter((span) => PUSH_WORKTREE_SPAN.test(span.content));
+  if (named.length === 0) {
+    // `git -C` shown outside a span would otherwise fall back to the session checkout: the token would bind a branch
+    // the user was not asked about.
+    return GIT_DASH_C.test(question)
+      ? {
+          reason:
+            "the question shows `git -C` outside an inline code span; show the worktree push as one span, `git -C <absolute directory> push …`",
+        }
+      : { dir: null };
+  }
+  if (HIDDEN_IN_QUESTION.test(question) || FENCE.test(question)) {
+    return {
+      reason:
+        "the question holds a fenced block or an invisible character; show the worktree push in one inline code span",
+    };
+  }
+  if (named.length > 1)
+    return { reason: "the question names more than one `git -C <dir> push` span; ask about one push" };
+  const content = named[0].content.trim();
+  if (named[0].multiline || HIDDEN_IN_COMMAND.test(content)) {
+    return {
+      reason: "the `git -C` span spans lines or holds an invisible character; name it on one line in plain text",
+    };
+  }
+  if (UNSAFE_DIRECTORY_WORD.test(content.split(/\s+/)[2] ?? "")) return { reason: DIRECTORY_SPELLING };
+  const parsed = plainCommandWords(content);
+  if (parsed.reason) {
+    return {
+      reason: "the `git -C` span is not one plain command (no operator, variable, glob or tilde outside quotes)",
+    };
+  }
+  const [git, option, dir, push] = parsed.words;
+  if (git !== "git" || option !== "-C" || push !== "push" || !dir || !path.isAbsolute(dir)) {
+    return { reason: "the worktree push must read `git -C <absolute directory> push …`" };
+  }
+  return { dir };
+}
+
 /**
  * The push token's own fields for an approved `git-push` question (a RECORD_BUILDERS entry).
  *
  * The token binds the checkout the push runs from — its branch and HEAD — never the command's spelling; the question
  * text the user saw is kept in the common `question` field and must name that branch (the rule's question shows it;
- * no HEAD sha is required there).
+ * no HEAD sha is required there). The checkout is the payload `cwd`'s, or — when the question shows one
+ * `git -C <absolute directory> push …` span — that directory, which must be a checkout of the session project (a
+ * worktree pushed from a session whose cwd is elsewhere). A branch is checked out in one worktree, so branch + HEAD
+ * identify it and the record needs no path field.
  *
  * @param {object} data Parsed hook payload.
  * @param {{question: string}} verdict The write verdict, holding the question text the user answered.
@@ -608,7 +713,13 @@ function isAncestor(cwd, ancestor, descendant, env = process.env) {
  * @returns {{fields: object}|{reason: string}}
  */
 function pushTokenFields(data, verdict, { now, env }) {
-  const here = gitHead(data.cwd, env);
+  const named = questionPushWorktree(verdict.question);
+  if (named.reason) return named;
+  if (named.dir) {
+    const home = siblingCheckout(named.dir, data.cwd, env);
+    if (home.reason) return home;
+  }
+  const here = gitHead(named.dir || data.cwd, env);
   if (here.reason) return here;
   if (!String(verdict.question).includes(here.branch)) {
     return {
@@ -622,9 +733,10 @@ function pushTokenFields(data, verdict, { now, env }) {
 // ── Push run token ────────────────────────────────────────────────────────────
 
 // A push named in an inline code span, and the plain remote and branch words it may hold.
-const PUSH_COMMAND = /^git push /;
-// Any span that reads as a push in spelling (extra or tab spaces, a leading space): a second one makes the question ambiguous.
-const PUSH_LIKE = /^\s*git\s+push\b/i;
+const PUSH_COMMAND = /^git (?:-C \S+ )?push /;
+// Any span that reads as a push in spelling (extra or tab spaces, a leading space, a `-C <dir>`): a second one makes the
+// question ambiguous.
+const PUSH_LIKE = /^\s*git\s+(?:-C\s+\S+\s+)?push\b/i;
 const RUN_REMOTE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const RUN_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 // Branch words the guard can never spend: `HEAD` and a full ref name are not a plain branch name.
@@ -649,7 +761,11 @@ function questionPushRun(question) {
   const pushes = spans.filter((span) => PUSH_COMMAND.test(span.content));
   const heads = spans.filter((span) => COMMIT_ID.test(span.content));
   if (pushes.length !== 1 || spans.filter((span) => PUSH_LIKE.test(span.content)).length !== 1) {
-    return { reason: "the question must name exactly one push in an inline code span (`git push <remote> <branch>`)" };
+    return {
+      reason:
+        "the question must name exactly one push in an inline code span (`git push <remote> <branch>`, or " +
+        "`git -C <absolute worktree path> push <remote> <branch>` with an unquoted path without spaces)",
+    };
   }
   if (heads.length !== 1) {
     return { reason: "the question must name the PR head commit once, as a full commit id in an inline code span" };
@@ -657,9 +773,20 @@ function questionPushRun(question) {
   if (pushes[0].multiline) return { reason: "the push spans lines; name it on one line" };
   const command = pushes[0].content.trim();
   if (HIDDEN_IN_COMMAND.test(command)) return { reason: HIDDEN_REASON };
+  if (command.startsWith("git -C ") && UNSAFE_DIRECTORY_WORD.test(command.split(/\s+/)[2] ?? "")) {
+    return { reason: DIRECTORY_SPELLING };
+  }
   const parsed = plainCommandWords(command);
   if (parsed.reason) return parsed;
-  const [git, push, remote = "", branch = "", ...rest] = parsed.words;
+  // A worktree the session is not in is named `git -C <absolute directory> push <remote> <branch>`.
+  const dashC = parsed.words[1] === "-C";
+  const dir = dashC ? parsed.words[2] : null;
+  if (dashC && (!dir || !path.isAbsolute(dir))) {
+    return { reason: "the worktree push must read `git -C <absolute directory> push <remote> <branch>`" };
+  }
+  const [git, push, remote = "", branch = "", ...rest] = dashC
+    ? [parsed.words[0], ...parsed.words.slice(3)]
+    : parsed.words;
   const plainBranch =
     RUN_BRANCH.test(branch) &&
     !RUN_BRANCH_UNSPENDABLE.test(branch) &&
@@ -669,7 +796,7 @@ function questionPushRun(question) {
   if (git !== "git" || push !== "push" || rest.length > 0 || !RUN_REMOTE.test(remote) || !plainBranch) {
     return { reason: "the push must be exactly `git push <remote> <branch>` with plain names and no option" };
   }
-  return { remote, branch, baseHead: heads[0].content };
+  return { remote, branch, baseHead: heads[0].content, dir };
 }
 
 /**
@@ -680,9 +807,13 @@ function questionPushRun(question) {
  * @param {{now: Date}} options Creation time.
  * @returns {{fields: object}|{reason: string}}
  */
-function pushRunTokenFields(data, verdict, { now }) {
+function pushRunTokenFields(data, verdict, { now, env }) {
   const named = questionPushRun(verdict.question);
   if (named.reason) return named;
+  if (named.dir) {
+    const home = siblingCheckout(named.dir, data.cwd, env);
+    if (home.reason) return home;
+  }
   const expires = new Date(now.getTime() + PUSH_RUN_TOKEN_TTL_MS).toISOString();
   return {
     fields: {
@@ -843,7 +974,7 @@ function plainCommandWords(command) {
     const problem = quote === "'" ? null : braces ? EXPANSION_REASON : plainCharProblem(c, quote, word === null);
     if (problem) {
       return {
-        reason: `the approved command holds ${problem}; the approved text must be one gh command whose every value it shows`,
+        reason: `the approved command holds ${problem}; the approved text must be one plain command whose every value it shows`,
       };
     }
     if (quote === "'") {
@@ -1527,6 +1658,16 @@ function evaluateAnswer(data, lookup = findToolUse) {
 }
 
 /**
+ * Where a push token's push runs, for its recorded message: the worktree the question named, else this checkout.
+ *
+ * @param {string|null|undefined} dir The question's `git -C` directory, when it named one.
+ * @returns {string}
+ */
+function pushOrigin(dir) {
+  return dir ? `the worktree ${dir}, written \`git -C ${dir} push …\`` : "this checkout";
+}
+
+/**
  * The context line for a record just written: what it allows, for how long, and how to revoke it.
  *
  * @param {object} row Scope row.
@@ -1547,7 +1688,7 @@ function recordedMessage(row, record, target) {
   if (row.id === "push-run") {
     return (
       `${written}One non-force push of branch ${record.branch} to remote ${record.remote} may run once, until ` +
-      `${record.expires_at}, from this checkout while HEAD descends from ${record.base_head.slice(0, 12)}, as the ` +
+      `${record.expires_at}, from ${pushOrigin(questionPushRun(record.question).dir)} while HEAD descends from ${record.base_head.slice(0, 12)}, as the ` +
       `only push in its Bash command; a second push, another branch or remote, or a HEAD off that line needs a new ` +
       `${row.header} or git-push question; ${never}`
     );
@@ -1555,7 +1696,8 @@ function recordedMessage(row, record, target) {
   if (row.id === "push-once") {
     return (
       `${written}One non-force push of branch ${record.branch} at ${record.head.slice(0, 12)} to a configured ` +
-      `remote may run once, until ${record.expires_at}, from this checkout, as the only push in its Bash command; a ` +
+      `remote may run once, until ${record.expires_at}, from ${pushOrigin(questionPushWorktree(record.question).dir)}, ` +
+      `as the only push in its Bash command; a ` +
       `second push, a new commit or another branch needs a new ${row.header} question; ${never}`
     );
   }
@@ -1849,7 +1991,7 @@ function pruneClaims(dir, row, ownClaim, now) {
  * @param {{transcriptPath?: string, now: Date}} options The spending call's transcript and the current time.
  * @returns {string|null} Reasons never echo token values.
  */
-function approvalProofProblem(row, record, { transcriptPath, now }) {
+function approvalProofProblem(row, record, { transcriptPath, now, checkout }) {
   if (typeof transcriptPath !== "string" || transcriptPath === "") {
     return "the call names no session transcript to check the approval in";
   }
@@ -1883,7 +2025,46 @@ function approvalProofProblem(row, record, { transcriptPath, now }) {
       named.remote === record.remote && named.branch === record.branch && named.baseHead === record.base_head;
     if (named.reason || !same) return "the approving question names another push than the token";
   }
-  return null;
+  return row.id === "push-once" || row.id === "push-run" ? checkoutProblem(row, record.question, checkout) : null;
+}
+
+/**
+ * The work tree root of the checkout holding `dir`, or null when git resolves none.
+ *
+ * @param {string} dir Directory a question's `git -C` span names.
+ * @returns {string|null}
+ */
+function toplevelOf(dir) {
+  const found = gitLocation(dir, process.env);
+  return found.reason ? null : found.toplevel;
+}
+
+/**
+ * Why the approving question does not show the checkout this push runs in, or null.
+ *
+ * A push of a checkout other than the session cwd's (`checkout.explicit`, a `git -C` directory) is covered only when
+ * the question the user answered showed that same worktree in a `git -C <absolute directory> push …` span; the user
+ * selected it. A push from the cwd's own checkout never runs on a question that shows another worktree.
+ *
+ * @param {object} row Scope row (`push-once` or `push-run`).
+ * @param {string} question The token's question text.
+ * @param {{toplevel: string, explicit: boolean}|undefined} checkout The checkout the push runs in.
+ * @returns {string|null}
+ */
+function checkoutProblem(row, question, checkout) {
+  const named = row.id === "push-run" ? questionPushRun(question) : questionPushWorktree(question);
+  if (named.reason) return row.id === "push-run" ? null : named.reason;
+  const top = checkout && checkout.toplevel;
+  const shown = named.dir ? toplevelOf(named.dir) : null;
+  if (checkout && checkout.explicit) {
+    return shown !== null && shown === top
+      ? null
+      : "a push of another checkout (`git -C`) needs the approving question to show that worktree in a " +
+          "`git -C <absolute directory> push …` span";
+  }
+  return named.dir && shown !== top
+    ? "the approving question names another worktree than the checkout this push runs in"
+    : null;
 }
 
 /**
@@ -1894,10 +2075,10 @@ function approvalProofProblem(row, record, { transcriptPath, now }) {
  * @param {{dir: string, claim: string, expected: object, transcriptPath?: string, now: Date}} spend The spend.
  * @returns {string|null}
  */
-function spendProblem(row, record, { dir, claim, expected, transcriptPath, now }) {
+function spendProblem(row, record, { dir, claim, expected, transcriptPath, now, checkout }) {
   const field = fieldMismatch(record, expected);
   if (field) return `${recordLabel(row)} ${MISMATCH_REASONS[field] || `approves another ${field}`}`;
-  const unproven = approvalProofProblem(row, record, { transcriptPath, now });
+  const unproven = approvalProofProblem(row, record, { transcriptPath, now, checkout });
   if (unproven) return unproven;
   return answerSpentElsewhere(dir, row, record.question_id, claim)
     ? "that approval was already spent by another call"
@@ -1936,7 +2117,10 @@ function spendToken(scopeId, options) {
  * @param {object} options See `spendToken`.
  * @returns {{ok: true}|{ok: false, reason: string}}
  */
-function spendUnguarded(scopeId, { cwd, env = process.env, now = new Date(), callId, transcriptPath, expected }) {
+function spendUnguarded(
+  scopeId,
+  { cwd, env = process.env, now = new Date(), callId, transcriptPath, expected, checkout },
+) {
   const row = scopeById(scopeId);
   if (!row || !row.singleUse) return { ok: false, reason: "unknown single-use approval scope" };
   if (typeof callId !== "string" || callId === "") {
@@ -1945,7 +2129,7 @@ function spendUnguarded(scopeId, { cwd, env = process.env, now = new Date(), cal
   const where = recordDirectory(cwd, env);
   if (where.reason) return { ok: false, reason: where.reason };
   const claim = claimPath(where.dir, row, callId);
-  const spend = { dir: where.dir, claim, expected: expected || {}, transcriptPath, now };
+  const spend = { dir: where.dir, claim, expected: expected || {}, transcriptPath, now, checkout };
   return withTokenLock(where.dir, row, () => {
     const status = recordAt(where.dir, row, now);
     if (status.ok) {
@@ -2979,8 +3163,11 @@ module.exports = {
   questionPushRun,
   questionScope,
   recordAnswers,
+  UNSAFE_DIRECTORY_WORD,
+  checkoutRoot,
   recordDirectory,
   recordLabel,
+  siblingCheckout,
   recordStatus,
   removeRecord,
   revokeCommand,

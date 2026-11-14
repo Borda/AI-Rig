@@ -10,6 +10,7 @@ import sys
 import tempfile
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 from _modules import load_module_scoped
@@ -163,6 +164,92 @@ def test_concealed_index_entry_fails_clean_source_guard(gates: ModuleType, repos
 
     assert gates.source_guard_error(snapshot, snapshot["head"]) is not None
     assert "tracked.py" in snapshot.get("error", "") + snapshot["status"]
+
+
+def _use_legacy_pipe_encoding(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force unspecified text-pipe encoding while retaining real subprocess execution."""
+    run = subprocess.run
+
+    def run_with_legacy_encoding(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        """Use CP1252 for text pipes that did not request an explicit encoding."""
+        if (kwargs.get("text") or kwargs.get("universal_newlines")) and kwargs.get("encoding") is None:
+            kwargs["encoding"] = "cp1252"
+        return run(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run_with_legacy_encoding)
+
+
+@pytest.mark.integration
+def test_non_ascii_checkout_root_passes_under_legacy_pipe_encoding(
+    gates: ModuleType, repository: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkout path survives legacy subprocess text encodings without becoming a different root."""
+    checkout = repository.rename(repository.parent / "účet")
+    _use_legacy_pipe_encoding(monkeypatch)
+
+    raw = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=checkout, capture_output=True, check=True).stdout
+    with pytest.raises(UnicodeDecodeError):
+        raw.decode("cp1252")
+
+    snapshot = gates.inspect_source(checkout)
+
+    assert gates.source_guard_error(snapshot, snapshot["head"]) is None
+
+
+@pytest.mark.integration
+def test_non_ascii_concealed_source_fails_under_legacy_pipe_encoding(
+    gates: ModuleType, repository: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A legacy subprocess text encoding cannot hide changes to a non-ASCII tracked path."""
+    name = "účet.py"
+    (repository / name).write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "--", name], cwd=repository, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "add source\n\nCo-authored-by: Codex <codex@openai.com>"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "update-index", "--assume-unchanged", "--", name], cwd=repository, check=True, capture_output=True
+    )
+    (repository / name).write_text("value = 2\n", encoding="utf-8")
+    _use_legacy_pipe_encoding(monkeypatch)
+
+    raw = subprocess.run(["git", "ls-files", "-v", "-z"], cwd=repository, capture_output=True, check=True).stdout
+    with pytest.raises(UnicodeDecodeError):
+        raw.decode("cp1252")
+
+    snapshot = gates.inspect_source(repository)
+
+    assert name in snapshot.get("error", "")
+    assert gates.source_guard_error(snapshot, snapshot["head"]).startswith("source-inspection-failed:")
+
+
+@pytest.mark.integration
+def test_non_ascii_ignored_input_fails_under_legacy_pipe_encoding(
+    gates: ModuleType, repository: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A legacy subprocess text encoding cannot hide a non-ASCII ignored input."""
+    name = "účet.py"
+    (repository / ".git/info/exclude").write_text("runtime/\n", encoding="utf-8")
+    (repository / "runtime").mkdir()
+    (repository / "runtime" / name).write_text("value = 1\n", encoding="utf-8")
+    _use_legacy_pipe_encoding(monkeypatch)
+
+    raw = subprocess.run(
+        ["git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z"],
+        cwd=repository,
+        capture_output=True,
+        check=True,
+    ).stdout
+    with pytest.raises(UnicodeDecodeError):
+        raw.decode("cp1252")
+
+    snapshot = gates.inspect_source(repository)
+
+    assert json.loads(snapshot["ignored"]) == [f"runtime/{name}"]
+    assert gates.source_guard_error(snapshot, snapshot["head"]).startswith("source-dirty:ignored-inputs:")
 
 
 def test_gate_environment_preserves_configuration_without_credentials(gates: ModuleType) -> None:

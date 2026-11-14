@@ -306,7 +306,8 @@ class TestPackageTimings:
         assert "[installed-package] teardown passed test_probe.py::test_fast duration=" in output
         assert "[installed-package] teardown passed test_probe.py::test_wait" not in output
         assert ("[installed-package] call passed test_probe.py::test_wait" in output) == call_completes
-        assert process.wait(timeout=30) == 0
+        # Completed phases can precede slow worker shutdown; retain the existing child-process budget.
+        assert process.wait(timeout=CHILD_PYTEST_TIMEOUT) == 0
 
     @pytest.mark.integration
     @pytest.mark.packaging

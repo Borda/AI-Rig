@@ -30,14 +30,14 @@ class TestQuestionGuideLayout:
         assert len(SKILLS) == 6
 
     def test_guide_is_short_and_points_at_details(self) -> None:
-        """The guide stays within 350 words, states root ownership and links an existing details file.
+        """The guide stays within 400 words, states root ownership and links an existing details file.
 
         A short guide is what every skill loads before asking; the long-form rules live in the details file it names.
         """
         guide = GUIDE.read_text(encoding="utf-8")
 
         assert GUIDE.is_file()
-        assert len(guide.split()) <= 350
+        assert len(guide.split()) <= 400
         assert "The root owns user questions" in " ".join(guide.split())
         assert "codex-user-questions-details.md" in guide
         assert GUIDE.with_name("codex-user-questions-details.md").is_file()

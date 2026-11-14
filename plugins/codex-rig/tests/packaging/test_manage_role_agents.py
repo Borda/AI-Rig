@@ -251,7 +251,9 @@ class TestDiagnose:
         stray ``__pycache__`` would show up in the before/after snapshot.
         """
         plugin_root = tmp_path / "installed-plugin"
-        shutil.copytree(PLUGIN_ROOT, plugin_root, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
+        shutil.copytree(
+            PLUGIN_ROOT, plugin_root, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".reports")
+        )
         environment = os.environ.copy()
         environment.pop("PYTHONDONTWRITEBYTECODE", None)
         environment["CODEX_HOME"] = str(codex_home)

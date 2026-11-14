@@ -854,23 +854,25 @@ _DUPLICATE_PASS_FORGERIES = {"missing-parts": _drop_parts, "altered-part": _alte
 
 @pytest.mark.parametrize("source_only", [True, False])
 def test_ordinary_intake_rejects_duplicate_role_metadata(
-    tmp_path: Path, subtests: pytest.Subtests, source_only: bool
+    tmp_path: Path, subtests: pytest.Subtests, source_only: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An earlier duplicate cannot hide missing or forged source or historical final responsibility.
 
     One aggregated run per topology serves both problems: each subtest forges its own duplicate pass inside a fresh
-    canonical report, so neither problem edits the aggregated run the other one reads.
+    canonical report, so neither problem edits the aggregated run the other one reads. Multipart final reports cover
+    the historical metadata shape without also constructing oversized source waves. Validator entry points run in
+    process because these mutations exercise proof admission; separate CLI tests retain process transport coverage.
     """
     run, home = (
-        _completed_source_only(tmp_path)
-        if source_only
-        else _completed_batches(tmp_path, large=True, consolidation_reports=3)
+        _completed_source_only(tmp_path) if source_only else _completed_batches(tmp_path, consolidation_reports=3)
     )
     assert _batch_command(run, "assemble-batches", home).returncode == 0
     manifest = json.loads((run / "specialist-manifest.json").read_bytes())
     passes = json.loads(json.dumps(manifest["passes"]))
     assert len({item["role"] for item in passes}) == len(passes) > 1
     parts_key = "source_parts" if source_only else "final_parts"
+    finder = _load_finder("duplicate_role_intake")
+    _in_process_intake_commands(finder, monkeypatch)
 
     def check(problem: str) -> None:
         duplicate = json.loads(json.dumps(passes[0]))
@@ -878,7 +880,6 @@ def test_ordinary_intake_rejects_duplicate_role_metadata(
         path = _canonical_report(
             run, [], {}, "accept-as-is", confidence_metadata={"specialist_passes": [duplicate, *passes]}
         )
-        finder = _load_finder("duplicate_role_intake")
         with pytest.raises(LookupError, match=f"metadata-specialist-pass-duplicate-role:{duplicate['role']}"):
             finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
 
@@ -2736,9 +2737,13 @@ def _canonical_report(
     ],
 )
 def test_every_individual_minor_survives_complete_consumers(
-    tmp_path: Path, subtests: pytest.Subtests, phase: str, role: str
+    tmp_path: Path, subtests: pytest.Subtests, phase: str, role: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Omission of either independent obligation rejects; complete concrete actions reach actual intake."""
+    """Omission of either independent obligation rejects; complete concrete actions reach actual intake.
+
+    The real validator entry points run in process while report metadata changes; the frozen source never changes.
+    Command transport has separate coverage, so these proof mutations need no new interpreter for each admission.
+    """
     one = _batch_finding("F_ONE", "low", "Document the returned value.")
     two = _batch_finding("F_TWO", "low", "Correct the independent empty-input explanation.")
     run, home = _completed_batches(
@@ -2751,6 +2756,7 @@ def test_every_individual_minor_survives_complete_consumers(
         final_finding=(role, 2) if phase == "final" else None,
         final_records=[one, two] if phase == "final" else None,
     )
+    _verify_unchanged_source_once(monkeypatch)
     assert _batch_command(run, "assemble-batches", home).returncode == 0
     manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
     originals = manifest["source_findings"]
@@ -2759,6 +2765,7 @@ def test_every_individual_minor_survives_complete_consumers(
     assert all(item["original"]["evidence"][0]["source_sha256"] for item in originals)
     validator = _load_validator("individual_consumer_validator")
     finder = _load_finder("individual_consumer_intake")
+    _in_process_intake_commands(finder, monkeypatch)
     records = [
         {
             **item["original"],

@@ -34,6 +34,7 @@ from codemap_py.scanner import (
     Exclusions,
     _collect_module_aliases,
     _effective_src_root,
+    _is_package_dir,
     _iter_doc_files,
     _iter_python_files,
     _load_exclusions,
@@ -704,6 +705,121 @@ def _resolve_import_submodule_edges(modules: list[dict]) -> None:
         module["direct_imports"] = sorted(direct)
 
 
+def _resolve_import_edges(modules: list[dict], root: Path) -> None:
+    """Complete every module's ``direct_imports`` with the edges that plain name matching cannot see, in-place.
+
+    The three passes run in this order because each reads stored raw fields, never another pass's output, so a full and
+    an incremental scan reach the same result.
+
+    Args:
+        modules: parsed module entries, mutated in place.
+        root: project root, used to tell a script directory from a regular package directory.
+    """
+    _resolve_import_submodule_edges(modules)
+    _resolve_script_dir_edges(modules, root)
+    _resolve_root_qualified_edges(modules)
+
+
+def _sibling_module_name(directory: str, dotted: str, name_by_path: dict[str, str]) -> str | None:
+    """Return the indexed module that the dotted import names inside *directory*, or None.
+
+    Args:
+        directory: posix directory of the importing file, relative to the project root (empty for the root).
+        dotted: absolute dotted import name as written in the statement.
+        name_by_path: indexed module name keyed by its posix path.
+
+    Examples:
+        >>> _sibling_module_name("tools", "util", {"tools/util.py": "tools.util"})
+        'tools.util'
+        >>> _sibling_module_name("tools", "pkg.mod", {"tools/pkg/mod.py": "tools.pkg.mod"})
+        'tools.pkg.mod'
+        >>> _sibling_module_name("tools", "missing", {"tools/util.py": "tools.util"}) is None
+        True
+    """
+    stem = "/".join(part for part in (directory, dotted.replace(".", "/")) if part)
+    for candidate in (f"{stem}/__init__.py", f"{stem}/__init__.pyi", f"{stem}.py", f"{stem}.pyi"):
+        if candidate in name_by_path:
+            return name_by_path[candidate]
+    return None
+
+
+def _resolve_script_dir_edges(modules: list[dict], root: Path) -> None:
+    """Add edges for bare imports that resolve against the importing file's own directory, in-place.
+
+    A file in a directory without ``__init__.py`` runs with that directory first on ``sys.path``: as a script, or as a
+    test collected by pytest's default import mode. ``import helpers`` there names the sibling ``helpers.py`` and
+    ``from pkg.sub import x`` a sibling package, yet the dotted name carries no directory prefix, so name matching alone
+    never links them. Each resolved target is added to ``direct_imports`` beside the raw name, as parent-package imports
+    already are. Files inside a regular package are untouched, because their sibling imports are relative or absolute.
+
+    Args:
+        modules: parsed module entries; ``direct_imports`` of script-directory files is extended in place.
+        root: project root, used to tell a regular package directory from a script directory.
+    """
+    name_by_path = {m["path"]: m["name"] for m in modules if m.get("status") == "ok"}
+    package_dirs: dict[str, bool] = {}
+    for module in modules:
+        if module.get("status") != "ok":
+            continue
+        directory = module["path"].rpartition("/")[0]
+        if directory not in package_dirs:
+            package_dirs[directory] = _is_package_dir(root / directory)
+        if package_dirs[directory]:
+            continue
+        found = {_sibling_module_name(directory, name, name_by_path) for name in _imported_names(module)}
+        _add_import_edges(module, found)
+
+
+def _imported_names(module: dict) -> set[str]:
+    """Return every dotted name a module's import statements could bind to an indexed module."""
+    names = set(module.get("unresolved_direct_imports", module.get("direct_imports", [])))
+    names.update(module.get("from_import_submodules", []))
+    return names
+
+
+def _add_import_edges(module: dict, targets: set[str | None]) -> None:
+    """Add *targets* to the module's ``direct_imports``, ignoring ``None`` and the module itself."""
+    found = {target for target in targets if target is not None and target != module["name"]}
+    if found:
+        module["direct_imports"] = sorted({*module["direct_imports"], *found})
+
+
+def _root_qualified_name(path: str) -> str:
+    """Return the dotted name a module path has when the project root is on ``sys.path``.
+
+    Examples:
+        >>> _root_qualified_name("modules/models/uni_pc/uni_pc.py")
+        'modules.models.uni_pc.uni_pc'
+        >>> _root_qualified_name("modules/models/uni_pc/__init__.py")
+        'modules.models.uni_pc'
+    """
+    parts = path.rsplit(".", 1)[0].split("/")
+    return ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+
+
+def _resolve_root_qualified_edges(modules: list[dict]) -> None:
+    """Add edges for imports written with a module's project-root-qualified dotted path, in-place.
+
+    A module is named from its detected source root, which can sit below the project root (for example the parent of
+    the only regular package inside a tree of plain directories). Code that runs with the project root on ``sys.path``
+    still imports it as ``modules.models.pkg.mod``, a name that never equals the module's own. Only modules whose own
+    name differs from their root-qualified one are mapped, so an ordinary layout is untouched.
+
+    Args:
+        modules: parsed module entries; ``direct_imports`` is extended in place.
+    """
+    canonical_by_qualified = {
+        _root_qualified_name(m["path"]): m["name"]
+        for m in modules
+        if m.get("status") == "ok" and _root_qualified_name(m["path"]) != m["name"]
+    }
+    if not canonical_by_qualified:
+        return
+    for module in modules:
+        if module.get("status") == "ok":
+            _add_import_edges(module, {canonical_by_qualified.get(name) for name in _imported_names(module)})
+
+
 def _collect_symbol_alias_limitations(modules: list[dict]) -> list[dict[str, str]]:
     """Return sorted target-specific evidence for rejected alias paths.
 
@@ -1273,7 +1389,7 @@ def scan(root: Path, coverage_path: Path | None = None) -> dict:
     indexed_names = {m["name"] for m in modules if m.get("status") == "ok"}
     module_aliases = _collect_module_aliases(conftest_paths, indexed_names, root)
 
-    _resolve_import_submodule_edges(modules)
+    _resolve_import_edges(modules, root)
     symbol_aliases = _canonicalize_symbol_aliases(modules)
     symbol_alias_limitations = _collect_symbol_alias_limitations(modules)
     _recompute_metrics(modules, module_aliases, symbol_aliases)
@@ -1471,7 +1587,7 @@ def incremental_scan(root: Path, old_index: dict, coverage_path: Path | None = N
     indexed_names = {m["name"] for m in modules if m.get("status") == "ok"}
     module_aliases = _collect_module_aliases(conftest_paths, indexed_names, root)
 
-    _resolve_import_submodule_edges(modules)
+    _resolve_import_edges(modules, root)
     symbol_aliases = _canonicalize_symbol_aliases(modules)
     symbol_alias_limitations = _collect_symbol_alias_limitations(modules)
     _recompute_metrics(modules, module_aliases, symbol_aliases)

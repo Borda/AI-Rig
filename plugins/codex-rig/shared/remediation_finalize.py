@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Derive code-remediate bookkeeping artifacts from recorded run state and finalize one result candidate.
+"""Derive remediation, review, and audit bookkeeping and finalize one result candidate.
 
 ## Purpose
 
@@ -56,7 +56,9 @@ The code-remediate skill uses it at work-bucket planning and at result finalizat
 ``finalize --skill code-review``, which also synchronizes canonical finding and blocker content in existing notes and
 handoff action tables, preserving authored statuses and source bindings. It runs the review-specific validator before
 the shared one and leaves completion to
-``find-review-report.py``. Remediation finalization tests compare its derived fields with hand-built valid fixtures.
+``find-review-report.py``. Audit uses ``finalize --skill audit`` for shared handoff derivation and the audit
+validator, preserving authored findings, decisions, source coverage and evidence metadata. Finalization tests compare
+its derived fields with hand-built valid fixtures.
 
 ## Outputs
 
@@ -1644,9 +1646,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     final.add_argument("--handoff", type=Path, required=True, help="Agent-authored final-handoff draft JSON.")
     final.add_argument(
         "--skill",
-        choices=("code-remediate", "code-review"),
+        choices=("code-remediate", "code-review", "audit"),
         default="code-remediate",
-        help="Owning workflow; code-review derives only shared handoff fields and also runs its review validator.",
+        help="Owning workflow; audit derives shared fields and validates audit evidence; review adds its validator.",
     )
     final.add_argument("--parent-thread-id", help="code-review: parent thread for review-validator provenance.")
     final.add_argument("--codex-home", type=Path, help="code-review: actual Codex home for the review validator.")

@@ -6,6 +6,7 @@ import copy
 import hashlib
 import itertools
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -1474,13 +1475,8 @@ def _build_real_chunked_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     return _ChunkedReview(repository, chunks, manifest, request, result_map, session_home, summary)
 
 
-@pytest.fixture
-def chunked_coordinator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[_ChunkedReview, Path]:
-    """Build isolated real child reviews and bound coordinator results for one acceptance or rejection case.
-
-    Keep each public-validation scenario in its own test so Windows process startup and coverage costs do not accumulate
-    against one test's timeout. Function scope isolates mutations, Git repositories and native session evidence.
-    """
+def _build_chunked_coordinator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[_ChunkedReview, Path]:
+    """Build complete real child reviews and the coordinator bound to their checked results."""
     review = _build_real_chunked_review(tmp_path, monkeypatch)
     coordinator = _write_loop(tmp_path, monkeypatch)
     handoff = _load_handoff(tmp_path)
@@ -1492,6 +1488,43 @@ def chunked_coordinator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tupl
     monkeypatch.setenv("CODEX_HOME", str(review.session_home))
     (tmp_path / "result.json").write_bytes(coordinator.read_bytes())
     return review, coordinator
+
+
+@pytest.fixture(scope="module")
+def coordinator_template(tmp_path_factory: pytest.TempPathFactory) -> tuple[_ChunkedReview, Path, Path]:
+    """Retain one worker-private real build and a pristine copy at the original signed absolute paths."""
+    root = tmp_path_factory.mktemp("chunked-coordinator")
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        review, coordinator = _build_chunked_coordinator(root, monkeypatch)
+    snapshot = tmp_path_factory.mktemp("chunked-coordinator-snapshot") / "tree"
+    shutil.copytree(root, snapshot)
+    return review, coordinator, snapshot
+
+
+@pytest.fixture
+def chunked_coordinator(
+    coordinator_template: tuple[_ChunkedReview, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> tuple[_ChunkedReview, Path]:
+    """Restore independent files and records while retaining the real build's signed absolute paths.
+
+    Keep the seven public-validation scenarios separate for Windows timeouts. Replacing the entire worker-private tree
+    restores additions, deletions, bytes, modes and mtimes; copying its records prevents mutations between cases.
+    """
+    review, coordinator, snapshot = coordinator_template
+
+    def retry_writable(function: Callable[[str], object], path: str, _: object) -> None:
+        """Allow deletion of Git object files that Windows marks read-only."""
+        os.chmod(path, 0o700)
+        function(path)
+
+    # Copy back to the original location: rebasing receipts would invalidate their hashes and native session evidence.
+    handler = "onexc" if sys.version_info >= (3, 12) else "onerror"
+    shutil.rmtree(coordinator.parent, **{handler: retry_writable})
+    shutil.copytree(snapshot, coordinator.parent)
+    monkeypatch.chdir(review.repository)
+    monkeypatch.setenv("CODEX_HOME", str(review.session_home))
+    monkeypatch.setenv("CODEX_THREAD_ID", "parent-thread")
+    return copy.deepcopy(review), coordinator
 
 
 def _assert_interaction_assessment_enforced(run: Path, review: _ChunkedReview, canonical: Path) -> None:

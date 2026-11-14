@@ -1135,7 +1135,7 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 
 ## Gate, CI and live-probe notes
 
-- **CI matrix:** The repository CI test matrix runs complete plugin test suite on Linux, macOS, and Windows with Python 3.10, 3.11, 3.12, and 3.13. The synthetic denial gate and installed-package-safe gate are included in that offline matrix.
+- **CI matrix:** The repository CI test matrix runs complete plugin test suite on Linux, macOS, and Windows with Python 3.11 and 3.14, plus Python 3.10 on one pinned `ubuntu-24.04` runner. The synthetic denial gate and installed-package-safe gate are included in that offline matrix.
 - **Manual-only boundary:** A live local reviewer wave candidate-binding probe is separately authorized and manual; it must not run in CI and does not establish equivalence with desktop approval UI.
 - **Live manifest:** Its `--live-matrix` form consumes one local three-entry manifest ordered `text-control`, `skill-control`, and `denial`; all entries must use same Codex binary, model, plugin version, timeout, and independently recorded SHA-256 digest of `package-manifest.json`, with operator-prepared isolated non-overlapping Codex homes, workdirs, evidence roots, and output paths.
 - **Isolation and launch:** The probe verifies full manifest and every declared payload before launch, rejects any candidate or cross-row digest mismatch, and mechanically enforces path isolation; whether Codex home had prior use remains operator precondition and is not inferred from directory contents. It stops at first failure, never accepts collector command, and never installs or retries.

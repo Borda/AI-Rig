@@ -1421,6 +1421,241 @@ class TestTokenValidity:
         assert "the current branch is not the one the push was approved on" in result.stderr
 
 
+@pytest.fixture(name="worktree")
+def _worktree(git_repo: Path, tmp_path: Path) -> Path:
+    """Add a linked worktree ``wt`` of ``git_repo`` on branch ``feature``, outside the session's checkout."""
+    path = tmp_path / "wt"
+    _git(git_repo, "worktree", "add", "-b", "feature", str(path))
+    return path
+
+
+@_skip_git_unavailable
+class TestWorktreePush:
+    """A push of another checkout of the project is named ``git -C <dir> push``, and the token binds that checkout.
+
+    The Bash cwd stays in the session's checkout (a worktree outside the working directories resets it after every call,
+    and ``cd`` is never covered), so the guard reads the branch, HEAD and remotes of the ``-C`` directory.
+    """
+
+    def test_approved_worktree_push_is_allowed_from_another_cwd(
+        self, guard: Callable, git_repo: Path, push_token: Callable, worktree: Path
+    ) -> None:
+        """A token for the worktree's branch lets its ``git -C`` push run while the cwd is the main checkout.
+
+        Scenario: the session is in ``git_repo`` on ``main``; the user approved a push of ``feature`` checked out in
+        the worktree, and the call names that worktree with ``-C``.
+        """
+        command = f"git -C {worktree.as_posix()} push origin feature"
+        push_token(git_repo, command, branch="feature")
+
+        result = guard(command)
+
+        assert result.returncode == 0, result.stderr
+
+    def test_approval_covers_one_push(
+        self, guard: Callable, git_repo: Path, push_token: Callable, worktree: Path
+    ) -> None:
+        """The token is single use: the same worktree push a second time asks again.
+
+        Scenario: the first ``git -C`` push spends the token, so a repeat finds none.
+        """
+        command = f"git -C {worktree.as_posix()} push origin feature"
+        push_token(git_repo, command, branch="feature")
+        guard(command)
+
+        result = guard(command)
+
+        assert result.returncode == 2
+        assert "AskUserQuestion" in result.stderr
+
+    def test_worktree_push_needs_the_question_to_name_that_worktree(
+        self, guard: Callable, git_repo: Path, push_token: Callable, worktree: Path
+    ) -> None:
+        """A token approved on a question that never showed the worktree does not cover a ``git -C`` push of it.
+
+        Scenario: the user approved ``git push origin feature`` with no worktree in the question; the push names the
+        worktree through ``-C``, so the approval is not the user's selection of it.
+        """
+        push_token(git_repo, "git push origin feature", branch="feature")
+
+        result = guard(f"git -C {worktree.as_posix()} push origin feature")
+
+        assert result.returncode == 2
+        assert "to show that worktree" in result.stderr
+        assert "AskUserQuestion" in result.stderr
+
+    def test_question_naming_another_worktree_does_not_cover_a_cwd_push(
+        self, guard: Callable, git_repo: Path, push_token: Callable, worktree: Path
+    ) -> None:
+        """A plain push from the cwd never runs on a question that showed another worktree.
+
+        Scenario: the token's question names the worktree, but the push runs from the main checkout with no ``-C``.
+        """
+        push_token(git_repo, f"git -C {worktree.as_posix()} push origin main")
+
+        result = guard("git push origin main")
+
+        assert result.returncode == 2
+        assert "names another worktree" in result.stderr
+
+    def test_main_checkout_token_does_not_cover_a_worktree_push(
+        self, guard: Callable, git_repo: Path, push_token: Callable, worktree: Path
+    ) -> None:
+        """A token approved for ``main`` never lets the worktree's branch go out through ``-C``.
+
+        Scenario: the pending token names ``main``; the push names the worktree on ``feature``.
+        """
+        push_token(git_repo)
+
+        result = guard(f"git -C {worktree.as_posix()} push origin feature")
+
+        assert result.returncode == 2
+        assert "the current branch is not the one the push was approved on" in result.stderr
+
+    def test_worktree_token_does_not_cover_a_push_from_the_cwd(
+        self, guard: Callable, git_repo: Path, push_token: Callable, worktree: Path
+    ) -> None:
+        """A token approved for the worktree's branch does not cover a plain push of the cwd's branch.
+
+        Scenario: the token names ``feature``; the call has no ``-C`` and runs in ``main``'s checkout.
+        """
+        push_token(git_repo, f"git -C {worktree.as_posix()} push origin feature", branch="feature")
+
+        result = guard("git push origin main")
+
+        assert result.returncode == 2
+        assert "the current branch is not the one the push was approved on" in result.stderr
+
+    @pytest.mark.parametrize(
+        ("template", "reason"),
+        [
+            pytest.param("git -C ../wt push origin feature", "literal absolute path", id="relative-directory"),
+            pytest.param("git -C {wt} -C {wt} push origin feature", "another repository", id="second-dash-c"),
+            pytest.param("git --git-dir={wt}/.git push origin feature", "another repository", id="git-dir"),
+            pytest.param("git -C {wt} --work-tree {wt} push origin feature", "another repository", id="work-tree"),
+            pytest.param('git -C "$WT" push origin feature', "literal absolute path", id="variable-directory"),
+            pytest.param('git -C "{wt} x" push origin feature', "literal absolute path", id="directory-with-space"),
+            pytest.param('git -C "{wt}" push origin feature', "literal absolute path", id="quoted-directory"),
+            pytest.param("git -C {wt}\\ x push origin feature", "literal absolute path", id="escaped-space-directory"),
+            pytest.param(
+                "git -C C:\\Users\\me\\wt push origin feature", "forward slashes", id="windows-backslash-path"
+            ),
+            pytest.param("git -C {wt} status && git push origin main", "another repository", id="dash-c-on-a-read"),
+            pytest.param("cd {wt} && git -C {wt} push origin feature", "changes directory", id="cd-before-dash-c"),
+            pytest.param(
+                "git -C {wt} -c remote.origin.pushurl=/tmp/evil.git push origin feature",
+                "remote.origin.pushurl",
+                id="pushurl-config-after-dash-c",
+            ),
+            pytest.param(
+                "git -C {wt} --config-env=remote.origin.pushurl=URL push origin feature",
+                "remote.origin.pushurl",
+                id="config-env-after-dash-c",
+            ),
+            pytest.param(
+                "git -C {wt} -c remote.origin.push=+feature:main push origin feature",
+                "remote.origin.push",
+                id="push-refspec-config-after-dash-c",
+            ),
+            pytest.param(
+                "git -C {wt} -c url./tmp/x.pushInsteadOf=a push origin feature",
+                "url.",
+                id="push-instead-of-after-dash-c",
+            ),
+            pytest.param("git -C {wt} --namespace=x push origin feature", "another repository", id="namespace"),
+            pytest.param("git -C {wt} --exec-path=/tmp/x push origin feature", "another repository", id="exec-path"),
+            pytest.param("env -C {wt} git push origin feature", "changes directory", id="env-dash-c"),
+            pytest.param("env -i --chdir={wt} git push origin feature", "changes directory", id="env-chdir"),
+            pytest.param("sudo -D {wt} git push origin feature", "changes directory", id="sudo-dash-d"),
+            pytest.param("chroot {wt} git push origin feature", "changes directory", id="chroot"),
+            pytest.param(
+                'git -C {wt} push origin "$(git branch --show-current)"',
+                "variable or substitution",
+                id="branch-substitution-runs-in-the-cwd",
+            ),
+        ],
+    )
+    def test_other_spellings_are_never_covered(
+        self, guard: Callable, push_token: Callable, git_repo: Path, worktree: Path, template: str, reason: str
+    ) -> None:
+        """Only one literal absolute ``-C`` directory on the one push is covered; every other way is by hand.
+
+        Scenario: a valid token for ``feature`` is pending; each spelling points git elsewhere, or reads a branch in
+        the cwd instead of the worktree, so the guard blocks with the by-hand advice.
+        """
+        push_token(git_repo, f"git -C {worktree.as_posix()} push origin feature", branch="feature")
+
+        result = guard(template.format(wt=worktree.as_posix()))
+
+        assert result.returncode == 2
+        assert reason in result.stderr
+        assert "by hand" in result.stderr
+
+    def test_mismatch_reason_names_the_checkout_it_was_read_in(
+        self, guard: Callable, git_repo: Path, push_token: Callable, worktree: Path
+    ) -> None:
+        """A branch mismatch under ``-C`` says which checkout was read and what the approval names.
+
+        Scenario: the pending token names ``main`` (the session's own branch) while the push names the worktree on
+        ``feature``, so "the current branch" alone would read as the cwd's.
+        """
+        push_token(git_repo)
+
+        result = guard(f"git -C {worktree.as_posix()} push origin feature")
+
+        assert f"[in {worktree.as_posix()}]" in result.stderr
+        assert "approval names main" in result.stderr
+
+    def test_detached_worktree_is_told_to_check_out_a_branch(self, guard: Callable, worktree: Path) -> None:
+        """A detached worktree gets the check-out advice, not a question that could never record.
+
+        Scenario: the worktree's HEAD is detached, so the writer records nothing for it; asking would loop.
+        """
+        _git(worktree, "switch", "--detach")
+
+        result = guard(f"git -C {worktree.as_posix()} push origin feature")
+
+        assert result.returncode == 2
+        assert "check out a named branch" in result.stderr
+        assert f"[in {worktree.as_posix()}]" in result.stderr
+
+    def test_branch_checked_out_in_a_worktree_gets_the_dash_c_hint(
+        self, guard: Callable, git_repo: Path, push_token: Callable, worktree: Path
+    ) -> None:
+        """Pushing a worktree's branch from the cwd without ``-C`` is told to add it, not to push by hand.
+
+        Scenario: the user approved the worktree push; the call forgot ``-C``, so the refspec names a branch the cwd
+        does not have checked out but a sibling worktree does.
+        """
+        push_token(git_repo, f"git -C {worktree.as_posix()} push origin feature", branch="feature")
+
+        result = guard("git push origin feature")
+
+        assert result.returncode == 2
+        assert f"push it as `git -C {worktree.as_posix()} push" in result.stderr
+        assert "AskUserQuestion" in result.stderr
+
+    def test_directory_outside_the_project_is_never_covered(
+        self, guard: Callable, git_repo: Path, push_token: Callable, tmp_path: Path
+    ) -> None:
+        """A ``-C`` directory that is no checkout of the session project is left to the user.
+
+        Scenario: another repository with its own ``feature`` branch; the token approved ``feature`` here, but the
+        directory belongs to a different common dir.
+        """
+        other = tmp_path / "other"
+        other.mkdir()
+        _git(other, "init", "-b", "feature")
+        _git(other, "commit", "--allow-empty", "-m", "init")
+        push_token(git_repo, f"git -C {other.as_posix()} push origin feature", branch="feature")
+
+        result = guard(f"git -C {other.as_posix()} push origin feature")
+
+        assert result.returncode == 2
+        assert "no checkout of this project" in result.stderr
+        assert "by hand" in result.stderr
+
+
 @_skip_git_unavailable
 class TestForcePushSpelling:
     """The force-push block must gate the action, not one spelling of it.

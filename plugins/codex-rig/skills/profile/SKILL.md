@@ -3,7 +3,9 @@ name: profile
 description: Explain native Codex session and agent token usage, inclusive tool time, and optional supplied-rate cost estimates from selected telemetry; excludes application CPU/GPU profiling and billing statements.
 ---
 
-> Before asking, read [User Questions](../../shared/codex-user-questions.md). Follow the [native execution rules](../../shared/native-skill-contract.md); this reporting skill adds no permissions or instrumentation.
+> Before asking, read [User Questions](../../shared/codex-user-questions.md). At entry, read and apply the native contract's [Terminal Presentation](../../shared/native-skill-contract.md#terminal-presentation), [Acceptance and recovery](../../shared/native-skill-contract.md#acceptance-and-recovery), [Proactive recovery and delivery](../../shared/native-skill-contract.md#proactive-recovery-and-delivery), [Portability Rules](../../shared/native-skill-contract.md#portability-rules), [Authorized Workflow Execution](../../shared/native-skill-contract.md#authorized-workflow-execution), and [Evidence Rules](../../shared/native-skill-contract.md#evidence-rules) sections rather than loading the whole contract. This reporting skill adds no permissions or instrumentation.
+
+> Before applicable code checks, load [Sandboxed Test Runs](../../shared/native-skill-contract.md#sandboxed-test-runs) and [Project Dependency Preparation](../../shared/native-skill-contract.md#project-dependency-preparation); before an approval request or a genuine pause, load [Approval Brief](../../shared/native-skill-contract.md#approval-brief) or [Actionable Pauses](../../shared/native-skill-contract.md#actionable-pauses), respectively. If another activity covered by the native contract becomes applicable within this skill's existing scope, read and apply its named section before that activity. All native obligations remain unchanged; conditional loading never expands this skill's authority or bypasses an approval or stop condition.
 
 # Profile
 

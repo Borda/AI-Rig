@@ -1850,6 +1850,154 @@ class TestPushTokenRecording:
         assert not _push_token(checkout).exists()
         assert "detached" in _context(proc)
 
+    def test_worktree_span_binds_that_worktrees_branch_and_head(
+        self, run_hook: Callable, answered: Callable, checkout: Path, tmp_path: Path
+    ) -> None:
+        """A ``git -C <worktree> push`` span makes the token name the worktree's branch and HEAD, not the cwd's.
+
+        Scenario: the session is in the main checkout on ``main``; the question shows the push of ``feature``, checked
+        out in a linked worktree one commit ahead, so the token must hold ``feature`` and that worktree's HEAD.
+        """
+        worktree = tmp_path / "wt"
+        _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+        _git("commit", "--allow-empty", "-m", "feature work", cwd=worktree)
+        command = f"git -C {worktree.as_posix()} push origin feature"
+
+        run_hook(answered(checkout, "Approve", _push_question(command)))
+
+        token = _load(_push_token(checkout))
+        assert (token["branch"], token["head"]) == ("feature", _rev(worktree))
+
+    @pytest.mark.parametrize(
+        ("command", "reason"),
+        [
+            pytest.param("git -C ../wt push origin feature", "absolute directory", id="relative-directory"),
+            pytest.param("git -C {plain} push origin feature", "no checkout of this project", id="not-a-checkout"),
+            pytest.param("git -C {wt} -o x push origin feature", "must read", id="push-not-after-the-directory"),
+            pytest.param('git -C "$WT" push origin feature', "cannot be pushed through", id="variable-directory"),
+            pytest.param('git -C "{wt}" push origin feature', "cannot be pushed through", id="quoted-directory"),
+            pytest.param('git -C "{wt} x" push origin feature', "cannot be pushed through", id="spaced-directory"),
+        ],
+    )
+    def test_unusable_worktree_span_records_nothing(
+        self, run_hook: Callable, answered: Callable, checkout: Path, tmp_path: Path, command: str, reason: str
+    ) -> None:
+        """A ``git -C`` span that names no checkout of the project, or a relative or unreadable one, records nothing.
+
+        Scenario: a worktree ``wt`` and a plain directory exist; the token must not bind a checkout the guard could not
+        resolve, so the writer reports why and writes no file.
+        """
+        worktree = tmp_path / "wt"
+        _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+        plain = tmp_path / "plain"
+        plain.mkdir()
+
+        spelled = command.format(wt=worktree.as_posix(), plain=plain.as_posix())
+        proc = run_hook(answered(checkout, "Approve", _push_question(spelled)))
+
+        assert not _push_token(checkout).exists()
+        assert reason in _context(proc)
+
+    def test_two_worktree_spans_record_nothing(
+        self, run_hook: Callable, answered: Callable, checkout: Path, tmp_path: Path
+    ) -> None:
+        """A question showing two ``git -C`` pushes is ambiguous about which checkout the user approved.
+
+        Scenario: two spans for the same worktree; the writer refuses rather than pick one.
+        """
+        worktree = tmp_path / "wt"
+        _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+        wt = worktree.as_posix()
+        text = f"Push feature: `git -C {wt} push origin feature` or `git -C {wt} push upstream feature`?"
+
+        proc = run_hook(answered(checkout, "Approve", _push_question(text=text)))
+
+        assert not _push_token(checkout).exists()
+        assert "more than one" in _context(proc)
+
+    def test_worktree_command_outside_a_span_records_nothing(
+        self, run_hook: Callable, answered: Callable, checkout: Path, tmp_path: Path
+    ) -> None:
+        """``git -C`` shown as plain text must not fall back to binding the session checkout.
+
+        Scenario: the question carries the worktree command in prose and the cwd's branch ``main`` elsewhere in the
+        text; without the refusal the token would bind ``main`` for a push the user read as the worktree's.
+        """
+        worktree = tmp_path / "wt"
+        _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+        text = f"Push feature (not main) with git -C {worktree.as_posix()} push origin feature?"
+
+        proc = run_hook(answered(checkout, "Approve", _push_question(text=text)))
+
+        assert not _push_token(checkout).exists()
+        assert "outside an inline code span" in _context(proc)
+
+    def test_recorded_message_names_the_worktree(
+        self, run_hook: Callable, answered: Callable, checkout: Path, tmp_path: Path
+    ) -> None:
+        """The context line after recording names the worktree directory the token covers, not a placeholder.
+
+        Scenario: a worktree push approval; Claude reads this line to learn the exact form to run.
+        """
+        worktree = tmp_path / "wt"
+        _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+
+        proc = run_hook(
+            answered(checkout, "Approve", _push_question(f"git -C {worktree.as_posix()} push origin feature"))
+        )
+
+        assert f"the worktree {worktree.as_posix()}, written `git -C {worktree.as_posix()} push" in _context(proc)
+
+    def test_worktree_span_in_a_fence_records_nothing(
+        self, run_hook: Callable, answered: Callable, checkout: Path, tmp_path: Path
+    ) -> None:
+        """A worktree push shown in a fenced block is no inline span the user can read as one command.
+
+        Scenario: the question carries the ``git -C`` text in a triple-backtick fence beside an inline span.
+        """
+        worktree = tmp_path / "wt"
+        _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+        text = f"Push feature: `git -C {worktree.as_posix()} push origin feature`\n```\ngit push origin main\n```\n?"
+
+        proc = run_hook(answered(checkout, "Approve", _push_question(text=text)))
+
+        assert not _push_token(checkout).exists()
+        assert "fenced block" in _context(proc)
+
+    def test_run_question_with_a_worktree_span_records_it_unchanged(
+        self, run_hook: Callable, answered: Callable, checkout: Path, tmp_path: Path
+    ) -> None:
+        """A ``git-push-run`` question may name its push as ``git -C <worktree> push <remote> <branch>``.
+
+        Scenario: the run's push span names a linked worktree; the token holds that remote and branch, read from the
+        text like any run token.
+        """
+        worktree = tmp_path / "wt"
+        _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+        question = _push_run_question(_rev(worktree), f"git -C {worktree.as_posix()} push origin feature")
+
+        run_hook(answered(checkout, "Approve", question))
+
+        token = _load(checkout / ".git" / PUSH_RUN_RECORD)
+        assert (token["remote"], token["branch"]) == ("origin", "feature")
+
+    def test_worktree_span_must_show_its_branch(
+        self, run_hook: Callable, answered: Callable, checkout: Path, tmp_path: Path
+    ) -> None:
+        """The question must name the worktree's branch, as it must name the cwd's: the user sees what is pushed.
+
+        Scenario: the span names the worktree but the question text holds no ``feature``.
+        """
+        worktree = tmp_path / "wt"
+        _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+
+        proc = run_hook(
+            answered(checkout, "Approve", _push_question(text=f"Push: `git -C {worktree.as_posix()} push`?"))
+        )
+
+        assert not _push_token(checkout).exists()
+        assert "does not name branch feature" in _context(proc)
+
 
 @_skip_node_or_git_unavailable
 class TestGhWriteTokenRecording:
@@ -2170,6 +2318,29 @@ class TestPushTokenRealCase:
         assert _rev(remote, "main") == _rev(checkout)
         assert second.returncode == 2
 
+    def test_worktree_push_lands_from_another_cwd(
+        self, approve: Callable, checkout: Path, remote: Path, tmp_path: Path
+    ) -> None:
+        """A worktree's branch goes out through ``git -C <worktree> push`` while the session stays in the main checkout.
+
+        Scenario in three steps: approve the push of ``feature`` (a worktree one commit ahead), the guard allows and
+        spends the token, the push lands on the remote, and the same command again is blocked.
+        """
+        worktree = tmp_path / "wt"
+        _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+        _git("commit", "--allow-empty", "-m", "feature work", cwd=worktree)
+        command = f"git -C {worktree.as_posix()} push origin feature"
+        approve(command)
+
+        allowed = _guard_push(checkout, command)
+        _git("push", "origin", "feature", cwd=worktree)
+        repeated = _guard_push(checkout, command)
+
+        assert allowed.returncode == 0, allowed.stderr
+        assert _rev(remote, "feature") == _rev(worktree)
+        assert (repeated.returncode, "git-push" in repeated.stderr) == (2, True)
+        assert not _push_token(checkout).exists()
+
     def test_variable_spelling_is_never_covered(self, approve: Callable, checkout: Path, remote: Path) -> None:
         """Oss:resolve's fallback spelling, a remote and ref in variables, may name any target: it is left to the user.
 
@@ -2360,6 +2531,46 @@ class TestPushRunTokenRealCase:
         assert _rev(remote, "main") == _rev(checkout)
         assert (repeated.returncode, "git-push" in repeated.stderr) == (2, True)
         assert not _push_run_token(checkout).exists()
+
+    def test_worktree_push_runs_when_the_run_question_names_it(
+        self, approve_run: Callable, checkout: Path, remote: Path, tmp_path: Path
+    ) -> None:
+        """A run approval whose push span is ``git -C <worktree> push …`` lets that worktree's push run once.
+
+        Scenario: the user selected the worktree in the run question; a later commit in it sits on the named PR head,
+        and the one push through ``-C`` lands on the remote.
+        """
+        worktree = tmp_path / "wt"
+        _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+        command = f"git -C {worktree.as_posix()} push origin feature"
+        approve_run(head=_rev(worktree), command=command)
+        _git("commit", "--allow-empty", "-m", "run work", cwd=worktree)
+
+        allowed = _guard_push(checkout, command)
+        _git("push", "origin", "feature", cwd=worktree)
+
+        assert allowed.returncode == 0, allowed.stderr
+        assert _rev(remote, "feature") == _rev(worktree)
+        assert not _push_run_token(checkout).exists()
+
+    def test_worktree_push_needs_the_run_question_to_name_it(
+        self, approve_run: Callable, checkout: Path, remote: Path, tmp_path: Path
+    ) -> None:
+        """A run approval that never showed the worktree does not cover a ``git -C`` push of it.
+
+        Scenario: the run question names a plain ``git push origin feature``; the push through ``-C`` is the worktree
+        the user was never shown, so it is blocked and the token stays.
+        """
+        worktree = tmp_path / "wt"
+        _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+        approve_run(head=_rev(worktree), command="git push origin feature")
+
+        blocked = _guard_push(checkout, f"git -C {worktree.as_posix()} push origin feature")
+
+        assert blocked.returncode == 2
+        assert "to show that worktree" in blocked.stderr
+        assert _push_run_token(checkout).exists()
+        assert _rev(remote, "feature") == ""
 
     def test_head_off_the_named_pr_head_is_blocked(self, approve_run: Callable, checkout: Path, remote: Path) -> None:
         """A HEAD that does not descend from the PR head the user saw is refused and the token stays.

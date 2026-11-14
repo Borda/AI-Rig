@@ -7,7 +7,7 @@ description: 'Safely manage Codex Rig role-agent shims: doctor, status, or remov
 
 # Agent Shims
 
-After user intervention or repeated invocation, follow [Resume And Re-entry](../../shared/helper-cli-contract.md#resume-and-re-entry): complete selected action's verification and diagnostic instructions below. This manager keeps its non-artifact lifecycle; it doesn't skip its closing checks or replace final explanation with raw JSON.
+At initial entry, after recovery, and after user intervention or repeated invocation, follow [Resume And Re-entry](../../shared/helper-cli-contract.md#resume-and-re-entry): proactively complete the selected action's permitted recovery, verification and diagnostic instructions below. This manager keeps its non-artifact lifecycle and action-specific stop rules; it doesn't skip its closing checks or replace final explanation with raw JSON.
 
 This is experimental lifecycle tool. Installing authenticated standalone agent TOML does not prove that active collaboration interface can select that custom profile. A task name or child path matching role name is not proof. Use installed shims only when runtime exposes explicit custom-agent selector and observed child metadata plus verifier output prove selection; otherwise use blank-agent role-card injection.
 

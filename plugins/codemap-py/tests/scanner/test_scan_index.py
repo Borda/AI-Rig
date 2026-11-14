@@ -628,7 +628,7 @@ class TestAtomicIndexWrite:
 
         results = _run_scans_concurrently(scan_index, tmp_path, 2)
 
-        assert [code for code, _ in results] == [0, 0], results
+        assert [code for code, _ in results] == [0, 0], "\n".join(stderr for _, stderr in results)
         index = json.loads(index_path_for(tmp_path).read_text())  # never corrupt/truncated
         assert any(m["name"] == "gamma" for m in index["modules"])
         assert not list(

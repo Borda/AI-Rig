@@ -7,6 +7,7 @@ the Git change-set test keeps a real Git repository because the Git read is its 
 from __future__ import annotations
 
 import subprocess
+from collections import Counter
 from pathlib import Path
 from types import ModuleType
 from unittest import mock
@@ -66,6 +67,108 @@ def test_changed_tests_and_config_are_reported(project: Path) -> None:
     assert report["targets"] == ["tests/test_unrelated.py"]
     assert report["sources"] == {"tests/test_unrelated.py": "changed-test"}
     assert report["config_changed"] == ["conftest.py"]
+
+
+@mock.patch.object(Path, "read_text", autospec=True, side_effect=Path.read_text)
+def test_choose_reads_each_test_once_for_multiple_changed_sources(read_text: mock.MagicMock, project: Path) -> None:
+    """Reuse imported-test text across source matching and sandbox checks without selecting unrelated tests."""
+    report = HELPER.choose(project, ["src/pkg/mod.py", "src/pkg/orphan.py", "src/pkg/unused.py"], "HEAD", False, None)
+
+    assert report == {
+        "targets": ["tests/test_mod.py", "tests/test_usage.py"],
+        "sources": {"tests/test_mod.py": "heuristic", "tests/test_usage.py": "heuristic"},
+        "unmapped": ["src/pkg/orphan.py", "src/pkg/unused.py"],
+        "config_changed": [],
+        "codemap": "disabled",
+        "sandbox_safe": True,
+        "sandbox_reason": "no parallel option or xdist fixture found",
+        "pytest_args": ["-p", "no:xdist", "--", "tests/test_mod.py", "tests/test_usage.py"],
+    }
+    assert Counter(call.args[0].relative_to(project).as_posix() for call in read_text.call_args_list) == {
+        "tests/test_mod.py": 1,
+        "tests/test_usage.py": 1,
+        "tests/test_unrelated.py": 1,
+    }
+
+
+def test_choose_refreshes_test_text_after_file_changes(project: Path) -> None:
+    """Observe changed imports and fixture dependencies on each invocation, including removed dependencies."""
+    initial = HELPER.choose(project, ["src/pkg/mod.py", "src/pkg/orphan.py"], "HEAD", False, None)
+    (project / "tests/test_usage.py").write_text(
+        "from pkg.orphan import OTHER\ndef f(worker_id): pass\n", encoding="utf-8"
+    )
+    changed = HELPER.choose(project, ["src/pkg/mod.py", "src/pkg/orphan.py"], "HEAD", False, None)
+    (project / "tests/test_usage.py").write_text("def f(): pass\n", encoding="utf-8")
+    cleared = HELPER.choose(project, ["src/pkg/mod.py", "src/pkg/orphan.py"], "HEAD", False, None)
+
+    assert initial["unmapped"] == ["src/pkg/orphan.py"]
+    assert initial["sandbox_safe"] is True
+    assert changed["unmapped"] == []
+    assert changed["targets"] == ["tests/test_mod.py", "tests/test_usage.py"]
+    assert changed["sandbox_safe"] is False
+    assert changed["sandbox_reason"] == "tests/test_usage.py uses xdist fixtures"
+    assert cleared["targets"] == ["tests/test_mod.py"]
+    assert cleared["unmapped"] == ["src/pkg/orphan.py"]
+    assert cleared["sandbox_safe"] is True
+
+
+@mock.patch.object(Path, "read_text", autospec=True, side_effect=Path.read_text)
+@mock.patch.object(HELPER.codemap_adapter, "_run_json", autospec=True)
+@mock.patch.object(HELPER.codemap_adapter, "_resolve_codemap_executable", autospec=True)
+@mock.patch.object(HELPER.subprocess, "run", autospec=True)
+def test_complete_codemap_reads_only_selected_tests(
+    git: mock.MagicMock,
+    resolve: mock.MagicMock,
+    run_json: mock.MagicMock,
+    read_text: mock.MagicMock,
+    project: Path,
+) -> None:
+    """Leave unrelated test contents unread when a complete provider result bypasses heuristics."""
+    resolve.return_value = HELPER.codemap_adapter.LauncherResolution("codemap-py", "available", "test launcher")
+    run_json.return_value = (
+        0,
+        {"index": {"stale": False, "query_complete": True}, "test_impact": {"test_files": ["tests/test_mod.py"]}},
+        None,
+    )
+    git.return_value = subprocess.CompletedProcess([], 0, "a" * 40, "")
+
+    report = HELPER.choose(project, ["src/pkg/mod.py", "src/pkg/orphan.py"], "HEAD", True, None)
+
+    assert report["targets"] == ["tests/test_mod.py"]
+    assert report["sources"] == {"tests/test_mod.py": "codemap"}
+    assert report["unmapped"] == []
+    assert [call.args[0].relative_to(project).as_posix() for call in read_text.call_args_list] == ["tests/test_mod.py"]
+
+
+@pytest.fixture
+def unreadable_project(project: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Make the importing test unreadable without relying on host file permission enforcement."""
+    original_read = Path.read_text
+
+    def read(path: Path, *args: object, **kwargs: object) -> str:
+        """Simulate an unreadable test without depending on host file permission enforcement."""
+        if path == project / "tests/test_usage.py":
+            raise PermissionError("test read denied")
+        return original_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read)
+    return project
+
+
+def test_unreadable_import_candidate_is_ignored(unreadable_project: Path) -> None:
+    """Skip unreadable import candidates while retaining named tests and unmapped sources."""
+    report = HELPER.choose(unreadable_project, ["src/pkg/mod.py", "src/pkg/orphan.py"], "HEAD", False, None)
+
+    assert report["targets"] == ["tests/test_mod.py"]
+    assert report["unmapped"] == ["src/pkg/orphan.py"]
+
+
+def test_unreadable_selected_test_propagates_sandbox_error(unreadable_project: Path) -> None:
+    """Propagate an unreadable selected test's error when the sandbox must inspect its fixture dependencies."""
+    with pytest.raises(PermissionError, match="test read denied"):
+        HELPER.choose(
+            unreadable_project, ["src/pkg/mod.py", "src/pkg/orphan.py", "tests/test_usage.py"], "HEAD", False, None
+        )
 
 
 @pytest.mark.parametrize(

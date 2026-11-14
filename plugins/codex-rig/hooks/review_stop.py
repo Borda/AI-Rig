@@ -317,6 +317,12 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             continue
         if item_type in {"Reasoning", "AgentMessage"}:
             continue
+        if item_type == "FileChange":
+            # Artifact writes (for example the review blueprint) emit this receipt.
+            # A completed edit neither finishes the workflow nor requests a pause.
+            if item.get("status") != "completed":
+                return {}
+            continue
         if item_type == "SubAgentActivity":
             if item.get("kind") not in {"started", "completed"}:
                 return {}

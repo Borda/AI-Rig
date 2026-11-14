@@ -21,7 +21,7 @@ from _platform import DIRECTORY_SYMLINKS_AVAILABLE, FILE_SYMLINKS_AVAILABLE, POS
 PLUGIN = Path(__file__).resolve().parents[1]
 HELPER = PLUGIN / "skills" / "optimize" / "campaign.py"
 SHARED = PLUGIN / "shared"
-GIT_ENV = os.environ | {
+GIT_IDENTITY = {
     "GIT_AUTHOR_NAME": "Test",
     "GIT_AUTHOR_EMAIL": "test@example.invalid",
     "GIT_COMMITTER_NAME": "Test",
@@ -51,7 +51,8 @@ def cli(action: str, run: Path, *arguments: str, success: bool = True) -> dict:
 
 def git(repo: Path, *arguments: str) -> None:
     """Run one Git command in the repository, failing the test when it fails."""
-    subprocess.run(["git", "-C", str(repo), *arguments], env=GIT_ENV, check=True, capture_output=True)
+    # The environment is read per call: a module-level copy would predate the session's Git configuration isolation.
+    subprocess.run(["git", "-C", str(repo), *arguments], env=os.environ | GIT_IDENTITY, check=True, capture_output=True)
 
 
 def git_bytes(repo: Path, *arguments: str) -> bytes:

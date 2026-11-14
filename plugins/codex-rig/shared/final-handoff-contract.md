@@ -1,5 +1,7 @@
 # Final Handoff Contract
 
+Before preparing a handoff, apply [Proactive recovery and delivery](native-skill-contract.md#proactive-recovery-and-delivery) against the original user request. Complete feasible authorized work before rendering; `remaining` and `next_steps` describe genuine blockers or work outside the completed request, not a way to defer promised work. A validated intermediate report returns to its waiting parent workflow and does not end that parent's task. Keep the owning workflow's required output, verification and exact-caller exceptions intact.
+
 > Load this common contract plus the matching required supplement for every workflow disposition, including terminal and exact caller output. Other workflows need no supplement.
 
 | Workflow | Required supplement |

@@ -99,7 +99,24 @@
 //   <remote>`, `-u`, `<remote> HEAD|<branch>|refs/heads/<branch>`, `HEAD:<branch>`,
 //   a substitution printing the current branch (`"$(git branch
 //   --show-current)"`, read as the branch it is on), `git -c x=y push`,
-//   `git lfs push <remote> <branch>`. Never covered, with or without a token —
+//   `git lfs push <remote> <branch>`.
+//   WORKTREE PUSH: the Bash cwd may be another checkout than the one pushed (a worktree outside the
+//   session's working directories, where cwd resets after every call, and `cd` is never covered). The
+//   push then names its checkout as `git -C <dir> push …`: `-C` is the only global repository option
+//   (`--git-dir`, `--work-tree`, `--namespace`, `--exec-path` are never covered), once on the one push, its
+//   value one literal absolute directory (no space, quote, glob, variable or
+//   substitution) inside a checkout of the session project (same common dir). That checkout's branch, HEAD,
+//   remotes and ancestry replace the cwd's in every check below, and the token binds them — approved by a
+//   `git-push` question whose `git -C <dir> push …` span names the same checkout. A branch is checked out
+//   in one worktree, so branch + HEAD identify it. A current-branch substitution is not read there: it
+//   would run in the cwd, not in `<dir>`, and stays a blocking substitution. A worktree push needs the
+//   user's explicit selection: the approving question (`git-push`, or the `git-push-run` push span) must have
+//   shown that same worktree (lib/approval-grants.js `checkoutProblem`). `env -C`/`--chdir`, `sudo -D`/
+//   `--chdir`, `chroot` and `nsenter` move a push elsewhere like `cd` and are never covered. LIMIT: a plain
+//   approval is bound by branch + HEAD, not by checkout path; a branch checked out in two worktrees
+//   (`git worktree add --force`) is spendable from either, and per-worktree config
+//   (`extensions.worktreeConfig`) is unseen, like any config an earlier call changed.
+//   Never covered, with or without a token —
 //   blocked, the token kept, the message telling Claude the user runs it by
 //   hand: deleting a remote ref (`:ref`, `--delete`/`-d`), `--prune`,
 //   `--all`/`--branches`, `--tags`, `--follow-tags`, any option outside
@@ -107,7 +124,8 @@
 //   side of a refspec, a destination that is a URL, a path or an unknown name
 //   (configured names from `git remote` in the checkout), a variable or
 //   substitution naming the remote or a refspec, `cd`/`pushd`/`popd`/`chdir`
-//   anywhere in the command, `-C`/`--git-dir`/`--work-tree`/GIT_DIR, inline
+//   anywhere in the command, `--git-dir`/`--work-tree`/GIT_DIR, a `-C` that is
+//   not the one leading option of the push (WORKTREE PUSH below), inline
 //   config redirecting the push (`-c`/`--config-env` remote.*, url.*, push.*,
 //   branch.*, include*; GIT_CONFIG_* variables), and `send-pack`, `http-push`
 //   and `subtree push` (a URL or path destination; a split commit, not HEAD).
@@ -140,9 +158,9 @@
 //   keeps it a substitution, which blocks as one. A program other than git that moves HEAD or a ref earlier in the same
 //   command (a script, a Makefile, `gh pr checkout`) is beyond the text checks.
 //   The token, branch and HEAD are read where the payload `cwd` points (else
-//   the hook's own cwd); whether that follows a `cd` made in an earlier Bash
-//   call is unverified. A linked worktree of the project is checked against its
-//   own branch and HEAD. The shape checks read text: a repeat or second push
+//   the hook's own cwd), or at the `-C` directory of a WORKTREE PUSH; whether
+//   the cwd follows a `cd` made in an earlier Bash call is unverified. A linked
+//   worktree of the project is checked against its own branch and HEAD. The shape checks read text: a repeat or second push
 //   assembled at run time (an alias or function defined elsewhere, `eval "$X"`)
 //   is beyond them, and a commit message naming git push beside a real push
 //   reads as a second push (a false block only). SessionStart wipes pending
@@ -230,12 +248,39 @@ const REPEAT_RUNNERS = new Set(["watch", "parallel", "xargs"]);
 const FUNCTION_DEFINITION = /(?:^|[\s;&|{(])(?:function\s+[\w.-]+|[\w.-]+\s*\(\s*\))\s*\{/;
 // git options and variables that run git in another repository than the checkout whose branch and
 // HEAD the token names.
-const REPOSITORY_OPTION = /^(?:-C|--git-dir|--work-tree)(?:=|$)/;
+// `--namespace` moves the refs a push writes on a local remote; `--exec-path` runs `git-<command>` programs from a
+// directory the command names: neither is covered, so both read as pointing git elsewhere.
+const REPOSITORY_OPTION = /^(?:-C|--git-dir|--work-tree|--namespace|--exec-path)(?:=|$)/;
 const REPOSITORY_VARIABLE = /\bGIT_(?:DIR|WORK_TREE|COMMON_DIR)=/;
 // git global options that take the next word as their value.
-const GLOBAL_OPTIONS_WITH_VALUE = new Set(["-c", "--config-env", "--namespace", "--exec-path", "--attr-source"]);
+// `-C`, `--git-dir` and `--work-tree` take the next word as their value (`-c` after `-C <dir>` must still be scanned).
+const GLOBAL_OPTIONS_WITH_VALUE = new Set([
+  "-c",
+  "-C",
+  "--config-env",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--exec-path",
+  "--attr-source",
+]);
 // Shell builtins that move a later command into another directory, so into another repository.
 const DIRECTORY_CHANGERS = ["cd", "pushd", "popd", "chdir"];
+// Wrapper programs whose own leading option changes the directory the wrapped command runs in: `env -C <dir>` /
+// `--chdir`, `sudo -D <dir>` / `--chdir`. Options that take a value, so the value is not read as the command.
+// `chroot` and `nsenter` relocate whatever they run: any invocation counts.
+const DIRECTORY_WRAPPERS = new Map([
+  ["chroot", { always: true }],
+  ["nsenter", { always: true }],
+  ["env", { option: /^(?:-[A-Za-z]*C|--chdir(?:=|$))/, valued: new Set(["-u", "-S", "-P", "-a"]) }],
+  [
+    "sudo",
+    {
+      option: /^(?:-[A-Za-z]*D|--chdir(?:=|$))/,
+      valued: new Set(["-u", "-g", "-h", "-p", "-r", "-t", "-U", "-T", "-R"]),
+    },
+  ],
+]);
 // Inline config that changes where a push goes or what it sends: remote.<name>.url/pushurl/push/mirror,
 // url.<base>.insteadOf/pushInsteadOf, push.default/followTags, branch.<name>.pushRemote, config includes.
 const REDIRECTING_CONFIG = /^(?:remote|url|push|branch|include|includeif)\./i;
@@ -468,12 +513,56 @@ function readingKey(args) {
     .join(" ");
 }
 
-// True when a git invocation's global options move it into another repository or work tree.
-function switchesRepository(words) {
-  for (let i = 1; i < words.length && words[i].startsWith("-"); i += GLOBAL_OPTIONS_WITH_VALUE.has(words[i]) ? 2 : 1) {
-    if (REPOSITORY_OPTION.test(words[i])) return true;
+// A git invocation split at its global options: the repository options it carries (`-C <dir>` as {name: "-C", value},
+// any other spelling or option as {name} alone) and the words from its subcommand on. An unknown option reads as a flag.
+function globalRepositoryOptions(words) {
+  const options = [];
+  let i = 1;
+  for (; i < words.length && words[i].startsWith("-"); i += 1) {
+    const word = words[i];
+    if (word === "-C") {
+      options.push({ name: "-C", value: words[i + 1] ?? "" });
+      i += 1;
+    } else if (REPOSITORY_OPTION.test(word)) {
+      options.push({ name: word.split("=")[0] });
+      if (!word.includes("=")) i += 1;
+    } else if (GLOBAL_OPTIONS_WITH_VALUE.has(word)) {
+      i += 1;
+    }
   }
-  return false;
+  return { options, rest: words.slice(i) };
+}
+
+const DIRECTORY_SPELLING =
+  "the `-C` directory may point git at another repository: only one literal absolute path is covered (no space, " +
+  "quote, backslash, glob, variable or substitution; on Windows write it with forward slashes)";
+const NOT_ONE_WORKTREE_PUSH =
+  "the command points git at another repository or work tree: only one `-C <absolute directory>` on the one push is " +
+  "covered (no --git-dir, --work-tree, second -C, or -C on another git command)";
+
+// The checkout the push runs in, or why none is covered: `{dir: null}` for the session cwd, `{dir}` for a WORKTREE PUSH
+// (one `-C <literal absolute directory>` on the one push invocation, nothing else pointing git elsewhere), else `{reason}`.
+// The lexer reads one command twice (decoded and coarse), so identical readings count once.
+function repositoryTarget(command, deadline, grants) {
+  const gits = programInvocations(command, "git", { deadline });
+  if (gits === null) return { reason: "the command holds text the guard cannot read for a git invocation" };
+  const pointed = gits
+    .map(globalRepositoryOptions)
+    .filter(({ options }) => options.length > 0)
+    .map(({ options, rest }) => ({ options, push: asPush(rest) !== null }));
+  if (pointed.length === 0) return { dir: null };
+  // The directory's spelling is judged first: a quoted, spaced, escaped or variable path splits differently in the
+  // lexer's two readings, and "second -C" would send the reader hunting for an option that is not there.
+  const badDirectory = pointed
+    .flatMap(({ options }) => options)
+    .find((o) => o.name === "-C" && (grants.UNSAFE_DIRECTORY_WORD.test(o.value) || !path.isAbsolute(o.value)));
+  if (badDirectory) return { reason: DIRECTORY_SPELLING };
+  const [first] = pointed;
+  const same = pointed.every((found) => JSON.stringify(found) === JSON.stringify(first));
+  const [option] = first.options;
+  if (!same || !first.push || first.options.length !== 1 || option.name !== "-C")
+    return { reason: NOT_ONE_WORKTREE_PUSH };
+  return { dir: option.value };
 }
 
 // The config keys a git invocation sets inline: `-c <key>=<value>`, `--config-env[=]<key>=<variable>`.
@@ -571,7 +660,7 @@ function refspecProblem(spec, scope, destinationAllowed) {
   const source = colon < 0 ? spec : spec.slice(0, colon);
   if (source === "") return "an empty source refspec deletes the remote ref";
   if (source !== "HEAD" && !names.includes(source)) {
-    return `the refspec pushes another ref than the current branch ${scope.branch}`;
+    return `the refspec pushes another ref (${source}) than the current branch ${scope.branch}`;
   }
   if (colon >= 0 && !(destinationAllowed && names.includes(spec.slice(colon + 1)))) {
     return `the refspec updates another remote ref than the current branch ${scope.branch}`;
@@ -601,9 +690,21 @@ function readingScopeProblem(reading, scope) {
   );
 }
 
+// True when a wrapper invocation's leading options (up to the command it wraps) include its directory option.
+function wrapperChangesDirectory(words, { always, option, valued }) {
+  if (always) return true;
+  for (let i = 1; i < words.length; i += 1) {
+    const word = words[i];
+    if (option.test(word)) return true;
+    if (valued.has(word)) i += 1;
+    else if (!word.startsWith("-") && !word.includes("=")) return false;
+  }
+  return false;
+}
+
 // Why no approval can cover this command — the user runs it by hand — or null: a directory change, another
 // repository, inline config redirecting the push, or a push reading outside the approved branch's push.
-function uncoveredProblem(command, pushReadings, scope, deadline) {
+function uncoveredProblem(command, pushReadings, scope, deadline, target) {
   for (const name of DIRECTORY_CHANGERS) {
     const found = programInvocations(command, name, { deadline });
     if (found === null) return "the command holds text the guard cannot read for a directory change";
@@ -611,9 +712,17 @@ function uncoveredProblem(command, pushReadings, scope, deadline) {
   }
   const gits = programInvocations(command, "git", { deadline });
   if (gits === null) return "the command holds text the guard cannot read for a git invocation";
-  if (REPOSITORY_VARIABLE.test(command) || gits.some(switchesRepository)) {
-    return "the push points git at another repository or work tree (-C, --git-dir, --work-tree, GIT_DIR)";
+  for (const [name, wrapper] of DIRECTORY_WRAPPERS) {
+    const found = programInvocations(command, name, { deadline });
+    if (found === null) return "the command holds text the guard cannot read for a directory change";
+    if (found.some((words) => wrapperChangesDirectory(words, wrapper))) {
+      return `the command runs through \`${name}\` with an option that changes directory, so the push may run in another repository`;
+    }
   }
+  if (REPOSITORY_VARIABLE.test(command)) {
+    return "the push points git at another repository or work tree (GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR)";
+  }
+  if (target.reason) return target.reason;
   if (CONFIG_VARIABLE.test(command)) {
     return "a GIT_CONFIG, HOME or XDG_CONFIG_HOME assignment swaps config that can change where the push goes";
   }
@@ -679,6 +788,45 @@ function configuredRemotes(cwd, grants) {
   }
 }
 
+// A reason computed in the `-C` checkout `dir` names it: the session's own cwd is another checkout, so "the current
+// branch" would otherwise read as the cwd's.
+function inCheckout(reason, dir) {
+  return dir ? `${reason} [in ${dir}]` : reason;
+}
+
+// The hint for a refspec naming a branch that another worktree of the project has checked out, or "": that branch is
+// pushed as `git -C <that worktree> push <remote> <branch>`, which a `git-push` question showing it can cover.
+function siblingWorktreeHint(reason, cwd, grants) {
+  // A path the `-C` form cannot carry gets no hint (the guard would refuse it): `grants.UNSAFE_DIRECTORY_WORD`.
+  const named = /another ref \(([^)]+)\) than/.exec(reason);
+  if (!named) return "";
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!grants.DISCOVERY_ENV.includes(key.toUpperCase())) env[key] = value;
+  }
+  let listing;
+  try {
+    listing = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: cwd || process.cwd(),
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000,
+    });
+  } catch {
+    return "";
+  }
+  const block = listing
+    .split(/\r?\n\r?\n/)
+    .find((entry) => entry.split(/\r?\n/).includes(`branch refs/heads/${named[1]}`));
+  const dir = block && /^worktree (.+)$/m.exec(block)?.[1];
+  if (!dir || grants.UNSAFE_DIRECTORY_WORD.test(dir) || !path.isAbsolute(dir)) return "";
+  return (
+    ` — branch ${named[1]} is checked out in ${dir}: push it as \`git -C ${dir} push <remote> ${named[1]}\` after ` +
+    "a git-push question that shows that command"
+  );
+}
+
 // Why the push token does not allow this call, or null after spending it: a token of the session project, valid, on
 // the current branch at the current HEAD, claimed once for this call's tool_use_id with the approving answer proved
 // in the transcript (lib/approval-grants.js `spendToken`: of concurrent calls exactly one claims it).
@@ -688,8 +836,14 @@ function onceTokenProblem(grants, here, data) {
     if (status.expired) fs.rmSync(status.file, { force: true });
     return status.reason;
   }
-  if (here.branch !== status.record.branch) return "the current branch is not the one the push was approved on";
-  if (here.head !== status.record.head) return "HEAD moved since the push was approved";
+  const dir = here.checkout.explicit ? here.dir : null;
+  if (here.branch !== status.record.branch) {
+    return inCheckout(
+      `the current branch is not the one the push was approved on (approval names ${status.record.branch}, the checkout is on ${here.branch})`,
+      dir,
+    );
+  }
+  if (here.head !== status.record.head) return inCheckout("HEAD moved since the push was approved", dir);
   if (typeof data.tool_use_id !== "string" || data.tool_use_id === "") {
     return "the payload carries no tool_use_id to spend the push approval with";
   }
@@ -697,6 +851,7 @@ function onceTokenProblem(grants, here, data) {
     cwd: data.cwd,
     callId: data.tool_use_id,
     expected: { branch: here.branch, head: here.head },
+    checkout: here.checkout,
     transcriptPath: data.transcript_path,
   });
   return spent.ok ? null : spent.reason;
@@ -725,15 +880,21 @@ function runPushShapeProblem(pushReadings, record) {
 // run's own commits sit on top of it), claimed once like the exact-HEAD token. A call that already spent the exact-HEAD
 // token (a second copy of the same hook call) never spends this one too.
 function runTokenProblem(grants, here, data, pushReadings, record) {
-  if (here.branch !== record.branch) return "the current branch is not the one the run's push was approved on";
+  const dir = here.checkout.explicit ? here.dir : null;
+  if (here.branch !== record.branch) {
+    return inCheckout(
+      `the current branch is not the one the run's push was approved on (approval names ${record.branch}, the checkout is on ${here.branch})`,
+      dir,
+    );
+  }
   if (grants.holdsClaim(PUSH_SCOPE, { cwd: data.cwd, callId: data.tool_use_id })) {
     return "this call already spent the exact-HEAD push approval";
   }
   const shape = runPushShapeProblem(pushReadings, record);
   if (shape) return shape;
   const remote = record.remote;
-  if (!grants.isAncestor(data.cwd, record.base_head, here.head)) {
-    return "HEAD is not on the line of the PR head the run's push was approved from";
+  if (!grants.isAncestor(here.dir, record.base_head, here.head)) {
+    return inCheckout("HEAD is not on the line of the PR head the run's push was approved from", dir);
   }
   if (typeof data.tool_use_id !== "string" || data.tool_use_id === "") {
     return "the payload carries no tool_use_id to spend the push approval with";
@@ -742,6 +903,7 @@ function runTokenProblem(grants, here, data, pushReadings, record) {
     cwd: data.cwd,
     callId: data.tool_use_id,
     expected: { branch: here.branch, remote },
+    checkout: here.checkout,
     transcriptPath: data.transcript_path,
   });
   return spent.ok ? null : spent.reason;
@@ -769,11 +931,23 @@ function pushVerdict(command, data, inspection) {
   if (!grants)
     return { kind: "ask", reason: "commit-guard cannot load hooks/lib/approval-grants.js to read the push token" };
   if (data.agent_id) return { kind: "agent", reason: "a spawned agent never spends the user's push approval" };
-  const where = grants.recordDirectory(data.cwd);
-  if (where.reason) return { kind: "ask", reason: where.reason };
-  const here = grants.gitHead(data.cwd);
-  if (here.reason) return { kind: "ask", reason: here.reason };
-  const scoped = PLAIN_BRANCH.test(here.branch) ? command.replace(BRANCH_SUBSTITUTION, here.branch) : command;
+  const session = grants.checkoutRoot(data.cwd);
+  if (session.reason) return { kind: "ask", reason: session.reason };
+  // The checkout the push runs in: the session cwd, or the `-C` directory of a worktree push, which must itself be a
+  // checkout of the session project. A target no approval can cover is reported by `uncoveredProblem` below.
+  const target = repositoryTarget(command, Date.now() + 1000, grants);
+  const home = target.dir ? grants.siblingCheckout(target.dir, data.cwd) : session;
+  if (home.reason) return { kind: "byHand", reason: home.reason };
+  const checkout = target.dir || data.cwd;
+  const here = grants.gitHead(checkout);
+  // No branch to approve on (detached HEAD, no commit): a question can never record, so Claude fixes the checkout first.
+  if (here.reason) return { kind: "checkout", reason: inCheckout(here.reason, target.dir) };
+  here.dir = checkout;
+  // The spend proves the approving question showed this checkout: a `-C` push needs a question naming that worktree.
+  here.checkout = { toplevel: home.toplevel, explicit: Boolean(target.dir) };
+  // A branch substitution runs in the session cwd, not in the `-C` directory, so it names no branch of the target.
+  const scoped =
+    !target.dir && PLAIN_BRANCH.test(here.branch) ? command.replace(BRANCH_SUBSTITUTION, here.branch) : command;
   // Git discovery can outlast the text budget; substituted text gets its own bounded inspection phase.
   const info = scoped === command ? inspection : { ...inspection, deadline: Date.now() + 1000 };
   const all = scoped === command ? inspection.readings : gitSubcommandArgs(scoped, info);
@@ -781,10 +955,14 @@ function pushVerdict(command, data, inspection) {
   const pushReadings = readings.filter((args) => asPush(args) !== null);
   const repeated = repeatProblem(scoped, pushReadings);
   if (repeated) return { kind: "ask", reason: repeated };
-  const scope = { branch: here.branch, remotes: configuredRemotes(data.cwd, grants) };
+  const scope = { branch: here.branch, remotes: configuredRemotes(checkout, grants) };
   // Remote discovery is subprocess time, so scope inspection starts a fresh text-only budget.
-  const uncovered = uncoveredProblem(scoped, pushReadings, scope, Date.now() + 1000);
-  if (uncovered) return { kind: "byHand", reason: uncovered };
+  const uncovered = uncoveredProblem(scoped, pushReadings, scope, Date.now() + 1000, target);
+  if (uncovered) {
+    // A branch checked out in a sibling worktree is pushed through `-C`: a question can cover that, so ask, not by hand.
+    const hint = target.dir ? "" : siblingWorktreeHint(uncovered, data.cwd, grants);
+    return hint ? { kind: "ask", reason: uncovered + hint } : { kind: "byHand", reason: uncovered };
+  }
   const moving = movingGitProblem(readings.filter((args) => asPush(args) === null));
   if (moving) return { kind: "ask", reason: moving };
   const token = tokenProblem(grants, here, data, pushReadings);
@@ -798,14 +976,26 @@ const PUSH_ADVICE = {
     "you will run. The user's `Approve` records a single-use token (claude-push-approval.json in the git common dir, " +
     "15 min) for one push of this branch at this HEAD to a configured remote — `git push [-u] [<remote>] " +
     "[HEAD|<branch>][:<branch>]`, remote and branch written out — run from this checkout as the only push in its Bash " +
-    "command, beside no git that moves HEAD. A resolve run may instead ask once at its start with header " +
-    "`git-push-run` (a `git push <remote> <branch>` span and the PR head commit id in the question); that token " +
-    "allows one such push while HEAD descends from that head. Never create, copy or edit a token yourself.",
+    "command, beside no git that moves HEAD. To push another checkout of this project (a worktree) without changing " +
+    "directory, write the push as `git -C <absolute worktree path> push <remote> <branch>` — path unquoted, no space or " +
+    "backslash (on Windows with forward slashes), branch written out — in the question's one inline code span and in " +
+    "the Bash call; the question's branch, HEAD and commits are then that worktree's (read them with `git -C <path>`) " +
+    "and its first line says it is that worktree, not this session's checkout. The token binds that worktree's branch " +
+    "and HEAD, and a worktree push runs only on a question that showed that worktree. A resolve run may instead ask " +
+    "once at its start with header `git-push-run` (a `git push <remote> <branch>` span, or `git -C <absolute worktree " +
+    "path> push <remote> <branch>` for a worktree, and the PR head commit id in the question); that token allows one " +
+    "such push while HEAD descends from that head. Never create, copy or edit a token yourself.",
   byHand:
-    "A push approval covers only one push of the current branch at the approved HEAD to a configured remote name — " +
-    "`git push [-u] [<remote>] [HEAD|<branch>][:<branch>]`, remote and branch written out, run from this checkout — " +
-    "so no `git-push` answer can cover this one; do not ask for it. Give the user the exact command to run by hand in " +
-    "their own shell, or write the push in that plain form when a plain push of this branch is what the task needs.",
+    "A push approval covers only one push of the branch checked out where the push runs, at the approved HEAD, to a " +
+    "configured remote name — `git push [-u] [<remote>] [HEAD|<branch>][:<branch>]`, remote and branch written out, " +
+    "run from this checkout, or as `git -C <absolute worktree path> push …` for another worktree of this project (path " +
+    "unquoted, no space or backslash) — so no `git-push` answer can cover this one; do not ask for it. Give the user " +
+    "the exact command to run by hand in their own shell, or write the push in one of those plain forms when a plain " +
+    "push of the branch checked out there is what the task needs.",
+  checkout:
+    "A push is approved on a named branch at a commit, so no `git-push` answer can record for this checkout yet: " +
+    "check out a named branch (with a commit) there in its own Bash call, then ask the git-push question and push. " +
+    "Asking now would record nothing.",
   agent: "Only the lead session spends the user's push approval: hand the push back to it.",
   fault:
     "commit-guard fails closed: no push runs until it can check the approval. Retry; if it persists, reinstall the " +

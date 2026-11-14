@@ -138,7 +138,6 @@ _OLDER_PROVIDER_PHRASES = [
     "missing-index",
     "Any residual `root_mismatch` stays `degraded`",
     "incompatible provider is never retried within same run",
-    "Never substitute the invoking checkout's index",
 ]
 _PYTHON_DIFF_CODES = [
     "codemap-context-missing-for-python-diff",

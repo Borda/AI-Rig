@@ -96,7 +96,7 @@ class TestHelperContract:
     """Protect the shared helper-CLI contract that every packaged skill must point back to."""
 
     def test_closing_gate_survives_reentry(self) -> None:
-        """Re-entering a skill after user intervention resumes at the first unmet checkpoint, not a summary.
+        """Automatic recovery and user intervention retain the first unmet checkpoint and closing gate.
 
         User intervention must not turn a resumed skill into an informal final summary; the shared contract's Resume And
         Re-entry section pins the closing-gate obligations.
@@ -109,7 +109,11 @@ class TestHelperContract:
             [
                 "every skill",
                 "user intervention",
-                "repeated skill invocation",
+                "repeated invocation",
+                "initial entry",
+                "recovered failure",
+                "nested-skill return",
+                "no new user turn",
                 "first unmet checkpoint",
                 "normal closing gate",
                 "not an exact-output override",

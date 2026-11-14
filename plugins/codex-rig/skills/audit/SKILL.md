@@ -179,7 +179,7 @@ Classify overlap as `keep`, `sharpen`, `merge-prune`:
 
 ### 12: Write mandatory result artifact
 
-Use shared lifecycle/authoritative help. Write `AUDIT_METADATA`, validate `audit`, promote only validated candidate.
+Use shared lifecycle/authoritative help. Write `AUDIT_METADATA` and the authored handoff draft, then use `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/remediation_finalize.py finalize --skill audit --help` for the populated invocation with `--promote`. The helper derives gate verification, confidence copies, result artifact links and digest bindings, renders the handoff, writes the candidate, validates `audit`, and promotes only a validated candidate. Keep findings, decisions, source coverage and substantive audit metadata authored; the helper never invents missing evidence or accepts changed evidence digests. Repair evidenced bookkeeping from retained canonical inputs and rerun the finalizer; preserve substantive validation failures as open work.
 
 ## Fail-Fast Rules
 

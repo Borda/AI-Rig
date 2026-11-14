@@ -1,8 +1,8 @@
 """Real-Git acceptance checks for optional gate source binding.
 
-Every test drives ``shared/run_gates.py`` as a subprocess against a real temporary Git repository, because the contract
-is the observable receipt, exit status and side effects of that runner, not any internal function. Nothing here is
-mocked: the Git state, the checked-out worktrees and the child processes are the behaviour under test.
+Acceptance tests drive ``shared/run_gates.py`` against real temporary Git repositories, because the contract is the
+observable receipt, exit status and side effects of that runner. Controlled Git-output boundary checks additionally
+exercise filename framing and inspection failures without depending on host filename capabilities.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import pytest
 from _modules import load_module
@@ -1531,3 +1532,113 @@ def test_project_environment_binds_nested_uv_run(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert not (repository / ".venv").exists()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("parallel", [False, True])
+def test_source_proof_batches_git_inventory_per_process(
+    tmp_path: Path, repository: Path, output: Path, parallel: bool
+) -> None:
+    """Three collected files and an imported module share one real Git inventory in each pytest process."""
+    audit_directory = tmp_path / "audit"
+    audit_directory.mkdir()
+    (repository / "example.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (repository / "test_first.py").write_text("import example\ndef test_value(): assert example.VALUE == 1\n")
+    (repository / "test_žluťoučký.py").write_text("def test_value(): assert True\n", encoding="utf-8")
+    (repository / "test_third.py").write_text("def test_value(): assert True\n")
+    (repository / "conftest.py").write_text(
+        "import json, os, sys\nfrom pathlib import Path\n"
+        f"AUDIT = Path({str(audit_directory)!r})\n"
+        "def audit(event, args):\n"
+        "    if event == 'subprocess.Popen' and 'ls-files' in args[1]:\n"
+        "        with (AUDIT / (str(os.getpid()) + '.jsonl')).open('a', encoding='utf-8') as stream:\n"
+        "            stream.write(json.dumps(args[1]) + '\\n')\n"
+        "sys.addaudithook(audit)\n",
+        encoding="utf-8",
+    )
+    _git(repository, "add", ".")
+    _git(repository, "commit", "-m", f"inventory fixture\n\n{CODEX_TRAILER}")
+    arguments = ["-q", "-p", "no:cacheprovider", "-o", "addopts="] + (["-n", "2"] if parallel else ["-p", "no:xdist"])
+
+    result = _run(
+        TestPytestGateRecovery._tests_gate_command(
+            output,
+            repository,
+            _git(repository, "rev-parse", "HEAD"),
+            sys.executable,
+            "--pytest-args-json",
+            json.dumps(arguments),
+        )
+    )
+
+    assert result.returncode == 0, result.stderr
+    proof = _gate_check(output, "tests")["python_imports"]
+    inventories = [path.read_text(encoding="utf-8").splitlines() for path in audit_directory.glob("*.jsonl")]
+    assert proof["status"] == "pass"
+    assert len(proof["tests"]) == 3
+    assert proof["modules"]["example"]["tracked"] is True
+    assert len(inventories) == (3 if parallel else 1)
+    assert all(len(records) == 1 for records in inventories), inventories
+    expected = ["git", "ls-files", "-z", "--"]
+    expected_audit = subprocess.list2cmdline(expected) if sys.platform == "win32" else expected
+    assert all(json.loads(records[0]) == expected_audit for records in inventories), inventories
+
+
+@pytest.mark.parametrize(
+    ("filename", "tracked"),
+    [
+        pytest.param("test_line\nbreak.py", True, id="newline"),
+        pytest.param("test_žluťoučký.py", True, id="non-ascii"),
+        pytest.param("test_line", False, id="partial-line"),
+        pytest.param("test_*.py", False, id="literal-pathspec"),
+        pytest.param(".", False, id="worktree-root"),
+    ],
+)
+def test_source_inventory_matches_exact_nul_delimited_names(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, filename: str, tracked: bool
+) -> None:
+    """Git's raw NUL framing preserves unusual filenames and never interprets an origin as a pathspec."""
+    gates = _load_run_gates(monkeypatch)
+    inventory = b"test_line\nbreak.py\0" + os.fsencode("test_žluťoučký.py") + b"\0"
+    git = mock.Mock(spec=subprocess.run, return_value=subprocess.CompletedProcess([], 0, stdout=inventory))
+    monkeypatch.setattr(gates.subprocess, "run", git)
+
+    result = gates.inspect_collected_test(tmp_path / filename, tmp_path)
+
+    assert result["tracked"] is tracked
+    assert result["status"] == ("pass" if tracked else "fail")
+    git.assert_called_once_with(
+        ["git", "ls-files", "-z", "--", f":(literal){filename}"],
+        cwd=tmp_path,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        timeout=gates.SOURCE_INSPECTION_TIMEOUT_SECONDS,
+    )
+
+
+@pytest.mark.parametrize(
+    "git_result",
+    [
+        pytest.param(subprocess.CompletedProcess([], 1, stdout=b"test_file.py\0"), id="partial-output-failure"),
+        pytest.param(OSError("git unavailable"), id="unavailable"),
+        pytest.param(subprocess.TimeoutExpired("git", 1), id="timeout"),
+    ],
+)
+def test_source_inventory_failure_rejects_clean_tracking(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, git_result: subprocess.CompletedProcess[bytes] | Exception
+) -> None:
+    """An unsuccessful Git inventory cannot certify a collected file even when it emitted that file's name."""
+    gates = _load_run_gates(monkeypatch)
+    git = mock.Mock(spec=subprocess.run, side_effect=[git_result])
+    monkeypatch.setattr(gates.subprocess, "run", git)
+
+    result = gates.inspect_collected_test(tmp_path / "test_file.py", tmp_path)
+
+    assert result == {
+        "origin": (tmp_path / "test_file.py").resolve().as_posix(),
+        "tracked": False,
+        "status": "fail",
+        "reason": "test-not-tracked",
+    }
+    git.assert_called_once()

@@ -35,7 +35,7 @@ class TestQuestionGuidance:
         and the guide must keep the root-owns-questions rule plus a working pointer to them.
         """
         assert len(SKILLS) == 4
-        assert len(guide.split()) <= 350
+        assert len(guide.split()) <= 400
         assert "The root owns user questions" in guide
         assert "codex-user-questions-details.md" in guide
         assert DETAILS_PATH.is_file()

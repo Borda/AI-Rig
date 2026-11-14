@@ -20,6 +20,8 @@ from _skill_text import missing_phrases, read_with_references
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 #: Skills that load part of their instructions from a trigger-loaded reference rather than SKILL.md.
 _MOVED_REFERENCES = {
+    "implement": ("portable-parallel-read.md",),
+    "manage": ("portable-parallel-read.md",),
     "challenge-resolve": ("chunk-path.md",),
     "code-review": (
         "source-and-scope.md",
@@ -198,17 +200,26 @@ def test_waits_still_report_pending_and_timed_out_agents() -> None:
     assert missing_phrases(native, phrases) == []
 
 
-def test_empty_wait_requires_evidence_based_status_before_another_wait() -> None:
-    """Prevent silent empty-wait loops and unsupported claims that no children are running.
+def test_empty_wait_coalesces_status_without_losing_evidence_or_deadlines() -> None:
+    """Reduce empty-wait noise without hiding deadlines or inventing child progress.
 
     An empty wait return proves nothing about the children, so the contract must demand a dispatch to wait on and an
-    evidence-based status update before any further wait or tool call.
+    evidence-based status update when state changes or the host update cadence requires one.
     """
     native = _text("shared/native-skill-contract.md")
 
     phrases = (
         "Before waiting, identify at least one accepted dispatch still awaiting completion or join",
         "If none remains, do not wait",
+        "timeout_ms: 60000",
+        "Respect the active tool's minimum and maximum timeout",
+        "report early and recalculate the cadence budget",
+        "use the minimum valid wait and disclose the timing limit",
+        "Never extend the recorded child deadline or mark it timed out early",
+        "Complete useful parent work before waiting",
+        "On a state change or when the active host's user-update cadence is due",
+        "For an unchanged empty return before that cadence is due, omit a duplicate status",
+        "check child deadlines after every return",
         "before another wait or other tool call",
         "role/task, elapsed time, last observed event",
         "no new progress evidence",
@@ -221,17 +232,75 @@ def test_empty_wait_requires_evidence_based_status_before_another_wait() -> None
 @pytest.mark.parametrize(
     "relative",
     [
-        "assets/AGENTS.md",
         "shared/specialist-orchestration.md",
         "skills/code-review/references/legacy-dispatch.md",
         "skills/challenge-resolve/SKILL.md",
     ],
 )
-def test_wait_call_sites_keep_the_status_checkpoint_visible(relative: str) -> None:
-    """Keep notification mandatory where the workflow tells the agent to wait."""
+def test_wait_call_sites_keep_bounded_status_cadence_visible(relative: str) -> None:
+    """Keep workflow wait instructions consistent with bounded, coalesced status updates."""
     assert (
-        "After every wait, including an empty return, report completed/expected counts, pending roles and elapsed time "
-        "before any next tool call" in _text(relative)
+        "Report on state changes or when the active host's user-update cadence is due; omit duplicate status for "
+        "unchanged empty returns before that cadence" in _text(relative)
+    )
+    assert "Respect the active tool's timeout bounds and short-budget handling" in _text(relative)
+
+
+def test_global_wait_rule_requires_canonical_contract_before_waiting() -> None:
+    """Keep detailed wait obligations reachable before a global-instruction reader can wait."""
+    lines = (PLUGIN_ROOT / "assets/AGENTS.md").read_text(encoding="utf-8").splitlines()
+
+    assert any(
+        "Before waiting for a child, read and apply" in line
+        and "`shared/native-skill-contract.md` §Agent Waits" in line
+        and "binds as if inline" in line
+        for line in lines
+    )
+    assert any("blocking `wait_agent` + timeout" in line and "never poll" in line for line in lines)
+
+
+def test_pr_helper_details_load_before_pr_preparation() -> None:
+    """Require the PR helper branch before preparation while retaining common local and completion guards."""
+    common = (PLUGIN_ROOT / "shared/helper-cli-contract.md").read_text(encoding="utf-8").splitlines()
+    pr = (PLUGIN_ROOT / "shared/helper-pr-contract.md").read_text(encoding="utf-8").splitlines()
+
+    assert any(
+        "Before any PR review or PR remediation preparation" in line
+        and "read and apply [PR Helper Contract](helper-pr-contract.md)" in line
+        and "binds as if inline" in line
+        for line in common
+    )
+    assert (
+        missing_phrases(
+            "\n".join(pr),
+            (
+                "After successful authoritative `pr.json` collection",
+                "--skill code-review --promote-pr-run <run-directory>",
+                "rejects any disagreement with an initial PR-named run",
+                "interrupted claims reserve a gap rather than being reclaimed",
+                "--skill code-remediate --promote-pr-run <run-directory>",
+                "Python PR test gates use `--pytest-python <absolute interpreter>`",
+                "missing receipts, crashed workers or wrong source origins fail closed",
+            ),
+        )
+        == []
+    )
+    assert (
+        missing_phrases(
+            "\n".join(common),
+            (
+                "Local-diff review mirrors are deliberately dirty",
+                "collect_diff.py --verify-review-worktree",
+                "find-review-report.py --complete-run <run-directory>",
+                "historical results retain their existing compatibility",
+                "--archive-result",
+                "Existing flat code-review artifacts remain valid lookup inputs, require no migration",
+                "Local report-only remediation and collection failures keep timestamp paths",
+                "resumed runs retain their existing paths without re-promotion",
+                "Existing remediation artifacts are not migrated",
+            ),
+        )
+        == []
     )
 
 

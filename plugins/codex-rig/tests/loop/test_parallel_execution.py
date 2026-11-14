@@ -1918,15 +1918,17 @@ class TestPortableReadConsumerRuntimeMatrix:
     ) -> None:
         """Each promoted consumer's documented boundary is complete and fails closed.
 
-        The contract spans the consumer's own Parallel Adoption section, which carries its consumer values, and the
-        shared ``portable-parallel-read.md`` fragment, which carries the invariant route text. The skill must point at
-        the fragment, so a consumer cannot lose the invariant half while this test still passes. Text is compared with
-        whitespace collapsed, so reflowing prose never breaks it.
+        The skill gates a local portable reference before child preparation. That reference carries consumer values and
+        loads the shared invariant fragment. Both links are required so a consumer cannot lose either half while this
+        test still passes. Text is compared with whitespace collapsed, so reflowing prose never breaks it.
         """
         text = (SKILLS_ROOT / skill / "SKILL.md").read_text(encoding="utf-8")
         skill_section = _squash(_section_body(text, "## Parallel Adoption (Portable read-only)"))
+        portable_reference = _squash(
+            (SKILLS_ROOT / skill / "references" / "portable-parallel-read.md").read_text(encoding="utf-8")
+        )
         fragment = _squash((PLUGIN_ROOT / "shared" / "portable-parallel-read.md").read_text(encoding="utf-8"))
-        section = skill_section + " " + fragment
+        section = portable_reference + " " + fragment
         contracts = [
             *_PORTABLE_SUBSECTIONS,
             *_PORTABLE_CONTRACTS,
@@ -1940,7 +1942,13 @@ class TestPortableReadConsumerRuntimeMatrix:
         ]
 
         assert '"execution": "optional auto|serial|parallel-read|parallel-write; default auto"' in _squash(text)
-        assert "read [portable-parallel-read.md](../../shared/portable-parallel-read.md)" in skill_section
+        assert "Only when Execution Route Selection resolves to `parallel-read`" in skill_section
+        assert (
+            "read and apply [portable-parallel-read.md](references/portable-parallel-read.md) in full" in skill_section
+        )
+        assert "before any child preparation" in skill_section
+        assert "`serial`, `auto`, and native routes do not load it" in skill_section
+        assert "read [portable-parallel-read.md](../../../shared/portable-parallel-read.md)" in portable_reference
         assert [contract for contract in contracts if contract not in section] == []
         assert [exception for exception in _PORTABLE_UNSAFE_EXCEPTIONS if exception in section] == []
 

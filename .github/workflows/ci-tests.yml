@@ -87,45 +87,43 @@ jobs:
       # Pre-commit regenerates these manifests; check byte-identical hashes once per OS.
       - name: 🧾 Verify blueprint manifest freshness
         run: |
-          uv run --only-group test \
+          uv run --no-project \
             python plugins/cc_foundry/bin/build_blueprint_manifest.py \
             --scan-dir plugins --check
 
+      # Test time tracks how many Git and Python processes tests start; one line per OS shows whether a slow runner is
+      # slow at spawning, at file writes, or neither, and whether an ambient Git filter (LFS) is configured on it.
+      - name: 🔬 Measure process-spawn cost
+        run: uv run --no-project python scripts/measure_spawn_cost.py
+
   tests:
-    name: tests (${{ matrix.scope }}, ${{ matrix.os }}, Python ${{ matrix.python-version }}${{ matrix.shards && format(', shard {0}/{1}', matrix.shard, matrix.shards) || '' }})
+    name: tests (${{ matrix.scope }}, ${{ matrix.os }}, Py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-        scope: ["codex", "claude", "shared"]
-        # Only the Codex scope on Windows and macOS is split: its process-heavy tests took 32-44 minutes on one Windows
-        # runner, close to the timeout. Every other combination runs one unsharded job, so shards 2 and 3 are excluded.
-        shard: [1, 2, 3]
-        exclude:
-          - { os: "windows-latest", python-version: "3.10" }
-          - { scope: "claude", shard: 2 }
-          - { scope: "claude", shard: 3 }
-          - { scope: "shared", shard: 2 }
-          - { scope: "shared", shard: 3 }
-          - { os: "ubuntu-latest", shard: 2 }
-          - { os: "ubuntu-latest", shard: 3 }
-          - { os: "macos-latest", shard: 3 }
-        # `shards` is the slice count; its presence marks a sharded job and adds the shard to the job name.
+        # General floor 3.11 and the newest release every plugin accepts (codemap-py requires CPython <3.15): the releases between add runner time, not coverage.
+        python-version: ["3.11", "3.14"]
+        # The Codex suite is the longest leg on every OS (Windows 57 min, macOS 31 min, Ubuntu 14 min), so it runs as two
+        # complementary selections, `integration` and `not integration`, on separate runners. Together they select every
+        # test exactly once; no xdist_group spans both, so no shared fixture is rebuilt by the second runner.
+        scope: ["codex-integration", "codex-unit", "claude", "shared"]
         include:
-          - { scope: "codex", os: "windows-latest", shards: 3 }
-          - { scope: "codex", os: "macos-latest", shards: 2 }
-    timeout-minutes: 45
+          # Python 3.10 (the repository minimum) runs on the fastest OS, pinned to one Ubuntu image instead of ubuntu-latest, so a runner migration never changes it.
+          - { os: "ubuntu-24.04", python-version: "3.10", scope: "codex-integration" }
+          - { os: "ubuntu-24.04", python-version: "3.10", scope: "codex-unit" }
+          - { os: "ubuntu-24.04", python-version: "3.10", scope: "claude" }
+          - { os: "ubuntu-24.04", python-version: "3.10", scope: "shared" }
+    timeout-minutes: 60
     env:
       PYTHONFAULTHANDLER: "1"
-      SHARD: ${{ matrix.shards && format('{0}/{1}', matrix.shard, matrix.shards) || '' }}
-      # Coverage tracing added 10-13% to measured runs and is informational, so only the newest Python reports it.
-      COVERAGE: ${{ matrix.python-version == '3.13' }}
+      # Coverage tracing added 10-13% to measured runs and is informational, so one Python (3.14) reports it.
+      COVERAGE: ${{ matrix.python-version == '3.14' }}
       PYTEST_ARGS: >-
-        -n 4 --dist worksteal
+        -n 4
         -W error::DeprecationWarning --durations=500 --durations-min=0.2
-        --cov-report=term-missing --cov-report=html:.reports/coverage
+        --cov-report=term-missing
         --cov-report=xml:coverage.xml
 
     steps:
@@ -144,17 +142,38 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # Every runner image configures a system-wide Git LFS filter. The shipped Git helpers strip GIT_* variables, so
+      # tests cannot opt out of it, and each executable-filter safety check then runs about a dozen extra Git processes
+      # (one process costs 26 ms on Windows against 1.2 ms on Linux). Tests that exercise filter rejection configure
+      # their own repository-local filters; the user-level file is redirected by the test configuration.
+      - name: 🧹 Remove ambient system Git LFS filter
+        shell: bash
+        run: |
+          sudo_cmd=""
+          [ "$RUNNER_OS" = Linux ] && sudo_cmd="sudo"
+          $sudo_cmd git config --system --remove-section filter.lfs || echo "::warning::system Git LFS filter was not removed"
+          git config --show-origin --get-regexp '^filter\.' || echo "no ambient system Git filters remain"
+
       # Four workers run each scope, including Node, coverage, and subprocess tests; work stealing keeps the
-      # few multi-minute tests from landing last on one worker. Coverage is opt-in so local runs stay untraced, and
+      # few multi-minute tests from landing last on one worker in Claude/shared scopes. Codex uses loadgroup to honor
+      # its existing lifecycle fixture groups instead of rebuilding those expensive fixtures on multiple workers.
+      # Coverage is opt-in so local runs stay untraced, and
       # its sources stay out of pyproject's [tool.coverage], which would also configure tests that start their own
       # coverage run. The XML report feeds the informational Codecov upload below.
       # Slow-test durations help identify scopes that need further balancing.
       - name: 🧪 Run Codex tests
-        if: matrix.scope == 'codex'
+        if: startsWith(matrix.scope, 'codex')
+        env:
+          SCOPE: ${{ matrix.scope }}
         run: |
           read -r -a pytest_args <<< "$PYTEST_ARGS"
-          # --shard comes from the root conftest.py and hashes node ids, so the slices are disjoint and complete.
-          if [ -n "$SHARD" ]; then pytest_args+=(--shard "$SHARD"); fi
+          pytest_args+=(--dist loadgroup)
+          # `integration` and `not integration` partition the suite; see the matrix comment above.
+          if [ "$SCOPE" = codex-integration ]; then
+            pytest_args+=(-m integration)
+          else
+            pytest_args+=(-m "not integration")
+          fi
           if [ "$COVERAGE" = true ]; then
             pytest_args+=(--cov=plugins/codex-rig/bin --cov=plugins/codex-rig/shared \
               --cov=plugins/codex-rig/runtime --cov=plugins/codex-rig/scripts)
@@ -169,7 +188,7 @@ jobs:
             pytest_args+=(--cov=plugins/cc_develop/bin --cov=plugins/cc_foundry/bin \
               --cov=plugins/cc_oss/bin --cov=plugins/cc_research/bin)
           fi
-          uv run --only-group test pytest \
+          uv run --only-group test pytest --dist worksteal \
             plugins/cc_develop plugins/cc_foundry plugins/cc_oss plugins/cc_research \
             "${pytest_args[@]}"
 
@@ -181,14 +200,14 @@ jobs:
             pytest_args+=(--cov=plugins/codemap-py/bin --cov=plugins/codemap-py/src \
               --cov=plugins/bridge_cc-codex/bin)
           fi
-          uv run --only-group test pytest \
+          uv run --only-group test pytest --dist worksteal \
             plugins/codemap-py plugins/bridge_cc-codex benchmarks tests \
             "${pytest_args[@]}"
 
       # Coverage is informational only: an upload failure never fails the job, and codecov.yml
       # marks every status as informational so coverage changes never block a merge.
       - name: 📊 Upload coverage to Codecov
-        if: ${{ !cancelled() && matrix.python-version == '3.13' }}
+        if: ${{ !cancelled() && matrix.python-version == '3.14' }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

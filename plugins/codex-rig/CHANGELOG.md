@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.44.1
+
+- Remediation reuses an explicit commit-style choice without a separate standing-approval prompt, while preserving approval for the current plan only.
+- Source-bound gates decode Git path output using filesystem rules, preserving non-ASCII paths on Windows and other hosts with legacy subprocess encodings while retaining clean-source checks.
+- Challenge reviews validate required routing metadata before starting reviewers, preventing late assembly failures from incomplete review setup.
+- Challenge reviewers receive explicit finding-status guidance and early response validation. One evidence-preserving status correction reuses the original source inspection, avoiding a full rereview while retaining provenance and source-freshness checks. Recovery validates complete coverage and source bindings before starting the correction, and authenticated historical role cards remain usable through final validation.
+- Shared helper guidance loads PR promotion and source-proof details only before PR workflows, while preserving local review completion and recovery. The global wait rule loads its detailed canonical contract before waiting, reducing duplicate instructions without changing deadlines or reporting. Shared question guidance remains self-contained in independently installed plugins.
+- Test source verification batches tracked-file inspection within each pytest process and retains bounded, literal-path lookups for standalone validators. Targeted test selection reuses file contents within each invocation, reducing repeated Git processes and disk reads while preserving source checks, selections, read-error behavior and freshness between calls.
+- Audit finalization derives repeated gate, confidence and digest fields through the existing finalizer. Implement and Manage load portable-route details only when selected, and Profile scopes its shared-contract reads to applicable obligations.
+- All skills check for unfinished authorized work at entry, after recoverable failures and nested tasks, and before final delivery, including lightweight and agent-shim workflows. They continue without generic continue/resume prompts, reuse valid evidence, and preserve the requested scope, output format, destination and required checks; genuine permission, decision and retry limits still apply.
+- Review recovery uses the existing permitted parent fallback after exhausted reviewer retries when source and independence requirements allow it, completing fresh inspection and normal report validation before offering a recovery choice. The direct-retry checkpoint loads this recovery explicitly, including broad and high-risk reviews, so an incomplete replacement alone never triggers a new/resume prompt. Completed reviews recommending changes remain usable by remediation; passing tests alone never turn an unfinished review into a completed one.
+- Child-agent waits default to 60 seconds and coalesce unchanged status messages within the host update cadence, reducing terminal noise. Short remaining budgets respect the host minimum wait and disclose deadline-observation granularity without extending child deadlines.
+- Completed artifact edits no longer disable the unfinished-review and remediation continuation check; failed, declined and pending edits still preserve the pause.
+
 ## 0.44.0
 
 - GitHub reads on Windows respect their timeout even when a descendant retains inherited output handles.

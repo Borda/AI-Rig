@@ -6,7 +6,7 @@ The bridge is useful with either host integration installed and has no dependenc
 
 > Contributing or want internals? See [Development and release verification](docs/development.md) and [Security and privacy](docs/security.md).
 
-> Release: `0.13.0`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
+> Release: `0.13.1`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
 
 ## 🚀 After installation
 
@@ -24,7 +24,7 @@ Consent details:
 
 ### How Codex asks questions
 
-Codex asks only for a genuinely missing decision, material input or protected action. Authorized preparation, internal recovery and completion need no new consent. Existing answers, scope/digest confirmation and runtime permission remain authoritative.
+Codex asks only for a genuinely missing decision, material input or protected action. Authorized preparation, internal recovery and completion need no new consent. Existing answers, scope/digest confirmation and runtime permission remain authoritative. Recovery guidance is self-contained in this package; it does not require Codex Rig to be installed.
 
 - **Order of controls:** Codex prefers permitted synchronous input, then this plugin's packaged native terminal form (`ask_user`, served by `bin/user_questions_mcp.py`). Each plugin ships its own provider; no sibling installation or user-settings change is required.
 - **The local form** waits for the answer and binds it to the decision ID and frozen scope digest. Closed choices use a selectable list; open-ended indexes, ranges, severity combinations and exact-token confirmations use native text input with the complete grammar. It performs no commands, repository writes, credential reads, network access or permission changes.

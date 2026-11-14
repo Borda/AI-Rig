@@ -156,7 +156,7 @@ ______________________________________________________________________
 
 ## 🧪 Test Coverage & CI
 
-Each plugin ships pytest coverage for its deterministic helpers and workflow contracts. Tests run on pull requests and pushes to `main` through `ci-tests.yml`, whose executable matrix currently covers 12 combinations: Ubuntu, macOS, and Windows across Python 3.10, 3.11, 3.12, and 3.13. OpenCode Rig is the exception: it is TypeScript and runs its own Vitest suites in a separate `opencode-rig` job on Ubuntu, macOS, and Windows across Node 20 and 24.
+Each plugin ships pytest coverage for its deterministic helpers and workflow contracts. Tests run on pull requests and pushes to `main` through `ci-tests.yml`, whose executable matrix currently covers 7 combinations per test scope: Ubuntu, macOS, and Windows across Python 3.11 and 3.14 (the general floor and the newest release every plugin accepts), plus Python 3.10 (the repository minimum) on one pinned `ubuntu-24.04` image. OpenCode Rig is the exception: it is TypeScript and runs its own Vitest suites in a separate `opencode-rig` job on Ubuntu, macOS, and Windows across Node 20 and 24.
 
 <details>
 <summary><strong>Show coverage table</strong></summary>

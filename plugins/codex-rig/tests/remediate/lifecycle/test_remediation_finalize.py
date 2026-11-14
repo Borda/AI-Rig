@@ -14,6 +14,11 @@ import pytest
 from _modules import load_module
 from _platform import FILE_SYMLINKS_AVAILABLE
 from _skill_text import read_with_references
+from test_audit_acceptance import (
+    _gate_template,  # noqa: F401
+    _validator,  # noqa: F401
+    audit_run,  # noqa: F401
+)
 from test_finding_presentation import VALIDATOR, _write_remediation_candidate
 
 # Importing the fixture function registers the shared `assessed_pr` fixture in this module.
@@ -1055,3 +1060,101 @@ class TestFinalizePromotion:
         final = (run / "final.md").read_text()
         assert final.index("**Artifact**") < final.index("**Recommendations / next steps**")
         assert final.endswith(f"| {owner} | Boundary guard | Fix the regression. |\n")
+
+
+class TestAuditFinalization:
+    """Exercise audit bookkeeping recovery through the ordinary CLI and artifact consumer."""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("alter_evidence", [False, True])
+    def test_finalizes_only_retained_audit_evidence(self, audit_run: tuple, alter_evidence: bool) -> None:  # noqa: F811
+        """Recover omitted copies while preserving authored decisions and rejecting changed cost evidence.
+
+        The audit draft supplies findings and metadata but omits generated handoff fields. The CLI must promote a valid
+        result accepted by the next validator; altered behavioral evidence must remain rejected and unpromoted.
+        """
+        _, run, result = audit_run
+        metadata = copy.deepcopy(result["metadata"])
+        metadata["authored_finding"] = {"summary": "A scoped finding remains.", "decision": "Keep for owner."}
+        handoff = {
+            "schema_version": 1,
+            "skill": "audit",
+            "branch": "standard",
+            "outcome": {"title": "Audit", "summary": "Assessment accepted; one scoped finding remains."},
+            "tables": [
+                {
+                    "heading": "Results",
+                    "columns": ["Item", "Severity / impact", "Decision", "Evidence", "Next action"],
+                    "rows": [
+                        {
+                            "id": "finding",
+                            "cells": ["Scoped finding", "medium", "Keep", "audit-ledger.md", "Owner fixes"],
+                            "source_ids": ["finding"],
+                        }
+                    ],
+                }
+            ],
+            "source_records": [{"id": "finding", "evidence": "audit-ledger.md"}],
+            "source_coverage": {
+                "source_records_total": 1,
+                "represented_source_records_total": 1,
+                "omitted_source_records_total": 0,
+            },
+            "remaining": [],
+            "next_steps": [],
+            "caller_contract": None,
+        }
+        (run / "metadata-draft.json").write_text(json.dumps(metadata), encoding="utf-8")
+        (run / "handoff-draft.json").write_text(json.dumps(handoff), encoding="utf-8")
+        if alter_evidence:
+            (run / "behavior.json").write_text('{"critical_regressions": 1}', encoding="utf-8")
+        command = [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/remediation_finalize.py"),
+            "finalize",
+            "--skill",
+            "audit",
+            "--run",
+            str(run),
+            "--metadata",
+            str(run / "metadata-draft.json"),
+            "--handoff",
+            str(run / "handoff-draft.json"),
+            "--status",
+            "pass",
+            "--confidence",
+            "0.95",
+            "--medium",
+            "1",
+            "--artifact-path",
+            str(run / "result.json"),
+            "--promote",
+        ]
+        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        assert completed.returncode == int(alter_evidence), completed.stdout + completed.stderr
+        summary = json.loads(completed.stdout)
+        assert summary["promoted"] is not alter_evidence
+        if alter_evidence:
+            assert not (run / "result.json").exists()
+            assert any("audit-cost-evidence-digest-mismatch" in error["code"] for error in summary["errors"])
+            return
+        promoted = json.loads((run / "result.json").read_bytes())
+        assert promoted["findings"]["medium"] == 1
+        assert {key: promoted["metadata"][key] for key in metadata} == metadata
+        assert json.loads((run / "final-handoff.json").read_bytes())["tables"] == handoff["tables"]
+        consumer = subprocess.run(
+            [
+                sys.executable,
+                str(PLUGIN_ROOT / "shared/validate-artifacts.py"),
+                "--skill",
+                "audit",
+                "--out",
+                str(run),
+                "--result",
+                str(run / "result.json"),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert consumer.returncode == 0, consumer.stdout + consumer.stderr

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.44.2
+
+- Import edges now cover two cases that name matching missed. A bare `import helper` or `from pkg import x` in a directory without `__init__.py` (a script, or a test collected by pytest's default import mode) links to the sibling module it names. An import written with a module's project-root path (`from ns.leaf import mod`) links to a module that is named from a nested source root. On five real Python repositories this raised measured import-edge recall from 0.995 to 1.000 on the three held-out ones, with no new false edges beyond the parent-package edges the index already keeps deliberately.
+- The persisted index generation advances to 15, so existing indexes rebuild once on the next scan and pick up these edges.
+- Codex question guidance stays self-contained in standalone installs and continues already-authorized recovery without redundant continue/resume prompts; real denials and protected decisions remain binding.
+
 ## 0.44.1
 
 - Scan markers, hook sentinels and the exhausted-module record reject a planted symlink before exclusive creation, because Windows exclusive creation can follow a dangling link; macOS and Linux behaviour is unchanged.

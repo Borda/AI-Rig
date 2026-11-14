@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import copy
 import errno
 import hashlib
 import importlib.util
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tracemalloc
@@ -97,7 +99,9 @@ def test_help_explains_success_does_not_prove_completion() -> None:
 @pytest.mark.parametrize(
     ("content", "status", "diagnostic"),
     [
-        pytest.param("[" * 20_000 + "0" + "]" * 20_000, 2, "loop-evidence-inspection-failed", id="deep-json"),
+        # Python 3.14 bounds JSON nesting by native stack space instead of a fixed recursion count, so 20,000 levels
+        # parse there; one million levels still exceeds every supported interpreter's limit.
+        pytest.param("[" * 1_000_000 + "0" + "]" * 1_000_000, 2, "loop-evidence-inspection-failed", id="deep-json"),
         pytest.param("{}", 1, "loop-evidence-invalid", id="contract-failure"),
     ],
 )
@@ -2395,6 +2399,8 @@ def _prepare_challenge(
     unchanged: bool = False,
     oversized: bool = False,
     edit_brief: Callable[[str, str], str] = _keep_brief,
+    supporting_content: bytes | None = None,
+    interaction_requirements: list[dict[str, Any]] | None = None,
 ) -> _Challenge:
     """Prepare a challenge-only review with the real producer helper over a (possibly large or unchanged) source."""
     producer = _review_helper("prepare/test_review_prepare.py")
@@ -2410,7 +2416,29 @@ def _prepare_challenge(
     source_bytes = validator._canonical_source_bytes(source)
     diff_bytes = (review / "diff.patch").read_bytes()
     source_text = source_bytes.decode("utf-8")
-    brief = f"Review request:\n{json.dumps(REQUEST, sort_keys=True)}\nFrozen source:\n{source_text}\nFrozen diff:\n{diff_bytes.decode('utf-8')}\n"
+    request = dict(REQUEST)
+    evidence_args = []
+    if interaction_requirements is not None:
+        request["specification"] += "\nInteraction assessment:\n" + json.dumps(interaction_requirements, sort_keys=True)
+        (run / "current-source.json").write_bytes(source_bytes)
+        evidence_path = run / "preparation-evidence.json"
+        write_json(
+            evidence_path,
+            {
+                **_evidence_document(repository.as_posix(), "review", origin=FIRST_RUN_ORIGIN),
+                "schema_version": 3,
+                "request": request,
+                "current_source_path": "current-source.json",
+                "interaction_requirements": interaction_requirements,
+                "diff_base_oid": source["revision"],
+            },
+        )
+        evidence_args = ["--challenge-evidence", str(evidence_path)]
+    brief = f"Review request:\n{json.dumps(request, sort_keys=True)}\nFrozen source:\n{source_text}\nFrozen diff:\n{diff_bytes.decode('utf-8')}\n"
+    if supporting_content is not None:
+        (repository / "support.dat").write_bytes(supporting_content)
+        supporting = validator._canonical_source_bytes(validator.capture_source_snapshot(repository, ["support.dat"]))
+        brief += f"Supporting source:\n{supporting.decode('utf-8')}\n"
     brief = edit_brief(brief, source_text)
     (review / "challenger-evidence.md").write_bytes(brief.encode("utf-8"))
     routing = json.loads((review / "review-routing.json").read_text(encoding="utf-8"))
@@ -2431,6 +2459,7 @@ def _prepare_challenge(
         "--source-root",
         str(source_root),
         *committed_args,
+        *evidence_args,
     )
     assert prepared.returncode == 0, prepared.stderr
     return _Challenge(producer, run, review, repository, source, source_bytes, diff_bytes, brief)
@@ -2463,7 +2492,11 @@ def _assemble_challenge(
     response = json.dumps(report)
     terminal = "  \n" + response + "\n  "
     _, home, _ = challenge.producer._assembly_evidence(
-        challenge.run, prepared_run=challenge.review, findings={"challenger": terminal}, final_header="missing"
+        challenge.run,
+        prepared_run=challenge.review,
+        findings={"challenger": terminal},
+        final_header="missing",
+        compact_reader="challenge_response" in json.loads((challenge.review / "inspection-plan.json").read_bytes()),
     )
     if launch_name is not None:
         parent_session = home / "sessions" / "rollout-parent.jsonl"
@@ -2488,7 +2521,8 @@ def _bind_challenge(challenge: _Challenge, assembly: _Assembly, report_field: st
     assert assembly.process.returncode == 0, assembly.process.stderr
     review, run = challenge.review, challenge.run
     manifest = json.loads((review / "specialist-manifest.json").read_text(encoding="utf-8"))
-    attempt = manifest["passes"][0]["attempts"][0]
+    item = manifest["passes"][0]
+    attempt = item["attempts"][item.get("selected_attempt", 1) - 1]
     normalized = (review / attempt["output_path"]).read_bytes()
     raw = (review / attempt["raw_output_path"]).read_bytes()
     for filename in ("current-source.json", "source-1.json"):
@@ -2510,6 +2544,594 @@ def _bind_challenge(challenge: _Challenge, assembly: _Assembly, report_field: st
 def _validate_bound(bound: _BoundChallenge) -> None:
     """Validate the bound challenge with the production loop validator."""
     _validator().validate_loop_evidence(bound.challenge.run, bound.assembly.home)
+
+
+def _record_corrected_findings(bound: _BoundChallenge) -> None:
+    """Bind corrected native findings to matching ledger and identity triage records."""
+    challenge, assembly = bound.challenge, bound.assembly
+    findings = json.loads(assembly.response)["findings"]
+    _write_ledger(
+        challenge.run / "loop-ledger.json",
+        _single_round_ledger(
+            "parent",
+            challenge.source,
+            hashlib.sha256(challenge.diff_bytes).hexdigest(),
+            bound.attempt["agent_thread_id"],
+            findings,
+        ),
+    )
+    evidence_path = challenge.run / "loop-evidence.json"
+    evidence = json.loads(evidence_path.read_bytes())
+    evidence["rounds"][0]["triage"] = [
+        {
+            "reported_signature": finding["signature"],
+            "signature": finding["signature"],
+            "tier": finding["tier"],
+            "reason": "",
+            "evidence": [],
+        }
+        for finding in findings
+    ]
+    write_json(evidence_path, evidence)
+
+
+def _disposition_response() -> dict[str, Any]:
+    """Build a retained response with one ambiguous token and one already canonical finding."""
+    return {
+        "source_sha256": SOURCE_SHA,
+        "diff_sha256": DIFF_SHA,
+        "findings": [
+            {**_finding(["The guard now rejects invalid input."]), "disposition": "resolved"},
+            {
+                **_finding(["The input contract excludes this case."], signature="unreachable-case"),
+                "disposition": "rejected",
+            },
+        ],
+        "assessment": {"rating": 1, "rationale": "The guard and input contract close the original obligations."},
+        "interactions": [{"id": "caller-path", "verdict": "reviewed", "evidence": ["The caller checks the input."]}],
+    }
+
+
+def _disposition_validation() -> dict[str, Any]:
+    """Load the native response validator that owns lossless disposition correction."""
+    wrapper = _module(PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py")
+    return wrapper._retained_reviewer_rating.__globals__
+
+
+class TestChallengeDispositionCorrection:
+    """Only a reviewer closure enum may change; every retained claim and valid enum survives."""
+
+    @pytest.mark.parametrize("verdict", ["verified-fixed", "rejected"])
+    @pytest.mark.parametrize("retained", ["open", "fixed-pending-verification", "verified-fixed", "rejected"])
+    def test_accepts_only_the_reviewer_selected_closure(self, verdict: str, retained: str) -> None:
+        """Retain every parsed value while allowing either evidence-based canonical closure meaning."""
+        original = _disposition_response()
+        original["findings"][1]["disposition"] = retained
+        corrected = copy.deepcopy(original)
+        corrected["findings"][0]["disposition"] = verdict
+        validation = _disposition_validation()
+        assert validation["_challenge_disposition_payload"](json.dumps(original), "challenger") == original
+        validation["_validate_challenge_disposition_correction"](
+            json.dumps(original), json.dumps(corrected), "challenger"
+        )
+        assert corrected["findings"][1] == original["findings"][1]
+
+    @pytest.mark.parametrize(
+        "damage",
+        [
+            pytest.param(lambda payload: payload["findings"][0].update(disposition="closed"), id="unknown-token"),
+            pytest.param(lambda payload: payload["findings"][0].update(evidence=[]), id="no-evidence"),
+            pytest.param(lambda payload: payload["findings"][1].update(tier="urgent"), id="mixed-invalid-tier"),
+            pytest.param(lambda payload: payload["assessment"].update(rating=9), id="mixed-invalid-assessment"),
+            pytest.param(lambda payload: payload["findings"][0].update(disposition="open"), id="already-canonical"),
+            pytest.param(lambda payload: payload.update(source_sha256="not-a-digest"), id="mixed-invalid-digest"),
+            pytest.param(
+                lambda payload: payload["findings"].append(copy.deepcopy(payload["findings"][0])),
+                id="duplicate-signature",
+            ),
+        ],
+    )
+    def test_rejects_other_original_response_defects(self, damage: Callable[[dict[str, Any]], None]) -> None:
+        """Refuse recovery when resolved is absent or any other response field is invalid."""
+        payload = _disposition_response()
+        damage(payload)
+        with pytest.raises(SystemExit, match="review-"):
+            _disposition_validation()["_challenge_disposition_payload"](json.dumps(payload), "challenger")
+
+    def test_rejects_duplicate_json_keys(self) -> None:
+        """Reject a hidden earlier value instead of accepting JSON's last duplicate key."""
+        raw = json.dumps(_disposition_response()).replace(
+            '"disposition": "resolved"', '"disposition": "open", "disposition": "resolved"'
+        )
+        with pytest.raises(SystemExit, match="review-"):
+            _disposition_validation()["_challenge_disposition_payload"](raw, "challenger")
+
+    @pytest.mark.parametrize("disposition", ["open", "fixed-pending-verification"])
+    def test_rejects_empty_evidence_on_canonical_sibling(self, disposition: str) -> None:
+        """Reject resolved recovery when a canonical sibling finding lacks the strict consumer's evidence."""
+        payload = _disposition_response()
+        payload["findings"][1].update(disposition=disposition, evidence=[])
+        with pytest.raises(SystemExit, match="review-"):
+            _disposition_validation()["_challenge_disposition_payload"](json.dumps(payload), "challenger")
+
+    @pytest.mark.parametrize("disposition", ["open", "fixed-pending-verification"])
+    def test_native_intake_rejects_empty_finding_evidence(self, tmp_path: Path, disposition: str) -> None:
+        """Reject evidence-free open and pending findings at native intake before the strict loop consumer."""
+        payload = _disposition_response()
+        payload.pop("interactions")
+        payload["findings"] = [{**_finding([]), "disposition": disposition}]
+        retained = tmp_path / "review.json"
+        retained.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises(SystemExit, match="review-"):
+            _disposition_validation()["_retained_reviewer_rating"](
+                retained, local_reviewer_wave=False, main=False, role="challenger", structured_native=True
+            )
+
+    def test_historical_schema_one_contract_accepts_canonical_findings(self, tmp_path: Path) -> None:
+        """Keep historical schema-one native response envelopes readable after finding validation tightens."""
+        payload = _disposition_response()
+        payload["findings"][0]["disposition"] = "verified-fixed"
+        payload["interactions"] = []
+        contract = {
+            "schema_version": 1,
+            "evidence_schema_version": 3,
+            "request_sha256": "c" * 64,
+            "source_sha256": SOURCE_SHA,
+            "supporting_source_sha256": None,
+            "diff_sha256": DIFF_SHA,
+            "interaction_requirements": [],
+        }
+        retained = tmp_path / "review.json"
+        retained.write_text(json.dumps(payload), encoding="utf-8")
+        assert (
+            _disposition_validation()["_retained_reviewer_rating"](
+                retained,
+                local_reviewer_wave=False,
+                main=False,
+                role="challenger",
+                structured_native=True,
+                challenge_response=contract,
+            )
+            == 1
+        )
+
+    @pytest.mark.parametrize(
+        "damage",
+        [
+            pytest.param(lambda payload: payload.update(source_sha256="c" * 64), id="source"),
+            pytest.param(lambda payload: payload.update(diff_sha256="c" * 64), id="diff"),
+            pytest.param(lambda payload: payload["findings"][0].update(signature="different-claim"), id="identity"),
+            pytest.param(lambda payload: payload["findings"][0].update(tier="low"), id="severity"),
+            pytest.param(lambda payload: payload["findings"][0].update(structural=True), id="structural"),
+            pytest.param(
+                lambda payload: payload["findings"][0].update(evidence=["A different argument."]), id="evidence"
+            ),
+            pytest.param(lambda payload: payload["assessment"].update(rating=2), id="rating"),
+            pytest.param(
+                lambda payload: payload["assessment"].update(rationale="Different judgment."), id="assessment"
+            ),
+            pytest.param(lambda payload: payload["interactions"][0].update(verdict="unresolved"), id="interaction"),
+            pytest.param(lambda payload: payload["findings"].pop(), id="count"),
+            pytest.param(lambda payload: payload["findings"].reverse(), id="order"),
+            pytest.param(lambda payload: payload["findings"][1].update(disposition="verified-fixed"), id="valid-enum"),
+            pytest.param(lambda payload: payload["findings"][0].update(disposition="open"), id="reopened"),
+            pytest.param(lambda payload: payload["findings"][0].update(disposition="resolved"), id="ambiguous-refusal"),
+        ],
+    )
+    def test_rejects_any_changed_claim_or_unchanged_ambiguity(self, damage: Callable[[dict[str, Any]], None]) -> None:
+        """Reject a2 unless only resolved tokens become canonical closure dispositions."""
+        original = _disposition_response()
+        corrected = copy.deepcopy(original)
+        corrected["findings"][0]["disposition"] = "verified-fixed"
+        damage(corrected)
+        with pytest.raises(SystemExit, match="review-"):
+            _disposition_validation()["_validate_challenge_disposition_correction"](
+                json.dumps(original), json.dumps(corrected), "challenger"
+            )
+
+
+def _historical_disposition_artifacts(challenge: _Challenge, assembly: _Assembly, damage: str) -> None:
+    """Retain a formerly accepted one-attempt manifest derived from authentic original native receipts."""
+    producer = _module(PLUGIN_ROOT / "skills/code-review/review_prepare.py")
+    out = challenge.review
+    plan = json.loads((out / "inspection-plan.json").read_bytes())
+    dispatch = json.loads((out / "dispatch.json").read_bytes())
+    parent = producer._runtime_parent_rows(
+        producer.validator._read_jsonl(assembly.home / "sessions/rollout-parent.jsonl")
+    )
+    routing = json.loads((out / "review-routing.json").read_bytes())
+    assessments = json.loads((out / "specialist-assessments.json").read_bytes())
+    briefs = json.loads((out / "review-briefs.json").read_bytes())
+    original = producer._observed_pass(
+        out,
+        plan["contexts"][0],
+        parent,
+        producer._child_sessions(assembly.home, "parent"),
+        {**assessments["challenger"], "axis": briefs["challenger"]["axis"]},
+        routing["trigger_reasons"]["challenger"],
+        retain_rejected=True,
+    )
+    original["output_path"] = "specialists/challenger.md"
+    original["attempts"][0].update(
+        output_path="specialists/challenger.md", raw_output_path="specialists/challenger.raw.md"
+    )
+    manifest = {
+        **producer.manifest_header(plan),
+        "manifest_kind": "native-wave",
+        **producer._retained_reader_identity(out, dispatch),
+        "context_reader_python": dispatch["context_reader_python"],
+        "inspection_execution": {"plan_path": "inspection-plan.json", "plan_sha256": dispatch["plan_sha256"]},
+        "passes": [original],
+    }
+    if damage == "previous-input":
+        manifest["review_input_sha256"] = "f" * 64
+    elif damage == "previous-plan":
+        manifest["inspection_execution"]["plan_sha256"] = "f" * 64
+    elif damage == "previous-role":
+        original["role"] = "qa-specialist"
+    elif damage == "previous-thread":
+        original["attempts"][0]["agent_thread_id"] = "unrelated-original"
+    elif damage == "previous-raw":
+        original["attempts"][0]["raw_output_sha256"] = "f" * 64
+    write_json(out / "specialist-manifest.json", manifest)
+    write_json(
+        out / "inspection-summary.json", {"actual_mode": "single", "historical": "Previously accepted resolved token."}
+    )
+    (out / "historical-manifest.fixture.json").write_bytes((out / "specialist-manifest.json").read_bytes())
+    (out / "historical-summary.fixture.json").write_bytes((out / "inspection-summary.json").read_bytes())
+
+
+def _disposition_recovery_flow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    damage: str,
+    *,
+    edit_report: Callable[[dict[str, Any]], None] = _keep_report,
+    prepare_only: bool = False,
+    supporting_content: bytes | None = None,
+    interaction_requirements: list[dict[str, Any]] | None = None,
+) -> tuple[_Challenge, _Assembly, subprocess.CompletedProcess[str], bytes]:
+    """Replay one authentic original inspection and a generated tool-free correction with optional damage."""
+
+    def original_response(report: dict[str, Any]) -> None:
+        """Retain an ambiguous disposition alongside the scenario's independent response defect."""
+        report["findings"] = [{**_finding(["The guard now rejects invalid input."]), "disposition": "resolved"}]
+        edit_report(report)
+
+    recovery = _review_helper("prepare/test_review_prepare_recovery.py")
+    challenge = _prepare_challenge(
+        tmp_path, monkeypatch, supporting_content=supporting_content, interaction_requirements=interaction_requirements
+    )
+    assembly = _assemble_challenge(challenge, edit_report=original_response)
+    assert assembly.process.returncode != 0
+    if damage.startswith("previous-"):
+        _historical_disposition_artifacts(challenge, assembly, damage)
+    child = next((assembly.home / "sessions").glob("rollout-child-*.jsonl"))
+    original_bytes = child.read_bytes()
+    rows = [json.loads(line) for line in original_bytes.decode().splitlines()]
+    old_path = rows[0]["payload"]["agent_path"]
+    parent_path = assembly.home / "sessions/rollout-parent.jsonl"
+    parent = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
+    for row in parent:
+        if row.get("payload", {}).get("author") == old_path:
+            row["timestamp"] = "2026-01-01T10:00:15.000Z"
+    if damage == "missing-join":
+        parent = [row for row in parent if row.get("payload", {}).get("author") != old_path]
+    if damage == "original-read":
+        next(row["payload"] for row in rows if row.get("payload", {}).get("type") == "custom_tool_call")["input"] += (
+            "\ntext('extra');"
+        )
+        recovery._write_jsonl(child, rows)
+    challenge.producer._write_jsonl(parent_path, parent)
+    prepared = _run_producer(
+        challenge.producer,
+        "prepare-repair",
+        "--out",
+        str(challenge.review),
+        "--codex-home",
+        str(assembly.home),
+        "--role",
+        "challenger",
+        "--kind",
+        "challenge-disposition",
+    )
+    if prepare_only or damage in {"missing-join", "original-read"}:
+        return challenge, assembly, prepared, original_bytes
+    assert prepared.returncode == 0, prepared.stderr
+    arguments = json.loads(prepared.stdout)["arguments"]
+    assert arguments["task_name"].endswith("_a2")
+    assert "verified-fixed" in arguments["message"]
+    assert "rejected" in arguments["message"]
+    corrected = json.loads(assembly.response)
+    corrected["findings"][0]["disposition"] = "verified-fixed"
+    corrected_raw = assembly.terminal if damage == "ambiguous" else json.dumps(corrected)
+    replacement, _, new_path = recovery._replacement_rows(rows, "disposition-replacement", arguments["message"])
+    # Compact-reader command events belong only to the original source inspection, never the tool-free correction.
+    replacement = [
+        row for row in replacement if row.get("payload", {}).get("item", {}).get("type") != "CommandExecution"
+    ]
+    replacement[0]["payload"]["timestamp"] = "2026-01-01T10:00:40.050Z"
+    replacement[-1]["payload"].update(
+        started_at=1767261640.2, completed_at=1767261641.0, last_agent_message=corrected_raw
+    )
+    if damage == "tool":
+        replacement.insert(-1, recovery._forbidden_tool_row())
+    challenge.producer._write_jsonl(assembly.home / "sessions/rollout-disposition-replacement.jsonl", replacement)
+    if damage == "second-repair":
+        challenge.producer._write_jsonl(assembly.home / "sessions/rollout-disposition-duplicate.jsonl", replacement)
+    parent.extend(
+        [
+            recovery._spawn_row("2026-01-01T10:00:40.000Z", "disposition-spawn", arguments),
+            recovery._call_output_row(
+                "2026-01-01T10:00:40.100Z", "disposition-spawn", json.dumps({"task_name": new_path})
+            ),
+            recovery._final_answer_row("2026-01-01T10:00:41.100Z", new_path, corrected_raw),
+        ]
+    )
+    challenge.producer._write_jsonl(parent_path, parent)
+    if damage == "stale-source":
+        (challenge.repository / "widget.py").write_text("VALUE = 999\n", encoding="utf-8")
+    if damage == "role-drift":
+        producer = _module(PLUGIN_ROOT / "skills/code-review/review_prepare.py")
+        installed_root = tmp_path / "updated-installed-plugin"
+        shutil.copytree(PLUGIN_ROOT, installed_root, ignore=shutil.ignore_patterns("tests", "__pycache__"))
+        installed_card = installed_root / "roles/challenger/ROLE.md"
+        frozen_card = challenge.review / "role-cards/challenger/ROLE.md"
+        installed_card.write_bytes(frozen_card.read_bytes() + b"\nUpdated installed role fixture.\n")
+        assert hashlib.sha256(installed_card.read_bytes()).digest() != hashlib.sha256(frozen_card.read_bytes()).digest()
+        with monkeypatch.context() as installed:
+            installed.setattr(producer.validator, "PLUGIN_ROOT", installed_root)
+            summary = producer.assemble(challenge.review, assembly.home, challenge_only=True)
+            producer.validator._validate_challenge_manifest_preflight(
+                challenge.review, assembly.home, "parent", challenge.repository
+            )
+            process = subprocess.CompletedProcess(["assemble"], 0, json.dumps(summary), "")
+            corrected_assembly = _Assembly(process, assembly.home, json.dumps(corrected), corrected_raw)
+            bound = _bind_challenge(challenge, corrected_assembly)
+            _record_corrected_findings(bound)
+            loop_validator = _validator()
+            installed.setattr(loop_validator, "PLUGIN_ROOT", installed_root)
+            with pytest.raises(ValueError, match="loop-evidence-review-preface-invalid"):
+                loop_validator._check_context_material(
+                    (challenge.review / bound.attempt["context_path"]).read_bytes(),
+                    challenge.source_bytes,
+                    challenge.diff_bytes,
+                    json.dumps(REQUEST, sort_keys=True),
+                    None,
+                )
+            loop_validator.validate_loop_evidence(challenge.run, assembly.home)
+        process = subprocess.CompletedProcess(["assemble"], 0, json.dumps(summary), "")
+        return (
+            challenge,
+            _Assembly(process, assembly.home, json.dumps(corrected), corrected_raw),
+            process,
+            original_bytes,
+        )
+    process = _run_producer(
+        challenge.producer,
+        "assemble",
+        "--challenge-only",
+        "--out",
+        str(challenge.review),
+        "--codex-home",
+        str(assembly.home),
+    )
+    return challenge, _Assembly(process, assembly.home, json.dumps(corrected), corrected_raw), process, original_bytes
+
+
+class TestNativeChallengeDispositionRecovery:
+    """A generated second reviewer closes the enum ambiguity without reading source again."""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("content", "reviewed_paths", "limits", "accepted"),
+        [
+            pytest.param(b"Supporting policy.\n", ["widget.py"], "none", False, id="supporting-source-omitted"),
+            pytest.param(
+                b"Supporting policy.\n", ["support.dat", "widget.py"], "none", True, id="supporting-source-covered"
+            ),
+            pytest.param(b"\xff\x00", ["support.dat", "widget.py"], "none", False, id="binary-limit-omitted"),
+            pytest.param(
+                b"\xff\x00",
+                ["support.dat", "widget.py"],
+                "Binary support.dat was inspected only as encoded bytes.",
+                True,
+                id="binary-limit-declared",
+            ),
+        ],
+    )
+    def test_recovery_admission_checks_supporting_source_and_binary_limits(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        content: bytes,
+        reviewed_paths: list[str],
+        limits: str,
+        accepted: bool,
+    ) -> None:
+        """Require supporting paths and honest binary limits before generating correction arguments."""
+        coverage = {"reviewed_paths": reviewed_paths, "unreviewed_paths": [], "limits": limits, "judgment": "Closed."}
+        challenge, _, result, _ = _disposition_recovery_flow(
+            tmp_path,
+            monkeypatch,
+            "none",
+            supporting_content=content,
+            edit_report=lambda report: report["assessment"].update(rationale=json.dumps(coverage)),
+            prepare_only=True,
+        )
+        assert (result.returncode == 0) is accepted, result.stderr or result.stdout
+        assert (challenge.review / "repair-dispatch.challenger.json").exists() is accepted
+
+    @pytest.mark.integration
+    def test_recovery_admission_preserves_unresolved_interaction_without_certifying_clean(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Allow valid unresolved interaction evidence through correction while strict clean consumption rejects it."""
+        requirements = [
+            {"id": "caller-path", "source_paths": ["widget.py"], "claim": "The caller preserves the guard."}
+        ]
+        interactions = [{"id": "caller-path", "verdict": "unresolved", "evidence": ["The caller remains unverified."]}]
+        challenge, assembly, result, _ = _disposition_recovery_flow(
+            tmp_path,
+            monkeypatch,
+            "none",
+            interaction_requirements=requirements,
+            edit_report=lambda report: report.update(interactions=interactions),
+        )
+        assert result.returncode == 0, result.stderr
+        corrected = json.loads(assembly.response)
+        assert corrected["interactions"] == interactions
+        retained = challenge.run / "corrected-response.json"
+        write_json(retained, corrected)
+        validator = _validator()
+        arguments = (
+            retained,
+            hashlib.sha256(challenge.source_bytes).hexdigest(),
+            hashlib.sha256(challenge.diff_bytes).hexdigest(),
+            ["widget.py"],
+            [],
+            requirements,
+        )
+        assert validator._findings_from_report(*arguments, require_clean=False) == corrected["findings"]
+        with pytest.raises(ValueError, match="loop-evidence-interaction-verdict-invalid"):
+            validator._findings_from_report(*arguments)
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "edit_report",
+        [
+            pytest.param(
+                lambda report: report.update(assessment=_coverage_assessment(rationale="All source inspected.")),
+                id="non-json-coverage",
+            ),
+            pytest.param(
+                lambda report: report.update(assessment=_coverage_assessment([])), id="required-source-omitted"
+            ),
+            pytest.param(
+                lambda report: report["assessment"].update(
+                    rationale=json.dumps(
+                        {
+                            "reviewed_paths": ["widget.py"],
+                            "unreviewed_paths": ["widget.py"],
+                            "limits": "none",
+                            "judgment": "clean",
+                        }
+                    )
+                ),
+                id="unreviewed-source",
+            ),
+            pytest.param(
+                lambda report: report["assessment"].update(
+                    rationale=json.dumps(
+                        {"reviewed_paths": ["widget.py"], "unreviewed_paths": [], "limits": [], "judgment": "clean"}
+                    )
+                ),
+                id="malformed-limits",
+            ),
+            pytest.param(
+                lambda report: report["assessment"].update(
+                    rationale=json.dumps(
+                        {"reviewed_paths": ["widget.py"], "unreviewed_paths": [], "limits": "none", "judgment": " "}
+                    )
+                ),
+                id="blank-judgment",
+            ),
+            pytest.param(lambda report: report.update(source_sha256="f" * 64), id="source-digest-mismatch"),
+            pytest.param(lambda report: report.update(diff_sha256="f" * 64), id="diff-digest-mismatch"),
+        ],
+    )
+    def test_recovery_admission_rejects_other_response_defects_before_dispatch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        edit_report: Callable[[dict[str, Any]], None],
+    ) -> None:
+        """Do not spend a correction turn on coverage or digest defects that enum-only correction cannot repair."""
+        challenge, assembly, result, original_bytes = _disposition_recovery_flow(
+            tmp_path, monkeypatch, "none", edit_report=edit_report, prepare_only=True
+        )
+        assert result.returncode != 0, result.stdout
+        assert "review-" in result.stderr
+        assert not result.stdout.strip()
+        assert not (challenge.review / "repair-dispatch.challenger.json").exists()
+        assert next((assembly.home / "sessions").glob("rollout-child-*.jsonl")).read_bytes() == original_bytes
+
+    @pytest.mark.integration
+    def test_recovery_reaches_strict_loop_intake(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Keep the original raw response and native reads while validating the corrected review through the ledger."""
+        challenge, assembly, result, original_bytes = _disposition_recovery_flow(tmp_path, monkeypatch, "none")
+        assert result.returncode == 0, result.stderr
+        bound = _bind_challenge(challenge, assembly)
+        item = bound.manifest["passes"][0]
+        assert item["recovery"] == {"kind": "challenge-disposition"}
+        assert len(item["attempts"]) == 2
+        assert item["selected_attempt"] == 2
+        assert b'"disposition": "resolved"' in (challenge.review / item["attempts"][0]["raw_output_path"]).read_bytes()
+        assert next((assembly.home / "sessions").glob("rollout-child-*.jsonl")).read_bytes() == original_bytes
+        _record_corrected_findings(bound)
+        _validate_bound(bound)
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "damage", ["ambiguous", "tool", "original-read", "missing-join", "stale-source", "second-repair"]
+    )
+    def test_recovery_rejects_unproven_or_repeated_correction(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
+    ) -> None:
+        """Reject missing original proof, new tools, stale source, repeated a2 or unchanged ambiguity."""
+        _, _, result, _ = _disposition_recovery_flow(tmp_path, monkeypatch, damage)
+        assert result.returncode != 0
+        assert "review-" in result.stderr
+
+    @pytest.mark.integration
+    def test_archives_authenticated_previously_assembled_original(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Replace derived historical artifacts only after authentic a2 validation, preserving exact old bytes."""
+        challenge, _, result, _ = _disposition_recovery_flow(tmp_path, monkeypatch, "previous-valid")
+        assert result.returncode == 0, result.stderr
+        assert (challenge.review / "repair-original/specialist-manifest.json").read_bytes() == (
+            challenge.review / "historical-manifest.fixture.json"
+        ).read_bytes()
+        assert (challenge.review / "repair-original/inspection-summary.json").read_bytes() == (
+            challenge.review / "historical-summary.fixture.json"
+        ).read_bytes()
+        manifest = json.loads((challenge.review / "specialist-manifest.json").read_bytes())
+        assert manifest["passes"][0]["selected_attempt"] == 2
+        assert manifest["passes"][0]["recovery"] == {"kind": "challenge-disposition"}
+
+    @pytest.mark.integration
+    def test_recovery_uses_authenticated_frozen_role_after_installed_role_changes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Accept original frozen role bytes after an installed update without changing source or native receipts."""
+        challenge, _, result, _ = _disposition_recovery_flow(tmp_path, monkeypatch, "role-drift")
+        assert result.returncode == 0, result.stderr
+        manifest = json.loads((challenge.review / "specialist-manifest.json").read_bytes())
+        assert (
+            manifest["passes"][0]["role_card_sha256"]
+            == hashlib.sha256((challenge.review / "role-cards/challenger/ROLE.md").read_bytes()).hexdigest()
+        )
+        assert manifest["passes"][0]["selected_attempt"] == 2
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "damage", ["previous-input", "previous-plan", "previous-role", "previous-thread", "previous-raw"]
+    )
+    def test_rejects_replacing_unrelated_historical_artifacts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
+    ) -> None:
+        """Preserve canonical artifacts when the historical input, plan, role, thread or raw hash differs."""
+        challenge, _, result, _ = _disposition_recovery_flow(tmp_path, monkeypatch, damage)
+        assert result.returncode != 0
+        assert "review-repair-original-manifest-mismatch" in result.stderr
+        assert (challenge.review / "specialist-manifest.json").read_bytes() == (
+            challenge.review / "historical-manifest.fixture.json"
+        ).read_bytes()
+        assert (challenge.review / "inspection-summary.json").read_bytes() == (
+            challenge.review / "historical-summary.fixture.json"
+        ).read_bytes()
+        assert not (challenge.review / "repair-original").exists()
 
 
 def _append_to(path: Path) -> None:
@@ -2583,6 +3205,30 @@ class TestNativeChallengePreparation:
 
         assert "Return exactly one raw JSON object or one fenced adversarial-loop block" in message
         assert "Return your findings and Reviewer Assessment" not in message
+
+    def test_frozen_context_defines_every_finding_disposition(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Give the reviewer the exact finding enum before it chooses a closure verdict."""
+        challenge = _prepare_challenge(tmp_path, monkeypatch)
+        plan = json.loads((challenge.review / "inspection-plan.json").read_bytes())
+        context = (challenge.review / plan["contexts"][0]["context_path"]).read_text(encoding="utf-8")
+        assert all(token in context for token in ("signature", "tier", "structural", "disposition", "evidence"))
+        assert all(token in context for token in ("open", "verified-fixed", "rejected", "fixed-pending-verification"))
+
+    def test_assembly_rejects_noncanonical_disposition_before_ledger(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Reject a resolved token during native assembly instead of discovering it after loop intake."""
+        challenge = _prepare_challenge(tmp_path, monkeypatch)
+        assembly = _assemble_challenge(
+            challenge,
+            edit_report=lambda report: report.update(
+                findings=[{**_finding(["The guard now rejects invalid input."]), "disposition": "resolved"}]
+            ),
+        )
+        assert assembly.process.returncode != 0
+        assert "disposition" in assembly.process.stderr
 
     def test_pages_oversized_source_through_context(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Complete source above the ordinary cap is retained byte for byte in a multi-page context.

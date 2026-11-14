@@ -58,6 +58,13 @@ def commit_step(skill: str) -> str:
 class TestUpfrontDecisionPacket:
     """The scope checkpoint's packet of commit and plan preferences, and the later steps that reuse its answers."""
 
+    def test_commit_choice_does_not_request_standing_approval(self, packet: str, commit_step: str):
+        """A chosen commit mode authorizes this plan without a separate standing-approval question."""
+        assert "Do not ask a separate remember-approval question" in packet
+        assert "Do not ask a separate remember-approval question" in commit_step
+        assert "A commit mode never creates a standing grant" in packet
+        assert "| Remember approval |" not in packet
+
     def test_folds_into_scope_checkpoint_keeping_rendered_scope(self, skill: str, packet: str):
         """Commit and plan preferences join step 05 without changing the frozen scope presentation.
 

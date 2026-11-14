@@ -384,6 +384,74 @@ def _prepare(
     )
 
 
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("reason_fields", "diagnostic"),
+    [
+        pytest.param({}, "review-routing-trigger-reason-mismatch", id="missing-map"),
+        pytest.param({"trigger_reasons": None}, "review-routing-trigger-reason-mismatch", id="null-map"),
+        pytest.param({"trigger_reasons": {}}, "review-routing-trigger-reason-mismatch", id="missing-challenger"),
+        pytest.param(
+            {"trigger_reasons": {"challenger": ["Explicit review."], "qa-specialist": ["Extra role."]}},
+            "review-routing-trigger-reason-mismatch",
+            id="extra-role",
+        ),
+        pytest.param(
+            {"trigger_reasons": {"challenger": "Explicit review."}},
+            "review-routing-trigger-reason-values-invalid",
+            id="scalar-reason",
+        ),
+        pytest.param(
+            {"trigger_reasons": {"challenger": []}},
+            "review-routing-trigger-reason-values-invalid",
+            id="empty-reasons",
+        ),
+        pytest.param(
+            {"trigger_reasons": {"challenger": [" "]}},
+            "review-routing-trigger-reason-values-invalid",
+            id="blank-reason",
+        ),
+        pytest.param(
+            {"trigger_reasons": {"challenger": [1]}},
+            "review-routing-trigger-reason-values-invalid",
+            id="nontext-reason",
+        ),
+    ],
+)
+def test_challenge_prepare_rejects_unusable_trigger_reasons_before_dispatch(
+    tmp_path: Path, reason_fields: dict[str, object], diagnostic: str
+) -> None:
+    """Reject routing that assembly cannot consume before freezing any paid reviewer task."""
+    run = _review_inputs(tmp_path)
+    routing_path = run / "review-routing.json"
+    routing = json.loads(routing_path.read_bytes())
+    routing.update(triggered_roles=["challenger"])
+    del routing["trigger_reasons"]
+    routing.update(reason_fields)
+    original = json.dumps(routing).encode("utf-8")
+    routing_path.write_bytes(original)
+    briefs_path = run / "review-briefs.json"
+    briefs = json.loads(briefs_path.read_bytes())
+    briefs_path.write_text(json.dumps({"challenger": briefs["challenger"]}), encoding="utf-8", newline="\n")
+    source = (run / "local-source/source-snapshot.json").read_text(encoding="utf-8")
+    diff = (run / "diff.patch").read_text(encoding="utf-8")
+    request = {"goal": "Review source", "specification": "Preserve behavior", "done_when": "Source reviewed"}
+    (run / "challenger-evidence.md").write_text(
+        f"Review request:\n{json.dumps(request, sort_keys=True)}\nFrozen source:\n{source}\nFrozen diff:\n{diff}\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    result = _prepare(run, challenge_only=True)
+
+    assert result.returncode != 0
+    assert diagnostic in result.stderr
+    assert routing_path.read_bytes() == original
+    assert not (run / "dispatch.json").exists()
+    assert not (run / "inspection-plan.json").exists()
+    assert not (run / "specialists").exists()
+
+
 def test_prepare_rejects_missing_signals_without_rewriting_routing(tmp_path: Path) -> None:
     """Reject omitted semantic booleans before canonicalization or reviewer preparation.
 

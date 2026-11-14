@@ -82,7 +82,13 @@ def _write_executable(path: Path, payload: bytes) -> Path:
 def _installed_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
     """Create source-independent package and executable inputs with difficult paths."""
     plugin_root = tmp_path / 'installed plugin žluťoučký "quoted" \\slash $;[]'
-    shutil.copytree(PLUGIN_ROOT, plugin_root, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
+    manifest = json.loads((PLUGIN_ROOT / "package-manifest.json").read_text(encoding="utf-8"))
+    for record in manifest["files"]:
+        source = PLUGIN_ROOT / record["path"]
+        destination = plugin_root / record["path"]
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+    shutil.copy2(PLUGIN_ROOT / "package-manifest.json", plugin_root / "package-manifest.json")
     python_binary = _write_executable(tmp_path / 'python λ "quoted" \\slash $;[]', b"python-runtime\n")
     codex_binary = _write_executable(tmp_path / 'codex 雪 "quoted" \\slash $;[]', b"codex-runtime\n")
     return plugin_root, python_binary, codex_binary

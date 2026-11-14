@@ -30,14 +30,21 @@ def test_codex_remote_write_policy_has_no_approval_escape(relative: str) -> None
 def test_helper_documents_worker_receipts_without_certifying_subprocesses() -> None:
     """Stop obsolete guidance from denying the tested worker-source guarantee.
 
-    The helper contract states that per-worker receipts exist while unobserved test subprocesses stay uncertified, and
-    no longer lumps xdist workers in with the inconclusive cases.
+    The helper contract loads the owning PR contract before PR preparation. That contract states that per-worker
+    receipts exist while unobserved test subprocesses stay uncertified, without treating xdist workers as inconclusive.
     """
-    text = (RIG / "shared" / "helper-cli-contract.md").read_text(encoding="utf-8")
+    helper_text = (RIG / "shared" / "helper-cli-contract.md").read_text(encoding="utf-8")
+    pr_reference = next(
+        line for line in helper_text.splitlines() if "[PR Helper Contract](helper-pr-contract.md)" in line
+    )
+    assert "Before any PR review or PR remediation preparation, read and apply" in pr_reference
+    assert "it binds as if inline here" in pr_reference
+
+    text = (RIG / "shared" / "helper-pr-contract.md").read_text(encoding="utf-8")
 
     assert "per-worker receipts" in text
     assert "unobserved test subprocesses" in text
-    assert "or xdist workers, which remain inconclusive" not in text
+    assert "or xdist workers, which remain inconclusive" not in helper_text + text
 
 
 def test_plugin_wait_instructions_preserve_host_boundaries() -> None:

@@ -158,7 +158,7 @@ class TestFixtureRuntime:
 
     @pytest.mark.integration
     def test_admits_fresh_scans_at_distinct_roots(self, scanned_files: SimpleNamespace) -> None:
-        """Admit schema-14 indexes scanned at two distinct roots with their own root identities."""
+        """Admit schema-15 indexes scanned at two distinct roots with their own root identities."""
         first = fixture_runtime.validate_fixture_runtime(
             scanned_files.source_root, scanned_files.index_path, scanned_files.coordinate
         )
@@ -167,7 +167,7 @@ class TestFixtureRuntime:
             second = fixture_runtime.validate_fixture_runtime(second_root, second_index, second_coordinate)
 
             assert scanned_files.source_root != second_root
-            assert first.scan_version == second.scan_version == 14
+            assert first.scan_version == second.scan_version == 15
             assert first.index_scan_root == second.index_scan_root == "."
             assert first.source_fingerprint == second.source_fingerprint
             assert first.raw_index_sha256 != second.raw_index_sha256

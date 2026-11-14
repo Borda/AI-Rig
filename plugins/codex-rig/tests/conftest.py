@@ -47,6 +47,33 @@ def text_newline_default(request: pytest.FixtureRequest, monkeypatch: pytest.Mon
     monkeypatch.setattr(Path, "write_text", write_with_default)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def hermetic_git_config(tmp_path_factory: pytest.TempPathFactory) -> Generator[None, None, None]:
+    """Keep every test's Git independent of the machine's global and system configuration.
+
+    An ambient executable filter such as Git LFS makes the diff collector's safety check run seven more Git processes on
+    each call, so a test's duration and behaviour would otherwise depend on the developer or runner it happens to run
+    on. Repository-local configuration still applies, so tests that exercise filter rejection configure their own.
+
+    Shipped helpers strip every ``GIT_*`` variable before running Git, so the home directory is redirected too: Git
+    reads the global configuration from there. The system configuration stays in place: shipped helpers would read it
+    regardless, and Git for Windows keeps platform semantics there (symbolic links, line endings), so ignoring it for
+    test-side Git alone makes the tests and the shipped helpers disagree about the same repository. Windows keeps its
+    configuration entirely for the same reason; the CI workflow removes the runner's system LFS filter instead.
+    """
+    if os.name == "nt":
+        yield
+        return
+    home = tmp_path_factory.mktemp("git-home")
+    empty = home / "gitconfig"
+    empty.write_bytes(b"")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("GIT_CONFIG_GLOBAL", os.fspath(empty))
+        for variable in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME"):
+            patch.setenv(variable, os.fspath(home))
+        yield
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Register selectors when tests run from a payload without repository configuration."""
     for marker in (

@@ -302,13 +302,14 @@ class TestSkillGuidance:
     def test_guide_is_compact_and_ships_its_details(self) -> None:
         """Keep the shipped guide short, rooted in one owner, and paired with its details file.
 
-        The compact guide is loaded by every skill, so its word count is bounded; the skill count pins the roster.
+        The compact guide includes the proactive-recovery decision before question controls; its bounded word count
+        allows that entry obligation without duplicating the full recovery contract. The skill count pins the roster.
         """
         reference = PLUGIN_ROOT / QUESTION_REFERENCE
         guide = reference.read_text(encoding="utf-8")
 
         assert len(SKILLS) == 16
-        assert len(guide.split()) <= 350
+        assert len(guide.split()) <= 400
         assert "The root owns user questions" in guide
         assert "codex-user-questions-details.md" in guide
         assert reference.with_name("codex-user-questions-details.md").is_file()

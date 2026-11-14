@@ -718,7 +718,8 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
         ),
         pytest.param(
             "shared/native-skill-contract.md",
-            "Without a grant, that workflow also asks `Remember approval for local Git in this project?` with exactly "
+            "Except for Code Remediate, which never asks a separate remember-approval question after a commit-mode "
+            "choice, without a grant that workflow also asks `Remember approval for local Git in this project?` with exactly "
             "the choices `Approve always` and `This time only`, as a separate answer field in the same native control.",
             id="native-remember-question",
         ),
@@ -727,23 +728,6 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
             "`Approve always` records the grant only after the chosen mode's commits complete and verify; `This time "
             "only`, `leave unstaged`, a deferred mode and an unanswered question record nothing.",
             id="native-remember-writes-after-commit",
-        ),
-        pytest.param(
-            "skills/code-remediate/SKILL.md",
-            "| Remember approval | `Remember approval for local Git in this project?` — `Approve always`, `This time "
-            "only` | the grant check returned `no grant` and the commit preference picks a mode that commits | step 12 |",
-            id="remediate-packet-remember-row",
-        ),
-        pytest.param(
-            "skills/code-remediate/SKILL.md",
-            "the same native control also carries `Remember approval for local Git in this project?` with exactly "
-            "`Approve always` and `This time only` as a separate answer field",
-            id="remediate-step12-remember-field",
-        ),
-        pytest.param(
-            "skills/code-remediate/SKILL.md",
-            "`This time only`, an unanswered remember question, and a mode whose commits do not complete write nothing.",
-            id="remediate-step12-this-time-only",
         ),
         pytest.param(
             "shared/native-skill-contract.md",

@@ -2875,6 +2875,7 @@ def _validate_challenge_manifest_preflight(
         codex_home,
         parent_thread_id,
         project_root,
+        retained_role_cards=passes[0].get("recovery") == {"kind": "challenge-disposition"},
     )
     if manifest.get("schema_version") not in {7, 8}:
         _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id)

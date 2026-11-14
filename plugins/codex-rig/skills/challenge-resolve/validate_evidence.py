@@ -355,7 +355,13 @@ def _current_scoped_diff(
 
 
 def _check_context_material(
-    context: bytes, source_bytes: bytes, diff_bytes: bytes, request_text: str | None, supporting_bytes: bytes | None
+    context: bytes,
+    source_bytes: bytes,
+    diff_bytes: bytes,
+    request_text: str | None,
+    supporting_bytes: bytes | None,
+    *,
+    role_card: bytes | None = None,
 ) -> None:
     """Check exact source, diff, request and supporting labels in one reviewer context."""
     try:
@@ -407,7 +413,11 @@ def _check_context_material(
         # New request-bound reviews allow only the role card before evidence. Schema-one
         # reviews retain their historical preface readability but cannot promote current work.
         preface = context_text.split("Review request:\n", maxsplit=1)[0]
-        challenger_card = (PLUGIN_ROOT / "roles" / "challenger" / "ROLE.md").read_text(encoding="utf-8")
+        challenger_card = (
+            role_card.decode("utf-8")
+            if role_card is not None
+            else (PLUGIN_ROOT / "roles" / "challenger" / "ROLE.md").read_text(encoding="utf-8")
+        )
         if preface not in {"", challenger_card + "\n"}:
             raise ValueError("loop-evidence-review-preface-invalid")
 
@@ -711,6 +721,28 @@ def _findings_from_report(
         payload = json.loads(block.group(1) if block is not None else text)
     except json.JSONDecodeError as exception:
         raise ValueError("loop-evidence-report-block-invalid") from exception
+    return _findings_from_payload(
+        payload,
+        source_digest,
+        diff_digest,
+        coverage_paths,
+        binary_paths,
+        interaction_requirements,
+        require_clean=require_clean,
+    )
+
+
+def _findings_from_payload(
+    payload: object,
+    source_digest: str,
+    diff_digest: str,
+    coverage_paths: list[str] | None = None,
+    binary_paths: list[str] | None = None,
+    interaction_requirements: list[dict[str, Any]] | None = None,
+    *,
+    require_clean: bool = True,
+) -> list[dict[str, Any]]:
+    """Validate the same response contract at recovery admission and final report consumption."""
     base_keys = {"source_sha256", "diff_sha256", "findings"}
     expected_keys = (
         (base_keys | {"assessment", "interactions"},)
@@ -930,7 +962,15 @@ def _validate_review_round(
             context_bytes = context.read_bytes()
         except OSError as exception:
             raise ValueError("loop-evidence-review-context-unreadable") from exception
-        _check_context_material(context_bytes, source_bytes, diff_bytes, request_text, supporting_bytes)
+        # Manifest validation authenticated the original frozen card and reads before this correction was selected.
+        retained_card = (
+            (review_run / "role-cards" / item["role"] / "ROLE.md").read_bytes()
+            if schema == 8 and item.get("recovery") == {"kind": "challenge-disposition"}
+            else None
+        )
+        _check_context_material(
+            context_bytes, source_bytes, diff_bytes, request_text, supporting_bytes, role_card=retained_card
+        )
         reported_signatures: set[str] = set()
         for finding in _findings_from_report(
             output,

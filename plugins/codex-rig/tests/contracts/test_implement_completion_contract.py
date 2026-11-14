@@ -2,12 +2,14 @@
 
 from pathlib import Path
 
+from _skill_text import read_with_references
+
 SKILL = Path(__file__).resolve().parents[2] / "skills/implement/SKILL.md"
 
 
 def _section(heading: str) -> list[str]:
     """Read the named heading through the next heading at the same or a higher level."""
-    lines = SKILL.read_text(encoding="utf-8").splitlines()
+    lines = read_with_references(SKILL, "portable-parallel-read.md").splitlines()
     start = lines.index(heading) + 1
     level = len(heading.split(" ", 1)[0])
     end = next(

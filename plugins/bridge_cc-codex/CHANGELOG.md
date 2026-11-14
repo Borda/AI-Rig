@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.1
+
+- Codex question guidance stays self-contained in standalone installs and continues already-authorized recovery without redundant continue/resume prompts; real denials and protected decisions remain binding.
+
 ## 0.13.0
 
 - Windows artifact retention uses complete opened-file identities, so Python 3.12 and 3.13 can prune completed evidence without rejecting unchanged files as linked or changed.

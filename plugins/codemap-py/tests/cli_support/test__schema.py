@@ -134,7 +134,7 @@ class TestScanVersion:
 
         A deliberate pin: changing the schema version must update this test together with the index-staleness logic.
         """
-        assert SCAN_VERSION == 14
+        assert SCAN_VERSION == 15
 
 
 class TestPerFeatureVersionConstants:

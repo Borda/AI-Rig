@@ -141,8 +141,25 @@ def _module_name(path: str) -> str:
     return ".".join(parts)
 
 
-def heuristic_targets(root: Path, source: str, tests: list[str]) -> list[str]:
-    """Pick tests named after the changed module or importing it."""
+def _test_text(root: Path, relative: str, texts: dict[str, str | OSError]) -> str:
+    """Read each test once per selection, retaining read failures for the caller's existing error policy."""
+    if relative not in texts:
+        try:
+            texts[relative] = (root / relative).read_text(encoding="utf-8", errors="replace")
+        except OSError as error:
+            texts[relative] = error
+    text = texts[relative]
+    if isinstance(text, OSError):
+        raise text
+    return text
+
+
+def heuristic_targets(
+    root: Path, source: str, tests: list[str], texts: dict[str, str | OSError] | None = None
+) -> list[str]:
+    """Pick tests named after the changed module or importing it, optionally reusing selection-local text."""
+    if texts is None:
+        texts = {}
     stem = PurePosixPath(source).stem
     module = _module_name(source)
     named = {f"test_{stem}.py", f"{stem}_test.py"}
@@ -153,7 +170,7 @@ def heuristic_targets(root: Path, source: str, tests: list[str]) -> list[str]:
             if test in chosen:
                 continue
             try:
-                if pattern.search((root / test).read_text(encoding="utf-8", errors="replace")):
+                if pattern.search(_test_text(root, test, texts)):
                     chosen.append(test)
             except OSError:
                 continue
@@ -184,8 +201,12 @@ def codemap_targets(root: Path, base: str, provider_root: Path | None, timeout: 
     return sorted(PurePosixPath(str(path)).as_posix() for path in files), status
 
 
-def sandbox_safe(root: Path, targets: list[str], conftests: list[str]) -> tuple[bool, str]:
-    """Decide whether ``-p no:xdist`` may be added under the Sandboxed Test Runs conditions."""
+def sandbox_safe(
+    root: Path, targets: list[str], conftests: list[str], texts: dict[str, str | OSError] | None = None
+) -> tuple[bool, str]:
+    """Decide whether xdist may be disabled, optionally reusing test text from the same selection."""
+    if texts is None:
+        texts = {}
     if PARALLEL_OPTION.search(os.environ.get("PYTEST_ADDOPTS", "")):
         return False, "PYTEST_ADDOPTS requests parallelism"
     for name in ("pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"):
@@ -197,7 +218,7 @@ def sandbox_safe(root: Path, targets: list[str], conftests: list[str]) -> tuple[
                 return False, f"{name} addopts requests parallelism"
     for relative in [*targets, *conftests]:
         path = root / relative
-        if path.is_file() and XDIST_FIXTURES.search(path.read_text(encoding="utf-8", errors="replace")):
+        if path.is_file() and XDIST_FIXTURES.search(_test_text(root, relative, texts)):
             return False, f"{PurePosixPath(relative).as_posix()} uses xdist fixtures"
     return True, "no parallel option or xdist fixture found"
 
@@ -218,18 +239,20 @@ def choose(root: Path, changed: list[str], base: str, use_codemap: bool, provide
     impact, codemap_status = codemap_targets(root, base, provider_root, 30.0) if use_codemap else (None, "disabled")
     unmapped = []
     tests, conftests = _python_test_layout(root)
+    # Keep reads lazy for complete provider results and discard all text when this selection finishes.
+    texts: dict[str, str | OSError] = {}
     for test in impact or []:
         sources.setdefault(_contained_path(root, test), "codemap")
     if impact is None or codemap_status == "incomplete":
         # An incomplete index may miss tests, so the heuristics add theirs instead of being skipped.
         for source in python_sources:
-            matches = heuristic_targets(root, source, tests)
+            matches = heuristic_targets(root, source, tests, texts)
             for test in matches:
                 sources.setdefault(_contained_path(root, test), "heuristic")
             if not matches:
                 unmapped.append(source)
     targets = sorted({_contained_path(root, path) for path in sources if (root / path).is_file()})
-    safe, reason = sandbox_safe(root, targets, conftests)
+    safe, reason = sandbox_safe(root, targets, conftests, texts)
     # pytest on Python 3.10 and 3.11 still reads an option-shaped word after ``--``, so a leading dash gets a ``./``.
     pytest_targets = [f"./{path}" if path.startswith("-") else path for path in targets]
     return {

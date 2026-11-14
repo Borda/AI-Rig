@@ -575,7 +575,35 @@ def _local_origin_membership(origin: Path, worktree: Path, snapshot: dict[str, A
     }
 
 
-def inspect_imported_module(name: str, worktree: Path, local_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+def _tracked_source_paths(worktree: Path, relative: str | None = None) -> set[bytes]:
+    """Read a NUL-delimited inventory or one literal path, rejecting tracking claims if inspection fails."""
+    arguments = ["git", "ls-files", "-z", "--"]
+    if relative is not None:
+        # Standalone validators inspect one origin; avoid expanding every call into a whole-index read.
+        arguments.append(f":(literal){relative}")
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed Git argv with a literal pathspec after --
+            arguments,
+            cwd=worktree,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    if completed.returncode != 0:
+        return set()
+    return set(completed.stdout.split(b"\0")) - {b""}
+
+
+def inspect_imported_module(
+    name: str,
+    worktree: Path,
+    local_snapshot: dict[str, Any] | None = None,
+    *,
+    tracked_paths: set[bytes] | None = None,
+) -> dict[str, Any]:
     """Check an actual imported origin against clean tracking or admitted local snapshot bytes."""
     module = sys.modules.get(name)
     if module is None:
@@ -588,20 +616,9 @@ def inspect_imported_module(name: str, worktree: Path, local_snapshot: dict[str,
         relative = origin.relative_to(worktree).as_posix()
     except ValueError:
         return {"origin": origin.as_posix(), "tracked": False, "status": "fail", "reason": "origin-outside-worktree"}
-    try:
-        tracked = (
-            subprocess.run(  # noqa: S603 - argv list, no shell
-                ["git", "ls-files", "--error-unmatch", "--", relative],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
-                cwd=worktree,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-                timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
-            ).returncode
-            == 0
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        tracked = False
+    if tracked_paths is None:
+        tracked_paths = _tracked_source_paths(worktree, relative)
+    tracked = os.fsencode(relative) in tracked_paths
     return {
         "origin": origin.as_posix(),
         "tracked": tracked,
@@ -611,27 +628,22 @@ def inspect_imported_module(name: str, worktree: Path, local_snapshot: dict[str,
     }
 
 
-def inspect_collected_test(path: Path, worktree: Path, local_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+def inspect_collected_test(
+    path: Path,
+    worktree: Path,
+    local_snapshot: dict[str, Any] | None = None,
+    *,
+    tracked_paths: set[bytes] | None = None,
+) -> dict[str, Any]:
     """Verify an actual collected test against clean tracking or admitted local snapshot bytes."""
     origin = path.resolve()
     try:
         relative = origin.relative_to(worktree).as_posix()
     except ValueError:
         return {"origin": origin.as_posix(), "tracked": False, "status": "fail", "reason": "test-outside-worktree"}
-    try:
-        tracked = (
-            subprocess.run(  # noqa: S603 - argv list, no shell
-                ["git", "ls-files", "--error-unmatch", "--", relative],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
-                cwd=worktree,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-                timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
-            ).returncode
-            == 0
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        tracked = False
+    if tracked_paths is None:
+        tracked_paths = _tracked_source_paths(worktree, relative)
+    tracked = os.fsencode(relative) in tracked_paths
     return {
         "origin": origin.as_posix(),
         "tracked": tracked,
@@ -762,9 +774,16 @@ def pytest_configure(config: Any) -> None:
 
         def pytest_sessionfinish(self, session: Any, exitstatus: int) -> None:
             """Publish serial or aggregated worker proof before pytest returns."""
-            origins = {name: inspect_imported_module(name, worktree, local_snapshot) for name in modules}
+            tracked_paths = _tracked_source_paths(worktree)
+            origins = {
+                name: inspect_imported_module(name, worktree, local_snapshot, tracked_paths=tracked_paths)
+                for name in modules
+            }
             tests = {
-                path.resolve().as_posix(): inspect_collected_test(path, worktree, local_snapshot) for path in self.paths
+                path.resolve().as_posix(): inspect_collected_test(
+                    path, worktree, local_snapshot, tracked_paths=tracked_paths
+                )
+                for path in self.paths
             }
             statuses = {entry["status"] for entry in (*origins.values(), *tests.values())}
             status = (
@@ -894,11 +913,10 @@ def _ignored_source_inventory(worktree: Path | None) -> str:
         ],
         cwd=worktree,
         capture_output=True,
-        text=True,
         check=True,
         timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
     )
-    return json.dumps([path for path in ignored.stdout.split("\0") if path])
+    return json.dumps([os.fsdecode(path) for path in ignored.stdout.split(b"\0") if path])
 
 
 def _concealed_source_error(flags: str, worktree: Path | None) -> str | None:
@@ -910,11 +928,10 @@ def _concealed_source_error(flags: str, worktree: Path | None) -> str | None:
         [*SOURCE_GIT, "ls-files", "-s", "-z"],
         cwd=worktree,
         capture_output=True,
-        text=True,
         check=True,
         timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
     )
-    index = dict(row.split("\t", 1)[::-1] for row in staged.stdout.split("\0") if row)
+    index = dict(os.fsdecode(row).split("\t", 1)[::-1] for row in staged.stdout.split(b"\0") if row)
     configuration = subprocess.run(  # noqa: S603 - fixed local Git inspection
         [*SOURCE_GIT, "config", "--bool", "--get-regexp", r"^core\.(filemode|symlinks)$"],
         cwd=worktree,
@@ -973,11 +990,11 @@ def inspect_source(worktree: Path | None = None) -> dict[str, str]:
                 [*SOURCE_GIT, "rev-parse", "--show-toplevel"],
                 cwd=worktree,
                 capture_output=True,
-                text=True,
                 check=False,
                 timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
             )
-            if root.returncode != 0 or not root.stdout.strip() or Path(root.stdout.strip()).resolve() != worktree:
+            root_path = os.fsdecode(root.stdout.rstrip(b"\r\n"))
+            if root.returncode != 0 or not root_path or Path(root_path).resolve() != worktree:
                 return {**empty, "error": "selected-worktree-is-not-checkout-root"}
         head = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
             [*SOURCE_GIT, "rev-parse", "HEAD"],
@@ -995,18 +1012,16 @@ def inspect_source(worktree: Path | None = None) -> dict[str, str]:
             [*SOURCE_GIT, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"],
             cwd=worktree,
             capture_output=True,
-            text=True,
             check=False,
             timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
         )
         if status.returncode != 0:
-            detail = status.stderr.strip() or f"exit {status.returncode}"
+            detail = os.fsdecode(status.stderr).strip() or f"exit {status.returncode}"
             return {**empty, "error": f"git-status-failed:{detail}"}
         flags = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
             [*SOURCE_GIT, "ls-files", "-v", "-z"],
             cwd=worktree,
             capture_output=True,
-            text=True,
             check=False,
             timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
         )
@@ -1014,14 +1029,14 @@ def inspect_source(worktree: Path | None = None) -> dict[str, str]:
             return {**empty, "error": f"git-index-flags-failed:exit {flags.returncode}"}
         snapshot = {
             "head": head.stdout.strip(),
-            "status": status.stdout.rstrip("\r\n"),
+            "status": os.fsdecode(status.stdout).rstrip("\r\n"),
             "ignored": _ignored_source_inventory(worktree),
         }
-        concealed_error = _concealed_source_error(flags.stdout, worktree)
+        concealed_error = _concealed_source_error(os.fsdecode(flags.stdout), worktree)
         if concealed_error:
             snapshot["error"] = concealed_error
         return snapshot
-    except (OSError, RuntimeError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
+    except (OSError, RuntimeError, UnicodeError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
         return {**empty, "error": f"git-inspection-failed:{error}"}
 
 

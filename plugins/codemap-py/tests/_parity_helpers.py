@@ -142,7 +142,7 @@ def assert_v13_index_delta(old: dict, new: dict) -> None:
             for record in module.get(field, []):
                 record["file"] = Path(record["file"]).relative_to(root).as_posix()
     assert old["scan_version"] == 11
-    assert new["scan_version"] == 14
+    assert new["scan_version"] == 15
     assert set(new) == set(old) | V12_ROOT_ADDITIONS | {"source_fingerprint"}
     # These non-Git fixtures retain every historical digest, plus the newly consumed ignore-policy input.
     expected_hashes = dict(old["file_shas"])
@@ -151,7 +151,7 @@ def assert_v13_index_delta(old: dict, new: dict) -> None:
         expected_hashes[".codemapignore"] = hashlib.md5(ignore_file.read_bytes(), usedforsecurity=False).hexdigest()
     assert new["file_shas"] == expected_hashes
     sources = {key: value for key, value in expected_hashes.items() if key != "__coverage_mtime__"}
-    payload = json.dumps([14, sources], sort_keys=True, separators=(",", ":")).encode("utf-8")
+    payload = json.dumps([15, sources], sort_keys=True, separators=(",", ":")).encode("utf-8")
     assert new["source_fingerprint"] == hashlib.sha256(payload).hexdigest()
     assert len(old["modules"]) == len(new["modules"])
     for legacy_module, current_module in zip(old["modules"], new["modules"], strict=True):

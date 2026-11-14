@@ -1077,6 +1077,16 @@ def prepare(
     roles = {"challenger"} if challenge_only else validator._validate_routing(out, routing["risk_tier"])
     if challenge_only and routing.get("triggered_roles") != ["challenger"]:
         raise ValueError("review-challenge-role-set-mismatch")
+    if challenge_only:
+        # Assembly consumes these frozen reasons; reject unusable input before spending a reviewer turn.
+        reasons = routing.get("trigger_reasons")
+        if not isinstance(reasons, dict) or set(reasons) != roles:
+            raise ValueError("review-routing-trigger-reason-mismatch")
+        if not all(
+            isinstance(value, list) and value and all(isinstance(item, str) and item.strip() for item in value)
+            for value in reasons.values()
+        ):
+            raise ValueError("review-routing-trigger-reason-values-invalid")
     if set(briefs) != roles:
         raise ValueError("review-brief-role-set-mismatch")
     selections = {}
@@ -1725,6 +1735,7 @@ def assemble(out: Path, codex_home: Path, challenge_only: bool = False) -> dict[
     }
     if "sol_selection" in routing:
         manifest["sol_selection"] = routing["sol_selection"]
+    disposition_repair = challenge_only and passes[0].get("recovery") == {"kind": "challenge-disposition"}
     summary: dict[str, Any] = {}
     validator._validate_manifest_entries(
         out,
@@ -1734,6 +1745,7 @@ def assemble(out: Path, codex_home: Path, challenge_only: bool = False) -> dict[
         codex_home,
         plan["parent_thread_id"],
         Path.cwd(),
+        retained_role_cards=disposition_repair,
         require_role_card_receipts=True,
         runtime_summary=summary,
     )
@@ -1744,9 +1756,33 @@ def assemble(out: Path, codex_home: Path, challenge_only: bool = False) -> dict[
         and not validator._native_independent_wave(manifest, summary)
     ):
         raise ValueError("review-wave-not-parallel")
-    _freeze(
-        {out / "specialist-manifest.json": _json_bytes(manifest), out / "inspection-summary.json": _json_bytes(summary)}
-    )
+    artifacts = {"specialist-manifest.json": _json_bytes(manifest), "inspection-summary.json": _json_bytes(summary)}
+    previous_path = out / "specialist-manifest.json"
+    if disposition_repair and previous_path.exists() and previous_path.read_bytes() != artifacts[previous_path.name]:
+        # Older intake admitted this malformed label. Preserve that derived receipt only after authenticating a2.
+        previous = validator._load_json(previous_path)
+        try:
+            prior_pass = previous["passes"][0]
+            prior_attempt = prior_pass["attempts"][0]
+            original = dict(passes[0]["attempts"][0])
+            for key, digest_key in (("output_path", "output_sha256"), ("raw_output_path", "raw_output_sha256")):
+                original[key] = prior_attempt[key]
+                if validator._sha256(validator._resolve_path(out, original[key])) != original[digest_key]:
+                    raise ValueError("review-repair-original-manifest-mismatch")
+            expected_pass = {key: value for key, value in passes[0].items() if key != "recovery"}
+            expected_pass.update(attempts=[original], selected_attempt=1, output_path=original["output_path"])
+            if previous != {**manifest, "passes": [expected_pass]}:
+                raise ValueError("review-repair-original-manifest-mismatch")
+        except (KeyError, IndexError, TypeError) as error:
+            raise ValueError("review-repair-original-manifest-mismatch") from error
+        _freeze(
+            {out / "repair-original" / name: (out / name).read_bytes() for name in artifacts if (out / name).exists()}
+        )
+        _freeze({out / (name + ".repair-candidate"): content for name, content in artifacts.items()})
+        for name in artifacts:
+            (out / (name + ".repair-candidate")).replace(out / name)
+    else:
+        _freeze({out / name: content for name, content in artifacts.items()})
     return summary
 
 
@@ -1910,6 +1946,7 @@ def main() -> int:
             "closure-evidence-shape",
             "assessment-format",
             "finding-id-namespace",
+            "challenge-disposition",
             "incomplete-dispatch",
             "interrupted-dispatch",
         ),

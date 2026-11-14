@@ -113,6 +113,41 @@ def test_unfinished_review_requests_one_authorized_continuation(review_state, ga
     assert "denial" in response["reason"]
 
 
+@pytest.mark.parametrize("skill", ["code-review", "code-remediate"])
+@pytest.mark.parametrize("status", ["completed", "failed", "declined", "inProgress"])
+def test_file_change_preserves_workflow_or_controlling_stop(review_state, skill: str, status: str) -> None:
+    """Completed artifact edits leave work pending; unsuccessful or pending edits preserve the host stop.
+
+    Creating a blueprint through apply_patch emits FileChange rather than CommandExecution. That ordinary receipt must
+    not disable the unfinished-work diagnostic, nor may it count as workflow completion.
+    """
+    payload, records = review_state
+    records[-1] = create_run_record(skill)
+    records.append(
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "thread_id": "session",
+                "turn_id": "turn",
+                "item": {
+                    "type": "FileChange",
+                    "status": status,
+                    "changes": {
+                        f"/workspace/.reports/codex/{skill}/run-a/notes.md": {"type": "add", "content": "Notes"}
+                    },
+                    "stdout": "Success" if status == "completed" else "",
+                    "stderr": "",
+                },
+            },
+        }
+    )
+
+    response = HOOK.evaluate(payload, records, "/plugin")
+
+    assert response.get("decision") == ("block" if status == "completed" else None)
+
+
 def test_remediation_before_nested_review_requires_continuation(review_state) -> None:
     """A successful checkout cannot strand an authorized joined workflow before review starts.
 

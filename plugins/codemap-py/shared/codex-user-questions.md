@@ -2,6 +2,8 @@
 
 Read once; reuse.
 
+Before choosing a question control, apply the owning workflow's recovery and delivery requirements. Identify the concrete missing information or authority the answer supplies. If the answer would merely say continue or resume already-authorized feasible work, execute that work instead; this never overrides a real denial, user stop or protected decision.
+
 1. Ask only for a genuinely missing decision, material input or protected action. Authorized preparation and internal recovery need no new consent. The root owns user questions. Children return context, question, choices, custom syntax and answer mapping; never open controls or user-facing fallback.
 2. Reuse unambiguous answers. Otherwise freeze scope, map labels/aliases to canonical values; one pending decision per workflow. Bind through host identity or an unambiguous conversational answer for the sole unchanged decision; ambiguity requires visible key.
 3. Inspect directly exposed tools and schemas/restrictions; discover deferred `ask_user` with tool search or `functions.exec` `ALL_TOOLS` before async. Prefer permitted synchronous `request_user_input` when choices fit, otherwise invoke native form. Async needs verified usable control; unknown means unsuitable. Printing payload is not asking. Tool acceptance does not prove a selectable form was rendered.
