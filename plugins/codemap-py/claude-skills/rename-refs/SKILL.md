@@ -1,7 +1,7 @@
 ---
 name: rename-refs
 description: |
-  Rename Python symbols or modules via the structural index — static callers, import sites, __all__ re-exports, Sphinx cross-refs; optional deprecated alias (--deprecate) or hard-delete (--remove-if-no-callers). Best-effort edits; partial state is reported on failure.
+  Rename Python symbols or modules via the structural index — static callers, import sites, __all__ re-exports, Sphinx cross-refs; optional deprecated alias (--deprecate) or hard-delete (--remove-if-no-callers). Every source write is journaled; a post-edit failure restores the run's edits all-or-nothing and reports any conflict.
   TRIGGER: "rename X to Y" (function/class/method/module), "move module X to Y", "update all references to X".
   SKIP: non-Python; local-variable rename; grep-only rename wanted; 1:N symbol splits; package directory rename (git mv).
 argument-hint: symbol <old_qname> <new_qname> [--dry-run] [--deprecate[='@deprecated(...)'|'@deprecated_class(...)'] | --no-deprecate] [--since <ver>] [--removed-in <ver>] [--remove-if-no-callers] | module <old_module_path> <new_module_path> [--dry-run]
@@ -11,7 +11,7 @@ effort: medium
 
 <objective>
 
-Rename a Python symbol/module with preflight and verification. Edits are best-effort: a post-edit failure can leave partial changes; Step 7 lists edited files and remaining work, without automatic rollback. Coverage:
+Rename a Python symbol/module with preflight and verification. Every source write is journaled by `rename_snapshot.py`: a post-edit failure restores all-or-nothing — each file the run changed gets its original bytes and a recorded `git mv` is undone with `git mv` back, but a file changed outside the run's recorded edits is a conflict, and any conflict keeps every file as it is and is reported; Step 7 lists restored files, conflicts and remaining work. Coverage:
 
 - Definition site (def/class line)
 - `__all__` re-exports in `__init__.py` files
@@ -82,12 +82,25 @@ IFS= read -r PROJ < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-proj-${CSID}" 2
 printf 'false\n' > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-PROCEED_STALE-${CSID}"
 printf '' > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-edited-files-${CSID}"
 printf '' > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-processed-import-files-${CSID}"
+# rollback journal: set aside an abandoned run's journal, open this run's — its preflight point for late files
+python "$PLUGIN_ROOT/bin/rename_snapshot.py" discard --retain || exit 1
+python "$PLUGIN_ROOT/bin/rename_snapshot.py" before || exit 1
 ```
 
-- Block exits 1 (`! UNSUPPORTED`, `! resolve_index_env.py failed`) → stop the skill. Every `!` line routes by edit state, never by step number; in no case finish the rename by hand (grep, `Edit`, `git mv`), in any language:
+- `! rename journal leftover` (with `RETAINED_JOURNAL <path>`): a previous rename left unfinished edits; the block stopped before opening this run's journal. Stop before any index query or edit. Print the retained path and tell the user a previous rename left unfinished edits. `AskUserQuestion`: (a) Keep as is — leave the files and the retained journal; (b) Restore — undo that rename all-or-nothing. Restore → run the block below with `RETAINED` substituted, then print its `RESTORED`/`REMOVED`/`MOVED_BACK` lines, or on exit 4 its `NOTHING_RESTORED` and `CONFLICT` lines (journal kept at that path). Either answer ends the run; the user re-invokes the rename.
+
+```bash
+# timeout: 120000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
+RETAINED="<RETAINED_JOURNAL path printed by Step 1>"
+case "$RETAINED" in *'<'*'>'*|"") echo "! BLOCKED — substitute RETAINED with the printed RETAINED_JOURNAL path"; exit 1 ;; esac
+python "$PLUGIN_ROOT/bin/rename_snapshot.py" restore --journal "$RETAINED"
+```
+
+- Block exits 1 (`! UNSUPPORTED`, `! resolve_index_env.py failed`, `! rename journal refused`) → stop the skill. Every `!` line routes by edit state, never by step number; in no case finish the rename by hand (grep, `Edit`, `git mv`), in any language:
   - Before the first source edit (`Edit` or `git mv`) — Steps 0–3, incl. Step 3's `--remove-if-no-callers` stops, Step 4 before its first write, Step 5's pre-`git mv` checks — every `!` stop ends the run. Never read a stop as a gate to answer.
-  - `! BLOCKED — substitute …` (Step 2, Step 4c) is a placeholder self-check, not a stop: substitute the named value and re-run that block.
-  - After the first source edit, a `!` line never ends the run before the summary. Any Step 4 `!` after a file was written (e.g. `! BLOCKED — sym-path sentinel missing`, `! gen_deprecation_wrapper failed`) and any Step 6 `!` (e.g. `! BLOCKED — OLD_NAME sentinel missing`) → finish the Step 6 checks that still run, then go to Step 7 and print `⚠ Rename incomplete`, naming the files already edited. The re-scan `! codemap-py index --incremental failed` warning does not skip other Step 6 checks; verification remains unavailable until a successful rescan, and Step 7 must report `⚠ Rename incomplete` with that warning.
+  - `! BLOCKED — substitute …` (Step 1, Step 2, Step 4c) is a placeholder self-check, not a stop: substitute the named value and re-run that block.
+  - After the first source edit, a `!` line never ends the run before the summary, and every post-edit failure restores. Any Step 4 or Step 5 `!` after a file was written (e.g. `! BLOCKED — sym-path sentinel missing`, `! gen_deprecation_wrapper failed`), any journal block exiting non-zero (`! rename journal refused`) and any Step 6 `!` (e.g. `! BLOCKED — OLD_NAME sentinel missing`) → stop further rename edits, skip the remaining Step 4–6 work, then go to Step 7: its journal restore block runs automatically, without a question, and the summary prints `⚠ Rename incomplete`, naming the restored files and every conflict. The re-scan `! codemap-py index --incremental failed` warning does not skip other Step 6 checks; verification remains unavailable until a successful rescan, so Step 7 must report `⚠ Rename incomplete` with that warning and restore.
 
 Let Step 2's first query create a missing index or refresh a stale one within the engine's heal cap. Inspect each answer's `index.query_complete` and `index.stale` before using it, including each batch item's `ok` and `result.index`. A failed query/preparation stops before edits. Only if a query still reports `stale: true` after bounded preparation (or preparation is explicitly disabled) ask: (a) Proceed anyway (callers may be incomplete); (b) Abort (explicitly refresh the index, then re-invoke). Abort stops. Missing/unknown freshness or `query_complete: false` → report the metadata and exact coverage gap in the blast report and Step 7; never treat it as complete or allow hard-delete. The caller preflight must still resolve every known site.
 
@@ -178,11 +191,11 @@ IFS= read -r DRY_RUN < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-DRY_RUN-${CSI
 printf 'REMOVE_IF_ZERO=%s DRY_RUN=%s RDEP_COUNT=%s EXHAUSTIVE=%s\nRDEP_HINT=%s\nINDEX_HINT=%s\n' "$REMOVE_IF_ZERO" "$DRY_RUN" "$RDEP_COUNT" "$EXHAUSTIVE" "$RDEP_HINT" "$INDEX_HINT"
 ```
 
-`fn-rdeps` returns `{qname, called_by:[{caller, module, path}], count, index:{query_complete, hint, ...}}`, plus a top-level `hint` for a method or constructor with zero static callers.
+`fn-rdeps` returns `{qname, called_by:[{caller, module, path, inferred?}], count, index:{query_complete, hint, ...}}`, plus a top-level `hint` for a method or constructor with zero static callers. `inferred: true` marks a caller reached only through an inferred receiver type: confirm it in source before rewriting it, and report any unconfirmed one as skipped.
 
 - `called_by` has **no line numbers**; `caller` is `module::qualified_name`, which `symbol` never matches. Step 3 splits it at `::` and saves ranges from `codemap-py query symbols <module>` filtered by exact `qualified_name`; Step 4c reads that preflight sentinel.
 - `EXHAUSTIVE` first reads `result["index"]["query_complete"]`; only if absent, use legacy `result["index"]["exhaustive"]`; neither → `false`. Incomplete → note in blast report.
-- `RDEP_HINT` non-empty → zero static callers is not zero callers: instance calls (`obj.method()`), overrides, subclass constructors, and implicit protocol (dunder) calls such as `len(x)` or `x == y` are never resolved statically. Print it in the blast report.
+- `RDEP_HINT` non-empty → zero static callers is not zero callers: instance calls on a receiver whose class the source does not state (`obj.method()`), overrides, subclass constructors, and implicit protocol (dunder) calls such as `len(x)` or `x == y` are never resolved statically. Print it in the blast report.
 - `INDEX_HINT` (`index.hint`) names the search for references the static AST never sees, such as hook-registered callers. Print it in the blast report; it never blocks the rename on its own.
 
 `called_by` holds call edges only: a subclass base, `isinstance` target, callback value, plain import or ancestor `__init__.py` re-export never appears in it. List every whole-word `OLD_NAME` in the files that call the symbol, define it, import its module, or import an ancestor package that may re-export it (one `batch` of `rdeps`, module names mapped to paths by its `list` item); Step 4c edits from this list:
@@ -426,7 +439,7 @@ PY
   _CM_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
   grep -rnw --include='*.py' --include='*.pyi' --exclude-dir=.git --exclude-dir=.venv --exclude-dir=node_modules -- "$OLD_NAME" "$_CM_ROOT" | head -50
   ```
-- `REMOVE_IF_ZERO=true` AND `RDEP_COUNT == 0` AND `EXHAUSTIVE=true` AND `RDEP_HINT` empty AND no non-call hit AND `DRY_RUN=false` → `AskUserQuestion`: (a) Delete `$OLD_REF` — confirmed no callers; (b) Abort — keep file. Abort: stop. Delete: find-symbol line range, then `Read` block bounds. Verify `start_line` contains expected bare `OLD_NAME` or qualified `OLD_REF`; mismatch → print `! Symbol name mismatch at line <start_line>: expected <OLD_NAME>, index may be stale — run /codemap-py:scan-codebase first`; abort without delete. Only then `Edit`: remove definition from `def`/`class` through final body, including immediately preceding `@decorator` lines. Skip Steps 4a–4d. Print `ℹ Symbol had no callers — removed $OLD_REF without rename`; go Step 6.
+- `REMOVE_IF_ZERO=true` AND `RDEP_COUNT == 0` AND `EXHAUSTIVE=true` AND `RDEP_HINT` empty AND no non-call hit AND `DRY_RUN=false` → `AskUserQuestion`: (a) Delete `$OLD_REF` — confirmed no callers; (b) Abort — keep file. Abort: stop. Delete: find-symbol line range, then `Read` block bounds. Verify `start_line` contains expected bare `OLD_NAME` or qualified `OLD_REF`; mismatch → print `! Symbol name mismatch at line <start_line>: expected <OLD_NAME>, index may be stale — run /codemap-py:scan-codebase first`; abort without delete. Only then run the Step 4 journal `before` block for the definition path, `Edit`: remove definition from `def`/`class` through final body, including immediately preceding `@decorator` lines, then run the Step 4 record and journal `after` blocks for that path. Skip Steps 4a–4d. Print `ℹ Symbol had no callers — removed $OLD_REF without rename`; go Step 6.
 - `REMOVE_IF_ZERO=true` AND `RDEP_COUNT == 0` AND `EXHAUSTIVE=true` AND `RDEP_HINT` empty AND no non-call hit AND `DRY_RUN=true` → record "would delete `$OLD_REF` — no callers, exhaustive" as a line in the dry-run report below; fall through to the `--dry-run` block. No `AskUserQuestion`, no `Edit` — dry-run means no edits, including the delete.
 - Otherwise (`REMOVE_IF_ZERO=false`): proceed with normal rename flow.
 
@@ -462,7 +475,18 @@ Otherwise `AskUserQuestion`: print the saved blast-radius report once as the las
 
 ## Step 4: Apply edits — symbol rename
 
-For either subcommand, immediately after each successful source `Edit`, record its exact path with this block, including definition, re-export, non-call, documentation and config edits. After a successful Step 5 `git mv`, run it for both the source and destination paths from that operation before any further edit. A failed write records no new path; retain all earlier entries for the partial-state summary.
+For either subcommand, run this journal `before` block immediately before each source write: every `Edit` (definition, re-export, non-call, documentation and config edits, the Step 3 hard-delete) and Step 5a's `git mv`, for its source path. A refused `before` (`! rename journal refused`) writes nothing; before the run's first source write it ends the run like any pre-edit stop, after one it is a post-edit failure (Step 1 routing).
+
+```bash
+# timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+JOURNAL_PATH="<exact path about to be edited, created or moved>"
+case "$JOURNAL_PATH" in *'<'*'>'*|"") echo "! BLOCKED — substitute JOURNAL_PATH with the path about to be written"; exit 1 ;; esac
+python "$PLUGIN_ROOT/bin/rename_snapshot.py" before --file "$JOURNAL_PATH"
+```
+
+Immediately after each successful source `Edit`, record its exact path with this block, including definition, re-export, non-call, documentation and config edits. After a successful Step 5 `git mv`, run it for both the source and destination paths from that operation before any further edit. A failed write records no new path; retain all earlier entries for the partial-state summary.
 
 ```bash
 # timeout: 3000
@@ -471,6 +495,28 @@ _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/nul
 EDITED_PATH="<exact path just edited or moved>"
 case "$EDITED_PATH" in *'<'*'>'*|"") echo "! BLOCKED — substitute EDITED_PATH with the actual edited path"; exit 1 ;; esac
 printf '%s\n' "$EDITED_PATH" >> "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-edited-files-${CSID}"
+```
+
+Then record the write in the journal before any further edit: after an `Edit`, run this journal `after` block for the same path; after a `git mv`, run the journal move block below with both paths instead. A non-zero exit is a post-edit failure.
+
+```bash
+# timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+JOURNAL_PATH="<exact path just edited>"
+case "$JOURNAL_PATH" in *'<'*'>'*|"") echo "! BLOCKED — substitute JOURNAL_PATH with the path just edited"; exit 1 ;; esac
+python "$PLUGIN_ROOT/bin/rename_snapshot.py" after --file "$JOURNAL_PATH"
+```
+
+```bash
+# timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+MOVED_FROM="<source path of the git mv>"
+MOVED_TO="<destination path of the git mv>"
+case "$MOVED_FROM" in *'<'*'>'*|"") echo "! BLOCKED — substitute MOVED_FROM with the git mv source path"; exit 1 ;; esac
+case "$MOVED_TO" in *'<'*'>'*|"") echo "! BLOCKED — substitute MOVED_TO with the git mv destination path"; exit 1 ;; esac
+python "$PLUGIN_ROOT/bin/rename_snapshot.py" after --move "$MOVED_FROM" "$MOVED_TO"
 ```
 
 Skip to Step 5 if `SUBCOMMAND=module`.
@@ -496,6 +542,18 @@ Skip to Step 6 if `SUBCOMMAND=symbol`.
 > loads: module.md
 
 Stop conditions carried by 5a: non-git source, untracked source, or unmerged/conflicted path → stop before edits; preserve uncommitted user edits on a tracked source — dirty status alone is never a stop.
+
+Journal the move: after 5a's first block (it saves `old-file-path`) and before its second block (the one running `git mv`), run this block; after a successful `git mv`, run the Step 4 record block for both paths and the journal move block before any further edit.
+
+```bash
+# timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
+IFS= read -r old_file_path < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-old-file-path-${CSID}" 2>/dev/null || old_file_path=""
+[ -n "$old_file_path" ] || { echo "! BLOCKED — old-file-path sentinel missing; stop before git mv"; exit 1; }
+python "$PLUGIN_ROOT/bin/rename_snapshot.py" before --file "$old_file_path"
+```
 
 Steps 5a–5f (file rename, direct imports, from-imports, `__init__.py` relative re-exports, `pyproject.toml`/`setup.cfg`, Sphinx `:mod:` refs) live in `modes/module.md`; load it and follow it in order:
 
@@ -599,7 +657,7 @@ IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${C
 IFS= read -r SYM_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-sym-path-${CSID}" 2>/dev/null || SYM_PATH=""
 IFS= read -r SYM_TYPE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-sym-type-${CSID}" 2>/dev/null || SYM_TYPE=""
 IFS= read -r DEPRECATE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-DEPRECATE-${CSID}" 2>/dev/null || DEPRECATE="false"
-[ -n "$OLD_NAME" ] || { echo "! BLOCKED — OLD_NAME sentinel missing; source already edited — finish remaining Step 6 checks, then Step 7: ⚠ Rename incomplete"; exit 1; }
+[ -n "$OLD_NAME" ] || { echo "! BLOCKED — OLD_NAME sentinel missing; source already edited — go to Step 7: restore, ⚠ Rename incomplete"; exit 1; }
 _T="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}"
 _CM_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 _ALIAS=""; [ "$DEPRECATE" = "true" ] && _ALIAS="$SYM_PATH"
@@ -704,7 +762,7 @@ try:
     if mode == "symbol" and not (after["count"] == len(after["called_by"]) == len(rows) == before["count"]):
         sys.exit("! caller identity count mismatch")
     if expected - actual or (mode == "symbol" and actual - expected):
-        sys.exit("! consumer identity mismatch — finish remaining checks, then Step 7: ⚠ Rename incomplete")
+        sys.exit("! consumer identity mismatch — go to Step 7: restore, ⚠ Rename incomplete")
 except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, AttributeError) as exc:
     diagnostic = getattr(exc, "stderr", None) or str(exc)
     sys.exit(f"! new-target verification unavailable: {str(diagnostic)[:400]}")
@@ -803,6 +861,24 @@ print("\n".join("  " + path for path in sorted(paths)) or "  (none recorded)")
 PY
 ```
 
+Then settle the journal with exactly one block. `⚠ Rename incomplete` (a post-edit failure, an unresolved known consumer, an unedited reference, failed or unavailable verification) → the restore block, which runs automatically, without a question. `✓ Renamed` → the discard block. A run that stopped before its first source write runs neither.
+
+```bash
+# timeout: 120000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "$PLUGIN_ROOT/bin/rename_snapshot.py" restore
+```
+
+Restore is all-or-nothing: it checks every journaled write first, then puts back every file still holding the run's last recorded edit, deletes a file the run created only while it holds the created bytes, and undoes a `git mv` with `git mv` back. Exit 4 = a conflict: with `NOTHING_RESTORED`, nothing was restored and every file keeps its current bytes; without it, a file changed during the restore, which stopped after its printed lines. Print each `CONFLICT` line and the `RETAINED_JOURNAL` path, where the original bytes stay (`restore --journal` on that path retries once the conflicts are resolved). Exit 3 = restore unavailable: print its `!` line and state that the edits remain in place.
+
+```bash
+# timeout: 5000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name codemap-py) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "$PLUGIN_ROOT/bin/rename_snapshot.py" discard
+```
+
 Print:
 
 ```
@@ -811,6 +887,7 @@ Print:
     <file>:<line>
   <remaining consumers, failed checks and next actions>
   Files edited: <the exact list printed above>
+  Restore: <RESTORED/REMOVED/MOVED_BACK lines, or nothing restored on a conflict>; conflicts: <each CONFLICT line, or none>; journal: <RETAINED_JOURNAL path when conflicts>
 [else]
 ✓ Renamed: <OLD_REF> → <NEW_REF> — residual references: RESIDUAL_COUNT (symbol) / MODULE_RESIDUAL_COUNT (module); each remaining hit classified as another origin, 0 when none
   Files changed: N

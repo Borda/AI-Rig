@@ -5,42 +5,42 @@
     "PT-01": {
       "baseline_commit": "8e805f9268043c9aa8f0d70800be537b56a93c19",
       "module_count": 646,
-      "raw_sha256_at_canonical_root": "c9755d74028e13211b5a4a7b03c1d4ea00baaaadb090c451cf40115f5d20115e",
-      "scan_version": 13,
-      "scanned_at": "2026-08-12T00:00:00+00:00",
-      "semantic_sha256": "9d0c4d537803d93459d7a683d47538af3d3e8d6bea356772c7b25f9c964184e6"
+      "raw_sha256_at_canonical_root": "1ce0cffa425c8c365a64524b4c56b6672386c2d1c2c710db94ff910b0c4b4df7",
+      "scan_version": 16,
+      "scanned_at": "2026-11-16T00:00:00+00:00",
+      "semantic_sha256": "8199218158333533a18470478be46b018e34fb1955d63d297aa4ad77ff4c137c"
     },
     "PT-02": {
       "baseline_commit": "aa0ee0d18d49c6b26f18d34a3473f177adefc262",
       "module_count": 646,
-      "raw_sha256_at_canonical_root": "b4fbe558ff37c56653a220b8e854a0e7a41714216cf9e8fabcb812126701768d",
-      "scan_version": 13,
-      "scanned_at": "2026-08-12T00:00:00+00:00",
-      "semantic_sha256": "06d7efdf415a20e9e8638eb046f9a3d34376e894b3b43dfb8f1c8b9e28613397"
+      "raw_sha256_at_canonical_root": "c00c292afdb09a38b93391ea3bd51eba635f381ea001b10e7790d1d266045a0e",
+      "scan_version": 16,
+      "scanned_at": "2026-11-16T00:00:00+00:00",
+      "semantic_sha256": "de6df438678dd53f574d40152780c1d562f0415053f9c6f08420bf6eb00a1b1a"
     },
     "PT-03": {
       "baseline_commit": "9df1910f0833100478886bef0a08b450ff2d0c14",
       "module_count": 646,
-      "raw_sha256_at_canonical_root": "eae63ec0e1d1deb037c4e9c858ffac578a9d12e1d07d2e4b33fd9609b8870182",
-      "scan_version": 13,
-      "scanned_at": "2026-08-12T00:00:00+00:00",
-      "semantic_sha256": "8160e8826165db9e4ea3f9d55310c170822c6475ecd97a36adbadf4102a42571"
+      "raw_sha256_at_canonical_root": "570e4b66b2bce04c2b28fbc405d2aed3ebf7c1239eb263cb4fd6ca6767cb147e",
+      "scan_version": 16,
+      "scanned_at": "2026-11-16T00:00:00+00:00",
+      "semantic_sha256": "a009b36f1565836487f019faad9c809255d3412be57ddddae06317c34b7c2b70"
     },
     "PT-04": {
       "baseline_commit": "3876cc525d2678463199407ca48230d3eba09461",
       "module_count": 644,
-      "raw_sha256_at_canonical_root": "b921f03d6c8d4249d2db5374dc9a418b8d078be4b3d2f9603b36b47094511911",
-      "scan_version": 13,
-      "scanned_at": "2026-08-12T00:00:00+00:00",
-      "semantic_sha256": "872fe5530c59fcdfede34af9036cb73b920da1f83c7919e96c728482d44356cb"
+      "raw_sha256_at_canonical_root": "fd5ae1a4f0c0f88e1c3075be5ef5fa3e5cc35e5c43db5ac3505b34059be9facd",
+      "scan_version": 16,
+      "scanned_at": "2026-11-16T00:00:00+00:00",
+      "semantic_sha256": "877759128862caf4873cff967b1f8c7b541355cb639ffd2a48e327b58b5e6815"
     },
     "PT-05": {
       "baseline_commit": "b15d394f2a9d36ccefba08328ac8dc2bd13e49b2",
       "module_count": 643,
-      "raw_sha256_at_canonical_root": "2d13e9a4c05ffd5b76fe20a0b7edca3aaba5c0a485ea86af8bc0da92aa850675",
-      "scan_version": 13,
-      "scanned_at": "2026-08-12T00:00:00+00:00",
-      "semantic_sha256": "1268c6b628d4cab32309487e7e1e5c7785fcb74bb6d1760cbd025ede4161d8c3"
+      "raw_sha256_at_canonical_root": "40de11eeddb28a4bf5cea4c7fd5697a533c9b37d40dc8a4e11cb3f299040b37e",
+      "scan_version": 16,
+      "scanned_at": "2026-11-16T00:00:00+00:00",
+      "semantic_sha256": "b05c60899be7f7822714b697e1fdc57081fe48f1fde37f147d64f830ba729868"
     }
   }
 }

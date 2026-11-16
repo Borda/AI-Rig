@@ -427,6 +427,20 @@ def _restore_legacy_impact_command(legacy: dict, current: dict) -> None:
     current["pytest_cmd"] = legacy["pytest_cmd"]
 
 
+def _drop_possibly_public(command: str, current: dict) -> None:
+    """Remove the additive ``possibly_public`` hint and its check text from a dead-code payload in place.
+
+    The frozen oracle predates the hint; the hint's own contract is pinned in
+    ``tests/query/test_dead_possibly_public.py``, and parity is asserted on everything else.
+    """
+    if command not in {"dead-symbols", "dead-modules"}:
+        return
+    current.pop("possibly_public_check", None)
+    for key in ("dead", "dead_modules"):
+        for finding in current.get(key, []):
+            finding.pop("possibly_public", None)
+
+
 def _assert_golden_query_parity(
     old: subprocess.CompletedProcess[str], new: subprocess.CompletedProcess[str], case: list[str]
 ) -> None:
@@ -457,6 +471,7 @@ def _assert_golden_query_parity(
     if command not in _COUNT_SEMANTIC_KEYS:
         legacy = json.loads(old.stdout)
         current = _drop_loaded_index_path(json.loads(new.stdout))
+        _drop_possibly_public(command, current)
         if command != "diff-impact":
             _restore_v13_not_covered(legacy, current)
         if command in {"test-impact", "diff-impact"}:
@@ -800,6 +815,7 @@ class TestDiffImpactParity:
             "exhaustive": False,
             "completeness_reason": "stale",
             "note": current["index"]["note"],
+            "remedies": [{"reason": "stale", "remedy": "Re-run /codemap-py:scan-codebase to update."}],
         }
         current["index"] = legacy["index"]
         _restore_legacy_impact_command(legacy["test_impact"], current["test_impact"])

@@ -107,7 +107,10 @@ BUDGETS = (
     # method in active use. The clause was compressed to 42 bytes against 5 bytes of headroom.
     # 5250 -> 5711: mandatory automatic preparation, frozen missing-index handling and canonical/custom root selection
     # add exactly 461 bytes over the committed 5237-byte skill; preserve the existing 13-byte headroom.
-    Budget("plugins/codemap-py/codex-skills/query-code/SKILL.md", 5711),
+    # 5711 -> 5850: one line naming the answer fields that report what the index could not see (`remedies`,
+    # `dynamic_sites`, `via`, `possibly_public`); without it an agent reads a quiet answer as a complete one. The line
+    # adds 141 bytes over the committed 5698-byte skill, compressed first.
+    Budget("plugins/codemap-py/codex-skills/query-code/SKILL.md", 5850),
     # Codex reads the whole global template on every turn, so each byte costs context on all of them. Activity-specific
     # detail belongs in ``shared/global-baseline-details.md``, loaded only when the template's trigger line names it.
     # Raise this number deliberately, in the same change that justifies the added always-loaded text, never to make a

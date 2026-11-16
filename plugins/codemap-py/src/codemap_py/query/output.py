@@ -96,6 +96,33 @@ def _tabular_key(payload: dict) -> str | None:
     return found
 
 
+#: Boolean row markers an emitter writes only on the rows they apply to (``fn-rdeps`` ``called_by[].inferred``).
+_OPTIONAL_ROW_FLAGS: tuple[str, ...] = ("inferred",)
+
+
+def _fill_optional_flags(payload: dict) -> dict:
+    """Return *payload* with each optional row flag present, as ``None``, on every row of a list that uses it.
+
+    JSON keeps an absent flag absent, so unmarked rows stay byte-identical. TSV needs one header for every row: without
+    the fill, a result mixing marked and unmarked rows hit the ragged-row refusal in :func:`_tabular_key`. ``None``
+    renders as an empty cell. Any other key that differs between rows still makes the table refuse.
+
+    Examples:
+        >>> _fill_optional_flags({"called_by": [{"caller": "a", "inferred": True}, {"caller": "b"}], "count": 2})
+        {'called_by': [{'caller': 'a', 'inferred': True}, {'caller': 'b', 'inferred': None}], 'count': 2}
+        >>> _fill_optional_flags({"rows": [{"x": 1}, {"x": 1, "y": 2}]})
+        {'rows': [{'x': 1}, {'x': 1, 'y': 2}]}
+    """
+    filled = dict(payload)
+    for key, value in payload.items():
+        if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
+            continue
+        flags = [flag for flag in _OPTIONAL_ROW_FLAGS if any(flag in row for row in value)]
+        if flags:
+            filled[key] = [{**row, **{flag: row.get(flag) for flag in flags}} for row in value]
+    return filled
+
+
 def _empty_table_key(payload: dict) -> str | None:
     """Return the key of a lone empty result list, or None.
 
@@ -158,6 +185,8 @@ def _emit_tsv(raw: str) -> None:
         if state._invocation is not None:
             state._invocation.result = payload
         return
+    if isinstance(payload, dict):
+        payload = _fill_optional_flags(payload)
     key = _tabular_key(payload) if isinstance(payload, dict) else None
     if key is None:
         # The error emitter bypasses format conversion; errors remain JSON.

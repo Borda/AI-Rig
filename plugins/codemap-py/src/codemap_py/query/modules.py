@@ -242,7 +242,7 @@ def cmd_central(
         "central": [
             {
                 "name": m["name"],
-                "rdep_count": rdep_counts.get(m["name"], m.get("rdep_count", 0)),
+                "rdep_count": rdep_counts.get(m["name"], 0) if exclude_tests else m.get("rdep_count", 0),
                 "path": m.get("path", ""),
             }
             for m in ranked

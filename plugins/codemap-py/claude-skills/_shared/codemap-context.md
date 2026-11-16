@@ -126,6 +126,7 @@ Each `codemap-py query` result carries `index` block with per-command coverage f
 - `index.method` — analysis technique used (`static-ast`, `import-graph`, `index-lookup`, `ast-flags`).
 - `index.not_covered` — what method structurally misses (list); non-empty → surface as scope caveat in response. Targeted source/runtime evidence may answer a different dynamic-behavior question; do not claim it makes the static graph complete.
 - `index.hint` — actionable alternative if deeper coverage needed (e.g. grep pattern for hook-registered callers).
+- `index.remedies`, `index.dynamic_sites` — when present, one action per incomplete-coverage reason, and a count of dynamic imports/`getattr` calls the static index cannot resolve; relay both with the caveat.
 - `index.confidence: "exact"` — exact within the reported method and scope; does not override freshness, completeness or truncation limits.
 
 **Codemap = primary codebase navigation tool.** Do NOT grep/bash to re-verify what codemap already returned. When `not_covered` non-empty: (1) include one-line caveat — "Note: callers via [not_covered items] not included — structurally invisible to static AST"; (2) log gap:

@@ -33,7 +33,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
-from codemap_py import index_paths, integration, query
+from codemap_py import index_paths, integration, query, runtime_log
 
 #: Lowest (major, minor) CPython version the launcher accepts as an interpreter.
 _MIN = (3, 11)
@@ -49,7 +49,7 @@ _HELP = """usage: codemap-py {index,query,doctor,integrate} [args...]
 Commands:
   index [args...]       Build or update the structural index.
   query [args...]       Query the structural index as JSON.
-  doctor [--json]       Report the resolved interpreter and index path.
+  doctor [--json]       Report the resolved interpreter, index path, and hook failure counts.
   integrate [args...]   Run a supported integration command.
 
 Direct compact query examples:
@@ -204,8 +204,37 @@ def _child_argv(script: str, rest: Sequence[str], plugin_root: Path, root: Path)
     return [sys.executable, str(plugin_root / "bin" / script), *pin, *rest]
 
 
+def _hook_failures() -> dict[str, dict[str, dict]]:
+    """Return the hook health of every hook runtime, keyed by runtime then hook name.
+
+    Each entry carries ``count`` (failures kept, capped at the retention), ``last_class``, ``last_time`` and
+    ``last_success`` (ISO-8601 UTC or ``None``). Times are raw stamps, never ages, so two doctor runs over the same log
+    directory print identical output.
+    """
+    return {runtime: runtime_log.hook_health(runtime) for runtime in runtime_log.HOOK_RUNTIMES}
+
+
+def _hook_failure_lines(hook_failures: Mapping[str, Mapping[str, Mapping[str, object]]]) -> list[str]:
+    """Render one text line per runtime and hook, with ``-`` for a time or class that was never recorded.
+
+    Examples:
+        >>> _hook_failure_lines({"codex": {"seed-session": {"count": 0, "last_class": None, "last_time": None,
+        ...     "last_success": "2026-01-02T03:04:05Z"}}})
+        ['hook_failures.codex.seed-session: count=0 last_class=- last_time=- last_success=2026-01-02T03:04:05Z']
+    """
+    lines = []
+    for runtime, hooks in hook_failures.items():
+        for hook, entry in hooks.items():
+            fields = " ".join(
+                f"{field}={'-' if entry[field] is None else entry[field]}"
+                for field in ("count", "last_class", "last_time", "last_success")
+            )
+            lines.append(f"hook_failures.{runtime}.{hook}: {fields}")
+    return lines
+
+
 def _doctor(rest: Sequence[str], plugin_root: Path) -> int:
-    """Report the resolved interpreter, version, plugin root, and index path."""
+    """Report the resolved interpreter, version, plugin root, index path, and hook failure counts."""
     info = sys.version_info
     resolved = index_paths.resolve_index()
     report = {
@@ -216,10 +245,12 @@ def _doctor(rest: Sequence[str], plugin_root: Path) -> int:
         "plugin_root": str(plugin_root),
         "index_path": str(resolved.index_path),
     }
+    hook_failures = _hook_failures()
     if "--json" in rest:
-        print(json.dumps(report, indent=2, sort_keys=True))
+        print(json.dumps({**report, "hook_failures": hook_failures}, indent=2, sort_keys=True))
     else:
-        print("\n".join(f"{key}: {report[key]}" for key in sorted(report)))
+        lines = [f"{key}: {report[key]}" for key in sorted(report)]
+        print("\n".join(lines + _hook_failure_lines(hook_failures)))
     return 0
 
 
@@ -233,7 +264,7 @@ def _query_argv(rest: Sequence[str], root: Path) -> list[str]:
     return [*pin, *rest]
 
 
-def _run_query(rest: Sequence[str], plugin_root: Path) -> int:
+def _run_query(rest: Sequence[str], plugin_root: Path, *, owns_process: bool = False) -> int:
     """Run the query engine in-process; the engine owns its own read lease.
 
     Runs the query engine as a direct, in-process call to
@@ -256,7 +287,10 @@ def _run_query(rest: Sequence[str], plugin_root: Path) -> int:
     resolved = index_paths.resolve_index()
     argv = _query_argv(rest, resolved.root)
     try:
-        query.main(argv)
+        if owns_process:
+            query.main(argv, owns_process=True)
+        else:
+            query.main(argv)
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else _RUNTIME_ERROR_EXIT
     except (KeyError, TypeError, ValueError) as exc:
@@ -298,8 +332,12 @@ def _run_index(rest: Sequence[str], plugin_root: Path) -> int:
     return subprocess.run(argv, check=False).returncode  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
 
 
-def main(argv: Sequence[str] | None = None, plugin_root: Path | None = None) -> int:  # noqa: PLR0911
-    """Dispatch ``index``/``query``/``doctor``/``integrate``."""
+def main(argv: Sequence[str] | None = None, plugin_root: Path | None = None, *, owns_process: bool = False) -> int:
+    """Dispatch ``index``/``query``/``doctor``/``integrate``.
+
+    ``owns_process`` is true only for the command-line entry point, which may end the process itself when a query
+    deadline cannot interrupt the main thread; embedded callers leave it false so a timeout never exits their host.
+    """
     argv = sys.argv[1:] if argv is None else list(argv)
     root = _default_plugin_root() if plugin_root is None else plugin_root
     if argv in (["--help"], ["-h"]):
@@ -309,14 +347,15 @@ def main(argv: Sequence[str] | None = None, plugin_root: Path | None = None) -> 
         sys.stderr.write(_USAGE + "\n")
         return _USAGE_EXIT
     command, rest = argv[0], argv[1:]
-    if command == "doctor":
-        return _doctor(rest, root)
-    if command == "index":
-        return _run_index(rest, root)
-    if command == "query":
-        return _run_query(rest, root)
-    if command == "integrate":
-        return integration.run(rest, root)
+    handlers = {
+        "doctor": lambda: _doctor(rest, root),
+        "index": lambda: _run_index(rest, root),
+        "query": lambda: _run_query(rest, root, owns_process=owns_process),
+        "integrate": lambda: integration.run(rest, root),
+    }
+    handler = handlers.get(command)
+    if handler is not None:
+        return handler()
     sys.stderr.write(f"codemap-py: unknown command {command!r}\n{_USAGE}\n")
     return _USAGE_EXIT
 

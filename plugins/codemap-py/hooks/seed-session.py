@@ -50,9 +50,13 @@ import _hookutil  # noqa: E402  (needs the sys.path insert above)
 project_name = _hookutil.project_name
 
 
+#: Name under which this hook records its swallowed failures and last clean run for ``codemap-py doctor``.
+_HOOK_NAME = "seed-session"
+
+
 def main() -> int:
     """Persist a non-empty Claude session ID, failing open on every error."""
-    try:
+    with _hookutil.hook_outcome(_HOOK_NAME, (OSError, ValueError, TypeError)):
         if _hookutil.runtime() != "claude":
             return 0
         payload = json.load(sys.stdin)
@@ -63,8 +67,6 @@ def main() -> int:
             return 0
         tmp_dir = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
         _hookutil.write_sentinel(tmp_dir / f"codemap-{project_name()}-session", session_id)
-    except (OSError, ValueError, TypeError):
-        pass
     return 0
 
 

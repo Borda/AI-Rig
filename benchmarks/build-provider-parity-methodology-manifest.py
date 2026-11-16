@@ -46,18 +46,18 @@ CANONICAL_TARGET = Path(
 #: Identity of the frozen Codemap index of the canonical target (hashes, scan version, module count).
 INDEX_LOCK = {
     "change_reason": (
-        "Scanner schema 13 preserves static reverse-import edges for relative imports and known from-package "
-        "submodule imports; production-only centrality remains derived from production importers."
+        "Scanner schema 16 relock of the same source commit, replacing the schema 13 lock. Results recorded "
+        "before this relock, including the agentic B_auto figures, were measured against the schema 13 index."
     ),
     "git_sha": "be98784a1a03581b7051a355ae1084fd352d7cea",
     "module_count": 645,
     "path": str(CANONICAL_TARGET / ".cache/codemap/codemap-provider-parity-pl-2.6.5.json"),
     "project": "codemap-provider-parity-pl-2.6.5",
-    "raw_sha256": "3c5840893e9c939baa61a6c5ce95994ff69ffe4a67d225aeb412c73deb61e0c1",
-    "semantic_sha256": "4086690e2b7bed8ff4fc95ed37606228caa236200ccad2e9d8c5dfb9dda1062e",
+    "raw_sha256": "6c2ec534abb8acb4d4fd516d67a8e65327d6f6c0109f58c0577289691cb77413",
+    "semantic_sha256": "8ff0e1686b99ef04392fb03c54f1101764e04f0b6bc98d2021a393fff98b9295",
     "scan_root": str(CANONICAL_TARGET),
-    "scan_version": 13,
-    "scanned_at": "2026-08-06T09:04:54.432797+00:00",
+    "scan_version": 16,
+    "scanned_at": "2026-11-16T00:00:00+00:00",
 }
 #: Thresholds a future run must meet for Codemap to be accepted, copied into the manifest.
 PRODUCT_ACCEPTANCE_POLICY = {

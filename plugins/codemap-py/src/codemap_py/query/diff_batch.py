@@ -783,7 +783,7 @@ def cmd_batch(index: dict, args: argparse.Namespace, parser: argparse.ArgumentPa
         shared = {
             key: value
             for key, value in coverages[0].items()
-            if key not in {"total_available", "exhaustive", "completeness_reason", "note"}
+            if key not in {"total_available", "exhaustive", "completeness_reason", "note", "remedies"}
             and all(key in coverage and coverage[key] == value for coverage in coverages)
         }
     # Per-query prose/legacy completeness cannot describe failed or missing siblings.

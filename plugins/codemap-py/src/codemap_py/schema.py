@@ -13,7 +13,7 @@ from typing import TypedDict
 
 # Increment when persisted index data changes query semantics incompatibly.
 #: Schema version stamped into newly written indexes, incremented on incompatible semantic changes.
-SCAN_VERSION: int = 15
+SCAN_VERSION: int = 16
 
 # Per-feature minimum index versions.
 # v4 and v5 were design epochs shipped together in one release (SCAN_VERSION 4–10).
@@ -33,6 +33,16 @@ COVERAGE_MIN_VER: int = 10  # v5.4 — coverage_pct, covered_by per symbol (requ
 ENTITY_TYPE_MIN_VER: int = 11  # v5.5 — entity_type ("pkg"|"test"|"docs"|"example"), package (top-level name)
 SYMBOL_ALIASES_MIN_VER: int = 12  # v5.6 — alias-aware reverse-call graph
 
+# v16 adds per-module fields that older indexes lack, so they rebuild:
+#   ``entry_point_refs``: entry points the root ``pyproject.toml`` declares (``[project.scripts]``,
+#     ``[project.gui-scripts]``, ``[project.entry-points.<group>]``) with group, name, attribute path and line;
+#     ``dead-symbols`` and ``dead-modules`` treat those targets as referenced;
+#   ``typed_calls`` and ``class_bases``: receiver facts behind inferred call edges, which carry an ``inferred`` rule
+#     marker and count as ``fn-*`` callers;
+#   ``dynamic_refs`` (``getattr`` on an imported name, unresolved import calls), resolved into ``getattr_refs``
+#     (index-only) and the ``dynamic_sites`` count that query results report; ``dynamic_imports`` entries resolved
+#     from a module constant or a lazy-import map carry ``via``.
+#
 # v15 adds import edges that name matching missed: bare imports in a script directory (no ``__init__.py``) to the
 # sibling modules they name, and imports written with the project-root-qualified path of a module whose own name is
 # relative to a nested source root. Older indexes lack these edges, so they rebuild.

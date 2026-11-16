@@ -93,6 +93,8 @@ jobs:
 
       # Test time tracks how many Git and Python processes tests start; one line per OS shows whether a slow runner is
       # slow at spawning, at file writes, or neither, and whether an ambient Git filter (LFS) is configured on it.
+      # On Windows the script also measures again after Defender exclusions, a measurement-only experiment; test jobs
+      # are unchanged until it shows a gain.
       - name: 🔬 Measure process-spawn cost
         run: uv run --no-project python scripts/measure_spawn_cost.py
 

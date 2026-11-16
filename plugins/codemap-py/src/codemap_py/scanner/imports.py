@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+import keyword
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 
 _STDLIB_MODULES: frozenset[str] = frozenset(sys.stdlib_module_names)  # Python 3.10+; project requires 3.10+
 
@@ -509,3 +511,372 @@ def extract_dynamic_imports(tree: ast.Module) -> list[dict]:
         elif isinstance(func, ast.Name) and func.id == "__import__":
             results.append({"literal": arg0.value, "line": node.lineno})
     return results
+
+
+#: Scope-opening nodes whose own bindings hide a module-level name inside them.
+_FUNCTION_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+_COMPREHENSION_SCOPES = (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)
+
+#: Fully qualified name of the callable that ``from importlib import import_module`` binds.
+_IMPORT_MODULE_QNAME = "importlib.import_module"
+
+
+@dataclass(frozen=True)
+class _RefContext:
+    """Module-wide facts the dynamic-reference pass resolves names against.
+
+    Attributes:
+        module_name: dotted name of the module being analysed (what ``__name__`` evaluates to).
+        package: dotted package of the module (what ``__package__`` evaluates to).
+        name_map: local name -> fully qualified name from the module's import statements.
+        constants: module-level names bound exactly once, unconditionally, to a string literal.
+    """
+
+    module_name: str
+    package: str
+    name_map: dict[str, str]
+    constants: dict[str, ast.Constant]
+
+
+def _is_module_path(text: str) -> bool:
+    """Return True when *text* is a dotted module path, optionally relative (leading dots).
+
+    Examples:
+        >>> _is_module_path("pkg.mod"), _is_module_path("..sub"), _is_module_path("pkg.mod is deprecated")
+        (True, True, False)
+        >>> _is_module_path("."), _is_module_path("pkg.class")
+        (False, False)
+    """
+    body = text.lstrip(".")
+    return bool(body) and all(part.isidentifier() and not keyword.iskeyword(part) for part in body.split("."))
+
+
+def _resolve_relative(path: str, anchor: str | None) -> str | None:
+    """Resolve a possibly relative module *path* against the package *anchor*, as ``importlib`` does.
+
+    Returns ``None`` when the path is relative and no anchor is known, or when it climbs above the anchor.
+
+    Examples:
+        >>> _resolve_relative("pkg.mod", None), _resolve_relative(".mod", "pkg"), _resolve_relative("..mod", "pkg.sub")
+        ('pkg.mod', 'pkg.mod', 'pkg.mod')
+        >>> _resolve_relative(".mod", None) is None, _resolve_relative("...mod", "pkg") is None
+        (True, True)
+    """
+    level = len(path) - len(path.lstrip("."))
+    if level == 0:
+        return path
+    parts = anchor.split(".") if anchor else []
+    if level - 1 >= len(parts):
+        return None
+    base = ".".join(parts[: len(parts) - (level - 1)])
+    rest = path[level:]
+    return f"{base}.{rest}" if rest else base
+
+
+def _single_name_assignment(stmt: ast.stmt) -> tuple[str | None, ast.expr | None]:
+    """Return ``(name, value)`` for ``name = value`` or ``name: T = value``, else ``(None, None)``."""
+    if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+        return stmt.targets[0].id, stmt.value
+    if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.value is not None:
+        return stmt.target.id, stmt.value
+    return None, None
+
+
+def _module_level_binding_counts(tree: ast.Module) -> dict[str, int]:
+    """Count how often each name is bound in module scope, conditional blocks included, nested scopes excluded."""
+    counts: dict[str, int] = {}
+    stack: list[ast.AST] = list(tree.body)
+    while stack:
+        node = stack.pop()
+        bound: list[str] = []
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            counts[node.name] = counts.get(node.name, 0) + 1
+            continue
+        if isinstance(node, ast.Lambda):
+            continue
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            bound = [alias.asname or alias.name.split(".")[0] for alias in node.names]
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            bound = [node.id]
+        for name in bound:
+            counts[name] = counts.get(name, 0) + 1
+        stack.extend(ast.iter_child_nodes(node))
+    return counts
+
+
+def _module_string_constants(tree: ast.Module, counts: dict[str, int]) -> dict[str, ast.Constant]:
+    """Map each module-level name bound exactly once, unconditionally, to its string literal node.
+
+    A name any function declares ``global`` can be rebound at run time, so it never counts as a constant.
+
+    Examples:
+        >>> tree = ast.parse("A = 'pkg.a'\\nB = 'x'\\nB = 'y'\\nif True:\\n    C = 'c'\\nD: str = 'pkg.d'")
+        >>> sorted(_module_string_constants(tree, _module_level_binding_counts(tree)))
+        ['A', 'D']
+    """
+    declared_global = {name for node in ast.walk(tree) if isinstance(node, ast.Global) for name in node.names}
+    constants: dict[str, ast.Constant] = {}
+    for stmt in tree.body:
+        name, value = _single_name_assignment(stmt)
+        if (
+            name is not None
+            and isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and counts.get(name) == 1
+            and name not in declared_global
+        ):
+            constants[name] = value
+    return constants
+
+
+def _scope_bindings(node: ast.AST) -> set[str]:
+    """Return the names a function, lambda or comprehension binds in its own scope.
+
+    Imports inside the scope are left out: they bind the imported module itself, which the module-wide import map
+    already records. The walk also enters nested scopes, which over-approximates the hidden names — a reference is
+    then dropped rather than misattributed.
+    """
+    names: set[str] = set()
+    if isinstance(node, _FUNCTION_SCOPES):
+        args = node.args
+        for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg]:
+            if arg is not None:
+                names.add(arg.arg)
+        body: list[ast.AST] = list(node.body) if isinstance(node.body, list) else [node.body]
+    else:
+        body = list(getattr(node, "generators", []))
+    declared: set[str] = set()
+    for child in body:
+        for sub in ast.walk(child):
+            if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store):
+                names.add(sub.id)
+            elif isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(sub.name)
+            elif isinstance(sub, ast.ExceptHandler) and sub.name:
+                names.add(sub.name)
+            elif isinstance(sub, (ast.Global, ast.Nonlocal)):
+                declared.update(sub.names)
+    return names - declared
+
+
+def _iter_scoped_calls(tree: ast.Module) -> Iterator[tuple[ast.Call, frozenset[str], ast.AST | None]]:
+    """Yield every call with the names its enclosing scopes hide and its enclosing module-level function.
+
+    Yields:
+        ``(call, hidden_names, top_function)`` — *top_function* is the module-level ``def`` the call sits in, or
+        ``None`` for a call at module level.
+    """
+    stack: list[tuple[ast.AST, frozenset[str], ast.AST | None]] = [(tree, frozenset(), None)]
+    while stack:
+        node, hidden, top_function = stack.pop()
+        for child in ast.iter_child_nodes(node):
+            child_hidden, child_top = hidden, top_function
+            if isinstance(child, (*_FUNCTION_SCOPES, *_COMPREHENSION_SCOPES)):
+                child_hidden = hidden | _scope_bindings(child)
+                if node is tree and isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    child_top = child
+            if isinstance(child, ast.Call):
+                yield child, child_hidden, child_top
+            stack.append((child, child_hidden, child_top))
+
+
+def _is_import_call(func: ast.expr, name_map: dict[str, str], hidden: frozenset[str]) -> bool:
+    """Return True for ``<x>.import_module(...)``, ``__import__(...)`` and a bare ``import_module`` from importlib."""
+    if isinstance(func, ast.Attribute):
+        return func.attr == "import_module"
+    if not isinstance(func, ast.Name) or func.id in hidden:
+        return False
+    return func.id == "__import__" or name_map.get(func.id) == _IMPORT_MODULE_QNAME
+
+
+def _constant_string(expr: ast.expr, ctx: _RefContext, hidden: frozenset[str]) -> ast.Constant | None:
+    """Return the string literal node *expr* evaluates to: a literal, or a visible module-level string constant."""
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+        return expr
+    if isinstance(expr, ast.Name) and expr.id not in hidden:
+        return ctx.constants.get(expr.id)
+    return None
+
+
+def _relative_anchor(call: ast.Call, ctx: _RefContext) -> str | None:
+    """Return the package a relative ``import_module(name, package)`` call resolves against, when it is static."""
+    package_arg = (
+        call.args[1] if len(call.args) > 1 else next((k.value for k in call.keywords if k.arg == "package"), None)
+    )
+    if isinstance(package_arg, ast.Name) and package_arg.id == "__name__":
+        return ctx.module_name
+    if isinstance(package_arg, ast.Name) and package_arg.id == "__package__":
+        return ctx.package
+    if isinstance(package_arg, ast.Constant) and isinstance(package_arg.value, str):
+        return package_arg.value
+    return None
+
+
+def _import_call_record(call: ast.Call, ctx: _RefContext, hidden: frozenset[str]) -> tuple[dict | None, bool]:
+    """Classify one import call as ``(dynamic_imports entry or None, counts_as_dynamic_site)``.
+
+    A string literal passed to ``<x>.import_module`` or ``__import__`` is already recorded by
+    :func:`extract_dynamic_imports`, so it yields nothing here; the bare ``import_module`` spelling is recorded the same
+    way. A module-level string constant yields an entry marked ``via: "constant"`` whose ``line`` is the constant's own
+    line, where the module path text lives. Anything else is a dynamic site.
+    """
+    if not call.args:
+        return None, False
+    arg0 = call.args[0]
+    if isinstance(arg0, ast.Constant) and isinstance(arg0.value, str):
+        if isinstance(call.func, ast.Name) and call.func.id != "__import__":
+            return {"literal": arg0.value, "line": call.lineno}, False
+        return None, False
+    constant = _constant_string(arg0, ctx, hidden)
+    resolved = _resolve_relative(constant.value, _relative_anchor(call, ctx)) if constant is not None else None
+    if constant is None or resolved is None or not _is_module_path(resolved):
+        return None, True
+    return {"literal": resolved, "line": constant.lineno, "via": "constant"}, False
+
+
+def _base_module_path(expr: ast.expr, ctx: _RefContext, hidden: frozenset[str]) -> str | None:
+    """Return the import path an expression like ``mod`` or ``pkg.sub`` names, when its root is an imported name."""
+    attrs: list[str] = []
+    while isinstance(expr, ast.Attribute):
+        attrs.append(expr.attr)
+        expr = expr.value
+    if not isinstance(expr, ast.Name) or expr.id in hidden:
+        return None
+    root = ctx.name_map.get(expr.id)
+    if root is None:
+        return None
+    return ".".join([root, *reversed(attrs)])
+
+
+def _getattr_record(call: ast.Call, ctx: _RefContext, hidden: frozenset[str]) -> dict | None:
+    """Return the ``dynamic_refs`` record of a ``getattr(<imported name>, <name>[, default])`` call, or ``None``.
+
+    Standard-library bases are dropped: they can never name an indexed module. Whether the base is a module at all is
+    decided later against the indexed module names (``codemap_py.graph``).
+    """
+    if len(call.args) < 2:
+        return None
+    base = _base_module_path(call.args[0], ctx, hidden)
+    if base is None or base.split(".")[0] in _STDLIB_MODULES:
+        return None
+    record: dict = {"kind": "getattr", "module": base, "line": call.lineno}
+    attr = _constant_string(call.args[1], ctx, hidden)
+    if attr is not None and attr.value.isidentifier():
+        record["name"] = attr.value
+    return record
+
+
+def _performs_import(function: ast.AST, name_map: dict[str, str]) -> bool:
+    """Return True when *function* contains an import statement or an import call."""
+    for node in ast.walk(function):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            return True
+        if isinstance(node, ast.Call) and _is_import_call(node.func, name_map, frozenset()):
+            return True
+    return False
+
+
+def _lazy_map_target(key: ast.expr | None, value: ast.expr) -> ast.Constant | None:
+    """Return the module-path literal of one lazy-map entry: ``"attr": "mod"`` or ``"attr": ("mod", "attr")``."""
+    if not (isinstance(key, ast.Constant) and isinstance(key.value, str) and key.value.isidentifier()):
+        return None
+    if isinstance(value, ast.Tuple) and len(value.elts) == 2:
+        if all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in value.elts):
+            value = value.elts[0]
+    if isinstance(value, ast.Constant) and isinstance(value.value, str) and _is_module_path(value.value):
+        return value
+    return None
+
+
+def _lazy_getattr_imports(
+    tree: ast.Module, ctx: _RefContext, counts: dict[str, int]
+) -> tuple[list[dict], ast.AST | None]:
+    """Resolve PEP 562 lazy-import maps: module-level dicts a module-level ``__getattr__`` reads before importing.
+
+    Returns:
+        ``(entries, getattr_function)`` — one ``dynamic_imports`` entry marked ``via: "lazy_getattr"`` per map value,
+        and the ``__getattr__`` definition whose import calls the map resolves (``None`` when no entry resolved).
+    """
+    getattr_function = next(
+        (s for s in reversed(tree.body) if isinstance(s, ast.FunctionDef) and s.name == "__getattr__"), None
+    )
+    if getattr_function is None or not _performs_import(getattr_function, ctx.name_map):
+        return [], None
+    read_names = {n.id for n in ast.walk(getattr_function) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+    entries: list[dict] = []
+    for stmt in tree.body:
+        name, value = _single_name_assignment(stmt)
+        if name not in read_names or not isinstance(value, ast.Dict) or counts.get(name) != 1:
+            continue
+        for key, item in zip(value.keys, value.values):
+            target = _lazy_map_target(key, item)
+            resolved = _resolve_relative(target.value, ctx.package) if target is not None else None
+            if target is not None and resolved is not None:
+                entries.append({"literal": resolved, "line": target.lineno, "via": "lazy_getattr"})
+    return entries, (getattr_function if entries else None)
+
+
+def extract_dynamic_references(
+    tree: ast.Module, module_name: str, is_package: bool, name_map: dict[str, str]
+) -> tuple[list[dict], list[dict]]:
+    """Resolve the static dynamic-import and ``getattr`` forms that string literals alone do not cover.
+
+    Three forms are resolved without running code:
+
+    * ``importlib.import_module(CONST)`` (or ``__import__``/a bare ``import_module``) whose argument is a module-level
+      string constant, bound exactly once and not hidden by a local name; relative paths resolve against ``__name__``,
+      ``__package__`` or a literal ``package`` argument.
+    * PEP 562 lazy-import maps: a module-level dict of ``"attr": "module.path"`` (or ``("module.path", "attr")``)
+      that a module-level ``__getattr__`` reads and that performs an import.
+    * ``getattr(<imported name>, "attr")`` with a literal or constant attribute name.
+
+    Every other import call, and every ``getattr`` on an imported name whose attribute is not static, is a dynamic
+    site: recorded so the count of unresolvable references is never silently zero.
+
+    Args:
+        tree: parsed AST of the module.
+        module_name: dotted name of the module.
+        is_package: True for a package ``__init__``.
+        name_map: local name -> qualified name map from :func:`_extract_imports_and_scope`.
+
+    Returns:
+        ``(imports, refs)`` — *imports* are extra ``dynamic_imports`` entries (``literal``, ``line`` and, for the
+        resolved forms, ``via``); *refs* are ``dynamic_refs`` records: ``{"kind": "getattr", "module", "line"}`` plus
+        ``name`` when the attribute is static, and ``{"kind": "import", "line"}`` for an unresolved import call.
+
+    Examples:
+        >>> src = "import importlib as il\\nTARGET = 'pkg.plugins'\\nil.import_module(TARGET)\\nil.import_module(x)"
+        >>> extract_dynamic_references(ast.parse(src), "pkg.loader", False, {"il": "importlib"})
+        ([{'literal': 'pkg.plugins', 'line': 2, 'via': 'constant'}], [{'kind': 'import', 'line': 4}])
+        >>> extract_dynamic_references(ast.parse("getattr(mod, 'run')"), "pkg.a", False, {"mod": "pkg.mod"})
+        ([], [{'kind': 'getattr', 'module': 'pkg.mod', 'line': 1, 'name': 'run'}])
+    """
+    counts = _module_level_binding_counts(tree)
+    package = module_name if is_package else module_name.rsplit(".", 1)[0] if "." in module_name else ""
+    ctx = _RefContext(module_name, package, name_map, _module_string_constants(tree, counts))
+    imports, lazy_function = _lazy_getattr_imports(tree, ctx, counts)
+    getattr_visible = "getattr" not in name_map and counts.get("getattr") is None
+    refs: list[dict] = []
+    for call, hidden, top_function in _iter_scoped_calls(tree):
+        if _is_import_call(call.func, name_map, hidden):
+            entry, is_site = _import_call_record(call, ctx, hidden)
+            if entry is not None:
+                imports.append(entry)
+            # A lazy map resolves the non-literal import calls of the __getattr__ that reads it.
+            elif is_site and not (lazy_function is not None and top_function is lazy_function):
+                refs.append({"kind": "import", "line": call.lineno})
+        elif (
+            getattr_visible
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "getattr"
+            and "getattr" not in hidden
+        ):
+            record = _getattr_record(call, ctx, hidden)
+            if record is not None:
+                refs.append(record)
+    # The scoped walk is depth-first from a stack; source order keeps the persisted lists deterministic and readable.
+    imports.sort(key=lambda entry: entry["line"])
+    # Two calls reading one constant point at the same constant line; one entry per (path, line, form) is enough.
+    imports = list({(entry["literal"], entry["line"], entry.get("via")): entry for entry in imports}.values())
+    refs.sort(key=lambda record: (record["line"], record["kind"], record.get("module", ""), record.get("name", "")))
+    return imports, refs

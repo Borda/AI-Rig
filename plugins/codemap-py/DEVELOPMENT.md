@@ -6,6 +6,7 @@ Technical detail for contributors, maintainers, and agents. User-facing install,
 
 - [Layout](#layout)
 - [Hooks and registration](#hooks-and-registration)
+- [Scanner and index internals](#scanner-and-index-internals)
 - [Telemetry and debrief internals](#telemetry-and-debrief-internals)
 - [Codex question routing](#codex-question-routing)
 - [Skill rosters and docs](#skill-rosters-and-docs)
@@ -33,6 +34,15 @@ Technical detail for contributors, maintainers, and agents. User-facing install,
 - Prompt status and missing-index sentinels are scoped per runtime and filename-safe session identity, falling back to `shared` when absent.
 - Resolver doctests preserve the caller's `TMPDIR`, including empty and absent values, and Python's temporary-directory cache, so downstream plugin tests retain their original temporary-directory boundary.
 - Python hook module docstrings describe event inputs, local side effects, output envelopes, and failure handling. Pure helper examples run as doctests in the repository pytest suite; hook lifecycle and filesystem behavior use pytest fixtures.
+
+## Scanner and index internals
+
+- Index generation 16 adds per-module `entry_point_refs` (`group`, `name`, `symbol`, `file`, `line`), present only when non-empty. `scanner/entry_points.py` parses the root `pyproject.toml` without `tomllib` in the config-reference phase of both full and incremental scans; a malformed in-scope table contributes nothing. Generation-15 indexes rebuild.
+- Generation 16 also adds per-module `dynamic_refs` (parse-time raw records), `getattr_refs` and `dynamic_sites` (graph phase, rebuilt on every full and incremental scan), and an optional `via` on `dynamic_imports` and `dynamic_imported_by` entries; all are absent when empty. `dynamic_imported_by` is cleared before restamping, so an incremental scan drops a removed dynamic importer. None of these writes `direct_imports`.
+- `scanner/receivers.py` records per-file receiver facts (`typed_calls`, `class_bases`); `call_inference.py` is the whole-index pass that resolves them to `inferred` call edges using the C3 linearisation of indexed classes. An incremental scan strips every inferred edge and recomputes from persisted facts, so a carried module never keeps a stale one. Both fields are additive and index-only.
+- `_deadline.py` selects the `--timeout` mechanism per call: `SIGALRM` where the host has it, otherwise a supervising parent process for `index` (`graph.main`) and a watchdog thread for `query`. Tests force the portable path without deleting the real `signal.SIGALRM`.
+- The hook recorder in `hooks/_hookutil.py` cannot import the package, so `runtime_log.py` duplicates its roster, retention and record-name constants; a test pins the roster and the forced-failure round trips pin the rest.
+- The census runners `benchmarks/run-import-census.py` and `benchmarks/run-callgraph-census.py` share `benchmarks/_bench_census/`. Each takes `--scanner-ref` (a Git ref, default `HEAD`) or `--scanner-dir` (a working-tree copy), never both, so a scanner change can be measured before it is committed.
 
 ## Telemetry and debrief internals
 
@@ -219,7 +229,7 @@ These are medians of paired percentage changes, not whole-arm savings. Gross inp
 
 **The remaining opportunity is reliable delivery, not a need to invent an accuracy gain.** Sonnet's near-perfect plain arm retains a small semantic advantage. Lower Claude tiers sometimes omit required compact syntax or use command forms whose successful results are not recognized; eight of Haiku's fourteen strict violations still contain exactly correct answers. Thus its 94.0% raw semantic credit and 30.0% admitted quality describe different properties. They must not be collapsed into either “the answers were wrong” or “the strict integration works.”
 
-Regressions also include real missing facts, count/ranking mistakes, and Codex execution/formatting failures. Two product issues remain actionable: filtered centrality output can fall back to an unfiltered count for a module with only test importers, and the deep-ranking naming disagreement is closed on the oracle side: a real scan names a package outside a configured source root from its own package root, which is the only name that resolves at runtime, and the benchmark oracle now derives module names by the same rule instead of by repository-relative path.
+Regressions also include real missing facts, count/ranking mistakes, and Codex execution/formatting failures. The filtered-centrality defect this run exposed is fixed (a module with no production importer now reports 0 under `--exclude-tests`), and the deep-ranking naming disagreement is closed on the oracle side: a real scan names a package outside a configured source root from its own package root, which is the only name that resolves at runtime, and the benchmark oracle now derives module names by the same rule instead of by repository-relative path.
 
 The large earlier optional Codex collapse is not reproduced, but Luna still loses two exactly correct tasks. Working-tree fixes require prospective validation; no historical score is rewritten.
 

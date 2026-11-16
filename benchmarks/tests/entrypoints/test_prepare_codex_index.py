@@ -5,8 +5,11 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
+import shutil
 import subprocess
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, replace
 from pathlib import Path, PureWindowsPath
 from types import ModuleType
 
@@ -444,6 +447,91 @@ class TestPatchIndexBundle:
             script.prepare_patch_index_bundle(source, locks, scanner)
 
         assert not (source / ".cache/codemap/patch/PT-01.json").exists()
+
+
+#: Source tree of the real scanner plugin, whose root-key helper and query-side scan-root check the keyed tests use.
+PLUGIN_SRC = SCRIPT.parent.parent / "plugins" / "codemap-py" / "src"
+
+#: Stub scanner that records ``scan_root_key`` the way the real scanner does: ``"."`` root plus the helper's digest.
+_KEYED_SCANNER = """#!/usr/bin/env python3
+import importlib.util, json, pathlib, sys
+helper = pathlib.Path(__file__).resolve().parent.parent / 'src' / 'codemap_py' / 'index_paths.py'
+spec = importlib.util.spec_from_file_location('index_paths', helper)
+paths = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = paths
+spec.loader.exec_module(paths)
+root = pathlib.Path(sys.argv[sys.argv.index('--root') + 1]).resolve()
+path = root / '.cache/codemap' / f'{root.name}.json'
+path.parent.mkdir(parents=True)
+path.write_text(json.dumps({'scan_version': 13, 'scanned_at': 'fresh', 'project': root.name, 'scan_root': '.',
+    'scan_root_key': paths.root_key(root), 'modules': [{'file': str(root / 'demo.py')}]}))
+"""
+
+#: Runs the real query-side scan-root check on one installed index and prints ``[valid, key_matches_root]``.
+_QUERY_ROOT_CHECK = (
+    "import json, sys\n"
+    "from pathlib import Path\n"
+    "from codemap_py import index_paths\n"
+    "from codemap_py.query.index_io import _valid_scan_root\n"
+    "payload = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))\n"
+    "root, key = payload['scan_root'], payload['scan_root_key']\n"
+    "print(json.dumps([_valid_scan_root(root, key), key == index_paths.root_key(Path(root))]))\n"
+)
+
+
+@pytest.fixture
+def keyed_patch_bundle(tmp_path: Path, patch_bundle: PatchBundle) -> PatchBundle:
+    """Swap the stub scanner for one inside a plugin layout that records a root key, as the real scanner does."""
+    plugin = tmp_path / "plugin"
+    helper_dir = plugin / "src" / "codemap_py"
+    helper_dir.mkdir(parents=True)
+    shutil.copyfile(PLUGIN_SRC / "codemap_py" / "index_paths.py", helper_dir / "index_paths.py")
+    scanner = plugin / "bin" / "scan-index"
+    scanner.parent.mkdir()
+    scanner.write_text(_KEYED_SCANNER, encoding="utf-8")
+    scanner.chmod(0o755)
+    return replace(patch_bundle, scanner=scanner)
+
+
+class TestPatchIndexRootKey:
+    """Relocating the scanner's ``scan_root_key`` so installed patch indexes are byte-stable and still query-valid."""
+
+    def test_installs_identical_bytes_on_every_run(self, keyed_patch_bundle: PatchBundle, script: ModuleType) -> None:
+        """Two bundle runs install byte-identical indexes although each scans a fresh random temporary worktree.
+
+        The scanner records a digest of the root it scanned. Left as the worktree's digest, the installed bytes change
+        on every run, so the raw lock at the canonical root could never match; the key must be recomputed for the
+        relocated root.
+        """
+        bundle = keyed_patch_bundle
+
+        first = script.prepare_patch_index_bundle(bundle.source, bundle.locks, bundle.scanner)
+        second = script.prepare_patch_index_bundle(bundle.source, bundle.locks, bundle.scanner)
+
+        assert first == second
+
+    def test_relocated_index_passes_the_query_scan_root_check(
+        self, keyed_patch_bundle: PatchBundle, script: ModuleType
+    ) -> None:
+        """The installed index's root key equals the real scanner key of its stored root, and the query accepts it.
+
+        A query binds an index to a tree through ``scan_root`` and ``scan_root_key``; a key describing a deleted
+        worktree would disagree with the stored root. The real query-side check runs in a child interpreter so the
+        plugin package never enters this test process.
+        """
+        bundle = keyed_patch_bundle
+        script.prepare_patch_index_bundle(bundle.source, bundle.locks, bundle.scanner)
+        index_path = bundle.source / ".cache/codemap/patch/PT-01.json"
+
+        checked = subprocess.run(
+            [sys.executable, "-c", _QUERY_ROOT_CHECK, str(index_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONPATH": str(PLUGIN_SRC)},
+        )
+
+        assert json.loads(checked.stdout) == [True, True]
 
 
 class TestReplaceRoot:

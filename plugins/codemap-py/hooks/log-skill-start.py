@@ -78,9 +78,13 @@ def resolve_session(session_file: Path) -> str:
     return session
 
 
+#: Name under which this hook records its swallowed failures and last clean run for ``codemap-py doctor``.
+_HOOK_NAME = "log-skill-start"
+
+
 def main() -> int:
     """Log one codemap-py Skill event, generating a local session ID if needed."""
-    try:
+    with _hookutil.hook_outcome(_HOOK_NAME, (OSError, TypeError, ValueError)):
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             return 0
@@ -115,8 +119,6 @@ def main() -> int:
         log_dir.mkdir(parents=True, exist_ok=True)
         with log_file.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(record, separators=(",", ":")) + "\n")
-    except (OSError, TypeError, ValueError):
-        pass
     return 0
 
 

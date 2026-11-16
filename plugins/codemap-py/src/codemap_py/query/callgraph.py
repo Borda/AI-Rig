@@ -17,6 +17,7 @@ from pathlib import Path
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 if str(_BIN) not in sys.path:
     sys.path.insert(0, str(_BIN))
+from codemap_py.call_inference import INFERRED_KEY  # noqa: E402
 from codemap_py.schema import MOCK_PATCHES_MIN_VER, VALID_CALL_RESOLUTIONS  # noqa: E402
 
 from .coverage import _CALL_GRAPH_NOT_COVERED, _cmd_coverage  # noqa: E402
@@ -132,6 +133,65 @@ def _direct_callers(rev_graph: dict, sym_map: dict, node: str) -> tuple[set[str]
     if class_qname is None:
         return callers, False
     return callers | set(rev_graph.get(class_qname, [])), True
+
+
+def _edges_of(sym_map: dict, caller: str) -> list[dict]:
+    """Return the call edges of every stored symbol record named *caller*, not only the one the symbol map kept.
+
+    The symbol map holds the last record per ``module::symbol``, while the reverse call graph takes edges from every
+    record, so a redefined function contributes callers through each of its records.
+
+    Examples:
+        >>> module = {"symbols": [{"qualified_name": "run", "calls": [{"target": "a"}]},
+        ...                       {"qualified_name": "run", "calls": [{"target": "b"}]}]}
+        >>> [edge["target"] for edge in _edges_of({"m::run": (module, module["symbols"][1])}, "m::run")]
+        ['a', 'b']
+        >>> _edges_of({}, "m::gone")
+        []
+    """
+    entry = sym_map.get(caller)
+    if entry is None:
+        return []
+    name = caller.partition("::")[2]
+    records = [sym for sym in entry[0].get("symbols", []) if sym.get("qualified_name") == name]
+    return [edge for sym in records for edge in sym.get("calls", [])]
+
+
+def _inferred_only_callers(index: dict, sym_map: dict, callers: set[str], targets: set[str]) -> set[str]:
+    """Return the callers whose every call edge to *targets* is an inferred one.
+
+    A caller qualifies only on positive evidence: at least one inferred edge reaches a target and no recorded edge
+    does. Edges are judged the way :func:`build_reverse_call_graph` admits them (valid resolution, alias-resolved
+    target), so a caller whose edges cannot be found stays unmarked rather than being called inferred.
+
+    Args:
+        index: parsed codemap index dict, for persisted symbol aliases.
+        sym_map: flat ``module::symbol`` lookup.
+        callers: the direct callers the reverse call graph reported.
+        targets: alias-resolved callee qnames that make a symbol a caller (``Class`` too for a merged ``__init__``).
+
+    Returns:
+        The subset of *callers* reached only through inferred edges.
+
+    Examples:
+        >>> module = {"symbols": [
+        ...     {"qualified_name": "a", "calls": [{"target": "m::f", "resolution": "local", "inferred": "super"}]},
+        ...     {"qualified_name": "b", "calls": [{"target": "m::f", "resolution": "local"}]}]}
+        >>> sym_map = {f"m::{s['qualified_name']}": (module, s) for s in module["symbols"]}
+        >>> sorted(_inferred_only_callers({}, sym_map, {"m::a", "m::b"}, {"m::f"}))
+        ['m::a']
+    """
+    inferred_only: set[str] = set()
+    for caller in callers:
+        kinds = {
+            bool(edge.get(INFERRED_KEY))
+            for edge in _edges_of(sym_map, caller)
+            if edge.get("resolution") in VALID_CALL_RESOLUTIONS
+            and _resolve_symbol_alias(index, edge.get("target", "")) in targets
+        }
+        if kinds == {True}:
+            inferred_only.add(caller)
+    return inferred_only
 
 
 def _reverse_call_walk(rev_graph: dict, sym_map: dict, start: str) -> tuple[list[tuple[str, int]], bool]:
@@ -327,6 +387,11 @@ def cmd_fn_rdeps(index: dict, qname: str, exclude_tests: bool = False) -> None:
     name), ``constructor_callers_merged`` (an ``__init__`` target also counts ``Class()``
     call sites), and ``hint`` (a method with zero static callers).
 
+    A ``called_by`` row carries ``inferred: true`` when every edge that makes its symbol a
+    caller is an inferred instance-call edge (the index edge carries ``inferred``), so a
+    consumer can confirm those call sites before acting on them. A row with any recorded edge keeps its three historic
+    keys; no row carries ``inferred: false``.
+
     Args:
         index: parsed codemap index dict (must be v3 with call graph).
         qname: ``module::symbol``, dotted ``module.symbol``, or a unique bare/class-qualified symbol name.
@@ -339,17 +404,21 @@ def cmd_fn_rdeps(index: dict, qname: str, exclude_tests: bool = False) -> None:
     if resolved_qname is None:
         _exit_symbol_not_found(index, qname)
     caller_qnames, merged = _direct_callers(_get_rev_graph(index), sym_map, resolved_qname)
+    class_qname = _constructor_class(sym_map, resolved_qname) if merged else None
+    targets = {resolved_qname} if class_qname is None else {resolved_qname, class_qname}
+    inferred_only = _inferred_only_callers(index, sym_map, caller_qnames, targets)
     callers = []
     for caller_qname in sorted(caller_qnames):
         entry = sym_map.get(caller_qname)
         m_entry = entry[0] if entry else {}
-        callers.append(
-            {
-                "caller": caller_qname,
-                "module": m_entry.get("name", ""),
-                "path": m_entry.get("path", ""),
-            }
-        )
+        row: dict = {
+            "caller": caller_qname,
+            "module": m_entry.get("name", ""),
+            "path": m_entry.get("path", ""),
+        }
+        if caller_qname in inferred_only:
+            row["inferred"] = True
+        callers.append(row)
     # Decided before the test filter: a method called only from tests has static callers, so a "0 static callers ...
     # dynamic dispatch" hint would be false; --exclude-tests just hides them.
     hint = None if callers else _zero_caller_hint(sym_map, resolved_qname)

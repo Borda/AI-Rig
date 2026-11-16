@@ -631,9 +631,13 @@ def stdin_payload() -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+#: Name under which this hook records its swallowed failures and last clean run for ``codemap-py doctor``.
+_HOOK_NAME = "inject-preamble"
+
+
 def main() -> int:
     """Emit one fail-open preamble and optionally start a background incremental refresh."""
-    try:
+    with _hookutil.hook_outcome(_HOOK_NAME, (OSError, TypeError, ValueError, subprocess.SubprocessError)):
         cwd = Path.cwd()
         root = Path(git_output(["rev-parse", "--show-toplevel"], cwd) or cwd)
         project = root.name
@@ -698,8 +702,6 @@ def main() -> int:
             "Reuse an earlier answer only while source inputs are unchanged; rerun after edits. Keep `--top` small"
             " when the output enters context."
         )
-    except (OSError, TypeError, ValueError, subprocess.SubprocessError):
-        pass
     return 0
 
 

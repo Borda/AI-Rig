@@ -44,6 +44,8 @@ docs = [
 bench = [
   "anthropic>=0.40",
   "fire>=0.6",
+  # Call-graph census reference tool; pinned so the truth does not drift with jedi releases.
+  "jedi==0.20.1",
   "pandas>=2",
   "rich>=13",
   "semble>=0.1",

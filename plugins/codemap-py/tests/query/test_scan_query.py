@@ -983,7 +983,7 @@ _RESOLUTION_PROJECT_FILES = {
         "\n"
         "\n"
         "def run():\n"
-        "    meter = Meter(3)\n"
+        "    meter = convert(Meter(3))\n"
         "    meter.update(1)\n"
         "    return convert(meter), meter.ratio\n"
         "\n"
@@ -3599,7 +3599,7 @@ class TestCoverageScanIntegration:
         index_path = _build_index(scan_index, root, "--with-coverage", str(cov_path))
 
         index = json.loads(index_path.read_text())
-        assert index["scan_version"] == 15
+        assert index["scan_version"] == 16
         mod = next(m for m in index["modules"] if m["name"] == "mymod")
         foo = next(s for s in mod["symbols"] if s["qualified_name"] == "foo")
         bar = next(s for s in mod["symbols"] if s["qualified_name"] == "bar")

@@ -167,7 +167,7 @@ class TestFixtureRuntime:
             second = fixture_runtime.validate_fixture_runtime(second_root, second_index, second_coordinate)
 
             assert scanned_files.source_root != second_root
-            assert first.scan_version == second.scan_version == 15
+            assert first.scan_version == second.scan_version == 16
             assert first.index_scan_root == second.index_scan_root == "."
             assert first.source_fingerprint == second.source_fingerprint
             assert first.raw_index_sha256 != second.raw_index_sha256

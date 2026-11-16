@@ -1,0 +1,56 @@
+{
+  "argv": [
+    "python plugins/codemap-py/scripts/codemap_py_entry.py query --index <clone>/.cache/codemap/<project>.json --root <clone> dead-symbols",
+    "python plugins/codemap-py/scripts/codemap_py_entry.py query --index <clone>/.cache/codemap/<project>.json --root <clone> dead-modules"
+  ],
+  "coordinates": "benchmarks/import-census-heldout-repos.json",
+  "description": "Pre-change baseline: dead-symbols and dead-modules totals per held-out census repository, from the indexes the census built. For before/after comparison of later scanner changes on the same coordinates.",
+  "environment": "CODEMAP_* variables removed, CODEMAP_LOGGING=false; dead-symbols at its default --min-loc 5; totals are the uncapped total field",
+  "incomplete_reasons": {
+    "psf__black": "18 test-case files fail to parse under Python 3.12 and are degraded in the index",
+    "sphinx-doc__sphinx": "coverage note names one file that failed to parse (degraded: tests/roots/test-pycode/cp_1251_coded.py); the index also records three dotted-name collisions dropping four __init__.py files"
+  },
+  "python": "3.12",
+  "query_scanner": "plugins/codemap-py exported from the same commit with git archive; never the working tree",
+  "repositories": {
+    "Textualize__rich": {
+      "dead_modules_query_complete": true,
+      "dead_modules_total": 59,
+      "dead_symbols_query_complete": true,
+      "dead_symbols_skipped_star_import": 0,
+      "dead_symbols_total": 26
+    },
+    "fastapi__fastapi": {
+      "dead_modules_query_complete": true,
+      "dead_modules_total": 379,
+      "dead_symbols_query_complete": true,
+      "dead_symbols_skipped_star_import": 0,
+      "dead_symbols_total": 194
+    },
+    "psf__black": {
+      "dead_modules_query_complete": false,
+      "dead_modules_total": 14,
+      "dead_symbols_query_complete": false,
+      "dead_symbols_skipped_star_import": 0,
+      "dead_symbols_total": 4
+    },
+    "scrapy__scrapy": {
+      "dead_modules_query_complete": true,
+      "dead_modules_total": 36,
+      "dead_symbols_query_complete": true,
+      "dead_symbols_skipped_star_import": 0,
+      "dead_symbols_total": 48
+    },
+    "sphinx-doc__sphinx": {
+      "dead_modules_query_complete": false,
+      "dead_modules_total": 63,
+      "dead_symbols_query_complete": false,
+      "dead_symbols_skipped_star_import": 0,
+      "dead_symbols_total": 223
+    }
+  },
+  "scanner": {
+    "scan_version": 15,
+    "sha": "77d2d79b8e3b3ddc6bc0ff6c750a71047171c64b"
+  }
+}

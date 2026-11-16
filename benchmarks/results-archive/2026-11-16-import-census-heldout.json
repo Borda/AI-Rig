@@ -1,0 +1,1845 @@
+{
+  "generated_at": "2026-11-16T11:37:09Z",
+  "pooled": {
+    "held-out": {
+      "false_negative": 2,
+      "false_positive": 302,
+      "parent_package_adjusted_precision": {
+        "hits": 7366,
+        "interval": [
+          0.9973316623558247,
+          0.9991671650949633
+        ],
+        "total": 7377,
+        "value": 0.9985088789480818
+      },
+      "parent_package_false_positive": 291,
+      "precision": {
+        "hits": 7075,
+        "interval": [
+          0.9542961683707614,
+          0.9633498626726362
+        ],
+        "total": 7377,
+        "value": 0.9590619493018843
+      },
+      "recall": {
+        "hits": 7075,
+        "interval": [
+          0.9989700634742595,
+          0.9999224975456056
+        ],
+        "total": 7077,
+        "value": 0.999717394376148
+      },
+      "scanner_edges": 7377,
+      "sources": 3197,
+      "true_positive": 7075,
+      "truth_edges": 7077
+    }
+  },
+  "repos": [
+    {
+      "class_counts": {
+        "fp:parent_package_init": 22
+      },
+      "commit": "8f4a058eeb2c664ef1cc2847d3882fc4a82fe3fa",
+      "false_negative": 0,
+      "false_negatives": [],
+      "false_positive": 22,
+      "false_positives": [
+        {
+          "class": "parent_package_init",
+          "source": "src/black/__init__.py",
+          "target": "src/blib2to3/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/black/__init__.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/black/brackets.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/black/comments.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/black/debug.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/black/linegen.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/black/lines.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/black/nodes.py",
+          "target": "src/blib2to3/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/black/nodes.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/black/parsing.py",
+          "target": "src/blib2to3/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/black/parsing.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/black/strings.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/black/trans.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/blib2to3/pgen2/driver.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/blib2to3/pgen2/grammar.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/blib2to3/pgen2/parse.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/blib2to3/pgen2/pgen.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/blib2to3/pgen2/tokenize.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/blib2to3/pygram.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/blib2to3/pytree.py",
+          "target": "src/blib2to3/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_tokenize.py",
+          "target": "src/blib2to3/pgen2/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/util.py",
+          "target": "tests/__init__.py"
+        }
+      ],
+      "group": "held-out",
+      "indexed": 440,
+      "label": "black",
+      "name": "psf__black",
+      "not_indexed": 1,
+      "out_of_universe_scanner_edges": 3,
+      "parent_package_adjusted_precision": {
+        "hits": 188,
+        "interval": [
+          0.9799751461622506,
+          1.0
+        ],
+        "total": 188,
+        "value": 1.0
+      },
+      "parent_package_false_positive": 22,
+      "parse_failures": [
+        "tests/data/cases/backslash_only_lines_tstring.py",
+        "tests/data/cases/fmtonoff_in_fstring_expression.py",
+        "tests/data/cases/pep_572_do_not_remove_parens.py",
+        "tests/data/cases/pep_750.py",
+        "tests/data/cases/pep_750_nested_quotes.py",
+        "tests/data/cases/preview_tstrings.py",
+        "tests/data/cases/preview_type_param_defaults_string_split.py",
+        "tests/data/cases/python315.py",
+        "tests/data/cases/remove_except_types_parens.py",
+        "tests/data/cases/t_docstring.py",
+        "tests/data/cases/tstring_prefix_preview.py",
+        "tests/data/cases/tstring_prefix_skip.py",
+        "tests/data/cases/tstring_prefix_stable.py",
+        "tests/data/cases/type_param_defaults.py",
+        "tests/data/miscellaneous/async_as_identifier.py",
+        "tests/data/miscellaneous/invalid_header.py",
+        "tests/data/miscellaneous/pattern_matching_invalid.py",
+        "tests/data/miscellaneous/python2_detection.py"
+      ],
+      "precision": {
+        "hits": 166,
+        "interval": [
+          0.8291801494693465,
+          0.921439111420888
+        ],
+        "total": 188,
+        "value": 0.8829787234042553
+      },
+      "recall": {
+        "hits": 166,
+        "interval": [
+          0.9773812776139649,
+          0.9999999999999999
+        ],
+        "total": 166,
+        "value": 1.0
+      },
+      "scanner_edges": 188,
+      "sources": 441,
+      "true_positive": 166,
+      "truth_edges": 166,
+      "url": "https://github.com/psf/black.git"
+    },
+    {
+      "class_counts": {
+        "fp:parent_package_init": 17
+      },
+      "commit": "a1b3be01aadc61c67edc09eed4f6cc1fcc3d3b8f",
+      "false_negative": 0,
+      "false_negatives": [],
+      "false_positive": 17,
+      "false_positives": [
+        {
+          "class": "parent_package_init",
+          "source": "docs_src/bigger_applications/app/main.py",
+          "target": "docs_src/bigger_applications/app/internal/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "docs_src/bigger_applications/app/main.py",
+          "target": "docs_src/bigger_applications/app/routers/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "docs_src/settings/app03/main.py",
+          "target": "docs_src/settings/app03/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "docs_src/settings/app03_non_an/main.py",
+          "target": "docs_src/settings/app03_non_an/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "fastapi/_compat/v2.py",
+          "target": "fastapi/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "fastapi/applications.py",
+          "target": "fastapi/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "fastapi/dependencies/utils.py",
+          "target": "fastapi/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "fastapi/openapi/utils.py",
+          "target": "fastapi/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "fastapi/param_functions.py",
+          "target": "fastapi/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "fastapi/routing.py",
+          "target": "fastapi/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_modules_same_name_body/app/main.py",
+          "target": "tests/test_modules_same_name_body/app/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_telemetry/test_runtime.py",
+          "target": "fastapi/telemetry/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_tutorial/test_conditional_openapi/test_tutorial001.py",
+          "target": "docs_src/conditional_openapi/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_tutorial/test_custom_response/test_tutorial008.py",
+          "target": "docs_src/custom_response/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_tutorial/test_custom_response/test_tutorial009.py",
+          "target": "docs_src/custom_response/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_tutorial/test_custom_response/test_tutorial009b.py",
+          "target": "docs_src/custom_response/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_tutorial/test_generate_clients/test_tutorial004.py",
+          "target": "docs_src/generate_clients/__init__.py"
+        }
+      ],
+      "group": "held-out",
+      "indexed": 1223,
+      "label": "fastapi",
+      "name": "fastapi__fastapi",
+      "not_indexed": 0,
+      "out_of_universe_scanner_edges": 0,
+      "parent_package_adjusted_precision": {
+        "hits": 1818,
+        "interval": [
+          0.9978913644303653,
+          1.0
+        ],
+        "total": 1818,
+        "value": 1.0
+      },
+      "parent_package_false_positive": 17,
+      "parse_failures": [],
+      "precision": {
+        "hits": 1801,
+        "interval": [
+          0.9850753313739734,
+          0.9941535982980682
+        ],
+        "total": 1818,
+        "value": 0.9906490649064906
+      },
+      "recall": {
+        "hits": 1801,
+        "interval": [
+          0.9978715029618114,
+          1.0
+        ],
+        "total": 1801,
+        "value": 1.0
+      },
+      "scanner_edges": 1818,
+      "sources": 1223,
+      "true_positive": 1801,
+      "truth_edges": 1801,
+      "url": "https://github.com/fastapi/fastapi.git"
+    },
+    {
+      "class_counts": {
+        "fp:parent_package_init": 20
+      },
+      "commit": "3a109ccdffe5b2d0e30684a304fbd388e99ce57b",
+      "false_negative": 0,
+      "false_negatives": [],
+      "false_positive": 20,
+      "false_positives": [
+        {
+          "class": "parent_package_init",
+          "source": "benchmarks/benchmarks.py",
+          "target": "benchmarks/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "examples/fullscreen.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "examples/print_calendar.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "examples/table_movie.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "examples/top_lite_simulator.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "rich/__main__.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "rich/box.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "rich/console.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "rich/markdown.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "rich/measure.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "rich/style.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "rich/table.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_cells.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_columns_align.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_console.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_filesize.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_rule_in_table.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_style.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_table.py",
+          "target": "rich/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_win32_console.py",
+          "target": "rich/__init__.py"
+        }
+      ],
+      "group": "held-out",
+      "indexed": 212,
+      "label": "rich",
+      "name": "Textualize__rich",
+      "not_indexed": 0,
+      "out_of_universe_scanner_edges": 0,
+      "parent_package_adjusted_precision": {
+        "hits": 750,
+        "interval": [
+          0.9949039692158141,
+          1.0
+        ],
+        "total": 750,
+        "value": 1.0
+      },
+      "parent_package_false_positive": 20,
+      "parse_failures": [],
+      "precision": {
+        "hits": 730,
+        "interval": [
+          0.9591700998503471,
+          0.9826723243406236
+        ],
+        "total": 750,
+        "value": 0.9733333333333334
+      },
+      "recall": {
+        "hits": 730,
+        "interval": [
+          0.9947650828189627,
+          1.0
+        ],
+        "total": 730,
+        "value": 1.0
+      },
+      "scanner_edges": 750,
+      "sources": 212,
+      "true_positive": 730,
+      "truth_edges": 730,
+      "url": "https://github.com/Textualize/rich.git"
+    },
+    {
+      "class_counts": {
+        "fp:parent_package_init": 35
+      },
+      "commit": "e63a574c767d7a9438c21db158f605f1c44c6e6a",
+      "false_negative": 0,
+      "false_negatives": [],
+      "false_positive": 35,
+      "false_positives": [
+        {
+          "class": "parent_package_init",
+          "source": "scrapy/commands/parse.py",
+          "target": "scrapy/utils/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "scrapy/commands/view.py",
+          "target": "scrapy/commands/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "scrapy/core/_http2/stream.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "scrapy/core/engine.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "scrapy/downloadermiddlewares/httpcache.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "scrapy/extensions/memusage.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "scrapy/extensions/telnet.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "scrapy/signalmanager.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "scrapy/signalmanager.py",
+          "target": "scrapy/utils/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "scrapy/spiders/__init__.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "scrapy/spiders/sitemap.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/spiders.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_command_parse.py",
+          "target": "scrapy/commands/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_core_scraper.py",
+          "target": "scrapy/core/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_downloadermiddleware_httpcache.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_engine.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_engine_close_spider.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_extension_memusage.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_extension_memusage.py",
+          "target": "scrapy/core/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_extension_memusage.py",
+          "target": "scrapy/extensions/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_extension_remote_control.py",
+          "target": "scrapy/extensions/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_extension_remote_control.py",
+          "target": "scrapy/settings/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_extension_statsmailer.py",
+          "target": "scrapy/extensions/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_linkextractors.py",
+          "target": "scrapy/linkextractors/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_pipeline_files.py",
+          "target": "scrapy/pipelines/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_pipeline_media.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_signalmanager.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_spider_sitemap.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_spiderstate.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_utils_httpobj.py",
+          "target": "scrapy/utils/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_utils_trackref.py",
+          "target": "scrapy/utils/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/utils/bases/engine.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/utils/bases/spider.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/utils/crawl.py",
+          "target": "scrapy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/utils/engine.py",
+          "target": "scrapy/__init__.py"
+        }
+      ],
+      "group": "held-out",
+      "indexed": 546,
+      "label": "scrapy",
+      "name": "scrapy__scrapy",
+      "not_indexed": 0,
+      "out_of_universe_scanner_edges": 0,
+      "parent_package_adjusted_precision": {
+        "hits": 2520,
+        "interval": [
+          0.9984778759491088,
+          1.0
+        ],
+        "total": 2520,
+        "value": 1.0
+      },
+      "parent_package_false_positive": 35,
+      "parse_failures": [],
+      "precision": {
+        "hits": 2485,
+        "interval": [
+          0.9807457734018732,
+          0.9899966059930938
+        ],
+        "total": 2520,
+        "value": 0.9861111111111112
+      },
+      "recall": {
+        "hits": 2485,
+        "interval": [
+          0.9984564706729426,
+          0.9999999999999998
+        ],
+        "total": 2485,
+        "value": 1.0
+      },
+      "scanner_edges": 2520,
+      "sources": 546,
+      "true_positive": 2485,
+      "truth_edges": 2485,
+      "url": "https://github.com/scrapy/scrapy.git"
+    },
+    {
+      "class_counts": {
+        "fn:non_package_path": 2,
+        "fp:other": 11,
+        "fp:parent_package_init": 197
+      },
+      "commit": "035a07c32c3241fd3356f4d827800c1f88525272",
+      "false_negative": 2,
+      "false_negatives": [
+        {
+          "class": "non_package_path",
+          "source": "tests/roots/test-ext-viewcode/spam/__init__.py",
+          "target": "tests/roots/test-ext-viewcode/spam/mod1.py"
+        },
+        {
+          "class": "non_package_path",
+          "source": "tests/roots/test-ext-viewcode/spam/__init__.py",
+          "target": "tests/roots/test-ext-viewcode/spam/mod2.py"
+        }
+      ],
+      "false_positive": 208,
+      "false_positives": [
+        {
+          "class": "parent_package_init",
+          "source": "doc/development/tutorials/examples/recipe.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/application.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/__init__.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/_epub_base.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/_epub_base.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/changes.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/dirhtml.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/epub3.py",
+          "target": "sphinx/builders/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/epub3.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/gettext.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/html/__init__.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/latex/__init__.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/latex/theming.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/latex/transforms.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/linkcheck.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/manpage.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/manpage.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/singlehtml.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/texinfo.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/text.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/builders/xml.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/cmd/build.py",
+          "target": "sphinx/cmd/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/config.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/directives/__init__.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/directives/__init__.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/directives/admonitions.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/directives/code.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/directives/code.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/directives/other.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/directives/patches.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/c/__init__.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/c/__init__.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/c/_ast.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/c/_symbol.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/changeset.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/citation.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/cpp/__init__.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/cpp/__init__.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/cpp/_ast.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/cpp/_parser.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/cpp/_symbol.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/index.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/index.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/javascript.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/javascript.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/math.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/python/__init__.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/python/__init__.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/python/_annotations.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/python/_object.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/python/_object.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/rst.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/rst.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/domains/std/__init__.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/environment/__init__.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/environment/__init__.py",
+          "target": "sphinx/environment/adapters/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/environment/__init__.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/environment/adapters/indexentries.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/environment/adapters/toctree.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/environment/collectors/asset.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/environment/collectors/asset.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/environment/collectors/toctree.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/events.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/events.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/apidoc/_cli.py",
+          "target": "sphinx/cmd/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/apidoc/_shared.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/autodoc/_dynamic/_docstrings.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/autodoc/_dynamic/_importer.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/autodoc/_dynamic/_loader.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/autodoc/_dynamic/_member_finder.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/autodoc/_dynamic/_signatures.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/autodoc/_dynamic/_type_annotations.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/autodoc/_dynamic/_type_comments.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/autodoc/_generate.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/autodoc/_legacy_class_based/_documenters.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/autodoc/_shared.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/autodoc/typehints.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/autosectionlabel.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/autosummary/__init__.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/autosummary/generate.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/coverage.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/doctest.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/duration.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/extlinks.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/graphviz.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/imgconverter.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/imgmath.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/intersphinx/_load.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/intersphinx/_shared.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/napoleon/__init__.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/napoleon/docstring.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/todo.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/ext/viewcode.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/extension.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/highlighting.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/io.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/jinja2glue.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/project.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/registry.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/registry.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/roles.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/theming.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/transforms/__init__.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/transforms/__init__.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/transforms/compact_bullet_list.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/transforms/i18n.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/transforms/post_transforms/__init__.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/transforms/post_transforms/__init__.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/transforms/post_transforms/code.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/transforms/post_transforms/code.py",
+          "target": "sphinx/ext/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/transforms/post_transforms/images.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/_inventory_file_reader.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/cfamily.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/cfamily.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/display.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/docfields.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/docfields.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/docutils.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/fileutil.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/i18n.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/inspect.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/inventory.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/nodes.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/nodes.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/osutil.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/parallel.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/rst.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/template.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/util/typing.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/writers/html.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/writers/html5.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/writers/html5.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/writers/latex.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/writers/latex.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/writers/manpage.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/writers/manpage.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/writers/texinfo.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "sphinx/writers/text.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "other",
+          "source": "tests/roots/test-ext-autodoc/autodoc_dummy_module.py",
+          "target": "tests/roots/test-inheritance/dummy/__init__.py"
+        },
+        {
+          "class": "other",
+          "source": "tests/roots/test-ext-autodoc/circular_import/__init__.py",
+          "target": "tests/roots/test-ext-autodoc/circular_import/c.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/roots/test-ext-autodoc/circular_import/b.py",
+          "target": "tests/roots/test-ext-autodoc/circular_import/__init__.py"
+        },
+        {
+          "class": "other",
+          "source": "tests/roots/test-ext-autodoc/circular_import/c.py",
+          "target": "tests/roots/test-ext-autodoc/circular_import/a.py"
+        },
+        {
+          "class": "other",
+          "source": "tests/roots/test-ext-autodoc/circular_import/c.py",
+          "target": "tests/roots/test-ext-autodoc/circular_import/b.py"
+        },
+        {
+          "class": "other",
+          "source": "tests/roots/test-ext-autodoc/target/canonical/__init__.py",
+          "target": "tests/roots/test-ext-autodoc/target/canonical/original.py"
+        },
+        {
+          "class": "other",
+          "source": "tests/roots/test-ext-autodoc/target/overload2.py",
+          "target": "tests/roots/test-ext-autodoc/target/overload.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/roots/test-ext-autosummary-import_cycle/spam/eggs.py",
+          "target": "tests/roots/test-ext-autosummary-import_cycle/spam/__init__.py"
+        },
+        {
+          "class": "other",
+          "source": "tests/roots/test-ext-viewcode-find-package/main_package/__init__.py",
+          "target": "tests/roots/test-ext-viewcode-find-package/main_package/subpackage/__init__.py"
+        },
+        {
+          "class": "other",
+          "source": "tests/roots/test-ext-viewcode-find-package/main_package/subpackage/__init__.py",
+          "target": "tests/roots/test-ext-viewcode-find-package/main_package/subpackage/_subpackage2/__init__.py"
+        },
+        {
+          "class": "other",
+          "source": "tests/roots/test-ext-viewcode-find-package/main_package/subpackage/__init__.py",
+          "target": "tests/roots/test-ext-viewcode-find-package/main_package/subpackage/_subpackage2/submodule.py"
+        },
+        {
+          "class": "other",
+          "source": "tests/roots/test-ext-viewcode/spam/mod3.py",
+          "target": "tests/roots/test-ext-viewcode/spam/mod1.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/roots/test-root/conf.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_addnodes.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_application.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_builders/test_build_html.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_builders/test_build_latex.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_builders/test_build_linkcheck.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_command_line.py",
+          "target": "sphinx/cmd/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_directives/test_directive_object_description.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_directives/test_directive_object_description.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_directives/test_directive_other.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_directives/test_directive_other.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_directives/test_directive_patch.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_directives/test_directive_productionlist.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_directives/test_directives_no_typesetting.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_directives/test_directives_no_typesetting.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_c.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_c.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_cpp.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_cpp.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_js.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_js.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_py.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_py.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_py_canonical.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_py_canonical.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_py_fields.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_py_fields.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_py_pyfunction.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_py_pyfunction.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_py_pyobject.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_py_pyobject.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_rst.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_rst.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_std.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_domains/test_domain_std.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_environment/test_environment_indexentries.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_environment/test_environment_toctree.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_ext_autodoc/test_ext_autodoc_typehints.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_ext_autosummary/test_ext_autosummary_imports.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_ext_intersphinx/test_ext_intersphinx.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_extensions/test_ext_ifconfig.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_extensions/test_ext_ifconfig.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "other",
+          "source": "tests/test_extensions/test_ext_inheritance_diagram.py",
+          "target": "tests/roots/test-ext-inheritance_diagram/example/sphinx.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_intl/test_intl.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_intl/test_locale.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_markup/test_markup.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_markup/test_markup.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_quickstart.py",
+          "target": "sphinx/cmd/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_transforms/test_transforms_doctest.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_transforms/test_transforms_move_module_targets.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_transforms/test_transforms_post_transforms.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_transforms/test_transforms_reorder_nodes.py",
+          "target": "sphinx/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_transforms/test_transforms_reorder_nodes.py",
+          "target": "sphinx/testing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_util/test_util_display.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_util/test_util_i18n.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_util/test_util_inspect.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_util/test_util_inspect_py314.py",
+          "target": "sphinx/util/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_util/test_util_logging.py",
+          "target": "sphinx/util/__init__.py"
+        }
+      ],
+      "group": "held-out",
+      "indexed": 771,
+      "label": "sphinx",
+      "name": "sphinx-doc__sphinx",
+      "not_indexed": 4,
+      "out_of_universe_scanner_edges": 0,
+      "parent_package_adjusted_precision": {
+        "hits": 2090,
+        "interval": [
+          0.9906487558986068,
+          0.9970740257111828
+        ],
+        "total": 2101,
+        "value": 0.9947643979057592
+      },
+      "parent_package_false_positive": 197,
+      "parse_failures": [],
+      "precision": {
+        "hits": 1893,
+        "interval": [
+          0.8874873638745043,
+          0.9130479353138051
+        ],
+        "total": 2101,
+        "value": 0.9009995240361732
+      },
+      "recall": {
+        "hits": 1893,
+        "interval": [
+          0.9961597971842657,
+          0.999710527122933
+        ],
+        "total": 1895,
+        "value": 0.9989445910290238
+      },
+      "scanner_edges": 2101,
+      "sources": 775,
+      "true_positive": 1893,
+      "truth_edges": 1895,
+      "url": "https://github.com/sphinx-doc/sphinx.git"
+    }
+  ],
+  "scanner": {
+    "ref": "HEAD",
+    "scan_version": 15,
+    "sha": "77d2d79b8e3b3ddc6bc0ff6c750a71047171c64b"
+  }
+}

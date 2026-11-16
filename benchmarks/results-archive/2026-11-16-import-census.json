@@ -1,0 +1,1285 @@
+{
+  "generated_at": "2026-11-16T11:26:35Z",
+  "pooled": {
+    "held-out": {
+      "false_negative": 0,
+      "false_positive": 133,
+      "parent_package_adjusted_precision": {
+        "hits": 7261,
+        "interval": [
+          0.9994712066399356,
+          1.0
+        ],
+        "total": 7261,
+        "value": 1.0
+      },
+      "parent_package_false_positive": 133,
+      "precision": {
+        "hits": 7128,
+        "interval": [
+          0.9783341639487322,
+          0.9845223421036504
+        ],
+        "total": 7261,
+        "value": 0.9816829637790938
+      },
+      "recall": {
+        "hits": 7128,
+        "interval": [
+          0.9994613452996488,
+          1.0
+        ],
+        "total": 7128,
+        "value": 1.0
+      },
+      "scanner_edges": 7261,
+      "sources": 2010,
+      "true_positive": 7128,
+      "truth_edges": 7128
+    },
+    "tuned": {
+      "false_negative": 0,
+      "false_positive": 56,
+      "parent_package_adjusted_precision": {
+        "hits": 1346,
+        "interval": [
+          0.9913654138060075,
+          0.9984181889413544
+        ],
+        "total": 1351,
+        "value": 0.996299037749815
+      },
+      "parent_package_false_positive": 51,
+      "precision": {
+        "hits": 1295,
+        "interval": [
+          0.9465555327210333,
+          0.9679425163497952
+        ],
+        "total": 1351,
+        "value": 0.9585492227979274
+      },
+      "recall": {
+        "hits": 1295,
+        "interval": [
+          0.9970422875275938,
+          1.0
+        ],
+        "total": 1295,
+        "value": 1.0
+      },
+      "scanner_edges": 1351,
+      "sources": 416,
+      "true_positive": 1295,
+      "truth_edges": 1295
+    }
+  },
+  "repos": [
+    {
+      "class_counts": {
+        "fp:parent_package_init": 27
+      },
+      "commit": "b77c9304e1c4220cca450c583491904daf8455af",
+      "false_negative": 0,
+      "false_negatives": [],
+      "false_positive": 27,
+      "false_positives": [
+        {
+          "class": "parent_package_init",
+          "source": "test/helper.py",
+          "target": "yt_dlp/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "test/test_YoutubeDL.py",
+          "target": "yt_dlp/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "test/test_aes.py",
+          "target": "yt_dlp/dependencies/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "test/test_age_restriction.py",
+          "target": "yt_dlp/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "test/test_compat.py",
+          "target": "yt_dlp/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "test/test_cookies.py",
+          "target": "yt_dlp/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "test/test_devalue.py",
+          "target": "yt_dlp/utils/jslib/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "test/test_downloader_http.py",
+          "target": "yt_dlp/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "test/test_jsc/conftest.py",
+          "target": "yt_dlp/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "test/test_postprocessors.py",
+          "target": "yt_dlp/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "test/test_pot/conftest.py",
+          "target": "yt_dlp/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "test/test_websockets.py",
+          "target": "yt_dlp/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "yt_dlp/aes.py",
+          "target": "yt_dlp/dependencies/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "yt_dlp/downloader/hls.py",
+          "target": "yt_dlp/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "yt_dlp/downloader/hls.py",
+          "target": "yt_dlp/dependencies/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "yt_dlp/downloader/mhtml.py",
+          "target": "yt_dlp/compat/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "yt_dlp/extractor/bilibili.py",
+          "target": "yt_dlp/dependencies/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "yt_dlp/extractor/common.py",
+          "target": "yt_dlp/utils/jslib/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "yt_dlp/extractor/extractors.py",
+          "target": "yt_dlp/extractor/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "yt_dlp/extractor/ivi.py",
+          "target": "yt_dlp/dependencies/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "yt_dlp/extractor/tarangplus.py",
+          "target": "yt_dlp/dependencies/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "yt_dlp/extractor/wrestleuniverse.py",
+          "target": "yt_dlp/dependencies/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "yt_dlp/extractor/youtube/jsc/_builtin/ejs.py",
+          "target": "yt_dlp/extractor/youtube/jsc/_builtin/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "yt_dlp/postprocessor/embedthumbnail.py",
+          "target": "yt_dlp/compat/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "yt_dlp/postprocessor/ffmpeg.py",
+          "target": "yt_dlp/compat/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "yt_dlp/postprocessor/movefilesafterdownload.py",
+          "target": "yt_dlp/compat/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "yt_dlp/utils/_utils.py",
+          "target": "yt_dlp/utils/__init__.py"
+        }
+      ],
+      "group": "held-out",
+      "indexed": 1124,
+      "label": "yt-dlp",
+      "name": "yt-dlp__yt-dlp",
+      "not_indexed": 0,
+      "out_of_universe_scanner_edges": 0,
+      "parent_package_adjusted_precision": {
+        "hits": 3858,
+        "interval": [
+          0.9990052414371424,
+          1.0
+        ],
+        "total": 3858,
+        "value": 1.0
+      },
+      "parent_package_false_positive": 27,
+      "parse_failures": [],
+      "precision": {
+        "hits": 3831,
+        "interval": [
+          0.9898365254370943,
+          0.9951857499457181
+        ],
+        "total": 3858,
+        "value": 0.9930015552099534
+      },
+      "recall": {
+        "hits": 3831,
+        "interval": [
+          0.9989982376325531,
+          1.0
+        ],
+        "total": 3831,
+        "value": 1.0
+      },
+      "scanner_edges": 3858,
+      "sources": 1124,
+      "true_positive": 3831,
+      "truth_edges": 3831,
+      "url": "https://github.com/yt-dlp/yt-dlp.git"
+    },
+    {
+      "class_counts": {
+        "fp:parent_package_init": 1
+      },
+      "commit": "82a973c04367123ae98bd9abdf80d9eda9b910e2",
+      "false_negative": 0,
+      "false_negatives": [],
+      "false_positive": 1,
+      "false_positives": [
+        {
+          "class": "parent_package_init",
+          "source": "modules/sd_samplers_timesteps_impl.py",
+          "target": "modules/models/diffusion/uni_pc/__init__.py"
+        }
+      ],
+      "group": "held-out",
+      "indexed": 213,
+      "label": "stable-diffusion-webui",
+      "name": "AUTOMATIC1111__stable-diffusion-webui",
+      "not_indexed": 0,
+      "out_of_universe_scanner_edges": 0,
+      "parent_package_adjusted_precision": {
+        "hits": 867,
+        "interval": [
+          0.9955886351777409,
+          1.0
+        ],
+        "total": 867,
+        "value": 1.0
+      },
+      "parent_package_false_positive": 1,
+      "parse_failures": [],
+      "precision": {
+        "hits": 866,
+        "interval": [
+          0.9934956339160484,
+          0.9997963723454807
+        ],
+        "total": 867,
+        "value": 0.9988465974625144
+      },
+      "recall": {
+        "hits": 866,
+        "interval": [
+          0.995583563720107,
+          0.9999999999999999
+        ],
+        "total": 866,
+        "value": 1.0
+      },
+      "scanner_edges": 867,
+      "sources": 213,
+      "true_positive": 866,
+      "truth_edges": 866,
+      "url": "https://github.com/AUTOMATIC1111/stable-diffusion-webui.git"
+    },
+    {
+      "class_counts": {
+        "fp:parent_package_init": 105
+      },
+      "commit": "ba8363f8ab56b2da456a81299cfdbfee1ef7b871",
+      "false_negative": 0,
+      "false_negatives": [],
+      "false_positive": 105,
+      "false_positives": [
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/bundles/primitives.py",
+          "target": "src/specify_cli/workflows/step/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/extensions/catalog/_helpers.py",
+          "target": "src/specify_cli/extensions/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/extensions/catalog/command_remove.py",
+          "target": "src/specify_cli/extensions/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/extensions/command_update.py",
+          "target": "src/specify_cli/extensions/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/integrations/_commands.py",
+          "target": "src/specify_cli/integrations/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/integrations/_helpers.py",
+          "target": "src/specify_cli/integrations/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/presets/_commands.py",
+          "target": "src/specify_cli/presets/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/_command_run_ownership.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/_commands.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/catalog/command_add.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/catalog/command_list.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/catalog/command_remove.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/command_definition.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/command_disable.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/command_enable.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/command_info.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/command_list.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/command_remove.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/command_resolve.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/command_search.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/command_status.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/expressions/diagnostics.py",
+          "target": "src/specify_cli/workflows/expressions/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/expressions/engine.py",
+          "target": "src/specify_cli/workflows/expressions/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/mcp_list.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/overlay/command_add.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/overlay/command_disable.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/overlay/command_enable.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/overlay/command_list.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/overlay/command_remove.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/overlay/command_set_priority.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/overlay/operations.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/step/_helpers.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/step/catalog/command_add.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/step/catalog/command_list.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/step/catalog/command_remove.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/step/command_add.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/step/command_remove.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/specify_cli/workflows/step/command_search.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/conftest.py",
+          "target": "src/specify_cli/authentication/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/integrations/test_cli.py",
+          "target": "src/specify_cli/integrations/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/artifacts/test_command_info.py",
+          "target": "src/specify_cli/artifacts/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/artifacts/test_command_list.py",
+          "target": "src/specify_cli/artifacts/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/artifacts/test_command_lookup.py",
+          "target": "src/specify_cli/integrations/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/artifacts/test_mcp_info.py",
+          "target": "src/specify_cli/artifacts/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/artifacts/test_mcp_list.py",
+          "target": "src/specify_cli/artifacts/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/artifacts/test_operation_info.py",
+          "target": "src/specify_cli/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/artifacts/test_operation_list.py",
+          "target": "src/specify_cli/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/artifacts/test_registration.py",
+          "target": "src/specify_cli/artifacts/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/authentication/helpers.py",
+          "target": "src/specify_cli/authentication/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/bundles/test_adapters.py",
+          "target": "src/specify_cli/bundles/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/bundles/test_catalog_config.py",
+          "target": "src/specify_cli/bundles/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/bundles/test_command_info.py",
+          "target": "src/specify_cli/bundles/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/bundles/test_command_init.py",
+          "target": "src/specify_cli/bundles/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/bundles/test_command_install.py",
+          "target": "src/specify_cli/bundles/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/bundles/test_installer.py",
+          "target": "src/specify_cli/bundles/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/bundles/test_offline.py",
+          "target": "src/specify_cli/bundles/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/bundles/test_primitives.py",
+          "target": "src/specify_cli/bundles/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/bundles/test_primitives.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/bundles/test_primitives.py",
+          "target": "src/specify_cli/workflows/step/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/bundles/test_references.py",
+          "target": "src/specify_cli/authentication/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/bundles/test_security_paths.py",
+          "target": "src/specify_cli/bundles/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/bundles/test_validator.py",
+          "target": "src/specify_cli/bundles/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/extensions/catalog/test_command_remove.py",
+          "target": "src/specify_cli/extensions/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/extensions/test_command_update_discovery.py",
+          "target": "src/specify_cli/extensions/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/presets/conftest.py",
+          "target": "tests/specify_cli/presets/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/presets/test_catalog.py",
+          "target": "src/specify_cli/authentication/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/presets/test_command_add.py",
+          "target": "src/specify_cli/authentication/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/presets/test_command_update.py",
+          "target": "src/specify_cli/presets/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/presets/test_registration.py",
+          "target": "src/specify_cli/presets/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/test_catalog_contracts.py",
+          "target": "src/specify_cli/authentication/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/test_catalog_contracts.py",
+          "target": "src/specify_cli/bundles/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/test_file_policy.py",
+          "target": "src/specify_cli/artifacts/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/test_operation_version.py",
+          "target": "src/specify_cli/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/helpers.py",
+          "target": "src/specify_cli/workflows/step/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/step/test_catalog_versions.py",
+          "target": "src/specify_cli/authentication/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/step/test_command_add.py",
+          "target": "src/specify_cli/authentication/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/step/test_command_add.py",
+          "target": "src/specify_cli/workflows/step/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/step/test_command_remove.py",
+          "target": "src/specify_cli/workflows/step/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/step/test_installer.py",
+          "target": "src/specify_cli/workflows/step/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_catalog_cache.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_catalog_versions.py",
+          "target": "src/specify_cli/authentication/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_catalog_versions.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_command_add.py",
+          "target": "src/specify_cli/authentication/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_command_add.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_command_definition.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_command_definition.py",
+          "target": "tests/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_command_disable.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_command_info.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_command_remove.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_command_run_ownership.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_mcp.py",
+          "target": "src/specify_cli/authentication/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_mcp.py",
+          "target": "src/specify_cli/integrations/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_mcp.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_mcp.py",
+          "target": "src/specify_cli/workflows/step/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_mcp_list.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_operation_list.py",
+          "target": "src/specify_cli/authentication/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/specify_cli/workflows/test_operation_list.py",
+          "target": "src/specify_cli/integrations/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_extensions.py",
+          "target": "src/specify_cli/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_extensions.py",
+          "target": "src/specify_cli/authentication/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_presets.py",
+          "target": "tests/specify_cli/presets/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_workflows.py",
+          "target": "src/specify_cli/authentication/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_workflows.py",
+          "target": "src/specify_cli/workflows/step/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/unit/test_condition_expression_block.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/workflows/test_github_step.py",
+          "target": "src/specify_cli/workflows/step/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/workflows/test_step_capture.py",
+          "target": "src/specify_cli/workflows/__init__.py"
+        }
+      ],
+      "group": "held-out",
+      "indexed": 669,
+      "label": "spec-kit",
+      "name": "github__spec-kit",
+      "not_indexed": 4,
+      "out_of_universe_scanner_edges": 0,
+      "parent_package_adjusted_precision": {
+        "hits": 2536,
+        "interval": [
+          0.9984874647300841,
+          1.0
+        ],
+        "total": 2536,
+        "value": 1.0
+      },
+      "parent_package_false_positive": 105,
+      "parse_failures": [],
+      "precision": {
+        "hits": 2431,
+        "interval": [
+          0.9501235660123079,
+          0.9656815771115784
+        ],
+        "total": 2536,
+        "value": 0.958596214511041
+      },
+      "recall": {
+        "hits": 2431,
+        "interval": [
+          0.9984222382269137,
+          0.9999999999999998
+        ],
+        "total": 2431,
+        "value": 1.0
+      },
+      "scanner_edges": 2536,
+      "sources": 673,
+      "true_positive": 2431,
+      "truth_edges": 2431,
+      "url": "https://github.com/github/spec-kit.git"
+    },
+    {
+      "class_counts": {
+        "fp:parent_package_init": 28
+      },
+      "commit": "8b005ed7f972987033ec34dc1e68b0635fb8142b",
+      "false_negative": 0,
+      "false_negatives": [],
+      "false_positive": 28,
+      "false_positives": [
+        {
+          "class": "parent_package_init",
+          "source": "src/_pytest/_py/path.py",
+          "target": "src/_pytest/_py/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/_pytest/assertion/util.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/_pytest/cacheprovider.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/_pytest/debugging.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/_pytest/doctest.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/_pytest/junitxml.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/_pytest/logging.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/_pytest/main.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/_pytest/pytester.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/_pytest/runner.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/_pytest/stepwise.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/_pytest/subtests.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/_pytest/terminal.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/_pytest/timing.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/_pytest/unittest.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "testing/acceptance_test.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "testing/deprecated_test.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "testing/io/test_terminalwriter.py",
+          "target": "src/_pytest/_io/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "testing/python/metafunc.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "testing/test_assertion.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "testing/test_capture.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "testing/test_faulthandler.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "testing/test_junitxml.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "testing/test_nodes.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "testing/test_parseopt.py",
+          "target": "src/_pytest/config/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "testing/test_runner.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "testing/test_tmpdir.py",
+          "target": "src/_pytest/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "testing/test_warning_types.py",
+          "target": "src/_pytest/__init__.py"
+        }
+      ],
+      "group": "tuned",
+      "indexed": 274,
+      "label": "pytest",
+      "name": "pytest-dev__pytest",
+      "not_indexed": 0,
+      "out_of_universe_scanner_edges": 0,
+      "parent_package_adjusted_precision": {
+        "hits": 880,
+        "interval": [
+          0.9956535198162204,
+          1.0
+        ],
+        "total": 880,
+        "value": 1.0
+      },
+      "parent_package_false_positive": 28,
+      "parse_failures": [],
+      "precision": {
+        "hits": 852,
+        "interval": [
+          0.9543979293794844,
+          0.9778958209938855
+        ],
+        "total": 880,
+        "value": 0.9681818181818181
+      },
+      "recall": {
+        "hits": 852,
+        "interval": [
+          0.9955113189169584,
+          1.0
+        ],
+        "total": 852,
+        "value": 1.0
+      },
+      "scanner_edges": 880,
+      "sources": 274,
+      "true_positive": 852,
+      "truth_edges": 852,
+      "url": "https://github.com/pytest-dev/pytest.git"
+    },
+    {
+      "class_counts": {
+        "fp:other": 5,
+        "fp:parent_package_init": 23
+      },
+      "commit": "2adaad1ab68312fa46efb07ff072b15b720e2444",
+      "false_negative": 0,
+      "false_negatives": [],
+      "false_positive": 28,
+      "false_positives": [
+        {
+          "class": "parent_package_init",
+          "source": "examples/coolmagic/utils.py",
+          "target": "examples/coolmagic/__init__.py"
+        },
+        {
+          "class": "other",
+          "source": "examples/coolmagic/utils.py",
+          "target": "examples/coolmagic/helpers.py"
+        },
+        {
+          "class": "other",
+          "source": "examples/coolmagic/views/static.py",
+          "target": "examples/coolmagic/utils.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "examples/couchy/application.py",
+          "target": "examples/couchy/__init__.py"
+        },
+        {
+          "class": "other",
+          "source": "examples/cupoftee/application.py",
+          "target": "examples/cupoftee/pages.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "examples/i18nurls/application.py",
+          "target": "examples/i18nurls/__init__.py"
+        },
+        {
+          "class": "other",
+          "source": "examples/i18nurls/application.py",
+          "target": "examples/i18nurls/views.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "examples/manage-couchy.py",
+          "target": "examples/couchy/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "examples/manage-shorty.py",
+          "target": "examples/shorty/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "examples/plnt/webapp.py",
+          "target": "examples/plnt/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "examples/shorty/application.py",
+          "target": "examples/shorty/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "examples/simplewiki/application.py",
+          "target": "examples/simplewiki/__init__.py"
+        },
+        {
+          "class": "other",
+          "source": "examples/webpylike/example.py",
+          "target": "examples/webpylike/webpylike.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/werkzeug/datastructures/structures.py",
+          "target": "src/werkzeug/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/werkzeug/http.py",
+          "target": "src/werkzeug/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/werkzeug/http.py",
+          "target": "src/werkzeug/sansio/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/werkzeug/routing/map.py",
+          "target": "src/werkzeug/routing/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/werkzeug/sansio/http.py",
+          "target": "src/werkzeug/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "src/werkzeug/wsgi.py",
+          "target": "src/werkzeug/sansio/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/live_apps/reloader_app.py",
+          "target": "src/werkzeug/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_datastructures.py",
+          "target": "src/werkzeug/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_exceptions.py",
+          "target": "src/werkzeug/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_formparser.py",
+          "target": "src/werkzeug/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_http.py",
+          "target": "src/werkzeug/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_local.py",
+          "target": "src/werkzeug/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_routing.py",
+          "target": "src/werkzeug/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_urls.py",
+          "target": "src/werkzeug/__init__.py"
+        },
+        {
+          "class": "parent_package_init",
+          "source": "tests/test_wrappers.py",
+          "target": "src/werkzeug/__init__.py"
+        }
+      ],
+      "group": "tuned",
+      "indexed": 142,
+      "label": "werkzeug",
+      "name": "pallets__werkzeug",
+      "not_indexed": 0,
+      "out_of_universe_scanner_edges": 0,
+      "parent_package_adjusted_precision": {
+        "hits": 466,
+        "interval": [
+          0.9753926857941002,
+          0.9954573829446118
+        ],
+        "total": 471,
+        "value": 0.9893842887473461
+      },
+      "parent_package_false_positive": 23,
+      "parse_failures": [],
+      "precision": {
+        "hits": 443,
+        "interval": [
+          0.915422520736568,
+          0.9585531376724679
+        ],
+        "total": 471,
+        "value": 0.940552016985138
+      },
+      "recall": {
+        "hits": 443,
+        "interval": [
+          0.9914027700196222,
+          1.0
+        ],
+        "total": 443,
+        "value": 1.0
+      },
+      "scanner_edges": 471,
+      "sources": 142,
+      "true_positive": 443,
+      "truth_edges": 443,
+      "url": "https://github.com/pallets/werkzeug.git"
+    }
+  ],
+  "scanner": {
+    "ref": "HEAD",
+    "scan_version": 15,
+    "sha": "77d2d79b8e3b3ddc6bc0ff6c750a71047171c64b"
+  }
+}

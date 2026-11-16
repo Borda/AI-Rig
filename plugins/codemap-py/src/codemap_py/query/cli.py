@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from codemap_py import index_paths
+from codemap_py import _deadline, index_paths
 from codemap_py import query_state as state
 
 # Transitional seam: exclusion rules live in codemap_py.scanner, but this
@@ -580,13 +580,21 @@ def _resolve_index_path(args: argparse.Namespace) -> Path:
     return resolved
 
 
-def main(argv: Sequence[str] | None = None) -> None:
-    """Run one query attempt with terminal telemetry and restore invocation-local state."""
+def main(argv: Sequence[str] | None = None, *, owns_process: bool = False) -> None:
+    """Run one query attempt with terminal telemetry and restore invocation-local state.
+
+    Args:
+        argv: Arguments excluding the program name; ``None`` reads ``sys.argv``.
+        owns_process: Set only by an entry point that owns the whole process (the ``scan-query`` launcher). It enables
+            the portable deadline's hard-exit backstop, which records the timeout and calls ``os._exit`` when the main
+            thread ignores the watchdog's interrupt. Embedded and in-process callers keep the default ``False``.
+    """
     previous, previous_command = state._invocation, state._CMD
     arguments = list(sys.argv[1:] if argv is None else argv)
     previous_alarm = signal.getsignal(signal.SIGALRM) if hasattr(signal, "SIGALRM") else None
     previous_timer = signal.getitimer(signal.ITIMER_REAL) if hasattr(signal, "getitimer") else (0.0, 0.0)
     timer_started = time.monotonic()
+    deadline = _deadline.InterruptDeadline(hard_exit=_hard_timeout_exit if owns_process else None)
     with CliInvocation("query", arguments) as invocation:
         # Preserve the last complete root even if a later root option is malformed.
         root_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False, exit_on_error=False)
@@ -599,7 +607,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         invocation.root = root_args.root
         state._invocation, state._CMD = invocation, ""
         try:
-            _run_query(arguments)
+            deadline.run(lambda: _run_query(arguments, deadline))
+        except _deadline.DeadlineExpired as expired:
+            # Converted inside the invocation so telemetry records exit 2, not the interrupt's 130.
+            _exit_timed_out(expired.seconds)
         except (KeyError, TypeError, ValueError) as exc:
             detail = f"{type(exc).__name__}: {exc}"
             _print(f"codemap: index failed self-check — {detail}", file=sys.stderr)
@@ -623,30 +634,60 @@ def main(argv: Sequence[str] | None = None) -> None:
             state._invocation, state._CMD = previous, previous_command
 
 
-def _start_query_timeout(args: argparse.Namespace) -> None:
-    """Apply the regex default deadline and arm the Unix timer where the calling thread permits it."""
+def _exit_timed_out(seconds: float) -> None:
+    """Retain timeout evidence while preserving the CLI's existing exit contract (stderr line, exit 2)."""
+    if state._invocation is not None:
+        state._invocation.result = {"error": "timeout", "timeout_seconds": seconds}
+    _print(f"scan-query: timed out after {seconds}s", file=sys.stderr)
+    sys.exit(2)
+
+
+def _hard_timeout_exit(seconds: float) -> None:
+    """Backstop for a process-owning entry point whose main thread ignored the deadline interrupt.
+
+    Runs on the watchdog thread: records the same timeout outcome the main thread would have, flushes, and exits hard,
+    because the main thread is stuck and cannot unwind. Never wired for embedded or in-process callers.
+    """
+    _print(f"scan-query: timed out after {seconds}s", file=sys.stderr)
+    invocation = state._invocation
+    if invocation is not None:
+        invocation.result = {"error": "timeout", "timeout_seconds": seconds}
+        invocation.__exit__(SystemExit, SystemExit(2), None)  # the one terminal record; the main thread never writes
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(2)
+
+
+def _start_query_timeout(args: argparse.Namespace, deadline: _deadline.InterruptDeadline | None = None) -> None:
+    """Apply the regex default deadline and arm the host's deadline where the calling thread permits it.
+
+    Hosts with ``SIGALRM`` keep the in-process alarm; elsewhere the portable watchdog in ``deadline`` is armed. Either
+    way nothing is armed off the main thread.
+    """
     if args.command == "find-symbol" and args.timeout <= 0:
         args.timeout = FIND_SYMBOL_TIMEOUT_SECONDS
-    if args.timeout <= 0 or not hasattr(signal, "SIGALRM") or threading.current_thread() is not threading.main_thread():
+    if args.timeout <= 0 or threading.current_thread() is not threading.main_thread():
+        return
+    if _deadline.select_mechanism() is _deadline.DeadlineMechanism.PORTABLE:
+        if deadline is not None:
+            deadline.arm(args.timeout)
         return
 
     def _timeout_handler(signum: int, frame: object) -> None:
         """Retain timeout evidence while preserving the CLI's existing exit contract."""
-        if state._invocation is not None:
-            state._invocation.result = {"error": "timeout", "timeout_seconds": args.timeout}
-        _print(f"scan-query: timed out after {args.timeout}s", file=sys.stderr)
-        sys.exit(2)
+        _exit_timed_out(args.timeout)
 
     signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(args.timeout)
 
 
-def _run_query(argv: Sequence[str]) -> None:
+def _run_query(argv: Sequence[str], deadline: _deadline.InterruptDeadline | None = None) -> None:
     """Parse CLI arguments, load the index, and dispatch to the appropriate command.
 
     Args:
         argv: Explicit argument vector excluding the program name, from the script
             or in-process dispatcher. The engine owns its read lease.
+        deadline: Portable watchdog armed for ``--timeout`` on hosts without ``SIGALRM``.
     """
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -661,7 +702,7 @@ def _run_query(argv: Sequence[str]) -> None:
     state._FORMAT = args.output_format
     _reject_multiline_args(args)
 
-    _start_query_timeout(args)
+    _start_query_timeout(args, deadline)
 
     index_path = _resolve_index_path(args)
     source_identity = index_paths.resolve_index(root=args.root)

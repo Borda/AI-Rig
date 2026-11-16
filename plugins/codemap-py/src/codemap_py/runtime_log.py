@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import time
 from pathlib import Path
 
@@ -254,3 +255,154 @@ def write_log(
     except Exception:  # noqa: S110 - best-effort diagnostics; failure ignored
         pass
     return diag
+
+
+#: Hooks whose health ``codemap-py doctor`` reports, in output order. Mirrors ``hooks/_hookutil.HOOK_NAMES``: the hooks
+#: run without this package, so the roster is restated there and pinned against this one by a test.
+HOOK_NAMES = (
+    "guard-redundant-scan",
+    "inject-preamble",
+    "log-skill-start",
+    "log-tool-use",
+    "record-exhausted",
+    "seed-session",
+)
+#: Runtimes whose hook health doctor reads; ``direct`` CLI runs have no hooks.
+HOOK_RUNTIMES = ("claude", "codex")
+#: Per-runtime subdirectory holding one directory per hook. Mirrors ``hooks/_hookutil.HOOK_HEALTH_SUBDIR``.
+HOOK_HEALTH_SUBDIR = "hook-health"
+#: Failure records a hook keeps; the reported count never exceeds it. Mirrors ``_hookutil.HOOK_FAILURE_RETENTION``.
+HOOK_FAILURE_RETENTION = 50
+#: Name of the per-hook last-clean-run stamp. Mirrors ``hooks/_hookutil.HOOK_SUCCESS_STAMP``.
+HOOK_SUCCESS_STAMP = "last-success"
+#: Shape of a failure record name (epoch ns, random token, exception class). Mirrors ``_hookutil.HOOK_FAILURE_NAME``;
+#: anything else in the directory is ignored, so no file content or foreign name ever reaches doctor output.
+_HOOK_FAILURE_NAME = re.compile(r"fail-(\d{20})-[0-9a-f]{8}-([A-Za-z_][A-Za-z0-9_]{0,63})")
+#: Shape of the last-success stamp content: epoch nanoseconds, zero-padded to 20 digits.
+_HOOK_STAMP = re.compile(r"\d{20}")
+#: Most directory entries read per hook, so a directory whose trimming stopped cannot make doctor slow.
+_HOOK_SCAN_LIMIT = 1000
+#: Most bytes read from a last-success stamp.
+_HOOK_STAMP_MAX_BYTES = 64
+
+
+def _is_plain_directory(path: Path) -> bool:
+    """Return whether *path* is a directory itself, not a link, junction, FIFO or regular file, without raising."""
+    try:
+        info = path.lstat()
+    except (OSError, ValueError):
+        return False
+    return stat.S_ISDIR(info.st_mode) and not getattr(info, "st_reparse_tag", 0)
+
+
+def _utc_text(epoch_ns: str) -> str | None:
+    """Return the ISO-8601 UTC second of a zero-padded epoch-nanosecond string, or ``None`` when out of range.
+
+    The supported range of ``time.gmtime`` is platform-dependent, so an out-of-range value is dropped rather than
+    raised.
+
+    Examples:
+        >>> _utc_text("00000000000000000000")
+        '1970-01-01T00:00:00Z'
+        >>> _utc_text("01700000000000000000")
+        '2023-11-14T22:13:20Z'
+    """
+    try:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(epoch_ns) // 1_000_000_000))
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _read_stamp(path: Path) -> str | None:
+    """Return the UTC time held by one last-success stamp, or ``None`` for a missing, odd or unreadable stamp.
+
+    The stamp is ``lstat``-checked before any open, so a FIFO or link planted at its path is never opened and cannot
+    make doctor hang; the open is also non-blocking and the opened file is re-checked against the inspected one.
+    """
+    try:
+        before = path.lstat()
+        if not stat.S_ISREG(before.st_mode):
+            return None
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        descriptor = os.open(path, flags)
+        try:
+            if not os.path.samestat(before, os.fstat(descriptor)):
+                return None
+            raw = os.read(descriptor, _HOOK_STAMP_MAX_BYTES)
+        finally:
+            os.close(descriptor)
+    except (OSError, ValueError):
+        return None
+    text = raw.decode("ascii", errors="replace").strip()
+    return _utc_text(text) if _HOOK_STAMP.fullmatch(text) else None
+
+
+def _failure_records(directory: Path) -> list[tuple[str, str]]:
+    """Return the ``(epoch_ns, class_name)`` pairs of the valid failure records in one hook directory.
+
+    Only regular files whose names match the record shape count; at most :data:`_HOOK_SCAN_LIMIT` entries are read.
+    """
+    records: list[tuple[str, str]] = []
+    try:
+        with os.scandir(directory) as entries:
+            for position, entry in enumerate(entries):
+                if position >= _HOOK_SCAN_LIMIT:
+                    break
+                match = _HOOK_FAILURE_NAME.fullmatch(entry.name)
+                if match and entry.is_file(follow_symlinks=False):
+                    records.append((match.group(1), match.group(2)))
+    except (OSError, ValueError):
+        return []
+    return records
+
+
+def _empty_hook_health() -> dict[str, object]:
+    """Return the health entry of a hook with no readable record: zero failures, no times."""
+    return {"count": 0, "last_class": None, "last_time": None, "last_success": None}
+
+
+def _hook_health_entry(directory: Path) -> dict[str, object]:
+    """Return one hook's ``count``, ``last_class``, ``last_time`` and ``last_success`` from its health directory."""
+    entry = _empty_hook_health()
+    if not _is_plain_directory(directory):
+        return entry
+    records = _failure_records(directory)
+    if records:
+        newest_ns, newest_class = max(records)
+        entry.update(count=min(len(records), HOOK_FAILURE_RETENTION), last_class=newest_class)
+        entry["last_time"] = _utc_text(newest_ns)
+    entry["last_success"] = _read_stamp(directory / HOOK_SUCCESS_STAMP)
+    return entry
+
+
+def hook_health(runtime: object, *, root: Path | None = None, override: str | None = None) -> dict[str, dict]:
+    """Return the failure count, last failure and last clean run of every hook for one runtime, never raising.
+
+    The hooks record under ``<log-dir>/<runtime>/hook-health/<hook>/`` (``hooks/_hookutil.record_failure``). The read
+    is bounded and identity-free: names that do not match the record shape, links, FIFOs and corrupt stamps all read
+    as nothing, and only an exception class name and UTC times leave this function. ``count`` is capped at
+    :data:`HOOK_FAILURE_RETENTION`, the number of records each hook keeps.
+
+    Args:
+        runtime: Runtime identity, normalized through :func:`resolve_runtime`.
+        root: Canonical project root; resolved from the CWD when omitted.
+        override: Explicit log-root override; defaults to ``CODEMAP_LOG_DIR``.
+
+    Returns:
+        One entry per name in :data:`HOOK_NAMES`, each with ``count`` (int), ``last_class``, ``last_time`` and
+        ``last_success`` (str or ``None``; times are ISO-8601 UTC seconds).
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     health = hook_health("codex", root=Path(d), override="")
+        >>> health["log-tool-use"]
+        {'count': 0, 'last_class': None, 'last_time': None, 'last_success': None}
+    """
+    try:
+        base = log_dir_for(runtime, root=root, override=override) / HOOK_HEALTH_SUBDIR
+    except (OSError, RuntimeError, ValueError):
+        return {hook: _empty_hook_health() for hook in HOOK_NAMES}
+    if not _is_plain_directory(base):
+        return {hook: _empty_hook_health() for hook in HOOK_NAMES}
+    return {hook: _hook_health_entry(base / hook) for hook in HOOK_NAMES}

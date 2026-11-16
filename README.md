@@ -465,7 +465,7 @@ Artifacts are reviewable evidence, not authority. Read the commands, source, tes
 - Network-backed workflows depend on user-managed authentication and runtime approval. The plugins do not install credentials or silently broaden network access.
 - Release workflows prepare and assess local artifacts. Remote publication, pushes, comments, merges, tags, and package uploads remain human-owned unless a future workflow explicitly documents a different contract.
 - Generated reports, plans, and experiment state are project-local. Read the owning plugin's artifact and cleanup sections before automating retention.
-- Platform support is capability-specific. Core workflows target Windows, macOS, and Linux; Codex Rig's authenticated legacy-shim cleanup remains POSIX-only, and Codemap's scan timeout flag uses a Unix-only signal where available.
+- Platform support is capability-specific. Core workflows target Windows, macOS, and Linux; Codex Rig's authenticated legacy-shim cleanup remains POSIX-only, and Codemap's `--timeout` flag has a portable supervisor path where `SIGALRM` is missing, proven on macOS and Linux; Windows stays unproven until CI observes it.
 - OpenCode Rig is an npm package for OpenCode `2.1.0+` on Node `20+`. It registers tools, skills, and one permission hook; role agents exist only after `opencode-rig init`, and its Git grant covers plain local commits only.
 - Possible future work is described as an opportunity, not a roadmap promise. The shipped source and tests define the current contract.
 

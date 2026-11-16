@@ -14,10 +14,12 @@ from .imports import (
     _extract_imports_and_scope,
     _symbol_alias_provenance,
     extract_dynamic_imports,
+    extract_dynamic_references,
     extract_imports,
     extract_module_exports,
 )
 from .mocks import extract_mock_patches
+from .receivers import extract_receiver_facts
 
 
 def _parse_file_star(args: tuple[Path, Path, Path]) -> dict:
@@ -35,6 +37,53 @@ def _strip_stub_call_edges(symbol_dicts: list[dict]) -> None:
     for sym in symbol_dicts:
         if sym.get("calls"):
             sym["calls"] = []
+
+
+def _dynamic_fields(
+    tree: ast.Module, filepath: Path, rel_path: Path, name: str, name_map: dict[str, str]
+) -> tuple[list[dict], list[dict]]:
+    """Return a module's ``dynamic_imports`` and ``dynamic_refs``: literal imports plus the statically resolved forms.
+
+    A stub has no executable body, so it neither imports dynamically nor holds a dynamic site; it keeps only what the
+    literal extractor always recorded. Resolved entries are appended, never merged, so literal entries keep the exact
+    order they always had.
+    """
+    dynamic_imports = extract_dynamic_imports(tree)
+    if filepath.suffix == ".pyi":
+        return dynamic_imports, []
+    try:
+        resolved_imports, dynamic_refs = extract_dynamic_references(
+            tree, name, filepath.name == "__init__.py", name_map
+        )
+    except Exception as exc:
+        # Same isolation as the import-scope fallback in _parse_file: a resolver defect must not degrade the module.
+        print(f"[codemap] ⚠ dynamic reference pass failed for {rel_path}: {exc}", file=sys.stderr)
+        return dynamic_imports, []
+    return [*dynamic_imports, *resolved_imports], dynamic_refs
+
+
+def _receiver_fields(
+    tree: ast.Module, filepath: Path, rel_path: Path, name: str, name_map: dict[str, str], module_map: dict[str, str]
+) -> dict:
+    """Return the additive ``typed_calls`` and ``class_bases`` fields, each only when non-empty.
+
+    The whole-index ``call_inference`` pass turns them into inferred call edges. A stub has no executable body, so it
+    records none; a defect in the receiver pass leaves the module ok, without these fields.
+    """
+    if filepath.suffix == ".pyi":
+        return {}
+    try:
+        facts = extract_receiver_facts(tree, name, name_map, module_map)
+    except Exception as exc:
+        # Same isolation as the dynamic reference pass: a resolver defect must not degrade the module.
+        print(f"[codemap] ⚠ receiver inference pass failed for {rel_path}: {exc}", file=sys.stderr)
+        return {}
+    fields: dict = {}
+    if facts.typed_calls:
+        fields["typed_calls"] = facts.typed_calls
+    if facts.class_bases:
+        fields["class_bases"] = facts.class_bases
+    return fields
 
 
 def _parse_file(filepath: Path, root: Path, src_root: Path) -> dict:
@@ -84,7 +133,7 @@ def _parse_file(filepath: Path, root: Path, src_root: Path) -> dict:
             imports = extract_imports(tree)
             submodule_candidates, nm, mm, star_imports = [], {}, {}, []
         symbols = extract_symbols(tree, name, nm, mm, star_imports or None)
-        dynamic_imports = extract_dynamic_imports(tree)
+        dynamic_imports, dynamic_refs = _dynamic_fields(tree, filepath, rel_path, name, nm)
         _loc, _is_entry = _count_loc_and_main_guard(source)
         is_test = bool(_TEST_PATH_RE.search(rel_path.as_posix()))
         entity_type, pkg = _classify_entity(rel_path, name)
@@ -118,6 +167,9 @@ def _parse_file(filepath: Path, root: Path, src_root: Path) -> dict:
         }
         if dynamic_imports:
             entry["dynamic_imports"] = dynamic_imports
+        if dynamic_refs:
+            entry["dynamic_refs"] = dynamic_refs
+        entry.update(_receiver_fields(tree, filepath, rel_path, name, nm, mm))
         if is_test:
             entry["mock_patches"] = extract_mock_patches(tree, rel_path)
         return entry

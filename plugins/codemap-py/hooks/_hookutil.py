@@ -13,6 +13,10 @@ sanitizer. Each was previously copy-pasted per hook, and every divergence betwee
 rather than an error: shards written under two different keys, or into two different directories, still look like
 perfectly healthy telemetry.
 
+It also owns hook health: :func:`hook_outcome` wraps each hook body, counting swallowed failures and stamping the
+last clean run under the runtime log directory, where ``codemap-py doctor`` reads them. Without it a hook that failed
+on every call looked exactly like a hook that had nothing to do.
+
 consumers: hooks/{seed-session,log-tool-use,log-skill-start,guard-redundant-scan,record-exhausted}.py — imported as bare
 ``_hookutil``; not a standalone executable
 """
@@ -23,8 +27,12 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import stat
 import tempfile
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 #: Characters that must never reach a shard name, a sentinel filename, or a session key.
@@ -44,6 +52,35 @@ LOG_DIR_ENV = "CODEMAP_LOG_DIR"
 RUNTIME_ALLOWLIST = frozenset({"claude", "codex"})
 #: Runtime name used when the host does not identify itself or reports an unrecognised one.
 DEFAULT_RUNTIME = "claude"
+
+#: Every hook that records its own health, by script stem. Mirrors ``codemap_py.runtime_log.HOOK_NAMES``, which
+#: ``codemap-py doctor`` reports in this order; a name outside this set is never turned into a path component.
+HOOK_NAMES = (
+    "guard-redundant-scan",
+    "inject-preamble",
+    "log-skill-start",
+    "log-tool-use",
+    "record-exhausted",
+    "seed-session",
+)
+#: Subdirectory of the runtime log directory holding one directory per hook. Mirrors
+#: ``codemap_py.runtime_log.HOOK_HEALTH_SUBDIR``. It holds no ``*.jsonl`` file, so no telemetry reader that
+#: enumerates the log directory (anonymizer export, debrief, join) ever picks a record up as a shard.
+HOOK_HEALTH_SUBDIR = "hook-health"
+#: Failure records kept per hook; each write deletes the oldest beyond this count. Mirrors
+#: ``codemap_py.runtime_log.HOOK_FAILURE_RETENTION``.
+HOOK_FAILURE_RETENTION = 50
+#: Name of the per-hook stamp holding the UTC time, in epoch nanoseconds, of the last run that ended cleanly.
+#: Mirrors ``codemap_py.runtime_log.HOOK_SUCCESS_STAMP``.
+HOOK_SUCCESS_STAMP = "last-success"
+#: Shape of one failure record name: ``fail-<epoch-ns, 20 digits>-<8 hex>-<exception class>``. The record is an
+#: empty file, so its name is the whole record: the class name and the UTC time, never a message, path or identity.
+#: Mirrors ``codemap_py.runtime_log._HOOK_FAILURE_NAME``.
+HOOK_FAILURE_NAME = re.compile(r"fail-(\d{20})-[0-9a-f]{8}-([A-Za-z_][A-Za-z0-9_]{0,63})")
+#: Characters an exception class name may not carry into a record name.
+_UNSAFE_CLASS = re.compile(r"[^A-Za-z0-9_]")
+#: Longest exception class name kept in a record name, so the name stays short on every filesystem.
+_CLASS_NAME_MAX = 64
 
 
 def runtime() -> str:
@@ -270,3 +307,151 @@ def project_key(cwd: Path | None = None) -> str:
     if os.name == "nt":
         identity = identity.replace("/", "\\").casefold()
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def logging_enabled() -> bool:
+    """Return whether the ``CODEMAP_LOGGING`` opt-out leaves local logging on.
+
+    Hook health records live in the log directory, so they follow the same opt-out as the telemetry shards: with
+    ``CODEMAP_LOGGING=false`` no hook writes there, and ``codemap-py doctor`` reports zero counts and no last success.
+
+    Examples:
+        >>> isinstance(logging_enabled(), bool)
+        True
+    """
+    return os.environ.get("CODEMAP_LOGGING", "true").lower() != "false"
+
+
+def _real_directory(path: Path) -> None:
+    """Create *path* as one owned directory level, refusing anything that is not a plain directory.
+
+    Only the two levels this module creates are checked. Higher components may legitimately be symlinks (a macOS
+    temporary path, a user's ``CODEMAP_LOG_DIR``), but a planted link at ``hook-health`` or a per-hook directory must
+    never redirect a record outside the log directory. An entry that reports a Windows reparse tag is refused too, as
+    intended defence against a junction.
+    """
+    with suppress(FileExistsError):
+        path.mkdir(mode=0o700)
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_reparse_tag", 0):
+        raise OSError(f"hook health path is not a plain directory: {path}")
+
+
+def _health_dir(hook: str) -> Path:
+    """Return the runtime-scoped health directory of *hook*, creating it as plain directories."""
+    base = log_dir()
+    base.mkdir(parents=True, exist_ok=True)
+    health = base / HOOK_HEALTH_SUBDIR
+    _real_directory(health)
+    directory = health / hook
+    _real_directory(directory)
+    return directory
+
+
+def _failure_record_name(exc: BaseException) -> str:
+    """Return a new failure record name carrying only the class name of *exc* and the current UTC time.
+
+    Examples:
+        >>> bool(HOOK_FAILURE_NAME.fullmatch(_failure_record_name(OSError("not stored"))))
+        True
+        >>> _failure_record_name(ValueError()).endswith("-ValueError")
+        True
+    """
+    cls = _UNSAFE_CLASS.sub("_", type(exc).__name__)[:_CLASS_NAME_MAX]
+    if not cls or cls[0].isdigit():
+        cls = f"_{cls}"[:_CLASS_NAME_MAX]
+    return f"fail-{time.time_ns():020d}-{secrets.token_hex(4)}-{cls}"
+
+
+def _trim_failures(directory: Path) -> None:
+    """Delete the oldest failure records of one hook beyond :data:`HOOK_FAILURE_RETENTION`.
+
+    Records are separate files, so trimming only unlinks: a concurrent writer's new record is never lost to a rewrite.
+    Two concurrent trimmers both delete a prefix of the same time-ordered list, so the directory never drops below the
+    retention count once that many records exist.
+    """
+    names = sorted(name for name in os.listdir(directory) if HOOK_FAILURE_NAME.fullmatch(name))
+    for stale in names[:-HOOK_FAILURE_RETENTION]:
+        with suppress(FileNotFoundError):
+            (directory / stale).unlink()
+
+
+def record_failure(hook: str, exc: BaseException) -> None:
+    """Record one swallowed failure of *hook* for ``codemap-py doctor``, never raising.
+
+    Each failure is one empty file created with ``O_CREAT | O_EXCL`` under
+    ``<log-dir>/<runtime>/hook-health/<hook>/``. Each record is its own file, so concurrent hook processes never
+    share a write target and the count does not depend on append atomicity across handles, which differs by
+    platform. Only the exception class name and the UTC time are kept; the message, the paths and the session
+    identity are never written.
+
+    The recorder is diagnostics: any error it meets (unwritable log directory, planted link, exhausted disk) is
+    dropped so the hook keeps its fail-open contract. A failure that happens before this function can run, such as an
+    import error or a launcher or interpreter failure, is therefore invisible here; a stale last-success stamp is the
+    only cue for it.
+
+    Args:
+        hook: Name from :data:`HOOK_NAMES`; any other value is ignored.
+        exc: The exception the hook swallowed or is about to re-raise.
+
+    Examples:
+        >>> record_failure("not-a-hook", OSError("ignored"))  # unknown names never become a path
+    """
+    try:
+        if hook not in HOOK_NAMES or not logging_enabled():
+            return
+        directory = _health_dir(hook)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        os.close(os.open(directory / _failure_record_name(exc), flags, 0o600))
+        _trim_failures(directory)
+    except Exception:  # noqa: S110 - diagnostics must never become the hook's own failure
+        pass
+
+
+def record_success(hook: str) -> None:
+    """Stamp the UTC time of a clean run of *hook*, never raising.
+
+    The stamp is what makes a hook that stopped running visible: its age grows while the failure count stays at zero.
+
+    Args:
+        hook: Name from :data:`HOOK_NAMES`; any other value is ignored.
+
+    Examples:
+        >>> record_success("not-a-hook")  # unknown names never become a path
+    """
+    try:
+        if hook not in HOOK_NAMES or not logging_enabled():
+            return
+        write_sentinel(_health_dir(hook) / HOOK_SUCCESS_STAMP, f"{time.time_ns():020d}\n")
+    except Exception:  # noqa: S110 - diagnostics must never become the hook's own failure
+        pass
+
+
+@contextmanager
+def hook_outcome(hook: str, expected: tuple[type[BaseException], ...]) -> Iterator[None]:
+    """Run one hook body, recording how it ended without changing what the hook returns or raises.
+
+    An exception in *expected* is recorded and swallowed, exactly as the hook's own ``except ...: pass`` did, so the
+    hook still fails open. Any other exception is recorded and re-raised, keeping the hook's previous exit behaviour.
+    A body that ends without an exception, including an early ``return``, stamps the last success.
+
+    Args:
+        hook: Name from :data:`HOOK_NAMES`.
+        expected: Exception classes the hook has always swallowed.
+
+    Yields:
+        Control to the hook body.
+
+    Examples:
+        >>> with hook_outcome("not-a-hook", (ValueError,)):
+        ...     raise ValueError("swallowed")
+    """
+    try:
+        yield
+    except expected as exc:
+        record_failure(hook, exc)
+        return
+    except Exception as exc:
+        record_failure(hook, exc)
+        raise
+    record_success(hook)

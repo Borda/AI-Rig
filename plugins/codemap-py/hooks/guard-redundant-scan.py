@@ -75,9 +75,13 @@ def module_matches(module: str, command: str) -> bool:
     return re.search(pattern, command) is not None
 
 
+#: Name under which this hook records its swallowed failures and last clean run for ``codemap-py doctor``.
+_HOOK_NAME = "guard-redundant-scan"
+
+
 def main() -> int:
     """Emit a Claude deny response only for an already-exhaustive import grep."""
-    try:
+    with _hookutil.hook_outcome(_HOOK_NAME, (OSError, TypeError, ValueError, re.error)):
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             return 0
@@ -104,8 +108,6 @@ def main() -> int:
                 }
             )
         )
-    except (OSError, TypeError, ValueError, re.error):
-        pass
     return 0
 
 

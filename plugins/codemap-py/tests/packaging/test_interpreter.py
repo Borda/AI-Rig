@@ -351,7 +351,15 @@ class TestEntryGate:
 
         report = json.loads(result.stdout)
         assert result.returncode == 0
-        assert set(report) == {"python", "version", "implementation", "supported", "plugin_root", "index_path"}
+        assert set(report) == {
+            "python",
+            "version",
+            "implementation",
+            "supported",
+            "plugin_root",
+            "index_path",
+            "hook_failures",
+        }
         assert report["implementation"] == "cpython"
         assert report["supported"] is True
         assert Path(report["plugin_root"]).name == "codemap-py"

@@ -15,8 +15,8 @@ from codemap_py import graph, query, rwgate
 @pytest.mark.parametrize(
     ("version", "rebuilt", "diagnostic"),
     [
-        pytest.param(14, True, "falling back to full scan", id="previous-generation-rebuilt"),
-        pytest.param(15, False, "Incremental scan", id="current-generation-reused"),
+        pytest.param(15, True, "falling back to full scan", id="previous-generation-rebuilt"),
+        pytest.param(16, False, "Incremental scan", id="current-generation-reused"),
     ],
 )
 def test_incremental_schema_generation_boundary(
@@ -34,7 +34,7 @@ def test_incremental_schema_generation_boundary(
 
     result = graph._build_index(args, tmp_path, index_path)
 
-    assert result["scan_version"] == 15
+    assert result["scan_version"] == 16
     assert (result["scanned_at"] != previous["scanned_at"]) is rebuilt
     assert diagnostic in capsys.readouterr().err
     index_path.write_text(json.dumps(result), encoding="utf-8")

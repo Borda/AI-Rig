@@ -1,0 +1,130 @@
+{
+  "description": "Pre-registered held-out repositories of the import-edge census (run-import-census.py --coordinates). Selected from a fixed pool by the written rule below, from file counts and default-branch commits read before any census scoring; none was used to derive or tune a scanner resolution rule.",
+  "registered_at": "2026-11-16",
+  "repositories": [
+    {
+      "commit": "8f4a058eeb2c664ef1cc2847d3882fc4a82fe3fa",
+      "group": "held-out",
+      "label": "black",
+      "name": "psf__black",
+      "url": "https://github.com/psf/black.git"
+    },
+    {
+      "commit": "a1b3be01aadc61c67edc09eed4f6cc1fcc3d3b8f",
+      "group": "held-out",
+      "label": "fastapi",
+      "name": "fastapi__fastapi",
+      "url": "https://github.com/fastapi/fastapi.git"
+    },
+    {
+      "commit": "3a109ccdffe5b2d0e30684a304fbd388e99ce57b",
+      "group": "held-out",
+      "label": "rich",
+      "name": "Textualize__rich",
+      "url": "https://github.com/Textualize/rich.git"
+    },
+    {
+      "commit": "e63a574c767d7a9438c21db158f605f1c44c6e6a",
+      "group": "held-out",
+      "label": "scrapy",
+      "name": "scrapy__scrapy",
+      "url": "https://github.com/scrapy/scrapy.git"
+    },
+    {
+      "commit": "035a07c32c3241fd3356f4d827800c1f88525272",
+      "group": "held-out",
+      "label": "sphinx",
+      "name": "sphinx-doc__sphinx",
+      "url": "https://github.com/sphinx-doc/sphinx.git"
+    }
+  ],
+  "selection": {
+    "count_method": "Number of blob entries whose path ends in .py in the GitHub recursive git tree of the commit (gh api GET repos/<owner>/<repo>/git/trees/<commit>?recursive=1; truncated=false for every member). Commit = head of the default branch at registration (gh api GET repos/<owner>/<repo>/commits/<branch>).",
+    "excluded": [
+      "yt-dlp",
+      "stable-diffusion-webui",
+      "spec-kit",
+      "pytest",
+      "werkzeug"
+    ],
+    "fallback": "If fewer than five qualify, widen the band to 50 to 5000 .py files, then take the next pool members alphabetically; never substitute a repository outside the pool.",
+    "fallback_used": false,
+    "members": [
+      {
+        "branch": "main",
+        "commit": "8f4a058eeb2c664ef1cc2847d3882fc4a82fe3fa",
+        "label": "black",
+        "py_files": 441,
+        "qualifies": true,
+        "repository": "psf/black"
+      },
+      {
+        "branch": "main",
+        "commit": "e38188e9e205005d5af5f9e59df51904c984586a",
+        "label": "click",
+        "py_files": 91,
+        "qualifies": false,
+        "repository": "pallets/click"
+      },
+      {
+        "branch": "master",
+        "commit": "a1b3be01aadc61c67edc09eed4f6cc1fcc3d3b8f",
+        "label": "fastapi",
+        "py_files": 1223,
+        "qualifies": true,
+        "repository": "fastapi/fastapi"
+      },
+      {
+        "branch": "main",
+        "commit": "49943b5a94413a530761350f04e896f76e8d620e",
+        "label": "flask",
+        "py_files": 83,
+        "qualifies": false,
+        "repository": "pallets/flask"
+      },
+      {
+        "branch": "master",
+        "commit": "b5addb64f0161ff6bfe94c124ef76f6a1fba5254",
+        "label": "httpx",
+        "py_files": 60,
+        "qualifies": false,
+        "repository": "encode/httpx"
+      },
+      {
+        "branch": "main",
+        "commit": "3a109ccdffe5b2d0e30684a304fbd388e99ce57b",
+        "label": "rich",
+        "py_files": 212,
+        "qualifies": true,
+        "repository": "Textualize/rich"
+      },
+      {
+        "branch": "master",
+        "commit": "e63a574c767d7a9438c21db158f605f1c44c6e6a",
+        "label": "scrapy",
+        "py_files": 546,
+        "qualifies": true,
+        "repository": "scrapy/scrapy"
+      },
+      {
+        "branch": "master",
+        "commit": "035a07c32c3241fd3356f4d827800c1f88525272",
+        "label": "sphinx",
+        "py_files": 775,
+        "qualifies": true,
+        "repository": "sphinx-doc/sphinx"
+      }
+    ],
+    "pool": [
+      "flask",
+      "click",
+      "rich",
+      "httpx",
+      "black",
+      "sphinx",
+      "scrapy",
+      "fastapi"
+    ],
+    "rule": "Keep pool repositories with 100 to 3000 .py files; take the first five alphabetically that are not among the excluded repositories."
+  }
+}

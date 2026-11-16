@@ -91,6 +91,7 @@ Interpret `index`:
 - Ordinary repository reads remain allowed for task-requested distinct independent AST/oracle view or source-body implementation/runtime. Label separately, never as rechecking complete Codemap result.
 - `query_complete: false`: name `completeness_reason`; use only a targeted fallback for gaps named by `degraded`, `not_covered`, `root_mismatch`, or `stale`. Fallback confirms queried facts → keep caveat in report, but caveat alone does not cut confidence below verified result.
 - `compact: true` changes only coverage metadata; findings/counts remain complete.
+- Extra honesty fields: coverage `remedies` (one `{reason, remedy}` per reducer), `dynamic_sites` (dynamic imports/`getattr` the index cannot resolve), `rdeps` `dynamic_imported_by[].via` (how a dynamic importer was resolved), `dead-symbols`/`dead-modules` `possibly_public: true` (may be used outside the repo; run `possibly_public_check` before deleting).
 
 Truncation ≠ incompleteness. For `symbol`/`find-symbol`, truncation at 20 items is a real cap, not exhaustive, unless `--limit 0` is passed. `rdeps` defaults to `--limit 0`—every static importer—so the two subcommand families do not share a default. 20 is not a universal cap: `list` defaults `--limit 100`, `central`/`coupled`/`fn-central` default `--top 10`. `query_complete` scores graph coverage only—staleness, degraded/untracked files, root mismatch, name collisions—not cap. Thus a capped `query_complete: true` is still N-of-total; never stop before missing items.
 

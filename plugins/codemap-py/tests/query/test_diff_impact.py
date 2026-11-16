@@ -271,7 +271,7 @@ def _method_project(tmp_path: Path, scan_index: Path) -> tuple[Path, Path, Path]
     util = root / "pkg" / "util.py"
     util.write_text(_METHOD_UTIL)
     (root / "pkg" / "core.py").write_text(
-        "from pkg.util import Report\n\n\ndef show(x):\n    r = Report(x)\n    return r.render()\n"
+        "from pkg.util import Report\n\n\ndef show(x):\n    r = Report(x) if x else None\n    return r.render()\n"
     )
     _init_committed_repo(root)
     run_scan(scan_index, root)
@@ -289,7 +289,7 @@ _METHOD_TESTS = (
     "\n"
     "class TestReport:\n"
     "    def test_render(self):\n"
-    "        r = Report(1)\n"
+    "        [r] = [Report(1)]\n"
     "        assert r.render() == 1\n"
     "\n"
     "\n"

@@ -415,11 +415,15 @@ def maybe_nudge_repeated_read(record: dict, log_file: Path) -> None:
         )
 
 
+#: Name under which this hook records its swallowed failures and last clean run for ``codemap-py doctor``.
+_HOOK_NAME = "log-tool-use"
+
+
 def main() -> int:
     """Record one matched tool use, respecting the opt-out and fail-open contracts."""
     if os.environ.get("CODEMAP_LOGGING", "true").lower() == "false":
         return 0
-    try:
+    with _hookutil.hook_outcome(_HOOK_NAME, (OSError, TypeError, ValueError)):
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             return 0
@@ -464,8 +468,6 @@ def main() -> int:
         with log_file.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(record, separators=(",", ":")) + "\n")
         maybe_nudge_repeated_read(record, log_file)
-    except (OSError, TypeError, ValueError):
-        pass
     return 0
 
 

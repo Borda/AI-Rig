@@ -202,6 +202,8 @@ def _reset_query_caches(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(query.coverage, "_coverage_cache", None)
     monkeypatch.setattr(query.index_io, "_git_root_cache", None)
     monkeypatch.setattr(query.index_io, "_git_root_resolved", False)
+    # An earlier in-process CLI run on the same xdist worker can leave this flag set, which swaps the veto reason.
+    monkeypatch.setattr("codemap_py.query_state._root_mismatch", False)
 
 
 class TestGitRootAnchoring:

@@ -165,6 +165,12 @@ def cmd_dead_symbols(index: dict, args: argparse.Namespace) -> None:
       * Owning module is **not** an entry-point (``if __name__ == "__main__"``)
       * Owning module is **not** a test file
       * Symbol name is **not** in the module's ``__all__`` list when present
+      * Symbol is **not** the target of a root ``pyproject.toml`` entry point (``[project.scripts]``,
+        ``[project.gui-scripts]``, ``[project.entry-points.*]``), nor a class enclosing that target
+
+    A finding in a top-level module or package ``__init__.py`` that declares no ``__all__`` carries
+    ``possibly_public: true``: outside code may import it, and the payload then carries one fixed
+    ``possibly_public_check`` text. The finding stays listed.
 
     Modules with ``has_star_imports=True`` are skipped entirely — star imports
     prevent reliable call-graph tracing; a warning per skipped module is logged
@@ -189,16 +195,14 @@ def cmd_dead_symbols(index: dict, args: argparse.Namespace) -> None:
     findings = [f for m in eligible for f in _module_dead_symbol_candidates(m, min_loc, rev_graph, sphinx_counts)]
 
     findings.sort(key=lambda f: (-f["loc"], f["module"], f["qualified_name"]))
-    _print(
-        json.dumps(
-            {
-                "dead": findings,
-                "total": len(findings),
-                "skipped_star_import": skipped_star,
-                "index": _cmd_coverage(index, method="static-ast", scope="dead-symbols"),
-            }
-        )
-    )
+    payload = {
+        "dead": findings,
+        "total": len(findings),
+        "skipped_star_import": skipped_star,
+        "index": _cmd_coverage(index, method="static-ast", scope="dead-symbols"),
+    }
+    _add_possibly_public_check(payload, findings)
+    _print(json.dumps(payload))
 
 
 def _dead_symbol_eligible_modules(index: dict) -> tuple[list[dict], list[str]]:
@@ -238,6 +242,128 @@ def _dead_symbol_eligible_modules(index: dict) -> tuple[list[dict], list[str]]:
     return eligible, skipped_star
 
 
+#: Fixed, identity-free text telling the reader how to confirm a ``possibly_public`` finding; emitted once per payload.
+_POSSIBLY_PUBLIC_CHECK = (
+    "possibly_public findings sit where outside code can import them (a top-level module, a package __init__.py, "
+    "or a module that declares __all__); the index sees only this project, so confirm no downstream project "
+    "or documented API uses them before deleting"
+)
+
+
+def _is_package_init(m: dict) -> bool:
+    """Return True when the module record comes from a package ``__init__.py`` file.
+
+    Examples:
+        >>> _is_package_init({"path": "src/pkg/__init__.py"})
+        True
+        >>> _is_package_init({"path": "src/pkg/mod.py"})
+        False
+        >>> _is_package_init({})
+        False
+    """
+    path = m.get("path")
+    return isinstance(path, str) and path.rsplit("/", 1)[-1] == "__init__.py"
+
+
+def _is_top_level_or_init(m: dict) -> bool:
+    """Return True for a top-level module (no dotted name) or any package ``__init__.py``.
+
+    Examples:
+        >>> _is_top_level_or_init({"name": "lib"})
+        True
+        >>> _is_top_level_or_init({"name": "lib.sub", "path": "lib/sub/__init__.py"})
+        True
+        >>> _is_top_level_or_init({"name": "lib.sub", "path": "lib/sub.py"})
+        False
+    """
+    return "." not in str(m.get("name", "")) or _is_package_init(m)
+
+
+def _symbol_possibly_public(m: dict) -> bool:
+    """Return True when a dead-symbol finding in this module may be a public API of the project.
+
+    Only symbols of a top-level module or package ``__init__.py`` carry the hint, and only when the module declares no
+    ``__all__`` (a declared ``__all__`` already settles which names are public, and dead-symbols skips those). The
+    other cues cannot fire here: a module with importers is never eligible, an entry-point module is skipped, and an
+    entry-point target is removed from the findings.
+
+    Examples:
+        >>> _symbol_possibly_public({"name": "lib"})
+        True
+        >>> _symbol_possibly_public({"name": "lib", "exports": ["a"]})
+        False
+        >>> _symbol_possibly_public({"name": "lib.deep.mod", "path": "lib/deep/mod.py"})
+        False
+    """
+    return m.get("exports") is None and _is_top_level_or_init(m)
+
+
+def _module_possibly_public(m: dict) -> bool:
+    """Return True when a dead-module finding may be a public module of the project.
+
+    Cues: the module declares ``__all__``, is a top-level module, or is a package ``__init__.py``. The entry-point cue
+    is not needed: an entry-point module never reaches the findings.
+
+    Examples:
+        >>> _module_possibly_public({"name": "lib.deep.mod", "path": "lib/deep/mod.py", "exports": []})
+        True
+        >>> _module_possibly_public({"name": "lib.deep.mod", "path": "lib/deep/mod.py"})
+        False
+    """
+    return m.get("exports") is not None or _is_top_level_or_init(m)
+
+
+def _add_possibly_public_check(payload: dict, findings: list[dict]) -> None:
+    """Add the fixed ``possibly_public_check`` text to *payload* when any finding carries the hint.
+
+    Examples:
+        >>> p = {}; _add_possibly_public_check(p, [{"possibly_public": True}]); sorted(p)
+        ['possibly_public_check']
+        >>> p = {}; _add_possibly_public_check(p, [{}]); p
+        {}
+    """
+    if any(f.get("possibly_public") for f in findings):
+        payload["possibly_public_check"] = _POSSIBLY_PUBLIC_CHECK
+
+
+def _entry_point_refs(m: dict) -> list[dict]:
+    """Return the module's well-formed ``entry_point_refs`` records.
+
+    The index validator does not know this key, so anything other than a list of dicts reads as no reference.
+
+    Examples:
+        >>> _entry_point_refs({"entry_point_refs": [{"symbol": "main"}, "junk"]})
+        [{'symbol': 'main'}]
+        >>> _entry_point_refs({"entry_point_refs": "junk"})
+        []
+    """
+    refs = m.get("entry_point_refs")
+    if not isinstance(refs, list):
+        return []
+    return [ref for ref in refs if isinstance(ref, dict)]
+
+
+def _entry_point_symbols(m: dict) -> set[str]:
+    """Return the qualified names that loading the module's entry points looks up.
+
+    Loading ``pkg.mod:Cls.method`` reads ``Cls`` from the module and then ``method`` from it, so both ``Cls`` and
+    ``Cls.method`` count as referenced. A module-only target (``pkg.plugin``) names no symbol.
+
+    Examples:
+        >>> sorted(_entry_point_symbols({"entry_point_refs": [{"symbol": "Cls.method"}, {"symbol": None}]}))
+        ['Cls', 'Cls.method']
+        >>> _entry_point_symbols({})
+        set()
+    """
+    names: set[str] = set()
+    for ref in _entry_point_refs(m):
+        symbol = ref.get("symbol")
+        if isinstance(symbol, str) and symbol:
+            parts = symbol.split(".")
+            names.update(".".join(parts[:end]) for end in range(1, len(parts) + 1))
+    return names
+
+
 def _module_dead_symbol_candidates(
     m: dict, min_loc: int, rev_graph: dict[str, list[str]], sphinx_counts: dict[str, int]
 ) -> list[dict]:
@@ -252,12 +378,16 @@ def _module_dead_symbol_candidates(
     """
     mod_name = m.get("name", "")
     exports: list[str] | None = m.get("exports")
+    entry_point_symbols = _entry_point_symbols(m)
+    possibly_public = _symbol_possibly_public(m)
     findings: list[dict] = []
     for sym in m.get("symbols", []):
         qname = sym.get("qualified_name", "")
         if not _is_public_symbol(qname):
             continue
         if exports is not None and sym.get("name", "") in exports:
+            continue
+        if qname in entry_point_symbols:
             continue
         loc = _symbol_loc(sym)
         if loc < min_loc:
@@ -270,16 +400,17 @@ def _module_dead_symbol_candidates(
             continue
         if sphinx_counts.get(full_qname, 0) != 0:
             continue
-        findings.append(
-            {
-                "name": sym.get("name", ""),
-                "module": mod_name,
-                "qualified_name": qname,
-                "loc": loc,
-                "rdep_count": m.get("rdep_count", 0),
-                "fn_rdep_count": fn_rdeps,
-            }
-        )
+        finding = {
+            "name": sym.get("name", ""),
+            "module": mod_name,
+            "qualified_name": qname,
+            "loc": loc,
+            "rdep_count": m.get("rdep_count", 0),
+            "fn_rdep_count": fn_rdeps,
+        }
+        if possibly_public:
+            finding["possibly_public"] = True
+        findings.append(finding)
     return findings
 
 
@@ -291,12 +422,18 @@ def cmd_dead_modules(index: dict, args: argparse.Namespace) -> None:
       * ``rdep_count == 0`` — no other module imports it statically
       * ``is_entry_point == False`` — not a runnable ``__main__`` script
       * ``is_test == False`` — not a test file
+      * no ``entry_point_refs`` — not the target module of an entry point declared
+        in the root ``pyproject.toml`` (packaging tools import it by name)
 
-    Dynamic importers (``dynamic_imported_by``) and config-file references
-    (``config_refs``) are deliberately ignored: a module reachable only via
-    dynamic dispatch is, by this definition, structurally dead from the static
-    call graph's point of view. Callers needing dynamic awareness should use
-    ``rdeps <module>`` to inspect the full reverse-import surface.
+    A finding that is a top-level module, a package ``__init__.py`` or a module declaring ``__all__`` carries
+    ``possibly_public: true`` (outside code may import it) and the payload then carries one fixed
+    ``possibly_public_check`` text; the finding stays listed.
+
+    Dynamic importers (``dynamic_imported_by``) and generic config-file
+    references (``config_refs``) are deliberately ignored: a module reachable
+    only via dynamic dispatch is, by this definition, structurally dead from the
+    static call graph's point of view. Callers needing dynamic awareness should
+    use ``rdeps <module>`` to inspect the full reverse-import surface.
 
     Output is sorted by LOC descending — biggest dead module first.
 
@@ -318,21 +455,22 @@ def cmd_dead_modules(index: dict, args: argparse.Namespace) -> None:
             continue
         if m.get("rdep_count", 0) != 0:
             continue
-        findings.append(
-            {
-                "name": m.get("name", ""),
-                "rdep_count": m.get("rdep_count", 0),
-                "loc": m.get("loc", 0),
-            }
-        )
+        if _entry_point_refs(m):
+            continue
+        finding = {
+            "name": m.get("name", ""),
+            "rdep_count": m.get("rdep_count", 0),
+            "loc": m.get("loc", 0),
+        }
+        if _module_possibly_public(m):
+            finding["possibly_public"] = True
+        findings.append(finding)
 
     findings.sort(key=lambda f: (-f["loc"], f["name"]))
-    _print(
-        json.dumps(
-            {
-                "dead_modules": findings,
-                "total": len(findings),
-                "index": _cmd_coverage(index, method="import-graph", scope="dead-modules"),
-            }
-        )
-    )
+    payload = {
+        "dead_modules": findings,
+        "total": len(findings),
+        "index": _cmd_coverage(index, method="import-graph", scope="dead-modules"),
+    }
+    _add_possibly_public_check(payload, findings)
+    _print(json.dumps(payload))

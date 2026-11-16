@@ -180,9 +180,13 @@ def invalidate(sentinel: Path, payload: dict) -> None:
     sentinel.unlink(missing_ok=True)
 
 
+#: Name under which this hook records its swallowed failures and last clean run for ``codemap-py doctor``.
+_HOOK_NAME = "record-exhausted"
+
+
 def main() -> int:
     """Maintain the exhausted-query sentinel for one PostToolUse event, failing open."""
-    try:
+    with _hookutil.hook_outcome(_HOOK_NAME, (OSError, TypeError, ValueError)):
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             return 0
@@ -191,8 +195,6 @@ def main() -> int:
             invalidate(sentinel, payload)
         else:
             record(sentinel, payload)
-    except (OSError, TypeError, ValueError):
-        pass
     return 0
 
 

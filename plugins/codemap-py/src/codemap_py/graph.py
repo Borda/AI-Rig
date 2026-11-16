@@ -27,7 +27,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from codemap_py import index_paths, rwgate
+from codemap_py import _deadline, index_paths, rwgate
+from codemap_py.call_inference import infer_call_edges
 from codemap_py.scanner import (
     _GLOB_META_RE,
     _STDLIB_MODULES,
@@ -49,6 +50,7 @@ from codemap_py.scanner import (
     get_git_sha,
     load_src_roots,
     scan_config_refs,
+    scan_entry_point_refs,
     scan_mkdocs_xrefs,
     scan_rst_xrefs,
 )
@@ -535,7 +537,10 @@ def _build_subprocess_rdep_count(modules: list[dict]) -> dict[str, int]:
 
 
 def _apply_config_refs(root: Path, modules: list[dict]) -> None:
-    """Attach config_refs from scan_config_refs to matching module entries in-place.
+    """Attach config_refs and pyproject entry_point_refs to matching module entries in-place.
+
+    Both keys are cleared first and set only when non-empty: an incremental scan carries the previous module dicts,
+    so a reference removed from the config must not survive on an unchanged module.
 
     Args:
         root: project root used for config file discovery.
@@ -543,11 +548,15 @@ def _apply_config_refs(root: Path, modules: list[dict]) -> None:
     """
     module_names = {m["name"] for m in modules if m.get("status") == "ok"}
     refs = scan_config_refs(root, module_names)
+    entry_refs = scan_entry_point_refs(root, module_names)
     for m in modules:
         name = m.get("name", "")
         m.pop("config_refs", None)
+        m.pop("entry_point_refs", None)
         if name in refs:
             m["config_refs"] = refs[name]
+        if name in entry_refs:
+            m["entry_point_refs"] = entry_refs[name]
 
 
 def _build_internal_prefix_set(indexed_names: set[str]) -> set[str]:
@@ -688,6 +697,20 @@ def _canonicalize_symbol_aliases(modules: list[dict]) -> dict[str, str]:
         _resolve(alias, set())
 
     return dict(sorted(resolved.items()))
+
+
+def _aliases_with_inferred_calls(modules: list[dict]) -> dict[str, str]:
+    """Canonicalize symbol aliases, then add the inferred method-call edges that resolve through them.
+
+    Args:
+        modules: parsed module entries; their symbols gain ``inferred`` call edges in place.
+
+    Returns:
+        The canonical ``alias_qname -> qname`` map of :func:`_canonicalize_symbol_aliases`.
+    """
+    symbol_aliases = _canonicalize_symbol_aliases(modules)
+    infer_call_edges(modules, symbol_aliases)
+    return symbol_aliases
 
 
 def _resolve_import_submodule_edges(modules: list[dict]) -> None:
@@ -956,13 +979,74 @@ def _stamp_dynamic_rdeps(modules: list[dict]) -> None:
                     (n for n in sorted(all_module_names, key=len, reverse=True) if literal.startswith(n + ".")), None
                 )
             if matched:
-                dynamic_rdeps.setdefault(matched, []).append(
-                    {"importer": caller_name, "path": caller_path, "line": entry["line"], "literal": literal}
-                )
+                record = {"importer": caller_name, "path": caller_path, "line": entry["line"], "literal": literal}
+                # Resolved non-literal forms say how the path was found; a plain literal keeps its old record shape.
+                if entry.get("via"):
+                    record["via"] = entry["via"]
+                dynamic_rdeps.setdefault(matched, []).append(record)
     for m in modules:
         name = m.get("name", "")
+        # An incremental scan carries unchanged modules over, so a module whose last dynamic importer went away must
+        # lose the list here; setting it only when present left the old importers in place.
+        m.pop("dynamic_imported_by", None)
         if name in dynamic_rdeps:
             m["dynamic_imported_by"] = dynamic_rdeps[name]
+
+
+def _resolve_dynamic_refs(records: object, indexed_names: set[str]) -> tuple[list[dict], int]:
+    """Split one module's ``dynamic_refs`` into resolved ``getattr`` references and a dynamic-site count.
+
+    A ``getattr`` record counts only when its base is an indexed module: a base that is a class, a function or an
+    external module can neither reference an indexed symbol nor hide one. An unresolved import call always counts,
+    since its argument may name any indexed module.
+
+    Args:
+        records: the module's ``dynamic_refs`` value (read defensively; anything malformed is skipped).
+        indexed_names: names of every ok module in the index.
+
+    Returns:
+        ``(getattr_refs, dynamic_sites)`` — references as ``{"target": "module::attr", "line"}`` records.
+
+    Examples:
+        >>> records = [
+        ...     {"kind": "getattr", "module": "pkg.mod", "name": "run", "line": 3},
+        ...     {"kind": "getattr", "module": "pkg.mod", "line": 4},
+        ...     {"kind": "getattr", "module": "pkg.mod.Cls", "name": "x", "line": 5},
+        ...     {"kind": "import", "line": 6},
+        ... ]
+        >>> _resolve_dynamic_refs(records, {"pkg.mod"})
+        ([{'target': 'pkg.mod::run', 'line': 3}], 2)
+    """
+    refs: list[dict] = []
+    sites = 0
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict):
+            continue
+        if record.get("kind") == "import":
+            sites += 1
+        elif record.get("kind") == "getattr" and record.get("module") in indexed_names:
+            if isinstance(record.get("name"), str):
+                refs.append({"target": f"{record['module']}::{record['name']}", "line": record.get("line")})
+            else:
+                sites += 1
+    return refs, sites
+
+
+def _stamp_dynamic_refs(modules: list[dict]) -> None:
+    """Stamp each module's resolved ``getattr_refs`` and its ``dynamic_sites`` count, in place.
+
+    Both are derived from the per-file ``dynamic_refs`` and the current module set, so they are rebuilt on every full
+    and incremental scan; each is absent when empty so an index without dynamic references keeps its old key set.
+    """
+    indexed_names = {m["name"] for m in modules if m.get("status") == "ok"}
+    for m in modules:
+        m.pop("getattr_refs", None)
+        m.pop("dynamic_sites", None)
+        refs, sites = _resolve_dynamic_refs(m.get("dynamic_refs", []), indexed_names)
+        if refs:
+            m["getattr_refs"] = refs
+        if sites:
+            m["dynamic_sites"] = sites
 
 
 def _recompute_metrics(
@@ -989,6 +1073,7 @@ def _recompute_metrics(
     _stamp_reference_counts(modules, counts)
     _stamp_import_groups(modules, aliases)
     _stamp_dynamic_rdeps(modules)
+    _stamp_dynamic_refs(modules)
 
 
 def _collect_doc_xrefs(root: Path) -> list[dict]:
@@ -1390,7 +1475,7 @@ def scan(root: Path, coverage_path: Path | None = None) -> dict:
     module_aliases = _collect_module_aliases(conftest_paths, indexed_names, root)
 
     _resolve_import_edges(modules, root)
-    symbol_aliases = _canonicalize_symbol_aliases(modules)
+    symbol_aliases = _aliases_with_inferred_calls(modules)
     symbol_alias_limitations = _collect_symbol_alias_limitations(modules)
     _recompute_metrics(modules, module_aliases, symbol_aliases)
     # Phase 3: config-file refs — scan pyproject.toml, setup.cfg, *.yml, *.yaml.
@@ -1588,7 +1673,7 @@ def incremental_scan(root: Path, old_index: dict, coverage_path: Path | None = N
     module_aliases = _collect_module_aliases(conftest_paths, indexed_names, root)
 
     _resolve_import_edges(modules, root)
-    symbol_aliases = _canonicalize_symbol_aliases(modules)
+    symbol_aliases = _aliases_with_inferred_calls(modules)
     symbol_alias_limitations = _collect_symbol_alias_limitations(modules)
     _recompute_metrics(modules, module_aliases, symbol_aliases)
     _apply_config_refs(root, modules)
@@ -1804,23 +1889,83 @@ def _resolve_out_path(root: Path) -> Path:
     return target
 
 
+#: The scan launcher a supervising parent runs as its worker (same layout ``bin/scan-index`` uses to find ``src/``).
+_SCAN_INDEX_LAUNCHER = Path(__file__).resolve().parents[2] / "bin" / "scan-index"
+
+
+def _requested_root(argv: list[str]) -> Path | None:
+    """Return the last complete ``--root`` in ``argv`` without validating the rest of the command line.
+
+    Examples:
+        >>> _requested_root(["--root", "a", "--root", "b", "--incremental"]) == Path("b")
+        True
+        >>> _requested_root(["--incremental"]) is None
+        True
+    """
+    # Preserve the last complete root even if a later root option is malformed.
+    root_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False, exit_on_error=False)
+    root_parser.add_argument("--root", type=Path)
+    root_args = argparse.Namespace(root=None)
+    try:
+        root_parser.parse_known_args(argv, namespace=root_args)
+    except argparse.ArgumentError:
+        pass  # The full parser owns malformed-root diagnostics and exit status.
+    return root_args.root
+
+
+def _requested_timeout(argv: list[str]) -> int:
+    """Return the ``--timeout`` seconds in ``argv``, or ``0`` when absent or malformed.
+
+    A malformed value yields ``0`` so the run continues to the full parser, which owns the diagnostic and exit status.
+
+    Examples:
+        >>> _requested_timeout(["--incremental", "--timeout", "7"])
+        7
+        >>> _requested_timeout(["--timeout", "soon"]), _requested_timeout([])
+        (0, 0)
+    """
+    timeout_parser = argparse.ArgumentParser(add_help=False, exit_on_error=False)
+    timeout_parser.add_argument("--timeout", type=int, default=0)
+    try:
+        known, _ = timeout_parser.parse_known_args(argv)
+    except argparse.ArgumentError:
+        return 0
+    return known.timeout
+
+
+def _supervise_portable_timeout(argv: list[str]) -> None:
+    """Own a ``--timeout`` deadline from a parent process on hosts without ``SIGALRM``.
+
+    Returns at once when there is no deadline or the host has ``SIGALRM`` (the in-process alarm keeps that path).
+    Otherwise it never returns: the scan runs in a ``scan-index`` worker that records its own outcome, and this parent
+    exits with the worker's status; on expiry it stops the worker and writes the run's single record itself, with the
+    same stderr line, result and exit status ``2`` as the ``SIGALRM`` path.
+    """
+    seconds = _requested_timeout(argv)
+    if seconds <= 0 or _deadline.select_mechanism() is _deadline.DeadlineMechanism.ALARM:
+        return
+    status = _deadline.run_supervised([sys.executable, str(_SCAN_INDEX_LAUNCHER), *argv], seconds)
+    if status is not None:
+        sys.exit(status)
+    with CliInvocation("index", argv) as invocation:
+        invocation.root = _requested_root(argv) or find_root()
+        invocation.result = {"error": "timeout", "timeout_seconds": seconds}
+        print(f"scan-index: timed out after {seconds}s", file=sys.stderr)
+        sys.exit(2)
+
+
 def main() -> None:
     """Run one scan attempt with terminal telemetry, including handled failures."""
+    deadline_owned_by_parent = _deadline.claim_worker_role()
+    if not deadline_owned_by_parent:
+        _supervise_portable_timeout(sys.argv[1:])
     previous_alarm = signal.getsignal(signal.SIGALRM) if hasattr(signal, "SIGALRM") else None
     previous_timer = signal.getitimer(signal.ITIMER_REAL) if hasattr(signal, "getitimer") else (0.0, 0.0)
     timer_started = time.monotonic()
     with CliInvocation("index", sys.argv[1:]) as invocation:
-        # Preserve the last complete root even if a later root option is malformed.
-        root_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False, exit_on_error=False)
-        root_parser.add_argument("--root", type=Path)
-        root_args = argparse.Namespace(root=None)
+        invocation.root = _requested_root(invocation.argv)
         try:
-            root_parser.parse_known_args(invocation.argv, namespace=root_args)
-        except argparse.ArgumentError:
-            pass  # The full parser owns malformed-root diagnostics and exit status.
-        invocation.root = root_args.root
-        try:
-            _run_scan(invocation)
+            _run_scan(invocation, deadline_owned_by_parent)
         finally:
             if hasattr(signal, "SIGALRM") and signal.getsignal(signal.SIGALRM) != previous_alarm:
                 signal.alarm(0)
@@ -1831,8 +1976,14 @@ def main() -> None:
                     signal.setitimer(signal.ITIMER_REAL, remaining, previous_timer[1])
 
 
-def _run_scan(invocation: CliInvocation) -> None:
-    """Parse CLI arguments and run the scan."""
+def _run_scan(invocation: CliInvocation, deadline_owned_by_parent: bool = False) -> None:
+    """Parse CLI arguments and run the scan.
+
+    Args:
+        invocation: The run's telemetry scope.
+        deadline_owned_by_parent: This process is a supervised worker; its parent enforces ``--timeout``, so no
+            in-process alarm is armed (it would race the parent's deadline).
+    """
     parser = argparse.ArgumentParser(description="Build the codemap structural index.")
     parser.add_argument("--root", type=Path, default=None, help="Project root (default: git root or cwd)")
     parser.add_argument(
@@ -1855,11 +2006,12 @@ def _run_scan(invocation: CliInvocation) -> None:
         type=int,
         default=0,
         metavar="N",
-        help="Hard timeout in seconds; 0 = no limit (default). Uses SIGALRM — Unix only.",
+        help="Hard timeout in seconds; 0 = no limit (default). Uses SIGALRM on Unix and a parent-process deadline elsewhere.",
     )
     args = parser.parse_args()
 
-    if args.timeout > 0 and hasattr(signal, "SIGALRM"):
+    alarm_host = _deadline.select_mechanism() is _deadline.DeadlineMechanism.ALARM
+    if args.timeout > 0 and alarm_host and not deadline_owned_by_parent:
 
         def _timeout_handler(signum: int, frame: object) -> None:
             """Retain the handled timeout outcome before unwinding the scan."""

@@ -41,7 +41,7 @@ Run each compact query alone: `PLUGIN_ROOT/bin/codemap-py query --compact <subco
 
 Counts and scoped rankings come from the query, never hand work on its output: no counting a returned list, no subtracting one call from another, no eyeballing repo-wide `central` against a candidate set. Rank a set from a prior result with `central --among`; `unmatched` names what it skipped. `rdeps --exclude-tests` reports `importer_count` and `excluded_test_importer_count` together.
 
-Truncation at 20 items is a real cap (`symbol`/`find-symbol` default); `--limit 0` removes it. `rdeps --limit N` previews static `imported_by`; default/`--limit 0` is exhaustive. `dynamic_imported_by`/`config_refs` stay exhaustive. `query_complete` is graph coverage only: true may mean 20-of-N. `index.confidence`: `exact` whole set, `partial` capped/stale; `index.truncated`+`index.total_available` give N. Truncated `rdeps` never settles exhaustive callers.
+Truncation at 20 items is a real cap (`symbol`/`find-symbol` default); `--limit 0` removes it. `rdeps --limit N` previews static `imported_by`; default/`--limit 0` is exhaustive. `dynamic_imported_by`/`config_refs` stay exhaustive. `query_complete` is graph coverage only: true may mean 20-of-N. `index.confidence`: `exact` whole set, `partial` capped/stale; `index.truncated`+`index.total_available` give N. Truncated `rdeps` never settles exhaustive callers. Also read coverage `remedies`/`dynamic_sites`, `rdeps` `via`; `dead-*` `possibly_public: true`: run `possibly_public_check` before deleting.
 
 No arbitrary total-call cap for needed facts. Bounded targeted correction retries per query; if the same correction failure recurs, stop and report the unfinished fact. Never retry a completed fact.
 

@@ -451,6 +451,6 @@ class TestIncrementalAliasScan:
         assert result.returncode == 0, result.stderr
         assert f"pre-v{SCAN_VERSION} index found — falling back to full scan" in result.stderr
         rebuilt = json.loads(index_path.read_text())
-        assert rebuilt["scan_version"] == SCAN_VERSION == 15
+        assert rebuilt["scan_version"] == SCAN_VERSION == 16
         assert rebuilt["symbol_aliases"]["pkg::target"] == "pkg.impl::target"
         assert rebuilt["symbol_alias_limitations"]

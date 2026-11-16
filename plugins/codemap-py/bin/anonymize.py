@@ -134,11 +134,21 @@ _COMMAND_LIST_FIELDS = ("imported_by", "changed_modules")
 #: diagnostic label (e.g. ``"sphinx"``) that gets pseudonymized too even though it
 #: was never identifying. Per the module's own design (see :data:`_GENERIC_TOKENS`):
 #: a safe field losing readability is the accepted failure mode, never a leak.
-_RESULT_FIELDS = ("source", "imports", "name", "resolved_qname", "file", "pattern", "hint")
+#:
+#: ``rdeps``' ``dynamic_imported_by[]`` rows name the importing module (``importer``)
+#: and the imported module path text (``literal``); both were passed through
+#: verbatim before resolved constant and lazy-map imports added more such rows.
+_RESULT_FIELDS = ("source", "imports", "name", "resolved_qname", "file", "pattern", "hint", "importer", "literal")
 
 #: List-valued counterpart to :data:`_RESULT_FIELDS`, same result-only gating and
 #: same telemetry scan: lists of untracked-file paths and qualified/suggested names.
 _RESULT_LIST_FIELDS = ("unique_qualified_names", "untracked_py", "suggestions")
+
+#: List fields of diagnostic prose, scrubbed per element by the qualified-name rule only, at any depth: ``not_covered``
+#: labels and the coverage block's ``remedies`` records (``{reason, remedy}``). Both are fixed identity-free templates
+#: by contract; scrubbing them anyway means a template that ever gains a qualified name cannot leak it, while plain
+#: prose stays readable. ``remedies`` is listed here because an unlisted key passes through unchanged.
+_TEXT_LIST_FIELDS = ("not_covered", "remedies")
 
 #: Join keys that identify one local Claude Code session. Replaced by a stable
 #: pseudonym: cross-layer joins survive (same salt → same pseudonym) while the raw
@@ -333,6 +343,37 @@ def _anonymize_text(text: str, salt: bytes) -> str:
     return _QUALIFIED_TOKEN_RE.sub(lambda m: _pseudo(m.group(0), salt), text)
 
 
+def _anonymize_text_item(item: object, salt: bytes) -> object:
+    """Scrub qualified names out of one :data:`_TEXT_LIST_FIELDS` element, string or flat record.
+
+    ``not_covered`` holds strings; ``remedies`` holds ``{reason, remedy}`` records. Each string value goes through
+    :func:`_anonymize_text`, so diagnostic prose and reducer slugs survive while any qualified name a future template
+    picks up is pseudonymized. Other value types pass through unchanged.
+
+    Args:
+        item: One list element.
+        salt: Per-project salt bytes.
+
+    Returns:
+        The element with qualified-name tokens in its strings replaced by pseudonyms.
+
+    Examples:
+        >>> s = b'x' * 32
+        >>> _anonymize_text_item("lazy-loading", s)
+        'lazy-loading'
+        >>> out = _anonymize_text_item({"reason": "collision", "remedy": "drop pkg.auth then re-scan"}, s)
+        >>> out["reason"], "pkg.auth" in out["remedy"]
+        ('collision', False)
+        >>> _anonymize_text_item(3, s)
+        3
+    """
+    if isinstance(item, str):
+        return _anonymize_text(item, salt)
+    if isinstance(item, dict):
+        return {k: _anonymize_text(v, salt) if isinstance(v, str) else v for k, v in item.items()}
+    return item
+
+
 def _pseudo_token(token: str, salt: bytes) -> str:
     """Return the pseudonym for one command token, or the token when it identifies nothing.
 
@@ -476,6 +517,8 @@ def _scrub_field(key: str, val: object, salt: bytes, *, in_result: bool = False)
         True
         >>> _scrub_field("timing_ms", 12, s) is None
         True
+        >>> _scrub_field("remedies", [{"reason": "stale", "remedy": "Re-run /codemap-py:scan-codebase."}], s)
+        [{'reason': 'stale', 'remedy': 'Re-run /codemap-py:scan-codebase.'}]
     """
     # Merged conditions keep return points <= the PLR0911 cap: two field families share
     # one transform each (_anonymize_command for scalars, the same list comprehension
@@ -489,8 +532,8 @@ def _scrub_field(key: str, val: object, salt: bytes, *, in_result: bool = False)
         return [_anonymize_command(e, salt) if isinstance(e, str) else e for e in val]
     if key in _SESSION_FIELDS and isinstance(val, str) and val:
         return _pseudo(val, salt)
-    if key == "not_covered" and isinstance(val, list):
-        return [_anonymize_text(e, salt) if isinstance(e, str) else e for e in val]
+    if key in _TEXT_LIST_FIELDS and isinstance(val, list):
+        return [_anonymize_text_item(e, salt) for e in val]
     return None
 
 
@@ -505,9 +548,9 @@ def _scrub_special_fields(v: object, salt: bytes, *, in_result: bool = False) ->
     :data:`_RESULT_FIELDS`/:data:`_RESULT_LIST_FIELDS` rules also apply, at any depth
     below that point; ``session``/``hook_session`` become stable pseudonyms; each element
     of a :data:`_COMMAND_LIST_FIELDS`/:data:`_RESULT_LIST_FIELDS` list (e.g.
-    ``imported_by``) is pseudonymized; and each ``not_covered`` element is scrubbed
-    individually, so qualified-name elements become pseudonyms while plain diagnostic
-    labels (e.g. ``lazy-loading``) pass through.
+    ``imported_by``) is pseudonymized; and each ``not_covered`` element and each
+    ``remedies`` record's strings are scrubbed individually, so qualified-name elements
+    become pseudonyms while plain diagnostic labels (e.g. ``lazy-loading``) pass through.
 
     This complements — and is applied alongside — :func:`_anonymize_value`, which
     handles whole-value qualified names in the ``args`` payload.
@@ -564,7 +607,7 @@ def anonymize_record(record: dict, salt: bytes) -> dict:
     :data:`_RESULT_FIELDS` / :data:`_RESULT_LIST_FIELDS` keys (e.g. verbatim source
     bodies in ``symbols[].source``, bare names in ``central[].name``), the
     ``session`` / ``hook_session`` join keys, and each element of any ``not_covered``
-    list. Leaves all other fields (timestamps, counts, flags, and top-level fields
+    or ``remedies`` list. Leaves all other fields (timestamps, counts, flags, and top-level fields
     that share a name with a result-only key, such as the ``source`` marking a
     synthetic benchmark record) unchanged.
 

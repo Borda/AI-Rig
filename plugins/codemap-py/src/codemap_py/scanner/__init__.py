@@ -78,6 +78,7 @@ from .docs_xrefs import (
     scan_mkdocs_xrefs,
     scan_rst_xrefs,
 )
+from .entry_points import scan_entry_point_refs
 from .exclusions import (
     _GLOB_META_RE,
     INDEXED_PATHSPEC,
@@ -246,6 +247,7 @@ __all__ = [
     "resolve_call",
     "resolve_call_chain",
     "scan_config_refs",
+    "scan_entry_point_refs",
     "scan_mkdocs_xrefs",
     "scan_rst_xrefs",
 ]

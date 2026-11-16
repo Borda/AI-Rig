@@ -76,6 +76,8 @@ For each `__all__` hit, Edit `"old_name"` → `"new_name"`.
 
 **4c — Import call sites** (per caller from `called_by`):
 
+A row with `inferred: true` is a caller reached only through an inferred receiver type, not a recorded call. Before editing its range, open the call site and confirm the receiver's class is the renamed symbol's class; edit only the confirmed call, and list an unconfirmed one as skipped instead of rewriting it.
+
 Track import-edited files in `PROCESSED_IMPORT_FILES` tmpfile; three callers in one file still need one import edit. The 4b block initializes it before the loop.
 
 Before each caller-file import edit, check + mark:

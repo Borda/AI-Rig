@@ -1,0 +1,40 @@
+{
+  "description": "Pinned repositories of the import-edge census (run-import-census.py). held-out: selected before the first census run; tuned: repositories the external resolver it is compared with was tuned on.",
+  "repositories": [
+    {
+      "commit": "b77c9304e1c4220cca450c583491904daf8455af",
+      "group": "held-out",
+      "label": "yt-dlp",
+      "name": "yt-dlp__yt-dlp",
+      "url": "https://github.com/yt-dlp/yt-dlp.git"
+    },
+    {
+      "commit": "82a973c04367123ae98bd9abdf80d9eda9b910e2",
+      "group": "held-out",
+      "label": "stable-diffusion-webui",
+      "name": "AUTOMATIC1111__stable-diffusion-webui",
+      "url": "https://github.com/AUTOMATIC1111/stable-diffusion-webui.git"
+    },
+    {
+      "commit": "ba8363f8ab56b2da456a81299cfdbfee1ef7b871",
+      "group": "held-out",
+      "label": "spec-kit",
+      "name": "github__spec-kit",
+      "url": "https://github.com/github/spec-kit.git"
+    },
+    {
+      "commit": "8b005ed7f972987033ec34dc1e68b0635fb8142b",
+      "group": "tuned",
+      "label": "pytest",
+      "name": "pytest-dev__pytest",
+      "url": "https://github.com/pytest-dev/pytest.git"
+    },
+    {
+      "commit": "2adaad1ab68312fa46efb07ff072b15b720e2444",
+      "group": "tuned",
+      "label": "werkzeug",
+      "name": "pallets__werkzeug",
+      "url": "https://github.com/pallets/werkzeug.git"
+    }
+  ]
+}

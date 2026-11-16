@@ -140,6 +140,8 @@ Existing Claude and exploratory Codex results remain historical evidence and are
 | Provider-neutral | `_bench_common/provider_parity_contracts.py` | Shared task, arm, scoring, provenance, and pairing library; not a runner                                      |
 | Provider-neutral | `generate-tasks-bench.py`                    | Validates or refreshes shared structural oracle fields                                                        |
 | Provider-neutral | `generate-tasks-real-issues.py`              | Refreshes shared real-issue task evidence                                                                     |
+| Provider-neutral | `run-import-census.py`                       | No-model import-edge census against a stdlib-`ast` truth                                                      |
+| Provider-neutral | `run-callgraph-census.py`                    | No-model `fn-rdeps` caller census against a jedi reference                                                    |
 
 Archived manifests retain historical consumer labels from before this rename. Active execution uses only the concise names above; no compatibility launchers remain.
 
@@ -160,35 +162,37 @@ Run **Query** first — validates the index before spending LLM tokens on agenti
 <details>
 <summary><strong>Per-file ownership and purpose</strong></summary>
 
-| File                                            | Ownership        | Purpose                                                                                                                                                           |
-| ----------------------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `policy/provider-parity-methodology.json`       | Provider-neutral | Tracked canonical methodology policy seed consumed by the deterministic builders                                                                                  |
-| `manifests/provider-parity-methodology.json`    | Provider-neutral | Ignored, on-demand generated shared task, evaluator, target, index, and analysis identities; frozen into each admitted run                                        |
-| `manifests/codex-integration.json`              | Codex            | Ignored, on-demand generated machine-enforced plain/direct-CLI/Skill execution contract                                                                           |
-| `manifests/codex-integration.md`                | Codex            | Ignored, on-demand generated human-readable manifest review and paid-run instructions                                                                             |
-| `manifests/codex-agentic.json`                  | Codex            | Ignored, on-demand generated machine-readable 16-task agentic A/B/C execution lock, exact-SHA admission, runtime limits, and artifact contract                    |
-| `manifests/codex-agentic.md`                    | Codex            | Ignored, on-demand generated human-readable 16-task agentic scope, treatment, scorer, approval, and launch review                                                 |
-| `build-provider-parity-methodology-manifest.py` | Provider-neutral | Deterministically regenerates or verifies the shared methodology manifest                                                                                         |
-| `build-codex-integration-manifest.py`           | Codex            | Deterministically regenerates or verifies the structural machine and human manifests                                                                              |
-| `build-codex-agentic-manifest.py`               | Codex            | Deterministically regenerates or verifies the shared 16-task agentic machine and human manifests                                                                  |
-| `_bench_common/agentic_contracts.py`            | Provider-neutral | Shared agentic arms, prompt materialization, answer contracts, oracle, parsing, scoring, and paired metrics                                                       |
-| `_bench_common/provider_parity_contracts.py`    | Provider-neutral | Canonical task identity, A/B/C semantics, evaluator dispatch, headline eligibility, and paired effects; not a runner or generator                                 |
-| `run-claude-agentic.py`                         | Claude           | Agentic benchmark measuring how Codemap/semble structural context changes Claude exploration                                                                      |
-| `run-claude-structural.py`                      | Claude           | Repo-agnostic structural benchmark driven by the `tasks-bench.json` repository header                                                                             |
-| `run-all.sh`                                    | Provider-neutral | Sole batch dispatcher: no-model cross-provider smoke, paid Claude batches, or approval-gated Codex structural and agentic studies                                 |
-| `run-codemap-cli.py`                            | Provider-neutral | Query-level correctness, coverage, and latency against a real repository                                                                                          |
-| `run-codex-structural.py`                       | Codex            | Codex structural provider-parity transport for canonical A/B/C cells with isolated plugin homes, native telemetry normalization, and shared structural evaluators |
-| `run-codex-agentic.py`                          | Codex            | 16-task Codex agentic runner with shared Claude-parity scoring, treatment isolation, paid admission, telemetry, and partial-artifact preservation                 |
-| `generate-tasks-bench.py`                       | Provider-neutral | Validates or refreshes shared structural oracle fields; it does not author prompts                                                                                |
-| `generate-tasks-real-issues.py`                 | Provider-neutral | Refreshes shared real-issue evidence                                                                                                                              |
-| `suites/tasks-agentic.json`                     | Provider-neutral | Shared 16 blast-radius navigation tasks (BA-01–BA-16), answer contracts, and difficulty tiers used by both agentic adapters                                       |
-| `suites/tasks-bench.json`                       | Provider-neutral | 60 tasks across 11 series plus the target repository header                                                                                                       |
-| `suites/tasks-code.json`                        | Provider-neutral | 15 code-level tasks used by the scan-query benchmark                                                                                                              |
-| `suites/tasks-patch.json`                       | Provider-neutral | 5 end-to-end patch tasks requiring patch application and tests                                                                                                    |
-| `suites/tasks-readcrop.json`                    | Provider-neutral | 6 symbol-contract extraction tasks scored by keyword recall                                                                                                       |
-| `suites/tasks-fix-single.json`                  | Provider-neutral | 4 single-file fix tasks scored by diff keyword recall                                                                                                             |
-| `suites/tasks-fix-multi.json`                   | Provider-neutral | 3 multicaller fix tasks scored by clean patch application, exact changed-path boundaries, and complete-caller AST behavior oracles                                |
-| `results/`                                      | Provider-neutral | JSON snapshots and Markdown reports from past runs                                                                                                                |
+| File                                            | Ownership        | Purpose                                                                                                                                                                 |
+| ----------------------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `policy/provider-parity-methodology.json`       | Provider-neutral | Tracked canonical methodology policy seed consumed by the deterministic builders                                                                                        |
+| `manifests/provider-parity-methodology.json`    | Provider-neutral | Ignored, on-demand generated shared task, evaluator, target, index, and analysis identities; frozen into each admitted run                                              |
+| `manifests/codex-integration.json`              | Codex            | Ignored, on-demand generated machine-enforced plain/direct-CLI/Skill execution contract                                                                                 |
+| `manifests/codex-integration.md`                | Codex            | Ignored, on-demand generated human-readable manifest review and paid-run instructions                                                                                   |
+| `manifests/codex-agentic.json`                  | Codex            | Ignored, on-demand generated machine-readable 16-task agentic A/B/C execution lock, exact-SHA admission, runtime limits, and artifact contract                          |
+| `manifests/codex-agentic.md`                    | Codex            | Ignored, on-demand generated human-readable 16-task agentic scope, treatment, scorer, approval, and launch review                                                       |
+| `build-provider-parity-methodology-manifest.py` | Provider-neutral | Deterministically regenerates or verifies the shared methodology manifest                                                                                               |
+| `build-codex-integration-manifest.py`           | Codex            | Deterministically regenerates or verifies the structural machine and human manifests                                                                                    |
+| `build-codex-agentic-manifest.py`               | Codex            | Deterministically regenerates or verifies the shared 16-task agentic machine and human manifests                                                                        |
+| `_bench_common/agentic_contracts.py`            | Provider-neutral | Shared agentic arms, prompt materialization, answer contracts, oracle, parsing, scoring, and paired metrics                                                             |
+| `_bench_common/provider_parity_contracts.py`    | Provider-neutral | Canonical task identity, A/B/C semantics, evaluator dispatch, headline eligibility, and paired effects; not a runner or generator                                       |
+| `run-claude-agentic.py`                         | Claude           | Agentic benchmark measuring how Codemap/semble structural context changes Claude exploration                                                                            |
+| `run-claude-structural.py`                      | Claude           | Repo-agnostic structural benchmark driven by the `tasks-bench.json` repository header                                                                                   |
+| `run-all.sh`                                    | Provider-neutral | Sole batch dispatcher: no-model cross-provider smoke, paid Claude batches, or approval-gated Codex structural and agentic studies                                       |
+| `run-codemap-cli.py`                            | Provider-neutral | Query-level correctness, coverage, and latency against a real repository                                                                                                |
+| `run-codex-structural.py`                       | Codex            | Codex structural provider-parity transport for canonical A/B/C cells with isolated plugin homes, native telemetry normalization, and shared structural evaluators       |
+| `run-codex-agentic.py`                          | Codex            | 16-task Codex agentic runner with shared Claude-parity scoring, treatment isolation, paid admission, telemetry, and partial-artifact preservation                       |
+| `generate-tasks-bench.py`                       | Provider-neutral | Validates or refreshes shared structural oracle fields; it does not author prompts                                                                                      |
+| `generate-tasks-real-issues.py`                 | Provider-neutral | Refreshes shared real-issue evidence                                                                                                                                    |
+| `run-import-census.py` (`_bench_census/`)       | Provider-neutral | No-model import-edge recall and precision against a stdlib-`ast` truth, on the repositories pinned in `import-census-repos.json` and `import-census-heldout-repos.json` |
+| `run-callgraph-census.py` (`_bench_callgraph/`) | Provider-neutral | No-model `fn-rdeps` caller recall and precision against a jedi reference, on the repositories pinned in `callgraph-census-repos.json`                                   |
+| `suites/tasks-agentic.json`                     | Provider-neutral | Shared 16 blast-radius navigation tasks (BA-01–BA-16), answer contracts, and difficulty tiers used by both agentic adapters                                             |
+| `suites/tasks-bench.json`                       | Provider-neutral | 60 tasks across 11 series plus the target repository header                                                                                                             |
+| `suites/tasks-code.json`                        | Provider-neutral | 15 code-level tasks used by the scan-query benchmark                                                                                                                    |
+| `suites/tasks-patch.json`                       | Provider-neutral | 5 end-to-end patch tasks requiring patch application and tests                                                                                                          |
+| `suites/tasks-readcrop.json`                    | Provider-neutral | 6 symbol-contract extraction tasks scored by keyword recall                                                                                                             |
+| `suites/tasks-fix-single.json`                  | Provider-neutral | 4 single-file fix tasks scored by diff keyword recall                                                                                                                   |
+| `suites/tasks-fix-multi.json`                   | Provider-neutral | 3 multicaller fix tasks scored by clean patch application, exact changed-path boundaries, and complete-caller AST behavior oracles                                      |
+| `results/`                                      | Provider-neutral | JSON snapshots and Markdown reports from past runs                                                                                                                      |
 
 </details>
 
@@ -998,6 +1002,11 @@ Omitting `--tasks` runs all 73 locked tasks (219 A/B/C cells); use an explicit f
     - benchmarks/results-archive/2026-09-08-codex-agentic-explicit-population-strata.md (terra and sol at the same prompts; not in the cross-provider table)
     - benchmarks/results-archive/2026-09-08-claude-agentic-20-task-suite.md (all three Claude tiers on the extended suite; not in the cross-provider table)
     - benchmarks/results-archive/2026-09-09-codex-agentic-20-task-suite.md (all three Codex strata on the extended suite; not in the cross-provider table)
+  Census lane (no model; one `.md` plus a `.json` record per run):
+    - benchmarks/results-archive/2026-11-16-import-census.md (baseline on the five pinned repositories)
+    - benchmarks/results-archive/2026-11-16-import-census-heldout.md (five repositories not used to derive fixes)
+    - benchmarks/results-archive/2026-11-16-callgraph-census.md (fn-rdeps against jedi, before instance-call inference)
+    - benchmarks/results-archive/2026-11-16-callgraph-census-instance-inference.md (same sample after inference)
   One archive file per run, named <date>-<provider>-<lane>[-<slug>].md; a file is written once and never revised.
   A number changes here only when it is recomputed from an artifact under results/; the artifacts are
   immutable, so a corrected figure means a new run, never an edited row. -->

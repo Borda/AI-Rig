@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import importlib.util
 import json
 import ntpath
 import os
@@ -320,6 +321,45 @@ def _release_worktree(source_root: Path, worktree: Path, task_id: str) -> str:
     return ""
 
 
+def _scanner_root_key(scan_index_bin: Path, root: Path) -> str:
+    """Return the root key the checked-out scanner records for an index scanned at *root*.
+
+    The scanner stores ``scan_root_key``, a digest of the scanned root's identity, next to ``scan_root``. A patch index
+    is scanned in a throwaway worktree and then relocated, so the key has to be recomputed for the relocated root.
+    Keeping the worktree's key would leave a digest of a random temporary path in the installed bytes, which then differ
+    on every run and can never match the raw lock. The digest comes from the scanner's own helper, loaded from the same
+    checkout as *scan_index_bin*, so the relocated key always equals what that scanner writes when it scans *root*.
+
+    Args:
+        scan_index_bin: Checked-out ``scan-index`` executable inside ``<plugin>/bin``.
+        root: Resolved root the relocated index describes.
+
+    Returns:
+        The scanner's 64-character root key for *root*.
+
+    Raises:
+        ValueError: If the checkout has no root-key helper next to its ``bin`` directory.
+
+    Examples:
+        >>> plugin = Path(__file__).resolve().parents[1] / "plugins" / "codemap-py"
+        >>> key = _scanner_root_key(plugin / "bin" / "scan-index", Path("/repo"))
+        >>> len(key), key == _scanner_root_key(plugin / "bin" / "scan-index", Path("/repo"))
+        (64, True)
+    """
+    helper = scan_index_bin.parent.parent / "src" / "codemap_py" / "index_paths.py"
+    spec = importlib.util.spec_from_file_location("_scanner_index_paths", helper) if helper.is_file() else None
+    if spec is None or spec.loader is None:
+        raise ValueError(
+            f"scanner root-key helper not found at {helper}; the scanned index records scan_root_key, so the patch "
+            "index cannot be relocated without the scanner checkout's codemap_py/index_paths.py"
+        )
+    module = importlib.util.module_from_spec(spec)
+    # The helper declares dataclasses, which resolve their module through sys.modules while the class body executes.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return str(module.root_key(root))
+
+
 def _install_patch_task_index(
     # config object would only rename them
     *,
@@ -358,6 +398,8 @@ def _install_patch_task_index(
         scan_root=str(source_root),
         scanned_at=lock.get("scanned_at"),
     )
+    if "scan_root_key" in payload:
+        payload["scan_root_key"] = _scanner_root_key(scan_index_bin, source_root)
     if payload.get("scan_version") != lock.get("scan_version"):
         raise ValueError(f"patch index scan_version drifted for {task_id}")
     if len(payload.get("modules", [])) != lock.get("module_count"):

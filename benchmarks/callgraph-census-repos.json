@@ -1,0 +1,97 @@
+{
+  "amendments": [
+    {
+      "after_scored_run": true,
+      "at": "2026-11-16T12:10:00Z",
+      "changed": "reference_tool.call and reference_tool.settings only: explicit search path (src/ when present, then repository root) replacing the environment's, and the jedi environment pinned to the census interpreter. Repositories, sampling, strata, seed, truth and scoring rules unchanged.",
+      "original_sha256": "e29181aac702f7cca1f266ce55959d9d2d75079ae971d4833e0eaf4cad4496f2",
+      "reason": "The registered configuration let jedi pick its environment from $VIRTUAL_ENV (the AI-Rig .venv, which installs click and rich) and did not search src/. Probe: tests/test_termui.py click.edit(...) resolved to .venv/lib/python3.12/site-packages/click/termui.py:848 under the registered configuration and to <clone>/src/click/termui.py:848 under the amended one; the reference truth was built against a different copy of the analysed package. The first scored run is kept and reported as invalid."
+    }
+  ],
+  "description": "Pre-registered repositories, sample design, truth rules and reference tool of the call-graph census (run-callgraph-census.py --registry). Written and hashed before any truth build or fn-rdeps scoring.",
+  "reference_tool": {
+    "call": "jedi.Script(source, path=file, project=jedi.Project(root, sys_path=[root/src if present, root], load_unsafe_extensions=False, smart_sys_path=True), environment=jedi.create_environment(sys.executable, safe=False)).goto(line, column, follow_imports=True)",
+    "name": "jedi",
+    "settings": "jedi defaults, except cache_directory pointed at the census work directory (one subdirectory per process); a resolution into any installed package other than jedi's bundled typeshed stops the run",
+    "spike": "pyright 1.1.414 rejected: its CLI --help lists no references option (references exist only through the LSP server), and its pip wrapper requires nodeenv and installs Node at first run when no global node is on PATH.",
+    "version": "0.20.1"
+  },
+  "registered_at": "2026-11-16",
+  "repositories": [
+    {
+      "commit": "e38188e9e205005d5af5f9e59df51904c984586a",
+      "group": "pool",
+      "label": "click",
+      "name": "pallets__click",
+      "url": "https://github.com/pallets/click.git"
+    },
+    {
+      "commit": "3a109ccdffe5b2d0e30684a304fbd388e99ce57b",
+      "group": "held-out",
+      "label": "rich",
+      "name": "Textualize__rich",
+      "url": "https://github.com/Textualize/rich.git"
+    }
+  ],
+  "sampling": {
+    "adjudicate_per_side": 6,
+    "allocation": "Draw min(per_stratum, N_h) targets per stratum; when the total is below min_total, draw the deficit from the strata in the order 0, 1, 2-5, 6+ up to each stratum's size.",
+    "draw": "Per stratum, sorted members sampled by random.Random(\"<seed>:<label>:<stratum>\"); adjudication draws use random.Random(\"<seed>:<label>:missed|extra\") over the sorted disagreeing edges.",
+    "min_total": 200,
+    "per_stratum": 60,
+    "seed": 20261116,
+    "strata": [
+      "0",
+      "1",
+      "2-5",
+      "6+"
+    ],
+    "stratify_by": "Distinct-caller count of each target in the reference tool's truth, never the fn-rdeps answer."
+  },
+  "scanner": {
+    "expected_scan_version": 15,
+    "ref": "HEAD"
+  },
+  "scoring": {
+    "estimates": "Recall and precision over distinct (target, caller) edges of the sample with 95% Wilson intervals, plus population-weighted point estimates with stratum weight N_h / n_h.",
+    "extra_classes": [
+      "reference_unresolved",
+      "resolved_elsewhere",
+      "no_same_name_call"
+    ],
+    "instance_method_share": "Missed edges whose class is instance_method, over all missed edges of the sample; also the stricter count where every call site of the edge is instance_method.",
+    "miss_class_precedence": [
+      "dynamic",
+      "instance_method",
+      "alias",
+      "re_export",
+      "decorator",
+      "other"
+    ],
+    "miss_class_rule": "A missed edge takes the highest-precedence class among its call sites."
+  },
+  "selection": {
+    "chosen": [
+      "rich",
+      "click"
+    ],
+    "pool": [
+      "flask",
+      "click",
+      "rich",
+      "httpx",
+      "black",
+      "sphinx",
+      "scrapy",
+      "fastapi"
+    ],
+    "rule": "From the import-census held-out set (black, fastapi, rich, scrapy, sphinx) take the member with the fewest .py files in its registered trace (rich, 212), bounding reference-tool runtime; from the pool members outside that set (click, flask, httpx) take the first alphabetically (click). Commits are those read at the held-out registration (import-census-heldout-repos.json selection trace)."
+  },
+  "truth": {
+    "callers": "Enclosing codemap-py symbol: top-level function (nested definitions, decorators and defaults included), Class.method for a method of a top-level class (its decorators included), Class for a class decorator or any other class-body statement. Module-scope sites, class bases and keywords have no caller: counted separately, never scored.",
+    "candidate_sites": "Resolve a call site only when its terminal identifier names a public target or a name the module binds by import.",
+    "excluded": "Imports, callback values, base-class and annotation uses: never an ast.Call function position. Modules the index does not hold as ok are not parsed.",
+    "sites": "ast.Call whose func is ast.Name or ast.Attribute, resolved at the terminal identifier; each resolved definition that is a target adds the (target, caller) edge, deduplicated per caller.",
+    "targets": "Public functions and methods: top-level def, and def directly in a top-level class body, no qualified-name component starting with an underscore; test modules included; module names exactly as the index records them."
+  }
+}

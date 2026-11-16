@@ -141,7 +141,7 @@ class TestManifestScope:
         assert manifest["target_source"]["commit"] == "be98784a1a03581b7051a355ae1084fd352d7cea"
         assert (
             manifest["frozen_index_contract"]["raw_sha256"]
-            == "3c5840893e9c939baa61a6c5ce95994ff69ffe4a67d225aeb412c73deb61e0c1"
+            == "6c2ec534abb8acb4d4fd516d67a8e65327d6f6c0109f58c0577289691cb77413"
         )
 
     def test_scope_task_ids_match_shared_methodology_suite(self, manifest: dict[str, Any]) -> None:

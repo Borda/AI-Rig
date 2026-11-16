@@ -12,6 +12,11 @@ command reference (``deps``, ``rdeps``, ``symbol``, ``fn-deps``, ``coverage``,
 this file — it calls :func:`codemap_py.query.main` in-process, in-process
 under its own read lease. This launcher exists for direct invocation
 (``scan-query <cmd> ...``) and for tests that exercise the standalone script.
+
+As the process owner it passes ``owns_process=True``: on hosts without SIGALRM
+that enables the ``--timeout`` hard-exit backstop, which records the timeout and
+ends the process when the main thread cannot act on the deadline interrupt.
+Embedded callers of :func:`codemap_py.query.main` keep the default ``False``.
 """
 
 from __future__ import annotations
@@ -26,4 +31,4 @@ if str(_SRC) not in sys.path:
 from codemap_py.query import main  # noqa: E402  (needs the sys.path insert above)
 
 if __name__ == "__main__":
-    main()
+    main(owns_process=True)

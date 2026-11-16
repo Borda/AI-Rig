@@ -93,7 +93,7 @@ def main() -> int:
 
     from codemap_py.cli import main as cli_main  # imported after the interpreter gate and path wiring
 
-    return cli_main(sys.argv[1:], plugin_root=root)
+    return cli_main(sys.argv[1:], plugin_root=root, owns_process=True)
 
 
 if __name__ == "__main__":
