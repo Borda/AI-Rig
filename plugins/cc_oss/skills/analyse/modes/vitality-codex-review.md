@@ -7,7 +7,7 @@ When `CODEX_AVAILABLE=1`: run the block below, then call `Skill(skill="bridge:re
 `bridge:review` runs read-only and cannot write files, so the orchestrator persists its result. When the bridge call returns (foreground, or the background call's exit notification):
 
 - `status` = `complete` → Write the returned scorecard (envelope findings, or the transcript at the bridge-reported artifact path) verbatim to `$CODEX_REVIEW_OUT` with the Write tool, then Write `$REVIEW_DIR/codex-repo-review.done` (content `done`).
-- Any other `status` (`partial`, `blocked`, `timeout`, `refused`) or no envelope → Write that status and its fault to `$CODEX_REVIEW_OUT`, never the `.done` sentinel — Aggregation reports it as ⏱ timed_out.
+- Any other `status` (`partial`, `blocked`, `timeout`, `refused`) or no envelope → Write that status and its fault to `$CODEX_REVIEW_OUT`, never the `.done` sentinel — Aggregation reports it as ⏱ timed_out, unless it was a quota stop (§Codex quota stop below).
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -55,7 +55,30 @@ State the overall Health Score % and your confidence (0.N) in the verdict.
 
 **When CODEX_AVAILABLE=0**: skip step; note "codex unavailable — single-pass analysis only" in Codex Independent Review report section.
 
+### Codex quota stop (`codex-blocked:quota`) — rest of the run
+
+When the bridge call returns, also Write the returned JSON object verbatim to `$REVIEW_DIR/codex-repo-review.json`. Then run the quota check block once, unedited.
+
+- A reply counts only when its `incident` is non-null and that incident file's `fault` is `quota-exhausted`; verdict and `blockers` text never decide.
+- On that fault the block writes `$REVIEW_DIR/codex-quota-blocked.txt`:
+  - no further `bridge:review` this run;
+  - Step 6 runs challenger-only, and the challenger prompt gets `--no-codex`.
+- `rate-limited`, `capacity` and every other fault keep today's handling.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r REVIEW_DIR < "${TMPDIR:-/tmp}/vitality-review-dir-${CSID}" 2>/dev/null || REVIEW_DIR=""
+[ -n "$REVIEW_DIR" ] || { echo "! BLOCKED — vitality-review-dir sentinel missing; rerun vitality Step 5 setup"; exit 1; }
+# harness incident fault only; a peer-authored blocked reply carries incident null
+_FAULT=$(python "$PLUGIN_ROOT/bin/bridge_quota_check.py" "$REVIEW_DIR/codex-repo-review.json") || _FAULT=none  # timeout: 15000
+[ "$_FAULT" = quota-exhausted ] && echo codex-blocked:quota > "$REVIEW_DIR/codex-quota-blocked.txt"
+if [ -e "$REVIEW_DIR/codex-quota-blocked.txt" ]; then echo "CODEX_QUOTA=codex-blocked:quota — no further bridge:review this run; challenger prompts get --no-codex"; else echo "CODEX_QUOTA=none"; fi
+```
+
 ### Aggregation
+
+Quota stop first: `.done` missing and `$REVIEW_DIR/codex-quota-blocked.txt` present → skip aggregation, fill the section with "⊘ codex-blocked:quota — single-pass analysis only", and skip the timed-out case below.
 
 After codex review completes, verify `$REVIEW_DIR/codex-repo-review.done` exists. Missing → ⏱ codex review timed_out: skip aggregation, fill the section with "⏱ codex review timed_out — single-pass analysis only". Present → compute per-axis delta:
 

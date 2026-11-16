@@ -673,6 +673,27 @@ class TestExtraPolicy:
         """
         assert marker in extra_policy
 
+    @pytest.mark.parametrize(
+        "marker",
+        [
+            pytest.param("An escalation that would run contributed code", id="names-contributed-code"),
+            pytest.param(
+                "is excluded from this preapproval by name (codex-rig shared contract, Contributed Code Execution)",
+                id="excluded-by-name",
+            ),
+            pytest.param(
+                "approve only when the Approval Brief cites a recorded user answer", id="recorded-user-answer"
+            ),
+        ],
+    )
+    def test_excludes_contributed_code_escalation(self, extra_policy: str, marker: str) -> None:
+        """A pull request's code never runs outside the sandbox on the automatic reviewer's approval alone.
+
+        The policy preapproves configured gates and dependency downloads; without this named exclusion the reviewer
+        could approve the one-time gate escalation that runs contributor tests with the user's permissions.
+        """
+        assert marker in extra_policy
+
     def test_local_merge_grant_preserves_task_and_runtime_boundaries(self, extra_policy: str) -> None:
         """Granted local integration consent stays separate from destructive or remote authority.
 

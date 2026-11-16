@@ -119,7 +119,9 @@ def _diagnostic(items: list[dict], workspace: Path, row: int, code: str) -> None
     items.append({"workspace": str(workspace), "row": row, "code": code})
 
 
-def _artifact(workspace: Path, reference: Any, row: int, diagnostics: list[dict]) -> dict | None:
+def _artifact(
+    workspace: Path, reference: Any, row: int, diagnostics: list[dict], versions: tuple[int, ...] = (1,)
+) -> dict | None:
     """Validate an explicitly linked JSON object and report unavailable evidence."""
     if reference is None:
         return None
@@ -131,7 +133,8 @@ def _artifact(workspace: Path, reference: Any, row: int, diagnostics: list[dict]
         if not isinstance(value, dict):
             raise ValueError("object required")
         version = value.get("schema_version", 1)
-        if not isinstance(version, int) or isinstance(version, bool) or version != 1:
+        # Incidents accept 1 (historical: delta always a list, no returncode) and 2 (current); result reports are 1.
+        if not isinstance(version, int) or isinstance(version, bool) or version not in versions:
             _diagnostic(diagnostics, workspace, row, "unsupported_artifact_schema")
             return None
         return value
@@ -159,7 +162,7 @@ def _attempts(workspace: Path, row: dict, line: int, diagnostics: list[dict]) ->
             _diagnostic(diagnostics, workspace, line, "invalid_incident_chain")
             break
         seen.add(reference)
-        incident = _artifact(workspace, reference, line, diagnostics)
+        incident = _artifact(workspace, reference, line, diagnostics, versions=(1, 2))
         if incident is None:
             break
         if any(incident.get(key, row.get(key)) != row.get(key) for key in ("run_id", "direction")):

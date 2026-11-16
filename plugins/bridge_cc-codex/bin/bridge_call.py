@@ -37,6 +37,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
+from enum import Enum
 from functools import lru_cache
 from pathlib import Path, PureWindowsPath
 from typing import Any
@@ -658,6 +659,11 @@ def build_codex_argv(request: Request, schema_path: Path) -> list[str]:
         # A caller opt-in to `github-read` swaps this pin and `-s` for a
         # domain- and method-scoped permission profile (see _github_read_overrides).
         *([] if github_read else ["-c", "sandbox_workspace_write.network_access=false"]),
+        # Hosted web search runs on the provider side, outside the sandbox
+        # network switch and outside the github-read domain list, so a child
+        # could still open pages. The bridge grants no web access in any mode.
+        "-c",
+        'web_search="disabled"',
         "--skip-git-repo-check",
         "--ignore-user-config",
         "--json",
@@ -912,7 +918,7 @@ def _run_request_attempt(
             )
         command = build_codex_argv(effective_request, schema_path)
     child_budget = effective_request.timeout_seconds
-    before_delta = _workspace_state(effective_request.workspace) if _is_write_verb(effective_request.verb) else []
+    before_delta = _workspace_state(effective_request.workspace) if _is_write_verb(effective_request.verb) else None
     child_cutoff = child_budget * CHILD_TIMEOUT_MULTIPLIER
     started = time.monotonic()
     attempt_started_at = time.time()
@@ -957,23 +963,36 @@ def _run_request_attempt(
         duration,
         _recovery or substitution,
     )
+    failure_kind = classify_failure(event_info.failure)
+    returncode = outcome.returncode
+
+    def _delta() -> list[str] | None:
+        """Report the write verb's observed workspace changes; ``None`` when no delta was computed."""
+        if not _is_write_verb(effective_request.verb):
+            return None
+        return _workspace_delta(before_delta, effective_request.workspace, event_info.touched)
+
     if outcome.output_limited:
         return _terminal_envelope(
             observed,
             "blocked",
             outcome.error or "child output exceeded the Bridge capture limit",
             fault="output-limit",
-            workspace_delta=(
-                _workspace_delta(before_delta, effective_request.workspace)
-                if _is_write_verb(effective_request.verb)
-                else None
-            ),
+            workspace_delta=_delta(),
             prior_incident=_prior_incident,
             partial_output=outcome.partial_output if host == "codex" else None,
+            returncode=returncode,
         )
     if outcome.timed_out:
         retry = _lower_effort_retry(effective_request, child_budget)
-        if _attempt == 0 and effective_request.verb in {"advise", "review"} and retry is not None:
+        # A classified provider stop (quota, rate, capacity) is not a slow answer, so a cheaper second attempt cannot
+        # help and would only repeat the failing request.
+        if (
+            failure_kind is None
+            and _attempt == 0
+            and effective_request.verb in {"advise", "review"}
+            and retry is not None
+        ):
             recovery = {"requested": effective_request.effort, "applied": retry.effort, "reason": "timeout retry"}
             incident = _write_incident(
                 paths,
@@ -985,6 +1004,7 @@ def _run_request_attempt(
                 duration_seconds=duration,
                 tokens=event_info.tokens,
                 cost=event_info.cost,
+                returncode=returncode,
             )
             return _run_request_attempt(
                 retry,
@@ -995,36 +1015,45 @@ def _run_request_attempt(
                 _job_path=_job_path,
                 _observations=_observations,
             )
+        classified = (
+            (failure_line(event_info.failure, failure_kind, effective_request.direction),)
+            if failure_kind is not None and event_info.failure is not None
+            else ()
+        )
         return _terminal_envelope(
             observed,
             "timeout",
             "hard cutoff reached",
-            workspace_delta=(
-                _workspace_delta(before_delta, effective_request.workspace)
-                if _is_write_verb(effective_request.verb)
-                else None
-            ),
+            fault=failure_kind.value if failure_kind is not None else None,
+            extra_blockers=classified or _advisory_blockers(event_info),
+            workspace_delta=_delta(),
             prior_incident=_prior_incident,
+            returncode=returncode,
         )
     if outcome.error:
         return _terminal_envelope(
             observed,
             "blocked",
             outcome.error,
-            workspace_delta=(
-                _workspace_delta(before_delta, effective_request.workspace)
-                if _is_write_verb(effective_request.verb)
-                else None
-            ),
+            workspace_delta=_delta(),
             prior_incident=_prior_incident,
+            returncode=returncode,
         )
-    if outcome.returncode != 0:
-        reason = event_info.error or f"child exited with code {outcome.returncode}"
+    if returncode != 0:
+        failure = event_info.failure
+        reason = failure.message if failure is not None else f"child exited with code {returncode}"
         retry = _lower_effort_retry(effective_request, child_budget)
         # The stale-capability retry stays read-only: a failed write-capable
         # child may already have landed edits, so rerunning it can duplicate
-        # or conflict with work that reached the worktree.
-        if _attempt == 0 and not _is_write_verb(effective_request.verb) and _is_effort_failure(reason) and retry:
+        # or conflict with work that reached the worktree. A classified stop is excluded too: its wording, not an
+        # effort marker quoted inside it, decides the outcome.
+        if (
+            _attempt == 0
+            and not _is_write_verb(effective_request.verb)
+            and failure_kind is None
+            and _is_effort_failure(reason)
+            and retry
+        ):
             recovery = {
                 "requested": effective_request.effort,
                 "applied": retry.effort,
@@ -1040,6 +1069,7 @@ def _run_request_attempt(
                 duration_seconds=duration,
                 tokens=event_info.tokens,
                 cost=event_info.cost,
+                returncode=returncode,
             )
             return _run_request_attempt(
                 retry,
@@ -1050,19 +1080,73 @@ def _run_request_attempt(
                 _job_path=_job_path,
                 _observations=_observations,
             )
-        return _terminal_envelope(observed, "blocked", reason, prior_incident=_prior_incident)
-    if event_info.core is None and event_info.error:
-        # A zero exit can still carry a structured provider failure; surface
-        # that cause instead of a generic invalid-model-result message.
-        return _terminal_envelope(observed, "blocked", event_info.error, prior_incident=_prior_incident)
+        return _provider_stop_envelope(
+            observed, event_info, failure_kind, reason, _delta(), _prior_incident, returncode
+        )
+    if event_info.failure is not None:
+        # A zero exit can still end in a terminal provider failure; it outranks any earlier model answer because the
+        # turn did not complete, so surface the cause instead of a stale or invalid result.
+        return _provider_stop_envelope(
+            observed, event_info, failure_kind, event_info.failure.message, _delta(), _prior_incident, returncode
+        )
     try:
         core = _public_core(validate_model_core(event_info.core))
     except ValueError as error:
-        return _terminal_envelope(observed, "blocked", f"invalid model result: {error}", prior_incident=_prior_incident)
+        return _terminal_envelope(
+            observed,
+            "blocked",
+            f"invalid model result: {error}",
+            workspace_delta=_delta(),
+            prior_incident=_prior_incident,
+            extra_blockers=_advisory_blockers(event_info),
+            returncode=returncode,
+        )
     # Only the write-capable verb may report a resumable session; the others drop it from the envelope.
     reportable_session = observed if _is_write_verb(effective_request.verb) else replace(observed, session_id=None)
     envelope = _make_envelope(reportable_session, core, event_info.cost, _prior_incident)
     return envelope
+
+
+def _advisory_blockers(event_info: ParsedOutput) -> tuple[str, ...]:
+    """Return the last non-terminal provider notice as one bounded context line, or nothing."""
+    if event_info.advisory is None:
+        return ()
+    return (f"provider notice: {' '.join(event_info.advisory.split())[:_MAX_PROVIDER_MESSAGE_CHARS]}",)
+
+
+def _provider_stop_envelope(
+    observed: EnvelopeContext,
+    event_info: ParsedOutput,
+    kind: FailureClass | None,
+    reason: str,
+    delta: list[str] | None,
+    prior_incident: str | None,
+    returncode: int | None,
+) -> dict[str, Any]:
+    """Return the blocked result for a failed child, naming the provider cause when the failure is classified.
+
+    A classified stop gets a harness-authored verdict line and an incident ``fault`` equal to the class, which is the
+    provenance consumers rely on. An unclassified failure keeps the provider's own text and a plain ``blocked`` fault.
+    """
+    if kind is not None and event_info.failure is not None:
+        return _terminal_envelope(
+            observed,
+            "blocked",
+            failure_line(event_info.failure, kind, observed.request.direction),
+            fault=kind.value,
+            workspace_delta=delta,
+            prior_incident=prior_incident,
+            returncode=returncode,
+        )
+    return _terminal_envelope(
+        observed,
+        "blocked",
+        reason,
+        workspace_delta=delta,
+        prior_incident=prior_incident,
+        extra_blockers=_advisory_blockers(event_info) if event_info.failure is None else (),
+        returncode=returncode,
+    )
 
 
 def _lower_effort(current: str, supported_efforts: tuple[str, ...]) -> str | None:
@@ -1103,16 +1187,50 @@ class ChildOutcome:
     started: bool = True
 
 
+class FailureClass(str, Enum):
+    """Provider-side stop causes the harness names; every other failure stays a generic ``blocked``.
+
+    The values are the incident ``fault`` strings and the contract consumers read, so they stay plain strings at the
+    serialization edge.
+    """
+
+    QUOTA = "quota-exhausted"
+    RATE = "rate-limited"
+    CAPACITY = "capacity"
+
+
+@dataclass(frozen=True)
+class ProviderFailure:
+    """One terminal provider failure: the rendered message plus the structured evidence found beside it."""
+
+    message: str
+    status: int | None = None
+    inner_type: str | None = None
+    inner_code: str | None = None
+
+
 @dataclass(frozen=True)
 class ParsedOutput:
-    """Contain model core, observed usage, session id, and structured error."""
+    """Contain model core, observed usage, session id, terminal provider failure, and advisory context.
+
+    ``failure`` is set only for a terminal provider failure. ``advisory`` is the last non-terminal Codex error notice
+    (for example a reconnect warning), kept as context and never as a verdict. ``touched`` lists file paths the peer
+    reported changing, in order of first appearance.
+    """
 
     core: Any
     tokens: dict[str, float]
     cost: float | None
     session_id: str | None
-    error: str | None
+    failure: ProviderFailure | None
     observed_models: tuple[str, ...] = ()
+    advisory: str | None = None
+    touched: tuple[str, ...] = ()
+
+    @property
+    def error(self) -> str | None:
+        """Return the terminal failure message, or ``None`` when the peer did not fail terminally."""
+        return self.failure.message if self.failure is not None else None
 
 
 @dataclass
@@ -1743,19 +1861,28 @@ def _parse_output(stdout: str, host: str) -> ParsedOutput:
             core = _decode_possible_json(record.get("structured_output", record.get("result", record)))
         usage = record.get("usage", record.get("modelUsage", {})) if isinstance(record, dict) else {}
         aggregate_cost = _cost_from(record) if isinstance(record, dict) else None
+        # Only a provider error record, or a record with no usable answer, can carry a failure: stray ``message`` or
+        # ``error`` keys beside a valid answer must not displace it.
+        failure = (
+            _provider_failure(record)
+            if isinstance(record, dict) and (record.get("is_error") is True or core is None)
+            else None
+        )
         return ParsedOutput(
             core,
             _number_fields(usage),
             aggregate_cost if aggregate_cost is not None else _cost_from(usage),
             record.get("session_id") if isinstance(record, dict) else None,
-            _error_from(record) if isinstance(record, dict) else None,
+            failure,
             _observed_models(records),
         )
     core: Any = None
     tokens: dict[str, float] = {}
     cost: float | None = None
     session_id: str | None = None
-    error: str | None = None
+    failure: ProviderFailure | None = None
+    advisory: str | None = None
+    touched: list[str] = []
     for record in records:
         if not isinstance(record, dict):
             continue
@@ -1766,12 +1893,37 @@ def _parse_output(stdout: str, host: str) -> ParsedOutput:
             usage = record.get("usage", {})
             tokens.update(_number_fields(usage))
             cost = _cost_from(usage) if _cost_from(usage) is not None else cost
-        if record_type in {"turn.failed", "error"}:
-            error = _error_from(record) or error
+            # A completed turn after a failed one means the provider recovered, so the earlier failure is not final.
+            failure = None
+        if record_type == "turn.failed":
+            # A failed turn is terminal even when it carries no readable message; the text is only diagnostic.
+            failure = _provider_failure(record) or ProviderFailure("turn failed without a provider message")
+        elif record_type == "error":
+            # A top-level error is a notice (reconnect, retry) unless a turn.failed follows it; it is never a verdict.
+            advisory = _error_from(record) or advisory
+        _collect_touched(record, touched)
         candidate = _model_candidate(record)
         if candidate is not None:
             core = candidate
-    return ParsedOutput(core, tokens, cost, session_id, error, _observed_models(records))
+    return ParsedOutput(core, tokens, cost, session_id, failure, _observed_models(records), advisory, tuple(touched))
+
+
+#: Most peer-reported file paths kept per attempt; a bound against a pathological transcript.
+_MAX_TOUCHED_PATHS = 200
+
+
+def _collect_touched(record: dict[str, Any], touched: list[str]) -> None:
+    """Append file paths from a Codex ``file_change`` item, keeping first-seen order and a fixed bound."""
+    item = record.get("item")
+    if not isinstance(item, dict) or item.get("type") != "file_change":
+        return
+    changes = item.get("changes")
+    if not isinstance(changes, list):
+        return
+    for change in changes:
+        path = change.get("path") if isinstance(change, dict) else None
+        if isinstance(path, str) and path and path not in touched and len(touched) < _MAX_TOUCHED_PATHS:
+            touched.append(path)
 
 
 def _observed_models(records: list[Any]) -> tuple[str, ...]:
@@ -1922,6 +2074,108 @@ def _error_from(value: Any) -> str | None:
     return rendered if rendered else None
 
 
+def _provider_failure(record: dict[str, Any]) -> ProviderFailure | None:
+    """Build the structured failure record for one host error, reading the evidence the provider put beside the text.
+
+    Claude reports the HTTP status as the integer ``api_error_status``. Codex puts a plain message, or a JSON document
+    inside the message whose ``error.type``/``error.code`` and outer ``status`` are read one level deep.
+    """
+    message = _error_from(record)
+    if message is None:
+        return None
+    status = record.get("api_error_status")
+    error = record.get("error", record)
+    inner_type = inner_code = None
+    if isinstance(error, dict):
+        inner_code = error.get("code") if isinstance(error.get("code"), str) else None
+        nested = _decode_possible_json(error.get("message")) if isinstance(error.get("message"), str) else None
+        if isinstance(nested, dict):
+            nested_error = nested.get("error")
+            if isinstance(nested_error, dict):
+                inner_type = nested_error.get("type") if isinstance(nested_error.get("type"), str) else None
+                nested_code = nested_error.get("code")
+                inner_code = nested_code if isinstance(nested_code, str) else inner_code
+            status = nested.get("status", status)
+    if isinstance(status, bool) or not isinstance(status, int):
+        status = None
+    return ProviderFailure(message, status, inner_type, inner_code)
+
+
+#: Wording that states a credit, usage-limit, spend-limit or subscription stop. Matched against provider text only,
+#: never against anything the peer model wrote, so a quote in an answer cannot classify a result. Codex entries come
+#: from its binary's error codes and TUI text, Claude entries from the Claude Code binary's own messages; both are
+#: candidate wording, not captured wire records.
+_QUOTA_WORDING = re.compile(
+    r"out of (?:extra )?(?:credits|usage)|no (?:remaining )?credits|credits? (?:are |is |have )?(?:been )?(?:depleted|exhausted)"
+    r"|credit balance (?:is )?too low|usage credit limit|insufficient credits?"
+    r"|usage limit|spend(?:ing)? limit|insufficient[ _]quota|(?:exceeded|exhausted) your (?:current )?quota"
+    r"|quota (?:exceeded|exhausted|reached)|subscription (?:has )?(?:expired|ended|lapsed|inactive|limit)"
+    r"|billing (?:hard )?limit",
+    re.IGNORECASE,
+)
+_QUOTA_CODES = re.compile(r"insufficient_quota|credits_depleted|usage_limit_reached|billing_hard_limit", re.IGNORECASE)
+_CAPACITY_WORDING = re.compile(r"(?:at|over) capacity|overloaded", re.IGNORECASE)
+_RATE_WORDING = re.compile(r"\brate[ _-]?limit|too many requests", re.IGNORECASE)
+_RETRY_AFTER = re.compile(
+    r"(?:retry|try again)\w{0,8}\W+(?:in|after)\W+(\d{1,5}(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b",
+    re.IGNORECASE,
+)
+#: Longest provider message copied into a harness-authored verdict line.
+_MAX_PROVIDER_MESSAGE_CHARS = 300
+#: Most provider text scanned for a stated wait, so a pathological message cannot make the scan slow.
+_MAX_RETRY_AFTER_SCAN_CHARS = 2000
+
+
+def classify_failure(failure: ProviderFailure | None) -> FailureClass | None:
+    """Classify a terminal provider failure into a named stop cause, or ``None`` for a generic block.
+
+    The table reads only the structured failure: message wording, inner code and type, and HTTP status. Contradictory
+    evidence (a 429 or 402 status beside capacity wording, or a 402 beside rate wording) and every unrecognized
+    failure, including a content-policy stop, return ``None`` so the caller keeps today's generic ``blocked`` result.
+
+    Examples:
+        >>> classify_failure(ProviderFailure("You're out of credits")) is FailureClass.QUOTA
+        True
+        >>> classify_failure(ProviderFailure("Selected model is at capacity")) is FailureClass.CAPACITY
+        True
+        >>> classify_failure(ProviderFailure("flagged for possible cybersecurity risk")) is None
+        True
+    """
+    if failure is None:
+        return None
+    text = failure.message
+    code = failure.inner_code or ""
+    kind = failure.inner_type or ""
+    if _QUOTA_WORDING.search(text) or any(_QUOTA_CODES.search(part) for part in (code, kind, text)):
+        return FailureClass.QUOTA
+    if _CAPACITY_WORDING.search(text):
+        return None if failure.status in {402, 429} else FailureClass.CAPACITY
+    if _RATE_WORDING.search(text) or _RATE_WORDING.search(code):
+        return None if failure.status == 402 else FailureClass.RATE
+    if failure.status == 429:
+        return FailureClass.RATE
+    if failure.status == 402:
+        return FailureClass.QUOTA
+    return None
+
+
+def failure_line(failure: ProviderFailure, kind: FailureClass, direction: str) -> str:
+    """Write the harness-authored one-line verdict for a classified failure, naming the peer for the direction."""
+    peer = "Codex" if direction == "claude_to_codex" else "Claude"
+    message = " ".join(failure.message.split())[:_MAX_PROVIDER_MESSAGE_CHARS]
+    if kind is FailureClass.QUOTA:
+        return f"{peer} quota exhausted: {message}"
+    if kind is FailureClass.CAPACITY:
+        return f"{peer} model at capacity: {message}"
+    match = _RETRY_AFTER.search(failure.message[:_MAX_RETRY_AFTER_SCAN_CHARS])
+    wait = ""
+    if match:
+        unit = match.group(2).lower()
+        scale = 3600 if unit.startswith("h") else 60 if unit.startswith("m") else 1
+        wait = f" (retry after {math.ceil(float(match.group(1)) * scale)}s)"
+    return f"{peer} rate limited{wait}: {message}"
+
+
 def _first_string(value: dict[str, Any], keys: Iterable[str]) -> str | None:
     """Return the first non-empty string found under ordered candidate keys."""
     for key in keys:
@@ -2019,8 +2273,8 @@ def _write_transcript(paths: BridgePaths, stdout: str, stderr: str) -> str:
     return paths.relative(path)
 
 
-def _workspace_state(workspace: Path) -> list[str]:
-    """Capture a porcelain snapshot without failing when Git or a repository is absent.
+def _workspace_state(workspace: Path) -> list[str] | None:
+    """Capture a porcelain snapshot, or ``None`` when Git or a repository is absent or the probe failed.
 
     The probe is bounded: a hung ``git status`` (stale ``index.lock``, stalled
     network filesystem) runs before any request budget is armed and must not
@@ -2041,7 +2295,9 @@ def _workspace_state(workspace: Path) -> list[str]:
             timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return []
+        return None
+    if result.returncode != 0:
+        return None
     return [line for line in result.stdout.splitlines() if line]
 
 
@@ -2121,10 +2377,50 @@ def _protected_changes(before: dict[str, str], workspace: Path) -> list[str]:
     return sorted(key for key in before.keys() | after.keys() if before.get(key) != after.get(key))
 
 
-def _workspace_delta(before: list[str], workspace: Path) -> list[str]:
-    """Return changed porcelain lines between spawn and a killed implementation."""
-    before_set = set(before)
-    return [line for line in _workspace_state(workspace) if line not in before_set]
+#: Longest peer-reported path kept in an incident delta entry.
+_MAX_REPORTED_PATH_CHARS = 300
+
+
+def _reported_change(path: str, workspace: Path) -> str:
+    """Render one peer-reported changed path as a bounded ``file_change`` entry, relative to the workspace when inside.
+
+    The path is peer-authored text, so control characters are replaced and the length is bounded before it reaches
+    the incident record. A path outside the workspace stays absolute, because an edit there matters most.
+
+    Examples:
+        >>> root = Path.cwd().resolve()
+        >>> _reported_change(root.as_posix() + "/a.py", root)
+        'file_change a.py'
+        >>> _reported_change("/elsewhere/b.py" + chr(10) + "x", root)
+        'file_change /elsewhere/b.py?x'
+    """
+    cleaned = "".join(char if char.isprintable() else "?" for char in path.replace("\\", "/"))
+    prefix = workspace.resolve().as_posix().rstrip("/") + "/"
+    if cleaned.startswith(prefix):
+        cleaned = cleaned[len(prefix) :]
+    return f"file_change {cleaned[:_MAX_REPORTED_PATH_CHARS]}"
+
+
+def _workspace_delta(before: list[str] | None, workspace: Path, touched: Iterable[str] = ()) -> list[str] | None:
+    """Return the observed workspace changes of a failed or killed implementation, or ``None`` when unknown.
+
+    The result joins two independent observations: porcelain lines that appeared since spawn, and ``file_change
+    <path>`` entries the peer reported in its own transcript. The second covers a file that was already modified or
+    untracked before the call, where the porcelain line does not change. ``None`` means no delta could be computed,
+    which is different from an empty list; even an empty list is advisory and does not prove that no edit landed.
+    """
+    after = _workspace_state(workspace)
+    changed = None
+    if before is not None and after is not None:
+        before_set = set(before)
+        changed = [line for line in after if line not in before_set]
+    reported = list(dict.fromkeys(_reported_change(path, workspace) for path in touched))
+    # A file Git already lists as new in this delta is not repeated from the transcript.
+    listed = {line[3:] for line in changed or [] if len(line) > 3}
+    reported = [entry for entry in reported if entry.removeprefix("file_change ") not in listed]
+    if changed is None and not reported:
+        return None
+    return [*(changed or []), *reported]
 
 
 def _make_envelope(
@@ -2160,8 +2456,14 @@ def _terminal_envelope(
     prior_incident: str | None = None,
     fault: str | None = None,
     partial_output: str | None = None,
+    returncode: int | None = None,
+    extra_blockers: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """Create, record, and return a harness-owned terminal result."""
+    """Create, record, and return a harness-owned terminal result.
+
+    ``fault`` names the incident cause when it is more specific than the status; ``extra_blockers`` adds harness-
+    authored context lines after the reason, and ``returncode`` records the child exit status in the incident.
+    """
     paths = context.paths
     observed = context.transcript_path is not None
     if context.transcript_path is None:
@@ -2173,7 +2475,7 @@ def _terminal_envelope(
         "findings": [],
         "files_touched": [],
         "remaining": [],
-        "blockers": [reason],
+        "blockers": [reason, *extra_blockers],
     }
     incident = _write_incident(
         paths,
@@ -2186,6 +2488,7 @@ def _terminal_envelope(
         partial_output=partial_output,
         duration_seconds=context.duration if observed else None,
         tokens=context.tokens if observed else None,
+        returncode=returncode,
     )
     if partial_output is not None:
         core["partial_output"] = partial_output
@@ -2206,11 +2509,17 @@ def _write_incident(
     duration_seconds: float | None = None,
     tokens: dict[str, float] | None = None,
     cost: float | None = None,
+    returncode: int | None = None,
 ) -> str:
-    """Persist one compact incident record without copying child environment data."""
+    """Persist one compact incident record without copying child environment data.
+
+    ``workspace_delta`` is ``None`` when no delta was computed and a list (possibly empty) otherwise; ``returncode`` is
+    the child exit status when a child ran.
+    """
     path = paths.incidents / f"{time.time_ns()}-{uuid.uuid4().hex[:8]}-{fault}.json"
     payload = {
-        "schema_version": 1,
+        # 2 adds ``returncode`` and makes ``workspace_delta`` nullable (``null`` = not computed); 1 is historical.
+        "schema_version": 2,
         "run_id": request.run_id,
         "direction": request.direction,
         "duration_seconds": duration_seconds,
@@ -2224,7 +2533,8 @@ def _write_incident(
         "network": request.network,
         "duration_budget_seconds": request.timeout_seconds,
         "transcript_path": transcript_path,
-        "workspace_delta": workspace_delta or [],
+        "workspace_delta": workspace_delta,
+        "returncode": returncode,
         "prior_incident": prior_incident,
     }
     if partial_output is not None:

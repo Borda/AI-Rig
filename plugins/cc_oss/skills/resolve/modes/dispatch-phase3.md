@@ -433,7 +433,7 @@ Type a topic for each item ID (e.g. '1=style 2=logic 3=tests'), or type 'auto' t
 
 - User types labels → parse `<id>=<topic>` pairs from response
 - User types `auto` → infer topics with the `auto` mapping below
-- User skips (empty response or blank) → fall back to `each` mode: commit each already-staged item individually using the same `commit_action_item.py` path as `COMMIT_MODE=each`
+- User skips (empty response or blank) → fall back to `each` mode: commit each already-staged item individually using the same `commit_action_item.py` path as `COMMIT_MODE=each`; pass `--codex` only for an item with a `c1-item-files.tsv` row, never for a Phase 2 item
 
 `auto` mapping (used by `domain`): topic from each item's `.change` field: `style`→`style`, `test`→`tests`, `docs`→`docs`, `ci`→`ci`, `config`→`config`, `code`|`refactor`→`logic`; default `misc` when unclassified. Every item lands in exactly one group; an implemented item with no label or classification → `misc`; a labelled id that was rejected or skipped is ignored.
 
@@ -458,7 +458,6 @@ else
     case "$PR_NUMBER" in ''|*[!0-9]*) echo "! BLOCKED — PR number missing or invalid"; exit 1 ;; esac
     case "$PR_REF" in "#$PR_NUMBER"|https://*/pull/"$PR_NUMBER") ;; *) echo "! BLOCKED — PR reference missing or mismatched"; exit 1 ;; esac
 fi
-[ -f "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" ] && IFS= read -r CODEX_AVAILABLE < "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" || CODEX_AVAILABLE="false"  # reload (Check 43: fresh shell) — set in Step 1; a bare shell var here would always read unset in this separate Bash call, so the Codex co-author trailer below could never fire
 # topic + ids from a Write-tool file, never placeholders: block text stays invariant for the blueprint manifest
 _GROUP_NOW="$IMPL_DIR/group-commit-now.txt"
 [ -s "$_GROUP_NOW" ] || { echo "! BLOCKED — $_GROUP_NOW missing; create it with the Write tool (one line: <topic> then this group's item ids, space-separated) before running this block"; exit 1; }
@@ -471,6 +470,7 @@ case "$_GROUP_IDS" in *[0-9]*) ;; *) echo "! BLOCKED — group ids missing: $_GR
 mv "$_GROUP_NOW" "$_GROUP_NOW.done"  # timeout: 3000
 : > "$IMPL_DIR/group-files.txt"; : > "$IMPL_DIR/group-summaries.txt"
 _COMMITTED_IDS=()  # only ids that actually contributed a file/summary below — an id with neither NEVER reaches group-ids.txt or the commit body, so the close-out fence and SKILL.md's straggler gate can't mark an unimplemented item completed
+_GROUP_CODEX=false  # Codex trailer only for a group holding a C1-recorded item; CODEX_AVAILABLE stays true after a quota stop, so keying on it credited Codex for specialist-only groups
 # cmd-substitution splits under zsh too, a bare $VAR does not
 for _gid in $(printf '%s\n' "$_GROUP_IDS"); do
     _SHA=$(jq -r --arg id "$_gid" 'select((.item_id|tostring)==$id) | .sha' "$IMPL_DIR/phase2-commits.jsonl" 2>/dev/null | head -1)
@@ -484,6 +484,7 @@ for _gid in $(printf '%s\n' "$_GROUP_IDS"); do
         awk -F'\t' -v id="$_gid" '$1==id{print $2}' "$IMPL_DIR/c1-item-files.tsv" >> "$IMPL_DIR/group-files.txt"
         awk -F'\t' -v id="$_gid" '$1==id{print $2; exit}' "$IMPL_DIR/c1-item-summary.tsv" >> "$IMPL_DIR/group-summaries.txt"
         _COMMITTED_IDS+=("$_gid")
+        _GROUP_CODEX=true
     else
         echo "⚠ item $_gid has no Phase-2 commit and no C1 record (rejected/skipped/stalled?) — excluded from group '$_TOPIC'"
     fi
@@ -493,7 +494,7 @@ sort -u "$IMPL_DIR/group-files.txt" -o "$IMPL_DIR/group-files.txt"
 [ -s "$IMPL_DIR/group-files.txt" ] || { echo "! BLOCKED — group '$_TOPIC' has no resolvable files across any of its items"; exit 1; }
 # message built in Python: item subjects already carry type(scope): — topic never prepended (was "tests: test(x): …")
 _BUILD_ARGS=(--build-group --topic "$_TOPIC" --summaries-file "$IMPL_DIR/group-summaries.txt" --pr "$PR_REF" --items "${_COMMITTED_IDS[*]}")
-[ "${CODEX_AVAILABLE:-false}" = "true" ] && _BUILD_ARGS+=(--codex)
+[ "$_GROUP_CODEX" = "true" ] && _BUILD_ARGS+=(--codex)
 _GROUP_FILES=()
 while IFS= read -r _f; do [ -n "$_f" ] && _GROUP_FILES+=("$_f"); done < "$IMPL_DIR/group-files.txt"
 export RESOLVE_APPROVED_HOOKS=""
@@ -524,7 +525,7 @@ else
 fi
 ```
 
-Commit subject format: Conventional Commits, built by `commit_action_item.py --build-group` — never `<topic>: <type(scope): …>`. One item with a typed subject → that subject verbatim. Otherwise type and scope = what the items share, else derived from the topic (`tests`→`test`, `logic`→`fix`, `misc`/`config`→`chore`; a file/specialist/custom topic becomes the scope); description = first item's, plus `(+N more)`, ≤72 chars total (word-boundary cut with `…`). Multi-item body lists every item subject. One commit per unique topic. Print `→ Committed group "<topic>" — items <ids>` after the commit fence. `! BLOCKED` from the close-out fence → group commit failed, no task flipped; investigate before re-running. Otherwise call `TaskUpdate(task_id=<printed task id>, status="completed")` per printed target line.
+Commit subject format: Conventional Commits, built by `commit_action_item.py --build-group` — never `<topic>: <type(scope): …>`. One item with a typed subject → that subject verbatim. Otherwise type and scope = what the items share, else derived from the topic (`tests`→`test`, `logic`→`fix`, `misc`/`config`→`chore`; a file/specialist/custom topic becomes the scope); description = first item's, plus `(+N more)`, ≤72 chars total (word-boundary cut with `…`). Multi-item body lists every item subject. Codex co-author trailer only when the group holds a C1 item (a `c1-item-files.tsv` row); Phase 2 items never add it, including C1 candidates a quota stop sent to Phase 2. One commit per unique topic. Print `→ Committed group "<topic>" — items <ids>` after the commit fence. `! BLOCKED` from the close-out fence → group commit failed, no task flipped; investigate before re-running. Otherwise call `TaskUpdate(task_id=<printed task id>, status="completed")` per printed target line.
 
 **After loop — `COMMIT_MODE=grouped` only**: once every topic group has committed, assert the index is empty — a group's `<all files changed by items in this group>` substitution silently omitting one of that group's staged files would otherwise leave it stranded, uncommitted, invisible to any later check:
 
@@ -543,7 +544,7 @@ case "$COMMIT_MODE" in
 esac
 ```
 
-**After loop — `COMMIT_MODE=all` only**: derive counters from `CHALLENGE_LOG`, create single commit:
+**After loop — `COMMIT_MODE=all` only**: derive counters from `CHALLENGE_LOG`, create single commit; Codex co-author trailer only when `c1-item-files.tsv` records a C1 item:
 
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
@@ -557,7 +558,6 @@ else
     case "$PR_REF" in "#$PR_NUMBER"|https://*/pull/"$PR_NUMBER") ;; *) echo "! BLOCKED — PR reference missing or mismatched"; exit 1 ;; esac
 fi
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
-[ -f "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" ] && IFS= read -r CODEX_AVAILABLE < "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" || CODEX_AVAILABLE="false"  # reload (Check 43: fresh shell) — set in Step 1; a bare shell var here would always read unset in this separate Bash call, so --codex could never be passed
 # grep -c prints 0 AND exits 1 on no match — `|| echo 0` would yield "0\n0" and commit_all_items.py rejects it; only a missing file leaves stdout empty
 # anchored right after id= (resolution= is the field placed there, before any free-text field — see the append
 # block, dispatch-prelude.md) so a reviewer's quoted text can never masquerade as the real field; -i absorbs casing drift
@@ -567,7 +567,8 @@ N_REJECTED=$(grep -ciE '^id[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]+resolution
 SUMMARIES_FILE=""
 export RESOLVE_APPROVED_HOOKS=""
 IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" 2>/dev/null || RESOLVE_APPROVED_HOOKS=""
-python "$PLUGIN_ROOT/bin/commit_all_items.py" "$PR_REF" "$N_AS_SUGGESTED" "$N_SELF_RESOLVED" "$N_REJECTED" "$SUMMARIES_FILE" $( [ "${CODEX_AVAILABLE:-false}" = "true" ] && echo "--codex" )  # timeout: 10000
+# Codex trailer only when a C1 item finished (a c1-item-files.tsv row, written for Git-verified C1 DONE items only); CODEX_AVAILABLE stays true after a quota stop, so keying on it credited Codex for specialist-only commits
+python "$PLUGIN_ROOT/bin/commit_all_items.py" "$PR_REF" "$N_AS_SUGGESTED" "$N_SELF_RESOLVED" "$N_REJECTED" "$SUMMARIES_FILE" $(awk -F'\t' '$1 ~ /^[0-9]+$/ && $2 != "" {found=1} END {exit !found}' "$IMPL_DIR/c1-item-files.tsv" 2>/dev/null && echo "--codex")  # timeout: 10000
 ```
 
 After the commit succeeds, flip only selected items with an implementation record to completed (deferred from per-item loop body where commit had not yet happened). A Phase 2 commit record or a Git-verified C1 file record is required for each id; the clean Phase 3 result proves the recorded Phase 2 work was merged before the bulk commit. A selected item absent from both ledgers remains `in_progress` for the straggler gate. Exclude ids already closed above (REJECT, `skipped-items.txt`). The persisted `selected-items.txt` is authoritative for scope; task ids still come from `item-tasks.tsv`:

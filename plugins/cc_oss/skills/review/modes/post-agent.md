@@ -13,6 +13,30 @@ Follow the protocol above: parent validates all candidates before consolidation 
 
 **Independence requirement**: the additional critical/blocking verification runs as a separate spawned agent of the finding's origin type; parent validation of every candidate remains mandatory.
 
+**Codex quota stop — challenger verifiers.** A `foundry:challenger` verifier runs its own Codex cross-check, which cannot succeed once Codex is out of credits in this run. Before composing verifier prompts, run this block once, unedited. It prints `REVIEW_CODEX=quota-blocked` when:
+
+- the Step 2 co-review reply persisted at `$RUN_DIR/codex-review-reply.json` links a harness incident whose `fault` is `quota-exhausted`; that reply decides alone, and its verdict or blockers text never does;
+- or no reply was persisted and `$RUN_DIR/foundry--codex.md` opens with the launch's own `⊘ codex-blocked:quota` line (the gate stop, kept on disk across a compaction).
+
+`REVIEW_CODEX=quota-blocked`, or `GATE_CODEX=quota-blocked` held from the Step 1 gate → every `foundry:challenger` verifier prompt ends with the line `--no-codex`. Other verifier types, and runs printing `REVIEW_CODEX=none` without the gate flag, are unchanged.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
+[ -n "$RUN_DIR" ] || { echo "! BLOCKED — run-dir sentinel empty; Step 4 cannot read the Step 2 Codex record"; exit 1; }
+_FAULT=none
+if [ -s "$RUN_DIR/codex-review-reply.json" ]; then
+    # persisted reply decides alone: harness incident fault, never verdict text
+    _FAULT=$(python "$PLUGIN_ROOT/bin/bridge_quota_check.py" "$RUN_DIR/codex-review-reply.json" 2>/dev/null) || _FAULT=none  # timeout: 15000
+else
+    # no reply: only the launch's one-line gate stop record counts
+    _CODEX_LINE=""; [ -f "$RUN_DIR/foundry--codex.md" ] && IFS= read -r _CODEX_LINE < "$RUN_DIR/foundry--codex.md"
+    case "$_CODEX_LINE" in "⊘ codex-blocked:quota"*) _FAULT=quota-exhausted ;; esac
+fi
+if [ "$_FAULT" = quota-exhausted ]; then echo "REVIEW_CODEX=quota-blocked — Codex out of credits this run; every foundry:challenger verifier prompt ends with --no-codex"; else echo "REVIEW_CODEX=none"; fi
+```
+
 **Deadlines, no polling**: in the verifier spawn response, write `$RUN_DIR/agent-watch-verify.tsv` with the Write tool — one row per verifier, `<name><TAB><its output file per the protocol, or - when it returns only an envelope><TAB>1800` — and run the Step 2 wake-up check (it reads every `agent-watch-*.tsv` in `$RUN_DIR`) at each notification. Never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop.
 
 **Spawn cap: max 3 verifier agents.** Critical/blocking findings > 3 → group into batches of ≤2 findings per verifier; note grouped IDs in rationale.

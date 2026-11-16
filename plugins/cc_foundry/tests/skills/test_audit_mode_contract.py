@@ -25,6 +25,14 @@ def _lines(relative: str) -> list[str]:
     return (_AUDIT / relative).read_text(encoding="utf-8").splitlines()
 
 
+def _span(relative: str, start: str, end: str) -> str:
+    """Join one restructured rule: from the line holding ``start`` through the next line holding ``end``."""
+    lines = _lines(relative)
+    first = next(index for index, line in enumerate(lines) if start in line)
+    last = next(index for index in range(first, len(lines)) if end in lines[index])
+    return "\n".join(lines[first : last + 1])
+
+
 def test_inventory_review_collects_the_read_only_bridge_reply() -> None:
     """Inventory reviews include unchanged sources and never depend on peer writes."""
     lines = _lines("modes/adversarial.md")
@@ -47,12 +55,25 @@ def test_adversarial_only_run_produces_the_gate_inputs() -> None:
 @_BASH
 @pytest.mark.skipif(shutil.which("node") is None, reason="requires node to execute the hook")
 @pytest.mark.integration
-@pytest.mark.parametrize("relative", ["modes/adversarial.md", "modes/steps-4-5-7.md"])
+@pytest.mark.parametrize(
+    ("relative", "stage", "start", "end"),
+    [
+        pytest.param("modes/adversarial.md", "adversarial", "Phase C staging:", "- Return: `{", id="adversarial"),
+        pytest.param(
+            "modes/steps-4-5-7.md",
+            "standard",
+            '> "Read the Step 3 per-file reports',
+            "> - Return ONLY a compact JSON envelope",
+            id="standard",
+        ),
+    ],
+)
 @pytest.mark.parametrize("finding_count", [0, 1])
-def test_adversarial_staging_reaches_the_real_follow_up_gate(tmp_path: Path, finding_count: int, relative: str) -> None:
+def test_adversarial_staging_reaches_the_real_follow_up_gate(
+    tmp_path: Path, finding_count: int, relative: str, stage: str, start: str, end: str
+) -> None:
     """The mode's actual append command produces usable gate inputs, including a clean audit."""
-    stage = "adversarial" if relative == "modes/adversarial.md" else "standard"
-    instruction = next(line for line in _lines(relative) if f"summary.jsonl.{stage}.rec" in line)
+    instruction = _span(relative, start, end)
     assert "empty" in instruction
     assert "Zero" in instruction
     staged_name = next(token for token in instruction.split("`") if token.endswith(f"/summary.jsonl.{stage}.rec"))
@@ -136,7 +157,9 @@ def test_fix_subagent_enforces_its_own_convergence_bound() -> None:
 
 def test_residual_criticals_carry_fix_selection_metadata() -> None:
     """A fixable critical discovered by the residual scanner can enter the next authorized pass."""
-    residual = next(line for line in _lines("templates/audit-fix-prompt.md") if line.startswith("**Step R2"))
+    residual = next(
+        line for line in _lines("templates/audit-fix-prompt.md") if line.startswith('- Prompt: "Fresh adversarial read')
+    )
     assert '"sev":"critical"' in residual
     assert '"auto_fixable":true|false' in residual
     assert '"category"' in residual
@@ -163,8 +186,7 @@ def test_summary_keys_and_fix_artifacts_distinguish_same_named_skills() -> None:
 
 def test_large_low_confidence_batch_has_a_consumer_and_staged_records() -> None:
     """The fan-out ceiling still merges its batch output into the canonical summary."""
-    lines = _lines("modes/steps-4-5-7.md")
-    consumer = next(line for line in lines if line.startswith("**Batch consumer**"))
+    consumer = _span("modes/steps-4-5-7.md", "**Batch consumer**", "- The shared append call below")
     assert "lowconf-batch-rerun.md" in consumer
     assert "summary.jsonl.lowconf-batch.rec" in consumer
     assert "aggregate.md" in consumer
@@ -276,11 +298,18 @@ def test_inventory_discovery_reads_disk_without_a_memory_roster(relative: str, s
     assert any("sort" in line for line in section)
 
 
-@pytest.mark.parametrize("relative", ["modes/steps-4-5-7.md", "modes/fix.md", "templates/audit-fix-prompt.md"])
-def test_nested_spawn_sites_are_included_in_deadline_rows(relative: str) -> None:
+@pytest.mark.parametrize(
+    ("relative", "locator"),
+    [
+        pytest.param("modes/steps-4-5-7.md", "every", id="steps"),
+        pytest.param("modes/fix.md", "Before each Agent spawn", id="fix"),
+        pytest.param("templates/audit-fix-prompt.md", "every", id="subagent"),
+    ],
+)
+def test_nested_spawn_sites_are_included_in_deadline_rows(relative: str, locator: str) -> None:
     """Consolidation and nested gate agents cannot evade the notification deadline protocol."""
     lines = _lines(relative)
-    deadline = next(line for line in lines if "agent-watch-" in line and "every" in line)
+    deadline = next(line for line in lines if "agent-watch-" in line and locator in line)
     assert "row per" in deadline
     assert "900" in deadline
 
@@ -300,10 +329,16 @@ def _bash_block(relative: str, needle: str) -> str:
     raise AssertionError(f"No runnable block for {needle}")
 
 
-@pytest.mark.parametrize("relative", ["modes/fix.md", "templates/audit-fix-prompt.md"])
-def test_scoped_authority_intersects_eligibility_without_collecting_decisions(relative: str) -> None:
+@pytest.mark.parametrize(
+    ("relative", "end"),
+    [
+        pytest.param("modes/fix.md", "- Pass the literal `SCOPE_FILTER`", id="fix"),
+        pytest.param("templates/audit-fix-prompt.md", "SELECTED_OPTION=scoped", id="subagent"),
+    ],
+)
+def test_scoped_authority_intersects_eligibility_without_collecting_decisions(relative: str, end: str) -> None:
     """A prior path or severity authorization reaches dispatch without granting systemic edits."""
-    scoped = next(line for line in _lines(relative) if "SELECTED_OPTION=scoped" in line)
+    scoped = _span(relative, "SELECTED_OPTION=scoped", end)
     assert "SCOPE_FILTER" in scoped
     assert "paths" in scoped
     assert "severities" in scoped
@@ -327,7 +362,7 @@ def test_scoped_selection_has_an_explicit_dispatch_route_without_a_new_question(
 def test_every_excluded_category_is_presented_and_reported() -> None:
     """Systemic and advisory exclusions cannot silently disappear at non-low severities."""
     lines = _lines("modes/fix.md")
-    decision = next(line for line in lines if "**Upfront decision collection**" in line)
+    decision = _span("modes/fix.md", "**Upfront decision collection**", "Severity-free advisories")
     assert "every `auto_fixable:false` row" in decision
     assert "group" in decision
     assert "category" in decision
@@ -355,11 +390,10 @@ def test_classifiers_receive_all_five_systemic_exclusion_classes(relative: str) 
 
 def test_combined_modes_have_a_reachable_single_writer() -> None:
     """The combined route actually dispatches the writer after efficiency has produced findings."""
-    lines = _lines("modes/adversarial.md")
-    dispatch = next(line for line in lines if "defer" in line and "efficiency Phase C" in line)
+    dispatch = _span("modes/adversarial.md", "Consolidator dispatch:", "- Surface only findings NOT")
     assert "Spawn" in dispatch
     assert "foundry:curator" in dispatch
-    producer = next(line for line in lines if "summary.jsonl.efficiency.rec" in line)
+    producer = _span("modes/adversarial.md", "Phase C staging:", "- Return: `{")
     assert "efficiency-report.md" in producer
     assert "stage" in producer
     assert "root" in producer
@@ -498,7 +532,11 @@ def test_adversarial_inventory_assigns_slugs_without_step_three() -> None:
     assert "skill" in rule
     assert "local" in rule
     assert "substitute" in rule
-    dispatch = next(line for line in _lines("modes/adversarial.md") if line.startswith("> Write full findings"))
+    dispatch = next(
+        line
+        for line in _lines("modes/adversarial.md")
+        if line.startswith("> - `<file-slug>` is the plugin-prefixed slug")
+    )
     assert "assigned above" in dispatch
 
 
@@ -672,3 +710,183 @@ def test_upgrade_records_a_terminal_result_for_artifact_cleanup() -> None:
     assert "mode" in result
     assert "upgrade" in result
     assert "append_ledger.py" in result
+
+
+_QUOTA_PROBE_SITES = ["modes/adversarial.md", "modes/fix.md", "modes/steps-4-5-7.md"]
+_QUOTA_RULE_FILES = ["SKILL.md", "templates/audit-fix-prompt.md"]
+_QUOTA_MARKER_WRITE = '> "$RUN_DIR/codex-blocked.txt"'
+
+
+def _quota_probe(relative: str) -> str:
+    """Return a site's shipped status-probe lines in file order: probe, quota override, status read, verdict."""
+    block = _bash_block(relative, "check_bridge.py").splitlines()
+    needles = ("check_bridge.py", "codex-blocked.txt", "IFS= read -r CODEX_STATUS", "CODEX_AVAILABLE=%s")
+    return "\n".join(next(line for line in block if needle in line) for needle in needles)
+
+
+@_BASH
+@pytest.mark.parametrize("relative", _QUOTA_PROBE_SITES)
+@pytest.mark.parametrize(
+    ("run_dir_record", "marker", "status", "visible"),
+    [
+        pytest.param("run\n", "codex-blocked:quota\n", "codex-blocked:quota", "false", id="quota-stop-recorded"),
+        pytest.param("run\n", "", "available", "true", id="no-quota-stop"),
+        pytest.param("", "codex-blocked:quota\n", "available", "true", id="run-dir-unrecorded"),
+    ],
+)
+def test_quota_stop_turns_the_bridge_off_for_the_rest_of_the_run(
+    tmp_path: Path, relative: str, run_dir_record: str, marker: str, status: str, visible: str
+) -> None:
+    """A recorded quota stop overrides an available probe, so no later site in the run dispatches the bridge.
+
+    The probe still reports the installed bridge as available; only the run's own marker can turn it off. An empty
+    marker or a run whose directory was never recorded keeps today's availability, so an older run cannot inherit it.
+    """
+    state = tmp_path / "audit-state-test"
+    state.mkdir()
+    (state / "run-dir").write_text(run_dir_record, encoding="utf-8")
+    (tmp_path / "run").mkdir()
+    (tmp_path / "run/codex-blocked.txt").write_text(marker, encoding="utf-8")
+    result = subprocess.run(
+        ["bash"],
+        input='python() { printf "available\\n"; }\nCSID=test\n' + _quota_probe(relative) + "\n",
+        cwd=tmp_path,
+        env={**os.environ, "TMPDIR": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (state / "codex-status").read_text(encoding="utf-8").strip() == status
+    assert result.stdout.strip() == f"CODEX_AVAILABLE={visible}"
+
+
+@_BASH
+@pytest.mark.parametrize("relative", _QUOTA_RULE_FILES)
+def test_quota_stop_records_the_marker_in_the_run_directory(tmp_path: Path, relative: str) -> None:
+    """The fixed recording block writes the run-scoped marker the status probes read back.
+
+    The orchestrator and the audit-fix sub-agent each ship the block, so both must land the same marker in the run
+    directory named by the session's audit-state sentinel.
+    """
+    state = tmp_path / "audit-state-test"
+    state.mkdir()
+    (state / "run-dir").write_text(str(tmp_path / "run") + "\n", encoding="utf-8")
+    (tmp_path / "run").mkdir()
+    result = subprocess.run(
+        ["bash"],
+        input=_bash_block(relative, _QUOTA_MARKER_WRITE),
+        env={**os.environ, "TMPDIR": str(tmp_path), "CLAUDE_CODE_SESSION_ID": "test"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "run/codex-blocked.txt").read_text(encoding="utf-8") == "codex-blocked:quota\n"
+
+
+@_BASH
+@pytest.mark.parametrize("relative", _QUOTA_RULE_FILES)
+def test_quota_stop_refuses_to_record_without_a_run_directory(tmp_path: Path, relative: str) -> None:
+    """A missing run-dir sentinel blocks instead of writing the marker into the working directory.
+
+    A root-relative marker would leak into the next audit run, which starts with a fresh run directory.
+    """
+    (tmp_path / "audit-state-test").mkdir()
+    result = subprocess.run(
+        ["bash"],
+        input=_bash_block(relative, _QUOTA_MARKER_WRITE),
+        cwd=tmp_path,
+        env={**os.environ, "TMPDIR": str(tmp_path), "CLAUDE_CODE_SESSION_ID": "test"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "BLOCKED" in result.stdout
+    assert not (tmp_path / "codex-blocked.txt").exists()
+
+
+@pytest.mark.parametrize("relative", _QUOTA_RULE_FILES)
+def test_quota_stop_decides_only_from_the_harness_incident(relative: str) -> None:
+    """Only the incident file's quota fault stops the bridge; verdict text and other faults keep today's route."""
+    lines = _lines(relative)
+    assert any("incident" in line and "`fault`" in line and "`quota-exhausted`" in line for line in lines)
+    assert any("null `incident`" in line and "`rate-limited`" in line and "`capacity`" in line for line in lines)
+    assert any("verdict" in line and "blockers text" in line and "never decide" in line.lower() for line in lines)
+
+
+@pytest.mark.parametrize("relative", _QUOTA_RULE_FILES)
+def test_quota_stop_reports_a_distinct_outcome_and_silences_challengers(relative: str) -> None:
+    """Quota-skipped work is reported as its own outcome, and later challengers skip their Codex cross-check."""
+    lines = _lines(relative)
+    assert any("codex-blocked:quota" in line and "no-op" in line for line in lines)
+    assert any("--no-codex" in line and "foundry:challenger" in line for line in lines)
+
+
+@pytest.mark.parametrize("relative", ["modes/fix.md", "templates/audit-fix-prompt.md"])
+def test_fast_path_uses_a_per_file_agent_after_a_quota_stop(relative: str) -> None:
+    """A recorded quota stop removes bridge:implement from the fast path like a dirty tree does."""
+    lines = _lines(relative)
+    assert any("codex-blocked.txt" in line and "haiku" in line and "bridge:implement" in line for line in lines)
+
+
+@pytest.mark.parametrize(
+    ("relative", "dispatch"),
+    [
+        pytest.param("modes/adversarial.md", "to each `bridge:review` result", id="adversarial-phase-b"),
+        pytest.param("modes/steps-4-5-7.md", "pass that entire rendered brief to", id="low-confidence-codex"),
+        pytest.param("modes/fix.md", "After the codex-prepass.md call", id="fix-cross-file-check"),
+        pytest.param("modes/fix.md", "to each `bridge:implement` result", id="fix-fast-path"),
+    ],
+)
+def test_every_bridge_dispatch_site_applies_the_quota_stop(relative: str, dispatch: str) -> None:
+    """Each audit bridge call hands its result to the run-wide quota stop, so one site's fault reaches the others."""
+    line = next(line for line in _lines(relative) if dispatch in line)
+    assert "§Bridge quota stop" in line
+
+
+@pytest.mark.parametrize(
+    ("relative", "spawn"),
+    [
+        pytest.param("modes/fix.md", "Spawn **foundry:challenger** with finding text", id="fix-gate"),
+        pytest.param("templates/audit-fix-prompt.md", "**Gate after a", id="subagent-gate"),
+        pytest.param("templates/audit-fix-prompt.md", "**R2 after a", id="subagent-r2"),
+    ],
+)
+def test_looping_challenger_spawns_skip_codex_after_a_quota_stop(relative: str, spawn: str) -> None:
+    """Per-file challenger spawns repeated every fix pass carry --no-codex once the quota stop fired."""
+    line = next(line for line in _lines(relative) if spawn in line)
+    assert "--no-codex" in line
+    assert "quota" in line
+
+
+@pytest.mark.parametrize(
+    ("relative", "sites"),
+    [
+        pytest.param("SKILL.md", ("modes/fix.md", "gate", "R2"), id="parent-run"),
+        pytest.param("templates/audit-fix-prompt.md", ("gate", "R2"), id="fix-subagent"),
+    ],
+)
+def test_challenger_quota_signal_records_the_run_wide_stop(relative: str, sites: tuple[str, ...]) -> None:
+    """A gate or R2 challenger whose own Codex cross-check met the quota fault records the run-wide stop at once.
+
+    The challenger runs Codex itself, so without this rule its quota fault stayed in its report and the next gate, fast-
+    path dispatch or Codex pass of the same run spent another doomed call. Its envelope key is the trigger.
+    """
+    rule = next(line for line in _lines(relative) if '"codex_blocked": "quota"' in line)
+    assert "run the block below at once" in rule
+    assert [site for site in sites if site not in rule] == []
+
+
+@pytest.mark.parametrize("relative", _QUOTA_RULE_FILES)
+def test_challenger_without_the_quota_key_keeps_the_route(relative: str) -> None:
+    """A challenger reply without the quota key leaves the run's Codex route unchanged."""
+    rule = next(line for line in _lines(relative) if '"codex_blocked": "quota"' in line)
+    assert "key absent keeps the current route" in rule
+
+
+def test_fix_gate_names_the_challenger_quota_signal() -> None:
+    """The fix-mode gate spawn names its reply's quota key as a quota stop, where the gate result is read."""
+    line = next(line for line in _lines("modes/fix.md") if "Spawn **foundry:challenger** with finding text" in line)
+    assert '"codex_blocked": "quota"' in line

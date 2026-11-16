@@ -371,6 +371,43 @@ def test_deeply_nested_report_yields_diagnostic(store: Path) -> None:
     assert result["groups"][0]["calls"] == 1
 
 
+@pytest.mark.parametrize(
+    ("schema", "supported"),
+    [
+        pytest.param(1, True, id="historical-incident-layout"),
+        pytest.param(2, True, id="current-incident-layout"),
+        pytest.param(3, False, id="future-incident-layout"),
+    ],
+)
+def test_incident_schema_versions_one_and_two_are_read(store: Path, schema: int, supported: bool) -> None:
+    """A usage report reads the historical and current incident layouts and still rejects an unknown version.
+
+    Incident records moved to schema 2 (nullable ``workspace_delta``, ``returncode``); reading only version 1 would
+    report every new incident as unsupported and drop its attempt.
+    """
+    incident = ".temp/bridge/incidents/final.json"
+    (store / "incidents" / "final.json").write_text(
+        json.dumps({"schema_version": schema, "fault": "quota-exhausted", "workspace_delta": None, "returncode": 1}),
+        encoding="utf-8",
+    )
+    _health(store, [{"direction": "claude_to_codex", "status": "blocked", "incident": incident}])
+
+    result = bridge_usage.summarize([store.parents[1]])
+
+    codes = {item["code"] for item in result["diagnostics"]}
+    assert ("unsupported_artifact_schema" in codes) is (not supported)
+
+
+def test_result_report_schema_version_two_is_not_read(store: Path) -> None:
+    """Only incidents moved to schema 2; a result report claiming version 2 is still an unsupported layout."""
+    (store / "report.json").write_text(json.dumps({"schema_version": 2}), encoding="utf-8")
+    _health(store, [{"direction": "claude_to_codex", "status": "blocked", "report_path": ".temp/bridge/report.json"}])
+
+    result = bridge_usage.summarize([store.parents[1]])
+
+    assert "unsupported_artifact_schema" in {item["code"] for item in result["diagnostics"]}
+
+
 @pytest.mark.parametrize("schema", [True, 1.0])
 def test_noninteger_schema_is_not_a_supported_version(store: Path, schema: object) -> None:
     """Boolean and floating schema values must not pass the integer version gate by equality."""

@@ -97,6 +97,15 @@ MANIFEST: list[dict[str, object]] = [
         ],
     },
     {
+        # Contributor-code scan, approval binding and contained runner: the oss review and resolve gates run PR code
+        # through it, and a plugin may be installed alone, so the copy ships with each plugin that needs it.
+        "canonical": "plugins/cc_foundry/bin/untrusted_code_guard.py",
+        "copies": [
+            "plugins/cc_oss/bin/untrusted_code_guard.py",
+            "plugins/codex-rig/shared/untrusted_code_guard.py",
+        ],
+    },
+    {
         # Adversarial-loop checker: appends rounds, prints the progress table and enforces the
         # repeat root-cause and third-occurrence rules. Codex owns the canonical source; without
         # a local copy a Claude loop runs ledger-less and those rules never fire.

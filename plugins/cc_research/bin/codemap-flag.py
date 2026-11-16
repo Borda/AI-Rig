@@ -122,4 +122,8 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    # the ! BLOCKED line carries an em dash; a piped Windows stream would encode it in the ANSI codepage, not UTF-8
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8")
     sys.exit(main(sys.argv))

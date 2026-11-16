@@ -4,14 +4,30 @@
 
 ## Phase 2c — Codex co-pilot (`--codex` only)
 
-> **Cost-bounded gate.** Run when `--codex` has the user approval defined below and is available at R2 AND both gates pass:
+> **Cost-bounded gate.** Run when `--codex` has the user approval defined below and is available at R2 AND all three gates pass:
 >
 > 1. **Cost ceiling** — `CODEX_ITER < MAX_CODEX_RUNS` (default `MAX_CODEX_RUNS=10`; even with `MAX_ITERATIONS=20`, Codex runs max 10 times).
 > 2. **Diminishing returns** — last 2 Codex passes both produced no code changes → skip Codex remaining iterations, append note to `diary.md`: `"Codex skipped from iter N — 2 consecutive no-ops"`.
+> 3. **Quota stop** — an earlier pass this run ended on a harness-classified `quota-exhausted` fault (outcomes below) → no Codex call for the rest of the run, Phase 2c and R7 alike, until the user's own `--resume` with `--codex` lifts it (approval below); the gate line shows `CODEX_BLOCKED=true`. Never write the 2-no-op note for it — that pass already noted `codex-blocked:quota`.
 
-For `bridge:implement`, the co-pilot gate requires a recorded user decision naming the run's task set and authorizing `--codex`; a direct user `/research:run --codex` request naming that program and scope is that approval. R2 checks availability; a restored flag or internal invocation alone is not approval. Record the user's decision and its conversation reference before the first co-pilot dispatch; workspace is the skill's absolute launch directory and network is `none` unless that decision names otherwise. Cite the decision and approved goal and scope in each iteration brief; reuse it only for tasks in that set. A subagent may dispatch only when its brief carries the orchestrating skill's recorded approval; otherwise return `blocked` and never dispatch. If no approval exists, use AskUserQuestion before dispatch; if AskUserQuestion is unavailable, return `blocked` and never dispatch.
+Co-pilot dispatch approval:
+
+- For `bridge:implement`, the co-pilot gate requires a recorded user decision naming the run's task set and authorizing `--codex`; a direct user `/research:run --codex` request naming that program and scope is that approval.
+- That direct request also lifts a stored quota stop when it resumes the run (`modes/resume.md`, before its step 1), never a stop recorded in this session after it; `codex_state.py` reads the `--codex` from the request's own arguments, so a restored flag or a resume without `--codex` never lifts it, and a skill or agent never types `--codex` on the user's behalf.
+- R2 checks availability; a restored flag or internal invocation alone is not approval.
+- Record the user's decision and its conversation reference before the first co-pilot dispatch; workspace is the skill's absolute launch directory and network is `none` unless that decision names otherwise.
+- Cite the decision and approved goal and scope in each iteration brief; reuse it only for tasks in that set.
+- A subagent may dispatch only when its brief carries the orchestrating skill's recorded approval; otherwise return `blocked` and never dispatch.
+- If no approval exists, use AskUserQuestion before dispatch; if AskUserQuestion is unavailable, return `blocked` and never dispatch.
 
 **Counters live in a file, never in prose.** `CODEX_ITER` and `CODEX_NOOP_STREAK` are persisted to `.experiments/state/<run-id>/codex-state` as JSON and re-read at every gate check. Prose-tracked counters are lost to mid-run compaction — silently re-opens whole Codex budget. `CODEX_DISABLED` is **derived** at read time (`CODEX_NOOP_STREAK >= 2`), never stored — one less value that can go stale.
+
+Quota stop adds one stored fact:
+
+- `codex_blocked` — the quota flag; no counter can derive it.
+- `CODEX_DISABLED` is also derived true when the stored quota flag is set.
+- File without it (older run, never blocked) reads not blocked.
+- Only `codex_state.py unblock` clears it, keeping both counters; it runs on every resume and lifts only a stop stored before the user's typed `--codex` (approval above).
 
 Run at the **first** Phase 2c of the run, ahead of the gate check. The write is guarded on the file's absence, so re-running it after a resume or a compaction cannot reset a budget that is already part-spent:
 
@@ -29,10 +45,10 @@ mkdir -p ".experiments/state/${RUN_ID}"  # timeout: 3000
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
-python "$PLUGIN_ROOT/bin/codex_state.py" read --state ".experiments/state/${RUN_ID}/codex-state"  # timeout: 5000 — prints CODEX_ITER, CODEX_NOOP_STREAK, CODEX_DISABLED (true once the streak reaches 2); missing file reads 0/0
+python "$PLUGIN_ROOT/bin/codex_state.py" read --state ".experiments/state/${RUN_ID}/codex-state"  # timeout: 5000 — prints CODEX_ITER, CODEX_NOOP_STREAK, CODEX_DISABLED (true at streak 2 or stored quota flag), + CODEX_BLOCKED=true when quota-blocked; missing file reads 0/0
 ```
 
-Gate fail (`CODEX_DISABLED=true` or `CODEX_ITER >= MAX_CODEX_RUNS`): skip Phase 2c, continue to Phase 3.
+Gate fail (`CODEX_DISABLED=true` or `CODEX_ITER >= MAX_CODEX_RUNS`): skip Phase 2c, continue to Phase 3. `CODEX_BLOCKED=true` on the line = quota stop, not a no-op streak.
 
 Else print narration, update R5b before Agent call:
 
@@ -42,7 +58,14 @@ Else print narration, update R5b before Agent call:
 
 TaskUpdate R5b subject: `R5b: Codex co-pilot — iter N/max_iterations running`, status: `in_progress`
 
-Codex runs a second pass in the same iteration, on the working tree Phase 2 left. Claude's edit is uncommitted and **undecided** here — Phases 3–7 have not run — so nothing is "kept" or "reverted" yet. Both passes form one change set: Phase 3 reconciles the changed paths of both against `scope_files` (a Codex path outside scope fails the combined scope check like any other), Phase 4 commits them as one experiment commit, and Phase 7 compares the single result against `best_metric`. "delta ≥ 0.1%" = delta against `best_metric`, not the previous Claude iteration. The combined change is kept only if delta ≥ 0.1% AND guard passes; one keep/revert decision covers both passes, so per-pass attribution comes from the diary entry, not from the delta.
+Codex runs a second pass in the same iteration, on the working tree Phase 2 left. Claude's edit is uncommitted and **undecided** here — Phases 3–7 have not run — so nothing is "kept" or "reverted" yet.
+
+Both passes form one change set:
+
+- Phase 3 reconciles the changed paths of both against `scope_files` (a Codex path outside scope fails the combined scope check like any other).
+- Phase 4 commits them as one experiment commit.
+- Phase 7 compares the single result against `best_metric`. "delta ≥ 0.1%" = delta against `best_metric`, not the previous Claude iteration.
+- The combined change is kept only if delta ≥ 0.1% AND guard passes; one keep/revert decision covers both passes, so per-pass attribution comes from the diary entry, not from the delta.
 
 > **Clean-tree exception.** Phase 2c deliberately runs `bridge:implement` on a tree holding Claude's uncommitted Phase 2 edit as a sanctioned exception to the clean-tree step of the Write-Delegation Checklist, so Claude and Codex edits are reviewed together as one combined change set. All other checklist steps remain in force: keep the owned paths bounded by `scope_files`, retain the iteration-start SHA snapshot and Phase 3 scope check, read the full combined diff yourself and run the actual proof commands; the bridge never commits, and the lead owns Phase 4's single experiment commit.
 
@@ -55,13 +78,18 @@ Run Codex ideation:
 Skill(skill="bridge:implement", args="Recorded user approval: <conversation reference and decision naming the approved task set>. Workspace: <absolute approved workspace>. Network: <approved mode, default none>. Goal: <goal>. Run clarification: <clarification_prompt> when present. Current metric: <metric_key>=<current_value> (baseline: <baseline>, direction: <higher|lower>). Scope files: <scope_files>. Compute: <compute>. Colab hardware: <colab_hw> when active. Read .experiments/state/<run-id>/context-<i>.md. Starting state: Claude's change is [present in the working tree, uncommitted and not yet evaluated | absent (Phase 2 was a no-op)]. Propose and implement one atomic optimization most likely to improve the metric without breaking <guard_cmd>. Write full reasoning to .experiments/state/<run-id>/codex-ideation-<i>.md.")
 ```
 
+- Codex stopped on a **harness-classified quota exhaustion** — all three hold: envelope `status` is `blocked` or `timeout`; its `incident` is non-null; the JSON file at that `incident` path (open it with Read) has `fault` equal to `quota-exhausted`. Then:
+  - persist with the `blocked` block below; note `codex-blocked:quota` in the diary entry, never `codex-no-op`. Marker is diary-only: Phase 8 `status` stays the Phases 3–7 outcome (empty change set → `no-op`), so stuck detection counts it as before;
+  - no further Codex call this run — later Phase 2c gate checks and R7 skip on `CODEX_BLOCKED=true` until a user resume with `--codex` lifts it; no fallback to another provider;
+  - continue in-house to Phase 3 on the tree as it stands: a stopped child may have edited first, so Phase 3 checks its paths like any other change.
+- Not classified — verdict or `blockers` text and the bridge skill's `! BLOCKED` line never decide. `incident: null` (a peer model can author the same wording), an unreadable incident file, or any other `fault` (`rate-limited`, `capacity`, `blocked`, …) takes the two outcomes below unchanged.
 - Codex proposes a change: proceed Phases 3–7 on the combined change set (verify files, commit, metric, guard, decide). Diary entry (Phase 7a) names the paths each pass touched.
 - Codex makes no change: Claude's edit (or the Phase 3 no-op) stands alone; note `codex-no-op` in the diary entry and continue to Phase 3.
 - Set `"ideation_source": "codex"` in the Phase 8 JSONL record whenever Codex changed any path in the committed change set (the schema has no combined value); `"claude"` otherwise.
 
 After Codex completes (any outcome):
 
-**Persist the counters** — run exactly one of the two blocks below, chosen by the outcome just recorded. Both increment `CODEX_ITER`; they differ only in what happens to the no-op streak. Never edit the numbers by hand: the blocks re-read the file so the increment survives a compaction that landed mid-iteration.
+**Persist the counters** — run exactly one of the three blocks below, chosen by the outcome just recorded. All three increment `CODEX_ITER`; they differ in what happens to the no-op streak and the quota flag. Never edit the numbers by hand: the blocks re-read the file so the increment survives a compaction that landed mid-iteration.
 
 Codex produced **no code changes** (`codex-no-op`) — streak grows:
 
@@ -81,7 +109,16 @@ IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || R
 python "$PLUGIN_ROOT/bin/codex_state.py" bump --state ".experiments/state/${RUN_ID}/codex-state" --outcome productive  # timeout: 5000 — re-reads the file, codex_iter + 1, noop_streak reset to 0; prints the new counters
 ```
 
-Streak reaching 2 is what disables Codex for the rest of the run — the gate check above derives that, so nothing else needs writing.
+Codex stopped on a **harness-classified quota exhaustion** (`codex-blocked:quota`) — streak unchanged, quota flag stored:
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
+python "$PLUGIN_ROOT/bin/codex_state.py" bump --state ".experiments/state/${RUN_ID}/codex-state" --outcome blocked  # timeout: 5000 — re-reads the file, codex_iter + 1, noop_streak unchanged, codex_blocked stored (sticky until unblock); prints CODEX_DISABLED=true CODEX_BLOCKED=true
+```
+
+Streak reaching 2, or the stored quota flag (until a user resume with `--codex` lifts it), is what disables Codex for the rest of the run — the gate check above derives that, so nothing else needs writing.
 
 TaskUpdate R5b subject: `R5b: Codex co-pilot — iter N done (<outcome>)`
 

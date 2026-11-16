@@ -45,7 +45,7 @@ Conclude supported, contradicted or unverified per claim, with provenance, teste
 
 ## Rules
 
-- A fetched PR worktree contains third-party code: running its gate executes its configuration and hooks. State that trust boundary before any reproduction check runs there.
+- A fetched PR worktree contains third-party code and OpenCode has no sandbox: running its tests, gate or reproduction executes its configuration, hooks and test code with the user's permissions. Before any command runs there, read its auto-load surface (`conftest.py`, `pyproject.toml`, `Makefile`, `package.json` scripts, `.pth` files, Git hooks) and the changed files, and report what they contain with an assessed risk (`none`, `borderline`, `high`, `likely-malicious`) — a heuristic, never a safety claim; packages the base already declares and the package index supplies are trusted by name, an added, URL-sourced or lookalike one is reported. Then ask the user, showing that evidence, whether to run it, whatever the risk. With no answer run nothing and record each such check as unverified. This is a prompt rule, not enforcement: the shell guard still admits `pytest -q` quietly.
 - Never write to the repository or GitHub during review. Sole exception: PR preparation may create one new dedicated local ref (and the objects `git fetch` stores); never switch branches, touch the index or working tree, or overwrite existing refs.
 - Do not fix findings here; hand them to `rig-remediate`.
 - A finding must cite source that was actually read; pattern-matched suspicion is labeled as suspicion.

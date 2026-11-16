@@ -108,3 +108,30 @@ class TestResearchWrapper:
         gates = _GATES.read_text(encoding="utf-8")
 
         assert f"{flag.CURRENCY_PREFIX}-${{CSID}}" in gates
+
+
+@pytest.mark.integration
+def test_strict_failure_stderr_is_utf8_under_ansi_stream_default(tmp_path: Path) -> None:
+    """The resolver writes its em-dash stderr line as UTF-8 even when the host stream default is not UTF-8.
+
+    A piped Windows stream encodes in the ANSI codepage; a caller decoding it as UTF-8 then lost the whole stderr.
+    ``PYTHONIOENCODING=cp1252`` reproduces that default on any OS.
+    """
+    env = {
+        "PYTHONIOENCODING": "cp1252",
+        "CSID": "utf8-stderr",
+        "TMPDIR": tmp_path.as_posix(),
+        "CODEMAP_INDEX_DIR": (tmp_path / "no-index").as_posix(),
+        "PATH": "",
+    }
+    result = subprocess.run(
+        [sys.executable, str(_RESEARCH_RESOLVER), "strict", "--currency-prefix", "research-codemap-currency"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stderr
+    assert "—".encode() in result.stderr
+    result.stderr.decode("utf-8")

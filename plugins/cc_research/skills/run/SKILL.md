@@ -156,7 +156,12 @@ cat "$CLAUDE_SKILL_DIR/modes/hypothesis-pipeline.md"  # timeout: 5000
 
 > loads: protocol.md
 
-**Per-iteration checkpoint write** (after Phase 7): if this iteration popped a `RESEARCH_QUEUE` entry (any R0 flag), stage one line for `<RUN_DIR>/checkpoint.jsonl` per schema in `protocol.md` (companion file, same skill dir): `{iteration, hypothesis_id, metric_before, metric_after, status: "passed"|"rolled_back"}` — Write that single line to `<RUN_DIR>/checkpoint.jsonl.rec` with the Write tool; Phase 8's flush block appends it. Runs started before the rename keep a legacy `checkpoint.json` (same JSONL lines); `--resume` reads it when `checkpoint.jsonl` is absent, and new lines go to `checkpoint.jsonl`.
+**Per-iteration checkpoint write** (after Phase 7): if this iteration popped a `RESEARCH_QUEUE` entry (any R0 flag), stage one line for `<RUN_DIR>/checkpoint.jsonl`:
+
+- Line shape per schema in `protocol.md` (companion file, same skill dir): `{iteration, hypothesis_id, metric_before, metric_after, status: "passed"|"rolled_back"}`.
+- Write that single line to `<RUN_DIR>/checkpoint.jsonl.rec` with the Write tool; Phase 8's flush block appends it.
+
+Runs started before the rename keep a legacy `checkpoint.json` (same JSONL lines); `--resume` reads it when `checkpoint.jsonl` is absent, and new lines go to `checkpoint.jsonl`.
 
 ### Step R1: Load / build config
 
@@ -337,7 +342,11 @@ Run all checks before touching code. Fail fast with clear message. First validat
 
 01. **Clean git**: `git status --porcelain` → must be empty except run artifacts and the unchanged program input. If dirty: print dirty files and stop. Use `git status --porcelain -- . ':(exclude).experiments' ':(exclude).temp' ':(exclude).reports' ':(top,exclude,literal)<repo-relative program_file>'`, substituting the exact resolved program path. Before excluding the program, compare its current `find_judge_verdict.py --hash-program` result with `state.program_sha256`; mismatch → stop. Phase 3 applies the same snapshot exemption, so campaign inputs are never staged as experiment changes.
 02. **Not detached HEAD**: `git rev-parse --abbrev-ref HEAD` → must not be `HEAD`.
-03. **Metric command numeric**: run `metric_cmd` once through the Phase 5 compute route (`modes/phase5-metric.md`: docker sandbox, Colab MCP, or local) — same environment as iterations (with `--colab`, the Phase 5 code-identity check runs first). Docker wrapper exit 2 accompanied by its own `docker_sandbox_run.py: verify-mode command ...` rejection diagnostic → print `! UNSUPPORTED — Docker verify rejected the command; use a script entry point for shell pipelines`, show wrapper output and stop before parsing. Other wrapper preparation errors → show the diagnostic and stop as `! BLOCKED`. A container command's own exit 2 is a failed metric, even with a usable float; exit code alone does not identify a wrapper rejection. Require exit 0, then parse stdout for a finite float. If non-zero or no finite float: show output and stop. Docker image is `python:3.11-slim` without project deps (`modes/compute-docker.md`) — a metric needing them fails here, not at iteration 1.
+03. **Metric command numeric**: run `metric_cmd` once through the Phase 5 compute route (`modes/phase5-metric.md`: docker sandbox, Colab MCP, or local) — same environment as iterations (with `--colab`, the Phase 5 code-identity check runs first). Docker image is `python:3.11-slim` without project deps (`modes/compute-docker.md`) — a metric needing them fails here, not at iteration 1. Handle the result in this order:
+    - Docker wrapper exit 2 accompanied by its own `docker_sandbox_run.py: verify-mode command ...` rejection diagnostic → print `! UNSUPPORTED — Docker verify rejected the command; use a script entry point for shell pipelines`, show wrapper output and stop before parsing.
+    - Other wrapper preparation errors → show the diagnostic and stop as `! BLOCKED`.
+    - A container command's own exit 2 is a failed metric, even with a usable float; exit code alone does not identify a wrapper rejection.
+    - Require exit 0, then parse stdout for a finite float. If non-zero or no finite float: show output and stop.
 04. **Guard passes**: run `guard_cmd` once through the same route; for Docker, use the R2 guard block below. Must exit 0. If fails: show output and stop.
 05. **`--colab` check**: verify `mcp__colab-mcp__runtime_execute_code` available. If not, print setup instructions (see Colab MCP section) and stop. If `--colab=HW` (`colab_hw` non-null): print: `  Hardware requested: --colab=<colab_hw>. Ensure your Colab notebook running with <colab_hw> GPU.`
 06. **`--codex` check**: distinguish the installed-and-enabled bridge target from absence. `claude` CLI not needed — run `python "${CLAUDE_PLUGIN_ROOT}/bin/check_bridge.py" --status` (`timeout: 5000`; reads plugin registry + settings). `absent` → print `⚠ bridge@borda-ai-rig not installed. Install it from the Borda AI Rig marketplace.` and **stop**. `disabled` → print `⚠ bridge@borda-ai-rig is disabled. Enable it and reload plugins.` and **stop**. `available` → continue.
@@ -421,7 +430,12 @@ Apply `agent_strategy` mapping from `<constants>`. If `auto`, apply keyword heur
 
 ### Step R4: Establish baseline (iteration 0)
 
-Run `metric_cmd` and `guard_cmd` through the same compute route as Phases 5–6 (`modes/phase5-metric.md`) — a host baseline against sandboxed iterations measures the environment, not the change. With `--colab`, run Phase 5's code-identity check (`modes/phase5-metric.md`) before the baseline `metric_cmd` — a stale runtime checkout would record a baseline for unrelated code; mismatch → `! BLOCKED`, stop. Parse metric value. Create `experiments.jsonl` with the Write tool holding this baseline record as its only line — the file does not exist yet. Every later record goes through Phase 8's `.rec` staging and flush block; this file is never rewritten:
+Measure and record the baseline:
+
+- Run `metric_cmd` and `guard_cmd` through the same compute route as Phases 5–6 (`modes/phase5-metric.md`) — a host baseline against sandboxed iterations measures the environment, not the change.
+- With `--colab`, run Phase 5's code-identity check (`modes/phase5-metric.md`) before the baseline `metric_cmd` — a stale runtime checkout would record a baseline for unrelated code; mismatch → `! BLOCKED`, stop.
+- Parse metric value.
+- Create `experiments.jsonl` with the Write tool holding this baseline record as its only line — the file does not exist yet. Every later record goes through Phase 8's `.rec` staging and flush block; this file is never rewritten:
 
 ```json
 {
@@ -443,7 +457,11 @@ Run `metric_cmd` and `guard_cmd` through the same compute route as Phases 5–6 
 
 Update `state.json`: `best_metric = <baseline>`, `best_commit = <HEAD sha>`, `baseline_commit = <HEAD sha>`.
 
-**`metric_repeats` > 1** — measure the baseline that many times. After each `metric_cmd` run (same route, its own call), Write one line `{"iteration":0,"metric":<float or null>,"exit":<code>}` to `.experiments/state/<run-id>/metric-runs.jsonl.rec` with the Write tool, then run the block below. `RUN_METRIC_NEXT_RUN=<k>` → run again; `RUN_METRIC_FAILED` → stop the run (an unmeasurable baseline cannot anchor Phase 7); `RUN_METRIC_DONE` → the baseline record's `metric` is the printed mean plus `"metric_sigma"` and `"metric_runs"` fields, and `state.json` gets `best_metric` = mean, `best_metric_sigma` = sigma (`null` for `n/a`), `best_metric_runs` = runs.
+**`metric_repeats` > 1** — measure the baseline that many times. After each `metric_cmd` run (same route, its own call), Write one line `{"iteration":0,"metric":<float or null>,"exit":<code>}` to `.experiments/state/<run-id>/metric-runs.jsonl.rec` with the Write tool, then run the block below. Its printed status decides the next step:
+
+- `RUN_METRIC_NEXT_RUN=<k>` → run again.
+- `RUN_METRIC_FAILED` → stop the run (an unmeasurable baseline cannot anchor Phase 7).
+- `RUN_METRIC_DONE` → the baseline record's `metric` is the printed mean plus `"metric_sigma"` and `"metric_runs"` fields, and `state.json` gets `best_metric` = mean, `best_metric_sigma` = sigma (`null` for `n/a`), `best_metric_runs` = runs.
 
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
@@ -570,7 +588,13 @@ if [ "$CODEMAP_ENABLED" = "true" ]; then cat "$_RESEARCH_SHARED/codemap-context.
 
 Execute its block. Leave `TARGET_MODULE`/`TARGET_FN` empty for the global `central` blast-radius baseline, or set `TARGET_MODULE` to the module the experiment edits (from `## Config`) for importer/coverage queries. Append output to `context-${I}.md` under a `## Structural Context (codemap-py)` heading so the Phase 2 ideation agent sees blast-radius before proposing edits.
 
-Codemap output non-empty: also append the reuse gate from `codemap-context.md` above verbatim and this **codemap-first protocol** directly below it in `context-${I}.md` (own copy — self-contained, no cross-plugin reference), so the Phase 2 spawn prompt's "read `context-<i>.md`" instruction carries it to the ideation agent: (1) **Skill-first** — use the Structural Context above before any Grep/Glob/Read aimed at imports, callers, or test coverage for a symbol already listed there. (2) **Query choice** — include the exact caller enabled/currency sentinel paths; in every fresh query or helper shell reload them, skip when disabled, and export `SCAN_NO_AUTOBUILD=1` when stale without clearing an inherited freeze. **Bounded call budget** — symbol not listed → up to 3 additional `codemap-py query` calls this iteration. (3) **Hard stop on `query_complete: true`** (legacy `exhaustive: true` only when `query_complete` is absent) — a result passing the reuse gate is final for its direction, no follow-up Grep/Read/query to re-confirm it. Codemap output empty: omit this paragraph — Phase 2 agent proceeds with normal file-read behaviour.
+Codemap output non-empty: also append the reuse gate from `codemap-context.md` above verbatim and this **codemap-first protocol** directly below it in `context-${I}.md` (own copy — self-contained, no cross-plugin reference), so the Phase 2 spawn prompt's "read `context-<i>.md`" instruction carries it to the ideation agent:
+
+1. **Skill-first** — use the Structural Context above before any Grep/Glob/Read aimed at imports, callers, or test coverage for a symbol already listed there.
+2. **Query choice** — include the exact caller enabled/currency sentinel paths; in every fresh query or helper shell reload them, skip when disabled, and export `SCAN_NO_AUTOBUILD=1` when stale without clearing an inherited freeze. **Bounded call budget** — symbol not listed → up to 3 additional `codemap-py query` calls this iteration.
+3. **Hard stop on `query_complete: true`** (legacy `exhaustive: true` only when `query_complete` is absent) — a result passing the reuse gate is final for its direction, no follow-up Grep/Read/query to re-confirm it.
+
+Codemap output empty: omit the reuse gate and this protocol — Phase 2 agent proceeds with normal file-read behaviour.
 
 Prepend header block to `context-<i>.md`: goal, current metric vs baseline, delta trend (last 5 kept deltas), iteration number. Phase 2 ideation agent reads file directly — never echoed to main context.
 
@@ -614,7 +638,12 @@ Return ONLY: {"files_modified":[...]}
 
 For Docker, run Phase 2a validation before Phase 2b implementation. Guard rework also goes to the implementing engineer.
 
-For `--colab` runs: the ideation agent cannot call `mcp__colab-mcp__runtime_execute_code` — no ideation agent's tools list grants it — so it proposes GPU code without prototyping it on the runtime; Phase 5 measures the committed change through Colab MCP. **Agent selection with `--colab`**: if task rooted in a research paper (goal references paper, model architecture from literature, or `--researcher` flag set) → use `research:scientist` to propose and `foundry:sw-engineer` to implement; if task is general empirical experiment NOT rooted in a paper → use `foundry:sw-engineer` for experiment implementation (standard agent_strategy mapping still applies; `--colab` alone does not force `research:scientist`).
+For `--colab` runs: the ideation agent cannot call `mcp__colab-mcp__runtime_execute_code` — no ideation agent's tools list grants it — so it proposes GPU code without prototyping it on the runtime; Phase 5 measures the committed change through Colab MCP.
+
+**Agent selection with `--colab`**:
+
+- if task rooted in a research paper (goal references paper, model architecture from literature, or `--researcher` flag set) → use `research:scientist` to propose and `foundry:sw-engineer` to implement;
+- if task is general empirical experiment NOT rooted in a paper → use `foundry:sw-engineer` for experiment implementation (standard agent_strategy mapping still applies; `--colab` alone does not force `research:scientist`).
 
 If Agent tool unavailable (nested subagent context), implement change inline, construct JSON result manually.
 
@@ -846,7 +875,15 @@ Stage one JSONL record for `experiments.jsonl` (same schema as baseline record i
 
 `ideation_source`: two values, no combined one — `"codex"` when Phase 2c (Codex) changed any path in the committed change set (even on top of Claude's edit), `"claude"` otherwise (`modes/codex-copilot.md` §Phase 2c).
 
-**Delta fields**: read `previous_best_metric` saved in `state.json` by Phase 0; retain that same reference across guard rework. `delta = metric - previous_best_metric` in raw metric units, signed without direction normalization (a lower-is-better improvement is negative). `delta_pct = 100 * delta / abs(previous_best_metric)` is the signed step percentage. `baseline_delta_pct = 100 * (metric - baseline_metric) / abs(baseline_metric)`, where `baseline_metric` is the iteration 0 metric, is the signed percentage versus baseline used in the diary and iteration summary. A zero denominator makes that percentage `null`; no usable measurement makes `metric` and all delta fields `null`, never a fabricated zero. Iteration 0 sets all deltas to zero by definition. Retro's raw step analysis reads `delta`; percentage displays use the explicitly named percentage field. For the R6 report, use `baseline_delta_pct` for each history row; best improvement is the best metric's baseline percentage with its sign reversed for `direction: lower`.
+**Delta fields**: read `previous_best_metric` saved in `state.json` by Phase 0; retain that same reference across guard rework. Field definitions and readers:
+
+- `delta = metric - previous_best_metric` in raw metric units, signed without direction normalization (a lower-is-better improvement is negative).
+- `delta_pct = 100 * delta / abs(previous_best_metric)` is the signed step percentage.
+- `baseline_delta_pct = 100 * (metric - baseline_metric) / abs(baseline_metric)`, where `baseline_metric` is the iteration 0 metric, is the signed percentage versus baseline used in the diary and iteration summary.
+- A zero denominator makes that percentage `null`; no usable measurement makes `metric` and all delta fields `null`, never a fabricated zero.
+- Iteration 0 sets all deltas to zero by definition.
+- Retro's raw step analysis reads `delta`; percentage displays use the explicitly named percentage field.
+- For the R6 report, use `baseline_delta_pct` for each history row; best improvement is the best metric's baseline percentage with its sign reversed for `direction: lower`.
 
 Flush every staged record — this iteration's `experiments.jsonl`, `diary.md`, and, when their flags are active, `checkpoint.jsonl` and `journal.md` — in one fixed block. `append_ledger.py` appends each staged `.rec`, supplies a trailing newline the Write tool may have omitted, and deletes the `.rec`; a ledger with nothing staged is a no-op:
 
@@ -935,6 +972,15 @@ rm -f .temp/state/skill-contract.md  # clear contract — campaign complete (com
 
 Skip R7 if `CODEX_DELEGATION_AVAILABLE=false` (warning already printed at R2 — no further action needed).
 
+Skip R7 also when Phase 2c stored a Codex quota stop this run (`modes/codex-copilot.md` outcomes): run the block below and skip on `CODEX_BLOCKED=true`, printing `ℹ R7 skipped — Codex quota exhausted earlier in this run (codex-blocked:quota)`. No co-pilot state file (run without `--codex`) reads not blocked.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
+python "$PLUGIN_ROOT/bin/codex_state.py" read --state ".experiments/state/${RUN_ID}/codex-state"  # timeout: 5000 — CODEX_BLOCKED=true → skip R7; missing file reads not blocked
+```
+
 Read `baseline_commit` from `state.json.baseline_commit` (R4); for older runs without it, use the `commit` of iteration 0 in `experiments.jsonl`. Missing both sources → report `! BLOCKED — baseline commit unavailable` and skip R7. Inspect applied changes (`git diff <baseline_commit>...<best_commit> --stat`), identify tasks Codex can complete (comments on non-obvious changes, docstrings for modified functions, test coverage).
 
 ```bash
@@ -945,11 +991,34 @@ cat "$_RESEARCH_SHARED/codex-delegation.md"  # timeout: 5000
 
 Apply criteria loaded above.
 
+A delegation call that ends on a harness-classified quota stop — `incident` non-null and that incident file's `fault` equal to `quota-exhausted`, never verdict text — ends R7:
+
+1. First persist it with the block below (compaction or re-entry then skips at the R7 pre-check above).
+2. Then dispatch no further delegation task this run.
+3. List the remaining tasks as not delegated (`codex-blocked:quota`).
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
+python "$PLUGIN_ROOT/bin/codex_state.py" bump --state ".experiments/state/${RUN_ID}/codex-state" --outcome blocked  # timeout: 5000 — creates the file when absent (no co-pilot this run); stores codex_blocked; prints CODEX_BLOCKED=true
+```
+
 ## Resume Mode
 
 > loads: resume.md
 >
 > Follow and execute `modes/resume.md`.
+
+**Read this request's flags** first, on every resume: the host substitutes this request's own arguments here, never inside `modes/resume.md`, so this block records whether the user typed `--codex` (the lift block there reads that record), persists `--keep` items for Phase 8 and resolves `--codemap` / `--no-codemap`. It prints the codemap mode; `--codemap` without a usable index prints `! BLOCKED` and exits 1 → stop before loading `modes/resume.md`:
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "$PLUGIN_ROOT/bin/codex_state.py" arm -- "$ARGUMENTS"  # timeout: 5000 — typed --codex arms this session's lift record (create-only); none clears it
+python "$PLUGIN_ROOT/bin/extract-keep-flag.py" research-run "$ARGUMENTS"  # timeout: 5000 — keep-items sentinel for Phase 8
+python "$PLUGIN_ROOT/bin/codemap-flag.py" research-run "$ARGUMENTS" || exit 1  # timeout: 5000 — last, so strict exit skips no other flag; codemap-enabled sentinel; prints mode
+```
 
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
@@ -979,7 +1048,10 @@ cat "$CLAUDE_SKILL_DIR/modes/colab-setup.md"  # timeout: 5000
 - **Never `git add -A`** — always stage specific files returned by agent JSON.
 - **Never `--no-verify`** — if pre-commit hook blocks, delegate to `foundry:linting-expert` and fix.
 - **Guard ≠ Verify** — guard checks regressions (tests, lint); verify checks target metric. Both must pass to keep commit.
-- **Single-sample keep rule by default** — `metric_repeats` 1 compares one Phase 5 sample with `best_metric` and keeps any measured gain: right for a deterministic metric (coverage, line counts, fixed-seed eval), wrong for timing, throughput or stochastic training, where noise alone produces "gains" and the `perf` fallback strategy lands. For those set `metric_repeats` ≥ 3: Phase 7 then keeps only gains beyond `max(min_delta_pct, 2σΔ)`, the noise model `/research:fortify` uses, at `metric_repeats`× metric cost. Default stays 1 (fortify's own `--runs` defaults to 3) so deterministic campaigns and the Colab time budget pay nothing extra.
+- **Single-sample keep rule by default** — `metric_repeats` 1 compares one Phase 5 sample with `best_metric` and keeps any measured gain:
+  - right for a deterministic metric (coverage, line counts, fixed-seed eval);
+  - wrong for timing, throughput or stochastic training, where noise alone produces "gains" and the `perf` fallback strategy lands. For those set `metric_repeats` ≥ 3: Phase 7 then keeps only gains beyond `max(min_delta_pct, 2σΔ)`, the noise model `/research:fortify` uses, at `metric_repeats`× metric cost.
+  - Default stays 1 (fortify's own `--runs` defaults to 3) so deterministic campaigns and the Colab time budget pay nothing extra.
 - **metric_cmd must exit 0 and print a finite float** — apply the same rule in R2, single-sample and repeated Phase 5 measurements, judge and fortify. A non-zero metric exit is a failed measurement even when stdout contains a number; distinguish Docker wrapper rejection using its diagnostic (R2 check 3). Piping metric output through grep/awk/tr is acceptable for local shell execution only when failures propagate (for example `set -o pipefail`). Docker verify accepts a single command without shell metacharacters; use a script entry point for parsing or pipelines.
 - **Guard/metric scripts protected** — ideation agent must not modify files referenced in `guard_cmd`/`metric_cmd`; exclude them from `scope_files`. Enforced in Phase 3 and after every guard rework by `check_iteration_scope.py`; a missing program file stops the run. New test files may be created within `scope_files` for coverage-improvement campaigns.
 - **JSONL over TSV** — richer structured fields, `jq`-parseable, no delimiter ambiguity; query with `jq -c 'select(.status == "kept")' experiments.jsonl`.

@@ -23,6 +23,7 @@ This checkout selects native automatic approval review for required plugin workf
 - Has the reviewer evaluate complete commands, including nested gates; no blanket interpreter or gate-runner rule is installed.
 - Keeps actual managed restrictions, denials, protected actions and scope limits effective. Automatic review can reject an action with a concrete reason; configuration and source tests do not guarantee every live decision.
 - Excludes Code Review's ephemeral dependency overlay by name: its dependency support check, fetch and any escalated test run over it are never approved as recipe or dependency-download work, and a single command that downloads a dependency and runs reviewed code is never approved.
+- Excludes any escalation that would run contributed code (a pull request, fork or contributor branch) outside the sandbox, including the one-time `run_gates.py` gate and a project install that builds contributor code: the automatic reviewer approves it only when the brief cites a recorded user answer for that exact command.
 
 <!-- policy-sibling: .codex/config.toml, .codex/README.md, plugins/codex-rig/shared/native-skill-contract.md, plugins/codex-rig/README.md (local Git approval grant) -->
 

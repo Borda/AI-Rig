@@ -1,6 +1,7 @@
 """Keep foundry:challenger usable as the adversarial loop's reviewer: a round must fold into the loop table."""
 
 import functools
+import itertools
 import json
 import os
 import shutil
@@ -144,6 +145,108 @@ def test_dispatch_site_records_challenger_failure(relative: str) -> None:
     ]
     text = _flat(relative)
     assert [clause for clause in clauses if clause not in text] == []
+
+
+_QUOTA_LOOP_SITES = [
+    "cc_foundry/rules/quality-gates.md",
+    "cc_develop/rules/quality-gates.md",
+    "cc_develop/rules/quality-gates-delta.md",
+    "cc_research/rules/quality-gates.md",
+    "cc_research/rules/quality-gates-delta.md",
+    "cc_oss/rules/quality-gates.md",
+    "cc_oss/rules/quality-gates-delta.md",
+]
+
+
+def _quota_loop_rule(relative: str) -> list[str]:
+    """Return the loop rule's Codex quota stop: its lead line and the bullet lines that follow it."""
+    lines = (_PLUGINS / relative).read_text(encoding="utf-8").splitlines()
+    lead = next(index for index, line in enumerate(lines) if line.startswith("Codex quota stop:"))
+    rest = itertools.dropwhile(lambda line: not line.strip(), lines[lead + 1 :])
+    return [lines[lead], *itertools.takewhile(lambda line: line.startswith("- "), rest)]
+
+
+@pytest.mark.parametrize("relative", _QUOTA_LOOP_SITES)
+@pytest.mark.parametrize(
+    "needles",
+    [
+        pytest.param(
+            ('"codex_blocked": "quota"', "harness-classified `quota-exhausted`", "rest of that loop"), id="trigger"
+        ),
+        pytest.param(
+            ("`--no-codex`", "every later `foundry:challenger` dispatch", "`bridge:review` route"), id="route"
+        ),
+        pytest.param(("no later security-filter review", "never PASS", "wait for the quota reset"), id="filter"),
+        pytest.param(("not re-dispatched", "no brief removes a quota stop"), id="no-redispatch"),
+        pytest.param(("reviewer route limits", "`loop-report.md`"), id="route-limits"),
+        pytest.param(
+            ("`⚠ codex-blocked:quota`", "only when the dispatch demanded no envelope", "first non-blank line"),
+            id="report-line-only-without-envelope",
+        ),
+        pytest.param(
+            ("envelope, when present, decides alone", '"codex_blocked": "quota"', "`⚠ codex-blocked:quota`"),
+            id="envelope-decides-alone",
+        ),
+        pytest.param(
+            ("first non-blank line under `## Codex Cross-Check`", "first such heading outside any code fence"),
+            id="first-unfenced-heading",
+        ),
+        pytest.param(("Field absent", "apply unchanged"), id="absent-unchanged"),
+    ],
+)
+def test_loop_rule_stops_codex_after_a_challenger_quota_signal(relative: str, needles: tuple[str, ...]) -> None:
+    """A loop whose challenger reports a Codex quota stop sends no further Codex call for the rest of that loop.
+
+    Each round's challenger runs its own Codex cross-check, and a quota-hit round still returns a Claude-only
+    deliverable, so without this rule every later round spent one doomed Codex call. A security-filter review ignores
+    ``--no-codex`` by design, so the loop must not dispatch one at all, nor re-dispatch a blocked one, after the stop.
+    """
+    assert any(all(needle in line for needle in needles) for line in _quota_loop_rule(relative))
+
+
+def _quota_loop_slice(relative: str) -> str:
+    """Return the loop quota stop's raw text from its lead line through its last bullet, line endings and blanks
+    kept."""
+    lines = (_PLUGINS / relative).read_bytes().decode("utf-8").splitlines(keepends=True)
+    lead = next(index for index, line in enumerate(lines) if line.startswith("Codex quota stop:"))
+    end = lead + 1
+    while end < len(lines) and not lines[end].strip():
+        end += 1
+    while end < len(lines) and lines[end].startswith("- "):
+        end += 1
+    return "".join(lines[lead:end])
+
+
+@pytest.mark.parametrize("relative", _QUOTA_LOOP_SITES[1:])
+def test_loop_quota_rule_copies_are_byte_identical(relative: str) -> None:
+    """Every plugin's copy of the loop quota stop matches foundry's canonical copy byte for byte.
+
+    Seven rule files carry the same paragraph so each plugin's standalone install keeps it; needle checks alone let a
+    copy drift in wording the needles do not cover. Comparing the raw lead-through-last-bullet slice, blank lines and
+    line endings included, names the drifted file and shows the differing line.
+    """
+    assert _quota_loop_slice(relative) == _quota_loop_slice(_QUOTA_LOOP_SITES[0])
+
+
+def _quota_loop_marker(relative: str) -> str:
+    """Return the first non-blank line after the loop quota stop's last bullet, where its sibling marker sits."""
+    lines = (_PLUGINS / relative).read_text(encoding="utf-8").splitlines()
+    lead = next(index for index, line in enumerate(lines) if line.startswith("Codex quota stop:"))
+    after = lead + len(_quota_loop_rule(relative)) + 1
+    return next(line for line in lines[after:] if line.strip())
+
+
+@pytest.mark.parametrize("relative", _QUOTA_LOOP_SITES)
+def test_loop_quota_rule_marker_lists_every_copy(relative: str) -> None:
+    """Each copy's policy-sibling marker names all seven copies, so an edit to one leads its author to the others.
+
+    The delta rule files carry the paragraph too; a marker that omits them lets a policy change skip three copies.
+    """
+    marker = _quota_loop_marker(relative)
+    listed = marker.removeprefix("<!-- policy-sibling: ").split(" — ", 1)[0]
+    paths = sorted(path.removesuffix(" (canonical)") for path in listed.split(", "))
+    assert marker.startswith("<!-- policy-sibling: ")
+    assert paths == sorted(f"plugins/{site}" for site in _QUOTA_LOOP_SITES)
 
 
 @pytest.mark.parametrize(

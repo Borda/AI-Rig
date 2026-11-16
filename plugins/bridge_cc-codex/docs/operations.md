@@ -15,7 +15,13 @@ The loaded current host must already have the Bridge plugin, trust, authenticati
 $bridge:setup action=all target=peer scope=auto live=prompt
 ```
 
-Plain setup uses `action=all target=peer scope=auto live=prompt`. It first runs credential-free inspection and displays every proposed operation, exact native argv, resolved target/scope, external capability, credential behavior, filesystem and host effects, rollback evidence, retry policy, and safe denial outcome. Safe configuration or repair runs only after one expiring, one-use approval bound to the action, workspace, plan, and observed state, then re-inspects host inventory before reporting whether the configuration is visible or a fresh session is required. Authentication and live verification are separately planned actions with distinct digests; the operator runs authentication in their own terminal outside model-captured tool streams, while live verification permits one paid provider call through the setup executor. After each approved operator command, end the turn and wait for the user to report completion before checking or advancing. A denial, changed digest, replay, failed probe, or failed operation stops without a hidden retry.
+Plain setup uses `action=all target=peer scope=auto live=prompt`.
+
+- It first runs credential-free inspection and displays every proposed operation, exact native argv, resolved target/scope, external capability, credential behavior, filesystem and host effects, rollback evidence, retry policy, and safe denial outcome.
+- Safe configuration or repair runs only after one expiring, one-use approval bound to the action, workspace, plan, and observed state, then re-inspects host inventory before reporting whether the configuration is visible or a fresh session is required.
+- Authentication and live verification are separately planned actions with distinct digests; the operator runs authentication in their own terminal outside model-captured tool streams, while live verification permits one paid provider call through the setup executor.
+- After each approved operator command, end the turn and wait for the user to report completion before checking or advancing.
+- A denial, changed digest, replay, failed probe, or failed operation stops without a hidden retry.
 
 An `approval-expired` result allows one fresh plan and approval per stage (configuration, authentication, and live verification), never reuse of the expired digest or its approval. For live verification, rerun the stage's precondition plan first and stop if configuration or authentication is missing. Re-plan the same action once, write a new operations file, and repeat the stage's approval question with the new full digest and file path, disclosing the 300-second deadline measured from plan issuance, not approval. A second expiry stops that stage.
 
@@ -24,17 +30,36 @@ An `approval-expired` result allows one fresh plan and approval per stage (confi
 $bridge:setup action=check target=peer scope=auto live=skip
 ```
 
-Use `action=check` for inspection only. The setup result is defined by `schemas/setup-result.schema.json` and reports the strongest evidence reached: `static`, `host-authenticated`, `session-ready`, `workspace-ready`, or `live-verified`. Static readiness, authentication, session/workspace binding, and inference are separate claims. `live=skip` remains `inference-unverified`; `live=required` is non-ready when approval or verification fails. A successful setup-CLI live probe is point-in-time evidence and remains partial until the host skill has applicable loaded-session/workspace evidence. The deterministic planner records only credential-free state and operation fingerprints; it never stores provider tokens, API keys, browser/device codes, account secrets, or raw login output. It does create one random per-user HMAC key solely to authenticate approval payloads.
+Use `action=check` for inspection only. The setup result is defined by `schemas/setup-result.schema.json` and reports the strongest evidence reached: `static`, `host-authenticated`, `session-ready`, `workspace-ready`, or `live-verified`.
+
+- Static readiness, authentication, session/workspace binding, and inference are separate claims.
+- `live=skip` remains `inference-unverified`; `live=required` is non-ready when approval or verification fails.
+- A successful setup-CLI live probe is point-in-time evidence and remains partial until the host skill has applicable loaded-session/workspace evidence.
+- The deterministic planner records only credential-free state and operation fingerprints; it never stores provider tokens, API keys, browser/device codes, account secrets, or raw login output.
+  - It does create one random per-user HMAC key solely to authenticate approval payloads.
 
 Ordinary `make sync-*` does not invoke setup. It calls only the direct static doctor with explicit read-only semantics, bounded timeout, and structured output. Sync does not invoke a model, pass an approval token, authenticate, configure, repair, restart a host, claim an active session/workspace, or make a provider call. A direct doctor result proves only the named machine/static probes.
 
 ## Foreground calls
 
-Claude Code skills use `/bridge:implement`, `/bridge:advise`, and `/bridge:review`. Codex skills use `$bridge:implement`, `$bridge:advise`, and `$bridge:review`. Each call requires a concrete task and supports explicit `--model`, `--effort`, and `--timeout-seconds` values. Omitted budgets default to 600 seconds for `implement`, 120 seconds for `advise`, and 300 seconds for `review`; the hard cutoff is 1.2 times the soft budget. Reverse implementations accept at most 700 seconds; reverse advice and review accept at most 350 seconds so their optional second attempt, per-attempt termination and drain overhead, and the response margin remain inside the 900-second host deadline.
+Claude Code skills use `/bridge:implement`, `/bridge:advise`, and `/bridge:review`. Codex skills use `$bridge:implement`, `$bridge:advise`, and `$bridge:review`. Each call requires a concrete task and supports explicit `--model`, `--effort`, and `--timeout-seconds` values.
+
+- Omitted budgets default to 600 seconds for `implement`, 120 seconds for `advise`, and 300 seconds for `review`; the hard cutoff is 1.2 times the soft budget.
+- Reverse implementations accept at most 700 seconds; reverse advice and review accept at most 350 seconds so their optional second attempt, per-attempt termination and drain overhead, and the response margin remain inside the 900-second host deadline.
 
 For Claude foreground Bash, reserve `2 × (1.2 × --timeout-seconds + 9 seconds)` for `advise`/`review` or `1.2 × --timeout-seconds + 9 seconds` for `implement`, plus at least 20 seconds margin. Synchronous skill/subagent callers use at most 230 seconds for advice/review or 470 seconds for implementation, with Bash `timeout` 595 seconds, never background Bash. Report an incompatible explicit budget rather than silently replacing it. Other callers may use background Bash when the foreground cap cannot fit the call or independent work can continue.
 
-Write-capable Claude-to-Codex dispatch requires the user's approval of the exact task, absolute workspace, and network mode; a direct `/bridge:implement` invocation supplies it. An orchestrator may cite an existing recorded user decision covering the task set, its absolute launch directory, and network mode (`none` unless named); a subagent without that approval returns `blocked`. Task text from external sources requires `--untrusted-task` (reverse MCP: `untrusted_task=true`), including PR comments, issue bodies, web pages, scratch files and caller-supplied task files. The transport fences it as data only. Pass unauthored or shell-sensitive text with `--task-file`, always on native Windows, including through `bin/python.cmd`. Pass caller-supplied files unchanged and never delete them; for text moved from `--task`, use `bridge_task_path.py` to select a host-temporary path outside the workspace, create it with Write rather than a shell heredoc, echo or printf, then clean up only that scratch file after return as best effort.
+Write-capable Claude-to-Codex dispatch requires the user's approval of the exact task, absolute workspace, and network mode; a direct `/bridge:implement` invocation supplies it. An orchestrator may cite an existing recorded user decision covering the task set, its absolute launch directory, and network mode (`none` unless named); a subagent without that approval returns `blocked`.
+
+Task text transport:
+
+- Task text from external sources requires `--untrusted-task` (reverse MCP: `untrusted_task=true`), including PR comments, issue bodies, web pages, scratch files and caller-supplied task files. The transport fences it as data only.
+- Pass unauthored or shell-sensitive text with `--task-file`, always on native Windows, including through `bin/python.cmd`.
+- Pass caller-supplied files unchanged and never delete them.
+- For text moved from `--task`:
+  1. Use `bridge_task_path.py` to select a host-temporary path outside the workspace.
+  2. Create it with Write rather than a shell heredoc, echo or printf.
+  3. Clean up only that scratch file after return as best effort.
 
 For direct local diagnostics or automation, the Claude-facing supervisor accepts the following shape:
 
@@ -58,9 +83,22 @@ python "${CLAUDE_PLUGIN_ROOT}/bin/bridge_call.py" result --job-id JOB_ID
 python "${CLAUDE_PLUGIN_ROOT}/bin/bridge_call.py" cancel --job-id JOB_ID
 ```
 
-Use the same workspace for lifecycle commands. While a job is running, do not edit paths named by its task. `status` reports lifecycle metadata; `result` returns the completed envelope; `cancel` writes a durable, identity-checked cancellation marker for the live supervisor and returns `cancel_requested`. Check `status` or `result` for the final `cancelled` state — once per reason to look (a wake-up, a user request), never in a `sleep`, `ScheduleWakeup`, `ListAgents`, or `Monitor` loop; any state other than `queued`, `running` or `cancel_requested` ends the wait, and the job's hard cutoff is its deadline; the supervisor, never the lifecycle caller, terminates its verified child process tree and records the observed worktree delta when available.
+Use the same workspace for lifecycle commands. While a job is running, do not edit paths named by its task.
 
-A recorded `running` job whose supervisor process no longer exists — or a `queued` record older than two minutes that no supervisor ever claimed — is reported as `stalled` instead of `running` or `queued`, so a supervisor killed without writing its final record cannot keep a caller polling forever. On POSIX, a recorded supervisor PID that `ps` shows owned by another user, or started after the supervisor recorded its own start, belongs to a later process that reused the PID and also counts as gone; where `ps` gives no answer, and on Windows, plain PID existence decides. A supervisor that fails with an internal error before producing an envelope records the terminal `failed` state with its error text. Treat `stalled` and `failed` as terminal: cancellation is refused for a stalled job because no supervisor remains to consume the marker, and you should inspect the job record, the bounded transcript, and the worktree before re-dispatching, because a killed write-capable child may have landed partial edits.
+- `status` reports lifecycle metadata.
+- `result` returns the completed envelope.
+- `cancel` writes a durable, identity-checked cancellation marker for the live supervisor and returns `cancel_requested`.
+
+Check `status` or `result` for the final `cancelled` state — once per reason to look (a wake-up, a user request), never in a `sleep`, `ScheduleWakeup`, `ListAgents`, or `Monitor` loop; any state other than `queued`, `running` or `cancel_requested` ends the wait, and the job's hard cutoff is its deadline. The supervisor, never the lifecycle caller, terminates its verified child process tree and records the observed worktree delta when available.
+
+A recorded `running` job whose supervisor process no longer exists — or a `queued` record older than two minutes that no supervisor ever claimed — is reported as `stalled` instead of `running` or `queued`, so a supervisor killed without writing its final record cannot keep a caller polling forever.
+
+On POSIX, a recorded supervisor PID that `ps` shows owned by another user, or started after the supervisor recorded its own start, belongs to a later process that reused the PID and also counts as gone; where `ps` gives no answer, and on Windows, plain PID existence decides.
+
+A supervisor that fails with an internal error before producing an envelope records the terminal `failed` state with its error text. Treat `stalled` and `failed` as terminal:
+
+- Cancellation is refused for a stalled job because no supervisor remains to consume the marker.
+- You should inspect the job record, the bounded transcript, and the worktree before re-dispatching, because a killed write-capable child may have landed partial edits.
 
 On Windows, `stalled` may never appear after supervisor PID reuse. Retain the launch budget and dispatch time (`--timeout-seconds`, default 600 seconds for `implement` when omitted); stop waiting at `--timeout-seconds` × 1.2 + 9 seconds termination/drain + 120 seconds startup grace, measured from dispatch, then read `/bridge:result`. Report incomplete work if no result exists; that deadline does not prove the child stopped or release ownership of paths it may still be editing.
 
@@ -74,6 +112,9 @@ Finalization freezes the bounded capture under its lock; a failed drain returns 
 | -- | -- | -- |
 | `blocked` | The request was rejected or a required CLI, authentication, permission, model, or input contract was unavailable. | Read `blockers`, run static diagnosis, and resolve the host prerequisite or narrow the request. |
 | `blocked` with `output-limit` incident | An ordinary raw or compacted record exceeded 256 KiB, a prefix-proven command-output record exceeded its temporary 8 MiB raw ceiling, or retained stdout/stderr exceeded 256 KiB, including during final flush; this classification wins over timeout or cancellation. | Use the bounded-work steps below; no automatic retry occurs. |
+| `blocked` with `quota-exhausted` incident | The peer provider is out of credits, over its usage limit, or out of subscription. The bridge made one attempt and does not retry. | Add credits or upgrade the plan, or continue without the peer; the call is not repeatable until the account recovers. No automatic fallback to another provider occurs. |
+| `blocked` with `rate-limited` incident | The peer provider rate-limited the call (`retry after` appears in the verdict only when the provider stated it). | Wait for the reset; the caller may retry once. |
+| `blocked` with `capacity` incident | The selected peer model reported it was at capacity. | Choose another model; the stop is transient and not an account problem. |
 | `timeout` | The hard cutoff elapsed before a valid result returned. | Read the transcript and workspace state; narrow the task or increase the explicit budget. Do not assume no edits occurred. |
 | `refused` with `recursion-depth` | The trusted call chain already contains a peer dispatch. | Start a fresh outer call rather than attempting another cross-host hop. |
 | `effort_substituted` | The requested effort was valid but unsupported by the target capability declaration. | Review the recorded requested and applied levels; repeat only with an intentional supported choice. |
@@ -88,19 +129,74 @@ Finalization freezes the bounded capture under its lock; a failed drain returns 
 
 ## Output-limit recovery
 
-Prompts derive the capture warning from `MAX_CHILD_OUTPUT_BYTES`: Codex is told command text counts against the cap and must stay short without inline scripts, source code or data lists; Claude is told to keep final JSON compact within the same cap, and read-only verbs are told files cannot be written. Ordinary raw records and all compacted records remain bounded to 256 KiB. A parsed prefix that proves `item.completed` and `command_execution` before the opening `aggregated_output` string allows a temporary raw buffer of at most 8 MiB; type fields after that string cannot establish this exception. On completion (or final flush), the entire record must validate and compact within 256 KiB, and its non-output fields must also fit 256 KiB. Malformed, unknown, agent-message, unproven, and larger records stay terminal. This bounds the pending byte buffer, with additional bounded parsing/compaction allocations; it does not promise an 8 MiB total process heap. Capture replaces Codex started `command` with `command_bytes` and `command_sha256`; completed commands keep at most the first 4 KiB of UTF-8 without splitting a character, adding size/digest only when truncated. Completed `aggregated_output` remains size/digest only; malformed lines and stderr remain unchanged. These reductions do not remove the capture ceiling.
+Prompts derive the capture warning from `MAX_CHILD_OUTPUT_BYTES`:
 
-1. Read `blockers` and the bounded `transcript_path`. When `incident` is present, open the JSON file at that workspace-relative path and inspect its `fault` member. Optional Codex-only `partial_output` in the envelope and incident is an unverified fragment of the last complete agent message, bounded to 4 KiB of UTF-8; it is absent for Claude and when no message was seen. Label it unverified and use it only to scope the split follow-up, never as findings or a verdict: status stays `blocked`, fault stays `output-limit`, and findings stay empty. Treat the call as incomplete even if the transcript contains useful work. For `implement`, inspect `workspace_delta`, changed files, and relevant tests before another request; the delta is advisory and an empty or unavailable-Git delta does not prove that no edits landed.
+- Codex is told command text counts against the cap and must stay short without inline scripts, source code or data lists.
+- Claude is told to keep final JSON compact within the same cap, and read-only verbs are told files cannot be written.
+
+Record ceilings:
+
+- Ordinary raw records and all compacted records remain bounded to 256 KiB.
+- A parsed prefix that proves `item.completed` and `command_execution` before the opening `aggregated_output` string allows a temporary raw buffer of at most 8 MiB; type fields after that string cannot establish this exception.
+- On completion (or final flush), the entire record must validate and compact within 256 KiB, and its non-output fields must also fit 256 KiB.
+- Malformed, unknown, agent-message, unproven, and larger records stay terminal.
+- This bounds the pending byte buffer, with additional bounded parsing/compaction allocations; it does not promise an 8 MiB total process heap.
+
+Capture compaction:
+
+- Capture replaces Codex started `command` with `command_bytes` and `command_sha256`; completed commands keep at most the first 4 KiB of UTF-8 without splitting a character, adding size/digest only when truncated.
+- Completed `aggregated_output` remains size/digest only; malformed lines and stderr remain unchanged.
+- These reductions do not remove the capture ceiling.
+
+Output-limit recovery steps:
+
+1. Read `blockers` and the bounded `transcript_path`. When `incident` is present, open the JSON file at that workspace-relative path and inspect its `fault` member.
+   - Optional Codex-only `partial_output` in the envelope and incident is an unverified fragment of the last complete agent message, bounded to 4 KiB of UTF-8; it is absent for Claude and when no message was seen.
+   - Label it unverified and use it only to scope the split follow-up, never as findings or a verdict: status stays `blocked`, fault stays `output-limit`, and findings stay empty.
+   - Treat the call as incomplete even if the transcript contains useful work.
+   - For `implement`, inspect `workspace_delta`, changed files, and relevant tests before another request; the delta is advisory and an empty or unavailable-Git delta does not prove that no edits landed.
 2. For `advise` or `review`, divide the original scope into explicit, independently checkable packages by file, module, symbol, or question. Name the covered paths and expected output in each request so no part of the original scope is silently dropped. The follow-up brief must keep commands small with no inline scripts or data, passing small inputs as arguments, and ask for bounded output through focused searches or path-limited diffs.
 3. Make fresh read-only calls for those packages and reconcile their results against the original scope. If any package still blocks, report its uncovered scope; do not promote partial transcript text to a verdict. For `implement`, request only verified remaining work as a separate bounded task after checking what already changed. Never replay the whole write-capable task automatically.
 
 ## Artifact inspection
 
-The bridge stores bounded transcripts at `.temp/bridge/raw-<timestamp>.txt`, detached-job records at `.temp/bridge/jobs/<job-id>.json`, durable cancellation markers at `.temp/bridge/jobs/<job-id>.cancel.json`, health records at `.temp/bridge/health.jsonl`, and sanitized fault records at `.temp/bridge/incidents/<timestamp>-<fault>.json`. Approved setup execution uses the platform user-state root under `bridge-setup/`: one owner-only HMAC key authenticates approval payloads, per-target/scope locks prevent concurrent user-scoped mutation across workspaces, and regular non-symlink JSONL records enforce one-use approvals and recurrence. These credential-free records contain only allowlisted identities, fingerprints, timestamps, classifications, outcomes, and rollback metadata; they never contain native output, authentication output, provider credentials, or raw native argv. Planning and checks do not create state. Setup retains this state by default so replay and repeated-fault evidence survives across workspaces; a journal larger than the bounded reader limit fails closed. Cleanup is operator-owned: archive evidence first and remove the complete `bridge-setup` state only when no setup operation or unexpired approval remains, accepting that removal invalidates approvals and recurrence history. The compact envelope's public fields carry decisions, blockers, and remaining work; its `transcript_path` points to transcript-only `details` and retained child output for additional evidence. Completed Codex command-output payloads are replaced by `aggregated_output_bytes` and `aggregated_output_sha256`, computed from the decoded output re-encoded as UTF-8; the digest supports equality checks against separately retained output but does not reconstruct it or add a raw archive. Compaction reduces Bridge capture bytes only and does not establish provider token savings. Details never hide required work, and `incident` is a workspace-relative path to a compact diagnostic file whose `fault` must be inspected after opening it. Preserve incident and review evidence before applying local retention or cleanup.
+The bridge stores bounded transcripts at `.temp/bridge/raw-<timestamp>.txt`, detached-job records at `.temp/bridge/jobs/<job-id>.json`, durable cancellation markers at `.temp/bridge/jobs/<job-id>.cancel.json`, health records at `.temp/bridge/health.jsonl`, and sanitized fault records at `.temp/bridge/incidents/<timestamp>-<fault>.json`.
+
+Approved setup execution uses the platform user-state root under `bridge-setup/`:
+
+- One owner-only HMAC key authenticates approval payloads.
+- Per-target/scope locks prevent concurrent user-scoped mutation across workspaces.
+- Regular non-symlink JSONL records enforce one-use approvals and recurrence.
+
+These credential-free records contain only allowlisted identities, fingerprints, timestamps, classifications, outcomes, and rollback metadata; they never contain native output, authentication output, provider credentials, or raw native argv. Planning and checks do not create state. Setup retains this state by default so replay and repeated-fault evidence survives across workspaces; a journal larger than the bounded reader limit fails closed.
+
+Cleanup is operator-owned: archive evidence first and remove the complete `bridge-setup` state only when no setup operation or unexpired approval remains, accepting that removal invalidates approvals and recurrence history.
+
+Envelope and transcript evidence:
+
+- The compact envelope's public fields carry decisions, blockers, and remaining work; its `transcript_path` points to transcript-only `details` and retained child output for additional evidence.
+- Completed Codex command-output payloads are replaced by `aggregated_output_bytes` and `aggregated_output_sha256`, computed from the decoded output re-encoded as UTF-8; the digest supports equality checks against separately retained output but does not reconstruct it or add a raw archive.
+- Compaction reduces Bridge capture bytes only and does not establish provider token savings.
+- Details never hide required work, and `incident` is a workspace-relative path to a compact diagnostic file whose `fault` must be inspected after opening it.
+
+Preserve incident and review evidence before applying local retention or cleanup.
 
 ## Configure repository-transfer consent once
 
-After installation, use `$bridge:setup` from Codex and follow [provider consent](../rules/provider-consent.md). Plain setup checks the native user policy and asks the operator to run `bin/bridge_consent.py grant` in their terminal. To explicitly consent without that question, run `bin/bridge_consent.py issue-token` in your terminal, then invoke `$bridge:setup --approve-claude-consent --consent-token <token>` with `action=all|configure|repair`; the skill calls the grant helper with the token and checks its result. The flag is invalid with read-only `check`, authentication, or live verification. Repeated setup reuses an exact configured grant. Use `check` for read-only status and `revoke` for operator-approved removal. No provider call occurs during this stage, and installation/binding alone grants nothing. A new host session may be needed for policy reload; project or managed policy remains authoritative.
+After installation, use `$bridge:setup` from Codex and follow [provider consent](../rules/provider-consent.md). Plain setup checks the native user policy and asks the operator to run `bin/bridge_consent.py grant` in their terminal.
+
+To explicitly consent without that question:
+
+1. Run `bin/bridge_consent.py issue-token` in your terminal.
+2. Invoke `$bridge:setup --approve-claude-consent --consent-token <token>` with `action=all|configure|repair`; the skill calls the grant helper with the token and checks its result.
+
+Consent boundaries:
+
+- The flag is invalid with read-only `check`, authentication, or live verification.
+- Repeated setup reuses an exact configured grant.
+- Use `check` for read-only status and `revoke` for operator-approved removal.
+- No provider call occurs during this stage, and installation/binding alone grants nothing.
+- A new host session may be needed for policy reload; project or managed policy remains authoritative.
 
 An installation script can explicitly grant consent after installing the plugin, using its resolved installed root in place of `PLUGIN_ROOT`. Run from the operator's terminal it needs nothing more; without a terminal it needs a one-time token the operator minted beforehand with `issue-token` in a terminal and exported as `BRIDGE_OPERATOR_TOKEN` (valid 5 minutes, consumed by one grant):
 
@@ -124,6 +220,15 @@ Raw usage counters are preserved. Codex input includes cached input; Claude inpu
 
 New local records include a cached plugin release and SHA-256 of the runtime file, plus ordered observations for executed attempts. Observed model names come only from provider metadata; absent identity stays unknown, and multiple reported models remain a set. A pre-dispatch refusal has no executed attempt. Public result fields retain final-attempt semantics; private attempt records support whole-call accounting. These records add no agent steps, model calls or external telemetry.
 
-Each row and result report also records `started_at` (wall clock at call entry; `ts` is the end), `task_bytes` (outgoing task) and `response_bytes` (public envelope before accounting warnings), plus `job_id` for detached jobs. Each executed attempt adds `started_at`, `ended_at`, `returncode`, `timed_out`, `stdout_bytes` and `stderr_bytes`. One call is one round trip: request out, answer back, in either direction. Nested hops stay refused by the recursion guard, so no parent link exists. Pass `--calls` to `bridge_usage.py` to list each deduplicated call with a `missing` list of expected fields it lacks and an `unknown` list for values the provider never reports: Codex cost, and the Codex model name, which Codex CLI 0.167.1 leaves out of its JSON stream (the bridge trusts provider metadata only, so the model stays unknown instead of being read from user config). A refusal has no attempt, so absent attempt and model fields are not gaps.
+Each row and result report also records `started_at` (wall clock at call entry; `ts` is the end), `task_bytes` (outgoing task) and `response_bytes` (public envelope before accounting warnings), plus `job_id` for detached jobs. Each executed attempt adds `started_at`, `ended_at`, `returncode`, `timed_out`, `stdout_bytes` and `stderr_bytes`.
+
+One call is one round trip: request out, answer back, in either direction. Nested hops stay refused by the recursion guard, so no parent link exists.
+
+Pass `--calls` to `bridge_usage.py` to list each deduplicated call with:
+
+- a `missing` list of expected fields it lacks;
+- an `unknown` list for values the provider never reports: Codex cost, and the Codex model name, which Codex CLI 0.167.1 leaves out of its JSON stream (the bridge trusts provider metadata only, so the model stays unknown instead of being read from user config).
+
+A refusal has no attempt, so absent attempt and model fields are not gaps.
 
 For work requiring executable verification, prepare declared dependencies in the parent under existing authority and provide current test evidence and limitations to the peer. Keep a coherent fix and regression together; split genuinely separable work at acceptance boundaries. Existing capture ceilings and permission controls remain in force; bounded output and a smaller task are preferred to raising limits.

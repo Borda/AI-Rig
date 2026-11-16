@@ -152,7 +152,7 @@ ______________________________________________________________________
 
 ### /oss:analyse
 
-Issue/discussion reproduction requires the parent to show the exact snippet and command, then obtain approval before host execution in the project environment; no additional isolation boundary is promised. PR analysis always refreshes general conversation, review bodies and inline comments. Discussion fetching merges both pagination levels with 200-comment/200-total-reply caps and explicitly reports incomplete evidence.
+Issue/discussion reproduction requires the parent to show the exact snippet and command, then obtain approval; the snippet is scanned first and runs through the PR-code guard (disposable copy, sandbox, cleared environment), and running without a sandbox is the user's explicit choice. PR analysis always refreshes general conversation, review bodies and inline comments. Discussion fetching merges both pagination levels with 200-comment/200-total-reply caps and explicitly reports incomplete evidence.
 
 Analyse GitHub threads + repo vitality + release evolution. Accepts issue/PR number, keyword `vitality`, keyword `ecosystem`, keyword `evolution`, or path to saved report file.
 
@@ -195,13 +195,36 @@ The shared parser used by analyse, review, and resolve recognizes flag names cas
 
 - **Thread number:** fetches issue/PR, reads all comments, classifies thread type (bug report, feature request, question, duplicate, stale), produces a structured summary: what asked, current state, action needed from you, and — with `--reply` — a draft response.
   - With a codemap index, symbols/modules named in the thread are existence-checked; identifiers that no longer resolve flag the issue as referencing stale code (with a likely rename target when codemap suggests one).
-  - PR mode leads with a **vitality** verdict — is the PR's intent still aligned with the current codebase and worth pushing forward — built for long-stale PRs where the base drifted. `bin/pr_drift.py` measures last-push age, commits the base gained, and which touched files changed or vanished on base since the merge base; the verdict is `ALIVE`, `REVIVE-MINOR`, `REVIVE-MAJOR` (push forward only with named rework), `SUPERSEDED`, `OBSOLETE` or `UNCLEAR`, each citing its evidence. A fresh, undrifted PR gets a one-line `ALIVE`. `SUPERSEDED` and `OBSOLETE` verdicts offer a close-with-thanks reply instead of review.
+  - PR mode leads with a **vitality** verdict — is the PR's intent still aligned with the current codebase and worth pushing forward — built for long-stale PRs where the base drifted.
+    - `bin/pr_drift.py` measures last-push age, commits the base gained, and which touched files changed or vanished on base since the merge base.
+    - The verdict is `ALIVE`, `REVIVE-MINOR`, `REVIVE-MAJOR` (push forward only with named rework), `SUPERSEDED`, `OBSOLETE` or `UNCLEAR`, each citing its evidence.
+    - A fresh, undrifted PR gets a one-line `ALIVE`.
+    - `SUPERSEDED` and `OBSOLETE` verdicts offer a close-with-thanks reply instead of review.
   - PR mode reads review bodies and inline code comments, expands findings a bot collapsed into a `<details>` block, and merges the same finding when it recurs across review rounds.
-  - The duplicate search reads a 400-character body snippet of every candidate, so a duplicate call rests on the reported failure rather than title words, then fetches the full thread of up to 3 candidates to confirm each: the potential duplicates first, then numbers cited in the thread, then the closest related candidates in the same component, which are promoted when their body or comments show the same failure or root cause; an unconfirmed one is marked `(snippet only)` with "verify, then close". The canonical is the item a maintainer named, else the strongest failure match, the analysed item included; candidates whose fetched bodies or comments establish the same root cause are an equal match, and closer symptom wording never makes one stronger. At an equal match a candidate that itself defers to another issue loses; when two or more potential duplicates are all unconfirmed, no canonical is named until the fetch confirms one. Once the canonical is determined and two or more potential duplicates remain, only the canonical (or the next-ranked candidate by the same order when the canonical is the analysed item) stays under Potential Duplicates; every other one, including a candidate whose fetched comments defer to another report, moves under Related as itself a duplicate of the canonical, with an action to close against it and `(snippet only)` where applicable. When the canonical is undetermined, every potential duplicate stays listed. A number cited in the thread but absent from the search results is listed as related and unverified until its fetched body shows the same failure.
+  - The duplicate search works in steps:
+    1. It reads a 400-character body snippet of every candidate, so a duplicate call rests on the reported failure rather than title words.
+    2. It then fetches the full thread of up to 3 candidates to confirm each: the potential duplicates first, then numbers cited in the thread, then the closest related candidates in the same component, which are promoted when their body or comments show the same failure or root cause.
+    3. An unconfirmed one is marked `(snippet only)` with "verify, then close".
+  - Choosing the canonical:
+    - The canonical is the item a maintainer named, else the strongest failure match, the analysed item included.
+    - Candidates whose fetched bodies or comments establish the same root cause are an equal match, and closer symptom wording never makes one stronger.
+    - At an equal match a candidate that itself defers to another issue loses; when two or more potential duplicates are all unconfirmed, no canonical is named until the fetch confirms one.
+  - Listing:
+    - Once the canonical is determined and two or more potential duplicates remain, only the canonical (or the next-ranked candidate by the same order when the canonical is the analysed item) stays under Potential Duplicates.
+      - Every other one, including a candidate whose fetched comments defer to another report, moves under Related as itself a duplicate of the canonical, with an action to close against it and `(snippet only)` where applicable.
+    - When the canonical is undetermined, every potential duplicate stays listed.
+    - A number cited in the thread but absent from the search results is listed as related and unverified until its fetched body shows the same failure.
 - **`vitality`:** pulls open issues + PRs, scores the repo across 9 axes (Axes 1–8 plus Axis 9 Trajectory), clusters duplicates, flags threads stale beyond the project threshold, and gives a prioritised triage list with a weighted Health Score % (🟢 ≥ 70%, 🟡 40–69.9%, 🔴 < 40%) and one Top Risk axis. All raw API data is saved to a JSONL file beside the report.
+  - When the bridge reports a Codex quota stop, the run makes no further Codex review call.
+  - The adversarial rework passes continue with the challenger alone, and the report says Codex was blocked by quota rather than timed out.
+  - The same holds when the challenger reports that its own Codex cross-check stopped on quota: later passes skip both the Codex review and the challenger's cross-check.
   - With a codemap index the report gains an Open-PR Overlap note (pairwise changed-file overlap plus tightly-coupled-module conflict candidates) and a Structural Constraints block (highest-blast-radius modules, collision/degraded/stale index signals).
   - Every codemap signal is optional — no index or plugin absent → GitHub-only behavior, gap flagged inline, never blocks.
-- **`evolution`:** traces which features each fix repairs and which release introduced them. It reads the changelog ("Added", "Changed", "Fixed" sections; conventional-commit fallback for releases without one), links entries to commits (SHA, PR, closing issue, then a low-confidence text match), and blames the lines each fix changed (SZZ, source files only). The result is a feature × fix association matrix with a soft view (each fix sums to 1, for release totals) and a binary view (one fix can repair several features; only blame, changelog-text, LLM or manual evidence counts as a link, while symbol, file and inherited overlap stay in the soft view).
+- **`evolution`:** traces which features each fix repairs and which release introduced them.
+  - It reads the changelog ("Added", "Changed", "Fixed" sections; conventional-commit fallback for releases without one).
+  - It links entries to commits (SHA, PR, closing issue, then a low-confidence text match).
+  - It blames the lines each fix changed (SZZ, source files only).
+  - The result is a feature × fix association matrix with a soft view (each fix sums to 1, for release totals) and a binary view (one fix can repair several features; only blame, changelog-text, LLM or manual evidence counts as a link, while symbol, file and inherited overlap stay in the soft view).
   - The report shows a fix-flow Sankey and release heatmap coloured by origin age (previous release, 2–5 back, legacy), the most-fixed features, a burn-up of features, fixes and approximate open bugs, a same-cycle panel for bugs fixed before they shipped, and every fix it could not place (`unlinked`, `unattributable`, `timed_out`, `unadjudicated`, `unknown`).
   - All charts are inline SVG in one self-contained HTML file; no CDN, no script. A Markdown report with static SVGs sits beside it.
   - Results live in a durable store, `.evolution/<host>/<owner>/<repo>/`, outside every TTL sweep. A rerun resumes an interrupted scan, adds new releases, and rescores from stored evidence without blaming again. Correct any cell in `overrides.csv` (`fix_id,column_id,assert|deny,note`); corrections survive reruns and `--full`.
@@ -285,13 +308,22 @@ Scope-aware parallel review of a GitHub PR. Input is a PR number or a saved revi
 - Reviewer names and finding authors show roles only, without execution-origin labels.
 - Terminal rejection reports `Not assessed` when no source review ran.
 - Every candidate is validated before publication; only confirmed findings become automatic `/oss:resolve` items. Open concerns are kept in `review-validation.json`.
-- Minor changes include bounded, low-impact correctness, test and compatibility fixes with localized repair and verification. Major revision requires evidenced material behavioral impact or substantial repair, even if a serious defect needs only a small patch. The verdict cites final finding IDs, impact and repair scope; finding counts, CI status and reviewer votes do not set it automatically. Required fixes remain actionable under Minor, and no unresolved required source change normally means source approval with readiness reported separately. Documentation-only corrections and missing or additional tests normally remain Minor unless concrete material consequences or a substantially incomplete required deliverable justify more; missing tests alone do not establish a production bug. These factors inform one combined judgment: high-impact findings can control the verdict and are never diluted by minor items. Use the strongest confirmed consequence as the baseline, account for proven joint effects, and keep severity, source disposition and verification separate. Missing tests no longer receive an automatic High rating; numeric topic discounts require independent calibration before they can determine verdicts.
+- Minor changes include bounded, low-impact correctness, test and compatibility fixes with localized repair and verification.
+- Major revision requires evidenced material behavioral impact or substantial repair, even if a serious defect needs only a small patch.
+- The verdict cites final finding IDs, impact and repair scope; finding counts, CI status and reviewer votes do not set it automatically.
+- Required fixes remain actionable under Minor, and no unresolved required source change normally means source approval with readiness reported separately.
+- Documentation-only corrections and missing or additional tests normally remain Minor unless concrete material consequences or a substantially incomplete required deliverable justify more; missing tests alone do not establish a production bug.
+- These factors inform one combined judgment: high-impact findings can control the verdict and are never diluted by minor items.
+  - Use the strongest confirmed consequence as the baseline, account for proven joint effects, and keep severity, source disposition and verification separate.
+- Missing tests no longer receive an automatic High rating; numeric topic discounts require independent calibration before they can determine verdicts.
 
 **How the pipeline works**
 
 1. **Scope detection** (`git diff --stat`) — exits only if no Python or doc files changed.
 2. **Acceptance gate** — Stage 1 (reject, terminal) then Stage 2 (block, non-terminal); reads PR description and known CI status before any agent spawns. Criteria: "Review stages" below.
 3. **Optional Codex co-review** — runs when `bridge@borda-ai-rig` is installed and enabled; otherwise skipped.
+   - When the acceptance gate's challenger reports that its own Codex cross-check stopped on quota, this run skips the co-review and the report says why.
+   - After that stop, or when the co-review itself stops on a Codex quota incident recorded by the bridge, the challengers that verify critical findings run without their Codex cross-check.
 4. **Parallel review dimensions** — PR metadata, diff and checks are fetched once per run and reused by every stage.
    - Scope selects spawn units; paired dimensions share one agent (performance + architecture in one opus spawn, docs + lint in one sonnet spawn). Each writes its own finding file and confidence block.
    - Default ranks units under a cap; `qa-specialist` is pinned outside the cap (security scan runs on every code PR). `--full` runs every unit selected by scope.
@@ -447,6 +479,12 @@ Apply review findings to codebase. Reads live PR comments, a saved review report
      - Two grouping tiebreaks cut merge conflicts: a file-ownership tiebreak gives every contested file to one specialist, and a soft import-coupling merge keeps a rename and its callers in one worktree.
    - **Merge-back**: the orchestrator cherry-picks every item's commit onto the PR branch sequentially, most-central group first. Conflicts that slip through use the same semantic resolution as step 2. A branch mutex blocks a second concurrent resolve run, and a HEAD fingerprint flags any external write that lands mid-flight.
    - Items of medium/high effort touching a single file with a code, test, docs, style, config, or CI change may instead route through `bridge:implement` one at a time from a clean worktree; `--agent <name>` overrides routing.
+     - When the bridge reports that Codex is out of credits or over its usage limit (a quota stop recorded in the bridge's incident file, not just the reply wording), no further item goes to Codex in that run.
+     - That item and every later one run through the specialists instead, and the final report says Codex was blocked by quota.
+     - A challenger that reports its own Codex cross-check stopped on quota has the same effect: no further item goes to Codex, and later challengers skip their cross-check.
+     - A bare review comment passed to `/oss:resolve` follows the same rule: the comment goes to the matching specialist and the Codex review loop stops.
+     - Rate limits and model-capacity stops keep the earlier handling.
+     - A commit carries the Codex co-author trailer only when it includes an item Codex implemented; items the specialists finished, including those after a quota stop, never add it.
    - Per-item verdicts and `[resolve No.N]` attribution remain. Every selected item runs in one pass, so a large selection never needs a rerun. After a review report is consumed, each finding's outcome (`fixed`, `self-resolved`, `rejected`, `skipped`, `pending`) is appended to `resolution.jsonl` beside it, and a later `/oss:review` of the PR re-checks earlier fixes and rejected findings.
 
 **Item selection.** Between gathering and implementation, resolve lists every pending item as a plain `#<id> [<type>] <summary>` line in the bulk question's text, most severe first, within a 1,500-character budget.
@@ -826,6 +864,13 @@ The blueprint and sentinel classifiers treat command-table names inside fixed or
 
 `oss` needs no required configuration — it reads project structure automatically.
 
+**PR-code execution safety:** running a contributor's tests, hooks or an issue author's snippet is execution of untrusted code. `/oss:review`, `/oss:resolve` and the `/oss:analyse` reproduction step run it through `bin/untrusted_code_guard.py`:
+
+- **Scan, then ask:** the guard lists the files a test run loads on its own, scans what the contribution changed (credential reads, secret environment, exfiltration endpoints, dynamic execution, persistence, destructive commands, agent-instruction edits, hidden Unicode, files no rule can read) and reports dependency provenance. The user sees the evidence and a risk level (`none`, `borderline`, `high`, `likely-malicious`) in the same question that already asks about repository hooks, so `/oss:resolve` gains no extra stop. The scan is a static heuristic, never a safety claim, and the risk level never changes isolation.
+- **Trust model:** files the base ref already contains, and packages the base ref declares and the official index supplies, are trusted by name. Added packages, direct URL/VCS/path references, index overrides, lookalike names and changed lockfiles or `setup.py` are reported.
+- **Contained run:** the command runs in a disposable copy of the working tree with an environment allowlist and a temporary home. Where the host can start one (`sandbox-exec` on macOS, `bwrap` on Linux) the sandbox denies the network, confines writes to the copy and hides the real home except the interpreter and tools. Running without a sandbox needs the user's recorded `unsandboxed` choice. The Linux tier is covered by argument-construction tests only; it has not been run on a Linux host by this plugin's tests.
+- **Limits:** the command's output returns to the agent, so a secret the code can read can still leave through it. macOS system services other than the keychain daemons stay reachable. A suite that opens a loopback socket (`pytest-rerunfailures`) fails inside the sandbox unless `-p no:xdist` is added or the parent re-asks with `--allow-loopback` (macOS only).
+
 **Model and cost:** `analyse`, `review`, `resolve` and `release` carry no `model:` pin and run on the session model. A pin on an inline skill swaps the model for one turn and back, which rewrites the whole cached prompt prefix twice — measured at about $1.4 to $1.5 per `/oss:resolve` run in an Opus session. Start these sessions on Sonnet for the cheap path; an Opus session now saves about $0.4 per resolve run and keeps Opus quality. Measure a skill with `/foundry:audit --efficiency`.
 
 **GitHub authentication:** skills use the `gh` CLI. Run `gh auth login` once if not already.
@@ -833,7 +878,13 @@ The blueprint and sentinel classifiers treat command-table names inside fixed or
 **Permission manifests:** `.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved; `.claude-plugin/permissions-deny.json` lists operations that stay denied no matter how broad the allow list becomes.
 
 - Deny covers destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, force-push, `claude --dangerously-skip-permissions`) and the `curl` write verbs the broad `Bash(curl:*)` allowance would otherwise reach. Deny entries are prefix matches, so they stop the documented command forms rather than every possible flag ordering.
-- `/oss:setup` (Step 5) merges both files into `~/.claude/settings.json` additively and idempotently. It also removes allow entries earlier oss versions shipped (listed in `.claude-plugin/permissions-allow-retired.json`, applied through `--drop-allow-file`): `Bash(gh api repos/*:*)`, `Bash(uv pip install:*)` and the broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)`, plus the former PR-number `sed -nE` grant whose regex `*` read as wildcards (`bin/extract_review_pr.py` replaces it). Retirement matches exact rule text, so an identical user-authored entry is removed too. Every other existing allow and deny entry is preserved.
+- `/oss:setup` (Step 5) merges both files into `~/.claude/settings.json` additively and idempotently.
+  - It also removes allow entries earlier oss versions shipped (listed in `.claude-plugin/permissions-allow-retired.json`, applied through `--drop-allow-file`):
+    - `Bash(gh api repos/*:*)`, `Bash(uv pip install:*)`;
+    - the broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)`;
+    - the former PR-number `sed -nE` grant whose regex `*` read as wildcards (`bin/extract_review_pr.py` replaces it).
+  - Retirement matches exact rule text, so an identical user-authored entry is removed too.
+  - Every other existing allow and deny entry is preserved.
 - No shipped allow entry matches `uv pip install`, `uv run --with`, `pip install` or `pip download`, so the review's dependency overlay downloads each reach their own permission prompt.
 
 **Git/GitHub permissions**
@@ -921,7 +972,7 @@ ______________________________________________________________________
 
 ## 🧰 Bin helper inventory
 
-The plugin ships 67 deterministic helpers in `bin/`. They are installed workflow support, not additional slash-command skills: the skills own orchestration, the helpers handle bounded parsing, evidence collection, path resolution, scoring, and artifact preparation. Only the groups matter at user level:
+The plugin ships 68 deterministic helpers in `bin/`. They are installed workflow support, not additional slash-command skills: the skills own orchestration, the helpers handle bounded parsing, evidence collection, path resolution, scoring, and artifact preparation. Only the groups matter at user level:
 
 | Group                    | What the helpers cover                                                                                                                                 | Examples                                                                                            |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
@@ -929,6 +980,7 @@ The plugin ships 67 deterministic helpers in `bin/`. They are installed workflow
 | Review and resolve       | PR intel fetch, finding ids, action-item merge, commits, fork/remote handling, test planning, worktree cleanup, git state                              | `fetch_pr_intel.py`, `merge_action_items.py`, `resolve_test_plan.py`, `git_state_snapshot.py`       |
 | Release and install      | Range/contributor extraction, release directory and marker handling, audit evidence, unreleased-leftover doc scan, rule-link install, permission merge | `release_append_publish.py`, `run_audit_checks.py`, `scan_unreleased_leftovers.py`, `sync_rules.py` |
 | Loop and session support | Review → fix loop ledgers, append-only ledgers, compaction contracts, agent deadline checks, auto-allow audit verification                             | `adversarial_loop.py`, `append_ledger.py`, `agent_watch.py`, `verify_blueprint_audit.py`            |
+| Untrusted code           | Contributor-code scan, approval binding and the contained runner for PR tests and issue snippets                                                       | `untrusted_code_guard.py`                                                                           |
 
 ______________________________________________________________________
 

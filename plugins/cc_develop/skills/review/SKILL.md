@@ -11,17 +11,39 @@ effort: high
 
 Comprehensive code review of local files or working-tree diff. Spawns specialized sub-agents in parallel, consolidates findings into structured feedback with severity levels.
 
-NOT for: GitHub PR review (use `/oss:review <PR#>` (requires oss plugin)); GitHub thread analysis or PR reply drafting (use `/oss:analyse <PR#>` (requires oss plugin)); implementation (use `/develop:feature` or `/develop:fix`); `.claude/` config changes (use `/foundry:manage` (requires foundry plugin) or `/foundry:audit` (requires foundry plugin)); non-Python-only projects (zero Python source files — pure JS/TS/Go/Rust) — review toolchain assumes Python/pytest; Python test-only targets where diff contains only test files (no `src/` or top-level `.py` source outside `tests/`) — review is uninformative; polyglot projects with Python source review Python files only.
+NOT for:
+
+- GitHub PR review (use `/oss:review <PR#>` (requires oss plugin))
+- GitHub thread analysis or PR reply drafting (use `/oss:analyse <PR#>` (requires oss plugin))
+- implementation (use `/develop:feature` or `/develop:fix`)
+- `.claude/` config changes (use `/foundry:manage` (requires foundry plugin) or `/foundry:audit` (requires foundry plugin))
+- non-Python-only projects (zero Python source files — pure JS/TS/Go/Rust) — review toolchain assumes Python/pytest
+- Python test-only targets where diff contains only test files (no `src/` or top-level `.py` source outside `tests/`) — review is uninformative
+
+Polyglot projects with Python source review Python files only.
 
 </objective>
 
 ## Improvement claim evidence
 
-Assess every material improvement claimed in the request, PR title/body or reviewed documentation, including claims without supplied benchmarks. Record each claim, its scope and evidence in the existing review report. Include the relevant claims, supplied evidence and this measurement protocol in reviewer context; the parent reconciles claim dispositions in the final report even when a specialist is omitted. Route performance claims to the performance dimension when admitted by the existing selection rules; the parent retains claim coverage when that dimension is not selected. Preserve existing scope, fan-out limits and execution permissions; inspection-only reviewers hand feasible reproduction checks to the parent. Behavioral claims need targeted tests; correctness tests alone do not prove performance or model-quality gains.
+Assess every material improvement claimed in the request, PR title/body or reviewed documentation, including claims without supplied benchmarks.
+
+- Record each claim, its scope and evidence in the existing review report.
+- Include the relevant claims, supplied evidence and this measurement protocol in reviewer context; the parent reconciles claim dispositions in the final report even when a specialist is omitted.
+- Route performance claims to the performance dimension when admitted by the existing selection rules; the parent retains claim coverage when that dimension is not selected.
+- Preserve existing scope, fan-out limits and execution permissions; inspection-only reviewers hand feasible reproduction checks to the parent.
+- Behavioral claims need targeted tests; correctness tests alone do not prove performance or model-quality gains.
 
 Bind numerical comparisons to exact baseline/candidate revisions, commands, representative workload/data, software, relevant hardware and settings. Attribute supplied results separately from independent reproduction. Use a predefined practical tolerance, appropriate warmup and accelerator timing, repeated measurements, raw samples, sample counts, summary statistic and variability. Check correctness and material tradeoffs. Explain hardware relevance and limit conclusions to measured workloads/devices.
 
-Shared local CPU/GPU, memory pressure or swapping, I/O contention and thermal/power changes can confound measurements. Record relevant observable contention and unavailable observations; never assume isolation. Run comparable baseline/candidate samples sequentially in paired, alternating or randomized order; avoid concurrent competing benchmarks or agent-owned heavy checks. Bound reruns and retain noisy attempts and exclusion criteria. More samples do not remove systematic bias. Never stop unrelated processes or change system resource controls without existing authorization. If noise or unequal contention could explain the effect, label measurements inconclusive and name the quieter or representative-hardware check needed; do not confirm or refute the claim from that run.
+Shared local CPU/GPU, memory pressure or swapping, I/O contention and thermal/power changes can confound measurements.
+
+- Record relevant observable contention and unavailable observations; never assume isolation.
+- Run comparable baseline/candidate samples sequentially in paired, alternating or randomized order; avoid concurrent competing benchmarks or agent-owned heavy checks.
+- Bound reruns and retain noisy attempts and exclusion criteria.
+- More samples do not remove systematic bias.
+- Never stop unrelated processes or change system resource controls without existing authorization.
+- If noise or unequal contention could explain the effect, label measurements inconclusive and name the quieter or representative-hardware check needed; do not confirm or refute the claim from that run.
 
 Conclude supported, contradicted or unverified per claim, with provenance, tested scope and whether independent reproduction succeeded. Missing hardware or unresolved noise leaves the claim unverified with prerequisite, owner and next check; feasible unperformed checks remain incomplete. Reliable counterevidence is required for contradiction. Missing verification alone is a coverage limit, not a source defect or grounds for rejection. Preserve each workflow's existing readiness and confidence contract.
 
@@ -36,11 +58,23 @@ Conclude supported, contradicted or unverified per claim, with provenance, teste
   - `--full`: run **every** dimension classification preselected, instead of only the `FANOUT_MAX` most relevant. Never widens preselection — a dimension the FIX/CHORE/impact-tier rules ruled out stays out. **Not free**: each extra agent costs ~120,851 tok fixed overhead however little work it does. Default stays capped; pass this when depth matters more than cost.
   - `--codemap`: strict mode — stop and report if codemap not installed (on by default when installed; use `--no-codemap` to opt out)
 
-**PR#/filename disambiguation gate** (its block runs in §Flag parsing, right after the flag block — BEFORE Worktree isolation and Step 1): valid PR# is positive integer (optional leading `#`) with no extension and no existing file at that path. Filenames that look like numbers (e.g. `42.py`) must NOT trigger PR mode. `dev_parse_args.py` classifies the flag-stripped target, so `42 --full` still counts, and writes the bare number or empty to the `dev-review-pr-number` sentinel; the gate block reads it, checks oss through the install record and prints `OSS_AVAILABLE=` and `PR_NUMBER=`. "Proceed to Step 1" below = continue the workflow: Worktree isolation, then Step 1.
+**PR#/filename disambiguation gate** (its block runs in §Flag parsing, right after the flag block — BEFORE Worktree isolation and Step 1): valid PR# is positive integer (optional leading `#`) with no extension and no existing file at that path.
+
+- Filenames that look like numbers (e.g. `42.py`) must NOT trigger PR mode.
+- `dev_parse_args.py` classifies the flag-stripped target, so `42 --full` still counts, and writes the bare number or empty to the `dev-review-pr-number` sentinel; the gate block reads it, checks oss through the install record and prints `OSS_AVAILABLE=` and `PR_NUMBER=`.
+- "Proceed to Step 1" below = continue the workflow: Worktree isolation, then Step 1.
 
 `$OSS_AVAILABLE` is `skip` → proceed to Step 1 normally (path / diff / dir mode).
 
-`$OSS_AVAILABLE` is `true` → call `AskUserQuestion` ONCE with BOTH questions in the same call (a second sequential window costs another human-idle round trip) — Q1: "Looks like you passed a PR/issue number. Did you mean to run `/oss:review $ARGUMENTS` (requires oss plugin) to review that PR?" Options: (a) "Yes — launch `/oss:review $ARGUMENTS`" · (b) "No — review local code". Q2: "If reviewing local code: provide the file path or directory (free text; skip if Q1 = Yes)". On (a): call `Skill(skill="oss:review", args="<PR_NUMBER>")` with the bare number the gate block printed (never the flags passed beside it), ignore Q2, then stop — do not enter Step 1. On (b): persist the Q2 response as the review target (block below), proceed to Step 1 (Q2 empty → ask once more for the path).
+`$OSS_AVAILABLE` is `true` → call `AskUserQuestion` ONCE with BOTH questions in the same call (a second sequential window costs another human-idle round trip):
+
+- Q1: "Looks like you passed a PR/issue number. Did you mean to run `/oss:review $ARGUMENTS` (requires oss plugin) to review that PR?" Options: (a) "Yes — launch `/oss:review $ARGUMENTS`" · (b) "No — review local code".
+- Q2: "If reviewing local code: provide the file path or directory (free text; skip if Q1 = Yes)".
+
+Answer handling:
+
+- On (a): call `Skill(skill="oss:review", args="<PR_NUMBER>")` with the bare number the gate block printed (never the flags passed beside it), ignore Q2, then stop — do not enter Step 1.
+- On (b): persist the Q2 response as the review target (block below), proceed to Step 1 (Q2 empty → ask once more for the path).
 
 Persist block for Q2 (shared by both branches) — substitute `<Q2 path>` with the user's answer; it replaces the PR number in the clean-args sentinel Step 1 re-reads:
 
@@ -201,7 +235,12 @@ fi
 if [ "$WORKTREE_ENABLED" = "true" ]; then python "$PLUGIN_ROOT/bin/dev_load_shared.py" worktree-isolation.md; fi
 ```
 
-`WORKTREE_ENABLED=true` → follow §Enter (base off HEAD, `EnterWorktree(path=…)`). **Read-only skill** — obey §Deliverable: `$RUN_DIR` handoffs stay under the active development run directory, or the worktree's `.developments/` for standalone reviews, but `$REPORT_DIR` (the review report) is written to the **main tree** (`$_ORIG_ROOT`, wired at Step 2) so its printed path + follow-up gate stay valid. Reviews committed HEAD state — uncommitted working-tree changes aren't visible, so the default target (no path given) is the last commit (`HEAD~1..HEAD`), matching Agent 0's pre-change ref; pass a path to review other committed files. Else skip — run in main tree (doc not loaded).
+`WORKTREE_ENABLED=true` → follow §Enter (base off HEAD, `EnterWorktree(path=…)`). **Read-only skill** — obey §Deliverable:
+
+- `$RUN_DIR` handoffs stay under the active development run directory, or the worktree's `.developments/` for standalone reviews, but `$REPORT_DIR` (the review report) is written to the **main tree** (`$_ORIG_ROOT`, wired at Step 2) so its printed path + follow-up gate stay valid.
+- Reviews committed HEAD state — uncommitted working-tree changes aren't visible, so the default target (no path given) is the last commit (`HEAD~1..HEAD`), matching Agent 0's pre-change ref; pass a path to review other committed files.
+
+Else skip — run in main tree (doc not loaded).
 
 ```bash
 # CODEMAP_RAW → true/false; strict exits on unavailability  # timeout: 5000
@@ -323,7 +362,13 @@ echo "$RUN_DIR" > "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}"
 
 Extended scan for changed modules — runs v5 pre-flight queries per module, persists structured output to `$RUN_DIR/codemap-context.md`, and sets `codemap_available` flag for Step 3 agent spawns:
 
-Before this block, enumerate the review target's Python files (the explicit file/directory contents, or the Step 1 diff's files). Convert only those paths to dotted modules relative to the target project root: strip leading `./`, `src/` and `.py`, replace `/` with `.`, and map `.__init__` to its package. Use the Write tool to save the space-separated module names to `${TMPDIR:-/tmp}/dev-review-target-modules-${CSID}` with resolved sentinel path, replacing any prior run's list. Unmappable targets get an empty list and file-read fallback. Path/directory and committed worktree reviews keep `FULL`: working-tree `diff-impact` does not measure those targets.
+Before this block:
+
+1. Enumerate the review target's Python files (the explicit file/directory contents, or the Step 1 diff's files).
+2. Convert only those paths to dotted modules relative to the target project root: strip leading `./`, `src/` and `.py`, replace `/` with `.`, and map `.__init__` to its package.
+3. Use the Write tool to save the space-separated module names to `${TMPDIR:-/tmp}/dev-review-target-modules-${CSID}` with resolved sentinel path, replacing any prior run's list.
+
+Unmappable targets get an empty list and file-read fallback. Path/directory and committed worktree reviews keep `FULL`: working-tree `diff-impact` does not measure those targets.
 
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
@@ -370,7 +415,14 @@ echo "$codemap_available" > "${TMPDIR:-/tmp}/dev-review-codemap-available-${CSID
 
 Codemap context propagation in Step 3:
 
-- `codemap_available=true` → copy `$CODEMAP_CONTEXT_STAGE` to `$RUN_DIR/codemap-context.md` once in Step 2, reusing the directory created before pre-flight. Each dimension spawn prompt gets a literal block holding only ITS slice of the batch results (the whole block in every prompt re-bills every query result to consumers that never read it; results for skipped agents injected nowhere): qa unit → `uncovered` + `mock-rdeps` entries; doc unit → `undocumented` + `xrefs --broken` entries; sw-engineer → `rdeps` + `central` + `diff-impact`. Entries whose only consumer was skipped by classification aren't injected anywhere:
+- `codemap_available=true` → copy `$CODEMAP_CONTEXT_STAGE` to `$RUN_DIR/codemap-context.md` once in Step 2, reusing the directory created before pre-flight. Each dimension spawn prompt gets a literal block holding only ITS slice of the batch results (the whole block in every prompt re-bills every query result to consumers that never read it; results for skipped agents injected nowhere):
+
+  - qa unit → `uncovered` + `mock-rdeps` entries
+  - doc unit → `undocumented` + `xrefs --broken` entries
+  - sw-engineer → `rdeps` + `central` + `diff-impact`
+
+  Entries whose only consumer was skipped by classification aren't injected anywhere:
+
   ```text
   ## Structural Context (codemap-py, codemap_available=true)
   <this agent's slice of $RUN_DIR/codemap-context.md>
@@ -387,6 +439,7 @@ Codemap context propagation in Step 3:
   - sw-engineer (Agent 1): `rdeps` first (importers per changed module)
   - challenger (Agent 7): unchanged — always reads source directly
   ```
+
 - `codemap_available=false` → omit block; agents proceed with current file-read behaviour.
 
 > Per-agent consumption guidance kept in sync with `$_DEV_SHARED/codemap-context.md` §Review-pipeline injection — update both on change.
@@ -447,6 +500,13 @@ Dispatch — substitute `<TARGET>` with its resolved literal value before the ca
 
 Note: with `--timeout-seconds 230`, `bridge:review` uses its synchronous foreground route and blocks until it returns. Its Write tool is limited to its own scratch task file; it returns findings inline in its response envelope and does not write `$RUN_DIR/codex.md`. No background health-monitoring/liveness-probe protocol applies. After `Skill(skill="bridge:review", ...)` returns, the orchestrator itself writes `$RUN_DIR/codex.md` from the returned envelope's `.findings`/`.verdict`/`.transcript_path` fields.
 
+Quota-blocked co-review (a `blocked` or `timeout` result):
+
+- First Read the incident file its `incident` field names.
+- Its `fault` is `quota-exhausted` (peer out of credits, never retried by the bridge) → write `codex-blocked:quota` as the first line of `codex.md`.
+- A null `incident`, an unreadable file or any other `fault` (`rate-limited`, `capacity`, …) keeps today's record.
+- Never decide from verdict or blockers text, which a model-authored `blocked` result can copy.
+
 After `$RUN_DIR/codex.md` is written (or skipped/blocked), extract compact seed list (≤10 items, `[{"loc":"file:line","note":"..."}]`) to inject into agent prompts in Step 3 as pre-flagged issues to verify or dismiss. Codex skipped, timed out, or found nothing → proceed with empty seed.
 
 **Cap-disclosure**: count total Codex findings before truncating. If ≥10, surface in consolidated report header:
@@ -461,7 +521,13 @@ Pass notice through to consolidator (Step 5) so it appears in final report heade
 
 Anti-anchoring pre-step: before any agent reads the diff, spawn a standalone agent that derives its own **blueprint-level** solution to the problem the change solves — approach + key data structures + edge cases, not full implementation. Bounded: ~10 tool calls, output ≤1 page. Isolation-motivated spawn, not work displacement — the blind agent must not share the orchestrator's context, so the "under ~73 calls → inline" rule does not apply; it still pays the fixed per-spawn overhead, hence the double gate below.
 
-For every classification, inspect `.plans/active/*.md` with the Read tool. Match only exact repository-relative paths listed in the plan's **Affected files** section against the review target's files; normalize `./` and path separators, never match stems or free-text mentions. A path/directory review uses its own files, not unrelated dirty files. Exactly one matching plan → use the Write tool to persist its resolved path to `${TMPDIR:-/tmp}/dev-review-plan-${CSID}`; none or multiple matches → overwrite that sentinel with an empty line and record the missing/ambiguous claim. Agent 1 receives `PLAN_CLAIM=<resolved matched-plan path>` when present, for every classification; omit the binding otherwise. A matched plan remains an author's claim, never contract evidence.
+For every classification, inspect `.plans/active/*.md` with the Read tool.
+
+- Match only exact repository-relative paths listed in the plan's **Affected files** section against the review target's files; normalize `./` and path separators, never match stems or free-text mentions. A path/directory review uses its own files, not unrelated dirty files.
+- Exactly one matching plan → use the Write tool to persist its resolved path to `${TMPDIR:-/tmp}/dev-review-plan-${CSID}`.
+- None or multiple matches → overwrite that sentinel with an empty line and record the missing/ambiguous claim.
+- Agent 1 receives `PLAN_CLAIM=<resolved matched-plan path>` when present, for every classification; omit the binding otherwise.
+- A matched plan remains an author's claim, never contract evidence.
 
 Problem statement for Agent 0 = that matching plan file, nothing else. A local diff has no PR body; the last commit message describes the *previous* change when the target is the working tree, so it is never used. Only FEATURE/MIXED diff reviews run the block below — path/directory targets have no change baseline and skip blind-solve. No diff content is read:
 
@@ -483,7 +549,10 @@ else
 fi
 ```
 
-`blind-solve: skipped` → no spawn; note the skip in the report header. Otherwise spawn with the contents of `$RUN_DIR/blind-solve-input.md` verbatim, then: "Your only source for pre-change code is `git show <PRE_REF>:<path>` for files listed above. Never use Read, `cat`, `git diff`, or any working-tree path — the working tree contains the change under review. Sketch your own solution to the stated problem — approach, key data structures/functions, edge cases — in ≤1 page. Do not write full code." Write to `$RUN_DIR/blind-solve.md`, return `{"status":"done","file":"$RUN_DIR/blind-solve.md","confidence":0.N}`.
+`blind-solve: skipped` → no spawn; note the skip in the report header. Otherwise spawn with the contents of `$RUN_DIR/blind-solve-input.md` verbatim, then:
+
+- "Your only source for pre-change code is `git show <PRE_REF>:<path>` for files listed above. Never use Read, `cat`, `git diff`, or any working-tree path — the working tree contains the change under review. Sketch your own solution to the stated problem — approach, key data structures/functions, edge cases — in ≤1 page. Do not write full code."
+- Write to `$RUN_DIR/blind-solve.md`, return `{"status":"done","file":"$RUN_DIR/blind-solve.md","confidence":0.N}`.
 
 Skip Agent 0 when classification is FIX/REFACTOR/CHORE (no fresh problem to solve blind) or target is a path/directory — checked before the block above runs; plan matching and the Agent 1 claim binding still apply. Launch in the same batch as the Step 3 spawn units — it needs no diff, nothing blocks it. Not a `FANOUT_MAX` unit — never counted against the cap, never ranked out, not part of any merged spawn unit.
 
@@ -567,19 +636,56 @@ Launch spawn units simultaneously with Agent tool (security augmentation folded 
 
 > "Write your FULL findings (all sections, Confidence block) to `$RUN_DIR/<agent-name>.md` using the Write tool — where `<agent-name>` is e.g. `sw-engineer`, `qa-specialist`, `perf-optimizer`, `doc-scribe`, `linting-expert`, `solution-architect`. Include your scoped source_outcome, source_rating (source-5-v1 integer 1–5 or null when undecidable), rationale, readiness (complete/blocked/incomplete), readiness_reason and inspected coverage (paths and checks, including unavailable checks). Then return to the caller ONLY a compact JSON envelope on your final line — nothing else after it (a merged unit returns the JSON array of §Merged spawn units instead, one such object per dimension file): `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":0,\"high\":1,\"medium\":2,\"low\":0},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.88,\"source_outcome\":\"MINOR_EDITS\",\"source_rating\":2,\"rationale\":\"<scoped judgment basis>\",\"readiness\":\"complete\",\"readiness_reason\":\"<completed checks or verification limits>\",\"coverage\":[\"<inspected path/check>\"]}`. Replace example judgments with your actual scoped assessment."
 
-**Codemap-py context preamble (substituted by orchestrator)**: rehydrate `IFS= read -r codemap_available < "${TMPDIR:-/tmp}/dev-review-codemap-available-${CSID}" 2>/dev/null || codemap_available=false`. When `codemap_available=true`, each dimension spawn prompt is prefixed with its `## Structural Context (codemap-py, codemap_available=true)` slice from `$RUN_DIR/codemap-context.md` per the per-agent slicing rules in Step 1. Agents must read that block first and skip redundant Grep/Read on symbols already covered by codemap output. Block absent → fall back to current file-read behaviour. Challenger (Agent 7) unchanged.
+**Codemap-py context preamble (substituted by orchestrator)**: rehydrate `IFS= read -r codemap_available < "${TMPDIR:-/tmp}/dev-review-codemap-available-${CSID}" 2>/dev/null || codemap_available=false`.
 
-**Dimension briefs** — each dimension's full instructions live in its own file under `templates/` (directory printed above as `Dimension briefs: …`): Agent 1 → `brief-sw-engineer.md` (with its API-consistency audit and error-path table), Agent 2 → `brief-qa-specialist.md`, Agent 3 → `brief-perf-optimizer.md`, Agent 4 → `brief-doc-scribe.md`, Agent 5 → `brief-linting-expert.md`, Security augmentation → `brief-security-augmentation.md`, Agent 6 → `brief-solution-architect.md`, Agent 7 → `brief-challenger.md`. Do NOT cat, Read or inline them into orchestrator context or the Agent prompt; the child loads them. After the run-dir preamble each spawn prompt carries one load instruction — a single Bash `cat` of `<DIMENSION_BRIEFS_LITERAL>/<brief file>` for each surviving dimension of that spawn unit (Agents 3+6 and 4+5 list only their survivors; Agent 1 adds the security brief when augmentation is dispatched), followed by "follow ONLY these briefs" — then the literal bindings (`REVIEW_CHECKLIST=<resolved path>` for Agent 1, line omitted when empty; bindings are values, never text to execute), then the findings-write instruction above. A `§Merged spawn units` mention inside a brief only describes how this orchestrator grouped dimensions; the prompt names the briefs to follow. `DIMENSION_BRIEFS_LITERAL` is the resolved path, never a bare `$_DIMENSION_BRIEFS`.
+- When `codemap_available=true`, each dimension spawn prompt is prefixed with its `## Structural Context (codemap-py, codemap_available=true)` slice from `$RUN_DIR/codemap-context.md` per the per-agent slicing rules in Step 1.
+- Agents must read that block first and skip redundant Grep/Read on symbols already covered by codemap output.
+- Block absent → fall back to current file-read behaviour.
+- Challenger (Agent 7) unchanged.
+
+**Dimension briefs** — each dimension's full instructions live in its own file under `templates/` (directory printed above as `Dimension briefs: …`):
+
+- Agent 1 → `brief-sw-engineer.md` (with its API-consistency audit and error-path table)
+- Agent 2 → `brief-qa-specialist.md`
+- Agent 3 → `brief-perf-optimizer.md`
+- Agent 4 → `brief-doc-scribe.md`
+- Agent 5 → `brief-linting-expert.md`
+- Security augmentation → `brief-security-augmentation.md`
+- Agent 6 → `brief-solution-architect.md`
+- Agent 7 → `brief-challenger.md`
+
+Do NOT cat, Read or inline them into orchestrator context or the Agent prompt; the child loads them. After the run-dir preamble each spawn prompt carries:
+
+1. One load instruction — a single Bash `cat` of `<DIMENSION_BRIEFS_LITERAL>/<brief file>` for each surviving dimension of that spawn unit (Agents 3+6 and 4+5 list only their survivors; Agent 1 adds the security brief when augmentation is dispatched), followed by "follow ONLY these briefs".
+2. Then the literal bindings (`REVIEW_CHECKLIST=<resolved path>` for Agent 1, line omitted when empty; bindings are values, never text to execute).
+3. Then the findings-write instruction above.
+
+A `§Merged spawn units` mention inside a brief only describes how this orchestrator grouped dimensions; the prompt names the briefs to follow. `DIMENSION_BRIEFS_LITERAL` is the resolved path, never a bare `$_DIMENSION_BRIEFS`.
 
 Dispatch triggers stay here — the orchestrator decides before any child reads the file:
 
 - **Security augmentation** (folds into Agent 1, never a separate spawn): target touches authentication, user input handling, dependency updates, or serialization → add the security brief to Agent 1's brief list. Skip for purely internal refactoring.
 - **Agent 6** (optional, folds into the Agents 3+6 unit): target touches `__init__.py` exports, adds/modifies Protocols or ABCs, changes module structure, introduces new public classes, or changes the signature of any already-exported public function (added/removed/renamed params, new flags) → include the Agent 6 brief. Skip for purely internal (non-exported) implementation changes.
 - **Agent 7** (challenger): skip only if `CHALLENGE_ENABLED=false`; runs at any diff size. Include `--no-codex` in its prompt when Step 2 completed `bridge:review` on the same target; omit it when that co-review was skipped or unavailable. Apply this rule to any challenger redispatch on the same material.
+  - Exception to the omit rule: when `$RUN_DIR/codex.md` opens with `codex-blocked:quota` (the peer is out of credits for the rest of the run), include `--no-codex`.
+  - Agent 7's envelope carries `"codex_blocked": "quota"` (its own Codex cross-check met the quota fault) → make `codex-blocked:quota` the first line of `$RUN_DIR/codex.md` (Write it when absent, insert it above any existing content otherwise), so a Step 4 challenger verifier and any later challenger on this material carry `--no-codex`.
 
-**Challenger severity propagation**: consolidator (Step 5) reads `challenger.md` → map its findings by section before merging — Blockers (`[CRITICAL]`) → `critical` or `high` (promote to `critical` only when independently corroborated, e.g. a Step 4 CONFIRMED verdict or matching evidence from another agent; otherwise keep the required independent verification open, never downgrade uncertainty into actionable high severity), Concerns (`[HIGH]`) → `medium`, Nitpicks (`[LOW]`) → `low`. Never drop challenger candidates from validation; only parent-CONFIRMED claims become findings, and uncertainty stays separately durable.
+**Challenger severity propagation**: consolidator (Step 5) reads `challenger.md` → map its findings by section before merging:
 
-**Health monitoring**: arm batch `review` in the spawn response — deliverable `$RUN_DIR/<agent-name>.md` per dimension file (a merged unit gets one row per file); Step 4 verifiers arm `verify`, the Step 5 consolidator arms `consolidate` (deliverable `-`); run the check block once per wake-up (`agent-resolution.md` §Agent waits — no polling, per-agent deadlines). Agent calls run in background. Spawn the batch, end the turn, resume on each completion notification — no filler tool calls, no "waiting" turns, no sleep, and never `ScheduleWakeup`, `ListAgents`, or a `Monitor` loop: the notification is the only resume signal (`agent-resolution.md` §Agent waits — no polling). An agent whose completion or idle notification arrives while `$RUN_DIR/<agent-name>.md` is still missing is ⏱ `timed_out` at once — never wait on it further. Agent returns partial results or errors → use Read tool on `$RUN_DIR/<agent-name>.md` for details. Mark agents that returned empty or error with ⏱ in final report. Never silently omit agents that **failed** (returned error/partial) — must appear with ⏱ marker. Agents **not spawned** (skipped due to mode flags, docs-only, CHORE mode) may be absent from RUN_DIR; consolidator "skip missing" applies only to legitimately-not-spawned agents.
+- Blockers (`[CRITICAL]`) → `critical` or `high` (promote to `critical` only when independently corroborated, e.g. a Step 4 CONFIRMED verdict or matching evidence from another agent; otherwise keep the required independent verification open, never downgrade uncertainty into actionable high severity)
+- Concerns (`[HIGH]`) → `medium`
+- Nitpicks (`[LOW]`) → `low`
+
+Never drop challenger candidates from validation; only parent-CONFIRMED claims become findings, and uncertainty stays separately durable.
+
+**Health monitoring**: arm batch `review` in the spawn response — deliverable `$RUN_DIR/<agent-name>.md` per dimension file (a merged unit gets one row per file); Step 4 verifiers arm `verify`, the Step 5 consolidator arms `consolidate` (deliverable `-`); run the check block once per wake-up (`agent-resolution.md` §Agent waits — no polling, per-agent deadlines).
+
+- Agent calls run in background. Spawn the batch, end the turn, resume on each completion notification — no filler tool calls, no "waiting" turns, no sleep, and never `ScheduleWakeup`, `ListAgents`, or a `Monitor` loop: the notification is the only resume signal (`agent-resolution.md` §Agent waits — no polling).
+- An agent whose completion or idle notification arrives while `$RUN_DIR/<agent-name>.md` is still missing is ⏱ `timed_out` at once — never wait on it further.
+- Agent returns partial results or errors → use Read tool on `$RUN_DIR/<agent-name>.md` for details.
+- Mark agents that returned empty or error with ⏱ in final report.
+- Never silently omit agents that **failed** (returned error/partial) — must appear with ⏱ marker.
+- Agents **not spawned** (skipped due to mode flags, docs-only, CHORE mode) may be absent from RUN_DIR; consolidator "skip missing" applies only to legitimately-not-spawned agents.
 
 ## Step 4: Validate all candidates and independently verify critical/blocking concerns
 
@@ -616,7 +722,12 @@ File present → parent validates all candidates using the printed protocol befo
 
 **Skill-specific**: use **same agent type** that raised finding as verifier (e.g. foundry:sw-engineer verifies foundry:sw-engineer's critical finding). **Spawn cap: max 3 verifier agents** — critical/blocking findings > 3 → group into batches of ≤2 findings per verifier (same origin type per batch); note grouped IDs in rationale; each finding still gets its own verdict. Same cap as the shared protocol and oss:review — unbounded verifier fanout costs ~120,851 tok per critical finding.
 
-Before consolidation, persist the parent's all-severity candidate validation and reviewer assessment evidence in `$RUN_DIR/cross-validation.md` with the Write tool. Include structured envelope fields defined by the loaded protocol and retain all dispositions. Pass that literal evidence path to the consolidator. Parent rechecks new/materially strengthened claims and the final envelope before delivery; a model's confirmation label alone is not proof. Non-empty `new_claims` in the consolidator envelope → validate each listed candidate ID against the source before delivery; any still unvalidated stays out of Findings and is listed under the report's open concerns.
+Before consolidation, persist the parent's all-severity candidate validation and reviewer assessment evidence in `$RUN_DIR/cross-validation.md` with the Write tool.
+
+- Include structured envelope fields defined by the loaded protocol and retain all dispositions.
+- Pass that literal evidence path to the consolidator.
+- Parent rechecks new/materially strengthened claims and the final envelope before delivery; a model's confirmation label alone is not proof.
+- Non-empty `new_claims` in the consolidator envelope → validate each listed candidate ID against the source before delivery; any still unvalidated stays out of Findings and is listed under the report's open concerns.
 
 If the protocol was unavailable, the parent's final Write must retain `## Cross-Validation: SKIPPED` and its reason in `cross-validation.md`; do not overwrite the earlier marker with validation notes that omit it.
 
@@ -713,7 +824,13 @@ Apply the "good fit" and "don't delegate" criteria defined there (when found) �
 
 **Hard gate**: before the follow-up question, the Step 5b header table and plain summary must already be built from the current report file. Not built → go back and do it now (see Step 5b). The question carries the summary; the full delivery block opens the final reply after the answer (or on a no-question path). Keep "Step 5b: Print report header" `in_progress` until that final delivery.
 
-**Hook-enforced**: on `Stop`, `hooks/enforce-review-header.js` keeps a turn going once per report when its final reply lacks the matching full header table — skipping the follow-up question does not skip delivery. At question time it blocks only this workflow's follow-up until the current report exists and the first question's text names the report path and its `Title`, `Outcome` values as a short plain summary, no table. Option descriptions and previews do not supply the summary. Missing evidence blocks this transition; apply the placement the deny reason names, then retry. Diagnostic/recovery questions remain available; use their own question header, not `dev-review`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
+**Hook-enforced**: on `Stop`, `hooks/enforce-review-header.js` keeps a turn going once per report when its final reply lacks the matching full header table — skipping the follow-up question does not skip delivery.
+
+- At question time it blocks only this workflow's follow-up until the current report exists and the first question's text names the report path and its `Title`, `Outcome` values as a short plain summary, no table.
+- Option descriptions and previews do not supply the summary.
+- Missing evidence blocks this transition; apply the placement the deny reason names, then retry.
+- Diagnostic/recovery questions remain available; use their own question header, not `dev-review`.
+- The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
 
 **Worktree exit** — if `WORKTREE_ENABLED=true`: the report already lives in the main tree (§Deliverable). Follow `worktree-isolation.md` §Exit — capture branch, call `ExitWorktree(action="keep")`, append the `Worktree` block to the report/output. Exit **before** the follow-up gate so the `/develop:fix`/`/develop:refactor` next-step suggestions below point at the main tree. Never auto-merge.
 

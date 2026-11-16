@@ -26,7 +26,12 @@ For each file in scope (Step 2 inventory; default all agents + skills if no expl
 
 > "Adversarially challenge this agent/skill. `--no-codex` — Phase B runs the Codex pass separately. Do NOT accept claims at face value. Find: (1) unstated assumptions failing in edge cases, (2) NOT-for coverage gaps — tasks this agent wrongly accepts because exclusions are incomplete, (3) conflicting instructions producing non-deterministic or contradictory behavior, (4) workflow steps routing to the wrong sub-agent for the stated goal, (5) implicit scope contradicting explicit NOT-for lines. Report every finding with specific evidence from the file."
 >
-> Write full findings to `<RUN_DIR>/adversarial/challenger-<file-slug>.md` where `<file-slug>` is the plugin-prefixed slug assigned above or retained from SKILL.md Step 3; preserve the source-path-to-slug mapping, including agent/skill disambiguation. Never use bare `challenger-SKILL.md`. Envelope severity mapping from your Blocker/Concern/Nitpick sections: each Blocker → `critical`, each Concern → `high`, each Nitpick → `low`; a Blocker or Concern from the Security Risks dimension → `security` instead; `medium` stays 0. Return ONLY: `{"status":"done","file":"<path>","findings":N,"severity":{"security":N,"critical":N,"high":N,"medium":N,"low":N},"confidence":0.N}`
+> Write full findings to `<RUN_DIR>/adversarial/challenger-<file-slug>.md`.
+>
+> - `<file-slug>` is the plugin-prefixed slug assigned above or retained from SKILL.md Step 3; preserve the source-path-to-slug mapping, including agent/skill disambiguation.
+> - Never use bare `challenger-SKILL.md`.
+> - Envelope severity mapping from your Blocker/Concern/Nitpick sections: each Blocker → `critical`, each Concern → `high`, each Nitpick → `low`; a Blocker or Concern from the Security Risks dimension → `security` instead; `medium` stays 0.
+> - Return ONLY: `{"status":"done","file":"<path>","findings":N,"severity":{"security":N,"critical":N,"high":N,"medium":N,"low":N},"confidence":0.N}`
 
 Use `ADVERSARIAL_BATCH_SIZE` (default 2) for grouping — smaller batches than Step 3 (`BATCH_SIZE_MIN`) to maximise per-file attention depth. Same plugin-aware batching algorithm; substitute `ADVERSARIAL_BATCH_SIZE` for `BATCH_SIZE_MIN`.
 
@@ -56,11 +61,22 @@ Use `ADVERSARIAL_BATCH_SIZE` grouping. Phase C deduplicates Phase A-prime findin
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 python "$PLUGIN_ROOT/bin/check_bridge.py" --status > "${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status" 2>/dev/null || echo "absent" > "${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status"  # timeout: 5000
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null && [ -n "$RUN_DIR" ] && [ -s "$RUN_DIR/codex-blocked.txt" ] && echo "codex-blocked:quota" > "${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status"  # quota stop holds for the whole run
 IFS= read -r CODEX_STATUS < "${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status" || CODEX_STATUS="absent"
 [ "$CODEX_STATUS" = "available" ] && printf 'CODEX_AVAILABLE=%s\n' true || printf 'CODEX_AVAILABLE=%s\n' false  # timeout: 5000
 ```
 
-If the printed status is `CODEX_AVAILABLE=true`, render a brief per inventory batch with literal source paths and use `Skill(skill="bridge:review", args="Inventory review of these files, including unchanged sources: <source paths>. Read every file; do not limit review to the working-tree diff. Find cross-file inconsistencies, circular dispatch chains, ambiguous agent routing, and instructions assuming unavailable tools. Return compact findings with source path, line, severity, category and proposed correction. Read-only: do not write files.")`. Availability false: log the persisted bridge status and skip Phase B. This inventory pass does not use the diff-only codex-prepass.md contract.
+Phase B depends on the printed status:
+
+- If the printed status is `CODEX_AVAILABLE=true`, render a brief per inventory batch with literal source paths and dispatch Phase B:
+  - Use `Skill(skill="bridge:review", args="Inventory review of these files, including unchanged sources: <source paths>. Read every file; do not limit review to the working-tree diff. Find cross-file inconsistencies, circular dispatch chains, ambiguous agent routing, and instructions assuming unavailable tools. Return compact findings with source path, line, severity, category and proposed correction. Read-only: do not write files.")`.
+  - This inventory pass does not use the diff-only codex-prepass.md contract.
+- Availability false: log the persisted bridge status and skip Phase B.
+
+Quota stop for Phase B (SKILL.md §Bridge quota stop):
+
+- Apply SKILL.md §Bridge quota stop to each `bridge:review` result.
+- Once it fires, skip the remaining batches.
 
 The orchestrator uses the Write tool to save the returned envelope's `findings` and status to `<RUN_DIR>/adversarial/codex-adversarial-<batch-slug>.md`; bridge:review is read-only and returns compact findings, not a written findings file. Preserve any bridge artifact link for supporting detail. Non-`complete` status or an unreviewed file is a coverage gap, never a clean pass; Phase C consumes the captured findings and gaps.
 
@@ -78,7 +94,19 @@ Scope resolution — map audit scope tokens to plugin dirs, collect all bin/ scr
 
 Per-plugin security sweep — for each plugin in scope with bin/ scripts, spawn **foundry:qa-specialist**:
 
-> "Security and vulnerability review of all bin/ scripts in `<resolved-bin-directory>`. Read-only audit: do NOT create, edit or run tests, and do NOT modify any repository file — your only write is the findings file below. You are a black-box security reviewer — focus on executable surface only, not callers. Review every `.py` file assigned to this batch. Check OWASP Top 10 applicability: (1) injection — `subprocess` calls with `shell=True` or string-concatenated command args; (2) path traversal — unvalidated file paths from argv; (3) insecure deserialization — `pickle.load`, `yaml.load` without `Loader`; (4) hardcoded secrets — API keys, tokens, passwords in source; (5) uncontrolled resource consumption — unbounded loops or file reads without size check. Write full findings per file to `<RUN_DIR>/adversarial/security-<plugin-name>-<batch>.md`. Return ONLY: `{\"status\":\"done\",\"file\":\"<path>\",\"scripts_reviewed\":N,\"findings\":N,\"severity\":{\"security\":N,\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"confidence\":0.N}`"
+> "Security and vulnerability review of all bin/ scripts in `<resolved-bin-directory>`.
+>
+> - Read-only audit: do NOT create, edit or run tests, and do NOT modify any repository file — your only write is the findings file below.
+> - You are a black-box security reviewer — focus on executable surface only, not callers.
+> - Review every `.py` file assigned to this batch.
+> - Check OWASP Top 10 applicability:
+>   - (1) injection — `subprocess` calls with `shell=True` or string-concatenated command args
+>   - (2) path traversal — unvalidated file paths from argv
+>   - (3) insecure deserialization — `pickle.load`, `yaml.load` without `Loader`
+>   - (4) hardcoded secrets — API keys, tokens, passwords in source
+>   - (5) uncontrolled resource consumption — unbounded loops or file reads without size check.
+> - Write full findings per file to `<RUN_DIR>/adversarial/security-<plugin-name>-<batch>.md`.
+> - Return ONLY: `{\"status\":\"done\",\"file\":\"<path>\",\"scripts_reviewed\":N,\"findings\":N,\"severity\":{\"security\":N,\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"confidence\":0.N}`"
 
 Use `BATCH_SIZE_MIN` (not `ADVERSARIAL_BATCH_SIZE`) for Phase D — bin/ scripts shorter, security checks deterministic; BATCH_SIZE_MIN fine here. Plugin with ≤5 bin/ scripts: one foundry:qa-specialist spawn covers all; larger sets batch by 5.
 
@@ -86,11 +114,38 @@ Phase D runs parallel with Phases A, A-prime, and B — same async launch patter
 
 **Phase C — Aggregate and deduplicate**:
 
-With `--efficiency`, defer this Phase C dispatch until efficiency Phase C completes; run efficiency Phases A–C now, then return here. Spawn **foundry:curator** consolidator exactly once to merge Phase A + Phase A-prime + Phase B + Phase D findings and, when combined, efficiency findings. This consolidator performs Step 5's sole writer role for the combined route; do not wait for a separately dispatched Step 5 or fire a gate before it returns. Cross-reference against standard audit `summary.jsonl` (same RUN_DIR). Surface only findings NOT already in standard audit — adversarial adds signal, not noise.
+Consolidator dispatch:
+
+- With `--efficiency`, defer this Phase C dispatch until efficiency Phase C completes; run efficiency Phases A–C now, then return here.
+- Spawn **foundry:curator** consolidator exactly once to merge Phase A + Phase A-prime + Phase B + Phase D findings and, when combined, efficiency findings.
+- This consolidator performs Step 5's sole writer role for the combined route; do not wait for a separately dispatched Step 5 or fire a gate before it returns.
+- Cross-reference against standard audit `summary.jsonl` (same RUN_DIR).
+- Surface only findings NOT already in standard audit — adversarial adds signal, not noise.
 
 Adversarial-only mode (`--adversarial` flag without preceding standard audit in same RUN_DIR): no `summary.jsonl` exists in this RUN_DIR. Skip dedup entirely — surface all adversarial findings without overlap filtering. Do NOT dedup against prior audit runs in `.reports/audit/`; prior runs may have unresolved findings still needing fixing.
 
-Write deduplicated findings to `<RUN_DIR>/adversarial/adversarial-aggregate.md` and stage `<RUN_DIR>/summary.jsonl.adversarial.rec` (Step 5 schema: repo-relative `file`, `sev`, `id`, `line`, `category`, `auto_fixable`, `one_line`). Phase C never rewrites the ledger. With `--efficiency`, read `<RUN_DIR>/efficiency/efficiency-report.md` or, if absent, the existing run-root `<RUN_DIR>/efficiency-report.md` once; consume its staged `<RUN_DIR>/summary.jsonl.efficiency.rec` if present, otherwise stage its findings there using the same schema. Apply efficiency Phase C's row-selection rules to E8/E9/E10 and plan items: one row per P1–P4 item plus outside-plan findings; exclude P-HOLD and E11 entirely from the ledger and fix gate. E8/E9 set auto_fixable false; E10 merges crossing a model decision point also set it false, while setup-only merges may be true; model-tier and all other systemic/advisory exclusions stay false. Preserve P-HOLD/E11 suggestions in the human report. Deduplicate both mode stages against each other and current same-run rows by source path, line and issue; preserve systemic/advisory exclusions and decisions. A missing efficiency report is a coverage gap, never zero findings. After standard aggregation (if any) and both active modes complete, this consolidator runs `python "${CLAUDE_PLUGIN_ROOT}/bin/append_ledger.py" "<RUN_DIR>/summary.jsonl" --run-root "<RUN_DIR>"`, consuming both stages, then renders canonical `<RUN_DIR>/aggregate.md` from all current same-run rows, retaining standard findings and ending with a Confidence block before returning its envelope. Zero findings: stage an empty `.rec` so the same helper creates empty canonical `summary.jsonl`, and write a non-empty no-findings `aggregate.md`. Return: `{"status":"done","new_findings":N,"overlapping":N,"severity":{"security":N,"critical":N,"high":N,"medium":N,"low":N}}`
+Phase C staging:
+
+- Write deduplicated findings to `<RUN_DIR>/adversarial/adversarial-aggregate.md` and stage `<RUN_DIR>/summary.jsonl.adversarial.rec` (Step 5 schema: repo-relative `file`, `sev`, `id`, `line`, `category`, `auto_fixable`, `one_line`).
+- Phase C never rewrites the ledger.
+
+Efficiency rows:
+
+- With `--efficiency`, read `<RUN_DIR>/efficiency/efficiency-report.md` or, if absent, the existing run-root `<RUN_DIR>/efficiency-report.md` once; consume its staged `<RUN_DIR>/summary.jsonl.efficiency.rec` if present, otherwise stage its findings there using the same schema.
+- Apply efficiency Phase C's row-selection rules to E8/E9/E10 and plan items: one row per P1–P4 item plus outside-plan findings; exclude P-HOLD and E11 entirely from the ledger and fix gate.
+- E8/E9 set auto_fixable false; E10 merges crossing a model decision point also set it false, while setup-only merges may be true; model-tier and all other systemic/advisory exclusions stay false.
+- Preserve P-HOLD/E11 suggestions in the human report.
+
+Deduplication:
+
+- Deduplicate both mode stages against each other and current same-run rows by source path, line and issue; preserve systemic/advisory exclusions and decisions.
+- A missing efficiency report is a coverage gap, never zero findings.
+
+Canonical write and return:
+
+- After standard aggregation (if any) and both active modes complete, this consolidator runs `python "${CLAUDE_PLUGIN_ROOT}/bin/append_ledger.py" "<RUN_DIR>/summary.jsonl" --run-root "<RUN_DIR>"`, consuming both stages, then renders canonical `<RUN_DIR>/aggregate.md` from all current same-run rows, retaining standard findings and ending with a Confidence block before returning its envelope.
+- Zero findings: stage an empty `.rec` so the same helper creates empty canonical `summary.jsonl`, and write a non-empty no-findings `aggregate.md`.
+- Return: `{"status":"done","new_findings":N,"overlapping":N,"severity":{"security":N,"critical":N,"high":N,"medium":N,"low":N}}`
 
 **Report format**:
 

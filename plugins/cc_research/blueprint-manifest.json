@@ -2,7 +2,7 @@
   "entries": {
     "0039aaf88da842348e9258a9964cdaeab9677973195917eb78915ea687099935": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:967"
+      "src": "skills/run/SKILL.md:1036"
     },
     "00ebe0c1918776969ebf358ef98a4b7ae0f7471bdd4c3e23580245763070f858": {
       "kind": "block",
@@ -15,7 +15,7 @@
     },
     "01cc3dbc5de742b78c84e5976b344f88e438a7367a020d112c3c2f4d33c3b257": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:402"
+      "src": "skills/run/SKILL.md:411"
     },
     "01f155e0c4267942d854197cd678327ccff8bd3fbadef324cdba24c2619992c3": {
       "kind": "block",
@@ -36,16 +36,16 @@
     },
     "051c6cf946eb6e31416ff8768f01374c0d9ccd8188e8f17a4cb83dd5c3071f7c": {
       "kind": "block",
-      "src": "skills/run/modes/codex-copilot.md:68",
+      "src": "skills/run/modes/codex-copilot.md:96",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r RUN_ID < \"${TMPDIR:-/tmp}/research-run-id-${CSID}\" 2>/dev/null || RUN_ID=\"\"\npython \"$PLUGIN_ROOT/bin/codex_state.py\" bump --state \".experiments/state/${RUN_ID}/codex-state\" --outcome noop"
     },
     "055a3ab1719269bab0271bb2e88f01fd5de7781662de64101eaa4b485d634170": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:705"
+      "src": "skills/run/SKILL.md:734"
     },
     "056e36dd928d0cd89e6e3b82ea02dbd660ee7886a05ca2b0b3141fc1a8b7db50": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:546"
+      "src": "skills/run/SKILL.md:564"
     },
     "0586b1ca8b62f1a544c65de664ebb0b979daeab4c2f8e665fbeb79fd5abb85cb": {
       "kind": "block",
@@ -61,7 +61,7 @@
     },
     "06466ddd08303d44fb77efe90647a66966f9048f76caea39b8249823be292dec": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:528"
+      "src": "skills/run/SKILL.md:546"
     },
     "07e3a72cb48a9d23855496beb3dc2a6816169d24dcc5085a91b4af3e82236da0": {
       "kind": "command",
@@ -86,7 +86,7 @@
     },
     "0a51b2a572231936d57d31836fabfdef51e5e2a3395939148dc014fc30548b5b": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:912"
+      "src": "skills/run/SKILL.md:949"
     },
     "0a6ff88380eb8a44466bb434e799bbf77d21017bcb0eecb7a40032ce4a0938af": {
       "kind": "command",
@@ -114,7 +114,7 @@
     },
     "0d0de1c69faddcf75a1decf21e444d39e915a86dd09c605a36d0b6edf7318b2c": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:873"
+      "src": "skills/run/SKILL.md:910"
     },
     "0d6308af0e762024368b94158f8eeaa97cf0bdb75153145a0166186740db9901": {
       "kind": "command",
@@ -134,12 +134,12 @@
     },
     "0ea08d562aae7c81a9eb0e5c765b2c509461684cbcb8cd2f9242738255a3aa60": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:402",
+      "src": "skills/run/SKILL.md:411",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\ncommand -v jq >/dev/null 2>&1 || { echo \"! MISSING \u2014 jq not on PATH; install jq and retry\"; exit 1; }\nIFS= read -r RUN_ID < \"${TMPDIR:-/tmp}/research-run-id-${CSID}\" 2>/dev/null || RUN_ID=\"\"\n[ -n \"$RUN_ID\" ] || { echo \"! BLOCKED \u2014 R2 guard: run-id sentinel missing\"; exit 1; }\nGUARD_CMD=$(jq -b -r '.config.guard_cmd // empty' \".experiments/state/$RUN_ID/state.json\") || { echo \"! BLOCKED \u2014 R2 guard: state.json unreadable\"; exit 1; }\n[ -n \"$GUARD_CMD\" ] || { echo \"! BLOCKED \u2014 R2 guard: config.guard_cmd missing from state.json\"; exit 1; }\nIFS= read -r _CFG_NET < \"${TMPDIR:-/tmp}/research-run-sandbox-network-${CSID}\" 2>/dev/null || _CFG_NET=\"\"\nSANDBOX_NETWORK=\"${SANDBOX_NETWORK:-${_CFG_NET:-none}}\" python \"$PLUGIN_ROOT/bin/docker_sandbox_run.py\" --mode verify \"$GUARD_CMD\""
     },
     "0edf2c68994c4b66c03fc84f1d3cc5fa8e1aa1b437cfbfeed72721671d5d5c42": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:226",
+      "src": "skills/run/SKILL.md:231",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _RESEARCH_SHARED < \"${TMPDIR:-/tmp}/research-shared-${CSID}\" 2>/dev/null || _RESEARCH_SHARED=\"\"\npython \"$PLUGIN_ROOT/bin/resolve_shared.py\" --emit codemap-gates.md"
     },
     "0edff87d74d98eea87cd64440a208512caa7c13f2da3cbe17d0ff8bb2dfa4149": {
@@ -156,7 +156,7 @@
     },
     "0f76f5b14d8d701e87baed206acfdfb6fcf3db7ef54e976be291b1f32c850c13": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:853"
+      "src": "skills/run/SKILL.md:890"
     },
     "0fcfbf9881a93b7419b55c7ca47b9b0645ae5a3a22b2c0f8d2dba765376479f4": {
       "kind": "command",
@@ -172,7 +172,7 @@
     },
     "10cb4f96bee0a847842905654bbb5136a99ede51c42be65e77cea33d619b4756": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:352"
+      "src": "skills/run/SKILL.md:361"
     },
     "11ef38dce1eb5dde6bfd9d7803a4eb17d3629f9051179ab356708b74bc2fcc28": {
       "kind": "command",
@@ -180,7 +180,7 @@
     },
     "12e7eced337e1af59442e71798eaac6e95fdaaa29adb2668aabe1de04ec41c70": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:187"
+      "src": "skills/run/SKILL.md:192"
     },
     "131109339e239ef6a0b682ebf557a62e55d16ab7707ae62fa33cbb21b3d60505": {
       "kind": "command",
@@ -188,7 +188,7 @@
     },
     "13c8fde51de6328f8d12c9d978705e6887bd4b316294e4e96e448e003879022a": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:940"
+      "src": "skills/run/SKILL.md:986"
     },
     "14349ae8c199147e0819a1409cdf4641098a78ad9d760d61f85c9a1467d10170": {
       "kind": "command",
@@ -200,7 +200,7 @@
     },
     "14468fd6dd97d9acada7fa233d31feadac12a3835a57d7bc1edc5f51b3fdb7c8": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:771"
+      "src": "skills/run/SKILL.md:800"
     },
     "147ec8f8c1856e6d99c930349db741899afca5f4f7f186e0cbdf662faca89f99": {
       "kind": "command",
@@ -228,7 +228,7 @@
     },
     "16a358701335ca5282910c1a8b9d437a4bf341d05ce3c7f5a0e85c91b9f6f75d": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:207",
+      "src": "skills/run/SKILL.md:212",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\n_SWEEP_TOKEN='<active-sweep-token>'\ncase \"$_SWEEP_TOKEN\" in '<'*) _SWEEP_TOKEN=\"\";; esac\nIFS= read -r _ACTIVE_SWEEP < \"${TMPDIR:-/tmp}/sweep-active-token-${CSID}\" 2>/dev/null || _ACTIVE_SWEEP=\"\"\n_RUN_ARGS=\"$ARGUMENTS\"\nif [ -n \"$_SWEEP_TOKEN\" ] && [ \"$_SWEEP_TOKEN\" = \"$_ACTIVE_SWEEP\" ]; then\n    IFS= read -r _RUN_ARGS < \"${TMPDIR:-/tmp}/sweep-run-args-${CSID}\" || { echo \"! BLOCKED \u2014 sweep run arguments missing\"; exit 1; }\nfi\nCODEMAP_RAW=$(python \"$PLUGIN_ROOT/bin/codemap-flag.py\" research-run \"$_RUN_ARGS\") || exit 1"
     },
     "16ace351c6a4a0ef3e852d53050dddc0f7f5eef6b21afaaa305f9690d17424f6": {
@@ -268,7 +268,7 @@
     },
     "1ad987eef40ed0fe6a1158ba93314dec8f661eef6aecdb25672f171eb90d0c20": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "1b10eea74fcc4213172ff93d147bb873fba076c843d7d42ecca0b29bc8c00772": {
       "kind": "command",
@@ -276,7 +276,7 @@
     },
     "1b26ce0103c596ef0b57f8d5f71b62f867875986bb59efb765469f0f1b1b4b5b": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:563"
+      "src": "skills/run/SKILL.md:581"
     },
     "1b9f6a511cff6c9e193d0e8c4e7b342db18f3cfc57f7a149cc9fa9cb50b5ed5a": {
       "kind": "command",
@@ -329,7 +329,7 @@
     },
     "20a1e7deb5817aa1ca421d1354563ce6f6736b86f18f59e6129107e4fcebc1f2": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:673"
+      "src": "skills/run/SKILL.md:702"
     },
     "20b98337fe6576148cb942e38bf75921a34ef9bfd55b259515f2d07f24ec077f": {
       "kind": "command",
@@ -359,7 +359,7 @@
     },
     "222fd929a066c7cf0b233c5ad3ed030ac1135588536568819609e25ad513b94e": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:912"
+      "src": "skills/run/SKILL.md:949"
     },
     "224e4104cefa5579c2a740a7b8c4f9b291de7544cb5ede99e8391bb9fd3cf105": {
       "kind": "command",
@@ -408,7 +408,7 @@
     },
     "281ec076f52e9f3af209d051a36574a1b572bc2c51c7e73edfe3cf0fa2983fbc": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:265"
+      "src": "skills/run/SKILL.md:270"
     },
     "28e6a4eef2659357bcd8d1ce802abad1ce7d64a3cb92b475127dd38fcf3eff44": {
       "kind": "command",
@@ -430,7 +430,7 @@
     },
     "29dbbec9a56be07e43d8038c624bb9d1834a35ae810a1feebc76cd40d5450c92": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:546"
+      "src": "skills/run/SKILL.md:564"
     },
     "29f9b081e6fb5091f801782bd3d31325c853e7ea87c741dc19b6ddcd6ff1fd79": {
       "kind": "block",
@@ -454,7 +454,7 @@
     },
     "2af3279f1c78e7e7b3cec261731118eaacb159cde569b141a49056022e6367ec": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:563"
+      "src": "skills/run/SKILL.md:581"
     },
     "2b003b4186da782a99935dc6c5d673f0b3af4292b076c5476ce1633c99b14029": {
       "kind": "command",
@@ -470,7 +470,7 @@
     },
     "2c58e3cce5d4f6eff6005dbd0f78ce348af7c6d476b585db439d52f8e7356299": {
       "kind": "command",
-      "src": "skills/run/modes/codex-copilot.md:18"
+      "src": "skills/run/modes/codex-copilot.md:34"
     },
     "2d25fb968a7e020d08bac0194201cb74995b3e2a4ca13f524740f4a0de1ad8cc": {
       "kind": "command",
@@ -478,7 +478,7 @@
     },
     "2dd0292eda1e6d4e7d8dd74b03007e5e83d9796ae529dd8429aab4d7f6cb69ab": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:402"
+      "src": "skills/run/SKILL.md:411"
     },
     "2def23941d9876ff632624b1bd0545928f4167505c128d904f9a718083cc2dca": {
       "kind": "command",
@@ -498,7 +498,7 @@
     },
     "2f8f221bc8d9c8baab1f96738c093deac8adeb252849ef6bdbbe22cc371ac786": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:743"
+      "src": "skills/run/SKILL.md:772"
     },
     "2fa2252c9703d2f9b171431c08a3d024ef7f0ed71267fe4e9bbd8ed94c07c783": {
       "kind": "block",
@@ -522,7 +522,7 @@
     },
     "31f7ab904a536f895716b1cc6d95179ab5f04b921b02b9c1eaddc8d646f6d441": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:736"
+      "src": "skills/run/SKILL.md:765"
     },
     "322ad1d90658d0c0bec6a8de507a5097dea7575351991caeabfbb4cf6f44e102": {
       "kind": "block",
@@ -553,7 +553,7 @@
     },
     "34b0b0d414c724996df52121fa8d720a2c00ffd79bf866705f572583b71edd7c": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:352"
+      "src": "skills/run/SKILL.md:361"
     },
     "34d310bdde6b5e37e19d09fb22b33c00e4200252097c183482fadb380863345f": {
       "kind": "command",
@@ -590,7 +590,7 @@
     },
     "37e8e44e5b810e52add9a462b8fc291ff713fbe83aa099847b81c8654835b895": {
       "kind": "block",
-      "src": "skills/judge/SKILL.md:398",
+      "src": "skills/judge/SKILL.md:405",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nmkdir -p .reports/research\nBRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')\nOUT=$(python \"$PLUGIN_ROOT/bin/resolve-anti-overwrite-path.py\" .reports/research \"judge-$BRANCH-$(date +%Y-%m-%d)\")\necho \"OUT=$OUT\""
     },
     "3883752a04f3cd6d2502109fee485b24799cd9677cc741e2dd851a7202b291e4": {
@@ -599,11 +599,11 @@
     },
     "388a804871e8091287d165c47826bcf166114d5818b40ca8e5245b4ab803a5c6": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:187"
+      "src": "skills/run/SKILL.md:192"
     },
     "38be9209ac7e1ec6b360d4365487d8f6496e880b0d39f13c4acbaf776d375f84": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "38e7b777257993f03f0de7afccfd8861408f6bafc88134aa0afe23dca386cfed": {
       "kind": "command",
@@ -639,7 +639,7 @@
     },
     "3de2474b85afc5c15018a349aa909db6d2e522116c0afa249e8a20bc25da9b6c": {
       "kind": "command",
-      "src": "skills/run/modes/codex-copilot.md:18"
+      "src": "skills/run/modes/codex-copilot.md:34"
     },
     "3de75e4c62cdd23d7b18d1bf9eeff791fcdc8be6131785ad9fcfc38326c80288": {
       "kind": "command",
@@ -669,12 +669,17 @@
     },
     "3edb0da92d22c3c4c1f1815845bd8213b677fc742672c2a0053c4cd11100357d": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:627",
+      "src": "skills/run/SKILL.md:656",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CLAUDE_SKILL_DIR < \"${TMPDIR:-/tmp}/research-run-skill-dir-${CSID}\" 2>/dev/null || CLAUDE_SKILL_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$CLAUDE_SKILL_DIR/modes/compute-docker.md\""
     },
     "3f21119602593506ec72ad0a568267a3c931ded38144f2897bf9e9812de6d31a": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:563"
+      "src": "skills/run/SKILL.md:581"
+    },
+    "3f2953b6f95afdff782f8e235a4734cc65f9a63aa9d141bdb0552a03b0149824": {
+      "kind": "block",
+      "src": "skills/sweep/SKILL.md:348",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r RUN_ID < \"${TMPDIR:-/tmp}/research-run-id-${CSID}\" 2>/dev/null || RUN_ID=\"\"\n[ -n \"$RUN_ID\" ] || { echo \"! BLOCKED \u2014 sweep: run-id sentinel missing; run R1 first\"; exit 1; }\npython \"$PLUGIN_ROOT/bin/codex_state.py\" block --state \".experiments/state/${RUN_ID}/codex-state\""
     },
     "3f373dc809e5cbfabe372af93bd5984d2ae449a51bc93355ba75d15a59fcf878": {
       "kind": "command",
@@ -727,12 +732,12 @@
     },
     "466827953004919b487279fe17ceecba02baef538678477cc49f18d69f7b5360": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:705",
+      "src": "skills/run/SKILL.md:734",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\ncommand -v jq >/dev/null 2>&1 || { echo \"! MISSING \u2014 jq not on PATH; install jq and retry\"; exit 1; }\nIFS= read -r RUN_ID < \"${TMPDIR:-/tmp}/research-run-id-${CSID}\" 2>/dev/null || RUN_ID=\"\"\n[ -n \"$RUN_ID\" ] || { echo \"! BLOCKED \u2014 Phase 6: run-id sentinel missing\"; exit 1; }\nGUARD_CMD=$(jq -b -r '.config.guard_cmd // empty' \".experiments/state/$RUN_ID/state.json\") || { echo \"! BLOCKED \u2014 Phase 6: state.json unreadable\"; exit 1; }\n[ -n \"$GUARD_CMD\" ] || { echo \"! BLOCKED \u2014 Phase 6: config.guard_cmd missing from state.json\"; exit 1; }\nIFS= read -r _CFG_NET < \"${TMPDIR:-/tmp}/research-run-sandbox-network-${CSID}\" 2>/dev/null || _CFG_NET=\"\"\nSANDBOX_NETWORK=\"${SANDBOX_NETWORK:-${_CFG_NET:-none}}\" python \"$PLUGIN_ROOT/bin/docker_sandbox_run.py\" --mode verify \"$GUARD_CMD\""
     },
     "46983c2658400707760b213c711995bfe43d70f71d364ac54ec1694260c60d61": {
       "kind": "block",
-      "src": "skills/run/modes/codex-copilot.md:77",
+      "src": "skills/run/modes/codex-copilot.md:105",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r RUN_ID < \"${TMPDIR:-/tmp}/research-run-id-${CSID}\" 2>/dev/null || RUN_ID=\"\"\npython \"$PLUGIN_ROOT/bin/codex_state.py\" bump --state \".experiments/state/${RUN_ID}/codex-state\" --outcome productive"
     },
     "46d232982807a7d74b16f026d7896a251ae684851aede485dc21ef76ec352aab": {
@@ -770,7 +775,7 @@
     },
     "49e4db222eb975c8f60639c48e4917fe607624d7e1ad7a65c3cace7ebe04242e": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "4a3f767c8b3e1b622e8ed1331a522197428176b6f442f937804d82e0d5dfa711": {
       "kind": "block",
@@ -808,12 +813,12 @@
     },
     "4ddd02e3050cbf07753d8d16f97648041dc129d4826f71879771a81100888fd1": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:783",
+      "src": "skills/run/SKILL.md:812",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r I < \"${TMPDIR:-/tmp}/research-run-iter-${CSID}\" 2>/dev/null || I=\"\"\npython \"$PLUGIN_ROOT/bin/revert_iteration_commit.py\" --iteration \"$I\" --phase 7"
     },
     "5033e28753b80ed1f2ee21e24f8284e21d347e2863f1d943260fda9dfdfbe58b": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:265"
+      "src": "skills/run/SKILL.md:270"
     },
     "508aadeacbf2254ba3e54e4cc1b94fda1a128875aeb489cd31be205d030cfbd9": {
       "kind": "command",
@@ -821,7 +826,7 @@
     },
     "50eeb4db6f8fe5752cdadec6aa6f5500dc89361a23d69b40b265b463b83e5570": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:528"
+      "src": "skills/run/SKILL.md:546"
     },
     "51521451161b0c1cea2922c2217a887f50e23aee6ae75f381907b0b207323bf7": {
       "kind": "command",
@@ -841,7 +846,7 @@
     },
     "5215b10dead1cc980d8f3e1916f891c7f5e8f706c01fa689842b252df52ba512": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:873",
+      "src": "skills/run/SKILL.md:910",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _RUN_ID < \"${TMPDIR:-/tmp}/research-run-id-${CSID}\" 2>/dev/null || _RUN_ID=\"\"\n_STATE_JSON=\".experiments/state/${_RUN_ID}/state.json\"\n_ITER=$(jq -b -r '.iteration // 0' \"$_STATE_JSON\" 2>/dev/null || echo \"?\")\n_BEST=$(jq -b -r '.best_metric // \"?\"' \"$_STATE_JSON\" 2>/dev/null || echo \"?\")\n_PROG=$(jq -b -r '.program_file // \"\"' \"$_STATE_JSON\" 2>/dev/null || echo \"\")\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-sentinel research-run-keep-items \"research:run\" \"iteration-loop (after iter ${_ITER})\" \".experiments/${_RUN_ID}\" \"state-json=${_STATE_JSON}, program=${_PROG}, iter=${_ITER}, best-metric=${_BEST}, cat-once-files=_shared/codemap-context.md + modes/compute-docker.md + modes/codex-copilot.md + modes/phase5-metric.md (re-cat after compaction only)\" \"continue R5 from iter $(( _ITER + 1 )) or proceed to R6 when loop done\" -- calls_ahead=30 \"drop=iteration diff, metric and guard output, ideation prompts\"\npython \"$PLUGIN_ROOT/bin/compaction_boundary.py\""
     },
     "5217890a9d4fb86dfe393c589d8a895632ca9f142bb620eac4ca1bbcb3257b82": {
@@ -850,11 +855,11 @@
     },
     "535c6b183fe594c983a20a501aa12a9545c3d2abdb90a18080af553694d380d5": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:705"
+      "src": "skills/run/SKILL.md:734"
     },
     "53be8a549baa21646c67637eea1666b09562335db56dc62a4db7276563e005a4": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:546"
+      "src": "skills/run/SKILL.md:564"
     },
     "542ba0d2e618b98425959f1990f5eeb1cfde1475792c2ceb2ba78280cd1ff16a": {
       "kind": "command",
@@ -864,9 +869,13 @@
       "kind": "command",
       "src": "skills/topic/SKILL.md:295"
     },
+    "54e4468cd1699688b6e566b16898a344b06b6bef12123fee4198663a27686d82": {
+      "kind": "command",
+      "src": "skills/run/modes/resume.md:36"
+    },
     "5529f5ad519d2847d8822a323617837b7ca33c3571922b720dc2e2b9b81a3709": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:207"
+      "src": "skills/run/SKILL.md:212"
     },
     "5530c66109a743a8394a48b2ffb794e9565131dea11355ed49401a396cca0211": {
       "kind": "command",
@@ -886,11 +895,11 @@
     },
     "55beb55f5bf3ee6abe21cbe0eb5501794a8aafba4022e0867c3e961739d1a018": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:265"
+      "src": "skills/run/SKILL.md:270"
     },
     "56069af4b3127e098385b860a870dd03bb6647aa91a4d7b5c73797cbdd674982": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:546"
+      "src": "skills/run/SKILL.md:564"
     },
     "5620cb27ade9578076795392be6c96674c88bb8e7cd7e684b20dc25900ec6b72": {
       "kind": "command",
@@ -898,7 +907,7 @@
     },
     "56e40b06fd5dcd73d0dfd87227392f86f0cb89e4edcec3db3ae1ed18427c9bd8": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:258"
+      "src": "skills/run/SKILL.md:263"
     },
     "571ee5391895d1d09a009f18926648203529e4624cba3000555d12bf8eb4d81a": {
       "kind": "command",
@@ -939,11 +948,16 @@
     },
     "5a0a2f9670d17afc45cd593ba50e7f7a27489ae3752b30eafc8cdb6f7c73afa3": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:873"
+      "src": "skills/run/SKILL.md:910"
     },
     "5aa914ef6172ceb613bf56338c6ae8121e4badc113308de485b6fda049c64492": {
       "kind": "command",
       "src": "skills/retro/SKILL.md:66"
+    },
+    "5ada1fa2381c8840f1cab7239d2a9a667c8c4666882a801c2ac60bff33a09663": {
+      "kind": "block",
+      "src": "skills/run/SKILL.md:1015",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/codex_state.py\" arm -- \"$ARGUMENTS\"\npython \"$PLUGIN_ROOT/bin/extract-keep-flag.py\" research-run \"$ARGUMENTS\"\npython \"$PLUGIN_ROOT/bin/codemap-flag.py\" research-run \"$ARGUMENTS\" || exit 1"
     },
     "5ae92d1d231fd1ee02de06e32b8ae74e3e03aad23c428145690f80c4b9746a67": {
       "kind": "command",
@@ -997,7 +1011,7 @@
     },
     "5e768ec3e295917c18379189c63e7bfe1b6f25b27f3038d60df61ff28eb62204": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:448",
+      "src": "skills/run/SKILL.md:466",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r RUN_ID < \"${TMPDIR:-/tmp}/research-run-id-${CSID}\" 2>/dev/null || RUN_ID=\"\"\n[ -n \"$RUN_ID\" ] || { echo \"! BLOCKED \u2014 R4: research run-id sentinel missing; metric-runs.jsonl.rec left in place\"; exit 1; }\npython \"$PLUGIN_ROOT/bin/append_ledger.py\" \".experiments/state/$RUN_ID/metric-runs.jsonl\"\npython \"$PLUGIN_ROOT/bin/run_metric_stats.py\" status \".experiments/state/$RUN_ID\" --iteration 0"
     },
     "5fe5899742203692df614356da3b5364836dfc8eab9635dd123f2b7920279fe0": {
@@ -1039,11 +1053,11 @@
     },
     "62cbf7fbdf8a8ab09772664b9dd3eff5e83058a310f12d04827a0b03902568b6": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:873"
+      "src": "skills/run/SKILL.md:910"
     },
     "635bf37810fd92e925cf8c0e52fd7c88f1c2f2030f9a24dd9049c7a6fcb52a63": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "63be65eece43b008bd1597a8adf86f18aff9682d7961d632d46aa9176dfab18b": {
       "kind": "block",
@@ -1080,12 +1094,12 @@
     },
     "69066633e9908b7aeca1f98982d7ff344e77e8ec57ae1008c59fc7a9451d3c08": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:900",
+      "src": "skills/run/SKILL.md:937",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nmkdir -p .reports/research\nBRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')\nOUT=$(python \"$PLUGIN_ROOT/bin/resolve-anti-overwrite-path.py\" .reports/research \"run-$BRANCH-$(date +%Y-%m-%d)\")\necho \"OUT=$OUT\""
     },
     "69511c912c77a74827cdf9b92b1c7d6dab7fef05e990ea0e282d5a3252b1bd50": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:743"
+      "src": "skills/run/SKILL.md:772"
     },
     "6971a2e35d981aa1f651c6e7bad4551b17206080a04e61e755d18048ccb24f63": {
       "kind": "block",
@@ -1123,7 +1137,7 @@
     },
     "6bd167a2d62a6f33bd869c7119f8569132bb4af2600b1f7239305b29c9cdee08": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:528"
+      "src": "skills/run/SKILL.md:546"
     },
     "6ce3159eb9a8e80c6a8f5fc4efe1fc2613434934603ee12b113088706ab15430": {
       "kind": "command",
@@ -1140,7 +1154,7 @@
     },
     "6dd1704ed5d4e7304a841bf318636316c9c750272a58ee69930adad8b8104b8f": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:187"
+      "src": "skills/run/SKILL.md:192"
     },
     "6dde054eb3834afe1ed4999488e964bab760204f7424fb82fad9fee21b47571b": {
       "kind": "command",
@@ -1179,7 +1193,7 @@
     },
     "6f0a44dae878085fb6ec89df5442b5e0a7ed197acfeaeb726f48775d38a71c65": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:771"
+      "src": "skills/run/SKILL.md:800"
     },
     "6f489aff1bb7cbab95e47a0e5ffaf3540f58bc8de1af09ff5363ab96aabb2350": {
       "kind": "command",
@@ -1191,7 +1205,7 @@
     },
     "6fbc01a869c6ccc6b9b40cf9d1962a99f861c830710862e872b44033db603f77": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:642",
+      "src": "skills/run/SKILL.md:671",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CLAUDE_SKILL_DIR < \"${TMPDIR:-/tmp}/research-run-skill-dir-${CSID}\" 2>/dev/null || CLAUDE_SKILL_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$CLAUDE_SKILL_DIR/modes/codex-copilot.md\""
     },
     "70869bb41b6397dce90e61dd1c119dbbef7f3f17890574d2b1408ad492d2af66": {
@@ -1213,7 +1227,7 @@
     },
     "72bcbc87d16bb5728b153581c271ab3a1845fcae347e252bc90e2a0570ea5b2c": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:743"
+      "src": "skills/run/SKILL.md:772"
     },
     "72c70b6c7c9b07468af9b227d568d573cead59941d4601ccd7801db64e27706e": {
       "kind": "command",
@@ -1254,7 +1268,7 @@
     },
     "7670c517531f1efc975e46f49bdd05089d59ba5b1de068e385d926b2e711e9ae": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:651"
+      "src": "skills/run/SKILL.md:680"
     },
     "76c32640cf5ba4239e61030d9ae303996a25142b35736ad76b59c627491512e1": {
       "kind": "command",
@@ -1271,7 +1285,7 @@
     },
     "77240575566924e534bc0c20002f3f9377593a8e5a0ee9cfbd4ac6fef18ff3bc": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:758",
+      "src": "skills/run/SKILL.md:787",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r RUN_ID < \"${TMPDIR:-/tmp}/research-run-id-${CSID}\" 2>/dev/null || RUN_ID=\"\"\nIFS= read -r I < \"${TMPDIR:-/tmp}/research-run-iter-${CSID}\" 2>/dev/null || I=\"\"\n[ -n \"$RUN_ID\" ] && [ -n \"$I\" ] || { echo \"! BLOCKED \u2014 Phase 7: run-id or iteration sentinel missing (run the Phase 0 block first)\"; exit 1; }\npython \"$PLUGIN_ROOT/bin/run_metric_stats.py\" decide \".experiments/state/$RUN_ID\" --iteration \"$I\""
     },
     "773018d8bc2a4e28dee5b8bc0db71b778716b9a0c8126cfdb380400f0dbfb770": {
@@ -1284,7 +1298,7 @@
     },
     "7875a014a85f1b9b80cca93e44df9fda1b9360d37e0744ed93f1f1b188efd066": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:402"
+      "src": "skills/run/SKILL.md:411"
     },
     "7957e822fec5aa26dfc1aa09de3620c948ab3913ee6eeffa8122b240fb785275": {
       "kind": "command",
@@ -1354,7 +1368,7 @@
     },
     "7fca53e1972cac971539384fe5a70aef106fe62cdb2a6b3fa13a00f0105f2b7e": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:940"
+      "src": "skills/run/SKILL.md:986"
     },
     "80359dfc1a337479c22063576ae07ccd9bfc9b6ef2487ef3f79c2aaddcf8a0ad": {
       "kind": "command",
@@ -1366,7 +1380,7 @@
     },
     "80e65de431010016031e24c8f047a18c1cf9a60148639a745b73688c63b1e3cb": {
       "kind": "block",
-      "src": "skills/sweep/SKILL.md:312",
+      "src": "skills/sweep/SKILL.md:313",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _RESEARCH_SHARED < \"${TMPDIR:-/tmp}/research-shared-${CSID}\" 2>/dev/null || _RESEARCH_SHARED=\"\"\n_RESEARCH_SKILLS=\"${_RESEARCH_SHARED%/_shared}\"\n[ -z \"$_RESEARCH_SKILLS\" ] && _RESEARCH_SKILLS=\"$PLUGIN_ROOT/skills\"\nset -o pipefail\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_RESEARCH_SKILLS/run/SKILL.md\" | sed '1,/^<\\/objective>$/d' || exit $?"
     },
     "814f866b33f25cbcc6a3cfb24a7d416b69b4bf41ebf0f35872f60382ed426f9e": {
@@ -1385,7 +1399,7 @@
     },
     "83efc7aaa21e91d730ce19a7707001a61539dc073770b6c2c3fc03d8098e80e3": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "844baf21dc474e2962749a55563ed6465b125a5236f6c81f4ee9e86b3ed6dd46": {
       "kind": "command",
@@ -1393,11 +1407,21 @@
     },
     "8491153b79f13d5c1699414434f92c6342aee2fd56a2e5bb96943347d0ce1134": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:265"
+      "src": "skills/run/SKILL.md:270"
     },
     "84ab629bc06963b68a7e56e41ab916190431dce55390cc78d756356af4770117": {
       "kind": "command",
       "src": "skills/judge/SKILL.md:146"
+    },
+    "8589dd7d0cf9042b617d274d889f8e72f1f81f664284c6c5c17baa8b737d20d4": {
+      "kind": "block",
+      "src": "skills/run/modes/resume.md:16",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nRESUME_RUN_ID=\"<run-id>\"\ncase \"$RESUME_RUN_ID\" in *'<'*'>'*|\"\"|*/*) echo \"! BLOCKED \u2014 resume: run-id not substituted\"; exit 1;; esac\n[ -f \".experiments/state/$RESUME_RUN_ID/state.json\" ] || { echo \"! BLOCKED \u2014 resume: .experiments/state/$RESUME_RUN_ID/state.json not found\"; exit 1; }\nmkdir -p \".experiments/$RESUME_RUN_ID\"\necho \"$RESUME_RUN_ID\" > \"${TMPDIR:-/tmp}/research-run-id-${CSID}\"\necho \"RUN_ID=$RESUME_RUN_ID RUN_DIR=.experiments/$RESUME_RUN_ID\""
+    },
+    "85dceb002777a6d255dd90fc82d4c3f614e90b71cd2245ce5455cd51bee77781": {
+      "kind": "block",
+      "src": "skills/run/modes/resume.md:36",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r RUN_ID < \"${TMPDIR:-/tmp}/research-run-id-${CSID}\" 2>/dev/null || RUN_ID=\"\"\n[ -n \"$RUN_ID\" ] || { echo \"! BLOCKED \u2014 resume: run-id sentinel missing\"; exit 1; }\npython \"$PLUGIN_ROOT/bin/codex_state.py\" unblock --state \".experiments/state/${RUN_ID}/codex-state\""
     },
     "85e5be30b499b1c0379f54e208139a861b690b04b1bd0b50528279b3d0b1dbab": {
       "kind": "block",
@@ -1426,16 +1450,16 @@
     },
     "888a85a71d04c27bdb0a80bc200f04b4303d221bb6a9a74e3ad798aef66fcaff": {
       "kind": "block",
-      "src": "skills/sweep/SKILL.md:278",
+      "src": "skills/sweep/SKILL.md:279",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\ncase \"<VERDICT>|<JUDGE_REPORT>\" in *'<'*'>'*) echo \"! BLOCKED \u2014 contract placeholders not substituted\"; exit 1;; esac\nIFS= read -r _OUT < \"${TMPDIR:-/tmp}/sweep-out-path-${CSID}\" 2>/dev/null || _OUT=\"program.md\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-sentinel sweep-keep-items \"research:sweep\" \"run-gate (after S3 judge+refinement)\" \"n/a\" \"program-path=${_OUT}, judge-verdict=<VERDICT>, judge-report=<JUDGE_REPORT>\" \"S4 gate on verdict \u2192 S5 run program if approved\" -- calls_ahead=20 \"drop=judge loop prompts, fixes and agent output\"\npython \"$PLUGIN_ROOT/bin/compaction_boundary.py\""
     },
     "897f709f3805be74e03d65ffc11f6ab5411350a0b23e74b81d06b5bd86d00890": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:673"
+      "src": "skills/run/SKILL.md:702"
     },
     "898f5fcd5851950d14576aaae7b7321421eff8a8c6e9807455cb5d285747fa08": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:563"
+      "src": "skills/run/SKILL.md:581"
     },
     "89c6accf4c2c902a7a66b4a0251baf40d52e468106a083d72b12a2be3f9c2a36": {
       "kind": "command",
@@ -1523,7 +1547,7 @@
     },
     "91553a232c76b9fdd93ae40558baad6a642f1098605914ccfa8f7f28a7965e7f": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "92042a34d296202fe317024b7bd502dc81d4602de37d7aa01d13df36ae2adae4": {
       "kind": "block",
@@ -1562,11 +1586,11 @@
     },
     "943bc8f9ba32c8d2597aca08cab57adaa6ea29a7ef9e9a4b3cd0304d80b37fd1": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:265"
+      "src": "skills/run/SKILL.md:270"
     },
     "94a89573c7efaa3f68b4d9e57764602a2d07bbc8c6854fd3b799db3414e4ea50": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:673"
+      "src": "skills/run/SKILL.md:702"
     },
     "94de48e1ffbdb3a2f0fb004f7961c625418d786cd92f0b8061da873a569964f9": {
       "kind": "command",
@@ -1586,28 +1610,28 @@
     },
     "972ddccf90547bbc463afa00bbc476077b18ed8c6a4c5df9b7a3644769ae88b2": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:705"
+      "src": "skills/run/SKILL.md:734"
     },
     "98ba2ad182a2b6aa210e7b3e60933ce8204c944378fa91830b3a61669249e3f3": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:758"
+      "src": "skills/run/SKILL.md:787"
     },
     "98e7f118c6084b0d154601e33a3c70fba14b35921bf2905608773eb93c907545": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:873"
+      "src": "skills/run/SKILL.md:910"
     },
     "99e0461be49cfe728b363002f9106fd2dc2577faa06641867ed186028694543d": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "9a86a915951c63d222da165afaed90f08db4875c64638693444e9879658b1bcb": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:477",
+      "src": "skills/run/SKILL.md:495",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CLAUDE_SKILL_DIR < \"${TMPDIR:-/tmp}/research-run-skill-dir-${CSID}\" 2>/dev/null || CLAUDE_SKILL_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$CLAUDE_SKILL_DIR/modes/team.md\""
     },
     "9ac6d6842fd64b59bd256b81447f6fe59effdcf6b97f8d286d0d2747937b4f74": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:265"
+      "src": "skills/run/SKILL.md:270"
     },
     "9ac9c393cbcd666a4058b2d8800566c8c564259dc68a34879d00cef57379c7c5": {
       "kind": "command",
@@ -1620,6 +1644,11 @@
     "9ba2c013b6a778a04ff7a2d31c9de70643fb2414c37c9d5b3b0cb30387931869": {
       "kind": "command",
       "src": "skills/fortify/SKILL.md:119"
+    },
+    "9bc43fd5e45d864446d8c0d43ca653681d631adf818fa18ca64845b1d5d32117": {
+      "kind": "block",
+      "src": "skills/run/SKILL.md:1000",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r RUN_ID < \"${TMPDIR:-/tmp}/research-run-id-${CSID}\" 2>/dev/null || RUN_ID=\"\"\npython \"$PLUGIN_ROOT/bin/codex_state.py\" bump --state \".experiments/state/${RUN_ID}/codex-state\" --outcome blocked"
     },
     "9c9ac1ae31133666e9f0f961e1001ce07fcd895fc61136f1ba2dd0d06e7331a9": {
       "kind": "command",
@@ -1653,7 +1682,7 @@
     },
     "9e3417e5d9926b70ec0f4eea98b5c7ce153c2865819541d77ec2fac60a67be81": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:954",
+      "src": "skills/run/SKILL.md:1023",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CLAUDE_SKILL_DIR < \"${TMPDIR:-/tmp}/research-run-skill-dir-${CSID}\" 2>/dev/null || CLAUDE_SKILL_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$CLAUDE_SKILL_DIR/modes/resume.md\""
     },
     "9e87d593649303dc3d20d8d4998fbbec417d1b851c88040979fd5d46a4a95c57": {
@@ -1692,7 +1721,7 @@
     },
     "a152d8f687339027266d5f2682fc0b3c44306c2fc6ad62459e0f9f6573ab48ac": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:673"
+      "src": "skills/run/SKILL.md:702"
     },
     "a18655b529e3e02f370b36244a404f28546adaf2e03b29af54b168bdc35b622b": {
       "kind": "command",
@@ -1745,7 +1774,7 @@
     },
     "a697d893331ba74a6835d80e50286b5de5e636532a85f3eadfd4746ffa6c7460": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:771"
+      "src": "skills/run/SKILL.md:800"
     },
     "a69d7e4b46693f114c40e4d212acb1883883302fc8d254ab13da44dc0eada293": {
       "kind": "command",
@@ -1787,7 +1816,7 @@
     },
     "aaa2a8d25c2e796df6e2c047a465d714a6414a466484465682c77b99d22d9b3f": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:967"
+      "src": "skills/run/SKILL.md:1036"
     },
     "ab7e5e1be50246bb5893d1bba56e4fd4bed9af199d0057d21645a1f455907fb4": {
       "kind": "command",
@@ -1844,7 +1873,7 @@
     },
     "b04540618cce113361c7dc27dbf1cfaf3bd2035e7ecab4236f228553d0778f22": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:546"
+      "src": "skills/run/SKILL.md:564"
     },
     "b13064c2443220b231d7153e7590a48cf5fb8761ef689e846bfe322e369672f3": {
       "kind": "command",
@@ -1856,7 +1885,7 @@
     },
     "b2091379d2aa2d88b6420cafd5011a80d3b2415cc6d383265911e2ca174f4547": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:771"
+      "src": "skills/run/SKILL.md:800"
     },
     "b2574fc1702c2ef5adeb2a48f336e05668e6938decc6fd968d3fe6373393ba7b": {
       "kind": "block",
@@ -1885,16 +1914,16 @@
     },
     "b693f7c8c6656179159a5f34016b02d8ba7723104c7ec01113710c3f3dfbb9eb": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:187",
+      "src": "skills/run/SKILL.md:192",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\n_SWEEP_TOKEN='<active-sweep-token>'\ncase \"$_SWEEP_TOKEN\" in '<'*) _SWEEP_TOKEN=\"\";; esac\nIFS= read -r _ACTIVE_SWEEP < \"${TMPDIR:-/tmp}/sweep-active-token-${CSID}\" 2>/dev/null || _ACTIVE_SWEEP=\"\"\n_RUN_ARGS=\"$ARGUMENTS\"; _INL=\"\"\nif [ -n \"$_SWEEP_TOKEN\" ] && [ \"$_SWEEP_TOKEN\" = \"$_ACTIVE_SWEEP\" ]; then\n    IFS= read -r _RUN_ARGS < \"${TMPDIR:-/tmp}/sweep-run-args-${CSID}\" || { echo \"! BLOCKED \u2014 sweep run arguments missing\"; exit 1; }\n    _INL=--inlined\nfi\npython \"$PLUGIN_ROOT/bin/extract-keep-flag.py\" research-run \"$_RUN_ARGS\" $_INL\n\nIFS= read -r _RESEARCH_SHARED < \"${TMPDIR:-/tmp}/research-shared-${CSID}\" 2>/dev/null || _RESEARCH_SHARED=\"\"\ncat \"$_RESEARCH_SHARED/unsupported-flag-protocol.md\""
     },
     "b72eb765d6a306303f5bb00fb3312b698992a2d249c72fc639583780d252aa41": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:402"
+      "src": "skills/run/SKILL.md:411"
     },
     "b757f35a0cee2917c0ad8fbac17f5f7022ca0ea0fb13e1a39b2496f89e43a497": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:528"
+      "src": "skills/run/SKILL.md:546"
     },
     "b765dcb76a6ac0c160fd94d17bda61322ae8464ea556550ff3988f855b004fe2": {
       "kind": "block",
@@ -1912,7 +1941,7 @@
     },
     "b87883fffbd7d7625a4a319038e518e9073b46733ae794f31bde09232646f3fc": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "b8be1542d912dee299ac498d8bb3889db7aeba2f73659c404c6912ac8feb6f6c": {
       "kind": "block",
@@ -1921,7 +1950,7 @@
     },
     "ba47015af0f05b402be09bf4ec9122eb1eb5bd15ef1996ab21d2d3680adc087b": {
       "kind": "block",
-      "src": "skills/run/modes/codex-copilot.md:18"
+      "src": "skills/run/modes/codex-copilot.md:34"
     },
     "baac5559fa1e45b8d79201548073517adb098f81e5c5a5029dbca3b0df91fa3a": {
       "kind": "command",
@@ -1937,7 +1966,7 @@
     },
     "badd567df785a90498977366c17693cc18fcc060bf840b4691e5705f7cf6d5b4": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:528"
+      "src": "skills/run/SKILL.md:546"
     },
     "bb093efb448648cdadd6ebfddfa07df89d1591ec10987fb259a78db84308cee0": {
       "kind": "block",
@@ -1966,7 +1995,7 @@
     },
     "bcf9ff769423eb069adf8c2d905e4eeca6a85a3e30414ef4eb255dc7ea73e2e0": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "bd3b18d4663a00536394971a8f97a7fd1ef3dab7fe68fe290e2f870d93a6e6ea": {
       "kind": "command",
@@ -1982,11 +2011,11 @@
     },
     "bd5a6a994949f5e6ab6f5efba0851e49708c065c3ce9ea272e86d36ca981707a": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:253"
+      "src": "skills/run/SKILL.md:258"
     },
     "bd855d3281423e3d1e7e38dabe3f7041c4a8508b3120297dc41f322a2b7bbda6": {
       "kind": "command",
-      "src": "skills/run/modes/codex-copilot.md:18"
+      "src": "skills/run/modes/codex-copilot.md:34"
     },
     "bda3ea5a27b5476f7df26bf630cc03e793fe70a7e881507678131a1afb480d4c": {
       "kind": "command",
@@ -2007,12 +2036,12 @@
     },
     "bee1765a24584ac9c7c6a1f3f5df9e648fdd2884c9c4cbeea7c7cdec44b62cc9": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:853",
+      "src": "skills/run/SKILL.md:890",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _RUN_ID < \"${TMPDIR:-/tmp}/research-run-id-${CSID}\" 2>/dev/null || _RUN_ID=\"\"\n[ -n \"$_RUN_ID\" ] || { echo \"! BLOCKED \u2014 research run-id sentinel missing; staged iteration records left in place\"; exit 1; }\nfor _LEDGER in \".experiments/state/$_RUN_ID/experiments.jsonl\" \".experiments/state/$_RUN_ID/diary.md\" \".experiments/$_RUN_ID/checkpoint.jsonl\" \".experiments/$_RUN_ID/journal.md\"; do\n    python \"$PLUGIN_ROOT/bin/append_ledger.py\" \"$_LEDGER\" || exit 1\ndone"
     },
     "bef3a4f6224bc99b5ed03306b867cfe40990381a25112a5007768c8d21000deb": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "bf4ea121b415b13a7b05ca7a711aef391055299f014a316a42b9aa7cccc4af67": {
       "kind": "command",
@@ -2024,7 +2053,7 @@
     },
     "c0be8b0233aa538ab509eca7d73cfbf2d76a179cf7d67365ab5ab159a4c5dc77": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "c145de27c8225b898cd0e66f773f046031357a56ca302837cd62a159dc9febd3": {
       "kind": "command",
@@ -2037,7 +2066,7 @@
     },
     "c1cae7c6b01703ee751a2b3de83970254177e0fbe170400ee87fdf70f7f3ef4d": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:253"
+      "src": "skills/run/SKILL.md:258"
     },
     "c20c1cd286114ce20837f20abae81f21126aaa85bfe9eaf90e6f4ef0052ed649": {
       "kind": "block",
@@ -2075,7 +2104,7 @@
     },
     "c491f768c9f2a5ff8c40e1ff75ac03bd3dff4369b32225a1ae9b038fb10f0b1e": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:265"
+      "src": "skills/run/SKILL.md:270"
     },
     "c49a8600988593b0893253245e13067c2d6ccf644f3282559cc368245bf9cc50": {
       "kind": "command",
@@ -2083,7 +2112,7 @@
     },
     "c508dfb48e4d6b4c716f82c7ee601118d85573e046488c1e7a9063a33c83196d": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:771"
+      "src": "skills/run/SKILL.md:800"
     },
     "c56225e4cf55b6bfc01a5bda46abc06238143d0452986698f1bbd6dbb540550e": {
       "kind": "command",
@@ -2099,7 +2128,7 @@
     },
     "c64eefb605796902ce54ea201221792cf795032af2f5973ac354161f5d104b67": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:771"
+      "src": "skills/run/SKILL.md:800"
     },
     "c73f7e988b8c187b58e43451a17bc474cc44fc81471626815a72a781f5af60e4": {
       "kind": "command",
@@ -2107,16 +2136,11 @@
     },
     "c77647768947bfaa266ab35bacc80b6d459b13e339789908769a3b84be527351": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "c7d1c8fe7b856619cdd3dcd71700292fba11ad1af17255abc610063d9585a21e": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:546"
-    },
-    "c7ef03ff7ab976ffec0acc624952ce411ef20cc4a8ba091673f413e716443c20": {
-      "kind": "block",
-      "src": "skills/run/modes/resume.md:16",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nRESUME_RUN_ID=\"<run-id>\"\ncase \"$RESUME_RUN_ID\" in *'<'*'>'*|\"\"|*/*) echo \"! BLOCKED \u2014 resume: run-id not substituted\"; exit 1;; esac\n[ -f \".experiments/state/$RESUME_RUN_ID/state.json\" ] || { echo \"! BLOCKED \u2014 resume: .experiments/state/$RESUME_RUN_ID/state.json not found\"; exit 1; }\nmkdir -p \".experiments/$RESUME_RUN_ID\"\necho \"$RESUME_RUN_ID\" > \"${TMPDIR:-/tmp}/research-run-id-${CSID}\"\npython \"$PLUGIN_ROOT/bin/extract-keep-flag.py\" research-run \"$ARGUMENTS\"\npython \"$PLUGIN_ROOT/bin/codemap-flag.py\" research-run \"$ARGUMENTS\" || exit 1\necho \"RUN_ID=$RESUME_RUN_ID RUN_DIR=.experiments/$RESUME_RUN_ID\""
+      "src": "skills/run/SKILL.md:564"
     },
     "c820f414ac1b9231b74a38cc0822d2bf1aeac7591c96851c0da88daa778c01aa": {
       "kind": "command",
@@ -2136,7 +2160,7 @@
     },
     "ca23e3a5802870a9da5969443a2d88cd678d9f5d252b209cfe122ed725b5f55a": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "ca2a27504e15a80e126375174dda40322cd834dd247d8b3b2881a8997b53aa4b": {
       "kind": "command",
@@ -2148,7 +2172,7 @@
     },
     "cb36ae25b6a7a9f973a9cda86a668ebd96b434f8ba365feddab0e46f4c33e384": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "cc3b38d5792c800284c116ac4d27e9f0a15410318f9e7e54cc2fd83e213c474e": {
       "kind": "command",
@@ -2278,11 +2302,11 @@
     },
     "d626d488d8eacb49dc262c23a42c8f99b2531c28312804ba0c47f18e24d0487e": {
       "kind": "command",
-      "src": "skills/sweep/SKILL.md:278"
+      "src": "skills/sweep/SKILL.md:279"
     },
     "d635e4a08e688d91b3d0ca1a66e7177d58487ba156d00bc07c1aaddec8b2c6ab": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:528"
+      "src": "skills/run/SKILL.md:546"
     },
     "d677fca068e5104be3a3076afd65c67a021bb98b008a5c1147707ac68898f29e": {
       "kind": "command",
@@ -2302,7 +2326,7 @@
     },
     "d8a01f3c5f4b9621dd0fd583aae462915edbcde686f020c1867a0056cc8e0a98": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:694",
+      "src": "skills/run/SKILL.md:723",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CLAUDE_SKILL_DIR < \"${TMPDIR:-/tmp}/research-run-skill-dir-${CSID}\" 2>/dev/null || CLAUDE_SKILL_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$CLAUDE_SKILL_DIR/modes/phase5-metric.md\""
     },
     "d93743e808dbd8219de984f4a257f87a0cded85f9c2a163bdfe9513bf21192d2": {
@@ -2377,7 +2401,7 @@
     },
     "e0b40eeb30e44807e82472d9b89cd8575f3fd18e8968932599de83cbc2c23b9f": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "e0e3f701c4cd70a292c2ec10e2f8708e79f034bace4b9b1459cd516b418fe16d": {
       "kind": "block",
@@ -2494,7 +2518,7 @@
     },
     "ea5f285e7e14afdd3c07f0ed228e917a7721759d837db5650ae5fa5b06a214a5": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:362"
+      "src": "skills/run/SKILL.md:371"
     },
     "ea5fc7a2c0efbe955ecc59ec04f4f8a4619887f63d4033ce78e0051da20a77b0": {
       "kind": "command",
@@ -2510,7 +2534,7 @@
     },
     "eac58ce343e309f02d2d20adf5bc4bd2ffa9d3e2c660660d8550f0effc0d0bf6": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:528"
+      "src": "skills/run/SKILL.md:546"
     },
     "ecd07af17d5897200d48c1b1c1a2deec6e0bed80016702852ce4b301f88654e6": {
       "kind": "command",
@@ -2544,13 +2568,17 @@
       "kind": "command",
       "src": "skills/judge/SKILL.md:146"
     },
+    "f15ecdee551e27b4d1d94bbbe4e07d39e7f82e27c36ee3f465dd9a758196644f": {
+      "kind": "command",
+      "src": "skills/sweep/SKILL.md:348"
+    },
     "f1d3aabde081f038a8a710745528691925add94c8325545682bb10408f6b99a5": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:651"
+      "src": "skills/run/SKILL.md:680"
     },
     "f233d39c2d5b597c46f7bfd8585d1122f4fa848eb1d9a644ff447a640a060606": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:546"
+      "src": "skills/run/SKILL.md:564"
     },
     "f42bb34ca4100b608701773248b8b33b05f13ec6f5c923f615f20bb51b0b5861": {
       "kind": "command",
@@ -2562,7 +2590,7 @@
     },
     "f44d3b6ff7d41296145cdaad557164f7d6c9e8a0cef9ebe8faaa82cc81432974": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:448"
+      "src": "skills/run/SKILL.md:466"
     },
     "f71f776410c1b80c90d5bb74c065baff53b0541f4223e52ad723752a5543411c": {
       "kind": "command",
@@ -2574,7 +2602,7 @@
     },
     "f7505c4a0ffbb07bf94396dcbcbceaac4693195eade0ac46c18757409c25ee25": {
       "kind": "block",
-      "src": "skills/run/modes/codex-copilot.md:28",
+      "src": "skills/run/SKILL.md:977",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name research) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r RUN_ID < \"${TMPDIR:-/tmp}/research-run-id-${CSID}\" 2>/dev/null || RUN_ID=\"\"\npython \"$PLUGIN_ROOT/bin/codex_state.py\" read --state \".experiments/state/${RUN_ID}/codex-state\""
     },
     "f7579146c320a3f6b4589a803c84932fd1aaeb38238afc6fa890483050a14895": {
@@ -2587,7 +2615,7 @@
     },
     "f7fe9b32519ad4eb0c8de08abaafd2785cb0891ab63e775eee76708cb8d10897": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:736"
+      "src": "skills/run/SKILL.md:765"
     },
     "f815400c3bb5f5ac64e7a5549acfa9d5be67a8c2a950f2cfd78ad70639929428": {
       "kind": "command",
@@ -2624,7 +2652,7 @@
     },
     "f9bb389f695450d954f04279574d668f7a24db819c4433fa1b641412b2eddc84": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:853"
+      "src": "skills/run/SKILL.md:890"
     },
     "f9eb6434e14a2bcbd75ba420fa946010746cf8698c7bfba5732c23f01652251e": {
       "kind": "command",
@@ -2712,13 +2740,13 @@
     },
     "ffe3d6c7011600f85afd5ab9baafa7b259b7749b5e61df75fe812e7b5021966a": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:258"
+      "src": "skills/run/SKILL.md:263"
     },
     "fff8fb28372927932994d3c025ac8572fcd4a80e9ac7e894c210ab93872d3f09": {
       "kind": "command",
       "src": "skills/verify/SKILL.md:87"
     }
   },
-  "plugin": "cc_research@0.33.4",
+  "plugin": "cc_research@0.34.0",
   "schema": 2
 }

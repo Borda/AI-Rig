@@ -23,6 +23,17 @@ def _section(start: str, end: str) -> list[str]:
     return lines[first:last]
 
 
+def _list_item(lines: list[str], marker: str) -> list[str]:
+    """Return a numbered item's own line plus its indented nested lines, so a split item is read whole."""
+    first = next(index for index, line in enumerate(lines) if line.startswith(marker))
+    item = [lines[first]]
+    for line in lines[first + 1 :]:
+        if not line.startswith("    "):
+            break
+        item.append(line)
+    return item
+
+
 def _bash_block(lines: list[str], marker: str) -> str:
     """Extract the Bash fence containing a distinctive executable line."""
     current: list[str] | None = None
@@ -136,9 +147,11 @@ def test_fresh_shell_uses_persisted_compute_timeout(
 def test_docker_rejection_is_reported_before_float_parsing() -> None:
     """An unsupported shell pipeline is distinguished from a nonnumeric metric."""
     lines = _section("### Step R2:", "### Step R3:")
-    metric = next(line for line in lines if line.startswith("03."))
-    assert metric.index("exit 2") < metric.index("parse stdout")
-    assert "! UNSUPPORTED" in metric
+    metric = _list_item(lines, "03.")
+    rejection = next(index for index, line in enumerate(metric) if "exit 2" in line)
+    parsing = next(index for index, line in enumerate(metric) if "parse stdout" in line)
+    assert rejection < parsing
+    assert any("! UNSUPPORTED" in line for line in metric)
     notes = _section("<notes>", "</notes>")
     assert any("Docker" in line and "single command" in line and "script entry point" in line for line in notes)
 
@@ -146,12 +159,12 @@ def test_docker_rejection_is_reported_before_float_parsing() -> None:
 def test_metric_exit_two_does_not_imply_a_wrapper_rejection() -> None:
     """A nonzero metric fails without being confused with a wrapper preparation rejection."""
     lines = _section("### Step R2:", "### Step R3:")
-    metric = next(line for line in lines if line.startswith("03."))
-    assert "docker_sandbox_run.py:" in metric
-    assert "container command's own exit 2" in metric
-    assert "usable float" in metric
-    assert "failed metric" in metric
-    assert "Require exit 0" in metric
+    metric = _list_item(lines, "03.")
+    assert any("docker_sandbox_run.py:" in line for line in metric)
+    container = next(line for line in metric if "container command's own exit 2" in line)
+    assert "usable float" in container
+    assert "failed metric" in container
+    assert any("Require exit 0" in line for line in metric)
 
 
 def test_raw_step_delta_is_distinct_from_baseline_percentage() -> None:

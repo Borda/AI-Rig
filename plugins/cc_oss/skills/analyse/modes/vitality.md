@@ -2,7 +2,12 @@
 
 <workflow>
 
-**Task hygiene**: follow `agent-resolution.md` §Task hygiene loaded by SKILL.md. **Zero bookkeeping-only turns**: every `TaskCreate`/`TaskUpdate` below rides in the response that carries the next real tool call (one phase's `completed` with the next phase's first call), without additional timing exceptions. **Task tracking**: TaskCreate tasks for each major phase before starting, all in one response: "Step 1 Data Fetch", "Step 2 Axis Scoring (3 parallel)", "Step 3 Assemble Scores", "Step 4 Report", "Step 5 Codex Review", "Step 6 Adversarial Rework Loop", "Step 7 Terminal Output"; mark each in_progress/completed as you go. **In `--quick` mode** (QUICK_MODE=true): omit the "Step 5 Codex Review" and "Step 6 Adversarial Rework Loop" tasks — they are skipped.
+Task rules for this mode:
+
+- **Task hygiene**: follow `agent-resolution.md` §Task hygiene loaded by SKILL.md.
+- **Zero bookkeeping-only turns**: every `TaskCreate`/`TaskUpdate` below rides in the response that carries the next real tool call (one phase's `completed` with the next phase's first call), without additional timing exceptions.
+- **Task tracking**: TaskCreate tasks for each major phase before starting, all in one response: "Step 1 Data Fetch", "Step 2 Axis Scoring (3 parallel)", "Step 3 Assemble Scores", "Step 4 Report", "Step 5 Codex Review", "Step 6 Adversarial Rework Loop", "Step 7 Terminal Output"; mark each in_progress/completed as you go.
+- **In `--quick` mode** (QUICK_MODE=true): omit the "Step 5 Codex Review" and "Step 6 Adversarial Rework Loop" tasks — they are skipped.
 
 ## Step 1 — Data Fetch
 
@@ -58,7 +63,13 @@ Spawn all 3 `oss:repo-warden` agents simultaneously in single response:
 >
 > `Agent(subagent_type="oss:repo-warden", name="repo-warden-C", description="Score axes 3, 9", prompt="AXIS_GROUP=C")`
 
-**Health monitoring** — SKILL.md §Health monitoring: in this spawn response write `<WATCH_DIR>/agent-watch-score.tsv` with one row per agent (`repo-warden-A<TAB>$PARTIAL_A<TAB>1800`, same for B and C, paths expanded). Follow SKILL.md §Health monitoring for the wait discipline. At each completion notification, parse the returned envelope before checking for a partial file or running the SKILL.md watch block. `status: "declined"` → surface `declined` and its `reason`, including a Step 1 missing-sentinel failure; no partial file is expected, so do not label it `timed_out`. Stop before Step 3 assembly and report the affected group and input to repair. Otherwise run the watch block: `timed_out`, or a notification without its partial file → read the tail of any partial output; surface with ⏱ now.
+**Health monitoring** — SKILL.md §Health monitoring.
+
+- In this spawn response write `<WATCH_DIR>/agent-watch-score.tsv` with one row per agent (`repo-warden-A<TAB>$PARTIAL_A<TAB>1800`, same for B and C, paths expanded).
+- Follow SKILL.md §Health monitoring for the wait discipline.
+- At each completion notification, parse the returned envelope before checking for a partial file or running the SKILL.md watch block:
+  1. `status: "declined"` → surface `declined` and its `reason`, including a Step 1 missing-sentinel failure; no partial file is expected, so do not label it `timed_out`. Stop before Step 3 assembly and report the affected group and input to repair.
+  2. Otherwise run the watch block: `timed_out`, or a notification without its partial file → read the tail of any partial output; surface with ⏱ now.
 
 Collect all 3 agents' results on their notifications. Verify all 3 partial files exist: `$PARTIAL_A`, `$PARTIAL_B`, `$PARTIAL_C`.
 
@@ -193,7 +204,13 @@ IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev
 python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_ANALYSE/modes/codemap-signals.md"  # timeout: 5000
 ```
 
-Run its **Detect** block (loaded above), then **Signal B** (open-PR conflict/duplicate candidates) and **Signal C** (Structural Constraints). Signal B fetches changed-file lists for open PRs (bounded by `PR_FILES_CAP`), does pairwise file overlap, and — when `CM_ENABLED=true` — adds `coupled`-based hidden-conflict pairs; surface `PRSET_CANDIDATES` pairs in report. Signal C uses parsed `central[]` / `collision_count` / `degraded` / `stale` to fill template's `### Structural Constraints` bullets. `CM_ENABLED=false`: Signal B still runs direct file-overlap layer (no codemap needed); Signal C fills Structural Constraints block with single "structural index unavailable" bullet — never leave empty, never block.
+Run its **Detect** block (loaded above), then **Signal B** (open-PR conflict/duplicate candidates) and **Signal C** (Structural Constraints).
+
+- Signal B fetches changed-file lists for open PRs (bounded by `PR_FILES_CAP`), does pairwise file overlap, and — when `CM_ENABLED=true` — adds `coupled`-based hidden-conflict pairs; surface `PRSET_CANDIDATES` pairs in report.
+- Signal C uses parsed `central[]` / `collision_count` / `degraded` / `stale` to fill template's `### Structural Constraints` bullets.
+- `CM_ENABLED=false`:
+  - Signal B still runs direct file-overlap layer (no codemap needed);
+  - Signal C fills Structural Constraints block with single "structural index unavailable" bullet — never leave empty, never block.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -244,17 +261,18 @@ echo "$REVIEW_DIR" > "${TMPDIR:-/tmp}/vitality-review-dir-${CSID}"
 echo "$REWORK_ITER" > "${TMPDIR:-/tmp}/vitality-rework-iter-${CSID}"
 echo "$REWORK_MAX" > "${TMPDIR:-/tmp}/vitality-rework-max-${CSID}"
 echo "$CODEX_AVAILABLE" > "${TMPDIR:-/tmp}/vitality-codex-available-${CSID}"
-cat "$_OSS_ANALYSE/modes/vitality-codex-review.md"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_ANALYSE/modes/vitality-codex-review.md"  # timeout: 5000
 ```
 
 Execute its steps (Step 5), then:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload _OSS_ANALYSE (Check 41)
 IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev/null || _OSS_ANALYSE=""
 [ -z "$_OSS_ANALYSE" ] && _OSS_ANALYSE="plugins/cc_oss/skills/analyse"
-cat "$_OSS_ANALYSE/modes/vitality-adversarial-rework.md"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_ANALYSE/modes/vitality-adversarial-rework.md"  # timeout: 5000
 ```
 
 Execute its steps (Step 6) — each returns here to the next in sequence.
@@ -299,7 +317,7 @@ _(Omit Passes line when TOTAL_PASSES=1 — no retry loop needed.)_
 When `HEALTH_SCORE_PCT=-1`, render `**Health Score:** -- ⚪ — every axis unavailable`; never append `%` or assign a health band.
 
 _(Band by rule, the axis score bands applied to the printed percentage, rounded to one decimal: 🟢 ≥ 70% · 🟡 40–69.9% · 🔴 < 40%. When OVERALL_CONFIDENCE < 0.7 prefix this line with: `⚠ LOW CONFIDENCE ({OVERALL_CONFIDENCE:.2f}) — directional only`)_
-**Aggregate:**   {XX}% (mean main + Codex) — omit line when CODEX_AVAILABLE=0
+**Aggregate:**   {XX}% (mean main + Codex) — omit line when CODEX_AVAILABLE=0 or Step 5 left no Codex score (timed out, or blocked by quota)
 **Rework:**      {REWORK_ITER} iteration(s) — omit line when REWORK_ITER=0
 **Top Risk:**    {Axis N name (conf X.XX) — most urgent finding, one line. Exactly one axis: worst band first (🔴 over 🟡), then higher axis weight, then lower score, then lower axis number; never a combined multi-axis risk. The report Summary names the same axis.}
 → {REPORT_FILE}
@@ -334,7 +352,12 @@ If Axis 3 specifically ⚪: `⚠ Axis 3 (contributor health, wt 10%) unavailable
 
 Block must begin with `# Repo Vitality — {GH_OWNER}/{GH_REPO}` title and close with `---` on own line. Do not print full analysis to terminal. Full Conf/Weight columns and per-axis detail in report file only.
 
-**Confidence anchor** (SKILL.md Step 6b): the response's `## Confidence` block assesses this scorecard. Start **Score** at `OVERALL_CONFIDENCE`, the mean per-axis `conf` that `bin/vitality_extract.py` derives from listed degraders only (`vitality-scoring.md` §Confidence — Listed Degraders Only), and carry `1.0 − OVERALL_CONFIDENCE` as one Gap naming the lowest-conf axes. Score = `OVERALL_CONFIDENCE` minus the deductions below, so the Gaps sum to `1.0 − Score`. Deduct further only for a condition listed below; any other gap, including one that only *could* change a band, the Health Score or the Top Risk, is `(-0.00)`:
+**Confidence anchor** (SKILL.md Step 6b): the response's `## Confidence` block assesses this scorecard.
+
+- Start **Score** at `OVERALL_CONFIDENCE`, the mean per-axis `conf` that `bin/vitality_extract.py` derives from listed degraders only (`vitality-scoring.md` §Confidence — Listed Degraders Only), and carry `1.0 − OVERALL_CONFIDENCE` as one Gap naming the lowest-conf axes.
+- Score = `OVERALL_CONFIDENCE` minus the deductions below, so the Gaps sum to `1.0 − Score`.
+
+Deduct further only for a condition listed below; any other gap, including one that only *could* change a band, the Health Score or the Top Risk, is `(-0.00)`:
 
 - a `partial` fetch envelope: cap Score at 0.70 (Step 1)
 - each ⚪ axis: −0.05
@@ -354,7 +377,11 @@ Every other gap stays `(-0.00)`: small samples, truncation, data inconsistencies
 - **Adversarial review mandatory in full mode** — Step 6 always runs; `foundry:challenger` always spawned; the complete repository, report path, nine-axis review criteria, output path, permission boundary, and return contract from `vitality-adversarial-rework.md` are passed to `bridge:review` when `CODEX_AVAILABLE=1`. Only skip path is `--quick` (QUICK_MODE=true), which bypasses Steps 5 and 6 for fast daily scorecard at lower confidence.
 - **Parallel group discipline**: Group 2 data fetches in gh-scraper only after Group 1 resolves (needs root file list and default_branch); scoring Groups A/B/C have no such dependency — all read from DATA_FILE independently
 - **Data reuse**: root-contents fetch shared by Axes 6 and 7; releases fetch shared by Axis 2 and security signals; contributor stats weeks[] shared by Axis 3 and sub-signal 9A — all written to DATA_FILE, each scorer reads what it needs
-- **--limit caps and truncation detection**: all limits set to target+1 (e.g. `--limit 501` for open issues targeting 500); if response length == limit, truncation occurred. Exceptions: `closed_issues` is a search capped at GitHub's 1000-result ceiling (`--limit 1000`), so 1000 returned is read as truncated without proof; the `ci_workflows` registry page compares GitHub's `total_count` with the entries returned — `assemble_vitality_data.py` sets `"partial": true` on the JSONL record; `vitality_extract.py` applies only the truncation degraders the `vitality-scoring.md` Weights table lists (scorer copies `conf`); any other truncation goes in notes, never `conf`
+- **--limit caps and truncation detection**: all limits set to target+1 (e.g. `--limit 501` for open issues targeting 500); if response length == limit, truncation occurred.
+  - Exception: `closed_issues` is a search capped at GitHub's 1000-result ceiling (`--limit 1000`), so 1000 returned is read as truncated without proof.
+  - Exception: the `ci_workflows` registry page compares GitHub's `total_count` with the entries returned.
+  - `assemble_vitality_data.py` sets `"partial": true` on the JSONL record.
+  - `vitality_extract.py` applies only the truncation degraders the `vitality-scoring.md` Weights table lists (scorer copies `conf`); any other truncation goes in notes, never `conf`
 - **Duplicate clustering**: flag DUPLICATE only when root = same problem (identical error/feature ask/root cause); flag RELATED when same component, distinct problems — do not conflate
 - **Discussions API**: GraphQL `discussions(first:100)` sufficient for health snapshot; full pagination not needed
 - **Stats 202**: contributor stats endpoint returns 202 while GitHub computes them — gh-scraper does not retry; an empty payload becomes a `202_pending` partial record; scorer Group C handles fallback from `commits_50`
@@ -369,7 +396,12 @@ Every other gap stays `(-0.00)`: small samples, truncation, data inconsistencies
 - **Health Score footer row**: Score column shows weighted %; Weight column shows "100%"; Status/Key Signal/Risk left blank
 - **Rework loop exit conditions**: exits when `$REWORK_VERDICT = "pass"` OR `$REWORK_ITER >= $REWORK_MAX`; always exits after 2 iterations max regardless of verdict
 - **SCORES_FILE**: assembled in Step 3 by orchestrator from 3 partial files — not written by gh-scraper; gh-scraper prompt in Step 1 does NOT include SCORES_FILE
-- **CI pass-rate denominator**: always `success / counted` over the newest 20 counted default-branch runs, as `vitality_extract.py` computes `ci_pass_rate_pct` (rubric checkpoint 5, `runs_sampled`); counted = completed runs of the default branch (fetched with `branch=<default>`) of a CI event — `push`, `schedule`, `workflow_dispatch`, `merge_group` — except `skipped` / `neutral` (executed no job) and `cancelled` (superseded); every other event stays out (pull-request events such as a fork PR from the fork's own `main`, `workflow_run` PR-comment bots, `dynamic` Dependabot/Copilot runs), pending runs never fetched (`status=completed`); failures, `action_required`, `timed_out` and unknown conclusions all count — never trim further to success/conclusive; report `action_required` runs as separate "workflow auth failures" note; inconsistent denominators break cross-repo Health Score comparison
+- **CI pass-rate denominator**: always `success / counted` over the newest 20 counted default-branch runs, as `vitality_extract.py` computes `ci_pass_rate_pct` (rubric checkpoint 5, `runs_sampled`).
+  - Counted = completed runs of the default branch (fetched with `branch=<default>`) of a CI event — `push`, `schedule`, `workflow_dispatch`, `merge_group` — except `skipped` / `neutral` (executed no job) and `cancelled` (superseded).
+  - Every other event stays out (pull-request events such as a fork PR from the fork's own `main`, `workflow_run` PR-comment bots, `dynamic` Dependabot/Copilot runs); pending runs never fetched (`status=completed`).
+  - Failures, `action_required`, `timed_out` and unknown conclusions all count — never trim further to success/conclusive.
+  - Report `action_required` runs as separate "workflow auth failures" note.
+  - Inconsistent denominators break cross-repo Health Score comparison
 - **Dependabot manifest_path classification**: before classifying alert as runtime user exposure, check `manifest_path` — `*_test.txt`, `**/test*.txt`, `**/dev*.txt`, `**/ci*.txt` = test/CI deps, not user-facing; GitHub `scope=runtime` field is unreliable for extras classification; actual runtime exposure = alert in file referenced by published extras_require; always split security finding: "N user-facing (extras/*.txt)" vs "M dev/CI-facing (*\_test.txt)"
 - **CODEOWNERS activity verification**: compute CODEOWNERS active-maintainer count programmatically from commit-author data (`commits.json`/stats); never enumerate by name recognition; inactive = 0 commits in window; still counts as CODEOWNERS member but labelled "nominal"; correct list must include all commit authors who appear in CODEOWNERS, exclude those with 0 commits
 - **Issue truncation framing**: when `open_issues.json` size == (`open_issues_count` − open PRs count), sample IS full population — state "all N open issues sampled"; reserve "N-cap window" framing for genuinely truncated samples only (response size == fetch limit); check: `sample_size = len(open_issues.json)`, `population = repo_meta.open_issues_count - open_prs_count`, if `sample_size >= population` → no truncation

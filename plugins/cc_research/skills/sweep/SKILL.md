@@ -235,6 +235,7 @@ Repeat up to `MAX_REFINE` times:
 
    - Pass `--skip-validation` if user provided it; else include validation (J4), preserving its per-command approval gate and the reuse rule above.
    - Capture J6 verdict and judge report path (`JUDGE_REPORT`).
+   - The `Codex:` header field of an earlier iteration's judge report reads `codex-blocked:quota` (J5a quota stop) → make no further `bridge:review` call in this sweep run: skip J5a's Codex pass and record `codex-blocked:quota` again in that field, so the latest `JUDGE_REPORT` still carries the stop; the refine loop continues Claude-only. Only that header field counts: the token anywhere else in a report (findings, quoted program text, Codex output) never starts a stop.
 
 2. Print: `` sweep: judge iteration `REFINE_ITER`/`MAX_REFINE` → `VERDICT`  ``
 
@@ -342,10 +343,21 @@ esac
 
 > **`--team` and interactivity**: `--team` passed → sweep semi-interactive — run mode Phase B presents user confirmation gate before Phase C. Gate cannot be bypassed from sweep context; sweep pauses and waits. Expected behavior.
 
+**Quota stop carried into the run** — when the `Codex:` header field of the last `JUDGE_REPORT` reads `codex-blocked:quota` (that field only, as in S3; the token elsewhere in the report never counts), run this block once, right after run's R1 writes the run-id sentinel and before R2, so run's Phase 2c and R7 skip Codex on the stored stop (`modes/codex-copilot.md` quota gate). The forwarded `--codex` stays; the run report shows the co-pilot as off by the S3 quota stop, with no Codex pass run (`block` stores the stop without counting a pass):
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
+[ -n "$RUN_ID" ] || { echo "! BLOCKED — sweep: run-id sentinel missing; run R1 first"; exit 1; }
+python "$PLUGIN_ROOT/bin/codex_state.py" block --state ".experiments/state/${RUN_ID}/codex-state"  # timeout: 5000 — stores codex_blocked for the new run; codex_iter stays 0; prints CODEX_BLOCKED=true
+```
+
 On completion, standard R6 terminal summary printed. Also prepend:
 
 ```text
 sweep: complete — plan → judge → run pipeline finished
+sweep: Codex off — codex-blocked:quota in S3 judge; no Codex call ran after it  [only when S3 recorded it]
 ```
 
 ```bash

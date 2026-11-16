@@ -1682,6 +1682,8 @@ def check_shared_scripts(run: CalibrationRun) -> None:
         cli_paths["release-evidence"] = run.paths.shared_dir / "release_evidence.py"
         cli_paths["remediation-finalize"] = run.paths.shared_dir / "remediation_finalize.py"
         cli_paths["test-targets"] = run.paths.shared_dir / "test_targets.py"
+        cli_paths["contributor-run-integrity"] = run.paths.shared_dir / "contributor_run_integrity.py"
+        cli_paths["untrusted-code-guard"] = run.paths.shared_dir / "untrusted_code_guard.py"
         cli_paths["challenge-resolve-evidence"] = run.paths.skills_dir / "challenge-resolve" / "validate_evidence.py"
         cli_paths["challenge-resolve-chunks"] = run.paths.skills_dir / "challenge-resolve" / "chunk_diff.py"
         cli_paths["codemap-adapter"] = run.paths.codemap_adapter

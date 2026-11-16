@@ -210,9 +210,17 @@ Notable checks:
 
 - C13 flags a `scope_files` overlap with the metric or guard scripts as high severity.
 - C9b validates `metric_repeats` and `min_delta_pct`, and adds a low advisory when a `perf` or `ml` strategy measures one sample per iteration. The advisory never becomes a Required Change, because repeated runs are a cost you opt into.
+- When the Codex adversarial review ends on a harness-classified `quota-exhausted` bridge fault (read from the incident file, never the verdict text), the judge records `codex-blocked:quota` in the report's `Codex:` header field, does not retry, and finishes the review without Codex.
 - A `{field}` token in the `## Config` block is flagged high, because `run` does not substitute it, and the dry run skips a command that contains one.
 
-A dry run checks that the metric emits a numeric value and the guard exits successfully. Judge asks for per-command execution approval; each question carries the exact command, its directly invoked repository entry-point file, compute route, network setting and timeout. Docker compute uses `docker_sandbox_run.py --mode verify` with a read-only project mount, writable `.experiments` and the resolved network isolation; it never falls back to host execution. Local, absent or invalid compute uses the local route. Colab validation is skipped with a medium finding. Snapshots check Git-visible dirty paths and prior `.experiments/state/**` outside the current run dir; other ignored files are not checked. Metric drift is reported as medium and the separately approved guard still runs.
+A dry run checks that the metric emits a numeric value and the guard exits successfully. How the dry run executes and what it reports:
+
+- Judge asks for per-command execution approval; each question carries the exact command, its directly invoked repository entry-point file, compute route, network setting and timeout.
+- Docker compute uses `docker_sandbox_run.py --mode verify` with a read-only project mount, writable `.experiments` and the resolved network isolation; it never falls back to host execution.
+- Local, absent or invalid compute uses the local route.
+- Colab validation is skipped with a medium finding.
+- Snapshots check Git-visible dirty paths and prior `.experiments/state/**` outside the current run dir; other ignored files are not checked.
+- Metric drift is reported as medium and the separately approved guard still runs.
 
 | Verdict          | Meaning                                                       |
 | ---------------- | ------------------------------------------------------------- |
@@ -229,7 +237,16 @@ Finding: measurement validity — metric_cmd measures a proxy, not the stated me
 Required changes: (1) add `target:` under ## Metric  (2) replace metric_cmd
 ```
 
-`--skip-validation` is for cross-machine planning. It leaves metric and guard executability unverified, adds a medium disclosure excluded from Required Changes, and does not by itself prevent `APPROVED`. Snapshot errors, missing or malformed judge-side rating/Goodhart fields and unavailable Docker are also medium non-program unverified findings, excluded from Required Changes; unresolved Goodhart fields remain explicitly unreviewed. Real command failures and wrapper safety rejection remain critical. Checks that could not be verified appear separately from severity counts on an `Unverified checks:` line in both the report and terminal summary. Every unexecuted command is shown as `not run (<reason>)` in Dry-Run Results and terminal Validation. Reports are written to `.reports/research/judge-<branch>-<date>.md`.
+`--skip-validation` is for cross-machine planning. It leaves metric and guard executability unverified, adds a medium disclosure excluded from Required Changes, and does not by itself prevent `APPROVED`.
+
+Unverified and failed checks are reported as follows:
+
+- Snapshot errors, missing or malformed judge-side rating/Goodhart fields and unavailable Docker are also medium non-program unverified findings, excluded from Required Changes; unresolved Goodhart fields remain explicitly unreviewed.
+- Real command failures and wrapper safety rejection remain critical.
+- Checks that could not be verified appear separately from severity counts on an `Unverified checks:` line in both the report and terminal summary.
+- Every unexecuted command is shown as `not run (<reason>)` in Dry-Run Results and terminal Validation.
+
+Reports are written to `.reports/research/judge-<branch>-<date>.md`.
 
 <a id="research-run"></a>
 
@@ -289,13 +306,18 @@ The `ml` and `arch` specialists propose changes without modifying source; `found
 - `--colab` requires the `colab-mcp` runtime tool and a connected runtime; an optional hardware value is checked against the requested GPU.
 - `--codex` requires `bridge@borda-ai-rig` installed and enabled; the bridge availability probe does not require a `claude` CLI in the current host.
 - `--codex` co-pilot deliberately builds on Claude's uncommitted Phase 2 edit as a sanctioned exception to the clean-tree step of the Write-Delegation Checklist, so both passes are reviewed as one combined change set under the existing scope, snapshot, diff-review, and bridge no-commit safeguards.
+- `--codex` co-pilot stops for the rest of the run, including R7 delegation, when a bridge call ends on a harness-classified `quota-exhausted` fault:
+  - The fault comes from the incident file the bridge links, never from the verdict text.
+  - The run continues without Codex, and the iteration diary notes `codex-blocked:quota` instead of a Codex no-op.
+  - Rate limits and model-capacity stops keep the per-pass handling.
+  - The stop survives `--resume` of the same run. Typing `--codex` again on that resume (`/research:run --resume <program.md> --codex`, for example after adding credits) is a fresh approval that lifts a stop stored before it; the Codex run budget already spent still counts. A stop recorded later in the same Claude Code session stays, even if the lift step runs again; resume from a new session to approve Codex again.
 - Explicit integrations stop when unavailable rather than silently degrading.
 
 #### Hypothesis and resume flags
 
 - `--researcher` generates hypotheses with `research:scientist`; `--architect` adds architectural hypotheses from `foundry:solution-architect`. Both can run together, and every oracle annotates its own hypotheses' feasibility (no separate annotation pass).
 - `--hypothesis <path>` consumes a pre-built JSONL queue without spawning an oracle. One entry is popped per iteration, progress is checkpointed, the file is never modified, and normal ideation resumes when the queue is exhausted.
-- `--resume` continues only a run whose status is `running`. It restores saved flags, sandbox, Colab and clarification settings, reuses the existing hypothesis file, and skips hypotheses already tried by id. A branch that no longer contains `best_commit` requires an explicit continue-or-abort decision. Logged outcomes finish any pending ledger flush without replay; an unlogged interrupted experiment commit is reverted and recorded with no invented metric. Team recovery reconciles the persisted active iteration and queue position before advancing the cursor.
+- `--resume` continues only a run whose status is `running`. It restores saved flags, sandbox, Colab and clarification settings, reuses the existing hypothesis file, and skips hypotheses already tried by id. A branch that no longer contains `best_commit` requires an explicit continue-or-abort decision. Logged outcomes finish any pending ledger flush without replay; an unlogged interrupted experiment commit is reverted and recorded with no invented metric. Team recovery reconciles the persisted active iteration and queue position before advancing the cursor. `--keep`, `--codemap` and `--no-codemap` typed with `--resume` apply to the resumed session, and `--codemap` without a usable index stops before the run is restored.
 - `--journal` requires one of the hypothesis flags and records every outcome.
 - `--team` uses the team mode for parallel hypothesis exploration; combined with `--hypothesis`, the supplied queue joins the team's axis hypotheses in the shared queue.
 - `--keep "<items>"` preserves named context through compaction.
@@ -334,7 +356,14 @@ By default each iteration's metric is measured once and any measured gain is kep
 
 #### Plan → judge/refine → run pipeline
 
-Runs the plan → judge/refine → run pipeline from a goal, accepting planning defaults and retaining J4 per-command execution approval. A failed planning dry run stops before writing or running the contract and reports the command error for correction. It accepts the run's compute, team, Codex, researcher, architect, journal, and hypothesis options, plus `--skip-validation`, `--out <path>`, and `--keep "<items>"`. It asks before overwriting an existing contract. Within one sweep run, approval is reused across refine iterations only while command text, compute route and network setting are byte-identical; any change asks again, as does a script change. A standalone judge invocation always asks anew.
+Runs the plan → judge/refine → run pipeline from a goal, accepting planning defaults and retaining J4 per-command execution approval.
+
+- A failed planning dry run stops before writing or running the contract and reports the command error for correction.
+- It accepts the run's compute, team, Codex, researcher, architect, journal, and hypothesis options, plus `--skip-validation`, `--out <path>`, and `--keep "<items>"`.
+- It asks before overwriting an existing contract.
+- Within one sweep run, approval is reused across refine iterations only while command text, compute route and network setting are byte-identical; any change asks again, as does a script change.
+- A standalone judge invocation always asks anew.
+- After a judge iteration records `codex-blocked:quota` in its report's `Codex:` header field, the sweep makes no further Codex call: later judge iterations skip the Codex review, and the campaign starts with its Codex quota stop already stored and no Codex pass counted, so the co-pilot and R7 delegation stay off. The marker anywhere else in a report never counts.
 
 ```text
 /research:sweep "increase validation F1 to 0.87"
@@ -411,7 +440,13 @@ Supported options:
 - `--skip-run` identifies candidates without executing ablations.
 - `--keep "<items>"`
 
-Fortify executes only source campaigns whose persisted compute route is `local`; a Docker or Colab source stops unless `--skip-run` requests candidate discovery only. Each measurement verifies that cwd and HEAD identify the expected variant checkout (`best_commit` plus its selected reverts), binds that checkout evidence to the sample, and stops if executed project code cannot be established as belonging to the variant. Checkout guards compare physical directories and receipts use native Python paths, so Git Bash path spelling does not reject a matching Windows checkout. Absolute data paths may still reference the original repository. Unrelated positional input is rejected before source-run lookup. Variant identifiers use ASCII lowercase letters, digits and hyphens; descriptive component labels may retain Unicode.
+Fortify executes only source campaigns whose persisted compute route is `local`; a Docker or Colab source stops unless `--skip-run` requests candidate discovery only. Measurement and input rules:
+
+- Each measurement verifies that cwd and HEAD identify the expected variant checkout (`best_commit` plus its selected reverts), binds that checkout evidence to the sample, and stops if executed project code cannot be established as belonging to the variant.
+- Checkout guards compare physical directories and receipts use native Python paths, so Git Bash path spelling does not reject a matching Windows checkout.
+- Absolute data paths may still reference the original repository.
+- Unrelated positional input is rejected before source-run lookup.
+- Variant identifiers use ASCII lowercase letters, digits and hyphens; descriptive component labels may retain Unicode.
 
 | Class         | Metric loss after component removal |
 | ------------- | ----------------------------------- |
@@ -731,7 +766,7 @@ python "$PLUGIN_ROOT/bin/verify_blueprint_audit.py" prune --older-than 30 --dry-
 
 Progress tables come only from the ledger helper and include reconciliation of previous dispositions and current carried, repeat-route and new findings for all tiers and security. Old means a known invariant, including closed history, rather than only previous-row carryover. Reviews run before a ledger are disclosed as pre-ledger prose, never invented table rows. Repeated review/fix requests, a second independent review of the same change, or a repeated skill review/fix cycle activate the full loop before the next reviewer dispatch, with its stop rules and user-set round budget.
 
-`rules/quality-gates.md` requires confidence blocks on analysis output, defines report-file and terminal-header formatting, and requires independent review/fix cycles to follow its local adversarial-loop procedure. Confidence describes the correctness of the delivered result and how it was checked; completion is reported separately, and a high score does not pass an unmet gate.
+`rules/quality-gates.md` requires confidence blocks on analysis output, defines report-file and terminal-header formatting, and requires independent review/fix cycles to follow its local adversarial-loop procedure. When a `foundry:challenger` round reports `"codex_blocked": "quota"`, the rest of that loop runs without Codex. Confidence describes the correctness of the delivered result and how it was checked; completion is reported separately, and a high score does not pass an unmet gate.
 
 `/research:setup` installs one variant at `research-quality-gates.md`:
 

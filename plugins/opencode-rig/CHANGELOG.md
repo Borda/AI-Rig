@@ -2,6 +2,14 @@
 
 All notable changes to this package are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.7.0
+
+- `rig-review` now vets a fetched pull request's code before running any of it in that worktree; before, it only stated that the worktree held third-party code:
+  - Reads the pull request's auto-load files and changed files, and reports an assessed risk.
+  - Asks you before running any test, gate or reproduction there.
+  - Runs nothing and records the check as unverified when you do not answer.
+  - Is a prompt-level rule only: OpenCode has no sandbox, and the README limits say so.
+
 ## 0.6.0
 
 - Every workflow handoff now leads with the shared handoff table: verdict, alignment with the project's codebase and direction, findings by severity, the next action with what it closes, and confidence with its largest limit, followed by the evidence. The review's alignment field names the conventions it checked and the surfaces it did not.

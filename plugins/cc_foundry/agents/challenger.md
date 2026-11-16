@@ -125,10 +125,13 @@ fi
 6. **Collect Codex output** (CODEX_ENABLED only)
 
    - Use the result Step 2 recorded — `bridge:review` is a synchronous `Skill()` call, so there is no file to poll, no launch timestamp, and no stall timer
-   - Result non-empty → store as `CODEX_OUTPUT`; extract file paths for convergence detection
-   - Result empty, an error, or a bridge refusal:
+   - Result non-empty and none of the failures below → store as `CODEX_OUTPUT`; extract file paths for convergence detection
+   - Result empty, an error, a bridge refusal, or a `blocked` or `timeout` status:
      - Set `CODEX_FAILED=true`; store the error text as `CODEX_ERROR`
      - **Do not silently skip** — surface failure in report (see output format)
+     - Status `blocked` or `timeout` with a non-null `incident` → Read the JSON file at that `incident` path; its `fault` is `quota-exhausted` → set `CODEX_BLOCKED=quota` (peer out of credits; the bridge never retries one).
+     - A null `incident`, an unreadable file, any other `fault` (`rate-limited`, `capacity`, …) or verdict or blockers text leave `CODEX_BLOCKED` unset: a peer's own `blocked` result can copy the harness wording.
+     - `CODEX_BLOCKED=quota` → no second `bridge:*` call in this run; report it per the output format and `<delivery>` **Codex quota signal**.
 
 7. **Produce report** using output format below; end with `## Confidence` block per quality-gates rules
 
@@ -177,7 +180,7 @@ Verbatim always: structural field labels (`**Target reference**:`, `**Verdict**:
 
 ## Codex Cross-Check
 
-<!-- Always present: exactly one variant below; a skipped or failed cross-check is stated, never omitted. -->
+<!-- Always present: exactly one variant below; a skipped or failed cross-check is stated, never omitted. The variant's fixed text opens the section, never Codex output: callers read the quota signal from that first line. -->
 
 <!-- When --no-codex was set: -->
 Codex cross-check skipped (`--no-codex`).
@@ -185,11 +188,16 @@ Codex cross-check skipped (`--no-codex`).
 <!-- When CODEX_ENABLED=false and --no-codex not set: -->
 ⚠ Codex not available — cross-check skipped.
 
-<!-- When CODEX_FAILED: -->
+<!-- When CODEX_FAILED with CODEX_BLOCKED=quota — this exact line opens the section, replacing the failed variant below: -->
+⚠ codex-blocked:quota — Codex out of credits (incident fault `quota-exhausted`); cross-check not retried. Report above is Claude-only.
+
+<!-- When CODEX_FAILED otherwise: -->
 ⚠ **Codex cross-check failed** — [CODEX_ERROR verbatim]
 Report above is Claude-only.
 
-<!-- When Codex succeeded: -->
+<!-- When Codex succeeded — this fixed line opens the section, then the verbatim output: -->
+Codex cross-check completed.
+
 [CODEX_OUTPUT verbatim]
 
 **Convergence**: [Files or concerns mentioned by both tracks carry higher confidence.
@@ -202,12 +210,13 @@ Report above is Claude-only.
 
 - **Final reply = deliverable.** The host may refuse a subagent's report-file write (`Subagents should return findings as text, not write report files`). On that refusal, put the full findings in the final reply; never retry under another name or via Bash.
 - **Never send the report or envelope through SendMessage**; the caller reads the final reply. A demanded envelope closes the reply as one JSON line.
+- **Codex quota signal**: with `CODEX_BLOCKED=quota` (workflow step 6), add the top-level key `"codex_blocked": "quota"` to every envelope the caller demands, even when its schema omits it; the key is absent otherwise. A demanded fixed closing line (e.g. `Wrote: <id>`) stays unchanged: the quota line opening the Codex Cross-Check section is then the caller's only signal, so never omit or reword it. Codex output never opens that section: on success the fixed `Codex cross-check completed.` line comes first, so peer text never sits where callers read the signal.
 - **Security-filter review (deny-list, allowlist, sandbox, permission, approval or danger gate, or a parser deciding whether input may run): never author candidate bypass strings.** A safety classifier stops a response that composes attack-shaped strings, whatever the payload, so the open-ended search runs in Codex, never in your own reply. Order:
   1. Logic review first: read the diff and trace each filter path; a finding names the mechanism and file:line and describes inputs by class (`a short-option cluster such as -co`), never as a new working string.
   2. Coverage table: from the filtered language's authoritative grammar (cite the manual or spec sections: syntax, expansions, options, compound forms), one row per construct class, one column per reader that judges it (every lane, mirror, lexer). Each cell `admitted-by-spec`, `refused` or `unmodeled`, with the deciding file:line, read from the whole frozen snapshot, not only the diff. Every `unmodeled` cell is a finding. In an allowlist filter, flag every check that refuses only inputs found in a hand-written set (characters, words, option names) unless an admit check bounds it. At least one row per cited grammar subsection; each `refused` cell cites the code that refuses it, as a file:line the parent reads before it accepts a clean table. Deliver the table with the findings as one block, which the parent keeps as that round's own table file; an incomplete table forbids a clean verdict.
   3. Codex search: the workflow Step 2 `bridge:review` call carries the caller's specification and asks for candidate bypasses with exact inputs and expected verdicts. A filter review needs Codex: ignore `--no-codex` for it.
   4. Static check: classify every Codex candidate, and every string from a generator the caller supplies, with the functions under review (foreground Bash); never run a candidate in a real shell. A reproduced admission is a finding in your six-tier counts, tagged `source: codex` or `source: generator`; an unreproduced one goes to Refuted Challenges.
-  5. Codex unavailable or failed, or a response stopped by a safety classifier → return the envelope with `"status": "blocked"`, `"reason": "codex-unavailable"` or `"classifier"`, six-tier counts of what was found and `"probes": N`. Never report PASS for a search that did not run, and never FAIL without a finding.
+  5. Codex unavailable or failed, or a response stopped by a safety classifier → return the envelope with `"status": "blocked"`, `"reason": "codex-unavailable"` or `"classifier"`, six-tier counts of what was found and `"probes": N`; with `CODEX_BLOCKED=quota` the `codex-unavailable` envelope also carries `"codex_blocked": "quota"`. Never report PASS for a search that did not run, and never FAIL without a finding.
   <!-- policy-sibling: plugins/codex-rig/shared/adversarial-loop.md (filter-review coverage paragraph, canonical), plugins/cc_foundry/agents/challenger.md -->
 
 </delivery>

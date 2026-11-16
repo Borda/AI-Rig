@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.34.0
+
+- On Windows, the `--codemap` strict-mode `! BLOCKED` line now reaches the caller as UTF-8 instead of the ANSI codepage, so the em dash no longer corrupts the message or breaks a caller that decodes it as UTF-8.
+- `/research:run --codex` stops calling Codex for the rest of the run, including R7 delegation, as soon as a bridge call ends on a harness-classified `quota-exhausted` fault:
+  - The fault is read from the incident file the bridge links, never from verdict text.
+  - The iteration continues in-house on the tree as it stands, and the diary records `codex-blocked:quota` instead of `codex-no-op`.
+  - A quota stop no longer counts as a no-op and no longer burns further paid calls that cannot succeed.
+  - Rate-limit and model-capacity stops keep the existing per-pass handling.
+  - `codex_state.py` gains `bump --outcome blocked` and stores the stop as `codex_blocked`; older state files without it read as not blocked.
+  - Once blocked, `codex_state.py` prints `CODEX_DISABLED=true CODEX_BLOCKED=true`, and the flag persists across `--resume` of the same run.
+- Codex quota stops can now be lifted, and they no longer leak into review loops or the judge and sweep pipeline:
+  - Resuming the same run with `--codex` typed again (`/research:run --resume <program.md> --codex`), for example after adding credits, is a fresh approval that lifts a quota stop stored before that resume, ahead of any Codex call: `codex_state.py arm` reads the flag from the request's own arguments and `unblock` lifts, and the Codex run budget already spent still counts. A resume without `--codex` or a restored flag keeps the stop, and a stop recorded later in the same Claude Code session is never lifted by that approval, even when the lift step runs again after a compaction; to approve Codex again after such a stop, resume from a new session.
+  - Review loops that dispatch `foundry:challenger` stop calling Codex once a challenger reports `"codex_blocked": "quota"` or opens its Codex Cross-Check section with `⚠ codex-blocked:quota`: later rounds run with `--no-codex` and never switch to `bridge:review`, a quota-blocked round is not re-dispatched, and a later security-filter review is not dispatched but reported blocked with the quota cause, never as a pass.
+  - `/research:judge` reads a quota stop of its Codex adversarial review from the bridge incident, records `codex-blocked:quota` in the report's new `Codex:` header field and finishes without Codex; inside `/research:sweep`, later judge iterations make no further Codex call and the campaign starts with the quota stop stored without counting a Codex pass (`codex_state.py block`), so the co-pilot and R7 delegation stay off. Sweep reads the stop from that header field only, so judged text quoting the marker cannot start one.
+- `/research:run --resume` now honours `--keep`, `--codemap` and `--no-codemap` typed with it. Before, they were read inside the loaded resume mode, where the request's arguments are never substituted, so keep items were lost at compaction, `--no-codemap` did not opt out and `--codemap` did not require an index. A `--codemap` resume without a usable index now stops with `! BLOCKED` before the run is restored.
+
 ## 0.33.4
 
 - Fortify recognizes the same variant checkout across Git Bash and native Windows path spellings, preserving metric receipt validation and ranking.

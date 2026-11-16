@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import textwrap
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -199,6 +201,88 @@ def test_resume_requires_existing_program_before_recovery() -> None:
     assert "missing" in program
     assert "keep the stored `config`" not in program
     assert lines.index(program) < recovery
+
+
+def test_loaded_resume_mode_never_reads_request_arguments() -> None:
+    """``resume.md`` passes no ``$ARGUMENTS`` to any command: that file never receives the request's arguments.
+
+    The host substitutes ``$ARGUMENTS`` only in ``run/SKILL.md`` text. ``resume.md`` is printed by
+    ``render_plugin_root.py``, which renders only the plugin-root token, so a call there receives an empty string and
+    silently drops every flag the user typed with ``--resume``.
+    """
+    assert [line for line in _lines("modes/resume.md") if "$ARGUMENTS" in line] == []
+
+
+@pytest.fixture
+def resume_entry(tmp_path: Path) -> Callable[[str], subprocess.CompletedProcess[str]]:
+    """Run a resume entry as the host does: the substituted ``run/SKILL.md`` block, then the loaded restore block.
+
+    Each block runs in its own shell. The skill block gets the typed arguments as one quoted shell word in place of the
+    literal ``"$ARGUMENTS"`` (host substitution); the ``resume.md`` restore block runs with no ``ARGUMENTS`` in its
+    environment, since the renderer that prints it substitutes nothing. A failing skill block stops before the restore
+    block, as the model stops on its ``! BLOCKED`` line.
+    """
+    state = tmp_path / ".experiments/state/resume-run"
+    state.mkdir(parents=True)
+    (state / "state.json").write_text("{}\n", encoding="utf-8", newline="\n")
+    skill_block = _block("SKILL.md", "bash", 'codex_state.py" arm -- "$ARGUMENTS"')
+    restore_block = _block("modes/resume.md", "bash", 'RESUME_RUN_ID="<run-id>"').replace(
+        'RESUME_RUN_ID="<run-id>"', 'RESUME_RUN_ID="resume-run"'
+    )
+    hidden = {"ARGUMENTS", "CSID", "CODEMAP_INDEX_DIR", "CLAUDE_CODE_SESSION_ID"}
+    env = {key: value for key, value in os.environ.items() if key not in hidden}
+    env.update(TMPDIR=tmp_path.as_posix(), CLAUDE_CODE_SESSION_ID="resume-flags", CLAUDE_PLUGIN_ROOT=_PLUGIN.as_posix())
+
+    def run(typed: str) -> subprocess.CompletedProcess[str]:
+        substituted = skill_block.replace('"$ARGUMENTS"', shlex.quote(typed))
+        script = f"(\n{substituted}\n) && (\n{restore_block}\n)"
+        return subprocess.run(
+            [_BASH or "bash", "-c", render_shell(script, _PLUGIN, "research")],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            check=False,
+        )
+
+    return run
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _BASH, reason="run shell blocks require Bash")
+def test_resume_applies_typed_keep_and_codemap_opt_out(
+    tmp_path: Path, resume_entry: Callable[[str], subprocess.CompletedProcess[str]]
+) -> None:
+    """``--keep`` and ``--no-codemap`` typed with ``--resume`` reach their sentinels and survive the restore block.
+
+    The keep items feed Phase 8's compaction contract and the codemap sentinel gates structural context. Read from the
+    loaded mode file, both resolved from an empty string: keep items vanished and codemap fell back to ``auto``.
+    """
+    result = resume_entry('--resume program.md --keep "alpha, beta" --no-codemap')
+
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert (tmp_path / "research-run-keep-items-resume-flags").read_text(encoding="utf-8").strip() == "alpha, beta"
+    assert (tmp_path / "research-run-codemap-enabled-resume-flags").read_text(encoding="utf-8").strip() == "false"
+    assert "off" in result.stdout.splitlines()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _BASH, reason="run shell blocks require Bash")
+def test_resume_with_strict_codemap_stops_before_restoring_the_run(
+    tmp_path: Path, resume_entry: Callable[[str], subprocess.CompletedProcess[str]]
+) -> None:
+    """``--codemap`` typed with ``--resume`` and no index stops with ``! BLOCKED`` before the run is restored.
+
+    Strict mode promises a run with structural context or none at all. Read from the loaded mode file, the flag was lost
+    and the resume continued in ``auto`` mode without an index.
+    """
+    result = resume_entry("--resume program.md --codemap")
+
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "! BLOCKED — --codemap (strict)" in result.stderr
+    assert not (tmp_path / ".experiments/resume-run").exists()
 
 
 def test_team_preserves_propose_only_routing_and_metric_reference() -> None:

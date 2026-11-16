@@ -247,14 +247,27 @@ Invoked by skills, not user commands.
 | `bin/fence_untrusted.py` | Wraps untrusted paper text for `verify`, following the `skills/_shared/untrusted-content.md` protocol. |
 | `bin/run_metric_stats.py` | `run`'s repeated-measurement cursor and noise-aware keep decision when `metric_repeats` > 1. |
 | `bin/revert_iteration_commit.py` | Double-revert guard `run` calls from Phase 5 and Phase 7; refuses another iteration's experiment commit at `HEAD`. |
-| `bin/codex_state.py` | Reads and bumps the `--codex` co-pilot counters. |
+| `bin/codex_state.py` | Reads and bumps the `--codex` co-pilot counters, stores (`bump --outcome blocked`, `block`) or lifts (`unblock`) the per-run quota-stop flag, and arms the per-session lift approval from a resume's typed `--codex` (`arm`). |
 | `bin/merge_settings_permissions.py` | Merges shipped `permissions-allow.json` / `permissions-deny.json` into `~/.claude/settings.json` in one atomic write for `/research:setup`. |
 | `bin/write_skill_contract.py` | `--keep-sentinel <name>` appends the session's `--keep` items to a compaction contract's `preserve:` line. |
 | `bin/health_monitor_start.py` | Creates cross-platform health-monitor sentinel coordinates; skills describe the monitoring sequence in workflow prose rather than exposing it as a user command. Consolidation is possible future cleanup, not a current requirement. |
 
-Full packaged inventory:
+Full packaged inventory, grouped by initial letter:
 
-`adversarial_loop.py`, `agent_watch.py`, `append_ledger.py`, `check_iteration_scope.py`, `check_output_within_root.py`, `codemap-flag.py`, `codemap_resolve.py`, `codex_state.py`, `compaction_boundary.py`, `compute_effect_size.py`, `detect-complexity.py`, `docker_sandbox_run.py`, `extract-keep-flag.py`, `fence_untrusted.py`, `find_judge_verdict.py`, `find_run_id.py`, `fortify_metric_stats.py`, `fortify_next_variant.py`, `gate-on-sentinel.py`, `get_plugin_install_path.py`, `heal_git_artifacts.py`, `health_monitor_start.py`, `load-agent-reference.py`, `make_run_dir.py`, `merge_settings_permissions.py`, `parse-skill-flags.py`, `parse_kaggle_args.py`, `read_state_field.py`, `require-vars.py`, `resolve-anti-overwrite-path.py`, `resolve_shared.py`, `resolve_shared_path.py`, `retro_analyze.py`, `revert_iteration_commit.py`, `run_metric_stats.py`, `sync_rules.py`, `verify_patient_split.py`, `write_skill_contract.py`.
+- `adversarial_loop.py`, `agent_watch.py`, `append_ledger.py`
+- `check_iteration_scope.py`, `check_output_within_root.py`, `codemap-flag.py`, `codemap_resolve.py`, `codex_state.py`, `compaction_boundary.py`, `compute_effect_size.py`
+- `detect-complexity.py`, `docker_sandbox_run.py`
+- `extract-keep-flag.py`
+- `fence_untrusted.py`, `find_judge_verdict.py`, `find_run_id.py`, `fortify_metric_stats.py`, `fortify_next_variant.py`
+- `gate-on-sentinel.py`, `get_plugin_install_path.py`
+- `heal_git_artifacts.py`, `health_monitor_start.py`
+- `load-agent-reference.py`
+- `make_run_dir.py`, `merge_settings_permissions.py`
+- `parse-skill-flags.py`, `parse_kaggle_args.py`
+- `read_state_field.py`, `require-vars.py`, `resolve-anti-overwrite-path.py`, `resolve_shared.py`, `resolve_shared_path.py`, `retro_analyze.py`, `revert_iteration_commit.py`, `run_metric_stats.py`
+- `sync_rules.py`
+- `verify_patient_split.py`
+- `write_skill_contract.py`
 
 The private module `_sentinel_io.py` is imported by the sentinel writers to create each `${TMPDIR}` sentinel fresh with mode 0600 instead of writing through a planted symlink.
 

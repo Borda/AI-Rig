@@ -343,6 +343,13 @@ Skill(skill="bridge:review", args="Read-only adversarial review of run program. 
 
 Incorporate Codex findings into overall findings list with `source: "codex"`; a `critical` Codex finding counts as critical in the J6 verdict table.
 
+Codex stopped on a **harness-classified quota exhaustion** — all three hold: the `bridge:review` result `status` is `blocked` or `timeout`; its `incident` is non-null; the JSON file at that `incident` path (open it with Read) has `fault` equal to `quota-exhausted`. Then:
+
+- record `codex-blocked:quota` in the J6 report's `Codex:` header field (the one field `/research:sweep` reads back) and summary, never as a Codex finding; no retry, no further `bridge:review` call in this run, no fallback to another provider;
+- continue to J5b Claude-only, as for `plugin-missing`.
+
+Not classified — verdict or `blockers` text never decides: `incident: null` (a peer model can author the same wording), an unreadable incident file, or any other `fault` (`rate-limited`, `capacity`, `blocked`, …) keeps today's handling.
+
 **`CODEX_STATUS=plugin-missing`**: print one line and continue:
 
 ```text
@@ -419,6 +426,7 @@ Outcome:       APPROVED | NEEDS-REVISION | BLOCKED
 Methodology:   sound | needs-refinement | fundamentally-flawed | timed-out (unreviewed) | unrecognized (unreviewed)
 Findings:      [N] critical · [N] high · [N] medium · [N] low
 Protocol gaps: [N]
+Codex:         reviewed | skipped | codex-blocked:quota
 Confidence:    [score] — [key gaps]
 Next steps:    /research:run <path>  [APPROVED] | fix protocol, re-run /research:judge  [otherwise]
 Path:          → .reports/research/judge-<branch>-<date>.md
@@ -477,6 +485,7 @@ Snapshot coverage: Git-visible dirty file contents and index, nested repository 
 ### Codex Review
 <findings from Codex adversarial review, annotated with source: "codex">
 (Skipped — bridge plugin not installed or disabled) [if unavailable]
+(Stopped — `codex-blocked:quota`: Codex out of credits, not retried; Claude-only review) [if quota-stopped]
 
 ### Required Changes
 <ordered list of specific fixes for each non-pass program finding, critical first; include exact edits to program.md; omit the C9b repeat advisory, explicit validation-skip advisories and all non-program unverified findings from Required Changes>
@@ -504,7 +513,7 @@ Review fields: <rating/goodhart value and source per dimension; unreviewed with 
 Findings:     <N> critical · <N> high · <N> medium · <N> low | Unverified checks: <id> — <reason> | none
 Protocol gaps: <N>
 Validation:   metric=<value>|fail|not run (<reason>)|unverified (<reason>); guard=pass|fail|not run (<reason>)|unverified (<reason>); evidence=<non-program reasons or none>
-Codex:        reviewed | skipped
+Codex:        reviewed | skipped | codex-blocked:quota
 → saved to .reports/research/judge-<branch>-<date>.md
 ---
 Next: /research:run <path>                         [APPROVED]

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.14.0
+
+- Provider stops are reported plainly instead of as a generic failure:
+  - The bridge classifies the terminal provider failure as `quota-exhausted` (credits, usage limit, subscription, spend limit), `rate-limited` or `capacity`.
+  - It makes one child attempt and writes an incident whose `fault` is the class, with a harness-authored verdict and blocker line naming the peer.
+  - A stop that arrives with a hard cutoff keeps status `timeout` but no longer spends a lower-effort retry.
+  - Contradictory evidence, content-policy stops and unrecognized failures stay a plain `blocked`.
+  - The bridge skills tell the caller to lead with a bold `! BLOCKED` line and return the options as text; there is no automatic fallback to another provider.
+  - `rules/envelope.md` documents the provenance contract: only an envelope with a non-null `incident` whose `fault` matches is harness-classified.
+- A terminal Codex `turn.failed` (no later `turn.completed`) now outranks an earlier model answer even on exit code 0:
+  - The call returns `blocked` where it previously returned the stale answer.
+  - A top-level reconnect or retry notice is context in `blockers`, never the verdict.
+  - A nonzero exit without a terminal failure reports `child exited with code N`.
+- Incident records move to `schema_version` 2 (version 1 stays readable):
+  - `workspace_delta` is `null` when it was not computed, instead of `[]`.
+  - A blocked write call records its delta on every blocked path, adding the paths the Codex transcript reported as `file_change` (relative to the workspace, so files already modified before the call are covered).
+  - `returncode` records the child exit status.
+  - An empty or null delta still does not prove that no edit landed.
+- Research, develop, foundry and oss looping consumers stop dispatching to a quota-exhausted peer for the rest of the run (see their changelogs).
+- The bridge skills' failure handling is restructured into one block per status, and a provider stop under `status=timeout` is handled as a provider stop.
+- Every Codex call now passes `web_search="disabled"` in every network mode, so a Codex child can no longer open pages through its provider-side web search while the sandbox network is off.
+
 ## 0.13.1
 
 - Codex question guidance stays self-contained in standalone installs and continues already-authorized recovery without redundant continue/resume prompts; real denials and protected decisions remain binding.

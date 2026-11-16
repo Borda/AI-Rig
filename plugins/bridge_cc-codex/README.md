@@ -6,7 +6,7 @@ The bridge is useful with either host integration installed and has no dependenc
 
 > Contributing or want internals? See [Development and release verification](docs/development.md) and [Security and privacy](docs/security.md).
 
-> Release: `0.13.1`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
+> Release: `0.14.0`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
 
 ## 🚀 After installation
 
@@ -161,7 +161,13 @@ Plain `/bridge:setup` and `$bridge:setup` invocations use those defaults. `all`:
 1. Inspects, proposes, and reports every supported stage.
 2. Asks for one expiring, one-use approval before safe configuration or repair, bound to the exact action, target, resolved scope, workspace, observed-state fingerprint, native argv, external capability, rollback record, and stop condition.
 
-> The digest is authenticated with a host-held per-user HMAC key so a caller cannot forge or alter a plan, but the digest is not consent: the operator or host permission surface must still approve the displayed operation. A denial, changed digest, replay, failed probe, or failed operation stops without an equivalent retry. An expired approval permits one replacement plan, new operations file, and fresh approval per stage; never reuse the old digest or approval, and stop on a second expiry. Recheck live-verification preconditions before planning its replacement. The approval deadline is 300 seconds from plan issuance, not approval; after an operator command, wait for the user to report completion before checking or advancing.
+> The digest is authenticated with a host-held per-user HMAC key so a caller cannot forge or alter a plan, but the digest is not consent: the operator or host permission surface must still approve the displayed operation.
+>
+> - A denial, changed digest, replay, failed probe, or failed operation stops without an equivalent retry.
+> - An expired approval permits one replacement plan, new operations file, and fresh approval per stage; never reuse the old digest or approval, and stop on a second expiry.
+>   - Recheck live-verification preconditions before planning its replacement.
+> - The approval deadline is 300 seconds from plan issuance, not approval.
+> - After an operator command, wait for the user to report completion before checking or advancing.
 
 The remaining setup stages have distinct boundaries:
 
@@ -442,8 +448,23 @@ Bridge state is project-local:
 Artifact handling:
 
 - Artifact directories and members are rechecked against the bound project and store before reads, creation, and writes. Escaping parents and linked file leaves are rejected; directory aliases contained within the store remain usable. These checks do not promise immunity to concurrent path replacement during an OS operation.
-- Incident records do not persist child command arguments or environment data. They preserve the classified fault, reason, model, effort, verb, budget, transcript path, and—when a write-capable process is killed—the observed worktree delta. That delta is advisory: unchanged dirty status or unavailable Git can produce an empty delta despite edits, so inspect the actual worktree independently.
-- Optional local accounting writes one private structured result after final warnings and one health row per logical call, with schema version 1, direct result/transcript/incident links, outcome counts, direction, verb, requested model, effort, reported cost/tokens, status, depth, and `run_id`. `elapsed_seconds` covers the whole call through final checks, excluding optional accounting writes; `duration_seconds`, cost and tokens retain final-attempt semantics. Retry incidents retain their own observed duration/tokens/cost; unavailable observations stay null or empty. Reports retain the public result, including warnings, blockers and remaining scope. New artifacts use the existing private writer (owner-only mode on POSIX; platform filesystem permissions on Windows). Accounting is entirely workspace-local: no exporter, network request, additional model call or agent step, only local serialization and file writes. Keep this private store out of version control and shared folders. A report write failure leaves a null report link and a sanitized warning; a health write failure updates the report with that warning when storage permits. A write failure appends a sanitized nonblocking telemetry warning to public `findings`, preserving the original status, verdict, decision fields and incident without rerunning the child. A symlink, reparse point, hard link, or nonregular `health.jsonl` is refused without writing its target.
+- Incident records (schema version 2) never persist child command arguments or environment data. They record:
+  - the classified fault and reason, model, effort, verb, budget, transcript path and child exit code;
+  - for a blocked or killed write call, the observed worktree delta (`null` when it was not computed): new Git status lines plus the file paths the Codex transcript reported.
+  - The delta stays advisory: an unavailable Git or an empty delta does not prove that no edit landed, so inspect the actual worktree independently.
+- Provider stops are reported plainly:
+  - Out of credits, over a usage limit or out of subscription: `blocked` after one attempt, incident fault `quota-exhausted`, verdict naming the peer. `rate-limited` and `capacity` are reported the same way.
+  - The bridge does not retry and never falls back to the other provider; the calling skill returns the options as text.
+  - Only a non-null incident whose `fault` matches proves the classification, never the verdict text.
+- Optional local accounting writes one private structured result after final warnings and one health row per logical call, with schema version 1, direct result/transcript/incident links, outcome counts, direction, verb, requested model, effort, reported cost/tokens, status, depth, and `run_id`.
+  - `elapsed_seconds` covers the whole call through final checks, excluding optional accounting writes; `duration_seconds`, cost and tokens retain final-attempt semantics.
+  - Retry incidents retain their own observed duration/tokens/cost; unavailable observations stay null or empty.
+  - Reports retain the public result, including warnings, blockers and remaining scope.
+  - New artifacts use the existing private writer (owner-only mode on POSIX; platform filesystem permissions on Windows).
+  - Accounting is entirely workspace-local: no exporter, network request, additional model call or agent step, only local serialization and file writes. Keep this private store out of version control and shared folders.
+  - A report write failure leaves a null report link and a sanitized warning; a health write failure updates the report with that warning when storage permits.
+  - A write failure appends a sanitized nonblocking telemetry warning to public `findings`, preserving the original status, verdict, decision fields and incident without rerunning the child.
+  - A symlink, reparse point, hard link, or nonregular `health.jsonl` is refused without writing its target.
 - Completed job artifacts under `.temp/bridge` older than 30 days, or beyond the newest 200 completed jobs, are pruned automatically; queued or running jobs and anything they reference are never pruned, and `health.jsonl` rotates at 5 MiB, keeping one previous generation as `health.jsonl.1`.
 - Pass `--untrusted-task` (MCP argument `untrusted_task`) whenever the task text comes from PR comments, issue bodies, web pages or any other external source. The bridge then wraps the task in a fresh-token fence and tells the peer it is data only, never instructions.
 - After a `stalled` job, edit the workspace only once the peer is confirmed terminated or the original hard cutoff has passed. A supervisor that died abruptly cannot enforce the cutoff and may leave its peer running, because portable subprocess APIs cannot guarantee cleanup.
@@ -472,7 +493,7 @@ Safety boundaries:
 
 Network access:
 
-> ! BREAKING — unless the caller opts in with `--network github-read`, every Codex invocation pins `sandbox_workspace_write.network_access=false`, so an `implement` task that installed a dependency, refreshed a lockfile, or ran a network-touching hook now fails inside the sandbox. The control is Codex-side only; the Claude child is constrained by permission mode instead.
+> ! BREAKING — unless the caller opts in with `--network github-read`, every Codex invocation pins `sandbox_workspace_write.network_access=false`, so an `implement` task that installed a dependency, refreshed a lockfile, or ran a network-touching hook now fails inside the sandbox. Every Codex invocation also passes `web_search="disabled"`, because Codex's hosted web search runs on the provider side and the sandbox network pin does not cover it. The control is Codex-side only; the Claude child is constrained by permission mode instead.
 
 `--network github-read` is an opt-in per call; the default stays `none`, and the Claude peer refuses it:
 
@@ -518,6 +539,12 @@ This plugin is distributed under the Apache License, Version 2.0; see [LICENSE](
 
 ### Offline usage accounting
 
-[`bin/bridge_usage.py`](bin/bridge_usage.py) reads explicitly selected project stores without provider calls or writes: `python "$BRIDGE_PLUGIN_ROOT/bin/bridge_usage.py" --workspace /absolute/project` (replace the variable with the installed plugin root). Repeat `--workspace` to consolidate projects. Output separates version/model cohorts, partial outcomes, observed attempt usage, unknown spend and evidence gaps; it does not score provider quality or fabricate historical metadata. Add `--calls` to also list every call with its start/end times, message sizes, attempts and the expected fields it lacks, for completeness checks and later replay. See [offline usage audit](docs/operations.md#offline-usage-audit).
+[`bin/bridge_usage.py`](bin/bridge_usage.py) reads explicitly selected project stores without provider calls or writes: `python "$BRIDGE_PLUGIN_ROOT/bin/bridge_usage.py" --workspace /absolute/project` (replace the variable with the installed plugin root).
+
+- Repeat `--workspace` to consolidate projects.
+- Output separates version/model cohorts, partial outcomes, observed attempt usage, unknown spend and evidence gaps; it does not score provider quality or fabricate historical metadata.
+- Add `--calls` to also list every call with its start/end times, message sizes, attempts and the expected fields it lacks, for completeness checks and later replay.
+
+See [offline usage audit](docs/operations.md#offline-usage-audit).
 
 Private accounting records retain ordered executed attempts, provider-reported model identities, the plugin version and a cached runtime-file digest. Public envelopes retain final-attempt usage. Both host skill sets now require bounded task scope and parent-prepared verification dependencies when needed, reusing existing evidence without expanding child permissions.

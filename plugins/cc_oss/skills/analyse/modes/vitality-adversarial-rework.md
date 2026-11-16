@@ -24,7 +24,7 @@ REWORK_SECTIONS=""
 
 Spawn reviewers simultaneously in single response — each writes to own iter-indexed file. No shared input between reviewers.
 
-**When CODEX_AVAILABLE=1**: spawn `foundry:challenger` and call the bridge review simultaneously:
+**When CODEX_AVAILABLE=1** and `$REVIEW_DIR/codex-quota-blocked.txt` is absent: spawn `foundry:challenger` and call the bridge review simultaneously:
 
 1. `foundry:challenger` — reads `$REPORT_FILE`; stress-tests scoring thresholds, flags weak evidence, challenges causality claims, verifies limit-hit detection, checks coverage gate logic; flags shared blind spots between main analysis and Codex independent review, or unconvincing divergence resolution; assesses all 9 axes including Axis 9 Trajectory. Writes findings to `$REVIEW_DIR/challenger-iter${REWORK_ITER}.md` (Write tool). Writes sentinel `$REVIEW_DIR/challenger-iter${REWORK_ITER}.done`. After narrative findings, writes machine-readable block on own line:
 
@@ -40,21 +40,44 @@ Spawn reviewers simultaneously in single response — each writes to own iter-in
 
    Only flag `verdict=needs_rework` when finding is factually wrong or unsupported by evidence — not style/emphasis differences. Returns compact JSON envelope only.
 
+   - Quota stop: when `$REVIEW_DIR/codex-quota-blocked.txt` exists (`codex-blocked:quota`), end the challenger prompt with the line `--no-codex`.
+   - Reason: its own `bridge:review` cross-check cannot succeed this run.
+   - When it returns, Write its reply verbatim to `$REVIEW_DIR/challenger-iter${REWORK_ITER}.json` (the JSON envelope, or the reply text when it returned none); the sentinel check reads only its top-level `codex_blocked`, where `"quota"` means its own cross-check hit the stop and writes the same marker.
+   - A reply with no JSON envelope counts by its second carrier instead: its `## Codex Cross-Check` section opens with `⚠ codex-blocked:quota` (first non-blank line). The token anywhere else never counts.
+
 2. `Skill(skill="bridge:review", args="Read $REPORT_FILE independently for repository $GH_OWNER/$GH_REPO. Do not read challenger output and do not edit source files. Review evidence quality, threshold calibration, data gaps, scoring edges, divergence resolution, and the nine named axes: responsiveness, maintenance activity, contributor health, issue and pull-request health, CI/CD and code quality, documentation, governance, security posture, and trajectory. You are read-only and must not create files: return every actionable finding in your result, with the finding count, blockers, and confidence.")`
 
    `bridge:review` cannot write files, so the orchestrator persists its result when the call returns (foreground, or the background call's exit notification): `status` = `complete` → Write the returned findings (envelope findings, or the transcript at the bridge-reported artifact path) to `$REVIEW_DIR/codex-iter${REWORK_ITER}.md` with the Write tool, then Write `$REVIEW_DIR/codex-iter${REWORK_ITER}.done` (content `done`); any other `status` or no envelope → Write that status and its fault to the `.md`, never the `.done` — the sentinel check below reports ⏱.
 
-**When CODEX_AVAILABLE=0**: spawn `foundry:challenger` only (step 1 above; skip step 2).
+   - In every case also Write the returned JSON object verbatim to `$REVIEW_DIR/codex-iter${REWORK_ITER}.json`.
+   - The sentinel check reads that reply's harness incident `fault` (Step 5 quota rule: `quota-exhausted` only, never verdict text).
+   - A quota stop is reported as `codex-blocked:quota` instead of ⏱.
+
+**When CODEX_AVAILABLE=0 or `$REVIEW_DIR/codex-quota-blocked.txt` exists**: spawn `foundry:challenger` only (step 1 above; skip step 2).
 
 After spawning, verify sentinels and parse the challenger verdict (one fence: verdict depends on the `.done` check):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r REVIEW_DIR < "${TMPDIR:-/tmp}/vitality-review-dir-${CSID}" 2>/dev/null || REVIEW_DIR=""
 [ -n "$REVIEW_DIR" ] || { echo "! BLOCKED — vitality-review-dir sentinel missing; rerun vitality Step 5 setup"; exit 1; }
 IFS= read -r REWORK_ITER < "${TMPDIR:-/tmp}/vitality-rework-iter-${CSID}" 2>/dev/null || REWORK_ITER="0"
 IFS= read -r CODEX_AVAILABLE < "${TMPDIR:-/tmp}/vitality-codex-available-${CSID}" 2>/dev/null || CODEX_AVAILABLE="0"
-[ "$CODEX_AVAILABLE" = "1" ] && { [ -f "$REVIEW_DIR/codex-iter${REWORK_ITER}.done" ] || echo "⏱ codex iter${REWORK_ITER} timed_out — no .done sentinel"; }
+_QUOTA_MARK="$REVIEW_DIR/codex-quota-blocked.txt"
+# challenger's own cross-check: envelope codex_blocked field or anchored Cross-Check line, never prose
+_CH_FAULT=$(python "$PLUGIN_ROOT/bin/bridge_quota_check.py" --challenger "$REVIEW_DIR" "challenger-iter${REWORK_ITER}.json" 2>/dev/null) || _CH_FAULT=none  # timeout: 15000
+[ "$_CH_FAULT" = quota-exhausted ] && echo codex-blocked:quota > "$_QUOTA_MARK"
+# missing .done: a harness quota incident (never verdict text) ends Codex review for the run; other faults stay ⏱
+if [ "$CODEX_AVAILABLE" = "1" ] && [ ! -e "$_QUOTA_MARK" ] && [ ! -f "$REVIEW_DIR/codex-iter${REWORK_ITER}.done" ]; then
+    _FAULT=$(python "$PLUGIN_ROOT/bin/bridge_quota_check.py" "$REVIEW_DIR/codex-iter${REWORK_ITER}.json" 2>/dev/null) || _FAULT=none  # timeout: 15000
+    [ "$_FAULT" = quota-exhausted ] && echo codex-blocked:quota > "$_QUOTA_MARK"
+fi
+if [ "$CODEX_AVAILABLE" = "1" ] && [ -e "$_QUOTA_MARK" ]; then
+    echo "⊘ codex-blocked:quota — challenger-only from here, challenger prompt gets --no-codex"
+else
+    [ "$CODEX_AVAILABLE" = "1" ] && { [ -f "$REVIEW_DIR/codex-iter${REWORK_ITER}.done" ] || echo "⏱ codex iter${REWORK_ITER} timed_out — no .done sentinel"; }
+fi
 # fail closed: missing .done, missing/invalid REWORK_JSON or unknown verdict = timed_out, never pass
 REWORK_VERDICT="timed_out"
 [ -f "$REVIEW_DIR/challenger-iter${REWORK_ITER}.done" ] || echo "⚠ challenger iter${REWORK_ITER} did not complete"
@@ -138,7 +161,7 @@ After loop exits (pass, timed_out or max iterations): update `$REPORT_FILE` — 
 
 **Challenger:** {findings from $REVIEW_DIR/challenger-iter{final_iter}.md}
 
-**Codex:** {findings from $REVIEW_DIR/codex-iter{final_iter}.md — or "codex unavailable — single adversarial pass only" when CODEX_AVAILABLE=0, or "⏱ codex timed_out" when its `.done` was missing}
+**Codex:** {findings from $REVIEW_DIR/codex-iter{final_iter}.md — or "codex unavailable — single adversarial pass only" when CODEX_AVAILABLE=0, or "⊘ codex-blocked:quota — later passes challenger-only" when `$REVIEW_DIR/codex-quota-blocked.txt` exists (after the final iteration's findings when its `.done` exists), or "⏱ codex timed_out" when its `.done` was missing otherwise}
 ```
 
 **TaskUpdate**: mark "Step 6 Adversarial Rework Loop" completed. If overall confidence from adversarial findings drops below 0.7 AND re-run of specific axes warranted, create new task "Step 3 re-score: {axis list}" and mark in_progress before re-fetching — keep task list current when confidence-driven reruns happen.

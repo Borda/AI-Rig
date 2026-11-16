@@ -81,7 +81,7 @@ export RESOLVE_APPROVED_HOOKS=""
 python "$PLUGIN_ROOT/bin/commit_lint_fixes.py"  # timeout: 90000
 ```
 
-**Gate loop — QA gate** (max 3 iterations; every test run inside it is targeted, never the full suite):
+**Gate loop — QA gate** (max 3 iterations; every test run inside it is targeted, never the full suite, and runs through the PR-code guard per `dispatch-prelude.md` §PR-code approval):
 
 1. Run truth-check — `foundry:qa-specialist` reports blocking issues
 2. Fix — apply fixes inline or via `IMPL_AGENT`
@@ -101,17 +101,18 @@ python "$PLUGIN_ROOT/bin/resolve_test_plan.py" full-command --script "$IMPL_DIR/
 Then run it once, as a **background** Bash call (`run_in_background: true` — a large suite outlives the ~10 min foreground cap), and end the turn; its exit re-invokes the orchestrator, no polling:
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; cannot run the full suite"; exit 1; }
 _T0=$(date +%s)
-bash -- "$IMPL_DIR/full-suite.sh" > "$IMPL_DIR/full-suite.log" 2>&1
+python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" run --approval-file "$IMPL_DIR/code-approval.txt" -- bash -- "$IMPL_DIR/full-suite.sh" > "$IMPL_DIR/full-suite.log" 2>&1
 echo "$?" > "$IMPL_DIR/full-suite.rc"
 # a background call's own tool timing ends at dispatch, so the suite's wall time is recorded here instead
 echo "$(( $(date +%s) - _T0 ))" > "$IMPL_DIR/full-suite.seconds"
 tail -40 "$IMPL_DIR/full-suite.log"
 ```
 
-Exit 0 → proceed. Non-zero → the failing tests are blocking issues and count against the same 3-iteration gate cap: fix them (gate-loop step 2; the failing ids may be rerun while fixing, but that is never the verification), then **rerun the full suite** — the gate-loop verification for a full-suite failure is always a full-suite rerun — with the same two blocks — background run, rc and log rewritten on disk — because a fix can break something outside the targeted set. Repeat until the full suite exits 0 or the cap is spent; at the cap stop with the step 4 message, `! BLOCKED — QA gate blocked push — review findings above, fix errors, then re-run /resolve or push manually after fixing.` A green full-suite run must be the last test evidence before Step 10. Record the command, its source and every run's result in the final report.
+A log that opens with an `untrusted-guard:` refusal (approval missing or stale, or no usable sandbox) means the suite did not run, whatever the exit code says (pytest also uses 3 and 4): record `full test suite not run — PR-code execution not approved` as an execution gap in the final report, never as a pass, and when the refusal says the approval is stale, rescan and ask again per `dispatch-prelude.md` §PR-code approval. Exit 0 → proceed. Non-zero → the failing tests are blocking issues and count against the same 3-iteration gate cap: fix them (gate-loop step 2; the failing ids may be rerun while fixing, but that is never the verification), then **rerun the full suite** — the gate-loop verification for a full-suite failure is always a full-suite rerun — with the same two blocks — background run, rc and log rewritten on disk — because a fix can break something outside the targeted set. Repeat until the full suite exits 0 or the cap is spent; at the cap stop with the step 4 message, `! BLOCKED — QA gate blocked push — review findings above, fix errors, then re-run /resolve or push manually after fixing.` A green full-suite run must be the last test evidence before Step 10. Record the command, its source and every run's result in the final report.
 
 - Warnings (non-blocking) → record in report; don't block push

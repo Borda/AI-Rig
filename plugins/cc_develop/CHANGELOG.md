@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.48.0
+
+- Codex out-of-credit stop: once a bridge call fails and its incident file records fault `quota-exhausted`, a develop run stops calling Codex for the rest of the run.
+  - The quality stack records `codex-blocked:quota` in the run's checkpoint and keeps every remaining mechanical-delegation task in-house; later challengers skip their own Codex cross-check.
+  - `/develop:review` saves a quota-blocked co-review as `codex-blocked:quota` in `codex.md`, and its challenger then runs without Codex.
+  - The report shows the quota stop as its own outcome, never as a no-op or a missing bridge, and the doomed follow-up calls are gone.
+  - Rate limits, capacity errors, older bridges and verdict text alone keep today's behaviour.
+- A challenger's own Codex quota stop now ends Codex for the run: a plan-gate or implementation challenger that reports `codex-blocked:quota` is recorded in the feature, fix or refactor checkpoint, and `/develop:review` saves Agent 7's signal in `codex.md`, so a Step 4 challenger verifier and every later bridge call skip Codex. Review → fix loops pass `--no-codex` to every later challenger after that signal, never switch to a `bridge:review` route, and report a further security-filter review blocked with the quota cause instead of dispatching it. An envelope's key decides alone; the report line counts only for a challenger asked for no envelope, and only as the first line under its first Cross-Check heading outside a code block, so Codex output or quoted text never triggers the stop.
+
 ## 0.47.2
 
 - Windows review reports remain visible to native hooks; refactor gates exclude accepted-red files with Windows line endings, and targeted selection accepts Windows separators.

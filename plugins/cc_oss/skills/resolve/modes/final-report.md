@@ -19,13 +19,33 @@ echo "PUSH_STATUS=$PUSH_STATUS"
 case "$PUSH_STATUS" in blocked-guard|blocked-permission|blocked-needs-manual-push) echo "PUSH_UNBLOCK=$_IMPL_DIR/push-unblock.txt"; cat "$_IMPL_DIR/push-unblock.txt" 2>/dev/null || echo "⚠ push-unblock.txt missing" ;; esac
 IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_DEGRADED=""
 [ -z "$INTAKE_DEGRADED" ] || { echo "INTAKE=degraded $INTAKE_DEGRADED"; cat "${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}" 2>/dev/null || echo "⚠ intake gap list missing"; }
+IFS= read -r _C1_QUOTA < "$_IMPL_DIR/c1-quota-blocked.txt" 2>/dev/null && echo "C1 $_C1_QUOTA"
+find "$_IMPL_DIR" -maxdepth 1 -name 'c1-quota-partial-*.patch' 2>/dev/null | sed 's/^/C1_PARTIAL_PATCH=/'  # timeout: 5000
 IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
 cat "$_OSS_RESOLVE/templates/resolve-report.md"  # timeout: 5000
 ```
 
 Report template (loaded above) — use for section structure. Its `### Push` section shows the printed `PUSH_STATUS` through the template's status table, never a prose recollection of Step 10. Its `### Review Intake` section appears only when the block printed `INTAKE=degraded`, built from the gap JSON printed beside it, never from recollection of the triage. More than 50 items selected → the report's summary carries Step 3d's large-selection line.
 
-**Tell the review what happened.** When this run consumed a review report, append one outcome per review-sourced item (`fixed` / `self-resolved` / `rejected` / `skipped` / `pending`, finding title and location, commit hash, reason) to `resolution.jsonl` beside that report. `fixed` and `self-resolved` need an implementation record (Phase 2 commit, Codex-direct record, or a `[resolve No.<id>]` commit after this run's base head); an accepted but unmerged item stays `pending`. The next `/oss:review` of this PR reads the ledger, confirms earlier fixes at the new head and re-checks rejected findings before deciding whether to report them again. Append-only and idempotent per run; the script builds records from this run's own files, never from recollection:
+Codex quota stop: a printed `C1 codex-blocked:quota item=<id>` → the summary carries one `codex-blocked:quota` line:
+
+- Codex quota exhausted at that item; no further C1 call this run.
+- Later C1 candidates ran through Phase 1+2.
+- Shown as its own outcome, never as a no-op or a failure.
+- Each printed `C1_PARTIAL_PATCH=<path>` goes on that line too: the stopped call's partial edit, kept outside the tree.
+
+A printed `C1 codex-blocked:quota source=challenger` → the same `codex-blocked:quota` line, stating instead:
+
+- A challenger's own Codex cross-check hit the quota stop; no C1 call ran after it.
+- C1 candidates not done by then ran through Phase 1+2; later challengers skipped their Codex cross-check.
+- Shown as its own outcome, never as a no-op or a failure.
+
+**Tell the review what happened.** When this run consumed a review report, append one outcome per review-sourced item to `resolution.jsonl` beside that report.
+
+- Each outcome: `fixed` / `self-resolved` / `rejected` / `skipped` / `pending`, finding title and location, commit hash, reason.
+- `fixed` and `self-resolved` need an implementation record (Phase 2 commit, Codex-direct record, or a `[resolve No.<id>]` commit after this run's base head); an accepted but unmerged item stays `pending`.
+- The next `/oss:review` of this PR reads the ledger, confirms earlier fixes at the new head and re-checks rejected findings before deciding whether to report them again.
+- Append-only and idempotent per run; the script builds records from this run's own files, never from recollection:
 
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
@@ -40,7 +60,11 @@ else
 fi
 ```
 
-**Unblock push — last actionable item.** `PUSH_STATUS` is `blocked-guard`, `blocked-permission` or `blocked-needs-manual-push` → the block above `cat`s the `PUSH_UNBLOCK` file; end the report — after `**Next**`, the Challenge Log, Confidence, and every other section — with a `## Unblock push` section that repeats its lines verbatim in a fenced block. The user returns to the bottom of the report and runs exactly those lines; never paraphrase, reorder, or regenerate them. File missing or empty → print `⚠ push-unblock.txt missing — scroll to Step 10 for the guard's exact lines` in that section instead.
+**Unblock push — last actionable item.** Applies when `PUSH_STATUS` is `blocked-guard`, `blocked-permission` or `blocked-needs-manual-push`.
+
+- The block above `cat`s the `PUSH_UNBLOCK` file; end the report — after `**Next**`, the Challenge Log, Confidence, and every other section — with a `## Unblock push` section that repeats its lines verbatim in a fenced block.
+- The user returns to the bottom of the report and runs exactly those lines; never paraphrase, reorder, or regenerate them.
+- File missing or empty → print `⚠ push-unblock.txt missing — scroll to Step 10 for the guard's exact lines` in that section instead.
 
 Immediately before printing it — the one standalone bookkeeping call, so a compaction mid-report cannot leave the run `in_progress` (`rules/task-lifecycle.md` §TaskUpdate before long output):
 
@@ -50,7 +74,11 @@ TaskUpdate(task_id=TASK_CLOSE, status="completed")
 
 **Print the final report — including the full Action Items resolution table — inline to terminal.**
 
-> **Output-Routing exemption (canonical)**: the Step 11 final report is a read-in-context, acted-on-immediately resolution summary the user must see to confirm every item and how it resolved. Always print the full Action Items table inline to terminal regardless of row count — this is the whole point of the report. Global Output Routing (*5+ findings → `.temp/output-*.md`, summary only*) does **not** apply; never divert this table to a file in place of showing it. Writing a durable copy to `.reports/resolve/` in addition is fine, but the inline terminal print is mandatory and never replaced by a prose summary.
+> **Output-Routing exemption (canonical)**: the Step 11 final report is a read-in-context, acted-on-immediately resolution summary the user must see to confirm every item and how it resolved.
+>
+> - Always print the full Action Items table inline to terminal regardless of row count — this is the whole point of the report.
+> - Global Output Routing (*5+ findings → `.temp/output-*.md`, summary only*) does **not** apply; never divert this table to a file in place of showing it.
+> - Writing a durable copy to `.reports/resolve/` in addition is fine, but the inline terminal print is mandatory and never replaced by a prose summary.
 
 **Action Items table** — one row per selected item, columns: `#` | `Type` | `Change` | `Status` | `Resolution` | `Commit`:
 
@@ -60,11 +88,21 @@ TaskUpdate(task_id=TASK_CLOSE, status="completed")
 - `Commit`: short SHA (7 chars); `—` when `COMMIT_MODE=stage`
 - For `location: discussion` rows append `· thread (no GH resolve)` to Status — no GitHub Resolve button exists for PR main-thread comments
 
-Include `### Challenge Log` section in report — source of truth is `$IMPL_DIR/challenge-log.txt` (Read it; one `key=value` record per line, written by the shared append block in `dispatch-prelude.md`, called by C1 and Phase 1), never a recollection of verdicts from earlier in the conversation. File absent or empty (Step 8 skipped, skip-all, or `--no-challenge`) → omit the section; never treat the failed Read as an error. Columns: `#` | `Finding` | `Evidence` | `Resolution` — no `Suggestion` column: `Resolution` is the outcome and already names what was done with the suggestion, and `suggestion_why` stays in `challenge-log.txt`. Every cell must be self-contained — reader gets full context from that row alone, never by cross-referencing another row or recalling earlier conversation:
+Include `### Challenge Log` section in report.
+
+- Source of truth is `$IMPL_DIR/challenge-log.txt` (Read it; one `key=value` record per line, written by the shared append block in `dispatch-prelude.md`, called by C1 and Phase 1), never a recollection of verdicts from earlier in the conversation.
+- File absent or empty (Step 8 skipped, skip-all, or `--no-challenge`) → omit the section; never treat the failed Read as an error.
+- Columns: `#` | `Finding` | `Evidence` | `Resolution` — no `Suggestion` column: `Resolution` is the outcome and already names what was done with the suggestion, and `suggestion_why` stays in `challenge-log.txt`.
+
+Every cell must be self-contained — reader gets full context from that row alone, never by cross-referencing another row or recalling earlier conversation:
 
 - `Finding`: one-line gist of the reviewer's comment (from `finding` in `CHALLENGE_LOG`) — what was flagged, not just its id
 - `Evidence`: bracketed flag + reason on one line, e.g. `[VALID] — <evidence_why>` or `[REJECT] — <evidence_why>`. Reason never empty, never generic — state in a few words what the verdict was about. Never print a bare `VALID`/`REJECT`, bracketed or not, with no reason
-- `Resolution`: concrete outcome, never a bare label. `detail=pending-impl:<id>` → backfill before printing: look up that id's `Commit` SHA in the Action Items table above and run `git log -1 --format=%s <sha>` for the one-line summary of what changed; render as `as-suggested: <that summary>`. `detail=<alternative text>` (self-resolved rows) → render as `self-resolved: <alternative text>`. `detail=<evidence_why>` (rejected rows) → render as `rejected: <evidence_why>`. If a commit lookup fails, state `as-suggested: (commit summary unavailable, see commit <sha>)` — never fall back to printing the bare word `as-suggested` alone
+- `Resolution`: concrete outcome, never a bare label.
+  - `detail=pending-impl:<id>` → backfill before printing: look up that id's `Commit` SHA in the Action Items table above and run `git log -1 --format=%s <sha>` for the one-line summary of what changed; render as `as-suggested: <that summary>`.
+  - `detail=<alternative text>` (self-resolved rows) → render as `self-resolved: <alternative text>`.
+  - `detail=<evidence_why>` (rejected rows) → render as `rejected: <evidence_why>`.
+  - If a commit lookup fails, state `as-suggested: (commit summary unavailable, see commit <sha>)` — never fall back to printing the bare word `as-suggested` alone
 
 Omit section when `--no-challenge`.
 

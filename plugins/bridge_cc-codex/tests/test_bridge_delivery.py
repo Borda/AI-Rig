@@ -552,7 +552,7 @@ class TestFinalResultAccounting:
         assert (tmp_path / "accounting-runs.txt").read_text() == "run\nrun\n"
         assert result["status"] == ("blocked" if fail_retry else "complete")
         assert len(incidents) == (2 if fail_retry else 1)
-        assert first["schema_version"] == 1
+        assert first["schema_version"] == 2
         assert first["run_id"] == request.run_id
         assert first["direction"] == request.direction
         assert first["fault"] == first_fault
@@ -663,7 +663,7 @@ class TestFinalResultAccounting:
 
         incident = json.loads((tmp_path / result["incident"]).read_text())
         assert result["status"] == "refused"
-        assert incident["schema_version"] == 1
+        assert incident["schema_version"] == 2
         assert incident["run_id"] == nested.run_id
         assert incident["direction"] == nested.direction
         assert incident["duration_seconds"] is None

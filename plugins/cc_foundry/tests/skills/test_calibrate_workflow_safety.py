@@ -299,12 +299,16 @@ def test_apply_requires_approval_of_filtered_concrete_edits() -> None:
 def test_pipeline_children_share_reserved_tier_slots_across_all_phases() -> None:
     """Concurrent pipelines cannot each consume the session's entire model-tier pool."""
     lines = (_CALIBRATE / "templates/pipeline-prompt.md").read_text(encoding="utf-8").splitlines()
-    budget = next(line for line in lines if line.startswith("**Shared spawn budget**:"))
-    assert "max(1, floor((tier ceiling - coordinators in that tier) / coordinators))" in budget
-    assert "haiku 4 / sonnet 1 / opus 1" in budget
-    assert "weak probes, probe scorers, target runs, baselines, Claude scorers and curator" in budget
-    assert "counting all pipeline coordinators and children" in budget
-    assert "haiku 20 / sonnet 8 / opus 5" in budget
+    start = next(index for index, line in enumerate(lines) if line.startswith("**Shared spawn budget**:"))
+    end = next(index for index in range(start + 1, len(lines)) if lines[index].startswith("**Scratchpad discipline**"))
+    budget = lines[start:end]
+    assert any("max(1, floor((tier ceiling - coordinators in that tier) / coordinators))" in line for line in budget)
+    assert any("haiku 4 / sonnet 1 / opus 1" in line for line in budget)
+    assert any(
+        "weak probes, probe scorers, target runs, baselines, Claude scorers and curator" in line for line in budget
+    )
+    assert "counting all pipeline coordinators and children" in budget[0]
+    assert "haiku 20 / sonnet 8 / opus 5" in budget[0]
     assert not any("Issue ALL spawns" in line or "all scorers in a single response" in line for line in lines)
 
 

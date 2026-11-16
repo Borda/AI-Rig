@@ -22,6 +22,23 @@ def flat(text: str) -> str:
     return " ".join(text.split())
 
 
+def list_after(lines: list[str], start: int) -> list[str]:
+    """Return the contiguous bullet items that follow ``lines[start]``, stripped of their indentation.
+
+    Blank lines before the first bullet are skipped, so a lead sentence separated from its list by one blank line still
+    finds the list; the first blank or non-bullet line after a bullet ends it.
+    """
+    items: list[str] = []
+    for line in lines[start + 1 :]:
+        stripped = line.strip()
+        if not stripped and not items:
+            continue
+        if not stripped.startswith("- "):
+            break
+        items.append(stripped)
+    return items
+
+
 def load_module(path: Path, name: str, *, register: bool = False) -> ModuleType:
     """Load the script at ``path`` as a module called ``name``, so sibling plugins cannot shadow each other.
 

@@ -643,6 +643,47 @@ def test_task_file_refuses_a_fifo_without_blocking(tmp_path: Path, capsys: pytes
     assert response["error"] == "--task-file must be a regular file"
 
 
+@pytest.mark.parametrize(
+    "network",
+    [
+        pytest.param("none", id="no-network"),
+        pytest.param("github-read", id="github-read-profile"),
+    ],
+)
+@pytest.mark.parametrize(
+    "verb",
+    [
+        pytest.param("advise", id="advise"),
+        pytest.param("review", id="review"),
+        pytest.param("implement", id="implement"),
+    ],
+)
+def test_codex_argv_disables_hosted_web_search_in_every_network_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verb: str, network: str
+) -> None:
+    """The bridge never grants web access: hosted web search is switched off beside the sandbox network pin.
+
+    Codex's native `web_search` tool runs on the provider side, so `sandbox_workspace_write.network_access=false` does
+    not cover it; a real transcript showed an `open_page` search call under `--network none`. The documented
+    `web_search` setting accepts `disabled`, so it is pinned as a config override in every mode, including the `github-
+    read` profile, whose domain list does not govern a provider-side tool either. Resume carries it too.
+    """
+    # The github-read profile is verified on darwin only; the refusal elsewhere has its own tests.
+    monkeypatch.setattr(bridge_call.sys, "platform", "darwin")
+    schema_path = tmp_path / "core-schema.json"
+    schema_path.write_text("{}", encoding="utf-8")
+    fresh = bridge_call.build_codex_argv(_request(tmp_path, verb=verb, network=network), schema_path)
+    overrides = [fresh[index + 1] for index, arg in enumerate(fresh) if arg == "-c"]
+
+    assert 'web_search="disabled"' in overrides
+    if verb == "implement" and network == "none":
+        resumed = bridge_call.build_codex_argv(
+            _request(tmp_path, verb="implement", session_id="session-fixed", origin_workspace=tmp_path), schema_path
+        )
+        resumed_overrides = [resumed[index + 1] for index, arg in enumerate(resumed) if arg == "-c"]
+        assert 'web_search="disabled"' in resumed_overrides
+
+
 def test_fresh_review_and_resume_argv_preserve_routing_contract(tmp_path: Path) -> None:
     """Prevent subtle Codex argv drift that changes sandbox, review, or resume behavior.
 
@@ -3098,13 +3139,17 @@ def test_claude_provider_error_preserves_bounded_api_context_and_zero_usage(
 
     incident = json.loads((tmp_path / result["incident"]).read_text(encoding="utf-8"))
     transcript = (tmp_path / result["transcript_path"]).read_text(encoding="utf-8")
+    # Intended contract change: spend-limit wording on a 429 is a classified quota stop, so the verdict is the
+    # harness-authored line (peer named by direction, provider text bounded) and the incident fault is the class.
     assert result["status"] == "blocked"
-    assert result["verdict"].startswith("api_error: HTTP 429: Spend limit reached; ")
-    assert result["verdict"] == "api_error: HTTP 429: " + provider_message
+    assert result["verdict"].startswith("Claude quota exhausted: api_error: HTTP 429: Spend limit reached; ")
+    assert result["verdict"] == "Claude quota exhausted: " + ("api_error: HTTP 429: " + provider_message)[:300]
+    assert result["blockers"] == [result["verdict"]]
     assert result["tokens"] == {"input_tokens": 0.0, "output_tokens": 0.0}
     assert "details" not in result
-    assert incident["fault"] == "blocked"
+    assert incident["fault"] == "quota-exhausted"
     assert incident["reason"] == result["verdict"]
+    assert incident["returncode"] == 1
     assert provider_result["details"][0] in transcript
     assert provider_result["details"][0] not in result["verdict"]
 
@@ -3814,8 +3859,9 @@ def test_write_verb_effort_failure_is_reported_without_a_second_attempt(
 def test_workspace_state_degrades_when_git_is_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Prevent a machine without Git from crashing write-capable dispatch instead of degrading.
 
-    Starting git raises FileNotFoundError, as on a host without Git. The workspace snapshot degrades to an empty list
-    instead of raising, so write-capable dispatch still works without Git.
+    Starting git raises FileNotFoundError, as on a host without Git. The workspace snapshot degrades to ``None`` (not
+    computed) instead of raising, so write-capable dispatch still works without Git and the incident can tell an unknown
+    delta from an empty one.
     """
 
     def _missing_git(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -3824,7 +3870,8 @@ def test_workspace_state_degrades_when_git_is_unavailable(tmp_path: Path, monkey
 
     monkeypatch.setattr(bridge_call.subprocess, "run", _missing_git)
 
-    assert bridge_call._workspace_state(tmp_path) == []
+    assert bridge_call._workspace_state(tmp_path) is None
+    assert bridge_call._workspace_delta(None, tmp_path) is None
 
 
 def test_supervisor_preserves_a_cancellation_requested_during_its_final_record_write(

@@ -21,12 +21,25 @@ case "$RESUME_RUN_ID" in *'<'*'>'*|""|*/*) echo "! BLOCKED — resume: run-id no
 [ -f ".experiments/state/$RESUME_RUN_ID/state.json" ] || { echo "! BLOCKED — resume: .experiments/state/$RESUME_RUN_ID/state.json not found"; exit 1; }
 mkdir -p ".experiments/$RESUME_RUN_ID"  # timeout: 5000 — RUN_DIR: hypothesis queue, checkpoint, journal
 echo "$RESUME_RUN_ID" > "${TMPDIR:-/tmp}/research-run-id-${CSID}"
-python "$PLUGIN_ROOT/bin/extract-keep-flag.py" research-run "$ARGUMENTS"  # timeout: 5000 — keep-items sentinel for Phase 8
-python "$PLUGIN_ROOT/bin/codemap-flag.py" research-run "$ARGUMENTS" || exit 1  # timeout: 5000 — codemap-enabled sentinel; prints CODEMAP_RAW
 echo "RUN_ID=$RESUME_RUN_ID RUN_DIR=.experiments/$RESUME_RUN_ID"
 ```
 
-`RUN_DIR` = `.experiments/<run-id>` (the R1 convention). Codemap printed ≠ `off` → follow R1's codemap-gates block.
+`RUN_DIR` = `.experiments/<run-id>` (the R1 convention). `--keep` items and the codemap mode came from this request's own arguments in the `run/SKILL.md` Resume Mode block before this file loaded; the codemap mode it printed ≠ `off` → follow R1's codemap-gates block.
+
+**Lift a stored Codex quota stop** here, before R2 and any Codex dispatch:
+
+- Run the block below on every resume: `codex_state.py unblock` decides, so no reading of the arguments here gates it.
+- It lifts only when this invocation's own arguments carry a typed `--codex`, a new approval (`modes/codex-copilot.md` co-pilot dispatch approval) that `run/SKILL.md` Resume Mode recorded with `codex_state.py arm` before loading this file. A `--codex` restored from `flags` or a resume without it never approves the lift: the stored stop stays.
+- A quota stop recorded later in this session spends that approval: re-running the block after a compaction or a re-entry keeps that stop and prints why.
+- Code cannot tell another skill's or agent's resume from the user's: a skill or agent never passes `--codex` to a resume on the user's behalf.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name research) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
+[ -n "$RUN_ID" ] || { echo "! BLOCKED — resume: run-id sentinel missing"; exit 1; }
+python "$PLUGIN_ROOT/bin/codex_state.py" unblock --state ".experiments/state/${RUN_ID}/codex-state"  # timeout: 5000 — lifts only a stop stored before this session's typed --codex; refusal prints why, file untouched; counters kept
+```
 
 1. Read `state.json`. Restore `clarification_prompt`, `colab_hw`, `sandbox_mode`, and the `flags` object R1 persisted (`--team`, `--compute`, `--codex`, `--researcher`, `--architect`, `--journal`, `--hypothesis`, `--scientist`). `flags` absent (run started before R1 persisted it) → no stored flags. Precedence: flags passed with this `--resume` invocation override stored ones. `team_mode` present → team run: restore `RUN_DIR` = `team_mode.run_dir`, but defer dispatch until the recovery and precondition steps below finish.
 

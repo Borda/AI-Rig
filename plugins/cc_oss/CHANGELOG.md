@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.62.0
+
+- The PR-code guard shipped with the review, resolve and analyse gates now keeps the real checkout, including `.env`, out of the Linux sandbox and starts a bare program such as `bash` from the allowlisted `PATH` on Windows, so a full-suite gate no longer starts the WSL launcher there.
+- `/oss:review`, `/oss:resolve` and the `/oss:analyse` reproduction step now scan contributed code before running it and run it contained, instead of running it in the project environment with your full environment and no isolation. The guard shows you the evidence and a risk level, runs the command in a disposable copy of the working tree with an environment allowlist and a temporary home, and under a sandbox where the host has one (network denied, writes confined, the real home unreadable except the interpreter and tools).
+  - `/oss:resolve` asks the PR-code question inside its existing hook-approval question, so it gains no extra stop; its QA gate, item agents and full-suite run all go through the guard under that one answer, and a declined answer is reported as an execution gap, never a pass.
+  - Running without a sandbox is possible only on your recorded choice, and code the scan rates `likely-malicious` is presented as "do not run": choosing to run is your explicit override.
+  - Packages the base ref declares and the official index supplies are trusted by name; added packages, direct URL/VCS references, index overrides, lookalike names and changed lockfiles are reported.
+- `/oss:resolve` stops sending action items to Codex for the rest of the run once the bridge reports a Codex quota stop (out of credits, usage limit or subscription), instead of repeating a call that cannot succeed for every later Codex-eligible item.
+  - The item that hit the stop and every later one run through the specialists, and later challengers skip their own Codex cross-check.
+  - The final report shows `codex-blocked:quota` rather than a no-op or failure; items Codex finished earlier keep their Codex co-author trailer.
+  - Edits the stopped call left behind are saved as a patch in the run directory, the tree is restored, and the patch is handed to that item's specialists as a starting point, so nothing is lost and the merge-back no longer hits them.
+  - Only the bridge's own incident record triggers the stop, never reply wording; rate-limit and capacity stops, older bridge versions and runs without the bridge behave as before.
+- `/oss:resolve` topic-group and all-items commits carry the Codex co-author trailer only when they include an item Codex implemented, instead of whenever Codex was available for the run, so a commit holding only specialist work, including items a Codex quota stop sent to the specialists, no longer credits Codex.
+- `/oss:resolve` on a bare review comment and `/oss:analyse vitality` apply the same Codex quota stop. Comment dispatch hands the comment to the matching specialist and ends the Codex review loop; vitality runs its remaining adversarial passes with the challenger alone and without its Codex cross-check. Both report `codex-blocked:quota` instead of a no-op or a timeout.
+- `/oss:resolve`, `/oss:analyse vitality` and `/oss:review` also stop calling Codex when a `foundry:challenger` reports that its own Codex cross-check stopped on quota (`codex_blocked: "quota"` in its envelope, which decides alone, or, when it returned no envelope, the `⚠ codex-blocked:quota` line opening the first unfenced Codex Cross-Check section), instead of repeating calls that cannot succeed. Challengers without that signal behave as before.
+  - Resolve and vitality skip Codex for the rest of the run and later challengers run without their cross-check; resolve's final report names the challenger as the source.
+  - `/oss:review` skips its Codex co-review when the acceptance-gate challenger reports the stop, and the report says why. After that stop, or a quota incident on the co-review itself, the challengers verifying critical findings run without their Codex cross-check.
+  - Review-and-fix loops pass `--no-codex` to later challenger rounds, dispatch no further security-filter review, and report it blocked with the quota cause instead of PASS.
+- `/oss:analyse vitality` loads its Step 5 and Step 6 instructions through the plugin's path renderer, so their helper calls resolve to the installed plugin.
+
 ## 0.61.0
 
 - `get_plugin_install_path.py` writes UTF-8 with LF newlines to stdout and stderr and `resolve_shared_path.py` does the same for stderr, so Windows callers get the plugin path without carriage returns and without locale-encoded messages.

@@ -45,7 +45,12 @@ Re-derive group membership after all reassignments (file overlap + import coupli
 | `per-specialist` | ≤8 items/spawn (`GROUP_CAP=8`); one file past 8 → chained links | pool-capped waves |
 | `preview` | resolved below before any split | resolved below |
 
-`per-specialist` only widens the cap to `GROUP_CAP=8`; the file-ownership tiebreak and import-coupling merge run first and unchanged — they are cross-specialist reassignments, so no width answer reaches them. Fewer spawns than `auto` (a specialist with ≤8 items gets one worktree), still inside the ~55–60 tool-call stall bound (`claude-config.md` §Agent/Skill Spawn Discipline): past 8 items it splits and chains exactly as above. A group that returns `partial: true` is handled as any other partial — its unfinished items stay pending and are reported at Step 11. An unreadable or unexpected sentinel value is `auto`: this gate tunes cost, so a lost answer degrades to current behaviour rather than blocking dispatch.
+`per-specialist` only widens the cap to `GROUP_CAP=8`.
+
+- The file-ownership tiebreak and import-coupling merge run first and unchanged — they are cross-specialist reassignments, so no width answer reaches them.
+- Fewer spawns than `auto` (a specialist with ≤8 items gets one worktree), still inside the ~55–60 tool-call stall bound (`claude-config.md` §Agent/Skill Spawn Discipline): past 8 items it splits and chains exactly as above.
+- A group that returns `partial: true` is handled as any other partial — its unfinished items stay pending and are reported at Step 11.
+- An unreadable or unexpected sentinel value is `auto`: this gate tunes cost, so a lost answer degrades to current behaviour rather than blocking dispatch.
 
 **Spawn wave cap** (per `claude-config.md` §Parallel Spawn Ceilings — `CAP_OPUS=5`, `CAP_SONNET=8`): `GROUP_CAP` above bounds one spawn's items, not the combined sub-group count across specialist types.
 
@@ -87,7 +92,14 @@ Follow the Boundary step printed above before Phase 2 dispatch; reports are `cha
 
 **Group-preview gate — `DISPATCH_MODE=preview` only; every other mode skips this section entirely.** The user asked at Step 3d to see the real groups before anything spawns, which is why this is the one gate the default path never pays.
 
-1. Build the formed-groups table, one row per group: `specialist · item ids · files · reassignment reason if any`. Include every group; no compression mode or communication style replaces it with a count. Write the full table to `$IMPL_DIR/phase2-groups-table.md` before the call. List the groups as plain lines in the question text, about 6 lines, within a 1,500-character whole-question budget; reserve the question, compact hint and file path first. Past that budget, list the top groups that fit plus the total group count and file path. Print the full table once as the last text of the reply message that issues the group question, never in an option’s `preview`, never Bash stdout. Options carry labels and one-line descriptions only, with no preview.
+1. Build the formed-groups table, one row per group: `specialist · item ids · files · reassignment reason if any`.
+
+   - Include every group; no compression mode or communication style replaces it with a count.
+   - Write the full table to `$IMPL_DIR/phase2-groups-table.md` before the call.
+   - List the groups as plain lines in the question text, about 6 lines, within a 1,500-character whole-question budget; reserve the question, compact hint and file path first.
+   - Past that budget, list the top groups that fit plus the total group count and file path.
+   - Print the full table once as the last text of the reply message that issues the group question, never in an option’s `preview`, never Bash stdout.
+   - Options carry labels and one-line descriptions only, with no preview.
 
 2. The question text closes with this line and the table file path, since the gate is human idle and the contract was refreshed immediately above: `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. ``
 
@@ -95,7 +107,11 @@ Follow the Boundary step printed above before Phase 2 dispatch; reports are `cha
 
 4. Map the answer and **run the matching Step 3d dispatch-mode block again** so the sentinel holds a width, never `preview`: (a) → `sequential` · (b) → `auto` · (c) → `per-specialist` · unanswered → `auto`. A `preview` value surviving into Phase 3 or a post-compaction resume would re-ask a decided gate.
 
-5. The previewed groups were formed under the `auto` split, so a resolved width of `per-specialist` **re-runs the import-coupling merge at `GROUP_CAP=8`, then re-splits each specialist's items at 8** per the split rules above before any tag is derived — a pair the merge left split at 5 may now co-locate, sub-groups merge back up to 8 items, a chain re-cuts its links at 8; the shown grouping was the question, not the commitment. Then re-run the boundary-1 block: it is idempotent here (`worktrees-before.txt` is still empty, nothing spawned), and without it `skill-contract.md` keeps `dispatch-mode=preview` while the sentinel holds a width, so a compaction inside Phase 2's multi-minute window resumes from two disagreeing sources.
+5. The previewed groups were formed under the `auto` split, so a resolved width of `per-specialist` **re-runs the import-coupling merge at `GROUP_CAP=8`, then re-splits each specialist's items at 8** per the split rules above before any tag is derived.
+
+   - A pair the merge left split at 5 may now co-locate, sub-groups merge back up to 8 items, a chain re-cuts its links at 8; the shown grouping was the question, not the commitment.
+
+   Then re-run the boundary-1 block: it is idempotent here (`worktrees-before.txt` is still empty, nothing spawned), and without it `skill-contract.md` keeps `dispatch-mode=preview` while the sentinel holds a width, so a compaction inside Phase 2's multi-minute window resumes from two disagreeing sources.
 
 6. (d) Stop → leave every worktree unspawned, mark no item `in_progress`, and run the stop-path release fence in `dispatch-prelude.md` (it releases the branch mutex this run took at the prelude — skipping it leaks the lock until the healer's 30-min cap; no worktree exists yet, so Phase 3 stays unloaded). Report the formed groups, and the Phase 2 items as pending; items already committed by C1 in `each` mode stay resolved and are reported as such. Then jump to Step 11. Never partially dispatch a stopped run.
 
@@ -105,9 +121,28 @@ Derive `<group_tag>` per group as a short kebab-case slug naming its shared file
 - `description` = 3–5 words naming this group's scope (files/theme touched), never echoing `name` or the shared effort/instruction boilerplate below.
 - Compose every group's `name`/`description`/prompt-line-1 triple in one pass before firing, and confirm each prompt line 1 opens with that group's own theme, not the shared "Effort level" framing — this is a `--` fanout over one target (same PR/run) same as Phase 1's challenge dispatch, so the same pre-spawn check applies (task-lifecycle.md §Spawn slots, "When every agent shares one target"): the framing sentence below is identical across every group and belongs after the lead, never as the row's visible label.
 
-**Persist the groups once, before the first spawn** — create `$IMPL_DIR/phase2-groups.tsv` with the Write tool, one row per spawn: `<group_tag>\t<link>\t<item ids, space-separated>` (link `1` for an unchained group; a chain gets one row per link, `1..K`). Write it after any preview-gate re-split and never rewrite it. A resumed run takes group tags and per-link items from this file and never re-derives a slug: a different slug misses `chain-<tag>.tsv` and starts link 1 off base — a second lineage on that file. The spawn-base block below refuses to run without the file and blocks any tag it does not list.
+**Persist the groups once, before the first spawn** — create `$IMPL_DIR/phase2-groups.tsv` with the Write tool, one row per spawn: `<group_tag>\t<link>\t<item ids, space-separated>` (link `1` for an unchained group; a chain gets one row per link, `1..K`).
 
-**Spawn base** — every Phase 2 worktree, chained or not, starts from a pinned sha, never the harness default: Claude Code cuts a subagent worktree from `origin/<default>` unless `worktree.baseRef` is `head` (`_shared/worktree-isolation.md`), so an unpinned specialist edits the default branch's copy of PR files and its picks conflict or go stale in Phase 3. In each spawn response, first create `$IMPL_DIR/phase2-spawn-now.txt` with the Write tool — the group tags spawning now (this wave's groups, or the one chain whose next link is due), space-separated, taken from `phase2-groups.tsv` — then run this block once; per tag it prints the link number, base and that link's items from `phase2-groups.tsv`. The block reads the tags from that file, never from a substituted placeholder, so its text stays invariant and matches the blueprint manifest in unattended Run 2. It consumes the file (renamed to `phase2-spawn-now.txt.done`), so every spawn response writes a fresh list. It also records every link it prints `→ spawn` for as a `<group_tag>\t<link>` row in `$IMPL_DIR/phase2-spawned.tsv`, and never prints `→ spawn` for a recorded link: a list redeclaring a link already spawned — a resume after compaction while that link still runs — gets `⏳ … spawn nothing` instead of a second agent on the same items (duplicate commits per item, a Phase 3 BLOCK). Spawn every `→ spawn` link in the very next response, writing its watch row (§Health monitoring) in that same response. A recorded link never spawned (a compaction in between) keeps its items pending for the Step 8 straggler gate, never a second spawn. A resume tells it apart by that watch row: present → `⏳ … spawned` (run `agent_watch.py`, wait only while it reads `pending`); absent → the block arms `agent-watch-impl-<group_tag>.link<k>.tsv` with a zero deadline and prints `⚠ … recorded but no watch row` — mark the link ⏱ and move on, since no notification will ever come for an agent that never started. `phase2-groups.tsv` is validated on every run: a malformed row, a (tag, link) listed twice, a tag whose links skip a number, or an item in two rows blocks before anything spawns.
+- Write it after any preview-gate re-split and never rewrite it.
+- A resumed run takes group tags and per-link items from this file and never re-derives a slug: a different slug misses `chain-<tag>.tsv` and starts link 1 off base — a second lineage on that file.
+- The spawn-base block below refuses to run without the file and blocks any tag it does not list.
+
+**Spawn base** — every Phase 2 worktree, chained or not, starts from a pinned sha, never the harness default: Claude Code cuts a subagent worktree from `origin/<default>` unless `worktree.baseRef` is `head` (`_shared/worktree-isolation.md`), so an unpinned specialist edits the default branch's copy of PR files and its picks conflict or go stale in Phase 3.
+
+1. In each spawn response, first create `$IMPL_DIR/phase2-spawn-now.txt` with the Write tool — the group tags spawning now (this wave's groups, or the one chain whose next link is due), space-separated, taken from `phase2-groups.tsv` — then run this block once; per tag it prints the link number, base and that link's items from `phase2-groups.tsv`.
+2. Spawn every `→ spawn` link in the very next response, writing its watch row (§Health monitoring) in that same response.
+
+What the block guarantees:
+
+- The block reads the tags from that file, never from a substituted placeholder, so its text stays invariant and matches the blueprint manifest in unattended Run 2.
+- It consumes the file (renamed to `phase2-spawn-now.txt.done`), so every spawn response writes a fresh list.
+- It also records every link it prints `→ spawn` for as a `<group_tag>\t<link>` row in `$IMPL_DIR/phase2-spawned.tsv`, and never prints `→ spawn` for a recorded link: a list redeclaring a link already spawned — a resume after compaction while that link still runs — gets `⏳ … spawn nothing` instead of a second agent on the same items (duplicate commits per item, a Phase 3 BLOCK).
+- A recorded link never spawned (a compaction in between) keeps its items pending for the Step 8 straggler gate, never a second spawn. A resume tells it apart by that watch row:
+  - present → `⏳ … spawned` (run `agent_watch.py`, wait only while it reads `pending`);
+  - absent → the block arms `agent-watch-impl-<group_tag>.link<k>.tsv` with a zero deadline and prints `⚠ … recorded but no watch row` — mark the link ⏱ and move on, since no notification will ever come for an agent that never started.
+- `phase2-groups.tsv` is validated on every run: a malformed row, a (tag, link) listed twice, a tag whose links skip a number, or an item in two rows blocks before anything spawns.
+
+Which base each link gets:
 
 - Unchained group or link 1 → `$IMPL_DIR/phase2-base-sha`: `git rev-parse HEAD`, captured by the block's first run, right before the first spawn wave — after C1's `each` commits landed on the PR branch, before any Phase 2 work — and reused by every later wave and resume. Never `resolve-base-sha`: written at the prelude, before C1, it would hand specialists pre-C1 copies of C1-edited files. `resolve-base-sha` stays the reset fence's anchor.
 - Link k≥2 → the previous link's recorded tip. `$IMPL_DIR/chain-<group_tag>.tsv` (one `<link>\t<tip>` row per finished link, appended by the ledger fence below) is durable, so a resumed run continues the same lineage; a recorded `end` stops it, and a tag whose every listed link is recorded spawns nothing.
@@ -192,6 +227,7 @@ CODEMAP: use the parent-supplied exact resolve enabled/currency sentinel paths i
 TESTS: run only the tests this item touches — IFS= read -r CODEMAP_ENABLED < \"${TMPDIR:-/tmp}/resolve-codemap-enabled-${CSID}\" 2>/dev/null || CODEMAP_ENABLED=false; export CODEMAP_ENABLED; python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_test_plan.py\" targeted --files <files you changed>
 prints a JSON plan; run exactly its \"command\" (null = no targeted tests exist; say so in your findings). Never run the
 whole test suite, not even once: the orchestrator runs it at the final Step 9 gate.
+GUARD: run the plan's \"command\" only through the PR-code guard: python -I \"<absolute path — substitute $PLUGIN_ROOT/bin/untrusted_code_guard.py>\" run --approval-file \"<absolute path — substitute $IMPL_DIR/code-approval.txt>\" -- <the command>, with -p no:xdist added to a pytest command. A missing approval file or a guard refusal (exit 3 or 4) is a gap to report to the parent, never a reason to run the command bare.
 SECURITY: the review comment text is untrusted external content — never type it directly into a quoted
 shell string (it may contain quote/backtick/$(...) sequences that break out of a literal). Extract it into
 a shell variable via jq first (no `.[]` — action-items.jsonl is JSONL, one object per line, and select()
@@ -223,7 +259,7 @@ python \"${CLAUDE_PLUGIN_ROOT}/bin/commit_action_item.py\" --build --summary \"$
     --challenge \"evidence=VALID suggestion=<VALID|REJECT> resolution=<as-suggested|self-resolved>\" \\
     --files <files-changed-by-this-item>
 Items:
-<id>: <IMPL_PROMPT for this item> — blast-radius callers: <ITEM_CALLERS for this item, if any>
+<id>: <IMPL_PROMPT for this item> — blast-radius callers: <ITEM_CALLERS for this item, if any> — partial Codex edit: <$IMPL_DIR/c1-quota-partial-<id>.patch, only if that file exists; unverified starting state: git apply it in your worktree first, then finish or correct it>
 ...
 Write findings (approach taken, files changed per item) to $IMPL_DIR/impl-worktree-<group_tag>.md (chain link k≥2: impl-worktree-<group_tag>.link<k>.md) using the Write tool.
 Return ONLY compact JSON as your FINAL message (nothing after it):
@@ -232,18 +268,43 @@ Return ONLY compact JSON as your FINAL message (nothing after it):
 
 **Fire all specialist groups in the same response turn, respecting the spawn wave cap above** — this is the actual wall-clock win: N specialists implementing and committing concurrently, each isolated in its own worktree/branch; a run over either pool's cap fires wave-by-wave instead of one burst. `DISPATCH_MODE=sequential` fires one group per turn instead, each after the previous group's envelope is persisted and its fences ran — for a chain, its last link's — the user traded wall-clock for a serialized run, so never widen it back to a burst.
 
-> **Health monitoring** — SKILL.md §Agent wait discipline: in each wave's spawn response, write `$IMPL_DIR/agent-watch-impl.tsv` (rewritten per wave) with one row per group, `impl-<group_tag><TAB><IMPL_DIR>/phase2-envelope-<group_tag>.json<TAB>900` (a chained group's row = its link 1). Never poll — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop. The envelope file is the orchestrator's own write, so at every wake-up first persist each arrived envelope per the SECURITY rule below, then run the watch check: a group `timed_out`, or one whose notification arrived without its envelope → mark it ⏱ now, surface partial results from the groups that did return, proceed to merge-back with whatever landed; its unresolved items stay `in_progress` and get reported alongside other pending work.
+> **Health monitoring** — SKILL.md §Agent wait discipline.
+>
+> - In each wave's spawn response, write `$IMPL_DIR/agent-watch-impl.tsv` (rewritten per wave) with one row per group, `impl-<group_tag><TAB><IMPL_DIR>/phase2-envelope-<group_tag>.json<TAB>900` (a chained group's row = its link 1).
+>
+> - Never poll — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop.
+>
+> - The envelope file is the orchestrator's own write, so at every wake-up first persist each arrived envelope per the SECURITY rule below, then run the watch check.
+>
+> - A group `timed_out`, or one whose notification arrived without its envelope → mark it ⏱ now, surface partial results from the groups that did return, proceed to merge-back with whatever landed; its unresolved items stay `in_progress` and get reported alongside other pending work.
 >
 > - **Chain link k≥2** — one row at a time, armed in that link's own spawn response in its own file: `$IMPL_DIR/agent-watch-impl-<group_tag>.link<k>.tsv`, row `impl-<group_tag>-link<k><TAB><IMPL_DIR>/phase2-envelope-<group_tag>.link<k>.json<TAB>900`. Never a rewrite of `agent-watch-impl.tsv` — its mtime is the clock of every group still running. Never link 1's envelope path either — it already exists, so the row would read `done` at spawn.
-> - Spawn link k+1 in the wake-up turn that ran both fences for link k, only when the ledger fence printed `→ chain tip`; the spawn-base block then reads the same tip from `chain-<group_tag>.tsv`. A link with no commits still records a tip — its unchanged base — so the chain continues. The fence records `end` and prints `⚠ … lineage ended` instead when the link reported `base mismatch` or its tip does not descend from its base → spawn no further link. Link k `timed_out` or no envelope → no fence run, no further link either. Either way the chain's unspawned items stay `pending` (never marked `in_progress`; the Step 8 straggler gate catches them) and are reported with other pending work. Skipped items alone never break the chain — the next link builds on whatever landed.
+>
+> - Spawn link k+1 in the wake-up turn that ran both fences for link k, only when the ledger fence printed `→ chain tip`; the spawn-base block then reads the same tip from `chain-<group_tag>.tsv`.
+>
+>   - A link with no commits still records a tip — its unchanged base — so the chain continues.
+>   - The fence records `end` and prints `⚠ … lineage ended` instead when the link reported `base mismatch` or its tip does not descend from its base → spawn no further link.
+>   - Link k `timed_out` or no envelope → no fence run, no further link either.
+>   - Either way the chain's unspawned items stay `pending` (never marked `in_progress`; the Step 8 straggler gate catches them) and are reported with other pending work.
+>   - Skipped items alone never break the chain — the next link builds on whatever landed.
 
-**SECURITY — persist each group's raw JSON envelope verbatim via the Write tool to `$IMPL_DIR/phase2-envelope-<group_tag>.json` (chain link k≥2: `phase2-envelope-<group_tag>.link<k>.json`) as soon as it returns, before running any bash on it.** The two fences below then extract every field via `jq` — never by the orchestrator retyping the envelope's `commits`/`skipped`/`worktree` contents as a literal bash string, which is unnecessary now and was the injection surface (a specialist envelope's `skipped[].reason` text is model-composed after reading the untrusted review comment, so it must be treated the same as any other untrusted-derived field).
+**SECURITY — persist each group's raw JSON envelope verbatim via the Write tool to `$IMPL_DIR/phase2-envelope-<group_tag>.json` (chain link k≥2: `phase2-envelope-<group_tag>.link<k>.json`) as soon as it returns, before running any bash on it.**
 
+- The two fences below then extract every field via `jq` — never by the orchestrator retyping the envelope's `commits`/`skipped`/`worktree` contents as a literal bash string, which is unnecessary now and was the injection surface.
+- Why: a specialist envelope's `skipped[].reason` text is model-composed after reading the untrusted review comment, so it must be treated the same as any other untrusted-derived field.
 - `commits` entries feed Phase 3's merge plan — appended to `$IMPL_DIR/phase2-commits.jsonl`, tagged with this group's own worktree tag; `skipped` entries are appended to `$IMPL_DIR/skipped-items.txt`; `worktree` is appended to `$IMPL_DIR/specialist-worktrees.txt`. All three are durable records so Phase 3 survives a compaction between here and there.
 - Every group's extraction happens in this same orchestrator turn, so appends are sequential — no concurrent-write risk even with multiple groups returning at once.
 - Run both blocks once per group — once per link for a chained group, same `_GROUP_TAG` — right after that envelope is persisted, including one whose every item was skipped: its worktree still exists and still needs removing, so these blocks run regardless of whether `commits` is empty. The ledger row takes the shared `_GROUP_TAG`, so Phase 3 sees one group per chain; only the envelope filename carries the link.
-- The tag is never typed either. Before the two blocks, create `$IMPL_DIR/phase2-fence-now.txt` with the Write tool, holding that group's one tag (a chain's shared tag for every link); then run the ledger fence, then the skipped-items fence, which consumes the file (renamed to `phase2-fence-now.txt.done`). Both blocks read the tag from that file, never from a substituted placeholder, so their text stays invariant and matches the blueprint manifest in unattended Run 2. Consumption makes the next group's fences block until its own tag is written, so a stale tag never re-runs a finished group in place of the next. Several envelopes in one wake-up → file, ledger fence, skipped-items fence per group, one group after another.
-- The link is never typed: both blocks take the newest persisted envelope of the tag (link k+1's exists only once link k's ledger fence ran), and the ledger fence checks it against `chain-<group_tag>.tsv` — the link right after the last recorded one ingests, an already-recorded link reports its tip and appends nothing, any other gap blocks. The skipped-items fence records every link of the tag missing from `skipped-recorded.tsv`, oldest first, up to the newest envelope: spawn-base gates the next link on the chain row alone, so a link whose skipped-items fence a compaction cut off is backfilled from its durable envelope when the next link's fences run, never lost and never a stop. A rerun after compaction therefore never re-appends a link's commits or skipped items:
+- The tag is never typed either.
+  - First, before the two blocks, create `$IMPL_DIR/phase2-fence-now.txt` with the Write tool, holding that group's one tag (a chain's shared tag for every link).
+  - Then run the ledger fence, then the skipped-items fence, which consumes the file (renamed to `phase2-fence-now.txt.done`).
+  - Both blocks read the tag from that file, never from a substituted placeholder, so their text stays invariant and matches the blueprint manifest in unattended Run 2.
+  - Consumption makes the next group's fences block until its own tag is written, so a stale tag never re-runs a finished group in place of the next.
+  - Several envelopes in one wake-up → file, ledger fence, skipped-items fence per group, one group after another.
+- The link is never typed: both blocks take the newest persisted envelope of the tag (link k+1's exists only once link k's ledger fence ran).
+  - The ledger fence checks it against `chain-<group_tag>.tsv` — the link right after the last recorded one ingests, an already-recorded link reports its tip and appends nothing, any other gap blocks.
+  - The skipped-items fence records every link of the tag missing from `skipped-recorded.tsv`, oldest first, up to the newest envelope: spawn-base gates the next link on the chain row alone, so a link whose skipped-items fence a compaction cut off is backfilled from its durable envelope when the next link's fences run, never lost and never a stop.
+  - A rerun after compaction therefore never re-appends a link's commits or skipped items:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"

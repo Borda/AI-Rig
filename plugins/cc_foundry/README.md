@@ -203,7 +203,10 @@ Every push asks its own question, `git-push`: **Approve** (this push, once) or *
 - Approve makes the hook record a single-use token, `claude-push-approval.json`, in the same common directory. It holds the current branch, HEAD and the id of the question you answered, and expires after 15 minutes. A later Approve replaces it; a later Deny removes it.
 - `commit-guard.js` lets one push of that branch at that HEAD to a configured remote run (`git push`, `git push origin`, `-u`, `origin <branch>`, `origin HEAD:<branch>`, `git lfs push origin <branch>`), after checking that your Approve to that very question is in the session transcript, and consumes the token. Of parallel push calls only one runs; a spawned agent never spends it. Each shell-text inspection phase has a one-second budget that excludes Git discovery time, so slow Git subprocesses do not invalidate an otherwise readable push.
 - The push must run from the checkout itself (or as the worktree push below), be the only push in its command, and have no commit, reset or checkout beside it. A second push, a new commit or another branch needs a new Approve.
-- A worktree of the project that the session is not in is pushed without `cd`, as `git -C <absolute worktree path> push <remote> <branch>`: one `-C`, on the one push, its directory one literal absolute path (no space, quote, backslash, glob or variable; on Windows with forward slashes) inside a checkout of this project. The question shows that command, and the token then holds that worktree's branch and HEAD; a current-branch substitution is not read there, so the branch is written out. A worktree push needs your explicit selection: it runs only on an approval whose question showed that worktree (`git-push`, or the `git-push-run` push span), never on one that named no worktree or another.
+- A worktree of the project that the session is not in is pushed without `cd`, as `git -C <absolute worktree path> push <remote> <branch>`:
+  - One `-C`, on the one push, its directory one literal absolute path (no space, quote, backslash, glob or variable; on Windows with forward slashes) inside a checkout of this project.
+  - The question shows that command, and the token then holds that worktree's branch and HEAD; a current-branch substitution is not read there, so the branch is written out.
+  - A worktree push needs your explicit selection: it runs only on an approval whose question showed that worktree (`git-push`, or the `git-push-run` push span), never on one that named no worktree or another.
 - No Approve covers deleting a remote branch, `--prune`, `--all`, `--tags`, another branch or ref, a URL, path or variable destination, `cd`, `env -C`, `sudo -D`, `chroot`, `--git-dir`, `--work-tree`, any other `-C` use, `send-pack`, `http-push` or `subtree push`: the agent gives you the command to run yourself.
 - One exception to a question per push: `/oss:resolve` asks once at its start, `git-push-run` (**Approve** / **Deny**), naming one `git push <remote> <branch>` and the PR head commit id. Approve records `claude-push-run-approval.json`, valid 12 hours; one push of that branch to that remote then runs while HEAD descends from that head, so the run does not ask again. Every other rule above still holds. A run approval may name a worktree in its push span, as `git -C <absolute worktree path> push <remote> <branch>`; `/oss:resolve` itself pushes from the lead's own checkout and names none.
 - A dry run (`--dry-run`) needs no approval. Force pushes stay forbidden even with a token.
@@ -234,6 +237,7 @@ Behaviors the shipped rules and skills apply across workflows.
 - The table is `Iteration | Security | Critical | High | Medium | Low | Nits | Weighted score`. Score weights are `20/10/6/4/2/1`. Before any completed round, no progress table is printed; pending reviews and unrelated status updates do not repeat it.
 - Before the baseline review of a diff the parent or its resolver wrote, the author records an attestation (invariant, sibling routes, consumer, failing-before/passing-after check) and fixes the gaps it exposes. The reviewer never sees it, and it never counts toward scoring.
 - Each open finding needs a recorded fix, escalation, or justified deferral. Each round's cost lands in an advisory `loop-metrics.jsonl`.
+- When a round's challenger reports its Codex cross-check out of credits (`codex_blocked: quota`), later rounds run the challenger without Codex and never switch to a `bridge:review` route. No further security-filter review runs: it is reported blocked with the quota cause and the options (wait for the provider reset, or decide), never as a pass.
 - Completion prompts ask only for a missing decision or authorization, regardless of report length, and already-authorized next steps continue. Concrete gates for fresh scope, paid execution, sensitive or destructive actions, and remote changes remain in force.
 - Workflow audits and adversarial reviews trace producer guarantees through downstream consumers and the next ordinary user action, and report untested handoffs. Out-of-scope declines preserve mandated deliverable files and caller reply formats; `unsupported` envelopes surface a routing miss with `reason` and `owner`, never findings or a timeout.
 
@@ -303,6 +307,13 @@ Full-sweep quality audit of the project's `.claude/` config by default, or of al
 - Catches broken cross-references, model-tier mismatches, description overlap, doc staleness.
 - Command-rebinding checks keep a complete single-quoted first `grep` pattern as data while still reporting quoted commands, declaration targets, and concatenated operands.
 - Reports findings by severity; asks for fix scope only when authorization is missing. Zero findings complete without a fix question; already-authorized fixes continue.
+- Out-of-credits stop: when a bridge call fails because the Codex peer is out of credits (the bridge's incident file records fault `quota-exhausted`), the rest of the audit run makes no further bridge call.
+  - Later Codex passes are skipped.
+  - The fix fast path uses its per-file agent.
+  - Challengers run without their Codex cross-check.
+  - The report shows `codex-blocked:quota`.
+  - A fix-gate or residual-scan challenger whose own Codex cross-check meets the same fault triggers the same stop.
+  - Rate limits, capacity errors and verdict text alone keep the usual route.
 - Default mode checks declared handoff inputs and outputs within scope; adversarial mode adds deep producer/consumer tracing and independently challenges claims via `foundry:challenger` + Codex. Preflight validates configuration without rewriting sources, and Step 3 then Step 4 curators share bounded Opus waves alongside Bash checks and Sonnet docs lookup.
 
 Combined efficiency runs place their report under `RUN_DIR/efficiency/` and stage rows in `summary.jsonl.efficiency.rec`; Step 5 alone writes the canonical summary. Run `--upgrade` as a separate invocation; the report follow-up does not switch the current audit into upgrade mode. Upgrade reuses only a completed same-project audit from the last four hours whose sources remain unchanged; otherwise it runs a fresh scoped audit. Each proposal snapshots exact pre-edit bytes, records its edited bytes and restores only while those bytes still match; concurrent changes require reconciliation.
@@ -379,7 +390,23 @@ Outputs structured report. With fix level: delegates fixes to sub-agents (never 
 
 Benchmarks agents and skills against synthetic problems with defined ground truth. Primary signal = calibration bias — gap between self-reported confidence and actual recall. Well-calibrated agent reports 0.9 when finds ~90% of issues.
 
-Problems are checked before they count. A deterministic validator rejects any problem whose answer key the input does not support, and every high or extreme problem first goes to a weak solver (Haiku with no domain instructions): one it fully solves is regenerated or downgraded. Reports show the weak-solver recall per tier, so a perfect score on a tier the weak solver also aces reads as "does not discriminate", not as a strong target. With `--full`, a domain can add frozen real cases (public issue threads whose outcome a maintainer recorded, cut before the verdict, kept only when a weak solver missed them); they report as `recall_real`, and a domain whose generated problems stay too easy can take its verdict from them (`verdict_tier: real`). A domain whose answers follow from a rubric the skill ships, such as vitality scoring, skips the weak solver (it cannot answer without the rubric) and gets hard problems from band edges instead. A domain can pin the target's model to the tier the skill itself uses for that step (`solver_model:`), as the `/oss:analyse evolution` adjudication domain does with Sonnet, and can void every answer in a role where the response also names something wrong (`precision_gate: per-role`), so listing every candidate never scores.
+Problems are checked before they count.
+
+- A deterministic validator rejects any problem whose answer key the input does not support.
+- Every high or extreme problem first goes to a weak solver (Haiku with no domain instructions): one it fully solves is regenerated or downgraded.
+- Reports show the weak-solver recall per tier, so a perfect score on a tier the weak solver also aces reads as "does not discriminate", not as a strong target.
+- With `--full`, a domain can add frozen real cases (public issue threads whose outcome a maintainer recorded, cut before the verdict, kept only when a weak solver missed them); they report as `recall_real`, and a domain whose generated problems stay too easy can take its verdict from them (`verdict_tier: real`).
+- A domain whose answers follow from a rubric the skill ships, such as vitality scoring, skips the weak solver (it cannot answer without the rubric) and gets hard problems from band edges instead.
+- A domain can pin the target's model to the tier the skill itself uses for that step (`solver_model:`), as the `/oss:analyse evolution` adjudication domain does with Sonnet, and can void every answer in a role where the response also names something wrong (`precision_gate: per-role`), so listing every candidate never scores.
+
+When a Codex call fails because the peer is out of credits (the bridge's incident file records fault `quota-exhausted`), the calibration run makes no further Codex call:
+
+- The pipeline records a run-level stop that every later pipeline of the run reads.
+- Remaining problems are generated and scored by Claude alone, without one doomed retry per problem.
+- The report names `codex-blocked:quota`.
+- When the calibrated agent is `foundry:challenger`, a response whose own Codex cross-check met the same fault triggers the same stop, so the next problem's challenger skips Codex.
+- A pipeline already waiting on a Codex call when the stop lands pays at most one more call.
+- Codex problems generated before a scoring-time stop keep the run labelled dual-source.
 
 With `--ab-test`, each target also runs against a `general-purpose` baseline and gets one verdict, first match wins: `significant`, `marginal`, `baseline-ahead`, `inconclusive` (both arms at ceiling), or `no-lift`. A mixed-sign result (one metric up, the other down) can still be `significant` or `marginal`; the report then describes the negative delta as a trade-off.
 
@@ -432,7 +459,15 @@ With `--ab-test`, each target also runs against a `general-purpose` baseline and
 
 Results saved to `.reports/calibrate/<timestamp>/<slug>/`, where the slug strips a leading `/` and replaces remaining `:`, `/` and spaces with `-` (`foundry-sw-engineer`, `oss-analyse-vitality`; the communication mode uses `communication`). Improvement proposals written to `proposal.md` per slug dir; `--apply` shows the exact edits for approval first and applies only the approved ones, and never trusts a proposal without that review. Agents and skills modes use dual-source evaluation: Claude + Codex generate problems and score responses independently, Claude 51% tiebreaker.
 
-Target discovery uses installed plugin manifests and cache by default; `--local` selects plugin source in the current checkout. Pipelines use at most two categories together, four Sonnet coordinators per session (four in one category or two each), with child tier slots reserved before dispatch. Missing dependencies, unmeasured trigger fidelity and incomplete outcomes are reported explicitly; unmeasured values stay null rather than becoming scores. Edit approval still applies under `--skip-gate`. Availability checks distinguish absent plugins from resolver refusals or failures, and disclose each skipped target. Every expected target retains a persisted outcome; timeouts keep their reservations until the coordinator and children stop. Routing and rules run their children serially within the reserved tier budget.
+Discovery, concurrency and outcome reporting:
+
+- Target discovery uses installed plugin manifests and cache by default; `--local` selects plugin source in the current checkout.
+- Pipelines use at most two categories together, four Sonnet coordinators per session (four in one category or two each), with child tier slots reserved before dispatch.
+- Missing dependencies, unmeasured trigger fidelity and incomplete outcomes are reported explicitly; unmeasured values stay null rather than becoming scores.
+- Edit approval still applies under `--skip-gate`.
+- Availability checks distinguish absent plugins from resolver refusals or failures, and disclose each skipped target.
+- Every expected target retains a persisted outcome; timeouts keep their reservations until the coordinator and children stop.
+- Routing and rules run their children serially within the reserved tier budget.
 
 <a id="foundry-manage"></a>
 
@@ -440,7 +475,12 @@ Target discovery uses installed plugin manifests and cache by default; `--local`
 
 Create, update, or delete agents, skills, and rules; update or delete hooks. Full cross-reference propagation. Keeps README and `settings.json` in sync automatically.
 
-Resolution uses the current project’s `.claude/` configuration by default. `--local` supports content updates to plugin-source agents, skills and rules using a quoted directive or spec file; it rejects creation, rename, deletion, hooks and permission operations. Hook creation and rename are unsupported; content updates delegate to `foundry:sw-engineer`. Hook deletion deregisters only the selected hook before removing its file. Permission operations validate the requested rule and distinguish unavailable settings/tools from an absent entry; permission shipping applies only to operations that need it.
+Resolution uses the current project’s `.claude/` configuration by default.
+
+- `--local` supports content updates to plugin-source agents, skills and rules using a quoted directive or spec file; it rejects creation, rename, deletion, hooks and permission operations.
+- Hook creation and rename are unsupported; content updates delegate to `foundry:sw-engineer`.
+- Hook deletion deregisters only the selected hook before removing its file.
+- Permission operations validate the requested rule and distinguish unavailable settings/tools from an absent entry; permission shipping applies only to operations that need it.
 
 **Execution architecture** — animated diagram of fans, joins and gates.
 
@@ -588,7 +628,11 @@ Extracts patterns from work history + corrections, distills into durable improve
 
 - `--project` triggers an interactive project picker — lists slugs under `~/.claude/projects/*/memory/` with MEMORY.md size in tokens; select one or more. Without `--project`, `prune` and `memory` use only the current project's memory; an absent current entry stops `prune`, while `memory` continues with `.notes/lessons.md` alone rather than selecting another project.
 - Both run parallel across selected projects (one agent per project), then consolidate for confirmation; `memory` mode's Review first path approves or skips each proposal. `memory` mode also enriches each project's feedback with project-level context (CLAUDE.md, recent git log, active plans) for better classification.
-- **`memory` mode** selects memory files by `type: feedback` frontmatter and includes a legacy `.notes/lessons.md` when present: clusters by domain, classifies each entry as `→ rule`, `→ agent update`, `→ skill update`, `→ already covered`, or `→ too narrow`, and generates proposals. Before applying, a conflict pre-check greps each target file and flags cross-proposal collisions with ⚠. Each proposal names its concrete target and edits for approval; confirmed changes are snapshotted and applied, followed by a `git diff` review before committing. Pruning evaluates memory bodies, including unlinked files, and updates approved memory files and their MEMORY.md index links together; failed index updates restore only the affected memory snapshot.
+- **`memory` mode** selects memory files by `type: feedback` frontmatter and includes a legacy `.notes/lessons.md` when present.
+  - Clusters by domain, classifies each entry as `→ rule`, `→ agent update`, `→ skill update`, `→ already covered`, or `→ too narrow`, and generates proposals.
+  - Before applying, a conflict pre-check greps each target file and flags cross-proposal collisions with ⚠.
+  - Each proposal names its concrete target and edits for approval; confirmed changes are snapshotted and applied, followed by a `git diff` review before committing.
+  - Pruning evaluates memory bodies, including unlinked files, and updates approved memory files and their MEMORY.md index links together; failed index updates restore only the affected memory snapshot.
 - **`external` mode** reads the source (URL, file, directory), extracts its mental model and standout implementation details, and compares against the live local setup.
   - Candidates split into *Align + improve* (maps onto existing agents/skills/rules) and *Differentiated highlights* (novel, larger work).
   - Each is scored and assigned a lane: adopt-as-is / tweak / discuss / skip.
@@ -638,7 +682,13 @@ Interactive outline co-creation for developer advocacy content. Collects format,
 ```
 
 - **Supported formats**: blog post, Marp slide deck (conference/meetup talk), social thread (Twitter/LinkedIn), talk abstract (CFP submission), lightning talk (5–10 min), animated SVG (SMIL, plays inside `<img>`), short video (up to 60 s, written as a [HyperFrames](https://github.com/heygen-com/hyperframes) HTML composition).
-- **Short video prerequisites**: Node 22 or newer, npm/npx and network access to npm/scaffold dependency sources are required; `ffmpeg` is needed later for rendering, so a missing `ffmpeg` only triggers a warning. Choosing generation authorizes downloading/executing the latest package and installing project dependencies; only then does the skill run `npx hyperframes@latest init --skip-skills` with telemetry turned off (`HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1`) to scaffold `.plans/content/<slug>-video/`. It renames the `CLAUDE.md` and `AGENTS.md` that the scaffold copies in to `HYPERFRAMES-*.txt`, so no agent loads them as instructions. `foundry:creator` then writes the scenes into the project and lists the media files you need to copy into `assets/`. Check, preview and render stay user-run, and the skill prints the commands: `npm run check`, `npm run dev` and `npm run render -- --quality delivery --fps <fps> -o <slug>.mp4`. These use the CLI version pinned at scaffold time, run with the same telemetry opt-out, and come with optional `ffmpeg` GIF/WebM conversion. The skill never runs HyperFrames sign-in, skill installs, publish or cloud renders. If you stop before generating, the skill prints subshell-wrapped commands to resume later without redoing the outline.
+- **Short video prerequisites**: Node 22 or newer, npm/npx and network access to npm/scaffold dependency sources are required; `ffmpeg` is needed later for rendering, so a missing `ffmpeg` only triggers a warning.
+  - Choosing generation authorizes downloading/executing the latest package and installing project dependencies; only then does the skill run `npx hyperframes@latest init --skip-skills` with telemetry turned off (`HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1`) to scaffold `.plans/content/<slug>-video/`.
+  - It renames the `CLAUDE.md` and `AGENTS.md` that the scaffold copies in to `HYPERFRAMES-*.txt`, so no agent loads them as instructions.
+  - `foundry:creator` then writes the scenes into the project and lists the media files you need to copy into `assets/`.
+  - Check, preview and render stay user-run, and the skill prints the commands: `npm run check`, `npm run dev` and `npm run render -- --quality delivery --fps <fps> -o <slug>.mp4`. These use the CLI version pinned at scaffold time, run with the same telemetry opt-out, and come with optional `ffmpeg` GIF/WebM conversion.
+  - The skill never runs HyperFrames sign-in, skill installs, publish or cloud renders.
+  - If you stop before generating, the skill prints subshell-wrapped commands to resume later without redoing the outline.
 - **Out-of-scope detection**: refuses FAQs, comparison tables, reference docs at Step 1, redirects to `foundry:doc-scribe`. Pure media processing (download, transcode, trim, transcribe existing media) is redirected to `ffmpeg`, Whisper or `yt-dlp` run directly. Their outputs, such as a transcript of your own talk, can be passed as source paths in the outline `## Constraints`. Remotion is not supported.
 - **Editorial conflict detection**: brief implies expert-level topic for beginner audience (or reverse) — skill surfaces mismatch explicitly before writing.
 - Writes `.plans/content/<slug>-outline.md`. Hand off to `foundry:creator` after approval: `@foundry:creator`.
@@ -855,6 +905,10 @@ Generally not invoked directly. `/foundry:audit` spawns it in batches across all
   - It also delivers a coverage table built from the filtered language's own grammar (every construct class against every reader that judges it: admitted by spec, refused or unmodeled).
   - It never writes bypass candidates itself, and `--no-codex` does not apply to such a review.
 - Each finding is named after the invariant it breaks, so a new route to a known gap counts as a repeat. A search that could not run returns `status: blocked` with its reason, never a clean verdict. The Codex Cross-Check section is always present, stating a skip or failure rather than omitting it.
+- When its own Codex cross-check stops because the peer is out of credits (the bridge's incident file records fault `quota-exhausted`), challenger does not retry.
+  - It adds `"codex_blocked": "quota"` to any envelope its caller asked for, and opens the Codex Cross-Check section with one fixed `⚠ codex-blocked:quota` line.
+  - A successful cross-check opens that section with the fixed line `Codex cross-check completed.` before Codex's own output. Callers take the envelope key alone when an envelope came back, and otherwise read only the first line under the first Cross-Check heading outside a code block, so Codex output or a quoted example cannot fake the stop.
+  - `/foundry:audit`, `/foundry:calibrate`, the `/develop:*` skills that call Codex later and review → fix loops read that signal and send no further Codex calls for the rest of their run.
 
 <a id="foundry-creator"></a>
 
@@ -1191,7 +1245,11 @@ New agent or skill: use `/foundry:manage create` — handles scaffolding and REA
 
 Review and evidence expectations in the shipped `rules/quality-gates.md`:
 
-- Before `bridge:implement`, provide the exact finding, target paths, evidence, permitted edits, result, stop condition and proof command. A dirty tree blocks delegation unless the invoking skill explicitly documents a combined-change exception with bounded owned paths, a recorded starting snapshot, combined-diff review and proof commands; only that invocation may use the exception. The parent reads the full returned diff and runs the proof before committing; the bridge never commits. Repeated fix rounds on the same issue (2+) stay with the parent; a review-and-fix loop counts every round on one component as the same issue, so continuing past the second delegated round needs one recorded user decision naming the component.
+- Before `bridge:implement`, provide the exact finding, target paths, evidence, permitted edits, result, stop condition and proof command.
+
+  - A dirty tree blocks delegation unless the invoking skill explicitly documents a combined-change exception with bounded owned paths, a recorded starting snapshot, combined-diff review and proof commands; only that invocation may use the exception.
+  - The parent reads the full returned diff and runs the proof before committing; the bridge never commits.
+  - Repeated fix rounds on the same issue (2+) stay with the parent; a review-and-fix loop counts every round on one component as the same issue, so continuing past the second delegated round needs one recorded user decision naming the component.
 
 - Cited proof for factual, causal and completion claims; a representative real case alongside TDD; user-authorized behavior unchanged. Mocks are supplementary polishing after real behavior is validated; unavailable real acceptance stays explicit.
 
@@ -1199,4 +1257,12 @@ Review and evidence expectations in the shipped `rules/quality-gates.md`:
 
 - The shared cross-validation protocol requires parent validation at every severity before findings publication, then capped independent critical verification. Review presentation uses role names only and square-bracketed scores, such as `Software engineer [3]`. Static proof may settle a claim; unavailable evidence never refutes it, and incomplete feasible work never becomes unconditional approval.
 
-- Review outcomes follow the final findings' concrete impact and required repair. Minor changes include bounded correctness, test and compatibility fixes; Major revision requires evidenced material behavioral impact or substantial repair. The verdict cites the controlling finding IDs, while finding counts, CI status and reviewer votes do not set it automatically. Required fixes remain actionable under Minor, and source approval stays separate from verification readiness. Documentation-only corrections and missing or additional tests normally remain Minor unless concrete material consequences or a substantially incomplete required deliverable justify more; missing tests alone do not establish a production bug. These factors inform one combined judgment: high-impact findings can control the verdict and are never diluted by minor items. Use the strongest confirmed consequence as the baseline, account for proven joint effects, and keep severity, source disposition and verification separate. Missing tests no longer receive an automatic High rating; numeric topic discounts require independent calibration before they can determine verdicts.
+- Review outcomes follow the final findings' concrete impact and required repair.
+
+  - Minor changes include bounded correctness, test and compatibility fixes; Major revision requires evidenced material behavioral impact or substantial repair.
+  - The verdict cites the controlling finding IDs, while finding counts, CI status and reviewer votes do not set it automatically.
+  - Required fixes remain actionable under Minor, and source approval stays separate from verification readiness.
+  - Documentation-only corrections and missing or additional tests normally remain Minor unless concrete material consequences or a substantially incomplete required deliverable justify more; missing tests alone do not establish a production bug.
+  - These factors inform one combined judgment: high-impact findings can control the verdict and are never diluted by minor items.
+  - Use the strongest confirmed consequence as the baseline, account for proven joint effects, and keep severity, source disposition and verification separate.
+  - Missing tests no longer receive an automatic High rating; numeric topic discounts require independent calibration before they can determine verdicts.

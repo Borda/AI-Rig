@@ -217,9 +217,7 @@ def test_named_skills_use_declared_layout_and_keep_multiple_matches() -> None:
     assert "PLUGIN_LAYOUT:" in tier3
     assert "union every plugin" in tier3
     assert "retain all same-named skills" in tier3
-    resolution = next(
-        line for line in _SKILL.read_text(encoding="utf-8").splitlines() if "**Scope token resolution**" in line
-    )
+    resolution = next(line for line in _SKILL.read_text(encoding="utf-8").splitlines() if "tier-3 lookup uses" in line)
     assert "`LOCAL_MODE=false`" in resolution
     assert "`.claude/skills/` only" in resolution
     assert "`.claude/agents/`" in resolution
@@ -230,7 +228,7 @@ def test_mode_exclusions_agree_at_all_three_entry_points() -> None:
     lines = _SKILL.read_text(encoding="utf-8").splitlines()
     upgrade = next(line for line in lines if line.startswith("  - `--upgrade`"))
     adversarial = next(line for line in lines if line.startswith("  - `--adversarial`"))
-    combinations = next(line for line in lines if "**Valid combinations**" in line)
+    combinations = next(line for line in lines if line.startswith("  - Among `--upgrade`"))
     expected = (
         "Among `--upgrade`, `--adversarial`, `--efficiency`, `--consolidate`: "
         "`--upgrade` and `--consolidate` each exclude all others; "

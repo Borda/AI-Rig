@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.45.0
+
+- The contributor-code guard now keeps the real checkout, including `.env`, out of the Linux sandbox and starts a bare program such as `bash` from the allowlisted `PATH` on Windows instead of the system directory first.
+- Code Review and Code Remediate now scan contributor code before running it and put the evidence and an assessed risk level in front of you: before the first command in a review worktree or an attached pull-request branch, a scan lists the files that run on their own, reports dependency provenance (packages the base already declares are trusted by name, new or URL-sourced ones are reported) and rates the contribution `none`, `borderline`, `high` or `likely-malicious`, which is a static heuristic and never a safety claim.
+- A new integrity check fingerprints Git configuration, hooks, every ref outside remote-tracking ones (replace refs included), submodule Git state, index flags that hide edits from status, included configuration files, the approval grant, and the edits, auto-loaded files and bytecode of the reviewed checkout and your own checkout around every run, hashes the bytes of executable files in ignored interpreter environments, walks nested repositories and your other linked worktrees, anchors its baseline to a digest the agent keeps, and stops on any change or failure to check; before, sandboxed code could leave state that a later unsandboxed command would run. Remediation in your own checkout covers its ignored files and index flags but not tracked edits, which the agent makes on purpose; bytes of other ignored files are not hashed (their change time is, which on Windows is the creation time), and a write outside the fingerprinted paths or by a process that outlives a command is not covered.
+- An escalation that would run contributor code outside the sandbox, including the one-time `run_gates.py` gate, a project install and the reusable pytest prefix, now needs your answer to a question showing the scan verdict, and the automatic approval reviewer no longer decides it; the reusable prefix is offered only for code rated `none`.
+- A moved head or a changed dependency manifest triggers a rescan before the next run, and a scan that cannot run, or an integrity anchor lost to a compaction, means no contributor code executes.
+
 ## 0.44.1
 
 - Remediation reuses an explicit commit-style choice without a separate standing-approval prompt, while preserving approval for the current plan only.

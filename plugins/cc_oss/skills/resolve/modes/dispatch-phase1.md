@@ -17,7 +17,12 @@ Route by domain to foreground challenge agent:
 | Test coverage, assertions, regressions | `foundry:qa-specialist` |
 | Default / unclassified | `foundry:challenger` |
 
-**Early and late waves.** Phase 1 runs in two passes under the same rules. The **early wave** fires inside the Run 2 fan (SKILL.md Step 7b join), in the same response as the Step 7a conflict agent, over every selected item that is not a C1 candidate (see the effort classification). The **late wave** runs after the join and C1, over every C1 candidate C1 did not complete (UNCERTAIN, dirty-tree fall-through, a second medium item in a non-`each` mode); same chunking, prompt, verdict processing and log append, `<domain>` slugs suffixed `-late` so no filename collides. An empty set skips its wave; Phase 2 starts after the late wave.
+**Early and late waves.** Phase 1 runs in two passes under the same rules.
+
+1. The **early wave** fires inside the Run 2 fan (SKILL.md Step 7b join), in the same response as the Step 7a conflict agent, over every selected item that is not a C1 candidate (see the effort classification).
+2. The **late wave** runs after the join and C1, over every C1 candidate C1 did not complete (UNCERTAIN, dirty-tree fall-through, a second medium item in a non-`each` mode); same chunking, prompt, verdict processing and log append, `<domain>` slugs suffixed `-late` so no filename collides.
+
+An empty set skips its wave; Phase 2 starts after the late wave.
 
 Set `DOMAIN_CHALLENGER` from routing table: architecture/API/coupling/default → `foundry:challenger`; code logic/correctness/edge-cases → `foundry:sw-engineer`; test coverage/assertions/regressions → `foundry:qa-specialist`. Use agent-resolution.md fallback if foundry absent.
 
@@ -58,7 +63,24 @@ else
 fi
 ```
 
-Build each item line from its `action-items.jsonl` record (Step 3c merge carries the reviewer's evidence through), read after the re-check above: append `[confirmed verify=<verify_file>]` only when `verify_verdict` is `CONFIRMED`, `[evidence=<source_file>]` when `source_file` is set, and `[thin]` when `thin` is true. Append `[parent-confirmed candidate=<candidate_id> validation=<parent_validation_file>]` only when `validation_status=CONFIRMED` and that pointer survived the re-check. A retained pointer without that status is historical evidence only. Parent confirmation covers only the linked review finding, never any additional GitHub request. Omit a marker whose field is absent. `[confirmed]` covers the review finding the item was built from; GitHub items never carry it.
+Build each item line from its `action-items.jsonl` record (Step 3c merge carries the reviewer's evidence through), read after the re-check above:
+
+- append `[confirmed verify=<verify_file>]` only when `verify_verdict` is `CONFIRMED`, `[evidence=<source_file>]` when `source_file` is set, and `[thin]` when `thin` is true.
+- Append `[parent-confirmed candidate=<candidate_id> validation=<parent_validation_file>]` only when `validation_status=CONFIRMED` and that pointer survived the re-check.
+  - A retained pointer without that status is historical evidence only.
+  - Parent confirmation covers only the linked review finding, never any additional GitHub request.
+- Omit a marker whose field is absent.
+- `[confirmed]` covers the review finding the item was built from; GitHub items never carry it.
+- Append `[partial=$IMPL_DIR/c1-quota-partial-<id>.patch]` when that file exists.
+  - It is the stopped Codex call's unverified partial edit for this item: starting state to read, never proof of a fix.
+
+**Codex quota stop (`codex-blocked:quota`).** Applies to every `foundry:challenger` prompt this phase sends: chunks, single-item retries, caucus, spotter.
+
+- Trigger: the late-wave freshness block printed `CHALLENGER_CODEX=off`, or `$IMPL_DIR/c1-quota-blocked.txt` exists at any later spawn → end the prompt with the line `--no-codex`.
+- Reason: its own `bridge:review` cross-check cannot succeed this run.
+- Other challenger types ignore the flag.
+- A challenger's own cross-check can hit the stop too: its reply then carries a top-level `codex_blocked` of `"quota"`, and the challenger quota check below records it in that marker.
+- Chunks already fired in the same response keep their cross-check; never serialize the fan for this.
 
 ```text
 Agent(subagent_type="${DOMAIN_CHALLENGER}", name="challenge-<domain>", description="<3-5 words: this chunk's domain scope>", prompt="<domain>: two-part challenge for these review items.
@@ -79,9 +101,21 @@ Return ONLY compact JSON as your FINAL message (nothing after it):
 {\"items\":[{\"id\":N,\"evidence\":\"VALID\"|\"REJECT\"|\"UNVERIFIED\"|\"ALREADY_FIXED\",\"evidence_rationale\":\"<one sentence>\",\"suggestion\":\"VALID\"|\"REJECT\",\"suggestion_rationale\":\"<one sentence>\",\"alternative\":\"<brief alternative or null>\",\"missing_capability\":\"<when unverified>\",\"owner\":\"<when unverified>\",\"next_check\":\"<when unverified>\",\"closure\":\"<observable closure when unverified>\",\"original_revision\":\"<when already fixed>\",\"current_revision\":\"<when already fixed>\",\"fix_evidence\":\"<evidenced change when already fixed>\"}]}")
 ```
 
-**Fire every chunk's `Agent()` call in the same response turn** — read-only (no working-tree writes), safe to run concurrently regardless of file overlap between chunks. In the early wave the Step 7a conflict agent (`foundry:sw-engineer`) sits in that same response and holds one `CAP_OPUS` slot. More chunks than a tier's pool (`claude-config.md` §Parallel Spawn Ceilings: `CAP_OPUS=5` for `foundry:challenger`/`foundry:sw-engineer`, `CAP_SONNET=8` for `foundry:qa-specialist`) → fire the first wave up to each pool, the next wave as earlier chunks return. In that same response, arm the deadlines (SKILL.md §Agent wait discipline): write `$IMPL_DIR/agent-watch-challenge.tsv` with one row per fired chunk, `challenge-<domain><TAB><IMPL_DIR>/challenge-domain-<domain>.md<TAB>300` (`CHALLENGE_TIMEOUT_S`); a later wave rewrites the file with its own rows. Never poll for verdicts — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop; run the watch check at each wake-up. A chunk `timed_out`, or one whose notification arrived without its JSON reply → ⏱ now, and every item in it is treated `UNCERTAIN` per the verdict rules below (one single-item retry each, armed in `agent-watch-challenge-retry.tsv`). **No item is ever dropped or implemented by a timeout alone** — the first retry is automatic; what happens after a second timeout is the user's decision.
+**Fire every chunk's `Agent()` call in the same response turn** — read-only (no working-tree writes), safe to run concurrently regardless of file overlap between chunks.
 
-**Challenge double-timeout gate** — fires only when a single-item retry also times out (a missing verdict blocked the run before this gate existed; the decision now goes to the user instead). Collect **every** item of this wave whose retry timed out, then ask **once** for all of them — one wait, never one per item. The items go in the question text itself, one line each (`#<id> · <domain> · <summary>`), never as reply text before the call: 5.5-family models may return reply text written before a tool call as an empty progress update, leaving the user to decide on bare ids. The gate is human idle, so the question text closes with the `/compact` hint line. Then invoke `AskUserQuestion` (actual tool call):
+- In the early wave the Step 7a conflict agent (`foundry:sw-engineer`) sits in that same response and holds one `CAP_OPUS` slot.
+- More chunks than a tier's pool (`claude-config.md` §Parallel Spawn Ceilings: `CAP_OPUS=5` for `foundry:challenger`/`foundry:sw-engineer`, `CAP_SONNET=8` for `foundry:qa-specialist`) → fire the first wave up to each pool, the next wave as earlier chunks return.
+- In that same response, arm the deadlines (SKILL.md §Agent wait discipline): write `$IMPL_DIR/agent-watch-challenge.tsv` with one row per fired chunk, `challenge-<domain><TAB><IMPL_DIR>/challenge-domain-<domain>.md<TAB>300` (`CHALLENGE_TIMEOUT_S`); a later wave rewrites the file with its own rows.
+- Never poll for verdicts — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop; run the watch check at each wake-up.
+- A chunk `timed_out`, or one whose notification arrived without its JSON reply → ⏱ now, and every item in it is treated `UNCERTAIN` per the verdict rules below (one single-item retry each, armed in `agent-watch-challenge-retry.tsv`).
+- **No item is ever dropped or implemented by a timeout alone** — the first retry is automatic; what happens after a second timeout is the user's decision.
+
+**Challenge double-timeout gate** — fires only when a single-item retry also times out (a missing verdict blocked the run before this gate existed; the decision now goes to the user instead).
+
+1. Collect **every** item of this wave whose retry timed out, then ask **once** for all of them — one wait, never one per item.
+2. The items go in the question text itself, one line each (`#<id> · <domain> · <summary>`), never as reply text before the call: 5.5-family models may return reply text written before a tool call as an empty progress update, leaving the user to decide on bare ids.
+3. The gate is human idle, so the question text closes with the `/compact` hint line.
+4. Then invoke `AskUserQuestion` (actual tool call):
 
 ```text
 "The challenge for <N> item(s) timed out twice: <ids>. What should happen to them?
@@ -115,7 +149,30 @@ echo "dropped: $_DROP_IDS"  # timeout: 3000
 
 Immediately after each call returns, persist its raw JSON reply verbatim via the Write tool to `$IMPL_DIR/challenge-verdicts-<domain>.json` (same `<domain>` slug as the spawn) — the verdict-processing steps below and the challenge-log append (`dispatch-prelude.md`) both read it via `jq`, never by re-typing the reply's rationale/alternative text.
 
-**Structural prep — fire in this same turn, concurrently with the challenge agents** (the codemap queries below are read-only and depend only on item *files*, known from Step 3b — not on any challenge verdict — so they run under the challenge agents' latency shadow, adding ~0 wall-clock; grouping in Phase 2 then finds its maps already warm). Keyed off all `SELECTED_ITEMS` (not yet-unknown `SURVIVING_ITEMS`) — a few queries for items challenge later drops are cheap and hidden under the agent latency; Phase 2 filters to survivors. Resolve each file to its canonical module name + build the whole-repo centrality map (`resolve_centrality.py`), then capture each module's **forward imports** (`deps`, fan-*out*, naturally small — never the 20-cap that truncates reverse `rdeps`):
+**Challenger quota check — after every challenger reply is persisted** (chunk, single-item retry, caucus; both waves), run the block below once, unedited, before the next spawn:
+
+- It reads only the top-level `codex_blocked` of the persisted `challenge-verdicts-*.json` replies, never rationale text; `"quota"` means that challenger's own Codex cross-check stopped on a harness `quota-exhausted` incident.
+- A persisted reply that carries no JSON envelope at all counts by its second carrier instead: its `## Codex Cross-Check` section opens with `⚠ codex-blocked:quota` (first non-blank line). An envelope always decides by its key; the token anywhere else never counts.
+- `CHALLENGER_CODEX=off` → it wrote `$IMPL_DIR/c1-quota-blocked.txt` as `codex-blocked:quota source=challenger` (never over a marker C1 wrote), so every later challenger prompt ends with `--no-codex` and the brief block refuses every C1 call.
+- `CHALLENGER_QUOTA=none` → nothing changes. `CODEX_AVAILABLE` stays unchanged either way.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing"; exit 1; }
+# challenger signal only (envelope field or anchored Cross-Check line), never prose; helper globs, so zsh never aborts
+_CH_FAULT=$(python "$PLUGIN_ROOT/bin/bridge_quota_check.py" --challenger "$IMPL_DIR" 'challenge-verdicts-*.json') || _CH_FAULT=none  # timeout: 15000
+# a C1 marker keeps its item id: the partial-edit handoff reads it
+if [ "$_CH_FAULT" = quota-exhausted ] && [ ! -e "$IMPL_DIR/c1-quota-blocked.txt" ]; then echo "codex-blocked:quota source=challenger" > "$IMPL_DIR/c1-quota-blocked.txt"; fi
+if [ -e "$IMPL_DIR/c1-quota-blocked.txt" ]; then echo "CHALLENGER_CODEX=off — codex-blocked:quota this run: end every later foundry:challenger prompt with --no-codex; no C1 call"; else echo "CHALLENGER_QUOTA=none"; fi
+```
+
+**Structural prep — fire in this same turn, concurrently with the challenge agents.**
+
+- Why now: the codemap queries below are read-only and depend only on item *files*, known from Step 3b — not on any challenge verdict — so they run under the challenge agents' latency shadow, adding ~0 wall-clock; grouping in Phase 2 then finds its maps already warm.
+- Keyed off all `SELECTED_ITEMS` (not yet-unknown `SURVIVING_ITEMS`) — a few queries for items challenge later drops are cheap and hidden under the agent latency; Phase 2 filters to survivors.
+- Resolve each file to its canonical module name + build the whole-repo centrality map (`resolve_centrality.py`), then capture each module's **forward imports** (`deps`, fan-*out*, naturally small — never the 20-cap that truncates reverse `rdeps`):
 
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
@@ -154,8 +211,17 @@ fi
 
 Parse each group's per-item verdict array — same granularity as a single-item challenge, never relaxed by grouping:
 
-- Missing item id, or a present element with empty/null `evidence_rationale` or `suggestion_rationale` → treat as UNCERTAIN. Re-dispatch it alone (single-item challenge call, same domain); persist that reply via the Write tool to a **separate** file, `$IMPL_DIR/challenge-verdicts-<domain>-retry-<id>.json` — never overwrite the group's own `challenge-verdicts-<domain>.json`, which still holds every sibling item's verdict this pass hasn't appended yet. The retry prompt carries the item's `evidence=`/`verify=` markers like the group call. The shared append block (`dispatch-prelude.md`) prefers the retry file for that id when present, and its `// "challenge agent returned no rationale after retry"` fallback covers the still-empty case exactly once, after the real retry — never before it.
-- **Ask the spotter** — the retry is still UNCERTAIN (empty rationale again) and the item carries a `finding_id` and its `author` names a real agent type (not an `@login`, not `codex`; on a GitHub item annotated by the merge, the agent type after `+`): dispatch that agent type for this item alone, as `name="caucus-<id>"`, with the same two-part prompt and JSON contract plus its `evidence=` file. This is the reviewer role that raised the finding, consulted on its own claim — a domain challenger guessing twice adds no signal. Persist the reply via the Write tool to `$IMPL_DIR/challenge-verdicts-<domain>-caucus-<id>.json`; arm `agent-watch-challenge-caucus.tsv` with a 300 s row. A caucus `evidence=VALID` counts only when its rationale cites the code it read (`file:line`); a bare restatement of the original claim falls to the no-rationale default, because the author agreeing with itself is not verification. After that bounded retry/caucus, missing rationale remains incomplete: block that item with owner/recovery and leave it pending, never default VALID or REJECT. One caucus per item, never more.
+- Missing item id, or a present element with empty/null `evidence_rationale` or `suggestion_rationale` → treat as UNCERTAIN.
+  - Re-dispatch it alone (single-item challenge call, same domain); persist that reply via the Write tool to a **separate** file, `$IMPL_DIR/challenge-verdicts-<domain>-retry-<id>.json` — never overwrite the group's own `challenge-verdicts-<domain>.json`, which still holds every sibling item's verdict this pass hasn't appended yet.
+  - The retry prompt carries the item's `evidence=`/`verify=` markers like the group call.
+  - The shared append block (`dispatch-prelude.md`) prefers the retry file for that id when present, and its `// "challenge agent returned no rationale after retry"` fallback covers the still-empty case exactly once, after the real retry — never before it.
+- **Ask the spotter** — the retry is still UNCERTAIN (empty rationale again) and the item carries a `finding_id` and its `author` names a real agent type (not an `@login`, not `codex`; on a GitHub item annotated by the merge, the agent type after `+`):
+  - dispatch that agent type for this item alone, as `name="caucus-<id>"`, with the same two-part prompt and JSON contract plus its `evidence=` file.
+  - This is the reviewer role that raised the finding, consulted on its own claim — a domain challenger guessing twice adds no signal.
+  - Persist the reply via the Write tool to `$IMPL_DIR/challenge-verdicts-<domain>-caucus-<id>.json`; arm `agent-watch-challenge-caucus.tsv` with a 300 s row.
+  - A caucus `evidence=VALID` counts only when its rationale cites the code it read (`file:line`); a bare restatement of the original claim falls to the no-rationale default, because the author agreeing with itself is not verification.
+  - After that bounded retry/caucus, missing rationale remains incomplete: block that item with owner/recovery and leave it pending, never default VALID or REJECT.
+  - One caucus per item, never more.
 - `evidence=UNVERIFIED` → list `<id> unverified <domain>`; exclude from SURVIVING_ITEMS, retain task pending, and carry owner/next_check/closure into the challenge log, resolution.jsonl and final Open Concerns. Do not implement or delete the obligation. Missing reviewer coverage, provenance limits, unavailable checks, confidence gaps, or a declined optional extra-review request remain process/evidence limits; never turn them into source action items or repeat a dismissed review request.
 - `evidence=ALREADY_FIXED` → list `<id> already-fixed <domain>`; exclude from implementation, retain original/current identities and fix evidence, report separately from refutation. After the validated append block prints its task id, call `TaskUpdate(status="completed")`; no implementation commit is required for this evidenced historical closure.
 - `evidence=REJECT` → print `⊘ #<id> evidence rejected: <reason from the persisted verdict file>`; set type `[challenged:reject]`; list `<id> rejected <domain>` for the shared append block (`dispatch-prelude.md`); drop from `SURVIVING_ITEMS`. The append block prints the task id to dispose (or explains why none exists in report mode); call `TaskUpdate(status="deleted")` on it.

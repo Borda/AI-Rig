@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -101,23 +102,44 @@ class TestFullSuiteGate:
     def test_run_block_records_exit_code(self, tmp_path: Path) -> None:
         """The run block keeps the log and the exit code on disk, so a failing suite is never mistaken for a pass.
 
-        A stub ``full-suite.sh`` prints a marker and exits 3; the shipped block must run it, exit 0 itself and persist
-        the exit code beside the log for the later gate-loop step.
+        A stub ``full-suite.sh`` prints a marker and exits 3; the shipped block runs it through the PR-code guard under
+        a run-scoped approval, exits 0 itself and persists the exit code beside the log for the later gate-loop step.
+        The resolver prologue is dropped: it validates an installed plugin root, which a temporary directory is not.
         """
         gate = (_RESOLVE / "modes/lint-qa-gate.md").read_text(encoding="utf-8")
         marker = gate.index('bash -- "$IMPL_DIR/full-suite.sh"')
         start = gate.rindex("```bash", 0, marker) + len("```bash\n")
-        block = gate[start : gate.index("```", start)]
+        block = "\n".join(
+            line for line in gate[start : gate.index("```", start)].splitlines() if "resolve_plugin_root.py" not in line
+        )
         session = "resolve-full-suite"
         impl_dir = tmp_path / "impl"
         impl_dir.mkdir()
         (impl_dir / "full-suite.sh").write_text("echo suite-ran\nexit 3\n", encoding="utf-8", newline="\n")
         sentinel = tmp_path / f"resolve-impl-dir-{session}"
         sentinel.write_text(f"{bash_path(impl_dir)}\n", encoding="utf-8", newline="\n")
-        env = os.environ | {"CLAUDE_CODE_SESSION_ID": session, "TMPDIR": str(tmp_path)}
-        result = subprocess.run(
-            [_BASH, "-c", block], cwd=tmp_path, env=env, capture_output=True, text=True, check=False
-        )
+        plugin_root = _RESOLVE.parents[1]
+        git_env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "t"}
+        git_env |= {"GIT_COMMITTER_EMAIL": "t@example.com", "GIT_CONFIG_GLOBAL": os.devnull}
+        env = os.environ | git_env | {"CLAUDE_CODE_SESSION_ID": session, "TMPDIR": str(tmp_path)}
+        env |= {
+            "PLUGIN_ROOT": str(plugin_root),
+            "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ['PATH']}",
+        }
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        for args in (["init", "-q", "-b", "main"], ["commit", "-q", "--allow-empty", "-m", "base"]):
+            subprocess.run(["git", "-C", str(repo), *args], env=env, check=True, capture_output=True)
+        (repo / "a.txt").write_text("x\n", encoding="utf-8")
+        for args in (["add", "-A"], ["commit", "-q", "-m", "head"]):
+            subprocess.run(["git", "-C", str(repo), *args], env=env, check=True, capture_output=True)
+        bind = [
+            sys.executable, str(plugin_root / "bin/untrusted_code_guard.py"), "bind", "--repo", str(repo),
+            "--head", "HEAD", "--base", "HEAD~1", "--scope", "run", "--tier", "env-only", "--decision", "unsandboxed",
+            "--out", str(impl_dir / "code-approval.txt"),
+        ]  # fmt: skip
+        subprocess.run(bind, env=env, check=True, capture_output=True)
+        result = subprocess.run([_BASH, "-c", block], cwd=repo, env=env, capture_output=True, text=True, check=False)
         assert result.returncode == 0, result.stderr
         assert (impl_dir / "full-suite.rc").read_text(encoding="utf-8").strip() == "3"
         assert "suite-ran" in result.stdout

@@ -33,11 +33,11 @@ def test_counter_bump_leaves_planted_temp_target_unchanged(tmp_path: Path) -> No
     state = tmp_path / "codex-state"
     state.with_suffix(".tmp").symlink_to(victim)
 
-    assert codex_state.bump(state, "noop") == (1, 1)
+    assert codex_state.bump(state, codex_state.Outcome.NOOP) == codex_state.CodexState(codex_iter=1, noop_streak=1)
 
     assert victim.read_text(encoding="utf-8") == "keep me"
     assert not state.is_symlink()
-    assert codex_state.load_counters(state) == (1, 1)
+    assert codex_state.load_state(state) == codex_state.CodexState(codex_iter=1, noop_streak=1)
 
 
 @pytest.mark.parametrize(
@@ -54,7 +54,7 @@ def test_unusable_counter_numbers_reset_with_warning(
     state = tmp_path / "codex-state"
     state.write_text(payload, encoding="utf-8")
 
-    assert codex_state.load_counters(state) == (0, 0)
+    assert codex_state.load_state(state) == codex_state.CodexState()
     assert "unusable" in capsys.readouterr().err
 
 

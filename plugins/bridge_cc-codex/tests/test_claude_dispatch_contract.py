@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 import pytest
+from _bridge_prose import instruction_block
 
 SKILLS = Path(__file__).resolve().parents[1] / "claude-skills"
 
@@ -63,7 +64,7 @@ def test_implement_confirmation_is_user_owned_and_available() -> None:
     """An orchestrator cannot approve its own write-capable dispatch on the user's behalf."""
     lines = (SKILLS / "implement/SKILL.md").read_text(encoding="utf-8").splitlines()
     tools = next(line for line in lines if line.startswith("allowed-tools:"))
-    consent = next(line for line in lines if "For consent, caller means the user" in line)
+    consent = "\n".join(instruction_block(lines, "For consent, caller means the user"))
     assert "AskUserQuestion" in tools.partition(":")[2].replace(",", " ").split()
     assert "A direct user `/bridge:implement` invocation consents only to its exact task" in consent
     assert "every other dispatch" in consent
@@ -76,7 +77,8 @@ def test_implement_confirmation_is_user_owned_and_available() -> None:
 def test_orchestrator_approval_names_task_set_and_default_boundary() -> None:
     """Recorded task selection must authorize bounded unattended work without self-approval."""
     lines = (SKILLS / "implement/SKILL.md").read_text(encoding="utf-8").splitlines()
-    consent = next(line for line in lines if "A citable approval" in line)
+    consent = "\n".join(instruction_block(lines, "For every other dispatch"))
+    assert "A citable approval" in consent
     assert "recorded user decision in the orchestrating skill that names the task set" in consent
     assert "workspace is the skill's absolute launch directory" in consent
     assert "network is `none` unless that decision names otherwise" in consent
@@ -88,6 +90,17 @@ def test_missing_user_approval_without_question_tool_blocks_dispatch() -> None:
     lines = (SKILLS / "implement/SKILL.md").read_text(encoding="utf-8").splitlines()
     consent = next(line for line in lines if "AskUserQuestion is unavailable" in line)
     assert "return `blocked` and never dispatch" in consent
+
+
+def _consent_block(lines: list[str]) -> str:
+    """Return the approval line plus the list items directly under it, so a split paragraph still matches."""
+    start = next(i for i, line in enumerate(lines) if "recorded user decision" in line)
+    block = [lines[start]]
+    for line in lines[start + 1 :]:
+        if not re.match(r"\s*(?:[-*]|\d+\.)\s", line):
+            break
+        block.append(line)
+    return "\n".join(block)
 
 
 @pytest.mark.parametrize(
@@ -103,7 +116,7 @@ def test_missing_user_approval_without_question_tool_blocks_dispatch() -> None:
 def test_orchestrated_caller_carries_recorded_user_approval(caller: str) -> None:
     """Each write-capable caller must cite its user gate instead of approving its own dispatch."""
     lines = (SKILLS.parent.parent / caller).read_text(encoding="utf-8").splitlines()
-    consent = next(line for line in lines if "recorded user decision" in line)
+    consent = _consent_block(lines)
     assert "task set" in consent
     assert "absolute launch directory" in consent
     assert "network is `none` unless that decision names otherwise" in consent
@@ -114,7 +127,7 @@ def test_orchestrated_caller_carries_recorded_user_approval(caller: str) -> None
 def test_research_approval_uses_user_request_rather_than_availability_check() -> None:
     """An automatic plugin probe or restored flag cannot stand in for a user's task authorization."""
     lines = (SKILLS.parent.parent / "cc_research/skills/run/modes/codex-copilot.md").read_text().splitlines()
-    consent = next(line for line in lines if "recorded user decision" in line)
+    consent = _consent_block(lines)
     assert "direct user `/research:run --codex` request" in consent
     assert "R2 checks availability" in consent
     assert "restored flag or internal invocation alone is not approval" in consent
@@ -144,7 +157,8 @@ def test_detached_launch_retains_absolute_workspace_without_an_option() -> None:
 def test_dispatch_arguments_remain_discoverable(skill_lines: list[str]) -> None:
     """Callers see correlation options without advertising an internal refusal-only override."""
     hint = next(line for line in skill_lines if line.startswith("argument-hint:"))
-    parsing = next(line for line in skill_lines if line.startswith("Parse `$ARGUMENTS`"))
+    parsing = "\n".join(instruction_block(skill_lines, "Parse `$ARGUMENTS`"))
+    assert parsing.startswith("Parse `$ARGUMENTS`")
     assert "--depth" not in hint
     assert "`depth`" not in parsing
     assert "[--run-id ID]" in hint

@@ -52,6 +52,24 @@ _SKIPPED_FENCE = "_SKIP_COUNT_BEFORE="
 #: Marker line of the spawn-base block, which reads its tags from a Write-tool file instead of a placeholder.
 _SPAWN_NOW_LINE = '_SPAWN_NOW="$IMPL_DIR/phase2-spawn-now.txt"'
 _DRIFT_LINE = 'echo "⚠ base HEAD moved during Phase 2:'
+#: Marker line of the C1 quota check block; its own variable name keeps it apart from the commit fence's read.
+_QUOTA_LINE = 'IFS= read -r _QUOTA_TAG < "$IMPL_DIR/c1-item-current.txt"'
+#: Workspace-relative incident path in the shape the bridge harness writes.
+_INCIDENT = ".temp/bridge/incidents/1700000000000000000-0a0b0c0d-quota-exhausted.json"
+_OTHER_INCIDENT = ".temp/bridge/incidents/1700000000000000001-0e0f1a1b-quota-exhausted.json"
+#: Line of the comment-dispatch quota check that names the persisted bridge reply.
+_COMMENT_REPLY_LINE = '"$PLUGIN_ROOT/bin/bridge_quota_check.py" "$IMPL_DIR/comment-bridge-reply.json"'
+#: Line of the C1 partial-edit handoff block that names the patch it writes.
+_HANDOFF_LINE = '_PARTIAL="$IMPL_DIR/c1-quota-partial-${_PARTIAL_ID}.patch"'
+#: Line of the Phase 1 challenger quota check that scans the persisted challenger replies.
+_CHALLENGER_QUOTA_LINE = "--challenger \"$IMPL_DIR\" 'challenge-verdicts-*.json'"
+#: Marker content a challenger-reported quota stop writes: no ``item=``, so no partial-edit handoff runs for it.
+_CHALLENGER_MARK = "codex-blocked:quota source=challenger\n"
+#: Line a challenger opens its ``## Codex Cross-Check`` section with after its own cross-check stopped on quota.
+_CROSS_CHECK_QUOTA = (
+    "⚠ codex-blocked:quota — Codex out of credits (incident fault `quota-exhausted`); cross-check not retried. "
+    "Report above is Claude-only."
+)
 #: phase2-groups.tsv as written once before the first spawn: a two-link ``core`` chain and an unchained ``docs`` group.
 _GROUPS_TSV = "core\t1\t3 4 5 6 7\ncore\t2\t8 9\ndocs\t1\t2\n"
 #: Marker line of each block run once per item, item batch, C1 item, topic group or Phase 2 link: each reads its runtime
@@ -63,6 +81,11 @@ _AUTO_ALLOWED_BLOCKS = [
     pytest.param(
         "modes/dispatch-prelude.md", 'IFS= read -r _BATCH_TAG < "$IMPL_DIR/c1-item-current.txt"', id="c1-commit"
     ),
+    pytest.param("modes/dispatch-prelude.md", _QUOTA_LINE, id="c1-quota-check"),
+    pytest.param("modes/comment-dispatch.md", _COMMENT_REPLY_LINE, id="comment-quota-check"),
+    pytest.param("modes/dispatch-prelude.md", '[ ! -e "$IMPL_DIR/c1-quota-blocked.txt" ] ||', id="c1-freshness-quota"),
+    pytest.param("modes/dispatch-prelude.md", _HANDOFF_LINE, id="c1-quota-handoff"),
+    pytest.param("modes/dispatch-phase1.md", _CHALLENGER_QUOTA_LINE, id="challenger-quota-check"),
     pytest.param("modes/dispatch-prelude.md", '_LOG_NOW="$IMPL_DIR/challenge-log-now.txt"', id="challenge-log"),
     pytest.param("modes/dispatch-phase3.md", '_GROUP_NOW="$IMPL_DIR/group-commit-now.txt"', id="group-commit"),
     pytest.param("modes/dispatch-phase2.md", _SPAWN_NOW_LINE, id="spawn-base"),
@@ -78,16 +101,23 @@ _SPLIT_RULE = (
 )
 #: Post-Step-3d `AskUserQuestion` mentions that are error recovery, a user-elected gate, or an explicit "no ask" note.
 _POST_SELECTION_ASK_ALLOWLIST = (
-    "**Repository hook approval — parent-owned",  # explicitly approved execution boundary for PR-supplied hooks
+    # explicitly approved execution boundary for PR-supplied hooks (Repository hook approval, step 4)
+    "The parent calls `AskUserQuestion` with **Run these hooks** / **Keep hooks disabled**",
+    "**PR-code approval — same question call",  # PR-code execution boundary, asked in the hook-approval call: no extra stop
     "No confirming commit found",  # straggler gate: unresolved item status
     "**Push confirmation — one `AskUserQuestion` call.**",  # Step 10: scope-bearing push confirmation (git-push)
     "**Drift question — its own `AskUserQuestion` call",  # Step 10: target moved since Step 9 (BASE_FRESH=no only)
     "Assign a topic label to each implemented item",  # Step 8: typed-labels file lost (recovery)
     "no new `AskUserQuestion` here",  # Step 11 states it reads the stored answer
     "Phase 2 groups are formed",  # group preview, elected at Step 3d via Custom dispatch
-    "Challenge double-timeout gate",  # Phase 1: a retry also timed out; user decides, batched per wave
+    # Phase 1 Challenge double-timeout gate, step 4: a retry also timed out; user decides, batched per wave
+    "4. Then invoke `AskUserQuestion` (actual tool call):",
 )
 _REAL_RUN = subprocess.run
+#: Co-author trailer the commit helpers add when Codex implemented part of the committed change.
+_CODEX_TRAILER = "Co-authored-by: Codex <codex@openai.com>"
+#: Marker line of the ``COMMIT_MODE=all`` bulk-commit block.
+_ALL_COMMIT_LINE = 'SUMMARIES_FILE=""'
 #: Review-comment text a hostile reviewer could plant; C1 must carry it as data and never run it.
 _UNTRUSTED_TEXT = "decoder drops values; $(touch c1-injection) `touch c1-backtick`"
 
@@ -250,6 +280,8 @@ def _init_repo(repo: Path) -> None:
     _git(repo, "init", "-q")
     _git(repo, "config", "user.name", "Resolve Test")
     _git(repo, "config", "user.email", "resolve@example.invalid")
+    # fixtures write LF; a host-wide core.autocrlf=true (Git for Windows default) would leave them stat-dirty
+    _git(repo, "config", "core.autocrlf", "false")
 
 
 def _commit_all(repo: Path, message: str) -> str:
@@ -268,6 +300,29 @@ def lineage(tmp_path: Path) -> Lineage:
     base = _commit_all(repo, "base")
     _put(repo / "core.py", "VALUE = 2\n")
     return Lineage(repo, base, _commit_all(repo, "link commit"))
+
+
+@pytest.fixture
+def collapsed_run(tmp_path: Path) -> Path:
+    """Return a checkout after a clean Phase 3 in a non-``each`` commit mode, with Codex available all run.
+
+    Item 3's Phase 2 commit is collapsed into the index (its sha kept in ``phase2-commits.jsonl``), and ``a.py`` holds
+    an unstaged edit for the Codex item a test may record in ``c1-item-files.tsv``. ``CODEX_AVAILABLE`` stays ``true``
+    because a Codex quota stop never changes it.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _put(repo / "core.py", "VALUE = 1\n")
+    _put(repo / "a.py", "A = 1\n")
+    base = _commit_all(repo, "base")
+    _put(repo / "core.py", "VALUE = 2\n")
+    phase2_sha = _commit_all(repo, "fix(core): raise value [resolve No.3]")
+    _git(repo, "reset", "-q", "--soft", base)
+    _put(repo / "a.py", "A = 2\n")
+    _write_impl_file(tmp_path, "phase2-commits.jsonl", json.dumps({"item_id": 3, "sha": phase2_sha}) + "\n")
+    _write_impl_file(tmp_path, "c1-item-summary.tsv", "4\tfix(a): raise A\n")
+    _seed(tmp_path, {"pr-number": "42", "pr-ref": "#42", "preflight-CODEX_AVAILABLE": "true"})
+    return repo
 
 
 def _envelope_fence(tmp_path: Path, marker: str, tag: str = "core\n") -> str:
@@ -1451,6 +1506,541 @@ class TestC1:
 
         assert "Everything else keeps the full Part 1" not in report_mode
         assert "Parent candidate proof" in report_mode
+
+
+def _write_incident(repo: Path, relative: str, fault: str) -> None:
+    """Write a bridge incident record with ``fault`` at ``relative`` below ``repo``, as the bridge harness would."""
+    path = repo / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {"schema_version": 2, "fault": fault, "verb": "implement", "workspace_delta": [], "returncode": 1}
+    _put(path, json.dumps(record))
+
+
+@pytest.fixture
+def quota_run(tmp_path: Path) -> Path:
+    """Create a C1 run after one bridge call: briefed item 4, its recorded HEAD, Codex available, ``.temp/`` ignored.
+
+    Returns the repository, whose ``nested`` subdirectory stands in for a Bash cwd below the bridge workspace.
+    """
+    repo = tmp_path / "repo"
+    impl_dir = _make_impl_dir(tmp_path)
+    _init_repo(repo)
+    _put(repo / ".gitignore", ".temp/\n")
+    _put(repo / "a.py", "old\n")
+    (repo / "data.bin").write_bytes(_BINARY_BASE)
+    _put(impl_dir / "c1-head-4.txt", _commit_all(repo, "baseline") + "\n")
+    _put(impl_dir / "c1-item-current.txt", "4\n")  # the brief block's record
+    _seed(tmp_path, {"preflight-CODEX_AVAILABLE": "true"})
+    (repo / "nested").mkdir()
+    return repo
+
+
+#: Committed bytes of the tracked binary file in ``quota_run``; NUL and 0xFF force Git's binary patch format.
+_BINARY_BASE = b"\x00\x01base\xff"
+#: ``git`` wrapper that refuses every ``--check`` call and hands everything else to the real Git.
+_REFUSE_CHECK_GIT = """#!/bin/sh
+for arg in "$@"; do
+    if [ "$arg" = "--check" ]; then echo "test double: check refused" >&2; exit 1; fi
+done
+exec "{git}" "$@"
+"""
+
+
+def _dirty_after_quota_stop(tmp_path: Path, repo: Path) -> str:
+    """Leave the state a dirty C1 quota stop leaves: marker, tracked text and binary edits, one untracked file.
+
+    Returns the ``git status`` porcelain text of that state, for comparison after a failed handoff.
+    """
+    _write_impl_file(tmp_path, "c1-quota-blocked.txt", "codex-blocked:quota item=4\n")
+    _put(repo / "a.py", "partial\n")
+    (repo / "data.bin").write_bytes(b"\x00\x02partial\xfe")
+    _put(repo / "nested/b.py", "new\n")
+    return _git(repo, "status", "--porcelain=v1", "--untracked-files=all")
+
+
+def _run_quota_check(
+    tmp_path: Path, repo: Path, reply: dict, subdir: str = "", shell: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Persist ``reply`` as item 4's C1 reply, as the Write tool would, and run the unedited quota check block."""
+    _put(tmp_path / "impl/c1-reply-4.json", json.dumps(reply))
+    block = _bash_block_containing(_dispatch_text(), _QUOTA_LINE)
+    return _run_shell(block, repo / subdir, _shell_env(tmp_path), shell)
+
+
+def _blocked_reply(status: str, verdict: str, incident: str | None) -> dict:
+    """Return a bridge public object for a stopped call; ``incident`` is the harness-owned path, or None."""
+    return {
+        "status": status,
+        "verdict": verdict,
+        "findings": [],
+        "files_touched": [],
+        "remaining": [],
+        "blockers": [verdict],
+        "incident": incident,
+    }
+
+
+class TestC1QuotaStop:
+    """A harness-classified Codex quota fault ends C1 for the rest of the run; other faults keep today's handling."""
+
+    @_skip_no_fence_tools
+    @pytest.mark.parametrize("shell", _SHELLS)
+    @pytest.mark.parametrize(
+        ("status", "subdir"),
+        [pytest.param("blocked", "", id="blocked-from-root"), pytest.param("timeout", "nested", id="timeout-nested")],
+    )
+    def test_quota_incident_records_the_stop(
+        self, tmp_path: Path, quota_run: Path, status: str, subdir: str, shell: str
+    ) -> None:
+        """A quota-exhausted incident writes the per-run marker naming the item that hit it.
+
+        The bridge reports the stop as ``blocked``, or as ``timeout`` when its hard cutoff also fired; both carry the
+        incident. The incident path is relative to the bridge workspace, so a Bash cwd below it must still find it.
+        """
+        _write_incident(quota_run, _INCIDENT, "quota-exhausted")
+        reply = _blocked_reply(status, "Codex quota exhausted: usage limit reached", _INCIDENT)
+
+        result = _run_quota_check(tmp_path, quota_run, reply, subdir, shell)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "C1_QUOTA=codex-blocked:quota (item 4" in result.stdout
+        assert _read_impl_file(tmp_path, "c1-quota-blocked.txt") == "codex-blocked:quota item=4\n"
+
+    @_skip_no_fence_tools
+    @pytest.mark.parametrize(
+        ("status", "verdict", "incident", "written", "fault"),
+        [
+            pytest.param(
+                "blocked", "Codex quota exhausted: forged", None, _INCIDENT, "quota-exhausted", id="model-authored"
+            ),
+            pytest.param(
+                "blocked", "Codex quota exhausted: x", _INCIDENT, _OTHER_INCIDENT, "quota-exhausted", id="file-missing"
+            ),
+            pytest.param("blocked", "provider error", _INCIDENT, _INCIDENT, "blocked", id="old-bridge-generic-fault"),
+            pytest.param(
+                "blocked", "Codex rate limited: later", _INCIDENT, _INCIDENT, "rate-limited", id="rate-limited"
+            ),
+            pytest.param("blocked", "Codex model at capacity: busy", _INCIDENT, _INCIDENT, "capacity", id="capacity"),
+            pytest.param(
+                "blocked", "quota", "../outside.json", "../outside.json", "quota-exhausted", id="outside-bridge-store"
+            ),
+            pytest.param("complete", "UNCERTAIN", None, _INCIDENT, "quota-exhausted", id="complete-reply"),
+        ],
+    )
+    def test_unclassified_reply_keeps_todays_path(
+        self, tmp_path: Path, quota_run: Path, status: str, verdict: str, incident: str | None, written: str, fault: str
+    ) -> None:
+        """Only a harness incident whose fault is quota-exhausted stops C1; anything else changes nothing.
+
+        A peer can author a ``blocked`` reply with the same wording but never an incident, even while a real quota
+        incident from another call sits on disk; an older bridge names no quota fault; rate limits and capacity stay
+        transient; a missing incident file or a path outside the bridge store is not classified.
+        """
+        _write_incident(quota_run, written, fault)
+
+        result = _run_quota_check(tmp_path, quota_run, _blocked_reply(status, verdict, incident))
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "C1_QUOTA=none (item 4)" in result.stdout
+        assert not (tmp_path / "impl/c1-quota-blocked.txt").exists()
+
+    @_skip_no_fence_tools
+    def test_quota_stop_with_changes_blocks_after_recording_the_stop(self, tmp_path: Path, quota_run: Path) -> None:
+        """A quota stop that left edits halts before Phase 1+2, yet later C1 calls stay disabled.
+
+        Phase 3 cherry-picks refuse a worktree with unattributed edits, and an empty incident delta never proves that no
+        edit landed, so the block checks Git itself; the marker is written first so a rerun never calls Codex again.
+        """
+        _write_incident(quota_run, _INCIDENT, "quota-exhausted")
+        _put(quota_run / "a.py", "partial\n")
+
+        result = _run_quota_check(tmp_path, quota_run, _blocked_reply("blocked", "Codex quota exhausted: x", _INCIDENT))
+
+        assert result.returncode != 0
+        assert "! BLOCKED — C1 quota stop left changes; run the partial-edit handoff block" in result.stdout
+        assert _read_impl_file(tmp_path, "c1-quota-blocked.txt") == "codex-blocked:quota item=4\n"
+
+    @_skip_no_fence_tools
+    @pytest.mark.parametrize("subdir", [pytest.param("", id="from-root"), pytest.param("nested", id="from-nested")])
+    def test_partial_edit_handoff_saves_a_patch_and_restores_the_tree(
+        self, tmp_path: Path, quota_run: Path, subdir: str
+    ) -> None:
+        """The stopped call's edits move into a patch for the item's Phase 1+2 agents; the tree returns to the brief.
+
+        Phase 2 specialists work in worktrees that never see main-tree edits, and Phase 3 cherry-picks refuse an
+        unstaged edit on the same file, so the edits cannot stay in place. Nothing is discarded: the patch holds the
+        modified file and the new untracked file, and applies forward again.
+        """
+        _dirty_after_quota_stop(tmp_path, quota_run)
+        block = _bash_block_containing(_dispatch_text(), _HANDOFF_LINE)
+
+        result = _run_shell(block, quota_run / subdir, _shell_env(tmp_path))
+
+        patch = tmp_path / "impl/c1-quota-partial-4.patch"
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert _git(quota_run, "status", "--porcelain=v1", "--untracked-files=all") == ""
+        assert (quota_run / "a.py").read_text(encoding="utf-8") == "old\n"
+        assert (quota_run / "data.bin").read_bytes() == _BINARY_BASE
+        assert not (quota_run / "nested/b.py").exists()
+        assert {"a/a.py", "a/data.bin", "b/nested/b.py"} <= set(patch.read_text(encoding="utf-8").split())
+        assert _git(quota_run, "apply", "--check", str(patch)) == ""
+
+    @_skip_no_fence_tools
+    def test_handoff_that_cannot_write_its_patch_leaves_the_tree_as_is(self, tmp_path: Path, quota_run: Path) -> None:
+        """A patch path that cannot be written stops the handoff before the tree changes.
+
+        A directory standing at the patch path makes the redirect fail; the edits must stay exactly where they are.
+        """
+        before = _dirty_after_quota_stop(tmp_path, quota_run)
+        (tmp_path / "impl/c1-quota-partial-4.patch").mkdir()
+        block = _bash_block_containing(_dispatch_text(), _HANDOFF_LINE)
+
+        result = _run_shell(block, quota_run, _shell_env(tmp_path))
+
+        assert result.returncode != 0
+        assert "! BLOCKED — C1 quota stop left changes; tree left as is" in result.stdout
+        assert "cannot write the tracked diff" in result.stdout
+        assert _git(quota_run, "status", "--porcelain=v1", "--untracked-files=all") == before
+
+    @_skip_no_fence_tools
+    def test_handoff_whose_reverse_check_fails_leaves_the_tree_as_is(self, tmp_path: Path, quota_run: Path) -> None:
+        """A patch Git will not reverse-apply stops the handoff before the tree changes, and the patch stays.
+
+        A ``git`` wrapper refuses every ``--check`` call, standing in for a patch Git cannot reverse; everything else
+        reaches the real Git.
+        """
+        before = _dirty_after_quota_stop(tmp_path, quota_run)
+        fake_bin = tmp_path / "fake-bin"
+        fake_bin.mkdir()
+        wrapper = fake_bin / "git"
+        _put(wrapper, _REFUSE_CHECK_GIT.format(git=bash_path(Path(shutil.which("git")))))
+        wrapper.chmod(0o755)
+        env = _shell_env(tmp_path)
+        block = _bash_block_containing(_dispatch_text(), _HANDOFF_LINE)
+
+        result = _run_shell(block, quota_run, env | {"PATH": f"{fake_bin}{os.pathsep}{env['PATH']}"})
+
+        assert result.returncode != 0
+        assert "reverse check failed" in result.stdout
+        assert "patch (if written): " in result.stdout
+        assert (tmp_path / "impl/c1-quota-partial-4.patch").stat().st_size > 0
+        assert _git(quota_run, "status", "--porcelain=v1", "--untracked-files=all") == before
+
+    def test_partial_edit_is_handed_to_the_items_phase_1_and_2_agents(self) -> None:
+        """The handoff patch reaches the item's challenger and implementer as unverified starting state."""
+        dispatch = _dispatch_text()
+
+        assert "`[partial=$IMPL_DIR/c1-quota-partial-<id>.patch]` when that file exists" in dispatch
+        assert "partial Codex edit: <$IMPL_DIR/c1-quota-partial-<id>.patch, only if that file exists" in dispatch
+        assert "route the item through Phase 1+2; never discard the patch" in dispatch
+
+    def test_handoff_block_never_resets_cleans_checks_out_or_stashes(self) -> None:
+        """The handoff restores only by reverse-applying its own verified patch; no other Git operation may change
+        files.
+
+        ``reset``, ``clean``, ``checkout``, ``stash`` and ``rm`` could drop edits the patch does not hold.
+        """
+        lines = _bash_block_containing(_dispatch_text(), _HANDOFF_LINE).splitlines()
+        subcommands = {match for line in lines for match in re.findall(r'\bgit(?: -C "\$_TOP")? ([a-z-]+)', line)}
+
+        assert subcommands == {"rev-parse", "diff", "ls-files", "status", "apply"}
+        assert not [line for line in lines if re.match(r"\s*rm\b", line)]
+
+    @_skip_no_fence_tools
+    @pytest.mark.parametrize(
+        ("run_file", "expected"),
+        [
+            pytest.param("c1-quota-blocked.txt", True, id="after-quota-stop"),
+            pytest.param("unrelated.txt", False, id="no-stop"),
+        ],
+    )
+    def test_late_wave_freshness_block_turns_challenger_codex_off(
+        self, tmp_path: Path, lineage: Lineage, run_file: str, expected: bool
+    ) -> None:
+        """After a quota stop the late-wave block tells the orchestrator to send challengers ``--no-codex``.
+
+        A ``foundry:challenger`` runs its own ``bridge:review`` cross-check unless its prompt carries ``--no-codex``,
+        which after a quota stop is one more call that cannot succeed.
+        """
+        _write_impl_file(tmp_path, run_file, "codex-blocked:quota item=4\n")
+        block = bash_block_after(_dispatch_text(), "**C1 evidence freshness")
+
+        result = _run_resolve_block(block, tmp_path, lineage.repo, lineage.tip)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert ("CHALLENGER_CODEX=off" in result.stdout) is expected
+
+    def test_phase_1_challenger_prompts_carry_no_codex_after_the_stop(self) -> None:
+        """Every Phase 1 challenger prompt gains ``--no-codex`` once the C1 quota marker exists."""
+        lines = _resolve_text("modes/dispatch-phase1.md").splitlines()
+
+        assert any("`CHALLENGER_CODEX=off`" in line and "`--no-codex`" in line for line in lines)
+        assert any("`$IMPL_DIR/c1-quota-blocked.txt`" in line and "`--no-codex`" in line for line in lines)
+
+    @_skip_no_fence_tools
+    def test_quota_stop_leaves_codex_available_untouched(self, tmp_path: Path, quota_run: Path) -> None:
+        """The stop never rewrites the run's Codex availability.
+
+        That sentinel still keeps the ``xhigh`` skip off; the Codex co-author trailer follows each item's C1 record
+        instead, so C1 items finished before the stop keep it and later specialist items never gain it.
+        """
+        _write_incident(quota_run, _INCIDENT, "quota-exhausted")
+
+        _run_quota_check(tmp_path, quota_run, _blocked_reply("blocked", "Codex quota exhausted: x", _INCIDENT))
+
+        sentinel = tmp_path / f"resolve-preflight-CODEX_AVAILABLE-{_SESSION}"
+        assert sentinel.read_text(encoding="utf-8") == "true\n"
+        assert "CODEX_AVAILABLE" not in _bash_block_containing(_dispatch_text(), _QUOTA_LINE)
+
+    @_skip_no_fence_tools
+    @pytest.mark.parametrize(
+        "record",
+        [
+            pytest.param("codex-blocked:quota item=4\n", id="c1-stop"),
+            pytest.param(_CHALLENGER_MARK, id="challenger-cross-check-stop"),
+        ],
+    )
+    def test_brief_block_refuses_every_c1_call_after_the_stop(
+        self, tmp_path: Path, lineage: Lineage, record: str
+    ) -> None:
+        """Once the marker exists, no later C1 brief is written and the pending item id stays unconsumed.
+
+        Without a brief file there is nothing to pass as ``--task-file``, so the doomed bridge call cannot be issued. A
+        challenger whose own Codex cross-check stopped on quota writes the same marker without an item id.
+        """
+        _write_impl_file(tmp_path, "c1-quota-blocked.txt", record)
+        _write_impl_file(tmp_path, "c1-item-now.txt", "7\n")
+        _write_impl_file(tmp_path, "bridge-approval.md", "Recorded user approval: Step 3d selected task set 7.\n")
+        record = {"id": 7, "file": "a.py", "line": 1, "full_comment_text": "fix"}
+        _write_impl_file(tmp_path, "action-items.jsonl", json.dumps(record) + "\n")
+        block = _bash_block_containing(_dispatch_text(), '_C1_NOW="$IMPL_DIR/c1-item-now.txt"')
+
+        result = _run_resolve_block(block, tmp_path, lineage.repo, lineage.tip)
+
+        assert result.returncode != 0
+        assert "→ C1 skipped — Codex quota exhausted earlier this run" in result.stdout
+        assert _read_impl_file(tmp_path, "c1-item-now.txt") == "7\n"
+        assert not (tmp_path / "impl/c1-brief-7.md").exists()
+
+    def test_rule_names_the_marker_the_fault_source_and_the_unchanged_faults(self) -> None:
+        """The C1 text states what stops C1, where the decision comes from, and what it leaves alone."""
+        c1 = _c1_text()
+
+        assert "`$IMPL_DIR/c1-quota-blocked.txt`" in c1
+        assert "`incident` is non-null and that incident file's `fault` is `quota-exhausted`" in c1
+        assert "verdict and `blockers` text never decide" in c1
+        assert "`rate-limited`, `capacity` and every other fault keep today's handling" in c1
+        assert "`CODEX_AVAILABLE` stays unchanged" in c1
+        assert "**`C1_QUOTA=codex-blocked:quota`** → the item falls through to Phase 1+2" in c1
+
+    def test_final_report_shows_the_stop_as_its_own_outcome(self) -> None:
+        """The final report surfaces the stop and any handoff patch from run files, not from scrolled-off output."""
+        report = _resolve_text("modes/final-report.md")
+
+        assert 'IFS= read -r _C1_QUOTA < "$_IMPL_DIR/c1-quota-blocked.txt"' in report
+        assert "find \"$_IMPL_DIR\" -maxdepth 1 -name 'c1-quota-partial-*.patch'" in report
+        assert "never as a no-op or a failure" in report
+
+
+def _challenger_reply(**extra: object) -> str:
+    """Return a persisted Phase 1 challenger reply as the Write tool stores it, plus any extra top-level keys."""
+    item = {"id": 3, "evidence": "VALID", "evidence_rationale": "a.py:4 drops it", "suggestion": "VALID",
+            "suggestion_rationale": "guard fits", "alternative": None}  # fmt: skip
+    return json.dumps({"items": [item], **extra})
+
+
+def _run_challenger_quota_check(tmp_path: Path, shell: str | None = None) -> subprocess.CompletedProcess[str]:
+    """Run the unedited Phase 1 challenger quota check against the run dir ``impl``."""
+    block = _bash_block_containing(_resolve_text("modes/dispatch-phase1.md"), _CHALLENGER_QUOTA_LINE)
+    return _run_shell(block, tmp_path, _shell_env(tmp_path), shell)
+
+
+class TestChallengerQuotaStop:
+    """A challenger whose own Codex cross-check stopped on quota ends Codex for the rest of the resolve run.
+
+    The challenger's ``bridge:review`` reply never reaches the orchestrator; only the challenger's envelope does, with a
+    top-level ``codex_blocked`` of ``"quota"``. The check reuses C1's marker, which every later C1 brief and challenger
+    prompt already reads.
+    """
+
+    @_skip_no_bash
+    @pytest.mark.parametrize("shell", _SHELLS)
+    @pytest.mark.parametrize(
+        ("name", "content"),
+        [
+            pytest.param(
+                "challenge-verdicts-api-late.json", _challenger_reply(codex_blocked="quota"), id="envelope-key"
+            ),
+            pytest.param(
+                "challenge-verdicts-api.json",
+                f"## Challenge: items\n\n## Codex Cross-Check\n\n{_CROSS_CHECK_QUOTA}\n",
+                id="reply-without-envelope",
+            ),
+        ],
+    )
+    def test_quota_reply_records_the_stop(self, tmp_path: Path, shell: str, name: str, content: str) -> None:
+        """Either challenger carrier writes the run marker and turns challenger Codex off.
+
+        The envelope key, or, for a reply that carries no envelope, the anchored opening line of its Cross-Check
+        section. A late-wave reply counts too; ``CODEX_AVAILABLE`` stays as it was, as after a C1 stop.
+        """
+        _make_impl_dir(tmp_path)
+        _seed(tmp_path, {"preflight-CODEX_AVAILABLE": "true"})
+        _write_impl_file(tmp_path, "challenge-verdicts-logic.json", _challenger_reply())
+        _write_impl_file(tmp_path, name, content)
+
+        result = _run_challenger_quota_check(tmp_path, shell)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "CHALLENGER_CODEX=off" in result.stdout
+        assert _read_impl_file(tmp_path, "c1-quota-blocked.txt") == _CHALLENGER_MARK
+        assert (tmp_path / f"resolve-preflight-CODEX_AVAILABLE-{_SESSION}").read_text(encoding="utf-8") == "true\n"
+
+    @_skip_no_bash
+    @pytest.mark.parametrize("shell", _SHELLS)
+    @pytest.mark.parametrize(
+        ("name", "reply"),
+        [
+            pytest.param("unrelated.txt", "x\n", id="no-reply-persisted"),
+            pytest.param("challenge-verdicts-logic.json", _challenger_reply(), id="field-absent"),
+            pytest.param("challenge-verdicts-logic.json", _challenger_reply(codex_blocked="capacity"), id="capacity"),
+            pytest.param(
+                "challenge-verdicts-logic.json",
+                json.dumps({"items": [{"id": 3, "evidence_rationale": "Codex quota exhausted"}]}),
+                id="quota-wording-in-rationale",
+            ),
+            pytest.param(
+                "challenge-verdicts-api.json",
+                f"## Codex Cross-Check\n\nCodex agrees on a.py:4.\n{_CROSS_CHECK_QUOTA}\n",
+                id="token-below-the-opening-line",
+            ),
+            pytest.param(
+                "challenge-domain-api.md",
+                f"## Codex Cross-Check\n\n{_CROSS_CHECK_QUOTA}\n",
+                id="analysis-file-is-not-a-reply",
+            ),
+        ],
+    )
+    def test_other_replies_keep_codex_on(self, tmp_path: Path, shell: str, name: str, reply: str) -> None:
+        """No stop without a carrier: a missing reply, another value or quota wording in prose changes nothing.
+
+        With no reply persisted yet, zsh must not abort on an unmatched glob.
+        """
+        _make_impl_dir(tmp_path)
+        _write_impl_file(tmp_path, name, reply)
+
+        result = _run_challenger_quota_check(tmp_path, shell)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "CHALLENGER_QUOTA=none" in result.stdout
+        assert not (tmp_path / "impl/c1-quota-blocked.txt").exists()
+
+    @_skip_no_bash
+    def test_c1_marker_is_never_replaced(self, tmp_path: Path) -> None:
+        """A marker C1 wrote keeps its item id, which the partial-edit handoff reads to name its patch."""
+        _make_impl_dir(tmp_path)
+        _write_impl_file(tmp_path, "c1-quota-blocked.txt", "codex-blocked:quota item=4\n")
+        _write_impl_file(tmp_path, "challenge-verdicts-logic-late.json", _challenger_reply(codex_blocked="quota"))
+
+        result = _run_challenger_quota_check(tmp_path)
+
+        assert "CHALLENGER_CODEX=off" in result.stdout
+        assert _read_impl_file(tmp_path, "c1-quota-blocked.txt") == "codex-blocked:quota item=4\n"
+
+    @_skip_no_fence_tools
+    def test_handoff_refuses_a_challenger_stop(self, tmp_path: Path, quota_run: Path) -> None:
+        """A challenger stop names no C1 item, so the partial-edit handoff stops before touching the tree."""
+        _write_impl_file(tmp_path, "c1-quota-blocked.txt", _CHALLENGER_MARK)
+        _put(quota_run / "a.py", "someone else's edit\n")
+        before = _git(quota_run, "status", "--porcelain=v1", "--untracked-files=all")
+        block = _bash_block_containing(_dispatch_text(), _HANDOFF_LINE)
+
+        result = _run_shell(block, quota_run, _shell_env(tmp_path))
+
+        assert result.returncode != 0
+        assert "! BLOCKED — no C1 quota stop recorded in c1-quota-blocked.txt" in result.stdout
+        assert _git(quota_run, "status", "--porcelain=v1", "--untracked-files=all") == before
+
+    @_skip_no_bash_jq
+    def test_challenge_log_reads_a_reply_carrying_the_field(self, tmp_path: Path) -> None:
+        """The extra top-level key leaves the shared challenge-log append block reading the reply's items as before."""
+        _write_challenge_inputs(tmp_path, "3 as-suggested logic\n")
+        _write_impl_file(tmp_path, "challenge-verdicts-logic.json", _challenger_reply(codex_blocked="quota"))
+
+        result = _run_resolve_block(_challenge_log_block(), tmp_path, tmp_path, "a" * 40)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "evidence_why=a.py:4 drops it" in _read_impl_file(tmp_path, "challenge-log.txt")
+
+    def test_phase_1_text_names_the_field_the_check_and_the_fan_limit(self) -> None:
+        """Phase 1 states which reply field records the stop, when the check runs, and what it cannot stop."""
+        lines = _resolve_text("modes/dispatch-phase1.md").splitlines()
+
+        assert any("`codex_blocked`" in line and '`"quota"`' in line for line in lines)
+        assert any(
+            line.startswith("**Challenger quota check") and "after every challenger reply" in line for line in lines
+        )
+        assert any("same response keep their cross-check" in line for line in lines)
+
+    def test_c1_rule_and_final_report_name_the_challenger_source(self) -> None:
+        """The C1 rule and the final report tell a challenger-sourced stop apart from a C1 item stop."""
+        assert "`codex-blocked:quota source=challenger`" in _c1_text()
+        assert "`C1 codex-blocked:quota source=challenger`" in _resolve_text("modes/final-report.md")
+
+
+class TestCommentDispatchQuotaStop:
+    """Comment dispatch stops calling the bridge for the rest of its run after a harness quota fault."""
+
+    @staticmethod
+    def _run_check(tmp_path: Path, incident: str | None, fault: str) -> subprocess.CompletedProcess[str]:
+        """Persist one bridge reply as the Write tool would, write its incident, and run the unedited quota check."""
+        launch = tmp_path / "launch"
+        launch.mkdir()
+        impl_dir = _make_impl_dir(tmp_path)
+        _write_incident(launch, _INCIDENT, fault)
+        _put(impl_dir / "comment-bridge-reply.json", json.dumps(_blocked_reply("blocked", "Codex quota: x", incident)))
+        block = _bash_block_containing(_resolve_text("modes/comment-dispatch.md"), _COMMENT_REPLY_LINE)
+        return _run_shell(block, launch, _shell_env(tmp_path))
+
+    @_skip_no_bash
+    def test_quota_incident_disables_the_bridge_for_the_run(self, tmp_path: Path) -> None:
+        """A quota-exhausted incident writes the run marker, so 12a falls back in-house and 12b stops."""
+        result = self._run_check(tmp_path, _INCIDENT, "quota-exhausted")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "COMMENT_QUOTA=codex-blocked:quota" in result.stdout
+        assert _read_impl_file(tmp_path, "codex-quota-blocked.txt") == "codex-blocked:quota\n"
+
+    @_skip_no_bash
+    @pytest.mark.parametrize(
+        ("incident", "fault"),
+        [
+            pytest.param(None, "quota-exhausted", id="model-authored-null-incident"),
+            pytest.param(_INCIDENT, "rate-limited", id="rate-limited"),
+            pytest.param(_INCIDENT, "capacity", id="capacity"),
+            pytest.param(_INCIDENT, "blocked", id="old-bridge-generic-fault"),
+        ],
+    )
+    def test_other_replies_keep_the_bridge_route(self, tmp_path: Path, incident: str | None, fault: str) -> None:
+        """A peer-authored quota verdict, a rate limit, capacity or an older bridge's fault keeps today's flow."""
+        result = self._run_check(tmp_path, incident, fault)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "COMMENT_QUOTA=none" in result.stdout
+        assert not (tmp_path / "impl/codex-quota-blocked.txt").exists()
+
+    def test_rule_routes_in_house_stops_the_loop_and_reports_the_stop(self) -> None:
+        """The text sends 12a to the Step 12 fallback agent, ends 12b, and reports Codex as blocked by quota."""
+        comment = _resolve_text("modes/comment-dispatch.md")
+
+        assert "`incident` is non-null and that incident file's `fault` is `quota-exhausted`" in comment
+        assert "12a dispatches the fallback agent from the Step 12 table" in comment
+        assert (
+            'if COMMENT_QUOTA == codex-blocked:quota: CODEX_REVIEW_FINDINGS = "⊘ codex-blocked:quota — Codex quota '
+            'exhausted"; break' in comment
+        )
+        assert '"⊘ codex-blocked:quota — Codex quota exhausted"' in comment
+        assert "`rate-limited`, `capacity` and every other fault keep today's handling" in comment
 
 
 class TestPhase1Freshness:
@@ -2728,6 +3318,72 @@ class TestPerItemBlocks:
         assert "NO MATCH — item 1 has no [resolve No.1] commit" in result.stdout
         assert "MATCH — item 3: " in result.stdout
         assert "[resolve No.3]" in result.stdout
+
+
+class TestCodexCoAuthorTrailer:
+    """Combined commits credit Codex only when they hold an item Codex implemented, never for Codex availability."""
+
+    @_skip_no_fence_tools
+    @pytest.mark.parametrize("shell", _SHELLS)
+    @pytest.mark.parametrize(
+        ("group_line", "c1_files", "codex_trailer"),
+        [
+            pytest.param("logic 3\n", "", False, id="specialist-item-after-quota-stop"),
+            pytest.param("tests 3\n", "4\ta.py\n", False, id="specialist-group-beside-codex-item"),
+            pytest.param("logic 4\n", "4\ta.py\n", True, id="codex-item"),
+            pytest.param("logic 3 4\n", "4\ta.py\n", True, id="mixed-group"),
+        ],
+    )
+    def test_group_commit_trailer_follows_codex_items(
+        self, tmp_path: Path, collapsed_run: Path, shell: str, group_line: str, c1_files: str, codex_trailer: bool
+    ) -> None:
+        """A topic-group commit carries the Codex trailer exactly when one of its items has a Codex (C1) record.
+
+        After a Codex quota stop the stopped item and every later one run through the specialists, yet
+        ``CODEX_AVAILABLE`` stays ``true``; a trailer keyed on it credited Codex for specialist-only groups. A group
+        holding the item Codex finished keeps the trailer, alone or beside a specialist item.
+        """
+        _write_impl_file(tmp_path, "group-commit-now.txt", group_line)
+        _write_impl_file(tmp_path, "c1-item-files.tsv", c1_files)
+        block = _bash_block_containing(_dispatch_text(), '_GROUP_NOW="$IMPL_DIR/group-commit-now.txt"')
+
+        result = _run_resolve_block(block, tmp_path, collapsed_run, "a" * 40, shell)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert _read_impl_file(tmp_path, "group-commit-status.txt") == "ok\n"
+        assert (_CODEX_TRAILER in _git(collapsed_run, "log", "-1", "--format=%B")) is codex_trailer
+
+    @_skip_no_fence_tools
+    @pytest.mark.parametrize("shell", _SHELLS)
+    @pytest.mark.parametrize(
+        ("c1_files", "staged", "codex_trailer"),
+        [
+            pytest.param("", ("core.py",), False, id="specialist-items-only"),
+            pytest.param("4\ta.py\n", ("core.py", "a.py"), True, id="codex-item"),
+        ],
+    )
+    def test_all_items_commit_trailer_follows_codex_items(
+        self,
+        tmp_path: Path,
+        collapsed_run: Path,
+        shell: str,
+        c1_files: str,
+        staged: tuple[str, ...],
+        codex_trailer: bool,
+    ) -> None:
+        """The single all-items commit carries the Codex trailer exactly when the run recorded a Codex (C1) item.
+
+        The C1 staging fence has already staged the Codex item's files when one exists. With no C1 record, as after a
+        quota stop that sent every Codex-eligible item to the specialists, Codex wrote nothing in the commit.
+        """
+        _write_impl_file(tmp_path, "c1-item-files.tsv", c1_files)
+        _git(collapsed_run, "add", "--", *staged)
+        block = _bash_block_containing(_dispatch_text(), _ALL_COMMIT_LINE)
+
+        result = _run_resolve_block(block, tmp_path, collapsed_run, "a" * 40, shell)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (_CODEX_TRAILER in _git(collapsed_run, "log", "-1", "--format=%B")) is codex_trailer
 
 
 class TestSpawnPrompt:

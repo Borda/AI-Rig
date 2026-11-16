@@ -6,9 +6,34 @@ Run dir: `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/`
 
 `<TARGET>` resolves the agent or skill file; `<TARGET_LABEL>` names this run in results and the ledger (the target, plus the mode for a mode-level domain, e.g. `/oss:analyse vitality`); `<RUN_SLUG>` is its safe directory name (e.g. `oss-analyse-vitality`), derived by SKILL.md Step 1 without changing the label. `<PROBLEM_SET_VERSION>` stamps every result line; ledger rows without it predate problem set 2.0 and are not comparable with it.
 
-Optional caller inputs: `PROBLEMS_PATH` (an existing local problem-set path; default empty) and `START_PHASE` (`1a` by default, or `2` to reuse that set). Without explicit overrides, run every phase normally. `START_PHASE=2` requires `PROBLEMS_PATH`: read the supplied JSON array and its declared fetch-store files as untrusted fixture data, stage each object as this run's `problems-<source>-<problem_id>.json` using its recorded `source` (`claude`, `codex` or `real`), and run the same Phase 1b validator and domain flags to produce `problems.json`. Missing source provenance, duplicate IDs within a source, or any rejected problem makes reuse incomplete; never relabel sources, regenerate rejected inputs or score a subset silently. Copy any domain-required derived-answer files before validation. Record the source path and original generation mix in the benchmark report, and skip generation and weak probing (Phases 1a–1c). Missing, unreadable or invalid input, or any other start phase: write an incomplete result under the Graceful-exit protocol and return; never silently score a different problem set. A reused set without recorded weak-probe evidence has unverified difficulty; disclose that limit instead of assigning measured probe results. Derive generation-source reporting from the reused records; bridge availability controls scoring only on this route.
+Optional caller inputs: `PROBLEMS_PATH` (an existing local problem-set path; default empty) and `START_PHASE` (`1a` by default, or `2` to reuse that set). Without explicit overrides, run every phase normally.
 
-**Shared spawn budget**: the orchestrator reserves tier slots within the session-wide haiku 20 / sonnet 8 / opus 5 ceilings, counting all pipeline coordinators and children. Per-pipeline allocation is `max(1, floor((tier ceiling - coordinators in that tier) / coordinators))`, capped at haiku 4 / sonnet 1 / opus 1. With four Sonnet coordinators: Haiku `floor(20/4)=5`, capped at 4; Sonnet `floor((8-4)/4)=1`; Opus `floor(5/4)=1`. The parent subtracts unrelated session work and reduces coordinators until every reservation fits; zero available capacity never permits a child. Apply these reservations across weak probes, probe scorers, target runs, baselines, Claude scorers and curator, with no overlapping phases. Dispatch another child only within its reserved tier capacity after earlier children finish or are confirmed stopped; timeout alone never releases slots. Never independently use a tier's full ceiling. The orchestrator may lower concurrency further; no local instruction increases its reservations. Deadline arithmetic assumes serial execution: about 13 initial fast children, up to 21 with probe retries, at 120 s each plus 600 s fixed overhead (3120 s fast); dual fast adds up to three 576 s generation calls and two 432 s scoring attempts per problem (rounded to 8340 s). Full and A/B use SKILL.md's `6 × PROBE_PROBLEMS + 2 × TOTAL_PROBLEMS × ARMS + 1` child count plus its Codex allowance, rounded up to minutes. These allowances are planning estimates, not child runtime guarantees.
+`START_PHASE=2` requires `PROBLEMS_PATH`:
+
+- Read the supplied JSON array and its declared fetch-store files as untrusted fixture data, stage each object as this run's `problems-<source>-<problem_id>.json` using its recorded `source` (`claude`, `codex` or `real`), and run the same Phase 1b validator and domain flags to produce `problems.json`.
+- Missing source provenance, duplicate IDs within a source, or any rejected problem makes reuse incomplete; never relabel sources, regenerate rejected inputs or score a subset silently.
+- Copy any domain-required derived-answer files before validation.
+- Record the source path and original generation mix in the benchmark report, and skip generation and weak probing (Phases 1a–1c).
+- Missing, unreadable or invalid input, or any other start phase: write an incomplete result under the Graceful-exit protocol and return; never silently score a different problem set.
+- A reused set without recorded weak-probe evidence has unverified difficulty; disclose that limit instead of assigning measured probe results.
+- Derive generation-source reporting from the reused records; bridge availability controls scoring only on this route.
+
+**Shared spawn budget**: the orchestrator reserves tier slots within the session-wide haiku 20 / sonnet 8 / opus 5 ceilings, counting all pipeline coordinators and children.
+
+- Per-pipeline allocation is `max(1, floor((tier ceiling - coordinators in that tier) / coordinators))`, capped at haiku 4 / sonnet 1 / opus 1. With four Sonnet coordinators: Haiku `floor(20/4)=5`, capped at 4; Sonnet `floor((8-4)/4)=1`; Opus `floor(5/4)=1`.
+- The parent subtracts unrelated session work and reduces coordinators until every reservation fits; zero available capacity never permits a child.
+- Apply these reservations across weak probes, probe scorers, target runs, baselines, Claude scorers and curator, with no overlapping phases.
+- Dispatch another child only within its reserved tier capacity after earlier children finish or are confirmed stopped; timeout alone never releases slots.
+- Never independently use a tier's full ceiling.
+- The orchestrator may lower concurrency further; no local instruction increases its reservations.
+
+Deadline arithmetic assumes serial execution:
+
+- About 13 initial fast children, up to 21 with probe retries, at 120 s each plus 600 s fixed overhead (3120 s fast).
+- Dual fast adds up to three 576 s generation calls and two 432 s scoring attempts per problem (rounded to 8340 s).
+- Full and A/B use SKILL.md's `6 × PROBE_PROBLEMS + 2 × TOTAL_PROBLEMS × ARMS + 1` child count plus its Codex allowance, rounded up to minutes.
+
+These allowances are planning estimates, not child runtime guarantees.
 
 **Scratchpad discipline**: session scratchpad is shared across every concurrent calibration pipeline, not per-target. Write every bridge task file and any other intermediate you create inside your own run dir above — never a bare filename in the shared scratchpad. A generic name there (`codex-gen-task.txt`, etc.) gets silently overwritten by a sibling pipeline within seconds, caller then scores against wrong domain's problems with no error surfaced.
 
@@ -33,6 +58,7 @@ PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin
 RUN_DIR='.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>'
 mkdir -p "$RUN_DIR"
 python "$PLUGIN_ROOT/bin/check_bridge.py" --status > "$RUN_DIR/bridge-status" 2>/dev/null || printf '%s\n' absent > "$RUN_DIR/bridge-status"  # timeout: 5000
+[ -s "${RUN_DIR%/*}/codex-blocked.txt" ] && printf '%s\n' codex-blocked:quota > "$RUN_DIR/bridge-status"  # sibling pipeline of this run hit the quota stop
 IFS= read -r CODEX_STATUS < "$RUN_DIR/bridge-status" || CODEX_STATUS=absent
 if [ "$CODEX_STATUS" = "available" ]; then CODEX_AVAILABLE=true; else CODEX_AVAILABLE=false; fi
 echo "bridge@borda-ai-rig: $CODEX_STATUS"
@@ -40,6 +66,23 @@ printf 'CODEX_AVAILABLE=%s\n' "$CODEX_AVAILABLE"
 ```
 
 The helper reads Claude's installed-plugin registry, marketplace cache, and enabled-plugin settings directly; doesn't require a nested `claude plugin list` call from a background agent. Reuse the persisted `bridge-status` for this pipeline; before any later Bash call that needs the value, re-read it with `IFS= read -r CODEX_STATUS < ".reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/bridge-status"` and derive `CODEX_AVAILABLE` from equality to `available`. A failed or missing read means unavailable; never re-probe midway through a run.
+
+- Run-level stop: a non-empty `.reports/calibrate/<TIMESTAMP>/codex-blocked.txt` (a sibling pipeline's quota stop) also means unavailable.
+
+**Quota stop**: after a `blocked` or `timeout` result from any Codex call in this pipeline, Read the incident file its `incident` field names and decide only from that file's `fault`.
+
+- `quota-exhausted` (peer out of credits; the bridge never retries one) → run the block below at once.
+  - It rewrites this pipeline's `bridge-status` and writes the run-level `<TIMESTAMP>/codex-blocked.txt`.
+  - This pipeline, and every pipeline of the run that starts or re-reads its status afterwards, derives `CODEX_AVAILABLE=false` and continues Claude-only.
+  - A pipeline already waiting on a Codex call when the marker lands pays at most one more call: its next re-read sees the marker, or that call meets the fault and runs this stop itself.
+- A null `incident`, an unreadable incident file or any other `fault` (`rate-limited`, `capacity`, `blocked`, …) keeps today's path.
+- Evidence rule: never decide from verdict or blockers text, which a model-authored `blocked` result can copy.
+- The stop adds no question.
+
+```bash
+RUN_DIR='.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>'
+printf '%s\n' codex-blocked:quota > "$RUN_DIR/bridge-status"; printf '%s\n' codex-blocked:quota > "${RUN_DIR%/*}/codex-blocked.txt"; echo "bridge@borda-ai-rig: codex-blocked:quota"
+```
 
 Codex integration active only for `agents` and `skills` modes. Pipeline spawned for `routing`, `communication`, or `rules`: treat `CODEX_AVAILABLE=false` — those modes test Claude-specific internals Codex lacks context for.
 
@@ -142,7 +185,13 @@ Difficulty tiers:
 
 Size floors are secondary to reasoning load — reach them with realistic material (more code paths, more comments, more candidate items), never padding. A domain entry's `scale_chars:` overrides both floors. A domain entry declaring `haystack:` requires high and extreme problems to carry that candidate pool (default: ≥ 15 candidate items, ≥ 3 of them `near_misses` sharing title, keywords or error with the target but differing in root cause).
 
-Open shape: a domain entry declaring `open_shape: true` wants problems shaped like real reports, not closed puzzles. Render the candidate pool as at least 5 rows, one per item, as `#<N> | state: <s> | title: <t> | body: <b>` with each body a snippet of at most 300 characters, and make a duplicate answer one of those rows; put no code block inside the pool; quote no source of the project under analysis and plant no maintainer diagnosis that the input then refutes step by step. The link between the item and its answer is a shared symptom described in different words, with evidence that suggests rather than proves, and no phrase of four or more words copied between them. Phase 1b enforces the row format and count, snippet length, fence ban, pool membership of the duplicate and copied-phrase ban (`--open-shape`); real problems and the off-domain scope problem are exempt.
+Open shape: a domain entry declaring `open_shape: true` wants problems shaped like real reports, not closed puzzles.
+
+- Render the candidate pool as at least 5 rows, one per item, as `#<N> | state: <s> | title: <t> | body: <b>` with each body a snippet of at most 300 characters, and make a duplicate answer one of those rows.
+- Put no code block inside the pool.
+- Quote no source of the project under analysis and plant no maintainer diagnosis that the input then refutes step by step.
+- The link between the item and its answer is a shared symptom described in different words, with evidence that suggests rather than proves, and no phrase of four or more words copied between them.
+- Phase 1b enforces the row format and count, snippet length, fence ban, pool membership of the duplicate and copied-phrase ban (`--open-shape`); real problems and the off-domain scope problem are exempt.
 
 Extreme bar: a reviewer who reads once and reports what stands out must miss ≥1 ground-truth item. Every extreme problem needs ≥1 item whose evidence is split across two sections (visible only when both are read together) and ≥1 construct that looks defective but is correct (a decoy, listed in `near_misses`). Before returning, skim your own input: every ground-truth item visible on a first pass → harden it.
 
@@ -166,6 +215,8 @@ Skill(skill="bridge:advise", args="--timeout-seconds 240 --effort medium Generat
 
 Full mode only — scaled tiers, one call per problem so a 12,000-character input never shares one call's output budget: the same args with `1` problem and difficulty `high`, then again with `extreme`, each at `--timeout-seconds 240` (worst case 576 s, under the foreground Bash cap).
 
+- Quota stop: apply the Pre-flight **Quota stop** after each call; once it fires, skip the remaining calls and let Claude generate the missing tiers.
+
 Parse each `findings[]` string as one problem and write it to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/problems-codex-<problem_id>.json`, one Write per problem. An unparsable entry is dropped; Phase 1b's `floor(<N_CODEX> * 0.5)` validity threshold accounts for partial yield.
 
 **Step 2 — Claude generates N_CLAUDE in-scope problems + 1 out-of-scope problem**:
@@ -181,7 +232,11 @@ Claude generates all `<N>` in-scope problems (fast: low, medium, high; full: two
 
 ### Phase 1b — Validate and merge problems
 
-**Real fixtures** (`--full` only): when the domain entry names `real_fixtures: <path>` and that directory exists in the working tree, copy each of its `*.json` files into the run dir as `problems-real-<problem_id>.json`. They are frozen problems with a maintainer-recorded outcome; never in `--fast` (their count is part of the full-run deadline the orchestrator armed). Absent directory → skip silently. When the entry also names `fetch_store: <path>`, copy `<path>/<problem_id>.json`, for each real problem that has one, into the run dir as `fetch-<problem_id>.json` — the frozen stand-in for the lookups the skill would make live (Phase 2 fixture contract, item 5).
+**Real fixtures** (`--full` only): when the domain entry names `real_fixtures: <path>` and that directory exists in the working tree, copy each of its `*.json` files into the run dir as `problems-real-<problem_id>.json`.
+
+- They are frozen problems with a maintainer-recorded outcome; never in `--fast` (their count is part of the full-run deadline the orchestrator armed).
+- Absent directory → skip silently.
+- When the entry also names `fetch_store: <path>`, copy `<path>/<problem_id>.json`, for each real problem that has one, into the run dir as `fetch-<problem_id>.json` — the frozen stand-in for the lookups the skill would make live (Phase 2 fixture contract, item 5).
 
 Run the deterministic validator over every `problems-*.json` in the run dir (`<FLOORS_ARG>` = the validator flags the domain entry implies, else empty: `--floors high=<H>,extreme=<E>` from `scale_chars:`, `--derived-gt` from `derived_gt: true`, `--open-shape` from `open_shape: true`, `--boundary` from `boundary: true`):
 
@@ -190,7 +245,13 @@ PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin
 python "$PLUGIN_ROOT/bin/calibrate_validate_problems.py" --run-dir ".reports/calibrate/<TIMESTAMP>/<RUN_SLUG>" <FLOORS_ARG>  # timeout: 15000
 ```
 
-It checks schema v2, that every `decisive` and near-miss `ref` occurs in `input` (skipped with `--derived-gt`), the labelled-field leak, the size floors (real problems exempt), contradictory near-misses, sentence-length `decisive` values and the single scope problem; `--open-shape` adds the candidate-row checks above for synthetic problems, and `--boundary` requires each high and extreme problem to hold at least 3 answers one step from a different outcome, read from the derived-answer outputs the domain entry tells you to save in the run dir. Any failure rejects the whole problem — never one item, because a dropped item leaves its defect in `input` and turns a correct report into a false positive. It merges valid problems into `problems.json` (with `source`, colliding ids prefixed by source) and logs rejections to `problems-rejected.json`; its one-line JSON summary lists `rejected_ids`.
+It checks:
+
+- Schema v2, that every `decisive` and near-miss `ref` occurs in `input` (skipped with `--derived-gt`), the labelled-field leak, the size floors (real problems exempt), contradictory near-misses, sentence-length `decisive` values and the single scope problem.
+- `--open-shape` adds the candidate-row checks above for synthetic problems.
+- `--boundary` requires each high and extreme problem to hold at least 3 answers one step from a different outcome, read from the derived-answer outputs the domain entry tells you to save in the run dir.
+
+Any failure rejects the whole problem — never one item, because a dropped item leaves its defect in `input` and turns a correct report into a false positive. It merges valid problems into `problems.json` (with `source`, colliding ids prefixed by source) and logs rejections to `problems-rejected.json`; its one-line JSON summary lists `rejected_ids`.
 
 - The validator reads only files named `problems-<claude|codex|real>-<id>.json`; check that `valid + rejected` equals the number of problem files you wrote — a misnamed file is invisible to it, not rejected.
 - Rejected Claude problem: regenerate it once, addressing the logged reasons, and rerun the validator.
@@ -235,15 +296,49 @@ Prompt for each subagent:
 >
 > **Write your complete response** (including the Confidence block) to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/response-<problem_id>.md` using the Write tool. Then end your reply with exactly one line: `Wrote: <problem_id>`
 
+When `<TARGET>` is `foundry:challenger` and the re-read status is `codex-blocked:quota` (this pipeline's or the run's quota stop), add `--no-codex` to each prompt: its own Codex cross-check would fail against the same empty account.
+
+When `<TARGET>` is `foundry:challenger`, a response whose `## Codex Cross-Check` section opens with `⚠ codex-blocked:quota` means that child's own Codex cross-check met the quota fault, decided from its incident `fault`.
+
+- At every wake-up while its responses land, run the block below before the next dispatch; it records the same stop as Pre-flight **Quota stop**, so later prompts carry `--no-codex` and scoring runs Claude-only.
+- Only the first non-blank line under the first `## Codex Cross-Check` heading outside any code fence counts; the token quoted anywhere else, inside a fence, or below the challenger's own opening line (Codex output) never does.
+
+```bash
+RUN_DIR='.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>'
+if awk 'BEGIN{b=sprintf("%c",96)} FNR==1{s=0;fl=0} s==2{next} {t=$0;sub(/^ +/,"",t);c=substr(t,1,1);n=0;if(length($0)-length(t)<4&&(c==b||c=="~"))while(substr(t,n+1,1)==c)n++} fl{if(c==fc&&n>=fl&&substr(t,n+1)~/^[ \t\r]*$/)fl=0;next} n>=3{fc=c;fl=n;if(s==1)s=2;next} s==0{if($0~/^## Codex Cross-Check[ \t\r]*$/)s=1;next} $0!~/^[ \t\r]*$/{if(index($0,"⚠ codex-blocked:quota")==1)q=1;s=2} END{exit !q}' "$RUN_DIR"/response-*.md 2>/dev/null; then printf '%s\n' codex-blocked:quota > "$RUN_DIR/bridge-status"; printf '%s\n' codex-blocked:quota > "${RUN_DIR%/*}/codex-blocked.txt"; echo "bridge@borda-ai-rig: codex-blocked:quota (challenger cross-check)"; else echo "challenger quota signal: none"; fi
+```
+
 **Context discipline**: subagents write to disk, return single-line acknowledgment. Pipeline agent must NOT accumulate their full analyses in context — scorers read from disk in Phase 3. `Wrote: <problem_id>` per agent = correct.
 
-**Completion handling** — never a poll loop or a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`); each subagent's result arrives as its `Agent()` result or completion notification (`_FOUNDRY_SHARED/agent-spawn-protocol.md`). Each subagent returns: check for `response-<problem_id>.md`; empty or missing: mark that problem `{"timed_out": true}` in scores.json, proceed. Never block indefinitely on single response. A subagent that finishes while you are between turns cannot hand its result back ("the agent that spawned you is no longer running"), so acknowledgment lines are unreliable: in two full runs none of 53 arrived as an `Agent()` result. Advance on the run dir instead — at every wake-up count the phase's deliverables on disk (`response-<problem_id>.md`, `score-<problem_id>-claude.json`, `proposal.md`); one present is done, however or whether its acknowledgment arrived, and the phase is complete when every spawned problem has its file or is marked timed out. This holds for Phases 1c, 2, 2b, 3a and 5.
+**Completion handling** — never a poll loop or a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`); each subagent's result arrives as its `Agent()` result or completion notification (`_FOUNDRY_SHARED/agent-spawn-protocol.md`).
 
-For **agent targets** when `LOCAL_MODE=true` and `TARGET_FILE` set: spawn `general-purpose` subagent — tests source tree definition rather than installed plugin. Write `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/prompt-<problem_id>.md` = "You are an agent described by the following instructions:" + TARGET_FILE content + a tool-limit line (`Use only these tools: <frontmatter tools:>`, omitted when `tools:` absent) + the per-problem prompt above; spawn prompt = one line: `Read .reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/prompt-<problem_id>.md and follow it exactly.` Frontmatter mapped onto the spawn: `model=` from `model:` (omit when absent or `inherit`), so tier changes are measured at the tier the agent ships with; `effort=` from `effort:` (omit when absent) — this template explicitly asks for it. Spawn schema lacks `effort`: add `"local mode: frontmatter effort not applied"` to `gaps`. `tools:` is enforced by the prompt line only, not the harness — add `"local mode: tools limited by prompt, not enforced"` to `gaps` when `tools:` present. When LOCAL_MODE=false or TARGET_FILE empty: spawn `Agent(subagent_type="<TARGET>")` normally.
+- Each subagent returns: check for `response-<problem_id>.md`; empty or missing: mark that problem `{"timed_out": true}` in scores.json, proceed.
+- Never block indefinitely on single response.
+
+A subagent that finishes while you are between turns cannot hand its result back ("the agent that spawned you is no longer running"), so acknowledgment lines are unreliable: in two full runs none of 53 arrived as an `Agent()` result. Advance on the run dir instead:
+
+- At every wake-up count the phase's deliverables on disk (`response-<problem_id>.md`, `score-<problem_id>-claude.json`, `proposal.md`); one present is done, however or whether its acknowledgment arrived.
+- The phase is complete when every spawned problem has its file or is marked timed out.
+
+This holds for Phases 1c, 2, 2b, 3a and 5.
+
+For **agent targets** when `LOCAL_MODE=true` and `TARGET_FILE` set: spawn `general-purpose` subagent — tests source tree definition rather than installed plugin.
+
+- Write `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/prompt-<problem_id>.md` = "You are an agent described by the following instructions:" + TARGET_FILE content + a tool-limit line (`Use only these tools: <frontmatter tools:>`, omitted when `tools:` absent) + the per-problem prompt above; spawn prompt = one line: `Read .reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/prompt-<problem_id>.md and follow it exactly.`
+- Frontmatter mapped onto the spawn:
+  - `model=` from `model:` (omit when absent or `inherit`), so tier changes are measured at the tier the agent ships with.
+  - `effort=` from `effort:` (omit when absent) — this template explicitly asks for it. Spawn schema lacks `effort`: add `"local mode: frontmatter effort not applied"` to `gaps`.
+- `tools:` is enforced by the prompt line only, not the harness — add `"local mode: tools limited by prompt, not enforced"` to `gaps` when `tools:` present.
+
+When LOCAL_MODE=false or TARGET_FILE empty: spawn `Agent(subagent_type="<TARGET>")` normally.
 
 For **skill targets** (target starts with `/`): spawn `general-purpose` subagent running the skill against the problem's inline fixture. Its context is the **fixture contract**, in this order, written to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/prompt-<problem_id>.md` (spawn prompt = one line: `Read <that file> and follow it exactly.`):
 
-1. The complete SKILL.md — never frontmatter only: routing, out-of-scope rules and `<notes>` are part of the behaviour under test. When `LOCAL_MODE=true` and `TARGET_FILE` set, read it from `TARGET_FILE` (frontmatter `model:` handled as for agent targets; a domain entry's `solver_model:` overrides it, in both modes, as the spawn's `model=`); otherwise try project-local `.claude/` first, then the validated installed root returned by `python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name <PLUGIN>`, then Step 1's resolved source-plugin root. At each tier use its manifest-declared skills directory (`skills/` when absent; `claude-skills/` where declared). The resolver prefers the active install record and excludes orphaned versions; never pick a cache version by mtime.
+1. The complete SKILL.md — never frontmatter only: routing, out-of-scope rules and `<notes>` are part of the behaviour under test.
+   - When `LOCAL_MODE=true` and `TARGET_FILE` set, read it from `TARGET_FILE` (frontmatter `model:` handled as for agent targets; a domain entry's `solver_model:` overrides it, in both modes, as the spawn's `model=`).
+   - Otherwise try project-local `.claude/` first, then the validated installed root returned by `python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name <PLUGIN>`, then Step 1's resolved source-plugin root.
+   - At each tier use its manifest-declared skills directory (`skills/` when absent; `claude-skills/` where declared).
+   - The resolver prefers the active install record and excludes orphaned versions; never pick a cache version by mtime.
 2. The mode file named by the domain entry's `mode:` key (from the same skill directory's `modes/`), when present.
 3. Every file that mode file loads (its `loads:` comments and `_shared/` documents it names), so the target scores with the rubric it ships with.
 4. This override line, verbatim: `Fixture contract: the input below replaces every live fetch. Do not call gh or any network command and do not spawn subagents; analyse the inline data, running only the skill's own local bin/ helpers on files you write from it.`
@@ -288,7 +383,12 @@ Each scorer receives this prompt (substitute `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON
 >
 > **Measure response length**: count characters in target response and (if AB_MODE) general response. Token efficiency proxy — shorter = more focused.
 >
-> **Severity accuracy**: only for found items whose `severity` is not null. Compare the response's label (the `<SEV_LABEL>` field when given) with ground truth, allowing ±1 tier (tiers ordered: critical > high > medium > low — "critical" vs "high" is 1-tier miss; "critical" vs "low" is 3-tier miss). `severity_accuracy = correct_severity / found_with_severity_count` (N/A if 0). Orthogonal to recall — agent can find everything but mislabel severity. Also record `severity_assigned`: per ground-truth item in order, the label the response gave it (null if not found, unlabeled, or the item's severity is null) — Phase 3c compares these across scorers.
+> **Severity accuracy**: only for found items whose `severity` is not null.
+>
+> - Compare the response's label (the `<SEV_LABEL>` field when given) with ground truth, allowing ±1 tier (tiers ordered: critical > high > medium > low — "critical" vs "high" is 1-tier miss; "critical" vs "low" is 3-tier miss).
+> - `severity_accuracy = correct_severity / found_with_severity_count` (N/A if 0).
+> - Orthogonal to recall — agent can find everything but mislabel severity.
+> - Also record `severity_assigned`: per ground-truth item in order, the label the response gave it (null if not found, unlabeled, or the item's severity is null) — Phase 3c compares these across scorers.
 >
 > **Format score**: for each found item, check whether response includes all three of: (a) location reference (line number, function name, or section), (b) severity or priority label (not required when the item's `severity` is null), (c) fix or action suggestion. `format_score = fully_structured_count / found_count` (N/A if found_count = 0). Measures actionability of findings, not just detection.
 >
@@ -309,6 +409,8 @@ For each problem, call the read-only Codex bridge skill. Run **sequentially** (n
 Each call passes `--timeout-seconds 180` (worst case 432 s, under the foreground Bash cap), so the bridge skill itself stays foreground.
 
 `bridge:review` is read-only — it returns its answer in the call envelope, never writing a file. The public envelope omits `details`, so the score travels as one JSON-object string in `findings[0]`. Call fails or `findings[0]` unparsable: retry once, then fall back to Claude's score alone for that problem (`scorer_mode: "single"`, per Phase 3c below) rather than looping.
+
+- Quota fault: a harness-classified `quota-exhausted` fault (Pre-flight **Quota stop**) is never retried; record it, then score this and every remaining problem with Claude alone.
 
 Skill(skill="bridge:review", args="--timeout-seconds 180 --effort medium Score a calibration response against ground truth.
 
@@ -393,7 +495,7 @@ Compute aggregates (exclude out-of-scope problem from recall/F1/severity/format 
 - `recall_claude_problems` = mean recall on in-scope problems where `source: "claude"` (null if none)
 - `recall_codex_problems` = mean recall on in-scope problems where `source: "codex"` (null if none)
 - `generator_recall_delta` = `recall_claude_problems − recall_codex_problems` (null if either is null)
-- `source_mode` = `"dual"` if CODEX_AVAILABLE and generation succeeded, else `"claude-only"`
+- `source_mode` = `"dual"` if Codex generation succeeded (`CODEX_GENERATION_FAILED` unset and the validated set holds at least one in-scope `source: "codex"` problem), else `"claude-only"`; decided from the generated problem set, never from the live `bridge-status`, which a later quota stop rewrites
 - `scoring` = `"dual"` if any problem dual-scored, else `"single"`
 - `codex_generation_failed` = true if Codex generation attempted but failed, else false
 
@@ -410,7 +512,8 @@ Write tool refuses any file whose exact basename is `report.md` from a subagent 
 ## Benchmark Report — <TARGET> — <date>
 Mode: <MODE> | Problems: <N> (in-scope) + 1 (out-of-scope) | Total known issues: M
 Source: dual (claude+codex) | Scorer: dual | Scorer agreement: X.XX [consistent ≥0.85 / moderate 0.70–0.85 / divergent ⚠ <0.70]
-[OR: Source: claude-only | Scorer: single — Codex unavailable or generation failed]
+[OR: Source: dual (claude+codex) | Scorer: single — codex-blocked:quota during scoring]
+[OR: Source: claude-only | Scorer: single — Codex unavailable, codex-blocked:quota before generation, or generation failed]
 
 ### Per-Problem Results
 | Problem ID | Source | Difficulty | Recall | Precision | SevAcc | Fmt  | Confidence | Cal. Δ | Agreement |

@@ -10,7 +10,7 @@
     },
     "004f57e7e7034b5b087d5b06cfb8deda0a9f888b36e56eaeff68ff99dc355ae7": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:111"
+      "src": "skills/_shared/quality-stack.md:117"
     },
     "0078b9a43c09fc99f1d51fb3197aeaf3caa5b0c10ae8b5f59e6cad3a80b71773": {
       "kind": "command",
@@ -18,7 +18,7 @@
     },
     "00b1426105007bad7e062e84528539163d15c6f2fb9e1792b65f42af761299d1": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:111"
+      "src": "skills/_shared/quality-stack.md:117"
     },
     "00c53707c20e34b51bf7636adf9a45e41769f9a0eee6efcfdebb3416fb4fb0b8": {
       "kind": "command",
@@ -46,7 +46,7 @@
     },
     "01d3fd85c1ee437c459e775abfacc7c20fe1adc99912bc1e03375e791f4aed30": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:456",
+      "src": "skills/audit/SKILL.md:532",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r LOCAL_MODE < \"${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode\" 2>/dev/null || LOCAL_MODE=\"false\"\npython \"$PLUGIN_ROOT/bin/load_mode.py\" audit modes efficiency.md $( [ \"$LOCAL_MODE\" = true ] && echo \"--local\" )"
     },
     "01d44266741a7824681c7c1655ffbb428a98b4b3fa0762026733036440d4a7c6": {
@@ -131,7 +131,7 @@
     },
     "0603f65c838121f912030f98da72526bdb56c05676dadbbfe338162ab86f8bd0": {
       "kind": "command",
-      "src": "skills/audit/templates/audit-fix-prompt.md:21"
+      "src": "skills/audit/templates/audit-fix-prompt.md:33"
     },
     "0657450a9ac7a0c8829380a869e2ec974b57fdb6f1f04d5a43bd5c9dd0e19291": {
       "kind": "command",
@@ -143,7 +143,7 @@
     },
     "06a44534668a316721a08ae0aef45fe0f378e6f8077387994bbcec82de97c45d": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:114",
+      "src": "skills/audit/SKILL.md:142",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/audit_preflight.py\" --arguments \"$ARGUMENTS\" || exit $?\n: > \"${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir\"\n: > \"${TMPDIR:-/tmp}/audit-state-${CSID}/unscanned-plugins\""
     },
     "073057f2f7cde4abc84b8ce750fff9e934d55660d1ffa5ee4fa65a2c36301d90": {
@@ -176,7 +176,7 @@
     },
     "08883f5b4236e3cd7f7d72db9054e569002b4d9b813fc38fac237a7c08eb18d7": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:266"
+      "src": "skills/audit/SKILL.md:323"
     },
     "088f5437c7b027855ef51e76489cf894cff319c4eb1f323e084e0e21f829132f": {
       "kind": "command",
@@ -193,7 +193,7 @@
     },
     "09abe3b99bb09081124a2df16c1ea36f57ca9056d5e22f9f07619666eec5339b": {
       "kind": "block",
-      "src": "skills/audit/modes/steps-4-5-7.md:167",
+      "src": "skills/audit/modes/steps-4-5-7.md:220",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _RUN_DIR < \"${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir\" 2>/dev/null || _RUN_DIR=\"\"\n[ -n \"$_RUN_DIR\" ] || { echo \"! BLOCKED \u2014 audit run-dir sentinel missing; remediation files left in place\"; exit 1; }\npython \"$PLUGIN_ROOT/bin/append_ledger.py\" \"$_RUN_DIR/aggregate.md\" --run-root \"$_RUN_DIR\" --from \"$_RUN_DIR\"/lowconf-*-remediation.md"
     },
     "09b1e104420e1dc818079635887efd565cafcc85b2bd3be5916b973f0a8e0e87": {
@@ -222,11 +222,11 @@
     },
     "0a9020c18feca3eeb2495fb1a9691a59e62654245da31f68d4fc5f6182f57db4": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:361"
+      "src": "skills/_shared/quality-stack.md:381"
     },
     "0af82cbbefef906c546445a841c7a339569862c15bf993e36e00836af828556e": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:266"
+      "src": "skills/audit/SKILL.md:323"
     },
     "0b4031afab89d8ff85e497b57a2d0e2ea4ba8de69aad6171d2070727572c8367": {
       "kind": "command",
@@ -258,7 +258,7 @@
     },
     "0c4042f2cad5c188b72abbeb9d41f2b3ed7ed037cf1160e03469ea4d94b7487d": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:293"
+      "src": "skills/_shared/quality-stack.md:303"
     },
     "0c4bed94a04455a521a07a50eedf12db5bcdee9575798b0a902605adb6b3ea7c": {
       "kind": "command",
@@ -266,7 +266,7 @@
     },
     "0c83ecca0dbf4a0da75daa2363f4bc7002980613a852578c08615b27f093e9b7": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:351",
+      "src": "skills/audit/SKILL.md:417",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir\" 2>/dev/null || RUN_DIR=\"\"\n[ -n \"$RUN_DIR\" ] || { echo \"! BLOCKED \u2014 audit run-dir sentinel missing; cannot check agent deadlines\"; exit 1; }\npython \"$PLUGIN_ROOT/bin/agent_watch.py\" --state-dir \"$RUN_DIR\""
     },
     "0cba65f237b6c77bd1f63b14b483b901d851e7fe7005afe02c1ee58be0d290fd": {
@@ -292,7 +292,7 @@
     },
     "0d81cc951b135c4586130f327c797edc7d207f5cfaa25a41d0712c116cd4970b": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:293"
+      "src": "skills/_shared/quality-stack.md:303"
     },
     "0d995d1bc6400d65bed54ee7a7fc7588ef8304d715e6a101c820f2c5e69ab3b1": {
       "kind": "command",
@@ -313,7 +313,7 @@
     },
     "0df1ef450898763fa1aa8163d10465b89b2a8077dfafcb35a99fef6e271c6d4a": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "0ea81eb8979e479fad05537a3469367b89d37ebaf8e434ca5c788fcdb4074299": {
       "kind": "command",
@@ -329,11 +329,11 @@
     },
     "0fa1286fa50d11de9e3f18cfebba1582baca7005f1f7f206cbc3773c6e667009": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "1003be09cd337874848f1f1679dc93adcf7597fda4a51f0fc9fb8fccc549196d": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:65"
+      "src": "skills/_shared/quality-stack.md:71"
     },
     "10218cafab25578ea2741f6a1652c02a8e26a30ab633ae2757f0b418350d20ef": {
       "kind": "command",
@@ -341,7 +341,7 @@
     },
     "107ca3f9f4b386d062d1a0746e99dc883174c3dc056f5e68888d2e0caf506a2a": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:406",
+      "src": "skills/audit/SKILL.md:472",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r LOCAL_MODE < \"${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode\" 2>/dev/null || LOCAL_MODE=\"false\"\nIFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir\" 2>/dev/null || RUN_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/load_mode.py\" audit templates report-template.md $( [ \"$LOCAL_MODE\" = true ] && echo \"--local\" )"
     },
     "10907b539adeb815c6db4e6eb3b6658994c19141fbf4d18798fd216625d25372": {
@@ -350,7 +350,7 @@
     },
     "10cdd189bd220511a4614331858e57f663794c28a7cf412a617a0384d387dcb4": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:65"
+      "src": "skills/_shared/quality-stack.md:71"
     },
     "111923e4831dab89b0a41452ec608a488515fb154b3ca68b496fc426104abc0b": {
       "kind": "command",
@@ -370,7 +370,7 @@
     },
     "11e281b9f443579b6ce37a81b0711ef957f7c0953266c56782f0cd8fdc71fd7c": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:212"
+      "src": "skills/_shared/quality-stack.md:222"
     },
     "120479ea6dfd187b08d94775ce50ebccbc196840a4b92080df1be33d0f7eabea": {
       "kind": "block",
@@ -379,11 +379,11 @@
     },
     "126ed86f2bd0b623e997f9ab45f58da87cb73397d7d677c5ce121da1fcad4676": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "128c0fb343f0a8a7ac0e5ec2aaa383a202f59538ed0b3fa6341b3dde0062b8ae": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:65"
+      "src": "skills/_shared/quality-stack.md:71"
     },
     "12944b3fb02703df1e478e25fd1bc1f68d6503f503869d93cfeefe762b66ebda": {
       "kind": "command",
@@ -399,11 +399,11 @@
     },
     "13103ceb712530d8967febe68e7d8d9262d3391291bcc941a789f01c4cee56ad": {
       "kind": "command",
-      "src": "agents/qa-specialist.md:130"
+      "src": "agents/qa-specialist.md:131"
     },
     "13333b47895dcea4a58f723987787af2af59b1732cfaf69e007fb432d950f534": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:242"
+      "src": "skills/_shared/quality-stack.md:252"
     },
     "134307374bf27035b0173f82b26f81695bdf6fb96aad454572cbfc7834643e81": {
       "kind": "command",
@@ -415,7 +415,7 @@
     },
     "14103738647ebfbbbcc90cc479b649f8472e6f68fa2511dcb9b49bdae0d72728": {
       "kind": "command",
-      "src": "skills/audit/modes/steps-4-5-7.md:181"
+      "src": "skills/audit/modes/steps-4-5-7.md:234"
     },
     "1413a43dba8069af119ea165b8b43358b300293759988564346be9673e87dbb9": {
       "kind": "block",
@@ -423,7 +423,7 @@
     },
     "14606c0e67e60a2ed3e756a6bf401349dedd5bf4531cc7d10a1e9bfe14403198": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:242"
+      "src": "skills/_shared/quality-stack.md:252"
     },
     "148ff7d076cbc53e20fbd956b2a12b3cd2d56bd56d3671cf96667a3b68c63375": {
       "kind": "command",
@@ -469,6 +469,11 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-setup.md:207"
     },
+    "15e04dd7540c15990431d4caa89f72fea3340ef3c7b2cda3347032535e2b97cb": {
+      "kind": "block",
+      "src": "skills/calibrate/templates/pipeline-prompt.md:56",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nRUN_DIR='.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>'\nmkdir -p \"$RUN_DIR\"\npython \"$PLUGIN_ROOT/bin/check_bridge.py\" --status > \"$RUN_DIR/bridge-status\" 2>/dev/null || printf '%s\\n' absent > \"$RUN_DIR/bridge-status\"\n[ -s \"${RUN_DIR%/*}/codex-blocked.txt\" ] && printf '%s\\n' codex-blocked:quota > \"$RUN_DIR/bridge-status\"\nIFS= read -r CODEX_STATUS < \"$RUN_DIR/bridge-status\" || CODEX_STATUS=absent\nif [ \"$CODEX_STATUS\" = \"available\" ]; then CODEX_AVAILABLE=true; else CODEX_AVAILABLE=false; fi\necho \"bridge@borda-ai-rig: $CODEX_STATUS\"\nprintf 'CODEX_AVAILABLE=%s\\n' \"$CODEX_AVAILABLE\""
+    },
     "164966c16e65db11e82badf5e075dce1c8fe77520f233d27944dd5155544fd7c": {
       "kind": "block",
       "src": "skills/manage/modes/perm.md:7"
@@ -483,11 +488,11 @@
     },
     "1745636a5b81f7b4a7894f6ae73e1c46475dcf42b35161b9a655b8a31478d60b": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:31"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:56"
     },
     "17cd46101ac8c00d6296e8786eba4ae008a3aabae9cf6091fa6b41bbfd738587": {
       "kind": "command",
-      "src": "skills/audit/modes/steps-4-5-7.md:90"
+      "src": "skills/audit/modes/steps-4-5-7.md:102"
     },
     "18288a988a8c7f9fcfed355bbc811fb2f4631a132483daa0665f931c5b602cd6": {
       "kind": "block",
@@ -507,11 +512,11 @@
     },
     "18b4c58c128c12f933c0bff3e7018bbc65125d68ee46133eacc5f7d735989b54": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "191ed32ea54de686571cbd2b75987ee201e6c0f813c806bbd68e71b48f19e20d": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "192aeb50690330ba7163b6bc30081a67ac524daba7d4be8c4801c6b8ad39f306": {
       "kind": "command",
@@ -527,7 +532,7 @@
     },
     "195e052e4df01bcbbf7c98f898cc8f8bffa707b559cb6162b6a9c13d5e54881d": {
       "kind": "block",
-      "src": "skills/audit/modes/steps-4-5-7.md:157",
+      "src": "skills/audit/modes/steps-4-5-7.md:210",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _RUN_DIR < \"${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir\" 2>/dev/null || _RUN_DIR=\"\"\n[ -n \"$_RUN_DIR\" ] || { echo \"! BLOCKED \u2014 audit run-dir sentinel missing; staged summary.jsonl.*.rec left in place\"; exit 1; }\npython \"$PLUGIN_ROOT/bin/append_ledger.py\" \"$_RUN_DIR/summary.jsonl\" --run-root \"$_RUN_DIR\""
     },
     "198472aac6e5cea2dda041536bf661522917b08c2ca974ca703e95a1ecba2e55": {
@@ -544,7 +549,7 @@
     },
     "19ea3afabdcbaaff4d02db2300e7a44300194eed619843c0e5af87973ce318c3": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:212"
+      "src": "skills/_shared/quality-stack.md:222"
     },
     "1a34e471e273819e9e989b8f639a24115bac53db36da41dc3383f15b89d8d569": {
       "kind": "command",
@@ -581,7 +586,7 @@
     },
     "1bfb9870c4d557fb01781cb101a09be3f4d04c13b0819492461c3f9b1695aa8e": {
       "kind": "command",
-      "src": "skills/audit/templates/audit-fix-prompt.md:64"
+      "src": "skills/audit/templates/audit-fix-prompt.md:113"
     },
     "1c713f1812e8e2df22fe170dcdc9c09c1b8187762c33b5bfeaf2082c176b5575": {
       "kind": "command",
@@ -589,7 +594,7 @@
     },
     "1c9ffe6907c43b116adc2db1fba20208547294e2411c0011acd451b962a319c6": {
       "kind": "block",
-      "src": "skills/_shared/quality-stack.md:404"
+      "src": "skills/_shared/quality-stack.md:432"
     },
     "1cb9a536c4d97c5c84dfee987ab5b8e669d4cdbc6f55c94d532e2a7f9d9a9616": {
       "kind": "command",
@@ -605,11 +610,11 @@
     },
     "1d782a927c4d05242f90598fce1a767cdc71d3e4726f1e637f261aff71e7107d": {
       "kind": "command",
-      "src": "skills/audit/modes/steps-4-5-7.md:157"
+      "src": "skills/audit/modes/steps-4-5-7.md:210"
     },
     "1d783f78fb34c6f3c39a9242eb313384078535ab07b28327673db845f9af299b": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "1d84d44b6ff1393e12ad3aa7ecc19146a65707a775082c9b99c8389416f54f55": {
       "kind": "command",
@@ -618,6 +623,11 @@
     "1d8632a5c973dda37f211348ac5cbcf84b6ed55434e1be224b8d16f3472deb67": {
       "kind": "command",
       "src": "skills/_shared/quality-stack.md:28"
+    },
+    "1dbb5f346a086f1bb8b338f07d209785767887ffe75efb33e4ab196d781fcb00": {
+      "kind": "block",
+      "src": "skills/audit/modes/adversarial.md:60",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/check_bridge.py\" --status > \"${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status\" 2>/dev/null || echo \"absent\" > \"${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status\"\nIFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir\" 2>/dev/null && [ -n \"$RUN_DIR\" ] && [ -s \"$RUN_DIR/codex-blocked.txt\" ] && echo \"codex-blocked:quota\" > \"${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status\"\nIFS= read -r CODEX_STATUS < \"${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status\" || CODEX_STATUS=\"absent\"\n[ \"$CODEX_STATUS\" = \"available\" ] && printf 'CODEX_AVAILABLE=%s\\n' true || printf 'CODEX_AVAILABLE=%s\\n' false"
     },
     "1dcb72f07b69d5c9e72e8dcaee544fb84abfa118d9884daa08b6a6d19012dac8": {
       "kind": "command",
@@ -633,11 +643,11 @@
     },
     "1de37c15254176d84025fff19dfa9bacea089b02c05d7567931de1a1e6c9edc3": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "1e69029b5efbb7b7ba91a0ab96e2cc7620ba6665dcf92620f35486b0b6a8dd6f": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:65"
+      "src": "skills/_shared/quality-stack.md:71"
     },
     "1e8149278aae406c0463a8a9f15a36ed2b777e4cc276ef6dfe1e0c338427219a": {
       "kind": "command",
@@ -673,7 +683,7 @@
     },
     "1fb563b654277e666c5a67e83ad6d51d211bc8a8c43156fcba7d7d71b461e13d": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:242"
+      "src": "skills/_shared/quality-stack.md:252"
     },
     "1ffd5305ca9acf1f4b5b91e36fc9c9e43b4d99546df97c4f42dcab85189a5514": {
       "kind": "command",
@@ -681,7 +691,7 @@
     },
     "200f3308dd33ce3f2267f6c3407d4e8bf61ee71b66a98d10cc3c49a5b72cca08": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "20179de392c310270b48089e61c3d0494bc194942e949e37155695e8fde6fbdf": {
       "kind": "command",
@@ -697,7 +707,7 @@
     },
     "21236bde4b733eaa2769bebc5481ddc7e3f4b840a4e5edbed672e4a074d79b7a": {
       "kind": "block",
-      "src": "skills/audit/modes/fix.md:101",
+      "src": "skills/audit/modes/fix.md:142",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r LOCAL_MODE < \"${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode\" 2>/dev/null || LOCAL_MODE=\"false\"\nIFS= read -r AUDIT_TPL < \"${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl\" 2>/dev/null || AUDIT_TPL=$(python \"$PLUGIN_ROOT/bin/resolve_skill_subdir.py\" audit templates $( [ \"$LOCAL_MODE\" = true ] && echo \"--local\" ))\npython \"$PLUGIN_ROOT/bin/load_mode.py\" audit templates audit-fix-prompt.md $( [ \"$LOCAL_MODE\" = true ] && echo \"--local\" )\necho \"AUDIT_TPL=$AUDIT_TPL\""
     },
     "212894fbcb23183a94e98ba86ba2c16e63fe5ab18afbd9c1f12fc39b0f5a9a8b": {
@@ -811,11 +821,11 @@
     },
     "2862ba675f9f56f0a532b4c1446bceef82d47e25b3bf8180a166bf0e1013da34": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:322"
+      "src": "skills/audit/SKILL.md:384"
     },
     "289ca0aa67362404e2bf15894422cc767803e3acd3aa6ab4f8788b6cf3a50d52": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:31"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:56"
     },
     "28e2bb2510789073d6a91e68e4b6b16771152f398ff0d989293e311309427a08": {
       "kind": "command",
@@ -831,7 +841,7 @@
     },
     "2943b9d2a19427f975898da1c3cb78d9dcbfcb6b652608fa5c7f079e567ae52c": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:65"
+      "src": "skills/_shared/quality-stack.md:71"
     },
     "29a747686b12c84290b2c70b21e77ab84c3173b57f9f31a62d771a518fe0bb25": {
       "kind": "command",
@@ -871,7 +881,7 @@
     },
     "2b1ec55de2ec434169d23c288216e2731d5629a5a4854449ea9b4d7f6b2c392f": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:332"
+      "src": "skills/_shared/quality-stack.md:342"
     },
     "2b7922895953a4683cc2fe4888608c6645860f6a161cee5e3ec90e2dfcc2017d": {
       "kind": "command",
@@ -879,15 +889,15 @@
     },
     "2ba1c57677139e047a1ccfc8d8ffd404cfa85fb442139c29f2a33c9b09e07d0e": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "2bf99b136908333c78c05002db5b8bc294bbab7783eacfcc744277f198ed1a6f": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:242"
+      "src": "skills/_shared/quality-stack.md:252"
     },
     "2bff01b7d2860652a1860e2d5d2d60b99bb22c69b80ceb90b71a6279ff6b0c40": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "2c5426bb735b1a7a9ac306ac632707cd6b307421eceff57036b057082e4339ee": {
       "kind": "command",
@@ -921,22 +931,17 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-skills-crossplugin.md:180"
     },
-    "2e7ade1aba5d57e5a3603d3ad9338157ae552b3748b55c9d5ebed17401952efc": {
-      "kind": "block",
-      "src": "skills/audit/modes/fix.md:141",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/check_bridge.py\" --status > \"${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status\" 2>/dev/null || echo \"absent\" > \"${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status\"\nIFS= read -r CODEX_STATUS < \"${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status\" || CODEX_STATUS=\"absent\"\n[ \"$CODEX_STATUS\" = \"available\" ] && printf 'CODEX_AVAILABLE=%s\\n' true || printf 'CODEX_AVAILABLE=%s\\n' false\n[ \"$CODEX_STATUS\" = \"available\" ] && python \"$PLUGIN_ROOT/bin/load_shared_doc.py\" --optional foundry skills/_shared codex-prepass.md"
-    },
     "2ed5612da83bd0accce46e56025e77a111e3ecb9a87e77a20d6cd06873587685": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills-crossplugin.md:180"
     },
     "2f0c255addd5d3d14d8a4ad64d40d9325f2a47bcfcaaba5887f48cc8dfa60362": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:145"
+      "src": "skills/audit/SKILL.md:178"
     },
     "2f30a6552cacf1105eba61a3fdefb287d45165ee5ad6f78fba43a48723b0956b": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "2f61cf0b4e826f4792cbc8aa0ac79934296ae6ef81991c27597fdb89c242c438": {
       "kind": "block",
@@ -974,15 +979,15 @@
     },
     "311a0b937895c6d038a647059ee67bccdfad7b51748449be4bd08f79afc2cf5e": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:266"
+      "src": "skills/audit/SKILL.md:323"
     },
     "31e1e64a210136b3b6181b143f6125f0ce4ed82c7b71e7949f2573a69ed44ca7": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:65"
+      "src": "skills/_shared/quality-stack.md:71"
     },
     "31e4c858b3c0dae165933c696967a8be644c5d1f666d2e3b9489c484a5993a34": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "31fe8d85c3b63824972b6ecd5cf626b0351ee1fa0f66f7338720464c5e8ab45e": {
       "kind": "command",
@@ -994,11 +999,11 @@
     },
     "32bf8fef9faf4ca24752160a843e47544cd742f85694094230fbbe1009251178": {
       "kind": "command",
-      "src": "skills/audit/modes/fix.md:101"
+      "src": "skills/audit/modes/fix.md:142"
     },
     "33754218240de09e738137b5a323c8b7fbcbaa7cd541655041229144b8c04033": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:145"
+      "src": "skills/audit/SKILL.md:178"
     },
     "33cf902ae82d0b3a4942a3b9c1eb2e854765adaeb139c7af3810f3c8b31bb2ce": {
       "kind": "command",
@@ -1049,7 +1054,7 @@
     },
     "369f2741627714632f1f3373f26467756bdda949951adb2a9260311cee959df3": {
       "kind": "block",
-      "src": "skills/audit/modes/adversarial.md:37",
+      "src": "skills/audit/modes/adversarial.md:42",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r LOCAL_MODE < \"${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode\" 2>/dev/null || LOCAL_MODE=\"false\"\nIFS= read -r AUDIT_TPL < \"${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl\" 2>/dev/null || AUDIT_TPL=$(python \"$PLUGIN_ROOT/bin/resolve_skill_subdir.py\" audit templates $( [ \"$LOCAL_MODE\" = true ] && echo \"--local\" ))\nprintf \"CURATOR_PROMPT_PATH=%s/curator-prompt.md\\n\" \"$AUDIT_TPL\""
     },
     "36a7e680a98c03f05114ae36239b8139d36b07573694ce85c5d77e6445d716fc": {
@@ -1058,11 +1063,11 @@
     },
     "3707e4d1f787dc4f3bca2334b22201a1c5d0cd3401ec0be2b7574c5e752bb101": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "37118195258364822b37d82b8a968fe6f02f061939cc65d22ac4ae4ca2046873": {
       "kind": "block",
-      "src": "skills/_shared/quality-stack.md:361"
+      "src": "skills/_shared/quality-stack.md:381"
     },
     "37518c512414fc327dae7de87d8f0b48adf146e3ce6082376a77c3f2b3b1ac62": {
       "kind": "command",
@@ -1078,7 +1083,7 @@
     },
     "38b6526a60eded68f363c8e85770e99caf6b68897efad5de8a22b1fcf13f9fc8": {
       "kind": "command",
-      "src": "skills/audit/templates/audit-fix-prompt.md:64"
+      "src": "skills/audit/templates/audit-fix-prompt.md:113"
     },
     "38d906cb2b629585d51bfef740101930cbab0e1dbf82e7f03f0eb61f8f0f72d4": {
       "kind": "command",
@@ -1098,7 +1103,7 @@
     },
     "39ec3c245139eef59ea2aba756f4aeb267e9be8f5c7a26bf8f644810c3742847": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "39ffe780355fac0e71c4fbe8dce56263793fa804271179b04b8f84e4896651f8": {
       "kind": "block",
@@ -1173,7 +1178,7 @@
     },
     "3d7a26a24d213d90062a7499b8545e95fe96ee076db40a4060f2b8b9e1340b0b": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:212"
+      "src": "skills/_shared/quality-stack.md:222"
     },
     "3d7f0b10b40b616551fd8c243b8cff3b4e8bc868ded9f4b7da5898f71e4865a7": {
       "kind": "command",
@@ -1185,7 +1190,7 @@
     },
     "3da5e84dad3f8ab720277e3ce4b61000bffa16a4de725ba1fb54a25bafd6d956": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "3dfba49c26bbdcc04e371d4b8b2edc21d959e726435d33fab9ffdcba2f7d8482": {
       "kind": "command",
@@ -1205,7 +1210,7 @@
     },
     "3e622f8f61613478d63cd92b748b252495d2e6368997427d748eb39edf9b7d5f": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:398"
+      "src": "skills/_shared/quality-stack.md:426"
     },
     "3e97eab9862fc21c68ede7dbbaa6df43d2ff852b82fc47c0eb68c8ff53361c13": {
       "kind": "block",
@@ -1221,7 +1226,7 @@
     },
     "3ef4e3fc4c1f7df87f3316a7c2564e5cb780377e3d83a0edd171cbaa7528684b": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:212"
+      "src": "skills/_shared/quality-stack.md:222"
     },
     "3f2d3643f4ca6d1debb8e55fa9612331ec3a05b0c260eeec517dc34197913a3f": {
       "kind": "command",
@@ -1263,11 +1268,11 @@
     },
     "4170048e29a3a5e3d01729cbde290cc9248203951d6ff8f6b3ecaf3fe236c42f": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:361"
+      "src": "skills/_shared/quality-stack.md:381"
     },
     "41942b8fc66fdeef3648e69408d9f283cc01a031c574e921b36a16e49044e943": {
       "kind": "block",
-      "src": "skills/_shared/quality-stack.md:445"
+      "src": "skills/_shared/quality-stack.md:473"
     },
     "419d59eacb0b82a8f63d24a2341a42c266536c8bd70557eb94ae7be96342929b": {
       "kind": "command",
@@ -1303,7 +1308,7 @@
     },
     "445de2961dfb152c847ec4274eac9625aa3a8ce1b71319ec88f5224ae66c84dc": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:172",
+      "src": "skills/audit/SKILL.md:205",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r LOCAL_MODE < \"${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode\" 2>/dev/null || LOCAL_MODE=\"false\"\nSTATIC_SCOPE=$( [ \"$LOCAL_MODE\" = true ] && echo plugins || echo .claude )\npython \"$PLUGIN_ROOT/bin/audit_churn.py\" --limit 300 --path plugins \\\n    > \"${TMPDIR:-/tmp}/audit-state-${CSID}/churn-signal.json\" 2>/dev/null\npython \"$PLUGIN_ROOT/bin/audit_static.py\" --scan-dir \"$STATIC_SCOPE\" \\\n    --jsonl \"${TMPDIR:-/tmp}/audit-state-${CSID}/static-findings.jsonl\""
     },
     "44676a7f021bec8dda0a7b5e654a871a85e0396417b02be5bfe8b952b2c1f148": {
@@ -1312,7 +1317,7 @@
     },
     "44aa9d64636826d09bee7abd82aa36c5a31fac8a6ead7bdb29dae70de7e92638": {
       "kind": "block",
-      "src": "agents/qa-specialist.md:130",
+      "src": "agents/qa-specialist.md:131",
       "template": "_ROOT=$(git rev-parse --show-toplevel 2>/dev/null); [ -n \"$_ROOT\" ] || _ROOT=\"$PWD\"\nPROJ=$(basename \"$_ROOT\")\n_IDX=\"${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}\"\nif command -v codemap-py >/dev/null 2>&1 && [ -f \"${_IDX}/${PROJ}.json\" ]; then\n    if [ -n \"$TARGET_MODULE\" ]; then\n        codemap-py query uncovered --top 20 \"$TARGET_MODULE\" 2>/dev/null\n        codemap-py query coverage-gap --threshold 0.8 \"$TARGET_MODULE\" 2>/dev/null\n        [ -n \"$TARGET_FN\" ] && codemap-py query mock-rdeps \"${TARGET_MODULE}::${TARGET_FN}\" 2>/dev/null\n    else\n\n        for _MOD in $(python \"${CLAUDE_PLUGIN_ROOT}/bin/codemap_changed_modules.py\"); do\n            codemap-py query uncovered --top 20 \"$_MOD\" 2>/dev/null\n            codemap-py query coverage-gap --threshold 0.8 \"$_MOD\" 2>/dev/null\n        done\n    fi\n    [ -n \"$TARGET_FIXTURE\" ] && codemap-py query fixture-rdeps \"$TARGET_FIXTURE\" 2>/dev/null\n    [ -n \"$TARGET_TEST_FILE\" ] && codemap-py query fixture-graph \"$TARGET_TEST_FILE\" 2>/dev/null\nfi"
     },
     "44b3298ab6eedac7ccb6a6ad3d9304625be4a5b638439a74d2df559634f1e8d9": {
@@ -1326,7 +1331,7 @@
     },
     "44c8b56cd67e7d188ee648f925d9d7694dedd5c998c1a7bedee3873c4d868f4b": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:237"
+      "src": "skills/audit/SKILL.md:294"
     },
     "44f94fd51173454d1e980d17cc53311c6a66de2b317ecd44a3b272b704c3de9d": {
       "kind": "command",
@@ -1346,7 +1351,7 @@
     },
     "46461a08caa2162ea90eaf9bbb7042ad4967c339bfe1375381f664edef66c180": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:398"
+      "src": "skills/_shared/quality-stack.md:426"
     },
     "4656cd29102468fd6116b1b85626852614d968ab3388d9f1e57a3683ac111fc0": {
       "kind": "command",
@@ -1354,7 +1359,7 @@
     },
     "468d0934d7452832b84e421bb6797ad8fd5d21dc731231dd63376a17e3eb9641": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:111"
+      "src": "skills/_shared/quality-stack.md:117"
     },
     "468eff50d365dd8c8b62f10f3db5944473236766b816fc44a9cbea8ae5aabd3f": {
       "kind": "command",
@@ -1370,7 +1375,7 @@
     },
     "47084e438d79c73a3385c5e160c101a77aaf62bdf753d6c96c8d45346fabef8f": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "473e407767a6c5a1a00cdad999de2ee7a8e836709eb77c4c10de80a01cf6f281": {
       "kind": "command",
@@ -1450,7 +1455,7 @@
     },
     "4b9cc1c0280b821c08627864e45ca1df28c72b90c304f86df1b3de2e780e7933": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:258"
+      "src": "skills/audit/SKILL.md:315"
     },
     "4bcf6e1134419ff94a52d708ba4a857b27bb116fe12514a6595226766a4b8666": {
       "kind": "command",
@@ -1475,6 +1480,10 @@
     "4cbe7e8e6240994e738a5328088062f80840dc6f260f073e8662c55cadf4a351": {
       "kind": "command",
       "src": "skills/setup/SKILL.md:61"
+    },
+    "4cc7b708d3582153e8723a2c51fa77099992b5b2cae0e6c48eac74f2350cd188": {
+      "kind": "command",
+      "src": "skills/calibrate/templates/pipeline-prompt.md:56"
     },
     "4ccead62f5d02a9ec03cb1fe3b14569be29f24e2a39fc3f529239064a4a064d6": {
       "kind": "block",
@@ -1548,6 +1557,10 @@
       "kind": "command",
       "src": "skills/brainstorm/SKILL.md:339"
     },
+    "5061a954ec9594376cc90b8428e44778b5cbb6f98cbb04eef077498132e5a45c": {
+      "kind": "command",
+      "src": "skills/audit/modes/adversarial.md:60"
+    },
     "5069e9d6ef3c5257e8c2e42d9445cf4c408d4c534394ae279d5aa4d5c978baba": {
       "kind": "command",
       "src": "skills/investigate/SKILL.md:50"
@@ -1575,11 +1588,11 @@
     },
     "516d3824b3a1e01e66c3fc3246548481a2e725efcb69c9d00aef1e4156dafd01": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:31"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:56"
     },
     "51748c2ac9eef934e913fbed484b75a0ba19b244545c49019e5368d238906cdd": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "518a253161c9a13184f1b5492dc8b6a42541670fc01f3c9168d393365f8814aa": {
       "kind": "command",
@@ -1612,7 +1625,7 @@
     },
     "539464c9a671ce43748ceeeb8d7c2827270c6c818ec836e3b6d036f0909060c6": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "53c12eb946042ae3b9ba989052cf85e8cb2a0f8502c61b3f8429f78013cfc459": {
       "kind": "command",
@@ -1636,7 +1649,7 @@
     },
     "547035a4bc99b8e43abe46a981fe62a64f81a8119bfc7df913fcceb26945bcf5": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:237"
+      "src": "skills/audit/SKILL.md:294"
     },
     "54e0170ce39590091bc8f74c70af32f2bba6ed62751684944cdc9dc559c46e21": {
       "kind": "block",
@@ -1660,11 +1673,11 @@
     },
     "55af5818accee40888d5e62457f13df92d372d0faa14edd4ca50a38812cca392": {
       "kind": "block",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "55b30d7351a847ed5582b2bdb4359d9878e350b373ff915c90385df916668163": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:31"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:56"
     },
     "55b7ed07eb53d37f03224bc5cec2233975c717987d837ceb69fce51fa7713bc4": {
       "kind": "command",
@@ -1676,7 +1689,7 @@
     },
     "56038ecefb642794c6bf861bbe5e81a3e9c63f1ecbc9983996f03b6ab8f396ce": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:130"
+      "src": "skills/audit/SKILL.md:158"
     },
     "56287714812a9571abd847bf3bb9401e160a9b32589975ab551f38e9695e3c77": {
       "kind": "command",
@@ -1701,7 +1714,7 @@
     },
     "569f2e95eb69aa090c69f389e0d0b3271f40feae08050a573de75dd9b9c1e0e8": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:202",
+      "src": "skills/audit/SKILL.md:252",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r LOCAL_MODE < \"${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode\" 2>/dev/null || LOCAL_MODE=\"false\"\n[ \"$LOCAL_MODE\" != \"true\" ] || python \"$PLUGIN_ROOT/bin/plugin_layout.py\" plugins"
     },
     "56fe38786427a6c6d8b1145fcaa6e718d9683dade633e484d2a4ed3d94f15bed": {
@@ -1730,11 +1743,11 @@
     },
     "57e0a3a0256adc5c27848986d10f846f6dceb9236f7f605947e41f80b1d1fcda": {
       "kind": "command",
-      "src": "skills/audit/templates/audit-fix-prompt.md:21"
+      "src": "skills/audit/templates/audit-fix-prompt.md:33"
     },
     "58219d00b21ba5fd749625750ff15c38ea7422591972bc99c0419d94ae0f25cb": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:322"
+      "src": "skills/audit/SKILL.md:384"
     },
     "5839de37e7d018e7c7d5fc96dc0bbec30dce8f82a986461cc81c4963dcd7a8d2": {
       "kind": "command",
@@ -1755,7 +1768,7 @@
     },
     "58f809963d0594ee59f9daf907473ffa8a2c5defe1c5a6a7b10edb50d9e69667": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "594a12e26e7d0844d17179b57fbb4ba18a775bbddcb7d136568e67f8f37ef608": {
       "kind": "command",
@@ -1763,11 +1776,11 @@
     },
     "595059f3f51f07b8e7efd212a1bc0f9c7d861f81b4f5a5df31b790d7e4980879": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:111"
+      "src": "skills/_shared/quality-stack.md:117"
     },
     "5a0fe7637d1c6f9eb3c8a34f6fff4b9736c48177bcc608451ef63fe806112f6c": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:322"
+      "src": "skills/audit/SKILL.md:384"
     },
     "5a1af48eff3449c1c0ec59fde03494931425cba40056f6dd6f1a64e175aac9b7": {
       "kind": "block",
@@ -1784,7 +1797,7 @@
     },
     "5a754a60e5a8f6e37c3fa23dd76f16a88bd004d64c173f5cee9d54dfac738aeb": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "5ac19e15c701b19cecdb44dd1afb094f0bf6473d4dbaecd953afe4d329d7167a": {
       "kind": "block",
@@ -1802,7 +1815,7 @@
     },
     "5b241be0cfbb1f6efd1965c980b31d3610128676088df5d1bdf4233c580c72a4": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "5b8720b31b96e52442ea3c47a1a8fc605fc7f59975ef2818076837b9418cba84": {
       "kind": "command",
@@ -1838,7 +1851,7 @@
     },
     "5c7597d2fd1eb46dacad380d92a6e454813a6b857064fef5dff27214fd94dac5": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:237"
+      "src": "skills/audit/SKILL.md:294"
     },
     "5cae1909b09ce40b44ee450b586ab3da88e3af30495feecf5bc23298728ce99e": {
       "kind": "command",
@@ -1862,7 +1875,7 @@
     },
     "5db201a28319ddf6446ca8d0c9206754ef343d427bd1bebe1b2eeeb789b70cad": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "5df20218a30b1588316cbcd167a15c275c9ce1b11490769cee3c34ebadf806ab": {
       "kind": "command",
@@ -1898,11 +1911,11 @@
     },
     "5f461b5913be53d3f388233b96ca9fad57c5ad0e88a1bd16189af42ec7a33d32": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "5f4e2ac873575b47083aeab2156ef7958f02e821b276f65743e47c6a3979d828": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:130",
+      "src": "skills/audit/SKILL.md:158",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r LOCAL_MODE < \"${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode\" 2>/dev/null || LOCAL_MODE=\"false\"\nIFS= read -r AUDIT_TPL < \"${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl\" 2>/dev/null || AUDIT_TPL=$(python \"$PLUGIN_ROOT/bin/resolve_skill_subdir.py\" audit templates $( [ \"$LOCAL_MODE\" = true ] && echo \"--local\" ))"
     },
     "5f5a16f936f620c78499d61941158ab928fc26fe0838ad07309e7293c025ba99": {
@@ -1931,7 +1944,7 @@
     },
     "602300068137f157bcb57780a76583b21f6adebde8d73840a0169518e73531e4": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:65"
+      "src": "skills/_shared/quality-stack.md:71"
     },
     "605075a3f6f6f6990441978939a8ac07aefd3df3ac831ae066859d78056902ce": {
       "kind": "command",
@@ -2039,7 +2052,7 @@
     },
     "6748ac3872b72e9adde06275ea524d7e997830360890845394f744c6d368717a": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "6778b350434a8135f4d04441382d6e3c4c6ba6abde3f1eb8cb8f886d8f0e2677": {
       "kind": "command",
@@ -2057,6 +2070,10 @@
       "kind": "command",
       "src": "skills/audit/modes/efficiency-measured.md:23"
     },
+    "67fadfb22e0ac029115cc3d3a468585fa971a3dfac5ffbf23fdf9422237eab58": {
+      "kind": "command",
+      "src": "skills/calibrate/templates/pipeline-prompt.md:306"
+    },
     "68146abba6f4ba2b2e7c786471f45a5e57f054ece22d3df5d377aed3f8bb1488": {
       "kind": "command",
       "src": "skills/audit/templates/checks-setup.md:61"
@@ -2071,7 +2088,7 @@
     },
     "68426a8cf5e3c7ef88272627bb1ac56fe21884f1f017b19ca88d1aa35b93ccd2": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:65"
+      "src": "skills/_shared/quality-stack.md:71"
     },
     "688b705e350107d9d7fe1d89fa907f4a8bb4d15a6ea12338a64cd70b689b0c26": {
       "kind": "command",
@@ -2087,15 +2104,15 @@
     },
     "696c356e12baaa63a3e6dafd18b3ff67eb96c955f8ddb56e6d4fcbcc875eb756": {
       "kind": "command",
-      "src": "skills/audit/modes/steps-4-5-7.md:90"
+      "src": "skills/audit/modes/steps-4-5-7.md:102"
     },
     "69997cba28e8b2456a66b0e71b27bddbe732618415bc0d68a7fe8f7869b9ee39": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:65"
+      "src": "skills/_shared/quality-stack.md:71"
     },
     "69bcd3e33e0ac97ff04bc3cf7395f92d4634c964ed2c7335b59dcf57a2eb2a00": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:100"
+      "src": "skills/_shared/quality-stack.md:106"
     },
     "69dc99cbddcf3e6e3017c28e8a8f1307365e2d83b6dd20859f77ea38928dc7ad": {
       "kind": "block",
@@ -2116,7 +2133,7 @@
     },
     "6b57829fd6d3570c4615c076db073ce96031adeaa7c8232ff53bc1603a64812d": {
       "kind": "command",
-      "src": "agents/qa-specialist.md:130"
+      "src": "agents/qa-specialist.md:131"
     },
     "6b9a44da68079e7b5c97fb704171187fce400ac00a99a18c6a38d6cce66aaa80": {
       "kind": "command",
@@ -2128,7 +2145,7 @@
     },
     "6c6a12a5d45c5ed3f3ad40da6049fa9747d3fecb8468bbc3f8573eb3003caefc": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:404"
+      "src": "skills/_shared/quality-stack.md:432"
     },
     "6c8a9e9b6503a0b46f29c058c29e9f9941ffd5585b5d1a31404afd2df8e908ff": {
       "kind": "command",
@@ -2158,7 +2175,7 @@
     },
     "6d4f0b394434d1f444cff680bf59d88dbef0601b7ad2bc2bf4e0ec9bbd793540": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:111"
+      "src": "skills/_shared/quality-stack.md:117"
     },
     "6d7a74a646383f638de57c6db4bb71bf095356fc483fbe09ddf9a56d789b6b17": {
       "kind": "command",
@@ -2212,7 +2229,7 @@
     },
     "6facc0900299144d73d9b33af0f16e17eca8f330ece29b7a9cab66dcfcc66e58": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:145"
+      "src": "skills/audit/SKILL.md:178"
     },
     "6fe3c8cc1ef805e3ec5eb747bdc381d2542f7274a14c2d599d58e7f66f315b1d": {
       "kind": "command",
@@ -2244,7 +2261,7 @@
     },
     "710ff5252236a13049961d1d1ff8967e9992542d91b07a60c8ef05b4f8751464": {
       "kind": "block",
-      "src": "skills/audit/templates/audit-fix-prompt.md:21",
+      "src": "skills/audit/templates/audit-fix-prompt.md:33",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir\" || exit 1\n[ -n \"$RUN_DIR\" ] || exit 1\nIFS= read -r PASS_COUNT < \"$RUN_DIR/fix-passes.txt\"\npython \"$PLUGIN_ROOT/bin/agent_watch.py\" --state-dir \"$RUN_DIR/fix-pass-$PASS_COUNT\""
     },
     "7117eaf55f49ee595f10688112e2bec406dcb3e3b675bb702701d1cc203af84b": {
@@ -2261,7 +2278,11 @@
     },
     "71b367f84f3ac74b2b5a60e5a93055591a66cb19b811ee1d683fc0ce51709a23": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:145"
+      "src": "skills/audit/SKILL.md:178"
+    },
+    "726e89b02547b25b8d6a4ed131c67908ed2424a9da03568c195cb936dcc25f90": {
+      "kind": "block",
+      "src": "skills/audit/SKILL.md:575"
     },
     "72a77529a88b400e56ceb142774288fe19918faf3ed8c1f64bd25bc508e2ea71": {
       "kind": "block",
@@ -2281,7 +2302,7 @@
     },
     "730d755d42e52c4ef45f0d7233d69eda0055b91f121166c574320d01aca8f2da": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:212"
+      "src": "skills/_shared/quality-stack.md:222"
     },
     "733f1f25b4543e49040a037157042067035bdd98937195c8f2f4a6c2cc85a096": {
       "kind": "command",
@@ -2301,7 +2322,7 @@
     },
     "73e47a95bf14a4cd87f06b1935bed922f1116ec9607f2fd317f4e2e67131320b": {
       "kind": "command",
-      "src": "skills/audit/templates/audit-fix-prompt.md:21"
+      "src": "skills/audit/templates/audit-fix-prompt.md:33"
     },
     "73ed82fa8979431a0f13e691380d5f802acdd3fb747a2326ef7115f3d5b8712c": {
       "kind": "block",
@@ -2334,15 +2355,19 @@
     },
     "76023681615db3a128c951342b4a2aceec393420209a086bb877e88b65de7074": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "7604b3725bc2d7e79ea222dbacb0fcc6c7c3f2c7eddb5caf3fc3b46e156e5e29": {
       "kind": "command",
       "src": "rules/_full/claude-config.md:35"
     },
+    "764046e2488796dde30704df96cca8bdaedc7f8814c7db5e62cacc0329f80581": {
+      "kind": "command",
+      "src": "skills/calibrate/templates/pipeline-prompt.md:82"
+    },
     "767a7266f8a79e6e1f8eef1b5ea505663ca72c1ee41f868822bcf634730760c9": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:430",
+      "src": "skills/audit/SKILL.md:506",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r LOCAL_MODE < \"${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode\" 2>/dev/null || LOCAL_MODE=\"false\"\npython \"$PLUGIN_ROOT/bin/load_mode.py\" audit modes upgrade.md $( [ \"$LOCAL_MODE\" = true ] && echo \"--local\" )"
     },
     "7687ade55e54ef287e0d776432f908023bb7fd24cf73eb639816f762d9a0f4f4": {
@@ -2434,7 +2459,7 @@
     },
     "7bd58990ffa3d1055129f1672a2a1ddeeab8da532b428322e661f1ffce7b1b5f": {
       "kind": "block",
-      "src": "skills/audit/modes/steps-4-5-7.md:90",
+      "src": "skills/audit/modes/steps-4-5-7.md:102",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _RUN_DIR < \"${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir\" 2>/dev/null || _RUN_DIR=\"\"\n[ -n \"$_RUN_DIR\" ] || { echo \"! BLOCKED \u2014 audit run-dir sentinel missing; re-run /foundry:audit\"; exit 1; }\n_PRESERVE=\"run-dir=$_RUN_DIR, static-findings=${TMPDIR:-/tmp}/audit-state-${CSID}/static-findings.jsonl, finding-files=$_RUN_DIR/*.md\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-file \"${TMPDIR:-/tmp}/audit-state-${CSID}/keep-items\" \"foundry:audit\" \"aggregate (after parallel curator+system-checks fan-out)\" \"$_RUN_DIR\" \"$_PRESERVE\" \"consolidate findings \u2192 aggregate.md + summary.jsonl \u2192 Step 7 report\"\nIFS= read -r LOCAL_MODE < \"${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode\" 2>/dev/null || LOCAL_MODE=\"false\"\nIFS= read -r AUDIT_TPL < \"${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl\" 2>/dev/null || AUDIT_TPL=$(python \"$PLUGIN_ROOT/bin/resolve_skill_subdir.py\" audit templates $( [ \"$LOCAL_MODE\" = true ] && echo \"--local\" ))\nIFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir\" 2>/dev/null || RUN_DIR=\"\"\nprintf \"RUN_DIR=%s\\nSTATIC_FINDINGS_PATH=%s\\nSEVERITY_TABLE_PATH=%s\\nPRECOMMIT_VALIDATION_PATH=%s\\nPRECOMMIT_STATUS_PATH=%s\\n\" \"$RUN_DIR\" \"${TMPDIR:-/tmp}/audit-state-${CSID}/static-findings.jsonl\" \"$(dirname \"$AUDIT_TPL\")/severity-table.md\" \"${TMPDIR:-/tmp}/audit-state-${CSID}/precommit-validate.txt\" \"${TMPDIR:-/tmp}/audit-state-${CSID}/precommit-status.txt\""
     },
     "7c4207ca1257af8201cdac4b4073f93df4ec5b010c071c5c95757c061d50c5b6": {
@@ -2485,6 +2510,10 @@
       "kind": "command",
       "src": "skills/brainstorm/SKILL.md:101"
     },
+    "7ece712a7603e0a43c69d9ca18fcb09c85c3edf69a32cee28f83f95be8181523": {
+      "kind": "command",
+      "src": "skills/audit/SKILL.md:575"
+    },
     "7ed6e6caf8215137ac51f8a695985eee43739764dc6fe10e304d507df17f05a8": {
       "kind": "block",
       "src": "skills/distill/modes/executables.md:89",
@@ -2519,9 +2548,14 @@
       "src": "agents/solution-architect.md:59",
       "template": "_ROOT=$(git rev-parse --show-toplevel 2>/dev/null); [ -n \"$_ROOT\" ] || _ROOT=\"$PWD\"\nPROJ=$(basename \"$_ROOT\")\n_IDX=\"${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}\"\nif command -v codemap-py >/dev/null 2>&1 && [ -f \"${_IDX}/${PROJ}.json\" ]; then\n    codemap-py query central --top 5 2>/dev/null\n    if [ -n \"$TARGET_MODULE\" ]; then\n        codemap-py query rdeps \"$TARGET_MODULE\" 2>/dev/null\n        codemap-py query deps \"$TARGET_MODULE\" 2>/dev/null\n        [ -n \"$TARGET_FN\" ] && codemap-py query xrefs \"${TARGET_MODULE}::${TARGET_FN}\" 2>/dev/null\n    else\n\n        for _MOD in $(python \"${CLAUDE_PLUGIN_ROOT}/bin/codemap_changed_modules.py\"); do\n            codemap-py query rdeps \"$_MOD\" 2>/dev/null\n            codemap-py query deps \"$_MOD\" 2>/dev/null\n        done\n    fi\nfi"
     },
+    "80632f11e1e4d2babc218f2397d7957b3bec37d8c346463dded08f240fc429c3": {
+      "kind": "block",
+      "src": "skills/audit/modes/fix.md:195",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/check_bridge.py\" --status > \"${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status\" 2>/dev/null || echo \"absent\" > \"${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status\"\nIFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir\" 2>/dev/null && [ -n \"$RUN_DIR\" ] && [ -s \"$RUN_DIR/codex-blocked.txt\" ] && echo \"codex-blocked:quota\" > \"${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status\"\nIFS= read -r CODEX_STATUS < \"${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status\" || CODEX_STATUS=\"absent\"\n[ \"$CODEX_STATUS\" = \"available\" ] && printf 'CODEX_AVAILABLE=%s\\n' true || printf 'CODEX_AVAILABLE=%s\\n' false\n[ \"$CODEX_STATUS\" = \"available\" ] && python \"$PLUGIN_ROOT/bin/load_shared_doc.py\" --optional foundry skills/_shared codex-prepass.md"
+    },
     "80a0bb915194525c20bbab086fcc061354f22cac9ae39d5b3ff6d17c7f4b41bd": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "80a12f8f51fdff95bf6125b989e903d2a67a16de411cb43927e78e9e4557548e": {
       "kind": "block",
@@ -2582,7 +2616,7 @@
     },
     "8429b1a1078a3ceee420b0d9f7e0b027a203529eb09f0f2991a201ccb67c3680": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:65"
+      "src": "skills/_shared/quality-stack.md:71"
     },
     "8429d982575081ee55acb60d848b8949529a9a12b912bb7c2c61ec3be61234f2": {
       "kind": "command",
@@ -2598,11 +2632,11 @@
     },
     "852de8470bc89d5279d6262d6ec0f839faae238fb136702847836ca11a9b66d3": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:212"
+      "src": "skills/_shared/quality-stack.md:222"
     },
     "8555d50453bc00aaf874c934973904696e5649ad8c1321d5508e063babc893d6": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:404"
+      "src": "skills/_shared/quality-stack.md:432"
     },
     "855ca672a0af5f420be7164af3617bd9f52a4a05c2aecf8344b96a5e22ef9d02": {
       "kind": "command",
@@ -2638,7 +2672,7 @@
     },
     "860daa9195dcd4a3333b98442182c562b0c95c6d75d8536c2d4c94711db96cb1": {
       "kind": "block",
-      "src": "skills/audit/modes/steps-4-5-7.md:181",
+      "src": "skills/audit/modes/steps-4-5-7.md:234",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _RUN_DIR < \"${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir\" 2>/dev/null || _RUN_DIR=\"\"\n[ -n \"$_RUN_DIR\" ] || { echo \"! BLOCKED \u2014 audit run-dir sentinel missing; re-run /foundry:audit\"; exit 1; }\n_PRESERVE=\"run-dir=$_RUN_DIR, aggregate=$_RUN_DIR/aggregate.md, summary=$_RUN_DIR/summary.jsonl\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-file \"${TMPDIR:-/tmp}/audit-state-${CSID}/keep-items\" \"foundry:audit\" \"report (after aggregate complete)\" \"$_RUN_DIR\" \"$_PRESERVE\" \"emit report \u2192 follow-up gate \u2192 optional fix mode (Steps 8-10) \u2192 Step 11\""
     },
     "861ed4bd6b93a7622ec529a1ad310652f2deb6e2b6cf7bd3dabf98738bd8d604": {
@@ -2647,7 +2681,7 @@
     },
     "862a6b1994f819c098a3b76fa37f59e3a7b4777e6adfdb8099cc035a9ac73365": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "862cb0e2f74ca9ef72087e3337264469d37e1fbb7446e925e898497711090a2d": {
       "kind": "command",
@@ -2667,11 +2701,11 @@
     },
     "86f33d659f185714f54c4bacf5dd0b83986f6ff79d8fd6e2afa7d53b20cc6709": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "86f5d8c2b344c0561abec086c46a16873918051a70f3ba9f86f8f791143a2379": {
       "kind": "command",
-      "src": "skills/audit/modes/adversarial.md:37"
+      "src": "skills/audit/modes/adversarial.md:42"
     },
     "8736c77e813c8fca837c5f7e277bc7e0039ef533a27ff29743f97f879d5c7321": {
       "kind": "block",
@@ -2689,7 +2723,7 @@
     },
     "87a71558ae314b4eaab5541fe80a5fd1e684f6ec2b62cfe52f06f21757dce15d": {
       "kind": "command",
-      "src": "skills/audit/modes/adversarial.md:55"
+      "src": "skills/audit/modes/adversarial.md:60"
     },
     "87cfe52208492e4d04ed83d737a1628936c681b39ee7e31130fc31be7a06aadc": {
       "kind": "command",
@@ -2702,7 +2736,7 @@
     },
     "88c43387a499489c9b68291f0128a1db1c91acbfd996fa1c5fe49b5c60f5f8d7": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:65"
+      "src": "skills/_shared/quality-stack.md:71"
     },
     "88c8c70d37bcb49a61a147bc6dde71ce3f135f0be27bc7a33a3a63e1e9b4ef90": {
       "kind": "command",
@@ -2812,7 +2846,7 @@
     },
     "8d3d8c475342d37af70c49f411c24e38273ece9b4305607e3aa9ac57fe3d2143": {
       "kind": "block",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:188",
+      "src": "skills/calibrate/templates/pipeline-prompt.md:243",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\npython \"$PLUGIN_ROOT/bin/calibrate_validate_problems.py\" --run-dir \".reports/calibrate/<TIMESTAMP>/<RUN_SLUG>\" <FLOORS_ARG>"
     },
     "8d64e1d1df391239a17e37a182f51d49c47fa73683cbdafdf32ee607cdbc1110": {
@@ -2858,7 +2892,7 @@
     },
     "8fe15b6f5b4bd8df166a74e127012416cce13af3255b6238900a7128cea1f7f5": {
       "kind": "command",
-      "src": "skills/audit/modes/steps-4-5-7.md:90"
+      "src": "skills/audit/modes/steps-4-5-7.md:102"
     },
     "8ff59ec2bb942f3e44b7fcad387af8eebd71871e80efa445443d591b03827f77": {
       "kind": "command",
@@ -2866,7 +2900,7 @@
     },
     "900039b411173b11af984ab3e8e69e9c636c02eb9a44a592545826a4a5053652": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:111"
+      "src": "skills/_shared/quality-stack.md:117"
     },
     "90718db00ceb815e3f197febf002f4be55246baf0169e8bed3c3ffd80768a297": {
       "kind": "command",
@@ -2895,11 +2929,11 @@
     },
     "9225c4a5717574c8cd0e22e056d266025b3acb04e68bb0b5b21e92f36dbcb232": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:145"
+      "src": "skills/audit/SKILL.md:178"
     },
     "922c7e9f5dc4718c32ca9c03457396f773d534696c0502eddcc1842838c29dd1": {
       "kind": "block",
-      "src": "skills/_shared/quality-stack.md:332"
+      "src": "skills/_shared/quality-stack.md:342"
     },
     "92474db35fdc48b3f4d8fdc1eb350ed686dda6e517d187eb20e1b15123d740ce": {
       "kind": "block",
@@ -2957,7 +2991,7 @@
     },
     "9479092648774854f9be210bc83dc65dbb93112aef6a2820d4c3ae87c40cd838": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:469",
+      "src": "skills/audit/SKILL.md:545",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/load_mode.py\" audit modes consolidate.md --local"
     },
     "948e036776e0b73f357dcdb46efc25858a4f7b09dd7406e802182d507e8a0c75": {
@@ -2970,7 +3004,7 @@
     },
     "94a8e6e9e2b244f838e754cb876cff5e14d550c3753c4617aa9f0739889bf565": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "94aabf2f5368dc27992f3114f85e03a274bf6833372dec745c198a4872a7fa6e": {
       "kind": "block",
@@ -2979,6 +3013,10 @@
     "9519597b7b64cb99fd97fa814f0c5f8f5e71bb699a1c66e2b534fe00998c5303": {
       "kind": "command",
       "src": "skills/setup/SKILL.md:61"
+    },
+    "9561be9cd3805a0ada18ebe4d8c27ff794f8ace1eb85a535a21863eb652b01c0": {
+      "kind": "block",
+      "src": "skills/calibrate/templates/pipeline-prompt.md:306"
     },
     "95a072144179105d838904c6e40336e6ae7f60851442039c0a7ac26ad9654cd2": {
       "kind": "command",
@@ -3014,7 +3052,7 @@
     },
     "96494c38796921bf1a22370cf2d826c42c516660642f49d976f18fea46708d43": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:363",
+      "src": "skills/audit/SKILL.md:429",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r LOCAL_MODE < \"${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode\" 2>/dev/null || LOCAL_MODE=\"false\"\npython \"$PLUGIN_ROOT/bin/load_mode.py\" audit modes steps-4-5-7.md $( [ \"$LOCAL_MODE\" = true ] && echo \"--local\" )"
     },
     "9678b61d8248f9d0f1e2070df28160fd2a299f0c40d929aa680a8f8f1bf4054c": {
@@ -3031,7 +3069,7 @@
     },
     "96ed9493fb007518c931afc247305a4eb0db4df0841540ec627416ab2b03dfe9": {
       "kind": "command",
-      "src": "agents/qa-specialist.md:130"
+      "src": "agents/qa-specialist.md:131"
     },
     "96f8ee8c712329c00a56b777ca5326068e9c1587734edba4b36ac64a511f7a17": {
       "kind": "block",
@@ -3060,7 +3098,7 @@
     },
     "9875e470cabc39af961e51a0bc3cc6305588fd70c69012886b92f2c056382dd6": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:212"
+      "src": "skills/_shared/quality-stack.md:222"
     },
     "9943c4da1757748280d398e392e4b7be26c6241e2d574b2306a7cbc96741eb47": {
       "kind": "block",
@@ -3080,7 +3118,7 @@
     },
     "998120679a5ce943ee4db593f6d3d013ba776aa09701f235fea11f0622f830c5": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:361"
+      "src": "skills/_shared/quality-stack.md:381"
     },
     "99865ff9ff838bde4d9744b56b101a85c9613deedae82032215911881d285044": {
       "kind": "command",
@@ -3088,7 +3126,7 @@
     },
     "99c2e05559b8157982e7ddca1518e0409964101e3c08e90db58a146566a43dd1": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "9a5ef8d913fca83f01f65d8e0e1e0aeb9ed51097bc69f22be17660e0ac2e9941": {
       "kind": "command",
@@ -3142,7 +3180,7 @@
     },
     "9d7cc9c0e934a1450f8e23ec18afccb50eb8443f4ce71f03d54b70b16989beff": {
       "kind": "block",
-      "src": "skills/audit/modes/steps-4-5-7.md:63",
+      "src": "skills/audit/modes/steps-4-5-7.md:75",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r LOCAL_MODE < \"${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode\" 2>/dev/null || LOCAL_MODE=\"false\"\nfor _F in checks-index.md checks-security.md; do python \"$PLUGIN_ROOT/bin/load_mode.py\" audit templates \"$_F\" $( [ \"$LOCAL_MODE\" = true ] && echo \"--local\" ); done"
     },
     "9da76b85c08dad7b39ba9b70c849a3310574ab811364d9862da1be2b3d6a7e9b": {
@@ -3188,7 +3226,7 @@
     },
     "9ebcbbe77a1aa8cf420c9b143b9d72596fdc33aa01721f6fd3640ca109f9c479": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:332"
+      "src": "skills/_shared/quality-stack.md:342"
     },
     "9ec55cae78aeea81f30ae24d36614d9796db3164116989f73427f1433fe36eb2": {
       "kind": "command",
@@ -3196,11 +3234,11 @@
     },
     "9f2689a76922b5df7a420c2b5d5b3d26dbbf83f0a2dff4390980a0715281711f": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "9f46b8902b78da2b5118411d9026afe03b307343b6db04ab4c1c319769d94735": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "9f7b830a458652855c9d2e75783e4df9c97b2e8d112120a3f85d3a8bec4d8055": {
       "kind": "command",
@@ -3247,7 +3285,7 @@
     },
     "a12b4b76aa16459a7c49f3e385e628a8b118eb0d02cc37260aa05b1804fc535f": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "a16e5a8dfa68238d0d211a798d06556d28c4558ad39fa9c2b928ae9c107e5449": {
       "kind": "command",
@@ -3272,7 +3310,7 @@
     },
     "a2e4ba1fa8872ed734cf70eee9a44eb13fcb43fb214b418485d16c43a6ddfaae": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:332"
+      "src": "skills/_shared/quality-stack.md:342"
     },
     "a31928e8fe9004dc6d5e204528535e294f79c354469a9a8ae3f51b09523b4341": {
       "kind": "command",
@@ -3335,11 +3373,6 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-setup.md:87"
     },
-    "a554f8a665ef8f3c2c6f2402be889194d1f014c309e6dab7a70d561e1ac70b7c": {
-      "kind": "block",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:31",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nRUN_DIR='.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>'\nmkdir -p \"$RUN_DIR\"\npython \"$PLUGIN_ROOT/bin/check_bridge.py\" --status > \"$RUN_DIR/bridge-status\" 2>/dev/null || printf '%s\\n' absent > \"$RUN_DIR/bridge-status\"\nIFS= read -r CODEX_STATUS < \"$RUN_DIR/bridge-status\" || CODEX_STATUS=absent\nif [ \"$CODEX_STATUS\" = \"available\" ]; then CODEX_AVAILABLE=true; else CODEX_AVAILABLE=false; fi\necho \"bridge@borda-ai-rig: $CODEX_STATUS\"\nprintf 'CODEX_AVAILABLE=%s\\n' \"$CODEX_AVAILABLE\""
-    },
     "a568afbe0941418752aa90bff12256b0c9ca6ab251ad2e45a89d0fa6f2e91a55": {
       "kind": "command",
       "src": "skills/audit/modes/upgrade.md:53"
@@ -3374,7 +3407,7 @@
     },
     "a666d322c44b72ffda07f147dcf834a4790a7844c5b36ba9a285ec4cc070cb5e": {
       "kind": "command",
-      "src": "skills/audit/modes/steps-4-5-7.md:167"
+      "src": "skills/audit/modes/steps-4-5-7.md:220"
     },
     "a6730d36fd6a11f9b67812879d78aff1ea42c819ce9f42fbbc111c657cbd5515": {
       "kind": "block",
@@ -3407,7 +3440,7 @@
     },
     "a98b0e7de943d44ce813e2f024704c5b14366b287f8a44eeb3b25f565971c6e4": {
       "kind": "block",
-      "src": "skills/_shared/quality-stack.md:398"
+      "src": "skills/_shared/quality-stack.md:426"
     },
     "a992f1c92fad405b623f9c0fed6d09eea3f2064757850e2f80f0bf1e0d25be55": {
       "kind": "block",
@@ -3432,7 +3465,7 @@
     },
     "aa9dc0dfcbd2a0a68b051c7e0b935af28c3e6e59c02022d41c8561d798d9f85f": {
       "kind": "command",
-      "src": "agents/qa-specialist.md:130"
+      "src": "agents/qa-specialist.md:131"
     },
     "aaa7b012f889b653627ba98460b37f66cd12fa7195e6c13c41305557fe2c7369": {
       "kind": "block",
@@ -3489,7 +3522,7 @@
     },
     "ad49d204519ed62a8a0dd849a55d074d0e7561bcf523196e38340289f36b0550": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "ad5047078f03ee523eed61534be55c2b2273a166fc7fc107b4317a3dcc2f733e": {
       "kind": "command",
@@ -3501,7 +3534,7 @@
     },
     "ae15106145ec3b8cdcba19d03eee107118c8cf704349e23f69662eaef4cdf3fb": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:376",
+      "src": "skills/audit/SKILL.md:442",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\npython \"$PLUGIN_ROOT/bin/load_shared_doc.py\" --optional foundry skills/_shared cross-validation-protocol.md"
     },
     "ae1aca2b771f3bd97b3af8d006e5e6d2b46e7f9a141b1e4b13c7db36e74f2f43": {
@@ -3518,7 +3551,7 @@
     },
     "af5d010885543bc4a2e8764dafc627012ba18df231a84b76f149c97e7911bdb7": {
       "kind": "command",
-      "src": "skills/audit/templates/audit-fix-prompt.md:64"
+      "src": "skills/audit/templates/audit-fix-prompt.md:113"
     },
     "af8dd71e25499a2463ae4d66ec036aae699add3ba103749527408f70d6709433": {
       "kind": "command",
@@ -3534,7 +3567,7 @@
     },
     "b047ccdc72017a2ecb9f009c24c6861234afaaa4f001b02338a22218639e3846": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:212"
+      "src": "skills/_shared/quality-stack.md:222"
     },
     "b04c24b3b24d77173e31b4e5ed41bf1c58e3fc60eb9fabf3bde1e24c636f86a7": {
       "kind": "command",
@@ -3579,7 +3612,7 @@
     },
     "b282fec0f567a6e4376cb2719f50861aa85f8a023aa33df8e0297d3c60fdc926": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:245"
+      "src": "skills/audit/SKILL.md:302"
     },
     "b2bc112cae8b326c160c3d7bb008f1ff6a6e7b8cd89b8d81046ce035adad487f": {
       "kind": "block",
@@ -3627,7 +3660,7 @@
     },
     "b6340aef8a632ffabaa321dbf9d3668ed28f24ea97e0e613ad9fcee7694596f0": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:145"
+      "src": "skills/audit/SKILL.md:178"
     },
     "b64e4797535b743279f1036f11cdafd981e2909f403bc8839c9f635b79cffcba": {
       "kind": "command",
@@ -3660,7 +3693,7 @@
     },
     "b828eabc92069275a4a332651599d3bd800241def80e93cc6dd1fa44a4344a0c": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "b83fdabf60c2b0294eeb64248d6d1031091a3e2c3e210e91d92682ca9bf24001": {
       "kind": "command",
@@ -3690,7 +3723,7 @@
     },
     "b9bfa8cbe91bc76f305812ceca84638c2a8f131479ecb1c1b9c4eb4108ed9629": {
       "kind": "block",
-      "src": "skills/audit/templates/audit-fix-prompt.md:64"
+      "src": "skills/audit/templates/audit-fix-prompt.md:113"
     },
     "b9f758a493774715d8a5f9a9f547dad093356a3f8c53f656fee2d314be8fa627": {
       "kind": "command",
@@ -3763,11 +3796,11 @@
     },
     "bd33bf49947e5ac26e6b5a8bcb86717e39f37ab7806a8fef12250024dbd4251e": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:145"
+      "src": "skills/audit/SKILL.md:178"
     },
     "bdf1f43d63cd75d78ba250bd56ada62c4a463619c51d789a351feee250dbdb1b": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:111"
+      "src": "skills/_shared/quality-stack.md:117"
     },
     "bdfbaacc21b27e6cd12a0e5a60c84bab88359e33e2ef51da0498f26b2acc98f3": {
       "kind": "command",
@@ -3787,7 +3820,7 @@
     },
     "bf2b5255691c29031c4932ff1ee885d11640808469d31a6fb03172f62838e9c5": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:443",
+      "src": "skills/audit/SKILL.md:519",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r LOCAL_MODE < \"${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode\" 2>/dev/null || LOCAL_MODE=\"false\"\npython \"$PLUGIN_ROOT/bin/load_mode.py\" audit modes adversarial.md $( [ \"$LOCAL_MODE\" = true ] && echo \"--local\" )"
     },
     "bf76c7bbdecea415210e1bd40a06b7ce3dc4568674aa9b007eb6677636fb3673": {
@@ -3801,15 +3834,15 @@
     },
     "bfadc07e5c48bf5dcf121dcc18fb10f8b1f47c7016e00baaddf7e194738483c8": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:242"
+      "src": "skills/_shared/quality-stack.md:252"
     },
     "c0092557fbd805450e2a1bef450875dd2cd0cf1f4df6705387681dbb2daca3ff": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:404"
+      "src": "skills/_shared/quality-stack.md:432"
     },
     "c021fda327a295c6acc6ebf2a93b82ab2703179c3462bb916bd5b3832d2592a8": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:293"
+      "src": "skills/_shared/quality-stack.md:303"
     },
     "c04cdb4e24c760acefbc128f2eb969236c88090dd295c31f3ff8db5b6d5956a4": {
       "kind": "command",
@@ -3825,11 +3858,11 @@
     },
     "c0af7733e5d577b1a6006c99bf8e063275a78d3cf1f663c47c5c5f23433e83d4": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:65"
+      "src": "skills/_shared/quality-stack.md:71"
     },
     "c0b3e7ce8d5d44e264e3e5dc25d7265e417379bb50d833f3b75a4d4112387b8a": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:393",
+      "src": "skills/audit/SKILL.md:459",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r LOCAL_MODE < \"${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode\" 2>/dev/null || LOCAL_MODE=\"false\"\npython \"$PLUGIN_ROOT/bin/load_mode.py\" audit modes fix.md $( [ \"$LOCAL_MODE\" = true ] && echo \"--local\" )"
     },
     "c120220580aee5d7440a77ead15770722e90b24a9928a092f14305b1ddb404df": {
@@ -3852,11 +3885,6 @@
     "c26f4b3de5d73f7d9889bf1805aa633b155ebf1b5f679ceee97b44cdccce204c": {
       "kind": "command",
       "src": "skills/manage/modes/rename.md:9"
-    },
-    "c279d13882c41fb42ecbda844c0f5ec9805dabe16a674a6bde0545c21ba14a4e": {
-      "kind": "block",
-      "src": "skills/audit/modes/adversarial.md:55",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/check_bridge.py\" --status > \"${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status\" 2>/dev/null || echo \"absent\" > \"${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status\"\nIFS= read -r CODEX_STATUS < \"${TMPDIR:-/tmp}/audit-state-${CSID}/codex-status\" || CODEX_STATUS=\"absent\"\n[ \"$CODEX_STATUS\" = \"available\" ] && printf 'CODEX_AVAILABLE=%s\\n' true || printf 'CODEX_AVAILABLE=%s\\n' false"
     },
     "c3520565ac2c9166ac8a0d9b9bafb173678a5bf0a35bb4d2118cd8c37f001113": {
       "kind": "command",
@@ -3884,11 +3912,11 @@
     },
     "c4a46399ac562e460a73ecb28a64596fee7a2d2004d22913da2b3aa1a98e77a4": {
       "kind": "command",
-      "src": "agents/qa-specialist.md:130"
+      "src": "agents/qa-specialist.md:131"
     },
     "c4cb1fec5781f53898c94e8d4c1e6172423b2cdfdd3ec0803297b338b4419ae5": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:172"
+      "src": "skills/audit/SKILL.md:205"
     },
     "c4eacedbbb4a35d8fea43fbc817dc87cfa7f37318cf6a42d54bea5b9eebd3714": {
       "kind": "command",
@@ -3904,11 +3932,11 @@
     },
     "c645902f308abbcf71fa2d950122c4f2c288410903f83a2bd373d0c9079d923a": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:100"
+      "src": "skills/_shared/quality-stack.md:106"
     },
     "c695694e0ee08d9f11994bffea247d787bb9c0ebef85e656cecdd13110a1172b": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:145"
+      "src": "skills/audit/SKILL.md:178"
     },
     "c6a69ba749d1c346a9340f60537ae064f0298ab8f9411c09ee9b112ff9ad1f3e": {
       "kind": "command",
@@ -3940,7 +3968,7 @@
     },
     "c83ae5491d36c879a26c17fc6ec7cf64eecbcad9fb4b7d24b728b9fb1de022bf": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "c848d7c38c2f9eef77f67b4227799d51fb3c4d25923043fb31d64086b26cdcb0": {
       "kind": "command",
@@ -3957,11 +3985,11 @@
     },
     "c8c61900b9976045deb62ae167e40068006ff44f59086aebc3dad41bf885b349": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:293"
+      "src": "skills/_shared/quality-stack.md:303"
     },
     "c8ca7e3c759220b8830d93193db7b650fac73ea09ff6af7bc0939854e289de89": {
       "kind": "command",
-      "src": "skills/audit/modes/steps-4-5-7.md:90"
+      "src": "skills/audit/modes/steps-4-5-7.md:102"
     },
     "c8fb808b6c6a81ab5a98182207d0b45be4a520099b8466ee4f01c61c99efea1f": {
       "kind": "block",
@@ -3977,7 +4005,7 @@
     },
     "ca358e224c1895576ce69916d8d0b5c20b0d4012c73fdbfc775a72b507e58a94": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:65"
+      "src": "skills/_shared/quality-stack.md:71"
     },
     "ca61d526b72786eb59f73e8f466a8fb60e6efcb42ec50b138e50309c088ea516": {
       "kind": "command",
@@ -3997,7 +4025,7 @@
     },
     "cb21485803ac81422b9ad8e9a4157bdfe0562e31184d7586a0630dcb539a9041": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "cb61e326da73a61534c1a19ed0c5085fad34d6dbb06c815b737d5ec5eb09d246": {
       "kind": "command",
@@ -4039,11 +4067,11 @@
     },
     "ccbcc6adabf16b57febb7f9393e4580cd17cb41da48863e2c85cb3a3df65a556": {
       "kind": "command",
-      "src": "skills/audit/modes/adversarial.md:55"
+      "src": "skills/audit/modes/adversarial.md:60"
     },
     "ccf1c80cc4b6890566b5c2ebaa6a925a8829501409778fccbdc3799489aeb48e": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:145"
+      "src": "skills/audit/SKILL.md:178"
     },
     "cd3f64e282b82541d6f18286f89fca43ab730c2d2a790a89119e6f38e8ec7fcb": {
       "kind": "command",
@@ -4055,7 +4083,7 @@
     },
     "cd8bd14062fc3694453a17f46c583de2249f8253c5510dcb13c9c54ffae0e065": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "cdb2df94089c310da601c28f5117b5d092fd3737d9bd21caf13a1c53c65d0338": {
       "kind": "command",
@@ -4063,11 +4091,11 @@
     },
     "cdb3253475882a81e847f0c4dd5978f5218e9d16969cd2e9a490af276c209fc9": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:242"
+      "src": "skills/_shared/quality-stack.md:252"
     },
     "cdcd5b10d8e22093a75ced08eb03d90ba144381b570003d2c64972f031246c97": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "cdee5d90e35a2a0b865b079f3f36bf3dd609524ec0b08d48d8c3354f1127a53f": {
       "kind": "command",
@@ -4096,7 +4124,7 @@
     },
     "ceec398948546a909d8305045d5952f8fb1beb13fb83f91db06edf6308555c96": {
       "kind": "command",
-      "src": "skills/audit/templates/audit-fix-prompt.md:64"
+      "src": "skills/audit/templates/audit-fix-prompt.md:113"
     },
     "cf2c82498e830438d577f9e5a88dabad0078ac0e66524f027dcd49de027edd79": {
       "kind": "block",
@@ -4108,7 +4136,7 @@
     },
     "cf8c3653ec1b9c5b4a0e0caf355739ce00a98fc97f6b5955ace46448328c0ca7": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:114"
+      "src": "skills/audit/SKILL.md:142"
     },
     "cffdbf0053d5505d9c01726fcc2f4d6c10e2cbd15fbb894c41765d5e9498e3b9": {
       "kind": "command",
@@ -4153,7 +4181,7 @@
     },
     "d1750884cfe64efc6581b7576a6b3199e4eb665f116c81be3112c2c4838060db": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "d17b599385d67ed1b11f43809e27eba91b549e37093638d79d717cab5a1ab27a": {
       "kind": "command",
@@ -4162,6 +4190,10 @@
     "d20a372e2a36eb2badbfd7006ec94bdda4a976cde93ba3510336df4a56513aa7": {
       "kind": "command",
       "src": "skills/investigate/SKILL.md:206"
+    },
+    "d236a38ed6fb90b4a3c2ed84abbf8aaaf106401e7782f49271e728030041eb88": {
+      "kind": "block",
+      "src": "skills/calibrate/templates/pipeline-prompt.md:82"
     },
     "d2409efcb5d0d2293e512ff0841b07c07556e3026dcb41a474f668fd8d4895be": {
       "kind": "command",
@@ -4190,7 +4222,7 @@
     },
     "d3c15ca8224454032a23d6f0fe4a43e9b9e3b5c62f768d8ab5a4750de142c7cb": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:351"
+      "src": "skills/audit/SKILL.md:417"
     },
     "d3ec7c9898f16ccb0548ba5c10c0fd78d37e7c9b005df615c392b716828a4fec": {
       "kind": "block",
@@ -4216,7 +4248,7 @@
     },
     "d4f8251af227f8a2fba2c97cfd84f8f91f83a54865534cea0ca15e403b6d933f": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:445"
+      "src": "skills/_shared/quality-stack.md:473"
     },
     "d50ac0ab1a42a0d7dd276f152022712dcfdfe7f0e0ac2aa93e9e232ea1d3dee8": {
       "kind": "block",
@@ -4257,11 +4289,11 @@
     },
     "d6e3c74a127b6da95f6ff27a965780a3d7a877156b1c7d0a4ae0f4d44429ba2a": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:145"
+      "src": "skills/audit/SKILL.md:178"
     },
     "d7bf622920916f3154ea9875dbe0bfbde36bd8c09d9551aa46486487c59bad0e": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:111"
+      "src": "skills/_shared/quality-stack.md:117"
     },
     "d7ed05892038e5f08f33972826cf2a557b4cf77059f752f077ef76d06e825a54": {
       "kind": "block",
@@ -4269,7 +4301,7 @@
     },
     "d86b5d51b6a9936f2083a48280a317e5f6c7c79814ef15866d1a6294e733dc98": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "d8731ed016a003a8003737e5ffd306077f29547945f2608cf883781f98662567": {
       "kind": "block",
@@ -4339,7 +4371,7 @@
     },
     "dcd6469c6c447ce7d350df39ca4406142e844338b6a98c8b5369b3a613a06b66": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:31"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:56"
     },
     "dcfaa87a69790f3feea598a78934c25d531be93dbc342d93ec87ee2288e16e8d": {
       "kind": "command",
@@ -4347,7 +4379,7 @@
     },
     "dd048e3ce01c2de862d500d444f2ab9a74b3fd8e25821ccbfd131e347329be33": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:111"
+      "src": "skills/_shared/quality-stack.md:117"
     },
     "dd255fc60cd70dfe7b59a7be97d644991affac74598b6905ec67f795c635243a": {
       "kind": "block",
@@ -4381,7 +4413,7 @@
     },
     "de3d30ec450642ef124b9cf7f3d63a319e504cf259e7c8c5f6093e5afb485941": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "de99a6590cd467540b33dc162ad4082b9b2cefd5f919545ff44ad31b3c496460": {
       "kind": "command",
@@ -4393,7 +4425,7 @@
     },
     "def211a194232bac092a052765b948778c282bc42e3f6d1881666830b6b60283": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:266"
+      "src": "skills/audit/SKILL.md:323"
     },
     "def954435da67e6f5c8bebbbf7d2eaa1490f25f7fac180a2333c49ae49270fd2": {
       "kind": "block",
@@ -4406,7 +4438,7 @@
     },
     "df5a7a460a7daaff222a6c7322713a17fffd2ab6fe5b3499f77a948b8fc1d3c1": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "e02c1daea244303652b9ef88b3fe32054b8f2e6dfe39eb53ab8fc7940f7fd78b": {
       "kind": "command",
@@ -4423,7 +4455,7 @@
     },
     "e0ec0ae828c964e9cc9865c8eb84e6a75005369109cb024a6d772d8e3cb1a6e7": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:332"
+      "src": "skills/_shared/quality-stack.md:342"
     },
     "e0fd40e67846d3456a9d5bc3220c2628ba528687785f2aa6d8ccbe8fb2531e82": {
       "kind": "command",
@@ -4482,9 +4514,13 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-skills-sweep.md:110"
     },
+    "e44ae3278a1db1c40d9e1752b665036ad3a80a0d54d56cf74dfff28338c5c3a4": {
+      "kind": "command",
+      "src": "skills/audit/SKILL.md:575"
+    },
     "e482281b6958a9c34c50dec3c0201739f4d88cc799a0a341d9833fe8408f5e48": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "e49f28067c27ec9725bb4399b8e11a1a275c3eb850ef52e86e9e6c00d25c0877": {
       "kind": "command",
@@ -4508,7 +4544,7 @@
     },
     "e5af1e886e91f59d5555059520717eca8813230a342d63f6f87261522e1b8339": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:145"
+      "src": "skills/audit/SKILL.md:178"
     },
     "e621844e8ceec0a49bd81f2b4b1bbf6bdfd436dedf7a522b2cd00a754d3d3bf4": {
       "kind": "command",
@@ -4538,7 +4574,7 @@
     },
     "e756d289d8fc6140338d6de013a9789ed125dffd489586065d4dd1d6593e9f43": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:212"
+      "src": "skills/_shared/quality-stack.md:222"
     },
     "e7a7607e2a7334abfcdf0f7d66dc65c8727b8403503a70959046a950469d9e9f": {
       "kind": "command",
@@ -4554,7 +4590,7 @@
     },
     "e85654880ea4a26efc7895e43740351c67196853f83ec7c2a87209b43f30fac0": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:242"
+      "src": "skills/_shared/quality-stack.md:252"
     },
     "e899536d159552e316b754181789f089970a5be473a01adec0ef91b070203f4f": {
       "kind": "command",
@@ -4583,11 +4619,11 @@
     },
     "e9ce1d4ac7d0ae208def1f0ea1a8a667ce45438e5ddfc757136cc86fdf0e11f1": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "ea306c6056b9751de85277486e1b5c7ee72f5ff55cb331e89106f5242a0448af": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:114"
+      "src": "skills/audit/SKILL.md:142"
     },
     "ea3c0122d859061e2a977f6b31e5d61ad2802ffa4dcd6208e5186f8e46bd853f": {
       "kind": "command",
@@ -4672,7 +4708,7 @@
     },
     "ee4c8fcb2e2130425c5c7cf6fc5b49f115645c65efbcbc42c7fd224f9a3cf878": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:134"
+      "src": "skills/_shared/quality-stack.md:144"
     },
     "eef0542ed419580f98581404f5d2343643e53bbc35d51f9c4e85b5e2737c115f": {
       "kind": "command",
@@ -4705,11 +4741,11 @@
     },
     "f06a82d681a1c7f26dbeef69301fb3ab0bc0ce70e758ca5266480d8c772471d3": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:65"
+      "src": "skills/_shared/quality-stack.md:71"
     },
     "f0b3147dccc155296838d1e47f352500d83862e7c53a2997a4632398ed1aaf8c": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:111"
+      "src": "skills/_shared/quality-stack.md:117"
     },
     "f12ce43527caffafbb4e3c19e5abe7c96313ab7f767988e6de87379e702daecf": {
       "kind": "command",
@@ -4729,7 +4765,7 @@
     },
     "f1c648fb1f7007b29b1a4d7929bdd54a49924dbc1918ff0acf266b73291a1a6a": {
       "kind": "block",
-      "src": "skills/audit/SKILL.md:322",
+      "src": "skills/audit/SKILL.md:384",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r LOCAL_MODE < \"${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode\" 2>/dev/null || LOCAL_MODE=\"false\"\nRUN_DIR=$(python \"$PLUGIN_ROOT/bin/make_run_dir.py\" .reports/audit)\n[ -z \"$RUN_DIR\" ] && { printf \"! BREAKING: make_run_dir.py returned empty path \u2014 check Python availability and write permission on .reports/\\n\"; exit 1; }\necho \"Run dir: $RUN_DIR\"\necho \"$RUN_DIR\" > \"${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir\"\npython \"$PLUGIN_ROOT/bin/load_mode.py\" audit templates curator-prompt.md $( [ \"$LOCAL_MODE\" = true ] && echo \"--local\" )"
     },
     "f223a6366de11430db2828ec59adcc0f3129fa2a6b28b2196f7e3d21aa0252f9": {
@@ -4755,7 +4791,7 @@
     },
     "f2ba42269897c95dd8ce11d37ec9aa0dc51d07bb17ed80842950d1a686e18ac1": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:351"
+      "src": "skills/audit/SKILL.md:417"
     },
     "f340919cfdf6b43451e9f2f7aee51950a99a8e8505b11b95c375041ed6f44600": {
       "kind": "command",
@@ -4775,7 +4811,7 @@
     },
     "f3bd223edb29b7c68f95ddb6b8eaf40a48020b22e2abdeb6b37702fa69dc354d": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:65"
+      "src": "skills/_shared/quality-stack.md:71"
     },
     "f3e548ffe2d4e3cea7cc498d9b517ba5474f5271d998c2952ae60ffa39a467f8": {
       "kind": "block",
@@ -4803,7 +4839,7 @@
     },
     "f4d52238996d42c54b2a3b2a1aa7c91d648959ee8bbdfe698951431331df6845": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:242"
+      "src": "skills/_shared/quality-stack.md:252"
     },
     "f4f9a2419091ca80795eea5fb230d4a5a5ed31d949715ff68a42b7a9cc6c7ef0": {
       "kind": "command",
@@ -4843,7 +4879,7 @@
     },
     "f74869babb8b6281031b33c13bf9c480bbdd82a5bcc803611ff7d79799b7df11": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:52"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
     "f7ebc5b181ef9ac843f99c2479a3c1f8f50ce59e3445d433d5c7f144552c59a9": {
       "kind": "block",
@@ -4879,7 +4915,7 @@
     },
     "f92f582b2d13c581ea8a66c2188e7e3513ce3436ddcb769a7f241004546d3fbe": {
       "kind": "command",
-      "src": "skills/audit/SKILL.md:245"
+      "src": "skills/audit/SKILL.md:302"
     },
     "f98a03183cb2c20cf652220fed94f013f3427dde3b91558989be55060f45bc07": {
       "kind": "command",
@@ -4903,7 +4939,7 @@
     },
     "fa960ea55ab3e7fae1703c7a09706bc0bbaa43f337fdaeb6ab15bcf58c62730a": {
       "kind": "command",
-      "src": "skills/_shared/quality-stack.md:293"
+      "src": "skills/_shared/quality-stack.md:303"
     },
     "fa973c59add22740cb47aabe189cdefd5652d4085e5518701a0cdad742cf8e0a": {
       "kind": "command",
@@ -4987,6 +5023,6 @@
       "src": "skills/audit/templates/checks-skills-sweep.md:33"
     }
   },
-  "plugin": "cc_foundry@0.79.0",
+  "plugin": "cc_foundry@0.80.0",
   "schema": 2
 }

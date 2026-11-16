@@ -60,7 +60,13 @@ echo "$USE_PRECOMMIT" > "${TMPDIR:-/tmp}/quality-stack-precommit-${CSID}"
 - `set -o pipefail` (bash/zsh/ksh extension, absent from POSIX `sh`/`dash` — present in both shells this Bash tool resolves to) replaces `${PIPESTATUS[0]}` — zsh has no bash-style `PIPESTATUS`, only a differently-indexed lowercase `$pipestatus`.
 - Every fence below that uses `R`, `$SKIP_RUFF`, or `$SKIP_MYPY` re-reads its sentinel first — a fresh `Bash()` call never inherits this block's shell state.
 - Optional multi-word arguments (`XDIST`, `_QS_DOCTEST_ARGS`, `RETRY`) are arrays too, expanded as `"${NAME[@]}"` (an empty array expands to nothing). Never enable `set -u` in these fences: bash 3.2 (macOS `/bin/bash`) aborts on `"${EMPTY[@]}"` under it.
-- Data operands (a test id, module path, or other repo-derived value) are ordinary quoted arguments — `"$VAR"` — one argument each, no re-splitting, no globbing (a bare `[...]` in a pytest parametrized node-id aborts zsh with `NOMATCH` only when the word is unquoted). `<test_dir>`, `<target_module>`, `<changed_files>` and `<module>` are substitution tokens, never executable shell operands. Before running the fences below, resolve them from the mode's scope and use the Write tool to replace four session files: `${TMPDIR:-/tmp}/quality-stack-test-dir-${CSID}` (one test-directory path), `${TMPDIR:-/tmp}/quality-stack-target-modules-${CSID}` (one doctest module path per line), `${TMPDIR:-/tmp}/quality-stack-changed-files-${CSID}` (one changed file path per line), and `${TMPDIR:-/tmp}/quality-stack-module-${CSID}` (one dotted module name for the optional codemap check). Write actual paths or names, without shell quoting, with a trailing newline and no empty entries. Missing, empty or unresolved targets halt with `! BLOCKED` before tool execution.
+- Data operands (a test id, module path, or other repo-derived value) are ordinary quoted arguments — `"$VAR"` — one argument each, no re-splitting, no globbing (a bare `[...]` in a pytest parametrized node-id aborts zsh with `NOMATCH` only when the word is unquoted).
+- `<test_dir>`, `<target_module>`, `<changed_files>` and `<module>` are substitution tokens, never executable shell operands. Before running the fences below, resolve them from the mode's scope and use the Write tool to replace four session files:
+  - `${TMPDIR:-/tmp}/quality-stack-test-dir-${CSID}` (one test-directory path)
+  - `${TMPDIR:-/tmp}/quality-stack-target-modules-${CSID}` (one doctest module path per line)
+  - `${TMPDIR:-/tmp}/quality-stack-changed-files-${CSID}` (one changed file path per line)
+  - `${TMPDIR:-/tmp}/quality-stack-module-${CSID}` (one dotted module name for the optional codemap check)
+- Write actual paths or names, without shell quoting, with a trailing newline and no empty entries. Missing, empty or unresolved targets halt with `! BLOCKED` before tool execution.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -129,7 +135,11 @@ fi
 echo "$DOCTEST_MERGED" > "${TMPDIR:-/tmp}/quality-stack-doctest-merged-${CSID}"
 ```
 
-No `rm -f` in this fence — a fence containing `rm -f` is flagged `is_dangerous` by `blueprint-allow.js`, which declines the *whole* submitted block before any manifest lookup regardless of what else shares it (same defect class R2 fixed on the wide-run fence below). Cleanup for this log lives in the isolated one-line fence below, alongside the wide-run log — same cost, already paid. Collection fails (exit non-zero — malformed `>>>` prompt, import error, etc.) → `DOCTEST_MERGED` stays `false`; the cause is on disk at `$_QS_COLLECT_LOG` either way now (previously kept only on the failure branch); doctests run as the separate pass below. `$RUNNER` here is a sentinel read-back from the detection fence (mapped to `R` by the closed `case`), not shell state — a `tox`/`make test` runner never reaches this block at all; those degrade via `runner-detection.md`'s own unwrapped-`PYTEST_CMD` fallback instead. This is a graceful degrade, not a halt — report status becomes `not-merged`, nothing more.
+Notes on the doctest collection fence above:
+
+- No `rm -f` in this fence — a fence containing `rm -f` is flagged `is_dangerous` by `blueprint-allow.js`, which declines the *whole* submitted block before any manifest lookup regardless of what else shares it (same defect class R2 fixed on the wide-run fence below). Cleanup for this log lives in the isolated one-line fence below, alongside the wide-run log — same cost, already paid.
+- Collection fails (exit non-zero — malformed `>>>` prompt, import error, etc.) → `DOCTEST_MERGED` stays `false`; the cause is on disk at `$_QS_COLLECT_LOG` either way now (previously kept only on the failure branch); doctests run as the separate pass below. This is a graceful degrade, not a halt — report status becomes `not-merged`, nothing more.
+- `$RUNNER` here is a sentinel read-back from the detection fence (mapped to `R` by the closed `case`), not shell state — a `tox`/`make test` runner never reaches this block at all; those degrade via `runner-detection.md`'s own unwrapped-`PYTEST_CMD` fallback instead.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -352,6 +362,16 @@ Stack fails (tests, lint, type check) — pick rollback depth by scope:
 
 Document option used in Final Report, "Recovery" subsection.
 
+## Codex Quota Stop
+
+Applies to every `bridge:*` result in this develop run: the Codex pre-pass review and each Codex Mechanical Delegation call. A peer out of credits fails every later call, and the bridge never retries one.
+
+- After a `blocked` or `timeout` result, Read the incident file its `incident` field names and decide only from that file's `fault`: `quota-exhausted` → stage the line `codex-blocked:quota` to the calling skill's `$DEV_DIR/checkpoint.md.rec` (Write tool) and append it with `append_ledger.py`, then continue this run in-house.
+- A null `incident`, an unreadable incident file, or any other `fault` (`rate-limited`, `capacity`, `blocked`, …) keeps today's path. Never decide from verdict or blockers text: a model-authored `blocked` result can carry the same words with a null `incident`.
+- A `foundry:challenger` reply in this run signals the same fault when its own Codex cross-check met it. An envelope, when present, decides alone through its top-level `"codex_blocked": "quota"` key; without a demanded envelope, only a `⚠ codex-blocked:quota` line counts, and only as the first non-blank line under the reply's first `## Codex Cross-Check` heading outside any code fence. Record the same line the same way; other report text never counts.
+- Once `$DEV_DIR/checkpoint.md` holds `codex-blocked:quota`, no `bridge:*` call runs for the rest of the run, and every later `foundry:challenger` prompt carries `--no-codex`.
+- Report the skipped Codex work as `codex-blocked:quota`, never as a no-op, a failure or an absent bridge. No question is added.
+
 ## Codex Pre-pass
 
 Use this pre-pass only when explicitly requested, or as the one bounded independent implementation challenge selected by the caller. Degrades gracefully if Codex unavailable; an unavailable required challenge remains an open coverage gap.
@@ -369,11 +389,13 @@ cat "$_SHARED/codex-prepass.md"  # timeout: 5000
 
 2. **Collect findings**: build `CODEX_FINDINGS` — bullet list of every flagged issue from `bridge:review` output. Nothing found or step skipped → set `CODEX_FINDINGS=""`. Review read-only, no working-tree changes.
 3. **Actor context**: note whether Codex involved (found real issues acted on). Pass as context when committing — `git-commit.md` decides trailers.
+4. **Quota stop**: apply §Codex Quota Stop to the `bridge:review` result before anything else reads it.
 
 Include `### Codex Pre-pass` section in final report:
 
 - Available + findings: list what Codex flagged (become `CODEX_FINDINGS` seed)
 - Available + no issues: "Codex pre-pass: no issues found"
+- Quota stop: "Codex pre-pass: codex-blocked:quota — peer out of credits, rest of run in-house"
 - Skipped (unavailable): "bridge@borda-ai-rig absent or disabled — pre-pass skipped"
 
 ## Progressive Review Loop
@@ -384,14 +406,20 @@ Run this section only when the user explicitly requests iterative review-and-fix
 
 - Compute concern signal after quality stack: any unresolved critical/high finding, OR `CODEX_FINDINGS` non-empty and not yet verified. Envelope confidence alone is NOT a trigger — template envelopes print 0.88, so a `< 0.9` arm fired on nearly every run, nesting a full multi-agent `/develop:review` (~5-6 spawns) without a concrete finding to chase; low confidence without findings goes to the report as a stated gap instead
 - No concern → skip directly to report; in the final report list optional follow-ups the user may explicitly request (`/develop:review` for a deeper local pass; `/oss:review` once a PR exists)
-- Concern present → spawn review dimension agents directly, scoped to the modified files — `/develop:review` is `disable-model-invocation`, so a `Skill()` call never runs it. Pick agents by changed-file concern: `foundry:sw-engineer` (correctness, always), `foundry:qa-specialist` (test gaps), `foundry:linting-expert` (lint/type residue), `foundry:perf-optimizer` / `foundry:solution-architect` / `foundry:doc-scribe` only when the diff touches their domain. `CODEX_FINDINGS` non-empty → prepend to every brief: "Codex pre-pass found the following — verify these, do not rediscover: $CODEX_FINDINGS". Also seed quality-stack's own findings as "already checked — verify, do not rediscover". Run dir, prompt ending and health monitoring: same as Cycle 2 below — set up the run dir here, Cycle 2 reuses it
+- Concern present → spawn review dimension agents directly, scoped to the modified files — `/develop:review` is `disable-model-invocation`, so a `Skill()` call never runs it.
+  - Pick agents by changed-file concern: `foundry:sw-engineer` (correctness, always), `foundry:qa-specialist` (test gaps), `foundry:linting-expert` (lint/type residue), `foundry:perf-optimizer` / `foundry:solution-architect` / `foundry:doc-scribe` only when the diff touches their domain.
+  - `CODEX_FINDINGS` non-empty → prepend to every brief: "Codex pre-pass found the following — verify these, do not rediscover: $CODEX_FINDINGS".
+  - Also seed quality-stack's own findings as "already checked — verify, do not rediscover".
+  - Run dir, prompt ending and health monitoring: same as Cycle 2 below — set up the run dir here, Cycle 2 reuses it
 - Capture review state from the envelopes: `{agents_with_findings, unresolved_findings, files_reviewed}`
 - Clean (no critical/high findings): skip to report
 
 **Cycle 2: Targeted re-check**
 
 - Fix critical/high findings from Cycle 1
-- Re-run quality stack on modified files only — scoped via `codemap-py query test-impact "<changed_module>"` (per file, then union): non-empty `pytest_cmd` **and** the result's `index.stale` is false and `index.query_complete` is true → re-run that scoped test set instead of the quality stack's directory-wide pytest line. Both freshness fields live under the nested `index` object, never at the top level — a top-level read finds nothing and trusts a stale index. Codemap absent, empty result, `index.stale` true, or `index.query_complete` not true → honest fallback to the full quality-stack re-run — never silently claim file-scoping the instruction can't actually perform
+- Re-run quality stack on modified files only — scoped via `codemap-py query test-impact "<changed_module>"` (per file, then union):
+  - Non-empty `pytest_cmd` **and** the result's `index.stale` is false and `index.query_complete` is true → re-run that scoped test set instead of the quality stack's directory-wide pytest line. Both freshness fields live under the nested `index` object, never at the top level — a top-level read finds nothing and trusts a stale index.
+  - Codemap absent, empty result, `index.stale` true, or `index.query_complete` not true → honest fallback to the full quality-stack re-run — never silently claim file-scoping the instruction can't actually perform
 - Scoped re-runs only shorten the fix loop: whenever Cycle 2 ends clean after any fix, run the full quality stack (its directory-wide pytest line, the repository's own settings) once before the report — the last code change is never verified by a scoped set alone
 - Run dir for file-based handoff — Cycle 1 creates a fresh one before its spawns (first block; fresh every run, so a prior run's `<agent-name>.md` never masks a timeout), Cycle 2 re-reads it (second block); spawn prompts carry the printed literal path, never `$RUN_DIR`:
 
@@ -451,4 +479,6 @@ cat "$_SHARED/codex-delegation.md"  # timeout: 5000
 
 Distinct from Codex pre-pass — pre-pass checks implementation diff for correctness; mechanical delegation outsources low-level follow-up (scaffolding, boilerplate, migration scripts) after review loop closes.
 
-Include `### Codex Delegation` section in final report only when tasks delegated — omit entirely if nothing delegated.
+Before each `bridge:implement` dispatch, check `$DEV_DIR/checkpoint.md` for a `codex-blocked:quota` line; present → keep that task in-house and never dispatch it. Apply §Codex Quota Stop to each result, so one quota fault keeps every remaining task in-house.
+
+Include `### Codex Delegation` section in final report only when tasks were delegated or kept in-house by a quota stop (listed as `codex-blocked:quota`) — omit entirely otherwise.

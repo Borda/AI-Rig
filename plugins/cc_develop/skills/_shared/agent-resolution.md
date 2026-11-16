@@ -28,6 +28,17 @@ Substituting `general-purpose`: prepend the role and target model from the table
 
 A separately spawned `general-purpose` challenger satisfies the independent plan or implementation challenge when it receives only the scoped plan/diff, acceptance criteria and relevant evidence, never the implementation conversation. Apply the same challenge criteria and finding validation as `foundry:challenger`. Label the Final Report `Independent challenge: general-purpose (foundry:challenger fallback)` with its actual result and coverage limits; missing, timed-out or incomplete output remains a coverage gap, never a passed challenge.
 
+## Challenger Codex quota signal
+
+A `foundry:challenger` spawn runs its own Codex cross-check, and a peer out of credits fails every later Codex call of the run.
+
+Applies to feature, fix and refactor runs, whose quality stack calls Codex later; plan and debug runs make no later Codex call, and `/develop:review` records the stop in its `codex.md` instead.
+
+- The reply signals the stop in one carrier. An envelope, when present, decides alone through its top-level `"codex_blocked": "quota"` key; without a demanded envelope, only a `⚠ codex-blocked:quota` line counts, and only as the first non-blank line under the reply's first `## Codex Cross-Check` heading outside any code fence. The challenger decided it from its incident file's `fault`; never infer it from other report text.
+- On that signal, add the line `codex-blocked:quota` to the next `$DEV_DIR/checkpoint.md.rec` record, in the same Write as any pending `step:` line (never a second Write over it), and append it with `append_ledger.py` in the next Bash block.
+- `foundry--quality-stack.md` §Codex Quota Stop then keeps every later `bridge:*` call off and adds `--no-codex` to every later challenger prompt. No question is added.
+- A `general-purpose` fallback challenger runs no Codex and never signals.
+
 ## Agent waits — no polling, per-agent deadlines
 
 <!-- policy-sibling: plugins/cc_oss/skills/resolve/SKILL.md (§Agent wait discipline — same agent_watch.py contract), plugins/cc_research/skills/_shared/agent-resolution.md (§Agent waits — no polling) -->
