@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { classifyCommand, decide } from "../../src/guardrails.ts"
 import { SKILLS } from "../../src/skill-manifest.ts"
 import { PACKAGE_ROOT, Project, RESOURCES_DIR } from "../helpers/harness.ts"
 
@@ -191,6 +192,7 @@ describe("shipped permissions", () => {
     "git show *",
     "git log *",
     "git status *",
+    "git diff *",
     "git blame *",
     "git rev-parse *",
     "git rev-list *",
@@ -213,6 +215,7 @@ describe("shipped permissions", () => {
     "head *",
     "tail *",
     "grep *",
+    "rg *",
     "wc *",
     "cut *",
     "tr *",
@@ -241,6 +244,52 @@ describe("shipped permissions", () => {
   ])
 
   const RECOVERY_ALLOWS = ["git rebase --abort", "git rebase --continue", "git rebase --skip", "git rebase --quit"]
+  /** One canonical command per new grant; both the rule and the hook must accept it. */
+  const GRANT_PROBES: ReadonlyArray<readonly [string, string]> = [
+    ["git diff *", "git diff HEAD --stat"],
+    ["rg *", "rg -n TODO src"],
+    ["pytest *", "pytest tests -q"],
+    ["python -m pytest *", "python -m pytest tests -q"],
+    ["python3 -m pytest *", "python3 -m pytest tests -q"],
+    ["py -m pytest *", "py -m pytest tests -q"],
+    [".venv/bin/python -m pytest *", ".venv/bin/python -m pytest tests -q"],
+    [".venv/bin/python3 -m pytest *", ".venv/bin/python3 -m pytest tests -q"],
+    [".venv/Scripts/python.exe -m pytest *", ".venv/Scripts/python.exe -m pytest tests -q"],
+    ["npm test", "npm test"],
+    ["npm run test", "npm run test"],
+    ["npm run lint", "npm run lint"],
+    ["npm run typecheck", "npm run typecheck"],
+    ["npm run check", "npm run check"],
+    ["make test", "make test"],
+    ["make lint", "make lint"],
+    ["make typecheck", "make typecheck"],
+    ["npm pack --dry-run", "npm pack --dry-run"],
+  ]
+
+  const GRANTED = { status: "granted", path: "approval.json" } as const
+
+  /**
+   * The reviewed execution list. These rules run project-defined code, so they cannot honestly
+   * join the read-only list; they are audited here and in the guide's workflow section.
+   */
+  const REVIEWED_WORKFLOW_EXECUTION = new Set([
+    "pytest *",
+    "python -m pytest *",
+    "python3 -m pytest *",
+    "py -m pytest *",
+    ".venv/bin/python -m pytest *",
+    ".venv/bin/python3 -m pytest *",
+    ".venv/Scripts/python.exe -m pytest *",
+    "npm test",
+    "npm run test",
+    "npm run lint",
+    "npm run typecheck",
+    "npm run check",
+    "make test",
+    "make lint",
+    "make typecheck",
+    "npm pack --dry-run",
+  ])
 
   const STOP_RULES = ["git push*", "git reset --hard*", "git clean*", "git rebase*"]
 
@@ -262,6 +311,29 @@ describe("shipped permissions", () => {
     let effect: string | undefined
     for (const rule of rules) {
       if (rule.action === "shell" && hostMatches(rule.resource, command)) effect = rule.effect
+    }
+    return effect
+  }
+
+  const EFFECT_RANK: Record<string, number> = { allow: 0, ask: 1, deny: 2 }
+
+  /**
+   * Model the documented host scanner, not the installed binary: each extracted subcommand and the
+   * `cd` target are checked separately, the role's `shell: *` catch-all asks for an unmatched
+   * subcommand, and the most restrictive effect wins. A directory change is checked as
+   * `external_directory`, allowed by default. The live host behaviour is the permission probe in
+   * the guide, not this helper.
+   */
+  function documentedRoleEffect(command: string): string {
+    let effect = "allow"
+    const segments = command
+      .split(/\n|&&|\|\||[;|]/)
+      .map((segment) => segment.trim())
+      .filter(Boolean)
+    for (const segment of segments) {
+      if (/^(?:cd|pushd|popd|set-location)\b/i.test(segment)) continue
+      const resolved = hostEffect(segment) ?? "ask"
+      if (EFFECT_RANK[resolved]! > EFFECT_RANK[effect]!) effect = resolved
     }
     return effect
   }
@@ -295,16 +367,21 @@ describe("shipped permissions", () => {
     expect(new Set(rules.map((rule) => `${rule.action} ${rule.resource}`)).size).toBe(rules.length)
   })
 
-  it("ships an allow exactly for the reviewed read-only list and the rebase recovery commands", () => {
+  it("ships an allow exactly for the reviewed inspection, execution, and recovery lists", () => {
     const shippedAllows = rules.filter((rule) => rule.effect === "allow").map((rule) => rule.resource)
     for (const resource of shippedAllows) {
       expect(
-        REVIEWED_READ_ONLY.has(resource) || RECOVERY_ALLOWS.includes(resource),
-        `${resource} is not on the reviewed read-only list`,
+        REVIEWED_READ_ONLY.has(resource) ||
+          REVIEWED_WORKFLOW_EXECUTION.has(resource) ||
+          RECOVERY_ALLOWS.includes(resource),
+        `${resource} is not on a reviewed allow list`,
       ).toBe(true)
     }
-    // The other direction: a name on the reviewed list the package no longer ships is a stale audit list.
+    // The other direction: a name on a reviewed list the package no longer ships is a stale audit list.
     for (const resource of REVIEWED_READ_ONLY) {
+      expect(shippedAllows, `${resource} is reviewed but not shipped`).toContain(resource)
+    }
+    for (const resource of REVIEWED_WORKFLOW_EXECUTION) {
       expect(shippedAllows, `${resource} is reviewed but not shipped`).toContain(resource)
     }
     // No blanket commit rule, so a recorded grant can take effect.
@@ -319,6 +396,42 @@ describe("shipped permissions", () => {
       expect(index, `${recovery} must exist`).toBeGreaterThan(-1)
       expect(index, `${recovery} must follow git rebase*`).toBeGreaterThan(blanket)
       expect(rules[index]!.effect).toBe("allow")
+    }
+  })
+
+  it("keeps every shipped allow free of an interior wildcard", () => {
+    for (const rule of rules.filter((candidate) => candidate.effect === "allow")) {
+      const star = rule.resource.indexOf("*")
+      if (star === -1) continue
+      expect(rule.resource, rule.resource).toMatch(/^[^*]* \*$/)
+      expect(rule.resource.indexOf("*"), rule.resource).toBe(rule.resource.length - 1)
+    }
+  })
+
+  it("keeps every allow that HEAD shipped unless it is on the approved removal list", () => {
+    // A removal is a stop that did not exist at HEAD. It needs its own reviewed decision, recorded here.
+    const APPROVED_REMOVALS: string[] = []
+    const repository = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: PACKAGE_ROOT,
+      encoding: "utf8",
+    }).trim()
+    const head = JSON.parse(
+      execFileSync("git", ["show", "HEAD:plugins/opencode-rig/src/resources/permissions.json"], {
+        cwd: repository,
+        encoding: "utf8",
+      }),
+    ) as { permissions: Array<{ resource: string; effect: string }> }
+    const shipped = new Set(rules.filter((rule) => rule.effect === "allow").map((rule) => rule.resource))
+    for (const rule of head.permissions.filter((candidate) => candidate.effect === "allow")) {
+      if (APPROVED_REMOVALS.includes(rule.resource)) continue
+      expect(shipped.has(rule.resource), `${rule.resource} shipped at HEAD but is gone`).toBe(true)
+    }
+  })
+
+  it("accepts every grant in both layers", () => {
+    for (const [resource, command] of GRANT_PROBES) {
+      expect(hostEffect(command), `${resource} config`).toBe("allow")
+      expect(decide(classifyCommand(command), "standard", GRANTED), `${resource} hook`).toBeUndefined()
     }
   })
 
@@ -350,6 +463,56 @@ describe("shipped permissions", () => {
     expect(hostEffect("git log --output out.txt")).toBe("ask")
     expect(hostEffect("git show --output=out.txt")).toBe("ask")
     expect(hostEffect("git rev-list --output=out.txt")).toBe("ask")
+  })
+
+  it("keeps the workflow's read and gate commands quiet inside a role agent", () => {
+    const allowed = [
+      "git diff HEAD~1 --stat",
+      "git diff 0ee62b3..59042e0 --stat",
+      "cd /private/tmp/review-pr563 && git diff 0ee62b3..59042e0 --stat",
+      "cd /private/tmp/review-pr563 && .venv/bin/python -m pytest tests/tune/test_tuner.py -q 2>&1 | tail -20",
+      "pytest -n 4 tests",
+      "python -m pytest tests -q",
+      ".venv/bin/python3 -m pytest tests -q",
+      "make test",
+      "make lint",
+      "npm test",
+      "npm run check",
+      "npm pack --dry-run",
+      "rg -n TODO src",
+    ]
+    for (const command of allowed) expect(documentedRoleEffect(command), command).toBe("allow")
+  })
+
+  it("keeps the workflow's deliberate stops inside a role agent", () => {
+    const asked = [
+      "git push origin main",
+      "git fetch origin main",
+      "git commit -m x",
+      "git reset --hard HEAD",
+      "git clean -n",
+      "git -C /tmp/other status",
+      "git diff --output=out.patch HEAD",
+      "rg --pre cat pattern",
+      "pytest tests/x.py; rm -rf build",
+      "make deploy",
+      "make test extra",
+      "pre-commit run --all-files",
+      "pre-commit run --files a.py",
+      "npm run format",
+      "npm run build",
+      "make format",
+      "pre-commit run ruff-check --files src/a.py",
+      "node --check src/a.js",
+      "ruff check src",
+      "mypy src",
+      "npm --prefix plugins/opencode-rig run check",
+      "npm pack",
+      "npx vitest run",
+      "sed -i s/a/b/ file",
+      "find . -delete",
+    ]
+    for (const command of asked) expect(documentedRoleEffect(command), command).toBe("ask")
   })
 
   it("ships a review guide that documents every rule and its effect", () => {
@@ -385,7 +548,14 @@ describe("shipped permissions", () => {
     }
     expect(new Set(allowlist).size, "the guide lists a resource twice").toBe(allowlist.length)
     expect([...allowlist].sort()).toEqual([...REVIEWED_READ_ONLY].sort())
+    // The execution section is a table, and it has to name exactly the reviewed execution list.
+    const workflow = /## Workflow execution allows([\s\S]*?)(?:\n## |$)/.exec(guide)?.[1] ?? ""
+    const workflowRows = [...workflow.matchAll(/^\| `([^`]+)` \| `allow` \|/gm)].map((match) => match[1]!)
+    expect(new Set(workflowRows).size, "the workflow table lists a resource twice").toBe(workflowRows.length)
+    expect(workflowRows.sort()).toEqual([...REVIEWED_WORKFLOW_EXECUTION].sort())
     // The defaults this package targets are the v2 ones, not the v1 ones.
+    expect(guide).toMatch(/guardrails: off[\s\S]*--basetemp/)
+    expect(guide).toContain("Permissive role access (opt-in)")
     expect(guide).toMatch(/`external_directory` is allowed by default, not asked/)
     expect(guide).not.toMatch(/doom_loop` and `external_directory` default to `ask`/)
   })

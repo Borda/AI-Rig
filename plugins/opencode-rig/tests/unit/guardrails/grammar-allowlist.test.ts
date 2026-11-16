@@ -546,7 +546,7 @@ describe("text outside the grammar asks even without a Git name", () => {
   it("asks for awk source regardless of apparent simplicity", () => {
     expectAsk("awk '{print $1}' file")
   })
-  it.each([".venv/bin/python -m pytest -n 4 tests"])("asks before module execution: %s", (command) => {
+  it.each([".venv/bin/python -m pytest -p evil tests"])("asks before module execution: %s", (command) => {
     expectAsk(command)
     expectAsk(persistedThenRun(command))
   })
@@ -750,6 +750,7 @@ describe.each(["top level", "saved script"])("restricted tool forms: %s", (scope
     scope === "top level" ? body : `cat > x.sh <<'SAVED_END'\n${body}\nSAVED_END\nsh x.sh`
   it.each([
     "make rig-check",
+    "make deploy",
     "npm ci",
     "npx vitest run tests/unit",
     "npx tsc --noEmit",
@@ -759,7 +760,6 @@ describe.each(["top level", "saved script"])("restricted tool forms: %s", (scope
     "cargo build --release",
     "cargo test -- --nocapture",
     "go build -o bin/app ./cmd/app",
-    "make test",
     "[ -d node_modules ] || npm ci",
     "FORCE_COLOR=0 npx vitest run",
     "nohup npm start > server.log 2>&1",

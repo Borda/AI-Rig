@@ -33,4 +33,6 @@ description: Reproduce a failure and narrow it to an evidence-backed root cause 
 
 ## Output
 
+> Lead with the [handoff table](../../references/handoff.md): verdict, alignment, findings, next action, confidence. Then the evidence below.
+
 Report run ID, finalization status, reproduction status, root cause or unconfirmed hypothesis, evidence references, confidence, limits, and the recommended next action. Route a confirmed fix to `rig-plan` before `rig-implement`; a clearly `TRIVIAL` fix may use `rig-implement`'s inline mini-plan. Do not present the fix as already verified.

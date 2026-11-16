@@ -39,4 +39,6 @@ Produce one plan that implementation can execute without re-deciding scope.
 
 ## Output
 
+> Lead with the [handoff table](../../references/handoff.md): verdict, alignment, findings, next action, confidence. Then the evidence below.
+
 Report the plan path, revision, scope classification, digest, verdict counts, workstreams, step count, gates, top risks, and any unresolved decision. Do not claim the change is implemented.

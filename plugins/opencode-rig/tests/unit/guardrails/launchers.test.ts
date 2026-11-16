@@ -263,7 +263,7 @@ describe("remote shell commands", () => {
 describe.each(["top level", "saved script"])("restricted tool forms: %s", (scope) => {
   const wrap = (body: string) =>
     scope === "top level" ? body : `cat > x.sh <<'SAVED_END'\n${body}\nSAVED_END\nsh x.sh`
-  it.each(["make test", "npx tsc --noEmit", "npx prettier -c ."])("asks for the complete invocation: %s", (body) => {
+  it.each(["make deploy", "npx tsc --noEmit", "npx prettier -c ."])("asks for the complete invocation: %s", (body) => {
     expect(decide(classifyCommand(wrap(body)), "standard", GRANTED)?.effect).toBe("ask")
   })
 })

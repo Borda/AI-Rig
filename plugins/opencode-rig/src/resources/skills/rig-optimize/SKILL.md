@@ -38,4 +38,6 @@ description: Improve a measured performance metric in guarded rounds against a c
 
 ## Output
 
+> Lead with the [handoff table](../../references/handoff.md): verdict, alignment, findings, next action, confidence. Then the evidence below.
+
 The metric contract, baseline median and spread, per-round hypothesis and measurement, kept and reverted rounds with reasons, the final measured delta, correctness gate results, environment, limits, and the proposed commit scope for a human.

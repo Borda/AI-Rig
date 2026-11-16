@@ -38,4 +38,6 @@ description: Mine recorded runs or a supplied external inventory for recurring f
 
 ## Output
 
+> Lead with the [handoff table](../../references/handoff.md): verdict, alignment, findings, next action, confidence. Then the evidence below.
+
 The evidence index, the patterns that met the threshold, proposals with counts and evidence run ids, rejected proposals with the reason, maintenance cost, and the handoff to `rig-plan` for each accepted proposal.

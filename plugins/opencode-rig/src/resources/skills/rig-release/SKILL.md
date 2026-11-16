@@ -37,4 +37,6 @@ description: Assess release readiness with a version baseline from the last rele
 
 ## Output
 
+> Lead with the [handoff table](../../references/handoff.md): verdict, alignment, findings, next action, confidence. Then the evidence below.
+
 Readiness verdict, proposed version, gate results, documentation state, package file list, release notes, migration notes, contributor reply drafts, blockers, and the remaining human steps.

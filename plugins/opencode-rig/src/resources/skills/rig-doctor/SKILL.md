@@ -21,6 +21,8 @@ Use `action: "assets"` (CLI: `opencode-rig doctor --assets`) to curate the shipp
 
 ## Response
 
+> Lead with the [handoff table](../../references/handoff.md): verdict, alignment, findings, next action, confidence. Then the evidence below.
+
 Report each line as pass, warn, or fail. For every failure, give the exact command or edit that fixes it:
 
 - Missing or stale agents: `opencode-rig init --project` (or `--upgrade`).

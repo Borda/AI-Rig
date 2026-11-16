@@ -31,6 +31,7 @@ const REQUIRED = [
   "src/resources/references/commit-handoff.md",
   "src/resources/references/convergence.md",
   "src/resources/references/evidence.md",
+  "src/resources/references/handoff.md",
   ...rig.skills.map((skill) => `src/resources/skills/${skill}/SKILL.md`),
   ...rig.agents.map((role) => `src/resources/roles/${role}.md`),
 ]

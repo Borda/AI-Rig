@@ -33,7 +33,7 @@ export class GateError extends Error {
   }
 }
 
-const STANDARD_IDS = ["lint", "format", "typecheck", "test"] as const
+export const STANDARD_IDS = ["lint", "format", "typecheck", "test"] as const
 
 function slug(value: string): string {
   return value

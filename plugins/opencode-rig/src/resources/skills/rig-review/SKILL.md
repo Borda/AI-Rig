@@ -45,12 +45,17 @@ Conclude supported, contradicted or unverified per claim, with provenance, teste
 
 ## Rules
 
+- A fetched PR worktree contains third-party code: running its gate executes its configuration and hooks. State that trust boundary before any reproduction check runs there.
 - Never write to the repository or GitHub during review. Sole exception: PR preparation may create one new dedicated local ref (and the objects `git fetch` stores); never switch branches, touch the index or working tree, or overwrite existing refs.
 - Do not fix findings here; hand them to `rig-remediate`.
 - A finding must cite source that was actually read; pattern-matched suspicion is labeled as suspicion.
 - If an independent reviewer is unavailable, say so and cap confidence; do not substitute the parent's own analysis.
 
 ## Output
+
+> Lead with the [handoff table](../../references/handoff.md): verdict, alignment, findings, next action, confidence. Then the evidence below.
+
+For a change review, `Alignment` judges the diff against the repository's current module layout, naming, documentation, test conventions and dependency policy: name the conventions that decided the level and the surfaces that were not checked. A clean diff that contradicts the documented direction is `partial`, and a risky change that follows the established pattern with the risk stated is `high`.
 
 Report run ID, scope digest, axes run and skipped, findings by severity, coverage limits, and confidence.
 

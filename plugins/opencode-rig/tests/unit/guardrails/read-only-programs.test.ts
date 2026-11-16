@@ -227,7 +227,7 @@ const WRITES = [
   "unlisted-reader --config=../file",
   // These existing asks concern command-substitution provenance and unknown cwd, not input path spelling.
   "wc -l $(git ls-files '*.py')",
-  "env -C web npm test",
+  "env -C web npm install",
 ]
 
 describe.each([
@@ -305,7 +305,7 @@ describe.each(["top level", "saved script"])("restricted tool forms: %s", (scope
   it.each([
     "pip install -r requirements.txt",
     "ruff check src --config ../ruff.toml",
-    "cd src && make test",
+    "cd src && make deploy",
     "npm install --prefix ./web",
     "brew install jq",
   ])("asks for the complete invocation: %s", (body) => {

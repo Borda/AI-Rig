@@ -13,6 +13,7 @@
  */
 
 import { devNull, hostname } from "node:os"
+import { STANDARD_IDS } from "./gates.ts"
 import type { GrantState } from "./git-grant.ts"
 import type { GuardrailMode } from "./options.ts"
 import { classifySegment, runGit } from "./util/git.ts"
@@ -1616,6 +1617,8 @@ const PROJECT_PROGRAMS = new Set(
     "nerdctl buildah conda mamba micromamba pixi rustup ninja rake pipenv tox nox composer dotnet deno vp"
   ).split(" "),
 )
+/** Scripts the project gate commands run, shared with gate detection. */
+const GATE_SCRIPTS = new Set<string>([...STANDARD_IDS, "check", "build"])
 /** Implicit protected writers and command carriers whose operand language is deliberately not modelled. */
 const ASK_PROGRAMS = new Set(
   (
@@ -2502,7 +2505,7 @@ class ShellGrammar {
       )
     )
       return false
-    if (ASK_PROGRAMS.has(program)) return false
+    if (ASK_PROGRAMS.has(program)) return this.preCommitGate(program, args)
     if (privileged && Object.hasOwn(READ_OPTIONS, program) && !["test", "["].includes(program)) {
       const form = readOptions(READ_OPTIONS[program]!, args)
       if (!form || form.values.some((value) => value.write)) return false
@@ -2535,7 +2538,12 @@ class ShellGrammar {
     if (PROJECT_PROGRAMS.has(program) && !identity.safeForm) return false
     // Python options can select modules, inline code or startup configuration. Unknown option arity
     // asks; resolving a version or launcher alias must not create another quiet script-file form.
-    if (["python", "node"].includes(program) && args[0]?.value.startsWith("-")) return false
+    if (
+      ["python", "node"].includes(program) &&
+      args[0]?.value.startsWith("-") &&
+      !(program === "node" && args[0]?.value === "--check")
+    )
+      return false
     // Embedded response files can be passed through compiler/linker option values.
     if (!["echo", "printf"].includes(program) && args.some((arg) => /[,=]@/.test(arg.value))) return false
     const valuedOptions = (READ_OPTIONS[program] ?? "").split(" ")
@@ -2753,6 +2761,15 @@ class ShellGrammar {
         return true
       }
     }
+    if (program === "node" && args[0]?.value === "--check") {
+      // Syntax checking reads one literal script path and does not execute it.
+      const script = args[1]
+      return (
+        args.length === 2 &&
+        script !== undefined &&
+        (this.cwdKnown ? this.writeTarget(script) : ordinaryProjectPath(script))
+      )
+    }
     if (fileInput) {
       // Literal script files are launcher inputs. Their absent contents retain the existing file-script limit.
       const script = args.findIndex((arg) => !arg.value.startsWith("-"))
@@ -2780,13 +2797,17 @@ class ShellGrammar {
 
   /** Admit complete project invocations; their project-defined test/build code is a by-design limit. */
   private projectTool(program: string, args: GrammarWord[]): boolean {
-    if (!this.cwdKnown || args.some((arg) => !arg.literal || arg.glob || arg.value.startsWith("@"))) return false
-    const path = (arg: GrammarWord): boolean => !arg.value.startsWith("-") && this.writeTarget(arg)
+    if (args.some((arg) => !arg.literal || arg.glob || arg.value.startsWith("@"))) return false
+    // A directory change outside the project leaves relative operands unresolvable against the project
+    // root. Read-only and gate operands are still literal relative project locations, so they stay
+    // admissible; an absolute, home, glob or parent path remains outside the modelled forms.
+    const path = (arg: GrammarWord): boolean =>
+      !arg.value.startsWith("-") && (this.cwdKnown ? this.writeTarget(arg) : ordinaryProjectPath(arg))
     const values = args.map((arg) => arg.value)
     switch (program) {
       case "pytest": {
         if (values.includes("--")) return false
-        const parsed = readOptions("-q -x -v -k= -m= --co --collect-only", args)
+        const parsed = readOptions("-q -x -v -s -k= -m= -n= --tb= --maxfail= --co --collect-only", args)
         return (
           parsed !== undefined &&
           parsed.operands.every(path) &&
@@ -2802,16 +2823,40 @@ class ShellGrammar {
         return args.every(path)
       case "tsc":
         return values.length === 1 && values[0] === "--noEmit"
+      case "make":
+        return values.length === 1 && (STANDARD_IDS as readonly string[]).includes(values[0]!)
       case "npm":
+        if (values.length === 1 && values[0] === "test") return true
+        if (values[0] === "run" && values.length === 2) return GATE_SCRIPTS.has(values[1]!)
+        if (values[0] === "pack") return values.length === 2 && values[1] === "--dry-run"
+        // `npm --prefix <dir> run <script>` is the aggregate gate form this repository uses.
         return (
-          (values.length === 1 && values[0] === "test") ||
-          (values.length === 2 && values[0] === "run" && ["test", "lint", "typecheck", "build"].includes(values[1]!))
+          values[0] === "--prefix" &&
+          values.length === 4 &&
+          values[2] === "run" &&
+          GATE_SCRIPTS.has(values[3]!) &&
+          path(args[1]!)
         )
       case "cargo":
         return values.length === 1 && ["check", "test", "clippy"].includes(values[0]!)
       default:
         return false
     }
+  }
+
+  /**
+   * Admit the gate hook command the workflow runs. `pre-commit run` without `--files` reads the index
+   * or every file and can rewrite them, so only the explicit file list is modelled.
+   */
+  private preCommitGate(program: string, args: GrammarWord[]): boolean {
+    if (program !== "pre-commit") return false
+    const values = args.map((arg) => arg.value)
+    if (values[0] !== "run" || !values.includes("--files")) return false
+    const parsed = readOptions("-v --verbose --show-diff-on-failure --color= --hook-stage= --files", args.slice(1))
+    if (!parsed) return false
+    // An empty list would run the configured default selection, which is the broad form.
+    if (parsed.operands.length === 0) return false
+    return parsed.operands.every((arg) => (this.cwdKnown ? this.writeTarget(arg) : ordinaryProjectPath(arg)))
   }
 
   /** Keep find predicate inputs separate from filenames it writes and programs it starts. */

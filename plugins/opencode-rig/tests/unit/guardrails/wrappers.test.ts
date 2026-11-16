@@ -540,7 +540,7 @@ describe("catalogued scheduling and terminal wrappers", () => {
     "systemd-run --user --scope make",
     "chrt 10 make",
     "taskset -c 0 make",
-    "unbuffer make test",
+    "unbuffer make deploy",
   ])("asks for project execution through scheduling wrappers: %s", (command) => {
     expect(decide(classifyCommand(command), "standard", GRANTED)?.effect).toBe("ask")
   })

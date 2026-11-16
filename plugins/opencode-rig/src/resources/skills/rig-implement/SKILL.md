@@ -37,4 +37,6 @@ description: Execute a frozen plan or a trivial change with an inline mini-plan,
 
 ## Output
 
+> Lead with the [handoff table](../../references/handoff.md): verdict, alignment, findings, next action, confidence. Then the evidence below.
+
 Report run ID, changed paths grouped by plan row with digests, gate receipts, failed or skipped checks, remaining risks, and the commit handoff. Do not claim completion without a finalized run.

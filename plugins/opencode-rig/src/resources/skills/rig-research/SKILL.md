@@ -46,6 +46,8 @@ description: Answer a decision question from primary sources with labeled claims
 
 ## Output
 
+> Lead with the [handoff table](../../references/handoff.md): verdict, alignment, findings, next action, confidence. Then the evidence below.
+
 The decision and recommendation, a claim table with state, source, and retrieval date, contradictions, threats to validity, limits, confidence, and the next workflow (`rig-plan`, `rig-investigate`, or `rig-optimize`).
 
 Reviewer independence is instruction-enforced: the tools accept a reviewer identity string without authenticating its dispatch session. Report the actual independent reviewer and any unavailable review; never present that string as session attestation.

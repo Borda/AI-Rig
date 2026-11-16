@@ -37,4 +37,6 @@ description: Run a bounded adversarial convergence loop with an independent chal
 
 ## Output
 
+> Lead with the [handoff table](../../references/handoff.md): verdict, alignment, findings, next action, confidence. Then the evidence below.
+
 Report the run ID, weighted series, stop reason, unresolved signatures, gate receipts, and remaining risks.

@@ -18,8 +18,10 @@ The permission hook never grants authority on its own: it runs after the rules O
 | `git rebase*` | `ask` | Rewrites commits that other branches may already contain. |
 | `* --output=*` | `ask` | `git log`, `git show`, and `git rev-list` write a file when they are given `--output=FILE`. |
 | `* --output *` | `ask` | The same option in the space-separated form. |
+| `* --pre *` | `ask` | `rg` runs an arbitrary program before the search when it is given `--pre <command>`, and an option may follow another option, so the rule names the option in any position. |
+| `* --pre=*` | `ask` | The same option in the equals form. |
 
-The two `--output` rules are the only ones that name no command. They exist because `git log --output=FILE`, `git show --output=FILE`, and `git rev-list --output=FILE` each create that file, and the read-only allowlist below would otherwise match them. They sit at the end of the ruleset so the last matching rule is the one that asks: a read-only inspection command that accepts `--output` now asks for an answer instead of writing silently.
+The four rules that name no command are the two `--output` rules and the two `* --pre` rules. The `--output` rules exist because `git log --output=FILE`, `git show --output=FILE`, and `git rev-list --output=FILE` each create that file, and the read-only allowlist below would otherwise match them. The `--pre` rules cover the one executing option of the `rg *` allow; they name no command because `rg --passthru --pre <command>` is the same option after another one, and any command line that contains the space-delimited `--pre` token asks, not only `rg`. All four sit after the allows they override, so the last matching rule is the one that asks: a read-only command that accepts `--output` or `--pre` asks instead of writing or executing silently.
 
 A rule of your own still wins over them, exactly as it wins over every other shipped rule: the shipped rules are inserted ahead of yours in the file you are merged into.
 
@@ -38,9 +40,9 @@ A plain local commit is deliberately absent. `git commit` is governed by the gua
 
 ## The read-only shell allowlist
 
-Every rule below is `allow`, and every one of them names a command that only reads. They exist because each role agent ships its own `shell: *` catch-all that asks, so without them every inspection command in a role agent stops for an answer.
+Every rule below is `allow`, and every one of them names a command whose own arguments only read; the channels below list the effects no rule can see. They exist because each role agent ships its own `shell: *` catch-all that asks, so without them every inspection command in a role agent stops for an answer.
 
-The list lives in one place. `opencode-rig init` appends the shipped ruleset to each role agent, after that agent's own rules, so the list cannot drift per agent and a command that is not on it still asks. The shipped order is kept, so the two `--output` rules land after the allows they override and an agent resolves `git log --output=FILE` to `ask` as well.
+The list lives in one place. `opencode-rig init` appends the shipped ruleset to each role agent, after that agent's own rules, so the list cannot drift per agent and a command that is not on it still asks. The shipped order is kept, so the `rg --pre` and `--output` asks land after the allows they override and an agent resolves `git log --output=FILE` or `rg --pre cat` to `ask` as well.
 
 Git inspection:
 
@@ -48,6 +50,7 @@ Git inspection:
 git show *
 git log *
 git status *
+git diff *
 git blame *
 git rev-parse *
 git rev-list *
@@ -75,6 +78,7 @@ cat *
 head *
 tail *
 grep *
+rg *
 wc *
 cut *
 tr *
@@ -102,16 +106,57 @@ echo *
 printf *
 ```
 
-A command whose wildcard also admits a writing or an executing form is not on the list: `git diff` (`--output=FILE` writes a file), `git grep` (`--open-files-in-pager=<command>` executes a command), `git remote -v` (git accepts `-v` before a mutating subcommand), `rg` (`--pre <command>` runs an arbitrary program before the search), `sort` (`-o FILE`), `tree` (`-o DIR`), `sed` and `awk` (`-i`, or a redirection inside the program), `find` (`-exec`, `-delete`), `tee`, `xargs`, `env`, and every interpreter or package manager. The Git families `git branch`, `git tag`, `git stash`, `git config`, and `git remote` are excluded for the same reason: their wildcard also matches their mutating forms. Two read-only forms of those families are on the list because their wildcard cannot reach a mutating form: `git stash list *` and `git config --get *`. `git pull` and `git fetch` write to the repository.
+A command whose wildcard also admits a writing or an executing form is not on the list: `git grep` (`--open-files-in-pager=<command>` executes a command), `git remote -v` (git accepts `-v` before a mutating subcommand), `sort` (`-o FILE`), `tree` (`-o DIR`), `sed` and `awk` (`-i`, or a redirection inside the program), `find` (`-exec`, `-delete`), `tee`, `xargs`, `env`, and every interpreter or package manager. The Git families `git branch`, `git tag`, `git stash`, `git config`, and `git remote` are excluded for the same reason: their wildcard also matches their mutating forms. Two read-only forms of those families are on the list because their wildcard cannot reach a mutating form: `git stash list *` and `git config --get *`. `git pull` and `git fetch` write to the repository.
+
+`git diff` and `rg` are on the list with their known writing or executing options closed by a later `ask`: `git diff --output=FILE` is stopped by the `* --output=*` rules, and `rg --pre <command>` and `rg --pre=<command>` are stopped by the `* --pre *` and `* --pre=*` rules before them, in any position. Those two patterns require a single space between `--pre` and its value; a tab-separated spelling is outside the rule and is left to the hook. `git diff --no-index <a> <b>` reads two arbitrary paths and a configured textconv or external driver still runs (see the channels below); the hook asks for the literal driver options but cannot see a driver configured for a path. Neither option reorders past its stop: the last matching rule wins.
 
 `date` is on the list without a wildcard on purpose: GNU `date -s` sets the system clock on Linux, so only the bare command is allowed and `date -u` still asks.
 
-### Two channels the allowlist does not close
+## Workflow execution allows
 
-Both come from how the host resolves a rule, not from a defect in this list.
+The rules below are `allow` too, but they are a different class from the inspection list: they run project-defined code, so they can execute whatever the repository's test, lint, or package script contains. They are here because every shipped workflow needs them, they are reviewed in this file before `init` writes anything, and asking again in each project only blocks the same work. They are inserted before the trailing `ask` rules, so no `--output` or `--pre` form becomes quiet through them.
+
+| Rule | Effect | Why it is here |
+| -- | -- | -- |
+| `pytest *` | `allow` | The review, investigation, and remediation workflows reproduce a reported failure or check a claim with the project's test runner. |
+| `python -m pytest *` | `allow` | The same runner through the interpreter. |
+| `python3 -m pytest *` | `allow` | The same runner through the Python 3 launcher. |
+| `py -m pytest *` | `allow` | The same runner through the Windows launcher. |
+| `.venv/bin/python -m pytest *` | `allow` | The same runner in a project virtual environment, the documented form in this repository. |
+| `.venv/bin/python3 -m pytest *` | `allow` | The same runner through the versioned interpreter name a virtual environment also provides. |
+| `.venv/Scripts/python.exe -m pytest *` | `allow` | The same runner in a native Windows virtual environment. |
+| `npm test` | `allow` | The JavaScript test gate detected from `package.json`. |
+| `npm run test` | `allow` | The same gate in its `run` spelling. |
+| `npm run lint` | `allow` | The JavaScript lint gate detected from `package.json`. |
+| `npm run typecheck` | `allow` | The JavaScript typecheck gate detected from `package.json`. |
+| `npm run check` | `allow` | An aggregate check script. |
+| `make test` | `allow` | The Makefile test gate detected by `rig_gate`. |
+| `make lint` | `allow` | The Makefile lint gate detected by `rig_gate`. |
+| `make typecheck` | `allow` | The Makefile typecheck gate detected by `rig_gate`. |
+| `npm pack --dry-run` | `allow` | The release workflow's package check; `npm pack` without `--dry-run` still asks. |
+
+> Acceptance: these entries can run project code. Read the list before installing; if a project must not run code from its own checkout, remove the entries you do not want. They never cover `git push`, a Git write, a history rewrite, a destructive operation, a package publication, or a form outside the listed prefix. An allowed script can also write: a test target may emit coverage or caches, and a project that defines `test` to format will format. Formatter, build and pre-commit-hook grants are deliberately absent because their normal job is to rewrite the working tree.
+
+> The `pytest` grants are hook-bounded: the rule names a prefix and the hook checks the arguments. With `guardrails: off` the hook does not run, so `pytest --basetemp=<dir>` (pytest deletes that directory) and `pytest -p` or `-c` (load a plugin or configuration) are no longer bounded. Keep the hook on for these forms; the `exact` rules (`npm test`, `npm run <script>`, `make <target>`, `npm pack --dry-run`) have no tail to bound.
+
+`npx <tool>` can download and then run a package, so the workflows use `npm test`, `npm run <script>`, `make <target>`, or the project interpreter instead. `.venv/bin/python *` (any script) is broader than the gate needs and stays asking; only the `-m pytest` form is listed. Raw `.venv/bin/ruff`, `mypy`, `uv run <tool>`, and `npm --prefix <dir> run <script>` stay asking in a role agent: their option tails cannot be bounded by a rule, and the workflows use `make lint`, `make typecheck`, `npm run <script>` after a `cd`, or the gate instead. `npm run format`, `make format`, `npm run build`, and `pre-commit run --files` are not granted to a role agent at all; they run through `rig_gate` in the parent, where the gate approval covers them.
+
+### Three channels the allowlist does not close
+
+They come from how the host resolves a rule, or from a driver the command text does not name, not from a defect in this list.
 
 - **A redirection attached to an allowed command still matches.** `cat a > b` matches `cat *`, and the shell performs the write. The list matches a command string, not its effect. Six of the seven role agents declare `edit: *` as `deny`, and that rule does not cover a redirection, so inside those agents a redirection is a write path their own read-only contract does not close.
+- **A configured diff driver still runs on a diff.** `git diff`, `git log -p`, and `git show` run a `textconv` or external diff driver when the user's Git config defines one for a path. The driver name is in `.gitattributes`, not in the command text, so no shell rule can name it. The hook asks for any Git option it does not model, `--ext-diff` and `--textconv` included, yet a driver configured for a path still runs; review only repositories whose attributes and Git configuration you trust.
+- **An abbreviated option spelling reaches the same effect.** Git accepts an unambiguous long-option prefix, so `git status --porc` runs `--porcelain` and an abbreviation of a writing option reaches the same write while no shipped rule names it. The hook asks for an option it does not know, so the write is stopped while guardrails are on; with `guardrails: off` only the shipped rules apply and the abbreviation is not named. Enumerating every abbreviation is the spelling list this package deliberately avoids.
 - **An agent rule is appended after the global rules.** The [OpenCode v2 permission documentation](https://opencode.ai/v2/docs/permissions/) states that OpenCode combines rules in order and uses the last match: lower-priority configuration first, global rules next, agent rules last. An agent `allow` therefore outranks a global `deny` for the same command. That consequence is the documented one; the composition order was not confirmed against the installed host binary, so read it as documented behaviour rather than a verified one. The host's own shipped agents append their permissions the same way, which is why this package does it too. The shipped ruleset contains no `deny` rule, so the list contains no command that a shipped rule denies, and this only matters if you add a global `deny` for a command on the list.
+
+### Reading another checkout
+
+`cd <directory> && <command>` is the quiet form: the host checks the `cd` target as its own resource through `external_directory`, allowed by default, and checks the following command against the rules above. `git -C <directory> <command>` asks instead — the hook cannot prove where `-C` points, so it classifies the whole invocation as unparsed Git. Both forms leave a Git write behind the rules; neither is a sandbox. A `cd` into a fetched PR worktree runs that worktree's code; the review skill names this trust boundary before any gate runs there.
+
+### Permissive role access (opt-in)
+
+The default above keeps every role agent at `shell: *` → `ask` plus the shipped lists. If you would rather have the six read-only agents inherit the host's permissive default and let the hook be their only shell bound, remove the `shell: *` rule from `~/.config/opencode/agents/rig-*.md` (or the project copies) and keep the rest of the shipped rules. That posture is **hook-bounded, not sandboxed**: it removes the per-read prompt but lets an agent run any non-Git command the hook does not stop. `opencode-rig init` renders the default again unless you re-apply the edit, so treat it as a deliberate local choice rather than a package option.
 
 ## What the hook escalates
 
@@ -137,7 +182,9 @@ Outside a role agent, OpenCode starts permissive, so most actions default to `al
 - Shell commands, including supported literal forms of `git status`, `git diff`, and `git log`, test runners, linters, and build tools. Git or GitHub forms outside the hook's literal allowlist still ask.
 - `external_directory` is allowed by default, not asked. The [v2 documentation](https://opencode.ai/v2/docs/permissions/) says no default rule asks for it, so a read or an edit outside the Location and worktree proceeds without a prompt. Add `{ "action": "external_directory", "resource": "*", "effect": "ask" }` to your own configuration to be asked. `doom_loop` and `lsp` are not v2 Core permission actions, so a rule naming either of them does nothing.
 
-Inside a role agent the shell is different: each role agent declares `shell: *` as `ask`, so anything outside the allowlist above asks, including test runners, linters, and build tools. The allowlist covers inspection, not execution.
+Inside a role agent the shell is different: each role agent declares `shell: *` as `ask`, so a command outside the two lists above asks. That includes `sed`, `find`, `sort`, `tree`, `awk`, `tee`, `xargs`, `npx <tool>`, `uv run`, `git -C`, and a test or build form outside the listed prefixes. The allowlists cover inspection plus the standard gate forms, not arbitrary execution.
+
+Two hook forms also stop asking with this release, because every workflow was tripping on them: a project tool run after a `cd` outside the project now stays quiet when its operands are plain relative paths (`cd <worktree> && pytest tests/x.py -q`), and the canonical gate commands are modelled directly — `make <test|lint|format|typecheck>`, `pre-commit run --files <paths>`, `npm pack --dry-run`, and `node --check <script>`. An absolute operand, a `..` segment, an unlisted make target, `pre-commit run --files` in a role agent, or `npm pack` without `--dry-run` still asks.
 
 ## Plain commits and the grant
 
