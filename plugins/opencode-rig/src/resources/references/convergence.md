@@ -29,7 +29,7 @@ A new finding never resets prior signatures, history, or the baseline. A signatu
 | -- | -- | -- | -- | -- | -- | -- | -- |
 | 1 | 0 + 1 | 0 + 0 | 0 + 2 | 0 + 1 | 0 + 0 | 0 + 0 | 24 |
 
-Every numeric cell is `old + new`. Old counts a signature seen in an earlier validated round; new counts a signature that first appears in this round. Keep every row.
+Every numeric cell is `old + new`. Old counts a signature seen in an earlier validated round; new counts a signature that first appears in this round. Keep every row. Print the table at the end of every validated round — before fixes, the next dispatch, or a stop — never only in the final handoff.
 
 ## Stop reasons
 

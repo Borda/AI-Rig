@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "name": "opencode-rig",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Evidence-first workflows, independent review, quality gates, and Git guardrails for OpenCode.",
   "entrypoint": "./src/index.ts",
   "license": "Apache-2.0",
@@ -23,7 +23,18 @@
     "rig-release",
     "rig-doctor"
   ],
-  "tools": ["rig_evidence", "rig_gate", "rig_findings", "rig_loop", "rig_git_grant", "rig_dispatch", "rig_doctor"],
+  "tools": [
+    "rig_evidence",
+    "rig_gate",
+    "rig_findings",
+    "rig_loop",
+    "rig_git_grant",
+    "rig_dispatch",
+    "rig_doctor",
+    "rig_script",
+    "rig_trust",
+    "rig_sandbox"
+  ],
   "agents": [
     "rig-investigator",
     "rig-implementer",

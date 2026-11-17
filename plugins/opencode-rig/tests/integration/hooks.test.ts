@@ -91,10 +91,13 @@ describe("permission evaluate hook", () => {
     expect(asked.effect).toBe("ask")
   })
 
-  it("never downgrades a configured ask", async () => {
+  it("answers a configured ask only for positively modelled inspection", async () => {
     const harness = await createHarness(Project.withCommit())
-    const event = await evaluate(harness, shellEvent(["git status"], "ask"))
-    expect(event.effect).toBe("ask")
+    const inspection = await evaluate(harness, shellEvent(["git status"], "ask"))
+    expect(inspection.effect).toBe("allow")
+    expect(inspection.message).toMatch(/inspection/)
+    const script = await evaluate(harness, shellEvent(["python script.py"], "ask"))
+    expect(script.effect).toBe("ask")
   })
 
   it("ignores non-shell actions and empty resource lists", async () => {

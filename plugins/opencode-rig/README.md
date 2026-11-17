@@ -1,6 +1,6 @@
 # opencode-rig
 
-Current version: `0.8.0`
+Current version: `0.9.0`
 
 Evidence-first delivery workflows for [OpenCode](https://opencode.ai): frozen plans, recorded gates, independent review, adversarial convergence, and Git guardrails that keep publication human-owned.
 
@@ -96,8 +96,11 @@ Every workflow follows the same envelope: classify the request, collect authorit
 | `rig_git_grant` | Read, record, or revoke the local Git approval grant after an explicit user decision.                                                                                             |
 | `rig_dispatch`  | Run one bounded role in a child session when native `rig-*` subagents are unavailable.                                                                                            |
 | `rig_doctor`    | Check plugin load, versions, agents, grant, ignore rules, gates, and stale runs; `action: "assets"` curates cards, and explicitly confirmed `action: "clean"` removes stale runs. |
+| `rig_script`    | Run a declared script file with a fixed interpreter and a receipt: source class, digest, argv, exit code, stream digests and a redacted tail.                                     |
+| `rig_trust`     | Read or record the per-commit trust decision that allows a forked pull request's verification on the host; the record expires and is never a general allow.                       |
+| `rig_sandbox`   | Run a forked pull request's verification in a container: copied worktree, pinned image, network off by default, and a receipt with image, command, exit and log.                  |
 
-All seven tools are registered under their full names; there is no namespace to remember. Calls are only accepted for an active or explicitly named run, and mutating calls validate their input before writing anything.
+All ten tools are registered under their full names; there is no namespace to remember. Calls are only accepted for an active or explicitly named run, and mutating calls validate their input before writing anything.
 
 ### Example: rig-review findings
 
@@ -111,6 +114,10 @@ rig_evidence action=finalize
 ```
 
 `correctness` is mandatory for `rig-review`. Use `aspects` as an alias for `axes` if preferred.
+
+### Declared scripts
+
+When a workflow needs ad-hoc code, it writes a file and runs it through `rig_script` instead of an inline `-c` or heredoc body. The source class names the root: `run` is a regular file under a run's `scripts/` directory (a bare probe name, a `scripts/`-prefixed name, or the project-relative path all work; a session without an active run can use the project-relative path under the artifact runs root), `project` is a file under the checkout's `scripts/`, `bin/` or `tools/`, and `plugin` is a shipped helper under the installed package's `bin/` whose SHA-256 matches the listing. The tool resolves the real path (a symlink escape is refused), caps the file at 256 KiB, runs `interpreter <path> ...argv` in the project root with a small positive environment allowlist (`PATH`, `HOME`/`USERPROFILE`, temp, locale and Windows essentials; no `PYTEST_ADDOPTS`-style overrides) and a bounded process tree, and writes a log plus a receipt with the source class, digest, argv, exit code, stream digests and a redacted tail. It proves what ran, not that it is safe: a script can use the network. Inline bodies, a script outside those roots, a modified plugin helper, and an interpreter outside the fixed set are refused.
 
 ## Agents
 
@@ -134,18 +141,23 @@ External pages, findings, PR comments, and inventories are data rather than inst
 
 Options live in the plugin entry of `opencode.jsonc`.
 
-| Option               | Default           | Meaning                                                                                                                                                                         |
-| -------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `guardrails`         | `"standard"`      | `standard` guards dangerous commands and asks for Git forms outside its literal allowlist; `strict` classifies merge and cherry-pick as destructive; `off` disables escalation. |
-| `artifacts`          | `".opencode-rig"` | Artifact root inside the project. It may not escape the project directory.                                                                                                      |
-| `gates`              | `[]`              | Explicit gate commands. When set, detection is skipped.                                                                                                                         |
-| `gateTimeoutMs`      | `600000`          | Per-gate timeout, between 1 second and 1 hour.                                                                                                                                  |
-| `maxParallel`        | `4`               | Ceiling for concurrent inline children, between 1 and 16.                                                                                                                       |
-| `maxLoopRounds`      | `3`               | Round limit used to validate the `round-limit` stop reason, between 1 and 10.                                                                                                   |
-| `ttlDays`            | `30`              | Age at which doctor reports a run as stale, between 1 and 3650.                                                                                                                 |
-| `journal`            | `true`            | Append redacted tool-call records to the active run or artifact root.                                                                                                           |
-| `codemap`            | `"auto"`          | Codemap integration mode. `auto` is inert until a codemap provider is present.                                                                                                  |
-| `compactionPreserve` | `true`            | Inject active run identity into compaction context.                                                                                                                             |
+| Option               | Default           | Meaning                                                                                                                                                                                                                                               |
+| -------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `guardrails`         | `"standard"`      | `standard` guards dangerous commands and asks for Git forms outside its literal allowlist; `strict` classifies merge and cherry-pick as destructive; `off` disables escalation.                                                                       |
+| `artifacts`          | `".opencode-rig"` | Artifact root inside the project. It may not escape the project directory.                                                                                                                                                                            |
+| `gates`              | `[]`              | Explicit gate commands. When set, detection is skipped.                                                                                                                                                                                               |
+| `gateTimeoutMs`      | `600000`          | Per-gate timeout, between 1 second and 1 hour.                                                                                                                                                                                                        |
+| `maxParallel`        | `4`               | Ceiling for concurrent inline children, between 1 and 16.                                                                                                                                                                                             |
+| `maxLoopRounds`      | `3`               | Round limit used to validate the `round-limit` stop reason, between 1 and 10.                                                                                                                                                                         |
+| `ttlDays`            | `30`              | Age at which doctor reports a run as stale, between 1 and 3650.                                                                                                                                                                                       |
+| `journal`            | `true`            | Append redacted tool-call records to the active run or artifact root.                                                                                                                                                                                 |
+| `codemap`            | `"auto"`          | Codemap integration mode. `auto` is inert until a codemap provider is present.                                                                                                                                                                        |
+| `compactionPreserve` | `true`            | Inject active run identity into compaction context.                                                                                                                                                                                                   |
+| `inspection`         | `true`            | Allow the hook to answer the role-agent shell ask for positively modelled read-only inspection and verification. A configured `deny` stays final; `guardrails: off` disables it.                                                                      |
+| `designedWrites`     | `true`            | Allow the narrow designed Git writes: the review fetch, a review worktree under the host temp root, and staging literal owned paths. A configured `deny` stays final.                                                                                 |
+| `blueprint`          | `true`            | Allow an exact shipped command block whose every fragment is in `blueprint-manifest.json`; `false` disables the allow.                                                                                                                                |
+| `execution`          | `"fork-sandbox"`  | Where verification runs: a forked PR in the container (or host after one trust answer), a same-repo PR and your checkout on the host; `all-sandbox` refuses every host verification and requires `rig_sandbox`; `host` keeps the trust-only baseline. |
+| `sandboxImage`       | `""`              | Pinned container image for `rig_sandbox`. Empty means sandbox execution is unavailable, so a fork's verification asks for the one host trust decision or records unverified.                                                                          |
 
 Unknown option keys fail plugin setup instead of being ignored.
 
@@ -167,7 +179,7 @@ Refresh may resume a stale run or a run blocked only by missing evidence: name i
 
 ## Git guardrails
 
-The permission hook runs after configured rules and can only escalate. It never turns a configured `deny` or `ask` into `allow`.
+The permission hook runs after configured rules. It escalates dangerous commands and, for positively modelled read-only inspection and verification inside a role agent, can also answer the role's `shell: *` ask with `allow`. It never turns a configured `deny` into `allow`.
 
 - Push, remote configuration, `gh` publication, package publishing, and container pushes always ask.
 - Hard reset, forced clean, forced checkout, restore, stash drop, forced worktree removal, and recursive file deletion always ask.
@@ -183,6 +195,27 @@ rig_git_grant action=approve confirm="Approve always" scope_acknowledged=true
 ```
 
 Revoke it with `rig_git_grant action=revoke`. `rig_git_grant action=status` reports `granted`, `absent`, `invalid`, or `no-git`. A grant lasts 30 days or until revoked and stores the literal user confirmation, creation ID, physical common-directory binding, and creation and expiry times. A symlink, an unknown schema, an expired or differently bound record, or an incomplete older record counts as no grant and requires a fresh **Approve always** answer. Writers to the common Git directory remain trusted; the record is not cryptographically signed. One-time commit consent uses the runtime shell permission prompt, without an additional conversational **Approve** question.
+
+### Inspection allow
+
+Inside a role agent every shell command starts at `ask`. With `inspection` on (the default), the hook answers that ask with `allow` when every resource in the event is positively proven read-only inspection or a configured verification form. The proof is a positive program set plus two structural signals from the shell grammar: a `writes` signal for a redirect, a write-valued option (`sort -o`, `uniq` output, `find -fls/-fprintf`) or a Git write verb, and an `executes` signal for a shell, script interpreter or exec channel (`find -exec`, `rg --pre`, `grep --open-files-in-pager`). Either signal refuses the allow, so `git add`, `sort -o`, `sed -i`, `bash script.sh` and `python script.py` still ask. A configured `deny` is final, one failing resource leaves the event to the rules, `execute` events are untouched, and `inspection: false` or `guardrails: off` disables it. The decision is stateless: it reads only the command text and shipped tables, so parallel reviews and nested subagents resolve independently. The hook has no agent identity, so the allow applies to any `shell` event: in the parent session it only matters if you configured an `ask` for one of these forms. The allow proves a command shape, not the code a test or build runs; a fetched pull-request worktree remains third-party code and the review asks before verification there. The shipped grammar also gained a `/dev/null` sink, marker data in `echo`/`printf`/`grep`, and `uv run pytest|ruff|mypy` identity. See [`src/resources/permissions-guide.md`](src/resources/permissions-guide.md), "Hook-bound inspection allow".
+
+### Designed Git writes
+
+A review has to fetch a pull request into its own ref, create and remove a worktree under the host temp root, and the implementer stages owned paths. With `designedWrites` on (the default), the hook allows exactly those literal forms: `git fetch --no-tags --no-write-fetch-head --no-auto-maintenance <url> refs/pull/<n>/head:refs/rig-review/pr-<n>-<sha12>`, `git worktree add --detach <path> <sha40>`, `git worktree remove [--force] <path>` and `git worktree prune` for a path under `<host temp>/opencode/review-*`, and `git add` of literal relative paths with no option, `.`/`..`, glob or pathspec magic. These literal forms are admitted ahead of the destructive class; a fetch with any other shape, a worktree outside that prefix, a compound command and a commit without a grant still ask. The allow is independent of the guardrail mode, and `designedWrites: false` turns it off.
+
+### Forked pull requests
+
+A pull request from a different repository is third-party code; one from a branch in the same repository is your own code. The review records `isCrossRepository` and the head repository before any verification and treats an unknown value as a fork.
+
+- A same-repository PR and your own checkout run verification on the host. The inspection allow admits a verification only in the project root, an own worktree whose HEAD is an ancestor of your HEAD, or a worktree with a matching trust record. A same-repository PR head that is not in your history therefore asks once; the review can record `rig_trust` for it too, after the user's answer.
+- A forked PR's verification runs through `rig_sandbox` under `execution: "fork-sandbox"`: a copy of the worktree without its Git metadata or credential-shaped files (`.env*`, keys, `.ssh`, `.npmrc`), a digest-pinned `sandboxImage` such as `python@sha256:<64 hex>`, the network off unless the call opts in (a dependency-fetching test needs `network: true`), CPU/memory/process caps, and a receipt with image, command, exit and log. The tool has no prompt rule of its own, like `rig_script`; install acceptance covers it, and the container is the boundary. No host code runs.
+- When no container runtime or image is available, the review asks the user once per fetched commit with `rig_trust`; the literal **Trust this PR** answer records `<artifact>/trust/<commit>.json`. A different commit or a re-created worktree asks again, the record expires after 24 hours, and it covers nothing else.
+- `all-sandbox` boxes every verification, including your own checkout; `host` keeps the trust-only baseline.
+
+### Shipped command blocks
+
+The workflows publish a small number of literal command blocks (a `git status --porcelain` before reading the tree, a `git diff --stat | tail -n 20` summary, and similar). With `blueprint` on (the default), the hook allows a command whose every top-level fragment is an exact block in the shipped manifest, after normalization: CRLF, trailing whitespace, quote-aware trailing comments and blank runs. The whole-block digest is kept for audit, and only `kind: "command"` entries are looked up, so a compound is allowed only when each fragment is shipped. A block with a runtime value, a heredoc, an unterminated quote or a line continuation is skipped at build time and asks at run time. A modified fragment, a partial compound, the always-ask classes and a configured `deny` are unaffected: they still ask. `blueprint: false` turns the allow off, and `blueprint-manifest.test.ts` keeps the manifest byte-derived from the published blocks.
 
 Nothing in this plugin pushes, tags, or publishes. Release and publication remain human-owned.
 

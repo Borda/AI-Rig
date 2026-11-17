@@ -254,7 +254,7 @@ describe("opencode-rig CLI", () => {
   })
 
   it("ships exactly the documented number of permission rules", () => {
-    expect(SHIPPED_COUNT).toBe(80)
+    expect(SHIPPED_COUNT).toBe(81)
   })
 
   it("merges into an existing global opencode.jsonc instead of creating a second file", () => {

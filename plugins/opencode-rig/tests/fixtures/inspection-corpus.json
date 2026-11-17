@@ -1,0 +1,381 @@
+{
+  "note": "Generic command forms only; no project paths or content. Each entry pins the inspection verdict for slice 1.",
+  "entries": [
+    {
+      "command": "sed -n '1,40p' file.ts",
+      "effect": "inspection"
+    },
+    {
+      "command": "sed -n 229,320p file.ts",
+      "effect": "inspection"
+    },
+    {
+      "command": "grep -n pattern -A 40 file.ts",
+      "effect": "inspection"
+    },
+    {
+      "command": "grep -n pattern -B3 -C5 file.ts",
+      "effect": "inspection"
+    },
+    {
+      "command": "rg -n TODO src",
+      "effect": "inspection"
+    },
+    {
+      "command": "find . -name '*.py'",
+      "effect": "inspection"
+    },
+    {
+      "command": "sort -u file.txt",
+      "effect": "inspection"
+    },
+    {
+      "command": "cat file.ts",
+      "effect": "inspection"
+    },
+    {
+      "command": "head -n 20 file.ts",
+      "effect": "inspection"
+    },
+    {
+      "command": "tail -n 50 file.log",
+      "effect": "inspection"
+    },
+    {
+      "command": "ls",
+      "effect": "inspection"
+    },
+    {
+      "command": "wc -l file.ts",
+      "effect": "inspection"
+    },
+    {
+      "command": "jq '.items[0]' file.json",
+      "effect": "inspection"
+    },
+    {
+      "command": "git diff HEAD --stat",
+      "effect": "inspection"
+    },
+    {
+      "command": "git diff a..b -- src",
+      "effect": "inspection"
+    },
+    {
+      "command": "git log --oneline -5",
+      "effect": "inspection"
+    },
+    {
+      "command": "git show HEAD:src/file.ts",
+      "effect": "inspection"
+    },
+    {
+      "command": "git status --short",
+      "effect": "inspection"
+    },
+    {
+      "command": "gh pr view 1 --json headRefOid",
+      "effect": "inspection"
+    },
+    {
+      "command": "gh pr diff 1",
+      "effect": "inspection"
+    },
+    {
+      "command": "ls 2>/dev/null",
+      "effect": "inspection"
+    },
+    {
+      "command": "git rev-parse --show-toplevel 2>/dev/null",
+      "effect": "inspection"
+    },
+    {
+      "command": "echo ====",
+      "effect": "inspection"
+    },
+    {
+      "command": "printf '%s\\n' ====",
+      "effect": "inspection"
+    },
+    {
+      "command": "python -m pytest tests -q",
+      "effect": "verification"
+    },
+    {
+      "command": ".venv/bin/python -m pytest tests -q",
+      "effect": "verification"
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tests -q",
+      "effect": "verification"
+    },
+    {
+      "command": "uv run pytest tests -q",
+      "effect": "verification"
+    },
+    {
+      "command": "uv run ruff check src",
+      "effect": "verification"
+    },
+    {
+      "command": "uv run mypy src",
+      "effect": "verification"
+    },
+    {
+      "command": "npm test",
+      "effect": "verification"
+    },
+    {
+      "command": "npm run check",
+      "effect": "verification"
+    },
+    {
+      "command": "make test",
+      "effect": "verification"
+    },
+    {
+      "command": "npm test -- --run",
+      "effect": "verification"
+    },
+    {
+      "command": "uv run python -m pytest -q",
+      "effect": "verification"
+    },
+    {
+      "command": "egrep -n pattern file.txt",
+      "effect": "inspection"
+    },
+    {
+      "command": "fgrep -n pattern file.txt",
+      "effect": "inspection"
+    },
+    {
+      "command": "md5sum file.txt",
+      "effect": "inspection"
+    },
+    {
+      "command": "sha256sum file.txt",
+      "effect": "inspection"
+    },
+    {
+      "command": "od -An -tx1 file.bin",
+      "effect": "inspection"
+    },
+    {
+      "command": "strings file.bin",
+      "effect": "inspection"
+    },
+    {
+      "command": "base64 file.bin",
+      "effect": "inspection"
+    },
+    {
+      "command": "xxd file.bin",
+      "effect": "inspection"
+    },
+    {
+      "command": "zcat file.gz",
+      "effect": "inspection"
+    },
+    {
+      "command": "rev file.txt",
+      "effect": "inspection"
+    },
+    {
+      "command": "echo hi > out.txt",
+      "effect": "ask"
+    },
+    {
+      "command": "cat file.ts > out.txt",
+      "effect": "ask"
+    },
+    {
+      "command": "sort -o out.txt file.txt",
+      "effect": "ask"
+    },
+    {
+      "command": "sort --output=out.txt file.txt",
+      "effect": "ask"
+    },
+    {
+      "command": "uniq file.txt out.txt",
+      "effect": "ask"
+    },
+    {
+      "command": "find . -fls out.txt",
+      "effect": "ask"
+    },
+    {
+      "command": "find . -fprintf out.txt %p",
+      "effect": "ask"
+    },
+    {
+      "command": "find . -exec cat {} \\;",
+      "effect": "ask"
+    },
+    {
+      "command": "find . -delete",
+      "effect": "ask"
+    },
+    {
+      "command": "git add src/file.ts",
+      "effect": "ask"
+    },
+    {
+      "command": "git rm src/file.ts",
+      "effect": "ask"
+    },
+    {
+      "command": "git diff --output=out.txt",
+      "effect": "ask"
+    },
+    {
+      "command": "sed -i s/a/b/ file.ts",
+      "effect": "ask"
+    },
+    {
+      "command": "bash script.sh",
+      "effect": "ask"
+    },
+    {
+      "command": "sh -c 'echo hi'",
+      "effect": "ask"
+    },
+    {
+      "command": "python script.py",
+      "effect": "ask"
+    },
+    {
+      "command": "python -c 'print(1)'",
+      "effect": "ask"
+    },
+    {
+      "command": "node script.js",
+      "effect": "ask"
+    },
+    {
+      "command": "awk '{print $1}' file.txt",
+      "effect": "ask"
+    },
+    {
+      "command": "npx vitest run",
+      "effect": "ask"
+    },
+    {
+      "command": "rg --pre cat pattern",
+      "effect": "ask"
+    },
+    {
+      "command": "npm run format",
+      "effect": "ask"
+    },
+    {
+      "command": "make format",
+      "effect": "ask"
+    },
+    {
+      "command": "uv run python script.py",
+      "effect": "ask"
+    },
+    {
+      "command": "/bin/cat file.ts",
+      "effect": "ask"
+    },
+    {
+      "command": "gh api -X POST /repos/o/r/issues",
+      "effect": "ask"
+    },
+    {
+      "command": "gh pr create -t title",
+      "effect": "ask"
+    },
+    {
+      "command": "cat file.ts | sh",
+      "effect": "ask"
+    },
+    {
+      "command": "./cat file.ts",
+      "effect": "ask"
+    },
+    {
+      "command": "../bin/cat file.ts",
+      "effect": "ask"
+    },
+    {
+      "command": "./pytest tests -q",
+      "effect": "ask"
+    },
+    {
+      "command": "ls && ./evil",
+      "effect": "ask"
+    },
+    {
+      "command": "cat file.ts; ./evil",
+      "effect": "ask"
+    },
+    {
+      "command": "cat /etc/passwd",
+      "effect": "ask"
+    },
+    {
+      "command": "cat ~/.ssh/id_rsa",
+      "effect": "ask"
+    },
+    {
+      "command": "cat \"$HOME/x\"",
+      "effect": "ask"
+    },
+    {
+      "command": "cat ''/etc/passwd",
+      "effect": "ask"
+    },
+    {
+      "command": "grep -f../secret x",
+      "effect": "ask"
+    },
+    {
+      "command": "cat ../../etc/passwd",
+      "effect": "ask"
+    },
+    {
+      "command": "head -n 5 ../../.env",
+      "effect": "ask"
+    },
+    {
+      "command": "cd /etc && cat hosts",
+      "effect": "ask"
+    },
+    {
+      "command": "xxd -r file.bin",
+      "effect": "ask"
+    },
+    {
+      "command": "unzip archive.zip",
+      "effect": "ask"
+    },
+    {
+      "command": "gunzip file.gz",
+      "effect": "ask"
+    },
+    {
+      "command": "git log --oneline | head -20",
+      "effect": "inspection"
+    },
+    {
+      "command": "cat file.ts | head -n 5",
+      "effect": "inspection"
+    },
+    {
+      "command": "cat \\/etc/passwd",
+      "effect": "ask"
+    },
+    {
+      "command": "cat \\.\\./secret",
+      "effect": "ask"
+    },
+    {
+      "command": "find \\/etc -name passwd",
+      "effect": "ask"
+    }
+  ]
+}

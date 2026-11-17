@@ -65,7 +65,7 @@ export default Plugin.define({
     const paths = resolvePaths(ctx.location.directory, options.artifacts)
 
     const tools = await registerTools({ ctx, paths, options, resourcesDir: RESOURCES_DIR })
-    const hooks: HookRegistration[] = await registerHooks({ ctx, paths, options })
+    const hooks: HookRegistration[] = await registerHooks({ ctx, paths, options, resourcesDir: RESOURCES_DIR })
     const skills = await registerSkills(ctx, RESOURCES_DIR)
     const commands = await registerCommands(ctx)
 

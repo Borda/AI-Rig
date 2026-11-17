@@ -387,6 +387,27 @@ export function doctorReport(input: DoctorInput): DoctorReport {
   if (gates.length > 0) pass(`gates: ${gates.map((gate) => gate.id).join(", ")} (${gates[0]?.source})`)
   else warn("no configured gates detected; completion will require an explicit gate exemption")
 
+  if (input.options.inspection) pass("inspection allow is on (read-only inspection and configured verification)")
+  else lines.push("INFO  inspection allow is off; role-agent inspection asks")
+
+  if (input.options.designedWrites)
+    pass("designed Git writes allow is on (review fetch, review worktree, owned staging)")
+  else lines.push("INFO  designed Git writes allow is off; those Git forms ask")
+
+  const execution =
+    input.options.execution === "host"
+      ? "host: untrusted verification relies on a per-commit trust record"
+      : `${input.options.execution}: ${input.options.sandboxImage ? `image ${input.options.sandboxImage}` : "no sandboxImage configured, so a forked PR needs one host trust answer"}`
+  lines.push(`INFO  execution mode ${execution}`)
+
+  const blueprint = readJsonSafe(join(input.packageRoot, "src", "resources", "blueprint-manifest.json"))
+  const entries =
+    blueprint?.entries && typeof blueprint.entries === "object" ? Object.keys(blueprint.entries).length : 0
+  if (!input.options.blueprint)
+    lines.push("INFO  shipped command blocks allow is off; those commands follow the normal rules")
+  else if (entries === 0) warn("blueprint manifest is missing or empty; shipped command blocks will ask")
+  else pass(`shipped command blocks allow is on (${entries} manifest entr${entries === 1 ? "y" : "ies"})`)
+
   if (input.assets) {
     const assets = checkAssets(join(input.packageRoot, "src", "resources"))
     if (assets.failures.length === 0) pass(assets.summary)

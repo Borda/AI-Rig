@@ -70,7 +70,7 @@ describe("rig.json", () => {
     const tools = readFileSync(join(PACKAGE_ROOT, "src", "register", "tools.ts"), "utf8")
     const registered = [...tools.matchAll(/name: "(rig_[a-z_]+)"/g)].map((match) => match[1])
     expect(rig.tools.sort()).toEqual([...new Set(registered)].sort())
-    expect(rig.tools).toHaveLength(7)
+    expect(rig.tools).toHaveLength(10)
   })
 
   it("lists exactly the shipped skills and role agents", () => {
@@ -356,7 +356,18 @@ describe("shipped permissions", () => {
 
   it("declares a well-formed ordered ruleset", () => {
     expect(manifest.schema).toBe(1)
-    const actions = new Set(["read", "edit", "glob", "grep", "list", "shell", "task", "webfetch", "websearch"])
+    const actions = new Set([
+      "read",
+      "edit",
+      "glob",
+      "grep",
+      "list",
+      "shell",
+      "task",
+      "webfetch",
+      "websearch",
+      "rig_trust",
+    ])
     const effects = new Set(["allow", "ask", "deny"])
     expect(rules.length).toBeGreaterThan(0)
     for (const rule of rules) {
@@ -519,7 +530,7 @@ describe("shipped permissions", () => {
     const guide = readFileSync(join(RESOURCES_DIR, "permissions-guide.md"), "utf8")
     expect(guide).toContain("permissions.json")
     for (const rule of rules) expect(guide, rule.resource).toContain(rule.resource)
-    expect(guide).toMatch(/never turns a configured `ask` or `deny` into `allow`/)
+    expect(guide).toMatch(/never turns a configured `deny` into `allow`/)
 
     // The guide's effect column has to agree with the shipped effect, in both directions.
     const tableEffects = new Map<string, string>()

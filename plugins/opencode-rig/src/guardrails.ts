@@ -32,6 +32,10 @@ export interface Classification {
   readonly command: string
   readonly reason: string
   readonly changesDirectory?: boolean
+  /** The grammar accepted a file write: a redirect, a write-valued option, or a Git write. */
+  readonly writes?: boolean
+  /** The grammar accepted a shell, script, or exec channel. */
+  readonly executes?: boolean
 }
 
 export interface Decision {
@@ -1066,8 +1070,8 @@ const WRAPPER_FLAGS: Readonly<Record<string, string>> = {
 }
 
 /** Resolve the same executable identity for every catalogue, retaining exact safe-form eligibility. */
-function programIdentity(value: string): string
-function programIdentity<T extends { value: string }>(
+export function programIdentity(value: string): string
+export function programIdentity<T extends { value: string }>(
   input: readonly T[],
 ): {
   words: T[]
@@ -1076,7 +1080,7 @@ function programIdentity<T extends { value: string }>(
   script: boolean
   fileInput: boolean
 }
-function programIdentity<T extends { value: string }>(
+export function programIdentity<T extends { value: string }>(
   input: string | readonly T[],
 ): string | { words: T[]; safeForm: boolean; module: boolean; script: boolean; fileInput: boolean } {
   if (typeof input === "string") {
@@ -1192,6 +1196,15 @@ function programIdentity<T extends { value: string }>(
   ) {
     words = input.slice(program === "limactl" ? 3 : 1)
     program = "nerdctl"
+  } else if (
+    program === "uv" &&
+    input[1]?.value === "run" &&
+    input[2] &&
+    ["pytest", "ruff", "mypy"].includes(programIdentity(input[2].value))
+  ) {
+    program = programIdentity(input[2].value)
+    words = input.slice(2)
+    safeForm = true
   } else if (
     program === "corepack" &&
     input[1] &&
@@ -1535,6 +1548,18 @@ const READ_OPTIONS: Readonly<Record<string, string>> = {
   cmp: "-b -l -s -i= -n= --print-bytes --verbose --silent --quiet --ignore-initial= --bytes=",
   stat: "-L -f -F -l -n -q -r -s -t= -x --dereference --file-system --format= --printf= --terse",
   file: "-b -c -e= -F= -h -i -k -l -L -m= -n -N -p -P= -r -s -v -z -Z -0 --brief --checking-printout --exclude= --separator= --no-dereference --mime --mime-type --mime-encoding --keep-going --dereference --magic-file= --no-buffer --no-pad --preserve-date --raw --special-files --uncompress",
+  md5sum: "-b -c --binary --check --tag --ignore-missing --quiet --status --strict -w --warn -z --zero",
+  sha1sum: "-b -c --binary --check --tag --ignore-missing --quiet --status --strict -w --warn -z --zero",
+  sha384sum: "-b -c --binary --check --tag --ignore-missing --quiet --status --strict -w --warn -z --zero",
+  sha512sum: "-b -c --binary --check --tag --ignore-missing --quiet --status --strict -w --warn -z --zero",
+  cksum: "-a= --algorithm=",
+  tac: "-b --before -r --regex -s= --separator=",
+  fmt: "-c --crown-margin -p= --prefix= -s --split-only -t --tagged-paragraph -u --uniform-spacing -w= --width=",
+  expand: "-a --all -i --initial -t= --tabs=",
+  unexpand: "-a --all --first-only -t= --tabs=",
+  tsort: "",
+  strings: "-a -f -n= -t= -e= --all --print-file-name --bytes= --radix= --encoding=",
+  zcat: "-f --force -q --quiet -S= --suffix= --help --version",
   less: "-a -c -e -E -f -F -g -G -i -I -j= -J -m -M -n -N -p= -q -Q -r -R -s -S -t= -u -U -w -W -x= -X -y= -z= --ignore-case --IGNORE-CASE --LINE-NUMBERS --RAW-CONTROL-CHARS --quit-if-one-screen --no-init",
   more: "-c -d -f -l -p -s -u -n=",
   cd: "-L -P -e -@",
@@ -2077,6 +2102,10 @@ class ShellGrammar {
    * Set when any command starts a shell, an opaque launcher or a path-named program.
    */
   launches = false
+  /** Set when the grammar accepts a file write. */
+  writes = false
+  /** Set when the grammar accepts a shell, a script file, or an exec channel. */
+  executes = false
   private index = 0
   private readonly text: string
   private depth: number
@@ -2250,7 +2279,9 @@ class ShellGrammar {
     if (/^\/dev\/(?:tcp|udp)\//.test(target.value) || (!target.literal && target.value.startsWith("/dev/")))
       return false
     if (operator !== "<") {
+      if (/^\/dev\/(?:null|stderr|stdout)$/.test(target.value)) return undefined
       if (!this.writeTarget(target)) return false
+      this.writes = true
       onWrite(target)
     }
     return undefined
@@ -2351,7 +2382,9 @@ class ShellGrammar {
         )
           return undefined
         // Word-initial `=` is zsh command-path and process substitution, `^` a zsh negation; `~[` runs a function.
-        if (this.index === start && (char === "=" || char === "^")) return undefined
+        // A word made only of `=` is a data marker (`echo ====`), never a command path.
+        if (this.index === start && char === "=" && !/^=+(?=[ \t\n;&|<>)]|$)/.test(text.slice(start))) return undefined
+        if (this.index === start && char === "^") return undefined
         if (
           this.index === start &&
           char === "~" &&
@@ -2489,6 +2522,12 @@ class ShellGrammar {
     const word = words[0]!
     const args = words.slice(1)
     const program = word.value
+    if (
+      ["echo", "printf"].includes(program) &&
+      args.length > 0 &&
+      args.every((arg) => arg.literal && /^[=-]{2,}$/.test(arg.value))
+    )
+      return true
     const wrapper = Object.hasOwn(WRAPPER_OPERANDS, program) ? wrapperProgram(program, words, 1) : undefined
     const elevation = WRAPPER_OPERANDS[program]?.elevation
     if (elevation === "always-ask" && !(program === "systemd-run" && wrapper?.userMode && !privileged)) return false
@@ -2591,12 +2630,17 @@ class ShellGrammar {
       return false
     if (name === "test") return !args.some((arg) => arg.value.startsWith("@")) && testOperands(args, false)
     // A lone `=` is a literal word; the other test tokens stay test syntax.
-    if (!Object.hasOwn(WRAPPER_OPERANDS, name) && args.some((arg) => arg.special && arg.value !== "=")) return false
+    if (
+      !Object.hasOwn(WRAPPER_OPERANDS, name) &&
+      args.some((arg) => arg.special && arg.value !== "=" && !(DATA_COMMANDS.has(name) && /^[=-]{2,}$/.test(arg.value)))
+    )
+      return false
     if (name === "printf") return external ? appendedOperandsSafe(words) : printfArguments(args)
     // zsh evaluates an exit status as arithmetic, so only a plain number is inert there.
     if (name === "exit") return args.every((arg) => arg.literal && /^-?\d+$/.test(arg.value))
     if (NON_POSIX_SHELLS.has(program)) return false
     const launcher = SHELLS.has(program) || OPAQUE.has(program)
+    if (launcher) this.executes = true
     this.launches ||= launcher || original.value.includes("/")
     // A directory change to a glob or an expansion may enter a hook directory before a relative write.
     this.launches ||= name === "cd" && args.some((arg) => !arg.literal || arg.glob)
@@ -2683,6 +2727,12 @@ class ShellGrammar {
 
   /** Apply the operand contract of a concrete program without treating its input paths as outputs. */
   private programOperands(program: string, args: GrammarWord[], fileInput: boolean): boolean {
+    if (
+      ["echo", "printf"].includes(program) &&
+      args.length > 0 &&
+      args.every((arg) => arg.literal && /^[=-]{2,}$/.test(arg.value))
+    )
+      return true
     if (PROJECT_PROGRAMS.has(program)) return this.projectTool(program, args)
     if (Object.hasOwn(READ_OPTIONS, program)) {
       if (program === "find") return this.findOperands(args)
@@ -2738,17 +2788,28 @@ class ShellGrammar {
         if (formattedInput && !parsed.options.includes("-j")) return false
         if (parsed.operands.some((arg) => !arg.literal || (!formattedInput && !arg.value.startsWith("+")))) return false
       }
-      if (parsed.values.some((value) => value.write))
+      if (parsed.values.some((value) => value.write)) {
+        this.writes = true
         return (
           parsed.values.filter((value) => value.write).every((value) => this.writeOperands([value.word], program)) &&
           this.writeOperands(parsed.operands, program)
         )
-      if (program === "xxd" && parsed.options.includes("-r")) return this.writeOperands(args, program)
-      if (["xxd", "uniq"].includes(program) && parsed.operands.length > 1) return this.writeOperands(args, program)
+      }
+      if (program === "xxd" && parsed.options.includes("-r")) {
+        this.writes = true
+        return this.writeOperands(args, program)
+      }
+      if (["xxd", "uniq"].includes(program) && parsed.operands.length > 1) {
+        this.writes = true
+        return this.writeOperands(args, program)
+      }
       return true
     }
+    if (program === "gh") return true
     if (program === "git") {
       const classification = classifySegment([program, ...args.map((arg) => arg.value)], "", "standard")
+      const readOnlyConfig = classification.kind === "other" && args[0]?.value === "config"
+      if (!readOnlyConfig && classification.kind !== "read-only-git") this.writes = true
       if (classification.kind === "read-only-git") {
         // Git revisions and grep patterns do not expand @files. File-valued options still ask.
         const options = readOptions(args[0]?.value === "grep" ? READ_OPTIONS.grep! : "", args.slice(1))
@@ -2771,6 +2832,7 @@ class ShellGrammar {
       )
     }
     if (fileInput) {
+      if (["python", "node"].includes(program)) this.executes = true
       // Literal script files are launcher inputs. Their absent contents retain the existing file-script limit.
       const script = args.findIndex((arg) => !arg.value.startsWith("-"))
       if (args.slice(0, script).some((arg) => /^-(?:[A-Za-z]*[cemp]|-eval|-print)$/.test(arg.value)))
@@ -2867,9 +2929,11 @@ class ShellGrammar {
       if (FIND_EXEC_OPTIONS.has(arg.value)) {
         while (index + 1 < args.length && ![";", "+"].includes(args[index + 1]!.value)) index += 1
       } else if (/^-(?:fprint0?|fprintf|fls)$/.test(arg.value)) {
+        this.writes = true
         if (!args[index + 1] || !this.writeTarget(args[++index]!)) return false
         if (arg.value === "-fprintf") index += 1
       } else if (arg.value === "-delete") {
+        this.writes = true
         // Deletion is independently classified as destructive; roots must still be ordinary project locations.
         if (!args.filter((word) => !word.value.startsWith("-")).every((word) => this.writeTarget(word))) return false
       } else {
@@ -2909,6 +2973,7 @@ class ShellGrammar {
     for (let index = 0; index < args.length; index += 1) {
       const arg = args[index]!
       if (arg.literal && FIND_EXEC_OPTIONS.has(arg.value)) {
+        this.executes = true
         const target = args[index + 1]
         if (!target?.bare || SHELLS.has(programIdentity(target.value)) || OPAQUE.has(programIdentity(target.value)))
           return false
@@ -3115,17 +3180,23 @@ function wrapperProgram(
   return { index, changesDirectory, replacement, userMode: userMode && !managerTarget }
 }
 
-/** Decide whether text is inside the modelled shell grammar, including bodies a same-text shell may run. */
-function shellGrammar(text: string, depth = 0): boolean {
-  if (depth > MAX_SHELL_DEPTH || text.length > MAX_SHELL_CHARS) return false
+/** The grammar verdict plus the write/exec channels it accepted. */
+function shellGrammarState(text: string, depth = 0): { ok: boolean; writes: boolean; executes: boolean } {
+  if (depth > MAX_SHELL_DEPTH || text.length > MAX_SHELL_CHARS) return { ok: false, writes: false, executes: false }
   const scanner = new ShellGrammar(withoutFences(text), depth)
-  if (!scanner.accepts()) return false
+  const accepted = scanner.accepts()
   // bash f and a remote shell fed a script from a file remain limits: the file's content is absent here.
   // A leading interpreter line is the only comment not read as code: it names the shell, never runs.
-  return (
-    !scanner.launches ||
-    scanner.bodies.every((body) => shellGrammar(body.replace(/^#!\/[A-Za-z0-9_./ -]*\n/, ""), depth + 1))
-  )
+  const ok =
+    accepted &&
+    (!scanner.launches ||
+      scanner.bodies.every((body) => shellGrammar(body.replace(/^#!\/[A-Za-z0-9_./ -]*\n/, ""), depth + 1)))
+  return { ok, writes: scanner.writes, executes: scanner.executes }
+}
+
+/** Decide whether text is inside the modelled shell grammar, including bodies a same-text shell may run. */
+function shellGrammar(text: string, depth = 0): boolean {
+  return shellGrammarState(text, depth).ok
 }
 
 /** Classify supported shell shapes; unsupported Git syntax always asks. */
@@ -3262,7 +3333,9 @@ function classifyShellCommand(
   const windowsAmbiguous = /(?:[A-Za-z]:\\|\\\\)[^\r\n]*(?:git|gh)\.exe\b/i.test(parsed.text)
   // Shell code is quiet only inside the modelled grammar, which subsumes the raw producer gate there.
   // Saved and expanding data bodies are outside the grammar's scope and keep that gate unchanged.
-  const outsideGrammar = context === "code" && !shellGrammar(command, depth)
+  const grammarState =
+    context === "code" ? shellGrammarState(command, depth) : { ok: true, writes: false, executes: false }
+  const outsideGrammar = context === "code" && !grammarState.ok
   const dynamicCode = context !== "code" && rawDynamicCode(command)
   let relevant = parsed.unparsedGit || windowsAmbiguous || dynamicCode
   let uncertain = parsed.uncertain || windowsAmbiguous || dynamicCode
@@ -3649,6 +3722,8 @@ function classifyShellCommand(
   return {
     ...classification,
     changesDirectory,
+    writes: grammarState.writes || (classification as Classification).writes === true,
+    executes: grammarState.executes || (classification as Classification).executes === true,
     bodyHit:
       executableBody ||
       winner.kind !== "other" ||

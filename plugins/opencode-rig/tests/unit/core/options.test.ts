@@ -20,6 +20,11 @@ describe("parseOptions", () => {
       journal: false,
       codemap: "require",
       compactionPreserve: false,
+      inspection: true,
+      designedWrites: true,
+      execution: "fork-sandbox",
+      sandboxImage: "",
+      blueprint: true,
     })
     expect(parsed).toEqual({
       guardrails: "strict",
@@ -32,6 +37,11 @@ describe("parseOptions", () => {
       journal: false,
       codemap: "require",
       compactionPreserve: false,
+      inspection: true,
+      designedWrites: true,
+      execution: "fork-sandbox",
+      sandboxImage: "",
+      blueprint: true,
     })
   })
 

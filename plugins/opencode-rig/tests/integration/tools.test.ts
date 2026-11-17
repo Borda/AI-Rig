@@ -23,6 +23,9 @@ describe("plugin registration", () => {
       "rig_gate",
       "rig_git_grant",
       "rig_loop",
+      "rig_sandbox",
+      "rig_script",
+      "rig_trust",
     ])
     expect(harness.skills).toHaveLength(11)
     expect(harness.skills.map((skill) => skill.id)).toEqual(

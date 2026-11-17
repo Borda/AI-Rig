@@ -7,6 +7,12 @@ description: Verify and resolve review findings, account for every finding in a 
 
 > Read [Evidence rules](../../references/evidence.md) and [Commit handoff](../../references/commit-handoff.md). Follow [Role dispatch](../../references/evidence.md#role-dispatch) for every implementer, verifier, and reviewer, including the native-agent fallback and stop on reported scope violations.
 
+Start with the project check:
+
+```bash
+git status --porcelain
+```
+
 ## Input
 
 - A `findings.json` artifact and its run ID.

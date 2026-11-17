@@ -8,6 +8,7 @@
 
 export type GuardrailMode = "standard" | "strict" | "off"
 export type CodemapMode = "auto" | "off" | "require"
+export type ExecutionMode = "fork-sandbox" | "all-sandbox" | "host"
 
 export interface RigOptions {
   readonly guardrails: GuardrailMode
@@ -16,6 +17,16 @@ export interface RigOptions {
   readonly gateTimeoutMs: number
   readonly maxParallel: number
   readonly maxLoopRounds: number
+  /** Allow the hook's positive read-only inspection model inside role agents. */
+  readonly inspection: boolean
+  /** Allow the narrow designed Git writes (review fetch/worktree, owned staging). */
+  readonly designedWrites: boolean
+  /** Where a forked pull request's verification runs. */
+  readonly execution: ExecutionMode
+  /** Pinned container image for sandbox execution; empty means no sandbox is available. */
+  readonly sandboxImage: string
+  /** Allow the hook to accept exact-text shipped command blocks. */
+  readonly blueprint: boolean
   readonly ttlDays: number
   readonly journal: boolean
   readonly codemap: CodemapMode
@@ -29,6 +40,11 @@ export const DEFAULT_OPTIONS: RigOptions = {
   gateTimeoutMs: 600_000,
   maxParallel: 4,
   maxLoopRounds: 3,
+  inspection: true,
+  designedWrites: true,
+  execution: "fork-sandbox",
+  sandboxImage: "",
+  blueprint: true,
   ttlDays: 30,
   journal: true,
   codemap: "auto",
@@ -37,6 +53,7 @@ export const DEFAULT_OPTIONS: RigOptions = {
 
 const GUARDRAIL_MODES: readonly GuardrailMode[] = ["standard", "strict", "off"]
 const CODEMAP_MODES: readonly CodemapMode[] = ["auto", "off", "require"]
+const EXECUTION_MODES: readonly ExecutionMode[] = ["fork-sandbox", "all-sandbox", "host"]
 
 export class OptionError extends Error {
   constructor(message: string) {
@@ -76,6 +93,13 @@ function readString(raw: Record<string, unknown>, key: string, fallback: string)
   return value
 }
 
+function readStringAllowEmpty(raw: Record<string, unknown>, key: string, fallback: string): string {
+  const value = raw[key]
+  if (value === undefined) return fallback
+  if (typeof value !== "string") throw new OptionError(`'${key}' must be a string`)
+  return value
+}
+
 function readBoolean(raw: Record<string, unknown>, key: string, fallback: boolean): boolean {
   const value = raw[key]
   if (value === undefined) return fallback
@@ -99,6 +123,11 @@ const KNOWN_KEYS = new Set([
   "gateTimeoutMs",
   "maxParallel",
   "maxLoopRounds",
+  "inspection",
+  "designedWrites",
+  "execution",
+  "sandboxImage",
+  "blueprint",
   "ttlDays",
   "journal",
   "codemap",
@@ -124,6 +153,11 @@ export function parseOptions(raw: unknown): RigOptions {
     gateTimeoutMs: readNumber(raw, "gateTimeoutMs", DEFAULT_OPTIONS.gateTimeoutMs, 1_000, 3_600_000),
     maxParallel: Math.trunc(readNumber(raw, "maxParallel", DEFAULT_OPTIONS.maxParallel, 1, 16)),
     maxLoopRounds: Math.trunc(readNumber(raw, "maxLoopRounds", DEFAULT_OPTIONS.maxLoopRounds, 1, 10)),
+    inspection: readBoolean(raw, "inspection", DEFAULT_OPTIONS.inspection),
+    designedWrites: readBoolean(raw, "designedWrites", DEFAULT_OPTIONS.designedWrites),
+    execution: readEnum(raw, "execution", EXECUTION_MODES, DEFAULT_OPTIONS.execution),
+    sandboxImage: readStringAllowEmpty(raw, "sandboxImage", DEFAULT_OPTIONS.sandboxImage),
+    blueprint: readBoolean(raw, "blueprint", DEFAULT_OPTIONS.blueprint),
     ttlDays: Math.trunc(readNumber(raw, "ttlDays", DEFAULT_OPTIONS.ttlDays, 1, 3_650)),
     journal: readBoolean(raw, "journal", DEFAULT_OPTIONS.journal),
     codemap: readEnum(raw, "codemap", CODEMAP_MODES, DEFAULT_OPTIONS.codemap),

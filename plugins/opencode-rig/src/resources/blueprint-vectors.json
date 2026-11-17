@@ -1,0 +1,21 @@
+{
+  "normalize": [
+    { "in": "git status --porcelain\r\n", "out": "git status --porcelain" },
+    { "in": "git status  --porcelain   # note", "out": "git status  --porcelain" },
+    { "in": "echo '# keep' # drop", "out": "echo '# keep'" },
+    { "in": "a\n\n\n\nb", "out": "a\n\nb" }
+  ],
+  "fragments": [
+    { "in": "a && b || c | d; e\nf", "out": ["a", "b", "c", "d", "e", "f"] },
+    { "in": "echo 'a && b'", "out": ["echo 'a && b'"] },
+    { "in": "git diff --stat", "out": ["git diff --stat"] }
+  ],
+  "unsafe": [
+    { "in": "cat <<'E'\nx\nE\n", "reason": "heredoc" },
+    { "in": "echo 'unterminated", "reason": "unterminated quote" },
+    { "in": "echo \\\n x", "reason": "line continuation" },
+    { "in": "cat <<\\EOF\nrm -rf x\nEOF\n", "reason": "heredoc" },
+    { "in": "git diff\u000b#; echo INJECTED", "reason": "non-ASCII whitespace or control character" },
+    { "in": "git diff\u0085#; echo INJECTED", "reason": "non-ASCII whitespace or control character" }
+  ]
+}

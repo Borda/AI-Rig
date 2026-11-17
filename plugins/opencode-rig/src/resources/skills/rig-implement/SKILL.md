@@ -34,6 +34,7 @@ description: Execute a frozen plan or a trivial change with an inline mini-plan,
 - Preserve unrelated working-tree changes.
 - Never revert a path that is not in an `in-scope` row. Before reverting, discarding, or overwriting a change you did not author, establish whether it is intended; ask when the tree is shared.
 - Keep the change minimal: no opportunistic refactors outside the plan.
+- Write ad-hoc probes as files under the run's `scripts/` directory and run them with `rig_script` (`source: "run"`, fixed interpreter, `argv` list); a project tool under `scripts/`, `bin/` or `tools/` uses `source: "project"`. Do not inline a `-c` body, a heredoc or a `mktemp` script: an inline body has no file provenance and asks.
 - Report incomplete work as incomplete; a partial fix with a clear stop is valid.
 
 ## Output

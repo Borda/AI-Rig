@@ -9,6 +9,12 @@ description: Improve a measured performance metric in guarded rounds against a c
 
 > This workflow changes code, one measured variable at a time. It never commits, pushes, or rewrites history; a human or `rig-implement` owns the commit.
 
+Start with the project check:
+
+```bash
+git status --porcelain
+```
+
 ## Preconditions
 
 - The benchmark is an already-configured gate. Detect it with `rig_gate` and `action: "detect"`.

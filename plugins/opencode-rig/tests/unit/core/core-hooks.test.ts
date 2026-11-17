@@ -1,17 +1,21 @@
 /** Permission scope and content-free journal contracts. */
-import { chmodSync, readFileSync, statSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { TRUST_WORDS, writeTrust } from "../../../src/trust.ts"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { sha256 } from "../../../src/digest.ts"
 import * as grants from "../../../src/git-grant.ts"
 import { DEFAULT_OPTIONS } from "../../../src/options.ts"
 import * as pathsModule from "../../../src/paths.ts"
 import { registerHooks } from "../../../src/register/hooks.ts"
-import { createHarness, Project } from "../../helpers/harness.ts"
+import { createHarness, RESOURCES_DIR, Project } from "../../helpers/harness.ts"
 
 afterEach(() => vi.restoreAllMocks())
 
-async function permissionHook() {
-  const project = new Project()
+async function permissionHook(overrides: Partial<typeof DEFAULT_OPTIONS> = {}, sharedProject?: Project) {
+  const project = sharedProject ?? new Project()
   const paths = {
     projectRoot: project.root,
     artifactRoot: project.path("artifacts"),
@@ -27,9 +31,280 @@ async function permissionHook() {
       },
     },
   }
-  await registerHooks({ ctx, paths, options: { ...DEFAULT_OPTIONS, journal: false, compactionPreserve: false } })
+  await registerHooks({
+    ctx,
+    paths,
+    options: { ...DEFAULT_OPTIONS, journal: false, compactionPreserve: false, ...overrides },
+    resourcesDir: RESOURCES_DIR,
+  })
   return callback
 }
+
+describe("inspection allow", () => {
+  it.each(["sed -n 1,20p src/a.ts", "grep -n x -A 40 src/a.ts", "git diff HEAD --stat", "uv run pytest tests -q"])(
+    "allows positively modelled inspection: %s",
+    async (command) => {
+      const hook = await permissionHook()
+      const event: any = { action: "shell", resources: [command], effect: "ask" }
+      await hook(event)
+      expect(event.effect).toBe("allow")
+      expect(event.message).toMatch(/inspection|verification/)
+    },
+  )
+
+  it.each([
+    "cat src/a.ts > out.txt",
+    "sort -o out.txt src/a.ts",
+    "git rm src/a.ts",
+    "bash script.sh",
+    "ls && ./evil",
+    "./cat src/a.ts",
+  ])("leaves a write or exec command to the rules: %s", async (command) => {
+    const hook = await permissionHook()
+    const event: any = { action: "shell", resources: [command], effect: "ask" }
+    await hook(event)
+    expect(event.effect).toBe("ask")
+  })
+
+  it("never overrides a host deny", async () => {
+    const hook = await permissionHook()
+    const event: any = { action: "shell", resources: ["git diff HEAD --stat"], effect: "deny" }
+    await hook(event)
+    expect(event.effect).toBe("deny")
+  })
+
+  it("leaves inspection to the rules when the option is off", async () => {
+    const hook = await permissionHook({ inspection: false })
+    const event: any = { action: "shell", resources: ["git diff HEAD --stat"], effect: "ask" }
+    await hook(event)
+    expect(event.effect).toBe("ask")
+  })
+
+  it("asks when one resource in the event fails the positive model", async () => {
+    const hook = await permissionHook()
+    const event: any = { action: "shell", resources: ["cat src/a.ts", "cat src/a.ts > out.txt"], effect: "ask" }
+    await hook(event)
+    expect(event.effect).toBe("ask")
+  })
+
+  it("does not apply the inspection allow to execute events", async () => {
+    const hook = await permissionHook()
+    const event: any = { action: "execute", resources: ["git diff HEAD --stat"], effect: "ask" }
+    await hook(event)
+    expect(event.effect).toBe("ask")
+  })
+})
+
+describe("designed Git writes", () => {
+  const sha = "0123456789abcdef0123456789abcdef01234567"
+  const fetchForm =
+    "git fetch --no-tags --no-write-fetch-head --no-auto-maintenance https://example.invalid/o/r.git refs/pull/563/head:refs/rig-review/pr-563-0123456789ab"
+
+  it.each([
+    fetchForm,
+    `git worktree add --detach ${join(tmpdir(), "opencode/review-pr563")} ${sha}`,
+    `git worktree remove ${join(tmpdir(), "opencode/review-pr563")}`,
+    "git add src/a.ts",
+  ])("allows %s", async (command) => {
+    const hook = await permissionHook()
+    const event: any = { action: "shell", resources: [command], effect: "ask" }
+    await hook(event)
+    expect(event.effect).toBe("allow")
+    expect(event.message).toMatch(/designed Git write/)
+  })
+
+  it.each(["git fetch origin", "git worktree remove /tmp/elsewhere", "git add -A", "git add src/a.ts && rm -rf src"])(
+    "leaves %s to the rules",
+    async (command) => {
+      const hook = await permissionHook()
+      const event: any = { action: "shell", resources: [command], effect: "ask" }
+      await hook(event)
+      expect(event.effect).toBe("ask")
+    },
+  )
+
+  it("never overrides a host deny", async () => {
+    const hook = await permissionHook()
+    const event: any = { action: "shell", resources: ["git add src/a.ts"], effect: "deny" }
+    await hook(event)
+    expect(event.effect).toBe("deny")
+  })
+
+  it("is disabled by designedWrites: false", async () => {
+    const hook = await permissionHook({ designedWrites: false })
+    const event: any = { action: "shell", resources: ["git add src/a.ts"], effect: "ask" }
+    await hook(event)
+    expect(event.effect).toBe("ask")
+  })
+})
+
+describe("all-sandbox execution mode", () => {
+  it("refuses host verification even in the project root but keeps inspection", async () => {
+    const project = Project.withCommit()
+    const hook = await permissionHook({ execution: "all-sandbox" }, project)
+    const verification: any = { action: "shell", resources: ["python -m pytest tests -q"], effect: "ask" }
+    await hook(verification)
+    expect(verification.effect).toBe("ask")
+    const inspection: any = { action: "shell", resources: ["git status --porcelain"], effect: "ask" }
+    await hook(inspection)
+    expect(inspection.effect).toBe("allow")
+    const alreadyAllowed: any = { action: "shell", resources: ["python -m pytest tests -q"], effect: "allow" }
+    await hook(alreadyAllowed)
+    expect(alreadyAllowed.effect).toBe("ask")
+  })
+})
+
+describe("verification trust", () => {
+  function reviewRepo(): { root: string; commit: string } {
+    mkdirSync(join(tmpdir(), "opencode"), { recursive: true })
+    const root = mkdtempSync(join(tmpdir(), "opencode/review-"))
+    const run = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: "ignore" })
+    run("init", "-q")
+    run("config", "user.email", "rig@example.com")
+    run("config", "user.name", "Rig Test")
+    run("config", "commit.gpgsign", "false")
+    writeFileSync(join(root, "probe.txt"), "third-party code\n")
+    run("add", "-A")
+    run("commit", "-qm", "third-party")
+    return { root, commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim() }
+  }
+
+  async function ask(command: string, project: Project) {
+    const hook = await permissionHook({}, project)
+    const event: any = { action: "shell", resources: [command], effect: "ask" }
+    await hook(event)
+    return event
+  }
+
+  it("allows read-only inspection in a fetched worktree but asks for verification", async () => {
+    const project = Project.withCommit()
+    const review = reviewRepo()
+    try {
+      expect((await ask(`cd ${review.root} && git diff --stat`, project)).effect).toBe("allow")
+      expect((await ask(`cd ${review.root} && python -m pytest tests -q`, project)).effect).toBe("ask")
+      expect((await ask("cat ../../etc/passwd", project)).effect).toBe("ask")
+      expect((await ask("cd /etc && cat hosts", project)).effect).toBe("ask")
+    } finally {
+      rmSync(review.root, { recursive: true, force: true })
+    }
+  })
+
+  it("allows verification after a matching per-commit trust record", async () => {
+    const project = Project.withCommit()
+    const review = reviewRepo()
+    try {
+      writeTrust(project.path("artifacts"), {
+        commit: review.commit,
+        worktree: review.root,
+        ref: "refs/rig-review/pr-563-0123456789ab",
+        words: TRUST_WORDS,
+      })
+      const event = await ask(`cd ${review.root} && python -m pytest tests -q`, project)
+      expect(event.effect).toBe("allow")
+      expect(event.message).toMatch(/trusted/)
+    } finally {
+      rmSync(review.root, { recursive: true, force: true })
+    }
+  })
+
+  it("asks again after the worktree commit changes", async () => {
+    const project = Project.withCommit()
+    const review = reviewRepo()
+    try {
+      writeTrust(project.path("artifacts"), {
+        commit: review.commit,
+        worktree: review.root,
+        ref: "refs/rig-review/pr-563-0123456789ab",
+        words: TRUST_WORDS,
+      })
+      writeFileSync(join(review.root, "next.txt"), "next\n")
+      execFileSync("git", ["add", "-A"], { cwd: review.root, stdio: "ignore" })
+      execFileSync("git", ["commit", "-qm", "next"], { cwd: review.root, stdio: "ignore" })
+      expect((await ask(`cd ${review.root} && python -m pytest tests -q`, project)).effect).toBe("ask")
+    } finally {
+      rmSync(review.root, { recursive: true, force: true })
+    }
+  })
+
+  it("allows verification in the project root without a record", async () => {
+    const project = Project.withCommit()
+    expect((await ask("python -m pytest tests -q", project)).effect).toBe("allow")
+    expect((await ask(`cd ${project.root} && python -m pytest tests -q`, project)).effect).toBe("allow")
+  })
+
+  it("allows verification in a project subdirectory", async () => {
+    const project = Project.withCommit()
+    mkdirSync(project.path("packages/api"), { recursive: true })
+    expect((await ask(`cd ${project.root}/packages/api && python -m pytest -q`, project)).effect).toBe("allow")
+  })
+
+  it("refuses a verification hidden behind a proven compound prefix", async () => {
+    const project = Project.withCommit()
+    const review = reviewRepo()
+    try {
+      expect((await ask(`echo ok && cd ${review.root} && python -m pytest tests -q`, project)).effect).toBe("ask")
+      expect((await ask(`cd ${review.root} && python -m pytest tests -q && cd ${project.root}`, project)).effect).toBe(
+        "ask",
+      )
+    } finally {
+      rmSync(review.root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("shipped command blocks", () => {
+  it("allows an exact shipped command and a compound of shipped fragments", async () => {
+    const hook = await permissionHook()
+    const single: any = { action: "shell", resources: ["test -f package.json"], effect: "ask" }
+    await hook(single)
+    expect(single.effect).toBe("allow")
+    expect(single.message).toMatch(/shipped command block/)
+
+    const compound: any = {
+      action: "shell",
+      resources: ["git status --porcelain\ngit diff --stat"],
+      effect: "ask",
+    }
+    await hook(compound)
+    expect(compound.effect).toBe("allow")
+  })
+
+  it("asks when a fragment is not shipped or the option is off", async () => {
+    const hook = await permissionHook()
+    const compound: any = { action: "shell", resources: ["git status --porcelain && git push"], effect: "ask" }
+    await hook(compound)
+    expect(compound.effect).toBe("ask")
+
+    const off = await permissionHook({ blueprint: false })
+    const command: any = { action: "shell", resources: ["test -f package.json"], effect: "ask" }
+    await off(command)
+    expect(command.effect).toBe("ask")
+  })
+
+  it("never overrides a host deny", async () => {
+    const hook = await permissionHook()
+    const event: any = { action: "shell", resources: ["test -f package.json"], effect: "deny" }
+    await hook(event)
+    expect(event.effect).toBe("deny")
+  })
+
+  it("does not let a non-inspection shipped block bypass all-sandbox", async () => {
+    const hook = await permissionHook({ execution: "all-sandbox" })
+    const event: any = { action: "shell", resources: ["test -f package.json"], effect: "ask" }
+    await hook(event)
+    expect(event.effect).toBe("ask")
+  })
+
+  it("refuses non-ASCII whitespace and heredoc bodies", async () => {
+    const hook = await permissionHook()
+    const injected: any = { action: "shell", resources: ["git diff\u000b#; echo INJECTED"], effect: "ask" }
+    await hook(injected)
+    expect(injected.effect).toBe("ask")
+    const heredoc: any = { action: "shell", resources: ["cat <<\\EOF\nrm -rf x\nEOF\n"], effect: "ask" }
+    await hook(heredoc)
+    expect(heredoc.effect).toBe("ask")
+  })
+})
 
 describe("grant evaluation", () => {
   it.each(["npm test", "git status", "git push origin main"])("does not resolve a grant for %s", async (command) => {

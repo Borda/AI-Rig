@@ -400,6 +400,11 @@
       "action": "shell",
       "resource": "* --output *",
       "effect": "ask"
+    },
+    {
+      "action": "rig_trust",
+      "resource": "*",
+      "effect": "ask"
     }
   ]
 }

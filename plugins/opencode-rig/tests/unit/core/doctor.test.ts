@@ -1,7 +1,8 @@
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { checkAssets } from "../../../src/doctor.ts"
-import { Project, RESOURCES_DIR } from "../../helpers/harness.ts"
+import { checkAssets, doctorReport } from "../../../src/doctor.ts"
+import { DEFAULT_OPTIONS } from "../../../src/options.ts"
+import { PACKAGE_ROOT, Project, RESOURCES_DIR } from "../../helpers/harness.ts"
 
 const LONG_SHARED_LINE =
   "- Do not present a reproduced result as a general guarantee when the environment differs from the reported one."
@@ -17,6 +18,20 @@ function fixture(project: Project, skills: Record<string, string>): string {
 }
 
 describe("checkAssets", () => {
+  it("reports the allow state and execution mode", () => {
+    const project = Project.withCommit()
+    const report = doctorReport({
+      packageRoot: PACKAGE_ROOT,
+      projectRoot: project.root,
+      artifactRoot: project.path(".opencode-rig"),
+      pluginListed: true,
+      options: DEFAULT_OPTIONS,
+    })
+    expect(report.lines.join("\n")).toMatch(/inspection allow is on/)
+    expect(report.lines.join("\n")).toMatch(/execution mode fork-sandbox/)
+    expect(report.lines.join("\n")).toMatch(/shipped command blocks allow is on/)
+  })
+
   it("passes the shipped package with no failures", () => {
     const result = checkAssets(RESOURCES_DIR)
     expect(result.failures).toEqual([])

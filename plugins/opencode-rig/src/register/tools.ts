@@ -32,6 +32,9 @@ import {
   type FindingsDocument,
 } from "../findings.ts"
 import { detectGates, runGate, type GateResult, type GateSpec } from "../gates.ts"
+import { executeScript, INTERPRETERS, resolveScript, type ScriptInterpreter, type ScriptSource } from "../script.ts"
+import { detectRuntime, isPinnedImage, runInSandbox } from "../sandbox.ts"
+import { isReviewWorktree, readTrust, TRUST_WORDS, writeTrust } from "../trust.ts"
 import { grantPath, readGrant, revokeGrant, writeGrant } from "../git-grant.ts"
 import { markdownSection, planTreeState } from "../plan.ts"
 import {
@@ -498,6 +501,63 @@ const DISPATCH_INPUT = {
     keep_session: { type: "boolean", description: "Keep the child session for inspection. Defaults to false." },
   },
   required: ["role", "task"],
+  additionalProperties: false,
+} as const
+
+const SCRIPT_INPUT = {
+  type: "object",
+  properties: {
+    source: {
+      type: "string",
+      enum: ["run", "project", "plugin"],
+      description:
+        "run: the active run's scripts/ directory; project: scripts/, bin/ or tools/; plugin: the installed package's bin/ or scripts/.",
+    },
+    path: { type: "string", description: "Script file path inside the chosen source root." },
+    interpreter: { type: "string", enum: [...INTERPRETERS], description: "Fixed interpreter used to run the file." },
+    argv: {
+      type: "array",
+      items: { type: "string" },
+      description: "Arguments after the script path; never a shell string.",
+    },
+    timeout_ms: { type: "number", description: "Bounded runtime, between 1000 and 3600000 milliseconds." },
+  },
+  required: ["source", "path", "interpreter"],
+  additionalProperties: false,
+} as const
+
+const TRUST_INPUT = {
+  type: "object",
+  properties: {
+    action: {
+      type: "string",
+      enum: ["approve", "status"],
+      description: "approve records one commit; status lists records.",
+    },
+    commit: { type: "string", description: "Fetched PR head commit (40-hex); required by approve." },
+    worktree: { type: "string", description: "Absolute review worktree path under <temp>/opencode/review-*." },
+    ref: { type: "string", description: "The dedicated refs/rig-review/pr-<n>-<sha12> ref." },
+    confirm: { type: "string", description: "The user's literal 'Trust this PR' answer; required by approve." },
+  },
+  required: ["action"],
+  additionalProperties: false,
+} as const
+
+const SANDBOX_INPUT = {
+  type: "object",
+  properties: {
+    worktree: { type: "string", description: "Absolute worktree to copy into the sandbox." },
+    argv: {
+      type: "array",
+      items: { type: "string" },
+      minItems: 1,
+      description: "Command and arguments, never a shell string.",
+    },
+    timeout_ms: { type: "number", description: "Bounded runtime, between 1000 and 3600000 milliseconds." },
+    network: { type: "boolean", description: "Opt in to container networking; the default is off." },
+    image: { type: "string", description: "Pinned image overriding options.sandboxImage." },
+  },
+  required: ["worktree", "argv"],
   additionalProperties: false,
 } as const
 
@@ -1345,6 +1405,216 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
     })
   })
   registrations.push(doctor)
+
+  const script = await ctx.tool.transform((editor: any) => {
+    editor.add({
+      name: "rig_script",
+      description:
+        "Run a declared script file with a fixed interpreter and a receipt: source class, digest, argv, exit code, stream digests and a redacted tail. A run probe lives under the active run's scripts/, a project tool under scripts/, bin/ or tools/, and a plugin helper must match the shipped listing. It proves what ran, not that it is safe.",
+      input: SCRIPT_INPUT,
+      options: { codemode: true, permission: "rig_script" },
+      execute: async (raw: unknown, context: any) => {
+        const input = raw as {
+          source: ScriptSource
+          path: string
+          interpreter: ScriptInterpreter
+          argv?: string[]
+          timeout_ms?: number
+        }
+        if (!["run", "project", "plugin"].includes(input.source))
+          throw new Error(`unknown script source: ${String(input.source)}`)
+        if (!(INTERPRETERS as readonly string[]).includes(input.interpreter))
+          throw new Error(`unknown interpreter: ${String(input.interpreter)}`)
+        const active =
+          typeof context.sessionID === "string" ? activeRun(paths.artifactRoot, context.sessionID) : undefined
+        const runDirectory = active ? join(paths.runsRoot, safeName(active.skill), safeName(active.runId)) : undefined
+        const logDirectory = runDirectory ? join(runDirectory, "scripts") : join(paths.artifactRoot, "scripts")
+        const packageRoot = resolve(resourcesDir, "..", "..")
+        const pluginFiles =
+          input.source === "plugin"
+            ? readJsonIfExists<{ files?: Record<string, string> }>(join(resourcesDir, "plugin-files.json"))?.files
+            : undefined
+        const request = {
+          source: input.source,
+          path: input.path,
+          interpreter: input.interpreter,
+          argv: input.argv ?? [],
+          timeoutMs: input.timeout_ms ?? options.gateTimeoutMs,
+          projectRoot: paths.projectRoot,
+          packageRoot,
+          runsRoot: paths.runsRoot,
+          ...(runDirectory ? { runDirectory } : {}),
+          ...(pluginFiles ? { pluginFiles } : {}),
+          logDirectory,
+        }
+        // Resolve and validate before the permission prompt names a path.
+        const resolved = resolveScript(request)
+
+        await ctx.permission.assert({
+          sessionID: context.sessionID,
+          agent: context.agent,
+          source: { type: "tool", messageID: context.messageID, id: context.id },
+          action: "rig_script",
+          resources: [resolved.absolute],
+          metadata: { source: input.source, interpreter: input.interpreter },
+        })
+
+        const receipt = await executeScript(request)
+        const receiptPath = `${receipt.log_path}.json`
+        writeJsonAtomic(receiptPath, receipt)
+        return {
+          content: [input.source === "run" ? "Run probe executed." : "Script executed.", json(receipt)].join("\n"),
+          metadata: {
+            status: receipt.status,
+            exit_code: receipt.exit_code,
+            digest: receipt.digest,
+            log_path: receipt.log_path,
+            receipt_path: receiptPath,
+          },
+        }
+      },
+    })
+  })
+  registrations.push(script)
+
+  const trust = await ctx.tool.transform((editor: any) => {
+    editor.add({
+      name: "rig_trust",
+      description:
+        "Read or record the per-commit trust decision for a forked pull request. A record allows that worktree's verification on the host only at the recorded commit, expires, and is never a general allow. Recording requires the user's literal 'Trust this PR' answer.",
+      input: TRUST_INPUT,
+      options: { codemode: true, permission: "rig_trust" },
+      execute: async (raw: unknown, context: any) => {
+        const input = raw as {
+          action: "approve" | "status"
+          commit?: string
+          worktree?: string
+          ref?: string
+          confirm?: string
+        }
+        if (input.action === "status") {
+          return {
+            content: json({ words: TRUST_WORDS, records: readTrust(paths.artifactRoot, input.commit) }),
+            metadata: { count: readTrust(paths.artifactRoot, input.commit).length },
+          }
+        }
+        if (input.action !== "approve") throw new Error(`unknown trust action: ${String(input.action)}`)
+        if (!input.commit || !input.worktree || !input.ref) throw new Error("approve requires commit, worktree and ref")
+        if (!isAbsolute(input.worktree) || !isReviewWorktree(input.worktree))
+          throw new Error("worktree must be an absolute path under <temp>/opencode/review-*")
+        const realWorktree = realpathSync(input.worktree)
+        if (input.confirm !== TRUST_WORDS)
+          throw new Error(`approve requires the user's literal '${TRUST_WORDS}' answer in confirm`)
+
+        await ctx.permission.assert({
+          sessionID: context.sessionID,
+          agent: context.agent,
+          source: { type: "tool", messageID: context.messageID, id: context.id },
+          action: "rig_trust",
+          resources: [realWorktree],
+          metadata: { commit: input.commit },
+        })
+        const active =
+          typeof context.sessionID === "string" ? activeRun(paths.artifactRoot, context.sessionID) : undefined
+        const record = writeTrust(paths.artifactRoot, {
+          commit: input.commit,
+          worktree: realWorktree,
+          ref: input.ref,
+          words: input.confirm,
+          ...(active ? { runId: active.runId } : {}),
+        })
+        return {
+          content: `Trusted the fetched commit for host verification.\n${json(record)}\nThe record covers this commit only and expires; a different commit asks again.`,
+          metadata: { commit: record.commit, expires_at: record.expires_at },
+        }
+      },
+    })
+  })
+  registrations.push(trust)
+
+  const sandbox = await ctx.tool.transform((editor: any) => {
+    editor.add({
+      name: "rig_sandbox",
+      description:
+        "Run a forked pull request's verification in a container: the worktree is copied, the image is pinned, the network is off by default, and the receipt records image, command, exit and log. It does not run host code; without a container runtime it reports the verification as unavailable.",
+      input: SANDBOX_INPUT,
+      options: { codemode: true, permission: "rig_sandbox" },
+      execute: async (raw: unknown, context: any) => {
+        const input = raw as {
+          worktree: string
+          argv: string[]
+          timeout_ms?: number
+          network?: boolean
+          image?: string
+        }
+        if (!Array.isArray(input.argv) || input.argv.length === 0 || input.argv.some((arg) => typeof arg !== "string"))
+          throw new Error("argv must be a nonempty array of strings")
+        if (!isAbsolute(input.worktree)) throw new Error("worktree must be an absolute path")
+        const image = input.image?.trim() || options.sandboxImage
+        if (!image)
+          throw new Error(
+            "no sandbox image is configured; set sandboxImage to <repository>@sha256:<64 hex> (see docker image inspect --format '{{index .RepoDigests 0}}'), or ask the user to trust this commit with rig_trust",
+          )
+        if (!isPinnedImage(image))
+          throw new Error("sandbox image must be digest-pinned as <repository>@sha256:<64 hex>")
+        const realWorktree = realpathSync(input.worktree)
+        if (realWorktree !== realpathSync(paths.projectRoot) && !isReviewWorktree(realWorktree))
+          throw new Error("worktree must be the project root or a review worktree under <temp>/opencode/review-*")
+        const active =
+          typeof context.sessionID === "string" ? activeRun(paths.artifactRoot, context.sessionID) : undefined
+        const logDirectory = active
+          ? join(paths.runsRoot, safeName(active.skill), safeName(active.runId), "sandbox")
+          : join(paths.artifactRoot, "sandbox")
+        await ctx.permission.assert({
+          sessionID: context.sessionID,
+          agent: context.agent,
+          source: { type: "tool", messageID: context.messageID, id: context.id },
+          action: "rig_sandbox",
+          resources: [realWorktree],
+          metadata: { image },
+        })
+
+        if (!detectRuntime()) {
+          const receiptPath = join(ensureDir(logDirectory), `unavailable-${randomUUID().slice(0, 8)}.json`)
+          const record = {
+            status: "unavailable",
+            reason: "no container runtime (docker or podman) is available",
+            worktree: resolve(input.worktree),
+            argv: input.argv,
+            image,
+            requested_at: new Date().toISOString(),
+          }
+          writeJsonAtomic(receiptPath, record)
+          return {
+            content: `No container runtime (docker or podman) is available. The verification did not run; record it as unverified.\n${json(record)}`,
+            metadata: { status: "unavailable", receipt_path: receiptPath },
+          }
+        }
+
+        const receipt = await runInSandbox({
+          worktree: input.worktree,
+          argv: input.argv,
+          image,
+          timeoutMs: input.timeout_ms ?? options.gateTimeoutMs,
+          ...(input.network === true ? { network: true } : {}),
+          logDirectory,
+        })
+        const receiptPath = `${receipt.log_path}.json`
+        writeJsonAtomic(receiptPath, receipt)
+        return {
+          content: ["Sandbox verification executed.", json(receipt)].join("\n"),
+          metadata: {
+            status: receipt.status,
+            exit_code: receipt.exit_code,
+            image: receipt.image,
+            log_path: receipt.log_path,
+            receipt_path: receiptPath,
+          },
+        }
+      },
+    })
+  })
+  registrations.push(sandbox)
 
   return registrations
 }

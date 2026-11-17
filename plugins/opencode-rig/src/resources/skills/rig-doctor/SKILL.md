@@ -7,6 +7,12 @@ description: Check opencode-rig install health, including plugin load, version s
 
 Run `rig_doctor` with `action: "report"` and interpret the report. Diagnosis is read-only; deletion requires the separate confirmed cleanup path below.
 
+Start with the project check:
+
+```bash
+test -f package.json
+```
+
 ## Checks
 
 - Plugin is loaded and reports the expected version.

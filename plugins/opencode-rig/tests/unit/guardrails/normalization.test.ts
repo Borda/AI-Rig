@@ -81,7 +81,7 @@ describe("executable text boundaries", () => {
     ["git commit -m '--amend'", "plain-commit"],
     ["git status 2>&1", "read-only-git"],
     ["git diff HEAD > x.patch", "read-only-git"],
-    ["git rev-parse --show-toplevel 2>/dev/null", "unparsed-git"],
+    ["git rev-parse --show-toplevel 2>/dev/null", "read-only-git"],
     ["git commit -F - <<'EOF'\n$(git push)\nEOF\n", "unparsed-git"],
     ["git add src/*.ts", "unparsed-git"],
     ['echo "$(printf safe)"', "other"],

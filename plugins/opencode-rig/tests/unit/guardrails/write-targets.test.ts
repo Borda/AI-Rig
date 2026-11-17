@@ -271,13 +271,10 @@ const WRITE_COSTS = [
   "env -P /bin echo hi",
   "ssh -i ~/.ssh/id_ed25519 host uptime",
   "git log --oneline | comm -12 - other.txt",
-  "git rev-parse --show-toplevel 2>/dev/null",
   "git add src/*.ts",
   "git commit -F - <<'EOF'\n$(git push)\nEOF\n",
-  "gh api repos/o/r --jq '.name'",
   "cmd /c echo 'hello world'",
   "comm -12 - other.txt",
-  "gh api repos/owner/repo --jq '.rm'",
   "uniq - x.sh <<'EOF'\necho ok\nEOF\n",
   "bash --rcfile /dev/null script.sh",
   "git checkout -",
@@ -285,10 +282,6 @@ const WRITE_COSTS = [
   "git log --oneline | sed -n '/foo/,/bar/p'",
   "git log --oneline | sed '/^#/d'",
   "git log --oneline | sed -e '/foo/,/bar/s|a|b|g'",
-  "cat 2>/dev/null <<'EOF'\ngit push origin main\nEOF",
-  "cat >/dev/null <<'EOF'\ngit push origin main\nEOF",
-  "cat >/dev/stderr <<'EOF'\ngit push origin main\nEOF",
-  "cat >/dev/stdout <<'EOF'\ngit push origin main\nEOF",
   "cat >/dev/tty <<'EOF'\ngit push origin main\nEOF",
   "jq '.items[0]' f.json",
   "go test ./...",
@@ -296,7 +289,6 @@ const WRITE_COSTS = [
   'basename "$PWD"',
   "git add -- *.ts",
   "git diff --stat -- src/*.ts",
-  "ls 2>/dev/null",
 ]
 
 describe("positive path rule accepted costs", () => {
@@ -311,6 +303,15 @@ describe("positive path rule accepted costs", () => {
     "jq -r '.version' package.json",
     'basename "$PWD"',
     "git diff --stat -- src/*.ts",
+    // Quiet since the grammar models /dev/null sinks and gh reads; a saved git script still asks.
+    "git rev-parse --show-toplevel 2>/dev/null",
+    "gh api repos/o/r --jq '.name'",
+    "gh api repos/owner/repo --jq '.rm'",
+    "cat 2>/dev/null <<'EOF'\ngit push origin main\nEOF",
+    "cat >/dev/null <<'EOF'\ngit push origin main\nEOF",
+    "cat >/dev/stderr <<'EOF'\ngit push origin main\nEOF",
+    "cat >/dev/stdout <<'EOF'\ngit push origin main\nEOF",
+    "ls 2>/dev/null",
   ])
   it.each(WRITE_COSTS)("classifies input and output roles for %s", (command) => {
     expect(decide(classifyCommand(command), "standard", GRANTED)?.effect).toBe(reads.has(command) ? undefined : "ask")
