@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { describe, expect, it } from "vitest"
 import {
   effectiveCommand,
@@ -120,7 +120,7 @@ describe("effective command and own worktrees", () => {
       prefixed: false,
     })
     expect(effectiveCommand("cd /tmp/opencode/review-x && pytest tests -q", "/repo")).toEqual({
-      directory: "/tmp/opencode/review-x",
+      directory: resolve("/tmp/opencode/review-x"),
       command: "pytest tests -q",
       prefixed: true,
     })

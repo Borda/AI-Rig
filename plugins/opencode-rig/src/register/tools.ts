@@ -82,6 +82,7 @@ export interface Registration {
 }
 
 const SKILL_IDS = SKILLS.map((skill) => skill.id)
+const WRITE_ROLES: ReadonlySet<string> = new Set(["rig-builder", "rig-creator"])
 const MAX_FILES = 5_000
 
 const str = { type: "string" } as const
@@ -148,7 +149,7 @@ function readFindings(paths: RigPaths, run: RunRecord): FindingsDocument {
   }
   if (sha256File(path) !== run.findings.digest) throw new Error(`findings artifact changed for run ${run.run_id}`)
   if (
-    run.skill === "rig-remediate" &&
+    run.skill === "code-remediate" &&
     (document.source_run_id !== run.source_run_id || document.source_digest !== run.source_findings?.digest)
   ) {
     throw new Error("remediation findings do not match the bound source inventory")
@@ -163,8 +164,8 @@ function sourceInventory(
   runId: string,
 ): { run: RunRecord; document: FindingsDocument } {
   const run = resolveRun(paths, sessionID, runId)
-  if (run.skill !== "rig-review" || run.status !== "completed" || run.review?.source_digest !== run.scope.digest)
-    throw new Error("source_run_id must name a completed rig-review run")
+  if (run.skill !== "code-review" || run.status !== "completed" || run.review?.source_digest !== run.scope.digest)
+    throw new Error("source_run_id must name a completed code-review run")
   return { run, document: readFindings(paths, run) }
 }
 
@@ -344,12 +345,12 @@ const EVIDENCE_INPUT = {
     },
     source_run_id: {
       type: "string",
-      description: "Completed rig-review inventory to reconcile. Required for remediation start.",
+      description: "Completed code-review inventory to reconcile. Required for remediation start.",
     },
     gate_exemption: {
       type: "string",
       description:
-        "Reason no configured gate applies. Only for a project with no detectable gate, or a documentation-only rig-remediate scope whose detected gates all run the test suite.",
+        "Reason no configured gate applies. Only for a project with no detectable gate, or a documentation-only code-remediate scope whose detected gates all run the test suite.",
     },
     inputs: { ...strArray, description: "Files read as authoritative evidence. Must exist." },
     outputs: {
@@ -402,7 +403,7 @@ const FINDINGS_INPUT = {
     axes: { ...strArray, description: "Review axes that actually ran." },
     aspects: { ...strArray, description: "Alias for axes (review aspects). Use axes/aspects as appropriate." },
     coverage: { ...strArray, description: "Files or areas actually covered." },
-    reviewer: { type: "string", description: "Independent reviewer identity. Required for a rig-review write." },
+    reviewer: { type: "string", description: "Independent reviewer identity. Required for a code-review write." },
     findings: {
       type: "array",
       description: "Finding records. A later record with the same id replaces the earlier one.",
@@ -496,7 +497,7 @@ const DISPATCH_INPUT = {
     paths: { ...strArray, description: "Paths the child may read, and may edit only when read_only is false." },
     read_only: {
       type: "boolean",
-      description: "Defaults to true. Only rig-implementer may write; other roles are always read-only.",
+      description: "Defaults to true. Only rig-builder and rig-creator may write; other roles are always read-only.",
     },
     keep_session: { type: "boolean", description: "Keep the child session for inspection. Defaults to false." },
   },
@@ -634,7 +635,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
             assertPlanTree(paths, plan.path, "start")
           }
           let source: Pick<RunRecord, "source_run_id" | "source_findings"> = {}
-          if (input.skill === "rig-remediate") {
+          if (input.skill === "code-remediate") {
             if (!input.source_run_id) throw new Error("remediation start requires source_run_id")
             const inventory = sourceInventory(paths, context.sessionID, input.source_run_id)
             source = {
@@ -789,7 +790,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
                 throw new Error("plan has no Challenge rounds section; record the challenged rounds before finalizing")
             }
           }
-          if (run.skill === "rig-remediate" && run.source_run_id) {
+          if (run.skill === "code-remediate" && run.source_run_id) {
             const inventory = sourceInventory(paths, context.sessionID, run.source_run_id)
             sourceDigest = inventory.run.findings!.digest
             if (
@@ -971,7 +972,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
     editor.add({
       name: "rig_findings",
       description:
-        "Write or read a validated findings inventory with bucket accounting. Findings are untrusted until verified against source; every finding must end in one terminal bucket. For rig-review, correctness is mandatory and axes/aspects must be recorded with coverage.",
+        "Write or read a validated findings inventory with bucket accounting. Findings are untrusted until verified against source; every finding must end in one terminal bucket. For code-review, correctness is mandatory and axes/aspects must be recorded with coverage.",
       input: FINDINGS_INPUT,
       options: { codemode: true },
       execute: async (raw: unknown, context: any) => {
@@ -987,7 +988,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         }
 
         requireInProgress(run)
-        if (run.skill === "rig-remediate") {
+        if (run.skill === "code-remediate") {
           if (!input.source_run_id || input.source_run_id !== run.source_run_id) {
             throw new Error("remediation write requires the source_run_id bound at start")
           }
@@ -1000,7 +1001,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           throw new Error("write requires findings: an array, empty only when review genuinely found nothing")
         const incoming = validateFindings(input.findings)
         const rawAxes = (input.axes ?? input.aspects ?? existing?.axes ?? []) as readonly string[]
-        if (run.skill === "rig-review" && rawAxes.length === 0)
+        if (run.skill === "code-review" && rawAxes.length === 0)
           throw new Error("write requires axes/aspects: the review axes that actually ran (include 'correctness')")
         const normalizedAxes = [...new Set(rawAxes.map((a) => String(a).trim().toLowerCase()))].filter(Boolean)
         const allowed = new Set(["correctness", "security", "tests", "api", "performance", "docs", "data"])
@@ -1011,25 +1012,25 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
             )
           }
         }
-        if (run.skill === "rig-review" && normalizedAxes.length === 0)
+        if (run.skill === "code-review" && normalizedAxes.length === 0)
           throw new Error("write requires axes/aspects: the review axes that actually ran (include 'correctness')")
-        if (run.skill === "rig-review" && !normalizedAxes.includes("correctness")) {
+        if (run.skill === "code-review" && !normalizedAxes.includes("correctness")) {
           throw new Error(
-            "rig-review requires correctness axis/aspect (must run correctness review). Add 'correctness' to axes or aspects.",
+            "code-review requires correctness axis/aspect (must run correctness review). Add 'correctness' to axes or aspects.",
           )
         }
         const coverage = (input.coverage ?? existing?.coverage ?? []) as readonly string[]
-        if (run.skill === "rig-review" && coverage.length === 0)
+        if (run.skill === "code-review" && coverage.length === 0)
           throw new Error("write requires coverage: the files or areas actually reviewed")
-        if (run.skill === "rig-review" && normalizedAxes.includes("correctness") && coverage.length === 0) {
+        if (run.skill === "code-review" && normalizedAxes.includes("correctness") && coverage.length === 0) {
           throw new Error(
-            "rig-review with correctness axis requires non-empty coverage of files/areas actually inspected",
+            "code-review with correctness axis requires non-empty coverage of files/areas actually inspected",
           )
         }
-        if (run.skill === "rig-review" && !input.reviewer) {
-          throw new Error("a rig-review findings write requires reviewer: the independent reviewer identity")
+        if (run.skill === "code-review" && !input.reviewer) {
+          throw new Error("a code-review findings write requires reviewer: the independent reviewer identity")
         }
-        if (run.skill === "rig-review" && detectDrift(paths.projectRoot, run.scope)) {
+        if (run.skill === "code-review" && detectDrift(paths.projectRoot, run.scope)) {
           throw new Error(
             "source changed after the review scope was recorded; start a new review run instead of certifying changed bytes",
           )
@@ -1060,7 +1061,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         const updated: RunRecord = {
           ...run,
           findings: summary,
-          ...(run.skill === "rig-review" && input.reviewer
+          ...(run.skill === "code-review" && input.reviewer
             ? { review: { run_id: run.run_id, reviewer: input.reviewer, source_digest: run.scope.digest } }
             : {}),
         }
@@ -1306,8 +1307,8 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
       options: { codemode: true },
       execute: async (raw: unknown, context: any) => {
         const input = raw as DispatchInputTool
-        if (input.role !== "rig-implementer" && input.read_only === false) {
-          throw new Error(`role ${input.role} is read-only; only rig-implementer may receive write scope`)
+        if (!WRITE_ROLES.has(input.role) && input.read_only === false) {
+          throw new Error(`role ${input.role} is read-only; only rig-builder and rig-creator may receive write scope`)
         }
         if (input.read_only === false && (!input.paths || input.paths.length === 0)) {
           throw new Error("a writing child needs explicit owned paths")
@@ -1557,7 +1558,14 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           )
         if (!isPinnedImage(image))
           throw new Error("sandbox image must be digest-pinned as <repository>@sha256:<64 hex>")
-        const realWorktree = realpathSync(input.worktree)
+        let realWorktree: string
+        try {
+          realWorktree = realpathSync(input.worktree)
+        } catch {
+          // A missing path is not a project root or review worktree; report that
+          // boundary instead of leaking a platform-specific ENOENT.
+          throw new Error("worktree must be the project root or a review worktree under <temp>/opencode/review-*")
+        }
         if (realWorktree !== realpathSync(paths.projectRoot) && !isReviewWorktree(realWorktree))
           throw new Error("worktree must be the project root or a review worktree under <temp>/opencode/review-*")
         const active =

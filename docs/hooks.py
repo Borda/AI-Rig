@@ -47,8 +47,8 @@ def _slugify(value: str, separator: str) -> str:
     Examples:
         >>> _slugify("/oss:release", "-")
         'oss-release'
-        >>> _slugify("Example: rig-review findings", "-")
-        'example-rig-review-findings'
+        >>> _slugify("Example: code-review findings", "-")
+        'example-code-review-findings'
     """
     return slugify(value.replace(":", separator), separator)
 

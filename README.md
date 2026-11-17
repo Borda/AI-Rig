@@ -54,7 +54,7 @@ Choose the smallest plugin that solves the job in front of you. Every package in
 | Plan and run literature-grounded ML experiments                         | [🔬 `research`](plugins/cc_research/README.md)            | 2 research agents and 10 skills for planning, judging, running, verifying, ablation, retrospectives, and Kaggle notebooks |
 | Answer import, caller, coupling, rename, and affected-test questions    | [🗂️ `codemap-py`](plugins/codemap-py/README.md)           | The same 6 structural-analysis skills for Claude Code and Codex, backed by a local static Python index                    |
 | Use evidence-first workflows and specialist role cards in Codex         | [🤖 `Codex Rig`](plugins/codex-rig/README.md)             | 13 workflow skills, 1 lifecycle manager, 15 role cards, shared gates, calibration, and artifact contracts                 |
-| Run evidence-first workflows, gates, and Git guardrails in OpenCode     | [⚡ `OpenCode Rig`](plugins/opencode-rig/README.md)       | 11 workflow skills, 7 evidence tools, 7 role agents, an adversarial loop, and an npm-installable TypeScript package       |
+| Run evidence-first workflows, gates, and Git guardrails in OpenCode     | [⚡ `OpenCode Rig`](plugins/opencode-rig/README.md)       | 11 workflow skills, 7 evidence tools, 8 role agents, an adversarial loop, and an npm-installable TypeScript package       |
 | Hand bounded implement, advise, and review calls between the two hosts  | [🌉 `bridge_CC-Codex`](plugins/bridge_cc-codex/README.md) | 3 bridge verbs in both directions with explicit models, effort, budgets, compact envelopes, and recursion safety          |
 
 If you use Claude Code, read the [Claude guide](.claude/README.md). If you use Codex, read the [Codex guide](.codex/README.md). OpenCode installs the npm package directly; its [README](plugins/opencode-rig/README.md) is the host guide.
@@ -90,7 +90,7 @@ This is the literal shipped skill inventory. The host guides list every agent, r
 | 🔬 Research        | `/research:topic`, `/research:plan`, `/research:judge`, `/research:run`, `/research:sweep`, `/research:verify`, `/research:fortify`, `/research:retro`, `/research:kaggle`, `/research:setup`                                                                                                                                       |
 | 🗂️ Codemap-py      | `scan-codebase`, `query-code`, `test-impact`, `rename-refs`, `integration`, `debrief-coding`, namespaced as `/codemap-py:...` in Claude Code and `$codemap-py:...` in Codex                                                                                                                                                         |
 | 🤖 Codex Rig       | `$codex-rig:assess`, `$codex-rig:audit`, `$codex-rig:calibrate`, `$codex-rig:code-remediate`, `$codex-rig:code-review`, `$codex-rig:implement`, `$codex-rig:investigate`, `$codex-rig:kaggle`, `$codex-rig:manage`, `$codex-rig:optimize`, `$codex-rig:release`, `$codex-rig:research`, `$codex-rig:sync`, `$codex-rig:agent-shims` |
-| ⚡ OpenCode Rig    | `/rig-plan`, `/rig-investigate`, `/rig-research`, `/rig-implement`, `/rig-review`, `/rig-remediate`, `/rig-challenge`, `/rig-optimize`, `/rig-distill`, `/rig-release`, `/rig-doctor`                                                                                                                                               |
+| ⚡ OpenCode Rig    | `/rig-plan`, `/rig-investigate`, `/rig-research`, `/rig-implement`, `/code-review`, `/code-remediate`, `/rig-challenge`, `/rig-optimize`, `/rig-distill`, `/rig-release`, `/rig-health`                                                                                                                                             |
 | 🌉 bridge_CC-Codex | `implement`, `advise`, `review`, `setup`, plus Claude-side detached-job `status`, `result`, `cancel`; namespaced as `/bridge:...` in Claude Code and `$bridge:...` in Codex                                                                                                                                                         |
 
 </details>
@@ -234,7 +234,7 @@ Start a fresh session, then try:
 /rig-research compare the two caching designs against the official docs
 /rig-investigate find the root cause of the failing test
 /rig-implement apply the verified fix
-/rig-review review the current diff
+/code-review review the current diff
 /rig-challenge challenge the change and iterate to convergence
 /rig-optimize cut the indexing benchmark median by 20%
 /rig-distill which failures kept repeating across the last runs?
@@ -292,9 +292,10 @@ OpenCode Rig ports the suite's evidence discipline to OpenCode without the DAG, 
 
 The package is TypeScript distributed through npm.
 
-- It cannot register agents by itself: `opencode-rig init` installs seven hash-stamped role agents and refuses to overwrite one you edited.
-- `rig-scientist` grades research claims against their sources; `rig-optimizer` recomputes benchmark rounds.
-- `rig-distill` proposes assets from recorded runs without installing them; `rig-release` drafts notes, migration steps, and contributor replies without posting.
+- It cannot register agents by itself: `opencode-rig init` installs eight hash-stamped role agents and refuses to overwrite one you edited.
+- `rig-researcher` grades research claims against their sources; `rig-optimizer` recomputes benchmark rounds.
+- `rig-creator` writes articles, user docs, decks, threads, animated SVGs, and short-video source from an approved outline.
+- `rig-distill` proposes assets and instruction consolidation or pruning from recorded runs without installing or editing anything; `rig-release` drafts notes, migration steps, and contributor replies without posting.
 - The permission hook escalates remote mutations, destructive operations, history rewrites, and ungranted local commits. It never downgrades a configured `ask` and never publishes anything.
 
 [Read the OpenCode Rig reference.](plugins/opencode-rig/README.md)
@@ -322,7 +323,7 @@ In OpenCode:
 ```text
 /rig-investigate diagnose the reported failure
 /rig-implement apply the verified fix
-/rig-review review the resulting diff
+/code-review review the resulting diff
 ```
 
 ### ML idea to reviewable result

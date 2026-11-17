@@ -37,9 +37,9 @@ it.each([
   "{bad json",
   '{"schema":99,"runs":{},"sessions":{}}',
   '{"schema":1,"runs":[],"sessions":{}}',
-  '{"schema":1,"runs":{"../outside":"rig-review"},"sessions":{}}',
+  '{"schema":1,"runs":{"../outside":"code-review"},"sessions":{}}',
   '{"schema":1,"runs":{"safe":"..\\\\outside"},"sessions":{}}',
-  '{"schema":1,"runs":{},"sessions":{"session":{"runId":"../outside","skill":"rig-review"}}}',
+  '{"schema":1,"runs":{},"sessions":{"session":{"runId":"../outside","skill":"code-review"}}}',
 ])("recovers real run IDs without overwriting invalid state %s", (corrupt) => {
   const project = new Project()
   const { paths, run } = allocated(project)
@@ -54,7 +54,7 @@ it("recovers a missing index but rejects incomplete and mismatched run records",
   const project = new Project()
   const { paths, run } = allocated(project)
   project.write(".opencode-rig/runs/rig-investigate/forged/run.json", JSON.stringify({ status: "completed" }))
-  project.write(".opencode-rig/runs/rig-review/mismatch/run.json", JSON.stringify(run))
+  project.write(".opencode-rig/runs/code-review/mismatch/run.json", JSON.stringify(run))
   expect(loadState(paths.artifactRoot).runs).toEqual({ [run.run_id]: run.skill })
 })
 
@@ -64,7 +64,7 @@ it.each(["../outside", "..\\outside", "/outside", "__proto__", "constructor"])(
     const project = new Project()
     const { paths } = allocated(project)
     expect(() => skillForRun(paths.artifactRoot, runId)).toThrow(/run/)
-    expect(() => rememberRun(paths.artifactRoot, "session", { runId, skill: "rig-review" })).toThrow(/run/)
+    expect(() => rememberRun(paths.artifactRoot, "session", { runId, skill: "code-review" })).toThrow(/run/)
   },
 )
 
@@ -81,7 +81,7 @@ it("rejects unsafe state entries before writing", () => {
 
 it("rejects missing active evidence without discarding the session pointer", () => {
   const project = new Project()
-  const entry = { runId: "missing", skill: "rig-review" }
+  const entry = { runId: "missing", skill: "code-review" }
   rememberRun(project.root, "session", entry)
   expect(() => activeRun(project.root, "session")).toThrow(/scope/)
   expect(loadState(project.root).sessions.session).toEqual(entry)
@@ -100,7 +100,10 @@ it("does not clear a session from an incomplete terminal-status artifact", () =>
 it("does not recover ambiguous run IDs shared by two valid skills", () => {
   const project = new Project()
   const { paths, run } = allocated(project)
-  project.write(`.opencode-rig/runs/rig-review/${run.run_id}/run.json`, JSON.stringify({ ...run, skill: "rig-review" }))
+  project.write(
+    `.opencode-rig/runs/code-review/${run.run_id}/run.json`,
+    JSON.stringify({ ...run, skill: "code-review" }),
+  )
   expect(loadState(paths.artifactRoot).runs).toEqual({})
 })
 
@@ -118,7 +121,7 @@ it.each(['{"schema":99}', '{"runs":[]}'])(
     await expect(
       dispatchRole(
         ctx,
-        { role: "rig-implementer", task: "Edit", sessionID: "parent", paths: ["."], read_only: false },
+        { role: "rig-builder", task: "Edit", sessionID: "parent", paths: ["."], read_only: false },
         RESOURCES_DIR,
       ),
     ).rejects.toThrow(/scope state/)
@@ -140,7 +143,7 @@ it("refuses array-valued terminal status before dispatch can bypass recorded sco
   await expect(
     dispatchRole(
       ctx,
-      { role: "rig-implementer", task: "Edit", sessionID: "parent", paths: ["."], read_only: false },
+      { role: "rig-builder", task: "Edit", sessionID: "parent", paths: ["."], read_only: false },
       RESOURCES_DIR,
     ),
   ).rejects.toThrow(/scope/)

@@ -24,7 +24,7 @@ Model recall is never evidence. "Obvious" and "well-known" are not evidence.
 - If a run's changed paths leave that table's `in-scope` rows, stop and report without finalizing; refresh only after the user approves a plan revision.
 - Finalization fails on source drift and on the owning skill's required evidence; see each skill's Finalize step.
 - Report failed gates and skipped coverage in the final answer, even when everything else passed.
-- When no configured gate exists, or a documentation-only `rig-remediate` scope leaves only test-suite gates, pass `gate_exemption` with its reason and manual substitute to `rig_evidence` at `action: "start"`; execute and record that substitute before finalization.
+- When no configured gate exists, or a documentation-only `code-remediate` scope leaves only test-suite gates, pass `gate_exemption` with its reason and manual substitute to `rig_evidence` at `action: "start"`; execute and record that substitute before finalization.
 
 ## Role dispatch
 

@@ -3,7 +3,7 @@
  *
  * Slice 2 of the approval-free plan: the review fetches a pull request into its
  * own ref, creates and removes a worktree under the host temp root, and the
- * implementer stages owned paths. Each form is a whole simple command with a
+ * builder stages owned paths. Each form is a whole simple command with a
  * literal shape; anything else falls back to the normal guardrail decision.
  *
  * The model is stateless: it reads the command text, the project root and the
@@ -33,9 +33,20 @@ function literal(text: string): boolean {
   return !/[$`\\*?[\]{}()<>|;&\n]/.test(text) && !text.startsWith("-")
 }
 
+/**
+ * A Windows absolute path uses `\` as its native separator, so it is literal
+ * there rather than an escape. Other characters that a shell expands stay
+ * rejected, and containment is still checked after the fact.
+ */
+const WINDOWS_ABSOLUTE = /^(?:[A-Za-z]:[\\/]|\\\\)/
+
+function literalPath(text: string): boolean {
+  return WINDOWS_ABSOLUTE.test(text) ? literal(text.replaceAll("\\", "/")) : literal(text)
+}
+
 /** Prove the path is a real location under `<temp>/opencode/review-*`. */
 function reviewPath(value: string, context: DesignedWriteContext): boolean {
-  return isAbsolute(value) && literal(value) && isReviewWorktree(value, context.tempRoot)
+  return isAbsolute(value) && literalPath(value) && isReviewWorktree(value, context.tempRoot)
 }
 
 /** Prove a staging operand is an ordinary literal path inside the project. */

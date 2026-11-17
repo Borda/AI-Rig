@@ -145,7 +145,7 @@ it("preserves a deleted implementation output's digest in the review scope", asy
   await harness.call("rig_evidence", { action: "refresh", message: "removed obsolete source" })
   await harness.call("rig_evidence", { action: "record", outputs: ["src/a.ts"] })
   const implementation = JSON.parse((await harness.call("rig_evidence", { action: "inspect" })).content)
-  await harness.call("rig_evidence", { action: "start", skill: "rig-review", paths: ["src/a.ts"] })
+  await harness.call("rig_evidence", { action: "start", skill: "code-review", paths: ["src/a.ts"] })
   const review = JSON.parse((await harness.call("rig_evidence", { action: "inspect" })).content)
   expect(review.scope.entries).toEqual([{ path: "src/a.ts", status: "D ", sha256: sha256("") }])
   expect(implementation.outputs).toEqual([{ path: "src/a.ts", sha256: review.scope.entries[0].sha256 }])

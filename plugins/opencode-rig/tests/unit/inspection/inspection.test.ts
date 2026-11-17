@@ -1,4 +1,5 @@
 /** The inspection allow is a positive, stateless model: reads and configured verification only. */
+import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
 import { inspectionSafe, inspectionSequence } from "../../../src/inspection.ts"
 
@@ -114,7 +115,7 @@ describe("inspection sequence", () => {
     ).toMatchObject({
       ok: true,
       kind: "verification",
-      directory: "/tmp/opencode/review-x",
+      directory: resolve("/tmp/opencode/review-x"),
     })
   })
 

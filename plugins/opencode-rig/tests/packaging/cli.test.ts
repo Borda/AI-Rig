@@ -84,20 +84,21 @@ describe("opencode-rig CLI", () => {
     expect(cli(project, ["--help"]).stdout).toContain("print-config")
   })
 
-  it("installs seven role agents into a project", () => {
+  it("installs eight role agents into a project", () => {
     const project = new Project()
     const result = cli(project, ["init", "--project"])
     expect(result.status).toBe(0)
-    expect(result.stdout).toMatch(/7 file\(s\) written/)
+    expect(result.stdout).toMatch(/8 file\(s\) written/)
     expect(result.stdout).toMatch(/0 problem\(s\)/)
 
     for (const name of [
       "rig-investigator",
-      "rig-implementer",
-      "rig-reviewer",
+      "rig-builder",
+      "rig-creator",
+      "rig-auditor",
       "rig-challenger",
       "rig-verifier",
-      "rig-scientist",
+      "rig-researcher",
       "rig-optimizer",
     ]) {
       const content = readFileSync(project.path(`.opencode/agents/${name}.md`), "utf8")
@@ -114,18 +115,18 @@ describe("opencode-rig CLI", () => {
     const project = new Project()
     const result = cli(project, ["init"])
     expect(result.stdout).toContain(join(project.root, "config", "agents"))
-    expect(project.exists("config/agents/rig-reviewer.md")).toBe(true)
+    expect(project.exists("config/agents/rig-auditor.md")).toBe(true)
   })
 
   it("detects an edited agent, refuses to overwrite silently, and repairs it with --upgrade", () => {
     const project = new Project()
     cli(project, ["init", "--project"])
-    const path = project.path(".opencode/agents/rig-reviewer.md")
+    const path = project.path(".opencode/agents/rig-auditor.md")
     writeFileSync(path, `${readFileSync(path, "utf8")}\nlocal edit\n`, "utf8")
 
     const check = cli(project, ["check", "--project"])
     expect(check.status).toBe(1)
-    expect(check.stdout).toMatch(/CONFLICT rig-reviewer/)
+    expect(check.stdout).toMatch(/CONFLICT rig-auditor/)
 
     const plain = cli(project, ["init", "--project"])
     expect(plain.status).toBe(1)
@@ -141,7 +142,7 @@ describe("opencode-rig CLI", () => {
   it("updates a card whose package content changed instead of calling it a user edit", () => {
     const project = new Project()
     cli(project, ["init", "--project"])
-    const path = project.path(".opencode/agents/rig-reviewer.md")
+    const path = project.path(".opencode/agents/rig-auditor.md")
     // Simulate a file installed from an older package: the body differs from today's package but
     // still matches the digest its own stamp recorded, so it is not a user edit.
     const installed = readFileSync(path, "utf8")
@@ -152,21 +153,21 @@ describe("opencode-rig CLI", () => {
 
     const plain = cli(project, ["init", "--project"])
     expect(plain.status).toBe(0)
-    expect(plain.stdout).not.toMatch(/CONFLICT rig-reviewer/)
-    expect(plain.stdout).toMatch(/STALE {4}rig-reviewer/)
+    expect(plain.stdout).not.toMatch(/CONFLICT rig-auditor/)
+    expect(plain.stdout).toMatch(/STALE {4}rig-auditor/)
     expect(readFileSync(path, "utf8")).not.toMatch(/older package/)
     expect(cli(project, ["check", "--project"]).status).toBe(0)
   })
 
   it("never overwrites an unstamped file without --force", () => {
     const project = new Project()
-    project.write(".opencode/agents/rig-reviewer.md", "# my own reviewer\n")
+    project.write(".opencode/agents/rig-auditor.md", "# my own reviewer\n")
     cli(project, ["init", "--project"])
-    expect(project.read(".opencode/agents/rig-reviewer.md")).toBe("# my own reviewer\n")
+    expect(project.read(".opencode/agents/rig-auditor.md")).toBe("# my own reviewer\n")
 
     const forced = cli(project, ["init", "--project", "--force"])
     expect(forced.status).toBe(0)
-    expect(project.read(".opencode/agents/rig-reviewer.md")).toMatch(/opencode-rig: v/)
+    expect(project.read(".opencode/agents/rig-auditor.md")).toMatch(/opencode-rig: v/)
   })
 
   it("removes only stamped files", () => {
@@ -175,8 +176,8 @@ describe("opencode-rig CLI", () => {
     project.write(".opencode/agents/custom.md", "# custom\n")
 
     const result = cli(project, ["remove", "--project"])
-    expect(result.stdout).toMatch(/7 removed, 1 kept/)
-    expect(project.exists(".opencode/agents/rig-reviewer.md")).toBe(false)
+    expect(result.stdout).toMatch(/8 removed, 1 kept/)
+    expect(project.exists(".opencode/agents/rig-auditor.md")).toBe(false)
     expect(project.exists(".opencode/agents/custom.md")).toBe(true)
     expect(cli(project, ["remove", "--project"]).status).toBe(0)
   })
@@ -225,7 +226,7 @@ describe("opencode-rig CLI", () => {
     const result = cli(project, ["doctor", "--project", "--assets"])
     expect(result.status).toBe(0)
     expect(result.stdout).toContain("opencode-rig doctor: healthy")
-    expect(result.stdout).toMatch(/assets: 11 skills, 7 role agents, \d+ repeated prose line\(s\)/)
+    expect(result.stdout).toMatch(/assets: 11 skills, 8 role agents, \d+ repeated prose line\(s\)/)
   })
 
   it("fails doctor when the agents are missing", () => {
@@ -250,7 +251,7 @@ describe("opencode-rig CLI", () => {
     expect(config.permissions).toEqual(SHIPPED)
     expect(config.$schema).toBe("https://opencode.ai/config.json")
     // The agent count must keep counting role cards only.
-    expect(result.stdout).toMatch(/7 file\(s\) written, 0 problem\(s\)/)
+    expect(result.stdout).toMatch(/8 file\(s\) written, 0 problem\(s\)/)
   })
 
   it("ships exactly the documented number of permission rules", () => {
@@ -715,7 +716,7 @@ describe("opencode-rig setup global instructions", () => {
 
     const result = cli(project, ["init", "--agents-only"])
     expect(result.status).toBe(0)
-    expect(project.exists("config/agents/rig-reviewer.md")).toBe(true)
+    expect(project.exists("config/agents/rig-auditor.md")).toBe(true)
     expect(project.exists("config/opencode.jsonc")).toBe(false)
     expect(project.exists("home/.config/opencode/AGENTS.md")).toBe(false)
   })

@@ -75,6 +75,13 @@ describe("rig_sandbox", () => {
         image: `repo@sha256:${"a".repeat(64)}`,
       }),
     ).rejects.toThrow(/project root or a review worktree/)
+    await expect(
+      harness.call("rig_sandbox", {
+        worktree: join(project.root, "missing-worktree"),
+        argv: ["true"],
+        image: `repo@sha256:${"a".repeat(64)}`,
+      }),
+    ).rejects.toThrow(/project root or a review worktree/)
   })
 
   it("reports the verification unavailable when no runtime exists", async () => {

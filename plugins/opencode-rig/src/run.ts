@@ -234,7 +234,7 @@ export function validateRunRecord(raw: unknown): RunRecord {
     !validOptionalEvidence(raw)
   )
     throw new Error("invalid run record schema or evidence")
-  if (raw.source_run_id !== undefined) validateRunIdentity("rig-review", raw.source_run_id as string)
+  if (raw.source_run_id !== undefined) validateRunIdentity("code-review", raw.source_run_id as string)
   if (raw.source_findings !== undefined && !validSourceFindings(raw.source_findings)) {
     throw new Error("invalid run record source inventory")
   }
@@ -348,13 +348,13 @@ export const SKILL_REQUIREMENTS: Readonly<Record<string, SkillRequirements>> = {
   "rig-investigate": { gates: false, review: false, findings: false, closedFindings: false, loop: false },
   "rig-research": { gates: false, review: true, findings: false, closedFindings: false, loop: false },
   "rig-implement": { gates: true, review: false, findings: false, closedFindings: false, loop: false },
-  "rig-review": { gates: false, review: true, findings: true, closedFindings: false, loop: false },
-  "rig-remediate": { gates: true, review: true, findings: true, closedFindings: true, loop: false },
+  "code-review": { gates: false, review: true, findings: true, closedFindings: false, loop: false },
+  "code-remediate": { gates: true, review: true, findings: true, closedFindings: true, loop: false },
   "rig-challenge": { gates: true, review: true, findings: false, closedFindings: false, loop: true },
   "rig-optimize": { gates: true, review: true, findings: false, closedFindings: false, loop: false },
   "rig-distill": { gates: false, review: false, findings: false, closedFindings: false, loop: false },
   "rig-release": { gates: true, review: false, findings: false, closedFindings: false, loop: false },
-  "rig-doctor": { gates: false, review: false, findings: false, closedFindings: false, loop: false },
+  "rig-health": { gates: false, review: false, findings: false, closedFindings: false, loop: false },
 }
 
 export function requirementsFor(skill: string): SkillRequirements {
@@ -402,7 +402,7 @@ function planProblems(run: RunRecord, input: FinalizeInput): string[] {
 
 /** Reconcile actual remediation records with the immutable source inventory captured at start. */
 function remediationProblems(run: RunRecord, input: FinalizeInput): string[] {
-  if (run.skill !== "rig-remediate") return []
+  if (run.skill !== "code-remediate") return []
   if (!run.source_run_id || !run.source_findings) return ["remediation source findings inventory is missing"]
   const problems: string[] = []
   if (input.source_findings_digest !== run.source_findings.digest) {

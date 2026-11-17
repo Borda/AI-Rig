@@ -2,6 +2,15 @@
 
 All notable changes to this package are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.10.0
+
+- Workflow and role names now state what they do. `rig-review` is `code-review`, `rig-remediate` is `code-remediate`, `rig-doctor` is `rig-health`, `rig-implementer` is `rig-builder`, `rig-reviewer` is `rig-auditor`, and `rig-scientist` is `rig-researcher`; slash commands, installed agent cards, run directories, and documentation use the new names. The `refs/rig-review/*` Git ref namespace is unchanged data, and runs already recorded under an old skill directory stay where they are.
+- `rig-research` now covers experiment methodology and implementation fit as well. It judges a design, metric, guard, and ablation plan before anyone runs it, and maps each recommendation onto the affected source, tests, and configuration read-only; the no-experiment, no-code-change boundary is unchanged.
+- `rig-distill` now takes a one-time snapshot of recorded runs and the instruction files that govern them. Alongside new or extended assets it proposes exact `consolidate`, `prune`, and `clarify` instruction edits and promotion of repeated run scripts, and still installs, edits, or deletes nothing.
+- New `rig-creator` role agent writes approved-outline articles, user docs, Marp decks, social threads, talk abstracts, animated SVGs, and short-video HyperFrames source. It writes only the named artifact paths, produces media source without rendering, and reports supplied assets and verification limits.
+- The designed Git write allow now accepts native Windows worktree paths, and `rig_sandbox` rejects a missing worktree with the documented boundary instead of a platform `ENOENT`. Path-sensitive checks resolve paths on the host platform, so the suite passes on Windows as well as macOS and Linux.
+- Upgrade note: `init` reports three stamped role cards as `EXTRA` after the rename. Remove `rig-implementer.md`, `rig-reviewer.md`, and `rig-scientist.md` from the agents directory so the old cards stop appearing as available subagents.
+
 ## 0.9.0
 
 - Shipped command blocks can run on their exact text. `blueprint` (default `true`) allows a command whose every top-level fragment is a `kind: "command"` entry in the new `src/resources/blueprint-manifest.json`, after CRLF, trailing-whitespace, quote-aware comment and blank-run normalization. The manifest is built from the fenced `bash`/`sh` blocks in the shipped skills, roles and references; a block with a runtime value, heredoc, unterminated quote or line continuation is skipped, a partial compound asks, and a packaging harness keeps the manifest byte-derived (with normalization and fragment vectors). The always-ask classes and a configured `deny` still win, and `blueprint: false` disables the allow.

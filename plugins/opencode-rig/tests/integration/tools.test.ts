@@ -200,9 +200,9 @@ ${TREE}`,
   it("refuses review evidence recorded after source drift", async () => {
     const project = changedProject()
     const harness = await createHarness(project)
-    await harness.call("rig_evidence", { action: "start", skill: "rig-review", paths: ["src"] })
+    await harness.call("rig_evidence", { action: "start", skill: "code-review", paths: ["src"] })
     project.write("src/a.ts", "export const a = 4\n")
-    await expect(harness.call("rig_evidence", { action: "record", reviewer: "rig-reviewer" })).rejects.toThrow(
+    await expect(harness.call("rig_evidence", { action: "record", reviewer: "rig-auditor" })).rejects.toThrow(
       /source changed after the recorded scope/,
     )
   })
@@ -283,7 +283,7 @@ describe("rig_findings", () => {
   async function reviewHarness(): Promise<{ project: Project; harness: Awaited<ReturnType<typeof createHarness>> }> {
     const project = changedProject()
     const harness = await createHarness(project)
-    await harness.call("rig_evidence", { action: "start", skill: "rig-review", paths: ["src"] })
+    await harness.call("rig_evidence", { action: "start", skill: "code-review", paths: ["src"] })
     return { project, harness }
   }
 
@@ -293,7 +293,7 @@ describe("rig_findings", () => {
       action: "write",
       axes: ["correctness", "tests"],
       coverage: ["src/a.ts"],
-      reviewer: "rig-reviewer",
+      reviewer: "rig-auditor",
       findings: [open],
     })
     expect(first.content).toMatch(/open 1, fixed 0/)
@@ -301,7 +301,7 @@ describe("rig_findings", () => {
 
     await harness.call("rig_findings", {
       action: "write",
-      reviewer: "rig-reviewer",
+      reviewer: "rig-auditor",
       findings: [{ ...open, status: "fixed", disposition: "Filtered empty lines and added a test." }],
     })
     const read = JSON.parse((await harness.call("rig_findings", { action: "read" })).content)
@@ -314,18 +314,18 @@ describe("rig_findings", () => {
   it("requires axes and coverage", async () => {
     const { harness } = await reviewHarness()
     await expect(
-      harness.call("rig_findings", { action: "write", coverage: ["src"], reviewer: "rig-reviewer", findings: [] }),
+      harness.call("rig_findings", { action: "write", coverage: ["src"], reviewer: "rig-auditor", findings: [] }),
     ).rejects.toThrow(/requires axes|aspects/)
   })
 
-  it("requires correctness axis for rig-review", async () => {
+  it("requires correctness axis for code-review", async () => {
     const { harness } = await reviewHarness()
     await expect(
       harness.call("rig_findings", {
         action: "write",
         axes: ["security"],
         coverage: ["src"],
-        reviewer: "rig-reviewer",
+        reviewer: "rig-auditor",
         findings: [],
       }),
     ).rejects.toThrow(/correctness/)
@@ -337,7 +337,7 @@ describe("rig_findings", () => {
       action: "write",
       aspects: ["Correctness", "tests"],
       coverage: ["src/a.ts"],
-      reviewer: "rig-reviewer",
+      reviewer: "rig-auditor",
       findings: [],
     })
     expect(result.content).toMatch(/axes: correctness, tests/)
@@ -350,13 +350,13 @@ describe("rig_findings", () => {
         action: "write",
         axes: ["correctness", "typo"],
         coverage: ["src"],
-        reviewer: "rig-reviewer",
+        reviewer: "rig-auditor",
         findings: [],
       }),
     ).rejects.toThrow(/unknown review axis/)
   })
 
-  it("requires a reviewer for a rig-review write", async () => {
+  it("requires a reviewer for a code-review write", async () => {
     const { harness } = await reviewHarness()
     await expect(
       harness.call("rig_findings", { action: "write", axes: ["correctness"], coverage: ["src"], findings: [] }),
@@ -370,7 +370,7 @@ describe("rig_findings", () => {
         action: "write",
         axes: ["correctness"],
         coverage: ["src"],
-        reviewer: "rig-reviewer",
+        reviewer: "rig-auditor",
         findings: [{ ...open, status: "fixed" }],
       }),
     ).rejects.toThrow(/without a disposition/)
@@ -384,7 +384,7 @@ describe("rig_findings", () => {
         action: "write",
         axes: ["correctness"],
         coverage: ["src"],
-        reviewer: "rig-reviewer",
+        reviewer: "rig-auditor",
         findings: [],
       }),
     ).rejects.toThrow(/start a new review run/)
@@ -396,7 +396,7 @@ describe("rig_findings", () => {
       action: "write",
       axes: ["correctness"],
       coverage: ["src/a.ts"],
-      reviewer: "rig-reviewer",
+      reviewer: "rig-auditor",
       findings: [open],
     })
     const finalized = await harness.call("rig_evidence", { action: "finalize" })
@@ -581,27 +581,41 @@ describe("rig_dispatch", () => {
   it("rejects write scope for a read-only role", async () => {
     const harness = await createHarness(changedProject())
     await expect(
-      harness.call("rig_dispatch", { role: "rig-reviewer", task: "review", read_only: false, paths: ["src"] }),
-    ).rejects.toThrow(/role rig-reviewer is read-only/)
+      harness.call("rig_dispatch", { role: "rig-auditor", task: "review", read_only: false, paths: ["src"] }),
+    ).rejects.toThrow(/role rig-auditor is read-only/)
   })
 
   it("requires owned paths for a writing child", async () => {
     const harness = await createHarness(changedProject())
     await expect(
-      harness.call("rig_dispatch", { role: "rig-implementer", task: "implement", read_only: false }),
+      harness.call("rig_dispatch", { role: "rig-builder", task: "implement", read_only: false }),
     ).rejects.toThrow(/needs explicit owned paths/)
+  })
+
+  it("allows write scope for the creator role", async () => {
+    const harness = await createHarness(changedProject())
+    harness.childReply = "Wrote the article.\nchanged: src/b.ts"
+    const result = await harness.call("rig_dispatch", {
+      role: "rig-creator",
+      task: "Write the approved article",
+      read_only: false,
+      paths: ["src"],
+    })
+    expect(result.content).toContain("role: rig-creator")
+    expect(harness.childPrompts.at(-1)?.text).toContain("You may edit only the paths listed above")
+    expect(result.metadata.scope_violation).toBe(false)
   })
 
   it("injects the role card, returns the final text, and removes the child session", async () => {
     const harness = await createHarness(changedProject())
     const result = await harness.call("rig_dispatch", {
-      role: "rig-reviewer",
+      role: "rig-auditor",
       task: "Review src/a.ts",
       paths: ["src"],
     })
-    expect(result.content).toContain("role: rig-reviewer")
+    expect(result.content).toContain("role: rig-auditor")
     expect(result.content).toContain("the child reports a concrete result")
-    expect(harness.childPrompts[0]?.text).toMatch(/You are an independent reviewer/)
+    expect(harness.childPrompts[0]?.text).toMatch(/You are an independent auditor/)
     expect(harness.childPrompts[0]?.text).toMatch(/Read-only: do not edit files/)
     expect(harness.removedSessions).toEqual(["child-1"])
   })
@@ -627,7 +641,7 @@ describe("rig_dispatch", () => {
     await harness.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["src"] })
     harness.childReply = "Edited the module.\nchanged: src/b.ts"
     const result = await harness.call("rig_dispatch", {
-      role: "rig-implementer",
+      role: "rig-builder",
       task: "implement",
       read_only: false,
       paths: ["src"],
@@ -642,7 +656,7 @@ describe("rig_dispatch", () => {
     await harness.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["src"] })
     harness.childReply = "Edited an unrelated test.\nchanged: tests/b.test.ts"
     const result = await harness.call("rig_dispatch", {
-      role: "rig-implementer",
+      role: "rig-builder",
       task: "implement",
       read_only: false,
       paths: ["src"],
@@ -658,7 +672,7 @@ describe("rig_dispatch", () => {
     await harness.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["src"] })
     harness.childReply = "changed: srcs/b.ts"
     const result = await harness.call("rig_dispatch", {
-      role: "rig-implementer",
+      role: "rig-builder",
       task: "implement",
       read_only: false,
       paths: ["src"],
@@ -672,7 +686,7 @@ describe("rig_dispatch", () => {
     const harness = await createHarness(changedProject())
     harness.childReply = "changed: lib/b.ts"
     const result = await harness.call("rig_dispatch", {
-      role: "rig-implementer",
+      role: "rig-builder",
       task: "implement",
       read_only: false,
       paths: ["src"],
@@ -688,7 +702,7 @@ describe("rig_dispatch", () => {
     await harness.call("rig_evidence", { action: "start", skill: "rig-plan" })
     harness.childReply = "changed: lib/b.ts"
     const result = await harness.call("rig_dispatch", {
-      role: "rig-implementer",
+      role: "rig-builder",
       task: "implement",
       read_only: false,
       paths: ["src"],
@@ -708,7 +722,7 @@ describe("rig_dispatch", () => {
     await harness.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["src"] })
     harness.childReply = reply
     const result = await harness.call("rig_dispatch", {
-      role: "rig-implementer",
+      role: "rig-builder",
       task: "implement",
       read_only: false,
       paths: ["src"],
@@ -721,7 +735,7 @@ describe("rig_dispatch", () => {
     await harness.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["src"] })
     harness.childReply = "Nothing to change; the code already matches the plan."
     const result = await harness.call("rig_dispatch", {
-      role: "rig-implementer",
+      role: "rig-builder",
       task: "implement",
       read_only: false,
       paths: ["src"],
@@ -739,7 +753,7 @@ describe("rig_dispatch", () => {
 
     second.childReply = "Edited a source file.\nchanged: src/b.ts"
     const rejected = await second.call("rig_dispatch", {
-      role: "rig-implementer",
+      role: "rig-builder",
       task: "implement",
       read_only: false,
       paths: ["tests"],
@@ -750,7 +764,7 @@ describe("rig_dispatch", () => {
 
     first.childReply = "Edited a source file.\nchanged: src/b.ts"
     const accepted = await first.call("rig_dispatch", {
-      role: "rig-implementer",
+      role: "rig-builder",
       task: "implement",
       read_only: false,
       paths: ["src"],
@@ -763,7 +777,7 @@ describe("rig_doctor", () => {
   it("reports a healthy install and every checked surface", async () => {
     const project = changedProject()
     const harness = await createHarness(project)
-    await harness.call("rig_evidence", { action: "start", skill: "rig-doctor", paths: ["src"] })
+    await harness.call("rig_evidence", { action: "start", skill: "rig-health", paths: ["src"] })
     const report = await harness.call("rig_doctor", { action: "report" })
     expect(report.metadata.ok).toBe(true)
     expect(report.content).toContain("plugin loaded")
@@ -777,7 +791,7 @@ describe("rig_doctor", () => {
     const harness = await createHarness(project)
     const report = await harness.call("rig_doctor", { action: "assets" })
     expect(report.metadata.ok).toBe(true)
-    expect(report.content).toMatch(/assets: 11 skills, 7 role agents, \d+ repeated prose line\(s\)/)
+    expect(report.content).toMatch(/assets: 11 skills, 8 role agents, \d+ repeated prose line\(s\)/)
   })
 
   it("requires confirmation before removing stale runs", async () => {

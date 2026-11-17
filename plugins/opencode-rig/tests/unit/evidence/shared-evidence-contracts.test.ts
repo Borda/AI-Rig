@@ -14,8 +14,8 @@ describe("shared evidence rules", () => {
     "rig-investigate",
     "rig-research",
     "rig-implement",
-    "rig-review",
-    "rig-remediate",
+    "code-review",
+    "code-remediate",
     "rig-challenge",
     "rig-optimize",
   ])("routes %s dispatches through the fallback and violation-stop contract", (skill) => {
@@ -35,11 +35,12 @@ describe("shared evidence rules", () => {
 
   it.each([
     "rig-investigator",
-    "rig-implementer",
-    "rig-reviewer",
+    "rig-builder",
+    "rig-creator",
+    "rig-auditor",
     "rig-challenger",
     "rig-verifier",
-    "rig-scientist",
+    "rig-researcher",
     "rig-optimizer",
   ])("makes %s report a scope violation instead of certifying the result", (role) => {
     const rule = lines(`roles/${role}.md`).find((line) => line.includes("`scope_violation: true`"))!
@@ -48,7 +49,7 @@ describe("shared evidence rules", () => {
     expect(rule).toContain("instead of accepting the affected result")
   })
 
-  it.each(["rig-implement", "rig-investigate", "rig-review"])("shares optional RTK guidance with %s", (skill) => {
+  it.each(["rig-implement", "rig-investigate", "code-review"])("shares optional RTK guidance with %s", (skill) => {
     const card = lines(`skills/${skill}/SKILL.md`)
     expect(card.some((line) => line.includes("evidence.md#optional-command-compression"))).toBe(true)
     expect(card.some((line) => line.includes("60-99%"))).toBe(false)

@@ -1,6 +1,6 @@
 # opencode-rig
 
-Current version: `0.9.0`
+Current version: `0.10.0`
 
 Evidence-first delivery workflows for [OpenCode](https://opencode.ai): frozen plans, recorded gates, independent review, adversarial convergence, and Git guardrails that keep publication human-owned.
 
@@ -13,7 +13,7 @@ Evidence-first delivery workflows for [OpenCode](https://opencode.ai): frozen pl
 - Requires a named independent reviewer before review, remediation, and challenge runs can complete.
 - Keeps review findings, remediation buckets, and the challenge ledger as validated artifacts with reconciliation counts.
 - Escalates remote mutations, destructive operations, and unreviewed commits to `ask` without ever downgrading a configured `ask` to `allow`.
-- Dispatches read-only specialists through native subagents when they are installed, with an inline child-session fallback when they are not.
+- Dispatches bounded specialists through native subagents when they are installed, with an inline child-session fallback when they are not.
 
 ## Requirements
 
@@ -39,7 +39,7 @@ node plugins/opencode-rig/bin/opencode-rig.mjs init   # or the path inside your 
 
 A branch specifier follows `main`; replace it with a full commit hash when the install must stay pinned. `opencode plugin add` is idempotent and writes the package specifier into `~/.config/opencode/opencode.json`. It caches the package for loading but does not link this package's CLI on `PATH`, so run `init` through `npx` for a published version or the checked-out script otherwise.
 
-`init` writes the seven `rig-*` role agents that OpenCode cannot register from a plugin package; they land in `~/.config/opencode/agents/`, or in `.opencode/agents/` with `--project`. It also merges the shipped permission rules into your OpenCode configuration: `~/.config/opencode/opencode.jsonc` when that file exists, otherwise an existing `opencode.json` beside it, otherwise a new `opencode.jsonc` — and with `--project` the `opencode.jsonc` or `opencode.json` at the Git root, falling back to the current directory outside Git. A card the package itself revised is reported `STALE` and refreshed automatically, because the stamp records the digest it was installed with. Add `--upgrade` to replace a stamped agent you edited locally; without it, `init` and `check` stop on a locally edited file and never overwrite it.
+`init` writes the eight `rig-*` role agents that OpenCode cannot register from a plugin package; they land in `~/.config/opencode/agents/`, or in `.opencode/agents/` with `--project`. It also merges the shipped permission rules into your OpenCode configuration: `~/.config/opencode/opencode.jsonc` when that file exists, otherwise an existing `opencode.json` beside it, otherwise a new `opencode.jsonc` — and with `--project` the `opencode.jsonc` or `opencode.json` at the Git root, falling back to the current directory outside Git. A card the package itself revised is reported `STALE` and refreshed automatically, because the stamp records the digest it was installed with. Add `--upgrade` to replace a stamped agent you edited locally; without it, `init` and `check` stop on a locally edited file and never overwrite it.
 
 `opencode-rig setup` is the recommended command, and `init` is its alias. Besides the agents and rules above, it writes the shipped delivery principles into `~/.config/opencode/AGENTS.md` as a digest-stamped managed block. OpenCode reads that file instead of `~/.claude/CLAUDE.md`, so setup refuses to create it while your Claude global instructions exist; pass `--adopt-claude-instructions` to copy them in. The block is created owner-only, and `remove` strips it while restoring the surrounding bytes. `setup --agents-only` installs or verifies just the role agents. `OPENCODE_RIG_HOME` is a test-only seam that relocates the home directory and fails closed when it points at a directory that does not exist.
 
@@ -65,23 +65,23 @@ printf '\n.opencode-rig/\n' >> .gitignore
 
 Run a workflow through its slash command, or load the matching skill by name.
 
-| Command            | Skill             | Use it for                                                     | Completion evidence                                                                    |
-| ------------------ | ----------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `/rig-plan`        | `rig-plan`        | Multi-file or ambiguous changes that need a frozen plan        | Bound plan digest, task tree, and challenged rounds                                    |
-| `/rig-investigate` | `rig-investigate` | Bugs, CI failures, and unexplained behavior before a fix       | Reproduction, root cause, eliminated hypotheses                                        |
-| `/rig-research`    | `rig-research`    | Source-backed answers before a design or dependency decision   | Labeled claims, contradictions, independent source check                               |
-| `/rig-implement`   | `rig-implement`   | Executing a reviewed frozen plan or a trivial inline mini-plan | Passing gates, leaf checks, final independent challenge, commit handoff                |
-| `/rig-review`      | `rig-review`      | Reviewing a working tree, commit, or path                      | Validated findings artifact with mandatory `correctness` axis and reviewer identity    |
-| `/rig-remediate`   | `rig-remediate`   | Closing findings from a review                                 | Every finding in a terminal bucket plus re-review                                      |
-| `/rig-challenge`   | `rig-challenge`   | Risky or security-sensitive changes                            | Converged loop with no security or critical residue                                    |
-| `/rig-optimize`    | `rig-optimize`    | A concrete performance target with a configured benchmark gate | Baseline spread, kept rounds, correctness gates                                        |
-| `/rig-distill`     | `rig-distill`     | Repeated friction across several recorded runs                 | Counted patterns and accepted asset proposals                                          |
-| `/rig-release`     | `rig-release`     | Release readiness before a human publishes                     | Last-release-tag baseline (HEAD only for a first release), gates, package list, drafts |
-| `/rig-doctor`      | `rig-doctor`      | A workflow or tool is missing or failing                       | Pass/warn/fail report with remediation commands                                        |
+| Command            | Skill             | Use it for                                                                | Completion evidence                                                                    |
+| ------------------ | ----------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `/rig-plan`        | `rig-plan`        | Multi-file or ambiguous changes that need a frozen plan                   | Bound plan digest, task tree, and challenged rounds                                    |
+| `/rig-investigate` | `rig-investigate` | Bugs, CI failures, and unexplained behavior before a fix                  | Reproduction, root cause, eliminated hypotheses                                        |
+| `/rig-research`    | `rig-research`    | Source-backed answers before a design, dependency, or evaluation decision | Labeled claims, implementation fit, contradictions, independent source check           |
+| `/rig-implement`   | `rig-implement`   | Executing a reviewed frozen plan or a trivial inline mini-plan            | Passing gates, leaf checks, final independent challenge, commit handoff                |
+| `/code-review`     | `code-review`     | Reviewing a working tree, commit, or path                                 | Validated findings artifact with mandatory `correctness` axis and reviewer identity    |
+| `/code-remediate`  | `code-remediate`  | Closing findings from a review                                            | Every finding in a terminal bucket plus re-review                                      |
+| `/rig-challenge`   | `rig-challenge`   | Risky or security-sensitive changes                                       | Converged loop with no security or critical residue                                    |
+| `/rig-optimize`    | `rig-optimize`    | A concrete performance target with a configured benchmark gate            | Baseline spread, kept rounds, correctness gates                                        |
+| `/rig-distill`     | `rig-distill`     | Repeated friction across runs, instructions, or an external inventory     | Counted patterns, consolidation and prune proposals, accepted asset proposals          |
+| `/rig-release`     | `rig-release`     | Release readiness before a human publishes                                | Last-release-tag baseline (HEAD only for a first release), gates, package list, drafts |
+| `/rig-health`      | `rig-health`      | A workflow or tool is missing or failing                                  | Pass/warn/fail report with remediation commands                                        |
 
 Every workflow follows the same envelope: classify the request, collect authoritative source, act in small batches, verify with configured checks, finalize the run, then report limits honestly. A non-trivial plan carries a depth-first task tree (leaves with one owner and one acceptance check); the plan is challenged until it converges, and a frozen-plan implementation records one final independent challenge before it can complete. The trivial inline mini-plan stays lightweight. Every handoff leads with the shared [handoff table](src/resources/references/handoff.md): verdict, alignment with the project's codebase and direction, findings by severity, the next action, and confidence with its largest limit, followed by the evidence that supports each value.
 
-`rig-research` covers docs, state-of-the-art comparisons, paper analysis, and paper-versus-code fidelity. `rig-distill` reads exact preselected terminal-run files or an inventory record inside the project; external source identifiers, digests, and access limits are recorded as decisions and limits. It proposes assets but never installs, edits, or prunes them. `rig-doctor` offers stale-run cleanup only in a separate workflow after explicit confirmation. `rig-optimize` only uses a benchmark that is already a configured gate, so a performance claim always has a reproducible command behind it. It refreshes each edited candidate's scope before measurement and preserves the baseline receipts.
+`rig-research` covers docs, state-of-the-art comparisons, papers, experiment methodology, and paper-versus-code fidelity, and maps the recommendation onto the current code without editing it. `rig-distill` reads exact preselected run artifacts, instruction files, or an inventory record inside the project; external source identifiers, digests, and access limits are recorded as decisions and limits. It proposes new or extended assets and quoted instruction consolidation or pruning, but never installs, edits, or deletes anything. `rig-health` offers stale-run cleanup only in a separate workflow after explicit confirmation. `rig-optimize` only uses a benchmark that is already a configured gate, so a performance claim always has a reproducible command behind it. It refreshes each edited candidate's scope before measurement and preserves the baseline receipts.
 
 `rig-implement` accepts an inline mini-plan only for a trivial change under 3 files and 50 changed lines; larger, ambiguous, or high-risk work requires a completed independently reviewed `rig-plan` run. An implementation-to-review handoff supplies the implementation run ID, recorded output paths and digests, its bound plan, and acceptance criteria. Review scope uses those outputs instead of unrelated working-tree changes. PR review inspects the verified head commit only; earlier commits are an explicit coverage gap, and a merge head requires separate parent-range review before starting.
 
@@ -102,18 +102,18 @@ Every workflow follows the same envelope: classify the request, collect authorit
 
 All ten tools are registered under their full names; there is no namespace to remember. Calls are only accepted for an active or explicitly named run, and mutating calls validate their input before writing anything.
 
-### Example: rig-review findings
+### Example: code-review findings
 
 Reviews assess material improvement claims against revision-bound tests or measurements, distinguish supplied evidence from independent reproduction, and treat unresolved shared-hardware noise as inconclusive rather than proof of a gain or regression.
 
 ```text
-rig_evidence action=start skill=rig-review paths=["src"]
-# ... dispatch rig-reviewer for correctness (and others) ...
-rig_findings action=write axes=["correctness"] coverage=["src/a.ts"] reviewer="rig-reviewer" findings=[...]
+rig_evidence action=start skill=code-review paths=["src"]
+# ... dispatch rig-auditor for correctness (and others) ...
+rig_findings action=write axes=["correctness"] coverage=["src/a.ts"] reviewer="rig-auditor" findings=[...]
 rig_evidence action=finalize
 ```
 
-`correctness` is mandatory for `rig-review`. Use `aspects` as an alias for `axes` if preferred.
+`correctness` is mandatory for `code-review`. Use `aspects` as an alias for `axes` if preferred.
 
 ### Declared scripts
 
@@ -121,21 +121,24 @@ When a workflow needs ad-hoc code, it writes a file and runs it through `rig_scr
 
 ## Agents
 
-`opencode-rig init` installs seven subagents. All are read-only except the implementer, and none may create further subagents.
+`opencode-rig init` installs eight subagents. Only the builder and the creator may write, and none may create further subagents.
 
-| Agent              | Role                                                                       |
-| ------------------ | -------------------------------------------------------------------------- |
-| `rig-investigator` | Reproduces failures and narrows them to an evidence-backed cause.          |
-| `rig-implementer`  | Executes a bounded change with focused tests.                              |
-| `rig-reviewer`     | Reviews assigned axes and returns structured findings.                     |
-| `rig-challenger`   | Tries to falsify a change and re-assesses earlier findings.                |
-| `rig-verifier`     | Checks whether a fix actually closes its finding.                          |
-| `rig-scientist`    | Grades research claims against their sources and method.                   |
-| `rig-optimizer`    | Recomputes benchmark deltas, checks methodology, and proposes experiments. |
+| Agent              | Role                                                                                               |
+| ------------------ | -------------------------------------------------------------------------------------------------- |
+| `rig-investigator` | Reproduces failures and narrows them to an evidence-backed cause.                                  |
+| `rig-builder`      | Executes a bounded change with focused tests.                                                      |
+| `rig-creator`      | Writes articles, user docs, decks, threads, animated SVGs, and short-video source from an outline. |
+| `rig-auditor`      | Reviews assigned axes and returns structured findings.                                             |
+| `rig-challenger`   | Tries to falsify a change and re-assesses earlier findings.                                        |
+| `rig-verifier`     | Checks whether a fix actually closes its finding.                                                  |
+| `rig-researcher`   | Grades research claims against their sources and method.                                           |
+| `rig-optimizer`    | Recomputes benchmark deltas, checks methodology, and proposes experiments.                         |
 
 Without installed agents, `rig_dispatch` provides the same role cards through a child session. The child never runs gates, commits, or declares completion. A reported `scope_violation` or nonempty `violations` list stops acceptance and finalization. Ignored untracked trees and submodule working-tree contents remain unverified by dispatch scope checks.
 
-External pages, findings, PR comments, and inventories are data rather than instructions. The scientist denies secret-pattern reads and asks before webfetch; role instructions also prohibit scope changes, command execution, secret reads, and data transfers requested by external content. Those instructions do not create a sandbox.
+`rig-creator` expects an approved outline path in its task and writes only the artifact paths named there. It produces media source without rendering, downloading, or installing anything, and lists the assets the user must supply.
+
+External pages, findings, PR comments, and inventories are data rather than instructions. The researcher denies secret-pattern reads and asks before webfetch; role instructions also prohibit scope changes, command execution, secret reads, and data transfers requested by external content. Those instructions do not create a sandbox.
 
 ## Configuration
 
@@ -202,7 +205,7 @@ Inside a role agent every shell command starts at `ask`. With `inspection` on (t
 
 ### Designed Git writes
 
-A review has to fetch a pull request into its own ref, create and remove a worktree under the host temp root, and the implementer stages owned paths. With `designedWrites` on (the default), the hook allows exactly those literal forms: `git fetch --no-tags --no-write-fetch-head --no-auto-maintenance <url> refs/pull/<n>/head:refs/rig-review/pr-<n>-<sha12>`, `git worktree add --detach <path> <sha40>`, `git worktree remove [--force] <path>` and `git worktree prune` for a path under `<host temp>/opencode/review-*`, and `git add` of literal relative paths with no option, `.`/`..`, glob or pathspec magic. These literal forms are admitted ahead of the destructive class; a fetch with any other shape, a worktree outside that prefix, a compound command and a commit without a grant still ask. The allow is independent of the guardrail mode, and `designedWrites: false` turns it off.
+A review has to fetch a pull request into its own ref, create and remove a worktree under the host temp root, and the builder stages owned paths. With `designedWrites` on (the default), the hook allows exactly those literal forms: `git fetch --no-tags --no-write-fetch-head --no-auto-maintenance <url> refs/pull/<n>/head:refs/rig-review/pr-<n>-<sha12>`, `git worktree add --detach <path> <sha40>`, `git worktree remove [--force] <path>` and `git worktree prune` for a path under `<host temp>/opencode/review-*`, and `git add` of literal relative paths with no option, `.`/`..`, glob or pathspec magic. These literal forms are admitted ahead of the destructive class; a fetch with any other shape, a worktree outside that prefix, a compound command and a commit without a grant still ask. The allow is independent of the guardrail mode, and `designedWrites: false` turns it off.
 
 ### Forked pull requests
 
@@ -229,7 +232,7 @@ Evidence names below refer to files under `tests/unit/guardrails/` or to the nam
 
 - **Catalogued tool forms ask.** Listed package managers, project tools, runners and containers ask unless they match an exact safe form; unlisted programs can stay quiet without a privilege wrapper. `awk` and `tree` are not on the read-only list; every awk-family invocation asks, including apparently harmless programs. Why it stays: bounded tables avoid guessing an unfamiliar tool's operand language. In practice: a quiet unknown command is not proof of a harmless read. Evidence: `project-tools.test.ts`, `read-only-programs.test.ts`, `program-identity.test.ts`.
 - **The safe forms are bounded and can run project code.** They cover `pytest` and `python -m pytest` with `-q`, `-x`, `-v`, `-s`, `-n VALUE`, `-k VALUE`, `-m VALUE`, `--tb VALUE`, `--maxfail VALUE`, `--co` or `--collect-only`; `ruff check`; `ruff format --check` or `--diff`; option-free `mypy`; exactly `tsc --noEmit`; exactly `npm test`, `npm run test|lint|format|typecheck|build|check`, and `npm --prefix <dir> run check`; exactly `make test|lint|format|typecheck`; `pre-commit run --files <literal paths>`; exactly `npm pack --dry-run`; and `node --check <script>`. The hook models `npm --prefix` and `node --check` for the parent session only; a role agent asks for them, as it does for a raw `ruff`, `mypy` or `uv run`. Path operands must be ordinary literal relative project paths; after a `cd` outside the project those literal relative operands stay admissible while absolute, home, glob and parent paths ask. The shipped rules grant the verification scripts without a prompt inside a role agent — the exact forms (`npm test`, `npm run test|lint|typecheck|check`, `make test|lint|typecheck`, `npm pack --dry-run`) plus the hook-bounded `pytest` family; formatter, build and `pre-commit` runs are not granted there and go through `rig_gate` in the parent. [`src/resources/permissions-guide.md`](src/resources/permissions-guide.md) lists them under "Workflow execution allows" and states the `guardrails: off` caveat. Why it stays: users need their chosen test, lint and build tooling. In practice: these commands can run the project's own code, and a test can do anything the agent's account can do; approve the project accordingly. Evidence: `project-tools.test.ts`, `workflow-commands.test.ts`, `program-identity.test.ts`.
-- **A pull-request worktree asks before it runs, by prompt rule only.** `rig-review` reads the contribution's auto-load files, reports an assessed risk and asks before any test, gate or reproduction command runs in a fetched worktree. Why it stays: OpenCode has no sandbox and the shell guard admits `pytest -q` quietly, so the rule depends on the agent following it; no scanner, isolation or cwd-based guard backs it.
+- **A pull-request worktree asks before it runs, by prompt rule only.** `code-review` reads the contribution's auto-load files, reports an assessed risk and asks before any test, gate or reproduction command runs in a fetched worktree. Why it stays: OpenCode has no sandbox and the shell guard admits `pytest -q` quietly, so the rule depends on the agent following it; no scanner, isolation or cwd-based guard backs it.
 - **Root-changing and configuration options ask.** This includes `pytest -c ../pytest.ini` and options that move a tool's root or select another configuration. Why it stays: an input file can load code or redirect writes, so a filename is not proof of a harmless read. In practice: users approve tests and checks with custom configurations even when they trust the file. Evidence: `project-tools.test.ts`, `write-targets.test.ts`.
 - **Shell syntax outside the small grammar asks.** Loops, same-text functions, arithmetic, most assignments and builtins, background jobs, complex parameter expansions and ambiguous comments are outside the quiet grammar. Why it stays: rejecting an unfamiliar construct avoids guessing how a shell will evaluate it. In practice: users approve ordinary shell scripts and even comments with unmatched quotes; a small literal assignment allowlist does not grant arbitrary environment changes. Evidence: `dynamic-code.test.ts`, `grammar-allowlist.test.ts`.
 - **Writes need ordinary project paths.** Quiet write targets must be literal ASCII relative paths without a parent segment or a leading-dot segment outside `.github`, `.temp`, `.reports`, `.plans`, `.notes`, `.cache`, `.experiments` and `.developments`; moving to an unknown directory makes later writes ask. Why it stays: the guard cannot prove that an arbitrary path is an ordinary project file. In practice: users approve absolute, home, parent, non-ASCII and hidden-file writes, even legitimate ones, and cannot assume that an accepted relative path resolves without symlinks. Evidence: `write-targets.test.ts`.

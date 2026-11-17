@@ -20,7 +20,7 @@ function context(project: Project, edit: () => void = () => {}) {
     },
   }
 }
-const input = { role: "rig-implementer", task: "Apply change", paths: ["src"], read_only: false } as const
+const input = { role: "rig-builder", task: "Apply change", paths: ["src"], read_only: false } as const
 
 it("detects tracked ignored edits while excluding ignored untracked additions", async () => {
   const project = Project.withCommit({ ".gitignore": "private/\n", "src/a.ts": "a" })
@@ -66,7 +66,7 @@ it("detects all foreign edits including already dirty files and retains child ev
 it("checks read-only roles without a calling session", async () => {
   const project = Project.withCommit()
   const ctx = context(project, () => project.write("src/a.ts", "changed"))
-  const result = await dispatchRole(ctx, { role: "rig-reviewer", task: "Review" }, RESOURCES_DIR)
+  const result = await dispatchRole(ctx, { role: "rig-auditor", task: "Review" }, RESOURCES_DIR)
   expect(result).toMatchObject({ scope_violation: true })
   expect(result.violations).toContainEqual(expect.stringContaining("read-only child changed path: src/a.ts"))
   expect(ctx.session.remove).not.toHaveBeenCalled()
@@ -74,7 +74,7 @@ it("checks read-only roles without a calling session", async () => {
 it("checks remediation run scopes for writers", async () => {
   const project = Project.withCommit()
   const paths = resolvePaths(project.root, ".opencode-rig")
-  const run = createRun(paths, { skill: "rig-remediate", scope: collectScope(project.root, ["src"]) })
+  const run = createRun(paths, { skill: "code-remediate", scope: collectScope(project.root, ["src"]) })
   rememberRun(paths.artifactRoot, "parent", { skill: run.skill, runId: run.run_id })
   const ctx = context(project, () => project.write("other.ts", "changed"))
   const result = await dispatchRole(ctx, { ...input, paths: ["."], sessionID: "parent" }, RESOURCES_DIR)
@@ -83,7 +83,7 @@ it("checks remediation run scopes for writers", async () => {
 it("fails closed before child creation for unreadable active runs", async () => {
   const project = Project.withCommit()
   const paths = resolvePaths(project.root, ".opencode-rig")
-  rememberRun(paths.artifactRoot, "parent", { skill: "rig-remediate", runId: "missing" })
+  rememberRun(paths.artifactRoot, "parent", { skill: "code-remediate", runId: "missing" })
   const ctx = context(project)
   await expect(dispatchRole(ctx, { ...input, sessionID: "parent" }, RESOURCES_DIR)).rejects.toThrow(/scope/)
   expect(ctx.session.create).not.toHaveBeenCalled()
@@ -98,7 +98,7 @@ it("does not blame a child for unchanged existing dirty files", async () => {
 it("binds shipped role permissions and read-only restrictions to child creation", async () => {
   const project = Project.withCommit()
   const ctx = context(project)
-  await dispatchRole(ctx, { role: "rig-scientist", task: "Inspect" }, RESOURCES_DIR)
+  await dispatchRole(ctx, { role: "rig-researcher", task: "Inspect" }, RESOURCES_DIR)
   expect(ctx.session.create.mock.calls[0]?.[0]).toMatchObject({
     permissions: expect.arrayContaining([
       { action: "edit", resource: "*", effect: "deny" },

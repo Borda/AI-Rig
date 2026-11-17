@@ -14,8 +14,8 @@ async function started(skill = "rig-challenge", gates = ['node -e "process.exit(
   project.write("src/a.ts", "export const a = 2\n")
   const harness = await createHarness(project, { gates })
   let sourceRunId: string | undefined
-  if (skill === "rig-remediate") {
-    const source = await harness.call("rig_evidence", { action: "start", skill: "rig-review", paths: ["src"] })
+  if (skill === "code-remediate") {
+    const source = await harness.call("rig_evidence", { action: "start", skill: "code-review", paths: ["src"] })
     sourceRunId = source.metadata.run_id
     await harness.call("rig_findings", {
       action: "write",
@@ -171,7 +171,7 @@ describe("gate history", () => {
 
 describe("run recovery", () => {
   it("requires findings to be rewritten after refreshing changed review source", async () => {
-    const { project, harness, runPath } = await started("rig-review")
+    const { project, harness, runPath } = await started("code-review")
     const inventory = { action: "write", findings: [], axes: ["correctness"], coverage: ["src"], reviewer: "reviewer" }
     await harness.call("rig_findings", inventory)
     project.write("src/a.ts", "export const a = 3\n")
@@ -370,14 +370,14 @@ describe("run write boundaries", () => {
   })
 
   it("permits remediation findings without review-only axes or coverage", async () => {
-    const { harness, runPath } = await started("rig-remediate")
+    const { harness, runPath } = await started("code-remediate")
     await harness.call("rig_findings", { action: "write", source_run_id: runAt(runPath).source_run_id, findings: [] })
     const artifact = JSON.parse((await harness.call("rig_findings", { action: "read" })).content)
     expect(artifact).toMatchObject({ axes: [], coverage: [], findings: [] })
   })
 
   it("reports absent when revoking an already absent grant", async () => {
-    const { harness } = await started("rig-doctor")
+    const { harness } = await started("rig-health")
     const result = await harness.call("rig_git_grant", { action: "revoke" })
     expect(result.metadata.status).toBe("absent")
     expect(result.content).toContain("No grant to revoke")

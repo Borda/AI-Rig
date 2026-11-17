@@ -1,9 +1,9 @@
 ---
-name: Rig Doctor
+name: Rig Health
 description: Check opencode-rig install health, including plugin load, version synchronization, agent installation, Git grant, artifact root, and detected gates. Use when a workflow or tool is unavailable. Also curates shipped cards (assets) and deletes stale runs only through explicitly confirmed cleanup. NOT for editing configuration or fixing files.
 ---
 
-# Rig Doctor
+# Rig Health
 
 Run `rig_doctor` with `action: "report"` and interpret the report. Diagnosis is read-only; deletion requires the separate confirmed cleanup path below.
 

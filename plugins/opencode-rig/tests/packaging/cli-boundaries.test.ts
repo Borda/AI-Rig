@@ -34,16 +34,16 @@ describe("CLI argument boundaries", () => {
   ])("rejects %s %s before touching installed files", (command, flag) => {
     const project = new Project()
     expect(cli(project, ["setup"]).status).toBe(0)
-    const agent = project.read("config/agents/rig-reviewer.md")
+    const agent = project.read("config/agents/rig-auditor.md")
     const instructions = project.read("home/.config/opencode/AGENTS.md")
-    project.write("config/agents/rig-reviewer.md", `${agent}local edit\n`)
+    project.write("config/agents/rig-auditor.md", `${agent}local edit\n`)
 
     const result = cli(project, [command, flag])
 
     expect(result.status).toBe(2)
     expect(result.stderr).toContain(flag)
     expect(result.stderr).toContain("Usage: opencode-rig")
-    expect(project.read("config/agents/rig-reviewer.md")).toBe(`${agent}local edit\n`)
+    expect(project.read("config/agents/rig-auditor.md")).toBe(`${agent}local edit\n`)
     expect(project.read("home/.config/opencode/AGENTS.md")).toBe(instructions)
   })
 
@@ -148,35 +148,35 @@ describe("project target boundaries", () => {
     const cwd = project.path("nested/deeper")
 
     expect(cli(project, ["setup", "--project"], cwd).status).toBe(0)
-    expect(project.exists(".opencode/agents/rig-reviewer.md")).toBe(true)
+    expect(project.exists(".opencode/agents/rig-auditor.md")).toBe(true)
     expect(project.exists("opencode.jsonc")).toBe(true)
     expect(project.exists("nested/deeper/.opencode")).toBe(false)
     expect(project.exists("nested/deeper/opencode.jsonc")).toBe(false)
     expect(cli(project, ["check", "--project"], cwd).status).toBe(0)
     expect(cli(project, ["doctor", "--project"], cwd).status).toBe(0)
     expect(cli(project, ["remove", "--project"], cwd).status).toBe(0)
-    expect(project.exists(".opencode/agents/rig-reviewer.md")).toBe(false)
+    expect(project.exists(".opencode/agents/rig-auditor.md")).toBe(false)
   })
 
   it.each([false, true])("refuses a dangling agent symlink with force=%s", (force) => {
     const project = new Project()
     mkdirSync(project.path(".opencode/agents"), { recursive: true })
     const target = project.path("outside.md")
-    symlinkSync(target, project.path(".opencode/agents/rig-reviewer.md"))
+    symlinkSync(target, project.path(".opencode/agents/rig-auditor.md"))
 
     const result = cli(project, ["setup", "--project", ...(force ? ["--force"] : [])])
 
     expect(result.status).toBe(1)
     expect(`${result.stdout}${result.stderr}`).toContain("symlink")
     expect(project.exists("outside.md")).toBe(false)
-    expect(lstatSync(project.path(".opencode/agents/rig-reviewer.md")).isSymbolicLink()).toBe(true)
+    expect(lstatSync(project.path(".opencode/agents/rig-auditor.md")).isSymbolicLink()).toBe(true)
   })
 
   it("refuses to overwrite an agent symlink target with --force", () => {
     const project = new Project()
     const target = project.write("outside.md", "Private data\n")
     mkdirSync(project.path(".opencode/agents"), { recursive: true })
-    symlinkSync(target, project.path(".opencode/agents/rig-reviewer.md"))
+    symlinkSync(target, project.path(".opencode/agents/rig-auditor.md"))
 
     const result = cli(project, ["setup", "--project", "--force"])
 
@@ -195,7 +195,7 @@ describe("project target boundaries", () => {
 
     expect(result.status).toBe(1)
     expect(`${result.stdout}${result.stderr}`).toContain("symlink")
-    expect(project.exists("elsewhere/rig-reviewer.md")).toBe(false)
+    expect(project.exists("elsewhere/rig-auditor.md")).toBe(false)
   })
 
   it("refuses to merge through a project configuration symlink", () => {
@@ -241,7 +241,7 @@ describe("project target boundaries", () => {
     })
 
     expect(result.status).toBe(0)
-    expect(project.exists(".opencode/agents/rig-reviewer.md")).toBe(true)
+    expect(project.exists(".opencode/agents/rig-auditor.md")).toBe(true)
     expect(project.exists("redirected/.opencode")).toBe(false)
     expect(project.exists("opencode.jsonc")).toBe(true)
   })

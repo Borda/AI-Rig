@@ -288,7 +288,7 @@ describe("distill workflow", () => {
 
 describe("doctor workflow", () => {
   it("names every roster source needed to repair an asset addition", () => {
-    const remedy = section("rig-doctor", "Response").find((line) => line.includes("Asset roster drift:"))
+    const remedy = section("rig-health", "Response").find((line) => line.includes("Asset roster drift:"))
     expect(remedy).toContain("`rig.json`")
     expect(remedy).toContain("`src/resources/agents.json`")
     expect(remedy).toContain("`src/skill-manifest.ts`")
@@ -310,11 +310,11 @@ describe("doctor workflow", () => {
     )
     expect(project.exists(input)).toBe(true)
 
-    const cleanup = section("rig-doctor", "Confirmed cleanup")
+    const cleanup = section("rig-health", "Confirmed cleanup")
     expect(cleanup.some((line) => line.includes("explicit confirmation") && line.includes("deleting"))).toBe(true)
     expect(cleanup.some((line) => line.includes('action: "clean"') && line.includes("confirm: true"))).toBe(true)
     expect(
-      section("rig-distill", "Rules").some((line) => line.includes("../rig-doctor/SKILL.md#confirmed-cleanup")),
+      section("rig-distill", "Rules").some((line) => line.includes("../rig-health/SKILL.md#confirmed-cleanup")),
     ).toBe(true)
 
     const removed = await harness.call("rig_doctor", { action: "clean", confirm: true })

@@ -8,7 +8,7 @@ it.each(["corrupt", "invalid", "missing-run"])("keeps hooks usable with %s activ
   project.write("outside-scope.txt", "uncommitted work")
   const harness = await createHarness(project)
   const artifactRoot = project.path(".opencode-rig")
-  if (damage === "missing-run") rememberRun(artifactRoot, "session-1", { runId: "missing", skill: "rig-review" })
+  if (damage === "missing-run") rememberRun(artifactRoot, "session-1", { runId: "missing", skill: "code-review" })
   else project.write(".opencode-rig/state.json", damage === "corrupt" ? "{broken" : '{"schema":99}')
   const state = project.read(".opencode-rig/state.json")
   const before = harness.toolHooks.get("execute.before")![0]!

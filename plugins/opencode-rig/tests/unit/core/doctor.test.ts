@@ -35,7 +35,7 @@ describe("checkAssets", () => {
   it("passes the shipped package with no failures", () => {
     const result = checkAssets(RESOURCES_DIR)
     expect(result.failures).toEqual([])
-    expect(result.summary).toMatch(/^assets: 11 skills, 7 role agents, \d+ repeated prose line\(s\)$/)
+    expect(result.summary).toMatch(/^assets: 11 skills, 8 role agents, \d+ repeated prose line\(s\)$/)
   })
 
   it("reports a card that is missing from the skill manifest and has a dead cross-reference", () => {

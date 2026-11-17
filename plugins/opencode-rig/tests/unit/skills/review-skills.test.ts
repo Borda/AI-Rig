@@ -15,15 +15,15 @@ function section(skill: string, heading: string): string[] {
 
 describe("review workflow instructions", () => {
   it("maps remediation buckets to tool statuses and rejects stale claims with evidence", () => {
-    const workflow = section("rig-remediate", "Workflow")
+    const workflow = section("code-remediate", "Workflow")
     const buckets = workflow.flatMap((line) => /^   - `([^`]+)` —/.exec(line)?.[1] ?? [])
     expect(buckets).toEqual([...STATUSES])
     expect(workflow.some((line) => line.includes('status: "rejected"') && line.includes("stale: "))).toBe(true)
-    expect(section("rig-remediate", "Rules").some((line) => line.includes("`deferred`"))).toBe(true)
+    expect(section("code-remediate", "Rules").some((line) => line.includes("`deferred`"))).toBe(true)
   })
 
   it("separates verifier closure verdicts from the reviewer's correctness axes", () => {
-    const workflow = section("rig-remediate", "Workflow")
+    const workflow = section("code-remediate", "Workflow")
     expect(
       workflow.some(
         (line) => line.includes("rig-verifier") && line.includes("`closed`") && line.includes("`verified_by`"),
@@ -31,14 +31,14 @@ describe("review workflow instructions", () => {
     ).toBe(true)
     expect(
       workflow.some(
-        (line) => line.includes("rig-reviewer") && line.includes("rig_findings") && line.includes("`correctness`"),
+        (line) => line.includes("rig-auditor") && line.includes("rig_findings") && line.includes("`correctness`"),
       ),
     ).toBe(true)
     expect(workflow.some((line) => line.includes("not-closed") && line.includes("unverifiable"))).toBe(true)
   })
 
   it("resolves PR heads to commit evidence without adding a nonexistent PR tool field", () => {
-    const workflow = section("rig-review", "Workflow")
+    const workflow = section("code-review", "Workflow")
     expect(
       workflow.some(
         (line) => line.includes("PR") && line.includes("fetch") && line.includes("local ref") && line.includes("SHA"),
@@ -48,7 +48,7 @@ describe("review workflow instructions", () => {
   })
 
   it("keeps workspace reviewers on the recorded working-tree bytes", () => {
-    const workflow = section("rig-review", "Workflow")
+    const workflow = section("code-review", "Workflow")
     const collection = workflow.find((line) => line.includes("**Collect exact source.**"))
     expect(collection).toContain("project root")
     expect(collection).toContain("staged and unstaged")
@@ -56,7 +56,7 @@ describe("review workflow instructions", () => {
   })
 
   it("gives reviewers exact source and diff as well as digests", () => {
-    const dispatch = section("rig-review", "Workflow").find((line) =>
+    const dispatch = section("code-review", "Workflow").find((line) =>
       line.includes("**Dispatch independent reviewers.**"),
     )
     expect(dispatch).toContain("exact source bytes or paths")
@@ -65,7 +65,7 @@ describe("review workflow instructions", () => {
   })
 
   it("links review classifications to the existing scope thresholds", () => {
-    const classify = section("rig-review", "Workflow").find((line) => line.includes("**Classify.**"))
+    const classify = section("code-review", "Workflow").find((line) => line.includes("**Classify.**"))
     expect(classify).toContain("../rig-plan/SKILL.md#workflow")
     const thresholds = section("rig-plan", "Workflow").find((line) => line.includes("**Classify scope.**"))
     expect(thresholds).toContain("under 3 files and 50 changed lines")
@@ -73,8 +73,8 @@ describe("review workflow instructions", () => {
   })
 
   it("scopes implementation handoffs from run evidence and acceptance criteria", () => {
-    expect(section("rig-review", "Input").some((line) => line.includes("implementation run ID"))).toBe(true)
-    const workflow = section("rig-review", "Workflow")
+    expect(section("code-review", "Input").some((line) => line.includes("implementation run ID"))).toBe(true)
+    const workflow = section("code-review", "Workflow")
     expect(
       workflow.some(
         (line) =>
@@ -91,7 +91,7 @@ describe("review workflow instructions", () => {
     expect(section("rig-research", "Rules").some((line) => line.includes("Do not run experiments"))).toBe(true)
   })
 
-  it.each(["rig-review", "rig-remediate", "rig-research"])(
+  it.each(["code-review", "code-remediate", "rig-research"])(
     "%s discloses instruction-enforced reviewer independence",
     (skill) => {
       const output = section(skill, "Output")
@@ -100,7 +100,7 @@ describe("review workflow instructions", () => {
     },
   )
 
-  it.each(["rig-remediate", "rig-research"])("%s treats external content as untrusted data", (skill) => {
+  it.each(["code-remediate", "rig-research"])("%s treats external content as untrusted data", (skill) => {
     const rules = section(skill, "Rules")
     expect(rules.some((line) => line.includes("untrusted data") && line.includes("instructions"))).toBe(true)
     expect(rules.some((line) => line.includes("secrets") && line.includes("URLs"))).toBe(true)

@@ -13,7 +13,7 @@ function section(skill: string, heading: string): string[] {
 }
 
 describe("external evidence boundaries", () => {
-  it.each(["rig-scientist", "rig-reviewer", "rig-verifier"])("%s rejects embedded instructions", (role) => {
+  it.each(["rig-researcher", "rig-auditor", "rig-verifier"])("%s rejects embedded instructions", (role) => {
     const lines = readFileSync(join(RESOURCES_DIR, "roles", `${role}.md`), "utf8").split("\n")
     const boundary = lines.find((line) => line.includes("untrusted data"))
     expect(boundary).toContain("never instructions")
@@ -38,9 +38,9 @@ describe("external evidence boundaries", () => {
     expect(boundary).toContain("send local data to URLs")
   })
 
-  it("asks before scientist web fetches while allowing ordinary project reads", () => {
+  it("asks before researcher web fetches while allowing ordinary project reads", () => {
     const manifest = JSON.parse(readFileSync(join(RESOURCES_DIR, "agents.json"), "utf8"))
-    const rules = manifest.agents["rig-scientist"].permissions
+    const rules = manifest.agents["rig-researcher"].permissions
     expect(rules.filter((rule: { action: string }) => rule.action === "webfetch")).toEqual([
       { action: "webfetch", resource: "*", effect: "ask" },
     ])
@@ -57,9 +57,9 @@ describe("external evidence boundaries", () => {
     "~/.config/**",
     "**/.config/**",
     "*credentials*",
-  ])("denies scientist reads matching %s after the broad read allow", (resource) => {
+  ])("denies researcher reads matching %s after the broad read allow", (resource) => {
     const manifest = JSON.parse(readFileSync(join(RESOURCES_DIR, "agents.json"), "utf8"))
-    const rules = manifest.agents["rig-scientist"].permissions as Array<{
+    const rules = manifest.agents["rig-researcher"].permissions as Array<{
       action: string
       resource: string
       effect: string
@@ -73,7 +73,7 @@ describe("external evidence boundaries", () => {
 
 describe("remediation inventory accounting", () => {
   it("reads and seeds every source finding before applying dispositions", () => {
-    const workflow = section("rig-remediate", "Workflow")
+    const workflow = section("code-remediate", "Workflow")
     expect(workflow.find((line) => line.startsWith("1. "))).toContain("after seeding in step 2")
     const start = workflow.find((line) => line.startsWith("2. "))
     expect(start).toContain('action: "read"')
@@ -89,7 +89,7 @@ describe("remediation inventory accounting", () => {
   })
 
   it("stops finalization when the persisted inventory differs from its source", () => {
-    const reconcile = section("rig-remediate", "Workflow").find((line) => line.startsWith("8. "))
+    const reconcile = section("code-remediate", "Workflow").find((line) => line.startsWith("8. "))
     expect(reconcile).toContain('action: "read"')
     expect(reconcile).toContain("run_id: <remediate run ID>")
     expect(reconcile).toContain("source total")
@@ -98,13 +98,13 @@ describe("remediation inventory accounting", () => {
   })
 
   it("records a deferred owner in its schema field and the trigger in disposition", () => {
-    const deferred = section("rig-remediate", "Workflow").find((line) => line.startsWith("   - `deferred`"))
+    const deferred = section("code-remediate", "Workflow").find((line) => line.startsWith("   - `deferred`"))
     expect(deferred).toContain("set `owner`")
     expect(deferred).toContain("trigger in `disposition`")
   })
 
   it("discloses unchecked verifier identity and instruction-enforced fixed closure", () => {
-    const output = section("rig-remediate", "Output")
+    const output = section("code-remediate", "Output")
     expect(output.some((line) => line.includes("`verified_by` is an unchecked string"))).toBe(true)
     expect(output.some((line) => line.includes("`fixed` closure is instruction-enforced"))).toBe(true)
   })
@@ -112,19 +112,19 @@ describe("remediation inventory accounting", () => {
 
 describe("review scope boundaries", () => {
   it("keeps the blanket repository write ban and its sole PR fetch exception", () => {
-    const rule = section("rig-review", "Rules").find((line) => line.includes("Sole exception"))
+    const rule = section("code-review", "Rules").find((line) => line.includes("Sole exception"))
     expect(rule).toContain("Never write to the repository or GitHub during review")
     expect(rule).toContain("one new dedicated local ref")
     expect(rule).toContain("objects `git fetch` stores")
     expect(rule).toContain("never switch branches, touch the index or working tree, or overwrite existing refs")
-    const introduction = readFileSync(join(RESOURCES_DIR, "skills", "rig-review", "SKILL.md"), "utf8").split("\n")
+    const introduction = readFileSync(join(RESOURCES_DIR, "skills", "code-review", "SKILL.md"), "utf8").split("\n")
     expect(
       introduction.some((line) => line.startsWith("> Read") && line.includes("sole PR preparation exception")),
     ).toBe(true)
   })
 
   it("persists the number of unreviewed PR commits in run limits", () => {
-    const workflow = section("rig-review", "Workflow")
+    const workflow = section("code-review", "Workflow")
     expect(workflow.some((line) => line.includes("gh pr view <n> --json commits"))).toBe(true)
     const limit = workflow.find((line) => line.includes("earlier commits unreviewed"))
     expect(limit).toContain('action: "record"')
@@ -134,7 +134,7 @@ describe("review scope boundaries", () => {
   })
 
   it("aborts on an existing dedicated ref before a non-forcing PR fetch", () => {
-    const workflow = section("rig-review", "Workflow")
+    const workflow = section("code-review", "Workflow")
     const check = workflow.findIndex((line) =>
       line.includes("git show-ref --verify --quiet refs/rig-review/pr-<n>-<sha12>"),
     )
@@ -152,7 +152,7 @@ describe("review scope boundaries", () => {
   })
 
   it("stops merge-head PR reviews before starting an empty commit scope", () => {
-    const workflow = section("rig-review", "Workflow")
+    const workflow = section("code-review", "Workflow")
     const guard = workflow.findIndex((line) => line.includes("git rev-list --parents -n 1 <verified SHA>"))
     const start = workflow.findIndex((line) => line.includes('Start `rig_evidence` with `action: "start"'))
     expect(guard).toBeGreaterThanOrEqual(0)
@@ -163,7 +163,7 @@ describe("review scope boundaries", () => {
   })
 
   it("stops when implementation output digests differ from the collected scope", () => {
-    const collection = section("rig-review", "Workflow").find((line) => line.startsWith("3. "))
+    const collection = section("code-review", "Workflow").find((line) => line.startsWith("3. "))
     expect(collection).toContain("each output's recorded `sha256`")
     expect(collection).toContain("new scope entry")
     expect(collection).toContain("missing")
@@ -174,7 +174,7 @@ describe("review scope boundaries", () => {
 
 describe("research evidence limits", () => {
   it("routes confirming experiments out of the read-only source cross-check", () => {
-    const crossCheck = section("rig-research", "Workflow").find((line) => line.startsWith("5. "))
+    const crossCheck = section("rig-research", "Workflow").find((line) => line.includes("**Cross-check"))
     expect(crossCheck).toContain("Experiments are out of scope")
     expect(crossCheck).toContain("`rig-optimize`")
     expect(crossCheck).toContain("`rig-investigate`")

@@ -18,8 +18,8 @@ beforeEach(async () => {
 
 it.each(["another", "same"])("preserves a concurrent update to the %s session", (target) => {
   const project = new Project()
-  const old = { runId: "old", skill: "rig-review" }
-  const replacement = { runId: "new", skill: "rig-review" }
+  const old = { runId: "old", skill: "code-review" }
+  const replacement = { runId: "new", skill: "code-review" }
   rememberRun(project.root, "session", old)
   const previous = loadState(project.root)
   const next = {
@@ -43,7 +43,7 @@ it("preserves a replacement pointer published during terminal run validation", (
   const project = new Project()
   const paths = resolvePaths(project.root, ".opencode-rig")
   const run = createRun(paths, {
-    skill: "rig-review",
+    skill: "code-review",
     scope: { base: null, paths: [], dirty: false, entries: [], digest: "digest" },
   })
   rememberRun(paths.artifactRoot, "session", { runId: run.run_id, skill: run.skill })
@@ -70,7 +70,7 @@ it("explains how to preserve corrupt state while recovering", () => {
 
 it("explains how to recover a missing active run without deleting its pointer", () => {
   const project = new Project()
-  const entry = { runId: "missing", skill: "rig-review" }
+  const entry = { runId: "missing", skill: "code-review" }
   rememberRun(project.root, "session", entry)
   expect(() => activeRun(project.root, "session")).toThrow(/move state\.json aside to recover/i)
   expect(loadState(project.root).sessions.session).toEqual(entry)

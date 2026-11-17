@@ -124,7 +124,7 @@ describe("skills", () => {
   })
 
   it("reference the evidence contract from every workflow that records evidence", () => {
-    for (const skill of skills.filter((name) => name !== "rig-doctor")) {
+    for (const skill of skills.filter((name) => name !== "rig-health")) {
       const text = readFileSync(join(RESOURCES_DIR, "skills", skill, "SKILL.md"), "utf8")
       expect(text).toMatch(/references\/evidence\.md/)
     }
@@ -598,10 +598,12 @@ describe("role agents", () => {
     }
   })
 
-  it("keeps every role read-only except the implementer", () => {
+  it("keeps every role read-only except the writer roles", () => {
     for (const [name, config] of Object.entries<any>(manifest.agents)) {
       const edit = config.permissions.find((permission: any) => permission.action === "edit")
-      expect(edit?.effect, `${name} edit permission`).toBe(name === "rig-implementer" ? "allow" : "deny")
+      expect(edit?.effect, `${name} edit permission`).toBe(
+        name === "rig-builder" || name === "rig-creator" ? "allow" : "deny",
+      )
       expect(
         config.permissions.some((permission: any) => permission.action === "task" && permission.effect === "allow"),
       ).toBe(false)
@@ -655,7 +657,7 @@ describe("rendered role agents", () => {
 
   it("carries the shipped rules after the agent's own shell catch-all", () => {
     const project = renderAll()
-    const rendered = parseFrontmatter(project.read(".opencode/agents/rig-reviewer.md"))
+    const rendered = parseFrontmatter(project.read(".opencode/agents/rig-auditor.md"))
     const catchAll = rendered.findIndex(
       (rule) => rule.action === "shell" && rule.resource === "*" && rule.effect === "ask",
     )
@@ -668,7 +670,7 @@ describe("rendered role agents", () => {
   it("gives every role agent the shipped rules with their shipped action and effect", () => {
     const project = renderAll()
     const names = Object.keys(agentManifest)
-    expect(names).toHaveLength(7)
+    expect(names).toHaveLength(8)
     for (const name of names) {
       const own = agentManifest[name].permissions
       const rendered = parseFrontmatter(project.read(`.opencode/agents/${name}.md`))
@@ -720,6 +722,6 @@ describe("published tarball", () => {
       encoding: "utf8",
       timeout: 120_000,
     })
-    expect(output).toMatch(/package check passed: \d+ files, 11 skills, 7 role cards/)
+    expect(output).toMatch(/package check passed: \d+ files, 11 skills, 8 role cards/)
   })
 })

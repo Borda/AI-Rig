@@ -20,8 +20,8 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-const writer = { role: "rig-implementer", task: "Edit", paths: ["src"], read_only: false } as const
-const reviewer = { role: "rig-reviewer", task: "Review" } as const
+const writer = { role: "rig-builder", task: "Edit", paths: ["src"], read_only: false } as const
+const reviewer = { role: "rig-auditor", task: "Review" } as const
 
 function context(project: Project, action: () => unknown = () => {}, text = "Done") {
   return {

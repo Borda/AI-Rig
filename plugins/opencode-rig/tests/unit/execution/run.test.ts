@@ -122,7 +122,7 @@ describe("requirementsFor", () => {
 describe("finalizeRun", () => {
   it("refuses to finalize a completed run again", () => {
     const project = Project.withCommit()
-    const { run } = setup(project, "rig-doctor")
+    const { run } = setup(project, "rig-health")
     const result = finalizeRun({ ...run, status: "completed" }, { drift: false })
     expect(result).toMatchObject({ ok: false, status: "completed" })
     expect(result.problems[0]).toMatch(/not 'in_progress'/)
@@ -130,7 +130,7 @@ describe("finalizeRun", () => {
 
   it("marks drift as stale and never certifies changed bytes", () => {
     const project = Project.withCommit()
-    const { run } = setup(project, "rig-doctor")
+    const { run } = setup(project, "rig-health")
     const result = finalizeRun(run, { drift: true })
     expect(result).toMatchObject({ ok: false, status: "stale" })
     expect(result.problems[0]).toMatch(/source drift/)
@@ -204,10 +204,10 @@ describe("finalizeRun", () => {
 
   it("requires a findings artifact from review", () => {
     const project = Project.withCommit()
-    const { run } = setup(project, "rig-review")
+    const { run } = setup(project, "code-review")
     const reviewed = {
       ...run,
-      review: { run_id: run.run_id, reviewer: "rig-reviewer", source_digest: run.scope.digest },
+      review: { run_id: run.run_id, reviewer: "rig-auditor", source_digest: run.scope.digest },
     }
     expect(finalizeRun(reviewed, { drift: false }).problems).toContain(
       "findings artifact is missing; write it with rig_findings",
@@ -216,11 +216,11 @@ describe("finalizeRun", () => {
 
   it("lets a review finish with open findings", () => {
     const project = Project.withCommit()
-    const { run } = setup(project, "rig-review")
+    const { run } = setup(project, "code-review")
     const result = finalizeRun(
       {
         ...run,
-        review: { run_id: run.run_id, reviewer: "rig-reviewer", source_digest: run.scope.digest },
+        review: { run_id: run.run_id, reviewer: "rig-auditor", source_digest: run.scope.digest },
         findings: { ...findings, open: 2 },
       },
       { drift: false },
@@ -230,12 +230,12 @@ describe("finalizeRun", () => {
 
   it("blocks remediation while a finding is open", () => {
     const project = Project.withCommit()
-    const { run } = setup(project, "rig-remediate")
+    const { run } = setup(project, "code-remediate")
     const result = finalizeRun(
       {
         ...run,
         gates: [receipt("test", "passed", run.scope.digest)],
-        review: { run_id: run.run_id, reviewer: "rig-reviewer", source_digest: run.scope.digest },
+        review: { run_id: run.run_id, reviewer: "rig-auditor", source_digest: run.scope.digest },
         findings: { ...findings, open: 1 },
       },
       { drift: false },
@@ -246,7 +246,7 @@ describe("finalizeRun", () => {
 
   it("completes remediation with every finding closed", () => {
     const project = Project.withCommit()
-    const { run } = setup(project, "rig-remediate")
+    const { run } = setup(project, "code-remediate")
     const inventory = ["F-1", "F-2", "F-3"].map((id) => ({
       id,
       severity: "medium" as const,
@@ -263,7 +263,7 @@ describe("finalizeRun", () => {
         source_run_id: "source-review",
         source_findings: { digest: "d".repeat(64), ids: inventory.map((finding) => finding.id) },
         gates: [receipt("test", "passed", run.scope.digest)],
-        review: { run_id: run.run_id, reviewer: "rig-reviewer", source_digest: run.scope.digest },
+        review: { run_id: run.run_id, reviewer: "rig-auditor", source_digest: run.scope.digest },
         findings: { ...findings, fixed: 3 },
       },
       { drift: false, source_findings_digest: "d".repeat(64), findings: inventory },
@@ -337,13 +337,13 @@ describe("finalizeRun", () => {
 describe("writeReport / renderReport", () => {
   it("writes a report with gates, findings, review, loop, changes, and limits", () => {
     const project = Project.withCommit()
-    const { run } = setup(project, "rig-remediate")
+    const { run } = setup(project, "code-remediate")
     const paths = resolvePaths(project.root, ".opencode-rig")
     const rendered = renderReport({
       ...run,
       gates: [receipt("test", "passed", run.scope.digest)],
       findings,
-      review: { run_id: run.run_id, reviewer: "rig-reviewer", source_digest: run.scope.digest },
+      review: { run_id: run.run_id, reviewer: "rig-auditor", source_digest: run.scope.digest },
       loop: convergedLoop,
       outputs: [{ path: "src/a.ts", sha256: "d".repeat(64) }],
       limits: ["Windows not exercised"],
@@ -352,7 +352,7 @@ describe("writeReport / renderReport", () => {
 
     expect(rendered).toContain("| `test` | passed | 0 | `npm run test` |")
     expect(rendered).toContain("| 0 | 0 | 0 | 0 | 0 |")
-    expect(rendered).toContain("Reviewer: `rig-reviewer`")
+    expect(rendered).toContain("Reviewer: `rig-auditor`")
     expect(rendered).toContain("Stop reason: `converged`")
     expect(rendered).toContain("- `src/a.ts` — `" + "d".repeat(64) + "`")
     expect(rendered).toContain("- Windows not exercised")
@@ -364,7 +364,7 @@ describe("writeReport / renderReport", () => {
 
   it("states missing evidence explicitly instead of leaving blanks", () => {
     const project = Project.withCommit()
-    const { run } = setup(project, "rig-doctor")
+    const { run } = setup(project, "rig-health")
     const rendered = renderReport(run)
     expect(rendered).toContain("No findings artifact.")
     expect(rendered).toContain("- none recorded")

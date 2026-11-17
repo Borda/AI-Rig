@@ -20,9 +20,9 @@ it("reports content edited after installation", () => {
       `---\nmode: subagent\n---\n<!-- opencode-rig: v1 sha256:${sha256(body)} -->\n\nRole\n`,
     )
   expect(installedAgentStatus(project.path("agents"), "1")).toEqual([])
-  project.write("agents/rig-reviewer.md", project.read("agents/rig-reviewer.md") + "Modified\n")
+  project.write("agents/rig-auditor.md", project.read("agents/rig-auditor.md") + "Modified\n")
   expect(installedAgentStatus(project.path("agents"), "1")).toContainEqual(
-    expect.stringMatching(/rig-reviewer.*modified/),
+    expect.stringMatching(/rig-auditor.*modified/),
   )
 })
 it("preserves in-progress runs and their referenced plan container", () => {
@@ -30,8 +30,8 @@ it("preserves in-progress runs and their referenced plan container", () => {
   const plan = oldRun(project, "runs/rig-plan/old-plan", { status: "completed" })
   project.write("runs/rig-plan/old-plan/plan.md", "Frozen plan")
   utimesSync(plan, new Date("2000-01-01"), new Date("2000-01-01"))
-  oldRun(project, "runs/rig-remediate/live", { status: "in_progress", plan: { path: join(plan, "plan.md") } })
-  const expired = oldRun(project, "runs/rig-review/expired", { status: "completed" })
+  oldRun(project, "runs/code-remediate/live", { status: "in_progress", plan: { path: join(plan, "plan.md") } })
+  const expired = oldRun(project, "runs/code-review/expired", { status: "completed" })
   expect(staleRuns(project.path("runs"), 30)).toEqual([expired])
 })
 it("honors Git ignore wildcards and negations", () => {
@@ -56,10 +56,10 @@ it("preserves relative plan references with nested artifact roots", () => {
   const plan = oldRun(project, "nested/cache/runs/rig-plan/old", { status: "completed" })
   project.write("nested/cache/runs/rig-plan/old/plan.md", "Frozen plan")
   utimesSync(plan, new Date("2000-01-01"), new Date("2000-01-01"))
-  oldRun(project, "nested/cache/runs/rig-remediate/live", {
+  oldRun(project, "nested/cache/runs/code-remediate/live", {
     status: "in_progress",
     plan: { path: "nested/cache/runs/rig-plan/old/plan.md" },
   })
-  const expired = oldRun(project, "nested/cache/runs/rig-review/expired", { status: "completed" })
+  const expired = oldRun(project, "nested/cache/runs/code-review/expired", { status: "completed" })
   expect(staleRuns(project.path("nested/cache/runs"), 30)).toEqual([expired])
 })

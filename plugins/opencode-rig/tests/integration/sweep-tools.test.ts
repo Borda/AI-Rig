@@ -15,7 +15,7 @@ const sourceFinding = (id: string) => ({
 })
 
 async function reviewSource(harness: Awaited<ReturnType<typeof createHarness>>) {
-  const source = await harness.call("rig_evidence", { action: "start", skill: "rig-review", paths: ["src"] })
+  const source = await harness.call("rig_evidence", { action: "start", skill: "code-review", paths: ["src"] })
   await harness.call("rig_findings", {
     action: "write",
     axes: ["correctness"],
@@ -176,7 +176,7 @@ it("requires disposition of omitted source findings before remediation can compl
   const sourceRunId = await reviewSource(harness)
   await harness.call("rig_evidence", {
     action: "start",
-    skill: "rig-remediate",
+    skill: "code-remediate",
     paths: ["src"],
     source_run_id: sourceRunId,
     gate_exemption: "No configured gate; manually inspected both findings.",
@@ -203,14 +203,14 @@ it("rejects a completed source review that has lost its independent review bindi
   const project = Project.withCommit()
   const harness = await createHarness(project)
   const sourceRunId = await reviewSource(harness)
-  const path = `.opencode-rig/runs/rig-review/${sourceRunId}/run.json`
+  const path = `.opencode-rig/runs/code-review/${sourceRunId}/run.json`
   const source = JSON.parse(project.read(path))
   delete source.review
   project.write(path, JSON.stringify(source))
   await expect(
     harness.call("rig_evidence", {
       action: "start",
-      skill: "rig-remediate",
+      skill: "code-remediate",
       source_run_id: sourceRunId,
       paths: ["src"],
     }),
@@ -259,7 +259,7 @@ it("forwards dispatch scope violations as structured metadata", async () => {
     project.write("outside.txt", "unexpected mutation\n")
   }
   const result = await harness.call("rig_dispatch", {
-    role: "rig-reviewer",
+    role: "rig-auditor",
     task: "Inspect source",
     paths: ["src"],
   })

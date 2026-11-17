@@ -21,13 +21,13 @@ describe("handoff table", () => {
     ["rig-investigate", "Output"],
     ["rig-research", "Output"],
     ["rig-implement", "Output"],
-    ["rig-review", "Output"],
-    ["rig-remediate", "Output"],
+    ["code-review", "Output"],
+    ["code-remediate", "Output"],
     ["rig-challenge", "Output"],
     ["rig-optimize", "Output"],
     ["rig-distill", "Output"],
     ["rig-release", "Output"],
-    ["rig-doctor", "Response"],
+    ["rig-health", "Response"],
   ]
 
   it.each(skills)("%s leads its handoff with the shared table", (skill, heading) => {

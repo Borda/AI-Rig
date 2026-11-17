@@ -2,13 +2,25 @@
   "schema": 1,
   "plugin": "opencode-rig",
   "entries": {
-    "87efd3145f27908bcb652ed87e7aa7aae6bba81e13c9b4e97aec7ccba76a4879": {
-      "kind": "command",
-      "src": "src/resources/skills/rig-doctor/SKILL.md:12"
-    },
     "ca225b06d4162d1658e5ddabe3f0616050b0a0a408204115fa1d8ba30ad0da4f": {
       "kind": "command",
-      "src": "src/resources/skills/rig-investigate/SKILL.md:12"
+      "src": "src/resources/skills/code-remediate/SKILL.md:12"
+    },
+    "bcf996cc2c0b7eb7e8ddcd15c1c22e596e11fd6556591a38ebc741509209e1a5": {
+      "kind": "command",
+      "src": "src/resources/skills/code-review/SKILL.md:10"
+    },
+    "2b60ef64a75a597e8efacd09b8fd641d4e942ca7e3f677aeb2e50f2eb6e84d70": {
+      "kind": "command",
+      "src": "src/resources/skills/code-review/SKILL.md:10"
+    },
+    "8d7bd8e013d183df63536472bc6eaf63f0baa72d560f6c9617d184ee1d971782": {
+      "kind": "block",
+      "src": "src/resources/skills/code-review/SKILL.md:10"
+    },
+    "87efd3145f27908bcb652ed87e7aa7aae6bba81e13c9b4e97aec7ccba76a4879": {
+      "kind": "command",
+      "src": "src/resources/skills/rig-health/SKILL.md:12"
     },
     "246050b60c622e9e0a8d7429766902046711650786484d881e3cec4905a5444b": {
       "kind": "command",
@@ -17,18 +29,6 @@
     "300d4a4cecd9b3876c86303af894a27af9dcad62b20f5c212a6c4df07d3ce927": {
       "kind": "block",
       "src": "src/resources/skills/rig-investigate/SKILL.md:12"
-    },
-    "bcf996cc2c0b7eb7e8ddcd15c1c22e596e11fd6556591a38ebc741509209e1a5": {
-      "kind": "command",
-      "src": "src/resources/skills/rig-review/SKILL.md:10"
-    },
-    "2b60ef64a75a597e8efacd09b8fd641d4e942ca7e3f677aeb2e50f2eb6e84d70": {
-      "kind": "command",
-      "src": "src/resources/skills/rig-review/SKILL.md:10"
-    },
-    "8d7bd8e013d183df63536472bc6eaf63f0baa72d560f6c9617d184ee1d971782": {
-      "kind": "block",
-      "src": "src/resources/skills/rig-review/SKILL.md:10"
     }
   },
   "skipped": []

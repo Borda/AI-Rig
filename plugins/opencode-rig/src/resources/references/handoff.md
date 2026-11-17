@@ -20,7 +20,7 @@
 - Alignment is a judgment about fit, not a restatement of the findings. A clean diff can be `partial` when it contradicts the documented direction; a risky change can be `high` when it follows the established pattern and the risk is stated.
 - A convention that was not checked is listed under Alignment, not omitted. When nothing was assessed, write `off — no codebase assessment was possible` and the reason.
 - Confidence reflects the weakest accepted evidence, not the average. The limit is the one most likely to change the verdict.
-- A skill that hands work to another names it exactly, for example `rig-remediate` on `F-001`–`F-003`, `rig-plan` for the approved finding, or `rig-implement` with the recorded plan digest.
+- A skill that hands work to another names it exactly, for example `code-remediate` on `F-001`–`F-003`, `rig-plan` for the approved finding, or `rig-implement` with the recorded plan digest.
 - A diagnostic workflow maps its outcomes onto the same values: pass is `approved`, warnings are `approved with notes`, and a failing prerequisite is `blocked`; a read-only report is `investigated`.
 - A run with a frozen plan adds, below the table, the plan outcome and rounds (`converged`, `round-limit`, `authority-required`), the task-tree leaves and their owners, and the final-challenge reviewer and verdict. The five table fields stay the decision surface.
 - The table is part of every run's report; there is no separate summary that can disagree with it.

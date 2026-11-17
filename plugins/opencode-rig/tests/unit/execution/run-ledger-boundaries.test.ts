@@ -48,7 +48,7 @@ function remediation(run: RunRecord): RunRecord {
 }
 
 it("does not complete remediation when a source finding was omitted", () => {
-  const { run } = allocated("rig-remediate")
+  const { run } = allocated("code-remediate")
   const result = finalizeRun(remediation(run), {
     drift: false,
     source_findings_digest: sha256("source"),
@@ -59,7 +59,7 @@ it("does not complete remediation when a source finding was omitted", () => {
 })
 
 it("does not complete remediation after its source inventory changes", () => {
-  const { run } = allocated("rig-remediate")
+  const { run } = allocated("code-remediate")
   const result = finalizeRun(remediation(run), {
     drift: false,
     source_findings_digest: sha256("replacement"),
@@ -70,7 +70,7 @@ it("does not complete remediation after its source inventory changes", () => {
 })
 
 it("does not treat an undisposed terminal status as source closure", () => {
-  const { run } = allocated("rig-remediate")
+  const { run } = allocated("code-remediate")
   const result = finalizeRun(remediation(run), {
     drift: false,
     source_findings_digest: sha256("source"),
@@ -81,7 +81,7 @@ it("does not treat an undisposed terminal status as source closure", () => {
 })
 
 it("accepts complete terminal dispositions from the bound source inventory", () => {
-  const { run } = allocated("rig-remediate")
+  const { run } = allocated("code-remediate")
   expect(
     finalizeRun(remediation(run), {
       drift: false,
@@ -95,7 +95,7 @@ it("accepts complete terminal dispositions from the bound source inventory", () 
 })
 
 it("requires remediation source evidence even when its summary has zero open findings", () => {
-  const { run } = allocated("rig-remediate")
+  const { run } = allocated("code-remediate")
   const bound = remediation(run)
   delete bound.source_run_id
   delete bound.source_findings
@@ -204,10 +204,10 @@ it("does not load run evidence through a linked skill directory", () => {
   external.write("linked/run.json", "{}")
   symlinkSync(
     external.root,
-    project.path(".opencode-rig/runs/rig-review"),
+    project.path(".opencode-rig/runs/code-review"),
     process.platform === "win32" ? "junction" : "dir",
   )
-  expect(() => loadRun(paths, "rig-review", "linked")).toThrow(/symbolic|outside/)
+  expect(() => loadRun(paths, "code-review", "linked")).toThrow(/symbolic|outside/)
 })
 
 it("does not write run evidence through a linked artifact ancestor outside the project", () => {

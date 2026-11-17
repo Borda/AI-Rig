@@ -19,11 +19,12 @@ import { activeRun } from "./state.ts"
 
 export const ROLE_IDS = [
   "rig-investigator",
-  "rig-implementer",
-  "rig-reviewer",
+  "rig-builder",
+  "rig-creator",
+  "rig-auditor",
   "rig-challenger",
   "rig-verifier",
-  "rig-scientist",
+  "rig-researcher",
   "rig-optimizer",
 ] as const
 

@@ -17,11 +17,11 @@ function cli(project: Project, command: string) {
 it("reports installed role edits even when the version stamp is unchanged", () => {
   const project = Project.withCommit()
   expect(cli(project, "setup").status).toBe(0)
-  const role = project.read("config/agents/rig-reviewer.md")
-  project.write("config/agents/rig-reviewer.md", `${role}\nlocal instructions\n`)
+  const role = project.read("config/agents/rig-auditor.md")
+  project.write("config/agents/rig-auditor.md", `${role}\nlocal instructions\n`)
   const result = cli(project, "doctor")
   expect(result.status).toBe(1)
-  expect(result.stdout).toContain("rig-reviewer has local edits")
+  expect(result.stdout).toContain("rig-auditor has local edits")
 })
 
 it("checks configured artifacts against Git info excludes", () => {
