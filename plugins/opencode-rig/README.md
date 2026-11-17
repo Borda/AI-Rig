@@ -1,6 +1,6 @@
 # opencode-rig
 
-Current version: `0.7.0`
+Current version: `0.8.0`
 
 Evidence-first delivery workflows for [OpenCode](https://opencode.ai): frozen plans, recorded gates, independent review, adversarial convergence, and Git guardrails that keep publication human-owned.
 
@@ -67,10 +67,10 @@ Run a workflow through its slash command, or load the matching skill by name.
 
 | Command            | Skill             | Use it for                                                     | Completion evidence                                                                    |
 | ------------------ | ----------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `/rig-plan`        | `rig-plan`        | Multi-file or ambiguous changes that need a frozen plan        | Bound plan digest and one independent challenge                                        |
+| `/rig-plan`        | `rig-plan`        | Multi-file or ambiguous changes that need a frozen plan        | Bound plan digest, task tree, and challenged rounds                                    |
 | `/rig-investigate` | `rig-investigate` | Bugs, CI failures, and unexplained behavior before a fix       | Reproduction, root cause, eliminated hypotheses                                        |
 | `/rig-research`    | `rig-research`    | Source-backed answers before a design or dependency decision   | Labeled claims, contradictions, independent source check                               |
-| `/rig-implement`   | `rig-implement`   | Executing a reviewed frozen plan or a trivial inline mini-plan | Passing gates, changed-path digests, commit handoff                                    |
+| `/rig-implement`   | `rig-implement`   | Executing a reviewed frozen plan or a trivial inline mini-plan | Passing gates, leaf checks, final independent challenge, commit handoff                |
 | `/rig-review`      | `rig-review`      | Reviewing a working tree, commit, or path                      | Validated findings artifact with mandatory `correctness` axis and reviewer identity    |
 | `/rig-remediate`   | `rig-remediate`   | Closing findings from a review                                 | Every finding in a terminal bucket plus re-review                                      |
 | `/rig-challenge`   | `rig-challenge`   | Risky or security-sensitive changes                            | Converged loop with no security or critical residue                                    |
@@ -79,7 +79,7 @@ Run a workflow through its slash command, or load the matching skill by name.
 | `/rig-release`     | `rig-release`     | Release readiness before a human publishes                     | Last-release-tag baseline (HEAD only for a first release), gates, package list, drafts |
 | `/rig-doctor`      | `rig-doctor`      | A workflow or tool is missing or failing                       | Pass/warn/fail report with remediation commands                                        |
 
-Every workflow follows the same envelope: classify the request, collect authoritative source, act in small batches, verify with configured checks, finalize the run, then report limits honestly. Every handoff leads with the shared [handoff table](src/resources/references/handoff.md): verdict, alignment with the project's codebase and direction, findings by severity, the next action, and confidence with its largest limit, followed by the evidence that supports each value.
+Every workflow follows the same envelope: classify the request, collect authoritative source, act in small batches, verify with configured checks, finalize the run, then report limits honestly. A non-trivial plan carries a depth-first task tree (leaves with one owner and one acceptance check); the plan is challenged until it converges, and a frozen-plan implementation records one final independent challenge before it can complete. The trivial inline mini-plan stays lightweight. Every handoff leads with the shared [handoff table](src/resources/references/handoff.md): verdict, alignment with the project's codebase and direction, findings by severity, the next action, and confidence with its largest limit, followed by the evidence that supports each value.
 
 `rig-research` covers docs, state-of-the-art comparisons, paper analysis, and paper-versus-code fidelity. `rig-distill` reads exact preselected terminal-run files or an inventory record inside the project; external source identifiers, digests, and access limits are recorded as decisions and limits. It proposes assets but never installs, edits, or prunes them. `rig-doctor` offers stale-run cleanup only in a separate workflow after explicit confirmation. `rig-optimize` only uses a benchmark that is already a configured gate, so a performance claim always has a reproducible command behind it. It refreshes each edited candidate's scope before measurement and preserves the baseline receipts.
 

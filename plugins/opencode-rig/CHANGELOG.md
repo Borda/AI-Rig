@@ -2,6 +2,12 @@
 
 All notable changes to this package are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.8.0
+
+- Plans now carry a depth-first task tree: a node splits only when it is not a coherent, independently verifiable unit; every leaf has one owner and exactly one acceptance check; depth 4 and 32 leaves are enforced. The tree is validated when a plan is bound (record for `rig-plan`, start for a frozen `rig-implement`), and a shared path between siblings becomes a dependency.
+- `rig-plan` records its challenged rounds in the plan's Challenge rounds section; finalizing requires that section and a `converged` outcome, so a `round-limit`/`authority-required` residue is not ready. The round budget is `options.maxLoopRounds`, instruction-enforced with the review digest binding the final plan bytes.
+- `rig-implement` executes the tree depth-first, checks each leaf before the next, delegates disjoint leaves, and records one mandatory independent final challenge after the gates. A frozen-plan implementation does not finalize without that reviewer record; blocking findings route to remediation, and the trivial inline mini-plan stays lighter. Handoffs report the plan rounds, tree leaves and final-challenge verdict.
+
 ## 0.7.0
 
 - `rig-review` now vets a fetched pull request's code before running any of it in that worktree; before, it only stated that the worktree held third-party code:

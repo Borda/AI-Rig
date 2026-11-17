@@ -151,9 +151,27 @@ describe("rig_evidence", () => {
     )
   })
 
+  const TREE = [
+    "",
+    "## Task tree",
+    "",
+    "```json",
+    '{"schema":1,"root":"T-1","nodes":[{"id":"T-1","parent":null,"goal":"Deliver the scoped change","owned_paths":["src/a.ts"],"acceptance_check":"focused test","depends_on":[],"leaf":true}]}',
+    "```",
+    "",
+    "## Challenge rounds",
+    "",
+    "- Round 1: challenger; no blocking findings; converged.",
+    "",
+  ].join(String.fromCharCode(10))
+
   it("binds a plan by digest and rejects a missing plan file", async () => {
     const project = changedProject()
-    project.write("plan.md", "# Plan\n")
+    project.write(
+      "plan.md",
+      `# Plan
+${TREE}`,
+    )
     const harness = await createHarness(project)
     await harness.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["src"] })
     await expect(harness.call("rig_evidence", { action: "record", plan_path: "missing.md" })).rejects.toThrow(

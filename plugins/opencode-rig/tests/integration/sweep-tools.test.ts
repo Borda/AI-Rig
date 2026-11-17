@@ -23,12 +23,17 @@ async function reviewSource(harness: Awaited<ReturnType<typeof createHarness>>) 
     reviewer: "reviewer",
     findings: [sourceFinding("F-1"), sourceFinding("F-2")],
   })
-  expect((await harness.call("rig_evidence", { action: "finalize" })).metadata.ok).toBe(true)
+  const done = await harness.call("rig_evidence", { action: "finalize" })
+  expect(done.metadata.ok, done.content).toBe(true)
   return source.metadata.run_id as string
 }
 
 async function reviewedPlan(project: Project, harness: Awaited<ReturnType<typeof createHarness>>) {
-  project.write(".opencode-rig/plan.md", "Implement the scoped change and run its regression.\n")
+  project.write(
+    ".opencode-rig/plan.md",
+    `Implement the scoped change and run its regression.
+${TREE}`,
+  )
   const plan = await harness.call("rig_evidence", {
     action: "start",
     skill: "rig-plan",
@@ -37,9 +42,24 @@ async function reviewedPlan(project: Project, harness: Awaited<ReturnType<typeof
   })
   const inspected = JSON.parse((await harness.call("rig_evidence", { action: "inspect" })).content)
   await harness.call("rig_evidence", { action: "record", reviewer: "challenger", plan_digest: inspected.plan.digest })
-  expect((await harness.call("rig_evidence", { action: "finalize" })).metadata.ok).toBe(true)
+  const done = await harness.call("rig_evidence", { action: "finalize" })
+  expect(done.metadata.ok, done.content).toBe(true)
   return plan.metadata.run_id as string
 }
+
+const TREE = [
+  "",
+  "## Task tree",
+  "",
+  "```json",
+  '{"schema":1,"root":"T-1","nodes":[{"id":"T-1","parent":null,"goal":"Deliver the scoped change","owned_paths":["src/a.ts"],"acceptance_check":"focused test","depends_on":[],"leaf":true}]}',
+  "```",
+  "",
+  "## Challenge rounds",
+  "",
+  "- Round 1: challenger; no blocking findings; converged.",
+  "",
+].join(String.fromCharCode(10))
 
 it("requires a reviewed plan or an explicit trivial mini-plan at implementation start", async () => {
   const harness = await createHarness(Project.withCommit())
@@ -59,7 +79,11 @@ it("rejects a plan whose bytes changed after independent plan review", async () 
   const project = Project.withCommit()
   const harness = await createHarness(project)
   const planRunId = await reviewedPlan(project, harness)
-  project.write(".opencode-rig/plan.md", "A materially different implementation.\n")
+  project.write(
+    ".opencode-rig/plan.md",
+    `A materially different implementation.
+${TREE}`,
+  )
   await expect(
     harness.call("rig_evidence", {
       action: "start",
@@ -83,7 +107,11 @@ it("refuses finalization and rebinding after an implementation plan changes", as
     plan_path: ".opencode-rig/plan.md",
     gate_exemption: "No configured gate; manually inspected the result.",
   })
-  project.write(".opencode-rig/plan.md", "Changed after implementation started.\n")
+  project.write(
+    ".opencode-rig/plan.md",
+    `Changed after implementation started.
+${TREE}`,
+  )
   await expect(harness.call("rig_evidence", { action: "record", plan_path: ".opencode-rig/plan.md" })).rejects.toThrow(
     /plan/,
   )
@@ -95,7 +123,11 @@ it("refuses finalization and rebinding after an implementation plan changes", as
 it("does not certify new plan bytes with a stale challenge digest", async () => {
   const project = Project.withCommit()
   const harness = await createHarness(project)
-  project.write(".opencode-rig/plan.md", "First plan\n")
+  project.write(
+    ".opencode-rig/plan.md",
+    `First plan
+${TREE}`,
+  )
   await harness.call("rig_evidence", {
     action: "start",
     skill: "rig-plan",
@@ -103,7 +135,11 @@ it("does not certify new plan bytes with a stale challenge digest", async () => 
     plan_path: ".opencode-rig/plan.md",
   })
   const inspected = JSON.parse((await harness.call("rig_evidence", { action: "inspect" })).content)
-  project.write(".opencode-rig/plan.md", "Revised plan\n")
+  project.write(
+    ".opencode-rig/plan.md",
+    `Revised plan
+${TREE}`,
+  )
   await harness.call("rig_evidence", {
     action: "record",
     plan_path: ".opencode-rig/plan.md",
@@ -113,6 +149,26 @@ it("does not certify new plan bytes with a stale challenge digest", async () => 
   const final = await harness.call("rig_evidence", { action: "finalize" })
   expect(final.metadata.ok).toBe(false)
   expect(final.content).toContain("plan")
+})
+
+it("requires a final independent challenge for a frozen plan", async () => {
+  const project = Project.withCommit()
+  const harness = await createHarness(project)
+  const planRunId = await reviewedPlan(project, harness)
+  await harness.call("rig_evidence", {
+    action: "start",
+    skill: "rig-implement",
+    paths: ["src"],
+    plan_run_id: planRunId,
+    plan_path: ".opencode-rig/plan.md",
+    gate_exemption: "No configured gate; manually inspected the result.",
+  })
+  const without = await harness.call("rig_evidence", { action: "finalize" })
+  expect(without.metadata.ok).toBe(false)
+  expect(without.content).toContain("final challenge")
+  await harness.call("rig_evidence", { action: "record", reviewer: "challenger" })
+  const withChallenge = await harness.call("rig_evidence", { action: "finalize" })
+  expect(withChallenge.metadata.ok).toBe(true)
 })
 
 it("requires disposition of omitted source findings before remediation can complete", async () => {
@@ -139,7 +195,8 @@ it("requires disposition of omitted source findings before remediation can compl
     source_run_id: sourceRunId,
     findings: [{ ...sourceFinding("F-2"), status: "rejected", disposition: "Source evidence disproves this claim" }],
   })
-  expect((await harness.call("rig_evidence", { action: "finalize" })).metadata.ok).toBe(true)
+  const done = await harness.call("rig_evidence", { action: "finalize" })
+  expect(done.metadata.ok, done.content).toBe(true)
 })
 
 it("rejects a completed source review that has lost its independent review binding", async () => {

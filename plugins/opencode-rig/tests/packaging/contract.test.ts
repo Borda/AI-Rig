@@ -151,7 +151,7 @@ describe("scope contract wording", () => {
     expect(text).toMatch(/reconcile both ways/)
     expect(text).toMatch(/every owned path has an in-scope row/)
     expect(text).toMatch(/every in-scope row names a path/)
-    expect(text).toMatch(/derive the delegation brief/)
+    expect(text).toMatch(/build the task tree/i)
     expect(text).toMatch(/never hand-write/)
   })
 

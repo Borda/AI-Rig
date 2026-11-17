@@ -395,6 +395,8 @@ function planProblems(run: RunRecord, input: FinalizeInput): string[] {
   }
   if (run.skill === "rig-implement" && !run.plan.run_id)
     problems.push("implementation plan is missing reviewed plan-run provenance")
+  if (run.skill === "rig-implement" && !run.review)
+    problems.push("implementation requires an independent final challenge; record the challenger with reviewer")
   return problems
 }
 

@@ -7,7 +7,16 @@
  */
 
 import { randomUUID } from "node:crypto"
-import { appendFileSync, chmodSync, existsSync, lstatSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  lstatSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { sha256, sha256File } from "../digest.ts"
@@ -24,6 +33,7 @@ import {
 } from "../findings.ts"
 import { detectGates, runGate, type GateResult, type GateSpec } from "../gates.ts"
 import { grantPath, readGrant, revokeGrant, writeGrant } from "../git-grant.ts"
+import { markdownSection, planTreeState } from "../plan.ts"
 import {
   appendLoopRecord,
   convergence,
@@ -176,6 +186,14 @@ function reviewedPlan(
     throw new Error("plan bytes or independent review no longer match the completed plan run")
   }
   return { path: planPath, digest: source.plan.digest, run_id: source.run_id }
+}
+
+/** Reject a plan whose task tree is missing or invalid at the binding point. */
+function assertPlanTree(paths: RigPaths, planPath: string, owner: string): void {
+  const absolute = resolveInsideProject(paths.projectRoot, planPath)
+  if (!existsSync(absolute)) throw new Error(`plan does not exist: ${planPath}`)
+  const { problems } = planTreeState(readFileSync(absolute, "utf8"))
+  if (problems.length > 0) throw new Error(`${owner} plan task tree invalid: ${problems.join("; ")}`)
 }
 
 /** Keep evidence mutations inside the active phase of a run. */
@@ -552,6 +570,9 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
               plan = reviewedPlan(paths, context.sessionID, input.plan_run_id, input.plan_path)
             }
           }
+          if (plan && (input.skill === "rig-plan" || input.skill === "rig-implement")) {
+            assertPlanTree(paths, plan.path, "start")
+          }
           let source: Pick<RunRecord, "source_run_id" | "source_findings"> = {}
           if (input.skill === "rig-remediate") {
             if (!input.source_run_id) throw new Error("remediation start requires source_run_id")
@@ -647,6 +668,9 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           if (run.skill === "rig-plan" && input.reviewer && !input.plan_digest?.trim()) {
             throw new Error("recording plan review requires plan_digest: the exact bytes the reviewer assessed")
           }
+          if (run.skill === "rig-plan" && input.plan_path) {
+            assertPlanTree(paths, input.plan_path, "record")
+          }
           const updated: RunRecord = {
             ...run,
             ...(plan ? { plan } : {}),
@@ -688,6 +712,21 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
               if (!run.plan.run_id) throw new Error("implementation plan provenance is missing")
               const current = reviewedPlan(paths, context.sessionID, run.plan.run_id, run.plan.path)
               if (current.digest !== run.plan.digest) throw new Error("implementation plan binding changed")
+            }
+            if (run.skill === "rig-plan") {
+              const text = readFileSync(resolveInsideProject(paths.projectRoot, run.plan.path), "utf8")
+              const lines = text.split(/\r?\n/)
+              const start = lines.findIndex((line) => /^##\s+Challenge rounds\s*$/.test(line))
+              const end = start < 0 ? -1 : lines.findIndex((line, index) => index > start && /^##\s/.test(line))
+              const body =
+                start < 0
+                  ? ""
+                  : lines
+                      .slice(start + 1, end < 0 ? undefined : end)
+                      .join("\n")
+                      .trim()
+              if (!body)
+                throw new Error("plan has no Challenge rounds section; record the challenged rounds before finalizing")
             }
           }
           if (run.skill === "rig-remediate" && run.source_run_id) {

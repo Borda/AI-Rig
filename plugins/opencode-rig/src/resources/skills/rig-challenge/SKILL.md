@@ -33,6 +33,7 @@ description: Run a bounded adversarial convergence loop with an independent chal
 - Use only configured `maxLoopRounds` for round-limit stops per [Convergence](../../references/convergence.md).
 - A new finding never resets prior signatures or history.
 - Do not reclassify a finding as fixed without independent assessment.
+- A non-trivial `rig-implement` run performs one mandatory final challenge of the changed behavior; this skill is the iterative loop for a risky or security-sensitive change, or when the user asks to repeat review and fix until clean.
 - Scope changes retain the parent stop and mark unassessed prior findings as unassessed.
 
 ## Output
