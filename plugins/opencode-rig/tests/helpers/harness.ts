@@ -17,6 +17,20 @@ import { afterEach } from "vitest"
 export const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
 export const RESOURCES_DIR = join(PACKAGE_ROOT, "src", "resources")
 
+/** A valid structured mini-plan for a trivial implementation. */
+export function trivialPlan(
+  ownedPaths: readonly string[] = ["src/a.ts"],
+  overrides: Record<string, string> = {},
+): string {
+  return JSON.stringify({
+    goal: "Update the scoped return value",
+    owned_paths: [...ownedPaths],
+    acceptance_check: "Run the configured gate for the changed path.",
+    feasibility: "One known return value with a configured test.",
+    ...overrides,
+  })
+}
+
 const disposers: Array<() => void | Promise<void>> = []
 
 afterEach(async () => {

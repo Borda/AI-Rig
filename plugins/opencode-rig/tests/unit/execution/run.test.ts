@@ -109,7 +109,7 @@ describe("requirementsFor", () => {
   })
 
   it("gates optimize on gates and review, and keeps distill advisory", () => {
-    expect(requirementsFor("rig-optimize")).toMatchObject({ gates: true, review: true, loop: false })
+    expect(requirementsFor("rig-optimize")).toMatchObject({ gates: true, review: true, loop: "off" })
     expect(requirementsFor("rig-research")).toMatchObject({ gates: false, review: true })
     expect(requirementsFor("rig-distill")).toMatchObject({ gates: false, review: false, findings: false })
   })

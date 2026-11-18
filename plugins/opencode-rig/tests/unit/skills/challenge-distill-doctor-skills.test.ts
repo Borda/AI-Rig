@@ -265,7 +265,9 @@ describe("distill workflow", () => {
     const harness = await createHarness(project)
     const started = await harness.call("rig_evidence", { action: "start", skill: "rig-distill", paths: [input] })
     rmSync(project.path(input))
-    await expect(harness.call("rig_evidence", { action: "finalize" })).rejects.toThrow("scope path does not exist")
+    const failed = await harness.call("rig_evidence", { action: "finalize" })
+    expect(failed.metadata.ok).toBe(false)
+    expect(failed.content).toContain("scope path does not exist")
     const restarted = await harness.call("rig_evidence", {
       action: "start",
       skill: "rig-distill",

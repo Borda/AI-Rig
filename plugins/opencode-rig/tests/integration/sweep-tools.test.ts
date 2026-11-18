@@ -2,7 +2,7 @@
 import { readdirSync, symlinkSync } from "node:fs"
 import { join } from "node:path"
 import { expect, it } from "vitest"
-import { createHarness, Project } from "../helpers/harness.ts"
+import { createHarness, Project, trivialPlan } from "../helpers/harness.ts"
 
 const sourceFinding = (id: string) => ({
   id,
@@ -69,8 +69,7 @@ it("requires a reviewed plan or an explicit trivial mini-plan at implementation 
   const started = await harness.call("rig_evidence", {
     action: "start",
     skill: "rig-implement",
-    paths: ["src"],
-    trivial_plan: "Correct one return value; run its regression.",
+    trivial_plan: trivialPlan(["src/a.ts"]),
   })
   expect(started.metadata.run_id).toBeTruthy()
 })
@@ -167,6 +166,10 @@ it("requires a final independent challenge for a frozen plan", async () => {
   expect(without.metadata.ok).toBe(false)
   expect(without.content).toContain("final challenge")
   await harness.call("rig_evidence", { action: "record", reviewer: "challenger" })
+  const withoutFindings = await harness.call("rig_evidence", { action: "finalize" })
+  expect(withoutFindings.metadata.ok).toBe(false)
+  expect(withoutFindings.content).toContain("findings artifact is missing")
+  await harness.call("rig_findings", { action: "write", reviewer: "challenger", findings: [] })
   const withChallenge = await harness.call("rig_evidence", { action: "finalize" })
   expect(withChallenge.metadata.ok).toBe(true)
 })
@@ -281,4 +284,169 @@ it("restores the session pointer when explicitly refreshing a stale run", async 
   await harness.call("rig_evidence", { action: "refresh", run_id: started.metadata.run_id, message: "adopted source" })
   const inspected = await harness.call("rig_evidence", { action: "inspect" })
   expect(JSON.parse(inspected.content).status).toBe("in_progress")
+})
+
+it("requires a converged loop when the final challenge finds a high issue", async () => {
+  const project = Project.withCommit()
+  const harness = await createHarness(project, { gates: ["true"] })
+  const planRunId = await reviewedPlan(project, harness)
+  const started = await harness.call("rig_evidence", {
+    action: "start",
+    skill: "rig-implement",
+    paths: ["src"],
+    plan_run_id: planRunId,
+    plan_path: ".opencode-rig/plan.md",
+  })
+  const runId = started.metadata.run_id as string
+  await harness.call("rig_gate", { action: "run", run_id: runId })
+  await harness.call("rig_findings", {
+    action: "write",
+    run_id: runId,
+    reviewer: "challenger",
+    findings: [
+      {
+        id: "F-001",
+        severity: "high",
+        dimension: "correctness",
+        file: "src/a.ts",
+        title: "Return the required value",
+        evidence: "The scoped return value contradicts the acceptance check",
+        status: "fixed",
+        disposition: "Corrected and rechecked with the configured gate",
+      },
+    ],
+  })
+  const withoutLoop = await harness.call("rig_evidence", { action: "finalize", run_id: runId })
+  expect(withoutLoop.metadata.ok).toBe(false)
+  expect(withoutLoop.content).toMatch(/record the fix-and-re-challenge loop/)
+
+  await harness.call("rig_loop", {
+    action: "start",
+    run_id: runId,
+    reviewer: "challenger",
+    findings: [{ signature: "F-001", severity: "high", status: "open" }],
+  })
+  await harness.call("rig_loop", {
+    action: "append",
+    run_id: runId,
+    reviewer: "challenger",
+    findings: [{ signature: "F-001", severity: "high", status: "fixed" }],
+  })
+  const loop = await harness.call("rig_loop", {
+    action: "finalize",
+    run_id: runId,
+    reviewer: "challenger",
+    stop_reason: "converged",
+  })
+  expect(loop.content).toMatch(/Loop finalized: converged/)
+  const done = await harness.call("rig_evidence", { action: "finalize", run_id: runId })
+  expect(done.metadata.ok, done.content).toBe(true)
+})
+
+it("requires a reviewer on an implementation findings write", async () => {
+  const project = Project.withCommit()
+  const harness = await createHarness(project)
+  await harness.call("rig_evidence", {
+    action: "start",
+    skill: "rig-implement",
+    trivial_plan: trivialPlan(["src/a.ts"]),
+  })
+  await expect(harness.call("rig_findings", { action: "write", findings: [] })).rejects.toThrow(
+    /requires reviewer: the independent challenger identity/,
+  )
+})
+
+it("rejects a re-assessment that converges with an open high finding", async () => {
+  const project = Project.withCommit()
+  const harness = await createHarness(project)
+  const started = await harness.call("rig_evidence", {
+    action: "start",
+    skill: "rig-implement",
+    trivial_plan: trivialPlan(["src/a.ts"]),
+    gate_exemption: "No configured gate; the focused check is recorded manually.",
+  })
+  const runId = started.metadata.run_id as string
+  await harness.call("rig_loop", {
+    action: "start",
+    run_id: runId,
+    reviewer: "challenger",
+    findings: [
+      { signature: "F-001", severity: "high", status: "open" },
+      { signature: "F-002", severity: "high", status: "open" },
+    ],
+  })
+  await harness.call("rig_loop", {
+    action: "append",
+    run_id: runId,
+    reviewer: "challenger",
+    findings: [
+      { signature: "F-001", severity: "high", status: "fixed" },
+      { signature: "F-002", severity: "high", status: "open" },
+    ],
+  })
+  await expect(
+    harness.call("rig_loop", { action: "finalize", run_id: runId, reviewer: "challenger", stop_reason: "converged" }),
+  ).rejects.toThrow(/cannot converge an implementation loop with 1 open high finding/)
+})
+
+it("archives a closed loop ledger on refresh so a new challenge can start", async () => {
+  const project = Project.withCommit({ "src/a.ts": "export const a = 1\n" })
+  const harness = await createHarness(project)
+  const started = await harness.call("rig_evidence", {
+    action: "start",
+    skill: "rig-implement",
+    trivial_plan: trivialPlan(["src/a.ts"]),
+    gate_exemption: "No configured gate; the focused check is recorded manually.",
+  })
+  const runId = started.metadata.run_id as string
+  await harness.call("rig_loop", { action: "start", run_id: runId, reviewer: "challenger", findings: [] })
+  await harness.call("rig_loop", {
+    action: "finalize",
+    run_id: runId,
+    reviewer: "challenger",
+    stop_reason: "converged",
+  })
+  project.write("src/a.ts", "export const a = 2\n")
+  await harness.call("rig_evidence", { action: "refresh", message: "source changed after the first challenge" })
+  const restarted = await harness.call("rig_loop", {
+    action: "start",
+    run_id: runId,
+    reviewer: "challenger",
+    findings: [],
+  })
+  expect(restarted.content).toMatch(/Baseline recorded/)
+})
+
+it("does not merge a findings inventory that describes different bytes", async () => {
+  const project = Project.withCommit({ "src/a.ts": "export const a = 1\n" })
+  const harness = await createHarness(project)
+  const started = await harness.call("rig_evidence", {
+    action: "start",
+    skill: "rig-implement",
+    trivial_plan: trivialPlan(["src/a.ts"]),
+    gate_exemption: "No configured gate; the focused check is recorded manually.",
+  })
+  const runId = started.metadata.run_id as string
+  await harness.call("rig_findings", {
+    action: "write",
+    run_id: runId,
+    reviewer: "challenger",
+    findings: [
+      {
+        id: "F-001",
+        severity: "low",
+        dimension: "correctness",
+        file: "src/a.ts",
+        title: "Old finding",
+        evidence: "Describes the previous bytes",
+        status: "fixed",
+        disposition: "Corrected before the rewrite",
+      },
+    ],
+  })
+  project.write("src/a.ts", "export const a = 2\n")
+  await harness.call("rig_evidence", { action: "refresh", message: "source rewritten after the challenge" })
+  await harness.call("rig_findings", { action: "write", run_id: runId, reviewer: "challenger", findings: [] })
+  const read = JSON.parse((await harness.call("rig_findings", { action: "read", run_id: runId })).content)
+  expect(read.findings).toEqual([])
 })

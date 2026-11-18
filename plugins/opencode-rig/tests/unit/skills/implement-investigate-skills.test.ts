@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { createHarness, Project, RESOURCES_DIR } from "../../helpers/harness.ts"
+import { createHarness, Project, RESOURCES_DIR, trivialPlan } from "../../helpers/harness.ts"
 
 /** Read a skill section as independent instruction lines. */
 function section(skill: string, heading: string): string[] {
@@ -56,19 +56,18 @@ describe("implementation workflow", () => {
     expect(handoff).not.toContain("Never commit on an absent grant")
   })
 
-  it("accepts a bounded inline mini-plan while routing larger or risky work to planning", () => {
+  it("accepts a bounded structured mini-plan while routing larger or risky work to planning", () => {
     const input = section("rig-implement", "Input")
-    const miniPlan = input.find((line) => line.includes("inline mini-plan"))
+    const miniPlan = input.find((line) => line.includes("structured mini-plan"))
     expect(miniPlan).toContain("`TRIVIAL`")
     expect(miniPlan).toContain("under 3 files and 50 changed lines")
-    expect(miniPlan).toContain("verdict table")
-    expect(miniPlan).toContain("acceptance")
+    expect(input.some((line) => line.includes('"acceptance_check"'))).toBe(true)
+    expect(input.some((line) => line.includes('"feasibility"'))).toBe(true)
+    expect(input.some((line) => line.includes("Never start an unclear change"))).toBe(true)
     expect(input.some((line) => line.includes("HIGH_RISK") && line.includes("rig-plan"))).toBe(true)
-    expect(
-      section("rig-implement", "Workflow").some(
-        (line) => line.includes("mini-plan") && line.includes("`trivial_plan` at start, before editing"),
-      ),
-    ).toBe(true)
+    expect(section("rig-implement", "Workflow").some((line) => line.includes("mini-plan JSON as `trivial_plan`"))).toBe(
+      true,
+    )
   })
 
   it("checks the frozen plan after binding and again before finalization", () => {
@@ -84,13 +83,14 @@ describe("implementation workflow", () => {
     expect(workflow[verify]).toContain(
       "The tool checks reviewed-plan provenance and unchanged plan bytes at start and finalization",
     )
-    expect(workflow[verify]).toContain("eligibility and semantic scope remain instruction-enforced")
+    expect(workflow[verify]).toContain("still the smaller case it claimed")
     const finalize = workflow.find((line) => line.includes("**Finalize.**"))
     expect(finalize).toContain("For a frozen plan, recheck the plan's SHA-256")
-    expect(finalize).toContain("For an inline mini-plan, recheck the actual task-owned diff")
-    expect(finalize).toContain("3+ files, 50+ changed lines")
+    expect(finalize).toContain("For a mini-plan, read the measured change the tool reports")
+    expect(finalize).toContain("50-line or 2-file guideline")
+    expect(finalize).toContain("records it as a limit")
+    expect(finalize).toContain("recorded output must stay inside the declared paths")
     expect(finalize).toContain("`HIGH_RISK` scope")
-    expect(finalize).toContain("stop")
     expect(finalize).toContain("never rebind")
   })
 
@@ -104,8 +104,7 @@ describe("implementation workflow", () => {
     expect(gates).toContain("manual substitute")
     expect(gates).toContain("never substitute a manual claim for a failed check")
 
-    const project = new Project()
-    project.write("notes.md", "# Notes\n")
+    const project = Project.withCommit({ "notes.md": "# Notes\n" })
     const harness = await createHarness(project)
     const detected = await harness.call("rig_gate", { action: "detect" })
     expect(detected.metadata.gates).toEqual([])
@@ -113,8 +112,7 @@ describe("implementation workflow", () => {
       action: "start",
       skill: "rig-implement",
       paths: ["notes.md"],
-      trivial_plan:
-        "Goal: clarify notes. Owned: notes.md. Scope: in-scope notes.md. Step: edit prose. Acceptance: read Markdown.",
+      trivial_plan: trivialPlan(["notes.md"], { goal: "Clarify the notes prose" }),
       gate_exemption: "No configured gate; read and validate the Markdown change manually.",
     })
     const run_id = started.metadata.run_id

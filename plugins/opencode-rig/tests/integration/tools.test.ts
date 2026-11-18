@@ -1,8 +1,19 @@
-import { existsSync, readFileSync, utimesSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs"
+import { execFileSync } from "node:child_process"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { sha256File } from "../../src/digest.ts"
-import { Project, createHarness } from "../helpers/harness.ts"
+import { Project, createHarness, trivialPlan } from "../helpers/harness.ts"
 
 function changedProject(files: Record<string, string> = { "src/a.ts": "export const a = 1\n" }): Project {
   const project = Project.withCommit(files)
@@ -56,8 +67,7 @@ describe("rig_evidence", () => {
     const started = await harness.call("rig_evidence", {
       action: "start",
       skill: "rig-implement",
-      trivial_plan: "Update the scoped return value and run its regression.",
-      paths: ["src"],
+      trivial_plan: trivialPlan(["src/a.ts"]),
     })
     expect(started.content).toMatch(/Run started/)
     const runId = started.metadata.run_id as string
@@ -94,7 +104,7 @@ describe("rig_evidence", () => {
     const run = JSON.parse(completedRun.content)
     expect(run.status).toBe("completed")
     expect(run.outputs).toHaveLength(1)
-    expect(run.limits).toEqual(["No Windows host"])
+    expect(run.limits).toContain("No Windows host")
     expect(run.confidence).toBe(0.9)
   })
 
@@ -117,12 +127,385 @@ describe("rig_evidence", () => {
     await harness.call("rig_evidence", {
       action: "start",
       skill: "rig-implement",
-      trivial_plan: "Update the scoped return value and run its regression.",
-      paths: ["src"],
+      trivial_plan: trivialPlan(["src/a.ts"]),
     })
     const result = await harness.call("rig_evidence", { action: "finalize" })
     expect(result.metadata).toMatchObject({ ok: false, status: "in_progress" })
     expect(result.content).toMatch(/no passing gate receipt/)
+  })
+
+  it("rejects a mini-plan that is free text or larger than trivial", async () => {
+    const harness = await createHarness(changedProject())
+    await expect(
+      harness.call("rig_evidence", {
+        action: "start",
+        skill: "rig-implement",
+        paths: ["src"],
+        trivial_plan: "Update the scoped return value and run its regression.",
+      }),
+    ).rejects.toThrow(/not a valid mini-plan/)
+    await expect(
+      harness.call("rig_evidence", {
+        action: "start",
+        skill: "rig-implement",
+        trivial_plan: trivialPlan(["a.ts", "b.ts", "c.ts"]),
+      }),
+    ).rejects.toThrow(/at most 2 files/)
+  })
+
+  it("uses the mini-plan's owned paths as the scope when none are given", async () => {
+    const project = changedProject()
+    const harness = await createHarness(project)
+    const started = await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["src/a.ts"]),
+    })
+    const run = JSON.parse((await harness.call("rig_evidence", { action: "inspect" })).content)
+    expect(run.scope.paths).toEqual(["src/a.ts"])
+    expect(started.metadata.scope_digest).toBeTruthy()
+  })
+
+  it("refuses a directory or a path that widens the mini-plan scope", async () => {
+    const harness = await createHarness(changedProject())
+    await expect(
+      harness.call("rig_evidence", {
+        action: "start",
+        skill: "rig-implement",
+        trivial_plan: trivialPlan(["src"]),
+      }),
+    ).rejects.toThrow(/must name a file, not a directory/)
+    await expect(
+      harness.call("rig_evidence", {
+        action: "start",
+        skill: "rig-implement",
+        paths: ["src"],
+        trivial_plan: trivialPlan(["src/a.ts"]),
+      }),
+    ).rejects.toThrow(/scoped by its mini-plan owned_paths/)
+  })
+
+  it("starts a trivial run whose declared file does not exist yet", async () => {
+    const project = Project.withCommit({ "src/a.ts": "export const a = 1\n" })
+    const harness = await createHarness(project)
+    const started = await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["src/fresh.ts"]),
+      gate_exemption: "No configured gate; the focused check is recorded manually.",
+    })
+    expect(started.metadata.run_id).toBeTruthy()
+    project.write("src/fresh.ts", "export const fresh = 1\n")
+    await harness.call("rig_evidence", { action: "refresh", message: "the declared new file now exists" })
+    const done = await harness.call("rig_evidence", { action: "finalize" })
+    expect(done.metadata.ok, done.content).toBe(true)
+  })
+
+  it("counts a trivial change from its own start, not from an already dirty tree", async () => {
+    const project = Project.withCommit({ "src/a.ts": "export const a = 1\n" })
+    project.write(
+      "src/a.ts",
+      `${Array.from({ length: 45 }, (_, index) => `export const a${index} = ${index}\n`).join("")}`,
+    )
+    const harness = await createHarness(project)
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["src/a.ts"]),
+      gate_exemption: "No configured gate; the focused check is recorded manually.",
+    })
+    project.write(
+      "src/a.ts",
+      `${Array.from({ length: 48 }, (_, index) => `export const a${index} = ${index}\n`).join("")}`,
+    )
+    await harness.call("rig_evidence", { action: "refresh", message: "three more lines on the same file" })
+    const done = await harness.call("rig_evidence", { action: "finalize" })
+    expect(done.metadata.ok, done.content).toBe(true)
+  })
+
+  it("normalizes a dotted owned path before scoping", async () => {
+    const project = changedProject()
+    const harness = await createHarness(project)
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["./src/a.ts"]),
+      gate_exemption: "No configured gate; the focused check is recorded manually.",
+    })
+    const run = JSON.parse((await harness.call("rig_evidence", { action: "inspect" })).content)
+    expect(run.scope.paths).toEqual(["src/a.ts"])
+    const done = await harness.call("rig_evidence", { action: "finalize" })
+    expect(done.metadata.ok, done.content).toBe(true)
+  })
+
+  it("refuses an owned path that became a directory", async () => {
+    const project = Project.withCommit({ "src/a.ts": "export const a = 1\n" })
+    const harness = await createHarness(project)
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["src/fresh"]),
+      gate_exemption: "No configured gate; the focused check is recorded manually.",
+    })
+    mkdirSync(project.path("src/fresh"))
+    project.write("src/fresh/a.ts", "export const a = 2\n")
+    await expect(
+      harness.call("rig_evidence", { action: "refresh", message: "the declared path became a directory" }),
+    ).rejects.toThrow(/owned path is a directory: src\/fresh/)
+  })
+
+  it("reports a damaged start baseline instead of throwing", async () => {
+    const project = changedProject()
+    const harness = await createHarness(project)
+    const started = await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["src/a.ts"]),
+      gate_exemption: "No configured gate; the focused check is recorded manually.",
+    })
+    const baseline = join(
+      project.root,
+      ".opencode-rig",
+      "runs",
+      "rig-implement",
+      started.metadata.run_id,
+      "trivial-baseline.json",
+    )
+    writeFileSync(baseline, "{ not json", "utf8")
+    const result = await harness.call("rig_evidence", { action: "finalize" })
+    expect(result.metadata.ok, result.content).toBe(true)
+    const run = JSON.parse(
+      (await harness.call("rig_evidence", { action: "inspect", run_id: started.metadata.run_id })).content,
+    )
+    expect(run.limits.join("\n")).toMatch(/not measured/)
+  })
+
+  it("refuses a trivial run when no base commit can bound it", async () => {
+    const project = new Project()
+    project.write("notes.md", "# Notes\n")
+    const harness = await createHarness(project)
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["notes.md"]),
+      gate_exemption: "No configured gate; the focused check is recorded manually.",
+    })
+    const result = await harness.call("rig_evidence", { action: "finalize" })
+    expect(result.metadata.ok, result.content).toBe(true)
+  })
+
+  it("rejects an artifact path written with different case", async () => {
+    const harness = await createHarness(changedProject())
+    await expect(
+      harness.call("rig_evidence", {
+        action: "start",
+        skill: "rig-implement",
+        trivial_plan: trivialPlan([".OpenCode-Rig/state.json"]),
+      }),
+    ).rejects.toThrow(/must be project source, not a run artifact/)
+  })
+
+  it("refuses an owned path that is a symlink", async () => {
+    const project = Project.withCommit({ "src/a.ts": "export const a = 1\n" })
+    symlinkSync(join(project.root, ".git", "config"), project.path("cfg"))
+    const harness = await createHarness(project)
+    await expect(
+      harness.call("rig_evidence", {
+        action: "start",
+        skill: "rig-implement",
+        trivial_plan: trivialPlan(["cfg"]),
+      }),
+    ).rejects.toThrow(/regular file, not a symbolic link/)
+  })
+
+  it("refuses an owned path replaced by a symlink after start", async () => {
+    const project = Project.withCommit({ "src/a.ts": "export const a = 1\n" })
+    const harness = await createHarness(project)
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["src/a.ts"]),
+      gate_exemption: "No configured gate; the focused check is recorded manually.",
+    })
+    rmSync(project.path("src/a.ts"))
+    symlinkSync(join(project.root, ".git", "config"), project.path("src/a.ts"))
+    await expect(
+      harness.call("rig_evidence", { action: "refresh", message: "the owned path was replaced by a link" }),
+    ).rejects.toThrow(/owned path is a symbolic link: src\/a.ts/)
+  })
+
+  it("refuses a missing owned path whose ancestor is a symlink into .git", async () => {
+    const project = Project.withCommit({ "src/a.ts": "export const a = 1\n" })
+    symlinkSync(project.path(".git"), project.path("docs"), "dir")
+    const harness = await createHarness(project)
+    await expect(
+      harness.call("rig_evidence", {
+        action: "start",
+        skill: "rig-implement",
+        trivial_plan: trivialPlan(["docs/hooks/pre-commit"]),
+      }),
+    ).rejects.toThrow(/must not touch VCS internals/)
+  })
+
+  it("refuses a path that impersonates the internal byte marker", async () => {
+    const harness = await createHarness(changedProject())
+    await expect(
+      harness.call("rig_evidence", {
+        action: "start",
+        skill: "rig-implement",
+        trivial_plan: trivialPlan(["\u0000git-bytes:6162"]),
+      }),
+    ).rejects.toThrow(/control characters/)
+  })
+
+  it.skipIf(process.platform === "win32")("refuses an owned FIFO", async () => {
+    const project = Project.withCommit({ "src/a.ts": "export const a = 1\n" })
+    execFileSync("mkfifo", [project.path("pipe.ts")])
+    const harness = await createHarness(project)
+    await expect(
+      harness.call("rig_evidence", {
+        action: "start",
+        skill: "rig-implement",
+        trivial_plan: trivialPlan(["pipe.ts"]),
+      }),
+    ).rejects.toThrow(/regular file, not a pipe, socket or device/)
+  })
+
+  it("accepts a flagged path that was already absent at start", async () => {
+    const project = Project.withCommit({ "src/a.ts": "export const a = 1\n", "src/b.ts": "export const b = 1\n" })
+    project.git("update-index", "--skip-worktree", "src/b.ts")
+    rmSync(project.path("src/b.ts"))
+    const harness = await createHarness(project)
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["src/a.ts"]),
+      gate_exemption: "No configured gate; the focused check is recorded manually.",
+    })
+    const result = await harness.call("rig_evidence", { action: "finalize" })
+    expect(result.metadata.ok, result.content).toBe(true)
+  })
+
+  it("refuses a record call while an owned path is a symlink", async () => {
+    const project = Project.withCommit({ "src/a.ts": "export const a = 1\n" })
+    const harness = await createHarness(project)
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["src/fresh.ts"]),
+      gate_exemption: "No configured gate; the focused check is recorded manually.",
+    })
+    symlinkSync(join(project.root, ".git", "config"), project.path("src/fresh.ts"))
+    await expect(
+      harness.call("rig_evidence", { action: "record", decision: "checked the owned path" }),
+    ).rejects.toThrow(/symbolic link/)
+  })
+
+  it.skipIf(process.platform === "win32")("refuses a FIFO that appears at an owned path", async () => {
+    const project = Project.withCommit({ "src/a.ts": "export const a = 1\n" })
+    const harness = await createHarness(project)
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["src/fresh.ts"]),
+      gate_exemption: "No configured gate; the focused check is recorded manually.",
+    })
+    execFileSync("mkfifo", [project.path("src/fresh.ts")])
+    const result = await harness.call("rig_evidence", { action: "finalize" })
+    expect(result.metadata.ok).toBe(false)
+    expect(result.content).toMatch(/not a regular file/)
+  })
+
+  it.skipIf(process.platform === "win32")("refuses a FIFO in a non-trivial scope instead of blocking", async () => {
+    const project = Project.withCommit({ "src/a.ts": "export const a = 1\n" })
+    execFileSync("mkfifo", [project.path("pipe.ts")])
+    const harness = await createHarness(project)
+    await expect(
+      harness.call("rig_evidence", { action: "start", skill: "rig-investigate", paths: ["pipe.ts"] }),
+    ).rejects.toThrow(/not a regular file/)
+  })
+
+  it("refuses an owned path that is a hard link", async () => {
+    const project = Project.withCommit({ "src/a.ts": "export const a = 1\n" })
+    rmSync(project.path("src/a.ts"))
+    linkSync(project.path(".git/config"), project.path("src/a.ts"))
+    const harness = await createHarness(project)
+    await expect(
+      harness.call("rig_evidence", {
+        action: "start",
+        skill: "rig-implement",
+        trivial_plan: trivialPlan(["src/a.ts"]),
+      }),
+    ).rejects.toThrow(/hard link/)
+  })
+
+  it.skipIf(process.platform === "win32")("refuses a FIFO as a recorded input", async () => {
+    const project = Project.withCommit({ "src/a.ts": "export const a = 1\n" })
+    execFileSync("mkfifo", [project.path("pipe.ts")])
+    const harness = await createHarness(project)
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["src/a.ts"]),
+      gate_exemption: "No configured gate; the focused check is recorded manually.",
+    })
+    await expect(harness.call("rig_evidence", { action: "record", inputs: ["pipe.ts"] })).rejects.toThrow(
+      /not a regular file/,
+    )
+  })
+
+  it("reports an over-guideline trivial change as a limit instead of failing", async () => {
+    const project = Project.withCommit({ "src/a.ts": "export const a = 1\n" })
+    const harness = await createHarness(project)
+    const started = await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["src/a.ts"]),
+      gate_exemption: "No configured gate; the focused check is recorded manually.",
+    })
+    project.write(
+      "src/a.ts",
+      `${Array.from({ length: 80 }, (_, index) => `export const a${index} = ${index}\n`).join("")}`,
+    )
+    await harness.call("rig_evidence", { action: "refresh", message: "the declared file grew" })
+    const done = await harness.call("rig_evidence", { action: "finalize" })
+    expect(done.metadata.ok, done.content).toBe(true)
+    const run = JSON.parse(
+      (await harness.call("rig_evidence", { action: "inspect", run_id: started.metadata.run_id })).content,
+    )
+    expect(run.limits.join("\n")).toMatch(/measured trivial change is .* above the 50-line \/ 2-file guideline/)
+  })
+
+  it("refuses a recorded output outside the declared scope", async () => {
+    const project = changedProject()
+    const harness = await createHarness(project)
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["src/a.ts"]),
+      gate_exemption: "No configured gate; the focused check is recorded manually.",
+    })
+    project.write("src/side.ts", "export const side = 1\n")
+    await expect(harness.call("rig_evidence", { action: "record", outputs: ["src/side.ts"] })).rejects.toThrow(
+      /outside the run scope/,
+    )
+  })
+
+  it("reports the measured change for a within-guideline trivial run", async () => {
+    const project = Project.withCommit({ "src/a.ts": "one\ntwo\nthree\n" })
+    const harness = await createHarness(project)
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["src/a.ts"]),
+      gate_exemption: "No configured gate; the focused check is recorded manually.",
+    })
+    project.write("src/a.ts", "one\ntwo\nthree\nfour\n")
+    await harness.call("rig_evidence", { action: "refresh", message: "added one line" })
+    const done = await harness.call("rig_evidence", { action: "finalize" })
+    expect(done.metadata.ok, done.content).toBe(true)
+    expect(done.content).toMatch(/Measured change: 1 line\(s\) across 1 file\(s\)/)
+    expect(readFileSync(done.metadata.report_path as string, "utf8")).toMatch(/1 line\(s\) across 1 file\(s\)/)
   })
 
   it("marks a run stale when source changes after the scope was recorded", async () => {
@@ -131,8 +514,7 @@ describe("rig_evidence", () => {
     await harness.call("rig_evidence", {
       action: "start",
       skill: "rig-implement",
-      trivial_plan: "Update the scoped return value and run its regression.",
-      paths: ["src"],
+      trivial_plan: trivialPlan(["src/a.ts"]),
     })
     await harness.call("rig_gate", { action: "run" })
     project.write("src/a.ts", "export const a = 3\n")
@@ -229,8 +611,7 @@ describe("rig_gate", () => {
     await harness.call("rig_evidence", {
       action: "start",
       skill: "rig-implement",
-      trivial_plan: "Update the scoped return value and run its regression.",
-      paths: ["src"],
+      trivial_plan: trivialPlan(["src/a.ts"]),
     })
 
     const passing = await harness.call("rig_gate", { action: "run", names: ["configured-1"] })
@@ -249,8 +630,7 @@ describe("rig_gate", () => {
     await harness.call("rig_evidence", {
       action: "start",
       skill: "rig-implement",
-      trivial_plan: "Update the scoped return value and run its regression.",
-      paths: ["src"],
+      trivial_plan: trivialPlan(["src/a.ts"]),
     })
     await expect(harness.call("rig_gate", { action: "run", names: ["nope"] })).rejects.toThrow(
       /unknown gate\(s\): nope/,
@@ -262,8 +642,7 @@ describe("rig_gate", () => {
     await harness.call("rig_evidence", {
       action: "start",
       skill: "rig-implement",
-      trivial_plan: "Update the scoped return value and run its regression.",
-      paths: ["src"],
+      trivial_plan: trivialPlan(["src/a.ts"]),
     })
     await expect(harness.call("rig_gate", { action: "run" })).rejects.toThrow(/no configured gates detected/)
   })
@@ -530,7 +909,7 @@ describe("rig_loop", () => {
     const other = await createHarness(project)
     await other.call("rig_evidence", { action: "start", skill: "rig-investigate", paths: ["src"] })
     await expect(other.call("rig_loop", { action: "read", reviewer: "rig-challenger" })).rejects.toThrow(
-      /only operates on a rig-challenge run/,
+      /operates on a rig-challenge or rig-implement run/,
     )
   })
 

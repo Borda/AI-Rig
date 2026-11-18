@@ -23,7 +23,9 @@ describe("delivery loop", () => {
     expect(implement).toMatch(/task tree/i)
     expect(implement).toMatch(/depth-first/i)
     expect(implement).toMatch(/final independent challenge|final-challenge/i)
-    expect(implement).toMatch(/blocking finding/i)
+    expect(implement).toMatch(/resolve every finding/i)
+    expect(implement).toMatch(/security, critical or high/i)
+    expect(implement).toMatch(/early exit/i)
   })
 
   it("keeps the challenge loop distinct from the mandatory final pass", () => {

@@ -1,7 +1,7 @@
 /** Workflow handoffs never promote stale validation or change deleted-file identities. */
 import { expect, it } from "vitest"
 import { sha256 } from "../../src/digest.ts"
-import { createHarness, Project } from "../helpers/harness.ts"
+import { createHarness, Project, trivialPlan } from "../helpers/harness.ts"
 
 it("requires new validation after a later gate changes source", async () => {
   const project = Project.withCommit({ "src/a.ts": "valid\n" })
@@ -14,8 +14,7 @@ it("requires new validation after a later gate changes source", async () => {
   const started = await harness.call("rig_evidence", {
     action: "start",
     skill: "rig-implement",
-    trivial_plan: "Update the scoped return value and run its regression.",
-    paths: ["src"],
+    trivial_plan: trivialPlan(["src/a.ts"]),
   })
   await harness.call("rig_gate", { action: "run" })
   expect(project.read("src/a.ts")).toBe("invalid\n")
@@ -46,8 +45,7 @@ it("does not revive a drifting gate batch when source returns to its original by
   await harness.call("rig_evidence", {
     action: "start",
     skill: "rig-implement",
-    trivial_plan: "Update the scoped return value and run its regression.",
-    paths: ["src"],
+    trivial_plan: trivialPlan(["src/a.ts"]),
   })
   await harness.call("rig_gate", { action: "run" })
   expect(project.read("src/a.ts")).toBe("candidate\n")
@@ -69,8 +67,7 @@ it("does not certify a batch whose later gate restores source after another vali
   const started = await harness.call("rig_evidence", {
     action: "start",
     skill: "rig-implement",
-    trivial_plan: "Update the scoped return value and run its regression.",
-    paths: ["src"],
+    trivial_plan: trivialPlan(["src/a.ts"]),
   })
   await harness.call("rig_gate", { action: "run" })
   expect(project.read("src/a.ts")).toBe("baseline\n")
@@ -94,8 +91,7 @@ it("completes when every gate validates unchanged source", async () => {
   const started = await harness.call("rig_evidence", {
     action: "start",
     skill: "rig-implement",
-    trivial_plan: "Update the scoped return value and run its regression.",
-    paths: ["src"],
+    trivial_plan: trivialPlan(["src/a.ts"]),
   })
   await harness.call("rig_gate", { action: "run" })
   const finalized = await harness.call("rig_evidence", { action: "finalize" })
@@ -116,8 +112,7 @@ it("certifies a formatter rerun after refreshing its edited source while retaini
   const started = await harness.call("rig_evidence", {
     action: "start",
     skill: "rig-implement",
-    trivial_plan: "Update the scoped return value and run its regression.",
-    paths: ["src"],
+    trivial_plan: trivialPlan(["src/a.ts"]),
   })
   await harness.call("rig_gate", { action: "run" })
   await harness.call("rig_evidence", { action: "refresh", message: "formatter updated source" })
@@ -138,8 +133,7 @@ it("preserves a deleted implementation output's digest in the review scope", asy
   await harness.call("rig_evidence", {
     action: "start",
     skill: "rig-implement",
-    trivial_plan: "Update the scoped return value and run its regression.",
-    paths: ["src/a.ts"],
+    trivial_plan: trivialPlan(["src/a.ts"]),
   })
   project.git("rm", "-q", "src/a.ts")
   await harness.call("rig_evidence", { action: "refresh", message: "removed obsolete source" })

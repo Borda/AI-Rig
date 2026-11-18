@@ -10,11 +10,16 @@
 import { isUtf8 } from "node:buffer"
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
-import { scopeDigest, sha256, type ScopeEntry } from "./digest.ts"
+import { scopeDigest, sha256, sha256Path, type ScopeEntry } from "./digest.ts"
 import type { ScopeRecord } from "./run.ts"
 import { runGit } from "./util/git.ts"
 
 const EMPTY_SHA256 = sha256("")
+/** Empty tree object per object format; an attribute source with no rules. */
+const EMPTY_TREE: Readonly<Record<string, string>> = {
+  sha1: "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+  sha256: "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321",
+}
 const MAX_WALK_FILES = 5_000
 const IGNORED_SEGMENTS = new Set(["node_modules", ".git", ".opencode-rig", ".reports", ".cache", "dist", "coverage"])
 
@@ -60,8 +65,12 @@ function normalizePaths(cwd: string, paths: readonly string[]): string[] {
 function hashFile(cwd: string, path: string): { status: string; sha256: string } | undefined {
   const absolute = resolveScopePath(cwd, path)
   if (!existsSync(absolute)) return undefined
-  if (statSync(absolute).isDirectory()) return undefined
-  return { status: "M", sha256: sha256(readFileSync(absolute)) }
+  const stat = statSync(absolute)
+  if (stat.isDirectory()) return undefined
+  // Opening a FIFO or device blocks or reads forever; a scope path must be a
+  // regular file, so fail closed instead of hashing it.
+  if (!stat.isFile()) throw new Error(`scope path is not a regular file: ${path}`)
+  return { status: "M", sha256: sha256Path(absolute) }
 }
 
 function walk(root: string, current: string, out: string[]): void {
@@ -125,19 +134,25 @@ function nulRecords(value: Buffer): Buffer[] {
 
 /** Preserve invalid UTF-8 filenames as distinct, printable byte identities. */
 function evidencePath(path: Buffer): string {
-  return isUtf8(path) ? path.toString("utf8") : `git-bytes:${path.toString("hex")}`
+  return isUtf8(path) ? path.toString("utf8") : `${GIT_BYTES_PREFIX}${path.toString("hex")}`
 }
 
+/** Internal spelling of a path whose bytes are not valid UTF-8. A NUL cannot
+ * appear in a real filename, so no user-supplied path can impersonate it. */
+export const GIT_BYTES_PREFIX = "\u0000git-bytes:"
+
 /** Hash the original filename bytes after checking physical containment. */
-function hashChangedFile(cwd: string, path: Buffer): string {
+export function hashChangedFile(cwd: string, path: Buffer): string {
   const absolute = Buffer.concat([Buffer.from(resolve(cwd) + sep), path])
   if (!existsSync(absolute)) return EMPTY_SHA256
   const physical = realpathSync(absolute, { encoding: "buffer" })
   const root = Buffer.from(realpathSync(cwd) + sep)
   if (!physical.subarray(0, root.length).equals(root))
     throw new Error(`scope path resolves outside the project: ${evidencePath(path)}`)
-  if (statSync(absolute).isDirectory()) return EMPTY_SHA256
-  return sha256(readFileSync(absolute))
+  const stat = statSync(absolute)
+  if (stat.isDirectory()) return EMPTY_SHA256
+  if (!stat.isFile()) throw new Error(`scope path is not a regular file: ${evidencePath(path)}`)
+  return sha256Path(absolute)
 }
 
 /** Collect explicit paths, rejecting missing rename origins before allowing deletions. */
@@ -277,4 +292,43 @@ export function refreshScope(cwd: string, scope: ScopeRecord): ScopeRecord {
 export function detectDrift(cwd: string, scope: ScopeRecord): boolean {
   if (scope.commit) return false
   return refreshScope(cwd, scope).digest !== scope.digest
+}
+
+/** Largest owned file the trivial bound will read; a bigger one must be planned. */
+export const MAX_MEASURED_BYTES = 4 * 1024 * 1024
+
+/**
+ * Hash each line of a text file, so a later run can measure its own added and
+ * removed lines without trusting Git, its attributes, its index or its filters.
+ * Returns `undefined` for a non-text, oversized or unreadable file.
+ */
+export function lineHashes(absolute: string): string[] | undefined {
+  try {
+    const stat = statSync(absolute)
+    if (!stat.isFile() || stat.size > MAX_MEASURED_BYTES) return undefined
+    const buffer = readFileSync(absolute)
+    if (!isUtf8(buffer) || buffer.includes(0)) return undefined
+    const text = buffer.toString("utf8")
+    if (text.length === 0) return []
+    const lines = text.split(/\r\n|\r|\n/)
+    if (/(?:\r\n|\r|\n)$/.test(text)) lines.pop()
+    return lines.map((line) => sha256(line).slice(0, 16))
+  } catch {
+    return undefined
+  }
+}
+
+/** Added plus removed lines between two line-hash sequences, order-insensitive. */
+export function lineDiffCount(start: readonly string[], current: readonly string[]): number {
+  const remaining = new Map<string, number>()
+  for (const hash of start) remaining.set(hash, (remaining.get(hash) ?? 0) + 1)
+  let added = 0
+  for (const hash of current) {
+    const left = remaining.get(hash) ?? 0
+    if (left > 0) remaining.set(hash, left - 1)
+    else added += 1
+  }
+  let removed = 0
+  for (const count of remaining.values()) removed += count
+  return added + removed
 }

@@ -29,6 +29,7 @@ Produce one plan that implementation can execute without re-deciding scope.
 
 ## Rules
 
+- Deliver a verified plan, not an implementation: `rig-implement` consumes the frozen plan as a separate run.
 - A frozen plan is read-only once implementation starts. If source contradicts the plan, stop and report the contradiction; never rewrite the plan to match what was built.
 - The verdict table defines scope, not the prose: a surface marked `deferred` or `out-of-scope` is not worked on, whatever the steps imply.
 - Every revision lists each changed verdict under "Verdict changes since the previous revision"; a surface moving to `deferred` or `out-of-scope` must appear there, never only inside rewritten prose.

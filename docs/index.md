@@ -20,7 +20,7 @@ Eight packages serve three runtimes: six marketplace plugins for Claude Code, th
 | Ground and run reviewable ML experiments                                       | [🔬 Research](cc_research.md)            | 10 skills and 2 agents covering literature, design, execution, verification, ablation, retrospective, and Kaggle work |
 | Answer structural Python questions from a local index                          | [🗂️ Codemap-py](codemap-py.md)           | 6 skills shared by Claude Code and Codex                                                                              |
 | Run evidence-first engineering workflows in Codex                              | [🤖 Codex Rig](codex-rig.md)             | 13 workflow skills, 1 lifecycle manager, and 15 role cards                                                            |
-| Run evidence-first workflows, gates, and Git guardrails in OpenCode            | [⚡ OpenCode Rig](opencode-rig.md)       | 11 workflow skills, 7 evidence tools, 8 role agents, an adversarial loop, and an npm-installable TypeScript package   |
+| Run evidence-first workflows, gates, and Git guardrails in OpenCode            | [⚡ OpenCode Rig](opencode-rig.md)       | 11 workflow skills, 10 tools, 8 role agents, an adversarial loop, and an npm-installable TypeScript package           |
 | Hand bounded implement, advise, and review calls between Claude Code and Codex | [🌉 bridge_CC-Codex](bridge_cc-codex.md) | 3 bridge verbs in both directions with explicit models, budgets, compact envelopes, and recursion safety              |
 
 ## Complete skill inventory

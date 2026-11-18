@@ -54,7 +54,7 @@ Choose the smallest plugin that solves the job in front of you. Every package in
 | Plan and run literature-grounded ML experiments                         | [🔬 `research`](plugins/cc_research/README.md)            | 2 research agents and 10 skills for planning, judging, running, verifying, ablation, retrospectives, and Kaggle notebooks |
 | Answer import, caller, coupling, rename, and affected-test questions    | [🗂️ `codemap-py`](plugins/codemap-py/README.md)           | The same 6 structural-analysis skills for Claude Code and Codex, backed by a local static Python index                    |
 | Use evidence-first workflows and specialist role cards in Codex         | [🤖 `Codex Rig`](plugins/codex-rig/README.md)             | 13 workflow skills, 1 lifecycle manager, 15 role cards, shared gates, calibration, and artifact contracts                 |
-| Run evidence-first workflows, gates, and Git guardrails in OpenCode     | [⚡ `OpenCode Rig`](plugins/opencode-rig/README.md)       | 11 workflow skills, 7 evidence tools, 8 role agents, an adversarial loop, and an npm-installable TypeScript package       |
+| Run evidence-first workflows, gates, and Git guardrails in OpenCode     | [⚡ `OpenCode Rig`](plugins/opencode-rig/README.md)       | 11 workflow skills, 10 tools, 8 role agents, an adversarial loop, and an npm-installable TypeScript package               |
 | Hand bounded implement, advise, and review calls between the two hosts  | [🌉 `bridge_CC-Codex`](plugins/bridge_cc-codex/README.md) | 3 bridge verbs in both directions with explicit models, effort, budgets, compact envelopes, and recursion safety          |
 
 If you use Claude Code, read the [Claude guide](.claude/README.md). If you use Codex, read the [Codex guide](.codex/README.md). OpenCode installs the npm package directly; its [README](plugins/opencode-rig/README.md) is the host guide.
@@ -467,7 +467,7 @@ Artifacts are reviewable evidence, not authority. Read the commands, source, tes
 - Release workflows prepare and assess local artifacts. Remote publication, pushes, comments, merges, tags, and package uploads remain human-owned unless a future workflow explicitly documents a different contract.
 - Generated reports, plans, and experiment state are project-local. Read the owning plugin's artifact and cleanup sections before automating retention.
 - Platform support is capability-specific. Core workflows target Windows, macOS, and Linux; Codex Rig's authenticated legacy-shim cleanup remains POSIX-only, and Codemap's `--timeout` flag has a portable supervisor path where `SIGALRM` is missing, proven on macOS and Linux; Windows stays unproven until CI observes it.
-- OpenCode Rig is an npm package for OpenCode `2.1.0+` on Node `20+`. It registers tools, skills, and one permission hook; role agents exist only after `opencode-rig init`, and its Git grant covers plain local commits only.
+- OpenCode Rig is an npm package for OpenCode `2.1.0+` on Node `20+`. It registers tools, skills, and four hooks (permission evaluation, tool journaling before and after, and session context); role agents exist only after `opencode-rig init`, and its Git grant covers plain local commits only.
 - Possible future work is described as an opportunity, not a roadmap promise. The shipped source and tests define the current contract.
 
 ## 🏗️ Repository checkout and synchronization

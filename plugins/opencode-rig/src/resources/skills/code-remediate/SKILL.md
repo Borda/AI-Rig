@@ -37,6 +37,7 @@ git status --porcelain
 
 ## Rules
 
+- An implementation resolves its own final-challenge findings inside its run; start remediation from a review inventory, or when the findings sit outside the implementation's owned paths.
 - Do not invent findings that were not reported; record new issues separately.
 - Do not mark `fixed` without a changed path and a check that exercises it.
 - Do not silently drop a finding you cannot resolve; mark it `deferred` with an owner and trigger, or ask.

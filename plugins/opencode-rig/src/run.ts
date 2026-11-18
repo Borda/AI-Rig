@@ -336,25 +336,29 @@ export interface SkillRequirements {
   readonly review: boolean
   readonly findings: boolean
   readonly closedFindings: boolean
-  readonly loop: boolean
+  /** `required` needs a ledger; `optional` accepts one and validates it when present. */
+  readonly loop: "off" | "optional" | "required"
 }
 
 /**
  * Per-skill completion contract. Review is allowed to finish with open
  * findings; remediation is not, because its whole purpose is closure.
+ * Implementation requires the final challenge, a findings inventory and its
+ * closure, and records a challenge loop whenever the challenge found a
+ * security, critical or high finding.
  */
 export const SKILL_REQUIREMENTS: Readonly<Record<string, SkillRequirements>> = {
-  "rig-plan": { gates: false, review: true, findings: false, closedFindings: false, loop: false },
-  "rig-investigate": { gates: false, review: false, findings: false, closedFindings: false, loop: false },
-  "rig-research": { gates: false, review: true, findings: false, closedFindings: false, loop: false },
-  "rig-implement": { gates: true, review: false, findings: false, closedFindings: false, loop: false },
-  "code-review": { gates: false, review: true, findings: true, closedFindings: false, loop: false },
-  "code-remediate": { gates: true, review: true, findings: true, closedFindings: true, loop: false },
-  "rig-challenge": { gates: true, review: true, findings: false, closedFindings: false, loop: true },
-  "rig-optimize": { gates: true, review: true, findings: false, closedFindings: false, loop: false },
-  "rig-distill": { gates: false, review: false, findings: false, closedFindings: false, loop: false },
-  "rig-release": { gates: true, review: false, findings: false, closedFindings: false, loop: false },
-  "rig-health": { gates: false, review: false, findings: false, closedFindings: false, loop: false },
+  "rig-plan": { gates: false, review: true, findings: false, closedFindings: false, loop: "off" },
+  "rig-investigate": { gates: false, review: false, findings: false, closedFindings: false, loop: "off" },
+  "rig-research": { gates: false, review: true, findings: false, closedFindings: false, loop: "off" },
+  "rig-implement": { gates: true, review: true, findings: true, closedFindings: true, loop: "optional" },
+  "code-review": { gates: false, review: true, findings: true, closedFindings: false, loop: "off" },
+  "code-remediate": { gates: true, review: true, findings: true, closedFindings: true, loop: "off" },
+  "rig-challenge": { gates: true, review: true, findings: false, closedFindings: false, loop: "required" },
+  "rig-optimize": { gates: true, review: true, findings: false, closedFindings: false, loop: "off" },
+  "rig-distill": { gates: false, review: false, findings: false, closedFindings: false, loop: "off" },
+  "rig-release": { gates: true, review: false, findings: false, closedFindings: false, loop: "off" },
+  "rig-health": { gates: false, review: false, findings: false, closedFindings: false, loop: "off" },
 }
 
 export function requirementsFor(skill: string): SkillRequirements {
@@ -363,11 +367,25 @@ export function requirementsFor(skill: string): SkillRequirements {
   return requirements
 }
 
+/** The inline mini-plan path is a trivial change, not a frozen-plan implementation. */
+export function isTrivialImplement(run: RunRecord): boolean {
+  return run.skill === "rig-implement" && Boolean(run.trivial_plan?.trim()) && !run.plan
+}
+
+/** A trivial implementation keeps the light path; every frozen plan takes the full contract. */
+export function requirementsForRun(run: RunRecord): SkillRequirements {
+  const requirements = requirementsFor(run.skill)
+  if (!isTrivialImplement(run)) return requirements
+  return { ...requirements, review: false, findings: false, closedFindings: false, loop: "off" }
+}
+
 export interface FinalizeInput {
   readonly drift: boolean
   readonly plan_digest?: string
   readonly source_findings_digest?: string
   readonly findings?: readonly Finding[]
+  /** Signatures the implementation's challenge ledger actually assessed. */
+  readonly loop_signatures?: readonly string[]
 }
 
 export interface FinalizeResult {
@@ -376,15 +394,17 @@ export interface FinalizeResult {
   readonly status: RunStatus
 }
 
+const SEVERE_SEVERITIES = new Set(["security", "critical", "high"])
+
 /** Check the frozen plan separately from the source inventory that excludes artifact directories. */
 function planProblems(run: RunRecord, input: FinalizeInput): string[] {
   if (run.skill !== "rig-plan" && run.skill !== "rig-implement") return []
   if (!run.plan) {
-    if (run.skill === "rig-implement" && run.trivial_plan?.trim()) return []
+    if (isTrivialImplement(run)) return []
     return [
       run.skill === "rig-plan"
         ? "plan artifact is missing"
-        : "implementation requires a reviewed plan or a trivial plan",
+        : "implementation requires a reviewed plan or an explicit trivial_plan",
     ]
   }
   const problems: string[] = []
@@ -395,9 +415,30 @@ function planProblems(run: RunRecord, input: FinalizeInput): string[] {
   }
   if (run.skill === "rig-implement" && !run.plan.run_id)
     problems.push("implementation plan is missing reviewed plan-run provenance")
-  if (run.skill === "rig-implement" && !run.review)
-    problems.push("implementation requires an independent final challenge; record the challenger with reviewer")
   return problems
+}
+
+/**
+ * Implementation closure: every finding is resolved, and a security, critical
+ * or high finding that was not disproved carries the fix-and-re-challenge
+ * loop. A rejected finding needs no loop; anything else does.
+ */
+function implementationProblems(run: RunRecord, input: FinalizeInput): string[] {
+  if (run.skill !== "rig-implement" || isTrivialImplement(run)) return []
+  const unresolvedSevere = (input.findings ?? []).filter(
+    (finding) => SEVERE_SEVERITIES.has(finding.severity) && finding.status !== "rejected",
+  )
+  if (unresolvedSevere.length === 0) return []
+  const ids = unresolvedSevere.map((finding) => finding.id)
+  if (!run.loop)
+    return [
+      `challenge reported a security, critical or high finding (${ids.join(", ")}); record the fix-and-re-challenge loop with rig_loop`,
+    ]
+  const assessed = new Set(input.loop_signatures ?? [])
+  const missing = ids.filter((id) => !assessed.has(id))
+  if (missing.length > 0)
+    return [`the challenge loop did not assess ${missing.join(", ")}; append a round with that signature`]
+  return []
 }
 
 /** Reconcile actual remediation records with the immutable source inventory captured at start. */
@@ -418,7 +459,7 @@ function remediationProblems(run: RunRecord, input: FinalizeInput): string[] {
  * completed; otherwise `status` is the honest outcome to record.
  */
 export function finalizeRun(run: RunRecord, input: FinalizeInput): FinalizeResult {
-  const requirements = requirementsFor(run.skill)
+  const requirements = requirementsForRun(run)
   const problems: string[] = []
 
   if (run.status !== "in_progress") {
@@ -429,11 +470,12 @@ export function finalizeRun(run: RunRecord, input: FinalizeInput): FinalizeResul
     return {
       ok: false,
       problems: ["source drift: the scope digest no longer matches the recorded inventory"],
-      status: requirements.loop && run.loop && run.loop.stop_reason !== "converged" ? "blocked" : "stale",
+      status:
+        requirements.loop === "required" && run.loop && run.loop.stop_reason !== "converged" ? "blocked" : "stale",
     }
   }
 
-  problems.push(...planProblems(run, input), ...remediationProblems(run, input))
+  problems.push(...planProblems(run, input), ...remediationProblems(run, input), ...implementationProblems(run, input))
 
   if (requirements.gates) {
     const current = currentGateReceipts(run)
@@ -449,9 +491,18 @@ export function finalizeRun(run: RunRecord, input: FinalizeInput): FinalizeResul
   }
 
   if (requirements.review) {
-    if (!run.review) problems.push("independent review evidence is missing")
+    if (!run.review)
+      problems.push(
+        run.skill === "rig-implement"
+          ? "implementation requires an independent final challenge; record the challenger with reviewer"
+          : "independent review evidence is missing",
+      )
     else if (run.review.source_digest !== run.scope.digest) {
-      problems.push("review evidence does not match the current scope digest")
+      problems.push(
+        run.skill === "rig-implement"
+          ? "the final challenge does not match the current scope; re-challenge the changed bytes and record it"
+          : "review evidence does not match the current scope digest",
+      )
     }
   }
 
@@ -460,13 +511,17 @@ export function finalizeRun(run: RunRecord, input: FinalizeInput): FinalizeResul
   }
 
   if (requirements.closedFindings && run.findings && run.findings.open > 0) {
-    problems.push(`remediation still has ${run.findings.open} open finding(s)`)
+    problems.push(
+      run.skill === "rig-implement"
+        ? `the final challenge still has ${run.findings.open} unresolved finding(s); fix or disprove each one`
+        : `remediation still has ${run.findings.open} open finding(s)`,
+    )
   }
 
   let loopBlocked = false
-  if (requirements.loop) {
+  if (requirements.loop !== "off") {
     if (!run.loop) {
-      problems.push("challenge loop ledger is missing; use rig_loop")
+      if (requirements.loop === "required") problems.push("challenge loop ledger is missing; use rig_loop")
     } else {
       if (run.loop.stop_reason !== "converged") {
         problems.push(`challenge loop stopped with '${run.loop.stop_reason}', not convergence`)
@@ -485,7 +540,13 @@ export function finalizeRun(run: RunRecord, input: FinalizeInput): FinalizeResul
   return { ok: true, problems: [], status: "completed" }
 }
 
-export function renderReport(run: RunRecord): string {
+export interface RunMeasurement {
+  readonly lines: number
+  readonly files: number
+  readonly unmeasured: readonly string[]
+}
+
+export function renderReport(run: RunRecord, measurement?: RunMeasurement): string {
   const current = new Set(currentGateReceipts(run))
   const latest = new Map(run.gates.map((gate) => [gate.id, gate]))
   const gates = run.gates.length
@@ -545,15 +606,26 @@ ${loop}
 
 ${run.outputs.length ? run.outputs.map((file) => `- \`${file.path}\` — \`${file.sha256}\``).join("\n") : "- none recorded"}
 
+## Measured change
+
+${
+  measurement
+    ? [
+        `- ${measurement.lines} line(s) across ${measurement.files} file(s), from the bytes this run started with`,
+        ...(measurement.unmeasured.length ? [`- Not measured: ${measurement.unmeasured.join(", ")}`] : []),
+      ].join("\n")
+    : "- not applicable (a frozen plan measures no inline change)"
+}
+
 ## Limits
 
 ${limits}
 ${run.stop_reason ? `\n## Stop reason\n\n\`${run.stop_reason}\`\n` : ""}`
 }
 
-export function writeReport(paths: RigPaths, run: RunRecord): string {
+export function writeReport(paths: RigPaths, run: RunRecord, measurement?: RunMeasurement): string {
   const path = join(runDirectory(paths, run.skill, run.run_id), "report.md")
-  writeFileSync(path, `${renderReport(run)}\n`, "utf8")
+  writeFileSync(path, `${renderReport(run, measurement)}\n`, "utf8")
   return path
 }
 

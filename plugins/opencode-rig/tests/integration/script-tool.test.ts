@@ -1,13 +1,13 @@
 /** rig_script runs declared files and records a receipt. */
 import { existsSync, readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
-import { Project, createHarness } from "../helpers/harness.ts"
+import { Project, createHarness, trivialPlan } from "../helpers/harness.ts"
 
 async function startedRun(project: Project, harness: Awaited<ReturnType<typeof createHarness>>) {
   const started = await harness.call("rig_evidence", {
     action: "start",
     skill: "rig-implement",
-    trivial_plan: "Run one declared probe and record its receipt.",
+    trivial_plan: trivialPlan(["src/a.ts"]),
   })
   return started.metadata.run_id as string
 }

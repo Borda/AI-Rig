@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { sha256 } from "../../src/digest.ts"
 import { collectScope } from "../../src/evidence.ts"
 import type { RunRecord } from "../../src/run.ts"
-import { createHarness, Project } from "../helpers/harness.ts"
+import { createHarness, Project, trivialPlan } from "../helpers/harness.ts"
 
 afterEach(() => vi.unstubAllEnvs())
 
@@ -30,8 +30,7 @@ async function started(skill = "rig-challenge", gates = ['node -e "process.exit(
   const result = await harness.call("rig_evidence", {
     action: "start",
     skill,
-    paths: ["src"],
-    ...(skill === "rig-implement" ? { trivial_plan: "Change one source constant; verify with configured gates." } : {}),
+    ...(skill === "rig-implement" ? { trivial_plan: trivialPlan(["src/a.ts"]) } : { paths: ["src"] }),
     ...(sourceRunId ? { source_run_id: sourceRunId } : {}),
   })
   const call = harness.call.bind(harness)
@@ -98,7 +97,7 @@ describe("gate history", () => {
   it("refuses to certify a different scope refreshed during gate approval", async () => {
     const { project, harness, directory, runPath } = await started("rig-implement")
     harness.ctx.permission.assert = async () => {
-      project.write("src/new.ts", "new source\n")
+      project.write("src/a.ts", "changed during approval\n")
       await harness.call("rig_evidence", { action: "refresh", message: "Scope expanded during approval" })
     }
     await expect(harness.call("rig_gate", { action: "run" })).rejects.toThrow(/scope changed/)

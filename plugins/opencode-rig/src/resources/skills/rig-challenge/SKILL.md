@@ -49,7 +49,7 @@ description: Run a bounded adversarial convergence loop with an independent chal
 - A new finding never resets prior signatures or history.
 - End each round with the cumulative progress table; do not defer it to the final report or repeat it without a new round.
 - Do not reclassify a finding as fixed without independent assessment.
-- A non-trivial `rig-implement` run performs one mandatory final challenge of the changed behavior; this skill is the iterative loop for a risky or security-sensitive change, or when the user asks to repeat review and fix until clean.
+- A non-trivial `rig-implement` run performs one mandatory final challenge of the changed behavior and runs this same ledger automatically when that challenge reports a security, critical or high finding; use this workflow on request, for a risky or security-sensitive change, or when the user asks to repeat review and fix until clean.
 - Scope changes retain the parent stop and mark unassessed prior findings as unassessed.
 
 ## Output

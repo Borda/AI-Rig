@@ -22,5 +22,5 @@
 - Confidence reflects the weakest accepted evidence, not the average. The limit is the one most likely to change the verdict.
 - A skill that hands work to another names it exactly, for example `code-remediate` on `F-001`–`F-003`, `rig-plan` for the approved finding, or `rig-implement` with the recorded plan digest.
 - A diagnostic workflow maps its outcomes onto the same values: pass is `approved`, warnings are `approved with notes`, and a failing prerequisite is `blocked`; a read-only report is `investigated`.
-- A run with a frozen plan adds, below the table, the plan outcome and rounds (`converged`, `round-limit`, `authority-required`), the task-tree leaves and their owners, and the final-challenge reviewer and verdict. The five table fields stay the decision surface.
+- A run with a frozen plan adds, below the table, the plan outcome and rounds (`converged`, `round-limit`, `authority-required`), the task-tree leaves and their owners, and the final-challenge reviewer and verdict, and the challenge-loop rounds and stop reason when the loop ran. The five table fields stay the decision surface.
 - The table is part of every run's report; there is no separate summary that can disagree with it.

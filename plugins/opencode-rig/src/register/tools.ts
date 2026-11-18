@@ -11,18 +11,31 @@ import {
   appendFileSync,
   chmodSync,
   existsSync,
+  closeSync,
   lstatSync,
+  openSync,
   readFileSync,
+  readSync,
   realpathSync,
+  renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import type { Plugin } from "@opencode/plugin"
-import { sha256, sha256File } from "../digest.ts"
+import { sha256, sha256File, scopeDigest, type ScopeEntry } from "../digest.ts"
 import { dispatchRole, ROLE_IDS, type RoleId } from "../dispatch.ts"
 import { doctorReport, installedAgentStatus, resolveAgentDirs, staleRuns } from "../doctor.ts"
-import { collectCommitScope, collectScope, detectDrift, refreshScope } from "../evidence.ts"
+import {
+  collectCommitScope,
+  collectScope,
+  detectDrift,
+  lineDiffCount,
+  lineHashes,
+  refreshScope,
+  scopeBase,
+} from "../evidence.ts"
 import {
   bucketCounts,
   mergeFindings,
@@ -37,6 +50,7 @@ import { detectRuntime, isPinnedImage, runInSandbox } from "../sandbox.ts"
 import { isReviewWorktree, readTrust, TRUST_WORDS, writeTrust } from "../trust.ts"
 import { grantPath, readGrant, revokeGrant, writeGrant } from "../git-grant.ts"
 import { markdownSection, planTreeState } from "../plan.ts"
+import { MAX_MINI_PLAN_LINES, MAX_MINI_PLAN_PATHS, miniPlanProblems, parseMiniPlan } from "../mini-plan.ts"
 import {
   appendLoopRecord,
   convergence,
@@ -61,6 +75,7 @@ import {
   type FileRecord,
   type FindingsSummary,
   type RunRecord,
+  type ScopeRecord,
 } from "../run.ts"
 import { SKILLS } from "../skill-manifest.ts"
 import { PLUGIN_VERSION } from "../version.ts"
@@ -192,12 +207,135 @@ function reviewedPlan(
   return { path: planPath, digest: source.plan.digest, run_id: source.run_id }
 }
 
+/**
+ * Scope a trivial run by its mini-plan's owned paths. A declared file may not
+ * exist yet, because a small new file is a normal trivial change, so a missing
+ * path enters the inventory as an empty pending entry; the ordinary collection
+ * hashes it as soon as the file exists.
+ */
+function trivialScope(projectRoot: string, owned: readonly string[]): ScopeRecord {
+  const present = owned.filter((path) => existsSync(resolveInsideProject(projectRoot, path)))
+  const missing = owned.filter((path) => !present.includes(path))
+  const collected = present.length > 0 ? collectScope(projectRoot, present) : undefined
+  const entries: ScopeEntry[] = [
+    ...(collected?.entries ?? []),
+    ...missing.map((path) => ({ path, status: "?", sha256: sha256("") })),
+  ].sort((left, right) => left.path.localeCompare(right.path))
+  return {
+    base: scopeBase(projectRoot),
+    paths: [...owned],
+    dirty: entries.length > 0,
+    entries,
+    digest: scopeDigest(entries),
+  }
+}
+
 /** Reject a plan whose task tree is missing or invalid at the binding point. */
 function assertPlanTree(paths: RigPaths, planPath: string, owner: string): void {
   const absolute = resolveInsideProject(paths.projectRoot, planPath)
   if (!existsSync(absolute)) throw new Error(`plan does not exist: ${planPath}`)
   const { problems } = planTreeState(readFileSync(absolute, "utf8"))
   if (problems.length > 0) throw new Error(`${owner} plan task tree invalid: ${problems.join("; ")}`)
+}
+
+/** The run's own artifacts are never part of the change it certifies. */
+function withoutArtifacts(paths: RigPaths, values: readonly string[]): string[] {
+  const root = relative(paths.projectRoot, paths.artifactRoot).split(sep).join("/")
+  return values.filter((path) => path !== root && !path.startsWith(`${root}/`))
+}
+
+interface TrivialBaseline {
+  /** Per-line hashes of every owned file at start; the run reports its own delta from these. */
+  readonly lineHashes?: Readonly<Record<string, readonly string[]>>
+}
+
+type TrivialMeasurement = {
+  readonly lines: number
+  readonly files: number
+  readonly unmeasured: readonly string[]
+}
+
+/**
+ * Measure the run's own edit from the line hashes recorded at start. This is
+ * accounting, not a boundary: Git, its index, attributes, filters and config
+ * are not consulted, and the result is reported rather than enforced.
+ */
+function measureTrivial(paths: RigPaths, run: RunRecord): TrivialMeasurement | undefined {
+  const baseline = readBaseline(join(paths.runsRoot, run.skill, run.run_id, "trivial-baseline.json"))
+  let lines = 0
+  let files = 0
+  const unmeasured: string[] = []
+  for (const path of run.scope.paths) {
+    const absolute = resolveInsideProject(paths.projectRoot, path)
+    const current = existsSync(absolute) ? lineHashes(absolute) : []
+    const start = baseline?.lineHashes?.[path]
+    if (current === undefined || start === undefined) {
+      unmeasured.push(path)
+      continue
+    }
+    const changed = lineDiffCount(start, current)
+    if (changed > 0) {
+      files += 1
+      lines += changed
+    }
+  }
+  return { lines, files, unmeasured }
+}
+
+/** Read the start baseline without trusting its shape; a damaged file is no measurement. */
+function readBaseline(path: string): TrivialBaseline | undefined {
+  try {
+    const raw = readJsonIfExists<TrivialBaseline>(path)
+    if (!raw || raw.lineHashes === undefined) return undefined
+    if (typeof raw.lineHashes !== "object" || raw.lineHashes === null || Array.isArray(raw.lineHashes)) return undefined
+    const entries = Object.values(raw.lineHashes)
+    if (entries.some((entry) => !Array.isArray(entry) || entry.some((value) => typeof value !== "string")))
+      return undefined
+    return raw
+  } catch {
+    return undefined
+  }
+}
+
+/** Real path of the nearest existing ancestor of a declared path. */
+function physicalAncestor(projectRoot: string, path: string): string {
+  let current = resolveInsideProject(projectRoot, path)
+  for (;;) {
+    if (existsSync(current)) return realpathSync(current)
+    const parent = dirname(current)
+    if (parent === current) return ""
+    current = parent
+  }
+}
+
+/** True when a recorded path sits inside the run's declared scope. */
+function insideScope(projectRoot: string, path: string, scope: readonly string[]): boolean {
+  const relativePath = relative(projectRoot, resolveInsideProject(projectRoot, path)).split(sep).join("/")
+  return scope.some((entry) => relativePath === entry || relativePath.startsWith(`${entry}/`))
+}
+
+/** Refuse a current owned-path state that would escape the project or its source. */
+function assertOwnedPathsSafe(paths: RigPaths, run: RunRecord): void {
+  if (!run.trivial_plan?.trim() || run.plan) return
+  const realArtifactRoot = existsSync(paths.artifactRoot) ? realpathSync(paths.artifactRoot).toLowerCase() : ""
+  const gitDirs = [resolve(paths.projectRoot, ".git"), resolveGitCommonDir(paths.projectRoot)]
+    .filter((value): value is string => value !== undefined && existsSync(value))
+    .map((value) => realpathSync(value).toLowerCase())
+  for (const path of run.scope.paths) {
+    const absolute = resolveInsideProject(paths.projectRoot, path)
+    const stat = lstatSync(absolute, { throwIfNoEntry: false })
+    if (stat?.isSymbolicLink()) throw new Error(`owned path is a symbolic link: ${path}`)
+    if (stat?.isDirectory()) throw new Error(`owned path is a directory: ${path}`)
+    if (stat && stat.nlink > 1) throw new Error(`owned path is a hard link: ${path}`)
+    if (stat && !stat.isFile()) throw new Error(`owned path is not a regular file: ${path}`)
+    const real = physicalAncestor(paths.projectRoot, path).toLowerCase()
+    if (
+      real &&
+      ((realArtifactRoot.length > 0 && (real === realArtifactRoot || real.startsWith(`${realArtifactRoot}${sep}`))) ||
+        gitDirs.some((dir) => real === dir || real.startsWith(`${dir}${sep}`)))
+    )
+      throw new Error(`owned path resolves outside project source: ${path}`)
+  }
 }
 
 /** Keep evidence mutations inside the active phase of a run. */
@@ -341,7 +479,7 @@ const EVIDENCE_INPUT = {
     trivial_plan: {
       type: "string",
       description:
-        "Inline mini-plan for a trivial implementation, including scope and verification. Alternative to plan_path and plan_run_id at start.",
+        "Structured mini-plan JSON for a trivial implementation: {goal, owned_paths (at most 2 project-relative files), acceptance_check, feasibility}. Alternative to plan_path and plan_run_id at start; anything larger uses rig-plan.",
     },
     source_run_id: {
       type: "string",
@@ -443,7 +581,7 @@ const LOOP_INPUT = {
       description:
         "start writes the baseline round; append adds an assessed round; read prints the ledger; finalize records the stop reason.",
     },
-    run_id: { type: "string", description: "Challenge run that owns the ledger." },
+    run_id: { type: "string", description: "Run that owns the ledger (rig-challenge or rig-implement)." },
     reviewer: { type: "string", description: "Independent challenger identity for this round." },
     source_digest: { type: "string", description: "Digest the round assessed. Defaults to the run scope digest." },
     findings: {
@@ -613,23 +751,85 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           if (!input.skill || !SKILL_IDS.includes(input.skill)) {
             throw new Error(`start requires skill: one of ${SKILL_IDS.join(", ")}`)
           }
-          const scope = input.commit
-            ? collectCommitScope(paths.projectRoot, input.commit, input.paths ?? [])
-            : collectScope(paths.projectRoot, input.paths ?? [])
+          let scopePaths = input.paths ?? []
+          let trivialOwned: string[] | undefined
+          if (input.skill === "rig-implement" && input.trivial_plan?.trim()) {
+            if (input.plan_path || input.plan_run_id)
+              throw new Error("choose a trivial_plan or a reviewed plan, not both")
+            if (input.commit)
+              throw new Error("a trivial run binds working-tree bytes; pass a frozen plan for commit evidence")
+            const problems = miniPlanProblems(input.trivial_plan)
+            if (problems.length > 0)
+              throw new Error(
+                `trivial_plan is not a valid mini-plan: ${problems.join("; ")}. Expected {"goal","owned_paths","acceptance_check","feasibility"} with at most ${MAX_MINI_PLAN_PATHS} owned paths.`,
+              )
+            const miniPlan = parseMiniPlan(input.trivial_plan)!
+            const normalize = (path: string) =>
+              relative(paths.projectRoot, resolveInsideProject(paths.projectRoot, path)).split(sep).join("/") || "."
+            trivialOwned = miniPlan.owned_paths.map(normalize)
+            if (scopePaths.length > 0) {
+              const supplied = scopePaths.map(normalize).sort().join("\n")
+              if (supplied !== [...trivialOwned].sort().join("\n"))
+                throw new Error(
+                  "a trivial run is scoped by its mini-plan owned_paths; pass exactly those paths or none at all",
+                )
+            }
+            scopePaths = trivialOwned
+            const artifactRoot = relative(paths.projectRoot, paths.artifactRoot).split(sep).join("/").toLowerCase()
+            const realArtifactRoot = existsSync(paths.artifactRoot)
+              ? realpathSync(paths.artifactRoot).toLowerCase()
+              : ""
+            const gitDirs = [resolve(paths.projectRoot, ".git"), resolveGitCommonDir(paths.projectRoot)]
+              .filter((value): value is string => value !== undefined && existsSync(value))
+              .map((value) => realpathSync(value))
+            for (const path of trivialOwned) {
+              const lowered = path.toLowerCase()
+              const absolute = resolveInsideProject(paths.projectRoot, path)
+              const stat = lstatSync(absolute, { throwIfNoEntry: false })
+              const real = physicalAncestor(paths.projectRoot, path).toLowerCase()
+              if (
+                lowered === artifactRoot ||
+                lowered.startsWith(`${artifactRoot}/`) ||
+                (real &&
+                  realArtifactRoot.length > 0 &&
+                  (real === realArtifactRoot || real.startsWith(`${realArtifactRoot}${sep}`)))
+              )
+                throw new Error(`owned path must be project source, not a run artifact: ${path}`)
+              if (stat?.isSymbolicLink())
+                throw new Error(`owned path must be a regular file, not a symbolic link: ${path}`)
+              if (
+                real &&
+                gitDirs.some((dir) => {
+                  const loweredDir = dir.toLowerCase()
+                  return real === loweredDir || real.startsWith(`${loweredDir}${sep}`)
+                })
+              )
+                throw new Error(`owned path must not touch VCS internals: ${path}`)
+              if (stat?.isDirectory()) throw new Error(`owned path must name a file, not a directory: ${path}`)
+              if (stat && stat.nlink > 1) throw new Error(`owned path must not be a hard link: ${path}`)
+              if (stat && !stat.isFile())
+                throw new Error(`owned path must be a regular file, not a pipe, socket or device: ${path}`)
+              if (stat && lineHashes(absolute) === undefined)
+                throw new Error(`owned path must be a small regular text file: ${path}`)
+            }
+          }
+          const scope = trivialOwned
+            ? trivialScope(paths.projectRoot, trivialOwned)
+            : input.commit
+              ? collectCommitScope(paths.projectRoot, input.commit, scopePaths)
+              : collectScope(paths.projectRoot, scopePaths)
           let plan: RunRecord["plan"]
           if (input.plan_path) {
             const absolute = resolveInsideProject(paths.projectRoot, input.plan_path)
             if (!existsSync(absolute)) throw new Error(`plan does not exist: ${input.plan_path}`)
             plan = { path: input.plan_path, digest: sha256File(absolute) }
           }
-          if (input.skill === "rig-implement") {
-            if (input.trivial_plan?.trim()) {
-              if (plan || input.plan_run_id) throw new Error("choose a trivial_plan or a reviewed plan, not both")
-            } else {
-              if (!input.plan_run_id || !input.plan_path)
-                throw new Error("implementation requires plan_path and plan_run_id, or an explicit trivial_plan")
-              plan = reviewedPlan(paths, context.sessionID, input.plan_run_id, input.plan_path)
-            }
+          if (input.skill === "rig-implement" && !input.trivial_plan?.trim()) {
+            if (!input.plan_run_id || !input.plan_path)
+              throw new Error(
+                "implementation starts from a frozen plan (plan_path and plan_run_id) or a structured trivial_plan; use rig-plan for anything larger",
+              )
+            plan = reviewedPlan(paths, context.sessionID, input.plan_run_id, input.plan_path)
           }
           if (plan && (input.skill === "rig-plan" || input.skill === "rig-implement")) {
             assertPlanTree(paths, plan.path, "start")
@@ -647,6 +847,16 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
             }
           }
           const run = createRun(paths, { skill: input.skill, scope, ...(plan ? { plan } : {}) })
+          const baseline = trivialOwned
+            ? {
+                lineHashes: Object.fromEntries(
+                  trivialOwned.map((path) => {
+                    const absolute = resolveInsideProject(paths.projectRoot, path)
+                    return [path, existsSync(absolute) ? (lineHashes(absolute) ?? []) : []]
+                  }),
+                ),
+              }
+            : undefined
           const created: RunRecord = {
             ...run,
             ...source,
@@ -656,6 +866,8 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           try {
             save(created)
             rememberRun(paths.artifactRoot, context.sessionID, { runId: created.run_id, skill: created.skill })
+            if (baseline)
+              writeJsonAtomic(join(paths.runsRoot, created.skill, created.run_id, "trivial-baseline.json"), baseline)
           } catch (error) {
             save({ ...created, status: "failed", stop_reason: "session registration failed" })
             throw error
@@ -673,6 +885,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         }
 
         if (input.action === "refresh") {
+          assertOwnedPathsSafe(paths, run)
           if (run.status === "completed" || run.status === "failed") {
             throw new Error(`cannot refresh a run with status '${run.status}'`)
           }
@@ -694,6 +907,13 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
             delete updated.review
             delete updated.findings
           }
+          // A finalized ledger cannot be appended to, so archive it and let the
+          // next challenge start a fresh one; an in-progress ledger keeps
+          // appending because its rounds remain the honest history.
+          if (run.loop?.stop_reason) {
+            const ledger = join(paths.runsRoot, run.skill, run.run_id, "loop.jsonl")
+            if (existsSync(ledger)) renameSync(ledger, `${ledger}.${Date.now()}.closed`)
+          }
           delete updated.loop
           appendJournal(paths, updated, {
             event: "scope.refresh",
@@ -713,6 +933,15 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
 
         if (input.action === "record") {
           requireInProgress(run)
+          assertOwnedPathsSafe(paths, run)
+          const outputRecords = fileRecords(paths.projectRoot, input.outputs ?? [], true)
+          const outside = outputRecords
+            .filter((record) => !insideScope(paths.projectRoot, record.path, run.scope.paths))
+            .map((record) => record.path)
+          if (run.skill === "rig-implement" && run.scope.paths.length > 0 && outside.length > 0)
+            throw new Error(
+              `recorded outputs outside the run scope: ${outside.join(", ")}; the run certifies only its declared paths`,
+            )
           if (input.reviewer && detectDrift(paths.projectRoot, run.scope)) {
             throw new Error(
               "source changed after the recorded scope; refresh the scope before recording independent review so the reviewer evidence binds to current bytes",
@@ -736,7 +965,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
             ...run,
             ...(plan ? { plan } : {}),
             inputs: [...run.inputs, ...fileRecords(paths.projectRoot, input.inputs ?? [])],
-            outputs: [...run.outputs, ...fileRecords(paths.projectRoot, input.outputs ?? [], true)],
+            outputs: [...run.outputs, ...outputRecords],
             limits: [...run.limits, ...(input.limits ?? [])],
             confidence: input.confidence ?? run.confidence,
             ...(input.reviewer
@@ -761,12 +990,14 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         }
 
         // finalize
-        const drift = detectDrift(paths.projectRoot, run.scope)
+        let drift = false
         let planDigest: string | undefined
         let sourceDigest: string | undefined
         let actualFindings: readonly Finding[] | undefined
         const bindingProblems: string[] = []
         try {
+          assertOwnedPathsSafe(paths, run)
+          drift = detectDrift(paths.projectRoot, run.scope)
           if (run.plan) {
             planDigest = sha256File(resolveInsideProject(paths.projectRoot, run.plan.path))
             if (run.skill === "rig-implement") {
@@ -805,11 +1036,43 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         } catch (error) {
           bindingProblems.push(error instanceof Error ? error.message : String(error))
         }
-        const checked = finalizeRun(run, {
+        let measurement: ReturnType<typeof measureTrivial>
+        try {
+          measurement =
+            run.skill === "rig-implement" && run.trivial_plan?.trim() && !run.plan
+              ? measureTrivial(paths, run)
+              : undefined
+        } catch (error) {
+          bindingProblems.push(error instanceof Error ? error.message : String(error))
+        }
+        const loopSignatures =
+          run.skill === "rig-implement" && run.loop
+            ? [
+                ...new Set(
+                  readLoop(join(paths.runsRoot, run.skill, run.run_id, "loop.jsonl")).flatMap((record) =>
+                    record.findings.map((finding) => finding.signature),
+                  ),
+                ),
+              ]
+            : undefined
+        const extraLimits: string[] = []
+        if (measurement) {
+          if (measurement.unmeasured.length > 0)
+            extraLimits.push(
+              `trivial change not measured for: ${measurement.unmeasured.join(", ")} (binary, oversized or unreadable)`,
+            )
+          if (measurement.lines > MAX_MINI_PLAN_LINES || measurement.files > MAX_MINI_PLAN_PATHS)
+            extraLimits.push(
+              `measured trivial change is ${measurement.lines} lines across ${measurement.files} files, above the ${MAX_MINI_PLAN_LINES}-line / ${MAX_MINI_PLAN_PATHS}-file guideline; use rig-plan for work this size`,
+            )
+        }
+        const finalRun = extraLimits.length > 0 ? { ...run, limits: [...run.limits, ...extraLimits] } : run
+        const checked = finalizeRun(finalRun, {
           drift,
           plan_digest: planDigest,
           source_findings_digest: sourceDigest,
           findings: actualFindings,
+          ...(loopSignatures ? { loop_signatures: loopSignatures } : {}),
         })
         const result = bindingProblems.length
           ? {
@@ -839,12 +1102,15 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
             metadata: { run_id: run.run_id, ok: false, status: result.status },
           }
         }
-        const completed: RunRecord = { ...run, status: "completed" }
-        const reportPath = writeReport(paths, completed)
+        const completed: RunRecord = { ...finalRun, status: "completed" }
+        const reportPath = writeReport(paths, completed, measurement ?? undefined)
         const withReport: RunRecord = { ...completed, report_path: reportPath }
         save(withReport)
+        const measured = measurement
+          ? `\n\nMeasured change: ${measurement.lines} line(s) across ${measurement.files} file(s) from the start bytes${measurement.unmeasured.length ? `; not measured: ${measurement.unmeasured.join(", ")}` : ""}`
+          : ""
         return {
-          content: `Run completed.\n${runSummary(withReport)}\nreport: ${reportPath}\n\n${gateTable(withReport)}`,
+          content: `Run completed.\n${runSummary(withReport)}\nreport: ${reportPath}${measured}\n\n${gateTable(withReport)}`,
           metadata: { run_id: run.run_id, ok: true, report_path: reportPath },
         }
       },
@@ -880,6 +1146,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         if (input.action !== "run") throw new Error(`unknown gate action: ${String(input.action)}`)
         let run = resolveRun(paths, context.sessionID, input.run_id)
         requireInProgress(run)
+        assertOwnedPathsSafe(paths, run)
         if (specs.length === 0) {
           throw new Error("no configured gates detected; record gate_exemption instead of inventing a command")
         }
@@ -980,10 +1247,18 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         const run = resolveRun(paths, context.sessionID, input.run_id)
         const directory = join(paths.runsRoot, run.skill, run.run_id)
         const path = join(directory, "findings.json")
-        const existing = readJsonIfExists<FindingsDocument>(path)
+        const stored = readJsonIfExists<FindingsDocument>(path)
+        // A refreshed scope invalidates the inventory: merging it would re-certify
+        // findings and coverage that describe different bytes.
+        const existing = stored?.target_digest === run.scope.digest ? stored : undefined
 
         if (input.action === "read") {
-          if (!existing) throw new Error(`no findings artifact for run ${run.run_id}`)
+          if (!existing)
+            throw new Error(
+              stored
+                ? `findings artifact describes bytes that no longer match the current scope; rewrite it for the current scope`
+                : `no findings artifact for run ${run.run_id}`,
+            )
           return { content: json(readFindings(paths, run)), metadata: { run_id: run.run_id } }
         }
 
@@ -1030,6 +1305,9 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         if (run.skill === "code-review" && !input.reviewer) {
           throw new Error("a code-review findings write requires reviewer: the independent reviewer identity")
         }
+        if (run.skill === "rig-implement" && !input.reviewer) {
+          throw new Error("a final-challenge findings write requires reviewer: the independent challenger identity")
+        }
         if (run.skill === "code-review" && detectDrift(paths.projectRoot, run.scope)) {
           throw new Error(
             "source changed after the review scope was recorded; start a new review run instead of certifying changed bytes",
@@ -1061,7 +1339,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         const updated: RunRecord = {
           ...run,
           findings: summary,
-          ...(run.skill === "code-review" && input.reviewer
+          ...((run.skill === "code-review" || run.skill === "rig-implement") && input.reviewer
             ? { review: { run_id: run.run_id, reviewer: input.reviewer, source_digest: run.scope.digest } }
             : {}),
         }
@@ -1091,7 +1369,8 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
       execute: async (raw: unknown, context: any) => {
         const input = raw as LoopInput
         const run = resolveRun(paths, context.sessionID, input.run_id)
-        if (run.skill !== "rig-challenge") throw new Error("rig_loop only operates on a rig-challenge run")
+        if (run.skill !== "rig-challenge" && run.skill !== "rig-implement")
+          throw new Error("rig_loop operates on a rig-challenge or rig-implement run")
         const path = join(paths.runsRoot, run.skill, run.run_id, "loop.jsonl")
         const records = readLoop(path)
 
@@ -1188,6 +1467,15 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           throw new Error(
             `cannot finalize with ${residue.security} security and ${residue.critical} critical finding(s) open`,
           )
+        }
+        if (input.stop_reason === "converged" && run.skill === "rig-implement") {
+          const openHigh = last.findings.filter((finding) => finding.severity === "high" && finding.status === "open")
+          if (openHigh.length > 0)
+            throw new Error(
+              `cannot converge an implementation loop with ${openHigh.length} open high finding(s): ${openHigh
+                .map((finding) => finding.signature)
+                .join(", ")}`,
+            )
         }
         appendLoopRecord(path, {
           schema: 1,

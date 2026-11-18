@@ -1,6 +1,6 @@
 # opencode-rig
 
-Current version: `0.10.0`
+Current version: `0.11.0`
 
 Evidence-first delivery workflows for [OpenCode](https://opencode.ai): frozen plans, recorded gates, independent review, adversarial convergence, and Git guardrails that keep publication human-owned.
 
@@ -65,25 +65,26 @@ printf '\n.opencode-rig/\n' >> .gitignore
 
 Run a workflow through its slash command, or load the matching skill by name.
 
-| Command            | Skill             | Use it for                                                                | Completion evidence                                                                    |
-| ------------------ | ----------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `/rig-plan`        | `rig-plan`        | Multi-file or ambiguous changes that need a frozen plan                   | Bound plan digest, task tree, and challenged rounds                                    |
-| `/rig-investigate` | `rig-investigate` | Bugs, CI failures, and unexplained behavior before a fix                  | Reproduction, root cause, eliminated hypotheses                                        |
-| `/rig-research`    | `rig-research`    | Source-backed answers before a design, dependency, or evaluation decision | Labeled claims, implementation fit, contradictions, independent source check           |
-| `/rig-implement`   | `rig-implement`   | Executing a reviewed frozen plan or a trivial inline mini-plan            | Passing gates, leaf checks, final independent challenge, commit handoff                |
-| `/code-review`     | `code-review`     | Reviewing a working tree, commit, or path                                 | Validated findings artifact with mandatory `correctness` axis and reviewer identity    |
-| `/code-remediate`  | `code-remediate`  | Closing findings from a review                                            | Every finding in a terminal bucket plus re-review                                      |
-| `/rig-challenge`   | `rig-challenge`   | Risky or security-sensitive changes                                       | Converged loop with no security or critical residue                                    |
-| `/rig-optimize`    | `rig-optimize`    | A concrete performance target with a configured benchmark gate            | Baseline spread, kept rounds, correctness gates                                        |
-| `/rig-distill`     | `rig-distill`     | Repeated friction across runs, instructions, or an external inventory     | Counted patterns, consolidation and prune proposals, accepted asset proposals          |
-| `/rig-release`     | `rig-release`     | Release readiness before a human publishes                                | Last-release-tag baseline (HEAD only for a first release), gates, package list, drafts |
-| `/rig-health`      | `rig-health`      | A workflow or tool is missing or failing                                  | Pass/warn/fail report with remediation commands                                        |
+| Command            | Skill             | Use it for                                                                | Completion evidence                                                                     |
+| ------------------ | ----------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `/rig-plan`        | `rig-plan`        | Multi-file or ambiguous changes that need a frozen plan                   | Bound plan digest, task tree, and challenged rounds                                     |
+| `/rig-investigate` | `rig-investigate` | Bugs, CI failures, and unexplained behavior before a fix                  | Reproduction, root cause, eliminated hypotheses                                         |
+| `/rig-research`    | `rig-research`    | Source-backed answers before a design, dependency, or evaluation decision | Labeled claims, implementation fit, contradictions, independent source check            |
+| `/rig-implement`   | `rig-implement`   | Executing a reviewed frozen plan or a trivial change with a mini-plan     | Passing gates, leaf checks, resolved challenge findings, converged loop, commit handoff |
+| `/code-review`     | `code-review`     | Reviewing a working tree, commit, or path                                 | Validated findings artifact with mandatory `correctness` axis and reviewer identity     |
+| `/code-remediate`  | `code-remediate`  | Closing findings from a review                                            | Every finding in a terminal bucket plus re-review                                       |
+| `/rig-challenge`   | `rig-challenge`   | Risky or security-sensitive changes                                       | Converged loop with no security or critical residue                                     |
+| `/rig-optimize`    | `rig-optimize`    | A concrete performance target with a configured benchmark gate            | Baseline spread, kept rounds, correctness gates                                         |
+| `/rig-distill`     | `rig-distill`     | Repeated friction across runs, instructions, or an external inventory     | Counted patterns, consolidation and prune proposals, accepted asset proposals           |
+| `/rig-release`     | `rig-release`     | Release readiness before a human publishes                                | Last-release-tag baseline (HEAD only for a first release), gates, package list, drafts  |
+| `/rig-health`      | `rig-health`      | A workflow or tool is missing or failing                                  | Pass/warn/fail report with remediation commands                                         |
 
-Every workflow follows the same envelope: classify the request, collect authoritative source, act in small batches, verify with configured checks, finalize the run, then report limits honestly. A non-trivial plan carries a depth-first task tree (leaves with one owner and one acceptance check); the plan is challenged until it converges, and a frozen-plan implementation records one final independent challenge before it can complete. The trivial inline mini-plan stays lightweight. Every handoff leads with the shared [handoff table](src/resources/references/handoff.md): verdict, alignment with the project's codebase and direction, findings by severity, the next action, and confidence with its largest limit, followed by the evidence that supports each value.
+Every workflow follows the same envelope: classify the request, collect authoritative source, act in small batches, verify with configured checks, finalize the run, then report limits honestly. A non-trivial plan carries a depth-first task tree (leaves with one owner and one acceptance check) and is challenged until it converges. A frozen-plan implementation records one final independent challenge bound to its final bytes, resolves every finding, and runs a recorded fix-and-re-challenge loop when that challenge reports a security, critical or high issue. A trivial change starts from a structured mini-plan, and the run reports its own measured change; exceeding the guideline is a recorded limit rather than a failed run. Every handoff leads with the shared [handoff table](src/resources/references/handoff.md): verdict, alignment with the project's codebase and direction, findings by severity, the next action, and confidence with its largest limit, followed by the evidence that supports each value.
+
 
 `rig-research` covers docs, state-of-the-art comparisons, papers, experiment methodology, and paper-versus-code fidelity, and maps the recommendation onto the current code without editing it. `rig-distill` reads exact preselected run artifacts, instruction files, or an inventory record inside the project; external source identifiers, digests, and access limits are recorded as decisions and limits. It proposes new or extended assets and quoted instruction consolidation or pruning, but never installs, edits, or deletes anything. `rig-health` offers stale-run cleanup only in a separate workflow after explicit confirmation. `rig-optimize` only uses a benchmark that is already a configured gate, so a performance claim always has a reproducible command behind it. It refreshes each edited candidate's scope before measurement and preserves the baseline receipts.
 
-`rig-implement` accepts an inline mini-plan only for a trivial change under 3 files and 50 changed lines; larger, ambiguous, or high-risk work requires a completed independently reviewed `rig-plan` run. An implementation-to-review handoff supplies the implementation run ID, recorded output paths and digests, its bound plan, and acceptance criteria. Review scope uses those outputs instead of unrelated working-tree changes. PR review inspects the verified head commit only; earlier commits are an explicit coverage gap, and a merge head requires separate parent-range review before starting.
+`rig-implement` accepts a structured mini-plan for a trivial change: `{goal, owned_paths, acceptance_check, feasibility}` with at most two files. A free-text, directory-valued, VCS-internal, or scope-widening plan is rejected; paths are normalized, the run is scoped to its owned files, and a declared new file may not exist yet. The run reports the change it measured as a line-hash diff from its own start bytes, and a change above the 50-line or 2-file guideline is recorded as a limit that points later work at `rig-plan`; it is not a failure. The measurement is independent of Git's index, attributes, filters and config. A recorded output must stay inside the declared paths: `rig_evidence` refuses an undeclared one. An edit outside the recorded evidence is outside the run's certificate, and the handoff says so. Larger, ambiguous, or high-risk work requires a completed independently reviewed `rig-plan` run. An implementation-to-review handoff supplies the implementation run ID, recorded output paths and digests, its bound plan, and acceptance criteria. Review scope uses those outputs instead of unrelated working-tree changes. PR review inspects the verified head commit only; earlier commits are an explicit coverage gap, and a merge head requires separate parent-range review before starting.
 
 ## Tools
 
@@ -92,7 +93,7 @@ Every workflow follows the same envelope: classify the request, collect authorit
 | `rig_evidence`  | Start, inspect, record, refresh, and finalize an evidence run. Binds scope bytes, paths, plan digests, and reviewer evidence.                                                     |
 | `rig_gate`      | Detect and run configured gates, store receipts and logs, and report failures by gate id.                                                                                         |
 | `rig_findings`  | Write or read a validated findings inventory with severity, coverage, and bucket accounting.                                                                                      |
-| `rig_loop`      | Drive the append-only adversarial loop: baseline, assessed rounds, cumulative progress, and a validated stop reason.                                                              |
+| `rig_loop`      | Drive the append-only adversarial loop on a `rig-challenge` or `rig-implement` run: baseline, assessed rounds, cumulative progress, and a validated stop reason.                  |
 | `rig_git_grant` | Read, record, or revoke the local Git approval grant after an explicit user decision.                                                                                             |
 | `rig_dispatch`  | Run one bounded role in a child session when native `rig-*` subagents are unavailable.                                                                                            |
 | `rig_doctor`    | Check plugin load, versions, agents, grant, ignore rules, gates, and stale runs; `action: "assets"` curates cards, and explicitly confirmed `action: "clean"` removes stale runs. |
@@ -301,6 +302,9 @@ opencode plugin remove opencode-rig
 - No invented checks. If no gate is configured, a run needs an explicit exemption and the manual check that replaces it.
 - Prompt rules are not a sandbox. The permission hook is host-enforced; workflow discipline is skill-enforced.
 - A reviewer's report proves review happened, not that no defect exists. Unreviewed areas stay coverage gaps.
+- A run certifies the paths it binds. An edit outside the recorded scope is invisible to that run's evidence, so the handoff maps every changed path to an in-scope row instead of completing around the gap. The trivial-path size report is accounting, not a security boundary: it proves what the run measured, not that the working tree contains nothing else.
+- The plugin does not defend against an agent that runs arbitrary shell or scripts and then declines to record what it did. The shell guard is a speed bump, the permission hook is host-enforced, and the evidence model certifies end states and recorded paths. Findings of that class are documented limits, not contract defects; the review protocol in the convergence reference says how they are triaged.
+- The trivial-path check inspects the owned path at start, refresh, record and gate time. It is a snapshot: a symlink or directory created and removed between two calls cannot be observed, and the shell/script boundary is the real write gate. A file above 4 MiB is not measured for lines and is reported as a limit.
 
 ## Development
 

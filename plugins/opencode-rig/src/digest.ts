@@ -6,14 +6,38 @@
  */
 
 import { createHash } from "node:crypto"
-import { readFileSync } from "node:fs"
+import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs"
 
 export function sha256(input: string | Buffer): string {
   return createHash("sha256").update(input).digest("hex")
 }
 
+/** Hash a regular file; a non-regular path would block or stream forever. */
 export function sha256File(path: string): string {
-  return sha256(readFileSync(path))
+  if (!statSync(path).isFile()) throw new Error(`not a regular file: ${String(path)}`)
+  return sha256Path(path)
+}
+
+/** Hash a path in bounded chunks; a non-regular path still blocks the open. */
+export function sha256Path(path: string | Buffer): string {
+  const hash = createHash("sha256")
+  // Read at most the size seen at open: a file another process keeps appending
+  // to cannot make this loop unbounded.
+  const expected = statSync(path).size
+  const handle = openSync(path, "r")
+  try {
+    const buffer = Buffer.alloc(1024 * 1024)
+    let total = 0
+    while (total < expected) {
+      const read = readSync(handle, buffer, 0, Math.min(buffer.length, expected - total), null)
+      if (read <= 0) break
+      hash.update(buffer.subarray(0, read))
+      total += read
+    }
+  } finally {
+    closeSync(handle)
+  }
+  return hash.digest("hex")
 }
 
 export interface ScopeEntry {
