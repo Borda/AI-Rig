@@ -59,7 +59,7 @@ export function resolvePaths(cwd: string, artifacts: string): RigPaths {
   }
   let ancestor = artifactRoot
   while (!lstatSync(ancestor, { throwIfNoEntry: false })) ancestor = dirname(ancestor)
-  const physical = relative(realpathSync(projectRoot), realpathSync(ancestor))
+  const physical = relative(realpathSync.native(projectRoot), realpathSync.native(ancestor))
   if (physical === ".." || physical.startsWith(`..${sep}`) || isAbsolute(physical)) {
     throw new Error(`artifact root resolves outside the project: ${artifactRoot}`)
   }

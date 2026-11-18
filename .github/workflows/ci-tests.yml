@@ -91,13 +91,6 @@ jobs:
             python plugins/cc_foundry/bin/build_blueprint_manifest.py \
             --scan-dir plugins --check
 
-      # Test time tracks how many Git and Python processes tests start; one line per OS shows whether a slow runner is
-      # slow at spawning, at file writes, or neither, and whether an ambient Git filter (LFS) is configured on it.
-      # On Windows the script also measures again after Defender exclusions, a measurement-only experiment; test jobs
-      # are unchanged until it shows a gain.
-      - name: 🔬 Measure process-spawn cost
-        run: uv run --no-project python scripts/measure_spawn_cost.py
-
   tests:
     name: tests (${{ matrix.scope }}, ${{ matrix.os }}, Py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
@@ -124,7 +117,7 @@ jobs:
       COVERAGE: ${{ matrix.python-version == '3.14' }}
       PYTEST_ARGS: >-
         -n 4
-        -W error::DeprecationWarning --durations=500 --durations-min=0.2
+        -W error::DeprecationWarning --durations=30
         --cov-report=term-missing
         --cov-report=xml:coverage.xml
 

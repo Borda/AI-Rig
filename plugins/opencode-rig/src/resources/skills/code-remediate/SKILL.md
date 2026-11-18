@@ -48,6 +48,8 @@ git status --porcelain
 
 > Lead with the [handoff table](../../references/handoff.md): verdict, alignment, findings, next action, confidence. Then the evidence below.
 
+`Verdict` is the re-review's source judgment on what remains after closure, chosen by the [code-review verdict rule](../code-review/SKILL.md#output); deferred and accepted-risk findings stay in that judgment.
+
 Report closure counts, per-finding status, changed paths, gate receipts, remaining risks, and the commit handoff.
 
 Reviewer independence is instruction-enforced: the tools accept a reviewer identity string without authenticating its dispatch session, and `verified_by` is an unchecked string; `fixed` closure is instruction-enforced. Report the actual independent reviewer and any unavailable review; never present that string as session attestation.

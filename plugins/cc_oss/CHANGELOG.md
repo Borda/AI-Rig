@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.64.0
+
+- The review header table printed in the terminal is shorter: `Link`, `Date`, `Commit SHA`, `Agents`, `Review contract`, `Rating scale`, `Readiness` and `Gate` stay in the report file only, and `PR` shows as a link (`[#N](url)`), so the table fits a terminal. The delivery check accepts the short table and the full one, and still requires every other field.
+- The review rating scale label is now `source-5-v2` (level 3 `MAJOR_REVISION`); reports and sidecars labelled `source-5-v1` (level 3 `NEEDS_WORK`) are still accepted, and a report mixing the two spellings is refused.
+- `/oss:review` now names level 3 of its review scale `MAJOR_REVISION` instead of `NEEDS_WORK`, so its outcomes read `APPROVE`, `MINOR_EDITS`, `MAJOR_REVISION`, `INSUFFICIENT_BUT_PROMISING`, `REJECT`, matching `/develop:review`. Archived reports and sidecars that say `NEEDS_WORK` are still read as level 3, and `/oss:resolve` and the release audit treat either name as a major revision.
+- `/oss:resolve` and `/oss:review` now apply the recorded PR-code clause to the review verifiers, the conflict resolver and the lint agent too; beside any answer but a known same-repo one, a clause that is not exactly the guard clause or the refusal is replaced by the refusal, and the guard clause covers every command that loads or executes checkout code. A run with no PR runs its tests directly only when its checked-out branch tracks `origin` through a branch ref: a branch with no upstream, such as one fetched by hand from a pull ref, keeps the gate until its first push, and a fork branch left checked out by an earlier run keeps it too.
+- A migration guide now words the scheduled removal of an API that was deprecated in an earlier release calmly and reassuringly: it says since which version users were warned, that the removal is the planned follow-through, gives the replacement with a short before and after, and avoids alarm words, so users who were warned long ago are not startled. A breaking change that had no earlier warning keeps direct wording. Release writing rules also ask for versions in prose to carry a `v` prefix (`v0.25.0`), so they read apart from plain numbers.
+
 ## 0.63.0
 
 - `/oss:resolve` and `/oss:review` no longer scan or ask about PR code when the PR comes from a branch in the same repository (not a fork): its tests run directly in the checkout with no prompt. Fork PRs, and PRs whose origin cannot be read, keep the scan, question and sandbox: the same-repo answer is cleared at the start of every run, a missing or null origin counts as a fork, and `/oss:review` reads it from its frozen PR snapshot.

@@ -2529,3 +2529,238 @@ fi
         positionals and hide a write, so null (widened by the guard into a block) is the only safe answer.
         """
         assert _invocations(command, "gh") is None
+
+
+@_skip_node_unavailable
+class TestRuntimeCommandInSubstitution:
+    """A command word that expands at run time inside ``$(…)`` or backticks runs, so it keeps the command unreadable."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git status; echo $($f arg)", id="dollar-paren"),
+            pytest.param("git status; echo `$f arg`", id="backticks"),
+            pytest.param("git status; x=$($f arg)", id="assignment"),
+            pytest.param('git status; echo "$($f push)"', id="double-quoted"),
+            pytest.param("git status; echo $($X push)", id="named-variable"),
+            pytest.param("git status; A=($($f push))", id="array-element"),
+        ],
+    )
+    def test_a_variable_command_word_in_a_substitution_is_unreadable(self, command: str) -> None:
+        """``$f`` may expand to ``git``, so the substitution could run a push the guard cannot see."""
+        reading = _analyse(command, "git")
+        assert reading.unreadable is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git status; echo $(x $f arg)", id="variable-is-an-argument"),
+            pytest.param("git status; echo $(echo $f arg)", id="echo-prints-it"),
+            pytest.param("git status; echo $(git rev-parse HEAD)", id="literal-git-read"),
+            pytest.param("git commit -m \"$(cat <<'EOF'\nmessage\nEOF\n)\"", id="message-heredoc"),
+        ],
+    )
+    def test_a_literal_command_word_in_a_substitution_stays_readable(self, command: str) -> None:
+        """Only a command word expanded at run time asks: a variable argument or a literal program is understood."""
+        reading = _analyse(command, "git")
+        assert reading.unreadable is False
+
+
+class TestSourceRunnerOperandFromAVariable:
+    """A source runner fed a variable is an accepted limit, and an array element reads like the top level."""
+
+    @pytest.mark.parametrize(
+        "runner",
+        [
+            pytest.param("eval $X", id="eval"),
+            pytest.param("sh -c $X", id="sh-c"),
+            pytest.param("source $F", id="source"),
+        ],
+    )
+    def test_an_array_element_reads_like_the_top_level(self, runner: str) -> None:
+        """The operand is run-time text, the same residual as an assigned value, wherever the runner sits."""
+        top = _analyse(f"git log; {runner}", "git")
+        element = _analyse(f"git log; A+=( $({runner}) )", "git")
+        assert element.unreadable == top.unreadable
+
+
+class TestSearchPatternNamingAProgram:
+    """A search program's pattern or flag cluster naming ``gh`` or ``git`` is data, not a code option."""
+
+    @pytest.mark.parametrize(
+        ("command", "program"),
+        [
+            pytest.param('grep -rn "gh pr checkout\\|refs/pull" plugins/x | head -30', "gh", id="grep-rn-gh"),
+            pytest.param('grep -rE "git push|gh pr" docs', "gh", id="grep-rE"),
+            pytest.param('grep -cr "git commit" dir', "git", id="grep-cr-git"),
+        ],
+    )
+    def test_search_pattern_does_not_make_the_command_unreadable(self, command: str, program: str) -> None:
+        """A pattern holding the program name is text searched for, so no prompt-worthy answer is set."""
+        reading = _analyse(command, program)
+        assert reading.unreadable is False
+        assert not reading.invocations
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("lua -e \"os.execute('gh pr merge 1')\"", id="lua-e"),
+            pytest.param('expect -c "spawn gh pr merge 1"', id="expect-c"),
+            pytest.param('rg --pre ./run.sh -e "gh pr merge 1" src', id="rg-pre"),
+            pytest.param('ag --pager "gh pr merge 1" -r src', id="ag-pager"),
+            pytest.param('sed -e "1e gh pr merge 1" f', id="sed-execute"),
+        ],
+    )
+    def test_a_code_option_of_another_program_still_stops_the_guard(self, command: str) -> None:
+        """Only search programs are exempt: any other executable's code option naming gh stays unreadable."""
+        reading = _analyse(command, "gh")
+        assert reading.unreadable is True or reading.invocations
+
+
+class TestArrayAssignments:
+    """Elements of ``name=(…)`` and ``name+=(…)`` are data words, so a read-only command beside git stays readable."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param('git ls-files x; A+=("$f")', id="append-with-variable"),
+            pytest.param('git ls-files x; A=("$f" "$g")', id="assign-with-variables"),
+            pytest.param("git ls-files x; A=($f)", id="unquoted-variable"),
+            pytest.param('git status; A=(\n a\n "$b"\n)', id="multi-line"),
+            pytest.param(
+                'while read -r f; do if git ls-files "$f"; then A+=("$f"); else B+=("$f"); fi; done < list.txt',
+                id="collect-loop",
+            ),
+        ],
+    )
+    def test_array_elements_do_not_make_the_command_unreadable(self, command: str) -> None:
+        """A variable element is a value, never a command word, so no prompt-worthy unreadable answer is set."""
+        reading = _analyse(command, "git")
+        assert reading.unreadable is False
+        assert reading.invocations
+        assert all(argv[1] != "push" for argv in reading.invocations)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git status; A=($(git push --force))", id="push-in-substitution"),
+            pytest.param("git status; A+=(`git push`)", id="push-in-backticks"),
+        ],
+    )
+    def test_a_push_inside_an_element_is_still_found(self, command: str) -> None:
+        """A substitution inside an array element runs, so its git call stays visible to the push guard."""
+        reading = _analyse(command, "git")
+        assert any(argv[1] == "push" for argv in reading.invocations or [])
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git status; A=(x; git push)", id="semicolon"),
+            pytest.param("git status; A=(x | $f)", id="pipe"),
+            pytest.param("git status; A=(x & $f)", id="background"),
+        ],
+    )
+    def test_a_separator_inside_an_array_list_stays_unreadable(self, command: str) -> None:
+        """Bash rejects a separator there and zsh reads one, so the list is not data and the answer is unreadable."""
+        assert _analyse(command, "git").unreadable is True
+        assert _unreadable_reason(command, "git").startswith("a `;`, `&` or `|` inside an array assignment list")
+
+    @pytest.mark.parametrize(
+        "opener",
+        [
+            pytest.param("if", id="if"),
+            pytest.param("while", id="while"),
+            pytest.param("until", id="until"),
+            pytest.param("case", id="case"),
+            pytest.param("{", id="brace"),
+            pytest.param("function", id="function"),
+        ],
+    )
+    def test_a_compound_opener_element_does_not_extend_the_array(self, opener: str) -> None:
+        """An element spelled like a compound opener leaves the array's group intact, so what follows is not data."""
+        command = f"git status; A=({opener})\n$f arg"
+        assert _analyse(command, "git").unreadable is True
+
+    def test_commands_after_the_array_are_not_data(self) -> None:
+        """A runtime command word on the line after a closed array stays unreadable, a literal call stays found."""
+        assert _analyse('git status; A=("$f")\n$f arg', "git").unreadable is True
+        reading = _analyse('git status; A=("$f")\ngit ls-files x', "git")
+        assert reading.unreadable is False
+        assert ["git", "ls-files", "x"] in (reading.invocations or [])
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git status; $f arg", id="variable-command-word"),
+            pytest.param('git status; A=(x); "${A[0]}" arg', id="command-word-from-array"),
+        ],
+    )
+    def test_a_runtime_command_word_stays_unreadable(self, command: str) -> None:
+        """Only the array elements are exempt: a command word that expands at run time still cannot be proven."""
+        assert _analyse(command, "git").unreadable is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git status; A=(B=(x))", id="first-element-literal"),
+            pytest.param('git status; A=(B=("$f"))', id="first-element-expansion"),
+            pytest.param("git status; A=(x B=(y))", id="later-element"),
+            pytest.param("git status; A+=(B+=(y))", id="appended-array"),
+        ],
+    )
+    def test_an_assignment_shaped_element_with_a_group_is_a_qualifier(self, command: str) -> None:
+        """Inside an array list `NAME=(` is a word with an attached group, which zsh reads as glob qualifiers."""
+        assert _analyse(command, "git").unreadable is True
+        assert _unreadable_reason(command, "git").startswith("a `(` group attached to a word")
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git status; A=(((.)(e:'git push':)))", id="arithmetic-opener-first"),
+            pytest.param("git status; A=(x ((.)(+f)))", id="arithmetic-opener-later"),
+            pytest.param("git status; A=( (x) )", id="spaced-group"),
+            pytest.param("git status; A=((x))", id="doubled-paren"),
+            pytest.param("git status; declare -a A=(((.)(+f)))", id="declare-form"),
+        ],
+    )
+    def test_a_paren_opening_an_element_is_a_glob_word(self, command: str) -> None:
+        """An element starting with `(` or `((` is a zsh glob word, so the list stays unreadable."""
+        assert _analyse(command, "git").unreadable is True
+        assert _unreadable_reason(command, "git").startswith("a `(` opening a word")
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git status; A=([[ x ]](.)(e:'cmd':))", id="conditional-opener-element"),
+            pytest.param("git status; A=([[ x ]]*(N))", id="conditional-opener-glob"),
+            pytest.param("git status; A=(x() y)", id="function-signature-element"),
+            pytest.param("git status; A=($(x)(.))", id="group-after-substitution"),
+        ],
+    )
+    def test_no_position_rule_exempts_a_group_inside_an_array_list(self, command: str) -> None:
+        """An element reading like a command start, a `[[` or a `name()` signature, cannot exempt a glued group."""
+        assert _analyse(command, "git").unreadable is True
+
+    def test_a_bounded_search_finds_no_readable_group_inside_an_array_list(self) -> None:
+        """A deterministic search over about 60 thousand array shapes finds no readable paren, lost push or data leak.
+
+        Three oracles run over every shape: no readable command keeps a bare paren in its list, a push held in a
+        substitution inside an element is found whenever the command reads, and a runtime command word after the list
+        never reads. The generator pairs elements (groups, globs, qualifiers, substitutions, reserved words, nested
+        arrays) with heads that put the array after reserved words, declaration builtins and runtime command words.
+        An unquoted paren inside the list is a zsh glob word, so any shape the reader still calls readable is a bypass
+        found without a peer reviewer.
+        """
+        fuzz = Path(__file__).resolve().parent / "fixtures" / "array_list_fuzz.js"
+        proc = subprocess.run(
+            ["node", str(fuzz), str(LIBRARY)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+        answer = json.loads(proc.stdout)
+        assert answer["cases"] > 55000
+        assert answer["suspicious"] == []

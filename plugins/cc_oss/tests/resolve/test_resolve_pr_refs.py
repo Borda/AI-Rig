@@ -38,11 +38,20 @@ def _meta(**overrides: object) -> dict:
 
 
 def _wire(
-    run: mock.MagicMock, *, default_ref: str, pr_meta: dict | None, head: str = "abc123", remote_show: str = ""
+    run: mock.MagicMock,
+    *,
+    default_ref: str,
+    pr_meta: dict | None,
+    head: str = "abc123",
+    remote_show: str = "",
+    branch: str = "feature-branch",
+    remotes: str | None = "|",
+    merge: str | None = "",
 ) -> None:
     """Answer the default-branch lookups, the PR fetch and the local SHA reads through the ``subprocess.run`` mock.
 
-    An empty ``default_ref`` or ``remote_show``, or a ``pr_meta`` of ``None``, makes that lookup fail with exit 1.
+    An empty ``default_ref`` or ``remote_show``, or a ``pr_meta`` of ``None``, makes that lookup fail with exit 1. An
+    empty ``merge`` is an unset ``branch.<name>.merge`` (exit 1); ``None`` is a failed config read.
     """
 
     def fake_run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -56,7 +65,13 @@ def _wire(
         if cmd[:2] == ["git", "rev-parse"]:
             return done(stdout="feature-branch" if "--abbrev-ref" in cmd else head)
         if cmd == ["git", "branch", "--show-current"]:
-            return done(stdout="feature-branch")
+            return done(stdout=branch)
+        if cmd[:2] == ["git", "for-each-ref"]:
+            return done(stdout=remotes) if remotes is not None else done(returncode=1)
+        if cmd[:3] == ["git", "config", "--get-all"]:
+            if merge is None:
+                return done(returncode=128)
+            return done(stdout=merge) if merge else done(returncode=1)
         if cmd[0] == "gh":
             return done(stdout=json.dumps(pr_meta)) if pr_meta is not None else done(returncode=1)
         return done(returncode=1)
@@ -335,18 +350,88 @@ class TestMain:
         assert [f.name for f in tmp_sentinels.glob("resolve-*")] == ["resolve-is-cross-repo-shared"]
 
     @pytest.mark.parametrize(
-        "argv", [pytest.param(["--pr", "42"], id="failed-pr-run"), pytest.param(["--local-base"], id="no-pr-run")]
+        ("argv", "default_ref"),
+        [
+            pytest.param(["--pr", "42"], "refs/remotes/origin/main", id="failed-pr-run"),
+            pytest.param(["--local-base"], "", id="no-pr-run-without-base"),
+        ],
     )
-    def test_clears_stale_cross_repo_sentinel(self, tmp_sentinels: Path, run: mock.MagicMock, argv: list[str]) -> None:
+    def test_clears_stale_cross_repo_sentinel(
+        self, tmp_sentinels: Path, run: mock.MagicMock, argv: list[str], default_ref: str
+    ) -> None:
         """A run that publishes no cross-repo answer leaves it empty, never the previous run's ``false``.
 
         The value decides whether PR code runs without the guard, so an earlier same-repo PR's answer must not carry
-        over to a fork PR whose metadata fetch failed or to a PR-less run; empty keeps the guard.
+        over to a fork PR whose metadata fetch failed or to a PR-less run that found no base; empty keeps the guard.
         """
         (tmp_sentinels / "resolve-is-cross-repo-shared").write_text("false\n", encoding="utf-8")
-        _wire(run, default_ref="refs/remotes/origin/main", pr_meta=None)
+        _wire(run, default_ref=default_ref, pr_meta=None)
         rpr.main(argv)
         assert read_shared_sentinel(tmp_sentinels, "resolve-is-cross-repo") == ""
+
+    def test_local_base_marks_own_checkout(self, tmp_sentinels: Path, run: mock.MagicMock) -> None:
+        """A PR-less run on a branch tracking ``origin`` records ``false``: the checkout is the user's own code.
+
+        Without it the QA gate's full suite would route through the guard with no approval file and always refuse, and
+        the targeted-test agent would find no clause, so a comment-dispatch run could never run its own tests.
+        """
+        (tmp_sentinels / "resolve-is-cross-repo-shared").write_text("true\n", encoding="utf-8")
+        _wire(
+            run,
+            default_ref="refs/remotes/origin/main",
+            pr_meta=None,
+            remotes="origin|origin",
+            merge="refs/heads/feature-branch",
+        )
+        assert rpr.main(["--local-base"]) == 0
+        assert read_shared_sentinel(tmp_sentinels, "resolve-is-cross-repo") == "false"
+
+    @pytest.mark.parametrize(
+        ("branch", "remotes", "merge", "expected"),
+        [
+            pytest.param("feature", "|", "", "", id="local-branch-no-upstream"),
+            pytest.param("feature", "origin|", "refs/heads/feature", "false", id="tracks-origin-default-push"),
+            pytest.param("feature", "origin|origin", "", "", id="origin-remote-without-a-merge-ref"),
+            pytest.param("feature", "origin|origin", "refs/heads/feature", "false", id="tracks-origin"),
+            pytest.param("feature", "https://github.com/fork/repo.git|", "", "", id="tracks-a-fork-url"),
+            pytest.param("feature", "fork|", "", "", id="tracks-a-fork-remote"),
+            pytest.param("feature", "origin|fork", "", "", id="pushes-to-a-fork"),
+            pytest.param("", "|", "", "", id="detached-head"),
+            pytest.param("feature", None, "", "", id="lookup-failed"),
+            pytest.param("feature", "|origin", "refs/heads/feature", "", id="push-remote-without-an-upstream"),
+            pytest.param(
+                "feature\u00a0", "origin|origin", "refs/heads/feature", "", id="branch-name-ends-in-a-unicode-space"
+            ),
+            pytest.param(
+                "feature",
+                "origin|origin",
+                "refs/heads/a\u00a0refs/pull/42/head",
+                "",
+                id="merge-ref-holds-a-unicode-space",
+            ),
+            pytest.param("feature", "origin|origin", "refs/pull/42/head", "", id="origin-with-a-pull-ref"),
+            pytest.param("feature", "origin|origin", "refs/pull/42/merge", "", id="origin-with-a-merge-ref"),
+            pytest.param("feature", "origin|origin", None, "", id="merge-lookup-failed"),
+        ],
+    )
+    def test_local_base_trusts_only_a_branch_that_tracks_origin(
+        self,
+        tmp_sentinels: Path,
+        run: mock.MagicMock,
+        branch: str,
+        remotes: str | None,
+        merge: str | None,
+        expected: str,
+    ) -> None:
+        """A no-PR run records ``false`` only for a branch whose upstream is ``origin`` through a ``refs/heads/`` ref.
+
+        An earlier fork run can leave the session on the fork's branch, where ``gh pr checkout`` set the fork as its
+        remote or tracked ``origin`` with the pull ref as its merge ref; the next no-PR run must keep the PR-code gate
+        there, and a branch with no upstream (fetched by hand from a pull ref) or an unknown answer is never own code.
+        """
+        _wire(run, default_ref="refs/remotes/origin/main", pr_meta=None, branch=branch, remotes=remotes, merge=merge)
+        assert rpr.main(["--local-base"]) == 0
+        assert read_shared_sentinel(tmp_sentinels, "resolve-is-cross-repo") == expected
 
     def test_emits_state_trace_on_stderr(
         self, tmp_sentinels: Path, run: mock.MagicMock, capsys: pytest.CaptureFixture[str]
@@ -419,3 +504,14 @@ class TestDryRun:
         _wire(run, default_ref="refs/remotes/origin/main", pr_meta=_meta())
         assert rpr.main(["--pr", "42", "--dry-run"]) == 0
         assert "[dry-run] would write " in capsys.readouterr().out
+
+
+class TestStaleSameRepoAnswer:
+    """A failed no-PR base lookup must not leave an earlier run's same-repo answer readable."""
+
+    def test_a_failed_local_base_clears_an_earlier_false(self, tmp_sentinels: Path, run: mock.MagicMock) -> None:
+        """An earlier run's ``false`` is emptied before the lookup, so a failure leaves the gate in force."""
+        (tmp_sentinels / "resolve-is-cross-repo-shared").write_text("false\n", encoding="utf-8")
+        _wire(run, default_ref="", pr_meta=None, remote_show="")
+        assert rpr.main(["--local-base"]) == 1
+        assert read_shared_sentinel(tmp_sentinels, "resolve-is-cross-repo") == ""

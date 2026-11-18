@@ -143,3 +143,47 @@ class TestFullSuiteGate:
         assert result.returncode == 0, result.stderr
         assert (impl_dir / "full-suite.rc").read_text(encoding="utf-8").strip() == "3"
         assert "suite-ran" in result.stdout
+
+    @pytest.mark.skipif(_BASH is None, reason="the gate block is Bash")
+    @pytest.mark.parametrize(
+        ("sentinel", "direct"),
+        [
+            pytest.param("false", True, id="same-repo"),
+            pytest.param("true", False, id="fork"),
+            pytest.param("", False, id="emptied"),
+            pytest.param(None, False, id="missing"),
+            pytest.param("maybe", False, id="unexpected"),
+        ],
+    )
+    def test_sentinel_decides_direct_run_or_guard(self, tmp_path: Path, sentinel: str | None, direct: bool) -> None:
+        """Only the recorded same-repo answer runs the full suite directly; anything else reaches the guard.
+
+        With no approval file the guard refuses and prints an ``untrusted-guard:`` line, so a fork whose answer is
+        emptied, missing or unexpected can never run its suite bare.
+        """
+        gate = (_RESOLVE / "modes/lint-qa-gate.md").read_text(encoding="utf-8")
+        marker = gate.index('bash -- "$IMPL_DIR/full-suite.sh"')
+        start = gate.rindex("```bash", 0, marker) + len("```bash\n")
+        block = "\n".join(
+            line for line in gate[start : gate.index("```", start)].splitlines() if "resolve_plugin_root.py" not in line
+        )
+        session = "resolve-full-suite-branch"
+        impl_dir = tmp_path / "impl"
+        impl_dir.mkdir()
+        (impl_dir / "full-suite.sh").write_text("echo suite-ran\nexit 3\n", encoding="utf-8", newline="\n")
+        (tmp_path / f"resolve-impl-dir-{session}").write_text(
+            f"{bash_path(impl_dir)}\n", encoding="utf-8", newline="\n"
+        )
+        if sentinel is not None:
+            (tmp_path / f"resolve-is-cross-repo-{session}").write_text(f"{sentinel}\n", encoding="utf-8", newline="\n")
+        env = os.environ | {"CLAUDE_CODE_SESSION_ID": session, "TMPDIR": str(tmp_path)}
+        env |= {
+            "PLUGIN_ROOT": str(_RESOLVE.parents[1]),
+            "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ['PATH']}",
+        }
+        result = subprocess.run(
+            [_BASH, "-c", block], cwd=tmp_path, env=env, capture_output=True, text=True, check=False
+        )
+        assert result.returncode == 0, result.stderr
+        assert ("suite-ran" in result.stdout) is direct
+        assert ("untrusted-guard:" in result.stdout) is (not direct)

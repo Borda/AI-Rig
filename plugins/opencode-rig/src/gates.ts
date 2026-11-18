@@ -151,7 +151,7 @@ function resolveInsideProject(projectRoot: string, file: string): string {
   try {
     let ancestor = absolute
     while (!lstatSync(ancestor, { throwIfNoEntry: false })) ancestor = dirname(ancestor)
-    physical = relative(realpathSync(projectRoot), realpathSync(ancestor))
+    physical = relative(realpathSync.native(projectRoot), realpathSync.native(ancestor))
   } catch (error) {
     throw new GateError(`cannot resolve gate file ${file}: ${String(error)}`)
   }

@@ -77,7 +77,9 @@ _VERDICT_SYMBOL_RE: Final = re.compile(r"^[✓⚠✗]\s*")
 #: Verdict token must lead the field. Tolerated: any case, `_`/space/`-` between words, and trailing
 #: detail or punctuation ("APPROVE — 0 critical", "needs work;"). Still rejected: a glued suffix
 #: ("APPROVED"), a free-form verdict ("LGTM"), or an unfilled placeholder ("[review outcome]").
-_OUTCOME_VERDICT_RE: Final = re.compile(r"^(?:APPROVE|NEEDS[ _-]WORK|REQUEST[ _-]CHANGES)(?![\w-])", re.IGNORECASE)
+_OUTCOME_VERDICT_RE: Final = re.compile(
+    r"^(?:APPROVE|MAJOR[ _-]REVISION|NEEDS[ _-]WORK|REQUEST[ _-]CHANGES)(?![\w-])", re.IGNORECASE
+)
 #: A gate line resolve can act on (full match): PASS or BLOCK, or a ``REJECT_<GROUND>`` it re-checks against the PR
 #: head. Anything else (``Gate: REJECTED``, a lowercase ``reject_scope``) is an ambiguous verdict, never a pass.
 _ACTIONABLE_GATE_RE: Final = re.compile(r"Gate: (?:PASS|BLOCK)(?:\s+.*)?|Gate: REJECT_[A-Z]+(?:\s+.*)?")
@@ -185,7 +187,53 @@ def _parse_header_fields(lines: list[str]) -> dict[str, str] | None:
     return fields
 
 
-_SOURCE_RATINGS: Final = {"APPROVE": 1, "MINOR_EDITS": 2, "NEEDS_WORK": 3, "INSUFFICIENT_BUT_PROMISING": 4, "REJECT": 5}
+_SOURCE_RATINGS: Final = {
+    "APPROVE": 1,
+    "MINOR_EDITS": 2,
+    "MAJOR_REVISION": 3,
+    "INSUFFICIENT_BUT_PROMISING": 4,
+    "REJECT": 5,
+}
+#: Scale labels a report or sidecar may carry. ``source-5-v2`` names level 3 ``MAJOR_REVISION``; the historical
+#: ``source-5-v1`` named it ``NEEDS_WORK``, and archived publications keep reading under it.
+_SCALE_V1: Final = "source-5-v1"
+_SCALE_V2: Final = "source-5-v2"
+_KNOWN_SCALES: Final = {_SCALE_V1, _SCALE_V2}
+_LEGACY_OUTCOMES: Final = {"NEEDS_WORK": "MAJOR_REVISION"}
+
+
+def _scale_consistent(data: dict) -> bool:
+    """Check that no outcome in a sidecar uses the level-3 name of the other scale version.
+
+    Examples:
+        >>> _scale_consistent({"rating_scale": "source-5-v2", "source_outcome": "MAJOR_REVISION"})
+        True
+        >>> _scale_consistent({"rating_scale": "source-5-v2", "source_outcome": "NEEDS_WORK"})
+        False
+        >>> _scale_consistent({"rating_scale": "source-5-v1", "source_outcome": "NEEDS_WORK"})
+        True
+    """
+    assessments = data.get("assessments")
+    outcomes = [data.get("source_outcome")]
+    outcomes += (
+        [item.get("source_outcome") for item in assessments if isinstance(item, dict)]
+        if isinstance(assessments, list)
+        else []
+    )
+    banned = "MAJOR_REVISION" if data.get("rating_scale") == _SCALE_V1 else "NEEDS_WORK"
+    return banned not in outcomes
+
+
+def source_rating(outcome: str) -> int:
+    """Return the rating of a source outcome, reading the historical level-3 name as ``MAJOR_REVISION``.
+
+    Examples:
+        >>> source_rating("MAJOR_REVISION"), source_rating("NEEDS_WORK")
+        (3, 3)
+    """
+    return _SOURCE_RATINGS[_LEGACY_OUTCOMES.get(outcome, outcome)]
+
+
 _READINESS: Final = {"complete", "blocked", "incomplete"}
 #: Candidate dispositions the version-one envelope accepts; ``None`` means feasible checks remain undone.
 _DISPOSITIONS: Final = {"CONFIRMED", "REFUTED", "ALREADY_FIXED", "UNVERIFIED", "OPTIONAL", None}
@@ -200,7 +248,7 @@ def _source_assessment(record: dict) -> bool:
         return False
     if outcome is None:
         return rating is None and record["readiness"] in {"blocked", "incomplete"}
-    return outcome in _SOURCE_RATINGS and type(rating) is int and rating == _SOURCE_RATINGS[outcome]
+    return outcome in {*_SOURCE_RATINGS, *_LEGACY_OUTCOMES} and type(rating) is int and rating == source_rating(outcome)
 
 
 class _GateRejected(Exception):
@@ -593,9 +641,13 @@ def _check_envelope_header(data: object, fields: dict[str, str]) -> str:
         not isinstance(data, dict)
         or type(data.get("contract_version")) is not int
         or data["contract_version"] != 1
-        or data.get("rating_scale") != "source-5-v1"
+        or data.get("rating_scale") not in _KNOWN_SCALES
     ):
-        raise _GateRejected("review-validation.json is not contract_version=1 rating_scale=source-5-v1")
+        raise _GateRejected(
+            "review-validation.json is not contract_version=1 rating_scale=source-5-v2 (or source-5-v1)"
+        )
+    if not _scale_consistent(data) or fields.get("Rating scale") != data["rating_scale"]:
+        raise _GateRejected("review-validation.json outcomes or the header Rating scale disagree with its rating_scale")
     if not _source_assessment(data) or not data.get("readiness_reason"):
         raise _GateRejected("aggregate source judgment, readiness or readiness_reason invalid")
     outcome = _VERDICT_SYMBOL_RE.sub("", fields["Outcome"])
@@ -629,8 +681,8 @@ def _validation_gate(report: Path, fields: dict[str, str]) -> tuple[str, str]:
     Returns:
         ``(gate line, "")`` for a valid publication, or ``("", reason)`` naming the first broken rule.
     """
-    if fields.get("Review contract") != "1" or fields.get("Rating scale") != "source-5-v1":
-        return "", "header lacks Review contract: 1 / Rating scale: source-5-v1"
+    if fields.get("Review contract") != "1" or fields.get("Rating scale") not in _KNOWN_SCALES:
+        return "", "header lacks Review contract: 1 / Rating scale: source-5-v2 (or source-5-v1)"
     try:
         data = json.loads(report.with_name("review-validation.json").read_text(encoding="utf-8"))
         findings = _read_findings(report)
@@ -706,6 +758,11 @@ def _producer_problem(report: Path) -> str:
             return (
                 "header lacks Review contract: 1 — the current producer writes the version-one contract; a legacy or "
                 "marker-free header is a producer defect, not an archive"
+            )
+        if fields.get("Rating scale") != _SCALE_V2:
+            return (
+                f"header lacks Rating scale: {_SCALE_V2} — the current producer writes the current review scale; "
+                f"{_SCALE_V1} is an archive-only reader"
             )
         findings = _read_findings(report)
     except (OSError, ValueError, RecursionError) as exc:
@@ -1018,7 +1075,7 @@ def _label_corrected(data: dict, readiness: str) -> dict:
 
 #: Judged aggregate outcome standing in for any judgment: the record rules tell a null outcome from a judged one, never
 #: one judgment from another.
-_JUDGED_STAND_IN: Final = "NEEDS_WORK"
+_JUDGED_STAND_IN: Final = "MAJOR_REVISION"
 
 
 def supported_outcomes(assessments: list) -> list[str | None]:
@@ -1032,15 +1089,15 @@ def supported_outcomes(assessments: list) -> list[str | None]:
         assessments: Assessment records; entries that are not mappings are ignored.
 
     Returns:
-        ``None`` (null outcome) and/or ``"NEEDS_WORK"`` (any judgment), in that order; empty when no completed reviewer
-        supports either.
+        ``None`` (null outcome) and/or ``"MAJOR_REVISION"`` (any judgment), in that order; empty when no completed
+        reviewer supports either.
 
     Examples:
         >>> judged = {"presence": "completed", "source_outcome": "APPROVE"}
         >>> undecided = {"presence": "completed", "source_outcome": None}
         >>> missing = {"presence": "missing", "source_outcome": None}
         >>> supported_outcomes([judged]), supported_outcomes([undecided, missing]), supported_outcomes([missing])
-        (['NEEDS_WORK'], [None], [])
+        (['MAJOR_REVISION'], [None], [])
     """
     completed = [record for record in assessments if isinstance(record, dict) and record.get("presence") == "completed"]
     outcomes: list[str | None] = []
@@ -1068,7 +1125,7 @@ def _residual_problem(data: dict, findings: list, reviewed_revision: str) -> str
         for readiness in ("incomplete", "blocked"):
             corrected = _label_corrected(data, readiness)
             corrected["source_outcome"] = outcome
-            corrected["source_rating"] = None if outcome is None else _SOURCE_RATINGS[outcome]
+            corrected["source_rating"] = None if outcome is None else source_rating(outcome)
             try:
                 _check_assessments(corrected)
                 _check_candidates(corrected, findings, reviewed_revision)
@@ -1098,7 +1155,7 @@ def _assess_residual(
 
 def _assess_versioned(report: Path, fields: dict[str, str], result: GapAssessment, strict_reason: str) -> None:
     """Collect every gap of a version-one publication the strict gate refused, instead of stopping at the first."""
-    if fields.get("Review contract") != "1" or fields.get("Rating scale") != "source-5-v1":
+    if fields.get("Review contract") != "1" or fields.get("Rating scale") not in _KNOWN_SCALES:
         result.add("envelope-header", GapSeverity.CRITICAL, "-", "header lacks Review contract: 1 / Rating scale")
     try:
         data = json.loads(report.with_name("review-validation.json").read_text(encoding="utf-8"))
@@ -1106,7 +1163,12 @@ def _assess_versioned(report: Path, fields: dict[str, str], result: GapAssessmen
     except (OSError, ValueError) as exc:
         result.add("sidecar-unreadable", GapSeverity.CRITICAL, "-", f"{type(exc).__name__}: {exc}")
         return
-    if not isinstance(data, dict) or data.get("contract_version") != 1 or not _source_assessment(data):
+    if (
+        not isinstance(data, dict)
+        or data.get("contract_version") != 1
+        or not _source_assessment(data)
+        or not _scale_consistent(data)
+    ):
         result.add("contract-unsupported", GapSeverity.CRITICAL, "-", "not a valid contract_version=1 envelope")
         return
     try:

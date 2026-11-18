@@ -110,15 +110,15 @@ def _publication(tmp_path: Path, outcome: str | None = "APPROVE", readiness: str
     gate = "REVIEW_V1_REJECT_SCOPE @abcdef1234567" if outcome == "REJECT" else "REVIEW_V1_PASS"
     write_lf(
         report,
-        f"---\nTitle: Review\nPR: #7\nReview contract: 1\nRating scale: source-5-v1\n"
+        f"---\nTitle: Review\nPR: #7\nReview contract: 1\nRating scale: source-5-v2\n"
         f"Readiness: {readiness}\nGate: {gate}\nOutcome: {outcome or 'null'}\nSummary: Scoped judgment.\n---\n",
     )
-    rating = {"APPROVE": 1, "MINOR_EDITS": 2, "NEEDS_WORK": 3, "INSUFFICIENT_BUT_PROMISING": 4, "REJECT": 5}.get(
+    rating = {"APPROVE": 1, "MINOR_EDITS": 2, "MAJOR_REVISION": 3, "INSUFFICIENT_BUT_PROMISING": 4, "REJECT": 5}.get(
         outcome
     )
     envelope = {
         "contract_version": 1,
-        "rating_scale": "source-5-v1",
+        "rating_scale": "source-5-v2",
         "source_outcome": outcome,
         "source_rating": rating,
         "readiness": readiness,
@@ -192,7 +192,7 @@ def _blocked_unverified(tmp_path: Path) -> Path:
 @pytest.fixture(name="confirmed_publication")
 def _confirmed_publication(tmp_path: Path) -> Path:
     """Publish a strictly valid version-one review whose one confirmed candidate has a merge-ready row."""
-    report = _publication(tmp_path, "NEEDS_WORK")
+    report = _publication(tmp_path, "MAJOR_REVISION")
     data = _read_envelope(tmp_path)
     data["candidates"] = [_candidate("CONFIRMED")]
     _write_envelope(tmp_path, data, [finding_row("backend-one")])
@@ -206,7 +206,7 @@ def _pr8_like(tmp_path: Path) -> Path:
     Three UNVERIFIED concerns stay open, four reviewers are blocked and one is incomplete, and one CONFIRMED candidate
     (V1b) never got its findings.jsonl row while another (V2) did.
     """
-    report = _publication(tmp_path, "NEEDS_WORK")
+    report = _publication(tmp_path, "MAJOR_REVISION")
     data = _read_envelope(tmp_path)
     data["assessments"] = [
         assessment("Software engineer", "blocked"),
@@ -290,7 +290,7 @@ def _second_row_reusing_id(report: Path) -> None:
 
 def _legacy_shaped_header(report: Path) -> None:
     """Rewrite the header without any version-one marker, which intake reads as a legacy archive."""
-    _write_legacy_report(report, outcome="NEEDS_WORK", title="Review", summary="s")
+    _write_legacy_report(report, outcome="MAJOR_REVISION", title="Review", summary="s")
 
 
 def _set(path: tuple, value: object) -> Mutation:
@@ -353,8 +353,8 @@ def _label_slip_unattributed_row_without_change(data: dict, rows: list) -> None:
 
 
 def _judged_reviewer(data: dict) -> None:
-    """Let the only reviewer judge NEEDS_WORK while the aggregate outcome stays null."""
-    data["assessments"][0].update(source_outcome="NEEDS_WORK", source_rating=3)
+    """Let the only reviewer judge MAJOR_REVISION while the aggregate outcome stays null."""
+    data["assessments"][0].update(source_outcome="MAJOR_REVISION", source_rating=3)
 
 
 def _missing_reviewer(data: dict) -> None:
@@ -471,14 +471,14 @@ class TestPublicationIntake:
     def test_header_hiding_a_different_judgment_is_rejected(self, tmp_path: Path) -> None:
         """A favorable header over a sidecar recording another source outcome yields no gate line.
 
-        The header says APPROVE while the sidecar records NEEDS_WORK; trusting the header would let a hidden judgment
-        through.
+        The header says APPROVE while the sidecar records MAJOR_REVISION; trusting the header would let a hidden
+        judgment through.
         """
         report = _publication(tmp_path)
-        _edit_envelope(tmp_path, lambda data: data.update(source_outcome="NEEDS_WORK"))
+        _edit_envelope(tmp_path, lambda data: data.update(source_outcome="MAJOR_REVISION"))
         assert frr.gate_line(report) == ""
 
-    @pytest.mark.parametrize("marker", ["Rating scale: source-5-v1", "Readiness: complete"])
+    @pytest.mark.parametrize("marker", ["Rating scale: source-5-v2", "Readiness: complete"])
     def test_partial_current_header_cannot_downgrade_to_legacy(self, tmp_path: Path, marker: str) -> None:
         """Any current-family marker requires the supported complete publication envelope.
 
@@ -537,7 +537,7 @@ class TestPublicationIntake:
 
         A confirmed candidate cannot disappear (no row) or publish twice (two rows); only exactly one row passes.
         """
-        report = _publication(tmp_path, "NEEDS_WORK")
+        report = _publication(tmp_path, "MAJOR_REVISION")
         _edit_envelope(tmp_path, lambda data: data.update(candidates=[_candidate("CONFIRMED")]))
         _write_rows(tmp_path / "findings.jsonl", [finding_row("backend-one")] * row_count)
         assert frr.gate_line(report) == expected
@@ -591,7 +591,7 @@ class TestPublicationIntake:
         or a confirmed candidate missing its finding row, all under ``Readiness: complete``. Without the reason, the
         producer's retry and the user both have to re-derive the cause by calling the private checks by hand.
         """
-        report = _publication(tmp_path, "NEEDS_WORK")
+        report = _publication(tmp_path, "MAJOR_REVISION")
         _edit_envelope(tmp_path, mutate)
         assert frr.main(["--report", str(report)]) == 1
         assert f"[gate] reason: {reason}" in capsys.readouterr().out
@@ -602,7 +602,7 @@ class TestPublicationIntake:
         The type differs, not the meaning, so the intake gate must not stop an otherwise valid envelope on it; the
         producer contract still asks for arrays.
         """
-        report = _publication(tmp_path, "NEEDS_WORK")
+        report = _publication(tmp_path, "MAJOR_REVISION")
         _edit_envelope(
             tmp_path, lambda data: data["assessments"][0].update(evidence="src/backend.py:12", limits="none")
         )
@@ -623,7 +623,7 @@ class TestPublicationIntake:
         A concern naming an already CONFIRMED candidate is invalid, and so is an UNVERIFIED candidate left open under an
         aggregate that still claims completion.
         """
-        report = _publication(tmp_path, "NEEDS_WORK")
+        report = _publication(tmp_path, "MAJOR_REVISION")
         data = _read_envelope(tmp_path)
         data["candidates"] = [_candidate(disposition)]
         data["open_concerns"] = [
@@ -751,7 +751,7 @@ class TestFindingConsumers:
         """
         review = tmp_path / "review"
         review.mkdir()
-        report = _publication(review, "NEEDS_WORK")
+        report = _publication(review, "MAJOR_REVISION")
         _edit_envelope(
             review,
             lambda data: data.update(
@@ -926,7 +926,7 @@ class TestReviewShellGates:
         Regression: the producer published ``Readiness: complete`` with open UNVERIFIED concerns, and only
         ``/oss:resolve`` noticed. The recipe here is the shipped Step 5 block, run against the real validator.
         """
-        report = _publication(tmp_path, "NEEDS_WORK")
+        report = _publication(tmp_path, "MAJOR_REVISION")
         _edit_envelope(tmp_path, mutate)
         result = self._run_review_publication_gate(tmp_path)
         assert result.returncode == returncode, result.stdout + result.stderr
@@ -1129,7 +1129,7 @@ class TestAssess:
         The open concern is intact and the QA reviewer finished, so nothing actionable is lost; resolve may offer to
         proceed with the valid parts. The path is published so that choice needs no second lookup.
         """
-        report = _publication(tmp_path, "NEEDS_WORK")
+        report = _publication(tmp_path, "MAJOR_REVISION")
         data = _read_envelope(tmp_path)
         data["candidates"] = [_candidate("UNVERIFIED")]
         data["open_concerns"] = [concern("backend-one")]
@@ -1154,7 +1154,7 @@ class TestAssess:
     @pytest.mark.parametrize(
         ("outcome", "readiness"),
         [
-            pytest.param("NEEDS_WORK", "complete", id="valid-v1-no-gaps"),
+            pytest.param("MAJOR_REVISION", "complete", id="valid-v1-no-gaps"),
             pytest.param(None, "blocked", id="valid-undecidable-no-gaps"),
         ],
     )
@@ -1182,7 +1182,7 @@ class TestAssess:
         legacy gap would offer Proceed on a misspelled rejection.
         """
         report = tmp_path / "review-report.md"
-        _write_legacy_report(report, gate=gate, outcome="NEEDS_WORK")
+        _write_legacy_report(report, gate=gate, outcome="MAJOR_REVISION")
         assert frr.main(["--report", str(report), "--assess"]) == 2
         payload = json.loads(capsys.readouterr().out)
         assert (payload["gate"], [(gap["rule"], gap["severity"]) for gap in payload["gaps"]]) == (
@@ -1193,7 +1193,7 @@ class TestAssess:
     @pytest.fixture(name="graded_publication")
     def _graded_publication(self, tmp_path: Path) -> Path:
         """Publish a strictly valid review with one confirmed (published) and one refuted candidate to damage."""
-        report = _publication(tmp_path, "NEEDS_WORK")
+        report = _publication(tmp_path, "MAJOR_REVISION")
         data = _read_envelope(tmp_path)
         data["candidates"] = [_named_candidate("backend-one", "CONFIRMED"), _named_candidate("refuted-one", "REFUTED")]
         _write_envelope(tmp_path, data, [finding_row("backend-one")])
@@ -1384,7 +1384,7 @@ class TestAssess:
         ("outcome", "recorded"),
         [
             pytest.param("REJECT", "REVIEW_V1_REJECT_SCOPE @abcdef1234567", id="rejection-under-critical-gap"),
-            pytest.param("NEEDS_WORK", "", id="no-rejection"),
+            pytest.param("MAJOR_REVISION", "", id="no-rejection"),
         ],
     )
     def test_echoes_a_recorded_rejection_whatever_the_gaps(
@@ -1448,7 +1448,7 @@ class TestAssess:
         Role names are free text; a blocked "Security auditor" under a claimed-complete review used to grade degraded
         and offer Proceed, while fill-gaps already re-ran it as the QA specialist.
         """
-        report = _publication(tmp_path, "NEEDS_WORK")
+        report = _publication(tmp_path, "MAJOR_REVISION")
         _edit_envelope(tmp_path, lambda data: data.update(assessments=[assessment(role, "blocked")]))
         gaps = [(gap.rule, gap.severity.value, gap.subject) for gap in frr.assess_report(report).gaps]
         assert gaps == [("assessment-not-complete", "critical", role)]
@@ -1481,7 +1481,7 @@ class TestAssess:
         commit id, and a prefix match tolerates the abbreviated id. The exit code stays that of the graded gaps.
         """
         current_head_sha.return_value = current
-        report = _publication(tmp_path, "NEEDS_WORK")
+        report = _publication(tmp_path, "MAJOR_REVISION")
         write_lf(tmp_path / head_file, f"{recorded}\n")
         assert frr.main(["--report", str(report), "--assess"]) == 0
         payload = json.loads(capsys.readouterr().out)
@@ -1691,3 +1691,64 @@ class TestProducerGate:
         output = capsys.readouterr().out
         assert "rejected (Gate: REJECT_SCOPE @abcdef1234567)" in output
         assert "incomplete-review-report" not in output
+
+
+def _relabel(tmp_path: Path, *, scale: str, level3: str) -> Path:
+    """Write a level-3 publication, then rewrite its scale label and level-3 name in the report and its sidecar."""
+    report = _publication(tmp_path, "MAJOR_REVISION")
+    for path in (report, tmp_path / _SIDECAR):
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace("source-5-v2", scale).replace("MAJOR_REVISION", level3), encoding="utf-8")
+    return report
+
+
+class TestRatingScaleVersions:
+    """``source-5-v2`` names level 3 ``MAJOR_REVISION``; archived ``source-5-v1`` publications keep reading."""
+
+    @pytest.mark.parametrize(
+        ("scale", "level3"),
+        [
+            pytest.param("source-5-v2", "MAJOR_REVISION", id="current"),
+            pytest.param("source-5-v1", "NEEDS_WORK", id="archived"),
+        ],
+    )
+    def test_each_scale_reads_its_own_level_three_name(self, tmp_path: Path, scale: str, level3: str) -> None:
+        """A publication whose label and level-3 spelling agree yields a gate line."""
+        line, why = frr.gate_verdict(_relabel(tmp_path, scale=scale, level3=level3))
+        assert (line.startswith("Gate:"), why) == (True, "")
+
+    @pytest.mark.parametrize(
+        ("scale", "level3"),
+        [
+            pytest.param("source-5-v2", "NEEDS_WORK", id="current-label-old-name"),
+            pytest.param("source-5-v1", "MAJOR_REVISION", id="archived-label-new-name"),
+        ],
+    )
+    def test_a_mixed_publication_is_refused(self, tmp_path: Path, scale: str, level3: str) -> None:
+        """A report mixing the label of one scale version with the level-3 name of the other has no gate line."""
+        line, why = frr.gate_verdict(_relabel(tmp_path, scale=scale, level3=level3))
+        assert line == ""
+        assert why
+
+    def test_an_unknown_scale_label_is_refused(self, tmp_path: Path) -> None:
+        """Only the two known scale labels are accepted."""
+        line, why = frr.gate_verdict(_relabel(tmp_path, scale="source-5-v3", level3="MAJOR_REVISION"))
+        assert line == ""
+        assert why
+
+    def test_the_header_scale_must_match_the_sidecar(self, tmp_path: Path) -> None:
+        """A header label that differs from the sidecar's ``rating_scale`` is a disagreement, not a pass."""
+        report = _publication(tmp_path, "MAJOR_REVISION")
+        text = report.read_text(encoding="utf-8")
+        report.write_text(text.replace("source-5-v2", "source-5-v1"), encoding="utf-8")
+        line, why = frr.gate_verdict(report)
+        assert line == ""
+        assert why
+
+    def test_the_producer_gate_refuses_the_archived_scale(self, tmp_path: Path) -> None:
+        """A freshly produced report labelled ``source-5-v1`` is a producer defect, though intake still reads it."""
+        report = _relabel(tmp_path, scale="source-5-v1", level3="NEEDS_WORK")
+        assert frr.publication_verdict(report)[0].startswith("Gate:")
+        line, why = frr.publication_verdict(report, producer=True)
+        assert line == ""
+        assert "Rating scale: source-5-v2" in why

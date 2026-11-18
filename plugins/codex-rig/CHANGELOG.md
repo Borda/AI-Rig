@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.47.0
+
+- Code Review now writes its source verdict with the review status scale shared with Claude and OpenCode Rig: `APPROVE`, `MINOR_EDITS`, `MAJOR_REVISION`, `INSUFFICIENT_BUT_PROMISING`, `REJECT`, or null, under `review_validation.source_rating_version` 2. Saved version 1 reviews with the earlier lowercase names (`accept-as-is`, `needs-more-work`, and the rest) still validate, render, and feed Code Remediate with the same gates and labels; a review that mixes a version with the other version's spelling is refused with a named reason.
+- Release migration guides now word the scheduled removal of an API deprecated in an earlier release calmly and reassuringly, naming since which version users were warned, the replacement and a short old and new example, with no alarm words; an unwarned breaking change keeps direct wording. Release writing also asks for versions in prose to carry a `v` prefix (`v0.25.0`), so they read apart from plain numbers.
+
 ## 0.46.0
 
 - Code Review and Code Remediate no longer scan or ask a risk question for a pull request whose head branch lives in the same repository (not a fork); an escalation there uses the ordinary test-run approval. The Git-metadata integrity checks around every run still apply, and a fork PR or an unreadable origin keeps the full gate, and the collector now reports a missing origin field as a fork. The review and remediation references and the lost-anchor rule follow the exemption, so a same-repository PR no longer needs a scan verdict to request the reusable pytest approval or to resume.

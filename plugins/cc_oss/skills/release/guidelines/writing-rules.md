@@ -12,13 +12,14 @@ Write for reader, not commit author.
 | Issue refs | Never include `closes #N` / `fixes #N` in CHANGELOG or DRAFT.md |
 | Bare `@name` scope | `@handle` only for a real GitHub user/org mention (Contributors line). Decorator or annotation name → backticks (`` `@cached` ``); role handle or other non-GitHub word → drop the `@` |
 | Bare `#N` scope | `#N` only for a real PR/issue number. Ordinal or step ref → plain number or word (`1st`, `step 7`); code-shaped token (C macro, hex color) → backticks |
+| Version numbers | In prose, write every version with a `v` prefix (`v0.25.0`, never bare `0.25.0`) so it reads apart from plain numbers; tags, code, filenames and manifest fields keep their own spelling |
 | Code examples | Real usage showing new surface; not pseudocode |
 | Tables | Use for option/preset comparisons; skip for single-item features |
 | Breaking changes | Rare — use sparingly; false alarms scare users more than change itself |
 | Fix items | Say what was broken and under what condition — not just "fixed X" |
 | Changed items | Behaviour changes only — old behaviour → new behaviour |
 | Deprecated items | Name old API and replacement; omit removal version if unknown |
-| Removed items | State deprecated-since version and migration target |
+| Removed items | State deprecated-since version and migration target; scheduled removal of an already-deprecated API → calm, reassuring wording (planned, announced earlier, replacement ready), never alarm |
 
 > **Breaking vs Deprecated**: Normal flow is deprecate → announce removal version → Removed. Breaking Changes = rare case where **public API or user-facing behaviour** breaks **immediately** on upgrade, no prior warning, no fallback — including dependency version incompatibilities affecting users directly. Private API and test changes never Breaking Changes. Old behaviour still works (even with deprecation warning) → belongs in Deprecated, not here. When in doubt, not Breaking Changes
 

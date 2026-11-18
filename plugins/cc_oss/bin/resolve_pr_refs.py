@@ -54,6 +54,8 @@ _PR_FIELDS: Final = (
 )
 #: Extracts the default branch name from the ``HEAD branch:`` line of ``git remote show`` output.
 _HEAD_BRANCH_RE: Final = re.compile(r"HEAD branch:\s*(\S+)")
+#: A branch merge ref under refs/heads/ with no whitespace of any kind inside the name.
+_BRANCH_HEAD_REF_RE: Final = re.compile(r"refs/heads/\S+")
 #: Printable characters ``git check-ref-format`` forbids anywhere in a ref name (control bytes are checked separately).
 _REF_FORBIDDEN_CHARS: Final = frozenset(" ~^:?*[\\")
 
@@ -125,6 +127,85 @@ def _run(cmd: list[str], timeout: int) -> str:
     except (OSError, subprocess.SubprocessError):
         return ""
     return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def _git_answer(cmd: list[str], timeout: int) -> str | None:
+    """Run ``cmd`` and return its stripped stdout, or ``None`` when the command failed or timed out.
+
+    Unlike :func:`_run`, an empty answer from a successful command stays distinguishable from a failure.
+    """
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603 - argv list, no shell
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def _git_text(cmd: list[str], timeout: int) -> str | None:
+    """Run ``cmd`` and return its stdout minus the trailing newline, or ``None`` when it failed or timed out.
+
+    Nothing else is stripped: an empty field inside a multi-field answer, or a name ending in a Unicode space, must
+    reach the caller exactly as git printed it.
+    """
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603 - argv list, no shell
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout.removesuffix("\n") if proc.returncode == 0 else None
+
+
+def _branch_merge_refs(branch: str, timeout: int) -> list[str] | None:
+    """Return the ``branch.<name>.merge`` values of a branch, an empty list when unset, ``None`` when git failed."""
+    try:
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", "config", "--get-all", f"branch.{branch}.merge"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode == 1:  # git config exits 1 when the key is unset
+        return []
+    return proc.stdout.splitlines() if proc.returncode == 0 else None
+
+
+def checkout_is_own_code(timeout: int) -> bool:
+    """Tell whether the checked-out branch is positively the user's own work, for a run that has no PR.
+
+    A branch that ``gh pr checkout`` made from a fork can track ``origin`` while its merge ref is the pull ref
+    (``refs/pull/N/head``), and a branch fetched by hand from a pull ref (``git fetch origin pull/N/head:x``) has no
+    upstream at all. Own code is therefore a named branch whose upstream remote is ``origin`` (the push remote empty or
+    ``origin``) and whose merge ref is under ``refs/heads/``; a detached HEAD, a failed lookup, a branch with no
+    upstream, any other remote or a pull ref is not known to be the user's own. A new local branch is therefore gated
+    until its first push sets an ``origin`` upstream.
+
+    Args:
+        timeout: Maximum wait in seconds per subprocess.
+
+    Returns:
+        ``True`` only when the branch is named, tracks ``origin`` through a ``refs/heads/`` merge ref and nothing else.
+    """
+    branch = _git_text(["git", "branch", "--show-current"], timeout)
+    if not branch or branch != branch.strip():
+        return False  # a name git accepts but strip() would alter could name another branch's configuration
+    remotes = _git_text(
+        ["git", "for-each-ref", "--format=%(upstream:remotename)|%(push:remotename)", f"refs/heads/{branch}"], timeout
+    )
+    merges = _branch_merge_refs(branch, timeout)
+    if remotes is None or merges is None:
+        return False
+    names = remotes.split("|")
+    if len(names) != 2:
+        return False
+    upstream, push = names
+    return (
+        upstream == "origin"
+        and push in {"", "origin"}
+        and bool(merges)
+        and all(_BRANCH_HEAD_REF_RE.fullmatch(ref) for ref in merges)
+    )
 
 
 def parse_head_branch(remote_show: str) -> str:
@@ -374,7 +455,10 @@ def publish_local_base(timeout: int) -> int:
     """Publish the default branch as ``resolve-base-ref`` for runs that have no PR.
 
     Report mode without a PR number and comment dispatch skip the PR path, so Step 9 would otherwise find no base. The
-    sentinel is emptied first: a failure must leave it empty rather than inherit a previous run's value.
+    sentinel is emptied first: a failure must leave it empty rather than inherit a previous run's value. A published
+    base also records ``resolve-is-cross-repo`` as ``false`` when the checked-out branch is positively the user's own
+    code (see :func:`checkout_is_own_code`), so the PR-code gate has nothing to guard; a fork branch left checked out,
+    a detached HEAD or a failed lookup leaves that answer empty and keeps the gate.
 
     Args:
         timeout: Maximum wait in seconds per subprocess.
@@ -383,11 +467,14 @@ def publish_local_base(timeout: int) -> int:
         0 when a valid default branch was published, 1 when it is undeterminable or not a valid branch name.
     """
     _write_sentinel("resolve-base-ref", "")
+    _write_sentinel("resolve-is-cross-repo", "")  # a failure below must not leave an earlier run's `false` readable
     base = default_branch(timeout)
     if not is_valid_branch_name(base):
         print(f"⛔ Cannot determine a valid origin default branch for QA (got {base!r})")
         return 1
     _write_sentinel("resolve-base-ref", base)
+    # no PR: own code only when the branch tracks origin; a fork branch or a branch with no upstream keeps the gate
+    _write_sentinel("resolve-is-cross-repo", "false" if checkout_is_own_code(timeout) else "")
     print(f"→ resolve-base-ref={base}")
     return 0
 

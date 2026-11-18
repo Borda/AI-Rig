@@ -27,17 +27,17 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "fcf062019650ae6a1aeabb5008cfd9d433c8bc95d545239d6f78a765ec6b01dc"
+      "sha256": "0a64d3ec1f95f899c31677e759a0fe831b97e63001f40da1334b945c36274f27"
     },
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "4d1d46b4385550b3dd37aaa2fc7290eb2ffe06196fa013713ddc9180825b173c"
+      "sha256": "72dda1776bb1c9beaf265fd90917095b04c9fd2dcf244ef9f81a64fba77472d7"
     },
     {
       "mode": "0644",
       "path": "DEVELOPMENT.md",
-      "sha256": "3015a4f8a3b54d5756c4dc2e20f6b9ccc67272ccc632f5ce30be769e8a09f8b3"
+      "sha256": "a770be274a57373a5e87f887f2817fd4451a299da740856f9163c63a57d475bb"
     },
     {
       "mode": "0644",
@@ -52,7 +52,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "61a0b41b4e143cfe05e5ec33cfa38e4586bf19502f7a23bbc4039a6d0a59c7f2"
+      "sha256": "f4e0eb6ffb81b77b42e4abbd6ad365585684f196ab0450910a404ad38f68ec96"
     },
     {
       "mode": "0644",
@@ -197,12 +197,12 @@
     {
       "mode": "0644",
       "path": "runtime/calibration/accepted-route-evidence.json",
-      "sha256": "d5c437a8bc9dfd8ed886fdafe40edc17ff1dee7bfa9cd87805742a038b4f2bd0"
+      "sha256": "99e8c737d15d076d70d30f5c0c43a948f9f304aa160958b44514364246175103"
     },
     {
       "mode": "0644",
       "path": "runtime/calibration/behavioral-cases.json",
-      "sha256": "5a8c7b64a50a600d777f0501d93c3ebf87c70dc7c7569f1249e77cfbcf48aee0"
+      "sha256": "0cee9fc0d3309cb6ae844540e6202f09ba520ab04361793e163f6ea18da739d8"
     },
     {
       "mode": "0644",
@@ -212,7 +212,7 @@
     {
       "mode": "0644",
       "path": "runtime/calibration/benchmarks.json",
-      "sha256": "d434196b07ad3d5b6b53e86ad79f7d94531a508904228176e943360e6b64b984"
+      "sha256": "a6493a7eb084e78ba955903e5181c1c237a0fc4e33e1fd29906c3a74d8d06815"
     },
     {
       "mode": "0644",
@@ -462,7 +462,7 @@
     {
       "mode": "0644",
       "path": "shared/final-handoff-code-review.md",
-      "sha256": "6d2eaee4b30b40163c22533d1b8537a8b1621af35f1d50a12bfbeeebec31cfde"
+      "sha256": "b6d4a7da89d52c91df9ceed4d8b74e437dcb60cf9a211ef0bfd592a2678cfab7"
     },
     {
       "mode": "0644",
@@ -477,12 +477,12 @@
     {
       "mode": "0755",
       "path": "shared/final_handoff.py",
-      "sha256": "4db6746f68d105f66b18260aa8f9409be03ef9ad17f1fb0f096b7929b5cc21d0"
+      "sha256": "69f6ef1bc6461bc240c6451144054bde6b4d032c08598bd6efd95e783d9da557"
     },
     {
       "mode": "0755",
       "path": "shared/find-review-report.py",
-      "sha256": "84b6f76f791d0deac2622c9dc3032201b316fa8a373256b9df1b149d647d8607"
+      "sha256": "6275b25ac8c339edfbf6b867a817ee022ebfdfdca2b6847262c92869d895e41d"
     },
     {
       "mode": "0644",
@@ -517,7 +517,7 @@
     {
       "mode": "0644",
       "path": "shared/native-skill-contract.md",
-      "sha256": "2dfe1c4c9c75bfbf88c602ad2868dff0b4a80d095644b6db0acacd2b082fb530"
+      "sha256": "4609624de66604411735c21d4d743072e03d090f43b1694469ac53250a028276"
     },
     {
       "mode": "0644",
@@ -602,7 +602,7 @@
     {
       "mode": "0755",
       "path": "shared/validate-artifacts.py",
-      "sha256": "fde3f6479d81e20c4fcbbda75cf57c94d232ec26229263da1125ecbc75d6ad98"
+      "sha256": "217dfc46908660b22687397f3112541b475a35961df646996b140814fca8980a"
     },
     {
       "mode": "0755",
@@ -702,17 +702,17 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/references/implementation.md",
-      "sha256": "8b11a44d65ec1cdce2dc57c4c5e1976b3305410844db0299459daee1a9a702f1"
+      "sha256": "a28332022b336c1f8e9f2bc0b527aa417813a9808397a1c4d0ca6b4e86a3c0e2"
     },
     {
       "mode": "0644",
       "path": "skills/code-remediate/references/intake.md",
-      "sha256": "8115197a891dd0995b0d03ef4d4438466dae9fa4c5fbdf54e5dcccfa1e6b19a2"
+      "sha256": "2693a9f9d1a15dc2486c47a26869b85c2149b8fab1f41747301a79bb5c3e5f71"
     },
     {
       "mode": "0644",
       "path": "skills/code-remediate/references/missing-review-decision.md",
-      "sha256": "c74c3c86c4c89cd5d4547a0b5f842dbae8cfb45f45ca31be423eba6310ad62fc"
+      "sha256": "4369616673b421be46cd936f7ba98d52e820551654deb310054efdd393184517"
     },
     {
       "mode": "0644",
@@ -722,7 +722,7 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/references/selection.md",
-      "sha256": "1305a21192c065a542f5bba07b92c121b7eda1f08e6bec3974fb2ba2d039be7f"
+      "sha256": "39121a29ca7c77e8f39c0a4aa2e707c0e98982f60ba6cc8ca3b92115a30c90d4"
     },
     {
       "mode": "0644",
@@ -752,12 +752,12 @@
     {
       "mode": "0644",
       "path": "skills/code-review/references/collection-failure.md",
-      "sha256": "7fada6ea4ac7824c97223616717fae7c8b1cd538b1d678d89d2fd04386dbdb2a"
+      "sha256": "8771452f6f30f6f4931ac712d88eea9a1b0b074bb92c8141d4c1840dc18eb49e"
     },
     {
       "mode": "0644",
       "path": "skills/code-review/references/findings-and-completion.md",
-      "sha256": "e2b9f03ac51860aacc79a787934c6c51a4b8a56bec33ed6f77359de4ebfb1f8a"
+      "sha256": "5c1ab119c7cc66ebb59f34f7a39ea58f530b8dbf12a25484f87cbd8bed8b437a"
     },
     {
       "mode": "0644",
@@ -772,7 +772,7 @@
     {
       "mode": "0644",
       "path": "skills/code-review/references/legacy-dispatch.md",
-      "sha256": "892f5cdff5bbce1ec224eab303ef864126104f291c6e4ece0758fcd1a14628f7"
+      "sha256": "c5b4fc57bfec342cfe1106097ce91bc514276da73542bce25ecbe84bd3fd7e78"
     },
     {
       "mode": "0644",
@@ -797,7 +797,7 @@
     {
       "mode": "0644",
       "path": "skills/code-review/result-template.json",
-      "sha256": "f8e9c91ec479b7eb2109051930adba7444b114ad5c27be87850b22e8463cd4bd"
+      "sha256": "99372782d66dafb58e89a8075efa5e37e45b6566e7a66b2e73f5384e5f6cc289"
     },
     {
       "mode": "0644",
@@ -827,7 +827,7 @@
     {
       "mode": "0755",
       "path": "skills/code-review/validate_artifacts.py",
-      "sha256": "c966e1171809c69ae1051a77a58efb096facc84f152094cebd9743e18f7be8fa"
+      "sha256": "87bef50a15db200eb091cef016a411a0cf6034fef237efe5ab69b03afd873cc2"
     },
     {
       "mode": "0644",
@@ -982,7 +982,7 @@
     {
       "mode": "0644",
       "path": "skills/release/release-writing.md",
-      "sha256": "357446880e29f3b18ec8c9e511ac9403615463568fbd93783f8e013566ddcc8b"
+      "sha256": "42ef614b891b7ed2f5d80c414bb24e49d64834ced599327390fd6788004d7dd1"
     },
     {
       "mode": "0644",
@@ -1552,7 +1552,7 @@
     {
       "mode": "0644",
       "path": "tests/remediate/contract/test_contributed_code_execution_contract.py",
-      "sha256": "211f3ad887488a8fe52fad146570954e03dabc1355a412f10884ff7a20d142ec"
+      "sha256": "d717cd09144c65977a592d3f8dcdc363d6f03a247b299284780e9dad201baa8b"
     },
     {
       "mode": "0644",
@@ -1762,7 +1762,7 @@
     {
       "mode": "0644",
       "path": "tests/review/pr/test_code_review_pr_failure_output_contract.py",
-      "sha256": "537d5668ae72295759c6895d1001e1e5be77af49144bb30833e2d268672dabff"
+      "sha256": "c1fa5df8af6ac0663127cb5f0ec22300bce411930c634e4b99198fdd31d91bae"
     },
     {
       "mode": "0644",
@@ -1917,7 +1917,7 @@
     {
       "mode": "0644",
       "path": "tests/review/validation/test_candidate_validation_contract.py",
-      "sha256": "986b90835044cb2f0ada36e01acefe18df1a1b544bf06c5492087e123c7bae3a"
+      "sha256": "dfd32b7fefa17c12a52922c35519daf7498ab06d52f8b8cac11aaa1753c24196"
     },
     {
       "mode": "0644",
@@ -1968,6 +1968,16 @@
       "mode": "0644",
       "path": "tests/review/validation/test_review_input_safety.py",
       "sha256": "4ae2f38a55673146d97c35265174a7c0c7369d52fe5f9581c9fbc239a8859033"
+    },
+    {
+      "mode": "0644",
+      "path": "tests/review/validation/test_source_rating_scale.py",
+      "sha256": "f25ec9d62754d5d5a4bdc42ce043d3ac414c7f2782a81b63b933c35a4bf86ce5"
+    },
+    {
+      "mode": "0644",
+      "path": "tests/review/validation/test_source_rating_scale_end_to_end.py",
+      "sha256": "a8ddf2938d4c3f58b733f26f13f493b8bc00985758305c80f51e4e0966fa6d31"
     },
     {
       "mode": "0644",
@@ -2276,5 +2286,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.46.0"
+  "version": "0.47.0"
 }

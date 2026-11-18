@@ -146,7 +146,7 @@ Findings intake:
 
 ### Versioned review candidate intake
 
-- For review reports with `finding_records_version=2`, require the producer completion validator supporting `review_validation.schema_version=1` and `source_rating_version=1`; an incompatible reader stops only dependent admission while [Report compatibility and recovery](../../code-review/references/report-recovery.md) diagnoses the missing capability and uses an authorized compatible reader or package-source repair. Do not prescribe a review rerun for the version alone; substantive missing evidence determines that choice.
+- For review reports with `finding_records_version=2`, require the producer completion validator supporting `review_validation.schema_version=1` and `source_rating_version=2` (historical reports may carry `source_rating_version=1`); an incompatible reader stops only dependent admission while [Report compatibility and recovery](../../code-review/references/report-recovery.md) diagnoses the missing capability and uses an authorized compatible reader or package-source repair. Do not prescribe a review rerun for the version alone; substantive missing evidence determines that choice.
 - Only confirmed `review_findings` authorize defect fixes.
 - Retain open candidate IDs, exact missing prerequisites, owners, next checks and closure conditions as evidence obligations; unverified or pending concerns are not automatic edit requests.
 - Preserve applicable authoritative retained evidence if fresh retrieval fails.

@@ -71,7 +71,7 @@ def _write_report(
     if gate:
         body += f"Gate: {gate}\n"
     if outcome is None:
-        outcome = "N/A — rejected at gate" if gate.startswith("REJECT_") else "NEEDS_WORK"
+        outcome = "N/A — rejected at gate" if gate.startswith("REJECT_") else "MAJOR_REVISION"
     body += f"Outcome: {outcome}\nSummary: Reviewed the change.\n---\n"
     report.write_text(body, encoding="utf-8")
     if mtime is not None:
@@ -183,7 +183,7 @@ class TestGateLine:
     @pytest.mark.parametrize(
         ("gate", "outcome", "expected"),
         [
-            pytest.param("", "NEEDS_WORK", "", id="pre-gate-report-without-gate-field"),
+            pytest.param("", "MAJOR_REVISION", "", id="pre-gate-report-without-gate-field"),
             pytest.param("PASS", "⚠ REQUEST_CHANGES", "Gate: PASS", id="pass-gate-warning-symbol"),
             pytest.param("PASS", "✓ APPROVE", "Gate: PASS", id="pass-gate-check-symbol"),
             pytest.param(
@@ -203,7 +203,7 @@ class TestGateLine:
             pytest.param("PASS", "[review outcome]", "", id="placeholder-outcome-incomplete"),
             pytest.param("PASS", "APPROVED", "", id="glued-suffix-outcome-incomplete"),
             pytest.param("PASS", "✓ LGTM", "", id="free-form-verdict-incomplete"),
-            pytest.param("PASS", "NEEDS_WORK_LATER", "", id="token-with-glued-suffix-incomplete"),
+            pytest.param("PASS", "MAJOR_REVISION_LATER", "", id="token-with-glued-suffix-incomplete"),
             pytest.param("PASS", "pending approval", "", id="token-buried-mid-sentence-incomplete"),
         ],
     )
@@ -221,6 +221,32 @@ class TestGateLine:
         report = _write_report(tmp_path, "run-001", "42", gate=gate, outcome=outcome)
 
         assert frr.gate_line(report) == expected
+
+
+class TestMajorRevisionLevel:
+    """Level 3 of the source scale is ``MAJOR_REVISION``; the archived ``NEEDS_WORK`` name is still read."""
+
+    @pytest.mark.parametrize("outcome", ["MAJOR_REVISION", "NEEDS_WORK"], ids=["current", "archived"])
+    def test_both_names_rate_three(self, outcome: str) -> None:
+        """A sidecar carrying either name with rating 3 is a valid source judgment."""
+        record = {"source_outcome": outcome, "source_rating": 3, "readiness": "complete"}
+        assert frr._source_assessment(record) is True
+        assert frr.source_rating(outcome) == 3
+
+    @pytest.mark.parametrize("outcome", ["MAJOR_REVISION", "NEEDS_WORK"], ids=["current", "archived"])
+    def test_a_wrong_rating_is_still_refused(self, outcome: str) -> None:
+        """The legacy alias never loosens the rating check."""
+        record = {"source_outcome": outcome, "source_rating": 2, "readiness": "complete"}
+        assert frr._source_assessment(record) is False
+
+    @pytest.mark.parametrize("outcome", ["MAJOR_REVISION", "MAJOR REVISION", "NEEDS_WORK", "NEEDS-WORK"])
+    def test_a_legacy_header_accepts_either_name(self, tmp_path: Path, outcome: str) -> None:
+        """Header intake matches the new level-3 name beside the archived one, with separator tolerance."""
+        report = tmp_path / "review-report.md"
+        report.write_text(
+            f"---\nTitle: t\nPR: #1\nGate: PASS\nOutcome: {outcome}\nSummary: s\n---\n\n## Review\n", encoding="utf-8"
+        )
+        assert frr.gate_line(report) == "Gate: PASS"
 
 
 class TestRejectSha:

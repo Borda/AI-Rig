@@ -48,10 +48,23 @@ Rules:
 
 - Tie-breaker: prefer user-visible impact when type/significance comparable
 
-- Blank line, then bullet list — one bullet per logical change; extended description of top changes plus all other notable changes
+- Blank line, then a body of labelled sections in this order — `Changes:`, `Impact:`, optional `Limitations:` — each label on its own line, a blank line between sections, bullets as single unwrapped lines:
 
-  - Skip: typos, linting, whitespace-only edits
-  - All changes skip-worthy → omit bullet list; subject-only commit — still include co-author block separated by blank line and `---`:
+  ```markdown
+  Changes:
+  - <one bullet per logical change; extended description of top changes plus all other notable changes>
+
+  Impact:
+  - <concrete user, developer, runtime, compatibility or maintenance effect of a change above>
+
+  Limitations:
+  - <OPTIONAL section — omit label and bullets entirely when there is nothing to report: known gap, untested path, deferred work or caveat the reader must not miss>
+  ```
+
+  - `Changes:` — what changed and on which surface; skip typos, linting, whitespace-only edits
+  - `Impact:` — required whenever `Changes:` is present; one bullet per change or tightly related group, naming who or what now behaves differently (user, developer, runtime, compatibility, maintenance); generic claims ("improves UX", "cleaner code") are insufficient; every impact traces to a `Changes:` bullet that is itself confirmed in the diff
+  - `Limitations:` — optional; omit the whole section when nothing is known, never write "None"; list only real gaps (not exercised, deferred, partial coverage, known caveat); never claim a check passed or was skipped without evidence from this session
+  - All changes skip-worthy → omit all sections; subject-only commit — still include co-author block separated by blank line and `---`:
 
   ```markdown
   Fix typo in config key name
@@ -136,7 +149,7 @@ Rule: after reading all per-file diffs (or all subagent `.md` summaries), ask "d
 
 **Docs/supplementary exempt**: README, CHANGELOG, inline comments, docstrings, and other documentation-only files are standalone entities — repeated small doc tweaks don't compound into a higher tier regardless of count.
 
-**Evidence-only body — mandatory, not situational**: the diff is the only evidence. Conversation/session context may be used **exclusively** to explain the *why* behind a change already confirmed present in `git diff HEAD` — never to assert that a change, action, or removal happened. A sentence describing something not backed by a `+`/`-` line doesn't go in the message, no matter how confidently conversation discussed it as done. Covers two failure modes, both forbidden equally:
+**Evidence-only body — mandatory, not situational**: the diff is the only evidence for `Changes:` and `Impact:` (an impact is a consequence of a diff-confirmed change, never a separate claim). Conversation/session context may be used **exclusively** to explain the *why* behind a change already confirmed present in `git diff HEAD` — never to assert that a change, action, or removal happened. A sentence describing something not backed by a `+`/`-` line doesn't go in the message, no matter how confidently conversation discussed it as done. Covers two failure modes, both forbidden equally:
 
 - **Reverted-change leak**: content introduced then rolled back before commit (e.g. via `git checkout HEAD -- <file>` or a later overwrite) — visible in chat history, absent from `git diff HEAD`. Distinct from content removed BY this commit, which appears as `-` lines and IS valid to mention.
 - **Narrated-but-unlanded change**: conversation describes an edit as accomplished (e.g. "removed the X section") but the actual diff hunk shows different content than narrated (e.g. it removed Y, not X — because X was reverted earlier and the removal script actually matched Y). Session narrative describing *what* was done isn't evidence of *what the diff contains* — only the diff is.
@@ -150,7 +163,7 @@ Rule: after reading all per-file diffs (or all subagent `.md` summaries), ask "d
 Separate co-author block from bullet list with `---`:
 
 ```markdown
-- last bullet
+- last bullet of the final section
 
 ---
 Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>

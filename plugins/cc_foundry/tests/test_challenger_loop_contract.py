@@ -76,6 +76,24 @@ def loop_ledger(tmp_path: Path) -> Path:
         pytest.param('"reason": "codex-unavailable"', id="codex-unavailable-blocks"),
         pytest.param("a skipped or failed cross-check is stated, never omitted", id="codex-section-always"),
         pytest.param("tools: Read, Write, Grep, Glob, Bash, Skill", id="skill-tool-for-bridge"),
+        pytest.param("One bounded call, never the whole target", id="codex-call-scoped"),
+        pytest.param('args="--effort medium --timeout-seconds 230 --task-file <that path>"', id="codex-call-budgeted"),
+        pytest.param("never inline, because a hook can block inline text", id="codex-task-through-file"),
+        pytest.param("Codex authors them, never you", id="filter-call-codex-authors"),
+        pytest.param(
+            "A reply with no candidate (a refusal, or `partial` with an empty list)", id="filter-no-candidate-blocked"
+        ),
+        pytest.param("is completed with a gap", id="codex-partial-is-a-gap"),
+        pytest.param("never re-send the same or a wider scope", id="codex-gap-not-resent"),
+        pytest.param('args="--split-file <that path> --effort medium --timeout-seconds 230"', id="codex-call-split"),
+        pytest.param("never to several serial calls", id="codex-split-no-serial-fallback"),
+        pytest.param("rejects the unknown `--split-file` flag with a usage error", id="codex-split-old-bridge-trigger"),
+        pytest.param(
+            "top-level `incident` that names the quota-exhausted scope's record", id="codex-split-quota-signal"
+        ),
+        pytest.param(
+            "Remove the scratch task or plan file you wrote once the call returns", id="codex-scratch-cleanup"
+        ),
     ],
 )
 def test_challenger_states_delivery_rule(clause: str) -> None:

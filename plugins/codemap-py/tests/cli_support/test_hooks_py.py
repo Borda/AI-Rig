@@ -273,6 +273,11 @@ def _session_marker(repo: Path, runtime: str = "claude") -> Path:
     return repo / ".cache" / "codemap" / f"current-session-{runtime}.json"
 
 
+#: Deadline for a detached *real* scan to publish: a cold Windows CI worker spent about 40 s on one such test, so the
+#: 8 s stub-marker default can expire before the scan imports and finishes. Success returns at once; only failure waits.
+_REAL_SCAN_TIMEOUT_S = 30.0
+
+
 def _await_marker(path: Path, needle: str = "", timeout_s: float = 8.0) -> bool:
     """Wait for non-empty content containing *needle*, requiring complete JSON for ``.json`` markers.
 
@@ -1241,7 +1246,7 @@ class TestInjectPreambleRefreshFingerprint:
         assert result.returncode == 0, result.stderr
         assert "refresh started" in result.stdout
         (record,) = hook_tmp.glob(f"codemap-refresh-fp-{repo.name}-*")
-        assert _await_marker(record, "published"), record.read_text()
+        assert _await_marker(record, "published", timeout_s=_REAL_SCAN_TIMEOUT_S), record.read_text()
         index = json.loads((idx_dir / f"{repo.name}.json").read_text())
         assert index["modules"][0]["direct_imports"] == ["pathlib"]
 
@@ -1290,7 +1295,7 @@ class TestInjectPreambleRefreshFingerprint:
         assert result.returncode == 0, result.stderr
         assert "refresh started" in result.stdout
         (record,) = hook_tmp.glob(f"codemap-refresh-fp-{repo.name}-*")
-        assert _await_marker(record, "published"), record.read_text()
+        assert _await_marker(record, "published", timeout_s=_REAL_SCAN_TIMEOUT_S), record.read_text()
         index = json.loads(index_path.read_text())
         assert {module["name"] for module in index["modules"]} == expected_modules
         published_imports = {module["name"]: module["direct_imports"] for module in index["modules"]}
@@ -1307,7 +1312,7 @@ class TestInjectPreambleRefreshFingerprint:
         repaired = _run_inject(repo, idx_dir, plugin_root, hook_tmp, event={"session_id": "after-rollback"})
         assert repaired.returncode == 0, repaired.stderr
         assert "refresh started" in repaired.stdout
-        assert _await_marker(record, "published"), record.read_text()
+        assert _await_marker(record, "published", timeout_s=_REAL_SCAN_TIMEOUT_S), record.read_text()
         repaired_index = json.loads(index_path.read_text())
         assert repaired_index["source_fingerprint"] == index["source_fingerprint"]
         assert repaired_index["modules"] == index["modules"]

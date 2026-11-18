@@ -27,6 +27,14 @@
           "linting-expert"
         ]
       },
+      "gpt-6.1-terra": {
+        "high": [
+          "doc-scribe"
+        ],
+        "medium": [
+          "web-explorer"
+        ]
+      },
       "gpt-6.2-sol": {
         "high": [
           "challenger",
@@ -39,14 +47,6 @@
           "qa-specialist",
           "squeezer",
           "sw-engineer"
-        ]
-      },
-      "gpt-6.1-terra": {
-        "high": [
-          "doc-scribe"
-        ],
-        "medium": [
-          "web-explorer"
         ]
       }
     }

@@ -226,6 +226,8 @@ Pick top 3–5 most significant changes from Classify. Ranking: breaking changes
 
 Always produce. No breaking changes → single line "No breaking changes in this release." Deprecations/removals → show before→after code examples. State in preamble: API deprecated in prior release and now removed → ❌ Removed (not Breaking).
 
+**Tone for a scheduled removal** (deprecated earlier, removed now as announced): calm, matter-of-fact, reassuring. Say it was deprecated since `<version>` with a warning, this removal is the planned follow-through, then give replacement and a short before→after. No alarm words (breaking, urgent, must, suddenly, dropped, no longer works), no ⚠️. Say users already on the replacement need no change. Unwarned breaking changes keep direct wording.
+
 If `migration_gaps` non-empty (from Validate migration docs): for each `[MISSING-MIGRATION]` item, add dedicated section covering that symbol with before→after example. For each `[SHALLOW]` item, expand existing coverage to add concrete upgrade instructions.
 
 If `breaking_callers` non-empty (from Breaking-change classification): for each Breaking symbol, add a before→after section citing its external call sites (the `migration_lines`) so downstream consumers see exactly which of their call sites must change. When that phase reported `query_complete:false`, prefix the section "Affected call sites (possibly-incomplete — codemap coverage partial)".

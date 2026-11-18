@@ -769,7 +769,18 @@ def _validate_code_review_final_handoff(
             None: "no source judgment",
         }
         if metadata.get("review_validation") is not None:
-            suggestions.update({"needs-more-work": "major revision", "reject": "block"})
+            # Source-rated reviews: a version 1 name and its version 2 token render the same Suggestion cell.
+            suggestions.update(
+                {
+                    "needs-more-work": "major revision",
+                    "reject": "block",
+                    "APPROVE": "approve",
+                    "MINOR_EDITS": "minor changes",
+                    "MAJOR_REVISION": "major revision",
+                    "INSUFFICIENT_BUT_PROMISING": "insufficient, but a good initiative",
+                    "REJECT": "block",
+                }
+            )
         suggestion_cells = rows[-1].get("cells")
         if (
             not isinstance(suggestion_cells, list)

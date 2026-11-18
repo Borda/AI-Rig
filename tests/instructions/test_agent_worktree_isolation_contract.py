@@ -171,24 +171,33 @@ READ_ONLY_CLAUSE = "Read-only investigation: never edit, create or delete tracke
 #: Commands an investigator sharing the caller's tree must never run, and where its probes run instead.
 READ_ONLY_TERMS = ("`git stash`", "`git checkout`", "`git reset`", "`git restore`", "`mktemp -d`", "run directory")
 
+#: Terms for a site that runs no probes: a PR review investigator may not execute PR code before the PR-code gate.
+NO_PROBE_TERMS = ("`git stash`", "`git checkout`", "`git reset`", "`git restore`", "run no reproduction probes")
+
 #: Non-isolated spawn sites of parallel ``foundry:sw-engineer`` hypothesis investigators, with the minimum number of
-#: read-only clauses each must carry (one per spawn prompt it spells out; the shared template counts once).
+#: read-only clauses each must carry (one per spawn prompt it spells out; the shared template counts once) and the
+#: terms that must follow the clause opening.
 READ_ONLY_INVESTIGATOR_SITES = (
-    pytest.param("plugins/cc_develop/skills/_shared/preflight-helpers.md", 1, id="team-spawn-template"),
-    pytest.param("plugins/cc_develop/skills/fix/modes/team-mode.md", 2, id="fix-team-hypotheses-a-b"),
-    pytest.param("plugins/cc_develop/skills/debug/SKILL.md", 1, id="debug-team-hypotheses"),
-    pytest.param("plugins/cc_oss/skills/review/modes/scope-context.md", 1, id="oss-review-issue-hypotheses"),
+    pytest.param(
+        "plugins/cc_develop/skills/_shared/preflight-helpers.md", 1, READ_ONLY_TERMS, id="team-spawn-template"
+    ),
+    pytest.param("plugins/cc_develop/skills/fix/modes/team-mode.md", 2, READ_ONLY_TERMS, id="fix-team-hypotheses-a-b"),
+    pytest.param("plugins/cc_develop/skills/debug/SKILL.md", 1, READ_ONLY_TERMS, id="debug-team-hypotheses"),
+    pytest.param(
+        "plugins/cc_oss/skills/review/modes/scope-context.md", 1, NO_PROBE_TERMS, id="oss-review-issue-hypotheses"
+    ),
 )
 
 
-def _clause_count(text: str) -> int:
+def _clause_count(text: str, terms: tuple[str, ...] = READ_ONLY_TERMS) -> int:
     """Count read-only clauses in ``text``: each opening must be followed, within its sentence group, by every term.
 
     Args:
         text: Markdown file contents.
+        terms: Terms every clause opening must be followed by within 400 characters.
 
     Returns:
-        Number of clause openings followed within 400 characters by every term of ``READ_ONLY_TERMS``.
+        Number of clause openings followed within 400 characters by every term of ``terms``.
 
     Examples:
         >>> _clause_count("x")
@@ -197,15 +206,15 @@ def _clause_count(text: str) -> int:
     count = 0
     for chunk in text.split(READ_ONLY_CLAUSE)[1:]:
         window = chunk[:400]
-        count += all(term in window for term in READ_ONLY_TERMS)
+        count += all(term in window for term in terms)
     return count
 
 
 class TestReadOnlyInvestigators:
     """Parallel hypothesis investigators sharing the caller's tree never write to it."""
 
-    @pytest.mark.parametrize(("relative", "minimum"), READ_ONLY_INVESTIGATOR_SITES)
-    def test_spawn_site_carries_the_read_only_clause(self, relative: str, minimum: int) -> None:
+    @pytest.mark.parametrize(("relative", "minimum", "terms"), READ_ONLY_INVESTIGATOR_SITES)
+    def test_spawn_site_carries_the_read_only_clause(self, relative: str, minimum: int, terms: tuple[str, ...]) -> None:
         """Each investigator spawn site states the full read-only clause, once per spelled-out prompt.
 
         Two investigators in one tree can stash each other's probes and the user's uncommitted work, or interleave edits
@@ -213,4 +222,4 @@ class TestReadOnlyInvestigators:
         """
         text = (REPO_ROOT / relative).read_text(encoding="utf-8")
 
-        assert _clause_count(text) >= minimum, f"{relative} lacks the read-only investigator clause"
+        assert _clause_count(text, terms) >= minimum, f"{relative} lacks the read-only investigator clause"

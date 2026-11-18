@@ -160,7 +160,7 @@ class TestReportHeaderState:
         report = tmp_path / "review-report.md"
         write_lf(
             report,
-            "---\nTitle: review\nPR: #42\nGate: PASS\nOutcome: NEEDS_WORK\nSummary: fix\n---\n\n## Code Review: PR #42\n",
+            "---\nTitle: review\nPR: #42\nGate: PASS\nOutcome: MAJOR_REVISION\nSummary: fix\n---\n\n## Code Review: PR #42\n",
         )
         session = "report-pr-state-test"
         _write_sentinels(tmp_path, session, {"report-file": f"{bash_path(report)}\n", "pr-number": "n/a\n"})

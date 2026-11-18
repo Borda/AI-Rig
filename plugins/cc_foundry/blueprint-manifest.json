@@ -447,7 +447,7 @@
     },
     "154ab2d86df14e417128f2a3f66ae02e8988ff2ac34fa5941edb8380ddedbcf9": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:237"
+      "src": "skills/distill/modes/memory.md:252"
     },
     "154fc337e62d7fa559cb93ff49a2a21a8bf93773c2e25498c6ee92baa36e69bf": {
       "kind": "command",
@@ -748,7 +748,7 @@
     },
     "23eefbf744adbe1d035200bf130dbb080b24625ecf0f4325d5bb5f213a2fbdd3": {
       "kind": "block",
-      "src": "rules/_full/git-commit.md:224"
+      "src": "rules/_full/git-commit.md:237"
     },
     "246b52808f7483875dcd35d639221bff2109f874ac7c287a46dd788fc64bd7c9": {
       "kind": "block",
@@ -837,7 +837,7 @@
     },
     "29232276c86186eea6f04a8a0f84fd2bf8357fe16e7f2460a78e0194eb7b451a": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:183"
+      "src": "skills/distill/modes/memory.md:198"
     },
     "2943b9d2a19427f975898da1c3cb78d9dcbfcb6b652608fa5c7f079e567ae52c": {
       "kind": "command",
@@ -1137,7 +1137,7 @@
     },
     "3adb2eaf526b0123df0d01ce36875ac6c6e357c24b7cf2f460cb8175500471e0": {
       "kind": "command",
-      "src": "rules/_full/git-commit.md:169"
+      "src": "rules/_full/git-commit.md:182"
     },
     "3b2fe39feecef5df990f1b41e42f87faf6f9839d05d6fded821ff765c33bb9b1": {
       "kind": "command",
@@ -1534,7 +1534,7 @@
     },
     "4ef731e1f4c65ebdfac86aacc25e1c32b7623bc65c7cbff260c6fc1852e5fa19": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:183"
+      "src": "skills/distill/modes/memory.md:198"
     },
     "4ef922ad5df7ba386ff01ca461c03e49e0f8cdac240f5e1bd636b6c005fd32d6": {
       "kind": "block",
@@ -1637,7 +1637,7 @@
     },
     "53f21931a77951b3c08e040d71ed0c904d05f6874c549c127cf586dd916a3a5a": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:183"
+      "src": "skills/distill/modes/memory.md:198"
     },
     "543c526aa72e1663d2aa746d1ed4ffc47109747b46f04e39fde2195c4419fb9b": {
       "kind": "command",
@@ -1920,7 +1920,7 @@
     },
     "5f5a16f936f620c78499d61941158ab928fc26fe0838ad07309e7293c025ba99": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:183"
+      "src": "skills/distill/modes/memory.md:198"
     },
     "5f7d5a22b6d2971885582198a868a34c30f2a20ef8ab3f24e6f2d1fc5a4c15d2": {
       "kind": "block",
@@ -2212,7 +2212,7 @@
     },
     "6f358249ed50202060e30ef9173077a168b0fb2be0e8ae4908a9f3754e5a0955": {
       "kind": "command",
-      "src": "rules/_full/git-commit.md:169"
+      "src": "rules/_full/git-commit.md:182"
     },
     "6f41de39291a7b27c8c0ff272c66ac3d9d09036e4b833526afd1397155ceae46": {
       "kind": "command",
@@ -2318,7 +2318,7 @@
     },
     "73b14ca722eb4c9b1dbd7ac0f568cd5ad58ea3863e1033ff076dfbd609a95ad1": {
       "kind": "block",
-      "src": "skills/distill/modes/memory.md:237"
+      "src": "skills/distill/modes/memory.md:252"
     },
     "73e47a95bf14a4cd87f06b1935bed922f1116ec9607f2fd317f4e2e67131320b": {
       "kind": "command",
@@ -2600,7 +2600,7 @@
     },
     "839f764536c28b2c25d0ef0ac384c422bb107a9a6148d95b7316f031b24216b0": {
       "kind": "block",
-      "src": "skills/distill/modes/memory.md:224"
+      "src": "skills/distill/modes/memory.md:239"
     },
     "83fc422ffc03aed44604490677fbd2bc9457c950916042df9eef1d886eeb2ce5": {
       "kind": "command",
@@ -2664,7 +2664,7 @@
     },
     "85a6c7d41fa5d2d4abe8b028f0f5f374e06ad427f5d81721366c9d29dbc56926": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:149"
+      "src": "skills/distill/modes/memory.md:164"
     },
     "85f99308bb1fe4d73bc14a10e547b053ab1a2e12acf28f69bb26e10de00a35b9": {
       "kind": "command",
@@ -2697,7 +2697,7 @@
     },
     "86d9fcece94ea0d3a167fbbeed02aeb91ff1b1bd0a5c911853d3533aed2b97f0": {
       "kind": "command",
-      "src": "rules/_full/git-commit.md:169"
+      "src": "rules/_full/git-commit.md:182"
     },
     "86f33d659f185714f54c4bacf5dd0b83986f6ff79d8fd6e2afa7d53b20cc6709": {
       "kind": "command",
@@ -2768,7 +2768,7 @@
     },
     "8a9d5b8e35a01958feb1ce548a3a160e574609b4d552b2c0cc9bb49c43bf4f8e": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:183"
+      "src": "skills/distill/modes/memory.md:198"
     },
     "8ae41a25b976410936cf4851b4b1c76864aeb3828b2b21a34fabc01b57280f14": {
       "kind": "block",
@@ -3185,7 +3185,7 @@
     },
     "9da76b85c08dad7b39ba9b70c849a3310574ab811364d9862da1be2b3d6a7e9b": {
       "kind": "command",
-      "src": "rules/_full/git-commit.md:169"
+      "src": "rules/_full/git-commit.md:182"
     },
     "9dd3d96add8bf06ef5a47d84f8cd8ecf4d9580a11b1b08b5727e96d7f8eeef96": {
       "kind": "block",
@@ -3222,7 +3222,7 @@
     },
     "9e881ef54463f08278e30b7fb03fcb5fbcd619c659e8cc082f286aef8a62b55d": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:224"
+      "src": "skills/distill/modes/memory.md:239"
     },
     "9ebcbbe77a1aa8cf420c9b143b9d72596fdc33aa01721f6fd3640ca109f9c479": {
       "kind": "command",
@@ -3323,7 +3323,7 @@
     },
     "a325f5684a5598466175b721144ba4a355e56a3a1fb279c37fdf85950c43597b": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:237"
+      "src": "skills/distill/modes/memory.md:252"
     },
     "a331130159bb1b7274e91867a00db090d0151d67ff1a0eea14a65875eec5a381": {
       "kind": "command",
@@ -3867,7 +3867,7 @@
     },
     "c120220580aee5d7440a77ead15770722e90b24a9928a092f14305b1ddb404df": {
       "kind": "block",
-      "src": "skills/distill/modes/memory.md:149",
+      "src": "skills/distill/modes/memory.md:164",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nRUN_DIR=$(python \"$PLUGIN_ROOT/bin/make_run_dir.py\" .reports/distill 2>/dev/null)\n[ -n \"$RUN_DIR\" ] || { echo \"! BLOCKED \u2014 make_run_dir.py returned no run dir; nothing applied\"; exit 1; }\necho \"$RUN_DIR\" > \"${TMPDIR:-/tmp}/distill-memory-run-dir-${CSID}\"\necho \"RUN_DIR=$RUN_DIR\""
     },
     "c18da57374eb78ff199d351cee265f8a386be2dd28e85da201292dfbb9f43155": {
@@ -3991,6 +3991,10 @@
       "kind": "command",
       "src": "skills/audit/modes/steps-4-5-7.md:102"
     },
+    "c8ca906daecc14f6bae01a510c1c439d280b651e6f0c706822ed95fd81968ba5": {
+      "kind": "command",
+      "src": "skills/distill/modes/memory.md:57"
+    },
     "c8fb808b6c6a81ab5a98182207d0b45be4a520099b8466ee4f01c61c99efea1f": {
       "kind": "block",
       "src": "skills/audit/templates/checks-shared.md:440"
@@ -4021,7 +4025,7 @@
     },
     "cad054646571f9964756ce9b8a90f1d13d1c3d0f47caad532c14cc177b4c31ac": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:149"
+      "src": "skills/distill/modes/memory.md:164"
     },
     "cb21485803ac81422b9ad8e9a4157bdfe0562e31184d7586a0630dcb539a9041": {
       "kind": "command",
@@ -4283,6 +4287,11 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-skills-deadfiles.md:44"
     },
+    "d6af63b6a5a41206a1edfbe2ecc259151098ad99570b3143befa7758faf127a1": {
+      "kind": "block",
+      "src": "skills/distill/modes/memory.md:57",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nMEM_DIR=\"<memory-dir>\"\ncase \"$MEM_DIR\" in *'<'*'>'*|\"\") echo \"! BLOCKED \u2014 substitute MEM_DIR\"; exit 1;; esac\npython \"$PLUGIN_ROOT/bin/mine_transcript_failures.py\" \"${MEM_DIR%/memory}\""
+    },
     "d6b45b1925bfaa99c0b32312574cf0ee7ab9bae0e4f8dc75bf81d68ff294f64e": {
       "kind": "command",
       "src": "skills/manage/modes/rename.md:9"
@@ -4396,7 +4405,7 @@
     },
     "ddbb611397cde44bad1265b3fbdb4d8b14d059c4c6c764d44a53546a5c14e0d9": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:183"
+      "src": "skills/distill/modes/memory.md:198"
     },
     "ddccd2c7d89503a36c69141ce660d3493f4998a8df6e309953f60241758b2f44": {
       "kind": "command",
@@ -4827,7 +4836,7 @@
     },
     "f4313dbcd0d9f1ecbe3cb358901744599f29196045d3cae1b5c0ce17098161dd": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:224"
+      "src": "skills/distill/modes/memory.md:239"
     },
     "f4ba2213f5126e545f8962cb7186f0a78c69e38f7c856ff46e49366fc40d88c5": {
       "kind": "command",
@@ -4872,6 +4881,10 @@
     "f6cd8e91ede0b19c5225ef949671ea0bada0da947a59e5aa5aeeb7aa66779026": {
       "kind": "block",
       "src": "skills/calibrate/modes/rules.md:39"
+    },
+    "f7013919a43929bb6fa711bf9e136ea047164378b6aa37f207f521b787b07a6e": {
+      "kind": "command",
+      "src": "skills/distill/modes/memory.md:57"
     },
     "f73e5411673b9e89fe758416653af78c5dcae56d8b56a9a19a688f32dc218be2": {
       "kind": "block",
@@ -4955,7 +4968,7 @@
     },
     "fc2b3454f2828b890511c67e8511a0670be796879f28dfe43e93dfe8a701554d": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:183"
+      "src": "skills/distill/modes/memory.md:198"
     },
     "fc4a8fa37e6a3c39ff61d5c34909e1069566526aaf3918d296cc35a477f448e4": {
       "kind": "block",
@@ -4992,7 +5005,7 @@
     },
     "feadbfe207c450dcbd5fd4dc18640110e827f795ca7ab5d74d1fc92c577075ac": {
       "kind": "block",
-      "src": "skills/distill/modes/memory.md:183"
+      "src": "skills/distill/modes/memory.md:198"
     },
     "fede7c60b6a4c25f2945ffeb8cd1c06077c8bc895621860e4df0061e986bb35c": {
       "kind": "block",
@@ -5023,6 +5036,6 @@
       "src": "skills/audit/templates/checks-skills-sweep.md:33"
     }
   },
-  "plugin": "cc_foundry@0.80.1",
+  "plugin": "cc_foundry@0.81.0",
   "schema": 2
 }

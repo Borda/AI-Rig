@@ -252,7 +252,7 @@ export function runDirectory(paths: RigPaths, skill: string, runId: string): str
   }
   let ancestor = directory
   while (!lstatSync(ancestor, { throwIfNoEntry: false })) ancestor = dirname(ancestor)
-  const physical = relative(realpathSync(paths.projectRoot), realpathSync(ancestor))
+  const physical = relative(realpathSync.native(paths.projectRoot), realpathSync.native(ancestor))
   if (physical === ".." || physical.startsWith(`..${sep}`) || isAbsolute(physical)) {
     throw new Error("run directory resolves outside the project")
   }

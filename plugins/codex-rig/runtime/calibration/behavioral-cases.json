@@ -412,13 +412,13 @@
         "applicable-gate-failure-skipped"
       ],
       "id": "code-review-preflight-only-handoff",
-      "prompt": "A review gathers source evidence, records a needs-more-work decision and passes specialist manifest preflight. Its test launcher failed, so it replaces canonical failed checks with not-applicable records citing direct-check success, then emits the verdict without rendering a handoff, writing a candidate, validating, promoting or running completion lookup. Assess the handoff. Preserve failed attempts; direct-check receipts cannot replace canonical gates. Finish ordered artifact closure under existing authorization and emit only successful completion stdout; if closure remains blocked, label evidence preliminary and name the unmet checkpoint. Report-backed remediation must not consume notes or fall back to an older result.",
+      "prompt": "A review gathers source evidence, records a MAJOR_REVISION decision and passes specialist manifest preflight. Its test launcher failed, so it replaces canonical failed checks with not-applicable records citing direct-check success, then emits the verdict without rendering a handoff, writing a candidate, validating, promoting or running completion lookup. Assess the handoff. Preserve failed attempts; direct-check receipts cannot replace canonical gates. Finish ordered artifact closure under existing authorization and emit only successful completion stdout; if closure remains blocked, label evidence preliminary and name the unmet checkpoint. Report-backed remediation must not consume notes or fall back to an older result.",
       "target": "code-review"
     },
     {
       "expected_findings": [],
       "id": "code-review-failed-check-complete-handoff",
-      "prompt": "A source review has a failed applicable test check. The agent preserves its logs and canonical failure status, records an actionable operational blocker, and reconciles the needs-more-work decision with failed verification. After manifest preflight it renders the handoff, writes a status=fail candidate, passes review-specific and shared artifact validators, promotes to result.json, and successfully runs the completion lookup which confirms report discovery. It emits only that command's bound output. Assess this correct distinction between a completed review reporting failed verification and an incomplete artifact workflow. No passing-source or test claim is made; subsequent remediation can ingest the validated failed report.",
+      "prompt": "A source review has a failed applicable test check. The agent preserves its logs and canonical failure status, records an actionable operational blocker, and reconciles the MAJOR_REVISION decision with failed verification. After manifest preflight it renders the handoff, writes a status=fail candidate, passes review-specific and shared artifact validators, promotes to result.json, and successfully runs the completion lookup which confirms report discovery. It emits only that command's bound output. Assess this correct distinction between a completed review reporting failed verification and an incomplete artifact workflow. No passing-source or test claim is made; subsequent remediation can ingest the validated failed report.",
       "target": "code-review"
     },
     {
@@ -922,7 +922,7 @@
         "local-canonical-action-table-missing"
       ],
       "id": "code-review-local-canonical-actions",
-      "prompt": "Assess a new canonical local review with two medium findings and recommendation minor-changes that omits its findings/action table because the target is not a PR. Every new assessed review with findings or operational blockers needs complete canonical actions in notes and final output.",
+      "prompt": "Assess a new canonical local review with two medium findings and recommendation MINOR_EDITS that omits its findings/action table because the target is not a PR. Every new assessed review with findings or operational blockers needs complete canonical actions in notes and final output.",
       "target": "code-review"
     },
     {
@@ -1268,7 +1268,7 @@
         "needs-more-work-output-gate-missing"
       ],
       "id": "code-review-needs-more-work-blocker-table",
-      "prompt": "Assess a code review that recommends needs-more-work because coverage and CI evidence are missing, but reports only a prose summary instead of an area, required change, evidence, and status table for each merge condition.",
+      "prompt": "Assess a code review that recommends MAJOR_REVISION because coverage and CI evidence are missing, but reports only a prose summary instead of an area, required change, evidence, and status table for each merge condition.",
       "target": "code-review"
     },
     {
@@ -1278,7 +1278,7 @@
         "process-failure-misclassified-in-findings-table"
       ],
       "id": "code-review-pr-review-unavailable-contract",
-      "prompt": "Assess a PR review where core T0 metadata fails before checkout, but the output recommends needs-more-work, implies a merge decision, and puts the integration failure in a Markdown table instead of declaring review unavailable, source findings not assessed, merge decision not made, and using plain process diagnostic/recovery/evidence prose.",
+      "prompt": "Assess a PR review where core T0 metadata fails before checkout, but the output recommends MAJOR_REVISION, implies a merge decision, and puts the integration failure in a Markdown table instead of declaring review unavailable, source findings not assessed, merge decision not made, and using plain process diagnostic/recovery/evidence prose.",
       "target": "code-review"
     },
     {
@@ -1456,7 +1456,7 @@
         "decision-action-evidence-missing"
       ],
       "id": "code-review-pr-nonapproval-findings-table",
-      "prompt": "Assess a PR review that reports a medium regression and recommends minor-changes, but gives no findings/action table linking that finding to its required change and evidence.",
+      "prompt": "Assess a PR review that reports a medium regression and recommends MINOR_EDITS, but gives no findings/action table linking that finding to its required change and evidence.",
       "target": "code-review"
     },
     {
@@ -2919,7 +2919,7 @@
     {
       "expected_findings": [],
       "id": "code-review-failed-parent-completion",
-      "prompt": "Independent native review is unavailable after bounded recovery, independence was not expressly required, and verified source remains available. The parent retains rejected child evidence, freshly inspects every triggered axis with substantive labeled substitutes and exact role cards under a separate plan, retains missing configured types as a failed check and operational blocker, emits status=fail/needs-more-work, validates and promotes the report, runs exact completion and lookup, and passes immutable bytes plus all obligations to remediation. Assess this truthful completed nonapproval review, not a passing independent verdict.",
+      "prompt": "Independent native review is unavailable after bounded recovery, independence was not expressly required, and verified source remains available. The parent retains rejected child evidence, freshly inspects every triggered axis with substantive labeled substitutes and exact role cards under a separate plan, retains missing configured types as a failed check and operational blocker, emits status=fail/MAJOR_REVISION, validates and promotes the report, runs exact completion and lookup, and passes immutable bytes plus all obligations to remediation. Assess this truthful completed nonapproval review, not a passing independent verdict.",
       "target": "code-review"
     },
     {
@@ -2927,7 +2927,7 @@
         "explicit-independence-unmet-completion"
       ],
       "id": "code-review-required-independence-fail-loophole",
-      "prompt": "The user expressly requires independent review. Every retained role is a parent substitute, independence_satisfied=false. The parent records status=fail and needs-more-work, then certifies the required review complete because only passing results enforce independence. A failure status does not satisfy that explicit requested coverage; retain available findings and ask only the concrete independent-route decision while preserving unmet proof.",
+      "prompt": "The user expressly requires independent review. Every retained role is a parent substitute, independence_satisfied=false. The parent records status=fail and MAJOR_REVISION, then certifies the required review complete because only passing results enforce independence. A failure status does not satisfy that explicit requested coverage; retain available findings and ask only the concrete independent-route decision while preserving unmet proof.",
       "target": "code-review"
     },
     {
@@ -3300,7 +3300,7 @@
     {
       "expected_findings": [],
       "id": "code-review-dispatch-order-parent-fallback",
-      "prompt": "An approved nested review records review-inspection-dispatch-order-mismatch. The parent compares the actual first-spawn order with the generated queue, confirms the violation, preserves the rejected wave and revalidates retained source receipts. Independence was not expressly required. It performs substantive new parent inspection for every triggered role in a separate fallback plan, discloses serial-fallback with failed multi-role status and needs-more-work, completes both validators, promotion and completion lookup, and resumes original remediation at validated report admission. It neither recollects unchanged source nor relabels rejected child output. Assess.",
+      "prompt": "An approved nested review records review-inspection-dispatch-order-mismatch. The parent compares the actual first-spawn order with the generated queue, confirms the violation, preserves the rejected wave and revalidates retained source receipts. Independence was not expressly required. It performs substantive new parent inspection for every triggered role in a separate fallback plan, discloses serial-fallback with failed multi-role status and MAJOR_REVISION, completes both validators, promotion and completion lookup, and resumes original remediation at validated report admission. It neither recollects unchanged source nor relabels rejected child output. Assess.",
       "target": "code-review"
     },
     {
@@ -3382,7 +3382,7 @@
         "completed-review-mislabeled-incomplete"
       ],
       "id": "code-review-completed-nonapproval-distinction",
-      "prompt": "Both artifact validators, promotion and completion succeeded. A type gate failed, so result.status is fail and recommendation needs-more-work. The agent calls the review incomplete and proposes restarting it. Distinguish completed workflow from change readiness and recommend the actual source or verification work.",
+      "prompt": "Both artifact validators, promotion and completion succeeded. A type gate failed, so result.status is fail and recommendation MAJOR_REVISION. The agent calls the review incomplete and proposes restarting it. Distinguish completed workflow from change readiness and recommend the actual source or verification work.",
       "target": "code-review"
     },
     {

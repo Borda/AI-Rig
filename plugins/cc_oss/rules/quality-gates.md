@@ -100,7 +100,7 @@ Applies to: agent files, skill files, CLAUDE.md, any markdown.
 
 1. Call **Write tool** to create `.temp/output-<slug>-<branch>-<YYYY-MM-DD>.md` where `<branch>` is `$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')` (new file — never overwrite; append counter suffix if slug exists, e.g. `-2.md`); file gets **full content**
 2. Print to terminal in order:
-   - a. **YAML header table** — render `---` metadata block from top of report file as simple two-column Markdown table (`Field | Value`, one row per key, each value single physical line ≤100 chars — never wrap a value inside a cell: wrapped continuation line loses leading `|`, breaks GFM table parsing from that row down) — never print raw YAML verbatim (see **Report File Format** below); if skill has no YAML block in file, fall back to plain ASCII verdict line; no Unicode box-drawing chars (`─`, `═`, `│`, `┌` etc.); use `·` as separator: `verdict: ⚠ NEEDS_WORK · findings: 8 · critical: 0 · high: 2 · medium: 4 · low: 2 · confidence: 0.88` (verdict word prefixed with its symbol — see §Reporting Findings)
+   - a. **YAML header table** — render `---` metadata block from top of report file as simple two-column Markdown table (`Field | Value`, one row per key, each value single physical line ≤100 chars — never wrap a value inside a cell: wrapped continuation line loses leading `|`, breaks GFM table parsing from that row down) — never print raw YAML verbatim (see **Report File Format** below); if skill has no YAML block in file, fall back to plain ASCII verdict line; no Unicode box-drawing chars (`─`, `═`, `│`, `┌` etc.); use `·` as separator: `verdict: ⚠ MAJOR_REVISION · findings: 8 · critical: 0 · high: 2 · medium: 4 · low: 2 · confidence: 0.88` (verdict word prefixed with its symbol — see §Reporting Findings)
    - b. **Report path** — `→ <filepath>`
    - c. **Executive summary** — prose: 2–3 sentence overview + each critical/high finding listed; omit medium/low detail unless ≤2 total findings
    - d. **Conditional follow-up gate** — invoke `AskUserQuestion` only when a required decision or authorization is missing; output length never triggers a question. Continue an already-authorized next action in the same turn. Background/pipeline work returns any missing decision to its owner.
@@ -133,7 +133,7 @@ Date:       [YYYY-MM-DD]
 Scope:      [what was analyzed — file paths, PR#, repo, run-id, etc.]
 Focus:      [aspect examined — e.g. "code review", "repo vitality", "thread triage"]
 Agents:     [agent names that contributed — comma-separated]
-Outcome:    [verdict — ✓ APPROVE | ⚠ NEEDS_WORK | ✗ BLOCKED | etc.]
+Outcome:    [verdict — ✓ APPROVE | ⚠ MAJOR_REVISION | ✗ BLOCKED | etc.]
 Confidence: [score] — [key gaps]
 Next steps: [recommended follow-up skill invocation]
 Path:       → .reports/<skill>/<timestamp>/<name>.md

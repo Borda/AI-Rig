@@ -115,7 +115,7 @@ function resolveInsideProject(projectRoot: string, path: string): string {
   }
   let ancestor = absolute
   while (!lstatSync(ancestor, { throwIfNoEntry: false })) ancestor = dirname(ancestor)
-  const physical = relative(realpathSync(projectRoot), realpathSync(ancestor))
+  const physical = relative(realpathSync.native(projectRoot), realpathSync.native(ancestor))
   if (physical === ".." || physical.startsWith(`..${sep}`) || isAbsolute(physical)) {
     throw new Error(`path resolves outside the project: ${path}`)
   }
@@ -301,7 +301,7 @@ function readBaseline(path: string): TrivialBaseline | undefined {
 function physicalAncestor(projectRoot: string, path: string): string {
   let current = resolveInsideProject(projectRoot, path)
   for (;;) {
-    if (existsSync(current)) return realpathSync(current)
+    if (existsSync(current)) return realpathSync.native(current)
     const parent = dirname(current)
     if (parent === current) return ""
     current = parent
@@ -317,10 +317,10 @@ function insideScope(projectRoot: string, path: string, scope: readonly string[]
 /** Refuse a current owned-path state that would escape the project or its source. */
 function assertOwnedPathsSafe(paths: RigPaths, run: RunRecord): void {
   if (!run.trivial_plan?.trim() || run.plan) return
-  const realArtifactRoot = existsSync(paths.artifactRoot) ? realpathSync(paths.artifactRoot).toLowerCase() : ""
+  const realArtifactRoot = existsSync(paths.artifactRoot) ? realpathSync.native(paths.artifactRoot).toLowerCase() : ""
   const gitDirs = [resolve(paths.projectRoot, ".git"), resolveGitCommonDir(paths.projectRoot)]
     .filter((value): value is string => value !== undefined && existsSync(value))
-    .map((value) => realpathSync(value).toLowerCase())
+    .map((value) => realpathSync.native(value).toLowerCase())
   for (const path of run.scope.paths) {
     const absolute = resolveInsideProject(paths.projectRoot, path)
     const stat = lstatSync(absolute, { throwIfNoEntry: false })
@@ -777,11 +777,11 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
             scopePaths = trivialOwned
             const artifactRoot = relative(paths.projectRoot, paths.artifactRoot).split(sep).join("/").toLowerCase()
             const realArtifactRoot = existsSync(paths.artifactRoot)
-              ? realpathSync(paths.artifactRoot).toLowerCase()
+              ? realpathSync.native(paths.artifactRoot).toLowerCase()
               : ""
             const gitDirs = [resolve(paths.projectRoot, ".git"), resolveGitCommonDir(paths.projectRoot)]
               .filter((value): value is string => value !== undefined && existsSync(value))
-              .map((value) => realpathSync(value))
+              .map((value) => realpathSync.native(value))
             for (const path of trivialOwned) {
               const lowered = path.toLowerCase()
               const absolute = resolveInsideProject(paths.projectRoot, path)
@@ -1791,7 +1791,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         if (!input.commit || !input.worktree || !input.ref) throw new Error("approve requires commit, worktree and ref")
         if (!isAbsolute(input.worktree) || !isReviewWorktree(input.worktree))
           throw new Error("worktree must be an absolute path under <temp>/opencode/review-*")
-        const realWorktree = realpathSync(input.worktree)
+        const realWorktree = realpathSync.native(input.worktree)
         if (input.confirm !== TRUST_WORDS)
           throw new Error(`approve requires the user's literal '${TRUST_WORDS}' answer in confirm`)
 
@@ -1848,13 +1848,13 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           throw new Error("sandbox image must be digest-pinned as <repository>@sha256:<64 hex>")
         let realWorktree: string
         try {
-          realWorktree = realpathSync(input.worktree)
+          realWorktree = realpathSync.native(input.worktree)
         } catch {
           // A missing path is not a project root or review worktree; report that
           // boundary instead of leaking a platform-specific ENOENT.
           throw new Error("worktree must be the project root or a review worktree under <temp>/opencode/review-*")
         }
-        if (realWorktree !== realpathSync(paths.projectRoot) && !isReviewWorktree(realWorktree))
+        if (realWorktree !== realpathSync.native(paths.projectRoot) && !isReviewWorktree(realWorktree))
           throw new Error("worktree must be the project root or a review worktree under <temp>/opencode/review-*")
         const active =
           typeof context.sessionID === "string" ? activeRun(paths.artifactRoot, context.sessionID) : undefined

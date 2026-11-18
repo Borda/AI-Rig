@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.49.0
+
+- The review header table printed in the terminal omits the file-only fields `Link`, `Date`, `Commit SHA`, `Agents`, `Review contract`, `Rating scale`, `Readiness` and `Gate` and shows `PR` as a link; the report file keeps every field and the delivery check accepts either form.
+- The review rating scale label is now `source-5-v2`, matching `/oss:review`.
+- `/develop:review` now names level 3 of its review scale `MAJOR_REVISION` instead of `NEEDS_WORK`, so the report outcome reads `APPROVE`, `MINOR_EDITS`, `MAJOR_REVISION`, `INSUFFICIENT_BUT_PROMISING`, `REJECT` and matches `/oss:review`; the shared cross-validation protocol copy carries the new name.
+
 ## 0.48.0
 
 - Codex out-of-credit stop: once a bridge call fails and its incident file records fault `quota-exhausted`, a develop run stops calling Codex for the rest of the run.

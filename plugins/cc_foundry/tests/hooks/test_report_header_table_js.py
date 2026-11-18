@@ -404,6 +404,59 @@ class TestDeliveryProblem:
         assert problem.startswith("current audit findings were not delivered; emit Step 7 before following up")
 
 
+_REVIEW_REPORT = (
+    "---\nTitle: oss-review — feat: add backend\nPR: #1712\nLink: https://github.com/o/r/pull/1712\nDate: 2026-11-18\n"
+    "Commit SHA: 02e12f40\nPR Type: feat\nAgents: sw-engineer, qa-specialist\nReview contract: 1\n"
+    "Rating scale: source-5-v2\nReadiness: blocked\nCI: passing (5/5)\nGate: REVIEW_V1_PASS\nOutcome: MINOR_EDITS\n"
+    "Summary: Sound additive backend.\n---\n"
+)
+_SHORT_REVIEW_ROWS = (
+    "| Title | oss-review — feat: add backend |\n| PR | [#1712](https://github.com/o/r/pull/1712) |\n"
+    "| PR Type | feat |\n| CI | passing (5/5) |\n| Outcome | MINOR_EDITS |\n| Summary | Sound additive backend. |"
+)
+
+
+@_skip_node_unavailable
+class TestReviewTerminalTable:
+    """A review report prints a shorter terminal table: file-only bookkeeping rows may be left out."""
+
+    @staticmethod
+    def _problem(tmp_path: Path, report_text: str, table_rows: str) -> object:
+        """Write the report, a transcript whose final reply is the given table, and return the delivery problem."""
+        report = tmp_path / "report.md"
+        report.write_text(report_text, encoding="utf-8")
+        reply = f"| Field | Value |\n| --- | --- |\n{table_rows}\n| Path | → {report} |"
+        return _call("deliveryProblem", str(report), str(_reply_transcript(tmp_path, reply)))
+
+    def test_the_short_table_is_delivered(self, tmp_path: Path) -> None:
+        """The table passes without the eight file-only rows."""
+        assert self._problem(tmp_path, _REVIEW_REPORT, _SHORT_REVIEW_ROWS) is None
+
+    def test_the_full_table_is_still_delivered(self, tmp_path: Path) -> None:
+        """Printing every field keeps passing, so a producer that has not adopted the short table is not blocked."""
+        rows = "\n".join(
+            f"| {line.split(': ', 1)[0]} | {line.split(': ', 1)[1]} |" for line in _REVIEW_REPORT.splitlines()[1:-1]
+        )
+        assert self._problem(tmp_path, _REVIEW_REPORT, rows) is None
+
+    @pytest.mark.parametrize("dropped", ["Title", "PR", "PR Type", "CI", "Outcome", "Summary"])
+    def test_a_required_row_left_out_is_refused(self, tmp_path: Path, dropped: str) -> None:
+        """Only the file-only fields may be omitted; every other header field must still appear."""
+        rows = "\n".join(line for line in _SHORT_REVIEW_ROWS.splitlines() if not line.startswith(f"| {dropped} |"))
+        assert self._problem(tmp_path, _REVIEW_REPORT, rows) is not None
+
+    def test_a_report_without_gate_keeps_every_field_required(self, tmp_path: Path) -> None:
+        """The omission applies to review headers only: another report's Date row is still required."""
+        report_text = "---\nTitle: t\nDate: 2026-11-18\nOutcome: PASS\nSummary: s\n---\n"
+        assert self._problem(tmp_path, report_text, "| Title | t |\n| Outcome | PASS |\n| Summary | s |") is not None
+        assert (
+            self._problem(
+                tmp_path, report_text, "| Title | t |\n| Date | 2026-11-18 |\n| Outcome | PASS |\n| Summary | s |"
+            )
+            is None
+        )
+
+
 @_skip_node_unavailable
 class TestQuestionSummaryFields:
     """Only first-question text supplies summary evidence."""

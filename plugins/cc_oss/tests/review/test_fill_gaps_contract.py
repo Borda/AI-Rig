@@ -128,16 +128,16 @@ def _prior(tmp_path: Path) -> Path:
     run = tmp_path / ".reports/review/pr-8/run-001"
     run.mkdir(parents=True)
     (run / "review-report.md").write_text(
-        "---\nTitle: Review\nPR: #8\nReview contract: 1\nRating scale: source-5-v1\nReadiness: complete\n"
-        "Gate: REVIEW_V1_PASS\nOutcome: NEEDS_WORK\nSummary: partial.\n---\n",
+        "---\nTitle: Review\nPR: #8\nReview contract: 1\nRating scale: source-5-v2\nReadiness: complete\n"
+        "Gate: REVIEW_V1_PASS\nOutcome: MAJOR_REVISION\nSummary: partial.\n---\n",
         encoding="utf-8",
         newline="\n",
     )
     (run / "head-sha.txt").write_text(_PRIOR_HEAD + "\n", encoding="utf-8", newline="\n")
     data = {
         "contract_version": 1,
-        "rating_scale": "source-5-v1",
-        "source_outcome": "NEEDS_WORK",
+        "rating_scale": "source-5-v2",
+        "source_outcome": "MAJOR_REVISION",
         "source_rating": 3,
         "readiness": "complete",
         "readiness_reason": "checked",
@@ -388,8 +388,8 @@ def _publish_fill_run(prior: Path, tmp_path: Path) -> Path:
     run.mkdir()
     (run / fgs.PLAN_NAME).write_text(json.dumps(plan), encoding="utf-8", newline="\n")
     (run / "review-report.md").write_text(
-        "---\nTitle: Review\nPR: #8\nReview contract: 1\nRating scale: source-5-v1\nReadiness: blocked\n"
-        "Gate: REVIEW_V1_BLOCK\nOutcome: NEEDS_WORK\nSummary: fill-gaps run.\n---\n",
+        "---\nTitle: Review\nPR: #8\nReview contract: 1\nRating scale: source-5-v2\nReadiness: blocked\n"
+        "Gate: REVIEW_V1_BLOCK\nOutcome: MAJOR_REVISION\nSummary: fill-gaps run.\n---\n",
         encoding="utf-8",
         newline="\n",
     )
@@ -698,7 +698,7 @@ def _null_aggregate_all_reviewers_missing(data: dict) -> None:
 
 
 def _null_aggregate_over_judged_reviewers(data: dict) -> None:
-    """Label the aggregate outcome null although every reviewer judged NEEDS_WORK: an aggregate label slip only.
+    """Label the aggregate outcome null although every reviewer judged MAJOR_REVISION: an aggregate label slip only.
 
     The new consolidator recomputes the aggregate outcome over the merged assessments, so the carried judgments let it
     write a judged outcome without re-running any reviewer.
@@ -1040,7 +1040,7 @@ def _triage_outcome_slip_only_gap(report: Path) -> None:
     _triage_header_only_gap(report)
     _mutate_prior(report, lambda data: data.update(source_outcome=None, source_rating=None))
     text = report.read_text(encoding="utf-8").replace("Readiness: complete", "Readiness: blocked")
-    report.write_text(text.replace("Outcome: NEEDS_WORK", "Outcome: null"), encoding="utf-8", newline="\n")
+    report.write_text(text.replace("Outcome: MAJOR_REVISION", "Outcome: null"), encoding="utf-8", newline="\n")
 
 
 @pytest.mark.parametrize(
@@ -1338,3 +1338,11 @@ def test_unmappable_role_blocks_and_merged_dimensions_share_a_spawn() -> None:
     assert [(u["unit"], u["files"]) for u in units] == [
         ("review-perf-api", ["foundry--perf-optimizer.md", "foundry--solution-architect.md"])
     ]
+
+
+def test_a_prior_on_the_archived_scale_cannot_be_completed_piecemeal(prior: Path) -> None:
+    """A prior labelled ``source-5-v1`` is refused, so carried assessments never keep archived level names."""
+    sidecar = prior.parent / "review-validation.json"
+    sidecar.write_text(sidecar.read_text(encoding="utf-8").replace("source-5-v2", "source-5-v1"), encoding="utf-8")
+    with pytest.raises(fgs.FillGapsBlocked, match="archived scale"):
+        fgs._read_prior(prior, "8")

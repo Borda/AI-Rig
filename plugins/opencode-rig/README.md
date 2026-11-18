@@ -1,6 +1,6 @@
 # opencode-rig
 
-Current version: `0.11.0`
+Current version: `0.12.0`
 
 Evidence-first delivery workflows for [OpenCode](https://opencode.ai): frozen plans, recorded gates, independent review, adversarial convergence, and Git guardrails that keep publication human-owned.
 
@@ -81,6 +81,7 @@ Run a workflow through its slash command, or load the matching skill by name.
 
 Every workflow follows the same envelope: classify the request, collect authoritative source, act in small batches, verify with configured checks, finalize the run, then report limits honestly. A non-trivial plan carries a depth-first task tree (leaves with one owner and one acceptance check) and is challenged until it converges. A frozen-plan implementation records one final independent challenge bound to its final bytes, resolves every finding, and runs a recorded fix-and-re-challenge loop when that challenge reports a security, critical or high issue. A trivial change starts from a structured mini-plan, and the run reports its own measured change; exceeding the guideline is a recorded limit rather than a failed run. Every handoff leads with the shared [handoff table](src/resources/references/handoff.md): verdict, alignment with the project's codebase and direction, findings by severity, the next action, and confidence with its largest limit, followed by the evidence that supports each value.
 
+A review verdict is a source judgment on one five-level scale: `APPROVE`, `MINOR_EDITS`, `MAJOR_REVISION`, `INSUFFICIENT_BUT_PROMISING` or `REJECT`, or `null` when no defensible judgment exists. A missing check or unavailable reviewer lowers confidence instead of producing a rejection. `investigated` and `blocked` report diagnostic and blocked runs.
 
 `rig-research` covers docs, state-of-the-art comparisons, papers, experiment methodology, and paper-versus-code fidelity, and maps the recommendation onto the current code without editing it. `rig-distill` reads exact preselected run artifacts, instruction files, or an inventory record inside the project; external source identifiers, digests, and access limits are recorded as decisions and limits. It proposes new or extended assets and quoted instruction consolidation or pruning, but never installs, edits, or deletes anything. `rig-health` offers stale-run cleanup only in a separate workflow after explicit confirmation. `rig-optimize` only uses a benchmark that is already a configured gate, so a performance claim always has a reproducible command behind it. It refreshes each edited candidate's scope before measurement and preserves the baseline receipts.
 

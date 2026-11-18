@@ -95,7 +95,7 @@ if [[ "$CLEAN_ARGS" == *.md ]]; then
         echo "Error: plan files cannot be used as review report input. Pass a review report from .reports/review/pr-<N>/run-<NNN>/review-report.md or a PR number."
         exit 1
     fi
-    if [ -f "$CLEAN_ARGS" ] && grep -qE '^(Outcome: *(APPROVE|MINOR_EDITS|NEEDS_WORK|INSUFFICIENT_BUT_PROMISING|REJECT|REQUEST_CHANGES)|Gate: *(REVIEW_V1_)?(PASS|BLOCK|REJECT_[A-Z]+))([[:space:]]|$)' "$CLEAN_ARGS" 2>/dev/null; then  # timeout: 5000
+    if [ -f "$CLEAN_ARGS" ] && grep -qE '^(Outcome: *(APPROVE|MINOR_EDITS|MAJOR_REVISION|NEEDS_WORK|INSUFFICIENT_BUT_PROMISING|REJECT|REQUEST_CHANGES)|Gate: *(REVIEW_V1_)?(PASS|BLOCK|REJECT_[A-Z]+))([[:space:]]|$)' "$CLEAN_ARGS" 2>/dev/null; then  # timeout: 5000
         DIRECT_PATH_MODE=true
         REVIEW_FILE="$CLEAN_ARGS"
     else

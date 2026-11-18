@@ -66,6 +66,14 @@ Conclude supported, contradicted or unverified per claim, with provenance, teste
 
 For a change review, `Alignment` judges the diff against the repository's current module layout, naming, documentation, test conventions and dependency policy: name the conventions that decided the level and the surfaces that were not checked. A clean diff that contradicts the documented direction is `partial`, and a risky change that follows the established pattern with the risk stated is `high`.
 
+`Verdict` is the source judgment on the [verdict scale](../../references/handoff.md#verdict-scale), taken from the confirmed findings that remain after refuted, stale and already-fixed claims are removed:
+
+- `MINOR_EDITS`: every required correction has bounded impact and a localized remedy, including localized correctness, compatibility, test and documentation repairs. Documentation and missing-test gaps stay here unless a material consequence is shown.
+- `MAJOR_REVISION`: a remaining confirmed defect has material impact (a broken supported workflow or binding contract, data or compatibility loss) or needs substantial coupled repair; cite its finding IDs and why a minor correction is insufficient. A fixable critical defect belongs here even when its change is small.
+- `INSUFFICIENT_BUT_PROMISING` names the missing implementation and the useful initiative; `REJECT` cites the requirement the scope cannot fit and whether a different scope could.
+- Weigh the affected surface, realistic trigger and consequence before repair size. Finding count, severity labels or reviewer votes alone never choose the level, and many minor findings never dilute one dominant finding.
+- A missing check, unavailable reviewer or absent hardware is a coverage limit that lowers confidence, never grounds for `INSUFFICIENT_BUT_PROMISING` or `REJECT`. An inspected scope that stays undecidable is `null`, with its prerequisite and next check.
+
 Report run ID, scope digest, axes run and skipped, findings by severity, coverage limits, and confidence.
 
 Reviewer independence is instruction-enforced: the tools accept a reviewer identity string without authenticating its dispatch session. Report the actual independent reviewer and any unavailable review; never present that string as session attestation.

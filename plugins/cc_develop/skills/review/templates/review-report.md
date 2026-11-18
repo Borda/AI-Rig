@@ -8,12 +8,12 @@ Scope:        [key changed files]
 Focus:        [scope label — change summary]
 Agents:       [agents that ran]
 Review contract: 1
-Rating scale: source-5-v1
+Rating scale: source-5-v2
 Readiness:    [complete | blocked | incomplete]
 Reviewers:    Role [rating], Role [rating]
 CI:           [actual parent-supplied CI evidence, or N/A (no CI evidence supplied)]
 Gate:         [REVIEW_V1_PASS | REVIEW_V1_BLOCK | REVIEW_V1_REJECT_<GROUND> @<sha>]
-Outcome:      [APPROVE | MINOR_EDITS | NEEDS_WORK | INSUFFICIENT_BUT_PROMISING | REJECT | null]
+Outcome:      [APPROVE | MINOR_EDITS | MAJOR_REVISION | INSUFFICIENT_BUT_PROMISING | REJECT | null]
 Summary:      [review summary]
 Confidence:   [aggregate score] — [key gaps]
 Next steps:   [actions, blockers first]
@@ -105,5 +105,5 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficie
 > - Classify `Change Type` by intent using `fix`, `feat`, `refactor`, `perf`, `docs`, `ci`, `chore`, `test`, or `mixed`; never classify by file count or commit message.
 > - List key changed files in `Scope`, comma-separated, and keep `Focus` to one line.
 > - List agent names that ran, comma-separated; list actual reviewers using role names only and `Role [rating]` entries, without execution-origin labels.
-> - Use `APPROVE`, `MINOR_EDITS`, `NEEDS_WORK`, `INSUFFICIENT_BUT_PROMISING`, `REJECT`, or literal `null` for `Outcome`; summarize key findings in 1–2 sentences.
+> - Use `APPROVE`, `MINOR_EDITS`, `MAJOR_REVISION`, `INSUFFICIENT_BUT_PROMISING`, `REJECT`, or literal `null` for `Outcome`; summarize key findings in 1–2 sentences.
 > - Put blockers first in `Next steps` and list no more than five, as specified in `consolidator-prompt.md`.

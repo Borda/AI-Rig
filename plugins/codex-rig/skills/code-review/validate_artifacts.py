@@ -178,7 +178,7 @@ REQUIRED_SECTIONS = (
     "Confidence Gaps",
     "Confidence Calibration",
 )
-#: Recommendation values a review verdict may use.
+#: Recommendation values a historical review verdict without ``review_validation`` may use.
 VALID_RECOMMENDATIONS = {
     "accept-as-is",
     "minor-changes",
@@ -186,6 +186,20 @@ VALID_RECOMMENDATIONS = {
     "insufficient-but-promising",
     "reject",
     "not-aligned",
+}
+#: Source verdict spellings per ``review_validation.source_rating_version``, ordered from level 1 (approve) to
+#: level 5 (block). Version 2 is the unified ``source-5-v2`` scale every new review writes; version 1 is the labeled
+#: historical reader for the earlier lowercase names. One artifact never mixes the two vocabularies.
+SOURCE_VERDICTS: dict[int, tuple[str, ...]] = {
+    1: ("accept-as-is", "minor-changes", "needs-more-work", "insufficient-but-promising", "reject"),
+    2: ("APPROVE", "MINOR_EDITS", "MAJOR_REVISION", "INSUFFICIENT_BUT_PROMISING", "REJECT"),
+}
+#: Canonical token (the highest version's spelling, the one new review artifacts write) for every versioned source
+#: verdict spelling, so gates judge levels, not spellings.
+CANONICAL_SOURCE_VERDICTS = {
+    spelling: SOURCE_VERDICTS[max(SOURCE_VERDICTS)][level]
+    for spellings in SOURCE_VERDICTS.values()
+    for level, spelling in enumerate(spellings)
 }
 #: Reason codes that justify closing a PR at the close gate.
 CLOSE_CODES = {
@@ -813,20 +827,18 @@ def _validate_review_validation(metadata: dict[str, Any], result: dict[str, Any]
         or set(validation)
         != {"schema_version", "source_rating_version", "source_verdict", "verification_readiness", "candidates"}
         or validation["schema_version"] != 1
-        or validation["source_rating_version"] != 1
+        or type(validation["source_rating_version"]) is not int
+        or validation["source_rating_version"] not in SOURCE_VERDICTS
     ):
         raise SystemExit("review-validation-version-invalid")
     if metadata.get("finding_records_version") != 2:
         raise SystemExit("review-validation-finding-records-version")
     verdict = validation["source_verdict"]
-    if verdict not in {
-        None,
-        "accept-as-is",
-        "minor-changes",
-        "needs-more-work",
-        "insufficient-but-promising",
-        "reject",
-    }:
+    version = validation["source_rating_version"]
+    if verdict is not None and verdict not in SOURCE_VERDICTS[version]:
+        if any(verdict in spellings for spellings in SOURCE_VERDICTS.values()):
+            # A valid spelling from the other scale version: refuse the mix instead of guessing which field is wrong.
+            raise SystemExit(f"review-source-verdict-version-mismatch:{verdict}:source_rating_version={version}")
         raise SystemExit("review-source-verdict-invalid")
     if metadata.get("review_decision", {}).get("recommendation") != verdict:
         raise SystemExit("review-source-verdict-mismatch")
@@ -912,8 +924,27 @@ def _validate_review_validation(metadata: dict[str, Any], result: dict[str, Any]
         raise SystemExit(f"review-{readiness}-cannot-pass")
     if verdict is None and readiness == "complete":
         raise SystemExit("review-undecidable-requires-open-verification")
-    if verdict == "accept-as-is" and None in open_dispositions:
+    if _canonical_recommendation(verdict) == "APPROVE" and None in open_dispositions:
         raise SystemExit("review-unconditional-approval-with-open-concerns")
+
+
+def _canonical_recommendation(recommendation: object) -> object:
+    """Return the version 2 token for a versioned source verdict spelling, else the value unchanged.
+
+    Gates compare this canonical level, so a version 1 name and its version 2 token always reach the same decision.
+    Historical values outside the five-level scale (``not-aligned``, ``None``) pass through unchanged.
+
+    Examples:
+        >>> _canonical_recommendation("needs-more-work")
+        'MAJOR_REVISION'
+        >>> _canonical_recommendation("MAJOR_REVISION")
+        'MAJOR_REVISION'
+        >>> _canonical_recommendation("not-aligned")
+        'not-aligned'
+    """
+    if isinstance(recommendation, str):
+        return CANONICAL_SOURCE_VERDICTS.get(recommendation, recommendation)
+    return recommendation
 
 
 def _validate_candidate_source(out_dir: Path, metadata: dict[str, Any]) -> None:
@@ -949,8 +980,11 @@ def _validate_review_decision(metadata: dict[str, Any], result: dict[str, Any]) 
     recommendation = decision.get("recommendation")
     _validate_review_validation(metadata, result)
     new_ratings = metadata.get("review_validation") is not None
-    if recommendation not in VALID_RECOMMENDATIONS and not (new_ratings and recommendation is None):
+    # With review_validation, its own check already bound the recommendation to its source_rating_version
+    # vocabulary (or null); without it only the historical lowercase names are readable.
+    if not new_ratings and (not isinstance(recommendation, str) or recommendation not in VALID_RECOMMENDATIONS):
         raise SystemExit(f"invalid-review-recommendation:{recommendation!r}")
+    canonical = _canonical_recommendation(recommendation)
     for key in ("summary", "rationale"):
         value = decision.get(key)
         if not isinstance(value, str) or not value.strip():
@@ -988,7 +1022,7 @@ def _validate_review_decision(metadata: dict[str, Any], result: dict[str, Any]) 
         if new_ratings and any(assessment["rating"] is None for assessment in assessments):
             if metadata["review_validation"]["verification_readiness"] == "complete":
                 raise SystemExit("review-null-assessment-with-complete-verification")
-            if recommendation == "accept-as-is":
+            if canonical == "APPROVE":
                 raise SystemExit("review-unconditional-approval-with-undecidable-scope")
         passes = metadata.get("specialist_passes")
         if isinstance(passes, list):
@@ -1018,24 +1052,16 @@ def _validate_review_decision(metadata: dict[str, Any], result: dict[str, Any]) 
                 or len(set(authors)) != len(authors)
             ):
                 raise SystemExit("review-finding-authors-invalid")
-    if recommendation == "accept-as-is" and sum(findings.values()) != 0:
+    if canonical == "APPROVE" and sum(findings.values()) != 0:
         raise SystemExit("review-accept-with-findings")
-    if recommendation == "minor-changes" and (findings["critical"] or findings["high"]):
+    if canonical == "MINOR_EDITS" and (findings["critical"] or findings["high"]):
         raise SystemExit("review-minor-with-blocking-findings")
-    if recommendation in {"accept-as-is", "minor-changes"} and (
-        result.get("status") != "pass" or result.get("checks_failed")
-    ):
+    if canonical in {"APPROVE", "MINOR_EDITS"} and (result.get("status") != "pass" or result.get("checks_failed")):
         if not (
             new_ratings
             and (
-                (
-                    recommendation == "minor-changes"
-                    and metadata["review_validation"]["verification_readiness"] != "complete"
-                )
-                or (
-                    recommendation == "accept-as-is"
-                    and metadata["review_validation"]["verification_readiness"] == "blocked"
-                )
+                (canonical == "MINOR_EDITS" and metadata["review_validation"]["verification_readiness"] != "complete")
+                or (canonical == "APPROVE" and metadata["review_validation"]["verification_readiness"] == "blocked")
             )
         ):
             raise SystemExit("review-approval-with-failed-gates")
@@ -1068,12 +1094,12 @@ def _action_table_rows(notes_text: str) -> list[list[str]]:
 def _validate_action_table(notes_path: Path, result: dict[str, Any], metadata: dict[str, Any], scope: str) -> None:
     """Require actionable, evidence-backed rows for non-approval review outcomes."""
     decision = metadata["review_decision"]
-    recommendation = decision["recommendation"]
+    recommendation = _canonical_recommendation(decision["recommendation"])
     canonical_actions = metadata.get("finding_records_version") in {1, 2} and bool(
         metadata.get("review_findings") or metadata.get("operational_blockers")
     )
     if not canonical_actions and (
-        recommendation in {None, "accept-as-is"} or (scope != "pr" and recommendation != "needs-more-work")
+        recommendation in {None, "APPROVE"} or (scope != "pr" and recommendation != "MAJOR_REVISION")
     ):
         return
 
@@ -3521,7 +3547,7 @@ def _validate_batch_source_findings(out_dir: Path, result: dict[str, Any], manif
     current = metadata.get("review_validation")
     if not current and (
         (blocking and result.get("status") == "pass")
-        or metadata.get("review_decision", {}).get("recommendation") == "accept-as-is"
+        or _canonical_recommendation(metadata.get("review_decision", {}).get("recommendation")) == "APPROVE"
     ):
         raise SystemExit("review-batch-source-findings-unresolved")
     records = {item.get("id"): item for item in metadata.get("review_findings", [])}

@@ -95,10 +95,21 @@ STANDARD_COLUMNS = {
 }
 #: Skills the handoff renderer and validator accept: every standard-table skill plus code-review.
 SUPPORTED_SKILLS = frozenset((*STANDARD_COLUMNS, "code-review"))
-#: Allowed overall recommendations for a code-review handoff.
-REVIEW_RECOMMENDATIONS = frozenset(
-    {"accept-as-is", "minor-changes", "needs-more-work", "insufficient-but-promising", "reject", "not-aligned"}
+#: Historical lowercase code-review recommendations: ``source_rating_version`` 1 and unversioned handoffs.
+HISTORICAL_REVIEW_RECOMMENDATIONS = (
+    "accept-as-is",
+    "minor-changes",
+    "needs-more-work",
+    "insufficient-but-promising",
+    "reject",
+    "not-aligned",
 )
+#: Unified ``source-5-v2`` source verdict tokens written under ``source_rating_version`` 2, level 1 to level 5.
+SOURCE_VERDICT_TOKENS = ("APPROVE", "MINOR_EDITS", "MAJOR_REVISION", "INSUFFICIENT_BUT_PROMISING", "REJECT")
+#: Snapshot ``source_rating_version`` values that select the five-level source legend; 1 is the historical reader.
+SOURCE_RATING_VERSIONS = frozenset({1, 2})
+#: Allowed overall recommendations for a code-review handoff.
+REVIEW_RECOMMENDATIONS = frozenset((*HISTORICAL_REVIEW_RECOMMENDATIONS, *SOURCE_VERDICT_TOKENS))
 #: Required column headings for each named table in a code-review handoff.
 REVIEW_TABLE_COLUMNS = {
     "PR Snapshot": ("Field", "Value"),
@@ -139,6 +150,13 @@ REVIEW_PLAIN_SUMMARIES = {
     "insufficient-but-promising": "This review finds a promising contribution that needs substantially more implementation.",
     "None": "This review returned no source judgment; verification remains open.",
 }
+# A version 2 token reads exactly like the version 1 name for the same level.
+REVIEW_PLAIN_SUMMARIES.update(
+    {
+        token: REVIEW_PLAIN_SUMMARIES[name]
+        for name, token in zip(HISTORICAL_REVIEW_RECOMMENDATIONS, SOURCE_VERDICT_TOKENS)
+    }
+)
 
 
 class HandoffError(ValueError):
@@ -212,6 +230,39 @@ def review_commit_sha(run: Path, scope: str) -> str:
     return commits.pop()
 
 
+def _source_rating_version(table: dict[str, Any]) -> int | None:
+    """Return a snapshot table's supported source rating version, or ``None`` when it carries none.
+
+    Every supported version selects the same five-level source legend; only the verdict spelling differs.
+
+    Examples:
+        >>> _source_rating_version({"source_rating_version": 2})
+        2
+        >>> _source_rating_version({"source_rating_version": True}) is None
+        True
+    """
+    version = table.get("source_rating_version")
+    return version if type(version) is int and version in SOURCE_RATING_VERSIONS else None
+
+
+def _require_source_vocabulary(outcome_summary: str, tables: object) -> None:
+    """Refuse a review outcome whose verdict spelling belongs to another source rating version than its snapshot.
+
+    Version 2 snapshots take only the unified tokens; version 1 snapshots take only the historical lowercase names. A
+    handoff without a versioned snapshot keeps the spelling its result artifact already validated.
+    """
+    versions = {
+        _source_rating_version(table)
+        for table in (tables if isinstance(tables, list) else [])
+        if isinstance(table, dict)
+    } - {None}
+    recommendation = outcome_summary.removeprefix("Recommendation: ").removesuffix(".")
+    if (2 in versions and recommendation in HISTORICAL_REVIEW_RECOMMENDATIONS) or (
+        1 in versions and recommendation in SOURCE_VERDICT_TOKENS
+    ):
+        raise HandoffError("review-outcome-source-rating-version-mismatch")
+
+
 def _require_object(value: object, label: str) -> dict[str, Any]:
     """Return a JSON object or raise a stable contract error."""
     if not isinstance(value, dict):
@@ -275,7 +326,7 @@ def _validate_review_attribution(tables: list[dict[str, Any]], skill: str) -> No
             raise HandoffError("reviewers-empty")
         if "summary" in table:
             _require_string(table["summary"], "review-summary")
-        current = table.get("source_rating_version") == 1
+        current = _source_rating_version(table) is not None
         if "source_rating_version" in table and not current:
             raise HandoffError("source-rating-version-invalid")
         if current and table.get("verification_readiness") not in {"complete", "blocked", "incomplete"}:
@@ -564,7 +615,7 @@ def _validate_remaining(payload: dict[str, Any], row_ids: set[str], branch: str)
         if row_id in remaining_ids:
             raise HandoffError(f"remaining-row-id-duplicate:{row_id}")
         current_review = payload["skill"] == "code-review" and any(
-            table.get("source_rating_version") == 1 for table in payload["tables"]
+            _source_rating_version(table) is not None for table in payload["tables"]
         )
         if row_ids and row_id not in row_ids and not current_review:
             raise HandoffError(f"remaining-row-id-unknown:{row_id}")
@@ -726,6 +777,7 @@ def _validate_handoff(payload: object, *, allow_empty_remediation: bool = False)
             f"Recommendation: {recommendation}." for recommendation in (*REVIEW_RECOMMENDATIONS, None)
         }:
             raise HandoffError("review-outcome-not-canonical")
+        _require_source_vocabulary(outcome_summary, handoff.get("tables"))
     if "child_runs" in handoff:
         runs = handoff["child_runs"]
         if not isinstance(runs, list) or not runs:
@@ -825,7 +877,7 @@ def _render_table(
                 f"{item['role']} ({item['rating'] if item['rating'] is not None else 'no source judgment'})"
                 for item in table["reviewers"]
             )
-        current = table.get("source_rating_version") == 1
+        current = _source_rating_version(table) is not None
         lines.append(f"| Reviewers | {_table_cell(reviewers)}. |")
         if report_row is not None:
             lines.append(report_row)
@@ -1524,7 +1576,7 @@ def _render_v2_handoff(
         recommendation = outcome["summary"].removeprefix("Recommendation: ").removesuffix(".")
         plain_summary = (
             "The reviewed change needs more work before it can be accepted."
-            if current_review_summary and recommendation == "needs-more-work"
+            if current_review_summary and recommendation in {"needs-more-work", "MAJOR_REVISION"}
             else REVIEW_PLAIN_SUMMARIES[recommendation]
         )
         technical_summary = None

@@ -188,6 +188,8 @@ For each conflicted file:
 3. Edit tool: apply targeted replacements removing all conflict markers, producing correct resolved content — do NOT rewrite whole file; minimal targeted replacements only
 4. After resolving each file, stage it: git add -- <file>  (timeout: 3000)
 
+Read-only for execution: run no tests and no PR code; this step runs before the PR-code decision is recorded.
+
 Return ONLY a compact JSON envelope — no prose, no explanation:
 {\"status\":\"done\",\"resolved\":N,\"staged\":N,\"confidence\":0.N}
 ")

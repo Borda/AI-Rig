@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.34.1
+
+- The review report-header table check in the delivered `report-header-table.js` accepts the shorter terminal table for review reports, and the quality-gates rule example shows `MAJOR_REVISION` as the level 3 review outcome.
+
 ## 0.34.0
 
 - On Windows, the `--codemap` strict-mode `! BLOCKED` line now reaches the caller as UTF-8 instead of the ANSI codepage, so the em dash no longer corrupts the message or breaks a caller that decodes it as UTF-8.

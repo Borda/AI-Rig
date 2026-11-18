@@ -55,17 +55,17 @@ export function isReviewWorktree(path: string, tempRoot: string = tmpdir()): boo
   let realRoot = resolve(root)
   let realPath = resolve(path)
   try {
-    realRoot = realpathSync(root)
+    realRoot = realpathSync.native(root)
   } catch {
     // The temp root may not exist yet; the lexical root is the fallback.
   }
   try {
-    realPath = realpathSync(resolve(path))
+    realPath = realpathSync.native(resolve(path))
   } catch {
     // A worktree being added does not exist yet: resolve its parent so a
     // symlinked temp root still compares physically.
     try {
-      realPath = join(realpathSync(dirname(resolve(path))), basename(resolve(path)))
+      realPath = join(realpathSync.native(dirname(resolve(path))), basename(resolve(path)))
     } catch {
       // The parent does not exist either; the lexical path is the fallback.
     }
@@ -141,7 +141,7 @@ export function writeTrust(
   const record: TrustRecord = {
     schema: TRUST_SCHEMA,
     commit: input.commit,
-    worktree: realpathSync(input.worktree),
+    worktree: realpathSync.native(input.worktree),
     ref: input.ref,
     words: input.words,
     created_at: created.toISOString(),
@@ -156,14 +156,14 @@ export function writeTrust(
 export function trustFor(artifactRoot: string, directory: string, now: number = Date.now()): TrustStatus {
   let real: string
   try {
-    real = realpathSync(directory)
+    real = realpathSync.native(directory)
   } catch {
     return { status: "absent", reason: "directory does not exist" }
   }
   const records = readRecords(artifactRoot)
   const matching = records.filter((record) => {
     try {
-      return realpathSync(record.worktree) === real
+      return realpathSync.native(record.worktree) === real
     } catch {
       return false
     }

@@ -117,7 +117,7 @@ if _BIN_DIR not in sys.path:
 from _sentinel_io import write_private_text  # noqa: E402
 from check_bridge import bridge_status  # noqa: E402
 from find_review_report import (  # noqa: E402
-    _SOURCE_RATINGS,
+    _SCALE_V2,
     COMMIT_ID_RE,
     COMPLETED_NULL_MISLABEL,
     QA_ROLE_RE,
@@ -131,6 +131,7 @@ from find_review_report import (  # noqa: E402
     assess_report,
     duplicate_finding_id,
     finding_row_problem,
+    source_rating,
     supported_outcomes,
 )
 from mint_finding_ids import read_jsonl  # noqa: E402
@@ -159,7 +160,7 @@ _UNREPAIRABLE_RULES: Final = frozenset(
 _READINESS_CHOICES: Final = ("incomplete", "blocked", "complete")
 #: Stand-in judged aggregate outcome: the record rules tell a null outcome from a judged one, never one judgment from
 #: another.
-_JUDGED: Final = "NEEDS_WORK"
+_JUDGED: Final = "MAJOR_REVISION"
 #: Projection failure when the carried assessments support neither a null nor a judged aggregate outcome.
 _NO_OUTCOME: Final = (
     "no carried assessment supports an aggregate outcome (a null one needs a completed undecidable reviewer, "
@@ -416,6 +417,11 @@ def _load_prior(run_dir: Path) -> tuple[dict, list, str]:
         ) from exc
     if not isinstance(data, dict) or data.get("contract_version") != 1:
         raise FillGapsBlocked("prior review-validation.json is not contract_version=1")
+    if data.get("rating_scale") != _SCALE_V2:
+        raise FillGapsBlocked(
+            f"prior review-validation.json is not rating_scale={_SCALE_V2}: a review on the archived scale cannot be "
+            "completed piecemeal, because carried assessments would keep its level names; run a fresh review"
+        )
     if not all(isinstance(data.get(key), list) for key in ("assessments", "candidates", "open_concerns")):
         raise FillGapsBlocked("prior review-validation.json lacks assessments/candidates/open_concerns lists")
     if data.get("source_outcome") == "REJECT" or "REJECT_" in fields.get("Gate", ""):
@@ -540,7 +546,7 @@ def _stub_assessment(role: str, outcome: str | None, readiness: str) -> dict:
         "role": role,
         "presence": "completed",
         "source_outcome": outcome,
-        "source_rating": None if outcome is None else _SOURCE_RATINGS[outcome],
+        "source_rating": None if outcome is None else source_rating(outcome),
         "readiness": "blocked" if outcome is None else readiness,
         "coverage": _STUB,
         "rationale": _STUB,
@@ -611,13 +617,13 @@ def _outcome_choices(carried: list, rerun: bool) -> list[str | None]:
         ``None`` (null outcome) and/or a judged stand-in, in that order.
 
     Examples:
-        >>> judged = {"presence": "completed", "source_outcome": "NEEDS_WORK"}
+        >>> judged = {"presence": "completed", "source_outcome": "MAJOR_REVISION"}
         >>> undecided = {"presence": "completed", "source_outcome": None}
         >>> missing = {"presence": "missing", "source_outcome": None}
         >>> _outcome_choices([judged], False), _outcome_choices([undecided, missing], False)
-        (['NEEDS_WORK'], [None])
+        (['MAJOR_REVISION'], [None])
         >>> _outcome_choices([missing], False), _outcome_choices([missing], True)
-        ([], [None, 'NEEDS_WORK'])
+        ([], [None, 'MAJOR_REVISION'])
     """
     return [None, _JUDGED] if rerun else supported_outcomes(carried)
 

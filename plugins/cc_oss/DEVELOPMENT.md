@@ -173,7 +173,7 @@ Apply review findings to codebase. Reads live PR comments, saved review report, 
 
 - **Reject-gate interlock:** if the newest `/oss:review` report for this PR carries `Gate: REJECT_<GROUND>` (any of the 8 grounds under "/review" above), resolve refuses to start unless the PR's head commit has changed since that review — a rejected premise isn't something a code fix resolves.
 - `Gate: BLOCK` (e.g. red CI) and everything else proceed normally — resolve is exactly the fix path for those.
-- **Report verdicts:** review writers keep `Outcome:` to `APPROVE`, `NEEDS_WORK` or `REQUEST_CHANGES`, optionally preceded by its verdict symbol; counts belong in `Summary:`.
+- **Report verdicts:** review writers keep `Outcome:` to `APPROVE`, `MINOR_EDITS`, `MAJOR_REVISION`, `INSUFFICIENT_BUT_PROMISING`, `REJECT` or literal `null` (archived reports with `NEEDS_WORK` or `REQUEST_CHANGES` are still read), optionally preceded by its verdict symbol; counts belong in `Summary:`.
   - Report intake also accepts case and word-separator variations or trailing detail from existing reports.
   - Missing verdicts, placeholders and glued suffixes keep the report incomplete.
 - **Report source is resolved once, PR-scoped.**

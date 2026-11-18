@@ -96,8 +96,8 @@ echo "REVIEW_FILE=${REVIEW_FILE:-none}"
 ```
 
 - `none` → skip this check (informational: no prior review on file for this PR/branch).
-- Match under `.reports/review/pr-*/run-*/review-report.md` or the legacy pre-rename `.reports/review/*/review-report.md` (both oss lineage) → read its `Outcome:` YAML field (token alone, optional leading `✓`/`⚠`/`✗`). Token `NEEDS_WORK` or `REJECT` → add to Phase 2 Findings summary: `| Upstream review blocking | ✗ <REVIEW_FILE> reports <Outcome value> | <path> | critical |`. `APPROVE`/`MINOR_EDITS`/`INSUFFICIENT_BUT_PROMISING`/`null` → no finding.
-- Match under `.reports/codex/review/*/review-notes.md` (codex lineage) → grep `Recommendation:` / `Blocking findings:` lines. `needs-more-work` with non-empty `Blocking findings:` → same critical finding, quoting the blocking finding IDs.
+- Match under `.reports/review/pr-*/run-*/review-report.md` or the legacy pre-rename `.reports/review/*/review-report.md` (both oss lineage) → read its `Outcome:` YAML field (token alone, optional leading `✓`/`⚠`/`✗`). Token `MAJOR_REVISION` (or the archived name `NEEDS_WORK`) or `REJECT` → add to Phase 2 Findings summary: `| Upstream review blocking | ✗ <REVIEW_FILE> reports <Outcome value> | <path> | critical |`. `APPROVE`/`MINOR_EDITS`/`INSUFFICIENT_BUT_PROMISING`/`null` → no finding.
+- Match under `.reports/codex/review/*/review-notes.md` (codex lineage) → grep `Recommendation:` / `Blocking findings:` lines. `MAJOR_REVISION` (or the archived `needs-more-work`) with non-empty `Blocking findings:` → same critical finding, quoting the blocking finding IDs.
 
 ### Phase 2: Readiness checks
 

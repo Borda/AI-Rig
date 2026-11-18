@@ -510,7 +510,8 @@ function listed(problems) {
 }
 
 /**
- * `text` with paired inline markdown removed anywhere — code spans, `**x**`/`__x__`, `*x*`/`_x_` — one layer per pass
+ * `text` with paired inline markdown removed anywhere — links (`[text](url)` keeps `text`), code spans, `**x**`/`__x__`,
+ * `*x*`/`_x_` — one layer per pass
  * until nothing changes; `_x_` inside a word (snake_case) stays. A lone `*`, `_` or backtick stays, but two literal
  * ones in one value pair up once a wrapper is gone (`**x*y*z**` → `xyz`), so `cellMatches` tries whole-cell
  * wrappers first (`edgeUnwrapped`).
@@ -521,6 +522,7 @@ function inlineMarkdownText(text) {
   do {
     previous = current;
     current = current
+      .replace(/\[([^\]\n]+)\]\(<?[^)\s>]+>?\)/g, "$1")
       .replace(/(`+)(.+?)\1/g, "$2")
       .replace(/(\*\*|__)(?=\S)(.*?\S)\1/g, "$2")
       .replace(/(^|[^\w*])\*(?=\S)(.*?\S)\*(?![\w*])/g, "$1$2")
@@ -662,8 +664,22 @@ function auditDeliveryCheck(content) {
   };
 }
 
+// A review report (header with Gate and Outcome) keeps bookkeeping fields in the file but prints a shorter terminal
+// table: these rows may be left out, and a PR row may carry the Link as `[#N](url)`.
+const REVIEW_FILE_ONLY_FIELDS = new Set([
+  "Link",
+  "Date",
+  "Commit SHA",
+  "Agents",
+  "Review contract",
+  "Rating scale",
+  "Readiness",
+  "Gate",
+]);
+
 /**
- * A `---` header report counts as delivered only when one complete table repeats every field and value.
+ * A `---` header report counts as delivered only when one complete table repeats every field and value (a review
+ * report may omit its `REVIEW_FILE_ONLY_FIELDS` rows).
  * Returns `{ problem }` for an unfinished header, else:
  * - `delivers(text)`: the per-source predicate;
  * - `diagnose(texts)`: near-match remedy — which rows of the closest table differ from the file, "" when no source
@@ -682,7 +698,9 @@ function headerDeliveryCheck(content) {
   ) {
     return { problem: "report header is incomplete; finish the report before following up" };
   }
-  const entries = fields.map((field) => [normalize(field[1]), normalize(field[2])]);
+  const allEntries = fields.map((field) => [normalize(field[1]), normalize(field[2])]);
+  const isReview = allEntries.some(([name]) => name === "Gate") && allEntries.some(([name]) => name === "Outcome");
+  const entries = isReview ? allEntries.filter(([name]) => !REVIEW_FILE_ONLY_FIELDS.has(name)) : allEntries;
   // Match one complete table, so a random table plus raw header prose cannot authorize the transition.
   const matchesTable = (table) => {
     const rows = tableRows(table);
@@ -731,7 +749,10 @@ function headerDeliveryCheck(content) {
     delivers,
     diagnose,
     undelivered: "current report header was not delivered",
-    missing: "current report header was not delivered; print every header field as a table before following up",
+    missing: isReview
+      ? "current report header was not delivered; print the review header table (every field except Link, Date, " +
+        "Commit SHA, Agents, Review contract, Rating scale, Readiness and Gate) before following up"
+      : "current report header was not delivered; print every header field as a table before following up",
     headlines: [title, outcome].filter(Boolean),
   };
 }

@@ -4,8 +4,8 @@
 
 - Add `Reviewers:` immediately after `Readiness:`, preserving template order `Agents:`, `Review contract:`, `Rating scale:`, `Readiness:`, `Reviewers:`, `CI:`. List actual readable role names and their scoped rating, for example `Software engineer [3], QA specialist [2], Documentation reviewer [1].`
 - Use square brackets for each score: `Role [rating]`; a null rating renders as `Role [no source judgment]`.
-- Ratings: 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient, but a good initiative, 5 Block (source-5-v1); null means no source judgment, never rejection.
-- Use each reviewer's explicit source-5-v1 rating and rationale. Completed undecidable output has null judgment/rating with blocked readiness and inspected coverage; missing output remains a distinct coverage obligation in review-validation.json.
+- Ratings: 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient, but a good initiative, 5 Block (source-5-v2); null means no source judgment, never rejection.
+- Use each reviewer's explicit source-5-v2 rating and rationale. Completed undecidable output has null judgment/rating with blocked readiness and inspected coverage; missing output remains a distinct coverage obligation in review-validation.json.
 - A reviewer that produced no output is not rated — record it as a missing-reviewer limitation instead.
 - Display role names only in reviewer lists and finding authors; omit execution-origin labels and skipped roles.
 - Never average ratings or replace the overall verdict.
@@ -82,12 +82,12 @@ The file MUST begin with the template's `---`-delimited YAML metadata block: ope
 | `Scope:` | Comma-separated key changed py files; cap ~5. |
 | `Focus:` | Scope-label em-dash one-line description of what the change does, from the diff, not commit message. |
 | `Agents:` | Comma-separated agent names with output in `$RUN_DIR/`. |
-| `Review contract:` / `Rating scale:` | `1` / `source-5-v1` |
+| `Review contract:` / `Rating scale:` | `1` / `source-5-v2` |
 | `Readiness:` | `complete`, `blocked`, or `incomplete`, matching the envelope. |
 | `Reviewers:` | Actual scoped assessments per the additive attribution rules above. |
 | `CI:` | Actual CI evidence supplied by the parent, otherwise `N/A (no CI evidence supplied)`. Identify static checks and any authorized parent validation separately in the body; never fabricate a CI result or treat static analysis as a test run. |
 | `Gate:` | `REVIEW_V1_PASS`, `REVIEW_V1_BLOCK`, or an evidenced `REVIEW_V1_REJECT_<GROUND> @<sha>`. |
-| `Outcome:` | APPROVE / MINOR_EDITS / NEEDS_WORK / INSUFFICIENT_BUT_PROMISING / REJECT / literal null. |
+| `Outcome:` | APPROVE / MINOR_EDITS / MAJOR_REVISION / INSUFFICIENT_BUT_PROMISING / REJECT / literal null. |
 | `Summary:` | One line, at most 100 characters: `Intended behavior: <yes/partly/no/undetermined>` plus a brief overview when space permits; full basis and 1–2 sentence overview belong in the body. |
 | `Confidence:` | Aggregate score — key gaps. |
 | `Next steps:` | Comma-separated blockers + high-priority actions, max 5. |
@@ -106,10 +106,10 @@ The file MUST begin with the template's `---`-delimited YAML metadata block: ope
 Preserve a supported source judgment when unavailable tooling, runtime evidence or independent verification blocks readiness. Such limits do not alone force source_outcome/source_rating to null; null requires source evidence insufficient to judge. Record missing independence as an open validation obligation, never a confirmed finding. Keep missing reviewer coverage, feasible undone checks, actual failed gates and required checks visible; complete feasible authorized work before delivery, and never claim unconditional approval or merge readiness while blocked/incomplete. The develop review remains read-only; report actual parent validation evidence separately from child static checks and unavailable runtime checks.
 
 1. Follow the loaded candidate-validation protocol. Do not infer confirmation from confidence or severity. A claim you add or materially strengthen beyond the parent's `cross-validation.md` is not published as confirmed: record it in `review-validation.json` as a candidate with null disposition and one `open_concerns` entry (owner: parent, next_check: validate the claim), keep it out of `findings.jsonl`, and list its candidate IDs in the envelope's `new_claims` array (empty when none) so the parent validates them before delivery.
-2. Write `<REPORT_DIR_LITERAL>/review-validation.json`: contract_version=1, rating_scale=source-5-v1, aggregate source_outcome/source_rating/readiness/readiness_reason, returned/missing assessments, all candidates, and durable open_concerns. Aggregate readiness=complete only when every assessment is complete and open_concerns is empty. A missing required role (presence=missing) has readiness=incomplete; it, like any null candidate, makes the aggregate incomplete, overriding blocked, also under a null aggregate outcome. Header fields mirror the envelope.
+2. Write `<REPORT_DIR_LITERAL>/review-validation.json`: contract_version=1, rating_scale=source-5-v2, aggregate source_outcome/source_rating/readiness/readiness_reason, returned/missing assessments, all candidates, and durable open_concerns. Aggregate readiness=complete only when every assessment is complete and open_concerns is empty. A missing required role (presence=missing) has readiness=incomplete; it, like any null candidate, makes the aggregate incomplete, overriding blocked, also under a null aggregate outcome. Header fields mirror the envelope.
 3. Write `findings.jsonl` containing every confirmed actionable candidate exactly once. Every row carries contract_version=1, validation_status=CONFIRMED and candidate_id referring to the matching CONFIRMED candidate. Preserve stable finding IDs separately. Never put unverified concerns in this collection.
 4. The report's Open Concerns names every obligation ID/owner/next_check/closure. Feasible undone checks mean incomplete; genuinely unavailable prerequisites after feasible checks mean blocked. Neither permits unconditional approval or a merge-readiness claim.
-5. Null judgment means absence of source judgment supported by returned assessment evidence, never rejection. REJECT requires documented binding conflict and an evidenced terminal ground; fixable defects mean MINOR_EDITS or NEEDS_WORK according to evidenced impact and repair scope. INSUFFICIENT_BUT_PROMISING means substantially incomplete source implementation with a good initiative, never missing hardware/process evidence. Historical reports retain their original five-rating meanings.
+5. Null judgment means absence of source judgment supported by returned assessment evidence, never rejection. REJECT requires documented binding conflict and an evidenced terminal ground; fixable defects mean MINOR_EDITS or MAJOR_REVISION according to evidenced impact and repair scope. INSUFFICIENT_BUT_PROMISING means substantially incomplete source implementation with a good initiative, never missing hardware/process evidence. Historical reports retain their original five-rating meanings.
 
 ## File output and return
 

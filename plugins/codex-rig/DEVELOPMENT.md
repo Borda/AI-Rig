@@ -1062,7 +1062,7 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - Diagnose this as process limitation, not source defect or failed launch; no live compatibility is claimed by offline tests.
 - Versioned result paths must resolve to run's canonical `result.json`, including while validating `result.candidate.json` before promotion.
 - Confidence gaps are nonblank and unique, with exactly one declared closure each.
-- Assessed handoffs bind `Review Decision` / `Recommendation: <recommendation>.` to structured recommendation; approval requires zero findings and `minor-changes` forbids critical/high findings.
+- Assessed handoffs bind `Review Decision` / `Recommendation: <recommendation>.` to structured recommendation; approval requires zero findings and `MINOR_EDITS` (historical `minor-changes`) forbids critical/high findings; `review_validation.source_rating_version=2` takes only the uppercase `source-5-v2` tokens, version 1 only the historical lowercase names.
 - Both approving recommendations require passing result status and no failed checks.
 - Historical assessed records used `metadata.review_findings=[{"id":"CR-1","severity":"high"}]` (or `[]`); new records add canonical descriptive fields listed above, with exact per-severity totals and string severity values; malformed JSON types return stable validation error.
 - Optional `operational_blockers=[{"id":"G-1"}]` declares non-finding actions separately.

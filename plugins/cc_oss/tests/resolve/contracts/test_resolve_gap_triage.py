@@ -40,21 +40,21 @@ def _bash_block_after(marker: str, source: Path = _SKILL) -> str:
     return bash_block_after(read_resolve_source(source), marker)
 
 
-def _publication(run_dir: Path, outcome: str = "NEEDS_WORK") -> Path:
+def _publication(run_dir: Path, outcome: str = "MAJOR_REVISION") -> Path:
     """Write a complete, empty version-one review publication with one completed QA assessment."""
     run_dir.mkdir(parents=True)
     report = run_dir / "review-report.md"
     gate = f"REVIEW_V1_REJECT_SCOPE @{_REVISION}" if outcome == "REJECT" else "REVIEW_V1_PASS"
     report.write_text(
-        f"---\nTitle: Review\nPR: #7\nReview contract: 1\nRating scale: source-5-v1\n"
+        f"---\nTitle: Review\nPR: #7\nReview contract: 1\nRating scale: source-5-v2\n"
         f"Readiness: complete\nGate: {gate}\nOutcome: {outcome}\nSummary: Scoped judgment.\n---\n",
         encoding="utf-8",
         newline="\n",
     )
-    rating = {"NEEDS_WORK": 3, "REJECT": 5}[outcome]
+    rating = {"MAJOR_REVISION": 3, "REJECT": 5}[outcome]
     envelope = {
         "contract_version": 1,
-        "rating_scale": "source-5-v1",
+        "rating_scale": "source-5-v2",
         "source_outcome": outcome,
         "source_rating": rating,
         "readiness": "complete",

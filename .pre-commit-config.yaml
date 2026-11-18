@@ -14,7 +14,18 @@ ci:
   autofix_prs: true
   autoupdate_commit_msg: "[pre-commit.ci] bump ⬆ suggestions"
   autoupdate_schedule: quarterly
-  skip: [lychee, gitlint] # lychee: no binary in CI; gitlint: commit-msg stage, not run in CI
+  # The bot's run phase is cut off at 180 s and its runner is several times slower than a laptop (a full local run
+  # takes ~52 s; the bot hit the limit before its last hooks ran). Every skipped hook still gates the merge in
+  # .github/workflows/ci-precommit.yml. Only check-only hooks are skipped: every hook that rewrites files (formatters,
+  # blueprint-manifest-update, codex-rig-package-manifest) stays so the bot can commit its fixes.
+  skip:
+    - lychee # no binary in the bot sandbox
+    - gitlint # commit-msg stage, never run by the bot
+    - check-orphaned-bin # ~8 s: walks every plugin bin/ script and its references
+    - check-plugin-version-sync # ~5 s: checks every plugin version against git HEAD continuity; needs full repo history
+    - check-cli-flag-drift # ~2 s: AST-parses every bin/ script to compare argparse flags with SKILL.md and docstrings
+    - check-plugin-module-docs # ~1 s: scans every shipped Python module for documentation
+    - check-bash-persistence # ~1 s: scans every skill for shell variables used across Bash blocks
   # submodules: true
 
 # Never lint/format the MkDocs build output — generated, gitignored, not source.

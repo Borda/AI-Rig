@@ -6,7 +6,7 @@ Codex Rig is OpenAI Codex product in [Borda's AI-Rig](https://github.com/Borda/A
 >
 > Finish and verify the active piece before dependent work. Delegate ready independent pieces with focused context; keep the overall map compact. This keeps far-ahead implementation details out of the active context and makes ownership and closure explicit. [Workflow rules](shared/native-skill-contract.md#proportional-execution).
 
-> Current source version: `0.46.0`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
+> Current source version: `0.47.0`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
 
 All skills check the original requested outcome at entry, after recovery or a nested skill, and before delivery. Feasible authorized work continues without a generic continue/resume prompt; genuine missing decisions, denied capabilities and exhausted budgets keep their boundaries. Recovery preserves required scope, checks, artifacts, format and destination. A completed review with failed checks or a nonapproval recommendation is distinct from an incomplete report; permitted parent fallback can finish the report before remediation resumes.
 

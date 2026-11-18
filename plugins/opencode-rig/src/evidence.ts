@@ -50,7 +50,7 @@ function resolveScopePath(cwd: string, path: string): string {
   }
   let ancestor = absolute
   while (!lstatSync(ancestor, { throwIfNoEntry: false })) ancestor = dirname(ancestor)
-  const physical = relative(realpathSync(cwd), realpathSync(ancestor))
+  const physical = relative(realpathSync.native(cwd), realpathSync.native(ancestor))
   if (physical === ".." || physical.startsWith(`..${sep}`) || isAbsolute(physical)) {
     throw new Error(`scope path resolves outside the project: ${path}`)
   }
@@ -145,8 +145,8 @@ export const GIT_BYTES_PREFIX = "\u0000git-bytes:"
 export function hashChangedFile(cwd: string, path: Buffer): string {
   const absolute = Buffer.concat([Buffer.from(resolve(cwd) + sep), path])
   if (!existsSync(absolute)) return EMPTY_SHA256
-  const physical = realpathSync(absolute, { encoding: "buffer" })
-  const root = Buffer.from(realpathSync(cwd) + sep)
+  const physical = realpathSync.native(absolute, { encoding: "buffer" })
+  const root = Buffer.from(realpathSync.native(cwd) + sep)
   if (!physical.subarray(0, root.length).equals(root))
     throw new Error(`scope path resolves outside the project: ${evidencePath(path)}`)
   const stat = statSync(absolute)

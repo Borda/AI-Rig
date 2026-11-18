@@ -463,8 +463,8 @@ def make_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[...,
         report = review / "review-report.md"
         _put(
             report,
-            "---\nTitle: Review\nPR: #7\nReview contract: 1\nRating scale: source-5-v1\n"
-            "Readiness: complete\nGate: REVIEW_V1_PASS\nOutcome: NEEDS_WORK\nSummary: decoder check\n---\n",
+            "---\nTitle: Review\nPR: #7\nReview contract: 1\nRating scale: source-5-v2\n"
+            "Readiness: complete\nGate: REVIEW_V1_PASS\nOutcome: MAJOR_REVISION\nSummary: decoder check\n---\n",
         )
         _put(review / "head-sha.txt", lineage.tip + "\n")
         source = review / "source.md"
@@ -494,7 +494,7 @@ def make_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[...,
         assessment = {
             "role": "QA",
             "presence": "completed",
-            "source_outcome": "NEEDS_WORK",
+            "source_outcome": "MAJOR_REVISION",
             "source_rating": 3,
             "readiness": "complete",
             "coverage": "core.py",
@@ -508,8 +508,8 @@ def make_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[...,
             json.dumps(
                 {
                     "contract_version": 1,
-                    "rating_scale": "source-5-v1",
-                    "source_outcome": "NEEDS_WORK",
+                    "rating_scale": "source-5-v2",
+                    "source_outcome": "MAJOR_REVISION",
                     "source_rating": 3,
                     "readiness": "complete",
                     "readiness_reason": "source and contract inspected",

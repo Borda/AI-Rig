@@ -4,8 +4,8 @@
 
 - Add `Reviewers:` immediately after `Readiness:`, preserving template order `Agents:`, `Review contract:`, `Rating scale:`, `Readiness:`, `Reviewers:`, `CI:`. List actual readable role names and their scoped rating, for example `Software engineer [3], QA specialist [2], Documentation reviewer [1].`
 - Use square brackets for each score: `Role [rating]`; a null rating renders as `Role [no source judgment]`.
-- Ratings: 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient, but a good initiative, 5 Block (source-5-v1); null means no source judgment, never rejection.
-- Use each reviewer's explicit source-5-v1 rating and rationale. Completed undecidable output has null judgment/rating with blocked readiness and inspected coverage; missing output remains a distinct coverage obligation in review-validation.json.
+- Ratings: 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient, but a good initiative, 5 Block (source-5-v2); null means no source judgment, never rejection.
+- Use each reviewer's explicit source-5-v2 rating and rationale. Completed undecidable output has null judgment/rating with blocked readiness and inspected coverage; missing output remains a distinct coverage obligation in review-validation.json.
 - A reviewer that produced no output is not rated — record it as a missing-reviewer limitation instead.
 - Display role names only in reviewer lists and finding authors; omit execution-origin labels and skipped roles.
 - Never average ratings or replace the overall verdict.
@@ -22,7 +22,7 @@
 2. Load `<REVIEW_SKILL_DIR>/checklist.md` via `cat` (not Read tool — version-pinned cache path). Apply its signal-to-noise filter, annotation completeness and section caps.
 3. Load `<_OSS_SHARED>/review-section-taxonomy.md` via `cat` for canonical headers and agent-to-section ownership.
 4. Read the parent's validated candidates and assessments from `$RUN_DIR/cross-validation.md`. Include only parent-CONFIRMED candidates at every severity; critical/blocking findings additionally require independent verification. New or materially strengthened merged claims return to the parent for validation before publication.
-5. A late source REJECT cannot be published with incoming PASS/BLOCK. Return only `terminal-ground=<GROUND> | evidence=<path>` pointing at the existing documented binding conflict; publish nothing. The parent validates the ground and routes through Stage 1's terminal publisher with original reviewed SHA and provenance, reusing applicable conduct/license confirmation. If no evidenced terminal ground exists, choose MINOR_EDITS or NEEDS_WORK for fixable defects according to evidenced impact and repair scope; unfinished validation independently keeps readiness incomplete/blocked.
+5. A late source REJECT cannot be published with incoming PASS/BLOCK. Return only `terminal-ground=<GROUND> | evidence=<path>` pointing at the existing documented binding conflict; publish nothing. The parent validates the ground and routes through Stage 1's terminal publisher with original reviewed SHA and provenance, reusing applicable conduct/license confirmation. If no evidenced terminal ground exists, choose MINOR_EDITS or MAJOR_REVISION for fixable defects according to evidenced impact and repair scope; unfinished validation independently keeps readiness incomplete/blocked.
 6. Apply the challenger, design-comparison, issue-alignment and filtering rules below. Write evidence/finding sidecars before the report, then return only the specified summary.
 7. A `FILL_GAPS_PLAN=` binding makes this a fill-gaps run: merge per §Fill-gaps carry-over before writing any sidecar.
 
@@ -89,10 +89,10 @@ The parent supplies resolved literal input bindings in its compact Agent prompt.
 | `Agents:` | Short names of agents with output files in `$RUN_DIR/`. |
 | `Reviewers:` | Actual scoped assessments per the additive attribution rules above. |
 | `CI:` | `failing — [<CI_FAILING_CHECKS>]` when non-empty, otherwise `passing (<CI_COUNTS>)`; no counts/checks → `pending`. |
-| `Review contract:` / `Rating scale:` | `1` / `source-5-v1` |
+| `Review contract:` / `Rating scale:` | `1` / `source-5-v2` |
 | `Readiness:` | `complete`, `blocked`, or `incomplete`, matching the envelope. |
 | `Gate:` | `REVIEW_V1_<GATE>` (`REVIEW_V1_PASS` or `REVIEW_V1_BLOCK` here; terminal reject-gate reports bypass this consolidator). BLOCK does not determine source Outcome; retain CI/findings evidence separately. |
-| `Outcome:` | APPROVE / MINOR_EDITS / NEEDS_WORK / INSUFFICIENT_BUT_PROMISING / REJECT / literal null; token only, optional leading `✓`/`⚠`/`✗`. Put severity counts/detail in Summary, never after the token. |
+| `Outcome:` | APPROVE / MINOR_EDITS / MAJOR_REVISION / INSUFFICIENT_BUT_PROMISING / REJECT / literal null; token only, optional leading `✓`/`⚠`/`✗`. Put severity counts/detail in Summary, never after the token. |
 | `Summary:` | 1–2 sentences. |
 | `Confidence:` | Aggregate score — key gaps. |
 | `Next steps:` | Blockers first, max 5. |
@@ -128,14 +128,14 @@ The parent supplies resolved literal input bindings in its compact Agent prompt.
 
 **Source Files footnote**: after the `## Confidence` block, append `## Source Files` section. Use `Glob(pattern="*.md", path="$RUN_DIR")` to list every handover file present — lets reviewers locate raw subagent outputs without knowing the run timestamp. `$RUN_DIR` is consolidator's self-resolved run-dir (from run-dir preamble: `cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"`) — not orchestrator-substituted.
 
-**Return ONLY** the one-line publication summary: `verdict=<APPROVE|MINOR_EDITS|NEEDS_WORK|INSUFFICIENT_BUT_PROMISING|null> | findings=N | critical=N | high=N | file=<REPORT_DIR>/review-report.md`. A late terminal conflict instead returns the step 5 routing signal without publication.
+**Return ONLY** the one-line publication summary: `verdict=<APPROVE|MINOR_EDITS|MAJOR_REVISION|INSUFFICIENT_BUT_PROMISING|null> | findings=N | critical=N | high=N | file=<REPORT_DIR>/review-report.md`. A late terminal conflict instead returns the step 5 routing signal without publication.
 
 ## Publication validation
 
 Preserve a supported source judgment when unavailable tooling, runtime evidence or independent verification blocks readiness. Such limits do not alone force source_outcome/source_rating to null; null requires source evidence insufficient to judge. Record missing independence as an open validation obligation, never a confirmed finding. Keep missing reviewer coverage, feasible undone checks, actual failed gates and required checks visible; complete feasible authorized work before delivery, and never claim unconditional approval or merge readiness while blocked/incomplete.
 
 1. Follow the loaded candidate-validation protocol and the parent's evidence in `$RUN_DIR/cross-validation.md`; never infer confirmation from confidence or severity. New or materially strengthened claims require parent validation before publication.
-2. Write `<REPORT_DIR>/review-validation.json`: contract_version=1, rating_scale=source-5-v1, aggregate source_outcome/source_rating/readiness/readiness_reason, returned/missing assessments (evidence and limits as string arrays), all candidates, durable open_concerns (one per UNVERIFIED/null candidate only; any such candidate forbids readiness=complete). Aggregate readiness=complete only when every assessment is complete and open_concerns is empty. A missing required role (presence=missing) has readiness=incomplete; it, like any null candidate, makes the aggregate incomplete, overriding blocked, also under a null aggregate outcome. Every findings row carries id, section, severity, title, change and author; the publication gate refuses a row without them. Header fields mirror this envelope.
+2. Write `<REPORT_DIR>/review-validation.json`: contract_version=1, rating_scale=source-5-v2, aggregate source_outcome/source_rating/readiness/readiness_reason, returned/missing assessments (evidence and limits as string arrays), all candidates, durable open_concerns (one per UNVERIFIED/null candidate only; any such candidate forbids readiness=complete). Aggregate readiness=complete only when every assessment is complete and open_concerns is empty. A missing required role (presence=missing) has readiness=incomplete; it, like any null candidate, makes the aggregate incomplete, overriding blocked, also under a null aggregate outcome. Every findings row carries id, section, severity, title, change and author; the publication gate refuses a row without them. Header fields mirror this envelope.
 3. `findings.jsonl` contains every confirmed actionable candidate exactly once; each row carries contract_version=1, validation_status=CONFIRMED and candidate_id referring to its matching CONFIRMED candidate. Preserve existing minted finding IDs separately. Never put unverified concerns in this collection.
 4. Report Open Concerns names each obligation ID/owner/next_check/closure. Feasible undone checks mean incomplete; actual unavailable prerequisites after feasible checks mean blocked. Neither allows unconditional approval or a merge-readiness claim.
-5. Null is absence of source judgment with returned assessment evidence, never rejection. Source REJECT requires documented binding conflict and an evidenced terminal ground; fixable defects mean MINOR_EDITS or NEEDS_WORK according to evidenced impact and repair scope. INSUFFICIENT_BUT_PROMISING means a good initiative with substantially incomplete source implementation, never missing hardware/process evidence. Historical reports retain their original five-rating meanings.
+5. Null is absence of source judgment with returned assessment evidence, never rejection. Source REJECT requires documented binding conflict and an evidenced terminal ground; fixable defects mean MINOR_EDITS or MAJOR_REVISION according to evidenced impact and repair scope. INSUFFICIENT_BUT_PROMISING means a good initiative with substantially incomplete source implementation, never missing hardware/process evidence. Historical reports retain their original five-rating meanings.

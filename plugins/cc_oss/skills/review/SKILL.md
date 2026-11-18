@@ -86,10 +86,11 @@ AGENT_DEADLINE_S=1800  # per spawned agent, from its spawn; covers the former 90
 
 > Review presentation is additive: keep the aggregate summary as prose, all header fields, overall verdict, confidence and detailed findings.
 >
-> - Ask each actual reviewer for a scoped integer rating and rationale: 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient, but a good initiative, 5 Block (source-5-v1); null means no source judgment, never rejection.
+> - Ask each actual reviewer for a scoped integer rating and rationale: 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient, but a good initiative, 5 Block (source-5-v2); null means no source judgment, never rejection.
 > - Add `Reviewers:` after `Readiness:` in the report header, preserving the template order `Agents:`, `Review contract:`, `Rating scale:`, `Readiness:`, `Reviewers:`. Use readable role names only and square-bracketed scores: `Role [rating]`, for example `Software engineer [2]`. Omit execution-origin labels and skipped roles.
 > - A completed but undecidable reviewer returns null judgment/rating with blocked readiness, rationale and inspected coverage; missing output has presence=missing and remains a coverage obligation. Record these separately in review-validation.json; never invent rejection or approval.
 > - Never average role ratings into the final verdict.
+> - The terminal table is shorter than the report file: print every header field in file order except `Link`, `Date`, `Commit SHA`, `Agents`, `Review contract`, `Rating scale`, `Readiness` and `Gate`, show `PR` as `[#N](<Link value>)`, and end with the `Path` row; the report file keeps every field.
 > - After rendering the header table, add exactly this line below it, in the same Step 5b delivery block: `Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.`
 > - Findings overview adds `Author` after `ID`, retaining all contributing reviewer roles after deduplication.
 > - Read the summary and overview after the header rather than treating the header alone as the complete review.
@@ -235,7 +236,7 @@ Scenarios:
 
 <notes>
 
-- **PR review acceptance criteria — canonical here**: oss:shepherd cross-references these criteria; don't duplicate in shepherd. Shepherd defers to this file for acceptance thresholds, severity definitions. Header separates `Gate:` (`REVIEW_V1_PASS` / `REVIEW_V1_BLOCK` / `REVIEW_V1_REJECT_<GROUND>` where GROUND is one of the 8 in Stage 1 — GOAL, CONDUCT, SCOPE, LICENSE, DUPLICATE, REVERTED, SPAM, PHILOSOPHY; reject is terminal and skips fanout, block isn't) and `Outcome:` (`APPROVE` / `MINOR_EDITS` / `NEEDS_WORK` / `INSUFFICIENT_BUT_PROMISING` / `REJECT` / `null`), with separate Readiness and version-one REVIEW_V1\_\* gate; historical unversioned reports retain REQUEST_CHANGES and terminal N/A. See Acceptance gate (Step 1).
+- **PR review acceptance criteria — canonical here**: oss:shepherd cross-references these criteria; don't duplicate in shepherd. Shepherd defers to this file for acceptance thresholds, severity definitions. Header separates `Gate:` (`REVIEW_V1_PASS` / `REVIEW_V1_BLOCK` / `REVIEW_V1_REJECT_<GROUND>` where GROUND is one of the 8 in Stage 1 — GOAL, CONDUCT, SCOPE, LICENSE, DUPLICATE, REVERTED, SPAM, PHILOSOPHY; reject is terminal and skips fanout, block isn't) and `Outcome:` (`APPROVE` / `MINOR_EDITS` / `MAJOR_REVISION` / `INSUFFICIENT_BUT_PROMISING` / `REJECT` / `null`), with separate Readiness and version-one REVIEW_V1\_\* gate; historical unversioned reports retain REQUEST_CHANGES and terminal N/A. See Acceptance gate (Step 1).
 - **Block-tier catalogue** — per-category default for the `[blocking]` tag, applied by full-review agents once fanout runs (not automatic, judgment still required per row):
   | Category | Default | Nuance |
   | -- | -- | -- |

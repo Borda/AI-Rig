@@ -85,7 +85,7 @@
     "operational_blockers": [],
     "review_decision": {
       "rationale": "why the recommendation follows from findings, gates, and scope",
-      "recommendation": "assessed source judgment: accept-as-is|minor-changes|needs-more-work|insufficient-but-promising|reject or explicit null",
+      "recommendation": "assessed source judgment: APPROVE|MINOR_EDITS|MAJOR_REVISION|INSUFFICIENT_BUT_PROMISING|REJECT or explicit null",
       "summary": "1-3 sentence review outcome"
     },
     "review_findings": [],
@@ -95,8 +95,8 @@
     "review_validation": {
       "candidates": [],
       "schema_version": 1,
-      "source_rating_version": 1,
-      "source_verdict": "assessed source judgment: accept-as-is|minor-changes|needs-more-work|insufficient-but-promising|reject or explicit null",
+      "source_rating_version": 2,
+      "source_verdict": "assessed source judgment: APPROVE|MINOR_EDITS|MAJOR_REVISION|INSUFFICIENT_BUT_PROMISING|REJECT or explicit null",
       "verification_readiness": "complete"
     },
     "reviewer_assessments": [

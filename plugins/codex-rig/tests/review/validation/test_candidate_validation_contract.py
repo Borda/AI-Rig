@@ -1301,8 +1301,8 @@ def test_review_verdict_is_proportional_to_remaining_source_work() -> None:
     """Prevent every correctness edge case from automatically requiring a major revision."""
     path = PLUGIN_ROOT / "skills/code-review/references/findings-and-completion.md"
     lines = path.read_text(encoding="utf-8").splitlines()
-    minor = next(line for line in lines if line.startswith("- `minor-changes`"))
-    major = next(line for line in lines if line.startswith("- `needs-more-work`"))
+    minor = next(line for line in lines if line.startswith("- `MINOR_EDITS`"))
+    major = next(line for line in lines if line.startswith("- `MAJOR_REVISION`"))
     reconciliation = next(line for line in lines if line.startswith("Before finalization, reconcile"))
     assert "localized correctness, compatibility, or test repairs" in minor
     assert "material behavioral impact or substantial repair scope" in major

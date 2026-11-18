@@ -7,8 +7,8 @@ so the three suites assemble the same shapes the shipped scripts read.
 from __future__ import annotations
 
 
-def assessment(role: str, readiness: str = "complete", *, outcome: str = "NEEDS_WORK", rating: int = 3) -> dict:
-    """Describe one completed reviewer with the given readiness and judgment (NEEDS_WORK, rating 3 by default)."""
+def assessment(role: str, readiness: str = "complete", *, outcome: str = "MAJOR_REVISION", rating: int = 3) -> dict:
+    """Describe one completed reviewer with the given readiness and judgment (MAJOR_REVISION, rating 3 by default)."""
     return {
         "role": role,
         "presence": "completed",

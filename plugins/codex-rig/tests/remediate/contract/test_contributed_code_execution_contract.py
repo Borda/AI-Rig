@@ -6,6 +6,7 @@ paragraph never breaks an assertion.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -97,3 +98,42 @@ class TestWorkflowsPointAtTheRule:
         """A review worktree and an attached remediation branch run contributor code only under the shared rule."""
         text = _collapse((PLUGIN_ROOT / relative).read_text(encoding="utf-8"))
         assert ANCHOR in text
+
+
+class TestSameRepositoryExemption:
+    """The exemption is decided once at entry and kept in context, never re-read from the run directory."""
+
+    def test_exemption_answer_is_kept_in_context(self) -> None:
+        """Contributor code can rewrite run-directory files, so the routing file is read only at entry."""
+        paragraph = next(
+            line for line in _section("## Contributed Code Execution").split("**Same-repository exemption.**")[1:]
+        )
+        assert "keep the answer" in paragraph
+        assert "never re-reads `pr-routing.json`" in paragraph
+
+    def test_missing_exemption_answer_is_a_lost_anchor(self) -> None:
+        """After a compaction a forgotten exemption never counts as exempt."""
+        section = _section("## Contributed Code Execution")
+        assert "the exemption answer" in section
+        assert "A missing exemption answer is a lost anchor and never counts as exempt" in section
+
+    def test_dependency_rule_states_the_exemption(self) -> None:
+        """Rule 6 no longer demands a scan the exemption skips."""
+        assert "(under the same-repository exemption, snapshot only)" in _section("## Contributed Code Execution")
+
+
+class TestEveryCallerStatesTheExemption:
+    """A line that sends a reader to a scan-based rule also says what a same-repository PR does instead."""
+
+    def test_scan_based_references_name_the_exemption(self) -> None:
+        """Lines naming Contributed Code Execution with rule 2, 4, 5 or the scan must mention the exemption."""
+        rule = re.compile(r"\brules? [2-5]\b|\brules 3 to 5\b|\bscan\b", re.IGNORECASE)
+        offenders: list[str] = []
+        for folder in ("skills", "shared"):
+            for path in sorted((PLUGIN_ROOT / folder).rglob("*.md")):
+                for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                    if "Contributed Code Execution" not in line or not rule.search(line):
+                        continue
+                    if "exemption" not in line.lower() and "same-repository" not in line.lower():
+                        offenders.append(f"{path.relative_to(PLUGIN_ROOT)}:{number}")
+        assert offenders == []

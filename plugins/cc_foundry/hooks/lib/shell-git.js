@@ -140,7 +140,8 @@
 //   fail closed on unknown generated output reaching them, matching modeled file writes, and modeled commands
 //   shadowed by functions or aliases. Unknown programs are not inferred to write files. Literal print output and
 //   literal cat/tee input written to a script are followed. Runtime executable words are unreadable when the text
-//   names git or gh. Aliases configured earlier in the same command are followed; pre-existing aliases in git config
+//   names git or gh. A source runner (`eval`, `sh -c`, `source`, `.`) fed a variable is read like an
+//   assigned value, at the top level and inside an array element alike. Aliases configured earlier in the same command are followed; pre-existing aliases in git config
 //   remain outside inspection, which never runs git. These string-visible spellings are not followed either, by decision — the
 //   finder stays scoped to the review findings it fixes:
 //     * zsh SH_WORD_SPLIT and `$=x`/`${=x}`/`${==x}` change only field splitting of expanded values
@@ -308,6 +309,10 @@ const FISH_OPTIONS = {
   values: /^(?:-[cC]|--command|--init-command)$/,
 };
 const PRINT_PROGRAMS = new Set(["echo", "printf", "print"]);
+// The grep family: `-r`/`-c`/`-E`/`-e` are bundled flags or a pattern option, never a code option, so a pattern naming
+// `gh` or `git` (`grep -rn "gh pr checkout" dir`) is data. rg, ag and ack stay out: `rg --pre` and `--pager` run a
+// program. Substitutions in an argument are read apart.
+const SEARCH_PROGRAMS = new Set(["grep", "egrep", "fgrep"]);
 // `source`/`.` arguments that read stdin or a process substitution (`source <(…)`).
 const STDIN_FILE = /^(?:-|\/dev\/stdin|\/dev\/fd\/\d+|\/proc\/self\/fd\/\d+|<\()/;
 // Builtins that evaluate an argument's `[…]` subscript as arithmetic, running any `$(…)` or backtick
@@ -628,6 +633,9 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
         words.push(...expanded);
         facts.push(...expanded.map(() => fact));
         texts.push(...expanded.map(() => src.slice(wordStart, i)));
+        // inside an array list only: a first element spelled like a compound opener must not push a keyword group
+        const arrayElement = inputGroups.at(-1)?.array === true;
+        if (arrayElement) acc.arrayData.add(words);
         const caseGroup = inputGroups.at(-1);
         const caseWord = caseGroup?.end === "esac" && caseGroup.phase !== "body";
         const caseEnd =
@@ -641,7 +649,7 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
           // The subject and patterns are data, even when spelled like reserved compound openers.
           if (caseGroup.phase === "subject") caseGroup.phase = "in";
           else if (caseGroup.phase === "in" && expanded[0] === "in") caseGroup.phase = "pattern";
-        } else if (fact & WORD_BARE && expanded.length === 1) {
+        } else if (!arrayElement && fact & WORD_BARE && expanded.length === 1) {
           const atStart = words.slice(0, -1).every((w, k) => facts[k] & WORD_BARE && COMMAND_OPENERS.has(w));
           const declaration = commandStart(words);
           if (
@@ -815,6 +823,10 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
     } else if (acc.redirections && (c === "<" || c === ">") && next === "\\" && src[i + 2] === "\n") {
       // `<\⏎<EOF`: the shells splice the line first and read `<<`, the lexer would read two `<`
       return unreadable(acc, UNREADABLE_SYNTAX.continued);
+    } else if (c === "(" && word === null && inputGroups.at(-1)?.array === true) {
+      // inside an array list every element is a word, so a `(` or `((` opening one is a zsh glob word, never a
+      // group: an empty word list must not make the grouping-position tests answer true
+      return unreadable(acc, UNREADABLE_SYNTAX.wordStartParen);
     } else if (c === "(" && next === "(" && word === null && groupingPosition(words, facts, next)) {
       const read = readArithmetic(src, i + 2, acc, pipeline, nesting + 1);
       if (read < 0) return -1;
@@ -861,14 +873,17 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
     } else if (
       c === "(" &&
       word !== null &&
-      // only a word with no quoted or escaped text is an assignment word (`'a'=(…)` is a command word)
-      !(
-        quotedFrom < 0 &&
-        /^[A-Za-z_][A-Za-z0-9_]*\+?=$/.test(unmarkGlobs(word)) &&
-        arrayAssignmentPosition(words, facts)
-      ) &&
-      src[i + 1] !== ")" &&
-      !conditionOpen(words.map(unmarkGlobs), facts)
+      // inside an array list every element is a word: the position tests below read an empty word list as a command
+      // start (`NAME=(`, `x()`, a `[[` element), so none of them applies and every attached group is refused
+      (inputGroups.at(-1)?.array === true ||
+        // only a word with no quoted or escaped text is an assignment word (`'a'=(…)` is a command word)
+        (!(
+          quotedFrom < 0 &&
+          /^[A-Za-z_][A-Za-z0-9_]*\+?=$/.test(unmarkGlobs(word)) &&
+          arrayAssignmentPosition(words, facts)
+        ) &&
+          src[i + 1] !== ")" &&
+          !conditionOpen(words.map(unmarkGlobs), facts)))
     ) {
       // zsh reads any `(…)` group attached to a word as glob qualifiers, and some run code (`.(e:'cmd':)`,
       // `*(N)(+name)`, any delimiter); bash rejects the word. Every attached group is refused rather than
@@ -905,8 +920,14 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
         acc.functions.add(signature.at(-1));
         functionBodyPending = true;
       }
+      // the elements of `name=(…)` or `name+=(…)` are data words, never command words: bash runs none of them
+      const array =
+        word !== null &&
+        quotedFrom < 0 &&
+        /^[A-Za-z_][A-Za-z0-9_]*\+?=$/.test(unmarkGlobs(word)) &&
+        arrayAssignmentPosition(words, facts);
       endCommand();
-      inputGroups.push({ fed: feedsStdin, start: pipeline.commands.length, end: ")" });
+      inputGroups.push({ fed: feedsStdin, start: pipeline.commands.length, end: ")", array });
       depth += 1;
       groupOpenAt = i;
       i += 1;
@@ -928,6 +949,8 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
       depth = Math.max(0, depth - 1);
       i += 1;
     } else if (c === ";" || c === "&" || c === "|") {
+      // bash rejects a separator inside an array list and zsh reads it differently, so no element stays data
+      if (inputGroups.at(-1)?.array) return unreadable(acc, UNREADABLE_SYNTAX.arrayList);
       endWord();
       const outputCommands = [...closedGroup, words];
       endCommand();
@@ -1150,6 +1173,7 @@ const UNREADABLE_SYNTAX = Object.freeze({
   heredocDelimiter: "a heredoc delimiter written with `$'…'`, `$\"…\"` or a backslash-newline",
   zshQualifier: "a `(` group attached to a word, which zsh reads as glob qualifiers (`(e:…:)`, `(+name)`)",
   wordStartParen: "a `(` opening a word after the command word, which zsh reads as a glob word (`(*)(e:…:)`)",
+  arrayList: "a `;`, `&` or `|` inside an array assignment list, which bash rejects and zsh reads as a separator",
   groupComment: "a `#` right after a `(` or `|`, which zsh may read as a glob flag rather than a comment",
   quoteInExpansion: "a single quote inside a double-quoted `${…}`",
   printedSource: "printed shell source outside the decoded set",
@@ -1345,6 +1369,7 @@ function lexShell(src, redirections = true, failure = {}) {
     functions: new Set(),
     functionCommands: new Set(),
     caseData: new Set(),
+    arrayData: new Set(),
     pipelines: [],
     heredocs: [],
     redirectFiles: [], // redirection file, direction, owning command and enclosed compound commands
@@ -1762,6 +1787,7 @@ function collectWords(words, found, depth, target, scripts = new Set(), facts = 
       SOURCE_RUNNERS.has(name) ||
       INTERPRETERS.test(name) ||
       PRINT_PROGRAMS.has(name) ||
+      SEARCH_PROGRAMS.has(name) ||
       name === "git" ||
       name === "gh"
     )
@@ -2658,7 +2684,7 @@ function printedSource(words, facts, depth = 0) {
 /** Identify runtime command words in source, keeping argument expansions and known path commands as values. */
 function hasRuntimeCommand(lexed, bindings) {
   return lexed.commands.some((words) => {
-    if (lexed.substitutionOutputs.has(words) || lexed.caseData.has(words)) return false;
+    if (lexed.caseData.has(words) || lexed.arrayData.has(words)) return false;
     const facts = lexed.wordFacts.get(words);
     return executablePrograms(words).some((r) => {
       if (["[", "[["].includes(unmarkGlobs(words[r]))) return false;

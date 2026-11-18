@@ -45,7 +45,7 @@ def test_procedure_follows_the_evidence_standard() -> None:
     "marker",
     [
         pytest.param("(every agent)", id="applies-to-every-agent"),
-        pytest.param("already executes PR code (Agent 2 targeted tests)", id="gate-is-existing-pr-code-run"),
+        pytest.param("Agent 2's targeted tests also execute PR code", id="gate-is-existing-pr-code-run"),
         pytest.param("read-only sandbox) keeps the gap with that reason", id="read-only-reviewer-keeps-gap"),
     ],
 )

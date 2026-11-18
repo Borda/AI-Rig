@@ -2,6 +2,10 @@
 
 All notable changes to this package are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.12.0
+
+- Review verdicts use one five-level source scale: `APPROVE`, `MINOR_EDITS`, `MAJOR_REVISION`, `INSUFFICIENT_BUT_PROMISING` and `REJECT`, or `null` when no defensible source judgment exists. The handoff table no longer offers `approved`, `approved with notes` or `changes requested`: an approval with notes, and a diagnostic pass or warning, is `APPROVE` with non-blocking notes, and a change request is `MINOR_EDITS` for a bounded, localized remedy or `MAJOR_REVISION` for material impact or substantial repair. `code-review`, the `code-remediate` re-review and a final challenge that judges a contribution pick the level from the remaining confirmed findings; a missing check or unavailable reviewer lowers confidence and never yields `INSUFFICIENT_BUT_PROMISING` or `REJECT`. `investigated` and `blocked` remain run states.
+
 ## 0.11.0
 
 - A trivial implementation is declared and accounted, not policed. The mini-plan declares `{goal, owned_paths, acceptance_check, feasibility}` with at most two normalized project-relative files; `.git` or artifact paths, directories, symlinks, hard links and non-regular files are refused, and a declared new file may start before it exists. The run reports its own measured change as a line-hash diff from the bytes it started with; a change above 50 lines or two files, or a file it cannot measure, is recorded as a limit that points later work at `rig-plan` instead of failing the run. The measurement does not consult Git's index, attributes, filters or config, so no ambient setting can shrink it.

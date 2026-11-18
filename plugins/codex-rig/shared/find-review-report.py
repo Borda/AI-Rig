@@ -133,19 +133,22 @@ def review_result_kind(result_path: Path, *, allow_local: bool = False) -> str:
         return "invalid"
     recommendation = decision.get("recommendation")
     validation = metadata.get("review_validation")
+    # source_rating_version 2 reads only the unified tokens; version 1 and unversioned reports keep historical names.
+    unified = isinstance(validation, dict) and validation.get("source_rating_version") == 2
+    recognized = (
+        {"APPROVE", "MINOR_EDITS", "MAJOR_REVISION", "INSUFFICIENT_BUT_PROMISING", "REJECT"}
+        if unified
+        else {
+            "accept-as-is",
+            "minor-changes",
+            "needs-more-work",
+            "insufficient-but-promising",
+            "reject",
+            "not-aligned",
+        }
+    )
     if not (
-        (
-            isinstance(recommendation, str)
-            and recommendation
-            in {
-                "accept-as-is",
-                "minor-changes",
-                "needs-more-work",
-                "insufficient-but-promising",
-                "reject",
-                "not-aligned",
-            }
-        )
+        (isinstance(recommendation, str) and recommendation in recognized)
         or (recommendation is None and isinstance(validation, dict) and validation.get("schema_version") == 1)
     ):
         return "invalid"
