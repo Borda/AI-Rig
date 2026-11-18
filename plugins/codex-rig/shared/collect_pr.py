@@ -767,7 +767,7 @@ def _review_artifacts(
         "head_ref": payload.get("headRefName"),
         "head_oid": payload.get("headRefOid"),
         "head_repo": head_repo,
-        "is_cross_repository": bool(payload.get("isCrossRepository")),
+        "is_cross_repository": payload.get("isCrossRepository") is not False,
         "same_repo": bool(head_repo and base_repo and head_repo.casefold() == base_repo.casefold()),
         "local_checkout_required": True,
         "local_checkout_command": f"git worktree add --detach {review_path} {payload.get('headRefOid')}",

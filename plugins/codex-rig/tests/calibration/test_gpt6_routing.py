@@ -16,20 +16,20 @@ from _modules import load_module
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 ROLES = REPOSITORY_ROOT / "plugins" / "codex-rig" / "roles"
 EXPECTED = {
-    "challenger": ("gpt-6.1-sol", "high"),
+    "challenger": ("gpt-6.2-sol", "high"),
     "cicd-steward": ("gpt-6-luna", "high"),
     "curator": ("gpt-6-luna", "high"),
-    "data-steward": ("gpt-6.1-sol", "high"),
+    "data-steward": ("gpt-6.2-sol", "high"),
     "delegation-lead": ("gpt-6-luna", "high"),
     "doc-scribe": ("gpt-6.1-terra", "high"),
     "linting-expert": ("gpt-6-luna", "medium"),
     "oss-shepherd": ("gpt-6-luna", "high"),
-    "qa-specialist": ("gpt-6.1-sol", "medium"),
-    "scientist": ("gpt-6.1-sol", "high"),
-    "security-auditor": ("gpt-6.1-sol", "high"),
-    "solution-architect": ("gpt-6.1-sol", "high"),
-    "squeezer": ("gpt-6.1-sol", "medium"),
-    "sw-engineer": ("gpt-6.1-sol", "medium"),
+    "qa-specialist": ("gpt-6.2-sol", "medium"),
+    "scientist": ("gpt-6.2-sol", "high"),
+    "security-auditor": ("gpt-6.2-sol", "high"),
+    "solution-architect": ("gpt-6.2-sol", "high"),
+    "squeezer": ("gpt-6.2-sol", "medium"),
+    "sw-engineer": ("gpt-6.2-sol", "medium"),
     "web-explorer": ("gpt-6.1-terra", "medium"),
 }
 PAID_RUN = ["--confirm-paid-run", "chatgpt-subscription"]
@@ -58,8 +58,8 @@ def test_role_card_inherits_model_and_keeps_effort(role: str, effort: str) -> No
 @pytest.mark.parametrize(
     "setting",
     [
-        pytest.param(r'^model\s*=\s*"gpt-6\.1-sol"$', id="parent-model"),
-        pytest.param(r'^review_model\s*=\s*"gpt-6\.1-sol"$', id="review-model"),
+        pytest.param(r'^model\s*=\s*"gpt-6\.2-sol"$', id="parent-model"),
+        pytest.param(r'^review_model\s*=\s*"gpt-6\.2-sol"$', id="review-model"),
         pytest.param(r'^model_reasoning_effort\s*=\s*"medium"$', id="parent-effort"),
     ],
 )
@@ -149,7 +149,7 @@ def test_live_cli_rejects_invalid_model_identifiers_before_side_effects(
     directory byte-for-byte unchanged and nothing printed.
     """
     runner, policy, output = live_cli
-    route = {"baseline_model": "gpt-6.1-sol", "candidate_model": "gpt-6-luna", "min_campaigns": 1, field: model}
+    route = {"baseline_model": "gpt-6.2-sol", "candidate_model": "gpt-6-luna", "min_campaigns": 1, field: model}
     policy.write_text(json.dumps({"routes": {"selected": route}}), encoding="utf-8")
     sys.argv.extend(extra_arguments)
     before = tree_bytes(output)
@@ -281,7 +281,7 @@ class TestWindowsTimeoutEvidence:
         runner, output = windows_timeout_capture
 
         response, usage, _, exit_code = runner._run_model(
-            runner.ModelCallRequest(output, output, "example", 7, "prompt", "gpt-6.1-sol", "medium", "read-only")
+            runner.ModelCallRequest(output, output, "example", 7, "prompt", "gpt-6.2-sol", "medium", "read-only")
         )
 
         assert exit_code == 124

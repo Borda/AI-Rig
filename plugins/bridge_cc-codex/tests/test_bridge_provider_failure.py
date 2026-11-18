@@ -32,7 +32,7 @@ NESTED_EFFORT = json.dumps(
     {
         "type": "error",
         "error": {
-            "message": "Unsupported value: 'minimal' is not supported with the 'gpt-6.1-sol' model.",
+            "message": "Unsupported value: 'minimal' is not supported with the 'gpt-6.2-sol' model.",
             "type": "invalid_request_error",
             "param": "reasoning.effort",
             "code": "unsupported_value",

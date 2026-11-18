@@ -63,7 +63,7 @@ When `$CHANGE_SCOPE=lint-only` (all selected items were typing/doc/formatting) o
 ```text
 Agent(subagent_type="foundry:linting-expert", name="qa-lint", description="Lint changed files", maxTurns=15, prompt="Lint and type-check all files changed in the current branch since $BASE_REF_MERGE (expand to literal SHA before spawning). List every lint/type violation. Apply inline fixes for any that are auto-fixable. Write your full findings to $RUN_DIR/linting-expert-step9.md using the Write tool, then return ONLY a compact JSON envelope: {fixed: N, remaining: N, files: [...]}.")
 
-Agent(subagent_type="foundry:qa-specialist", name="qa-review", description="QA review changed files", maxTurns=15, prompt="QA-check all files changed in the current branch since $BASE_REF_MERGE (expand to literal SHA before spawning) for correctness, edge cases, and regressions. Run only the targeted tests: CODEMAP_ENABLED=$(cat \"${TMPDIR:-/tmp}/resolve-codemap-enabled-${CSID}\" 2>/dev/null || printf false) python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_test_plan.py\" targeted --base $BASE_REF_MERGE prints a JSON plan — run exactly its command (null = no targeted tests; say so). Never run the whole test suite: the orchestrator runs it at the end of this gate. Flag any blocking issues (bugs, broken contracts, missing test coverage for the changed logic). Write your full findings to $RUN_DIR/qa-specialist-step9.md using the Write tool, then return ONLY a compact JSON envelope: {blocking: N, warnings: N, issues: [...]}.")
+Agent(subagent_type="foundry:qa-specialist", name="qa-review", description="QA review changed files", maxTurns=15, prompt="QA-check all files changed in the current branch since $BASE_REF_MERGE (expand to literal SHA before spawning) for correctness, edge cases, and regressions. Run only the targeted tests: CODEMAP_ENABLED=$(cat \"${TMPDIR:-/tmp}/resolve-codemap-enabled-${CSID}\" 2>/dev/null || printf false) python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_test_plan.py\" targeted --base $BASE_REF_MERGE prints a JSON plan — run exactly its command (null = no targeted tests; say so), but first read $IMPL_DIR/pr-code-clause.txt (expand to the literal path before spawning) and follow it verbatim — it says whether to run directly, through the guard or not at all; a missing file means run no tests and report the gap. Never run the whole test suite: the orchestrator runs it at the end of this gate. Flag any blocking issues (bugs, broken contracts, missing test coverage for the changed logic). Write your full findings to $RUN_DIR/qa-specialist-step9.md using the Write tool, then return ONLY a compact JSON envelope: {blocking: N, warnings: N, issues: [...]}.")
 ```
 
 > **Health monitoring** — SKILL.md §Agent wait discipline: both spawns run in background. Issue them in one message together with the Write of `$IMPL_DIR/agent-watch-qa.tsv` (rows `linting-expert<TAB><RUN_DIR>/linting-expert-step9.md<TAB>900` and `qa-specialist<TAB><RUN_DIR>/qa-specialist-step9.md<TAB>900`, `RUN_DIR` expanded), then **end the turn** — the completion notification is the resume signal. Never hold the turn open with `Bash(true)`, a "waiting" line, a poll, `ScheduleWakeup`, `ListAgents` or a `Monitor` loop. At each wake-up run the watch check; `timed_out`, or a notification without its output file → surface partial results from `$RUN_DIR` with ⏱ now.
@@ -81,7 +81,7 @@ export RESOLVE_APPROVED_HOOKS=""
 python "$PLUGIN_ROOT/bin/commit_lint_fixes.py"  # timeout: 90000
 ```
 
-**Gate loop — QA gate** (max 3 iterations; every test run inside it is targeted, never the full suite, and runs through the PR-code guard per `dispatch-prelude.md` §PR-code approval):
+**Gate loop — QA gate** (max 3 iterations; every test run inside it is targeted, never the full suite, and runs through the PR-code guard per `dispatch-prelude.md` §PR-code approval, except for a same-repo PR, which runs directly):
 
 1. Run truth-check — `foundry:qa-specialist` reports blocking issues
 2. Fix — apply fixes inline or via `IMPL_AGENT`
@@ -106,7 +106,12 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; cannot run the full suite"; exit 1; }
 _T0=$(date +%s)
-python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" run --approval-file "$IMPL_DIR/code-approval.txt" -- bash -- "$IMPL_DIR/full-suite.sh" > "$IMPL_DIR/full-suite.log" 2>&1
+IFS= read -r IS_CROSS_REPO < "${TMPDIR:-/tmp}/resolve-is-cross-repo-${CSID}" 2>/dev/null || IS_CROSS_REPO=true  # missing sentinel = fork = guard
+if [ "$IS_CROSS_REPO" = "false" ]; then
+    bash -- "$IMPL_DIR/full-suite.sh" > "$IMPL_DIR/full-suite.log" 2>&1
+else
+    python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" run --approval-file "$IMPL_DIR/code-approval.txt" -- bash -- "$IMPL_DIR/full-suite.sh" > "$IMPL_DIR/full-suite.log" 2>&1
+fi
 echo "$?" > "$IMPL_DIR/full-suite.rc"
 # a background call's own tool timing ends at dispatch, so the suite's wall time is recorded here instead
 echo "$(( $(date +%s) - _T0 ))" > "$IMPL_DIR/full-suite.seconds"

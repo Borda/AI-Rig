@@ -256,7 +256,7 @@ _DRIFTS = [
         id="role-model-changed",
     ),
     pytest.param(
-        partial(_edit_json, _RECORD, partial(_assign_again, "curator", ["gpt-6.1-sol", "high"])),
+        partial(_edit_json, _RECORD, partial(_assign_again, "curator", ["gpt-6.2-sol", "high"])),
         "a role is assigned more than once",
         id="role-assigned-twice",
     ),

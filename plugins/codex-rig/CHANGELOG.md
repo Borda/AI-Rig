@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.46.0
+
+- Code Review and Code Remediate no longer scan or ask a risk question for a pull request whose head branch lives in the same repository (not a fork); an escalation there uses the ordinary test-run approval. The Git-metadata integrity checks around every run still apply, and a fork PR or an unreadable origin keeps the full gate, and the collector now reports a missing origin field as a fork. The review and remediation references and the lost-anchor rule follow the exemption, so a same-repository PR no longer needs a scan verdict to request the reusable pytest approval or to resume.
+- Update the active Sol parent, review, and specialist assignments to GPT-6.2 Sol. Calibration and roster checks follow the new assignments, and saved GPT-6.1 Sol reviews remain readable.
+
 ## 0.45.0
 
 - The contributor-code guard now keeps the real checkout, including `.env`, out of the Linux sandbox and starts a bare program such as `bash` from the allowlisted `PATH` on Windows instead of the system directory first.

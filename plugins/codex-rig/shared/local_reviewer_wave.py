@@ -675,6 +675,7 @@ def _resolve_node_role(
     role_path = roles_dir / role_id / "ROLE.md"
     role_bytes = _read_bytes(role_path, "role-card")
     if plan_schema != SCHEMA_VERSION:
+        # Older evidence binds the model to its original frozen role card.
         model, effort = _role_settings(role_bytes)
         if model not in {"gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"}:
             raise ReviewRouteError("plan-role-model-unsupported")

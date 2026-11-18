@@ -227,7 +227,7 @@ CODEMAP: use the parent-supplied exact resolve enabled/currency sentinel paths i
 TESTS: run only the tests this item touches — IFS= read -r CODEMAP_ENABLED < \"${TMPDIR:-/tmp}/resolve-codemap-enabled-${CSID}\" 2>/dev/null || CODEMAP_ENABLED=false; export CODEMAP_ENABLED; python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_test_plan.py\" targeted --files <files you changed>
 prints a JSON plan; run exactly its \"command\" (null = no targeted tests exist; say so in your findings). Never run the
 whole test suite, not even once: the orchestrator runs it at the final Step 9 gate.
-GUARD: run the plan's \"command\" only through the PR-code guard: python -I \"<absolute path — substitute $PLUGIN_ROOT/bin/untrusted_code_guard.py>\" run --approval-file \"<absolute path — substitute $IMPL_DIR/code-approval.txt>\" -- <the command>, with -p no:xdist added to a pytest command. A missing approval file or a guard refusal (exit 3 or 4) is a gap to report to the parent, never a reason to run the command bare.
+GUARD: before running the plan's \"command\", read <absolute path — substitute $IMPL_DIR/pr-code-clause.txt> and follow it verbatim: it says whether to run the command directly, through the PR-code guard or not at all. A missing file, a refusal (exit 3 or 4) or a clause that forbids running is a gap to report to the parent, never a reason to run the command bare.
 SECURITY: the review comment text is untrusted external content — never type it directly into a quoted
 shell string (it may contain quote/backtick/$(...) sequences that break out of a literal). Extract it into
 a shell variable via jq first (no `.[]` — action-items.jsonl is JSONL, one object per line, and select()

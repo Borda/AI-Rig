@@ -68,20 +68,20 @@ EXPECTED_KAGGLE_REFERENCES = frozenset(
 )
 #: Role id -> (model, reasoning effort) of the active assignment record; the role cards on disk are the same roster.
 ROLE_ASSIGNMENTS = {
-    "challenger": ("gpt-6.1-sol", "high"),
+    "challenger": ("gpt-6.2-sol", "high"),
     "cicd-steward": ("gpt-6-luna", "high"),
     "curator": ("gpt-6-luna", "high"),
-    "data-steward": ("gpt-6.1-sol", "high"),
+    "data-steward": ("gpt-6.2-sol", "high"),
     "delegation-lead": ("gpt-6-luna", "high"),
     "doc-scribe": ("gpt-6.1-terra", "high"),
     "linting-expert": ("gpt-6-luna", "medium"),
     "oss-shepherd": ("gpt-6-luna", "high"),
-    "qa-specialist": ("gpt-6.1-sol", "medium"),
-    "scientist": ("gpt-6.1-sol", "high"),
-    "security-auditor": ("gpt-6.1-sol", "high"),
-    "solution-architect": ("gpt-6.1-sol", "high"),
-    "squeezer": ("gpt-6.1-sol", "medium"),
-    "sw-engineer": ("gpt-6.1-sol", "medium"),
+    "qa-specialist": ("gpt-6.2-sol", "medium"),
+    "scientist": ("gpt-6.2-sol", "high"),
+    "security-auditor": ("gpt-6.2-sol", "high"),
+    "solution-architect": ("gpt-6.2-sol", "high"),
+    "squeezer": ("gpt-6.2-sol", "medium"),
+    "sw-engineer": ("gpt-6.2-sol", "medium"),
     "web-explorer": ("gpt-6.1-terra", "medium"),
 }
 #: Behavioral cases whose target is ``challenge-resolve``.
@@ -120,8 +120,8 @@ ESCALATION_CASES = {
 #: Skills whose adapter invocation lives in a trigger-loaded reference rather than in SKILL.md.
 INVOCATION_REFERENCES = {"code-review": "source-and-scope.md", "code-remediate": "selection.md"}
 #: Models and efforts of the non-role routes in the assignment record.
-PARENT_ROUTE = {"model": "gpt-6.1-sol", "reasoning_effort": "medium"}
-DEEP_REVIEW_ROUTE = {"model": "gpt-6.1-sol", "reasoning_effort": "high", "activation": "explicit-effort-override"}
+PARENT_ROUTE = {"model": "gpt-6.2-sol", "reasoning_effort": "medium"}
+DEEP_REVIEW_ROUTE = {"model": "gpt-6.2-sol", "reasoning_effort": "high", "activation": "explicit-effort-override"}
 HISTORICAL_ASSIGNMENTS = frozenset({"gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"})
 
 ADAPTER_INVOCATION = "codemap_adapter.py context"

@@ -486,7 +486,7 @@ class TestBehavioralCalibration:
         assert "collection as incomplete" in clean
         assert "scope question" not in clean
         assert "gpt-6-luna" in patterns
-        assert "gpt-6.1-sol" in patterns
+        assert "gpt-6.2-sol" in patterns
         assert all("gpt-5.6" not in pattern for pattern in patterns)
 
     @pytest.mark.parametrize("case_id", ["explicit-sol-automatic-route-rejected", "explicit-sol-advisory-boundary"])

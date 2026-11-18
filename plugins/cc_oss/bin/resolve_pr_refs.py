@@ -277,12 +277,26 @@ def _repository_identity(value: str) -> tuple[str, str, str] | None:
     return host.lower(), parts[0], parts[1].removesuffix(".git")
 
 
+def is_cross_repository(meta: dict) -> bool:
+    """Tell whether the PR head lives outside this repository; anything but a literal ``False`` counts as a fork.
+
+    The answer decides whether PR code runs without the guard, so a missing or null field must keep the gate.
+
+    Examples:
+        >>> is_cross_repository({"isCrossRepository": False})
+        False
+        >>> [is_cross_repository(m) for m in ({"isCrossRepository": True}, {}, {"isCrossRepository": None})]
+        [True, True, True]
+    """
+    return meta.get("isCrossRepository") is not False
+
+
 def _pr_precheck(meta: dict, timeout: int) -> bool:
     """Reject closed PRs or unverified checkout and push targets before publishing metadata."""
     if meta.get("state") != "OPEN":
         print("! BLOCKED — PR is not open or its state could not be verified")
         return False
-    if meta.get("isCrossRepository") and meta.get("maintainerCanModify") is not True:
+    if is_cross_repository(meta) and meta.get("maintainerCanModify") is not True:
         head = f"{head_repo_owner(meta)}/{head_repo_name(meta)}"
         if _run(["gh", "api", f"repos/{head}", "--jq", ".permissions.push"], timeout) != "true":
             print("! BLOCKED — fork PR does not allow maintainer edits and caller push access could not be verified")
@@ -321,7 +335,7 @@ def _collect_ref_metadata(args: argparse.Namespace) -> dict[str, str] | None:
         return None
     head_ref = str(meta.get("headRefName") or "")
     base_ref = str(meta.get("baseRefName") or "") or base_default
-    cross_repo = "true" if meta.get("isCrossRepository") else "false"
+    cross_repo = "true" if is_cross_repository(meta) else "false"
     head_oid = str(meta.get("headRefOid") or "")
     for label, ref in (("head", head_ref), ("base", base_ref)):
         # empty head ref: gh omitted it; an invalid name never reaches a sentinel
@@ -413,6 +427,8 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
 
+    # it gates PR-code execution: a failed or PR-less run must not inherit the previous run's value (empty = guard)
+    _write_sentinel("resolve-is-cross-repo", "")
     if args.local_base:
         return publish_local_base(args.timeout)
 

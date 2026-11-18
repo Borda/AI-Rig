@@ -647,7 +647,11 @@ def _replace_context_to_size(plan_path: Path, role_index: int, size: int) -> str
 
 
 def review_evidence_files(
-    tmp_path: Path, *, roles: tuple[str, ...] = ("challenger", "cicd-steward"), source_path: str = "widget.py"
+    tmp_path: Path,
+    *,
+    roles: tuple[str, ...] = ("challenger", "cicd-steward"),
+    source_path: str = "widget.py",
+    sol_model: str = "gpt-6.2-sol",
 ) -> tuple[Path, Path]:
     """Create a valid two-role frozen plan and bounded local reviewer wave evidence fixture."""
     contexts = tmp_path / "contexts"
@@ -687,7 +691,7 @@ def review_evidence_files(
             "cicd-steward": "gpt-6-luna",
             "doc-scribe": "gpt-6.1-terra",
             "web-explorer": "gpt-6.1-terra",
-        }.get(role_id, "gpt-6.1-sol")
+        }.get(role_id, sol_model)
         effort = next(
             line.split(": ", 1)[1] for line in role_text.splitlines() if line.startswith("model_reasoning_effort: ")
         )
@@ -862,7 +866,7 @@ def _strip_assessment_from_outputs(evidence_path: Path, evidence: dict[str, obje
 @pytest.fixture
 def historical_schema_two_evidence(tmp_path: Path) -> tuple[Path, Path, Path]:
     """Build schema-2 plan and evidence with pre-assessment outputs; return the plan, evidence and roles paths."""
-    plan_path, evidence_path = review_evidence_files(tmp_path)
+    plan_path, evidence_path = review_evidence_files(tmp_path, sol_model="gpt-6.1-sol")
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     plan["schema_version"] = 2
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
@@ -2020,7 +2024,7 @@ class TestDispatchAdmission:
         A schema-1 plan (no source, diff or capacity receipts) with historical role cards must still validate as
         evidence, yet `check_host` must refuse it before any process starts.
         """
-        plan_path, evidence_path = review_evidence_files(tmp_path)
+        plan_path, evidence_path = review_evidence_files(tmp_path, sol_model="gpt-6.1-sol")
         legacy_dropped = {"source_path", "source_sha256", "diff_path", "diff_sha256"}
         plan = {
             key: value
@@ -3054,7 +3058,7 @@ class TestValidateEvidence:
         assert plan["nodes"][0]["model"] == "gpt-6.1-terra"
         assert _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)["consumer_id"] == "code-review"
 
-        plan["nodes"][0]["model"] = "gpt-6.1-sol"
+        plan["nodes"][0]["model"] = "gpt-6.2-sol"
         _write_json(plan_path, plan)
         with pytest.raises(_adapter().ReviewRouteError, match="plan-capacity-receipt-binding-invalid"):
             _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)

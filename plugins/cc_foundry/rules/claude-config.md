@@ -39,6 +39,10 @@ Batch consecutive edits to one file and independent calls of every kind in one r
 
 Never combine navigation and a command in one Bash call: always two separate calls; CWD persists. Applies to every command, not only worktrees.
 
+## Literal Command Words in Git-Naming Bash Calls
+
+A Bash call naming `git` or `gh` writes the program as literal text. A variable or `$(…)` as the command word (`R=$(command -v ruff); git show … | "$R" check -`) makes `commit-guard` fail closed: it cannot rule out a hidden push, so it asks the user to confirm. Write `ruff` or `.venv/bin/ruff` directly, or split into two Bash calls (`git show … > "$F"`, then the tool on `"$F"`). A fixed assignment (`R=.venv/bin/ruff`) stays readable; a captured one does not.
+
 ## TMPDIR Sentinel Scoping
 
 > Before applying, Read `_full/claude-config.md` §TMPDIR Sentinel Scoping; binding inline. If it cannot be read, stop and report the missing prerequisite.

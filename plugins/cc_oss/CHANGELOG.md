@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.63.0
+
+- `/oss:resolve` and `/oss:review` no longer scan or ask about PR code when the PR comes from a branch in the same repository (not a fork): its tests run directly in the checkout with no prompt. Fork PRs, and PRs whose origin cannot be read, keep the scan, question and sandbox: the same-repo answer is cleared at the start of every run, a missing or null origin counts as a fork, and `/oss:review` reads it from its frozen PR snapshot.
+- `/oss:resolve` and `/oss:review` now record one PR-code decision per run in a clause file that every spawn follows, so the QA gate, item agents, Codex edits, issue and confirmation agents and the overlay run all execute PR code the same way (directly for a same-repo PR, through the guard after approval, or not at all). Before, the QA-gate tests, the Codex edit brief and the review reproduction runs ran without checking the answer to the PR-code question.
+- The PR-code question now always offers **Run without sandbox** beside the sandbox and *Do not run* options, instead of only on hosts with no sandbox, including the `/oss:analyse` reproduction question. It still runs in the disposable copy with a cleared environment but without containment, and the choice is recorded.
+
 ## 0.62.0
 
 - The PR-code guard shipped with the review, resolve and analyse gates now keeps the real checkout, including `.env`, out of the Linux sandbox and starts a bare program such as `bash` from the allowlisted `PATH` on Windows, so a full-suite gate no longer starts the WSL launcher there.

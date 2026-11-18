@@ -1,18 +1,18 @@
 {
   "accepted_at": "2026-07-11",
   "active_assignment_basis": {
-    "decided_at": "2026-10-26",
-    "decision": "explicit-user-terra-rollout",
+    "decided_at": "2026-11-18",
+    "decision": "explicit-user-sol-6.2-rollout",
     "gpt6_quality_cost_evidence": "pending-paired-evaluation"
   },
   "active_assignments": {
     "deep_review": {
       "activation": "explicit-effort-override",
-      "model": "gpt-6.1-sol",
+      "model": "gpt-6.2-sol",
       "reasoning_effort": "high"
     },
     "parent": {
-      "model": "gpt-6.1-sol",
+      "model": "gpt-6.2-sol",
       "reasoning_effort": "medium"
     },
     "roles": {
@@ -27,7 +27,7 @@
           "linting-expert"
         ]
       },
-      "gpt-6.1-sol": {
+      "gpt-6.2-sol": {
         "high": [
           "challenger",
           "data-steward",

@@ -104,6 +104,20 @@ _BRANCH_NAME_CASES = [
 class TestPureHelpers:
     """Helpers that read git output or PR metadata without any process call."""
 
+    @pytest.mark.parametrize(
+        ("meta", "expected"),
+        [
+            pytest.param({"isCrossRepository": False}, False, id="same-repo"),
+            pytest.param({"isCrossRepository": True}, True, id="fork"),
+            pytest.param({"isCrossRepository": None}, True, id="null-is-fork"),
+            pytest.param({}, True, id="missing-is-fork"),
+            pytest.param({"isCrossRepository": "false"}, True, id="string-is-fork"),
+        ],
+    )
+    def test_is_cross_repository_fails_closed(self, meta: dict, expected: bool) -> None:
+        """Only a literal ``False`` marks a same-repo PR; any other answer keeps the PR-code gate."""
+        assert rpr.is_cross_repository(meta) is expected
+
     def test_parse_head_branch(self) -> None:
         """The default branch is lifted from the ``HEAD branch:`` line."""
         assert rpr.parse_head_branch("* remote origin\n  HEAD branch: develop\n  Remote branches:") == "develop"
@@ -269,6 +283,14 @@ class TestMain:
         assert read_shared_sentinel(tmp_sentinels, "resolve-head-ref") == "pr-42-main"
         assert read_shared_sentinel(tmp_sentinels, "resolve-remote-head-ref") == "main"
 
+    def test_missing_cross_repo_field_publishes_true(self, tmp_sentinels: Path, run: mock.MagicMock) -> None:
+        """A payload that omits ``isCrossRepository`` publishes ``true``, so the PR-code gate stays on."""
+        meta = _meta()
+        del meta["isCrossRepository"]
+        _wire(run, default_ref="refs/remotes/origin/main", pr_meta=meta)
+        assert rpr.main(["--pr", "42"]) == 0
+        assert read_shared_sentinel(tmp_sentinels, "resolve-is-cross-repo") == "true"
+
     @pytest.mark.parametrize(
         ("overrides", "label"),
         [
@@ -294,7 +316,8 @@ class TestMain:
         _wire(run, default_ref="refs/remotes/origin/main", pr_meta=_meta(**overrides))
         assert rpr.main(["--pr", "42"]) == 1
         assert f"PR {label} ref" in capsys.readouterr().out
-        assert list(tmp_sentinels.glob("resolve-*")) == []
+        assert [f.name for f in tmp_sentinels.glob("resolve-*")] == ["resolve-is-cross-repo-shared"]
+        assert read_shared_sentinel(tmp_sentinels, "resolve-is-cross-repo") == ""
 
     def test_blocks_without_default_branch(
         self, tmp_sentinels: Path, run: mock.MagicMock, capsys: pytest.CaptureFixture[str]
@@ -309,7 +332,21 @@ class TestMain:
         _wire(run, default_ref="refs/remotes/origin/main", pr_meta=None)
         rc = rpr.main(["--pr", "42"])
         assert rc == 1
-        assert list(tmp_sentinels.glob("resolve-*")) == []
+        assert [f.name for f in tmp_sentinels.glob("resolve-*")] == ["resolve-is-cross-repo-shared"]
+
+    @pytest.mark.parametrize(
+        "argv", [pytest.param(["--pr", "42"], id="failed-pr-run"), pytest.param(["--local-base"], id="no-pr-run")]
+    )
+    def test_clears_stale_cross_repo_sentinel(self, tmp_sentinels: Path, run: mock.MagicMock, argv: list[str]) -> None:
+        """A run that publishes no cross-repo answer leaves it empty, never the previous run's ``false``.
+
+        The value decides whether PR code runs without the guard, so an earlier same-repo PR's answer must not carry
+        over to a fork PR whose metadata fetch failed or to a PR-less run; empty keeps the guard.
+        """
+        (tmp_sentinels / "resolve-is-cross-repo-shared").write_text("false\n", encoding="utf-8")
+        _wire(run, default_ref="refs/remotes/origin/main", pr_meta=None)
+        rpr.main(argv)
+        assert read_shared_sentinel(tmp_sentinels, "resolve-is-cross-repo") == ""
 
     def test_emits_state_trace_on_stderr(
         self, tmp_sentinels: Path, run: mock.MagicMock, capsys: pytest.CaptureFixture[str]

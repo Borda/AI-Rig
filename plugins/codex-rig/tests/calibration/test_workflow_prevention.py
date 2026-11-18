@@ -310,7 +310,7 @@ class TestWorkflowPolicyFindings:
     @pytest.mark.parametrize("separator", _CLAUSE_SEPARATORS)
     def test_allows_supported_model_after_historical_clause(self, runner, label: str, separator: str) -> None:
         """Replacing the current assignment with a supported model clears the finding."""
-        policy = f'{label} GPT-5.6 observations remain archived{separator}current runtime model = "gpt-6.1-sol".'
+        policy = f'{label} GPT-5.6 observations remain archived{separator}current runtime model = "gpt-6.2-sol".'
 
         assert runner.workflow_policy_findings(policy, _LIGHTWEIGHT) == []
 

@@ -816,8 +816,8 @@ class TestCalibrationRunner:
         The evidence copy moves qa-specialist from the medium to the high effort tier, which the role policy forbids.
         """
         evidence = json.loads((CALIBRATION_DIR / "accepted-route-evidence.json").read_text(encoding="utf-8"))
-        evidence["active_assignments"]["roles"]["gpt-6.1-sol"]["medium"].remove("qa-specialist")
-        evidence["active_assignments"]["roles"]["gpt-6.1-sol"]["high"].append("qa-specialist")
+        evidence["active_assignments"]["roles"]["gpt-6.2-sol"]["medium"].remove("qa-specialist")
+        evidence["active_assignments"]["roles"]["gpt-6.2-sol"]["high"].append("qa-specialist")
         tampered = tmp_path / "tampered-active-assignments.json"
         tampered.write_text(json.dumps(evidence), encoding="utf-8")
         paths = replace(calibration_runner.Paths.create("plugin", tmp_path), accepted_route_evidence=tampered)

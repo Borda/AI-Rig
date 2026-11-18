@@ -124,17 +124,17 @@ ROLE_TASK_CUES = {
     "scientist": "ablations",
     "delegation-lead": "separable workstreams",
 }
-#: Model identifier used in historical evidence and fixture attempts.
-DEFAULT_MODEL = "gpt-6.1-sol"
-#: Model identifier recorded in historical review evidence.
-REVIEW_MODEL = "gpt-6.1-sol"
+#: Model identifier used in synthetic calibration attempts.
+DEFAULT_MODEL = "gpt-6.2-sol"
+#: Model identifier recorded for the active review route.
+REVIEW_MODEL = "gpt-6.2-sol"
 #: Model identifier assigned to roles on the critical (Sol) model tier.
-CRITICAL_MODEL = "gpt-6.1-sol"
+CRITICAL_MODEL = "gpt-6.2-sol"
 #: Model identifier assigned to lighter support roles on the Luna tier.
 SUPPORT_MODEL = "gpt-6-luna"
 #: Model identifier assigned to documentation and external-evidence roles.
 TERRA_MODEL = "gpt-6.1-terra"
-#: Model groups recorded in the historical route evidence.
+#: Model groups recorded for active assignments.
 SUPPORTED_ACTIVE_MODELS = {DEFAULT_MODEL, CRITICAL_MODEL, SUPPORT_MODEL, TERRA_MODEL}
 #: Roles expected to run on the support (Luna) model instead of the critical model.
 LUNA_MODEL_AGENTS = {
@@ -559,8 +559,8 @@ def check_accepted_route_evidence(run: CalibrationRun) -> None:
         ):
             raise ValueError("active parent or deep-review assignment mismatch")
         if payload.get("active_assignment_basis") != {
-            "decided_at": "2026-10-26",
-            "decision": "explicit-user-terra-rollout",
+            "decided_at": "2026-11-18",
+            "decision": "explicit-user-sol-6.2-rollout",
             "gpt6_quality_cost_evidence": "pending-paired-evaluation",
         }:
             raise ValueError("active GPT-6 evidence status mismatch")

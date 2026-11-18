@@ -217,7 +217,7 @@ class TestCodexManifestSelection:
         assert contract["default_total_cells_by_provider"] == {"claude": 180, "codex": 60}
         assert contract["models_by_provider"] == {
             "claude": ["haiku", "sonnet", "opus"],
-            "codex": ["gpt-6.1-sol", "gpt-6-luna", "gpt-6-sol", "gpt-6-astra"],
+            "codex": ["gpt-6.1-sol", "gpt-6-luna", "gpt-6-sol", "gpt-6.2-astra"],
         }
 
 

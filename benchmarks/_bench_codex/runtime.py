@@ -24,7 +24,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 #: Codex model names the benchmark accepts; any other model is rejected with a ValueError.
-SUPPORTED_CODEX_MODELS = ("gpt-6.1-sol", "gpt-6-luna", "gpt-6-sol", "gpt-6-astra")
+SUPPORTED_CODEX_MODELS = ("gpt-6.1-sol", "gpt-6-luna", "gpt-6-sol", "gpt-6.2-astra")
 
 #: Lowercase credential-bearing event keys whose values are replaced with ``<redacted>`` in recorded telemetry.
 _SENSITIVE_EVENT_KEYS = frozenset(

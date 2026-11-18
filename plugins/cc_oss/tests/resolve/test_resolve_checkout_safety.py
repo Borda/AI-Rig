@@ -54,13 +54,19 @@ def _wire(
     run.side_effect = reply
 
 
+def _assert_only_cleared_cross_repo(sentinels: Path) -> None:
+    """Assert that a refused checkout left only the emptied cross-repo answer, no checkout metadata."""
+    assert [f.name for f in sentinels.glob("resolve-*")] == ["resolve-is-cross-repo-shared"]
+    assert (sentinels / "resolve-is-cross-repo-shared").read_text(encoding="utf-8").strip() == ""
+
+
 @pytest.mark.parametrize("state", ["CLOSED", "MERGED", ""])
 @mock.patch.object(rpr.subprocess, "run", autospec=True)
 def test_non_open_pr_is_blocked_before_sentinels(run: mock.Mock, tmp_sentinels: Path, state: str) -> None:
     """Only explicitly open PRs can enter the checkout pipeline."""
     _wire(run, _metadata(state=state))
     assert rpr.main(["--pr", "12"]) == 1
-    assert list(tmp_sentinels.glob("resolve-*")) == []
+    _assert_only_cleared_cross_repo(tmp_sentinels)
 
 
 @pytest.mark.parametrize(
@@ -81,7 +87,7 @@ def test_non_editable_fork_is_blocked(run: mock.Mock, tmp_sentinels: Path, permi
         api_responses={("gh", "api", "repos/contributor/project", "--jq", ".permissions.push"): permission},
     )
     assert rpr.main(["--pr", "12"]) == 1
-    assert list(tmp_sentinels.glob("resolve-*")) == []
+    _assert_only_cleared_cross_repo(tmp_sentinels)
 
 
 @mock.patch.object(rpr.subprocess, "run", autospec=True)
@@ -116,7 +122,7 @@ def test_origin_must_match_pr_base_repository(run: mock.Mock, tmp_sentinels: Pat
     """The hardcoded origin merge base cannot refer to a fork or an unverifiable repository."""
     _wire(run, _metadata(), origin)
     assert rpr.main(["--pr", "12"]) == 1
-    assert list(tmp_sentinels.glob("resolve-*")) == []
+    _assert_only_cleared_cross_repo(tmp_sentinels)
 
 
 @pytest.mark.parametrize(
@@ -165,7 +171,7 @@ def test_unverified_canonical_origin_is_blocked(
         api_responses={("gh", "api", "repos/oldowner/project", "--jq", ".full_name"): canonical_name},
     )
     assert rpr.main(["--pr", "12", "--timeout", "7"]) == 1
-    assert list(tmp_sentinels.glob("resolve-*")) == []
+    _assert_only_cleared_cross_repo(tmp_sentinels)
     run.assert_any_call(
         ["gh", "api", "repos/oldowner/project", "--jq", ".full_name"],
         capture_output=True,

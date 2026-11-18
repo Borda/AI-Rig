@@ -216,7 +216,7 @@ Follow above and execute its contents — stages `codemap_available` and `$CODEM
 
 `ISSUE_NUMS` empty → skip issue checks downstream.
 
-The issue-agent prompt must also bind `Reviewed source: <full PR_HEAD_SHA>` and the frozen-source rule: `git show <PR_HEAD_SHA>:<path>` / `git grep <pattern> <PR_HEAD_SHA> -- <paths>` only; working-tree reads or reproduction runs require a clean checkout at that exact SHA immediately before use. Substitute the literal SHA before dispatch; the issue text never supplies source identity.
+The issue-agent prompt must also bind `Reviewed source: <full PR_HEAD_SHA>` and the frozen-source rule: `git show <PR_HEAD_SHA>:<path>` / `git grep <pattern> <PR_HEAD_SHA> -- <paths>` only; working-tree reads or reproduction runs require a clean checkout at that exact SHA immediately before use, and any run that executes PR code follows `$RUN_DIR/code-clause.txt` verbatim (expand the literal path; a missing file means run nothing). Substitute the literal SHA before dispatch; the issue text never supplies source identity.
 
 ### Acceptance gate (PR mode only) — validate reject, then block
 

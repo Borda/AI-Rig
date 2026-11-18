@@ -137,7 +137,7 @@ class TestSync:
 
         projected = tomllib.loads((home / "config.toml").read_text(encoding="utf-8"))
         instructions = (home / "AGENTS.md").read_text(encoding="utf-8")
-        expected = {"model": "gpt-6.1-sol", "review_model": "gpt-6.1-sol", "custom": True}
+        expected = {"model": repository["model"], "review_model": repository["review_model"], "custom": True}
         assert projected == {**expected, **_optional_projection(repository)}
         assert instructions.startswith("User instructions.\n")
         assert instructions.count("borda-local:session-model-policy begin") == 1
@@ -343,8 +343,9 @@ class TestSync:
 
         namespace["sync"](SOURCE_CONFIG, SOURCE_POLICY, home, install_policy=False)
 
-        config = (home / "config.toml").read_text(encoding="utf-8")
-        assert ('model = "gpt-6.1-sol"' in config, 'review_model = "gpt-6.1-sol"' in config) == (True, True)
+        config = tomllib.loads((home / "config.toml").read_text(encoding="utf-8"))
+        repository = tomllib.loads(SOURCE_CONFIG.read_text(encoding="utf-8"))
+        assert (config["model"], config["review_model"]) == (repository["model"], repository["review_model"])
         assert (home / "AGENTS.md").read_text(encoding="utf-8") == original_instructions
 
     def test_projects_auto_review_policy_without_replacing_primary_policy(

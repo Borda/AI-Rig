@@ -429,7 +429,7 @@ def _build_manifest() -> dict[str, Any]:
     implementation_contract["artifact_sha256"] = artifact_sha256
     implementation_contract["codex_model_stratum"] = {
         "model": "gpt-6.1-sol",
-        "additional_strata": ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"],
+        "additional_strata": ["gpt-6-luna", "gpt-6-sol", "gpt-6.2-astra"],
         "reasoning_effort": "high",
         "strict_config": True,
     }
@@ -489,7 +489,7 @@ def _build_manifest() -> dict[str, Any]:
             # declaration read from two sides: --models resolves a name against the methodology
             # list, and the runner admits a stratum against this one, so a name missing here fails
             # at the preflight after the selection already resolved.
-            "additional_strata": ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"],
+            "additional_strata": ["gpt-6-luna", "gpt-6-sol", "gpt-6.2-astra"],
             "reasoning_effort": "high",
             "strict_config": True,
         },

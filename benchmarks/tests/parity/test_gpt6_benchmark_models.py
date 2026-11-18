@@ -22,7 +22,7 @@ if str(_PLATFORM_TESTS_DIR) not in sys.path:
 from _platform import POSIX_BASH  # noqa: E402
 
 CURRENT_PARENT_MODEL = "gpt-6.1-sol"
-MODELS = [CURRENT_PARENT_MODEL, "gpt-6-luna", "gpt-6-sol", "gpt-6-astra"]
+MODELS = [CURRENT_PARENT_MODEL, "gpt-6-luna", "gpt-6-sol", "gpt-6.2-astra"]
 OBSOLETE_MODELS = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.3-codex"]
 UNSUPPORTED_MESSAGE = "supported Codex benchmark model"
 _requires_bash = pytest.mark.skipif(POSIX_BASH is None, reason="requires a working POSIX Bash executable")

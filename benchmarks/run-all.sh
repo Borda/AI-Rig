@@ -1178,7 +1178,7 @@ canonical_provider_model() {
   if [ "$provider" = "codex" ]; then
     for candidate in $declared; do
       case "$candidate" in
-        gpt-6.1-sol|gpt-6-luna|gpt-6-sol|gpt-6-astra) ;;
+        gpt-6.1-sol|gpt-6-luna|gpt-6-sol|gpt-6.2-astra) ;;
         *) echo "ERROR: supported Codex benchmark model required; legacy declaration: $candidate" >&2; return 1 ;;
       esac
     done

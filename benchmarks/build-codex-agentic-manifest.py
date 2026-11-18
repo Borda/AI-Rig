@@ -148,7 +148,7 @@ def _build_manifest() -> dict[str, Any]:
         "status": "review_ready_paid_execution_pending_human_launch",
         "model": {
             "name": "gpt-6.1-sol",
-            "additional_strata": ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"],
+            "additional_strata": ["gpt-6-luna", "gpt-6-sol", "gpt-6.2-astra"],
             "reasoning_effort": "high",
             "strict_config": True,
         },

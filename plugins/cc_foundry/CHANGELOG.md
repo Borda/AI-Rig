@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.80.1
+
+- `claude-config.md` now tells agents to write the program in a Bash call that names `git` or `gh` as literal text, or to split the call in two, instead of using a variable or `$(…)` as the command word; a captured command word made `commit-guard` fail closed and ask the user to confirm an otherwise harmless read-only call.
+- `untrusted-content.md` now states that a PR from a branch in the maintained repository (not a fork) is outside the `oss` PR-code gates, and that a run without a sandbox may always be offered as the user's recorded choice, matching `/oss:resolve` and `/oss:review`.
+
 ## 0.80.0
 
 - `untrusted_code_guard.py` on Linux no longer mounts the real checkout into the bubblewrap sandbox: a contributor's command could read the repository's `.env`, and the `.git` it saw was a writable scratch directory instead of absent. The checkout stays unmounted (only interpreter and tool directories inside it are bound), so both paths now fail to open, as on macOS.
