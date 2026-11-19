@@ -121,17 +121,20 @@ def test_ignored_runtime_file_fails_clean_source_guard(gates: ModuleType, reposi
     assert gates.source_guard_error(snapshot, snapshot["head"]).startswith("source-dirty:")
 
 
-def test_import_bound_pytest_keeps_cache_outside_clean_source(
-    gates: ModuleType, repository: Path, tmp_path: Path
+@pytest.mark.integration
+def test_import_bound_pytest_keeps_cache_and_coverage_outside_clean_source(
+    gates: ModuleType, repository: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A passing import-bound test retains its cache under checks without dirtying the reviewed source."""
+    """Configured coverage measures the reviewed module while leaving the guarded checkout clean."""
     output = tmp_path / "out"
+    monkeypatch.setenv("PYTEST_ADDOPTS", "--cov=tracked --cov-report=term --cov-fail-under=100")
+    monkeypatch.setenv("COVERAGE_FILE", str(tmp_path / "caller.coverage"))
     skipped = [part for gate in ("lint", "format", "types", "review") for part in (f"--skip-{gate}", "out of scope")]
     arguments = [
         sys.executable,
         str(RUNNER),
         "--out",
-        str(output),
+        "out",
         "--worktree",
         str(repository),
         "--expected-head",
@@ -144,12 +147,41 @@ def test_import_bound_pytest_keeps_cache_outside_clean_source(
         json.dumps(["-q", "-p", "no:xdist", "test_tracked.py"]),
         *skipped,
     ]
-    completed = subprocess.run(arguments, cwd=repository, capture_output=True, check=False)
+    completed = subprocess.run(arguments, cwd=tmp_path, capture_output=True, check=False)
 
-    assert completed.returncode == 0, completed.stderr
+    assert completed.returncode == 0, (output / "checks/tests.stderr.txt").read_text(encoding="utf-8")
     assert (output / "checks/pytest-cache").is_dir()
+    assert (output / "checks/.coverage").read_bytes().startswith(b"SQLite format 3")
+    assert "tracked.py" in (output / "checks/tests.stdout.txt").read_text(encoding="utf-8")
+    assert not (tmp_path / "caller.coverage").exists()
+    assert not list(repository.glob(".coverage*"))
     assert not (repository / ".pytest_cache").exists()
     assert gates.inspect_source(repository)["status"] == ""
+
+
+def test_worktree_child_tools_keep_caches_in_gate_output(
+    gates: ModuleType, repository: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A nested pytest process honors caller options and keeps tool caches outside the review worktree."""
+    checks = tmp_path / "gate's output"
+    checks.mkdir()
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-p no:xdist -k test_value")
+    script = (
+        "import json, os, pytest; "
+        "print(json.dumps([os.environ.get(k) for k in ('MYPY_CACHE_DIR','RUFF_CACHE_DIR')]), flush=True); "
+        "raise SystemExit(pytest.main(['-q','test_tracked.py']))"
+    )
+    output, error = checks / "out", checks / "err"
+    code, _ = gates.execute_command([sys.executable, "-c", script], 60, output, error, repository)
+
+    assert code == 0, error.read_text(encoding="utf-8")
+    assert json.loads(output.read_text(encoding="utf-8").splitlines()[0]) == [
+        str(checks / "mypy-cache"),
+        str(checks / "ruff-cache"),
+    ]
+    assert (checks / "pytest-cache/v/cache/nodeids").is_file()
+    assert not (repository / ".pytest_cache").exists()
+    assert not (repository / "__pycache__").exists()
 
 
 @pytest.mark.parametrize(
@@ -276,7 +308,7 @@ def test_gate_environment_preserves_configuration_without_credentials(gates: Mod
 
 @pytest.mark.integration
 def test_free_form_pytest_passes_with_expected_head(gates: ModuleType, repository: Path, tmp_path: Path) -> None:
-    """A clean source remains acceptable when free-form pytest writes ignored tool caches."""
+    """Free-form pytest passes and leaves its cache in the gate evidence directory."""
     output = tmp_path / "out"
     skipped = [part for gate in ("lint", "format", "types", "review") for part in (f"--skip-{gate}", "out of scope")]
     executable = (
@@ -301,7 +333,8 @@ def test_free_form_pytest_passes_with_expected_head(gates: ModuleType, repositor
 
     assert completed.returncode == 0, completed.stderr
     assert result["status"] == "pass", (output / result["stderr"]).read_text(encoding="utf-8")
-    assert (repository / ".pytest_cache").is_dir()
+    assert (output / "checks/pytest-cache/v/cache/nodeids").is_file()
+    assert not (repository / ".pytest_cache").exists()
     assert gates.inspect_source(repository)["status"] == ""
 
 

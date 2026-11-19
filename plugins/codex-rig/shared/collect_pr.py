@@ -22,10 +22,10 @@ invoking checkout. Remediation first requires GitHub's attached branch checkout,
 original branch recovery. Fork recovery stops for the remediation workflow's bounded adversarial path. Reusing an output
 directory is supported because the collector removes its own prior evidence before starting a new attempt; a prior
 report-adjacent review worktree is reused only when it remains clean and bound to the same repository and exact commit.
-Each temporary fallback gets a fresh private parent; its path is retained in the checkout evidence. Every fallback
-worktree and its private parent are retained, including on failure, and may be removed by the run owner with ``git
-worktree remove <recorded-worktree>`` and removal of its empty private parent. A failed creation may leave only an empty
-private parent for the run owner to remove.
+Each temporary fallback gets a fresh private parent; its path is retained in the checkout evidence. Freshly created
+review worktrees receive a private ownership marker for terminal cleanup by ``review_worktree_cleanup.py``.
+Collection failures and pre-existing worktrees remain available for inspection. An interrupted creation may leave
+an empty private parent.
 
 ## Used by
 
@@ -83,6 +83,7 @@ from github_read import (  # noqa: E402
     run_bounded_command,
     run_gh_read,
 )
+from review_worktree_cleanup import filesystem_content_digest, record_creation, recorded_content_digest  # noqa: E402
 
 #: Largest ordinary command stdout or stderr; complete local untracked inventories are exempt on stdout.
 MAX_OUTPUT_BYTES = 16 * 1024 * 1024
@@ -256,7 +257,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return arguments
 
 
-def _run(run: RunCommand, argv: list[str], timeout: int, label: str, *, input_bytes: bytes | None = None) -> bytes:
+def _run(
+    run: RunCommand,
+    argv: list[str],
+    timeout: int,
+    label: str,
+    *,
+    input_bytes: bytes | None = None,
+    full_local_inventory: bool = False,
+) -> bytes:
     """Run one argv-only command, retaining complete local inventories and bounding other output."""
     if argv and argv[0] == "gh":
         if input_bytes is not None:
@@ -265,7 +274,7 @@ def _run(run: RunCommand, argv: list[str], timeout: int, label: str, *, input_by
             return run_gh_read(run, argv, timeout=timeout, label=label)
         except GitHubReadError as error:
             raise CollectionError(str(error), diagnostics=error.diagnostics) from error
-    inventory = argv in (
+    inventory = full_local_inventory or argv in (
         ["git", "ls-files", "--others", "-z"],
         ["git", "ls-files", "--others", "--exclude-standard", "-z"],
     )
@@ -1082,6 +1091,51 @@ def _worktree_preflight(
         raise CollectionError("dirty-tracked-worktree-overlap-before-pr-checkout")
 
 
+# Inspect the actual checkout rather than accepting cached filesystem observations.
+_PR_INSPECTION_OPTIONS = ("--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false")
+
+
+def pr_worktree_index_unmasked(worktree: Path, *, run: RunCommand = DEFAULT_RUN_COMMAND, timeout: int = 60) -> bool:
+    """Check whether Git index flags could conceal local file changes."""
+    flags = _run(
+        run,
+        ["git", "-C", str(worktree), *_PR_INSPECTION_OPTIONS, "ls-files", "-v", "-f", "-z"],
+        timeout,
+        "review-worktree-index-flags",
+        full_local_inventory=True,
+    )
+    return all(not entry[:1].islower() and entry[:1] != b"S" for entry in flags.split(b"\0") if entry)
+
+
+def pr_worktree_status(worktree: Path, *, run: RunCommand = DEFAULT_RUN_COMMAND, timeout: int = 60) -> bytes:
+    """Return NUL-delimited porcelain status including ignored overlays, independently of Git's filesystem caches."""
+    # Report an entirely ignored cache as its directory even when the ignore rule lives inside the cache.
+    return _run(
+        run,
+        [
+            "git",
+            "-C",
+            str(worktree),
+            *_PR_INSPECTION_OPTIONS,
+            "status",
+            "--porcelain",
+            "-z",
+            "--untracked-files=normal",
+            "--ignored=traditional",
+            "--ignore-submodules=none",
+        ],
+        timeout,
+        "review-worktree-status",
+    )
+
+
+def pr_worktree_is_clean(worktree: Path, *, run: RunCommand = DEFAULT_RUN_COMMAND, timeout: int = 60) -> bool:
+    """Check a PR checkout for changes, including ignored overlays and index-masked tracked files."""
+    return not pr_worktree_status(worktree, run=run, timeout=timeout) and pr_worktree_index_unmasked(
+        worktree, run=run, timeout=timeout
+    )
+
+
 def _review_worktree_checkout(
     run: RunCommand,
     timeout: int,
@@ -1090,6 +1144,7 @@ def _review_worktree_checkout(
     *,
     base_oid: str,
     head_oid: str,
+    prior_checkout: dict[str, Any],
 ) -> dict[str, Any]:
     """Create or verify an isolated detached worktree at the fetched PR head."""
     source = Path(
@@ -1203,9 +1258,22 @@ def _review_worktree_checkout(
     )
     if branch:
         raise CollectionError("review-worktree-not-detached")
-    status = _run(run, ["git", "-C", str(review), "status", "--porcelain", "-z"], timeout, "review-worktree-status")
-    if status:
+    if not pr_worktree_is_clean(review, run=run, timeout=timeout):
         raise CollectionError("review-worktree-dirty")
+    if reused:
+        # Git can normalize differences in bytes and modes. Only a previous pristine collection can vouch for reuse.
+        try:
+            prior_digest = recorded_content_digest(prior_checkout)
+            observed_digest = filesystem_content_digest(review) if prior_digest else None
+        except (OSError, ValueError) as error:
+            raise CollectionError("review-worktree-dirty") from error
+        if (
+            prior_checkout.get("worktree") != review.as_posix()
+            or prior_checkout.get("local_head") != head_oid
+            or not prior_digest
+            or prior_digest != observed_digest
+        ):
+            raise CollectionError("review-worktree-dirty")
     _write_json(
         output / "worktree-preflight.json",
         {
@@ -1269,6 +1337,23 @@ def _review_worktree_checkout(
         "force_policy": "no --force was used; ask the user before any forced checkout",
         "source_policy": "isolated detached worktree is authoritative for read-only code inspection",
     }
+    if worktree_location == "temporary-fallback":
+        checkout_evidence["worktree_temporary_root"] = review.parent.parent.as_posix()
+    if reused:
+        checkout_evidence["worktree_contents_sha256"] = prior_digest
+    else:
+        # Collection remains valid on filesystems where a private removal claim cannot be established.
+        # Cleanup requires this exact fresh receipt; reverified pre-existing trees never acquire a claim.
+        try:
+            checkout_evidence["created_worktree"] = record_creation(review, main_common)
+        except (OSError, ValueError) as error:
+            checkout_evidence["cleanup_unavailable"] = str(error)
+            try:
+                checkout_evidence["worktree_contents_sha256"] = filesystem_content_digest(review)
+            except (OSError, ValueError) as digest_error:
+                raise CollectionError("review-worktree-digest-unavailable") from digest_error
+        else:
+            checkout_evidence["worktree_contents_sha256"] = checkout_evidence["created_worktree"]["contents_sha256"]
     _write_json(output / "local-checkout.json", checkout_evidence)
     _write_json(
         output / "checkout-state.json",
@@ -1634,6 +1719,7 @@ def _checkout(
     selector: Path,
     *,
     checkout_mode: str,
+    prior_checkout: dict[str, Any],
 ) -> dict[str, Any]:
     """Fetch verified target/head refs and prepare mode-specific local PR source."""
     _require_checkout_identity(routing, checkout_mode)
@@ -1645,7 +1731,9 @@ def _checkout(
     _select_and_fetch_pr_head(run, timeout, output, routing, remote_name)
 
     if checkout_mode == "review":
-        return _review_worktree_checkout(run, timeout, output, routing, base_oid=base_oid, head_oid=head_oid)
+        return _review_worktree_checkout(
+            run, timeout, output, routing, base_oid=base_oid, head_oid=head_oid, prior_checkout=prior_checkout
+        )
 
     current_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "pre-checkout-head").decode().strip()
     _worktree_preflight(
@@ -1689,6 +1777,16 @@ def collect_pr(
 ) -> int:
     """Collect one PR context pack and optionally update its verified checkout."""
     output.mkdir(parents=True, exist_ok=True)
+    prior_checkout = {}
+    receipt_path = output / "local-checkout.json"
+    if checkout and checkout_mode == "review" and not receipt_path.is_symlink() and receipt_path.is_file():
+        try:
+            if receipt_path.stat().st_size <= MAX_OUTPUT_BYTES:
+                parsed = json.loads(receipt_path.read_bytes())
+                if isinstance(parsed, dict):
+                    prior_checkout = parsed
+        except (OSError, ValueError):
+            pass  # An unreadable prior receipt cannot authorize reuse of an occupied path.
     _clear_collector_artifacts(output)
     command_runner = subprocess.run if run is None else run
     try:
@@ -1791,6 +1889,7 @@ def collect_pr(
                 routing,
                 selector,
                 checkout_mode=checkout_mode,
+                prior_checkout=prior_checkout,
             )
             revision_range = f"{checkout_evidence['diff_base_oid']}...{checkout_evidence['diff_head_oid']}"
             diff_prefix = ["git", "-C", checkout_evidence["worktree"]] if checkout_mode == "review" else ["git"]

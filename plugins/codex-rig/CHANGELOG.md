@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.48.0
+
+- PR remediation runs `gh pr checkout` in the invoking checkout by default. Use `--worktree` to keep the attached PR branch and edits in a linked worktree. Interrupted creation resumes at the recorded location. Resume checks for tracked changes hidden from ordinary Git status. The handoff names the branch and tracking destination, including when a fork pull ref is fetch-only.
+- PR reviews inspect the exact head in a detached worktree. After successful validation, Code Review removes its own clean worktree and can finish cleanup after an interruption. Dirty, reused, locked and unfinished worktrees stay available for inspection. A paused review verifies the original file contents and permissions before continuing. If the old checkout has changed or lacks an original fingerprint, the review can use a fresh worktree and preserve the old one.
+- A small local Git ref preserves the review evidence through worktree removal and Git garbage collection. Completed assessments remain available for remediation. Successful close recommendations retain their completion evidence and remain ineligible for remediation.
+- Reviews and PR remediations sharing a Git common directory take turns before writing reports or changing checkouts. Nested reviews reuse the parent's slot. A paused review can yield its place and reacquire it with its original checkout ownership. Repositories with separate Git metadata can still run concurrently.
+- Worktree-bound gates keep coverage data and pytest, Ruff and mypy caches with the gate logs. Integrity failures identify changed ignored paths when available. Checking for hidden tracked edits also works on repositories with large Git indexes. Local inspection of fork source can proceed before the execution checks required for running contributed code.
+
 ## 0.47.0
 
 - Code Review now writes its source verdict with the review status scale shared with Claude and OpenCode Rig: `APPROVE`, `MINOR_EDITS`, `MAJOR_REVISION`, `INSUFFICIENT_BUT_PROMISING`, `REJECT`, or null, under `review_validation.source_rating_version` 2. Saved version 1 reviews with the earlier lowercase names (`accept-as-is`, `needs-more-work`, and the rest) still validate, render, and feed Code Remediate with the same gates and labels; a review that mixes a version with the other version's spelling is refused with a named reason.

@@ -279,19 +279,19 @@ class TestPullRequestNewlineName:
         base = _rev(repository, "HEAD")
         git_bytes(repository, "commit", "-qm", "change")
         head = _rev(repository, "HEAD")
-        git_bytes(repository, "checkout", "--detach", "-q")
+        review = pr_directory.with_name("pr-review-worktree")
+        git_bytes(repository, "worktree", "add", "--detach", str(review), head)
         (pr_directory / "diff.patch").write_bytes(git_bytes(repository, "diff", "--binary", f"{base}...{head}", "--"))
         checkout = {
-            "worktree": repository.resolve().as_posix(),
+            "worktree": review.resolve().as_posix(),
+            "worktree_contents_sha256": producer.filesystem_content_digest(review),
             "expected_head": head,
             "diff_base_oid": base,
             "diff_head_oid": head,
         }
         (pr_directory / "local-checkout.json").write_text(json.dumps(checkout), encoding="utf-8")
 
-        _, changed, comparison_base = producer._source_snapshot(
-            pr_directory, repository, head, [NEWLINE_NAME], None, None
-        )
+        _, changed, comparison_base = producer._source_snapshot(pr_directory, review, head, [NEWLINE_NAME], None, None)
 
         assert changed == {NEWLINE_NAME}
         assert comparison_base == base

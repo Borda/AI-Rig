@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 import test_review_direct as direct
 from _git_fixtures import git_bytes
-from test_review_prepare import HELPER, _build_review_inputs, _prepare
+from test_review_prepare import HELPER, _build_review_inputs, _pr_fixture_receipt, _prepare
 
 COMPONENT_SEPARATOR = "\n--- UTF-8 component ---\n"
 KNOWN_COMPONENTS = {"direct-plan:file:1", "direct-diff:section:0", "direct-source:1"}
@@ -116,7 +116,7 @@ def _commit(root: Path, message: str, *paths: str) -> str:
 
 def _export_for_base(run: Path, root: Path, head: str, base: str, fixture: str) -> subprocess.CompletedProcess[str]:
     """Point the run at one verified PR base, discover the fixture and export its component bindings."""
-    local_checkout = {"worktree": root.as_posix(), "expected_head": head, "diff_base_oid": base, "diff_head_oid": head}
+    local_checkout = _pr_fixture_receipt(root, head, base)
     (run / "local-checkout.json").write_bytes(json.dumps(local_checkout).encode())
     (run / "diff.patch").write_bytes(git_bytes(root, "diff", "--binary", f"{base}...{head}", "--"))
     (run / "files.txt").write_bytes(git_bytes(root, "diff", "--name-only", f"{base}...{head}", "--"))

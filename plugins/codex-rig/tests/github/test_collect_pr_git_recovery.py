@@ -20,6 +20,7 @@ from unittest import mock
 
 import pytest
 from _modules import load_module
+from _platform import POSIX_FILE_MODES_AVAILABLE
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 COLLECTOR = PLUGIN_ROOT / "shared" / "collect_pr.py"
@@ -195,7 +196,7 @@ def _collect(
     *,
     cross_repository: bool = True,
     state: str = "OPEN",
-    mutate_after_checkout: bool = False,
+    after_review_checkout: Callable[[Path], None] | None = None,
     switch_source_after_checkout: bool = False,
     checkout_mode: str = "review",
     gh_checkout_fails: bool = True,
@@ -249,8 +250,8 @@ def _collect(
             result = subprocess.run(arguments, cwd=worktree, **kwargs)
             if result.returncode == 0 and switch_source_after_checkout:
                 _git(worktree, "switch", "old-topic")
-            if result.returncode == 0 and mutate_after_checkout:
-                (Path(arguments[-2]) / "module.py").write_text("value = 'raced'\n", encoding="utf-8")
+            if result.returncode == 0 and after_review_checkout:
+                after_review_checkout(Path(arguments[-2]))
             return result
         assert arguments[0] != "gh", arguments
         if arguments[:2] in (["git", "fetch"], ["git", "ls-remote"]):
@@ -311,6 +312,20 @@ def _write_ignored_tree(worktree: Path, pattern: str) -> None:
 class TestReviewWorktree:
     """Review-mode checkout in a detached worktree beside the report, against real Git repositories."""
 
+    def test_large_tracked_index_checks_flags_through_last_entry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A complete index can exceed the command cap and still contain a masked final entry."""
+        module = _load_collector()
+        _git(tmp_path, "init", "-q")
+        for name in ("a-tracked-file", "z-tracked-file"):
+            (tmp_path / name).write_bytes(b"tracked")
+        _git(tmp_path, "add", ".")
+        monkeypatch.setattr(module, "MAX_OUTPUT_BYTES", 16)
+        assert module.pr_worktree_index_unmasked(tmp_path)
+        _git(tmp_path, "update-index", "--assume-unchanged", "--", "z-tracked-file")
+        assert not module.pr_worktree_index_unmasked(tmp_path)
+
     def test_isolates_exact_pr_head_from_dirty_main_checkout(
         self, tmp_path: Path, repository_template: RepositoryTemplate
     ) -> None:
@@ -326,12 +341,31 @@ class TestReviewWorktree:
         (main / "module.py").write_text("value = 'local work'\n", encoding="utf-8")
         main_status = _git(main, "status", "--short")
         output = tmp_path / "collected"
+        subprocess.run(
+            [
+                sys.executable,
+                str(PLUGIN_ROOT / "shared/review_checkout_slot.py"),
+                "acquire",
+                "--checkout",
+                str(main),
+                "--owner",
+                "fixture-review",
+            ],
+            check=True,
+            capture_output=True,
+        )
 
         code, calls = _collect(module, source, main, output, base, head)
 
         assert code == 0
         checkout = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
         review = Path(checkout["worktree"])
+        ownership = checkout["created_worktree"]
+        assert ownership["slot_owner"] == "fixture-review"
+        admin = Path(_git(review, "rev-parse", "--absolute-git-dir"))
+        assert ownership["git_dir"] == admin.as_posix()
+        assert (admin / "codex-review-owner").read_text(encoding="ascii") == ownership["owner"]
+        assert len(ownership["owner"]) == 32
         assert review == tmp_path / "collected-review-worktree"
         assert review != main
         assert _git(review, "rev-parse", "HEAD") == head
@@ -368,6 +402,27 @@ class TestReviewWorktree:
         assert _git(review, "rev-parse", "HEAD") == head
         receipt = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
         assert receipt["command"] == "not-run: existing exact clean review worktree"
+        assert "created_worktree" not in receipt
+
+    @pytest.mark.skipif(not POSIX_FILE_MODES_AVAILABLE, reason="filesystem cannot distinguish executable mode")
+    def test_reuse_compares_original_checkout_bytes(
+        self, tmp_path: Path, repository_template: RepositoryTemplate
+    ) -> None:
+        """A retry must keep the original executable mode when Git is configured to ignore it."""
+        module = _load_collector()
+        source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
+        _git(main, "config", "core.fileMode", "false")
+        output = tmp_path / "collected"
+        assert _collect(module, source, main, output, base, head)[0] == 0
+        review = tmp_path / "collected-review-worktree"
+        tracked = review / "module.py"
+        mode = tracked.stat().st_mode
+        tracked.chmod(mode ^ 0o100)
+        assert tracked.stat().st_mode != mode
+        assert _git(review, "status", "--porcelain") == ""
+        assert _collect(module, source, main, output, base, head)[0] == 2
+        assert (output / "pr-error.txt").read_text().strip() == "review-worktree-dirty"
+        assert tracked.stat().st_mode == mode ^ 0o100
 
     def test_preserves_dirty_registered_worktree_on_retry(
         self, tmp_path: Path, repository_template: RepositoryTemplate
@@ -375,7 +430,7 @@ class TestReviewWorktree:
         """Do not reset or replace local review notes during another collection attempt.
 
         A reviewer edited a file in the review worktree after the first collection. A second collection must stop with
-        review-worktree-dirty and leave the note in place, because resetting would destroy local review work.
+        review-worktree-dirty. A fresh run can then collect the clean PR source while preserving the original tree.
         """
         module = _load_collector()
         source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
@@ -384,6 +439,7 @@ class TestReviewWorktree:
         assert first_code == 0
         review = tmp_path / "collected-review-worktree"
         (review / "module.py").write_text("value = 'review note'\n", encoding="utf-8")
+        files_before = {path.relative_to(review): path.read_bytes() for path in review.rglob("*") if path.is_file()}
 
         second_code, second_calls = _collect(module, source, main, output, base, head)
 
@@ -392,6 +448,57 @@ class TestReviewWorktree:
         assert (review / "module.py").read_text(encoding="utf-8") == "value = 'review note'\n"
         assert not any(call[:3] == ["git", "worktree", "add"] for call in second_calls)
         assert not (output / "local-checkout.json").exists()
+
+        fresh_output = tmp_path / "fresh-run"
+        fresh_code, _ = _collect(module, source, main, fresh_output, base, head)
+        assert fresh_code == 0
+        fresh = Path(json.loads((fresh_output / "local-checkout.json").read_bytes())["worktree"])
+        assert fresh != review
+        assert _git(fresh, "rev-parse", "HEAD") == head
+        assert _git(fresh, "branch", "--show-current") == ""
+        assert (fresh / "module.py").read_bytes() == (source / "module.py").read_bytes()
+        assert {
+            path.relative_to(review): path.read_bytes() for path in review.rglob("*") if path.is_file()
+        } == files_before
+        assert (output / "pr-error.txt").read_text(encoding="utf-8") == "review-worktree-dirty\n"
+
+    @pytest.mark.parametrize("existing", [pytest.param(True, id="reuse"), pytest.param(False, id="after-add")])
+    @pytest.mark.parametrize(
+        ("mask", "name"),
+        [
+            pytest.param("", "overlay.py", id="ignored-overlay"),
+            pytest.param("--assume-unchanged", "module.py", id="assume-unchanged"),
+            pytest.param("--skip-worktree", "module.py", id="skip-worktree"),
+        ],
+    )
+    def test_refuses_porcelain_invisible_review_content(
+        self, tmp_path: Path, repository_template: RepositoryTemplate, existing: bool, mask: str, name: str
+    ) -> None:
+        """Neither reuse nor fresh checkout validation may accept hidden working bytes as exact PR source."""
+        module = _load_collector()
+        source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
+        output = tmp_path / "collected"
+        review = tmp_path / "collected-review-worktree"
+        (main / ".git" / "info" / "exclude").write_text("overlay.py\n", encoding="utf-8")
+        hidden = b"source from outside the PR\n"
+
+        def contaminate(tree: Path) -> None:
+            if mask:
+                _git(tree, "update-index", mask, "--", name)
+            (tree / name).write_bytes(hidden)
+            assert _git(tree, "status", "--porcelain") == ""
+
+        if existing:
+            _git(main, "worktree", "add", "--detach", str(review), head)
+            contaminate(review)
+        code, _ = _collect(
+            module, source, main, output, base, head, after_review_checkout=None if existing else contaminate
+        )
+
+        assert code == 2
+        assert (output / "pr-error.txt").read_text(encoding="utf-8") == "review-worktree-dirty\n"
+        assert not (output / "local-checkout.json").exists()
+        assert (review / name).read_bytes() == hidden
 
     def test_receipt_survives_report_promotion(self, tmp_path: Path, repository_template: RepositoryTemplate) -> None:
         """Keep the isolated source address valid after the report directory moves.
@@ -559,7 +666,13 @@ class TestReviewWorktree:
         output = tmp_path / "collected"
 
         code, calls = _collect(
-            module, source, worktree, output, base, head, mutate_after_checkout=mutate_after_checkout
+            module,
+            source,
+            worktree,
+            output,
+            base,
+            head,
+            after_review_checkout=_edit_module if mutate_after_checkout else None,
         )
 
         assert code == (2 if mutate_after_checkout else 0)
@@ -624,7 +737,7 @@ class TestReviewWorktree:
             base,
             head,
             cross_repository=False,
-            mutate_after_checkout=True,
+            after_review_checkout=_edit_module,
         )
 
         assert code == 2

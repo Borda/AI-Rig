@@ -6,6 +6,7 @@ because the failure they guard against is state written through the shared commo
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -36,6 +37,20 @@ def _helper(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[
     """Run the helper CLI and return its result without raising on a non-zero exit."""
     cmd = [sys.executable, "-I", str(HELPER), *args]
     return subprocess.run(cmd, env=_ENV, capture_output=True, text=True, check=False, cwd=cwd)
+
+
+def _populate(directory: Path, count: int) -> None:
+    """Create enough ordinary files to exercise the diagnostic storage and output limits."""
+    for number in range(count):
+        (directory / f"entry-{number}").touch()
+
+
+def _populate_runs(family: Path, count: int) -> None:
+    """Create report groups that exceed the checkout's review-run diagnostic budget."""
+    for number in range(1, count + 1):
+        run = family / f"run-{number:03}"
+        run.mkdir(parents=True)
+        (run / "gate.json").write_text("{}", encoding="utf-8")
 
 
 class Baseline:
@@ -97,6 +112,113 @@ class TestVerify:
     def test_unchanged_metadata_passes(self, baseline: Baseline) -> None:
         """Nothing written between snapshot and verify exits 0 with an empty change list."""
         assert baseline.verify() == (0, [])
+
+    def test_ignored_drift_identifies_paths_in_each_checkout(
+        self, checkout: Path, review: Path, tmp_path: Path
+    ) -> None:
+        """A shared report edit and new review coverage data identify their source checkout and operation."""
+        sibling = checkout / ".reports" / "sibling" / "evidence.json"
+        sibling.parent.mkdir(parents=True)
+        sibling.write_text("{}", encoding="utf-8")
+        coverage = review / ".coverage"
+        with (review / ".gitignore").open("a", encoding="utf-8") as handle:
+            handle.write(".coverage\n")
+        snap = Baseline(tmp_path / "integrity.json")
+        assert snap.take(review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
+        sibling.write_text('{"changed":true}', encoding="utf-8")
+        (checkout / ".venv" / "marker").unlink()
+        coverage.write_bytes(b"data")
+        result = _helper("verify", "--snapshot", str(snap.file), "--expect", snap.expect)
+        assert result.returncode == 3
+        assert json.loads(result.stdout) == {
+            "ok": False,
+            "changed": ["main-checkout:ignored", "review:ignored"],
+            "ignored_changes": {
+                "main-checkout:ignored": {"modified": [".reports/sibling/evidence.json"], "removed": [".venv/marker"]},
+                "review:ignored": {"added": [".coverage"]},
+            },
+        }
+
+    def test_large_ignored_store_reports_directory_and_bounds_snapshot(self, checkout: Path, tmp_path: Path) -> None:
+        """A large store reports its directory while a small sibling still identifies the exact changed file."""
+        store = checkout / ".venv"
+        _populate(store, 1024)
+        report = checkout / ".reports" / "state.json"
+        report.parent.mkdir()
+        report.write_text("{}", encoding="utf-8")
+        snap = Baseline(tmp_path / "integrity.json")
+        assert snap.take(checkout).returncode == 0
+        assert snap.file.stat().st_size < 32_768
+        (store / "entry-1023").write_bytes(b"changed")
+        report.unlink()
+        result = _helper("verify", "--snapshot", str(snap.file), "--expect", snap.expect)
+        assert result.returncode == 3
+        assert json.loads(result.stdout)["ignored_changes"] == {
+            "main-checkout:ignored": {"directories": [".venv"], "removed": [".reports/state.json"]}
+        }
+
+    def test_long_ignored_change_list_reports_omissions(self, checkout: Path, baseline: Baseline) -> None:
+        """The change count stays visible if the number of exact path changes exceeds the output limit."""
+        _populate(checkout / ".venv", 70)
+        result = _helper("verify", "--snapshot", str(baseline.file), "--expect", baseline.expect)
+        assert result.returncode == 3
+        expected = sorted(f".venv/entry-{number}" for number in range(70))
+        assert json.loads(result.stdout)["ignored_changes"] == {
+            "main-checkout:ignored": {"added": expected[:64], "omitted": 6}
+        }
+
+    def test_sibling_review_run_is_identified_in_large_report_archive(self, checkout: Path, tmp_path: Path) -> None:
+        """Report archives can outgrow per-file detail while individual review runs remain distinguishable."""
+        archive = checkout / ".reports" / "archive"
+        archive.mkdir(parents=True)
+        _populate(archive, 170)
+        sibling = checkout / ".reports" / "codex" / "code-review" / "pr-27" / "run-002" / "gate.json"
+        sibling.parent.mkdir(parents=True)
+        snap = Baseline(tmp_path / "integrity.json")
+        assert snap.take(checkout).returncode == 0
+        sibling.write_text("{}", encoding="utf-8")
+        result = _helper("verify", "--snapshot", str(snap.file), "--expect", snap.expect)
+        assert result.returncode == 3
+        assert json.loads(result.stdout)["ignored_changes"] == {
+            "main-checkout:ignored": {"added": [sibling.relative_to(checkout).as_posix()]}
+        }
+
+    def test_overflow_preserves_captured_groups_without_reporting_false_removals(
+        self, checkout: Path, tmp_path: Path
+    ) -> None:
+        """Inserting an earlier run can shift another into overflow while an unchanged file remains on disk."""
+        family = checkout / ".reports" / "codex" / "code-review" / "pr-1"
+        _populate_runs(family, 130)
+        captured = family / "run-001" / "gate.json"
+        snap = Baseline(tmp_path / "integrity.json")
+        assert snap.take(checkout).returncode == 0
+        captured.write_text('{"changed":true}', encoding="utf-8")
+        earlier = family / "run-000"
+        earlier.mkdir()
+        (earlier / "new.json").touch()
+        result = _helper("verify", "--snapshot", str(snap.file), "--expect", snap.expect)
+        assert result.returncode == 3
+        assert json.loads(result.stdout)["ignored_changes"] == {
+            "main-checkout:ignored": {
+                "directories": [".reports/codex/code-review"],
+                "modified": [captured.relative_to(checkout).as_posix()],
+            }
+        }
+
+    def test_historical_baseline_still_detects_ignored_writes(self, checkout: Path, baseline: Baseline) -> None:
+        """A retained digest from the previous aggregate-only schema still verifies and stops on later writes."""
+        body = json.loads(baseline.file.read_text(encoding="utf-8"))
+        body.pop("ignored_details", None)
+        body["schema"] = 3
+        marker = checkout / ".venv" / "marker"
+        st = marker.lstat()
+        record = f"{marker}:{st.st_size}:{st.st_mode:o}:{st.st_ino}:{st.st_ctime_ns}:"
+        body["marks"]["main-checkout:ignored"] = hashlib.sha256(record.encode()).hexdigest()
+        baseline.file.write_text(json.dumps(body), encoding="utf-8")
+        baseline.expect = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        assert baseline.verify() == (0, [])
+        (checkout / ".venv" / "added").touch()
+        assert baseline.verify() == (3, ["main-checkout:ignored"])
 
     @pytest.mark.parametrize(
         ("relative", "label"),

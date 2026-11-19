@@ -1,0 +1,501 @@
+"""Verify terminal cleanup using disposable detached Git worktrees."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+import pytest
+from _git_fixtures import git_text
+from _modules import load_module
+
+SHARED = Path(__file__).resolve().parents[3] / "shared"
+
+
+@pytest.fixture
+def review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Prepare real checkout ownership and isolate the independently tested report-completion gate."""
+    monkeypatch.syspath_prepend(str(SHARED))
+    helper = load_module("cleanup_test", SHARED / "review_worktree_cleanup.py")
+    root = tmp_path / "project"
+    root.mkdir()
+    git_text(root, "init", "-q")
+    (root / "file").write_text("tracked\n", encoding="utf-8")
+    (root / ".gitignore").write_text("ignored\n", encoding="utf-8")
+    git_text(root, "add", ".")
+    git_text(root, "-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "initial")
+    head = git_text(root, "rev-parse", "HEAD").strip()
+    worktree = tmp_path / "collection-review-worktree"
+    git_text(root, "worktree", "add", "--detach", str(worktree), head)
+    slot = root / ".git" / "codex-review-slot"
+    helper.review_checkout_slot._operate("acquire", slot, "run-owner", False)
+    run = tmp_path / "pr-7" / "run-001"
+    run.mkdir(parents=True)
+    checkout = {
+        "pr_number": 7,
+        "checkout_mode": "review",
+        "checkout_method": "git-detached-review-worktree",
+        "status": "checked-out",
+        "local_branch": "",
+        "local_head": head,
+        "expected_head": head,
+        "collection_run_dir": (tmp_path / "collection").as_posix(),
+        "worktree_location": "report-adjacent",
+        "source_worktree": root.as_posix(),
+        "worktree": worktree.as_posix(),
+        "command": f"git worktree add --detach {worktree} {head}",
+        "created_worktree": helper.record_creation(worktree, root / ".git"),
+    }
+    (run / "local-checkout.json").write_text(json.dumps(checkout), encoding="utf-8")
+    (run / "result.json").write_text('{"metadata": {}, "status": "pass"}', encoding="utf-8")
+    monkeypatch.setattr(helper, "_verify_completion", lambda *args: None)
+    monkeypatch.setattr(helper.review_worktree_replay, "verified_source_inputs", lambda *args: {})
+    command = [
+        "--run",
+        str(run),
+        "--worktree",
+        str(worktree),
+        "--slot",
+        str(slot),
+        "--owner",
+        "run-owner",
+        "--checkout-sha256",
+        hashlib.sha256((run / "local-checkout.json").read_bytes()).hexdigest(),
+        "--no-contributor-execution",
+    ]
+    return helper, command, run, root, worktree
+
+
+@pytest.mark.integration
+def test_removes_only_verified_clean_worktree_and_records_result(review) -> None:
+    """Native removal retains the invoking checkout, result, and exact receipt for later replay."""
+    helper, command, run, root, worktree = review
+    assert helper.main(command) == 0
+    assert not worktree.exists()
+    assert str(worktree) not in git_text(root, "worktree", "list", "--porcelain")
+    assert (root / "file").read_text(encoding="utf-8") == "tracked\n"
+    receipt = json.loads((run / "review-worktree-cleanup.json").read_bytes())
+    assert receipt["status"] == "removed"
+    assert receipt["head"] == git_text(root, "rev-parse", "HEAD").strip()
+    assert receipt["result_sha256"] == hashlib.sha256((run / "result.json").read_bytes()).hexdigest()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "condition",
+    [
+        pytest.param("ignored", id="ignored-user-content"),
+        pytest.param("loose", id="untracked-user-content"),
+        pytest.param("file", id="tracked-edit"),
+        pytest.param("empty", id="untracked-empty-directory"),
+        pytest.param("hidden-index", id="index-masks-change"),
+        pytest.param("hold", id="inspection-stop"),
+        pytest.param("replaced", id="same-path-and-head-replacement"),
+        pytest.param("attached", id="attached-branch"),
+        pytest.param("mismatched-receipt", id="unbound-receipt"),
+        pytest.param("pending", id="unfinished-candidate"),
+        pytest.param("invalid-completion", id="real-validator-rejects-incomplete-run"),
+        pytest.param("late-replacement", id="checkout-replaced-during-validation"),
+        pytest.param("admin-file", id="worktree-admin-has-local-data"),
+        pytest.param("different-run", id="later-slot-holder-cannot-remove-older-checkout"),
+        pytest.param("no-anchor", id="lost-integrity-anchor"),
+        pytest.param("wrong-anchor", id="invalid-integrity-anchor"),
+        pytest.param(
+            "mode",
+            id="git-ignores-file-mode",
+            marks=pytest.mark.skipif(os.name == "nt", reason="POSIX executable bits"),
+        ),
+    ],
+)
+def test_preserves_worktree_on_unverified_or_changed_state(
+    review, condition: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every uncertain disposition preserves the checkout and excludes a removed receipt."""
+    helper, command, run, root, worktree = review
+    if condition in {"ignored", "loose", "file"}:
+        (worktree / condition).write_text("preserve", encoding="utf-8")
+    elif condition == "empty":
+        (worktree / "empty").mkdir()
+    elif condition == "hidden-index":
+        git_text(worktree, "update-index", "--assume-unchanged", "file")
+        (worktree / "file").write_text("preserve", encoding="utf-8")
+    elif condition == "hold":
+        helper.review_checkout_slot._operate("hold", root / ".git/codex-review-slot", "run-owner", False)
+        monkeypatch.setenv("PATH", "")
+    elif condition == "replaced":
+        git_text(root, "worktree", "remove", str(worktree))
+        git_text(root, "worktree", "add", "--detach", str(worktree), "HEAD")
+    elif condition == "attached":
+        git_text(worktree, "switch", "-c", "new-owner")
+    elif condition == "mismatched-receipt":
+        (run / "local-checkout.json").write_bytes((run / "local-checkout.json").read_bytes() + b"\n")
+    elif condition == "pending":
+        (run / "result.candidate.json").write_text("{}", encoding="utf-8")
+    elif condition == "late-replacement":
+
+        def replace_checkout(*_args) -> None:
+            git_text(root, "worktree", "remove", str(worktree))
+            git_text(root, "worktree", "add", "--detach", str(worktree), "HEAD")
+
+        monkeypatch.setattr(helper, "_verify_completion", replace_checkout)
+    elif condition == "admin-file":
+        admin = Path(git_text(worktree, "rev-parse", "--absolute-git-dir"))
+        (admin / "user-notes").write_text("preserve", encoding="utf-8")
+    elif condition == "different-run":
+        slot = root / ".git/codex-review-slot"
+        helper.review_checkout_slot._operate("release", slot, "run-owner", False)
+        helper.review_checkout_slot._operate("acquire", slot, "new-owner", False)
+        command[command.index("--owner") + 1] = "new-owner"
+    elif condition in {"no-anchor", "wrong-anchor"}:
+        (run / "integrity.json").write_text(
+            json.dumps({"repo": str(worktree), "main_checkout": str(root), "watch_surface": True}), encoding="utf-8"
+        )
+        if condition == "wrong-anchor":
+            command[-1:] = ["--integrity-sha256", "0" * 64]
+    elif condition == "mode":
+        git_text(root, "config", "core.fileMode", "false")
+        (worktree / "file").chmod(0o755)
+        assert git_text(worktree, "status", "--porcelain") == ""
+    else:
+        real = load_module("cleanup_real_test", SHARED / "review_worktree_cleanup.py")
+        monkeypatch.setattr(helper, "_verify_completion", real._verify_completion)
+    assert helper.main(command) != 0
+    assert (worktree / ".git").exists()
+    assert not (run / "review-worktree-cleanup.json").exists()
+    if condition in {"ignored", "loose", "file"}:
+        assert (worktree / condition).read_text(encoding="utf-8") == "preserve"
+
+
+@pytest.mark.integration
+def test_interrupted_final_write_retains_pre_removal_receipt(review, monkeypatch: pytest.MonkeyPatch) -> None:
+    """If final bookkeeping fails after native removal, the verified source hashes survive for historical intake."""
+    helper, command, run, root, worktree = review
+    publish = helper._write_receipt
+
+    def interrupt(folder: Path, data: dict) -> None:
+        if data["status"] == "removed":
+            raise OSError("interrupted final bookkeeping")
+        publish(folder, data)
+
+    monkeypatch.setattr(helper, "_write_receipt", interrupt)
+    assert helper.main(command) != 0
+    assert not worktree.exists()
+    assert str(worktree) not in git_text(root, "worktree", "list", "--porcelain")
+    receipt = json.loads((run / "review-worktree-cleanup.json").read_bytes())
+    assert receipt["status"] == "removal-authorized"
+    assert receipt["local_checkout_sha256"] == hashlib.sha256((run / "local-checkout.json").read_bytes()).hexdigest()
+
+
+def test_existing_witness_with_missing_object_is_preserved_for_inspection(review) -> None:
+    """A retry must detect missing proof bytes instead of recreating them from the writable report."""
+    helper, command, run, root, _worktree = review
+    assert helper.main(command) == 0
+    receipt = json.loads((run / "review-worktree-cleanup.json").read_bytes())
+    replay = helper.review_worktree_replay
+    oid = git_text(root, "rev-parse", replay.witness_ref(run))
+    blob = root / ".git" / "objects" / oid[:2] / oid[2:]
+    blob.rename(blob.with_suffix(".held"))
+    with pytest.raises((ValueError, subprocess.CalledProcessError)):
+        replay.seal_source_witness(run, root, receipt)
+    assert not blob.exists()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param("none", id="only-authenticated-witness"),
+        pytest.param("private-ref", id="unrelated-archive-ref"),
+        pytest.param("tag", id="unexpected-tag"),
+        pytest.param("config", id="shared-config-change"),
+        pytest.param("changed-witness", id="wrong-witness-value"),
+        pytest.param("wrong-token", id="different-parent-receipt"),
+        pytest.param("report", id="changed-review-evidence"),
+    ],
+)
+def test_retry_after_witness_publication_uses_original_integrity_anchor(
+    review,
+    change: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Only the interrupted run's exact independently retained ref transition may differ from the original snapshot."""
+    helper, command, run, root, worktree = review
+    snapshot = run / "integrity.json"
+    checker = [sys.executable, str(SHARED / "contributor_run_integrity.py")]
+    captured = subprocess.run(
+        [
+            *checker,
+            "snapshot",
+            "--repo",
+            str(worktree),
+            "--main-checkout",
+            str(root),
+            "--watch-surface",
+            "--out",
+            str(snapshot),
+        ],
+        capture_output=True,
+        check=True,
+    )
+    anchor = json.loads(captured.stdout)["sha256"]
+    command[-1:] = ["--integrity-sha256", anchor]
+
+    def interrupt(*_args) -> None:
+        raise OSError("interrupted before journaling")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(helper, "_write_receipt", interrupt)
+        assert helper.main(command) != 0
+    output = capsys.readouterr()
+    assert "interrupted before journaling" in output.out
+    ref = helper.review_worktree_replay.witness_ref(run)
+    oid = git_text(root, "rev-parse", ref)
+    strict = subprocess.run(
+        [*checker, "verify", "--snapshot", str(snapshot), "--expect", anchor], capture_output=True, check=False
+    )
+    assert strict.returncode == 3
+    assert json.loads(strict.stdout)["changed"] == ["common:refs"]
+    assert helper.main(command) != 0
+    assert worktree.is_dir()
+    assert not (run / "review-worktree-cleanup.json").exists()
+    assert json.loads(output.err)["retry_witness"] == oid
+    if change == "private-ref":
+        git_text(root, "update-ref", "refs/codex-rig/review-archives/other", oid)
+    elif change == "tag":
+        git_text(root, "tag", "other")
+    elif change == "config":
+        git_text(root, "config", "fixture.flag", "changed")
+    elif change == "changed-witness":
+        git_text(root, "update-ref", ref, "HEAD")
+    elif change == "wrong-token":
+        oid = "0" * len(oid)
+    elif change == "report":
+        (run / "result.json").write_bytes((run / "result.json").read_bytes() + b"\n")
+    code = helper.main([*command, "--retry-witness", oid])
+    assert code == (0 if change == "none" else 1)
+    assert worktree.is_dir() == (change != "none")
+    assert (run / "review-worktree-cleanup.json").exists() == (change == "none")
+    if change != "none":
+        reason = json.loads(capsys.readouterr().out.splitlines()[-1])["reason"]
+        expected = {"config": "common:config", "report": "witness"}.get(change, "common:refs")
+        assert expected in reason
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "verify_integrity",
+    [pytest.param(True, id="retained-integrity-anchor"), pytest.param(False, id="no-contributor-execution")],
+)
+def test_terminal_cli_removes_collected_worktree_and_keeps_report_intake(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verify_integrity: bool
+) -> None:
+    """Exercise collection, completion, cleanup, replay and remediation intake on one real detached checkout."""
+    validation = Path(__file__).resolve().parents[1] / "validation"
+    completion = load_module("cleanup_completion_fixture", validation / "test_review_completion_gate.py")
+    routing = load_module("cleanup_routing_fixture", validation / "test_code_review_routing_contract.py")
+    project = tmp_path / "source"
+    project.mkdir()
+    git_text(project, "init", "-q")
+    for word in ("Wdiget", "Widget"):
+        (project / "widget.txt").write_text(word + "\n", encoding="utf-8")
+        git_text(project, "add", "widget.txt")
+        git_text(project, "-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", word)
+    slot = subprocess.run(
+        [
+            sys.executable,
+            str(SHARED / "review_checkout_slot.py"),
+            "acquire",
+            "--checkout",
+            str(project),
+            "--owner",
+            "terminal-fixture",
+        ],
+        capture_output=True,
+        check=True,
+    )
+    # Visible reports inside the invoking checkout exercise the collector's separate private fallback parent.
+    private_temp = tmp_path / "collector-temp"
+    private_temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(private_temp))
+    run = completion._write_assessed_pr(tmp_path if verify_integrity else project, project)
+    monkeypatch.chdir(project)
+    collector = load_module("cleanup_offline_collector", SHARED / "collect_pr.py")
+    metadata = json.loads((run / "pr-routing.json").read_bytes())
+    checkout = collector._review_worktree_checkout(
+        collector.DEFAULT_RUN_COMMAND,
+        30,
+        run,
+        metadata,
+        base_oid=metadata["base_oid"],
+        head_oid=metadata["head_oid"],
+        prior_checkout={},
+    )
+    worktree = Path(checkout["worktree"])
+    assert worktree != project
+    assert worktree.is_dir()
+    assert checkout["worktree_location"] == ("report-adjacent" if verify_integrity else "temporary-fallback")
+    if verify_integrity:
+        # Yield before binding integrity. A peer can complete while the original invocation keeps its creation proof.
+        scheduler = [sys.executable, str(SHARED / "review_checkout_slot.py")]
+        locator = json.loads(slot.stdout)["slot"]
+        for action, location, owner in (
+            ("release", ["--slot", locator], "terminal-fixture"),
+            ("acquire", ["--checkout", str(project)], "other-review"),
+            ("release", ["--slot", locator], "other-review"),
+            ("acquire", ["--checkout", str(project)], "terminal-fixture"),
+        ):
+            observed = subprocess.run(
+                [*scheduler, action, *location, "--owner", owner], capture_output=True, check=True
+            )
+            assert json.loads(observed.stdout)["slot"] == locator
+    gates = json.loads((run / "gates.json").read_bytes())
+    routing._bind_gates_to_worktree(gates, checkout["worktree"], checkout["local_head"])
+    (run / "gates.json").write_text(json.dumps(gates), encoding="utf-8")
+    review_check = next(check for check in gates["checks"] if check["id"] == "review")
+    (run / review_check["command_path"]).write_text(
+        f"git diff --check {metadata['base_oid']}...{metadata['head_oid']}\n", encoding="utf-8"
+    )
+    execution = ["--no-contributor-execution"]
+    if verify_integrity:
+        snapshot = subprocess.run(
+            [
+                sys.executable,
+                str(SHARED / "contributor_run_integrity.py"),
+                "snapshot",
+                "--repo",
+                str(worktree),
+                "--main-checkout",
+                str(project),
+                "--watch-surface",
+                "--out",
+                str(run / "integrity.json"),
+            ],
+            capture_output=True,
+            check=True,
+        )
+        execution = ["--integrity-sha256", json.loads(snapshot.stdout)["sha256"]]
+    finder = [sys.executable, str(SHARED / "find-review-report.py")]
+    complete = [*finder, "--complete-run", str(run), "--codex-home", str(tmp_path)]
+    original = subprocess.run(complete, capture_output=True, check=False)
+    assert original.returncode == 0, original.stderr.decode()
+    receipt_sha = hashlib.sha256((run / "local-checkout.json").read_bytes()).hexdigest()
+    cleanup_command = [
+        sys.executable,
+        str(SHARED / "review_worktree_cleanup.py"),
+        "--run",
+        str(run),
+        "--worktree",
+        str(worktree),
+        "--checkout-sha256",
+        receipt_sha,
+        "--slot",
+        json.loads(slot.stdout)["slot"],
+        "--owner",
+        "terminal-fixture",
+        *execution,
+        "--codex-home",
+        str(tmp_path),
+    ]
+    if verify_integrity:
+        cleanup = subprocess.run(cleanup_command, capture_output=True, check=False)
+        assert cleanup.returncode == 0, (cleanup.stdout.decode(), cleanup.stderr.decode())
+        assert json.loads(cleanup.stdout)["status"] == "removed"
+    else:
+        helper = load_module("interrupt_terminal_cleanup", SHARED / "review_worktree_cleanup.py")
+        write = helper._write_receipt
+
+        def interrupt_after_remove(directory: Path, data: dict) -> None:
+            if data["status"] == "removed":
+                raise OSError("interrupted after native Git removal")
+            write(directory, data)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(helper, "_write_receipt", interrupt_after_remove)
+            assert helper.main(cleanup_command[2:]) == 1
+    assert not worktree.exists()
+    if verify_integrity:
+        # Reachability keeps the small validation witness through normal Git maintenance.
+        git_text(project, "gc", "--quiet")
+        replay_helper = load_module("cleanup_witness_fixture", SHARED / "review_worktree_replay.py")
+        assert git_text(project, "cat-file", "-t", replay_helper.witness_ref(run)) == "blob"
+    else:
+        assert worktree.parent.is_dir()
+        assert json.loads((run / "review-worktree-cleanup.json").read_bytes())["status"] == "removal-authorized"
+    journal_path = run / "review-worktree-cleanup.json"
+    completed_journal = journal_path.read_bytes()
+    prior_stat = journal_path.stat()
+    if verify_integrity:
+        wrong_anchor = list(cleanup_command)
+        wrong_anchor[wrong_anchor.index("--integrity-sha256") + 1] = "0" * 64
+        rejected = subprocess.run(wrong_anchor, capture_output=True, check=False)
+        assert rejected.returncode == 1
+        assert "integrity digest does not match" in json.loads(rejected.stdout)["reason"]
+        rejected = subprocess.run([*cleanup_command, "--retry-witness", "0" * 40], capture_output=True, check=False)
+        assert rejected.returncode == 1
+        assert "witness does not match" in json.loads(rejected.stdout)["reason"]
+    else:
+        original_admin = Path(checkout["created_worktree"]["git_dir"])
+        original_admin.mkdir(parents=True)
+        (original_admin / "user-notes").write_bytes(b"preserve")
+        rejected = subprocess.run(cleanup_command, capture_output=True, check=False)
+        assert rejected.returncode == 1
+        assert "original worktree registration is not absent" in json.loads(rejected.stdout)["reason"]
+        assert (original_admin / "user-notes").read_bytes() == b"preserve"
+        original_admin.rename(tmp_path / "saved-admin")
+        # A different registration can claim the old path while its directory is missing.
+        other = tmp_path / "other"
+        git_text(project, "worktree", "add", "--detach", str(other), "HEAD")
+        git_text(project, "worktree", "move", str(other), str(worktree))
+        worktree.rename(other)
+        rejected = subprocess.run(cleanup_command, capture_output=True, check=False)
+        assert rejected.returncode == 1
+        assert "worktree-still-registered" in json.loads(rejected.stdout)["detail"]
+        assert journal_path.read_bytes() == completed_journal
+        other.rename(worktree)
+        git_text(project, "worktree", "remove", str(worktree))
+        final = run / "final.md"
+        bound_text = final.read_bytes()
+        final.write_bytes(bound_text + b"changed\n")
+        rejected = subprocess.run(cleanup_command, capture_output=True, check=False)
+        assert rejected.returncode == 1
+        assert "final" in json.loads(rejected.stdout)["detail"]
+        assert journal_path.read_bytes() == completed_journal
+        final.write_bytes(bound_text)
+    retry = subprocess.run(cleanup_command, capture_output=True, check=False)
+    assert retry.returncode == 0, (retry.stdout, retry.stderr)
+    assert json.loads(retry.stdout)["status"] == "removed"
+    assert json.loads(journal_path.read_bytes())["status"] == "removed"
+    if verify_integrity:
+        assert journal_path.read_bytes() == completed_journal
+        assert journal_path.stat().st_ino == prior_stat.st_ino
+        assert journal_path.stat().st_mtime_ns == prior_stat.st_mtime_ns
+    else:
+        assert worktree.parent.is_dir()
+    replay = subprocess.run(complete, capture_output=True, check=False)
+    assert replay.returncode == 0, replay.stderr.decode()
+    assert replay.stdout == original.stdout == (run / "final.md").read_bytes()
+    intake = subprocess.run(
+        [*finder, "--result", str(run / "result.json"), "--codex-home", str(tmp_path)], capture_output=True, check=False
+    )
+    assert intake.returncode == 0, intake.stderr.decode()
+    assert Path(intake.stdout.decode().strip()) == run / "result.json"
+    if verify_integrity:
+        # Replacing report files and their sidecar digest together cannot change the independently pinned evidence.
+        inventory = run / "files.txt"
+        inventory.write_bytes(inventory.read_bytes() + b"\n")
+        journal_path = run / "review-worktree-cleanup.json"
+        journal = json.loads(journal_path.read_bytes())
+        journal["source_inputs"]["files.txt"] = hashlib.sha256(inventory.read_bytes()).hexdigest()
+        journal_path.write_text(json.dumps(journal), encoding="utf-8")
+        altered = subprocess.run(complete, capture_output=True, check=False)
+        assert altered.returncode != 0
+        assert b"witness" in altered.stderr
+        rejected = subprocess.run(cleanup_command, capture_output=True, check=False)
+        assert rejected.returncode == 1
+        assert "witness" in json.loads(rejected.stdout)["detail"]

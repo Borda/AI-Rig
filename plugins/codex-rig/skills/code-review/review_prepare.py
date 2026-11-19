@@ -61,6 +61,9 @@ import os
 import re
 import shlex
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -82,8 +85,11 @@ SHARED_DIRECTORY = SKILL_DIRECTORY.parents[1] / "shared"
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 import collect_diff  # noqa: E402
+import collect_pr  # noqa: E402
 import review_execution_validation  # noqa: E402
+import review_worktree_replay  # noqa: E402
 from parallel_execution import _SECRET_PATTERNS, _runtime_parent_rows, review_fixture_discovery  # noqa: E402
+from review_worktree_cleanup import filesystem_content_digest, recorded_content_digest  # noqa: E402
 
 #: Historical ordinary context ceiling; oversized ordinary contexts use bounded batches, challenges retain full scope.
 MAX_REVIEW_CONTEXT_BYTES = 262144
@@ -232,6 +238,46 @@ def _freeze(files: dict[Path, bytes]) -> None:
                 raise ValueError(f"review-frozen-artifact-conflict:{path.name}") from None
 
 
+# Only result validation can replay an existing PR plan with ignored test caches left after its source freeze.
+_PROMOTED_PR_RUN: ContextVar[Path | None] = ContextVar("promoted_pr_run", default=None)
+
+
+@contextmanager
+def result_source_validation(out: Path, result: Path) -> Iterator[None]:
+    """Bind live or archived source validation to the exact result being checked."""
+    run = out.resolve()
+    promoted = result.parent.resolve() / result.name == run / "result.json"
+    token = _PROMOTED_PR_RUN.set(run if promoted else None)
+    try:
+        with review_worktree_replay.completed_source_validation(out, result):
+            yield
+    finally:
+        _PROMOTED_PR_RUN.reset(token)
+
+
+def _historical_test_output(root: Path, row: bytes) -> bool:
+    """Recognize ignored test caches and root coverage databases during read-only result validation."""
+    if not row.startswith(b"!! "):
+        return False
+    name = row[3:]
+    cache_dirs = {b".pytest_cache", b".ruff_cache", b".mypy_cache", b"__pycache__"}
+    components = name.split(b"/")
+    if not cache_dirs.isdisjoint(components[:-1]):
+        return True
+    # Coverage.py uses a host, PID, and random suffix for parallel data. A matching prefix alone is insufficient.
+    if name != b".coverage" and not re.fullmatch(
+        rb"\.coverage\.[^/]+\.(?:pid[0-9]+\.X[a-zA-Z0-9]+x(?:\.H[a-zA-Z0-9]+h)?|[0-9]+\.[0-9]+)", name
+    ):
+        return False
+    database = root / os.fsdecode(name)
+    if database.is_symlink() or not database.is_file():
+        return False
+    if name == b".coverage":
+        return True
+    with database.open("rb") as stream:
+        return stream.read(16) == b"SQLite format 3\0"
+
+
 def _source_snapshot(
     out: Path,
     source_root: Path,
@@ -239,6 +285,8 @@ def _source_snapshot(
     paths: list[str],
     expected_diff_base: str | None,
     scope_path: str | None,
+    *,
+    replay_frozen_plan: bool = False,
 ) -> tuple[dict[str, object], set[str], str]:
     """Bind selected source bytes and the actual comparison base to the verified checkout."""
     root = source_root.resolve(strict=True)
@@ -328,15 +376,39 @@ def _source_snapshot(
         raise ValueError("review-source-head-invalid")
     if collect_diff._git_output(root, ("rev-parse", "HEAD")).decode("ascii").strip() != expected_head:
         raise ValueError("review-source-head-mismatch")
-    if (
-        collect_diff._git_output(root, ("branch", "--show-current")).strip()
-        or collect_diff._git_output(root, ("status", "--porcelain", "--untracked-files=all")).strip()
-    ):
+    if collect_diff._git_output(root, ("branch", "--show-current")).strip():
+        raise ValueError("review-source-worktree-not-clean-detached")
+    excluded_outputs: frozenset[Path] = frozenset()
+    if pr_receipts:
+        historical = replay_frozen_plan and _PROMOTED_PR_RUN.get() == out.resolve()
+        try:
+            if historical:
+                # A completed run can retain ignored caches. Tracked modifications and other overlays still fail.
+                rows = [row for row in collect_pr.pr_worktree_status(root).split(b"\0") if row]
+                clean = all(
+                    _historical_test_output(root, row) for row in rows
+                ) and collect_pr.pr_worktree_index_unmasked(root)
+                if clean:
+                    excluded_outputs = frozenset(root / os.fsdecode(row[3:]) for row in rows)
+            else:
+                clean = collect_pr.pr_worktree_is_clean(root)
+        except collect_pr.CollectionError as error:
+            raise ValueError(f"review-source-worktree-inspection-failed:{error}") from error
+    else:
+        clean = not collect_diff._git_output(root, ("status", "--porcelain", "--untracked-files=all")).strip()
+    if not clean:
         raise ValueError("review-source-worktree-not-clean-detached")
     changed = collect_diff._git_output(
         root, collect_diff.canonical_diff_arguments(("diff", "--name-only", "-z", *comparison))
     )
     snapshot = collect_diff.capture_source_snapshot(root, paths)
+    if pr_receipts:
+        # Git can normalize different bytes or ignore a chmod. Check the whole materialized checkout once per snapshot.
+        original = recorded_content_digest(receipt)
+        if original is None and not historical:
+            raise ValueError("review-source-collection-digest-missing:collect-fresh-pr-source")
+        if original is not None and filesystem_content_digest(root, exclude=excluded_outputs) != original:
+            raise ValueError("review-source-collection-digest-mismatch")
     deleted = {
         path.decode("utf-8")
         for path in collect_diff._git_output(
@@ -356,6 +428,52 @@ def _source_snapshot(
     ):
         raise ValueError("review-source-file-inventory-stale")
     return snapshot, changed_paths, base
+
+
+def validate_plan_source(
+    out: Path,
+    plan_path: Path,
+    plan: dict[str, Any],
+    arguments: dict[str, Any],
+    selected: list[str],
+    *,
+    verified_source: tuple[dict[str, Any], set[str]] | None = None,
+) -> tuple[dict[str, Any], set[str], str | None, set[str]]:
+    """Check a frozen source selection against its checkout or its live-validated terminal cleanup receipt."""
+    root = Path(arguments["source_root"])
+    checkout = review_worktree_replay.retained_checkout(out, plan_path, root)
+    if checkout is not None:
+        snapshot = plan["source_snapshot"]
+        if snapshot.get("repository") != checkout["worktree"] or snapshot.get("revision") != checkout["expected_head"]:
+            raise ValueError("review-cleanup-source-snapshot-mismatch")
+        # Live PR validation requires a clean detached checkout, hence its actual untracked inventory was empty.
+        return snapshot, review_routing.read_review_paths(out, "files.txt"), checkout["diff_base_oid"], set()
+    if verified_source is None:
+        snapshot, changed, comparison = _source_snapshot(
+            out,
+            root,
+            arguments["expected_head"],
+            selected,
+            arguments["expected_diff_base"],
+            arguments["scope_path"],
+            replay_frozen_plan=True,
+        )
+    else:
+        snapshot, changed = verified_source
+        comparison = None
+    scopes = (
+        collect_diff._normalize_scope_paths(root, [arguments["scope_path"]])
+        if arguments["scope_path"] is not None
+        else []
+    )
+    untracked = {
+        path.decode("utf-8")
+        for path in collect_diff._git_output(
+            root, ("ls-files", "--others", "--exclude-standard", "-z", "--", *scopes)
+        ).split(b"\0")
+        if path
+    }
+    return snapshot, changed, comparison, untracked
 
 
 _diff_sections = collect_diff.diff_sections

@@ -69,6 +69,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -492,13 +493,25 @@ def execute_command(
     platform = sys.platform
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if platform == "win32" else 0
     argv = command_argv(command, platform) if isinstance(command, str) else command
+    child_environment = gate_environment(environment)
+    if worktree is not None:
+        # Hooks and nested pytest processes inherit these paths while running in a disposable checkout.
+        checks = stdout_path.parent.resolve()
+        pytest_cache = shlex.quote(f"cache_dir={checks / 'pytest-cache'}")
+        child_environment.update(
+            COVERAGE_FILE=str(checks / ".coverage"),
+            MYPY_CACHE_DIR=str(checks / "mypy-cache"),
+            RUFF_CACHE_DIR=str(checks / "ruff-cache"),
+            PYTHONDONTWRITEBYTECODE="1",
+            PYTEST_ADDOPTS=f"{child_environment.get('PYTEST_ADDOPTS', '')} -o {pytest_cache}".strip(),
+        )
     try:
         process = subprocess.Popen(  # noqa: S603 - argv list, no shell
             argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=worktree,
-            env=gate_environment(environment),
+            env=child_environment,
             start_new_session=platform != "win32",
             creationflags=creationflags,
         )

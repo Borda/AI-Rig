@@ -93,6 +93,202 @@ def _snapshot(worktree: Path) -> tuple[str, str, str]:
 class TestNativeCheckout:
     """Receipts for a PR checked out natively with ``gh pr checkout``."""
 
+    @pytest.mark.parametrize(
+        "branch_available", [pytest.param(True, id="available"), pytest.param(False, id="held-by-invoker")]
+    )
+    def test_explicit_worktree_retains_fork_source_and_preserves_invoker(
+        self, tmp_path: Path, repository_template: RepositoryTemplate, branch_available: bool
+    ) -> None:
+        """A requested linked checkout keeps caller edits and lets Git refuse an already occupied PR branch."""
+        source, caller, base, _old, head = _setup_repositories(tmp_path, repository_template)
+        caller_branch = "old-topic" if branch_available else "topic"
+        _git(caller, "checkout", caller_branch)
+        (caller / "notes.txt").write_text("user stage\n", encoding="utf-8")
+        _git(caller, "add", "notes.txt")
+        (caller / "notes.txt").write_text("user edit\n", encoding="utf-8")
+        (caller / "untracked").write_text("user file\n", encoding="utf-8")
+        before = (_git(caller, "rev-parse", "HEAD"), _git(caller, "diff"), _git(caller, "diff", "--cached"))
+        run = tmp_path / "run"
+        run.mkdir()
+        locator = run / "remediation-worktree.json"
+        prepared = _run_helper(caller, "worktree", "--receipt", str(locator))
+        assert prepared.returncode == 0, prepared.stderr
+        linked = Path(json.loads(prepared.stdout)["worktree"])
+        assert json.loads(locator.read_bytes())["invoking_checkout"] == caller.resolve().as_posix()
+        assert linked.parent.parent == tmp_path.resolve()
+        assert _git(linked, "branch", "--show-current") == ""
+        assert _git(linked, "rev-parse", "--path-format=absolute", "--git-common-dir") == _git(
+            caller, "rev-parse", "--path-format=absolute", "--git-common-dir"
+        )
+        pr_dir = run / "pr"
+        code, calls = _collect(
+            _load_collector(), source, linked, pr_dir, base, head, checkout_mode="remediate", gh_checkout_fails=False
+        )
+        assert ["gh", "pr", "checkout", PR_URL] in calls
+        assert (code == 0) == branch_available
+        assert _git(linked, "branch", "--show-current") == ("topic" if branch_available else "")
+        assert _git(caller, "branch", "--show-current") == caller_branch
+        assert (_git(caller, "rev-parse", "HEAD"), _git(caller, "diff"), _git(caller, "diff", "--cached")) == before
+        assert (caller / "untracked").read_text(encoding="utf-8") == "user file\n"
+        resumed = _run_helper(caller, "worktree", "--receipt", str(locator))
+        assert (resumed.returncode != 0) == branch_available
+        assert _git(linked, "branch", "--show-current") == ("topic" if branch_available else "")
+
+    def test_interrupted_allocation_resumes_only_its_unoccupied_frozen_checkout(
+        self, tmp_path: Path, repository_template: RepositoryTemplate
+    ) -> None:
+        """Resume a saved allocation without overwriting an occupant or stale worktree registration."""
+        _source, caller, _base, _old, _head = _setup_repositories(tmp_path, repository_template)
+        run = tmp_path / "run"
+        run.mkdir()
+        locator = run / "remediation-worktree.json"
+        args = ("worktree", "--receipt", str(locator))
+        allocated = _run_helper(caller, *args)
+        assert allocated.returncode == 0, allocated.stderr
+        original = locator.read_bytes()
+        linked = Path(json.loads(original)["worktree"])
+        # The registered directory can be missing, for example after an interrupted move.
+        relocated = tmp_path / "relocated"
+        linked.rename(relocated)
+        ambiguous = _run_helper(caller, *args)
+        assert ambiguous.returncode == 2
+        assert not linked.exists()
+        relocated.rename(linked)
+        _git(caller, "worktree", "remove", str(linked))
+        linked.mkdir()
+        occupied = _run_helper(caller, *args)
+        assert occupied.returncode == 2
+        assert not list(linked.iterdir())
+        linked.rmdir()
+        caller_branch = _git(caller, "branch", "--show-current")
+        _git(caller, "checkout", "old-topic")
+        drifted = _run_helper(caller, *args)
+        assert drifted.returncode == 2
+        assert not linked.exists()
+        _git(caller, "checkout", caller_branch)
+        # This reproduces an interrupt after the locator write but before git worktree add.
+        retried = _run_helper(caller, *args)
+        assert retried.returncode == 0, retried.stderr
+        assert locator.read_bytes() == original
+        assert json.loads(retried.stdout) == json.loads(original)
+        assert _git(linked, "rev-parse", "HEAD") == json.loads(original)["initial_head"]
+        assert _git(linked, "branch", "--show-current") == ""
+        assert _run_helper(caller, *args).returncode == 0
+        _git(caller, "worktree", "lock", "--reason", "user reservation", str(linked))
+        assert _run_helper(caller, *args).returncode == 2
+        assert "user reservation" in _git(caller, "worktree", "list", "--porcelain")
+        _git(caller, "worktree", "unlock", str(linked))
+        note = linked / "user-note"
+        note.write_text("preserve me", encoding="utf-8")
+        assert _run_helper(caller, *args).returncode == 2
+        assert note.read_text(encoding="utf-8") == "preserve me"
+        assert list(tmp_path.glob("codex-remediate-*")) == [linked.parent]
+
+    @pytest.mark.parametrize("flag", ["--assume-unchanged", "--skip-worktree"])
+    def test_allocated_worktree_resume_preserves_hidden_edits(
+        self, tmp_path: Path, repository_template: RepositoryTemplate, flag: str
+    ) -> None:
+        """An apparently clean allocated checkout cannot resume with tracked edits concealed by an index flag."""
+        _, caller, _, _, _ = _setup_repositories(tmp_path, repository_template)
+        run = tmp_path / "run"
+        run.mkdir()
+        locator = run / "remediation-worktree.json"
+        args = ("worktree", "--receipt", str(locator))
+        allocated = _run_helper(caller, *args)
+        assert allocated.returncode == 0, allocated.stderr
+        original = locator.read_bytes()
+        linked = Path(json.loads(original)["worktree"])
+        _git(linked, "update-index", flag, "--", "notes.txt")
+        (linked / "notes.txt").write_bytes(b"user edit hidden from status\n")
+        assert _git(linked, "status", "--porcelain", "--ignored", "--untracked-files=all") == ""
+        flags = _git(linked, "ls-files", "-v", "--", "notes.txt")
+
+        resumed = _run_helper(caller, *args)
+
+        assert resumed.returncode == 2, resumed.stdout
+        assert "remediation-worktree-has-local-changes" in resumed.stderr
+        assert (linked / "notes.txt").read_bytes() == b"user edit hidden from status\n"
+        assert _git(linked, "ls-files", "-v", "--", "notes.txt") == flags
+        assert locator.read_bytes() == original
+
+    @pytest.mark.parametrize("flag", ["--assume-unchanged", "--skip-worktree"])
+    def test_attached_branch_refuses_hidden_edits_at_preparation_and_resume(
+        self, tmp_path: Path, repository_template: RepositoryTemplate, flag: str
+    ) -> None:
+        """Branch preflights protect user bytes and flags even when Git otherwise reports a clean attached branch."""
+        c = _collected(tmp_path, repository_template)
+        receipt = tmp_path / "branch.json"
+        _prepared(c, receipt)
+        original = receipt.read_bytes()
+        _git(c.worktree, "update-index", flag, "--", "notes.txt")
+        (c.worktree / "notes.txt").write_bytes(b"hidden attached edit\n")
+        assert _git(c.worktree, "status", "--porcelain") == ""
+        flags = _git(c.worktree, "ls-files", "-v", "--", "notes.txt")
+        fresh = tmp_path / "second-branch.json"
+
+        preparation = _prepare(c, fresh)
+        resumed = _check(c.worktree, receipt, c.head)
+
+        assert preparation.returncode == resumed.returncode == 2
+        assert all(
+            "remediation-worktree-index-masks-local-state" in outcome.stderr for outcome in (preparation, resumed)
+        )
+        assert not fresh.exists()
+        assert receipt.read_bytes() == original
+        assert _git(c.worktree, "ls-files", "-v", "--", "notes.txt") == flags
+        assert (c.worktree / "notes.txt").read_bytes() == b"hidden attached edit\n"
+
+    @pytest.mark.parametrize(
+        "ignored",
+        [pytest.param(True, id="ignored-report-directory"), pytest.param(False, id="visible-report-directory")],
+    )
+    def test_worktree_delivery_binds_collected_source_after_report_promotion(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repository_template: RepositoryTemplate, ignored: bool
+    ) -> None:
+        """The retained checkout survives report promotion, identifies the fork branch, and rejects swapped locators."""
+        source, caller, base, _old, head = _setup_repositories(tmp_path, repository_template)
+        _git(caller, "checkout", "old-topic")
+        reports = caller / ".reports" / "codex" / "code-remediate"
+        run = reports / "timestamp"
+        run.mkdir(parents=True)
+        (caller / ".gitignore").write_text(".reports/\n" if ignored else "", encoding="utf-8")
+        for variable in ("TMPDIR", "TEMP", "TMP"):
+            monkeypatch.setenv(variable, str(tmp_path))
+        locator = run / "remediation-worktree.json"
+        created = _run_helper(caller, "worktree", "--receipt", str(locator))
+        assert created.returncode == 0, created.stderr
+        linked = Path(json.loads(created.stdout)["worktree"])
+        assert linked.parent.parent == (reports if ignored else tmp_path).resolve()
+        code, _calls = _collect(
+            _load_collector(),
+            source,
+            linked,
+            run / "pr",
+            base,
+            head,
+            checkout_mode="remediate",
+            gh_checkout_fails=False,
+        )
+        assert code == 0
+        promoted = reports / "pr-17" / "run-001"
+        promoted.parent.mkdir()
+        run.rename(promoted)
+        locator = promoted / locator.name
+        original = locator.read_bytes()
+        locator.write_text(json.dumps({**json.loads(original), "worktree": str(caller)}), encoding="utf-8")
+        receipt = promoted / "remediation-branch.json"
+        prepare_args = ("prepare", "--pr-dir", str(promoted / "pr"), "--receipt", str(receipt))
+        rejected = _run_helper(linked, *prepare_args)
+        assert rejected.returncode == 2
+        assert "remediation-worktree-mismatch" in rejected.stderr
+        assert not receipt.exists()
+        locator.write_bytes(original)
+        prepared = _run_helper(linked, *prepare_args)
+        assert prepared.returncode == 0, prepared.stderr
+        assert _check(linked, receipt, head).returncode == 0
+        assert _git(linked, "config", "branch.topic.merge") == "refs/heads/topic"
+        assert json.loads(receipt.read_bytes())["head_repository"] == "contributor/project"
+
     @pytest.mark.parametrize("branch", ["topic", "contributor/topic"])
     @pytest.mark.parametrize("tracking", ["pull-ref", "contributor-branch"])
     def test_prepares_and_checks_local_fix_without_push_destination(
@@ -713,6 +909,11 @@ def _legacy_unchanged(s: _Legacy) -> None:
     """Keep the legacy scenario as built."""
 
 
+def _masked_legacy_edit(s: _Legacy) -> None:
+    """Hide an existing user edit in the attached checkout while leaving visible work recoverable."""
+    _git(s.worktree, "update-index", "--assume-unchanged", "--", "notes.txt")
+
+
 def _wrong_push_remote(s: _Legacy) -> None:
     """Configure an unrelated push remote, which recovery must tolerate."""
     _git(s.worktree, "config", "remote.wrong.url", "https://github.com/other/project.git")
@@ -824,6 +1025,7 @@ class TestLegacyRecovery:
             pytest.param(_expect_original_head, None, id="head"),
             pytest.param(_unrelated_root, None, id="ancestry"),
             pytest.param(_foreign_legacy_worktree, None, id="worktree"),
+            pytest.param(_masked_legacy_edit, None, id="masked-index"),
             pytest.param(_other_pr_number, None, id="pr"),
             pytest.param(_other_source_head, None, id="source-head"),
             pytest.param(_renamed_destination, None, id="branch"),

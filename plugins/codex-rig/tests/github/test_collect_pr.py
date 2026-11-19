@@ -260,8 +260,26 @@ class FakeRunner:
                 stdout = f"{HEAD_OID}\n".encode()
             elif operation == ["branch", "--show-current"]:
                 stdout = b""
-            elif operation == ["status", "--porcelain", "-z"]:
-                stdout = b""
+            elif operation[:5] == [
+                "--no-optional-locks",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.untrackedCache=false",
+            ]:
+                if operation[5:] == [
+                    "status",
+                    "--porcelain",
+                    "-z",
+                    "--untracked-files=normal",
+                    "--ignored=traditional",
+                    "--ignore-submodules=none",
+                ]:
+                    stdout = b""
+                elif operation[5:] == ["ls-files", "-v", "-f", "-z"]:
+                    stdout = b"H a.py\0"
+                else:
+                    raise AssertionError(f"unexpected review inspection: {operation[5:]}")
             elif operation[:4] == ["diff", "--name-only", "-z", f"{BASE_OID}...{HEAD_OID}"]:
                 stdout = b"".join(f"{path}\0".encode() for path in self.pr_paths)
             elif operation[:2] == ["diff", "--binary"]:
@@ -1286,7 +1304,7 @@ def _collect_with_scan_failure(module: ModuleType, monkeypatch: pytest.MonkeyPat
     def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         """Supply command output at the informational or required source boundary."""
         result = runner(argv, **kwargs)
-        review_scan = argv[:2] == ["git", "-C"] and argv[3:] == ["status", "--porcelain", "-z"]
+        review_scan = argv[:2] == ["git", "-C"] and "status" in argv[3:]
         if failure == "oversized-review" and review_scan:
             return subprocess.CompletedProcess(argv, 0, stdout=oversized, stderr=b"")
         scan_argv, returncode, stdout, stderr = scans.get(failure, (None, 0, b"", b""))

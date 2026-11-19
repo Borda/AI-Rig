@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 from _artifact_files import write_json
 from _git_fixtures import git_text
+from _platform import POSIX_FILE_MODES_AVAILABLE
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 SKILL = PLUGIN_ROOT / "skills/code-review"
@@ -684,10 +685,25 @@ def _arrange_commit_deletion(run: Path, root: Path) -> str:
     return _record_committed_deletion(run, root, "{base} {head}")[1]
 
 
+def _pr_fixture_receipt(root: Path, head: str, base: str) -> dict[str, str]:
+    """Build a checkout receipt from the same pristine filesystem observations as PR collection."""
+    if str(PLUGIN_ROOT / "shared") not in sys.path:
+        sys.path.insert(0, str(PLUGIN_ROOT / "shared"))
+    from review_worktree_cleanup import filesystem_content_digest
+
+    return {
+        "worktree": root.as_posix(),
+        "expected_head": head,
+        "diff_base_oid": base,
+        "diff_head_oid": head,
+        "worktree_contents_sha256": filesystem_content_digest(root),
+    }
+
+
 def _arrange_pr_deletion(run: Path, root: Path) -> str:
     """Review a committed deletion compared as ``base...head`` with a pull-request checkout receipt."""
     base, head = _record_committed_deletion(run, root, "{base}...{head}")
-    receipt = {"worktree": root.as_posix(), "expected_head": head, "diff_base_oid": base, "diff_head_oid": head}
+    receipt = _pr_fixture_receipt(root, head, base)
     write_json(run / "local-checkout.json", receipt)
     return head
 
@@ -2833,7 +2849,7 @@ def test_prepare_uses_nested_pr_receipt_and_rejects_ambiguous_receipts(tmp_path:
     (run / "diff.patch").write_bytes(_git_bytes(review, "diff", "--binary", f"{base}...{head}", "--"))
     (run / "local-source/review-worktree.json").unlink()
     (run / "pr").mkdir()
-    receipt = {"worktree": review.as_posix(), "expected_head": head, "diff_base_oid": base, "diff_head_oid": head}
+    receipt = _pr_fixture_receipt(review, head, base)
     write_json(run / "pr/local-checkout.json", receipt)
     result = _prepare(run, source_root=review)
     assert result.returncode == 0, result.stderr
@@ -2842,6 +2858,159 @@ def test_prepare_uses_nested_pr_receipt_and_rejects_ambiguous_receipts(tmp_path:
     result = _prepare(run, source_root=review)
     assert result.returncode != 0
     assert "review-source-receipt-ambiguous" in result.stderr
+
+
+def _collected_pr_source(run: Path) -> Path:
+    """Bind a detached commit comparison to a PR receipt in place of the fixture's local mirror."""
+    review, head = _commit_second_widget(run)
+    base = git_text(review, "rev-parse", "HEAD^")
+    (run / "diff.patch").write_bytes(_git_bytes(review, "diff", "--binary", f"{base}...{head}", "--"))
+    (run / "local-source/review-worktree.json").unlink()
+    write_json(
+        run / "local-checkout.json",
+        _pr_fixture_receipt(review, head, base),
+    )
+    return review
+
+
+@pytest.mark.parametrize(
+    "mask",
+    [
+        pytest.param("--assume-unchanged", id="assume-unchanged"),
+        pytest.param("--skip-worktree", id="skip-worktree"),
+        pytest.param("", id="ignored-overlay"),
+    ],
+)
+def test_prepare_refuses_hidden_pr_source_after_collection(tmp_path: Path, mask: str) -> None:
+    """An unchanged HEAD and ordinary clean status cannot authorize hidden bytes for a new PR plan."""
+    run = _review_inputs(tmp_path)
+    review = _collected_pr_source(run)
+    if mask:
+        git_text(review, "update-index", mask, "--", "widget.py")
+        hidden = review / "widget.py"
+    else:
+        hidden = review / "overlay.py"
+        Path(git_text(review, "rev-parse", "--git-path", "info/exclude")).write_text("overlay.py\n", encoding="utf-8")
+    hidden.write_bytes(b"unreviewed = True\n")
+    assert git_text(review, "status", "--porcelain") == ""
+
+    result = _prepare(run, source_root=review, paged=False)
+    assert result.returncode == 2
+    assert "review-source-worktree-not-clean-detached" in result.stderr
+    assert not (run / "direct-plan.json").exists()
+    assert hidden.read_bytes() == b"unreviewed = True\n"
+
+
+@pytest.mark.parametrize(
+    ("change", "expected_code"),
+    [
+        pytest.param("clean-crlf", 0, id="platform-checkout-line-endings"),
+        pytest.param("lf", 2, id="git-normalized-bytes"),
+        pytest.param(
+            "mode",
+            2,
+            id="git-ignored-executable-mode",
+            marks=pytest.mark.skipif(
+                not POSIX_FILE_MODES_AVAILABLE, reason="filesystem cannot distinguish executable mode"
+            ),
+        ),
+        pytest.param("legacy", 2, id="missing-original-checkout-digest"),
+        pytest.param("conflict", 2, id="conflicting-original-digests"),
+    ],
+)
+def test_resumed_pr_freeze_binds_actual_collected_bytes_and_modes(
+    tmp_path: Path, change: str, expected_code: int
+) -> None:
+    """A working copy's pristine checkout representation survives Git EOL conversion and disabled file mode tracking."""
+    run = _review_inputs(tmp_path)
+    review = _collected_pr_source(run)
+    receipt_path = run / "local-checkout.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    target = review / "widget.py"
+    git_text(review, "config", "core.fileMode", "false")
+    git_text(review, "config", "core.autocrlf", "true")
+    target.unlink()
+    git_text(review, "restore", "--source=HEAD", "--worktree", "--", "widget.py")
+    assert target.read_bytes() == b"value = 3\r\n"
+    receipt = _pr_fixture_receipt(review, receipt["expected_head"], receipt["diff_base_oid"])
+    if change == "legacy":
+        del receipt["worktree_contents_sha256"]
+    if change == "mode":
+        receipt["created_worktree"] = {"contents_sha256": receipt.pop("worktree_contents_sha256")}
+    elif change == "conflict":
+        receipt["created_worktree"] = {"contents_sha256": "0" * 64}
+    write_json(receipt_path, receipt)
+    if change == "lf":
+        target.write_bytes(b"value = 3\n")
+    elif change == "mode":
+        target.chmod(target.stat().st_mode ^ 0o100)
+    # Refresh stale index stat metadata; both representations map to the same unchanged blob and Git mode.
+    git_text(review, "add", "--", "widget.py")
+    assert git_text(review, "status", "--porcelain") == ""
+    assert git_text(review, "diff", "--cached", "--name-only") == ""
+
+    result = _prepare(run, source_root=review, paged=False)
+    assert result.returncode == expected_code, result.stderr
+    assert (run / "direct-plan.json").exists() == (expected_code == 0)
+    if expected_code:
+        assert "review-source-collection-digest" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "self_ignoring_cache", [pytest.param(False, id="repository-ignore"), pytest.param(True, id="pytest-default-ignore")]
+)
+def test_frozen_pr_plan_allows_only_promoted_replay_of_test_caches(tmp_path: Path, self_ignoring_cache: bool) -> None:
+    """Retained test caches may coexist with a completed plan, while new work still needs an uncontaminated checkout."""
+    from coverage import CoverageData
+    from test_review_batches import _batch_producer
+
+    producer, _ = _batch_producer()
+    run = _review_inputs(tmp_path)
+    review = _collected_pr_source(run)
+    prepared = _prepare(run, source_root=review, paged=False)
+    assert prepared.returncode == 0, prepared.stderr
+    plan_path = run / "direct-plan.json"
+    plan = json.loads(plan_path.read_bytes())
+    paths = plan["source_snapshot"]["scope_paths"]
+    excludes = Path(git_text(review, "rev-parse", "--git-path", "info/exclude"))
+    excludes.write_text(".coverage*\n" if self_ignoring_cache else ".pytest_cache/\n.coverage*\n", encoding="utf-8")
+    for suffix in (None, True):
+        database = CoverageData(basename=str(review / ".coverage"), suffix=suffix)
+        database.add_lines({"widget.py": {1}})
+        database.write()
+    assert len(list(review.glob(".coverage*"))) == 2
+    cache = review / ".pytest_cache"
+    cache.mkdir()
+    if self_ignoring_cache:
+        (cache / ".gitignore").write_text("*\n", encoding="utf-8")
+    (cache / "nodeids").write_bytes(b"cached test evidence")
+
+    def validate_frozen() -> dict[str, object]:
+        return producer.validate_plan_source(run, plan_path, plan, plan, paths)[0]
+
+    for target in ("result.candidate.json", "result.json"):
+        write_json(run / target, {"status": "pass"})
+    with (
+        producer.result_source_validation(run, run / "result.candidate.json"),
+        pytest.raises(ValueError, match="not-clean-detached"),
+    ):
+        validate_frozen()
+    with producer.result_source_validation(run, run / "result.json"):
+        assert validate_frozen() == plan["source_snapshot"]
+        # Historical promoted receipts may predate collection digests. They still revalidate frozen source evidence.
+        receipt_path = run / "local-checkout.json"
+        legacy = json.loads(receipt_path.read_bytes())
+        del legacy["worktree_contents_sha256"]
+        write_json(receipt_path, legacy)
+        assert validate_frozen() == plan["source_snapshot"]
+        with pytest.raises(ValueError, match="not-clean-detached"):
+            producer._source_snapshot(run, review, plan["expected_head"], paths, plan["expected_diff_base"], None)
+        (review / ".coverage.overlay.py").write_bytes(b"unreviewed")
+        with pytest.raises(ValueError, match="not-clean-detached"):
+            validate_frozen()
+    (review / ".coverage.overlay.py").unlink()
+    with pytest.raises(ValueError, match="not-clean-detached"):
+        validate_frozen()
 
 
 def test_prepare_rejects_source_drift_before_freezing(tmp_path: Path) -> None:

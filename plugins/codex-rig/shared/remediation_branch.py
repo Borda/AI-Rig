@@ -8,11 +8,15 @@
     independent of publication configuration; this receipt never authorizes a push.
 ## Scope
 
-    Local Git queries only. Preparation records the existing branch and verifies
+    The optional worktree action creates a separate linked checkout for the collector.
+    All other actions use local Git queries only. Preparation records the existing branch and verifies
     its source tracking; it never creates or switches branches, sets tracking,
     or repairs a changed revision. Only the explicitly requested receipt is written.
 ## Usage
 
+    For an explicitly requested separate PR checkout, run ``python remediation_branch.py
+    worktree --receipt <run>/remediation-worktree.json`` from the invoking checkout,
+    then execute the remediation-mode collector from the returned worktree.
     Run ``python remediation_branch.py prepare --pr-dir <collected-pr-directory>
     --receipt <branch.json>`` immediately after collection. Run ``check`` with that
     receipt and ``--expected-head <recorded-revision>`` before integration or each
@@ -22,7 +26,8 @@
     <last-authorized-revision>`` before continuing with ordinary checks.
 ## Outputs
 
-    Preparation prints and exclusively writes a JSON receipt binding the PR,
+    The worktree action records the invoking and new checkout paths before calling Git,
+    preserving the location on interruption. Preparation prints and exclusively writes a JSON receipt binding the PR,
     worktree, initial revision, PR source, and attached branch. Check prints that receipt
     only after the current branch and expected revision match. Recovery exclusively
     writes a separate schema-2 receipt with the legacy evidence digest and verified
@@ -47,23 +52,113 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
 # A source file cannot contain a bytecode cache directory.
 sys.pycache_prefix = str(Path(__file__).resolve())
 
-from collect_pr import _github_remote_identity, _head_repository  # noqa: E402
+from collect_pr import (  # noqa: E402
+    CollectionError,
+    _github_remote_identity,
+    _head_repository,
+    pr_worktree_index_unmasked,
+    pr_worktree_is_clean,
+)
 
 
 def _git(*arguments: str, optional: bool = False) -> str:
-    """Run a local Git query, allowing absent optional configuration only."""
+    """Run a local Git command and distinguish ordinary negative lookups from errors."""
     result = subprocess.run(["git", *arguments], capture_output=True, text=True, check=False, timeout=30)  # noqa: S603, S607 - argv list, no shell; tool resolved via PATH on purpose
-    if optional and result.returncode == 1 and arguments[:2] == ("config", "--get"):
+    if optional and result.returncode == 1 and (arguments[:2] == ("config", "--get") or arguments[0] == "check-ignore"):
         return ""
     if result.returncode:
         raise ValueError(f"git-command-failed:{arguments[0]}:exit-{result.returncode}")
     return result.stdout.strip()
+
+
+def create_worktree(receipt: Path) -> dict[str, Any]:
+    """Create a private detached worktree for native PR checkout while preserving the invoking branch and index."""
+    caller = Path(_git("rev-parse", "--show-toplevel")).resolve()
+    common = Path(_git("rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+    head = _git("rev-parse", "--verify", "HEAD")
+    # Keep the new checkout outside the run directory so canonical PR report promotion cannot move it.
+    parent = receipt.parent.resolve(strict=True).parent
+    if parent.is_relative_to(caller) and (
+        parent == caller or not _git("check-ignore", "--", str(parent), optional=True)
+    ):
+        parent = Path(tempfile.gettempdir()).resolve()
+        if parent.is_relative_to(caller):
+            raise ValueError("no-isolated-remediation-worktree-location")
+    if receipt.is_symlink():
+        raise ValueError("invalid-remediation-worktree-locator")
+    if receipt.exists():
+        record = _read(receipt)
+        destination = record.get("worktree")
+        if (
+            record.get("schema_version") != 1
+            or record.get("invoking_checkout") != caller.as_posix()
+            or record.get("git_common_dir") != common.as_posix()
+            or record.get("initial_head") != head
+            or not isinstance(destination, str)
+        ):
+            raise ValueError("remediation-worktree-source-mismatch")
+        directory = Path(destination)
+        # Never claim an arbitrary directory named by a changed or partially written receipt.
+        if (
+            directory != directory.resolve()
+            or directory.parent.parent != parent
+            or not directory.parent.name.startswith("codex-remediate-")
+            or not directory.parent.is_dir()
+            or directory.name != "worktree"
+        ):
+            raise ValueError("invalid-remediation-worktree-location")
+        # A prunable registration can survive a missing directory. Preserve it for diagnosis.
+        registered = False
+        for entry in _git("worktree", "list", "--porcelain", "-z").split("\0\0"):
+            location, *attributes = entry.split("\0")
+            if location.startswith("worktree ") and Path(location.removeprefix("worktree ")) == directory:
+                registered = True
+                if not directory.is_dir() or any(
+                    field.partition(" ")[0] in {"locked", "prunable"} for field in attributes
+                ):
+                    raise ValueError("remediation-worktree-registration-unavailable")
+                break
+        if not registered and directory.exists():
+            raise ValueError("remediation-worktree-location-occupied")
+        if any(
+            (receipt.parent / name).exists()
+            for name in ("pr/local-checkout.json", "remediation-branch.json", "remediation-branch-recovered.json")
+        ):
+            raise ValueError("remediation-worktree-collected:resume-verified-pr-receipts")
+    else:
+        directory = Path(tempfile.mkdtemp(prefix="codex-remediate-", dir=parent)) / "worktree"
+        record = {
+            "schema_version": 1,
+            "invoking_checkout": caller.as_posix(),
+            "git_common_dir": common.as_posix(),
+            "initial_head": head,
+            "worktree": directory.as_posix(),
+        }
+        with receipt.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(record, indent=2) + "\n")
+        registered = False
+    if not registered:
+        _git("worktree", "add", "--detach", str(directory), head)
+    if (
+        Path(_git("-C", str(directory), "rev-parse", "--show-toplevel")).resolve() != directory
+        or Path(_git("-C", str(directory), "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+        != common
+    ):
+        raise ValueError("remediation-worktree-verification-failed")
+    if _git("-C", str(directory), "branch", "--show-current"):
+        raise ValueError("remediation-worktree-attached:resume-verified-pr-receipts")
+    if _git("-C", str(directory), "rev-parse", "HEAD") != head:
+        raise ValueError("remediation-worktree-head-mismatch")
+    if registered and not pr_worktree_is_clean(directory):
+        raise ValueError("remediation-worktree-has-local-changes")
+    return record
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -141,8 +236,11 @@ def _verify_record(record: dict[str, Any], expected_head: str) -> None:
     """Check live branch identity and ancestry for prepared or recovered evidence."""
     if record.get("schema_version") != 2 or record.get("status") != "prepared":
         raise ValueError("invalid-branch-receipt:preserve-local-work-and-use-recover-for-schema-1")
-    if record.get("worktree") != Path(_git("rev-parse", "--show-toplevel")).resolve().as_posix():
+    worktree = Path(_git("rev-parse", "--show-toplevel")).resolve()
+    if record.get("worktree") != worktree.as_posix():
         raise ValueError("worktree-mismatch")
+    if not pr_worktree_index_unmasked(worktree):
+        raise ValueError("remediation-worktree-index-masks-local-state")
     branch = _git("branch", "--show-current")
     if not branch or branch != record.get("branch"):
         raise ValueError("branch-mismatch")
@@ -284,6 +382,26 @@ def prepare(pr_dir: Path, receipt: Path) -> dict[str, Any]:
     worktree = Path(_git("rev-parse", "--show-toplevel")).resolve().as_posix()
     if checkout.get("worktree") != worktree:
         raise ValueError("collected-worktree-mismatch")
+    if not pr_worktree_index_unmasked(Path(worktree)):
+        raise ValueError("remediation-worktree-index-masks-local-state")
+    locator = pr_dir.parent / "remediation-worktree.json"
+    if locator.exists() or locator.is_symlink():
+        selected = _read(locator)
+        caller = selected.get("invoking_checkout")
+        if (
+            selected.get("schema_version") != 1
+            or selected.get("worktree") != worktree
+            or not isinstance(caller, str)
+            or caller == worktree
+            or not Path(caller).is_absolute()
+            or Path(_git("-C", caller, "rev-parse", "--show-toplevel")).resolve().as_posix() != caller
+        ):
+            raise ValueError("remediation-worktree-mismatch")
+        # A checkout at the right path must still belong to the invoking repository after report promotion.
+        for directory in (caller, worktree):
+            common = _git("-C", directory, "rev-parse", "--path-format=absolute", "--git-common-dir")
+            if Path(common).resolve().as_posix() != selected.get("git_common_dir"):
+                raise ValueError("remediation-worktree-mismatch")
     if _git("ls-files", "--unmerged"):
         raise ValueError("unresolved-index")
     for operation in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"):
@@ -320,14 +438,18 @@ def prepare(pr_dir: Path, receipt: Path) -> dict[str, Any]:
 def main() -> int:
     """Prepare, recover, or check a remediation branch with explicit failure diagnostics."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0], allow_abbrev=False)
-    parser.add_argument("action", choices=("prepare", "check", "recover"))
+    parser.add_argument("action", choices=("prepare", "check", "recover", "worktree"))
     parser.add_argument("--receipt", required=True, type=Path)
     parser.add_argument("--pr-dir", type=Path)
     parser.add_argument("--expected-head")
     parser.add_argument("--legacy-receipt", type=Path)
     args = parser.parse_args()
     try:
-        if args.action == "prepare":
+        if args.action == "worktree":
+            if args.pr_dir is not None or args.expected_head is not None or args.legacy_receipt is not None:
+                raise ValueError("worktree-requires-receipt-only")
+            record = create_worktree(args.receipt)
+        elif args.action == "prepare":
             if args.pr_dir is None or args.expected_head is not None or args.legacy_receipt is not None:
                 raise ValueError("prepare-requires-pr-dir-only")
             record = prepare(args.pr_dir, args.receipt)
@@ -339,7 +461,7 @@ def main() -> int:
             if args.expected_head is None or args.pr_dir is not None or args.legacy_receipt is not None:
                 raise ValueError("check-requires-expected-head-only")
             record = check(args.receipt, args.expected_head)
-    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+    except (CollectionError, OSError, ValueError, subprocess.TimeoutExpired) as error:
         print(f"remediation-branch: {error}", file=sys.stderr)
         return 2
     print(json.dumps(record, indent=2))

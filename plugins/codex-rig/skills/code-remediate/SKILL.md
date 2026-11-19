@@ -23,7 +23,7 @@ See the [fixed recurrence and root-cause policy](../../shared/native-skill-contr
 
 Newly discovered in-scope defects do not trigger another review wave or score-based permission request. Resolve feasible work within the authorized scope using source evidence and focused checks; record genuinely separate or unfinished work with evidence, owner, and next action. Ask only for a concrete missing decision or material scope expansion. Never claim unresolved selected findings are closed.
 
-Apply [Worktree lifecycle](../../shared/native-skill-contract.md#worktree-lifecycle) before collection: capture the original invoking checkout and announce any temporary worktree and intended return destination. Review isolation does not make remediation worktree-only; absent an explicit worktree-only request, finished changes belong in the invoking checkout.
+Apply [Worktree lifecycle](../../shared/native-skill-contract.md#worktree-lifecycle) before collection. Capture the original invoking checkout. In PR mode the default is `gh pr checkout` in that checkout. The optional `--worktree` flag requests a separate linked Git worktree, runs the same native PR checkout there, and retains the branch and finished changes there for the user. Announce both paths and the intended destination. A detached Code Review worktree belongs to its review.
 
 Keep report and reviewer setup subordinate to selected finding closure under the primary-goal rules in Reasoning-Progress Escalation. After selection and root-cause evidence establish an authorized fix, implement it and its regression before another review-preparation cycle. Diagnose an agent-owned setup failure once and attempt one bounded repair; if it fails, stop that auxiliary route and continue safe primary work. Preserve missing review coverage as a factual limitation; do not ask the user to debug reviewer names, commands, or metadata.
 
@@ -35,6 +35,7 @@ Keep report and reviewer setup subordinate to selected finding closure under the
   "mode": "optional report|pr|auto; default auto: pr for bare number, #number, PR URL, or pr_target; otherwise report, which also carries local supplied findings",
   "target": "optional shorthand target number, issue/PR URL, path, or current branch",
   "pr_target": "optional PR number, PR URL, or current branch PR when mode=pr",
+  "worktree": "optional boolean; --worktree requests linked-worktree delivery for a PR; default false",
   "remediation_scope": "optional all|required|suggestions|critical|high|medium|low|comma-separated severities|comma-separated selection indexes; ask before editing when omitted",
   "target_scope": "optional path/module; derive from the admitted target and selected findings when omitted",
   "done_when": "selected findings are fixed/resolved and unselected critical/high findings are explicitly deferred"
@@ -46,6 +47,8 @@ Keep report and reviewer setup subordinate to selected finding closure under the
 Follow these phases in order. Load only the current phase and triggered reference sections; do not concatenate all phase references. If a read is truncated, retrieve the missing applicable section before acting on it. Resume at the first unmet checkpoint, retaining valid evidence and prior authorization. Before admitting the target and evidence, read [Fail-fast Rules](references/completion.md#fail-fast-rules) and [Quality Gates](references/completion.md#quality-gates); these rules apply throughout. Read [Output Contract](references/completion.md#output-contract) before any status or final response and [Calibration Hooks](references/completion.md#calibration-hooks) when changing the corresponding behavior. A genuine stop or denial remains authoritative.
 
 ### Admit target and evidence
+
+For fresh or resumed PR remediation, follow [Review checkout scheduling](../../shared/native-skill-contract.md#review-checkout-scheduling) after PR State Preflight and before the first run or checkout write. The resumed source-drift exception acquires the slot before its guarded pull. Keep the common-directory slot through source verification and delivery. An authorized nested Code Review inherits the same owner and slot. Only the acquiring parent releases it after all writers finish or records the required inspection hold.
 
 Read [intake.md](references/intake.md). Preflight the PR before creating a run or looking up evidence; normalize input and admit exact requested evidence under the documented source and freshness rules. For `+review` with missing, incomplete, stale, or unstarted review evidence, invoke the owning Code Review workflow using the already authorized update, resume, or fresh review route, subject to its actual permission, independence, retry, and recovery boundaries. Admit its exact returned result through the normal validator, then continue this remediation. An incomplete checkpoint, successful collection, or completion of Code Review alone is not a terminal remediation outcome. `+report` and explicit report paths do not authorize a new review; preserve their decision and stop boundaries.
 

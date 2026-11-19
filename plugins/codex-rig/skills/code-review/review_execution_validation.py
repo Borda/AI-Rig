@@ -362,37 +362,16 @@ def _validate_direct_review(
         raise SystemExit("review-direct-role-set-mismatch")
     selected = sorted({path for context in contexts for path in context["source_paths"]})
     try:
-        snapshot, changed, comparison_base = review_prepare._source_snapshot(
-            out_dir,
-            Path(plan["source_root"]),
-            plan["expected_head"],
-            selected,
-            plan["expected_diff_base"],
-            plan["scope_path"],
+        snapshot, changed, comparison_base, actual_additions = review_prepare.validate_plan_source(
+            out_dir, plan_path, plan, plan, selected
         )
-    except (ValueError, RuntimeError) as error:
+    except (OSError, RuntimeError, UnicodeDecodeError, ValueError) as error:
         raise SystemExit(f"review-direct-source-invalid:{error}") from error
     if snapshot != plan["source_snapshot"]:
         raise SystemExit("review-direct-source-snapshot-changed")
     if plan["schema_version"] == 3 and plan.get("source_comparison_base") != comparison_base:
         raise SystemExit("review-direct-source-comparison-changed")
     additions = review_prepare.collect_diff.read_git_path_lines(out_dir / "untracked.txt")
-    try:
-        source_root = Path(plan["source_root"]).resolve()
-        scopes = (
-            review_prepare.collect_diff._normalize_scope_paths(source_root, [plan["scope_path"]])
-            if plan["scope_path"] is not None
-            else []
-        )
-        actual_additions = {
-            path.decode("utf-8")
-            for path in review_prepare.collect_diff._git_output(
-                source_root, ("ls-files", "--others", "--exclude-standard", "-z", "--", *scopes)
-            ).split(b"\0")
-            if path
-        }
-    except (OSError, RuntimeError, UnicodeDecodeError, ValueError) as error:
-        raise SystemExit(f"review-direct-source-invalid:{error}") from error
     if additions != actual_additions:
         raise SystemExit("review-direct-source-untracked-stale")
     if not (changed | additions) <= set(selected):

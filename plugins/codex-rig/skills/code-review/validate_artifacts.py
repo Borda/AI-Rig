@@ -54,7 +54,9 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, NamedTuple
 
@@ -158,6 +160,7 @@ from review_execution_validation import (  # noqa: E402
     validate_local_reviewer_evidence as validate_local_reviewer_evidence,
 )
 from review_routing import ROUTING_SIGNALS, derive_mechanical_risk, literal_patch_paths, read_review_paths  # noqa: E402
+from review_worktree_replay import CLOSED_REQUIRED_PR_ARTIFACTS  # noqa: E402
 from run_gates import (  # noqa: E402
     _aggregate_worker_proofs,
     _local_snapshot_bytes,
@@ -286,20 +289,6 @@ CLOSED_METADATA_KEYS = {
     "confidence_gap_closures",
     "confidence_recovery",
     "final_handoff",
-}
-#: PR artifact files that must be present for a closed-PR review.
-CLOSED_REQUIRED_PR_ARTIFACTS = {
-    "pr.json",
-    "pr-routing.json",
-    "remote-selection.json",
-    "target-branch.json",
-    "local-checkout.json",
-    "comments.json",
-    "reviews.json",
-    "review-threads.json",
-    "unresolved-review-threads.json",
-    "online-review-summary.json",
-    "diff.patch",
 }
 #: Artifacts that must not exist for a closed-PR review because detailed source review is skipped.
 CLOSED_FORBIDDEN_ARTIFACTS = {"codemap-context.json", "review-routing.json", "specialist-manifest.json", "specialists"}
@@ -1856,9 +1845,18 @@ def _validate_review_worktree_source(
     elif location == "temporary-fallback":
         digest = hashlib.sha256(collection_run_dir.encode("utf-8")).hexdigest()[:16]
         expected_name = f"codex-pr-review-{digest}-review-worktree"
+        path = Path(worktree)
+        temporary_root = checkout.get("worktree_temporary_root", tempfile.gettempdir())
+        current_layout = (
+            isinstance(temporary_root, str)
+            and Path(temporary_root).is_absolute()
+            and path.name == "review-worktree"
+            and re.fullmatch(r"codex-pr-review-[a-z0-9_]+", path.parent.name) is not None
+            and path.parent.parent == Path(temporary_root).resolve()
+        )
         location_valid = (
-            Path(worktree).name == expected_name
-            and Path(worktree).resolve().as_posix() == worktree
+            (path.name == expected_name or current_layout)
+            and path.resolve().as_posix() == worktree
             and not Path(worktree).is_relative_to(Path(source).resolve())
         )
     else:
@@ -4034,6 +4032,8 @@ def _review_steps(
     """Select the terminal or assessed review check list for one loaded candidate."""
     if context["review_status"] is not None:
         return _terminal_review_steps(out_dir, result_path, context)
+    if not env.parent_thread_id:
+        raise SystemExit("missing-parent-thread-id")
     return _assessed_review_steps(out_dir, result_path, context, env)
 
 
@@ -4140,19 +4140,33 @@ def main() -> int:
         parser.error("--all-errors requires --result")
     if args.challenge_only and not args.manifest_only:
         parser.error("--challenge-only requires --manifest-only")
-    if not args.parent_thread_id:
-        raise SystemExit("missing-parent-thread-id")
     if args.manifest_only:
+        if not args.parent_thread_id:
+            raise SystemExit("missing-parent-thread-id")
         if args.challenge_only:
             _validate_challenge_manifest_preflight(args.out, args.codex_home, args.parent_thread_id, args.project_root)
         else:
             _validate_manifest_preflight(args.out, args.codex_home, args.parent_thread_id, args.project_root)
         return 0
-    if args.all_errors:
-        report = collect_result_errors(args.out, args.result, args.codex_home, args.parent_thread_id, args.project_root)
-        print(json.dumps(report, indent=2, sort_keys=True))
-        return 0 if report["status"] == "pass" else 1
-    _validate_result(args.out, args.result, args.codex_home, args.parent_thread_id, args.project_root)
+    # The plan producer imports this validator during initialization. Resolve it only at result validation.
+    from review_prepare import result_source_validation
+
+    try:
+        with result_source_validation(args.out, args.result):
+            if args.all_errors:
+                report = collect_result_errors(
+                    args.out, args.result, args.codex_home, args.parent_thread_id, args.project_root
+                )
+                print(json.dumps(report, indent=2, sort_keys=True))
+                return 0 if report["status"] == "pass" else 1
+            _validate_result(args.out, args.result, args.codex_home, args.parent_thread_id, args.project_root)
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        if args.all_errors:
+            print(
+                json.dumps({"status": "fail", "errors": [{"step": "source-replay", "code": str(error)}], "not_run": []})
+            )
+            return 1
+        raise SystemExit(str(error)) from error
     return 0
 
 

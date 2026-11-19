@@ -497,7 +497,7 @@ def validate_inventory(out: Path, *, verified_source: tuple[dict[str, Any], set[
     """Reconstruct every complete role context and reverify all admitted source against its checkout.
 
     Only the freshly frozen preparation passes ``verified_source``, the snapshot and changed paths it just verified;
-    every other caller leaves it unset and reverifies the checkout in full.
+    later checks reverify the checkout or the exact archived source inputs for a completed PR cleanup.
     """
     producer, validator = _helpers()
     inventory = validator._load_json(out / "batch-inventory.json")
@@ -511,17 +511,8 @@ def validate_inventory(out: Path, *, verified_source: tuple[dict[str, Any], set[
             raise ValueError(f"review-batch-{name}-changed")
     selected = sorted({path for paths in inventory["selections"].values() for path in paths})
     arguments = inventory["source_arguments"]
-    snapshot, changed = (
-        producer._source_snapshot(
-            out,
-            Path(arguments["source_root"]),
-            arguments["expected_head"],
-            selected,
-            arguments["expected_diff_base"],
-            arguments["scope_path"],
-        )[:2]
-        if verified_source is None
-        else verified_source
+    snapshot, changed, _, actual_untracked = producer.validate_plan_source(
+        out, out / "batch-inventory.json", inventory, arguments, selected, verified_source=verified_source
     )
     if snapshot != inventory["source_snapshot"] or sorted(changed) != inventory["changed_paths"]:
         raise ValueError("review-batch-source-changed")
@@ -534,18 +525,6 @@ def validate_inventory(out: Path, *, verified_source: tuple[dict[str, Any], set[
     records = {record["path"]: record for record in snapshot["files"]}
     sections = producer._diff_sections((out / "diff.patch").read_bytes())
     untracked = producer.collect_diff.read_git_path_lines(out / "untracked.txt")
-    scopes = (
-        producer.collect_diff._normalize_scope_paths(Path(arguments["source_root"]), [arguments["scope_path"]])
-        if arguments["scope_path"] is not None
-        else []
-    )
-    actual_untracked = {
-        path.decode("utf-8")
-        for path in producer.collect_diff._git_output(
-            Path(arguments["source_root"]), ("ls-files", "--others", "--exclude-standard", "-z", "--", *scopes)
-        ).split(b"\0")
-        if path
-    }
     if untracked != actual_untracked:
         raise ValueError("review-batch-untracked-coverage-changed")
     if not (changed | untracked) <= set(selected) or not changed <= sections.keys():

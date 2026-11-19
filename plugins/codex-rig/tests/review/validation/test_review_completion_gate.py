@@ -17,6 +17,7 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
+from _git_fixtures import git_text
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 FINDER = PLUGIN_ROOT / "shared" / "find-review-report.py"
@@ -50,12 +51,25 @@ def _module(path: Path) -> ModuleType:
 @pytest.fixture(name="assessed_pr")
 def _assessed_pr(tmp_path: Path) -> Path:
     """Create a complete trivial PR review through real render and validation boundaries."""
+    return _write_assessed_pr(tmp_path)
+
+
+def _write_assessed_pr(tmp_path: Path, checkout: Path | None = None) -> Path:
+    """Use real commits and patch bytes when an integration test supplies its disposable checkout."""
     run = tmp_path / "reports" / "pr-123" / "run-001"
     run.mkdir(parents=True)
     # Reuse collector/gate construction; keep assessed behavior visible here.
     fixture = _module(Path(__file__).with_name("test_code_review_close_contract.py"))
+    if checkout is not None:
+        fixture.BASE_OID = git_text(checkout, "rev-parse", "HEAD^").strip()
+        fixture.HEAD_OID = git_text(checkout, "rev-parse", "HEAD").strip()
     result_path = fixture._write_closed_artifact(run)
-    (run / "diff.patch").write_text("diff --git a/widget.txt b/widget.txt\n", encoding="utf-8", newline="\n")
+    patch = (
+        (git_text(checkout, "diff", "--binary", "HEAD^...HEAD") + "\n")
+        if checkout
+        else "diff --git a/widget.txt b/widget.txt\n"
+    )
+    (run / "diff.patch").write_text(patch, encoding="utf-8", newline="\n")
     (run / "files.txt").write_text("widget.txt\n", encoding="utf-8")
     (run / "numstat.txt").write_text("1\t1\twidget.txt\n", encoding="utf-8")
     result = json.loads(result_path.read_text(encoding="utf-8"))

@@ -12,6 +12,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -1431,6 +1432,23 @@ class TestVerifiedPrSource:
         worktree = tmp_path.parent.parent / _temporary_worktree_name(source.checkout["collection_run_dir"])
         source.checkout["worktree"] = worktree.as_posix()
         source.checkout["worktree_location"] = "temporary-fallback"
+        _rebind_to_worktree(tmp_path, worktree.as_posix())
+
+        _VALIDATOR._validate_verified_pr_source(tmp_path, *source)
+
+    def test_accepts_current_private_temporary_review_worktree(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The collector's unique private temporary directory remains a valid checkout location after removal."""
+        source = _verified_review_worktree_source(tmp_path)
+        with tempfile.TemporaryDirectory(prefix="codex-pr-review-") as directory:
+            worktree = Path(directory).resolve() / "review-worktree"
+        source.checkout.update(
+            worktree=worktree.as_posix(),
+            worktree_location="temporary-fallback",
+            worktree_temporary_root=worktree.parent.parent.as_posix(),
+        )
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
         _rebind_to_worktree(tmp_path, worktree.as_posix())
 
         _VALIDATOR._validate_verified_pr_source(tmp_path, *source)

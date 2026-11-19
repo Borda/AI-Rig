@@ -237,12 +237,12 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <path d="M480,1770 L480,1804" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
 <g class="fi" style="--d:2.06s"><rect x="40" y="1804" width="880" height="86" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="1805" width="5.5" height="84" rx="2.75" fill="#2f9e73"/>
 <text x="56" y="1823" font-size="10.5" fill="#1b7f59" font-weight="700" text-anchor="start" letter-spacing="0.6">COMPLETE</text>
-<text x="56" y="1841" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Report lookup, then deliver</text>
+<text x="56" y="1841" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Validate report, release owned PR worktree, deliver</text>
 <g><path d="M878.0,1840.0 L884.0,1849.4 L896.0,1849.4 L902.0,1840.0 L902.0,1844.6 L896.0,1853.9 L884.0,1853.9 L878.0,1844.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="902.0,1840.0 896.0,1848.1 884.0,1848.1 878.0,1840.0 884.0,1831.9 896.0,1831.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M886.2,1840.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
 <text x="56" y="1861" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">find-review-report.py</tspan> --complete-run</text>
 <text x="56" y="1877.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">standalone: <tspan font-style="italic">emit final output verbatim</tspan></text>
 <text x="490" y="1861" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">nested: return <tspan font-weight="700" fill="#1c2150">result.json</tspan> path</text>
-<text x="490" y="1877.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">read-only: no GitHub write</tspan></text>
+<text x="490" y="1877.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">preserve dirty or unowned worktrees</tspan></text>
 </g>
 <path d="M480,1890 L480,1928" fill="none" stroke="#d6284a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-bypass)"/>
 <g class="fi" style="--d:2.12s"><rect x="496.0" y="1899" width="332.9" height="19.5" rx="9.8" fill="#fee6e2" stroke="#e0503f" stroke-width="1.1"/><text x="505.0" y="1912.6" font-size="10.5" fill="#b8321f" font-weight="700" text-anchor="start">checkpoint fails · permitted recovery exhausted</text></g>
@@ -328,7 +328,7 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <text x="600" y="2499" font-size="10.5" fill="#6b72a8" font-weight="700" text-anchor="start" letter-spacing="0.5">BLOCKS</text>
 <line x1="52" y1="2506" x2="908" y2="2506" stroke="#c8ccf2"/>
 <text x="56" y="2526" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">PR state preflight</text>
-<text x="230" y="2526" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">scope=pr, before run</text>
+<text x="230" y="2526" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">PR state before run · checkout slot before writes</text>
 <text x="600" y="2526" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">closed / merged stops</text>
 <line x1="52" y1="2534" x2="908" y2="2534" stroke="#dde0f4"/>
 <text x="56" y="2552" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">prior report</text>
