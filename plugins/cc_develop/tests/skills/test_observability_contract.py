@@ -383,6 +383,9 @@ _VISIBLE_EQUIVALENTS = {
         **_keep_sentinel_equivalents("fix"),
     },
     "skills/refactor/SKILL.md": {
+        "`GATE_EXIT -ne 0` (including exit 5) \u2192 characterization tests missing or wrong \u2014 **cannot proceed": (
+            "`GATE FAIL` (red, exit 5, or special case not pinned) \u2192 **cannot proceed to Step 4 without a passing safety net**",
+        ),
         "AFFECTED_MODULES=$(echo \"$REFACTOR_FILES\" | sed 's|^\\./||;s|^src/||;s|\\.py$||;s|/|.|g' | grep . ||": (
             'bin/build_codemap_batch.py" "$_BATCH_REQ" --files "$REFACTOR_FILES" --repository "$_ROOT" --queries rdeps',
         ),

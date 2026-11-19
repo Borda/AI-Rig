@@ -44,6 +44,11 @@ def runner_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         pytest.param(["--cov=../outside"], id="outside-coverage-source"),
         pytest.param(["--cov-report=html:../outside"], id="outside-coverage-report"),
         pytest.param(["@pytest-arguments.txt"], id="response-file-options"),
+        pytest.param(["--junitxml=../outside/report.xml"], id="outside-junit-report"),
+        pytest.param(["--junitxml="], id="empty-junit-report"),
+        pytest.param(["-o", "addopts=-p hostile_plugin"], id="ini-override"),
+        pytest.param(["-m", "not slow"], id="marker-expression"),
+        pytest.param(["-o", "junit_family=xunit2"], id="other-ini-value"),
     ],
 )
 @mock.patch("dev_run_tests.run_tail", autospec=True, return_value=(0, ["1 passed"]))
@@ -61,6 +66,14 @@ def test_refuses_unsafe_pytest_arguments(mock_run_tail, runner_session: Path, ex
         pytest.param(["--co", "-q", "--cov=."], id="refactor-collection"),
         pytest.param(["--cov=engine.core", "-q", "--cov-report=term-missing"], id="refactor-coverage"),
         pytest.param(["-p", "no:cacheprovider", "tests/test_engine.py"], id="disable-cache-plugin"),
+        pytest.param(
+            ["tests/test_engine.py::test_run", "-o", "xfail_strict=true", "--junitxml=.developments/pin.xml"],
+            id="refactor-special-case-pin",
+        ),
+        pytest.param(
+            ["tests/test_engine.py::test_run", "-rX", "-o", "junit_family=xunit1", "--junitxml=.developments/r.xml"],
+            id="refactor-special-case-xpass-and-file-attribute",
+        ),
     ],
 )
 @mock.patch("dev_run_tests.run_tail", autospec=True, return_value=(0, ["1 passed"]))

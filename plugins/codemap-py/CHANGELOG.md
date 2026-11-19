@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.45.1
+
+- The shared Codemap context guidance now describes `coupled` as internal-import coupling, ranked by import count, instead of co-change coupling, so consuming skills no longer read its output as evidence of files that change together. The guidance also tells consumers to use only in-scope modules with `internal_dep_count` of at least 20, the field the ranking sorts on.
+
 ## 0.45.0
 
 - Method calls on receivers whose class the source states (constructor, annotation, `self` attribute, `super()`, `Class.method()` through an imported class, inherited `self.method()`) now produce call edges marked `inferred`, so `fn-rdeps`, `fn-blast` and `test-impact` find those callers. On the rich and click census against jedi (the sample the rules were developed against; there is no held-out call-graph run yet), caller recall rose from 0.555 to 0.854 at 0.995 precision. `fn-rdeps` marks a `called_by` row `inferred: true` when every edge behind it is inferred, and no other verb shows the marker. Receivers from return values, containers and unannotated parameters stay unresolved, and `dead-symbols` now lists fewer methods because inferred callers count.

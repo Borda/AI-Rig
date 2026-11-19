@@ -145,20 +145,21 @@ IFS= read -r TARGET_MODULE < "$PLAN_NS/target-module" 2>/dev/null || TARGET_MODU
 if [ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py >/dev/null 2>&1; then
     if [ -n "$TARGET_MODULE" ]; then
         codemap-py query --timeout 5 rdeps "$TARGET_MODULE" --limit 10 --exclude-tests > "$PLAN_NS/sizing-rdeps" 2>/dev/null || true
-        codemap-py query --timeout 5 coupled --top 10 >> "$PLAN_NS/sizing-rdeps" 2>/dev/null || true
+        # whole ranking, then the target filter: a top-N cut first would hide a lower-ranked target
+        codemap-py query --timeout 5 --format tsv coupled --top 1000000 2>/dev/null | awk -F'\t' -v target="$TARGET_MODULE" 'NR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; print; next } { split($0, f, "\t") } f[col["name"]] == target && f[col["internal_dep_count"]] >= 20' >> "$PLAN_NS/sizing-rdeps" || true
     elif [ -n "$(git diff HEAD --name-only 2>/dev/null | grep '\.py$')" ]; then
         python "$PLUGIN_ROOT/bin/codemap_scan.py" --source=diff > "$PLAN_NS/sizing-rdeps" 2>/dev/null || true
     fi
 fi
 ```
 
-> Interpret `$PLAN_NS/sizing-rdeps` (skip when empty — codemap absent or no target): each `rdeps` block's caller count sets per-module blast tier; `coupled` output lists co-change pairs. Tiers match develop's convention:
+> Interpret `$PLAN_NS/sizing-rdeps` (skip when empty — codemap absent or no target): each `rdeps` block's caller count sets per-module blast tier; `coupled` rows arrive filtered before any cut: the target module only, when its `internal_dep_count` (the ranking field) is ≥ 20 (high-coupling); header-only → not high-coupling. Tiers match develop's convention:
 >
 > - `>= 5` rdeps → **HIGH** blast radius — cross-module reach; nudges complexity toward `large` and adds a Risks entry
 > - `1–4` rdeps → **MODERATE** — note affected importers in plan
 > - `0` rdeps → **LOW** — self-contained; proceed
 >
-> Fold highest tier across affected modules into complexity assessment below (HIGH tier or ≥3 affected modules → `large`), and pass tier table + coupled pairs to sw-engineer spawn as `## Structural blast radius` block so scope estimate accounts for downstream callers rather than file count alone.
+> Fold highest tier across affected modules into complexity assessment below (HIGH tier or ≥3 affected modules → `large`), and pass tier table + filtered high-coupling modules (`internal_dep_count` ≥ 20, affected only) to sw-engineer spawn as `## Structural blast radius` block so scope estimate accounts for downstream callers rather than file count alone.
 
 Arm batch `scope` in the spawn response (`agent-resolution.md` §Agent waits — no polling, per-agent deadlines). Spawn **foundry:sw-engineer** agent with full goal text from `$ARGUMENTS`. Agent should:
 
@@ -187,7 +188,7 @@ echo "STATE=${PLAN_FILE:-$SCOPE_FILE}"
 - Assess complexity: small (1-3 files, self-contained), medium (4-8 files or 1-2 modules), large (cross-module, API changes, or 3+ modules). Effort-sizing block produced tier table → let structural reach override file count: any **HIGH** blast module (≥5 rdeps) or ≥3 affected modules → `large`, regardless of raw file count.
 - Return **two separate** structured fields (not merged into flat risks list):
   - `breaking_changes`: list of changes affecting **public API only** — see criteria below; empty list when none
-  - `risks`: non-breaking concerns (missing tests, unclear requirements, external dependencies, internal coupling); when effort-sizing tier table flags HIGH/MODERATE modules or coupled pairs, add each as concrete risk (e.g. "changing `<mod>` reaches N downstream callers", "`<a>`/`<b>` co-change coupling")
+  - `risks`: non-breaking concerns (missing tests, unclear requirements, external dependencies, internal coupling); when effort-sizing tier table flags HIGH/MODERATE modules or an affected module with `internal_dep_count` ≥ 20, add each as concrete risk (e.g. "changing `<mod>` reaches N downstream callers", "`<mod>` imports N internal modules")
 - Note complexity smells: ambiguous goal, scope creep risk, missing reproduction case, directory-wide refactor without explicit goal
 
 Agent returns findings inline (no file handoff — output short).

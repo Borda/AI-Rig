@@ -55,6 +55,19 @@ def _run(block: str, tmp_path: Path, plugin: Path = _PLUGIN) -> subprocess.Compl
     )
 
 
+def _scope_findings(run_dir: Path, text: str = "none · 0 findings\n", plugin: Path | None = None) -> None:
+    """Record the Step 1 findings file in ``run_dir`` and point the run-dir sentinel at it.
+
+    A fake ``plugin`` gets the real findings helper, since every gate now validates the file before trusting a run.
+    """
+    (run_dir / "scope-findings.md").write_text(text, encoding="utf-8")
+    (run_dir / "dev-refactor-dev-dir-refactor-safety").write_text(
+        run_dir.as_posix() + "\n", encoding="utf-8", newline="\n"
+    )
+    if plugin is not None:
+        shutil.copy(_PLUGIN / "bin/dev_scope_findings.py", plugin / "bin/dev_scope_findings.py")
+
+
 @_skip_no_bash
 @pytest.mark.parametrize("gate", ["T1", "T2"])
 @pytest.mark.parametrize(
@@ -77,7 +90,53 @@ def test_team_gate_runs_the_saved_characterization_file(
         "tests/test_current.py\n", encoding="utf-8", newline="\n"
     )
     (tmp_path / "dev-pytest-cmd-refactor-safety").write_text("python -m pytest\n", encoding="utf-8", newline="\n")
+    _scope_findings(tmp_path)
     result = _run(_block(_TEAM, f"Gate {gate}"), tmp_path)
+    assert result.returncode == exit_code, result.stdout + result.stderr
+    assert verdict in result.stdout
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    ("findings", "test_map", "exit_code", "verdict"),
+    [
+        pytest.param("none · 0 findings\n", None, 0, "GATE OK", id="no-special-cases"),
+        pytest.param("F1 · special-case · pkg/mod.py::f · retry\n", None, 3, "F1 (unmapped)", id="unmapped"),
+        pytest.param(
+            "F1 · special-case · pkg/mod.py::f · retry\n",
+            "F1 · tests/test_current.py::test_current\n",
+            0,
+            "GATE OK",
+            id="mapped-green",
+        ),
+        pytest.param(
+            "F1 · special-case · pkg/mod.py::f · retry\n",
+            "F1 · tests/test_pin.py::test_pin\n",
+            3,
+            "F1 (tests/test_pin.py::test_pin FAILED)",
+            id="mapped-red",
+        ),
+        pytest.param(None, None, 1, "scope-findings.md missing or unreadable", id="findings-missing"),
+    ],
+)
+def test_team_gate_one_requires_a_passing_test_per_special_case(
+    tmp_path: Path, findings: str | None, test_map: str | None, exit_code: int, verdict: str
+) -> None:
+    """Gate T1 fails while a special case lacks a mapped passing test, or the findings file is missing."""
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_current.py").write_text("def test_current():\n    assert True\n", encoding="utf-8")
+    (tests / "test_pin.py").write_text("def test_pin():\n    assert False\n", encoding="utf-8")
+    (tmp_path / "dev-refactor-char-test-refactor-safety").write_text(
+        "tests/test_current.py\n", encoding="utf-8", newline="\n"
+    )
+    (tmp_path / "dev-pytest-cmd-refactor-safety").write_text("python -m pytest\n", encoding="utf-8", newline="\n")
+    _scope_findings(tmp_path, findings or "")
+    if findings is None:
+        (tmp_path / "scope-findings.md").unlink()
+    if test_map is not None:
+        (tmp_path / "special-case-tests.md").write_text(test_map, encoding="utf-8")
+    result = _run(_block(_TEAM, "Gate T1"), tmp_path)
     assert result.returncode == exit_code, result.stdout + result.stderr
     assert verdict in result.stdout
 
@@ -175,6 +234,7 @@ def test_baseline_requires_a_completed_nonempty_green_run(
         f"raise SystemExit({selector_exit})\n",
         encoding="utf-8",
     )
+    _scope_findings(tmp_path, plugin=plugin)
     block = _block(_SKILL, "BASELINE_EXIT").replace("'<scoped_python_files>'", shlex.quote("pkg/module.py"))
     result = _run(block, tmp_path, plugin)
     assert result.returncode == expected_exit, result.stdout + result.stderr
@@ -233,6 +293,7 @@ def test_characterization_path_is_persisted_literally(tmp_path: Path, path: str)
     saved = _run(block, tmp_path)
     assert saved.returncode == 0, saved.stderr
     assert (tmp_path / "dev-refactor-char-test-refactor-safety").read_text().strip() == path
+    _scope_findings(tmp_path)
     result = _run(_block(_TEAM, "Gate T1"), tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "GATE OK" in result.stdout
@@ -302,6 +363,7 @@ def test_baseline_exit_one_without_completed_record_is_runner_failure(tmp_path: 
         json.dumps({"tests": ["tests/test_existing.py"], "exit": record_exit}) + "\n", encoding="utf-8"
     )
     (scripts / "dev_test_targets.py").write_text("raise SystemExit(1)\n", encoding="utf-8")
+    _scope_findings(tmp_path, plugin=plugin)
     block = _block(_SKILL, "BASELINE_EXIT").replace("<scoped_python_files>", "pkg/module.py")
     result = _run(block, tmp_path, plugin)
     assert result.returncode == 1, result.stdout + result.stderr
@@ -348,6 +410,7 @@ def test_accepted_red_characterization_is_excluded_from_baseline_and_t2(
         "raise SystemExit(selector.main())\n",
         encoding="utf-8",
     )
+    _scope_findings(tmp_path, plugin=plugin)
     block = _block(_SKILL, "BASELINE_EXIT").replace(
         "'<scoped_python_files>'", shlex.join(["tests/test_red.py", "tests/test_existing.py"])
     )
@@ -363,3 +426,567 @@ def test_accepted_red_characterization_is_excluded_from_baseline_and_t2(
     assert post.returncode == 0, post.stdout + post.stderr
     assert "accepted-red characterization test excluded" in post.stdout
     assert "GATE OK" not in post.stdout
+
+
+_SPECIAL = "F1 · special-case · pkg/mod.py::retry · retries once\n"
+_TWO_SPECIAL = _SPECIAL + "F2 · special-case · pkg/mod.py::other · one caller\n"
+_PIN_TESTS = (
+    "import pytest\n"
+    "def test_pass():\n    assert True\n"
+    "def test_pass_too():\n    assert True\n"
+    "def test_fail():\n    assert False\n"
+    "@pytest.mark.skip(reason='x')\ndef test_skip():\n    pass\n"
+    "@pytest.mark.skipif(True, reason='x')\ndef test_skipif_true():\n    pass\n"
+    "@pytest.mark.skipif(False, reason='x')\ndef test_skipif_false():\n    pass\n"
+    "@pytest.mark.xfail\ndef test_xfail():\n    assert False\n"
+    "@pytest.mark.xfail\ndef test_xpass():\n    assert True\n"
+    "@pytest.mark.xfail(strict=False)\ndef test_xpass_nonstrict():\n    assert True\n"
+    "def test_imperative_xfail():\n    pytest.xfail('runtime')\n"
+    "@pytest.mark.parametrize('value', ['a b', '[x]', 'é'])\n"
+    "def test_param(value):\n    if value == 'a b':\n        pytest.skip('space id')\n"
+    "@pytest.mark.parametrize('value', ['a b', '[x]', 'é'])\n"
+    "def test_param_ok(value):\n    assert value\n"
+    "def test_runtime_xpass(request):\n    request.applymarker(pytest.mark.xfail(strict=False))\n"
+    "@pytest.fixture\ndef broken_teardown():\n    yield\n    raise RuntimeError('teardown')\n"
+    "def test_teardown_error(broken_teardown):\n    assert True\n"
+)
+
+
+def _pin_fixture(tmp_path: Path, findings: str, test_map: str | None, char_body: str = "") -> None:
+    """Lay out a characterization file, pin tests in another file, findings and map, plus runner state."""
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    body = char_body or "def test_current():\n    assert True\n"
+    (tests / "test_current.py").write_text(body, encoding="utf-8")
+    (tests / "test_pin.py").write_text(_PIN_TESTS, encoding="utf-8")
+    (tmp_path / "dev-pytest-cmd-refactor-safety").write_text("python -m pytest\n", encoding="utf-8", newline="\n")
+    (tmp_path / "dev-refactor-char-test-refactor-safety").write_text(
+        "tests/test_current.py\n", encoding="utf-8", newline="\n"
+    )
+    _scope_findings(tmp_path, findings)
+    if test_map is not None:
+        (tmp_path / "special-case-tests.md").write_text(test_map, encoding="utf-8")
+
+
+def _solo_gate(tmp_path: Path, plugin: Path = _PLUGIN) -> tuple[subprocess.CompletedProcess[str], str]:
+    """Run the solo Step 3 gate against ``tests/test_current.py``; return the result and the recorded gate exit."""
+    result = _run(_block(_SKILL, "<test_file>").replace("<test_file>", "tests/test_current.py"), tmp_path, plugin)
+    return result, (tmp_path / "dev-refactor-gate-exit-refactor-safety").read_text().strip()
+
+
+def _accept(tmp_path: Path) -> subprocess.CompletedProcess[str]:
+    """Run the solo Step 3 gate for a current verdict, then the shipped accepted-risk block."""
+    _solo_gate(tmp_path)
+    return _run(_block(_SKILL, "accept-unpinned"), tmp_path)
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    ("test_map", "exit_code", "line", "cause"),
+    [
+        pytest.param(None, 3, "GATE FAIL", "F1 (unmapped)", id="unmapped"),
+        pytest.param("test_pass", 0, "GATE OK", "SPECIAL-CASE PIN OK", id="pass"),
+        pytest.param("./tests/test_pin.py::test_pass", 0, "GATE OK", "SPECIAL-CASE PIN OK", id="dot-slash-path"),
+        pytest.param("test_fail", 3, "GATE FAIL", "F1 (tests/test_pin.py::test_fail FAILED)", id="fail"),
+        pytest.param("test_skip", 3, "GATE FAIL", "F1 (tests/test_pin.py::test_skip SKIPPED", id="skip"),
+        pytest.param(
+            "test_skipif_true", 3, "GATE FAIL", "F1 (tests/test_pin.py::test_skipif_true SKIPPED", id="skipif-true"
+        ),
+        pytest.param("test_skipif_false", 0, "GATE OK", "SPECIAL-CASE PIN OK", id="skipif-false-ran"),
+        pytest.param("test_xfail", 3, "GATE FAIL", "F1 (tests/test_pin.py::test_xfail XFAIL", id="xfail"),
+        pytest.param("test_xpass", 3, "GATE FAIL", "F1 (tests/test_pin.py::test_xpass XPASS", id="xpass-strict-by-ini"),
+        pytest.param(
+            "test_xpass_nonstrict",
+            3,
+            "GATE FAIL",
+            "F1 (tests/test_pin.py::test_xpass_nonstrict XPASS)",
+            id="xpass-nonstrict",
+        ),
+        pytest.param(
+            "test_imperative_xfail",
+            3,
+            "GATE FAIL",
+            "F1 (tests/test_pin.py::test_imperative_xfail XFAIL",
+            id="imperative-xfail",
+        ),
+        pytest.param(
+            "test_param", 3, "GATE FAIL", "F1 (tests/test_pin.py::test_param SKIPPED", id="param-id-with-space-skips"
+        ),
+        pytest.param("test_param_ok", 0, "GATE OK", "SPECIAL-CASE PIN OK", id="param-ids-space-brackets-unicode"),
+        pytest.param("test_absent", 6, "! GATE ERROR", "pytest usage error", id="usage-error-no-verdict"),
+        pytest.param(
+            "test_runtime_xpass", 3, "GATE FAIL", "F1 (tests/test_pin.py::test_runtime_xpass XPASS)", id="runtime-xpass"
+        ),
+        pytest.param(
+            "test_teardown_error",
+            3,
+            "GATE FAIL",
+            "F1 (tests/test_pin.py::test_teardown_error ERROR)",
+            id="fixture-error",
+        ),
+    ],
+)
+def test_solo_characterization_gate_pins_every_special_case(
+    tmp_path: Path, test_map: str | None, exit_code: int, line: str, cause: str
+) -> None:
+    """The solo Step 3 gate pins a special case only through a real pass, and names every other outcome."""
+    row = None if test_map is None else f"F1 · {test_map if '::' in test_map else 'tests/test_pin.py::' + test_map}\n"
+    _pin_fixture(tmp_path, _SPECIAL, row)
+    result, recorded = _solo_gate(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert recorded == str(exit_code)
+    assert line in result.stdout
+    assert cause in result.stdout
+
+
+@_skip_no_bash
+def test_solo_characterization_gate_names_foreign_rootdir(tmp_path: Path) -> None:
+    """Report ids relative to another pytest rootdir are a no-verdict error, never a failing special case."""
+    _pin_fixture(tmp_path, _SPECIAL, "F1 · tests/test_pin.py::test_pass\n")
+    (tmp_path / "tests/pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    result, recorded = _solo_gate(tmp_path)
+    assert recorded == "6", result.stdout + result.stderr
+    assert "rootdir differs" in result.stdout
+    assert "! GATE ERROR" in result.stdout
+    assert "GATE FAIL" not in result.stdout
+
+
+@_skip_no_bash
+def test_solo_characterization_gate_blocks_invalid_map(tmp_path: Path) -> None:
+    """A map row naming a missing test file is a blocked map, not a failing special case."""
+    _pin_fixture(tmp_path, _SPECIAL, "F1 · tests/test_absent.py::test_x\n")
+    result, recorded = _solo_gate(tmp_path)
+    assert recorded == "1", result.stdout + result.stderr
+    assert "mapped test file missing for F1" in result.stdout
+    assert "GATE FAIL" not in result.stdout
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    ("char_body", "recorded", "verdict"),
+    [
+        pytest.param("def test_current():\n    assert False\n", "1", "characterization test(s) failed", id="red"),
+        pytest.param("value = 1\n", "5", "no tests collected", id="no-tests"),
+    ],
+)
+def test_solo_characterization_gate_names_characterization_failures(
+    tmp_path: Path, char_body: str, recorded: str, verdict: str
+) -> None:
+    """A red or empty characterization run is reported as such; the pin still runs so (b) can show its labels."""
+    _pin_fixture(tmp_path, _SPECIAL, "F1 · tests/test_pin.py::test_pass\n", char_body)
+    result, gate_exit = _solo_gate(tmp_path)
+    assert gate_exit == recorded, result.stdout + result.stderr
+    assert verdict in result.stdout
+    assert "SPECIAL-CASE PIN OK: 1 special case(s) pinned" in result.stdout
+    assert "GATE OK" not in result.stdout
+
+
+@_skip_no_bash
+def test_solo_characterization_gate_names_runner_refusal(tmp_path: Path) -> None:
+    """A refused runner is reported as a runner error, never as an unpinned special case."""
+    _pin_fixture(tmp_path, _SPECIAL, "F1 · tests/test_pin.py::test_pass\n")
+    (tmp_path / "dev-pytest-cmd-refactor-safety").write_text("touch injected\n", encoding="utf-8", newline="\n")
+    result, recorded = _solo_gate(tmp_path)
+    assert recorded == "64"
+    assert "GATE ERROR" in result.stdout
+    assert "not pinned" not in result.stdout
+
+
+def _faulting_runner_plugin(tmp_path: Path, when: str) -> Path:
+    """Return a fake plugin whose test runner exits 70 for the characterization run or for the pin run only."""
+    plugin = tmp_path / "plugin"
+    (plugin / "bin").mkdir(parents=True)
+    shutil.copy(_PLUGIN / "bin/dev_scope_findings.py", plugin / "bin/dev_scope_findings.py")
+    fault = "'--junitxml' in ' '.join(sys.argv)" if when == "pin" else "'--junitxml' not in ' '.join(sys.argv)"
+    (plugin / "bin/dev_run_tests.py").write_text(
+        "import sys\n"
+        f"sys.path.insert(0, {str(_PLUGIN / 'bin')!r})\n"
+        f"if {fault}:\n"
+        "    raise SystemExit(70)\n"
+        "from dev_run_tests import main\n"
+        "raise SystemExit(main())\n",
+        encoding="utf-8",
+    )
+    return plugin
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    ("when", "verdict"),
+    [
+        pytest.param("characterization", "test runner fault (exit 70)", id="characterization-run"),
+        pytest.param("pin", "test runner did not run the special-case tests (exit 70)", id="pin-run"),
+    ],
+)
+def test_solo_characterization_gate_names_runner_fault(tmp_path: Path, when: str, verdict: str) -> None:
+    """A runner fault in either run keeps its own exit code and message."""
+    _pin_fixture(tmp_path, _SPECIAL, "F1 · tests/test_pin.py::test_pass\n")
+    result, recorded = _solo_gate(tmp_path, _faulting_runner_plugin(tmp_path, when))
+    assert recorded == "70", result.stdout + result.stderr
+    assert verdict in result.stdout
+    assert "GATE FAIL" not in result.stdout
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    ("test_map", "exit_code", "verdict"),
+    [
+        pytest.param("F1 · tests/test_pin.py::test_pass\n", 0, "GATE OK", id="pinned"),
+        pytest.param("F1 · tests/test_pin.py::test_absent\n", 6, "pytest usage error", id="usage-error"),
+    ],
+)
+def test_team_gate_one_names_pin_cause(tmp_path: Path, test_map: str, exit_code: int, verdict: str) -> None:
+    """Gate T1 keeps a no-verdict special-case run distinct from an unpinned special case."""
+    _pin_fixture(tmp_path, _SPECIAL, test_map)
+    result = _run(_block(_TEAM, "Gate T1"), tmp_path)
+    assert result.returncode == exit_code, result.stdout + result.stderr
+    assert verdict in result.stdout
+
+
+@_skip_no_bash
+def test_team_gate_one_names_characterization_runner_fault(tmp_path: Path) -> None:
+    """A runner fault on the characterization run is a GATE ERROR, not a failed characterization."""
+    _pin_fixture(tmp_path, _SPECIAL, "F1 · tests/test_pin.py::test_pass\n")
+    result = _run(_block(_TEAM, "Gate T1"), tmp_path, _faulting_runner_plugin(tmp_path, "characterization"))
+    assert result.returncode == 70, result.stdout + result.stderr
+    assert "! GATE ERROR: test runner fault (exit 70)" in result.stdout
+
+
+class TestAcceptedRisk:
+    """Accepting a GATE FAIL waives exactly the unpinned labels, only for the content it was recorded against."""
+
+    @_skip_no_bash
+    def test_accepts_only_unpinned_labels(self, tmp_path: Path) -> None:
+        """A failing label is accepted; a passing label stays enforced and keeps running."""
+        _pin_fixture(tmp_path, _TWO_SPECIAL, "F1 · tests/test_pin.py::test_pass\nF2 · tests/test_pin.py::test_fail\n")
+        accept = _accept(tmp_path)
+        assert accept.returncode == 0, accept.stdout + accept.stderr
+        assert "ACCEPTED UNPINNED: F2" in accept.stdout
+        pin = _run(_block(_TEAM, "Gate T2"), tmp_path)
+        assert pin.returncode == 0, pin.stdout + pin.stderr
+        assert "SPECIAL-CASE PIN OK: 1 special case(s) pinned" in pin.stdout
+
+    @_skip_no_bash
+    def test_stale_acceptance_is_ignored_after_the_map_changes(self, tmp_path: Path) -> None:
+        """Repointing an accepted label at a failing test after acceptance re-enforces it instead of passing."""
+        _pin_fixture(tmp_path, _TWO_SPECIAL, "F1 · tests/test_pin.py::test_pass\n")
+        accept = _accept(tmp_path)
+        assert "ACCEPTED UNPINNED: F2" in accept.stdout, accept.stdout + accept.stderr
+        (tmp_path / "special-case-tests.md").write_text(
+            "F1 · tests/test_pin.py::test_pass\nF2 · tests/test_pin.py::test_fail\n", encoding="utf-8"
+        )
+        pin = _run(_block(_TEAM, "Gate T2"), tmp_path)
+        assert pin.returncode == 3, pin.stdout + pin.stderr
+        assert "STALE ACCEPTANCE" in pin.stdout
+        assert "F2 (tests/test_pin.py::test_fail FAILED)" in pin.stdout
+        assert "PIN OK" not in pin.stdout
+
+    @_skip_no_bash
+    @pytest.mark.parametrize(
+        ("test_map", "plugin_fault", "gate_cause", "exit_code", "cause"),
+        [
+            pytest.param(
+                "F1 · tests/test_absent.py::test_x\n",
+                False,
+                "mapped test file missing for F1",
+                1,
+                "mapped test file missing for F1",
+                id="invalid-map",
+            ),
+            pytest.param(
+                "F1 · tests/test_pin.py::test_absent\n",
+                False,
+                "pytest usage error",
+                6,
+                "no current Step 3 verdict",
+                id="no-verdict",
+            ),
+            pytest.param(
+                "F1 · tests/test_pin.py::test_pass\n",
+                True,
+                "test runner did not run the special-case tests (exit 70)",
+                6,
+                "no current Step 3 verdict",
+                id="runner-fault",
+            ),
+        ],
+    )
+    def test_no_verdict_accepts_nothing(
+        self, tmp_path: Path, test_map: str, plugin_fault: bool, gate_cause: str, exit_code: int, cause: str
+    ) -> None:
+        """After an invalid map, a run without verdict or a runner fault, the accept block records nothing."""
+        _pin_fixture(tmp_path, _SPECIAL, test_map)
+        plugin = _faulting_runner_plugin(tmp_path, "pin") if plugin_fault else _PLUGIN
+        gate, _ = _solo_gate(tmp_path, plugin)
+        assert gate_cause in gate.stdout, gate.stdout + gate.stderr
+        accept = _run(_block(_SKILL, "accept-unpinned"), tmp_path, plugin)
+        assert accept.returncode == exit_code, accept.stdout + accept.stderr
+        assert cause in accept.stdout
+        assert not (tmp_path / "accepted-unpinned.json").exists()
+
+    @_skip_no_bash
+    def test_red_characterization_still_shows_and_binds_the_unpinned_labels(self, tmp_path: Path) -> None:
+        """A red characterization run still prints the pin's labels, and acceptance records exactly those."""
+        _pin_fixture(
+            tmp_path,
+            _TWO_SPECIAL,
+            "F1 · tests/test_pin.py::test_pass\nF2 · tests/test_pin.py::test_fail\n",
+            "def test_current():\n    assert False\n",
+        )
+        gate, recorded = _solo_gate(tmp_path)
+        assert recorded == "1", gate.stdout + gate.stderr
+        assert "GATE FAIL: special case not pinned — F2 (tests/test_pin.py::test_fail FAILED)" in gate.stdout
+        assert "characterization test(s) failed" in gate.stdout
+        (tmp_path / "tests/test_pin.py").write_text(
+            _PIN_TESTS.replace("def test_pass():\n    assert True", "def test_pass():\n    assert False"),
+            encoding="utf-8",
+        )
+        accept = _run(_block(_SKILL, "accept-unpinned"), tmp_path)
+        assert accept.returncode == 0, accept.stdout + accept.stderr
+        assert "ACCEPTED UNPINNED: F2" in accept.stdout
+        assert "F1" not in accept.stdout.split("ACCEPTED UNPINNED:")[1]
+
+    @_skip_no_bash
+    def test_reset_clears_map_and_acceptance_while_checks_keep_them(self, tmp_path: Path) -> None:
+        """Only the reset run at Step 1 and first Step 3 entry clears state; later check and literal blocks keep it."""
+        _pin_fixture(tmp_path, _TWO_SPECIAL, "F1 · tests/test_pin.py::test_pass\nF2 · tests/test_pin.py::test_fail\n")
+        assert _accept(tmp_path).returncode == 0
+        for kept in (_block(_TEAM, 'check "$DEV_DIR" || exit 1'), _block(_SKILL, 'check "$DEV_DIR"  # timeout')):
+            assert _run(kept, tmp_path).returncode == 0
+        assert _run(_block(_TEAM, "Gate T2"), tmp_path).returncode == 0
+        assert (tmp_path / "accepted-unpinned.json").exists()
+        assert (tmp_path / "special-case-tests.md").exists()
+        reset = _run(_block(_SKILL, "premise-grounding.md"), tmp_path)
+        assert reset.returncode == 0, reset.stdout + reset.stderr
+        assert not (tmp_path / "accepted-unpinned.json").exists()
+        assert not (tmp_path / "special-case-tests.md").exists()
+
+
+def _baseline_plugin(tmp_path: Path, selection: list[str]) -> Path:
+    """Return a fake plugin whose selector proposes ``selection`` and runs the real selector, plus the real helper."""
+    plugin = tmp_path / "plugin"
+    (plugin / "bin").mkdir(parents=True)
+    (plugin / "bin/dev_test_targets.py").write_text(
+        "import json, sys\nfrom pathlib import Path\n"
+        f"sys.path.insert(0, {str(_PLUGIN / 'bin')!r})\n"
+        "import dev_test_targets as selector\n"
+        "if '--files' in sys.argv and '--run' not in sys.argv:\n"
+        f"    print(json.dumps({{'tests': {selection!r}}}))\n"
+        "    raise SystemExit(0)\n"
+        "if '--files' in sys.argv:\n"
+        "    rest = sys.argv[sys.argv.index('--record-dir'):]\n"
+        "    sys.argv = [sys.argv[0], '--skill', 'refactor', '--tests-from', 'sel.json', *rest]\n"
+        f"    Path('sel.json').write_text(json.dumps({selection!r}))\n"
+        "selector._repo_root = Path.cwd\n"
+        "raise SystemExit(selector.main())\n",
+        encoding="utf-8",
+    )
+    shutil.copy(_PLUGIN / "bin/dev_scope_findings.py", plugin / "bin/dev_scope_findings.py")
+    (plugin / "bin/dev_run_tests.py").write_text(
+        f"import sys\nsys.path.insert(0, {str(_PLUGIN / 'bin')!r})\nfrom dev_run_tests import main\n"
+        "raise SystemExit(main())\n",
+        encoding="utf-8",
+    )
+    return plugin
+
+
+def _baseline(tmp_path: Path, plugin: Path, files: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run the shipped pre-edit baseline over ``files``."""
+    block = _block(_SKILL, "BASELINE_EXIT").replace("'<scoped_python_files>'", shlex.join(files))
+    return _run(block, tmp_path, plugin)
+
+
+@_skip_no_bash
+@pytest.mark.parametrize("accepted", [True, False], ids=["stale-acceptance", "pin-ok-then-map-edit"])
+def test_step_four_entry_blocks_a_map_edited_after_the_gate(tmp_path: Path, accepted: bool) -> None:
+    """Repointing the map at a failing test after Step 3 blocks Step 4 until the Step 3 gate runs again."""
+    if accepted:
+        _pin_fixture(tmp_path, _TWO_SPECIAL, "F1 · tests/test_pin.py::test_pass\n")
+        assert "ACCEPTED UNPINNED: F2" in _accept(tmp_path).stdout
+        rows = "F1 · tests/test_pin.py::test_pass\nF2 · tests/test_pin.py::test_fail\n"
+    else:
+        _pin_fixture(tmp_path, _SPECIAL, "F1 · tests/test_pin.py::test_pass\n")
+        gate, recorded = _solo_gate(tmp_path)
+        assert recorded == "0", gate.stdout + gate.stderr
+        rows = "F1 · tests/test_pin.py::test_fail\n"
+    (tmp_path / "special-case-tests.md").write_text(rows, encoding="utf-8")
+    plugin = _baseline_plugin(tmp_path, ["tests/test_current.py"])
+    result = _baseline(tmp_path, plugin, ["tests/test_current.py"])
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "no current Step 3 verdict for these findings and map — re-run the Step 3 gate" in result.stdout
+    assert "BASELINE OK" not in result.stdout
+
+
+@_skip_no_bash
+def test_baseline_keeps_a_node_shared_with_a_pinned_label(tmp_path: Path) -> None:
+    """Accepting a label leaves out only its failing node, never a node a pinned label also maps."""
+    _pin_fixture(
+        tmp_path,
+        _TWO_SPECIAL,
+        "F1 · tests/test_pin.py::test_fail\nF1 · tests/test_pin.py::test_shared\nF2 · tests/test_pin.py::test_shared\n",
+    )
+    (tmp_path / "tests/test_pin.py").write_text(
+        "def test_fail():\n    assert False\n\ndef test_shared():\n    assert True\n", encoding="utf-8"
+    )
+    assert "ACCEPTED UNPINNED: F1" in _accept(tmp_path).stdout
+    plugin = _baseline_plugin(tmp_path, ["tests/test_pin.py"])
+    result = _baseline(tmp_path, plugin, ["tests/test_pin.py"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    record = json.loads((tmp_path / "test-targets.jsonl").read_text().splitlines()[-1])
+    assert record["tests"] == ["tests/test_pin.py::test_shared"]
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    ("layout", "ini", "node"),
+    [
+        pytest.param("tests/Unit/test_u.py", "", "tests/Unit/test_u.py::test_u", id="uppercase-directory"),
+        pytest.param(
+            "tests/test_k.py",
+            "[pytest]\npython_classes = check_*\n",
+            "tests/test_k.py::check_k::test_u",
+            id="lowercase-class",
+        ),
+    ],
+)
+def test_report_ids_map_back_through_the_file_attribute(tmp_path: Path, layout: str, ini: str, node: str) -> None:
+    """Uppercase directories and lowercase classes keep their own outcome instead of reading as not reported."""
+    _pin_fixture(tmp_path, _SPECIAL, f"F1 · {node}\n")
+    target = tmp_path / layout
+    target.parent.mkdir(parents=True, exist_ok=True)
+    body = "class check_k:\n    def test_u(self):\n        assert True\n" if ini else "def test_u():\n    assert True\n"
+    target.write_text(body, encoding="utf-8")
+    if ini:
+        (tmp_path / "pytest.ini").write_text(ini, encoding="utf-8")
+    gate, recorded = _solo_gate(tmp_path)
+    assert recorded == "0", gate.stdout + gate.stderr
+    assert "SPECIAL-CASE PIN OK: 1 special case(s) pinned" in gate.stdout
+
+
+@_skip_no_bash
+@pytest.mark.parametrize("accepted", [False, True], ids=["unmapped-blocks", "accepted-risk-passes"])
+def test_baseline_map_blocks_unmapped_special_cases_until_accepted(tmp_path: Path, accepted: bool) -> None:
+    """An unmapped special case stops source edits; the accepted-risk block opens a route to Step 4."""
+    _pin_fixture(tmp_path, _SPECIAL, None)
+    plugin = _baseline_plugin(tmp_path, ["tests/test_current.py"])
+    if accepted:
+        accept = _accept(tmp_path)
+        assert accept.returncode == 0, accept.stdout + accept.stderr
+        assert "ACCEPTED UNPINNED: F1" in accept.stdout
+    else:
+        gate, _ = _solo_gate(tmp_path)
+        assert "F1 (unmapped)" in gate.stdout, gate.stdout + gate.stderr
+    result = _baseline(tmp_path, plugin, ["tests/test_current.py"])
+    assert result.returncode == (0 if accepted else 1), result.stdout + result.stderr
+    assert ("BASELINE OK" in result.stdout) is accepted
+    assert ("special case(s) F1 not pinned and not accepted" in result.stdout) is not accepted
+
+
+@_skip_no_bash
+@pytest.mark.parametrize("accepted", [False, True], ids=["mapped-red-blocks", "accepted-risk-excludes-node"])
+def test_baseline_excludes_only_accepted_failing_nodes(tmp_path: Path, accepted: bool) -> None:
+    """An unaccepted failing pin blocks Step 4; once accepted only its node leaves the baseline, its file still runs."""
+    _pin_fixture(tmp_path, _TWO_SPECIAL, "F1 · tests/test_pin.py::test_fail\nF2 · tests/test_pin.py::test_pass\n")
+    (tmp_path / "tests/test_pin.py").write_text(
+        "def test_pass():\n    assert True\n\ndef test_fail():\n    assert False\n\ndef test_other():\n    assert True\n",
+        encoding="utf-8",
+    )
+    plugin = _baseline_plugin(tmp_path, ["tests/test_pin.py", "tests/test_current.py"])
+    if accepted:
+        accept = _accept(tmp_path)
+        assert accept.returncode == 0, accept.stdout + accept.stderr
+        assert "ACCEPTED UNPINNED: F1" in accept.stdout
+    else:
+        gate, _ = _solo_gate(tmp_path)
+        assert "F1 (tests/test_pin.py::test_fail FAILED)" in gate.stdout, gate.stdout + gate.stderr
+    result = _baseline(tmp_path, plugin, ["tests/test_pin.py", "tests/test_current.py"])
+    assert result.returncode == (0 if accepted else 1), result.stdout + result.stderr
+    assert ("BASELINE OK" in result.stdout) is accepted
+    assert ("special case(s) F1 not pinned and not accepted" in result.stdout) is not accepted
+    if accepted:
+        record = json.loads((tmp_path / "test-targets.jsonl").read_text().splitlines()[-1])
+        assert record["tests"] == [
+            "tests/test_pin.py::test_pass",
+            "tests/test_pin.py::test_other",
+            "tests/test_current.py",
+        ]
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    ("test_map", "accept_red_char", "accepted_f1", "exit_code", "verdict"),
+    [
+        pytest.param("F1 · tests/test_pin.py::test_pass\n", False, False, 0, "SPECIAL-CASE PIN OK", id="pinned"),
+        pytest.param(
+            "F1 · tests/test_pin.py::test_fail\n", False, False, 3, "not passing after refactor", id="mapped-red"
+        ),
+        pytest.param(
+            "F1 · tests/test_pin.py::test_fail\nF2 · tests/test_pin.py::test_pass\n",
+            False,
+            True,
+            0,
+            "SPECIAL-CASE PIN OK: 1 special case(s) pinned",
+            id="accepted-unpinned-left-out",
+        ),
+        pytest.param(
+            "F1 · tests/test_pin.py::test_pass\nF2 · tests/test_pin.py::test_fail\n",
+            True,
+            False,
+            3,
+            "not passing after refactor",
+            id="accepted-red-char-still-runs-pins",
+        ),
+        pytest.param("F1 · tests/test_pin.py::test_absent\n", False, False, 6, "no verdict", id="pin-no-verdict"),
+        pytest.param("F1 · tests/test_pin.py::test_fail\n", False, False, 3, "GATE FAIL", id="single-verdict-line"),
+    ],
+)
+def test_team_gate_two_reruns_every_mapped_test(
+    tmp_path: Path, test_map: str, accept_red_char: bool, accepted_f1: bool, exit_code: int, verdict: str
+) -> None:
+    """Gate T2 reruns mapped tests from any file, leaves out only accepted labels, and names a no-verdict run."""
+    _pin_fixture(tmp_path, _TWO_SPECIAL if "F2" in test_map else _SPECIAL, test_map)
+    if accept_red_char:
+        (tmp_path / "accepted-red-characterization.txt").write_text("tests/test_current.py\n", encoding="utf-8")
+    if accepted_f1:
+        assert "ACCEPTED UNPINNED: F1" in _accept(tmp_path).stdout
+    result = _run(_block(_TEAM, "Gate T2"), tmp_path)
+    assert result.returncode == exit_code, result.stdout + result.stderr
+    assert verdict in result.stdout
+    assert ("accepted-red characterization test excluded" in result.stdout) is accept_red_char
+    assert ("GATE OK" in result.stdout) is (exit_code == 0 and not accept_red_char)
+
+
+@_skip_no_bash
+def test_team_gate_two_runs_pins_after_accepted_empty_characterization(tmp_path: Path) -> None:
+    """An accepted exit-5 characterization file is recorded like a red one, so T2 still reaches the pins."""
+    _pin_fixture(tmp_path, _SPECIAL, "F1 · tests/test_pin.py::test_pass\n", "value = 1\n")
+    (tmp_path / "accepted-red-characterization.txt").write_text("tests/test_current.py\n", encoding="utf-8")
+    result = _run(_block(_TEAM, "Gate T2"), tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "accepted-red characterization test excluded" in result.stdout
+    assert "SPECIAL-CASE PIN OK: 1 special case(s) pinned" in result.stdout
+
+
+@_skip_no_bash
+@pytest.mark.parametrize("present", [True, False], ids=["findings-present", "findings-missing"])
+def test_boundary_two_checks_the_findings_file(tmp_path: Path, present: bool) -> None:
+    """The post-edit compaction boundary refuses to continue without a valid findings file."""
+    _scope_findings(tmp_path)
+    if not present:
+        (tmp_path / "scope-findings.md").unlink()
+    (tmp_path / "dev-pytest-cmd-refactor-safety").write_text("python -m pytest\n", encoding="utf-8", newline="\n")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    result = _run(_block(_SKILL, "review+quality"), tmp_path)
+    assert (result.returncode == 0) is present, result.stdout + result.stderr
+    assert ("! BLOCKED" in result.stdout) is not present
+    assert ("missing or unreadable" in result.stdout) is not present
+
+
+@_skip_no_bash
+def test_team_gate_two_names_characterization_runner_fault(tmp_path: Path) -> None:
+    """A runner fault on the T2 characterization run is a GATE ERROR with its own exit code."""
+    _pin_fixture(tmp_path, _SPECIAL, "F1 · tests/test_pin.py::test_pass\n")
+    result = _run(_block(_TEAM, "Gate T2"), tmp_path, _faulting_runner_plugin(tmp_path, "characterization"))
+    assert result.returncode == 70, result.stdout + result.stderr
+    assert "! GATE ERROR: test runner fault (exit 70)" in result.stdout
+    assert "GATE OK" not in result.stdout

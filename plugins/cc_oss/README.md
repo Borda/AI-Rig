@@ -218,7 +218,7 @@ The shared parser used by analyse, review, and resolve recognizes flag names cas
   - When the bridge reports a Codex quota stop, the run makes no further Codex review call.
   - The adversarial rework passes continue with the challenger alone, and the report says Codex was blocked by quota rather than timed out.
   - The same holds when the challenger reports that its own Codex cross-check stopped on quota: later passes skip both the Codex review and the challenger's cross-check.
-  - With a codemap index the report gains an Open-PR Overlap note (pairwise changed-file overlap plus tightly-coupled-module conflict candidates) and a Structural Constraints block (highest-blast-radius modules, collision/degraded/stale index signals).
+  - With a codemap index the report gains an Open-PR Overlap note (pairwise changed-file overlap plus per-PR notes for PRs touching a high-coupling module) and a Structural Constraints block (highest-blast-radius modules, collision/degraded/stale index signals).
   - Every codemap signal is optional — no index or plugin absent → GitHub-only behavior, gap flagged inline, never blocks.
 - **`evolution`:** traces which features each fix repairs and which release introduced them.
   - It reads the changelog ("Added", "Changed", "Fixed" sections; conventional-commit fallback for releases without one).
@@ -428,7 +428,7 @@ ______________________________________________________________________
 
 ### /oss:resolve
 
-Preflight fetches `origin` without pulling or merging the caller's branch. Checkout verifies both the expected branch and exact PR-head OID. Fork heads named like the upstream default use a local `pr-<N>-<head>` alias, with an explicit remote-head refspec handed to the user for manual push. Closed/non-editable PRs stop before checkout. Stage mode and detached recovery preserve pending work. Repository hooks stay disabled unless the parent shows their exact commands/configuration and records per-run approval; approved formatter failures retry once only within selected worktree and index paths.
+Preflight fetches `origin` without pulling or merging the caller's branch. Checkout verifies both the expected branch and exact PR-head OID. Fork heads named like the upstream default use a local `pr-<N>-<head>` alias, with an explicit remote-head refspec handed to the user for manual push. Closed/non-editable PRs stop before checkout. Stage mode and detached recovery preserve pending work. Repository hooks follow the local Git setup: with no installed hook, or with installed hooks whose in-tree inputs (hook scripts, `.husky`, `.githooks`, `.pre-commit-config.*`, `package.json`) the PR leaves identical to its base, nothing is asked; when the PR changes a hook input, or the base cannot be compared, the parent shows the exact commands/configuration and records per-run approval, and the answer can be remembered per repository (an approval bound to those exact hook bytes, or a never-run policy, stored in the Git common directory); approved formatter failures retry once only within selected worktree and index paths.
 
 Apply review findings to codebase. Reads live PR comments, a saved review report, or both — deduplicates, resolves conflicts, implements fixes.
 

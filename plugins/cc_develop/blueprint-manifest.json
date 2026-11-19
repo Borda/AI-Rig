@@ -16,9 +16,13 @@
       "kind": "command",
       "src": "skills/review/SKILL.md:202"
     },
+    "017fa5522fb2922646f00b9652b410b8e52fcbee8a63c42c9e624fbb145c7ab6": {
+      "kind": "command",
+      "src": "skills/refactor/modes/team-mode.md:69"
+    },
     "01a98cff7e960397187cdf227b2aef65021f4025959128aabb4b2cecdcac75f3": {
       "kind": "command",
-      "src": "skills/refactor/modes/team-mode.md:83"
+      "src": "skills/refactor/modes/team-mode.md:108"
     },
     "020ba0c8c282a0b713cb759df9a06800895662eba3ea0d7ed425dd8458e04104": {
       "kind": "command",
@@ -42,7 +46,7 @@
     },
     "02e0fdd53fed1d4db9daf94f9b0c20f727ec9b1f2292d51bba81667783a0f2b4": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:469"
+      "src": "skills/refactor/SKILL.md:498"
     },
     "03557b19ae604b3b56da75250819993a6e8b10e575c6858d64a16b45669fa971": {
       "kind": "command",
@@ -86,7 +90,7 @@
     },
     "07381af057e1445eb252620bda9107c6652348f5b9988bc108c2acf53e082c74": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:370"
+      "src": "skills/plan/SKILL.md:371"
     },
     "075ab328ab1bae6e1ac03a8b5b4bd46d6b9c037f85119604ba125a2250f483a9": {
       "kind": "command",
@@ -148,7 +152,7 @@
     },
     "0aa2215ea946ee0ff8ca36cf695f6676bee9b66a281b567474d306ef0084c7f3": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:398"
+      "src": "skills/refactor/SKILL.md:412"
     },
     "0ad59f45be22bbf6c6e39d251529d9d80bf71de754c7588b9efa7b7a2472060d": {
       "kind": "block",
@@ -166,7 +170,7 @@
     },
     "0c36b583a703cdcd7b4aef6ed234d154e62efbf4ee79cc929886e2c3d048b94f": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:398"
+      "src": "skills/refactor/SKILL.md:412"
     },
     "0c4042f2cad5c188b72abbeb9d41f2b3ed7ed037cf1160e03469ea4d94b7487d": {
       "kind": "command",
@@ -202,7 +206,7 @@
     },
     "0f1163c91018b6315fbaa922843be2c9c5b023bea632ce5dfa07365573c6deae": {
       "kind": "block",
-      "src": "skills/plan/SKILL.md:205"
+      "src": "skills/plan/SKILL.md:206"
     },
     "0f4edd600cd22dcec99c7fae5052681726bcaa52c5d6d09afba5674a4928aced": {
       "kind": "command",
@@ -262,11 +266,7 @@
     },
     "1108cf07436f68a42f5b8e117b998f80539fc70f8b213813a866b894a56d951c": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:284"
-    },
-    "115b902fab6b02b93795e065c6e9c4092840ab3e5c0384112382ffd32710bab3": {
-      "kind": "command",
-      "src": "skills/refactor/modes/team-mode.md:83"
+      "src": "skills/plan/SKILL.md:285"
     },
     "119b4f0a4b0b73b14331bbaf15e8f2ec5c8e72e7972fba6650a689dec6e4ab1c": {
       "kind": "command",
@@ -294,7 +294,7 @@
     },
     "12eeb418760a460e66aff39f820e3133e2e3399891e8af4b88fbfc7003d18393": {
       "kind": "command",
-      "src": "skills/refactor/modes/team-mode.md:54"
+      "src": "skills/refactor/modes/team-mode.md:69"
     },
     "13333b47895dcea4a58f723987787af2af59b1732cfaf69e007fb432d950f534": {
       "kind": "command",
@@ -302,11 +302,15 @@
     },
     "137f59b7637c6822a864933a5f98fcda8f5d59c61d20233156d02b72e3a47c8d": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:310"
+      "src": "skills/refactor/SKILL.md:320"
     },
     "13afccef52e93c532644565b2829ab83b5f099108677afbe227367009106e9be": {
       "kind": "command",
       "src": "skills/debug/SKILL.md:151"
+    },
+    "13bc08c9d79cadd818cac7648d6307196f8ccfe4c699e2542168c20ffcee5de9": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:459"
     },
     "13e48d5bdf52d5903905ada4f291ed650c299502b8b362bc9d4c3d4e04ad6677": {
       "kind": "command",
@@ -371,6 +375,10 @@
       "kind": "command",
       "src": "skills/feature/SKILL.md:218"
     },
+    "18f98ae4b18d68f665bc4e14c44a7fc7a33f35adf0b060690d57b15b18be4ffe": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:459"
+    },
     "191ed32ea54de686571cbd2b75987ee201e6c0f813c806bbd68e71b48f19e20d": {
       "kind": "command",
       "src": "skills/_shared/foundry--quality-stack.md:144"
@@ -381,7 +389,7 @@
     },
     "1940b25848bdaaa60685e85082e409e02458c9138b0e49aced9d01af1e95635b": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:321"
+      "src": "skills/plan/SKILL.md:322"
     },
     "195519a43d564fd0d8e32e49e86795ac13f7a4294e008d7bd2fc227e40e5f816": {
       "kind": "command",
@@ -399,6 +407,10 @@
       "kind": "block",
       "src": "skills/feature/SKILL.md:128",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nINPUT_FILE=\"${TMPDIR:-/tmp}/dev-feature-arguments-${CSID}.txt\"\n[ -f \"$INPUT_FILE\" ] && [ ! -L \"$INPUT_FILE\" ] && [ -O \"$INPUT_FILE\" ] || { echo \"! BLOCKED \u2014 invocation input missing or untrusted; Write the arguments to the printed Invocation input file first\"; exit 1; }\nARGUMENT_BLOB=$(cat \"$INPUT_FILE\" && printf x) || exit 1\nARGUMENT_BLOB=${ARGUMENT_BLOB%x}\n\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\npython \"$PLUGIN_ROOT/bin/parse-skill-flags.py\" --flags worktree --value-flags issue --keep-state dev-feature-args --inlined -- \"$ARGUMENT_BLOB\" >/dev/null\nIFS= read -r ISSUE_REF < \"${TMPDIR:-/tmp}/dev-feature-args-issue-${CSID}\" 2>/dev/null || ISSUE_REF=\"\"\necho \"$ISSUE_REF\" > \"${TMPDIR:-/tmp}/dev-issue-ref-${CSID}\"\nif [ -n \"$ISSUE_REF\" ]; then\n    IFS= read -r REPO_NAME < \"${TMPDIR:-/tmp}/dev-upstream-${CSID}\" 2>/dev/null || REPO_NAME=\"\"\n    python \"$PLUGIN_ROOT/bin/dev_issue_fetch_wrap.py\" feature \"$ISSUE_REF\" || echo \"\u26a0 Could not fetch issue $ISSUE_REF \u2014 proceeding without issue context\"\nfi"
+    },
+    "1a285a3ea2925f5a8870124e2571fbd5161dc4089ee3aa890f9a214e6e28705e": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:459"
     },
     "1ab1a958617092d26c698d55a93007d4c17341cebd9f7b4b42de22aa1553ad85": {
       "kind": "command",
@@ -422,7 +434,7 @@
     },
     "1bbe9dd73e01570ff947481dda84d0a0a4ce86b3ae20e2915b971250baf469d9": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:205"
+      "src": "skills/plan/SKILL.md:206"
     },
     "1bd056f6af87e947b8dcbec53d1e2d05807d16c6082c0ab048ca46f5c0222aa6": {
       "kind": "command",
@@ -439,7 +451,7 @@
     },
     "1c39b7ccdaced29c2f22ef9389d1549f30420defe9c57acd22bcae41b9337078": {
       "kind": "block",
-      "src": "skills/refactor/modes/team-mode.md:25",
+      "src": "skills/refactor/modes/team-mode.md:28",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nREFACTOR_SKILL=\"$PLUGIN_ROOT/skills/refactor/SKILL.md\"\n[ -f \"$REFACTOR_SKILL\" ] || { echo \"! BLOCKED \u2014 refactor skill missing; repair the installation before spawning teammates\"; exit 1; }\nREFACTOR_SKILL=$(cd \"$PLUGIN_ROOT/skills/refactor\" && printf '%s/SKILL.md\\n' \"$PWD\") || exit 1\nprintf '%s\\n' \"$REFACTOR_SKILL\""
     },
     "1c9ffe6907c43b116adc2db1fba20208547294e2411c0011acd451b962a319c6": {
@@ -457,6 +469,10 @@
     "1d4b43e45e116b5ef5899700e5e527d4b42120ac5178a69c659c4cc2185701d2": {
       "kind": "block",
       "src": "skills/review/SKILL.md:265"
+    },
+    "1d6c8b61ded14660dc1c6ee8aa40154cb51fd1331005f567599ef05bab9c705d": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:459"
     },
     "1d783f78fb34c6f3c39a9242eb313384078535ab07b28327673db845f9af299b": {
       "kind": "command",
@@ -492,11 +508,11 @@
     },
     "1e96c6b2433dbc922e4ba4e9193a47fb39733a3189a04e9f191aaf62c25b78a5": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:398"
+      "src": "skills/refactor/SKILL.md:412"
     },
     "1ec2b86cb85a34accd4a4095266c14514c3207b459edfcfad2b72c5cf17eef06": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:205"
+      "src": "skills/plan/SKILL.md:206"
     },
     "1ef35eeba14ba65755a8a6898fc4b172c75116205fcb70345a67fb6ffcfcee50": {
       "kind": "command",
@@ -512,12 +528,12 @@
     },
     "2000a04386ac4cd5b27694fe67cc9b59fbe5996e7285be153eb17c368539d51c": {
       "kind": "block",
-      "src": "skills/plan/SKILL.md:284",
+      "src": "skills/plan/SKILL.md:285",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r PLAN_NS < \"${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}\" 2>/dev/null || PLAN_NS=\"\"\n[ -n \"$PLAN_NS\" ] || { echo \"! BLOCKED \u2014 plan namespace sentinel missing; re-run Flag parsing\"; exit 1; }\nIFS= read -r PLAN_FILE < \"$PLAN_NS/plan-file\" 2>/dev/null || PLAN_FILE=\"\"\n[ -n \"$PLAN_FILE\" ] || { echo \"! BLOCKED \u2014 plan-file not persisted; re-run Step 2\"; exit 1; }\n_PLAN_NAME=\"${PLAN_FILE##*/}\"\n_REPLY=\".temp/develop/${_PLAN_NAME%.md}-feasibility.txt\"\n[ -s \"$_REPLY\" ] || { echo \"! BLOCKED \u2014 feasibility reply not saved at $_REPLY; Write it there first\"; exit 1; }\nif command -v jq >/dev/null 2>&1; then grep -oE '\\{[^{}]*(\\{[^{}]*\\}[^{}]*)?\\}' \"$_REPLY\" | jq -c '.' 2>/dev/null\nelse python \"$PLUGIN_ROOT/bin/extract_json_field.py\" . < \"$_REPLY\"; fi"
     },
     "2073ed2c826abcd11c4b71a236b80e5a1f44e5bf716e1a55988d7d8a4517e1dc": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:173"
+      "src": "skills/plan/SKILL.md:174"
     },
     "209bdf0f89e98547fcb32ee0fc3fa34b951699bf790058b344aa6b6ae614fa83": {
       "kind": "command",
@@ -525,7 +541,7 @@
     },
     "2138ea9b2b1032d1961b4b5f01926ab7f113aa5f449183adc010d9781e6c6a03": {
       "kind": "command",
-      "src": "skills/refactor/modes/team-mode.md:83"
+      "src": "skills/refactor/SKILL.md:459"
     },
     "214d32e189bf1caa52e610509ef1949ea9f843a58d8cdbd5c79a5b56fe4a6f86": {
       "kind": "command",
@@ -534,6 +550,11 @@
     "2199d655a3976a4345bff2d93b921b434df68c243d44e5067cd01fa665195f29": {
       "kind": "command",
       "src": "skills/debug/SKILL.md:482"
+    },
+    "22373931186437d1113c74b3ab80d30bc3edca97d1af8f5991ce45efc179d789": {
+      "kind": "block",
+      "src": "skills/refactor/SKILL.md:567",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _DEV_DIR < \"${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}\" 2>/dev/null || _DEV_DIR=\"\"\nIFS= read -r _PYTEST_CMD < \"${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}\" 2>/dev/null || _PYTEST_CMD=\"\"\n_CHANGED=$({ git diff --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard; } | sort -u | tr '\\n' ' ' | sed 's/ *$//')\npython \"$PLUGIN_ROOT/bin/dev_scope_findings.py\" check \"$_DEV_DIR\" || exit 1\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" \"develop:refactor\" \"review+quality (after refactor edits applied)\" \"$_DEV_DIR\" \"dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD, scope-findings=$_DEV_DIR/scope-findings.md\" \"review and close gaps (Step 5) \u2192 Final Report\" -- calls_ahead=40 \"drop=refactor exploration and intermediate test output\"\nIFS= read -r _DEV_SHARED < \"${TMPDIR:-/tmp}/dev-shared-${CSID}\" 2>/dev/null || _DEV_SHARED=\"\"\n[ -z \"$_DEV_SHARED\" ] && _DEV_SHARED=\"plugins/cc_develop/skills/_shared\"\npython \"$PLUGIN_ROOT/bin/compaction_boundary.py\" \"$_DEV_SHARED\""
     },
     "22b95bc07f7d1137910f18c8acec2337e573686ef131cd118f0e9df70b4d6154": {
       "kind": "command",
@@ -555,11 +576,6 @@
     "240323254689dd21d8faed09517f02f993410eb092d9d8fc24ef62951b433010": {
       "kind": "command",
       "src": "skills/review/SKILL.md:484"
-    },
-    "24076d3d45786a87025f2c6e1743e730c4dd81fc1ebd5673b63e7bc46f4295be": {
-      "kind": "block",
-      "src": "skills/plan/SKILL.md:135",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CODEMAP_CURRENCY  2>/dev/null < \"${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}\" || CODEMAP_CURRENCY=\"no_index\"\nif [ \"$CODEMAP_CURRENCY\" = \"stale\" ]; then export SCAN_NO_AUTOBUILD=1; fi\nIFS= read -r PLAN_NS < \"${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}\" 2>/dev/null || PLAN_NS=\"\"\n[ -n \"$PLAN_NS\" ] || { echo \"! BLOCKED \u2014 plan namespace sentinel missing; re-run Flag parsing\"; exit 1; }\nIFS= read -r CODEMAP_ENABLED  2>/dev/null < \"$PLAN_NS/codemap-enabled\" || CODEMAP_ENABLED=false\nIFS= read -r TARGET_MODULE < \"$PLAN_NS/target-module\" 2>/dev/null || TARGET_MODULE=\"\"\nif [ \"$CODEMAP_ENABLED\" = \"true\" ] && command -v codemap-py >/dev/null 2>&1; then\n    if [ -n \"$TARGET_MODULE\" ]; then\n        codemap-py query --timeout 5 rdeps \"$TARGET_MODULE\" --limit 10 --exclude-tests > \"$PLAN_NS/sizing-rdeps\" 2>/dev/null || true\n        codemap-py query --timeout 5 coupled --top 10 >> \"$PLAN_NS/sizing-rdeps\" 2>/dev/null || true\n    elif [ -n \"$(git diff HEAD --name-only 2>/dev/null | grep '\\.py$')\" ]; then\n        python \"$PLUGIN_ROOT/bin/codemap_scan.py\" --source=diff > \"$PLAN_NS/sizing-rdeps\" 2>/dev/null || true\n    fi\nfi"
     },
     "24a02c1a74a00c93b6e90578eb03a7d449d93c459460d441ff67c62c687c4de2": {
       "kind": "command",
@@ -597,7 +613,7 @@
     },
     "28149fe9751e3fd275fe19470cd83127d9cf8e38293a76db23cdfde43e6172f0": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:502"
+      "src": "skills/refactor/SKILL.md:531"
     },
     "28abd5d0c4825edbfc9a425d9596809257b375a06a87a8155afdca20dc2e5730": {
       "kind": "command",
@@ -625,7 +641,7 @@
     },
     "2af9f2d45ace06c346912e9ddf3d77bda7bb824ee68356d12804e7ffbab1a884": {
       "kind": "block",
-      "src": "skills/refactor/SKILL.md:502"
+      "src": "skills/refactor/SKILL.md:531"
     },
     "2b1ec55de2ec434169d23c288216e2731d5629a5a4854449ea9b4d7f6b2c392f": {
       "kind": "command",
@@ -683,6 +699,10 @@
       "kind": "command",
       "src": "skills/review/SKILL.md:535"
     },
+    "2e5f769e7fb5826bd134a5cca63c9c772d58313f177dad18fb8bb0286155266d": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:377"
+    },
     "2ecfd68a1c39f2b5d35bcac2de9f6e3757166416566cde7ddb6db53f322dcaf4": {
       "kind": "command",
       "src": "skills/fix/SKILL.md:408"
@@ -698,6 +718,15 @@
     "2f8795308a4e655c1076045974df818cf7a5a500d32f6b70b6aac86e210ad8c9": {
       "kind": "command",
       "src": "skills/debug/SKILL.md:569"
+    },
+    "3057cfee022dc8df6c1c6831b7c38faa93e3e7fec4cbd209bd906581ad4caad6": {
+      "kind": "block",
+      "src": "skills/refactor/modes/team-mode.md:39",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r DEV_DIR < \"${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}\" 2>/dev/null || DEV_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/dev_scope_findings.py\" check \"$DEV_DIR\" || exit 1"
+    },
+    "305ef98cd7f8cdf5581d14a5e210763056fc2475e3ac2ccf03b78c387e4afe96": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:412"
     },
     "30dcddf3b3b4ca0e996c5cf030b22094b7cf916c63acb85262df8ffe9c3375bf": {
       "kind": "command",
@@ -740,6 +769,11 @@
       "kind": "command",
       "src": "skills/debug/SKILL.md:482"
     },
+    "336abdd970ef2126cd714e8a4e3fd4be3f80670869b219f9b28f8f86a94a5fc3": {
+      "kind": "block",
+      "src": "skills/refactor/SKILL.md:275",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r DEV_DIR < \"${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}\" 2>/dev/null || DEV_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/dev_scope_findings.py\" check \"$DEV_DIR\" || exit 1\npython \"$PLUGIN_ROOT/bin/dev_load_shared.py\" plan-inline.md"
+    },
     "34b244a279b5b406e45cd81d1ec2a3f3b8ee7b8e599684e31c856720f995e2ad": {
       "kind": "command",
       "src": "skills/_shared/batch-bisect.md:106"
@@ -756,27 +790,21 @@
       "kind": "command",
       "src": "skills/fix/SKILL.md:614"
     },
-    "35572f2b745daf0536ae686b6a4ba98f523b981fb078c858e2b8c1a255a30e8b": {
-      "kind": "block",
-      "src": "skills/refactor/modes/team-mode.md:11",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\n[ -f ~/.claude/TEAM_PROTOCOL.md ] || { echo \"! BLOCKED \u2014 --team needs ~/.claude/TEAM_PROTOCOL.md, written by /foundry:setup (requires foundry plugin); run /foundry:setup, or re-run without --team\"; exit 1; }\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/dev_setup_worktree_wrap.py\" refactor\nIFS= read -r TS < \"${TMPDIR:-/tmp}/dev-refactor-team-ts-${CSID}\" 2>/dev/null || TS=\"\"\nIFS= read -r RUN_DIR_LITERAL < \"${TMPDIR:-/tmp}/dev-refactor-run-dir-${CSID}\" 2>/dev/null || RUN_DIR_LITERAL=\"\"\n[ -n \"$TS\" ] && [ -n \"$RUN_DIR_LITERAL\" ] || { echo \"! dev-refactor-team-ts or dev-refactor-run-dir missing \u2014 cannot build teammate output paths; aborting team mode\"; exit 1; }\n: > \"${TMPDIR:-/tmp}/dev-refactor-char-test-${CSID}\""
-    },
     "358d2c8eae6398fddb77e5e7920f255dd5ffcebea6a8dd5d7b7011b657484b8b": {
       "kind": "command",
       "src": "skills/feature/SKILL.md:428"
     },
+    "35fbcd534123a59622f76b4815a3ba32203307bd3cbd2d829e69011d92c39629": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:412"
+    },
     "361fb60b60e2e438bec9e392d3f22829b6373e1b76ed2ac169f58c8190912018": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:205"
+      "src": "skills/plan/SKILL.md:206"
     },
     "36532227eab58069fc8237bb3f87afd7dcba9576aedd66e80df96a205d2ade26": {
       "kind": "command",
       "src": "skills/fix/SKILL.md:598"
-    },
-    "366f609afacf713be1c02912b9dedb32616a34568891035f35bde2870608ee45": {
-      "kind": "block",
-      "src": "skills/refactor/SKILL.md:424",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r DEV_DIR < \"${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}\" 2>/dev/null || DEV_DIR=\"\"\n[ -n \"$DEV_DIR\" ] || { echo \"! BLOCKED \u2014 refactor run directory missing; re-run Checkpoint init\"; exit 1; }\nset -- '<scoped_python_files>'\ncase \"$*\" in *'<'*'>'*|\"\") echo \"! BLOCKED \u2014 scoped file list contains an unresolved placeholder; substitute the Step 1 paths before running the baseline\"; exit 1 ;; esac\nIFS= read -r CODEMAP_CURRENCY < \"${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}\" 2>/dev/null || CODEMAP_CURRENCY=\"no_index\"\nif [ \"$CODEMAP_CURRENCY\" = \"stale\" ]; then export SCAN_NO_AUTOBUILD=1; fi\nIFS= read -r ACCEPTED_RED_CHAR 2>/dev/null < \"$DEV_DIR/accepted-red-characterization.txt\" || ACCEPTED_RED_CHAR=\"\"\nACCEPTED_RED_CHAR=${ACCEPTED_RED_CHAR%$'\\r'}\nif [ -n \"$ACCEPTED_RED_CHAR\" ]; then\n    echo \"BASELINE: accepted-red characterization test excluded: $ACCEPTED_RED_CHAR; remaining source tests must pass\"\n    python \"$PLUGIN_ROOT/bin/dev_test_targets.py\" --skill refactor --files \"$@\" > \"$DEV_DIR/baseline-selection.json\" || { echo \"! BLOCKED \u2014 baseline selection failed; recover the runner before editing\"; exit 1; }\n    python - \"$DEV_DIR/baseline-selection.json\" \"$ACCEPTED_RED_CHAR\" \"$DEV_DIR/baseline-tests.json\" <<'PY' || { echo \"! BLOCKED \u2014 baseline filtering failed; recover test selection before editing\"; exit 1; }\nimport json\nimport sys\nfrom pathlib import Path\n\nselection, excluded, output = sys.argv[1:]\ntests = json.loads(Path(selection).read_text(encoding=\"utf-8\"))[\"tests\"]\nremaining = [test for test in tests if Path(test).resolve() != Path(excluded).resolve()]\nPath(output).write_text(json.dumps(remaining) + \"\\n\", encoding=\"utf-8\")\nPY\n    python \"$PLUGIN_ROOT/bin/dev_test_targets.py\" --skill refactor --tests-from \"$DEV_DIR/baseline-tests.json\" --record-dir \"$DEV_DIR\" --run\nelse\n    python \"$PLUGIN_ROOT/bin/dev_test_targets.py\" --skill refactor --files \"$@\" --record-dir \"$DEV_DIR\" --run\nfi\nBASELINE_EXIT=$?\ncase \"$BASELINE_EXIT\" in\n    0) python \"$PLUGIN_ROOT/bin/dev_test_targets.py\" --check-record \"$DEV_DIR/test-targets.jsonl\" --expect-exit 0 || { echo \"! BLOCKED \u2014 no completed nonempty baseline; resolve test selection before editing\"; exit 1; } ;;\n    1) python \"$PLUGIN_ROOT/bin/dev_test_targets.py\" --check-record \"$DEV_DIR/test-targets.jsonl\" --expect-exit 1 || { echo \"! BLOCKED \u2014 baseline runner failed without a completed red run; recover the runner before editing\"; exit 1; }\n       echo \"! BLOCKED \u2014 pre-existing test failure in the remaining scoped tests; stop refactoring and recommend /develop:fix before any source edit\"; exit 1 ;;\n    *) echo \"! BLOCKED \u2014 baseline runner or collection failed (exit $BASELINE_EXIT); recover the runner before editing\"; exit \"$BASELINE_EXIT\" ;;\nesac\necho \"BASELINE OK: scoped tests pass before source edits\""
     },
     "369bd0e7e26c760e19dcda7787923530bed23cd920f24babcd1ee2686d5aa48d": {
       "kind": "command",
@@ -858,7 +886,7 @@
     },
     "3aac7615ac58b9f4620890121e56107f520dd203748f6c3ac1576bfb1307e75f": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:310"
+      "src": "skills/refactor/SKILL.md:320"
     },
     "3aad925f327994f13a26a36c8c44776c6f91f7540f7351572e686db245c5b657": {
       "kind": "command",
@@ -898,7 +926,7 @@
     },
     "3e558ed08db63dcf219ab64c70af81478acc4561562804e0dac64ffd025e426b": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:370"
+      "src": "skills/plan/SKILL.md:371"
     },
     "3e622f8f61613478d63cd92b748b252495d2e6368997427d748eb39edf9b7d5f": {
       "kind": "command",
@@ -971,11 +999,11 @@
     },
     "42bc0f3b4b305132eeb4792e8ac05444405662c51ad38ce3d25e420f0f5423d0": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:502"
+      "src": "skills/refactor/SKILL.md:531"
     },
     "432baf29dde186912a809dae9e405aa57fbee38e3e6f76b722d0d0a5ed360aa9": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:173"
+      "src": "skills/plan/SKILL.md:174"
     },
     "432d87f73bed652ac56552ac907508a1202ceb6a210ea35d3198d8a7d2ecb351": {
       "kind": "command",
@@ -1009,10 +1037,19 @@
       "kind": "command",
       "src": "skills/feature/SKILL.md:128"
     },
+    "454ad97787a79d5049961048dd7d67ff2de6dde119bf05bed618551f7718e089": {
+      "kind": "block",
+      "src": "skills/refactor/SKILL.md:445",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r DEV_DIR < \"${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}\" 2>/dev/null || DEV_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/dev_scope_findings.py\" accept-unpinned \"$DEV_DIR\""
+    },
     "45606d3f04d5c26c04e4422e6d4afd43337a09a54182a892b186d35d41a7f5c7": {
       "kind": "block",
       "src": "skills/fix/SKILL.md:288",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nINPUT_FILE=\"${TMPDIR:-/tmp}/dev-fix-arguments-${CSID}.txt\"\n[ -f \"$INPUT_FILE\" ] && [ ! -L \"$INPUT_FILE\" ] && [ -O \"$INPUT_FILE\" ] || { echo \"! BLOCKED \u2014 invocation input missing or untrusted; Write the arguments to the printed Invocation input file first\"; exit 1; }\nARGUMENT_BLOB=$(cat \"$INPUT_FILE\" && printf x) || exit 1\nARGUMENT_BLOB=${ARGUMENT_BLOB%x}\n\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/parse_target_qname.py\" --query-kind callers -- \"$ARGUMENT_BLOB\""
+    },
+    "456e03e0d066b93a6d86f40f0fcc8406fa0e9375281185337588f08dd310f2c8": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:412"
     },
     "45a988615346e0798ca3d8091470cd658467b73d7a0b288274f18ea07b959ed2": {
       "kind": "command",
@@ -1076,6 +1113,10 @@
     "4907b00ac6461495981c469444b2fc01e69d1095da843b0c8537bd7366edabd1": {
       "kind": "command",
       "src": "skills/_shared/batch-bisect.md:33"
+    },
+    "4912107c73b602c31eeb555a81c38ada1933c216ea2cfed13c81b9e149c710d1": {
+      "kind": "command",
+      "src": "skills/plan/SKILL.md:135"
     },
     "493e542858c595c522cbfd967c1486d6c14e7e992f26fe2a6f2c1f19e552e5ee": {
       "kind": "command",
@@ -1182,7 +1223,7 @@
     },
     "4e874927b5eb933b0978839bbdfae50f0d93587677ba11e41a1dcdb847b81974": {
       "kind": "command",
-      "src": "skills/refactor/modes/team-mode.md:25"
+      "src": "skills/refactor/modes/team-mode.md:28"
     },
     "4e899c456b4c6f902028d8b15e7313c5863cba0ad2c32f02c18e8e65fe82a0cc": {
       "kind": "command",
@@ -1214,7 +1255,7 @@
     },
     "4fc9e1130fa4b55b44b6a9839cb4f0a637e321ef972ba65b7e188073353882d4": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:173"
+      "src": "skills/plan/SKILL.md:174"
     },
     "503d567927b9e50976c6e3b3bba129ecb767d28037c330269d92b6b7286575b1": {
       "kind": "block",
@@ -1225,13 +1266,17 @@
       "kind": "command",
       "src": "skills/_shared/ci-log-extract.md:16"
     },
+    "5096b4aeccf530979560cbdfec2f3394d3643528c06af4f32f21883a8dd45651": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:459"
+    },
     "51105bc536ecc803e794176651304c6144d4ca59af46db47fbee07c9eba84ef9": {
       "kind": "command",
       "src": "skills/fix/SKILL.md:614"
     },
     "511c46ee47bea9c88c04866038468a417a8e0be0a2cf9f2b37146307d7c8d034": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:502"
+      "src": "skills/refactor/SKILL.md:531"
     },
     "5128b0054cb79daa742d4ba1ace849325290b44df043876492ac0ffbf2a96967": {
       "kind": "command",
@@ -1254,6 +1299,11 @@
       "kind": "command",
       "src": "skills/fix/SKILL.md:598"
     },
+    "527ef0c06229dae8a8f7afe48fbeed19e8349d1a502e4177ebba46bf6990d20d": {
+      "kind": "block",
+      "src": "skills/plan/SKILL.md:135",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CODEMAP_CURRENCY  2>/dev/null < \"${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}\" || CODEMAP_CURRENCY=\"no_index\"\nif [ \"$CODEMAP_CURRENCY\" = \"stale\" ]; then export SCAN_NO_AUTOBUILD=1; fi\nIFS= read -r PLAN_NS < \"${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}\" 2>/dev/null || PLAN_NS=\"\"\n[ -n \"$PLAN_NS\" ] || { echo \"! BLOCKED \u2014 plan namespace sentinel missing; re-run Flag parsing\"; exit 1; }\nIFS= read -r CODEMAP_ENABLED  2>/dev/null < \"$PLAN_NS/codemap-enabled\" || CODEMAP_ENABLED=false\nIFS= read -r TARGET_MODULE < \"$PLAN_NS/target-module\" 2>/dev/null || TARGET_MODULE=\"\"\nif [ \"$CODEMAP_ENABLED\" = \"true\" ] && command -v codemap-py >/dev/null 2>&1; then\n    if [ -n \"$TARGET_MODULE\" ]; then\n        codemap-py query --timeout 5 rdeps \"$TARGET_MODULE\" --limit 10 --exclude-tests > \"$PLAN_NS/sizing-rdeps\" 2>/dev/null || true\n\n        codemap-py query --timeout 5 --format tsv coupled --top 1000000 2>/dev/null | awk -F'\\t' -v target=\"$TARGET_MODULE\" 'NR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; print; next } { split($0, f, \"\\t\") } f[col[\"name\"]] == target && f[col[\"internal_dep_count\"]] >= 20' >> \"$PLAN_NS/sizing-rdeps\" || true\n    elif [ -n \"$(git diff HEAD --name-only 2>/dev/null | grep '\\.py$')\" ]; then\n        python \"$PLUGIN_ROOT/bin/codemap_scan.py\" --source=diff > \"$PLAN_NS/sizing-rdeps\" 2>/dev/null || true\n    fi\nfi"
+    },
     "5289c2998431d630488a4132fdf85642ce526c6e4bd5fc79e410e868db9b83c6": {
       "kind": "command",
       "src": "skills/fix/SKILL.md:234"
@@ -1268,7 +1318,7 @@
     },
     "53432140975cadba705d3a36237f6304d1025e4ce69fe6648ba37651417c25a5": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:205"
+      "src": "skills/plan/SKILL.md:206"
     },
     "5368e080c666a4a2a2815552725825e2bee020d4dbcfa26c50c11c9babaa1b96": {
       "kind": "command",
@@ -1312,7 +1362,7 @@
     },
     "5667302c4cec2c9c78dec91e47aa0d7cf884ddc9ba595eddb498ca60b9cf6baa": {
       "kind": "command",
-      "src": "skills/refactor/modes/team-mode.md:25"
+      "src": "skills/refactor/modes/team-mode.md:28"
     },
     "566ee3b37a16f8fe00a3101cba39e490446a6400e44dcbf8feea1f2436cbdb90": {
       "kind": "command",
@@ -1321,6 +1371,10 @@
     "566f4b407f0667ff4cbe6a68ac21badb7dc76fa2413360d481f630bb2ab07900": {
       "kind": "command",
       "src": "skills/_shared/ci-log-extract.md:44"
+    },
+    "568f307842ab22b1d99f3e8ecb7186d23365fb17d18bdfdf40ab195a55f1d3b8": {
+      "kind": "command",
+      "src": "skills/refactor/modes/team-mode.md:108"
     },
     "5699ada094e16c1b0597920f58469c8a1b5933fa1856b3335f79340c28f96ab1": {
       "kind": "command",
@@ -1386,7 +1440,7 @@
     },
     "59f611cc4ed15750750aba762e7cded910c8d15ebb0232eabfdf4cb1ef7c4b08": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:205"
+      "src": "skills/plan/SKILL.md:206"
     },
     "5a0b982ce7d6d5ac225ba7dfd2242eaea10608f3349961e6f694cc6d2d9a2f81": {
       "kind": "block",
@@ -1421,13 +1475,18 @@
       "kind": "command",
       "src": "skills/debug/SKILL.md:225"
     },
+    "5c42b8101d57cadc448b326eb1c5093b0fd5cda48ccbe31518f42560111026a8": {
+      "kind": "block",
+      "src": "skills/refactor/SKILL.md:412",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/dev_run_tests.py\" pytest -- <test_file> -v; GATE_EXIT=$?\nIFS= read -r DEV_DIR < \"${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}\" 2>/dev/null || DEV_DIR=\"\"\n\nPIN_EXIT=0\nif [ \"$GATE_EXIT\" -le 5 ]; then python \"$PLUGIN_ROOT/bin/dev_scope_findings.py\" pin \"$DEV_DIR\"; PIN_EXIT=$?; fi\n[ \"$GATE_EXIT\" -eq 0 ] && GATE_EXIT=$PIN_EXIT\necho \"$GATE_EXIT\" > ${TMPDIR:-/tmp}/dev-refactor-gate-exit-${CSID}\n\nif [ \"$GATE_EXIT\" -eq 64 ]; then\n    echo \"! GATE ERROR: test runner refused to start (exit 64) \u2014 no test ran; re-run Project Detection, do not fix the test\"\nelif [ \"$PIN_EXIT\" -ne 0 ] && [ \"$PIN_EXIT\" -ne 3 ]; then\n    echo \"! GATE ERROR: special-case check gave no verdict (exit $PIN_EXIT) \u2014 cause on the line above; fix the run, map or findings, not the tests\"\nelif [ \"$GATE_EXIT\" -gt 5 ]; then\n    echo \"! GATE ERROR: test runner fault (exit $GATE_EXIT) \u2014 no verdict; recover the runner, do not fix the test\"\nelif [ \"${GATE_EXIT}\" -eq 5 ]; then\n    echo \"GATE FAIL: no tests collected (exit 5) \u2014 characterization test file missing or not detected by pytest; cannot proceed to Step 4 without a safety net\"\nelif [ \"$PIN_EXIT\" -eq 3 ] && [ \"$GATE_EXIT\" -eq 3 ]; then\n    echo \"GATE FAIL: special case not pinned (unmapped, or a mapped test failed, skipped, xpassed or unreported; exit 3) \u2014 one passing named test per special-case line\"\nelif [ \"$GATE_EXIT\" -ne 0 ]; then\n    echo \"GATE FAIL: characterization test(s) failed (exit $GATE_EXIT) \u2014 fix the test, not the code\"\nelse\n    echo \"GATE OK: all characterization tests pass on unmodified code\"\nfi"
+    },
     "5c7d98cf454a6061e92ace5e680c7291e46f8da97cb68f1ed3a661b58c038ee0": {
       "kind": "command",
       "src": "skills/_shared/worktree-isolation.md:102"
     },
     "5ca0d5777102ab9378e34404428ee95c0a7ccbb0ccd94181795ecde6d2a3c874": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:395"
+      "src": "skills/plan/SKILL.md:396"
     },
     "5ce16e4a87b153abccb2ca74975cda85f85e32bbc83b472aa39ebf432009c678": {
       "kind": "command",
@@ -1452,7 +1511,7 @@
     },
     "5e0992db8bc2f19aa22dbf83686c9f133fac845f5ce21f61a3e1d9f866298f5f": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:205"
+      "src": "skills/plan/SKILL.md:206"
     },
     "5e0d0a7a1fa775085d52ba4935cd07f6b0c1467cd0b2bd4928fd62cb1cb0729f": {
       "kind": "command",
@@ -1517,7 +1576,7 @@
     },
     "602d8c884a510aa0da61dd3d32ace54bd8791d2685e3eb2c7d7e57b1eb3cbee9": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:284"
+      "src": "skills/plan/SKILL.md:285"
     },
     "604c28c9218f99b922b6ce9aa3c834cca48a336a304f2c24cbbe001256c5e673": {
       "kind": "command",
@@ -1550,7 +1609,7 @@
     },
     "610258af1c62b6eea009254b92bd8878d4bcbd4fc91e90899fbf2e42ef3ad91e": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:370"
+      "src": "skills/plan/SKILL.md:371"
     },
     "6126e0ae3130364c7e63bb36c9a6fdbd5f5aef7fe011a3f92bd843b5a24acdda": {
       "kind": "command",
@@ -1589,6 +1648,11 @@
       "kind": "command",
       "src": "skills/feature/SKILL.md:598"
     },
+    "6381a0287638d8f21122958e420e56abd794a61c942399e82a6d8f1ccacf0002": {
+      "kind": "block",
+      "src": "skills/refactor/modes/team-mode.md:11",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\n[ -f ~/.claude/TEAM_PROTOCOL.md ] || { echo \"! BLOCKED \u2014 --team needs ~/.claude/TEAM_PROTOCOL.md, written by /foundry:setup (requires foundry plugin); run /foundry:setup, or re-run without --team\"; exit 1; }\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/dev_setup_worktree_wrap.py\" refactor\nIFS= read -r TS < \"${TMPDIR:-/tmp}/dev-refactor-team-ts-${CSID}\" 2>/dev/null || TS=\"\"\nIFS= read -r RUN_DIR_LITERAL < \"${TMPDIR:-/tmp}/dev-refactor-run-dir-${CSID}\" 2>/dev/null || RUN_DIR_LITERAL=\"\"\n[ -n \"$TS\" ] && [ -n \"$RUN_DIR_LITERAL\" ] || { echo \"! dev-refactor-team-ts or dev-refactor-run-dir missing \u2014 cannot build teammate output paths; aborting team mode\"; exit 1; }\n: > \"${TMPDIR:-/tmp}/dev-refactor-char-test-${CSID}\"\n\nIFS= read -r DEV_DIR < \"${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}\" 2>/dev/null || DEV_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/dev_scope_findings.py\" reset \"$DEV_DIR\" || exit 1"
+    },
     "63c416fd33c56052931233cc6b9f4c60dfede60b1a21947fc296c9478930d21f": {
       "kind": "command",
       "src": "skills/_shared/worktree-isolation.md:102"
@@ -1624,6 +1688,11 @@
     "66b6035067e4e8a10c2044433e359078a6820f53c947eb1c388361791ec841a4": {
       "kind": "command",
       "src": "skills/_shared/foundry--quality-stack.md:28"
+    },
+    "6726e1fd2119c4b22c2345d411e3fb1a179b65c91858ee6fa5815b6a451af89f": {
+      "kind": "block",
+      "src": "skills/refactor/SKILL.md:221",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CODEMAP_CURRENCY  2>/dev/null < \"${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}\" || CODEMAP_CURRENCY=\"no_index\"\nif [ \"$CODEMAP_CURRENCY\" = \"stale\" ]; then export SCAN_NO_AUTOBUILD=1; fi\nIFS= read -r CODEMAP_ENABLED  2>/dev/null < \"${TMPDIR:-/tmp}/dev-refactor-codemap-enabled-${CSID}\" || CODEMAP_ENABLED=\"false\"\n[ \"$CODEMAP_ENABLED\" = \"true\" ] || exit 0\n_ROOT=$(git rev-parse --show-toplevel 2>/dev/null); [ -n \"$_ROOT\" ] || _ROOT=\"$PWD\"\nPROJ=$(basename \"$_ROOT\")\nREFACTOR_FILES=$(find \"$(python -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' '<target>')\" -name '*.py' -type f 2>/dev/null)\n_IDX=\"${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}\"\nif command -v codemap-py >/dev/null 2>&1 && [ -f \"${_IDX}/${PROJ}.json\" ]; then\n\n    IFS= read -r DEV_DIR < \"${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}\" 2>/dev/null || DEV_DIR=\"\"\n    [ -n \"$DEV_DIR\" ] || { echo \"! BLOCKED \u2014 refactor run directory missing; re-run Checkpoint init\"; exit 1; }\n    _BATCH_REQ=\"$DEV_DIR/codemap-rdeps-batch.json\"\n    AFFECTED_MODULES=$(python \"$PLUGIN_ROOT/bin/build_codemap_batch.py\" \"$_BATCH_REQ\" --files \"$REFACTOR_FILES\" --repository \"$_ROOT\" --queries rdeps) || exit $?\n    if [ -n \"$AFFECTED_MODULES\" ]; then codemap-py query batch \"$_BATCH_REQ\" 2>/dev/null; fi\n\n    codemap-py query --format tsv coupled --top 1000000 2>/dev/null | awk -F'\\t' -v scope=\" $AFFECTED_MODULES \" 'NR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; print; next } { split($0, f, \"\\t\") } index(scope, \" \" f[col[\"name\"]] \" \") && f[col[\"internal_dep_count\"]] >= 20'\nfi"
     },
     "6748ac3872b72e9adde06275ea524d7e997830360890845394f744c6d368717a": {
       "kind": "command",
@@ -1680,7 +1749,7 @@
     },
     "6a360014a3371aaefe292c0de48d737b52b2d26dd973c3b119fa064ad878ce2d": {
       "kind": "command",
-      "src": "skills/refactor/modes/team-mode.md:83"
+      "src": "skills/refactor/modes/team-mode.md:108"
     },
     "6aeffd893d5bf151f969e6c9012a1d09e642ffcefed47e2245d6e91139ff06e3": {
       "kind": "command",
@@ -1688,7 +1757,7 @@
     },
     "6b3f4dd152f8dac72450ae8877ad7887eacb584517dc2e3dcdc0aff4fd748ead": {
       "kind": "command",
-      "src": "skills/refactor/modes/team-mode.md:83"
+      "src": "skills/refactor/modes/team-mode.md:108"
     },
     "6b60379d3c4a2fb3a853a624a3fed51455ed6fe6b9324c64e8823e414e9fc8e0": {
       "kind": "command",
@@ -1734,7 +1803,7 @@
     },
     "6e6f535f35ec6038bba83bbdc66268c213946eee93f5a8c6d16ac13db6f4e179": {
       "kind": "block",
-      "src": "skills/plan/SKILL.md:395",
+      "src": "skills/plan/SKILL.md:396",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r PLAN_NS < \"${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}\" 2>/dev/null || PLAN_NS=\"\"\n[ -n \"$PLAN_NS\" ] || { echo \"! BLOCKED \u2014 plan namespace sentinel missing; re-run Flag parsing\"; exit 1; }\nIFS= read -r PLAN_FILE < \"$PLAN_NS/plan-file\" || exit 1\nIFS= read -r CHALLENGE_SHA256 < \"$PLAN_NS/challenge-sha256\" || exit 1\nIFS= read -r CHALLENGE_STATUS < \"$PLAN_NS/challenge-status\" || exit 1\npython \"$PLUGIN_ROOT/bin/plan_hash.py\" challenge-record \"$PLAN_FILE\" --status \"$CHALLENGE_STATUS\" --sha256 \"$CHALLENGE_SHA256\""
     },
     "6f0e1aa836287f4342dab9d15ed159f86c7fda148e990a445db2a27fd4e39a92": {
@@ -1748,10 +1817,6 @@
     "6f6866ee3049a7b6d7707cb1cab44575104d930347e74656bbcbb11f72f1d12d": {
       "kind": "command",
       "src": "skills/feature/SKILL.md:86"
-    },
-    "6f717e32996a4666aa777418bc01ae1d76d79fa9b5e52bb61b5a96736423c219": {
-      "kind": "command",
-      "src": "skills/refactor/SKILL.md:221"
     },
     "6fa3c3dc511d27daee59e0b1187bb8da42b016dac9ab3983bd50e43a0703d52f": {
       "kind": "command",
@@ -1865,7 +1930,7 @@
     },
     "76ad73982ac260ad6da0b634ee9fd0d950b018f837ff1e783c536b362c66840f": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:310"
+      "src": "skills/refactor/SKILL.md:320"
     },
     "7747c5425a76d09fa045c39fef2a420a496cab37889d95b67971defbb14b9e93": {
       "kind": "block",
@@ -1873,7 +1938,7 @@
     },
     "7751a76934c5c212817ba48fb96067b573bb8b9dec8c1063e28ef49b0f709b09": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:502"
+      "src": "skills/refactor/SKILL.md:531"
     },
     "77667b219ee659c71aafb4ba05e7acc7cdc4b577bf3c91b9a8f4f2514cfc4e45": {
       "kind": "command",
@@ -1923,6 +1988,10 @@
     "7d2ba6e237221ae6e28b1df8443e5765b835204734c60b6d05346ab44348381f": {
       "kind": "command",
       "src": "skills/fix/SKILL.md:115"
+    },
+    "7d4b8aca3a177638c954198b1e2af7b886e5b27f2d6692867bc86b1569234798": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:459"
     },
     "7d954a30c8d984476e7f6540a29c9126897ea991b8c3608ea2ce6074998dde9e": {
       "kind": "command",
@@ -1976,11 +2045,11 @@
     },
     "80fc06960d5de97db0f781b907b5e062559a743d0e46ff90c0e3a796fbcda7fb": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:284"
+      "src": "skills/plan/SKILL.md:285"
     },
     "81948cfe2bf4902c60823404d01c6fe3ce1f005ab5d44bfcc4ecf7f2114ae7e6": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:205"
+      "src": "skills/plan/SKILL.md:206"
     },
     "81a24ace3674ac9bd1a965809eb5d27f69c03b647379ec0fa3910f1ea742c9de": {
       "kind": "block",
@@ -2009,6 +2078,10 @@
     "8429b1a1078a3ceee420b0d9f7e0b027a203529eb09f0f2991a201ccb67c3680": {
       "kind": "command",
       "src": "skills/_shared/foundry--quality-stack.md:71"
+    },
+    "843196095d65d74e00e6e178a1f2f3a93a16000905173280c2b254db5ef73aad": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:412"
     },
     "8487facb878d61c1e4d4a7223dc243c3a39963e7fdfdf9d92621d402c4887085": {
       "kind": "block",
@@ -2111,7 +2184,7 @@
     },
     "8a6f64196d704ea4e314b051284e179630f5e0d30042eed626c25cf6c97de7db": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:502"
+      "src": "skills/refactor/SKILL.md:531"
     },
     "8ab001bca4d790f2ead766d8420fdc9c2b162ba9e9f7ba8a0da9d7632812dabf": {
       "kind": "block",
@@ -2123,7 +2196,7 @@
     },
     "8b6eb56684acd12de82b9c7cfaa2bec1623c88762098309c39d348f26b8d90b5": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:321"
+      "src": "skills/plan/SKILL.md:322"
     },
     "8b83c85992b2ee91e0cd232bbf6e54cdd49c3dfc4a9c229b3effbb148b700c55": {
       "kind": "block",
@@ -2169,7 +2242,7 @@
     },
     "8e8e91c828ed03d408cf36ab46000a83d0b7e6c7a9a65549ebf63c7c9ef46d06": {
       "kind": "block",
-      "src": "skills/plan/SKILL.md:370",
+      "src": "skills/plan/SKILL.md:371",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r PLAN_NS < \"${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}\" 2>/dev/null || PLAN_NS=\"\"\n[ -n \"$PLAN_NS\" ] || { echo \"! BLOCKED \u2014 plan namespace sentinel missing; re-run Flag parsing\"; exit 1; }\nIFS= read -r PLAN_FILE < \"$PLAN_NS/plan-file\" 2>/dev/null || PLAN_FILE=\"\"\nIFS= read -r CHALLENGE_ENABLED < \"$PLAN_NS/challenge-enabled\" 2>/dev/null || CHALLENGE_ENABLED=true\n[ -f \"$PLAN_FILE\" ] || { echo \"plan: PLAN_FILE not found: $PLAN_FILE\" >&2; exit 1; }\npython \"$PLUGIN_ROOT/bin/plan_hash.py\" challenge-digest \"$PLAN_FILE\" > \"$PLAN_NS/challenge-sha256\" || exit $?\nif [ \"$CHALLENGE_ENABLED\" = \"false\" ]; then\n    IFS= read -r CHALLENGE_SHA256 < \"$PLAN_NS/challenge-sha256\" || exit 1\n    python \"$PLUGIN_ROOT/bin/plan_hash.py\" challenge-record \"$PLAN_FILE\" --status skipped --sha256 \"$CHALLENGE_SHA256\" || exit $?\n    echo \"\u2192 --no-challenge passed \u2014 skipping Step 4 challenger gate; go to Step 5\"\nelse\n    echo \"\u2192 challenger gate active for $PLAN_FILE\"\nfi"
     },
     "8e99de91b124a209f4c8bf5b8cd5cae3fb5ab0579dd29d029a8514a0f92eaf27": {
@@ -2199,7 +2272,7 @@
     },
     "90a5a5848493f9a8268f791c0da28f14e3bd273cb7d8e602ba2e2c643edd9236": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:469"
+      "src": "skills/refactor/SKILL.md:498"
     },
     "90e4210b8f3e5bb7a2351d76e0a587f0c0ae8eabe5bc147bc6beba456eeec27a": {
       "kind": "block",
@@ -2220,7 +2293,7 @@
     },
     "91263df9af143a1319c2beafce151ef76465003e74f138f642e36c03286e5851": {
       "kind": "block",
-      "src": "skills/refactor/SKILL.md:357",
+      "src": "skills/refactor/SKILL.md:367",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r TEAM_MODE < \"${TMPDIR:-/tmp}/dev-team-mode-${CSID}\" 2>/dev/null || TEAM_MODE=false\n[ \"$TEAM_MODE\" = \"true\" ] && python \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$PLUGIN_ROOT/skills/refactor/modes/team-mode.md\""
     },
     "914823c791faa4defb249d30bcc43fd35de86feb9d327ba6b7430cbdc1875176": {
@@ -2282,6 +2355,10 @@
       "src": "skills/feature/SKILL.md:755",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\n_TPL=\"$PLUGIN_ROOT/skills/feature/templates/report-templates.md\"\ncat \"$_TPL\""
     },
+    "9408528d1448f5bc5255971852cf4ba41e2990d064353400afa49a911f8ff61d": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:259"
+    },
     "9443a99f5502cb198bbb514ce7dc9fcac3792251d99a6335841bcb56b1185232": {
       "kind": "command",
       "src": "skills/_shared/agent-resolution.md:5",
@@ -2330,13 +2407,9 @@
       "src": "skills/feature/SKILL.md:385",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _DEV_DIR < \"${TMPDIR:-/tmp}/dev-feature-dev-dir-${CSID}\" 2>/dev/null || _DEV_DIR=\"\"\nIFS= read -r _PLAN_FILE < \"${TMPDIR:-/tmp}/dev-plan-file-${CSID}\" 2>/dev/null || _PLAN_FILE=\"\"\nIFS= read -r _PYTEST_CMD < \"${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}\" 2>/dev/null || _PYTEST_CMD=\"\"\n_PRESERVE=\"dev-dir=$_DEV_DIR, plan-file=${_PLAN_FILE:-none}, pytest-cmd=$_PYTEST_CMD\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-sentinel dev-feature-keep-items \"develop:feature\" \"demo+edit (after scope analysis and plan)\" \"$_DEV_DIR\" \"$_PRESERVE\" \"write demo test (Step 2) \u2192 TDD loop (Step 3) \u2192 review (Step 4)\" -- calls_ahead=30 \"drop=scope analysis and plan exploration\"\nIFS= read -r _DEV_SHARED < \"${TMPDIR:-/tmp}/dev-shared-${CSID}\" 2>/dev/null || _DEV_SHARED=\"\"\n[ -z \"$_DEV_SHARED\" ] && _DEV_SHARED=\"plugins/cc_develop/skills/_shared\"\npython \"$PLUGIN_ROOT/bin/compaction_boundary.py\" \"$_DEV_SHARED\""
     },
-    "9647f605a90c8a3b421be5a112c7df9394c7475e9915b937b5d24242ed2e4f42": {
-      "kind": "command",
-      "src": "skills/plan/SKILL.md:135"
-    },
     "965b6092b89467fc5701317b0a3435fb58b135d642407d81fbbeeb152e89e487": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:398"
+      "src": "skills/refactor/SKILL.md:412"
     },
     "9678b61d8248f9d0f1e2070df28160fd2a299f0c40d929aa680a8f8f1bf4054c": {
       "kind": "command",
@@ -2378,14 +2451,13 @@
       "kind": "command",
       "src": "skills/feature/SKILL.md:428"
     },
+    "9859a9bebbde388f245ec683b6b590bf5ea6c8f08cbfe46a05e730ea27163c06": {
+      "kind": "command",
+      "src": "skills/refactor/modes/team-mode.md:69"
+    },
     "9875e470cabc39af961e51a0bc3cc6305588fd70c69012886b92f2c056382dd6": {
       "kind": "command",
       "src": "skills/_shared/foundry--quality-stack.md:222"
-    },
-    "9879d6af652197680d40843181765f1bb3b020837426f4d2d88dd80f9a3eec94": {
-      "kind": "block",
-      "src": "skills/refactor/SKILL.md:221",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CODEMAP_CURRENCY  2>/dev/null < \"${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}\" || CODEMAP_CURRENCY=\"no_index\"\nif [ \"$CODEMAP_CURRENCY\" = \"stale\" ]; then export SCAN_NO_AUTOBUILD=1; fi\nIFS= read -r CODEMAP_ENABLED  2>/dev/null < \"${TMPDIR:-/tmp}/dev-refactor-codemap-enabled-${CSID}\" || CODEMAP_ENABLED=\"false\"\n[ \"$CODEMAP_ENABLED\" = \"true\" ] || exit 0\n_ROOT=$(git rev-parse --show-toplevel 2>/dev/null); [ -n \"$_ROOT\" ] || _ROOT=\"$PWD\"\nPROJ=$(basename \"$_ROOT\")\nREFACTOR_FILES=$(find \"$(python -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' '<target>')\" -name '*.py' -type f 2>/dev/null)\n_IDX=\"${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}\"\nif command -v codemap-py >/dev/null 2>&1 && [ -f \"${_IDX}/${PROJ}.json\" ]; then\n\n    IFS= read -r DEV_DIR < \"${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}\" 2>/dev/null || DEV_DIR=\"\"\n    [ -n \"$DEV_DIR\" ] || { echo \"! BLOCKED \u2014 refactor run directory missing; re-run Checkpoint init\"; exit 1; }\n    _BATCH_REQ=\"$DEV_DIR/codemap-rdeps-batch.json\"\n    AFFECTED_MODULES=$(python \"$PLUGIN_ROOT/bin/build_codemap_batch.py\" \"$_BATCH_REQ\" --files \"$REFACTOR_FILES\" --repository \"$_ROOT\" --queries rdeps) || exit $?\n    if [ -n \"$AFFECTED_MODULES\" ]; then codemap-py query batch \"$_BATCH_REQ\" 2>/dev/null; fi\n    codemap-py query coupled --top 10\nfi"
     },
     "987e244a11bec8104583af922af18097dff01887c4327a0cd31842201d14b5a2": {
       "kind": "command",
@@ -2437,13 +2509,17 @@
       "kind": "command",
       "src": "skills/feature/SKILL.md:428"
     },
+    "9b2e066c1c0042cff4ac54c109c4b072d925a6e68b0534f1a359cdabee7a3ea6": {
+      "kind": "command",
+      "src": "skills/refactor/modes/team-mode.md:108"
+    },
     "9bda98159945b536e8c77240ef8917df49bf483a45fdfe3f8d5c8728037ad654": {
       "kind": "command",
       "src": "skills/_shared/batch-bisect.md:106"
     },
     "9c2bd81075f147c727a09e31a3c0b6083f145f2f67fa1a18449541a512571b2b": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:395"
+      "src": "skills/plan/SKILL.md:396"
     },
     "9cf38c4598339d916d97c1ff4cd0129cfbbc6692d9e2a2c099ac74a8124d164b": {
       "kind": "command",
@@ -2456,6 +2532,10 @@
     "9dfe8b8d8fc0391f731ab7b66d67b219b676f5367aea1cd7bede30aa926bd669": {
       "kind": "command",
       "src": "skills/_shared/batch-bisect.md:106"
+    },
+    "9e152b749fb5102da209f1d5d70a2a514e8d8cb8b3e00d3ed77822d45d468f65": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:459"
     },
     "9e24fb4f7e403f649d23af0b38ed7be278d5aea8b4784f8d519897eadc46b2c1": {
       "kind": "command",
@@ -2503,7 +2583,7 @@
     },
     "a0b4ced13950a0068bc5b079c2bd90475bf9e108862bb621e8ff12a4dade62cf": {
       "kind": "command",
-      "src": "skills/refactor/modes/team-mode.md:25"
+      "src": "skills/refactor/modes/team-mode.md:28"
     },
     "a0b520dde8cd49bcf237fc0bf5866bf6a61ea3b20a2cf49364ccad3130ee7e80": {
       "kind": "command",
@@ -2519,7 +2599,7 @@
     },
     "a151468d8de47e103643084bd7b765e04fad194101ad66e4589679e1153596d3": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:310"
+      "src": "skills/refactor/SKILL.md:320"
     },
     "a18ab8c4b9ece9f15b6c1ac3b4064a6c61250d625691338e497478c1989b5d85": {
       "kind": "command",
@@ -2603,7 +2683,7 @@
     },
     "a5d21244077e0e80077b634936b9069bdb2d447b1d126c616bf9062bc656888a": {
       "kind": "block",
-      "src": "skills/plan/SKILL.md:321"
+      "src": "skills/plan/SKILL.md:322"
     },
     "a6504cb36c8a6a05a1e5bbe9b80913f26fb8a6e5a7a48b6a68998d9ca95daa96": {
       "kind": "command",
@@ -2616,6 +2696,10 @@
     "a790b6e4afbcc7b340b4ce7da64986677f32c3fcf91aea50c1b02d80bad8634e": {
       "kind": "command",
       "src": "skills/refactor/SKILL.md:49"
+    },
+    "a7b3b4cb6de0bf53b9940a30efd936cdda10f91e87abb368eb6699a55d7f423d": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:221"
     },
     "a81e6bfd6ed21f2b83d3473e7fd3dfd5c9480cfaad773fd82f8ae986bdd45662": {
       "kind": "command",
@@ -2668,7 +2752,7 @@
     },
     "aa4242f9cc0e97d19cd7c63cded20c15a3f4f1c3ffede6d0f99d24f7f4bfce91": {
       "kind": "block",
-      "src": "skills/refactor/modes/team-mode.md:110"
+      "src": "skills/refactor/modes/team-mode.md:145"
     },
     "aa7bfd9097075d396a49ea1036f654181c520f5c1abb6da9a5b04c0f131fb1dd": {
       "kind": "command",
@@ -2676,7 +2760,11 @@
     },
     "ab366d859203e6c2bab41dc576ed5471b4a3f9688e9a6f71f1edeaff0fc08254": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:502"
+      "src": "skills/refactor/SKILL.md:531"
+    },
+    "ab5ac49e6110675a4a36fe69c79469f192a100045e0a0184fc7c6220f4f8d32c": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:412"
     },
     "ab69d15d514bf5a930778c024e6b9c2ade94419035914e6ddb2096ca75c732d1": {
       "kind": "block",
@@ -2737,7 +2825,7 @@
     },
     "af185904b18fe6ce1dff31889b51e125069d29e707d32d4503e53778f378e275": {
       "kind": "block",
-      "src": "skills/plan/SKILL.md:173",
+      "src": "skills/plan/SKILL.md:174",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r PLAN_NS < \"${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}\" 2>/dev/null || PLAN_NS=\"\"\n[ -n \"$PLAN_NS\" ] || { echo \"! BLOCKED \u2014 plan namespace sentinel missing; re-run Flag parsing\"; exit 1; }\nIFS= read -r CLEAN_ARGS < \"$PLAN_NS/clean-args\" 2>/dev/null || CLEAN_ARGS=\"\"\nIFS= read -r PLAN_FILE < \"$PLAN_NS/plan-file\" 2>/dev/null || PLAN_FILE=\"\"\nSCOPE_FILE=\".temp/develop/plan-scope-${CSID}.md\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" \"develop:plan\" \"idle gate\" \".plans/active/\" \"goal=$CLEAN_ARGS; scope-findings=$SCOPE_FILE; plan-file=${PLAN_FILE:-not written yet}\" \"resume: re-read plan-file when written, else scope-findings; re-issue the pending AskUserQuestion (breaking change, Step 4 blockers or Step 5 Proceed/Revise); Revise edits plan-file in place\"\necho \"STATE=${PLAN_FILE:-$SCOPE_FILE}\""
     },
     "af44d2abfcb2717872f10132fc046e873c71456ec3cf572e08af358c22cc0066": {
@@ -2773,18 +2861,13 @@
       "src": "skills/fix/SKILL.md:218",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r TEAM_MODE < \"${TMPDIR:-/tmp}/dev-team-mode-${CSID}\" 2>/dev/null || TEAM_MODE=false\n[ \"$TEAM_MODE\" = \"true\" ] && python \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$PLUGIN_ROOT/skills/fix/modes/team-mode.md\""
     },
-    "b259ca0263a8a731451f6917d0c86154a144da8a18b016517afd874ccf405624": {
-      "kind": "block",
-      "src": "skills/refactor/SKILL.md:367",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _DEV_DIR < \"${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}\" 2>/dev/null || _DEV_DIR=\"\"\nIFS= read -r _PLAN_FILE < \"${TMPDIR:-/tmp}/dev-plan-file-${CSID}\" 2>/dev/null || _PLAN_FILE=\"\"\nIFS= read -r _PYTEST_CMD < \"${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}\" 2>/dev/null || _PYTEST_CMD=\"\"\n_PRESERVE=\"dev-dir=$_DEV_DIR, plan-file=${_PLAN_FILE:-none}, pytest-cmd=$_PYTEST_CMD\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-sentinel dev-refactor-keep-items \"develop:refactor\" \"characterize+edit (after coverage audit)\" \"$_DEV_DIR\" \"$_PRESERVE\" \"add characterization tests (Step 3) \u2192 refactor with safety net (Step 4)\" -- calls_ahead=30 \"drop=scope exploration and coverage analysis\"\nIFS= read -r _DEV_SHARED < \"${TMPDIR:-/tmp}/dev-shared-${CSID}\" 2>/dev/null || _DEV_SHARED=\"\"\n[ -z \"$_DEV_SHARED\" ] && _DEV_SHARED=\"plugins/cc_develop/skills/_shared\"\npython \"$PLUGIN_ROOT/bin/compaction_boundary.py\" \"$_DEV_SHARED\""
-    },
     "b2aa9c12881d3e20b3ecf7aca2be1791ac1d1f4cd6c1e3b02fbd014fd7708f0d": {
       "kind": "command",
       "src": "skills/_shared/batch-mode.md:64"
     },
     "b3026b144d16252b62ac11a73289eb440fb10ef72cf84dbb3e75c58b85754855": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:398"
+      "src": "skills/refactor/SKILL.md:412"
     },
     "b30d37b04b2f78007fd163f6cc41d84c1e9a575d8e22cb2b9c7db46074633a9b": {
       "kind": "command",
@@ -2856,7 +2939,7 @@
     },
     "b951cc26f5a2b45d68a00f232344a85d7dd4fe75509221b4480b67c344fcd932": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:370"
+      "src": "skills/plan/SKILL.md:371"
     },
     "b9ea56f80a52e882026c36231afb950060afc93e61540fea6b05fbed90bfd974": {
       "kind": "command",
@@ -2872,7 +2955,7 @@
     },
     "bba9e33d1084d8ecfc384e7f41fa941f9edf1720170cb00cf249bec8b195a8af": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:311"
+      "src": "skills/plan/SKILL.md:312"
     },
     "bbb27c2eadf35e4ac3ed3bff7bcf2474e330269a0847677db46fde93eedb2c1b": {
       "kind": "command",
@@ -3033,16 +3116,11 @@
     },
     "c40568640b0c67970dc296503d63f8299838861ce388625c6848c3f29f684db7": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:469"
+      "src": "skills/refactor/SKILL.md:498"
     },
     "c4501c32ceae119315175b121e8c4104389b67aa13b6e96cf23f9d67c82f6d9c": {
       "kind": "command",
       "src": "skills/review/SKILL.md:374"
-    },
-    "c4781beb257a41f2f0b97d51fc07e8c7e23db6e4853e19812ca1f5ff28c98183": {
-      "kind": "block",
-      "src": "skills/refactor/SKILL.md:398",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/dev_run_tests.py\" pytest -- <test_file> -v; GATE_EXIT=$?\necho \"$GATE_EXIT\" > ${TMPDIR:-/tmp}/dev-refactor-gate-exit-${CSID}\n\nif [ \"${GATE_EXIT}\" -eq 5 ]; then\n    echo \"GATE FAIL: no tests collected (exit 5) \u2014 characterization test file missing or not detected by pytest; cannot proceed to Step 4 without a safety net\"\nelif [ \"$GATE_EXIT\" -eq 64 ]; then\n    echo \"! GATE ERROR: test runner refused to start (exit 64) \u2014 no test ran; re-run Project Detection, do not fix the test\"\nelif [ \"$GATE_EXIT\" -ne 0 ]; then\n    echo \"GATE FAIL: characterization test(s) failed (exit $GATE_EXIT) \u2014 fix the test, not the code\"\nelse\n    echo \"GATE OK: all characterization tests pass on unmodified code\"\nfi"
     },
     "c4982bb2ec030b13cee0273834700e8ef8bdc54da015d00ea0f5aac1b8ebf149": {
       "kind": "block",
@@ -3088,7 +3166,7 @@
     },
     "c7561660f4da8af5fd1039d00021525137090629b3f3b6981e514a6465dba8a0": {
       "kind": "command",
-      "src": "skills/refactor/modes/team-mode.md:110"
+      "src": "skills/refactor/modes/team-mode.md:145"
     },
     "c76d19a2f46352188ad8a5d92474d4f700d269f8893844d354dfa67e8e92c80f": {
       "kind": "command",
@@ -3096,11 +3174,11 @@
     },
     "c7a32952d8c3e2417c93111cca46182249d6b0dbad37d8e2dc6f972e552f30c9": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:502"
+      "src": "skills/refactor/SKILL.md:531"
     },
     "c7d166a30df923c194640c75cd79a1f7f233466be2b452f319adf37c7d1abb5d": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:502"
+      "src": "skills/refactor/SKILL.md:531"
     },
     "c8437e729cd8421702de6a05af43bfb9b8a57b6ebdda62e654385729360db20d": {
       "kind": "block",
@@ -3137,7 +3215,7 @@
     },
     "c9a5040918ee07d99aa68c3aceeb4b1c8c7f3ea1c2bc4c97f3bb02cf15fddf7d": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:395"
+      "src": "skills/plan/SKILL.md:396"
     },
     "c9b39ce711c3c9dbb0b04dce7dff13ea5520a94ddc43790e4de922e63d5a529a": {
       "kind": "block",
@@ -3168,10 +3246,6 @@
       "kind": "command",
       "src": "skills/debug/SKILL.md:515"
     },
-    "cb31b937e22d53499a249e75dcc92651b955f8f88a8959e2e7bb4409032958c2": {
-      "kind": "command",
-      "src": "skills/refactor/modes/team-mode.md:83"
-    },
     "cb5ec1dbcb8be6c1616fdfb72e3980ce1b22346d9bf9a6c9d260297405c12bad": {
       "kind": "command",
       "src": "skills/review/SKILL.md:454"
@@ -3193,6 +3267,11 @@
       "kind": "block",
       "src": "skills/fix/SKILL.md:408",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CODEMAP_ENABLED  < \"${TMPDIR:-/tmp}/dev-fix-codemap-enabled-${CSID}\"  2>/dev/null || CODEMAP_ENABLED=\"false\"\nIFS= read -r CODEMAP_CURRENCY  2>/dev/null < \"${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}\" || CODEMAP_CURRENCY=\"no_index\"\nif [ \"$CODEMAP_CURRENCY\" = \"stale\" ]; then export SCAN_NO_AUTOBUILD=1; fi\nIFS= read -r TARGET_FN        < \"${TMPDIR:-/tmp}/dev-fix-target-fn-${CSID}\"        2>/dev/null || TARGET_FN=\"\"\nIFS= read -r TARGET_MODULE    < \"${TMPDIR:-/tmp}/dev-fix-target-module-${CSID}\"    2>/dev/null || TARGET_MODULE=\"\"\nIFS= read -r TARGET_QUALIFIED < \"${TMPDIR:-/tmp}/dev-fix-target-qualified-${CSID}\" 2>/dev/null || TARGET_QUALIFIED=\"\"\nIFS= read -r DEV_DIR          < \"${TMPDIR:-/tmp}/dev-fix-dev-dir-${CSID}\"          2>/dev/null || DEV_DIR=\"\"\n_CODEMAP_NO_HEAL=\"\"\nif [ \"$CODEMAP_CURRENCY\" = \"stale\" ] || [ \"${SCAN_NO_AUTOBUILD:-0}\" = \"1\" ]; then _CODEMAP_NO_HEAL=\"--no-heal\"; fi\n[ -n \"$DEV_DIR\" ] && python \"$PLUGIN_ROOT/bin/append_ledger.py\" \"$DEV_DIR/checkpoint.md\"\nif [ \"$CODEMAP_ENABLED\" = \"true\" ] && [ -z \"$TARGET_FN\" ] && command -v codemap-py >/dev/null 2>&1; then\n    DERIVED_FN=$(grep -E '^suspect: [A-Za-z_][A-Za-z0-9_.]*::[A-Za-z_][A-Za-z0-9_]*$' \"$DEV_DIR/checkpoint.md\" 2>/dev/null | tail -1 | sed 's/^suspect: //')\n    if [ -n \"$DERIVED_FN\" ]; then\n        TARGET_QUALIFIED=\"$DERIVED_FN\"\n        TARGET_MODULE=\"${DERIVED_FN%%::*}\"\n        TARGET_FN=\"${DERIVED_FN##*::}\"\n        export TARGET_FN TARGET_MODULE TARGET_QUALIFIED\n        codemap-py query --timeout 5 $_CODEMAP_NO_HEAL fn-rdeps \"$TARGET_QUALIFIED\" --exclude-tests 2>/dev/null \\\n            | tee \"$DEV_DIR/fn-rdeps-output.txt\" || true\n    fi\nfi"
+    },
+    "cc7805c45b7963002b4e0cdd1abb07db1d9aff3736ef8edf3291653da8d5236f": {
+      "kind": "block",
+      "src": "skills/refactor/SKILL.md:377",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _DEV_DIR < \"${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}\" 2>/dev/null || _DEV_DIR=\"\"\nIFS= read -r _PLAN_FILE < \"${TMPDIR:-/tmp}/dev-plan-file-${CSID}\" 2>/dev/null || _PLAN_FILE=\"\"\nIFS= read -r _PYTEST_CMD < \"${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}\" 2>/dev/null || _PYTEST_CMD=\"\"\npython \"$PLUGIN_ROOT/bin/dev_scope_findings.py\" check \"$_DEV_DIR\" || exit 1\n\npython \"$PLUGIN_ROOT/bin/dev_scope_findings.py\" reset \"$_DEV_DIR\" || exit 1\n_PRESERVE=\"dev-dir=$_DEV_DIR, plan-file=${_PLAN_FILE:-none}, pytest-cmd=$_PYTEST_CMD, scope-findings=$_DEV_DIR/scope-findings.md\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-sentinel dev-refactor-keep-items \"develop:refactor\" \"characterize+edit (after coverage audit)\" \"$_DEV_DIR\" \"$_PRESERVE\" \"add characterization tests (Step 3) \u2192 refactor with safety net (Step 4)\" -- calls_ahead=30 \"drop=scope exploration and coverage analysis\"\nIFS= read -r _DEV_SHARED < \"${TMPDIR:-/tmp}/dev-shared-${CSID}\" 2>/dev/null || _DEV_SHARED=\"\"\n[ -z \"$_DEV_SHARED\" ] && _DEV_SHARED=\"plugins/cc_develop/skills/_shared\"\npython \"$PLUGIN_ROOT/bin/compaction_boundary.py\" \"$_DEV_SHARED\""
     },
     "ccbf2164c487f546b84bb4ea45dc4f10cb3bf4fd487032218f158d558a87df6e": {
       "kind": "command",
@@ -3220,7 +3299,7 @@
     },
     "cda8f5cc72ec938a8c12820e5fefb63c42f5011a3149ecf5bd53091b0ed7576d": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:469"
+      "src": "skills/refactor/SKILL.md:498"
     },
     "cdb2df94089c310da601c28f5117b5d092fd3737d9bd21caf13a1c53c65d0338": {
       "kind": "command",
@@ -3281,7 +3360,7 @@
     },
     "d0b737fbb7b3b2ec7484b862ad1a24eaccd77647a76755a1b57182143d743e90": {
       "kind": "command",
-      "src": "skills/refactor/modes/team-mode.md:83"
+      "src": "skills/refactor/modes/team-mode.md:108"
     },
     "d0ffaeae42a1503eb6cdb361a141f71d77f0f1efe2f4c4081ce659af5a9c62cb": {
       "kind": "command",
@@ -3324,6 +3403,11 @@
       "kind": "command",
       "src": "skills/review/SKILL.md:176"
     },
+    "d3456e5730ba7dbd42f8e4800336b7036e32829ae376af838a82f173d779f13f": {
+      "kind": "block",
+      "src": "skills/refactor/SKILL.md:459",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r DEV_DIR < \"${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}\" 2>/dev/null || DEV_DIR=\"\"\n[ -n \"$DEV_DIR\" ] || { echo \"! BLOCKED \u2014 refactor run directory missing; re-run Checkpoint init\"; exit 1; }\nset -- '<scoped_python_files>'\ncase \"$*\" in *'<'*'>'*|\"\") echo \"! BLOCKED \u2014 scoped file list contains an unresolved placeholder; substitute the Step 1 paths before running the baseline\"; exit 1 ;; esac\n\npython \"$PLUGIN_ROOT/bin/dev_scope_findings.py\" verify \"$DEV_DIR\" || exit 1\nIFS= read -r CODEMAP_CURRENCY < \"${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}\" 2>/dev/null || CODEMAP_CURRENCY=\"no_index\"\nif [ \"$CODEMAP_CURRENCY\" = \"stale\" ]; then export SCAN_NO_AUTOBUILD=1; fi\nIFS= read -r ACCEPTED_RED_CHAR 2>/dev/null < \"$DEV_DIR/accepted-red-characterization.txt\" || ACCEPTED_RED_CHAR=\"\"\nACCEPTED_RED_CHAR=${ACCEPTED_RED_CHAR%$'\\r'}\nif [ -n \"$ACCEPTED_RED_CHAR\" ] || [ -s \"$DEV_DIR/accepted-unpinned.json\" ]; then\n    [ -n \"$ACCEPTED_RED_CHAR\" ] && echo \"BASELINE: accepted-red characterization test excluded: $ACCEPTED_RED_CHAR; remaining source tests must pass\"\n    python \"$PLUGIN_ROOT/bin/dev_test_targets.py\" --skill refactor --files \"$@\" > \"$DEV_DIR/baseline-selection.json\" || { echo \"! BLOCKED \u2014 baseline selection failed; recover the runner before editing\"; exit 1; }\n\n    python \"$PLUGIN_ROOT/bin/dev_scope_findings.py\" baseline-filter \"$DEV_DIR\" \"$DEV_DIR/baseline-selection.json\" \"$DEV_DIR/baseline-tests.json\" \"$ACCEPTED_RED_CHAR\" || { echo \"! BLOCKED \u2014 baseline filtering failed; recover test selection before editing\"; exit 1; }\n    python \"$PLUGIN_ROOT/bin/dev_test_targets.py\" --skill refactor --tests-from \"$DEV_DIR/baseline-tests.json\" --record-dir \"$DEV_DIR\" --run\nelse\n    python \"$PLUGIN_ROOT/bin/dev_test_targets.py\" --skill refactor --files \"$@\" --record-dir \"$DEV_DIR\" --run\nfi\nBASELINE_EXIT=$?\ncase \"$BASELINE_EXIT\" in\n    0) python \"$PLUGIN_ROOT/bin/dev_test_targets.py\" --check-record \"$DEV_DIR/test-targets.jsonl\" --expect-exit 0 || { echo \"! BLOCKED \u2014 no completed nonempty baseline; resolve test selection before editing\"; exit 1; } ;;\n    1) python \"$PLUGIN_ROOT/bin/dev_test_targets.py\" --check-record \"$DEV_DIR/test-targets.jsonl\" --expect-exit 1 || { echo \"! BLOCKED \u2014 baseline runner failed without a completed red run; recover the runner before editing\"; exit 1; }\n       echo \"! BLOCKED \u2014 pre-existing test failure in the remaining scoped tests; stop refactoring and recommend /develop:fix before any source edit\"; exit 1 ;;\n    *) echo \"! BLOCKED \u2014 baseline runner or collection failed (exit $BASELINE_EXIT); recover the runner before editing\"; exit \"$BASELINE_EXIT\" ;;\nesac\necho \"BASELINE OK: scoped tests pass before source edits\""
+    },
     "d3c55996758cd646381ef93af4c0167e06f61a635ab9bcc589f1cca819873267": {
       "kind": "command",
       "src": "skills/feature/modes/team-mode.md:36"
@@ -3360,7 +3444,7 @@
     },
     "d5467ea7b81fb1a9ac8f85507f3b41adb01444228e21c52304cf930ce2a66b2d": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:310"
+      "src": "skills/refactor/SKILL.md:320"
     },
     "d572d49a825c376d9bbfa894c3fb01c55cec104c765ac77a6132d7df9dd2ba86": {
       "kind": "command",
@@ -3374,13 +3458,27 @@
       "kind": "block",
       "src": "skills/feature/SKILL.md:264"
     },
+    "d6b32b9a6bc82af30547a6c0a8184322823e47cc66234d59ae37aa58acacf376": {
+      "kind": "command",
+      "src": "skills/refactor/modes/team-mode.md:108"
+    },
     "d74cb3154d896ab9e748a5ff1592c893cbd3dd1d797d02a7f7cfb7b5c7362e68": {
       "kind": "block",
       "src": "skills/_shared/worktree-isolation.md:102"
     },
+    "d7530ba450acc3c4e4d022c0d08230d1e4dc478bb84c89104ff7c4ece1fcaa51": {
+      "kind": "block",
+      "src": "skills/refactor/SKILL.md:652",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r DEV_DIR < \"${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}\" 2>/dev/null || DEV_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/dev_scope_findings.py\" check \"$DEV_DIR\""
+    },
+    "d761f5849a195550ea40a048f28fc2e44ffbb5c109640c7569c1aebade0a3cc5": {
+      "kind": "block",
+      "src": "skills/refactor/SKILL.md:259",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/dev_load_shared.py\" premise-grounding.md\nIFS= read -r DEV_DIR < \"${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}\" 2>/dev/null || DEV_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/dev_scope_findings.py\" reset \"$DEV_DIR\""
+    },
     "d7a08f22729525c65ff92fd43e3999d04c70c343970740832bff4400ecd9997f": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:173"
+      "src": "skills/plan/SKILL.md:174"
     },
     "d7a99cbd0a174c304885edce287067bda12774a1ba15510cde15d015432c444e": {
       "kind": "block",
@@ -3409,7 +3507,7 @@
     },
     "d87b5a98a07059a815b2a173c04ae3f4f527b749794add2d6e81791bde27d9b1": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:370"
+      "src": "skills/plan/SKILL.md:371"
     },
     "d89a6df86dffa060a1bf57afac7174042d58439a77d192dba71a45dd10a457e2": {
       "kind": "command",
@@ -3493,7 +3591,7 @@
     },
     "df92938a419c15b084fb5ee92b637a7fec015a36fc97e2a31f5b22cac91a644f": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:502"
+      "src": "skills/refactor/SKILL.md:531"
     },
     "dfb7ebb345360f46f3659ac6be754202dd07cec65d5579b21fd7d8af64e174fc": {
       "kind": "command",
@@ -3524,7 +3622,7 @@
     },
     "e0b1873f83e8e1249fc1f7f3ad980c68f5e587c54e73deff9a87e8cd2b3fbd5b": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:367"
+      "src": "skills/refactor/SKILL.md:377"
     },
     "e0ec0ae828c964e9cc9865c8eb84e6a75005369109cb024a6d772d8e3cb1a6e7": {
       "kind": "command",
@@ -3575,7 +3673,7 @@
     },
     "e2f5d0b594588406880c70c6406a820c66ea3ef10f87fecb155691988ec40d32": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:321"
+      "src": "skills/plan/SKILL.md:322"
     },
     "e3eb31a68282f5c1c20f212d845c7a1901dcade6b9f2ef4c01374acdd25fa87d": {
       "kind": "command",
@@ -3591,7 +3689,7 @@
     },
     "e4232677319864e4cc6303aa85a13d85e24c4f8b34d35df1acd4bb7c84ea1fb6": {
       "kind": "block",
-      "src": "skills/refactor/SKILL.md:469",
+      "src": "skills/refactor/SKILL.md:498",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nif python \"$PLUGIN_ROOT/bin/dev_batch_gate.py\" refactor; then python \"$PLUGIN_ROOT/bin/dev_load_shared.py\" batch-mode.md; fi\necho \"0\"             > ${TMPDIR:-/tmp}/dev-inner-cycle-${CSID}\n[ -s \"${TMPDIR:-/tmp}/dev-start-time-${CSID}\" ] || echo \"$(date +%s)\"   > ${TMPDIR:-/tmp}/dev-start-time-${CSID}\necho 5    > ${TMPDIR:-/tmp}/dev-max-inner-cycles-${CSID}\necho 1800 > ${TMPDIR:-/tmp}/dev-max-wall-seconds-${CSID}"
     },
     "e42f19d7c42db09a7f8e5bbed65b5a557f04ed32f64331ee4ea930834f8f21eb": {
@@ -3600,8 +3698,12 @@
     },
     "e43612359902f800e487d7c481939c46a89d4cac358ea03ddf393c094b5d8ac1": {
       "kind": "block",
-      "src": "skills/refactor/SKILL.md:310",
+      "src": "skills/refactor/SKILL.md:320",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r PYTEST_CMD < \"${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}\" 2>/dev/null || PYTEST_CMD=\"\"\n[ -n \"$PYTEST_CMD\" ] || { echo \"! BLOCKED \u2014 PYTEST_CMD unresolved; re-run Project Detection (an empty runner would classify every function uncovered)\"; exit 1; }\n\n_CO_OUT=$(python \"$PLUGIN_ROOT/bin/dev_run_tests.py\" pytest -- --co -q --cov=. 2>&1)\n[ $? -ne 64 ] || { echo \"! BLOCKED \u2014 test runner refused to start (exit 64): $_CO_OUT\"; exit 1; }\nSKIP_COV=0\nif echo \"$_CO_OUT\" | grep -q \"ModuleNotFoundError\\|No module named.*cov\\|unrecognized arguments.*--cov\"; then\n    echo \"\u26a0 coverage tool not found \u2014 coverage gate skipped\"\n    SKIP_COV=1\n    _CO_OUT=$(python \"$PLUGIN_ROOT/bin/dev_run_tests.py\" pytest -- --co -q 2>&1)\n    [ $? -ne 64 ] || { echo \"! BLOCKED \u2014 test runner refused to start (exit 64): $_CO_OUT\"; exit 1; }\nfi\necho \"$_CO_OUT\" | head -5\necho \"$_CO_OUT\" | grep -i \"<module_name>\" || echo \"No tests found for <module_name>\"\n\n[ \"${SKIP_COV}\" -eq 0 ] && { python \"$PLUGIN_ROOT/bin/dev_run_tests.py\" pytest -- --cov=<target_module> -q --cov-report=term-missing || true; }"
+    },
+    "e4951a988e869f60efe6beaf4d67303bc4ed586a141462af297e16b82bf3fe95": {
+      "kind": "command",
+      "src": "skills/refactor/SKILL.md:459"
     },
     "e4a0de41481c0d965dca7fd92fce64721b579d55affd0a653d8d2124806c5a12": {
       "kind": "command",
@@ -3631,7 +3733,7 @@
     },
     "e67b8cc8bcb076a3e718282a77b1f52f29e639f68285a339dee9d77aac975f76": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:310"
+      "src": "skills/refactor/SKILL.md:320"
     },
     "e6b16f2003e7635a903b13e83effd484b634ee9ed16a04ceff0fc0a95f783420": {
       "kind": "command",
@@ -3681,11 +3783,6 @@
     "e888c79d8242bcc822e14f5c9a3935742b429dcd4adc23af6d94125e4e65952c": {
       "kind": "command",
       "src": "skills/feature/SKILL.md:42"
-    },
-    "e8d37005d77582dbaf618d1489a0dbf4dde583461cf5bebeb09a53357207c189": {
-      "kind": "block",
-      "src": "skills/refactor/SKILL.md:536",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _DEV_DIR < \"${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}\" 2>/dev/null || _DEV_DIR=\"\"\nIFS= read -r _PYTEST_CMD < \"${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}\" 2>/dev/null || _PYTEST_CMD=\"\"\n_CHANGED=$({ git diff --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard; } | sort -u | tr '\\n' ' ' | sed 's/ *$//')\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" \"develop:refactor\" \"review+quality (after refactor edits applied)\" \"$_DEV_DIR\" \"dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD\" \"review and close gaps (Step 5) \u2192 Final Report\" -- calls_ahead=40 \"drop=refactor exploration and intermediate test output\"\nIFS= read -r _DEV_SHARED < \"${TMPDIR:-/tmp}/dev-shared-${CSID}\" 2>/dev/null || _DEV_SHARED=\"\"\n[ -z \"$_DEV_SHARED\" ] && _DEV_SHARED=\"plugins/cc_develop/skills/_shared\"\npython \"$PLUGIN_ROOT/bin/compaction_boundary.py\" \"$_DEV_SHARED\""
     },
     "e8e22010bf5ebb347e52923785e994ca0f08c52020b26fb9ccfe8febb6f4ebcd": {
       "kind": "command",
@@ -3743,7 +3840,7 @@
     },
     "edc8d3ab30e1659b9bff308d7db63632b492a2c8aa45a0d97a0ecf36c59809bb": {
       "kind": "command",
-      "src": "skills/refactor/modes/team-mode.md:54"
+      "src": "skills/refactor/modes/team-mode.md:69"
     },
     "ee0372fa2f235319f084451f83f79ab04b507a6d38886516f717336b43f2d68a": {
       "kind": "command",
@@ -3889,7 +3986,7 @@
     },
     "f4f0c7deef01875222ca7bd5d01e4eb8d73caab4f871848b01233a3e071c62c9": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:284"
+      "src": "skills/plan/SKILL.md:285"
     },
     "f4f9a2419091ca80795eea5fb230d4a5a5ed31d949715ff68a42b7a9cc6c7ef0": {
       "kind": "command",
@@ -3901,7 +3998,7 @@
     },
     "f577e95f12ed40459efb4a139042185a06bb5fa8f8f7a67875049fff8dae0827": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:321"
+      "src": "skills/plan/SKILL.md:322"
     },
     "f59d4e83a74352db8f13476605810e84cded533773b1f4183c2dcffaa7211b3e": {
       "kind": "command",
@@ -3942,7 +4039,7 @@
     },
     "f7b98724d6ed48b1696a886c2ec254d5a112f555ea6f49a974c7d48d2d7dfa71": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:310"
+      "src": "skills/refactor/SKILL.md:320"
     },
     "f80afceda80a26aadf09b99ee8cc5022ec91bfe31bf282b6e3f18934d40e77c1": {
       "kind": "command",
@@ -3958,7 +4055,7 @@
     },
     "f884c30aba314c52310a0c15aafc788fdd9670e8c456adb881a02b852817f30d": {
       "kind": "block",
-      "src": "skills/plan/SKILL.md:311"
+      "src": "skills/plan/SKILL.md:312"
     },
     "f90bc2fb0a01ce2d094890125a3805d4b834f9e0e3bf795638f11be32f23f926": {
       "kind": "command",
@@ -3999,7 +4096,7 @@
     },
     "fbe81425f10d75628d4293b1afe1349f613debf438e6e039e39162476e632682": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:310"
+      "src": "skills/refactor/SKILL.md:320"
     },
     "fbee6c852031a5781667ffafd4635405879b0f113256070ae871ab7021674ea0": {
       "kind": "command",
@@ -4015,7 +4112,7 @@
     },
     "fc7f8d4f1dd022ddb83005f508e97af4fe09506cf7bd7c798e824456fb64c6dd": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:502"
+      "src": "skills/refactor/SKILL.md:531"
     },
     "fc88bbb893413387bd02ab655edc880da87be7170cfa89d90569ba7917782dda": {
       "kind": "command",
@@ -4027,7 +4124,7 @@
     },
     "fd472001448a5a3e0f1ec9eb48042ab03607af1e8e6efa6b196419d92e7b99f0": {
       "kind": "command",
-      "src": "skills/refactor/modes/team-mode.md:110"
+      "src": "skills/refactor/modes/team-mode.md:145"
     },
     "fd56ae3dcadc113939b69fc33779151da0c3479197337ea5e0f69dc7b4e00bf1": {
       "kind": "command",
@@ -4040,7 +4137,7 @@
     },
     "fd69935a492bb78514f7fd4e67ad3a928c39f36e8ec8f7570dac7328a805c926": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:205"
+      "src": "skills/plan/SKILL.md:206"
     },
     "fd6d731f4f4e02e6a243ffaeb25f2f7d1c05b9fa99374927ecc6ae1c899edf3a": {
       "kind": "command",
@@ -4048,21 +4145,25 @@
     },
     "fdddd429db4bba782c2cadf6f3b12749edbfbe00ff7e818129bb2b98cb924148": {
       "kind": "command",
-      "src": "skills/refactor/SKILL.md:502"
+      "src": "skills/refactor/SKILL.md:531"
     },
     "fde0af4afe0f5eff163940d455835b785cae3e2652bed8f77789ca0b092f0abc": {
       "kind": "command",
-      "src": "skills/refactor/modes/team-mode.md:25"
+      "src": "skills/refactor/modes/team-mode.md:28"
+    },
+    "fed5961d93d2a0d10ed5b736d85ebc9319bee40ab962dfd6356cab01f973bd51": {
+      "kind": "command",
+      "src": "skills/refactor/modes/team-mode.md:108"
     },
     "ff512569203c1c476d972e37bdfe0e59b276aed8d2cc4e6f5cc36214ff2bd006": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:205"
+      "src": "skills/plan/SKILL.md:206"
     },
     "ffbcb862cd10fb93b33d831679834186c51a91a20c2f8bbc78d0c2a72bb11e36": {
       "kind": "command",
       "src": "skills/debug/SKILL.md:378"
     }
   },
-  "plugin": "cc_develop@0.49.0",
+  "plugin": "cc_develop@0.50.0",
   "schema": 2
 }

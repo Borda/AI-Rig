@@ -2,7 +2,7 @@
 
 <!-- file: executables.md — consumers: distill/SKILL.md -->
 
-Triggered when first normalized argument token is `executables`. Reads latest `/foundry:audit --efficiency` Check 33 reports if present; runs bin/ extraction scan inline otherwise. Then gates, extracts with user confirmation, re-audits changed files.
+Triggered when first normalized argument token is `executables`. Reads latest `/foundry:audit --efficiency` Check 33 reports if present; runs bin/ extraction scan inline otherwise. Then E3 gate (extraction needs its answer), extracts, re-audits changed files.
 
 ## Step E1: Locate or run scan
 
@@ -69,11 +69,13 @@ For each file in `CHECK33_FILES`, read, extract clusters. Default: `Verdict = HI
 
 Also include **prose compression candidates** — inline blocks where `tokens(block) > tokens(prose equivalent)` or bin/ call-site descriptions where `tokens(description) >= tokens(prose equivalent)`. Tag as `Verdict = PROSE` in candidate list. Exempt: examples, templates, exact-syntax blocks.
 
-No qualifying clusters found: print `✓ No extraction candidates at current threshold.` End with `## Confidence` block, stop.
+**Executables open items** — clusters held back (LOW without `--eager`) + timed-out scan units (not scanned). E2 zero-result and E3 gate Open decisions list them.
+
+No qualifying clusters found: zero-result run (SKILL.md §Report-first gate) — print the five-part report, no question: **Summary** — `✓ No extraction candidates at current threshold.` + scan scope; **Recommendations** — `none — no candidate at current threshold` (or rerun with `--eager`); **Findings table** — `none — no qualifying cluster`; **Review verdict** — `none — nothing extracted, nothing reviewed`; **Open decisions** — executables open items, or `none — nothing open`. End with `## Confidence` block, stop.
 
 ## Step E3: Present candidates and gate
 
-Build the candidate summary table below and Write it to `$RUN_DIR/candidates.md` first. After capturing the before-numbers, it is printed once, rendered as normal Markdown, as the last reply text before the question call. The question text carries the extraction headline, counts by verdict and `→ $RUN_DIR/candidates.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
+Write the gate report (SKILL.md §Report-first gate) to `$RUN_DIR/candidates.md` first: **Summary** — counts by verdict, scan scope; **Recommendations** — recommended threshold option and why; **Findings table** — candidate summary table below; **Review verdict** — `none before gate — foundry:curator re-audit (E5) and convergence loop (E6) run after extraction`; **Open decisions** — executables open items and what this question decides. After capturing the before-numbers, it is printed once, rendered as normal Markdown, as the last reply text before the question call — same response, no tool call between; the saved file never replaces the print. The question text carries the extraction headline, counts by verdict, the one-line top recommendation and `→ $RUN_DIR/candidates.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
 
 ```text
 Bin/ extraction candidates:
@@ -95,20 +97,34 @@ IFS= read -r _SCAN_DIR < "${TMPDIR:-/tmp}/distill-exec-scan-dir-${CSID}" 2>/dev/
 python "$PLUGIN_ROOT/bin/extract_code_blocks.py" "$_SCAN_DIR" --min-tokens 5 > "$RUN_DIR/blocks-before.jsonl"  # timeout: 30000
 ```
 
-Then call `AskUserQuestion`, with the plain candidate summary in the question text and no `preview` — do NOT write options as plain text first. Map options directly into tool call arguments:
+Then call `AskUserQuestion` (SKILL.md §Report-first gate); its question text carries the extraction headline, counts by verdict, the one-line top recommendation and `→ $RUN_DIR/candidates.md`, no `preview` — do NOT write options as plain text first. One single-pick question, ≤4 options; map options directly into tool call arguments. Each option offered only when its cluster set is non-empty (`HIGH only` needs HIGH, `HIGH + MEDIUM` needs HIGH or MEDIUM, `HIGH + MEDIUM + LOW` needs any, `bin/ extraction` needs any HIGH/MEDIUM/LOW, `Prose only` needs PROSE); `Skip` always offered.
+
+**`$EAGER == false`** — HEAD choice set:
 
 - question: "Extract candidates to bin/ scripts?"
 - (a) label: `HIGH only` — description: extract only HIGH-verdict clusters
 - (b) label: `HIGH + MEDIUM` — description: extract all HIGH and MEDIUM clusters
-- (c) label: `HIGH + MEDIUM + LOW` — description: extract all clusters including LOW verdict; only shown when `--eager` active
-- (d) label: `Prose only` — description: compress only PROSE-verdict candidates (replace blocks with prose/table/schema, delete script if bin/ call-site)
-- (e) label: `Skip` — description: no extraction; review candidates manually
+- (c) label: `Prose only` — description: compress only PROSE-verdict candidates (replace blocks with prose/table/schema, delete script if bin/ call-site)
+- (d) label: `Skip` — description: no extraction; review candidates manually
 
-**If `$EAGER == false`**: omit option (c) — present only (a), (b), (d), (e).
+**`$EAGER == true`** — 5 choices exceed cap, so threshold moves to a follow-up asked only after `bin/ extraction`:
+
+- question: "Extract candidates to bin/ scripts?"
+- (a) label: `bin/ extraction` — description: extract bin/ clusters; threshold asked next
+- (b) label: `Prose only` — description: compress only PROSE-verdict candidates (replace blocks with prose/table/schema, delete script if bin/ call-site)
+- (c) label: `Skip` — description: no extraction; review candidates manually
+
+User picks `bin/ extraction`: call `AskUserQuestion` (§Report-first gate exclusion: follow-up within printed gate); its question text carries counts by verdict, the one-line top recommendation and `→ $RUN_DIR/candidates.md`. `Prose only` or `Skip`: no follow-up.
+
+- question: "Threshold for bin/ extraction?"
+- (a) label: `HIGH only` — description: extract only HIGH-verdict clusters
+- (b) label: `HIGH + MEDIUM` — description: extract all HIGH and MEDIUM clusters
+- (c) label: `HIGH + MEDIUM + LOW` — description: extract all clusters including LOW verdict
+- (d) label: `Skip` — description: no extraction; review candidates manually
 
 ## Step E4: Extract
 
-**`Prose only` branch** — select only PROSE candidates and have the parent or **foundry:curator** compress their exact approved blocks; do not spawn extraction engineers. Before editing, Read each target, record its approved block boundaries and snapshot its full bytes with `cp -p -- "<target>" "<RUN_DIR>/prose-pre/<target-id>"` after creating the snapshot directory; substitute actual paths before each command. A failed snapshot stops that target's writes. Replace only the selected block with equivalent prose/table/schema, preserving modal strength, literals, exceptions and step order; apply the instruction compression gate for instruction files. Run `diff -u "<RUN_DIR>/prose-pre/<target-id>" "<target>"` after editing, show the diff, and reject changes outside the approved block or any semantic loss. For a bin/ call-site candidate, first replace every approved consumer, verify no remaining script references across the project, and request confirmation for the exact script path before deleting it; remaining consumers or denied deletion keep the script and are reported. Record every changed/deleted path and the snapshot comparison for E5, skip the engineer spawns and Transplant below, then continue to E5 and E6. `Skip` exits without changes. Other selections use only bin/ clusters at the selected thresholds.
+**`Prose only` branch** — select only PROSE candidates and have the parent or **foundry:curator** compress their exact approved blocks; do not spawn extraction engineers. Before editing, Read each target, record its approved block boundaries and snapshot its full bytes with `cp -p -- "<target>" "<RUN_DIR>/prose-pre/<target-id>"` after creating the snapshot directory; substitute actual paths before each command. A failed snapshot stops that target's writes. Replace only the selected block with equivalent prose/table/schema, preserving modal strength, literals, exceptions and step order; apply the instruction compression gate for instruction files. Run `diff -u "<RUN_DIR>/prose-pre/<target-id>" "<target>"` after editing, show the diff, and reject changes outside the approved block or any semantic loss. For a bin/ call-site candidate, first replace every approved consumer, verify no remaining script references across the project, and confirm the exact script path via `AskUserQuestion` before deleting it (§Report-first gate exclusion: per-item approval after printed diff); remaining consumers or denied deletion keep the script and are reported. Record every changed/deleted path and the snapshot comparison for E5, skip the engineer spawns and Transplant below, then continue to E5 and E6. `Skip` exits without changes. Other selections use only bin/ clusters at the selected thresholds.
 
 > **Explicit worktree isolation** — each E4 spawn passes `isolation="worktree"` itself (`agents/sw-engineer.md` §Worktree isolation): clusters run in parallel, two may share one source `.md`, and the diff gate below reverts with `git checkout HEAD -- <file>` — in one shared tree that revert wipes a sibling cluster's edit or the user's uncommitted work. An isolated agent cannot write into the main tree, so its summary rides in the envelope, never a file; its edits stay in its worktree until §Transplant below.
 
@@ -180,7 +196,7 @@ python "$PLUGIN_ROOT/bin/extract_code_blocks.py" "$_SCAN_DIR" --min-tokens 5 > "
 
 For bin/ extraction, block count stays roughly flat by design — an extraction replaces a block's body, doesn't delete the block. Token estimate and count of blocks over 25 lines are the numbers that move. Prose compression may remove blocks entirely; report its measured block-count delta separately and count retained scripts when deletion was not approved.
 
-**Adversarial Convergence Loop** — before any commit, read and follow `quality-gates.md` §Adversarial Convergence Loop over the combined diff: an independent `foundry:challenger` baseline `W_0`, then further passes only while the unchanged-scope nonnegative integer total score strictly decreases, findings weighted `security 20 · critical 10 · high 6 · medium 4 · low 2 · nit 1`. Resolve feasible authorized findings and investigate the shared root cause of repeated signatures; a structural flag alone does not stop remediation. Any decrease (`0 < r_n < 1`) converges; equal scores plateau, and increases do not converge. Stop on an independently reviewed current `W_n == 0`, plateau/non-convergence with open findings, a stricter caller-budget stop, or missing independence/authorization. Any open `security` or `critical` finding blocks completion and commit; unresolved `high` requires escalation. On a stop with findings open, report completed scores, per-tier residue, evidence, owner and next action; invoke `AskUserQuestion` only for the concrete missing decision or authorization. A clean loop does not authorize a commit.
+**Adversarial Convergence Loop** — before any commit, read and follow `quality-gates.md` §Adversarial Convergence Loop over the combined diff: an independent `foundry:challenger` baseline `W_0`, then further passes only while the unchanged-scope nonnegative integer total score strictly decreases, findings weighted `security 20 · critical 10 · high 6 · medium 4 · low 2 · nit 1`. Resolve feasible authorized findings and investigate the shared root cause of repeated signatures; a structural flag alone does not stop remediation. Any decrease (`0 < r_n < 1`) converges; equal scores plateau, and increases do not converge. Stop on an independently reviewed current `W_n == 0`, plateau/non-convergence with open findings, a stricter caller-budget stop, or missing independence/authorization. Any open `security` or `critical` finding blocks completion and commit; unresolved `high` requires escalation. On every stop path — each one above, a stop before `W_0` included — Write the stop report (SKILL.md §Report-first gate) to `$RUN_DIR/convergence-stop.md`: **Summary** — stop reason, completed scores `W_0 → W_n` (`not-run` before `W_0`) and open counts per tier (`0` when none); **Recommendations** — next action and owner; **Findings table** — per-tier residue with evidence (`none — no open finding` after a clean `W_n == 0`, `none — no round completed` before `W_0`); **Review verdict** — challenger round outcomes (`not-run — <reason>` before `W_0`); **Open decisions** — the concrete missing decision or authorization, or `none — nothing awaits the user`. It is printed once, rendered as normal Markdown, as the last reply text before any question call — same response, no tool call between; the saved file never replaces the print. Invoke `AskUserQuestion` (SKILL.md §Report-first gate) only for the concrete missing decision or authorization; its question text carries the stop headline, open counts per tier, the one-line top recommendation and `→ $RUN_DIR/convergence-stop.md`. A clean loop does not authorize a commit.
 
 **Commit grouping** — two commits, never one. Extraction and policy are different kinds of change; reviewers read them differently:
 

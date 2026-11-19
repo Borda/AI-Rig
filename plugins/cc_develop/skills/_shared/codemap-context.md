@@ -44,7 +44,7 @@ if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
 python "$PLUGIN_ROOT/bin/codemap_scan.py" --source=diff  # timeout: 15000
 ```
 
-> Interpret: `rdeps` output = external callers affected; `coupled` output = co-change pairs.
+> Interpret: `rdeps` output = external callers affected; `coupled` output = modules ranked by `internal_dep_count`; use only in-scope modules with `internal_dep_count` ≥ 20, never the repo-wide list.
 >
 > Fallback (specific known module): `codemap-py query rdeps <mod> --limit 10 2>/dev/null || true`.
 

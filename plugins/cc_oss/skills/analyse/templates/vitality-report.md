@@ -137,10 +137,10 @@ _(Repeat for each group. If no duplicate groups found: "No obvious duplicates de
 
 ### Open-PR Overlap
 
-Merge-conflict / duplicate-effort candidates among open PRs (Signal B). Direct = shared changed files; Structural = tightly-coupled modules touched by different PRs (codemap-py). Emit only when candidates found:
+Merge-conflict / duplicate-effort candidates among open PRs (Signal B). Direct = changed files shared by two PRs; High-coupling touch = one PR touching a module high in codemap-py's per-module `coupled` ranking (no PR pairing). Emit only when found:
 
 - **PRs #A and #B** — direct: both touch `path/to/file` → conflict/duplicate candidate.
-- **PRs #A and #C** — structural: touch coupled modules `m1`/`m2` (no shared files) → review together.
+- **PR #C** — high-coupling touch: `m1` (N internal imports) → review for wider impact.
 
 _(No candidates: "No overlapping open PRs detected." When skipped: "PR-set overlap skipped — {N} open PRs exceeds cap {PR_FILES_CAP}.")_
 

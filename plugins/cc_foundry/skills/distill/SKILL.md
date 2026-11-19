@@ -52,6 +52,26 @@ echo "ARGUMENTS_FINAL=$CLEAN_ARGS"
 
 > **Note**: `EAGER`, `PROJECT_FLAG` and stripped `CLEAN_ARGS` are set by this Bash block, but shell variable state does **not** persist across separate Bash() tool calls. After this block runs, read its stdout (`EAGER=true/false`, `PROJECT_FLAG=true/false`, `ARGUMENTS_FINAL=...`), carry those values as model-context references for all subsequent mode dispatch and threshold decisions. Do not rely on `$EAGER`/`$PROJECT_FLAG` as live shell variables in later steps — substitute the literal value read from stdout. `PROJECT_FLAG=true`: mode must run interactive picker before operating.
 
+**Report-first gate — every mode** (default Step 5, `prune`, `memory`, `external`, `executables`, no exception). Invariant: user decides from a complete report, and the decision survives a host blanking pre-call text:
+
+- Before any `AskUserQuestion` on what to apply, port, extract, prune or do next: print gate report in reply, rendered normal Markdown. Order: Write report file first → then, in the response that calls `AskUserQuestion`, print full report as reply text right before the call. No tool call between print and call. Question text still carries its plain summary (below).
+- Every report — gate modes (`prune`, `memory`, `external`, `executables`) and default Step 5 — carries all five; empty part stated `none — <reason>`, never left out:
+  - **Summary** — headline + counts
+  - **Recommendations** — what to do, recommended option, why
+  - **Findings table** — the gate's candidate/proposal/scored table; label names rendered form, so a per-item text list is **Findings list**
+  - **Review verdict** — challenger/reviewer outcome (verdict counts, discarded rows), or `⚠ unavailable` / ⏱ `timed_out`, or `none before gate — <reviewer> runs after apply`
+  - **Open decisions** — what the question decides + unresolved items (conflicts, Group B, manual-review rows)
+- Saved `.temp/`/`.reports/` file = addition, never substitute. Write content, Bash stdout, question text, bare `→ <file>` path ≠ printed report. Gate reached without printed report = violation: print it, then ask, question text keeping its plain summary.
+- Gate report = required rich content (`_full/communication.md` §Interactive Questions: named file first, printed once before the call) → full print, not Output Routing header/path/summary form. distill is no report-header follow-up (`_shared/terminal-summaries.md` final-reply-after-answer rule does not apply); saved file gets no `---` YAML header.
+- Default mode: Step 5 report, no gate, never a question; all five parts (`**Review verdict**: none — default mode runs no reviewer`). Next steps (`/foundry:manage create` — user-invoked only — or edit existing) print as plain-text user-run commands. This line is the authoritative default-mode policy; `_full/quality-gates.md` §Output Routing defers here.
+- Question text stays ≤6 plain lines: headline + counts + one-line top recommendation + `→ <file>` (`communication.md` §Interactive Questions) — carries the decision when a host blanks pre-call text.
+- Every question site names its report (`§Report-first gate`) or one named exclusion (`§Report-first gate exclusion: <name>`). Exclusions: `--project` picker (scope choice, no report built yet); per-item approval after printed diff (`Review first`, `Show diff first`, draft approvals, deletion confirms — diff/draft printed first); follow-up within printed gate (asked only after the gate's first answer needs it; report already printed; its question text repeats counts, top recommendation, path).
+- Legal ask forms: an `AskUserQuestion` sentence, a `- question:` block with its `- (x) label:` options, or a sentence carrying an exclusion tag. Plain-text question or wait-for-reply = violation (`communication.md` §Interactive Questions); free text arrives via the tool's auto-added `Other` answer.
+- Open items: each mode keeps one open-item list (`<mode> open items`); its gate and zero-result **Open decisions** both name it, never a hand-picked subset.
+- Menus list only actionable options: option offered only when its candidate set is non-empty; `Skip` always offered.
+- Option cap: each question ≤4 single-pick options; more choices → conditional follow-up within printed gate, never a second question every user must answer.
+- Zero-result run (analysis found nothing to propose): same five parts, empty ones stated, no question. Prerequisite stop (no input to analyse) prints its one status line only.
+
 <!-- ../../assets/images/distill-arch.svg diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
 
 ## Mode dispatch — before inventory
@@ -161,8 +181,14 @@ Anti-pattern checklist — reject candidate if any apply:
 
 ## Step 5: Report
 
+Print report below in reply, rendered normal Markdown (§Report-first gate: all five parts, empty ones stated). Default mode has no gate: after the report, print next steps as plain-text user-run commands, never as a question (§Report-first gate, default-mode line).
+
 ```markdown
 ## Agent/Skill Suggestions
+
+**Summary**: [N patterns scanned · N gaps · N recommendations]
+
+**Recommendations** (`none — <reason>` when empty):
 
 ### Existing Coverage (no gaps found)
 - [agent/skill]: covers [pattern] well — no new file needed
@@ -186,6 +212,17 @@ Anti-pattern checklist — reject candidate if any apply:
 
 ### No Action Needed
 [pattern]: already handled by [existing agent/skill]
+
+**Findings table** (`none — <reason>` when no pattern found):
+
+| Pattern | Occurrences | Covered by | Gap |
+|---------|-------------|------------|-----|
+| [pattern] | [N] | [agent/skill or —] | [yes/no] |
+
+**Review verdict**: none — default mode runs no reviewer
+
+**Open decisions**:
+- [choice needing user input, e.g. which recommendation to scaffold — or `none — <reason>`]
 
 ## Confidence
 **Score**: [0.NN]

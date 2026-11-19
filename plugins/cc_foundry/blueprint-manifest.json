@@ -180,7 +180,7 @@
     },
     "088f5437c7b027855ef51e76489cf894cff319c4eb1f323e084e0e21f829132f": {
       "kind": "command",
-      "src": "skills/distill/SKILL.md:96"
+      "src": "skills/distill/SKILL.md:116"
     },
     "08b8c9b1f3db9277e3f0296d84522b7af4a79d6f70a23a27dda737e77853bb27": {
       "kind": "block",
@@ -230,7 +230,7 @@
     },
     "0b4031afab89d8ff85e497b57a2d0e2ea4ba8de69aad6171d2070727572c8367": {
       "kind": "command",
-      "src": "skills/distill/SKILL.md:123"
+      "src": "skills/distill/SKILL.md:143"
     },
     "0b4e7ae767c20610f6f879cb802da9bf699afe1d036b2e681d13a1e4e02403a2": {
       "kind": "command",
@@ -447,7 +447,7 @@
     },
     "154ab2d86df14e417128f2a3f66ae02e8988ff2ac34fa5941edb8380ddedbcf9": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:252"
+      "src": "skills/distill/modes/memory.md:253"
     },
     "154fc337e62d7fa559cb93ff49a2a21a8bf93773c2e25498c6ee92baa36e69bf": {
       "kind": "command",
@@ -520,7 +520,7 @@
     },
     "192aeb50690330ba7163b6bc30081a67ac524daba7d4be8c4801c6b8ad39f306": {
       "kind": "command",
-      "src": "skills/distill/modes/external.md:161"
+      "src": "skills/distill/modes/external.md:175"
     },
     "194a2c1083401164274bc7994aa96c0798b97e9a5f60bef0f304d2be9a1d6de2": {
       "kind": "command",
@@ -606,7 +606,7 @@
     },
     "1d5ecfe1f2a40fd421423a67e9f4f776137ac9a195bd57145388f91901b694b0": {
       "kind": "command",
-      "src": "skills/distill/modes/external.md:161"
+      "src": "skills/distill/modes/external.md:175"
     },
     "1d782a927c4d05242f90598fce1a767cdc71d3e4726f1e637f261aff71e7107d": {
       "kind": "command",
@@ -695,7 +695,7 @@
     },
     "20179de392c310270b48089e61c3d0494bc194942e949e37155695e8fde6fbdf": {
       "kind": "command",
-      "src": "skills/distill/SKILL.md:96"
+      "src": "skills/distill/SKILL.md:116"
     },
     "2022a4c6897a39347b5a8a194ef1c07eb5cf0657c4a986619d705ef25bf2672c": {
       "kind": "command",
@@ -837,7 +837,7 @@
     },
     "29232276c86186eea6f04a8a0f84fd2bf8357fe16e7f2460a78e0194eb7b451a": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:198"
+      "src": "skills/distill/modes/memory.md:199"
     },
     "2943b9d2a19427f975898da1c3cb78d9dcbfcb6b652608fa5c7f079e567ae52c": {
       "kind": "command",
@@ -1015,7 +1015,7 @@
     },
     "34261d868b15014df7c4720fac7ce32f22dfba1f78e708b49580b99664247b34": {
       "kind": "command",
-      "src": "skills/distill/modes/external.md:161"
+      "src": "skills/distill/modes/external.md:175"
     },
     "34265138f3d13390c90cc6fc289df147df7202d87844e10fc27368e4d0c82ba6": {
       "kind": "block",
@@ -1024,7 +1024,7 @@
     },
     "34312486e296511278455eb4f9fef656e8f700755dd02f9f923ee4a14187fba3": {
       "kind": "block",
-      "src": "skills/distill/SKILL.md:222",
+      "src": "skills/distill/SKILL.md:259",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\npython \"$PLUGIN_ROOT/bin/load_mode.py\" distill modes external.md --fallback-source"
     },
     "34a721412ba0070ff152ea4369aa1171ac2ef48b4368587fcbf71f68e4f3fb17": {
@@ -1111,7 +1111,7 @@
     },
     "3a27ea4238129cfe4e79cbd83a3f1f6332f5dfbada89d51582d9cba7d6d7e512": {
       "kind": "block",
-      "src": "skills/distill/SKILL.md:204",
+      "src": "skills/distill/SKILL.md:241",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\npython \"$PLUGIN_ROOT/bin/load_mode.py\" distill modes prune.md --fallback-source"
     },
     "3a36d18f4fc26c50316c6b502ad04595ceafbeb8e3ee4ca9ff68740b41d5c620": {
@@ -1534,7 +1534,7 @@
     },
     "4ef731e1f4c65ebdfac86aacc25e1c32b7623bc65c7cbff260c6fc1852e5fa19": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:198"
+      "src": "skills/distill/modes/memory.md:199"
     },
     "4ef922ad5df7ba386ff01ca461c03e49e0f8cdac240f5e1bd636b6c005fd32d6": {
       "kind": "block",
@@ -1633,11 +1633,11 @@
     },
     "53cd8fc5503e300d824158ccb12a0dfda8f47ca84254e957ecb23393c75604aa": {
       "kind": "command",
-      "src": "skills/distill/SKILL.md:96"
+      "src": "skills/distill/SKILL.md:116"
     },
     "53f21931a77951b3c08e040d71ed0c904d05f6874c549c127cf586dd916a3a5a": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:198"
+      "src": "skills/distill/modes/memory.md:199"
     },
     "543c526aa72e1663d2aa746d1ed4ffc47109747b46f04e39fde2195c4419fb9b": {
       "kind": "command",
@@ -1697,7 +1697,7 @@
     },
     "56353c52a6db8d9d63e25b42f756b5fe9d4d5c8e97bd2f5506462cc3c7534897": {
       "kind": "command",
-      "src": "skills/distill/modes/external.md:161"
+      "src": "skills/distill/modes/external.md:175"
     },
     "565c9260122c4269459063cdb123d65dd6209e019b61fccc4aa7072fa0fba20e": {
       "kind": "command",
@@ -1839,7 +1839,7 @@
     },
     "5c68652ef50c9dcfaa97b61d2ba59eb490ab0bc293e3faa7ca0daf5e6a6a92fc": {
       "kind": "block",
-      "src": "skills/distill/modes/external.md:183"
+      "src": "skills/distill/modes/external.md:197"
     },
     "5c6d639844828cc33b30b945c8f2ca1179fd7c6c0cebaf3a95295a1295954ad9": {
       "kind": "command",
@@ -1920,7 +1920,7 @@
     },
     "5f5a16f936f620c78499d61941158ab928fc26fe0838ad07309e7293c025ba99": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:198"
+      "src": "skills/distill/modes/memory.md:199"
     },
     "5f7d5a22b6d2971885582198a868a34c30f2a20ef8ab3f24e6f2d1fc5a4c15d2": {
       "kind": "block",
@@ -1996,7 +1996,7 @@
     },
     "62e59ffc132460f1b0b3e3f6d93c6beb19689cc336d2f54af4fbce770d71e1c4": {
       "kind": "command",
-      "src": "skills/distill/modes/external.md:183"
+      "src": "skills/distill/modes/external.md:197"
     },
     "6334b6e8b9acb695eaaa0a5c3a2e0c9ad57e3334ccc5d8eacc5fa84395a0732b": {
       "kind": "command",
@@ -2199,7 +2199,7 @@
     },
     "6ecde043bcd28fcdaa3ffbd883412b9c7d0bfe86905914698d8a3bfbb0f5d1b3": {
       "kind": "command",
-      "src": "skills/distill/modes/external.md:161"
+      "src": "skills/distill/modes/external.md:175"
     },
     "6f01daa2695ee2c417b79559ce4bc93b04ec60ad4b7634d445cc82531b4574ed": {
       "kind": "command",
@@ -2318,7 +2318,7 @@
     },
     "73b14ca722eb4c9b1dbd7ac0f568cd5ad58ea3863e1033ff076dfbd609a95ad1": {
       "kind": "block",
-      "src": "skills/distill/modes/memory.md:252"
+      "src": "skills/distill/modes/memory.md:253"
     },
     "73e47a95bf14a4cd87f06b1935bed922f1116ec9607f2fd317f4e2e67131320b": {
       "kind": "command",
@@ -2516,7 +2516,7 @@
     },
     "7ed6e6caf8215137ac51f8a695985eee43739764dc6fe10e304d507df17f05a8": {
       "kind": "block",
-      "src": "skills/distill/modes/executables.md:89",
+      "src": "skills/distill/modes/executables.md:91",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/distill-exec-run-dir-${CSID}\" 2>/dev/null || RUN_DIR=\"\"\nIFS= read -r _SCAN_DIR < \"${TMPDIR:-/tmp}/distill-exec-scan-dir-${CSID}\" 2>/dev/null || _SCAN_DIR=\"\"\n[ -n \"$RUN_DIR\" ] && [ -n \"$_SCAN_DIR\" ] || { echo \"! MISSING \u2014 E1 run-dir/scan-dir sentinel; re-run Step E1\"; exit 1; }\npython \"$PLUGIN_ROOT/bin/extract_code_blocks.py\" \"$_SCAN_DIR\" --min-tokens 5 > \"$RUN_DIR/blocks-before.jsonl\""
     },
     "7ee2d5b1537c4a3389b8f985901e758ce4203b3b5ecd6f03eb1cd2304cfea9d0": {
@@ -2600,7 +2600,7 @@
     },
     "839f764536c28b2c25d0ef0ac384c422bb107a9a6148d95b7316f031b24216b0": {
       "kind": "block",
-      "src": "skills/distill/modes/memory.md:239"
+      "src": "skills/distill/modes/memory.md:240"
     },
     "83fc422ffc03aed44604490677fbd2bc9457c950916042df9eef1d886eeb2ce5": {
       "kind": "command",
@@ -2664,7 +2664,7 @@
     },
     "85a6c7d41fa5d2d4abe8b028f0f5f374e06ad427f5d81721366c9d29dbc56926": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:164"
+      "src": "skills/distill/modes/memory.md:161"
     },
     "85f99308bb1fe4d73bc14a10e547b053ab1a2e12acf28f69bb26e10de00a35b9": {
       "kind": "command",
@@ -2768,7 +2768,7 @@
     },
     "8a9d5b8e35a01958feb1ce548a3a160e574609b4d552b2c0cc9bb49c43bf4f8e": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:198"
+      "src": "skills/distill/modes/memory.md:199"
     },
     "8ae41a25b976410936cf4851b4b1c76864aeb3828b2b21a34fabc01b57280f14": {
       "kind": "block",
@@ -2958,7 +2958,7 @@
     },
     "930c4b78191ac682e1efeca9950f781f22592d3ea95c9e4775a5bcf3022b7698": {
       "kind": "block",
-      "src": "skills/distill/modes/executables.md:172",
+      "src": "skills/distill/modes/executables.md:188",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/distill-exec-run-dir-${CSID}\" 2>/dev/null || RUN_DIR=\"\"\nIFS= read -r _SCAN_DIR < \"${TMPDIR:-/tmp}/distill-exec-scan-dir-${CSID}\" 2>/dev/null || _SCAN_DIR=\"\"\n[ -n \"$RUN_DIR\" ] && [ -n \"$_SCAN_DIR\" ] || { echo \"! MISSING \u2014 E1 run-dir/scan-dir sentinel; re-run Step E1\"; exit 1; }\npython \"$PLUGIN_ROOT/bin/extract_code_blocks.py\" \"$_SCAN_DIR\" --min-tokens 5 > \"$RUN_DIR/blocks-after.jsonl\""
     },
     "9317e9c6d16dea349f5b976740510f1428243ff6f81f026b13823dce38cd4374": {
@@ -3222,7 +3222,7 @@
     },
     "9e881ef54463f08278e30b7fb03fcb5fbcd619c659e8cc082f286aef8a62b55d": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:239"
+      "src": "skills/distill/modes/memory.md:240"
     },
     "9ebcbbe77a1aa8cf420c9b143b9d72596fdc33aa01721f6fd3640ca109f9c479": {
       "kind": "command",
@@ -3301,7 +3301,7 @@
     },
     "a2350c9cb8f8f252e5c437fd2ae81c3d01914d8d60358764b017da261f03b4be": {
       "kind": "block",
-      "src": "skills/distill/SKILL.md:231",
+      "src": "skills/distill/SKILL.md:268",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\npython \"$PLUGIN_ROOT/bin/load_mode.py\" distill modes executables.md --fallback-source"
     },
     "a248fd12c9b7c54a5d9a0f76630f636df009fbf1ed91aa07057d062a95ce157f": {
@@ -3323,7 +3323,7 @@
     },
     "a325f5684a5598466175b721144ba4a355e56a3a1fb279c37fdf85950c43597b": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:252"
+      "src": "skills/distill/modes/memory.md:253"
     },
     "a331130159bb1b7274e91867a00db090d0151d67ff1a0eea14a65875eec5a381": {
       "kind": "command",
@@ -3348,7 +3348,7 @@
     },
     "a4715103ff625a2e2f20bda3daba24104f3501f57d68f574f9c0f20b4c7f7694": {
       "kind": "block",
-      "src": "skills/distill/SKILL.md:123",
+      "src": "skills/distill/SKILL.md:143",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n_PRESERVE=\"run-dir=n/a\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-file \"${TMPDIR:-/tmp}/distill-state-${CSID}/keep-items\" \"foundry:distill\" \"gap-analysis (after work-pattern scan)\" \"n/a\" \"$_PRESERVE\" \"gap analysis (Step 3) \u2192 duplication check (Step 4) \u2192 report (Step 5)\""
     },
     "a4ad59429ce4db8484beb1fcabd38acdcdd4b8f943a42fd1329d9744861d0460": {
@@ -3449,7 +3449,7 @@
     },
     "aa0809c2f0234943978fa3690912fd68db9f5b3332343cb65bc39ecb091a612f": {
       "kind": "command",
-      "src": "skills/distill/modes/external.md:183"
+      "src": "skills/distill/modes/external.md:197"
     },
     "aa1fd6dda5b7a4410cf53e214cd0713393ab1294e53b6e86b8196dea307ebf6e": {
       "kind": "block",
@@ -3680,7 +3680,7 @@
     },
     "b6ecc6acdd9f4d21616d40f4c141a61775e23533ffca62b6d34a2dc8f2b6473c": {
       "kind": "block",
-      "src": "skills/distill/SKILL.md:79",
+      "src": "skills/distill/SKILL.md:99",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nfind \"$HOME/.claude/plugins/cache\" -mindepth 2 -maxdepth 2 -type d 2>/dev/null | while IFS= read -r p; do\n    m=\"${p%/*}\"; m=\"${m##*/}\"\n    python \"$PLUGIN_ROOT/bin/resolve_plugin_root.py\" --plugin-name \"${p##*/}\" --marketplace \"$m\" 2>/dev/null | sed \"s|^|PLUGIN_ROOT: ${p##*/} |\"\ndone"
     },
     "b6f4c4d1629de8022f684761a0d5a281c1d9cbd6b92fceee59251c15707eb10f": {
@@ -3867,7 +3867,7 @@
     },
     "c120220580aee5d7440a77ead15770722e90b24a9928a092f14305b1ddb404df": {
       "kind": "block",
-      "src": "skills/distill/modes/memory.md:164",
+      "src": "skills/distill/modes/memory.md:161",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nRUN_DIR=$(python \"$PLUGIN_ROOT/bin/make_run_dir.py\" .reports/distill 2>/dev/null)\n[ -n \"$RUN_DIR\" ] || { echo \"! BLOCKED \u2014 make_run_dir.py returned no run dir; nothing applied\"; exit 1; }\necho \"$RUN_DIR\" > \"${TMPDIR:-/tmp}/distill-memory-run-dir-${CSID}\"\necho \"RUN_DIR=$RUN_DIR\""
     },
     "c18da57374eb78ff199d351cee265f8a386be2dd28e85da201292dfbb9f43155": {
@@ -3993,7 +3993,7 @@
     },
     "c8ca906daecc14f6bae01a510c1c439d280b651e6f0c706822ed95fd81968ba5": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:57"
+      "src": "skills/distill/modes/memory.md:59"
     },
     "c8fb808b6c6a81ab5a98182207d0b45be4a520099b8466ee4f01c61c99efea1f": {
       "kind": "block",
@@ -4025,7 +4025,7 @@
     },
     "cad054646571f9964756ce9b8a90f1d13d1c3d0f47caad532c14cc177b4c31ac": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:164"
+      "src": "skills/distill/modes/memory.md:161"
     },
     "cb21485803ac81422b9ad8e9a4157bdfe0562e31184d7586a0630dcb539a9041": {
       "kind": "command",
@@ -4230,7 +4230,7 @@
     },
     "d3ec7c9898f16ccb0548ba5c10c0fd78d37e7c9b005df615c392b716828a4fec": {
       "kind": "block",
-      "src": "skills/distill/SKILL.md:213",
+      "src": "skills/distill/SKILL.md:250",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\npython \"$PLUGIN_ROOT/bin/load_mode.py\" distill modes memory.md --fallback-source"
     },
     "d401c0918882859c8a4cc8e68fbf3380dc8b4d2d445a63aebaebbe077598075f": {
@@ -4289,7 +4289,7 @@
     },
     "d6af63b6a5a41206a1edfbe2ecc259151098ad99570b3143befa7758faf127a1": {
       "kind": "block",
-      "src": "skills/distill/modes/memory.md:57",
+      "src": "skills/distill/modes/memory.md:59",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nMEM_DIR=\"<memory-dir>\"\ncase \"$MEM_DIR\" in *'<'*'>'*|\"\") echo \"! BLOCKED \u2014 substitute MEM_DIR\"; exit 1;; esac\npython \"$PLUGIN_ROOT/bin/mine_transcript_failures.py\" \"${MEM_DIR%/memory}\""
     },
     "d6b45b1925bfaa99c0b32312574cf0ee7ab9bae0e4f8dc75bf81d68ff294f64e": {
@@ -4347,7 +4347,7 @@
     },
     "da52c7df16c5a7f74224e1786a53661061b1308513f87ba963067328932a0b1a": {
       "kind": "command",
-      "src": "skills/distill/modes/external.md:161"
+      "src": "skills/distill/modes/external.md:175"
     },
     "daab97e587b1950bec24c8cf5cacb634088db3f03520db07bfdd2f3f279e7866": {
       "kind": "command",
@@ -4405,7 +4405,7 @@
     },
     "ddbb611397cde44bad1265b3fbdb4d8b14d059c4c6c764d44a53546a5c14e0d9": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:198"
+      "src": "skills/distill/modes/memory.md:199"
     },
     "ddccd2c7d89503a36c69141ce660d3493f4998a8df6e309953f60241758b2f44": {
       "kind": "command",
@@ -4517,7 +4517,7 @@
     },
     "e359d7fc1bb713fc8ae8c8dcefff92aa6412e84a7acb8157d334236e98db6b97": {
       "kind": "block",
-      "src": "skills/distill/modes/external.md:161"
+      "src": "skills/distill/modes/external.md:175"
     },
     "e3d7c26b34005ec0a62797f5f2f1b80854e67aa4863efb49b8a35cd01ff96891": {
       "kind": "command",
@@ -4537,7 +4537,7 @@
     },
     "e5420385fae1ffa77d8453e6d30f24e68c26086619b82a910b364efeb436406e": {
       "kind": "block",
-      "src": "skills/distill/SKILL.md:96"
+      "src": "skills/distill/SKILL.md:116"
     },
     "e5481d0d8d762d409f63c059301d5246d88542ce0d2208d7d71219bdc6d3b752": {
       "kind": "block",
@@ -4579,7 +4579,7 @@
     },
     "e70fda815df0cf33f1b58c7ba81ec33c6734c23e5ca2f028516fb297f2440644": {
       "kind": "command",
-      "src": "skills/distill/modes/external.md:161"
+      "src": "skills/distill/modes/external.md:175"
     },
     "e756d289d8fc6140338d6de013a9789ed125dffd489586065d4dd1d6593e9f43": {
       "kind": "command",
@@ -4668,7 +4668,7 @@
     },
     "ec278940662feff37d7178f1190615809d94eddfaa16d0c49d642edda6c21dcf": {
       "kind": "command",
-      "src": "skills/distill/modes/external.md:183"
+      "src": "skills/distill/modes/external.md:197"
     },
     "ec48ad690cffa70e061b6aa3d2e3d8549a68c940ac527bbc93409ff17cf58cbd": {
       "kind": "command",
@@ -4836,7 +4836,7 @@
     },
     "f4313dbcd0d9f1ecbe3cb358901744599f29196045d3cae1b5c0ce17098161dd": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:239"
+      "src": "skills/distill/modes/memory.md:240"
     },
     "f4ba2213f5126e545f8962cb7186f0a78c69e38f7c856ff46e49366fc40d88c5": {
       "kind": "command",
@@ -4884,7 +4884,7 @@
     },
     "f7013919a43929bb6fa711bf9e136ea047164378b6aa37f207f521b787b07a6e": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:57"
+      "src": "skills/distill/modes/memory.md:59"
     },
     "f73e5411673b9e89fe758416653af78c5dcae56d8b56a9a19a688f32dc218be2": {
       "kind": "block",
@@ -4968,7 +4968,7 @@
     },
     "fc2b3454f2828b890511c67e8511a0670be796879f28dfe43e93dfe8a701554d": {
       "kind": "command",
-      "src": "skills/distill/modes/memory.md:198"
+      "src": "skills/distill/modes/memory.md:199"
     },
     "fc4a8fa37e6a3c39ff61d5c34909e1069566526aaf3918d296cc35a477f448e4": {
       "kind": "block",
@@ -5005,7 +5005,7 @@
     },
     "feadbfe207c450dcbd5fd4dc18640110e827f795ca7ab5d74d1fc92c577075ac": {
       "kind": "block",
-      "src": "skills/distill/modes/memory.md:198"
+      "src": "skills/distill/modes/memory.md:199"
     },
     "fede7c60b6a4c25f2945ffeb8cd1c06077c8bc895621860e4df0061e986bb35c": {
       "kind": "block",
@@ -5036,6 +5036,6 @@
       "src": "skills/audit/templates/checks-skills-sweep.md:33"
     }
   },
-  "plugin": "cc_foundry@0.81.0",
+  "plugin": "cc_foundry@0.81.1",
   "schema": 2
 }

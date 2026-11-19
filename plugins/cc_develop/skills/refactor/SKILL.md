@@ -236,24 +236,32 @@ if command -v codemap-py >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ]; then
     _BATCH_REQ="$DEV_DIR/codemap-rdeps-batch.json"
     AFFECTED_MODULES=$(python "$PLUGIN_ROOT/bin/build_codemap_batch.py" "$_BATCH_REQ" --files "$REFACTOR_FILES" --repository "$_ROOT" --queries rdeps) || exit $?
     if [ -n "$AFFECTED_MODULES" ]; then codemap-py query batch "$_BATCH_REQ" 2>/dev/null; fi
-    codemap-py query coupled --top 10
+    # whole ranking, then in-scope filter: a top-N cut first would hide a lower-ranked in-scope module
+    codemap-py query --format tsv coupled --top 1000000 2>/dev/null | awk -F'\t' -v scope=" $AFFECTED_MODULES " 'NR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; print; next } { split($0, f, "\t") } index(scope, " " f[col["name"]] " ") && f[col["internal_dep_count"]] >= 20'
 fi
 ```
 
-Include `## Scope & Reusability (codemap-py)` block in foundry:sw-engineer spawn prompt. `rdeps` returns callers **outside** refactoring scope → flag explicitly — those callers must update or refactoring silently breaks public contract. `CODEMAP_ENABLED=false` and scope is multi-file → skip silently.
+Include `## Scope & Reusability (codemap-py)` block in foundry:sw-engineer spawn prompt. `rdeps` returns callers **outside** refactoring scope → flag explicitly — those callers must update or refactoring silently breaks public contract. `coupled` rows arrive filtered before any cut: in-scope modules with `internal_dep_count` ≥ 20 (the field the ranking sorts on; `dep_count` counts every import); header-only → none high-coupling. `CODEMAP_ENABLED=false` and scope is multi-file → skip silently.
 
 Spawn **foundry:sw-engineer** agent to analyze code and identify — Arm batch `scope` in the spawn response (`agent-resolution.md` §Agent waits — no polling, per-agent deadlines). It must identify:
 
 - Public API surface (functions, classes, methods external code calls)
 - Internal complexity hotspots (cyclomatic complexity, deep nesting, long functions)
 - Code smells relevant to stated goal
-- Dependencies and coupling between modules
+- **Dependencies and coupling between modules** (goal-scoped): per link ask "should these change together?" Flag hidden links (copied logic or values, implicit call order, global or file state set by another module), needless links (callers reaching internals, stable code importing more volatile code, shallow modules), surplus (pass-through wrappers, speculative config, dead code). Outside goal → Follow-up, never edit.
+- **Special cases** (`if` for one value, caller-specific param, swallowed exception, retry/sleep): diagnosis only — Step 3 characterization targets, bound by the Special-case no-edit rule below. Disabled/skipped tests → Follow-up only (no behaviour to pin).
 - **Complexity smell**: directory or cross-module scope — flag it; consider team mode
+
+**Finding file** — label each finding `F1`, `F2`, …; one class per finding; overlap → `special-case` wins (surplus or dead-looking branch that is also a special case = `special-case`). Before the gates below, Write every finding to the `SCOPE_FINDINGS` path the block below prints, one line each: `F<n> · special-case|coupling|smell|hotspot · <path::symbol> · <claim>`; nothing found → single line `none · 0 findings`. Step 1 re-entry (scope revision) rewrites it. Run-long source for Step 3 targets, the no-edit rule and the Final Report `Resolves` column — read it, never memory. Every reader runs `dev_scope_findings.py check|pin|verify`; `! BLOCKED` = re-run Step 1, never "no special cases".
+
+**Special-case no-edit rule** — governs every edit after Step 1, every actor: Step 4, Step 5 fixes, challenger fixes, Codex delegation, Progressive Review, final-gate fixes, team teammates. Code at a `special-case` anchor in `SCOPE_FINDINGS` is never edited or removed; removal → Follow-up `/develop:fix`. Fix needing such an edit → stop that fix, Follow-up. Stated at every actor this skill briefs. Limit: propagated foundry quality-stack spawn briefs (linting-expert, Progressive Review fixers) cannot carry it; backstop there = pinned characterization tests (Step 3) + the full suite at the final gate.
 
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 python "$PLUGIN_ROOT/bin/dev_load_shared.py" premise-grounding.md  # timeout: 5000
+IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
+python "$PLUGIN_ROOT/bin/dev_scope_findings.py" reset "$DEV_DIR"  # timeout: 5000
 ```
 
 §Premise Grounding Gate. Apply using **refactor** context from Skill contexts table.
@@ -267,6 +275,8 @@ Both gates evaluate after the same sw-engineer analysis — when BOTH fire, invo
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
+python "$PLUGIN_ROOT/bin/dev_scope_findings.py" check "$DEV_DIR" || exit 1  # timeout: 5000
 python "$PLUGIN_ROOT/bin/dev_load_shared.py" plan-inline.md  # timeout: 5000
 ```
 
@@ -371,7 +381,10 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/null || _DEV_DIR=""
 IFS= read -r _PLAN_FILE < "${TMPDIR:-/tmp}/dev-plan-file-${CSID}" 2>/dev/null || _PLAN_FILE=""
 IFS= read -r _PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || _PYTEST_CMD=""
-_PRESERVE="dev-dir=$_DEV_DIR, plan-file=${_PLAN_FILE:-none}, pytest-cmd=$_PYTEST_CMD"
+python "$PLUGIN_ROOT/bin/dev_scope_findings.py" check "$_DEV_DIR" || exit 1  # timeout: 5000
+# first Step 3 entry: no map or acceptance from an earlier pass carries over
+python "$PLUGIN_ROOT/bin/dev_scope_findings.py" reset "$_DEV_DIR" || exit 1  # timeout: 5000
+_PRESERVE="dev-dir=$_DEV_DIR, plan-file=${_PLAN_FILE:-none}, pytest-cmd=$_PYTEST_CMD, scope-findings=$_DEV_DIR/scope-findings.md"
 python "$PLUGIN_ROOT/bin/write_skill_contract.py" --keep-sentinel dev-refactor-keep-items "develop:refactor" "characterize+edit (after coverage audit)" "$_DEV_DIR" "$_PRESERVE" "add characterization tests (Step 3) → refactor with safety net (Step 4)" -- calls_ahead=30 "drop=scope exploration and coverage analysis"  # timeout: 5000
 IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
 [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
@@ -380,7 +393,7 @@ python "$PLUGIN_ROOT/bin/compaction_boundary.py" "$_DEV_SHARED"
 
 ## Step 3: Add characterization tests (if needed)
 
-For every **uncovered** or **partially covered** public API, arm batch `tests` (`agent-resolution.md` §Agent waits) and spawn **foundry:qa-specialist** to generate characterization tests:
+For every **uncovered** or **partially covered** public API, and every special-case label boundary 1 printed (`SPECIAL_CASES=`; even inside covered APIs — any present → this step runs), arm batch `tests` (`agent-resolution.md` §Agent waits) and spawn **foundry:qa-specialist** to generate characterization tests:
 
 - Import function, call with representative inputs, assert **current** output
 - Use `pytest.mark.parametrize` for multiple input/output pairs
@@ -391,6 +404,7 @@ Spawn with context:
 - Target module: `<module_path>`
 - Coverage audit results: [paste coverage-audit output showing uncovered/partial functions]
 - Uncovered public APIs to test: [list from audit]
+- Special cases to pin: `special-case` lines of the printed `SCOPE_FINDINGS` file — ≥1 named test each, asserting current behaviour; Write map `special-case-tests.md` beside it, one line per test: `F<n> · <test-path>::<test-name>`
 - Current code (read target file before writing tests — tests must assert CURRENT behaviour, not desired)
 - Test file target: `tests/test_<module>_characterization.py`
 - Test naming: `test_<function>_characterization_<scenario>`
@@ -400,12 +414,23 @@ Spawn with context:
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 python "$PLUGIN_ROOT/bin/dev_run_tests.py" pytest -- <test_file> -v; GATE_EXIT=$?
+IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
+# pin runs after a red run too, so (b) shows the unpinned labels; only a runner fault skips it
+PIN_EXIT=0
+if [ "$GATE_EXIT" -le 5 ]; then python "$PLUGIN_ROOT/bin/dev_scope_findings.py" pin "$DEV_DIR"; PIN_EXIT=$?; fi
+[ "$GATE_EXIT" -eq 0 ] && GATE_EXIT=$PIN_EXIT
 echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-refactor-gate-exit-${CSID}
 # Gate: all characterization tests must pass before proceeding — verdict in the same call as the run
-if [ "${GATE_EXIT}" -eq 5 ]; then
-    echo "GATE FAIL: no tests collected (exit 5) — characterization test file missing or not detected by pytest; cannot proceed to Step 4 without a safety net"
-elif [ "$GATE_EXIT" -eq 64 ]; then
+if [ "$GATE_EXIT" -eq 64 ]; then
     echo "! GATE ERROR: test runner refused to start (exit 64) — no test ran; re-run Project Detection, do not fix the test"
+elif [ "$PIN_EXIT" -ne 0 ] && [ "$PIN_EXIT" -ne 3 ]; then
+    echo "! GATE ERROR: special-case check gave no verdict (exit $PIN_EXIT) — cause on the line above; fix the run, map or findings, not the tests"
+elif [ "$GATE_EXIT" -gt 5 ]; then
+    echo "! GATE ERROR: test runner fault (exit $GATE_EXIT) — no verdict; recover the runner, do not fix the test"
+elif [ "${GATE_EXIT}" -eq 5 ]; then
+    echo "GATE FAIL: no tests collected (exit 5) — characterization test file missing or not detected by pytest; cannot proceed to Step 4 without a safety net"
+elif [ "$PIN_EXIT" -eq 3 ] && [ "$GATE_EXIT" -eq 3 ]; then
+    echo "GATE FAIL: special case not pinned (unmapped, or a mapped test failed, skipped, xpassed or unreported; exit 3) — one passing named test per special-case line"
 elif [ "$GATE_EXIT" -ne 0 ]; then
     echo "GATE FAIL: characterization test(s) failed (exit $GATE_EXIT) — fix the test, not the code"
 else
@@ -413,13 +438,23 @@ else
 fi
 ```
 
-`GATE_EXIT -ne 0` (including exit 5) → characterization tests missing or wrong — **cannot proceed to Step 4 without a passing safety net**. Invoke `AskUserQuestion` — "Characterization test gate failed (exit `$GATE_EXIT`). How to proceed?" · (a) **Fix test collection path / fix test assertions** (recommended — re-spawn qa-specialist with corrected path or assertions) · (b) **Proceed without safety net** (accept risk — record decision in `$DEV_DIR/checkpoint.md`) · (c) **Abort**. On (b): document explicit acceptance in `checkpoint.md` (`step: 3 — gate exit $GATE_EXIT — proceed without safety net (user accepted)`) before continuing — stage the line in `$DEV_DIR/checkpoint.md.rec` (Write tool) and append it with `append_ledger.py` in the next real Bash block.
+Route on the printed line, never on the number alone. `! GATE ERROR` or `! BLOCKED` → no verdict: recover the run, map or findings and re-run this block; offer no (b). `GATE FAIL` (red, exit 5, or special case not pinned) → **cannot proceed to Step 4 without a passing safety net**. Invoke `AskUserQuestion` — "Characterization test gate failed (exit `$GATE_EXIT`). How to proceed?" — question text names every unpinned label from the pin's `GATE FAIL: special case not pinned` line (pin runs even after a red run) · (a) **Fix test collection path / fix test assertions / add missing special-case tests** (recommended — re-spawn qa-specialist with corrected path, assertions or map) · (b) **Proceed without safety net** (accept risk — record decision in `$DEV_DIR/checkpoint.md`) · (c) **Abort**. On (b): document explicit acceptance in `checkpoint.md` (`step: 3 — gate exit $GATE_EXIT — proceed without safety net (user accepted)`) before continuing — stage the line in `$DEV_DIR/checkpoint.md.rec` (Write tool) and append it with `append_ledger.py` in the next real Bash block.
 
-On accepted (b) after a red characterization run, use the Write tool to save its exact repository-relative test path as one line in `$DEV_DIR/accepted-red-characterization.txt`. This file records only that explicitly accepted failing characterization file; exclude it from the Pre-edit baseline and Gate T2, and retain the missing safety net in the Final Report. A runner error is not a red characterization run; recover the runner first.
+On any accepted (b) run the block below in the same response: it re-runs no test — it copies exactly the labels and failing nodes of the verdict this gate just printed, bound to the current findings and map; any later change to either makes verdict and acceptance stale and every label is enforced again. Pre-edit baseline and Gate T2 then leave out exactly those nodes and still run every other pin; the no-edit rule still binds them. `! GATE ERROR` / `! BLOCKED` from it (no current verdict) → nothing accepted; re-run this gate first.
+
+```bash
+# accepted risk: record unpinned special cases
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
+python "$PLUGIN_ROOT/bin/dev_scope_findings.py" accept-unpinned "$DEV_DIR"  # timeout: 600000
+```
+
+On accepted (b) after a red or exit-5 characterization run, use the Write tool to save its exact repository-relative test path as one line in `$DEV_DIR/accepted-red-characterization.txt`. This file records only that explicitly accepted failing or empty characterization file; exclude it from the Pre-edit baseline and Gate T2, and retain the missing safety net in the Final Report. A runner error is not a red characterization run; recover the runner first.
 
 ## Step 4: Refactor with safety net
 
-**Pre-edit baseline** — after characterization tests and before the first source edit, run the Step 4 selector once against the Python files identified in Step 1. Team mode's parent runs this same block after T1 and before spawning the implementation teammate. Replace the entire `'<scoped_python_files>'` token with the explicit, individually shell-quoted repository-relative paths from that scope, not the current dirty diff. Include newly added characterization test paths so an initially untested module has a runnable baseline; the accepted-red file, when recorded above, is filtered out of the selected tests before execution. A coverage run is not this baseline. A nonempty completed green run of the remaining scoped tests is required for both solo and team mode:
+**Pre-edit baseline** — after characterization tests and before the first source edit, run the Step 4 selector once against the Python files identified in Step 1. Team mode's parent runs this same block after T1 and before spawning the implementation teammate. Replace the entire `'<scoped_python_files>'` token with the explicit, individually shell-quoted repository-relative paths from that scope, not the current dirty diff. Include newly added characterization test paths so an initially untested module has a runnable baseline; the accepted-red file and any accepted-unpinned special-case nodes (not their whole file), when recorded above, are filtered out of the selected tests before execution. A coverage run is not this baseline. A nonempty completed green run of the remaining scoped tests is required for both solo and team mode:
 
 ```bash
 # timeout: 600000
@@ -429,23 +464,17 @@ IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/nul
 [ -n "$DEV_DIR" ] || { echo "! BLOCKED — refactor run directory missing; re-run Checkpoint init"; exit 1; }
 set -- '<scoped_python_files>'
 case "$*" in *'<'*'>'*|"") echo "! BLOCKED — scoped file list contains an unresolved placeholder; substitute the Step 1 paths before running the baseline"; exit 1 ;; esac
+# Step 4 entry: a current Step 3 verdict, PIN OK or fully accepted, for these findings and this map
+python "$PLUGIN_ROOT/bin/dev_scope_findings.py" verify "$DEV_DIR" || exit 1  # timeout: 5000
 IFS= read -r CODEMAP_CURRENCY < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" 2>/dev/null || CODEMAP_CURRENCY="no_index"
 if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
 IFS= read -r ACCEPTED_RED_CHAR 2>/dev/null < "$DEV_DIR/accepted-red-characterization.txt" || ACCEPTED_RED_CHAR=""
 ACCEPTED_RED_CHAR=${ACCEPTED_RED_CHAR%$'\r'}
-if [ -n "$ACCEPTED_RED_CHAR" ]; then
-    echo "BASELINE: accepted-red characterization test excluded: $ACCEPTED_RED_CHAR; remaining source tests must pass"
+if [ -n "$ACCEPTED_RED_CHAR" ] || [ -s "$DEV_DIR/accepted-unpinned.json" ]; then
+    [ -n "$ACCEPTED_RED_CHAR" ] && echo "BASELINE: accepted-red characterization test excluded: $ACCEPTED_RED_CHAR; remaining source tests must pass"
     python "$PLUGIN_ROOT/bin/dev_test_targets.py" --skill refactor --files "$@" > "$DEV_DIR/baseline-selection.json" || { echo "! BLOCKED — baseline selection failed; recover the runner before editing"; exit 1; }
-    python - "$DEV_DIR/baseline-selection.json" "$ACCEPTED_RED_CHAR" "$DEV_DIR/baseline-tests.json" <<'PY' || { echo "! BLOCKED — baseline filtering failed; recover test selection before editing"; exit 1; }
-import json
-import sys
-from pathlib import Path
-
-selection, excluded, output = sys.argv[1:]
-tests = json.loads(Path(selection).read_text(encoding="utf-8"))["tests"]
-remaining = [test for test in tests if Path(test).resolve() != Path(excluded).resolve()]
-Path(output).write_text(json.dumps(remaining) + "\n", encoding="utf-8")
-PY
+    # leaves out the accepted red file and only accepted special-case nodes, never their whole file
+    python "$PLUGIN_ROOT/bin/dev_scope_findings.py" baseline-filter "$DEV_DIR" "$DEV_DIR/baseline-selection.json" "$DEV_DIR/baseline-tests.json" "$ACCEPTED_RED_CHAR" || { echo "! BLOCKED — baseline filtering failed; recover test selection before editing"; exit 1; }
     python "$PLUGIN_ROOT/bin/dev_test_targets.py" --skill refactor --tests-from "$DEV_DIR/baseline-tests.json" --record-dir "$DEV_DIR" --run
 else
     python "$PLUGIN_ROOT/bin/dev_test_targets.py" --skill refactor --files "$@" --record-dir "$DEV_DIR" --run
@@ -533,6 +562,8 @@ The block above is the only increment site — run it once per change-test pair 
 - **Performance**: replace loops with vectorized ops, reduce allocations, batch I/O
 - **Dead code removal**: remove unused imports, unreachable branches, commented-out code; scan `_`-prefixed functions with no call sites; flag public methods absent from `__init__.py` exports
 
+**Special-case no-edit rule** (Step 1) binds every category: never edit or remove code at a `special-case` anchor in the `SCOPE_FINDINGS` file the Pre-edit baseline printed — even an unreachable-looking branch or one-caller param; removal → Follow-up `/develop:fix`.
+
 ```bash
 # boundary 2: after refactor edits, before review stack (compaction-contract.md)
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
@@ -540,7 +571,8 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/null || _DEV_DIR=""
 IFS= read -r _PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || _PYTEST_CMD=""
 _CHANGED=$({ git diff --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard; } | sort -u | tr '\n' ' ' | sed 's/ *$//')
-python "$PLUGIN_ROOT/bin/write_skill_contract.py" "develop:refactor" "review+quality (after refactor edits applied)" "$_DEV_DIR" "dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD" "review and close gaps (Step 5) → Final Report" -- calls_ahead=40 "drop=refactor exploration and intermediate test output"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/dev_scope_findings.py" check "$_DEV_DIR" || exit 1  # timeout: 5000
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" "develop:refactor" "review+quality (after refactor edits applied)" "$_DEV_DIR" "dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD, scope-findings=$_DEV_DIR/scope-findings.md" "review and close gaps (Step 5) → Final Report" -- calls_ahead=40 "drop=refactor exploration and intermediate test output"  # timeout: 5000
 IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
 [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
 python "$PLUGIN_ROOT/bin/compaction_boundary.py" "$_DEV_SHARED"
@@ -560,7 +592,7 @@ A request to repeat review and fix until a reviewer reports no findings or no se
    - **Goal achieved**: stated refactoring goal actually accomplished (not just partial)
    - **No new smells**: no new coupling, complexity, or duplication introduced
    - **API surface**: no unintended public API changes (signature, return type, raised exceptions)
-   - **Dead code**: unreachable code after refactor was removed
+   - **Dead code**: unreachable code after refactor was removed — never code at a `special-case` anchor (Special-case no-edit rule)
 
 2. For every gap: return to Step 4, apply targeted fix — one focused change per gap.
 
@@ -592,11 +624,11 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 python "$PLUGIN_ROOT/bin/dev_load_shared.py" --qs-dir foundry--quality-stack.md  # timeout: 5000
 ```
 
-**Bounded independent implementation challenge**: After implementation and before the final gate, unless the user explicitly passed `--no-challenge`, dispatch one independent reviewer through the permitted `foundry:challenger` or available `bridge:review` route; never fork the implementation conversation. Supply only the current scoped diff, task acceptance and relevant evidence, allowing targeted source inspection. Reuse still-valid independent coverage for this exact result instead of dispatching again. Validate findings, apply feasible authorized fixes, rerun affected checks and report unresolved findings or missing independent coverage. Do not start another challenge or convergence loop automatically; after fixes, honestly report that the revised result lacks independent coverage. If no independent route is available, report the gap and do not claim the challenge passed.
+**Bounded independent implementation challenge**: After implementation and before the final gate, unless the user explicitly passed `--no-challenge`, dispatch one independent reviewer through the permitted `foundry:challenger` or available `bridge:review` route; never fork the implementation conversation. Supply only the current scoped diff, task acceptance and relevant evidence, allowing targeted source inspection. Reuse still-valid independent coverage for this exact result instead of dispatching again. Validate findings, apply feasible authorized fixes (Special-case no-edit rule binds; a finding needing such an edit → Follow-up `/develop:fix`), rerun affected checks and report unresolved findings or missing independent coverage. Do not start another challenge or convergence loop automatically; after fixes, honestly report that the revised result lacks independent coverage. If no independent route is available, report the gap and do not claim the challenge passed.
 
-Execute Branch Safety Guard, Quality Stack, the bounded implementation challenge above, and Codex Mechanical Delegation; use Codex Pre-pass as that challenge only when selected, and run Progressive Review Loop only when explicitly requested — the quality stack's directory-wide pytest run counts as the final gate's full-suite run only when `$TEST_CMD` is that same pytest invocation (`pytest`, `python -m pytest`, `uv run pytest`, `poetry run pytest`); a `tox -q` or `make test` repository never ran its own command in the stack, so run the final gate once even when no code changed. Otherwise do not run it again unless code changes after it (§Final gate).
+Execute Branch Safety Guard, Quality Stack, the bounded implementation challenge above, and Codex Mechanical Delegation; use Codex Pre-pass as that challenge only when selected, and run Progressive Review Loop only when explicitly requested — the quality stack's directory-wide pytest run counts as the final gate's full-suite run only when `$TEST_CMD` is that same pytest invocation (`pytest`, `python -m pytest`, `uv run pytest`, `poetry run pytest`); a `tox -q` or `make test` repository never ran its own command in the stack, so run the final gate once even when no code changed. Otherwise do not run it again unless code changes after it (§Final gate). Every fix in that stack — challenger, linting-expert, Codex Mechanical Delegation, Progressive Review, final gate — obeys the Special-case no-edit rule; a Codex delegation brief lists the `SCOPE_FINDINGS` path (boundary 2 printed it) and its `special-case` anchors as forbidden edits (stack spawn limit: Step 1 rule).
 
-**Final gate — full suite with the repository's own command.** Runs when `$TEST_CMD` is not the stack's pytest invocation, and again after any code change that follows the quality stack's wide run — a Progressive Review fix, or any fix to a full-suite failure (the stack halting on a genuine failure, or this block failing) — a fix can break something outside the targeted set, and the stack's own re-checks are scoped. A suite that may outlive the ~10 min foreground cap runs as a background Bash call (`run_in_background: true`): end the turn, its exit re-invokes you, no polling. Non-zero → fix (rerun the failing node ids while fixing — never the verification), then rerun this block in full. Max 3 gate iterations; at the cap stop, surface the remaining failures, and never report the suite green. A green full suite is the last test evidence before the Final Report:
+**Final gate — full suite with the repository's own command.** Runs when `$TEST_CMD` is not the stack's pytest invocation, and again after any code change that follows the quality stack's wide run — a Progressive Review fix, or any fix to a full-suite failure (the stack halting on a genuine failure, or this block failing) — a fix can break something outside the targeted set, and the stack's own re-checks are scoped. A suite that may outlive the ~10 min foreground cap runs as a background Bash call (`run_in_background: true`): end the turn, its exit re-invokes you, no polling. Non-zero → fix (Special-case no-edit rule binds; rerun the failing node ids while fixing — never the verification), then rerun this block in full. Max 3 gate iterations; at the cap stop, surface the remaining failures, and never report the suite green. A green full suite is the last test evidence before the Final Report:
 
 ```bash
 # timeout: 600000
@@ -615,6 +647,15 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 python "$PLUGIN_ROOT/bin/plan_hash.py" check  # timeout: 5000
 ```
 
+**Findings read** — same response as the drift check; source of every `Resolves` cell. `! BLOCKED` → lead the report with it, `Resolves` cells `unverified`:
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
+python "$PLUGIN_ROOT/bin/dev_scope_findings.py" check "$DEV_DIR"  # timeout: 5000
+```
+
 ```markdown
 ## Refactor Report: [target]
 
@@ -626,9 +667,9 @@ python "$PLUGIN_ROOT/bin/plan_hash.py" check  # timeout: 5000
 - Characterization tests added: N
 
 ### Changes Made
-| File | Change | Lines |
-|------|--------|-------|
-| path/to/file.py | extracted helper function | -12/+8 |
+| File | Change | Resolves | Lines |
+|------|--------|----------|-------|
+| path/to/file.py | extracted helper function | F2 | -12/+8 |
 
 ### Test Results
 - All tests passing: yes/no
@@ -645,6 +686,8 @@ python "$PLUGIN_ROOT/bin/plan_hash.py" check  # timeout: 5000
 
 **Refinements**: N passes.
 ```
+
+`Resolves`: finding label(s) from the `SCOPE_FINDINGS` file the row fixes; `—` when none (goal-only change, review-loop fix). Several findings under one fix only with shared-cause evidence; else one row each.
 
 Clear the contract in the current worktree before calling `ExitWorktree`. The contract reader in `rule-inject.js` resolves `.temp/state` from `process.cwd()`.
 

@@ -59,7 +59,7 @@ Set `STALE_ISSUE=true` when ≥1 candidate is a stale-issue hit; list the missin
 Open PRs touching overlapping code are merge-conflict or duplicate-effort risks. Two layers
 
 1. **Direct overlap** (no codemap needed) — pairwise intersection of changed-file lists. Shared file(s) between two open PRs → conflict/duplicate candidate.
-2. **Structural overlap** (codemap-py) — two PRs touch *different* files that map to *tightly coupled* modules → hidden-conflict candidate the file-name intersection misses.
+2. **High-coupling touch** (codemap-py) — per PR, never per pair: a PR touching a module high in the `coupled` ranking changes code that imports much of the codebase → wider-review note. `coupled` ranks single modules; it never relates two modules or two PRs.
 
 **Bounded fetch** — `open_prs` from gh-scraper carries no `files` field; fetch changed-file name-lists here, but only when the open-PR count is small enough to stay within rate limits:
 
@@ -86,17 +86,18 @@ One batched GraphQL request replaces one `gh pr view` per PR. A record with `cov
 
 **Direct overlap** — for each unordered PR pair in `$_PRSET`, intersect `files`; non-empty intersection → candidate. Report: "PRs #A and #B both touch `path` — conflict/duplicate candidate."
 
-**Structural overlap** (only when `CM_ENABLED=true`) — derive each PR's touched modules from its `.py` file paths, then check whether any module pair across two PRs appears together in `coupled --top 30`:
+**High-coupling touch** (only when `CM_ENABLED=true`) — match each PR's `.py` file paths against every module the whole `coupled` ranking puts at `internal_dep_count` ≥ 20 (filtered before any cut, so a lower-ranked one is never lost):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CM_ENABLED < "${TMPDIR:-/tmp}/analyse-codemap-enabled-${CSID}" 2>/dev/null || CM_ENABLED="false"
-[ "$CM_ENABLED" = "true" ] && codemap-py query coupled --top 30 --exclude-tests 2>/dev/null > "${TMPDIR:-/tmp}/analyse-cm-coupled-${CSID}.json"  # timeout: 10000
+[ "$CM_ENABLED" = "true" ] || exit 0
+codemap-py query --format tsv coupled --top 1000000 --exclude-tests 2>"${TMPDIR:-/tmp}/analyse-cm-coupled-meta-${CSID}.json" | awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; print; next } { split($0, f, "\t") } f[col["internal_dep_count"]] >= 20' > "${TMPDIR:-/tmp}/analyse-cm-coupled-${CSID}.tsv"  # timeout: 10000
 ```
 
-Parse `coupled[]` (each has `name`, `dep_count`). Two PRs whose modules are both high-coupling (`dep_count` ≥ 20) but share no files → "PRs #A and #B touch tightly-coupled modules (`m1`/`m2`) — review together even though file sets differ." `query_complete: false` → append "(coupling scan partial)".
+Read the TSV (header `name`, `dep_count`, `internal_dep_count`, `path`; only modules with `internal_dep_count` ≥ 20, the ranking field). Match a PR's files against `path`. Each touched module listed → one row for that PR: "PR #A touches high-coupling module `m1` (N internal imports) — review for wider impact." Several such modules → list them in that PR's row. Never pair PRs or modules from this ranking. `query_complete: false` in the `-meta-` JSON envelope beside it → append "(coupling scan partial)".
 
-Set `PRSET_CANDIDATES` = count of direct + structural candidate pairs; surface the pairs in the vitality report's Structural Constraints or a dedicated "Open-PR conflicts" note. Zero pairs → "no overlapping open PRs detected."
+Set `PRSET_CANDIDATES` = count of direct-overlap pairs only; high-coupling rows are listed separately, never counted as pairs. Surface both in the vitality report's Open-PR Overlap note. Zero pairs and zero rows → "no overlapping open PRs detected."
 
 ## Signal C — Structural Constraints (vitality mode)
 

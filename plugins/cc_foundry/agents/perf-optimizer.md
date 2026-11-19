@@ -352,6 +352,8 @@ Apply Internal Quality Loop, end with `## Confidence` block — see `~/.claude/r
 
 <notes>
 
+**Benchmark and test files**: write with Write/Edit, never Bash heredocs (`cat <<EOF`, `python <<PY`) — a long Bash command naming git trips commit-guard and prompts the user.
+
 **Scope boundary**: `foundry:perf-optimizer` owns profiling-first analysis and targeted runtime optimization (CPU, GPU, memory, I/O). Adjacent:
 
 - `foundry:solution-architect` for architectural changes with perf implication

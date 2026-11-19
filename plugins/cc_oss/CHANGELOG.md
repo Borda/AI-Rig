@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.65.0
+
+- `/oss:resolve` decides about repository git hooks from the local Git setup instead of asking every run: with no installed hook, or installed hooks whose in-tree inputs (hook scripts, `.husky`, `.githooks`, `.pre-commit-config.*`, `package.json`) the PR leaves identical to its base, hooks run or stay off with no question (Git's inactive `.sample` files do not count as hooks). Only a PR that changes a hook input, or a base that cannot be compared, shows the exact hook commands and asks, now with **Run and remember for this repo** and **Never run hooks in this repo** beside the per-run choices; a remembered approval is bound to the exact hook bytes (changed hooks ask again) and both choices live in the Git common directory, shared by linked worktrees, until `resolve_commit_hooks.py --forget`. An answered run, even a declined one, is never asked a second time, and the PR-code question is asked on its own when no hook question is needed.
+- `/oss:analyse` vitality no longer pairs open PRs as "tightly coupled" conflict candidates: the Codemap `coupled` query ranks single modules by internal imports, so the report now lists, per PR, the high-coupling modules it touches, filtered on that ranking's internal-import count. The conflict-candidate count covers shared-file pairs only.
+- `/oss:resolve` item agents are told to create and edit test and source files with Write/Edit instead of long Bash heredocs, so a run no longer stops on the commit-guard "cannot read this command exactly" prompt that a large Bash command naming git triggers.
+
 ## 0.64.0
 
 - The review header table printed in the terminal is shorter: `Link`, `Date`, `Commit SHA`, `Agents`, `Review contract`, `Rating scale`, `Readiness` and `Gate` stay in the report file only, and `PR` shows as a link (`[#N](url)`), so the table fits a terminal. The delivery check accepts the short table and the full one, and still requires every other field.

@@ -206,7 +206,7 @@ python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_ANALYSE/modes/codemap-sig
 
 Run its **Detect** block (loaded above), then **Signal B** (open-PR conflict/duplicate candidates) and **Signal C** (Structural Constraints).
 
-- Signal B fetches changed-file lists for open PRs (bounded by `PR_FILES_CAP`), does pairwise file overlap, and — when `CM_ENABLED=true` — adds `coupled`-based hidden-conflict pairs; surface `PRSET_CANDIDATES` pairs in report.
+- Signal B fetches changed-file lists for open PRs (bounded by `PR_FILES_CAP`), does pairwise file overlap, and — when `CM_ENABLED=true` — lists per PR the high-coupling modules it touches (per-module `coupled` ranking, never a PR pair); surface `PRSET_CANDIDATES` direct pairs and those rows in report.
 - Signal C uses parsed `central[]` / `collision_count` / `degraded` / `stale` to fill template's `### Structural Constraints` bullets.
 - `CM_ENABLED=false`:
   - Signal B still runs direct file-overlap layer (no codemap needed);

@@ -265,6 +265,8 @@ For hook authoring tasks (JavaScript hook files under `.claude/hooks/`, hook reg
 
 <notes>
 
+**Test and source files**: write with Write/Edit, never Bash heredocs (`cat <<EOF`, `python <<PY`) — a long Bash command naming git trips commit-guard and prompts the user.
+
 **Worktree isolation — per spawn, never frontmatter**: no `isolation` key here, so a plain spawn runs in caller's tree — edits, reports, handoff files land where caller reads them. Caller passes `isolation="worktree"` on its `Agent()` call only for parallel or speculative writers whose changes it transplants back (cherry-pick, patch). When isolated:
 
 - Own temporary worktree under `.claude/worktrees/<id>/`, cut from `origin/<default>` unless caller pins a base — run caller's base step first. Permissions in `settings.local.json` snapshot at worktree creation; path-specific allow rules must exist in `settings.json` before spawning.

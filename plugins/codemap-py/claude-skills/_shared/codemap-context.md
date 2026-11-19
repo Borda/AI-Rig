@@ -23,7 +23,7 @@ Normalize file path to dotted module: strip leading `./` and `src/`, strip trail
 - `fn-blast <mod>::<fn>` — transitive caller impact (depth > 1).
 - `rdeps <mod>` — reverse module dependencies; run when only module (no function) known.
 - `test-impact <mod | mod::fn>` — transitive affected-test selection for a known changed target.
-- `coupled` — internal co-change coupling; does not take a target.
+- `coupled` — internal-import coupling; does not take a target.
 - `symbol --with-imports <fn>` — read symbol's contract without re-reading file (all agents).
 
 > Consumer wrappers extend this map with per-agent dimensions (test gaps, doc gaps, mock coverage, etc.). Keep additions in wrapper — not here.
@@ -174,7 +174,7 @@ Set `CODEMAP_QUERY_KIND=skip`, skip Codemap when exact file+symbol supplied for 
 
 ## Extended scan — multi-file / API changes
 
-Task touches multiple modules or changes public-API surface → run per-affected-module reverse-dependency scan. Interpret: non-empty `rdeps.imported_by` = external callers affected; `coupled` output = co-change pairs. Fallback for one known module: `codemap-py query rdeps <mod> --exclude-tests`.
+Task touches multiple modules or changes public-API surface → run per-affected-module reverse-dependency scan. Interpret: non-empty `rdeps.imported_by` = external callers affected; `coupled` output = modules ranked by `internal_dep_count`; use only in-scope modules with `internal_dep_count` ≥ 20, never the repo-wide list. Fallback for one known module: `codemap-py query rdeps <mod> --exclude-tests`.
 
 Risk tier by `importer_count` from a successful result:
 

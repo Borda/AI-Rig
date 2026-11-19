@@ -131,28 +131,42 @@ After challenger returns: read `$EXT_RUN_DIR/challenger-review.md`. Annotate eac
 
 **E13: Gate — AskUserQuestion**
 
-Write the source report summary + adoption table + install-as-is recommendation (when applicable) to `$EXT_RUN_DIR/adoption.md` first; the full content is printed once, rendered as normal Markdown, as the last reply text before the question call. Call `AskUserQuestion` tool with the plain source headline, Group A/B counts, recommendation and `→ $EXT_RUN_DIR/adoption.md` in the question text — do NOT write options as plain text first. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping. Map options directly into tool call arguments:
+**Actionable set** — Group A rows with action Adopt or Tweak whose challenger verdict is neither `DISCARD` nor `NEEDS_MORE_INFO` (challenger unavailable: Group A Adopt/Tweak rows). E13 zero-result, E13 menu and E14 apply all key on this set, never on Group A membership.
 
-- question: "Apply external source candidates?" When install-as-is IS recommended, include all four options:
-- (a) label: `Apply Group A candidates` — description: adopt-as-is and tweak items only
+**External open items** — Discuss rows (Group A or B) + `NEEDS_MORE_INFO` rows. E13 zero-result and E13 gate Open decisions list them.
+
+**E13 zero-result** — actionable set empty and install-as-is not recommended: zero-result run (SKILL.md §Report-first gate) — Write report to `$EXT_RUN_DIR/adoption.md`, print five-part report, no question: **Summary** — E6 source intent, `0` actionable, Group A/B counts; **Recommendations** — `none — nothing to port`; **Findings table** — adoption table (non-actionable Group A, Group B and discarded rows); **Review verdict** — challenger verdict counts, or the ⚠ unavailable warning; **Open decisions** — external open items, or `none — nothing open`. Skip E14–E16; end with Confidence.
+
+Write the gate report (SKILL.md §Report-first gate) to `$EXT_RUN_DIR/adoption.md` first:
+
+- **Summary** — E6 Source Report intent + architecture, actionable count, Group A/B counts
+- **Recommendations** — Group A adopt/tweak set; install-as-is verdict + justification (when recommended)
+- **Findings table** — annotated adoption table (Verdict column, **Discarded by challenger** section)
+- **Review verdict** — challenger verdict counts, or the ⚠ unavailable warning above
+- **Open decisions** — external open items and what this question decides
+
+The full content is printed once, rendered as normal Markdown, as the last reply text before the question call — same response, no tool call between; the saved file never replaces the print. Call `AskUserQuestion` tool (SKILL.md §Report-first gate); its question text carries the plain source headline, Group A/B counts, the one-line top recommendation and `→ $EXT_RUN_DIR/adoption.md` — do NOT write options as plain text first. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping. Map options directly into tool call arguments:
+
+- question: "Apply external source candidates?" Offer only actionable options: `Apply Group A candidates` and `Review first` only when the actionable set is non-empty, `Install as standalone plugin` only when recommended, `Skip` always. Actionable set non-empty and install-as-is IS recommended, include all four options:
+- (a) label: `Apply Group A candidates` — description: apply the actionable set only
 - (b) label: `Install as standalone plugin` — description: install external source as standalone plugin
-- (c) label: `Review first` — description: walk through each candidate interactively
+- (c) label: `Review first` — description: walk through each actionable candidate interactively
 - (d) label: `Skip` — description: exit without changes
 
 When install-as-is is NOT recommended, omit (b) and re-label to avoid gaps:
 
-- (a) label: `Apply Group A candidates` — description: adopt-as-is and tweak items only
-- (b) label: `Review first` — description: walk through each candidate interactively
+- (a) label: `Apply Group A candidates` — description: apply the actionable set only
+- (b) label: `Review first` — description: walk through each actionable candidate interactively
 - (c) label: `Skip` — description: exit without changes
 
 **E14: Apply**
 
 - Route by the selected option label, never its display letter.
-- `Apply Group A candidates`: apply confirmed Group A targets only, in this order:
+- `Apply Group A candidates`: apply actionable-set targets only (E13 **Actionable set**), in this order:
   1. Conflict pre-check — `Read` each existing local target; overlapping content moves the item to Group B, never overwritten silently.
-  2. Draft each target in `$EXT_RUN_DIR/drafts/`. For an executable (hook `.js`, `.py`, `.sh`) run the E16 code review on the draft first and show its findings with the draft; write only after the user approves that executable. Review precedes write — E16 afterwards re-checks what was written.
+  2. Draft each target in `$EXT_RUN_DIR/drafts/`. For an executable (hook `.js`, `.py`, `.sh`) run the E16 code review on the draft first and show its findings with the draft; write only after the user approves that executable via `AskUserQuestion` (§Report-first gate exclusion: per-item approval after printed diff). Review precedes write — E16 afterwards re-checks what was written.
   3. Snapshot every approved target using the block below before any target Write or Edit, then `Edit` or `Write` from the approved draft; E15 compares against that snapshot.
-- `Review first`: show each Group A candidate's proposed diff and request explicit approval or skip. Perform the same conflict pre-check and executable draft review above; unresolved conflicts remain in Group B. Collect approved candidates, then use the same snapshot, apply and E15 diff gate as `Apply Group A candidates`; no target writes during the approval loop.
+- `Review first`: show each actionable candidate's proposed diff; per candidate, `AskUserQuestion` approve or skip (§Report-first gate exclusion: per-item approval after printed diff). Perform the same conflict pre-check and executable draft review above; unresolved conflicts remain in Group B. Collect approved candidates, then use the same snapshot, apply and E15 diff gate as `Apply Group A candidates`; no target writes during the approval loop.
 - `Install as standalone plugin`: print install command or path; don't apply automatically — plugin installation requires user action. No E14 target writes; report the pending user action and end with Confidence.
 - `Skip`: exit without target changes and end with Confidence.
 

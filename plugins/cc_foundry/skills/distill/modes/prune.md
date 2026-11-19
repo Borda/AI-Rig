@@ -34,7 +34,7 @@ fi
 
 **CLAUDE.md overlap scope**: only the `current` entry (memory of the project in the working directory) is compared against this project's CLAUDE.md. An `other` entry belongs to a different project whose CLAUDE.md is not loaded here — never Drop or Trim its memory files for duplication, judge them on their own content only.
 
-**If `PROJECT_FLAG == true`** (interactive picker): call `AskUserQuestion` with `multiSelect: true`. Build options from `PRUNE_ENTRY` lines — label = `<slug> (tokens=<N>)`, description = `prune this project's memory`. Max 3 project options plus `Skip` (4-option cap): more than 3 projects found, take the `current` entry plus the largest others by token count up to 3, note in question text that remaining projects were omitted (user can re-run). Always add a final option with label `Skip`, description `exit without changes`. Checked slugs: extract matching `<path>` fields as working set.
+**If `PROJECT_FLAG == true`** (interactive picker): call `AskUserQuestion` with `multiSelect: true` (§Report-first gate exclusion: `--project` picker). Build options from `PRUNE_ENTRY` lines — label = `<slug> (tokens=<N>)`, description = `prune this project's memory`. Max 3 project options plus `Skip` (4-option cap): more than 3 projects found, take the `current` entry plus the largest others by token count up to 3, note in question text that remaining projects were omitted (user can re-run). Always add a final option with label `Skip`, description `exit without changes`. Checked slugs: extract matching `<path>` fields as working set.
 
 **If `PROJECT_FLAG == false`**: working set = the `<path>` of the `current` PRUNE_ENTRY only — memory of the project in the working directory. No `current` entry: print `No memory file for the current project — re-run with --project to pick another.`, stop prune mode, end with Confidence block. Never prune `other` projects without the picker.
 
@@ -62,6 +62,8 @@ CONFIDENCE: 0.N
 ```
 
 In the spawn response Write `.temp/distill/prune/agent-watch-analysis.tsv` — one row per project, `<slug>\t-\t600` (envelope-only) — then end the turn; never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep (`_shared/agent-spawn-protocol.md` §Deadlines). On each notification run `python "${CLAUDE_PLUGIN_ROOT}/bin/agent_watch.py" --state-dir ".temp/distill/prune"` once; a project whose notification carried no analysis is ⏱ `timed_out` — list it as not analysed. Once every row is settled, merge into consolidated proposal list keyed by slug, labeling each section with its project slug.
+
+**Prune open items** — manual-review items (missing files, malformed frontmatter, ambiguous links, legacy inline index facts) + timed-out projects (not analysed). Every prune report's Open decisions lists them.
 
 **If `$EAGER == true`**: skip P1–P3 below, execute P-eager steps:
 
@@ -103,15 +105,17 @@ Legend:
   Action — "→ rule" entries can be promoted to rules/*.md then dropped from memory
 ```
 
-**P-eager-2**: Write the full scored table and legend to `.temp/distill/prune/scored.md` first; it is printed once, rendered as normal Markdown, as the last reply text before the question call. Call `AskUserQuestion` tool — do NOT write question as plain text. The question text carries the prune headline, counts by tier, project count and `→ .temp/distill/prune/scored.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
+**P-eager-2 zero-result** — no P1/P2 row (every entry P0 keep, no `→ rule`): zero-result run (SKILL.md §Report-first gate) — print five-part report, no question: **Summary** — counts by tier, project count; **Recommendations** — `none — every analysed entry P0, keep all`; **Findings table** — full scored table and legend; **Review verdict** — `none — prune mode runs no reviewer`; **Open decisions** — prune open items, or `none — nothing open`. Skip P-eager-2 question and P-eager-3; end with Confidence.
 
-- question: "Which entries to prune? Select tier or type item numbers (e.g. 2, 4, 7)."
+**P-eager-2**: Write the gate report (SKILL.md §Report-first gate) to `.temp/distill/prune/scored.md` first: **Summary** — counts by tier, project count; **Recommendations** — recommended tier selection and `→ rule` conversions; **Findings table** — full scored table and legend; **Review verdict** — `none — prune mode runs no reviewer`; **Open decisions** — prune open items and what this question decides. It is printed once, rendered as normal Markdown, as the last reply text before the question call — same response, no tool call between; the saved file never replaces the print. Call `AskUserQuestion` tool; its question text carries the prune headline, counts by tier, project count, the one-line top recommendation and `→ .temp/distill/prune/scored.md` — do NOT write question as plain text. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
+
+- question: "Which entries to prune? Select tier or type item numbers (e.g. 2, 4, 7)." Offer only actionable options: `All P2` only when P2 rows exist, `All P1 + P2` only when P1 rows exist, `Specific items` and `Skip` always.
 - (a) label: `All P2` — description: drop all tier-P2 entries; apply `→ rule` conversions as proposals
 - (b) label: `All P1 + P2` — description: trim P1 entries and drop P2 entries
-- (c) label: `Specific items` — description: enter item numbers in next message; applies only those
+- (c) label: `Specific items` — description: item numbers asked next via the question tool; applies only those
 - (d) label: `Skip` — description: leave memory files and MEMORY.md untouched; user edits manually
 
-User picks (c): print "Enter item numbers (e.g. 2, 4, 7):", wait for next message; resolve item numbers against # column before proceeding.
+User picks (c): call `AskUserQuestion` (§Report-first gate exclusion: follow-up within printed gate); its question text carries counts by tier, the one-line top recommendation and `→ .temp/distill/prune/scored.md`, asking for item numbers such as `2, 4, 7` typed in the auto-added `Other` answer; options `Back` (return to the prune choice) and `Skip` (leave memory untouched). Resolve item numbers against # column before proceeding.
 
 **P-eager-3**: Spawn one `Agent(subagent_type="foundry:curator", name="prune-apply-<slug>", description="Apply approved memory pruning", prompt="<apply prompt below>")` per project in parallel. Group selected `#` items by project slug; each agent receives only the items for its project. Substitute the absolute index path, the Memory inventory and Approved prune actions instructions, and the selected file paths inline before issuing each Agent call:
 
@@ -157,11 +161,11 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 - **Trim**: memory files still accurate but containing implementation history or rationale no longer needed day-to-day — keep operational facts (what/where), drop why-it-was-built backstory
 - **Keep**: rules actively applied every session; project-specific facts absent from CLAUDE.md; anything model needs to act correctly
 
-**Memory-write gate** — prune mode runs read-only by default and requires explicit user approval before editing or deleting any memory file or changing `MEMORY.md`; this rule applies in every installation, regardless of project CLAUDE.md content. Produce advisory diff/report rather than applying edits silently:
+**Memory-write gate** — prune mode runs read-only by default and never edits or deletes any memory file or changes `MEMORY.md` before an explicit approval answer at the P3 or P-eager-2 gate; this rule applies in every installation, regardless of project CLAUDE.md content. Produce advisory diff/report rather than applying edits silently:
 
 **P1**: Read all memory file bodies from the Memory inventory (parallel across 2+ projects). Analyse each for stale, redundant, and verbose entries.
 
-**P2**: Build consolidated proposed prune report across all projects and Write it to `.temp/distill/prune/proposals.md` first; it is printed once, rendered as normal Markdown, as the last reply text before the P3 question call. The question text carries the prune headline, project count, Drop/Trim counts and `→ .temp/distill/prune/proposals.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping. Report format:
+**P2**: Build consolidated proposed prune report across all projects and Write it to `.temp/distill/prune/proposals.md` first as the gate report (SKILL.md §Report-first gate): **Summary** — project count, Drop/Trim/Keep counts; **Recommendations** — Drop/Trim proposals below with reasons; **Findings list** — per-project proposal list; **Review verdict** — `none — prune mode runs no reviewer`; **Open decisions** — prune open items and what P3 decides. It is printed once, rendered as normal Markdown, as the last reply text before the P3 question call — same response, no tool call between; the saved file never replaces the print. The question text carries the prune headline, project count, Drop/Trim counts, the one-line top recommendation and `→ .temp/distill/prune/proposals.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping. Report format:
 
 ```text
 Prune proposals (apply manually unless explicitly approved below):
@@ -174,14 +178,16 @@ Prune proposals (apply manually unless explicitly approved below):
   ...
 ```
 
-**P3**: Call `AskUserQuestion`, with the plain P2 prune summary in the question text and no `preview` — do NOT write question as plain text. Map options directly into tool call:
+**P2 zero-result** — no Drop or Trim proposal in any project: zero-result run (SKILL.md §Report-first gate) — print five-part report, no question: **Summary** — project count, `0` Drop/Trim, Keep count; **Recommendations** — `none — every analysed memory file kept`; **Findings list** — `none — no Drop/Trim proposal`; **Review verdict** — `none — prune mode runs no reviewer`; **Open decisions** — prune open items, or `none — nothing open`. Skip P3; end with Confidence.
 
-- question: "Apply prune edits across all N project memory files?"
+**P3**: Call `AskUserQuestion` after the P2 gate report print (SKILL.md §Report-first gate); its question text carries the prune headline, project count, Drop/Trim counts, the one-line top recommendation and `→ .temp/distill/prune/proposals.md`, no `preview` — do NOT write question as plain text. Map options directly into tool call:
+
+- question: "Apply prune edits across all N project memory files?" Options always actionable: P2 zero-result handles an empty proposal set.
 - (a) label: `Apply now` — description: apply all proposals to all memory files in parallel
 - (b) label: `Show diff first` — description: print line-by-line preview before applying any change
 - (c) label: `Skip` — description: leave all MEMORY.md files untouched; user will edit manually
 
-Only after user picks (a) (or (b) followed by approval) may memory files or index links be changed or deleted. **Never apply prune edits silently.** Follow Approved prune actions above for snapshots, body edits, exact-path deletions, index updates and verification; apply across projects in parallel (one owner per project).
+User picks (b): line-by-line diff printed first; per change, `AskUserQuestion` approve or skip (§Report-first gate exclusion: per-item approval after printed diff). Only after user picks (a), or approves under (b), may memory files or index links be changed or deleted. **Never apply prune edits silently.** Follow Approved prune actions above for snapshots, body edits, exact-path deletions, index updates and verification; apply across projects in parallel (one owner per project).
 
 Print consolidated summary after applying (or after user declines):
 

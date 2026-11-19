@@ -79,7 +79,8 @@ _NOT_REPRODUCED = "Tests pass — bug may not be reproducible via pytest; check 
 #: Unrelated tool output such as ``1 error generated.``, a startup hook's ``FAILED preflight: …`` or an interpreter
 #: diagnostic quoting a path that contains ``1 failed in 0.01s`` does not match.
 _FAILURE_EVIDENCE = re.compile(
-    r"^FAILED \S.*?::\S|^(?:=+ )?\d+ failed(?:, \d+ \w+)* in [\d.]+s(?: \(\d+:\d\d:\d\d\))?(?: =+)?$"
+    r"^FAILED \S.*?::\S|^ERROR \S.*?::\S"
+    r"|^(?:=+ )?(?:\d+ \w+, )*\d+ (?:failed|errors?)(?:, \d+ \w+)* in [\d.]+s(?: \(\d+:\d\d:\d\d\))?(?: =+)?$"
 )
 #: Terminal colour and style codes, which ``--color=yes`` puts inside the summary lines.
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -111,6 +112,12 @@ def failure_reported(lines: list[str]) -> bool:
         False
         >>> failure_reported(["==== 1 failed, 300 passed in 65.12s (0:01:05) ===="])
         True
+        >>> failure_reported(["ERROR t.py::test_a - RuntimeError: teardown", "=== 1 passed, 1 error in 0.02s ==="])
+        True
+        >>> failure_reported(["==== 2 passed, 3 xpassed, 1 error in 0.02s ===="])
+        True
+        >>> failure_reported(["ERROR: file or directory not found: t.py"])
+        False
         >>> esc = chr(27)
         >>> failure_reported([f"{esc}[31mFAILED{esc}[0m t.py::{esc}[1mtest_a{esc}[0m - assert 0"])
         True

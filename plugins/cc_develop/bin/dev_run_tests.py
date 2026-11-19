@@ -44,7 +44,7 @@ from shutil import which
 
 from dev_run_dir import read_sentinel, write_sentinel
 from dev_run_repro import failure_reported, run_tail
-from run_pytest_short import _PYTEST_ALLOWLIST, _validate_target_in_cwd
+from run_pytest_short import _PYTEST_ALLOWLIST, _validate_target_in_cwd, within_run_directory
 
 #: Status for "no test command ran" (sysexits ``EX_USAGE``), distinct from every status a test runner returns.
 EXIT_NO_RUN = 64
@@ -115,7 +115,7 @@ def _parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
 
 def _validate_pytest_args(args: list[str], parser: _Parser) -> None:
     """Allow skill-used pytest flags while fencing every path-bearing argument to the project."""
-    flags = {"-q", "-qq", "-v", "-vv", "-x", "--exitfirst", "--co", "--collect-only", "--doctest-modules"}
+    flags = {"-q", "-qq", "-v", "-vv", "-x", "--exitfirst", "--co", "--collect-only", "--doctest-modules", "-rX"}
     flags.update(f"--tb={style}" for style in ("short", "long", "auto", "line", "native", "no"))
     flags.add("--cov-report=term-missing")
     index = 0
@@ -123,6 +123,20 @@ def _validate_pytest_args(args: list[str], parser: _Parser) -> None:
         arg = args[index]
         if arg == "-p" and args[index + 1 : index + 2] in (["no:cacheprovider"], ["no:xdist"]):
             index += 2
+            continue
+        # strict xfail turns an unexpected pass into a failure, so a report can tell XPASS from PASSED
+        if arg == "-o" and args[index + 1 : index + 2] == ["xfail_strict=true"]:
+            index += 2
+            continue
+        # file attribute per test case, so a report maps back to node ids without guessing from classname
+        if arg == "-o" and args[index + 1 : index + 2] == ["junit_family=xunit1"]:
+            index += 2
+            continue
+        # a machine-readable report stays inside the session run directory, like --log
+        if arg.startswith("--junitxml="):
+            if not arg.removeprefix("--junitxml=") or not within_run_directory(arg.removeprefix("--junitxml=")):
+                parser.error("--junitxml must name a file inside the session run directory")
+            index += 1
             continue
         if arg not in flags:
             target = arg.removeprefix("--cov=") if arg.startswith("--cov=") else arg

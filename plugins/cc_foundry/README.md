@@ -638,6 +638,7 @@ Extracts patterns from work history + corrections, distills into durable improve
   - Each is scored and assigned a lane: adopt-as-is / tweak / discuss / skip.
   - When the first group is thin or cumulative edit effort is large, it recommends installing the source as a standalone plugin instead of cherry-picking.
   - Nothing is written until confirmed.
+- **Report before every decision** — every mode prints its report in the reply. Before any question about what to apply, port, extract or prune, the report carries a summary, recommendations, the findings table (or list), the challenger or review verdict and the open decisions, the question itself repeats the counts, the top recommendation and the report path, its menu offers only options that apply, with `Skip` always present, and its open decisions list everything the mode left unresolved, including anything that timed out; the copy saved under `.temp/` or `.reports/` is in addition, never instead. The default mode asks nothing: its report carries the same five parts, with the review verdict stated as `none — default mode runs no reviewer`, and next steps such as `/foundry:manage create` are printed as commands to run. A run that finds nothing to propose prints the same report with its empty parts stated and asks nothing.
 
 After applying: update or reinstall the plugin so the new rule files ship; `/foundry:setup` then only links rules into `~/.claude/rules/` and merges settings.
 

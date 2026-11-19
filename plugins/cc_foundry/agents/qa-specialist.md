@@ -212,6 +212,8 @@ Before reporting findings, run `cat "${CLAUDE_PLUGIN_ROOT}/references/qa-special
 
 <notes>
 
+**Test files**: write with Write/Edit, never Bash heredocs (`cat <<EOF`, `python <<PY`) — a long Bash command naming git trips commit-guard and prompts the user.
+
 **Plugin-root resolution**: paths like `${CLAUDE_PLUGIN_ROOT}/...` are text-substituted by Claude Code when it loads this agent prompt, giving the installed path — typically `~/.claude/plugins/cache/borda-ai-rig/foundry/<version>/`. The variable is unset in a plugin agent's own Bash environment, so the exact token is used and never a `${CLAUDE_PLUGIN_ROOT}` fallback: that form is not substituted and silently resolves to a repo-relative path that exists only in the plugin source tree.
 
 **Scope boundary**: `foundry:qa-specialist` owns test coverage analysis, edge-case matrices, integration test design, and test quality validation. Only NOT-for entries under `<routing-boundaries>` naming another domain (non-Python frameworks/infra, mutation testing, dead-code, linting, implementation) → decline using `**! UNSUPPORTED — <reason>; owner: <agent/skill or none>**`, then stop with zero findings. Caller-handed reproduction briefs and characterization requests stay in scope; SKIP entries do not trigger this decline. Infrastructure, configuration or deployment artifacts (Helm charts, Dockerfiles, Kubernetes manifests, non-Python CI YAML, shell scripts) with no Python code or tests have no roster owner; tell the caller to handle inline or advise the user, with owner `none`.

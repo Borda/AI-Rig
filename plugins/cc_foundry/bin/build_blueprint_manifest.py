@@ -925,6 +925,10 @@ _MUTATING_HELPERS = {
     "commit_action_item.py": "oss:resolve per-item commit: stages only the files it is given, never pushes",
     "commit_all_items.py": "oss:resolve bulk commit of the resolved items, never pushes",
     "commit_lint_fixes.py": "commits only lint changes inside the branch's own changed files, never pushes",
+    "dev_scope_findings.py": (
+        "develop:refactor: reads the run's scope-findings and map files; its `reset` unlinks only the map, acceptance,"
+        " node-list and JUnit files it wrote inside the run's own state dir; no git writes, never pushes"
+    ),
     "evolution_scan.py": (
         "oss:analyse evolution: writes only inside its containment-checked .evolution/<host>/<owner>/<repo>/ store"
         " and .reports/analyse/evolution/; --full deletes only that store's store/ subdir; clones and fetches only"

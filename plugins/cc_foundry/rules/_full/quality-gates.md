@@ -66,7 +66,7 @@ Applies to all Python written or reviewed by any agent.
 **Follow-up gate options** — skill-defined; minimum: (a) primary action · (b) skip. Canonical examples by skill:
 
 - `foundry:audit` → (a) `/foundry:setup` (sync clean config) · (b) fix all findings · (c) skip
-- `foundry:distill` → (a) `/foundry:manage create` (scaffold suggestion) · (b) edit existing · (c) skip
+- `foundry:distill` default mode → no gate; `/foundry:manage create` (scaffold suggestion, user-invoked only) and edit-existing printed as plain-text next steps — policy owned by distill `SKILL.md` §Report-first gate
 
 ## Report File Format
 

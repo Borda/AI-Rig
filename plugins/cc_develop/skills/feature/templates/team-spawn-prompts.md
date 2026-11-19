@@ -23,6 +23,7 @@ Prompt template:
 > - Run Step 2's actual demo gate before implementation with `DEMO_TEAM_NONCE` and `DEMO_TEAM_PROOF` set to the lead-supplied literal nonce and proof path. Preserve the gate-generated proof file unchanged through implementation; never synthesize proof from a reported exit code. For doctests, exit 1 counts only with the wrapper's `failed <nonce>` verdict; example scripts require the interpreter probe and validated exit 1. Runner refusals, collection failures, missing scripts and timeouts are blocked, never red.
 > - Capture the Step 2 demo's failing exit code before implementing; report it in the output file as `"demo_red_exit": N` and in the return envelope as `demo_red_exit:N`. If the demo already passes pre-implementation, return `status: blocked` instead of proceeding.
 > - Scope: edit files in the source package directory and non-test Python files. Common layouts: `src/<module>/`, `<module>/`, or root-level `.py` files — use whichever exists; check `src/` first, fall back to project root. You own the primary red-green tests: create new test files under `tests/` for them (and promote the demo example script to pytest there). Do NOT edit existing test files — those belong to the qa-specialist teammate.
+> - Write test files with Write/Edit, never Bash heredocs: a long Bash command naming git trips commit-guard and prompts the user.
 > - Compact Instructions: preserve file paths, test results, API signatures. Discard verbose tool output.
 > - Task tracking: do NOT call TaskCreate or TaskUpdate — lead owns all task state.
 > - Signal completion in final delta message: 'Status: complete | blocked — <reason>'.
@@ -43,6 +44,7 @@ Prompt template:
 >
 > - Task: audit test coverage and add edge-case, boundary, and regression tests around the SW implementation; include security checks for any auth/payment/data-handling code. Do NOT write the primary TDD demo/red-green tests — those stay with sw-engineer (Teammate 1) as part of the TDD loop.
 > - Scope: only create or edit files under `tests/`. Do NOT edit source files under `src/` or the target module.
+> - Write test files with Write/Edit, never Bash heredocs: a long Bash command naming git trips commit-guard and prompts the user.
 > - Compact Instructions: preserve file paths, test results, API signatures. Discard verbose tool output.
 > - Task tracking: do NOT call TaskCreate or TaskUpdate — lead owns all task state.
 > - Signal completion in final delta message: 'Status: complete | blocked — <reason>'.

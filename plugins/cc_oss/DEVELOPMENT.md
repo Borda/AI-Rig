@@ -83,7 +83,7 @@ Release drafts, remediation, review, and vitality reports use short descriptive 
 - PR mode reads both review bodies and inline code comments, expands findings a bot collapsed into a `<details>` block instead of posting them individually, and merges the same finding when it recurs across review rounds.
 - `vitality`: pulls open issues + PRs, scores repo across 9 axes (Axes 1–8 plus Axis 9 Trajectory), clusters duplicates, flags threads stale beyond project threshold, gives prioritised triage list with weighted Health Score %.
 - All raw API data saved to JSONL file alongside report for manual inspection.
-- With codemap index, report gains Open-PR Overlap note (pairwise changed-file overlap plus tightly-coupled-module conflict candidates) and Structural Constraints block (highest-blast-radius modules, collision/degraded/stale index signals).
+- With codemap index, report gains Open-PR Overlap note (pairwise changed-file overlap plus per-PR notes for PRs touching a high-coupling module) and Structural Constraints block (highest-blast-radius modules, collision/degraded/stale index signals).
 - Every codemap signal optional — no index or plugin absent → analyse degrades to GitHub-only behavior, flags gap inline, never blocks.
 
 ## oss:review internals
