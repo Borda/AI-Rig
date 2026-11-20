@@ -12,7 +12,7 @@ effort: high
 
 Task scope and verification:
 
-- Scope the peer task to one coherent change with owned files and explicit acceptance checks; keep its regression with the fix.
+- Scope the peer task to one coherent change with owned files and explicit acceptance checks; keep its regression with the fix. Give the peer the context it lacks: the path, relative to the bound workspace, of every owned and related file, where the relevant code sits (symbol, section or line range), and what prompted the change.
 - When acceptance depends on executable verification, the owning parent prepares declared dependencies under existing authority and supplies the exact interpreter, available test evidence and known environment limitations before dispatch.
 - Reuse current evidence; do not add redundant checks.
 - Read-only peer permissions remain unchanged.

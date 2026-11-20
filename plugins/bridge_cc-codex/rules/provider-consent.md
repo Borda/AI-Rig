@@ -10,11 +10,25 @@ Before every `bridge_advise`, `bridge_review` or `bridge_implement` call, run th
 "PLUGIN_ROOT/bin/python" "PLUGIN_ROOT/bin/bridge_consent.py" check
 ```
 
-On native Windows use `bin/python.cmd` with host-shell quoting. A zero exit and `consent=configured` identify the exact supported policy in the current user's native configuration. Reuse that consent for the authorized task; do not ask per file, revision or ordinary provider call. Include the check result and the bounded destination/payload scope in dispatch context so the host reviewer can assess the existing authorization. Still verify installed Bridge identity, current workspace binding, task scope and edit authority.
+On native Windows use `bin/python.cmd` with host-shell quoting. A zero exit and `consent=configured` identify the exact supported policy in the current user's native configuration. A `policy=outdated` field means the operator's grant is the superseded v1 block: it still authorizes the transfers above, and the operator's own `grant` replaces it with the current block that also names the zero-provider `bridge_status` and `bridge_bind_workspace` calls; never edit or upgrade it for them. Reuse that consent for the authorized task; do not ask per file, revision or ordinary provider call. Include the check result and the bounded destination/payload scope in dispatch context so the host reviewer can assess the existing authorization. Still verify installed Bridge identity, current workspace binding, task scope and edit authority.
 
 An absent, invalid, unreadable or unsupported result stops dispatch under standing authority. Return the setup action below; continue unrelated local preparation. Installation, a generic review request and folder binding are not substitutes. Separate explicit current-task authorization naming the Claude destination and repository payload can authorize that bounded transfer, subject to actual host restrictions. Never bypass an explicit denial or revocation, and never treat cached consent as current.
 
-`configured_reviewer` reports only the user-file setting; `session_effective=unverified` is deliberate. Project or managed policy may override it, or the active session may not have reloaded it. A saved block is not proof that the native reviewer will approve. Do not switch approval modes or weaken sandbox settings to make it effective. After a host denial, report the concrete rationale and resolve its missing authority through the host's supported approval surface; do not repeat an equivalent call or change routes to evade it.
+`configured_reviewer` reports only the user-file setting; `session_effective=unverified` is deliberate. Project or managed policy may override it, or the active session may not have reloaded it. A saved block is not proof that the native reviewer will approve. Do not switch approval modes or weaken sandbox settings to make it effective. After a host denial, report the concrete rationale and resolve its missing authority through the host's supported approval surface; do not repeat an equivalent call or change routes to evade it. This recovery covers `bridge_status`, `bridge_bind_workspace`, `bridge_advise`, `bridge_review` and `bridge_implement`: once the user explicitly approves in the current turn through that surface, retry the call once, alone, citing the approval; a user-approved retry is not a bypass. A second rejection stops the route. Never silently drop the peer step; tell the user what is blocked.
+
+## Workspace binding outcomes
+
+Read the `bridge_bind_workspace` result before any executable call. Only `status=bound` with `binding_status=bound` and a nonempty `binding_id` allows dispatch. A bind attempt clears any earlier binding before it validates, so every outcome below except `bound` leaves the bridge unbound.
+
+| Result | Meaning | Next step |
+| ------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `status=bound` | The user confirmed the exact folder. | Retain `binding_id`; dispatch. |
+| `status=cancelled` or `declined` | The user declined the form, the typed folder failed validation, or the folder changed meanwhile. | Report it; offer a fresh bind with a known folder; never dispatch. |
+| error `-32602` | The proposal is not an allowed, existing, absolute project folder. | Agree a corrected folder with the user; call again. |
+| error `-32002` | The host offers no native form support, so this session can never bind. | Report it; continue in a session or client with form support. |
+| error `-32001` | A binding form is already pending. | Ask the user to answer or dismiss it; do not call again meanwhile. |
+| error `-32003` | Binding capacity is exhausted for this session. | Start a new session. |
+| host reviewer rejection | Not a server result; the call never ran. | Use the recovery rule above. |
 
 ## Setup approval and revocation
 

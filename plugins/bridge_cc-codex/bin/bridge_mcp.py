@@ -138,7 +138,7 @@ def tool_definitions() -> list[dict[str, Any]]:
         },
         {
             "name": BIND_TOOL_NAME,
-            "description": "Bind this process only after the user confirms the exact canonical project folder in a native form. Optional proposed_workspace is an untrusted suggestion that avoids retyping the known project; empty arguments ask for a folder. Rebinding immediately clears previous authority.",
+            "description": "When an authorized Bridge task needs a workspace binding, open a native form that asks the user to confirm the exact canonical project folder; call this before any confirmation exists, because only the user's 'Bind this folder' answer creates the binding it returns. The call alone grants nothing and sends nothing to a provider; calling it clears any current binding. Optional proposed_workspace is an untrusted suggestion that avoids retyping the known project; empty arguments ask for a folder.",
             "inputSchema": definitions[BIND_TOOL_NAME],
         },
         *request_tools,

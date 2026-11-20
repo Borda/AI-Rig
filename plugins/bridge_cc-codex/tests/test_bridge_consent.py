@@ -463,7 +463,7 @@ class TestUnsafeConfiguration:
         [
             pytest.param(lambda block: block.replace("excludes credentials", "includes credentials"), id="edited"),
             pytest.param(lambda block: block + block, id="duplicate"),
-            pytest.param(lambda block: block.replace("v1", "v2"), id="unknown-version"),
+            pytest.param(lambda block: block.replace("v2", "v9"), id="unknown-version"),
         ],
     )
     def test_unrecognized_grant_is_never_reused_or_overwritten(
@@ -658,3 +658,88 @@ class TestTomlStatements:
 
         assert len(chunks) == 3
         assert parse.call_count == 3
+
+
+LEGACY_BLOCK = (PLUGIN / "rules/claude-transfer-policy-v1.txt").read_text(encoding="utf-8").strip()
+
+
+class TestSupersededGrant:
+    """A v1 grant keeps covering transfers, is reported outdated, and only an approved grant replaces it."""
+
+    @pytest.fixture
+    def legacy_home(self, consent_home: Path) -> Path:
+        """Return a Codex home whose consent is the superseded v1 block beside a user rule."""
+        (consent_home / "config.toml").write_text(
+            "[auto_review]\nextra_policy = " + json.dumps("Existing user rule\n\n" + LEGACY_BLOCK) + "\n",
+            encoding="utf-8",
+        )
+        return consent_home
+
+    def _extra_policy(self, home: Path) -> str:
+        """Return the parsed ``extra_policy`` of the disposable config."""
+        return tomllib.loads((home / "config.toml").read_text(encoding="utf-8"))["auto_review"]["extra_policy"]
+
+    def test_check_reports_configured_but_outdated(
+        self, legacy_home: Path, run_consent: Callable[..., tuple[int, str]]
+    ) -> None:
+        """The v1 grant still counts as consent, with a marker telling the operator a grant upgrades it."""
+        code, output = run_consent(["check"], answer="")
+        report = json.loads(output)
+
+        assert code == 0
+        assert report["consent"] == "configured"
+        assert report["policy"] == "outdated"
+
+    def test_current_grant_has_no_outdated_marker(
+        self, consent_home: Path, run_consent: Callable[..., tuple[int, str]]
+    ) -> None:
+        """A current v2 grant reports plain consent without an upgrade hint."""
+        (consent_home / "config.toml").write_text(CONFIGURED_CONFIG, encoding="utf-8")
+
+        code, output = run_consent(["check"], answer="")
+
+        assert code == 0
+        assert "policy" not in json.loads(output)
+
+    def test_grant_replaces_only_the_v1_block(
+        self, legacy_home: Path, run_consent: Callable[..., tuple[int, str]]
+    ) -> None:
+        """An approved grant swaps v1 for v2 once and keeps the user's own policy text."""
+        code, output = run_consent(["grant"])
+
+        assert code == 0
+        assert "replaces the superseded v1 block" in output
+        assert self._extra_policy(legacy_home) == "Existing user rule\n\n" + POLICY_BLOCK
+
+    def test_declined_upgrade_leaves_the_v1_grant_untouched(
+        self, legacy_home: Path, run_consent: Callable[..., tuple[int, str]]
+    ) -> None:
+        """Without the operator's typed approval the v1 bytes stay exactly as found."""
+        original = (legacy_home / "config.toml").read_bytes()
+
+        code, _ = run_consent(["grant"], answer="Deny\n")
+
+        assert code == 2
+        assert (legacy_home / "config.toml").read_bytes() == original
+
+    def test_revoke_removes_the_v1_block(self, legacy_home: Path, run_consent: Callable[..., tuple[int, str]]) -> None:
+        """Revocation works on a superseded grant and leaves the user's own policy text."""
+        code, _ = run_consent(["revoke"])
+
+        assert code == 0
+        assert self._extra_policy(legacy_home) == "Existing user rule"
+
+    @pytest.mark.parametrize("args", [["check"], ["grant"], ["revoke"]])
+    def test_edited_v1_block_is_refused(
+        self, consent_home: Path, run_consent: Callable[..., tuple[int, str]], args: list[str]
+    ) -> None:
+        """Only the exact shipped v1 text is honoured; an edited copy is never reused or overwritten."""
+        edited = LEGACY_BLOCK.replace("excludes credentials", "includes credentials")
+        config = consent_home / "config.toml"
+        config.write_text("[auto_review]\nextra_policy = " + json.dumps(edited) + "\n", encoding="utf-8")
+        original = config.read_bytes()
+
+        code, _ = run_consent(args)
+
+        assert code == 2
+        assert config.read_bytes() == original

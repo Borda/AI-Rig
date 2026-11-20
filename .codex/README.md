@@ -416,7 +416,7 @@ Related policy:
   - The policy grants no permissions, installs no test runner, and leaves existing approval rules unchanged.
   - A source edit takes effect in other sessions only after deliberate policy synchronization and loading the updated instructions.
 - **Bridge MCP tools:** the project approval policy preapproves the five Bridge MCP tools when `bridge@borda-ai-rig` is verified installed and loaded, including ordinary provider inference for an already authorized task or invoked workflow.
-  - Status checks can run before binding; binding establishes the workspace through native user confirmation.
+  - Status checks can run before binding; binding establishes the workspace through native user confirmation. The bind call itself raises that form and sends nothing to a provider, so policy allows it before any confirmation exists.
   - Executable calls require the current workspace binding and stay within the authorized task scope; setup changes, authentication and setup `verify-live` keep separate approvals.
   - This supplements the existing Bridge command-recipe allowance, grants no arbitrary MCP or shell access, and reaches other sessions through deliberate policy synchronization rather than editing installed configuration during a task.
 - **Bridge repository-content consent:** this is a separate explicit stage in Bridge setup. The operator grants or revokes it through the installed `bridge_consent.py` helper; plugin installation alone grants nothing.

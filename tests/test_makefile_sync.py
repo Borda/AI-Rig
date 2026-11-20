@@ -641,7 +641,7 @@ class TestCodexSyncConsent:
         granted = outcome == "granted"
         self._assert_installers_ran(run, target, fake_codex_sync_script, fake_codex_home_sync_script)
         assert run.result.returncode == 0, run.result.stdout + run.result.stderr
-        assert ("bridge:claude-transfer-consent:v1 begin" in run.config) == granted
+        assert ("bridge:claude-transfer-consent:v2 begin" in run.config) == granted
         assert ('"consent": "configured"' in run.result.stdout) == granted
         assert ("with a one-time operator token" in run.result.stdout) == granted
         assert (run.config == ORIGINAL_CONFIG) == (not granted)

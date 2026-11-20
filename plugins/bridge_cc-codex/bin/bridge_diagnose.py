@@ -145,6 +145,7 @@ PAYLOAD_FILES = (
     "bin/bridge_setup.py",
     "rules/cli-baseline.json",
     "rules/claude-transfer-policy.txt",
+    "rules/claude-transfer-policy-v1.txt",
     "rules/provider-consent.md",
     "schemas/envelope.schema.json",
     "schemas/harness-envelope.schema.json",

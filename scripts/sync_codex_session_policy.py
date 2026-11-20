@@ -360,13 +360,16 @@ def sync(source_config: Path, source_policy: Path, codex_home: Path, *, install_
             raise SyncError("target auto_review.extra_policy must be a string")
         existing_extra = existing_review.get("extra_policy", "")
         if marker in existing_extra:
-            policy_file = (
-                Path(__file__).resolve().parents[1] / "plugins/bridge_cc-codex/rules/claude-transfer-policy.txt"
-            )
-            block = _read_text(policy_file, "Bridge consent policy").strip()
-            if existing_extra.count(marker) != 2 or existing_extra.count(block) != 1:
+            rules = Path(__file__).resolve().parents[1] / "plugins/bridge_cc-codex/rules"
+            # Keep the operator's exact current or superseded v1 grant untouched; only the operator's grant upgrades it.
+            candidates = [
+                _read_text(rules / name, "Bridge consent policy").strip()
+                for name in ("claude-transfer-policy.txt", "claude-transfer-policy-v1.txt")
+            ]
+            kept = [block for block in candidates if existing_extra.count(block) == 1]
+            if existing_extra.count(marker) != 2 or not kept:
                 raise SyncError("Bridge consent block is edited or unsupported; refusing overwrite")
-            extra_policy += ("\n\n" if extra_policy else "") + block
+            extra_policy += ("\n\n" if extra_policy else "") + kept[0]
         desired_config = _replace_extra_policy(desired_config, extra_policy)
 
     if not install_policy:

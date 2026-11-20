@@ -35,7 +35,12 @@ validate_package = importlib.util.module_from_spec(_VALIDATE_SPECIFICATION)
 _VALIDATE_SPECIFICATION.loader.exec_module(validate_package)
 
 #: Runtime files whose absence or change the doctor's payload fingerprint must notice.
-FINGERPRINTED_RUNTIME_FILES = ("bin/bridge_consent.py", "rules/claude-transfer-policy.txt", "rules/provider-consent.md")
+FINGERPRINTED_RUNTIME_FILES = (
+    "bin/bridge_consent.py",
+    "rules/claude-transfer-policy.txt",
+    "rules/claude-transfer-policy-v1.txt",
+    "rules/provider-consent.md",
+)
 
 
 class _Terminal(io.StringIO):

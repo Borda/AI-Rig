@@ -12,7 +12,7 @@ effort: medium
 
 Task scope and verification:
 
-- Scope the peer task to named files or symbols and a concrete question; preserve unavailable verification as an explicit limitation.
+- Scope the peer task to named files or symbols and a concrete question. Give the peer the context it lacks: the path, relative to the bound workspace, of every file involved, where the relevant part sits (symbol, section or line range), and what changed or prompted the request. With `--split-file`, repeat this for every scope. Preserve unavailable verification as an explicit limitation.
 - When acceptance depends on executable verification, the owning parent prepares declared dependencies under existing authority and supplies the exact interpreter, available test evidence and known environment limitations before dispatch.
 - Reuse current evidence; do not add redundant checks.
 - Read-only peer permissions remain unchanged.

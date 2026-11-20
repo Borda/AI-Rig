@@ -581,6 +581,23 @@ class TestSetupConsent:
         namespace["sync"](SOURCE_CONFIG, SOURCE_POLICY, home)
         assert "bridge:claude-transfer-consent:" not in config.read_text(encoding="utf-8")
 
+    @pytest.mark.integration
+    def test_preserves_a_superseded_v1_grant_without_upgrading_it(
+        self, tmp_path: Path, namespace: dict[str, object]
+    ) -> None:
+        """Sync keeps an operator's exact v1 block once and leaves the upgrade to the operator's own grant."""
+        home = tmp_path / "codex-home"
+        home.mkdir()
+        legacy = (ROOT / "plugins/bridge_cc-codex/rules/claude-transfer-policy-v1.txt").read_text(encoding="utf-8").strip()
+        config = home / "config.toml"
+        config.write_text('[auto_review]\npolicy = "primary"\nextra_policy = ' + json.dumps(legacy) + "\n", encoding="utf-8")
+
+        namespace["sync"](SOURCE_CONFIG, SOURCE_POLICY, home)
+
+        text = config.read_text(encoding="utf-8")
+        assert tomllib.loads(text)["auto_review"]["extra_policy"].count(legacy) == 1
+        assert "bridge:claude-transfer-consent:v2" not in text
+
     def test_cannot_seed_consent_from_repository_defaults(self, tmp_path: Path, namespace: dict[str, object]) -> None:
         """A repository-provided instruction can never become the operator's consent.
 
@@ -604,7 +621,7 @@ class TestSetupConsent:
         ("old", "new"),
         [
             pytest.param("excludes credentials", "includes credentials", id="edited-grant"),
-            pytest.param("v1", "v9", id="unknown-version"),
+            pytest.param("v2", "v9", id="unknown-version"),
         ],
     )
     def test_rejects_invalid_consent_before_either_target_write(
@@ -815,6 +832,8 @@ class TestExtraPolicy:
         assert set(re.findall(r"\bbridge_[a-z_]+\b", extra_policy)) == tools
         assert missing_phrases(extra_policy, phrases) == []
 
+            "bridge_bind_workspace call is what raises that native confirmation form",
+            "allowed before any confirmation exists",
     def test_github_reads_reuse_the_opt_in_profile(self) -> None:
         """The default permission profile has no network and ``github-read`` opts in to GitHub only.
 

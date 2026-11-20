@@ -42,6 +42,8 @@ except ModuleNotFoundError:
 
 #: Exact policy bytes shared with installation-independent setup and root policy-sync preservation.
 POLICY_PATH = Path(__file__).resolve().parents[1] / "rules" / "claude-transfer-policy.txt"
+#: Exact superseded v1 block: still honoured for transfers, reported as outdated, replaced only by an approved grant.
+LEGACY_POLICY_PATH = Path(__file__).resolve().parents[1] / "rules" / "claude-transfer-policy-v1.txt"
 #: Marker family used to detect unsupported, edited or duplicate grants rather than silently replacing them.
 MARKER = "<!-- bridge:claude-transfer-consent:"
 #: Maximum native configuration size accepted without retaining raw contents in diagnostics.
@@ -123,13 +125,34 @@ def _extra(config: dict[str, object]) -> str:
     return review.get("extra_policy", "")
 
 
-def _present(extra: str, block: str) -> bool:
-    """Reject edited or unknown consent before recognizing the exact shipped block."""
+def _state(extra: str, block: str, legacy: str) -> str:
+    """Classify consent as ``absent``, the exact current block, or the exact superseded block (``outdated``).
+
+    An edited, duplicated or unknown block is rejected rather than guessed at.
+
+    Examples:
+        >>> _state("plain user rule", "<!-- bridge:claude-transfer-consent:v2 -->", "<!-- bridge:claude-transfer-consent:v1 -->")
+        'absent'
+    """
     if MARKER not in extra:
-        return False
-    if extra.count(MARKER) != 2 or extra.count(block) != 1:
-        raise ValueError("consent block is edited, duplicated or unsupported; inspect it manually")
-    return True
+        return "absent"
+    if extra.count(MARKER) == 2 and extra.count(block) == 1:
+        return "current"
+    if extra.count(MARKER) == 2 and extra.count(legacy) == 1:
+        return "outdated"
+    raise ValueError("consent block is edited, duplicated or unsupported; inspect it manually")
+
+
+def _updated_policy(extra: str, action: str, state: str, block: str, legacy: str) -> str:
+    """Return ``extra_policy`` after adding, upgrading or removing only the marked consent block."""
+    if action == "grant":
+        if state == "outdated":
+            return extra.replace(legacy, block, 1)
+        return extra + ("\n\n" if extra else "") + block
+    existing = legacy if state == "outdated" else block
+    if extra.endswith("\n\n" + existing):
+        return extra.removesuffix("\n\n" + existing)
+    return extra.replace(existing, "", 1)
 
 
 #: One run of consecutive quote characters of a single kind, matched in place to size TOML string delimiters.
@@ -371,23 +394,21 @@ def main(argv: list[str] | None = None) -> int:
         config = _parse(text)
         extra = _extra(config)
         block = POLICY_PATH.read_text(encoding="utf-8").strip()
-        present = _present(extra, block)
+        state = _state(extra, block, LEGACY_POLICY_PATH.read_text(encoding="utf-8").strip())
         if args.action == "check":
             reviewer = config.get("approvals_reviewer")
-            print(
-                json.dumps(
-                    {
-                        "consent": "configured" if present else "absent",
-                        "configured_reviewer": reviewer
-                        if reviewer in ("auto_review", "user")
-                        else "unspecified-or-unsupported",
-                        "session_effective": "unverified",
-                    }
-                )
-            )
+            report = {
+                "consent": "absent" if state == "absent" else "configured",
+                "configured_reviewer": reviewer if reviewer in ("auto_review", "user") else "unspecified-or-unsupported",
+                "session_effective": "unverified",
+            }
+            if state == "outdated":
+                # The v1 grant still covers transfers; only the operator's grant adds the bind and status clause.
+                report |= {"policy": "outdated", "upgrade": "operator-terminal grant replaces the v1 block"}
+            print(json.dumps(report))
             return 0
-        if present == (args.action == "grant"):
-            print("Consent already configured." if present else "Consent already absent.")
+        if state == ("current" if args.action == "grant" else "absent"):
+            print("Consent already configured." if state == "current" else "Consent already absent.")
             return 0
         terminal = _operator_terminal()
         token = os.environ.get(TOKEN_ENV, "") if args.approve else ""
@@ -398,16 +419,12 @@ def main(argv: list[str] | None = None) -> int:
                 "grant and revoke require the operator terminal; piped input is not approval. "
                 f"Non-interactive grant --approve needs a one-time {TOKEN_ENV} minted by issue-token in that terminal"
             )
-        # Only this exact marked text is added or removed; surrounding user policy survives.
-        if args.action == "grant":
-            updated = extra + ("\n\n" if extra else "") + block
-        elif extra.endswith("\n\n" + block):
-            updated = extra.removesuffix("\n\n" + block)
-        else:
-            updated = extra.replace(block, "", 1)
-        replacement = _replace_extra(text, updated)
+        # Only this exact marked text is added, upgraded or removed; surrounding user policy survives.
+        legacy_block = LEGACY_POLICY_PATH.read_text(encoding="utf-8").strip()
+        replacement = _replace_extra(text, _updated_policy(extra, args.action, state, block, legacy_block))
+        upgrade = " (replaces the superseded v1 block)" if state == "outdated" and args.action == "grant" else ""
         print(
-            f"Bridge consent {args.action}: {path}\nChanges only auto_review.extra_policy; preserves other settings.\n"
+            f"Bridge consent {args.action}{upgrade}: {path}\nChanges only auto_review.extra_policy; preserves other settings.\n"
         )
         print(block)
         print(
