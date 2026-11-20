@@ -40,7 +40,8 @@ records without interpreting arbitrary gate names.
 ## Outputs
 
 It writes ``gates.json``, ``gates.txt``, ``failed.txt``, ``gates.checks.jsonl``, and per-gate command/stdout/stderr
-files. Worktree-bound runs record the selected checkout at the top level and in each executable source receipt. Guarded
+files. Pytest caches, raw coverage data and default file reports go under ``checks/`` in both checkout modes.
+Worktree-bound runs record the selected checkout at the top level and in each executable source receipt. Guarded
 executable records include their expected head plus before/after source receipts. Records distinguish
 pass, fail, timeout, missing command, and ``not-applicable`` states, while captured output is bounded to protect
 artifact size.
@@ -69,7 +70,6 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import shutil
 import signal
 import stat
@@ -85,6 +85,7 @@ sys.pycache_prefix = str(Path(__file__).resolve())
 
 import collect_diff  # noqa: E402
 from gate_test_approval import retain_approval  # noqa: E402
+from run_targeted_pytest import protected_pytest_environment  # noqa: E402
 
 #: Verification gate identifiers, in the order the gates run and are reported.
 GATE_IDS = ("lint", "format", "types", "tests", "review")
@@ -487,23 +488,22 @@ def execute_command(
     stderr_path: Path,
     worktree: Path | None = None,
     environment: dict[str, str] | None = None,
+    run_directory: Path | None = None,
 ) -> tuple[int, float]:
     """Execute one command with a shared deadline for exit and bounded stream capture."""
     started = time.monotonic()
     platform = sys.platform
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if platform == "win32" else 0
     argv = command_argv(command, platform) if isinstance(command, str) else command
-    child_environment = gate_environment(environment)
+    # Free-form gates can launch pytest through project scripts, including xdist workers.
+    checks = stdout_path.parent.resolve()
+    child_environment = protected_pytest_environment(
+        gate_environment(environment), checks, (run_directory or checks).resolve()
+    )
     if worktree is not None:
-        # Hooks and nested pytest processes inherit these paths while running in a disposable checkout.
-        checks = stdout_path.parent.resolve()
-        pytest_cache = shlex.quote(f"cache_dir={checks / 'pytest-cache'}")
         child_environment.update(
-            COVERAGE_FILE=str(checks / ".coverage"),
             MYPY_CACHE_DIR=str(checks / "mypy-cache"),
             RUFF_CACHE_DIR=str(checks / "ruff-cache"),
-            PYTHONDONTWRITEBYTECODE="1",
-            PYTEST_ADDOPTS=f"{child_environment.get('PYTEST_ADDOPTS', '')} -o {pytest_cache}".strip(),
         )
     try:
         process = subprocess.Popen(  # noqa: S603 - argv list, no shell
@@ -523,19 +523,25 @@ def execute_command(
     errors: list[str] = []
 
     def capture(stream: Any, path: Path) -> None:
-        """Drain one stream, retaining its prefix and an explicit truncation marker."""
+        """Retain raw output up to 1 MiB, then keep the opening and final 512 KiB around an omission count."""
         limit = 1024 * 1024
-        written = 0
-        truncated = False
+        half = limit // 2
+        total = 0
+        tail = bytearray()
         try:
             with path.open("wb") as output, stream:
                 while chunk := stream.read1(65536):
-                    remaining = max(0, limit - written)
-                    output.write(chunk[:remaining])
-                    written += min(len(chunk), remaining)
-                    if len(chunk) > remaining and not truncated:
-                        output.write(b"\n[output truncated after 1048576 bytes]\n")
-                        truncated = True
+                    if total < limit:
+                        output.write(chunk[: limit - total])
+                    total += len(chunk)
+                    if total > half:
+                        tail.extend(chunk)
+                        del tail[:-half]
+                if total > limit:
+                    # Preserve live prefix output until EOF; the final diagnostic often arrives in the last chunk.
+                    output.seek(half)
+                    output.write(f"\n[output truncated, omitted bytes: {total - limit}]\n".encode("ascii"))
+                    output.write(tail)
         except OSError as error:
             errors.append(f"capture-failed:{path.name}:{error}")
 
@@ -1126,9 +1132,7 @@ def run_check(
             worktree.as_posix(),
             str(proof_path.resolve()),
             json.dumps(python_test.modules),
-            json.dumps(
-                (*python_test.arguments, "-o", f"cache_dir={(out_dir / CHECKS_DIRNAME / 'pytest-cache').resolve()}")
-            ),
+            json.dumps(python_test.arguments),
             python_test.interpreter.as_posix(),
         ]
         if local_source is not None:
@@ -1190,11 +1194,8 @@ def run_check(
                 "stdout": recorded["stdout"],
                 "stderr": recorded["stderr"],
             }
-    if python_test_argv is not None:
-        # Pytest can start worker and project subprocesses; keep their bytecode out of review overlays and source.
-        environment = {**(environment if environment is not None else os.environ), "PYTHONDONTWRITEBYTECODE": "1"}
     exit_code, duration = execute_command(
-        python_test_argv or command, timeout, paths["stdout"], paths["stderr"], worktree, environment
+        python_test_argv or command, timeout, paths["stdout"], paths["stderr"], worktree, environment, out_dir
     )
     status = (
         "pass"

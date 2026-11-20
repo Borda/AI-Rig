@@ -287,15 +287,124 @@ def test_retry_after_witness_publication_uses_original_integrity_anchor(
         assert expected in reason
 
 
+def _inspected_cleanup_args(run: Path, root: Path, worktree: Path, ignored_file: Path) -> list[str]:
+    """Create the two independently retained anchors around a real ignored-file observation."""
+    checker = [sys.executable, str(SHARED / "contributor_run_integrity.py")]
+    original = run / "integrity-retry.json"
+    active = run / "integrity-restart.json"
+    snapshot = subprocess.run(
+        [
+            *checker,
+            "snapshot",
+            "--repo",
+            str(worktree),
+            "--main-checkout",
+            str(root),
+            "--watch-surface",
+            "--out",
+            str(original),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    anchor = json.loads(snapshot.stdout)["sha256"]
+    ignored_file.write_bytes(b"preserve this output")
+    identity = ["--snapshot", str(original), "--expect", anchor]
+    failed = subprocess.run([*checker, "verify", *identity], check=False, capture_output=True)
+    assert failed.returncode == 3
+    observed = json.loads(failed.stdout)["observed_sha256"]
+    started = subprocess.run(
+        [*checker, "restart-inspected", *identity, "--inspected-sha256", observed, "--out", str(active)],
+        check=True,
+        capture_output=True,
+    )
+    return [
+        "--original-snapshot",
+        str(original),
+        "--integrity-sha256",
+        anchor,
+        "--inspected-snapshot",
+        str(active),
+        "--inspected-sha256",
+        json.loads(started.stdout)["sha256"],
+    ]
+
+
+@pytest.mark.integration
+def test_inspected_snapshot_supports_interrupted_cleanup_witness(
+    review, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """After inspection a witness-only transition can finish cleanup while preserving both interval records."""
+    helper, command, run, root, worktree = review
+    ignored = root / "ignored"
+    command[-1:] = _inspected_cleanup_args(run, root, worktree, ignored)
+    original = (run / "integrity-retry.json").read_bytes()
+    active = (run / "integrity-restart.json").read_bytes()
+
+    def interrupt(*_args) -> None:
+        raise OSError("interrupted before journaling")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(helper, "_write_receipt", interrupt)
+        assert helper.main(command) == 1
+    output = capsys.readouterr()
+    assert "interrupted before journaling" in output.out
+    oid = json.loads(output.err)["retry_witness"]
+    assert helper.main([*command, "--retry-witness", oid]) == 0
+    assert not worktree.exists()
+    assert ignored.read_bytes() == b"preserve this output"
+    assert (run / "integrity-retry.json").read_bytes() == original
+    assert (run / "integrity-restart.json").read_bytes() == active
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("filename", ["integrity-retry.json", "integrity-restart.json"])
+def test_inspected_cleanup_rejects_altered_anchor(review, filename: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """Mutation of either retained interval record preserves the checkout before any cleanup witness is published."""
+    helper, command, run, root, worktree = review
+    command[-1:] = _inspected_cleanup_args(run, root, worktree, root / "ignored")
+    record = run / filename
+    altered = json.loads(record.read_bytes()) | {"marks": {}}
+    record.write_text(json.dumps(altered), encoding="utf-8")
+    assert helper.main(command) == 1
+    assert "digest" in json.loads(capsys.readouterr().out)["reason"]
+    assert worktree.exists()
+    assert not (run / "review-worktree-cleanup.json").exists()
+
+
+@pytest.mark.integration
+def test_no_execution_cleanup_refuses_retained_alternate_interval(review, capsys: pytest.CaptureFixture[str]) -> None:
+    """A missing default snapshot cannot turn an inspected run into a no-execution cleanup."""
+    helper, command, run, root, worktree = review
+    _inspected_cleanup_args(run, root, worktree, root / "ignored")
+    assert not (run / "integrity.json").exists()
+    assert helper.main(command) == 1
+    assert "original integrity digest required" in json.loads(capsys.readouterr().out)["reason"]
+    assert worktree.exists()
+
+
+@pytest.mark.integration
+def test_inspected_ignored_worktree_output_is_retained(review, capsys: pytest.CaptureFixture[str]) -> None:
+    """Confirmation of a measured ignored output never authorizes deleting it during terminal cleanup."""
+    helper, command, run, root, worktree = review
+    ignored = worktree / "ignored"
+    command[-1:] = _inspected_cleanup_args(run, root, worktree, ignored)
+    assert helper.main(command) == 1
+    assert "worktree contains changed, untracked or ignored data" in json.loads(capsys.readouterr().out)["reason"]
+    assert ignored.read_bytes() == b"preserve this output"
+    assert not (run / "review-worktree-cleanup.json").exists()
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    "verify_integrity",
-    [pytest.param(True, id="retained-integrity-anchor"), pytest.param(False, id="no-contributor-execution")],
+    "interval",
+    ["original", "inspected", "no-contributor-execution"],
 )
 def test_terminal_cli_removes_collected_worktree_and_keeps_report_intake(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verify_integrity: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interval: str
 ) -> None:
     """Exercise collection, completion, cleanup, replay and remediation intake on one real detached checkout."""
+    verify_integrity = interval != "no-contributor-execution"
     validation = Path(__file__).resolve().parents[1] / "validation"
     completion = load_module("cleanup_completion_fixture", validation / "test_review_completion_gate.py")
     routing = load_module("cleanup_routing_fixture", validation / "test_code_review_routing_contract.py")
@@ -362,7 +471,11 @@ def test_terminal_cli_removes_collected_worktree_and_keeps_report_intake(
         f"git diff --check {metadata['base_oid']}...{metadata['head_oid']}\n", encoding="utf-8"
     )
     execution = ["--no-contributor-execution"]
-    if verify_integrity:
+    if interval == "inspected":
+        with (project / ".git" / "info" / "exclude").open("a", encoding="utf-8") as stream:
+            stream.write("\ninspection-output.txt\n")
+        execution = _inspected_cleanup_args(run, project, worktree, project / "inspection-output.txt")
+    elif verify_integrity:
         snapshot = subprocess.run(
             [
                 sys.executable,

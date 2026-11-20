@@ -60,6 +60,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 
@@ -277,7 +278,7 @@ def run_git(arguments: tuple[str, ...], output: Path) -> int:
     with output.open("wb") as stream:
         try:
             completed = subprocess.run(  # noqa: S603 - argv list, no shell
-                ["git", "-c", "core.fsmonitor=false", *arguments],  # noqa: S607 - tool resolved via PATH on purpose
+                ["git", "-c", "core.fsmonitor=false", "--literal-pathspecs", *arguments],  # noqa: S607 - tool resolved via PATH on purpose
                 stdout=stream,
                 check=False,
                 timeout=GIT_TIMEOUT_SECONDS,
@@ -308,6 +309,11 @@ def collect_diff(scope: str, target: str, output: Path) -> int:
     """Collect the requested diff scope into the canonical artifact set."""
     reject_executable_filters(Path.cwd())
     output.mkdir(parents=True, exist_ok=True)
+    entry = output / "review-entry.json"
+    if entry.is_file():
+        saved = json.loads(entry.read_text(encoding="utf-8"))
+        if "local" in saved and saved["local"] != local_review_identity(Path.cwd(), scope, target):
+            raise ValueError("local-review-selection-changed-before-collection")
     status = run_git(("status", "--short"), output / "status.txt")
     if status != 0:
         return status
@@ -507,6 +513,57 @@ def _source_record(repository: Path, relative_path: str) -> dict[str, object]:
         "encoding": encoding,
         "content": content,
     }
+
+
+def review_file_digest(records: Iterable[dict]) -> str:
+    """Bind the names, kinds, executable bits, and exact bytes of selected changed files."""
+    entries = sorted((item["path"], item["kind"], item["executable"], item["sha256"]) for item in records)
+    return hashlib.sha256(json.dumps(entries, ensure_ascii=True).encode("ascii")).hexdigest()
+
+
+def local_review_identity(repository: Path, scope: str, target: str) -> dict[str, object]:
+    """Identify a standalone review by its original checkout, selection, revision and selected local changes."""
+    root = _repository_root(repository)
+    if (scope in {"path", "commit"}) != bool(target) or scope not in {"working-tree", "path", "commit"}:
+        raise ValueError("invalid-local-review-selection")
+    identity: dict[str, object] = {"repository": root.as_posix(), "scope": scope, "target": target}
+    if scope == "commit":
+        if target.startswith("-"):
+            raise ValueError("invalid-local-review-commit")
+        revisions = _git_output(root, ("rev-parse", "--revs-only", "--end-of-options", target)).splitlines()
+        if not revisions or not all(_REVISION_PATTERN.fullmatch(oid.removeprefix(b"^")) for oid in revisions):
+            raise ValueError("invalid-local-review-commit")
+        identity["revisions"] = [oid.decode("ascii") for oid in revisions]
+        return identity
+
+    reject_executable_filters(root)
+    pathspec = ("--",)
+    if scope == "path":
+        normalized = _normalize_scope_paths(repository.resolve(), [target])[0]
+        selected = ((repository.resolve().relative_to(root)) / normalized).as_posix()
+        identity["target"] = selected
+        pathspec = ("--", selected)
+    comparison = ("HEAD", *pathspec)
+    revision, patch, tracked, staged, untracked, staged_patch = _git_outputs(
+        root,
+        [
+            ("rev-parse", "--verify", "HEAD"),
+            canonical_diff_arguments(("diff", "--binary", *comparison)),
+            canonical_diff_arguments(("diff", "--name-only", "-z", *comparison)),
+            canonical_diff_arguments(("diff", "--cached", "--name-only", "-z", *comparison)),
+            ("ls-files", "--others", "--exclude-standard", "-z", *pathspec),
+            canonical_diff_arguments(("diff", "--cached", "--binary", *comparison)),
+        ],
+    )
+    identity.update(
+        revision=revision.strip().decode("ascii"),
+        diff_sha256=hashlib.sha256(patch).hexdigest(),
+        staged_sha256=hashlib.sha256(staged_patch).hexdigest(),
+        files_sha256=review_file_digest(
+            _source_record(root, path) for path in _inventory_paths(tracked + staged + untracked)
+        ),
+    )
+    return identity
 
 
 def _inventory_paths(inventory: bytes) -> list[str]:
@@ -812,7 +869,8 @@ def collect_review_worktree(repository: Path, output: Path) -> dict[str, object]
     except subprocess.TimeoutExpired as error:
         raise RuntimeError("Git worktree creation timed out") from error
     if completed.returncode != 0:
-        raise RuntimeError("Git could not create detached local review worktree")
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"Git could not create detached local review worktree: {detail}")
     if patch:
         # New patch paths must be visible to the mirror's later Git diff without staging their contents.
         try:

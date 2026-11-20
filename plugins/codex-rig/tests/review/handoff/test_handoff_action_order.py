@@ -2,6 +2,7 @@
 
 import copy
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,83 @@ def _standard_payload(finalizer: Any, skill: str, version: int) -> dict:
 
 class TestHandoffActionOrder:
     """Where the Next steps block sits relative to the Artifact block across presentation versions."""
+
+    def test_owned_action_is_the_only_recommendation_among_closed_rows(self, finalizer: Any) -> None:
+        """An outstanding prerequisite gives one concrete way forward while a completed row adds no action."""
+        payload = _standard_payload(finalizer, "investigate", 15)
+        payload["action_policy"] = "owned"
+        rows = payload["tables"][0]["rows"]
+        rows[0].update(cells=["Parser", "Receipt", "Confirmed", "Inspect CI."], source_ids=["report:CR-2"])
+        rows.insert(0, {"id": "CR-1", "cells": ["Copier", "Receipt", "Closed", "None"], "source_ids": ["report:CR-1"]})
+        payload["remaining"][0].update(owner="maintainer", next_action="Rerun CI once the worker is available.")
+
+        actions = finalizer.render_handoff(payload).split("**Recommendations / next steps**\n\n")[1]
+
+        assert actions.splitlines() == [
+            "| Owner | Issue | Action |",
+            "| -- | -- | -- |",
+            "| maintainer | External CI | Rerun CI once the worker is available. |",
+        ]
+
+    def test_complete_diagnosis_with_no_action_cells_has_no_recommendation_rows(self, finalizer: Any) -> None:
+        """A closed hypothesis does not acquire a made-up owner or a placeholder next step."""
+        payload = _standard_payload(finalizer, "investigate", 15)
+        payload["action_policy"] = "owned"
+        payload["tables"][0]["rows"][0]["cells"] = ["Parser", "Verified", "Closed", "—"]
+        payload.update(remaining=[], next_steps=[])
+
+        assert finalizer.render_handoff(payload).endswith(
+            "**Recommendations / next steps**\n\nNo further action is required.\n"
+        )
+
+    def test_best_way_forward_keeps_waiting_work_and_closes_with_one_route(self, finalizer: Any) -> None:
+        """Two waiting items stay accounted for while a single dependency-unblocking choice closes the report."""
+        payload = _standard_payload(finalizer, "implement", 15)
+        payload["action_policy"] = "best-way-forward"
+        payload["tables"][0]["rows"][0]["source_ids"] = ["report:CR-2"]
+        payload["tables"][0]["rows"].append(
+            {"id": "CR-1", "cells": ["Parser", "Blocked", "Pending", "CI"], "source_ids": ["report:CR-1"]}
+        )
+        payload["remaining"].append(
+            {"row_id": "CR-1", "owner": "maintainer", "item": "Parser awaits CI", "next_action": "Inspect CI results."}
+        )
+
+        rendered = finalizer.render_handoff(payload)
+        actions = rendered.split("**Recommendations / next steps**\n\n")[1]
+
+        assert "| maintainer | Parser awaits CI |" in rendered
+        assert actions.splitlines()[2:] == ["| ci | External CI | Rerun CI. |"]
+        payload["next_steps"].append("CR-1")
+        with pytest.raises(finalizer.HandoffError, match="best-way-forward-requires-one-step"):
+            finalizer.render_handoff(payload)
+
+    def test_actionable_result_row_requires_owned_follow_up(self, finalizer: Any) -> None:
+        """A genuine but unbound repair proposal must survive as an explicitly owned recommendation."""
+        payload = _standard_payload(finalizer, "investigate", 15)
+        payload["action_policy"] = "owned"
+        payload["tables"][0]["rows"][0]["cells"] = ["Parser", "Verified", "Confirmed", "Correct the receipt."]
+        payload.update(remaining=[], next_steps=[])
+
+        with pytest.raises(finalizer.HandoffError, match="table-action-requires-remaining:CR-2"):
+            finalizer.render_handoff(payload)
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            pytest.param("next_action", "None", id="empty-action"),
+            pytest.param("next_action", "No change.", id="completed-status"),
+            pytest.param("owner", "—", id="absent-owner"),
+            pytest.param("owner", "Unassigned", id="unassigned-owner"),
+        ],
+    )
+    def test_recommendation_requires_real_owner_and_action(self, finalizer: Any, field: str, value: str) -> None:
+        """A reserved absence marker cannot stand in for the requested owner or next action."""
+        payload = _standard_payload(finalizer, "implement", 15)
+        payload["action_policy"] = "owned"
+        payload["remaining"][0][field] = value
+
+        with pytest.raises(finalizer.HandoffError, match=f"remaining-{field}-placeholder:CR-2"):
+            finalizer.render_handoff(payload)
 
     def test_current_diagnosis_keeps_judgment_and_recommendations(self, finalizer: Any) -> None:
         """A completed diagnosis still delivers its repair recommendations without empty outcome labels."""
@@ -319,3 +397,60 @@ class TestHandoffActionOrder:
             hashlib.sha256(rendered.encode()).hexdigest()
             == "247f07601173080ddd14cff1b40883b6ce05fa0cf8de89b60ab739540ff51e54"
         )
+
+    def test_new_ordinary_handoff_defaults_to_owned_actions_before_binding(
+        self, finalizer: Any, tmp_path: Path
+    ) -> None:
+        """Direct rendering enforces the same authorship contract as the automated finalizer."""
+        payload = _standard_payload(finalizer, "investigate", 15)
+        handoff = tmp_path / "final-handoff.json"
+        final = tmp_path / "final.md"
+        validation = tmp_path / "final-handoff.validation.json"
+        handoff.write_text(json.dumps(payload), encoding="utf-8")
+
+        assert finalizer.render_files(handoff, final, validation) == finalizer.check_files(handoff, final, validation)
+        assert json.loads(handoff.read_bytes()) == {**payload, "action_policy": "owned"}
+
+    def test_invalid_unowned_action_does_not_overwrite_fresh_draft(self, finalizer: Any, tmp_path: Path) -> None:
+        """A policy default never changes the source or writes output when an authored action lacks an owner."""
+        payload = _standard_payload(finalizer, "investigate", 15)
+        payload.update(remaining=[], next_steps=[])
+        payload["tables"][0]["rows"][0]["cells"] = ["Parser", "Receipt", "Confirmed", "Fix the receipt."]
+        handoff = tmp_path / "final-handoff.json"
+        original = json.dumps(payload).encode()
+        handoff.write_bytes(original)
+        final, validation = tmp_path / "final.md", tmp_path / "final-handoff.validation.json"
+
+        with pytest.raises(finalizer.HandoffError, match="table-action-requires-remaining:CR-2"):
+            finalizer.render_files(handoff, final, validation)
+        assert handoff.read_bytes() == original
+        assert not final.exists()
+        assert not validation.exists()
+
+    def test_reissuing_bound_historical_handoff_preserves_its_exact_bytes(self, finalizer: Any, tmp_path: Path) -> None:
+        """Retained proof protects the original payload and presentation when an unmarked report is rendered again."""
+        payload = _standard_payload(finalizer, "investigate", 15)
+        payload.update(remaining=[], next_steps=[])
+        payload["tables"][0]["rows"][0]["cells"] = ["Parser", "Receipt", "Closed", "None"]
+        handoff, final, validation = (
+            tmp_path / "final-handoff.json",
+            tmp_path / "final.md",
+            tmp_path / "final-handoff.validation.json",
+        )
+        source = json.dumps(payload).encode()
+        rendered = finalizer.render_handoff(payload).encode()
+        proof = {
+            "schema_version": 1,
+            "status": "pass",
+            "skill": "investigate",
+            "branch": "standard",
+            "handoff_sha256": hashlib.sha256(source).hexdigest(),
+            "rendered_sha256": hashlib.sha256(rendered).hexdigest(),
+        }
+        receipt = json.dumps(proof).encode()
+        handoff.write_bytes(source)
+        final.write_bytes(rendered)
+        validation.write_bytes(receipt)
+
+        assert finalizer.render_files(handoff, final, validation) == proof
+        assert (handoff.read_bytes(), final.read_bytes(), validation.read_bytes()) == (source, rendered, receipt)

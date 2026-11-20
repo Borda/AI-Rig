@@ -210,12 +210,13 @@ def test_collect_diff_uses_only_git_argv(tmp_path: Path, monkeypatch: pytest.Mon
         "--ignore-submodules=none",
     ]
     assert [call for call in calls if "--no-pager" not in call] == [
-        ["git", "-c", "core.fsmonitor=false", "status", "--short"],
+        ["git", "-c", "core.fsmonitor=false", "--literal-pathspecs", "status", "--short"],
         *[
             [
                 "git",
                 "-c",
                 "core.fsmonitor=false",
+                "--literal-pathspecs",
                 "-c",
                 "core.quotePath=true",
                 "diff",
@@ -239,6 +240,7 @@ def test_collect_diff_uses_only_git_argv(tmp_path: Path, monkeypatch: pytest.Mon
             "git",
             "-c",
             "core.fsmonitor=false",
+            "--literal-pathspecs",
             "-C",
             str(repository.resolve()),
             "ls-files",
@@ -402,12 +404,13 @@ def test_reviewer_cleanup_diagnostics_keep_safe_failure_code(monkeypatch: pytest
 def test_gate_report_survives_non_utf8_failure_output(tmp_path: Path, suffix: bytes) -> None:
     """Retain a canonical failed gate when bounded external stderr is not valid UTF-8.
 
-    The failing command writes just under 1 MiB of stderr ending in half a UTF-8 character or an invalid byte; the
-    report must still be written with the failure reason decoded lossily and the stored log kept near the bound.
+    The failing command emits a multibyte character at the prefix boundary or an invalid byte. The reason is decoded
+    lossily while the stored stream retains the raw prefix and tail bytes.
     """
     script = tmp_path / "failure.py"
     script.write_text(
-        f"import sys\nsys.stderr.buffer.write(b'a' * (1024 * 1024 - 1) + {suffix!r})\nsys.exit(127)\n",
+        f"import sys\nsys.stderr.buffer.write(b'a' * (512 * 1024 - 1) + {suffix!r} + b'z' * (512 * 1024 + 1))\n"
+        "sys.exit(127)\n",
         encoding="utf-8",
     )
     output = tmp_path / "gates"
@@ -686,23 +689,39 @@ def test_gate_waits_for_inherited_output_before_the_deadline(tmp_path: Path) -> 
 
 
 def test_gate_output_capture_is_bounded_on_both_streams(tmp_path: Path) -> None:
-    """Drain both streams and mark truncation without letting logs grow without bound.
+    """Retain opening diagnostics and trailing failure summaries on both bounded byte streams.
 
     A command writes 2 MiB to each of stdout and stderr; both logs must start with the real output, stay near the 1 MiB
     bound and say they were truncated, and the command's own exit status must survive.
     """
     module = _load_module(RUN_GATES, "bounded_output_runner")
-    command = "import sys; sys.stdout.write('x' * 2097152); sys.stderr.write('y' * 2097152)"
+    command = (
+        "import sys; sys.stdout.buffer.write(b'x' * 2097152 + b'\\xff\\n1 failed, 12 passed\\n');"
+        "sys.stderr.buffer.write(b'y' * 2097152 + b'\\xfe final error\\n');sys.exit(7)"
+    )
     stdout, stderr = tmp_path / "stdout", tmp_path / "stderr"
 
     result, _ = module.execute_command([sys.executable, "-c", command], 10, stdout, stderr)
 
     logs = (stdout.read_bytes(), stderr.read_bytes())
-    assert result == 0
+    assert result == 7
     assert logs[0].startswith(b"x" * 1024)
     assert logs[1].startswith(b"y" * 1024)
+    assert logs[0].endswith(b"\xff\n1 failed, 12 passed\n")
+    assert logs[1].endswith(b"\xfe final error\n")
     assert all(len(content) <= 1024 * 1024 + 256 for content in logs)
     assert all(b"truncated" in content.lower() for content in logs)
+
+
+def test_gate_preserves_every_byte_at_the_capture_limit(tmp_path: Path) -> None:
+    """An exactly full stream and a short binary stream contain original bytes without truncation markers."""
+    module = _load_module(RUN_GATES, "exact_capture_limit_runner")
+    stdout, stderr = tmp_path / "stdout", tmp_path / "stderr"
+    command = "import sys; sys.stdout.buffer.write(bytes(range(256)) * 4096); sys.stderr.buffer.write(b'\\xff\\x00')"
+    result, _ = module.execute_command([sys.executable, "-c", command], 10, stdout, stderr)
+    assert result == 0
+    assert stdout.read_bytes() == bytes(range(256)) * 4096
+    assert stderr.read_bytes() == b"\xff\x00"
 
 
 @pytest.mark.parametrize("wrapper_name", ["collect-diff.sh", "run-gates.sh"])

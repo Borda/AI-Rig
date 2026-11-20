@@ -5,7 +5,8 @@ Purpose:
     Prevent a networked or third-party command from blocking repository maintenance indefinitely while preserving its
     normal output and exit status.
 Scope:
-    Launch exactly the argv supplied after ``--``. The helper does not use a shell, retry commands, inspect
+    Launch exactly the argv supplied after ``--``; on Windows the program name is first resolved through PATH and
+    PATHEXT so a ``.cmd`` shim starts. The helper does not use a shell, retry commands, inspect
     credentials, or interpret command output. On timeout it terminates the spawned process tree on POSIX and Windows.
 Usage:
     ``python3 scripts/run_with_timeout.py --timeout-seconds 120 --label "external plugin update" -- command arg``.
@@ -27,6 +28,7 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -118,6 +120,9 @@ def run(command: list[str], timeout_seconds: float, label: str, platform: str = 
     after interrupt cleanup. The caller supplies a positive timeout; this function does not parse it.
     """
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if platform == "win32" else 0
+    if platform == "win32":
+        # Without a shell, Windows resolves only ``.exe``; npm-style ``.cmd`` shims need the PATHEXT lookup.
+        command = [shutil.which(command[0]) or command[0], *command[1:]]
     try:
         process = subprocess.Popen(  # noqa: S603 - caller intentionally supplies literal argv without a shell.
             command,

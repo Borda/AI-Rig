@@ -182,6 +182,52 @@ describe("opencode-rig CLI", () => {
     expect(cli(project, ["remove", "--project"]).status).toBe(0)
   })
 
+  it("removes retired stamped cards only when asked", () => {
+    const project = new Project()
+    cli(project, ["init", "--project"])
+    const retired = project.path(".opencode/agents/rig-reviewer.md")
+    // A pre-rename card: stamped by us, no longer in this package's roster.
+    writeFileSync(retired, readFileSync(project.path(".opencode/agents/rig-auditor.md"), "utf8"), "utf8")
+    project.write(".opencode/agents/custom.md", "# mine\n")
+
+    const plain = cli(project, ["init", "--project"])
+    expect(plain.stdout).toMatch(/EXTRA {4}rig-reviewer\.md/)
+    expect(project.exists(".opencode/agents/rig-reviewer.md")).toBe(true)
+
+    const pruned = cli(project, ["init", "--prune-extra", "--project"])
+    expect(pruned.status).toBe(0)
+    expect(pruned.stdout).toMatch(/PRUNE {4}rig-reviewer\.md/)
+    expect(pruned.stdout).toMatch(/1 removed/)
+    expect(project.exists(".opencode/agents/rig-reviewer.md")).toBe(false)
+    expect(project.exists(".opencode/agents/custom.md")).toBe(true)
+  })
+
+  it("keeps a retired card that was edited after install", () => {
+    const project = new Project()
+    cli(project, ["init", "--project"])
+    const retired = project.path(".opencode/agents/rig-reviewer.md")
+    const installed = readFileSync(project.path(".opencode/agents/rig-auditor.md"), "utf8")
+    writeFileSync(retired, `${installed}\nlocal edit\n`, "utf8")
+
+    const result = cli(project, ["init", "--prune-extra", "--project"])
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toMatch(/KEEP\s+rig-reviewer\.md/)
+    expect(readFileSync(retired, "utf8")).toMatch(/local edit/)
+  })
+
+  it("never deletes retired cards during a check", () => {
+    const project = new Project()
+    cli(project, ["init", "--project"])
+    const retired = project.path(".opencode/agents/rig-reviewer.md")
+    writeFileSync(retired, readFileSync(project.path(".opencode/agents/rig-auditor.md"), "utf8"), "utf8")
+
+    const result = cli(project, ["check", "--prune-extra", "--project"])
+
+    expect(result.status).not.toBe(0)
+    expect(project.exists(".opencode/agents/rig-reviewer.md")).toBe(true)
+  })
+
   it("prints exactly the shipped rules, without a blanket commit rule", () => {
     const result = cli(new Project(), ["print-config"])
     const snippet = JSON.parse(result.stdout.slice(0, result.stdout.indexOf("\n\n//")))
@@ -761,7 +807,8 @@ describe("opencode-rig setup global instructions", () => {
     const result = cli(project, ["doctor", "--project"])
     expect(result.status).toBe(0)
     expect(result.stdout).toMatch(/RTK\s+(ok|warn)/)
-    expect(result.stdout).toMatch(/reduce .*output/)
+    expect(result.stdout).toMatch(/rig workflows (run every command raw|do not use it)/)
+    expect(result.stdout).not.toContain("read-heavy")
     expect(result.stdout).not.toMatch(/\d+[-–]\d+%/)
   })
 })

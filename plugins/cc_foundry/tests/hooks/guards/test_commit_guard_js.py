@@ -457,6 +457,81 @@ class TestCommitGuard:
 
         assert result.returncode == 0, result.stderr
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("rtk git push origin main", id="rtk-argv"),
+            pytest.param("rtk summary git push origin main", id="rtk-summary-argv"),
+            pytest.param('rtk run -c "git push origin main"', id="rtk-run-c"),
+            pytest.param('rtk run --shell bash -c "git push origin main"', id="rtk-run-shell"),
+            pytest.param('rtk summary --shell sh "git push origin main"', id="rtk-summary-shell"),
+            pytest.param('rtk err --shell sh "git push origin main"', id="rtk-err-shell"),
+            pytest.param('rtk test --shell sh "git push origin main"', id="rtk-test-shell"),
+            pytest.param("arch -arm64 rtk proxy 'git push origin main'", id="unmodeled-wrapper-bypass"),
+            pytest.param("chrt 0 rtk run 'git push origin main'", id="unmodeled-wrapper-run"),
+            pytest.param("fd -x rtk proxy 'git push origin main'", id="fd-exec-bypass"),
+        ],
+    )
+    def test_push_behind_an_rtk_runner_is_blocked_like_a_raw_push(self, guard: Callable, command: str) -> None:
+        """A push is stopped when rtk carries it, as argv or as a string it hands to a shell.
+
+        Scenario: rtk 1.2.0 runs ``run -c`` and ``summary|err|test --shell`` strings through a shell. The guard reads
+        that string like ``sh -c``, so the push needs the same user approval as the raw command.
+        """
+        result = guard(command)
+
+        assert result.returncode == 2, f"{command!r} was not blocked"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param('rtk run -c "git status"', id="rtk-run-c"),
+            pytest.param('rtk summary --shell sh "git log -1"', id="rtk-summary-shell"),
+            pytest.param("rtk git status", id="rtk-argv"),
+            pytest.param("rtk run --shell sh -c 'git status'", id="rtk-run-shell-c"),
+            pytest.param("rtk bypass git status", id="rtk-bypass-argv"),
+            pytest.param("arch -arm64 rtk proxy 'git status'", id="unmodeled-wrapper-bypass"),
+            pytest.param("git ls-files | xargs grep -l rtk", id="xargs-search-for-rtk"),
+            pytest.param("echo rtk proxy 'git status && git log'", id="print-argument-rtk"),
+            pytest.param("rtk bypass $'git\\nstatus'", id="rtk-bypass-newline-words"),
+        ],
+    )
+    def test_a_read_behind_an_rtk_runner_passes(self, guard: Callable, command: str) -> None:
+        """A read-only git command carried by rtk is not stopped, so the unwrap adds no new prompt.
+
+        Scenario: the same runner forms carry ``git status`` or ``git log``; the guard reads the inner command and finds
+        no push. An ask verdict also exits 0, so the output must hold no permission decision.
+        """
+        result = guard(command)
+
+        assert result.returncode == 0, result.stderr
+        assert "permissionDecision" not in result.stdout, result.stdout
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("rtk bypass 'git --work-tree #x log -1'", id="bypass-comment-word"),
+            pytest.param("rtk proxy 'git --work-tree ; log -1'", id="proxy-semicolon-word"),
+            pytest.param("printf 'git status' | xargs -I{} rtk bypass '{}'", id="xargs-fed-runner"),
+            pytest.param("printf 'git status' | xargs -I % rtk proxy %", id="xargs-plain-token-runner"),
+            pytest.param("printf 'git status' | parallel rtk proxy", id="parallel-tail-runner"),
+            pytest.param("find . -prune -exec rtk run 'git status' \\;", id="find-exec-runner"),
+            pytest.param("printf proxy | xargs -E echo -I % rtk % 'git status'", id="xargs-option-value-named-echo"),
+            pytest.param(
+                "find p -maxdepth 0 -exec echo {} \\; -exec rtk {} 'git status' \\;", id="find-earlier-clause-echo"
+            ),
+            pytest.param(
+                "find p -maxdepth 0 -name echo -o -exec rtk {} 'git status' \\;", id="find-predicate-operand-echo"
+            ),
+        ],
+    )
+    def test_an_rtk_string_it_cannot_read_exactly_asks(self, guard: Callable, command: str) -> None:
+        """A string that rtk and a shell split differently is sent to the usual approval instead of read in part."""
+        result = guard(command)
+
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"] == "ask"
+
     def test_session_start_deletes_push_token(self, run_hook: Callable, git_repo: Path, push_token: Callable) -> None:
         """SessionStart deletes a pending push token, so a prior session's approval never carries over.
 

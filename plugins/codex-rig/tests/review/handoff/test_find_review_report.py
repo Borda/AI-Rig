@@ -154,6 +154,285 @@ def _write_nested_report(
     return result_path
 
 
+def test_rerun_discovers_latest_incomplete_pr_without_admitting_it(tmp_path: Path) -> None:
+    """Entry may resume the newest retained producer even before it has findings or a result."""
+    _write_nested_report(tmp_path, "run-001")
+    retained = tmp_path / "pr-123" / "run-002"
+    retained.mkdir()
+    (retained / "pr.json").write_text(_identity(), encoding="utf-8")
+    args = ("--target", PR_URL, "--reports-dir", str(tmp_path))
+    discovery = _run_finder("--latest-run", *args)
+    assert discovery.returncode == 0, discovery.stderr
+    assert Path(discovery.stdout.strip()) == retained
+    accepted = _run_finder("--latest-run", *args, "--expect-run", str(retained))
+    assert accepted.returncode == 0, accepted.stderr
+    assert accepted.stdout == discovery.stdout
+    (retained.parent / "run-003").mkdir()
+    (retained.parent / "run-003" / "pr.json").write_text(_identity(), encoding="utf-8")
+    changed = _run_finder("--latest-run", *args, "--expect-run", str(retained))
+    assert changed.returncode == 1
+    assert "selected-review-run-changed" in changed.stderr
+    assert not changed.stdout
+    intake = _run_finder(*args)
+    assert intake.returncode == 1
+    assert INCOMPLETE in intake.stderr
+
+
+def test_rerun_refuses_a_damaged_newer_identity(tmp_path: Path) -> None:
+    """A newer directory cannot stand in for a collected identity or expose an older review."""
+    _write_nested_report(tmp_path, "run-001")
+    retained = tmp_path / "pr-123" / "run-002"
+    retained.mkdir()
+    discovery = _run_finder("--latest-run", "--target", PR_URL, "--reports-dir", str(tmp_path))
+    assert discovery.returncode == 1
+    assert not discovery.stdout
+
+
+def _entry(script: Path, repository: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    """Invoke one shipped entry command in an independently selected repository."""
+    return subprocess.run([sys.executable, str(script), *arguments], cwd=repository, capture_output=True, text=True)
+
+
+@pytest.fixture
+def entry_repository(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Create a Git checkout with one tracked file and ignored workflow reports."""
+    # Generated report and worktree names already consume much of Git for Windows' GIT_DIR limit.
+    repository = tmp_path_factory.mktemp("repo")
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    (repository / ".gitignore").write_text(".reports/\n", encoding="utf-8")
+    (repository / "selected").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repository),
+            "-c",
+            "user.name=Tester",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-qm",
+            "base",
+        ],
+        check=True,
+    )
+    return repository
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "selection",
+    [
+        pytest.param(("--local-scope", "working-tree"), id="working-tree"),
+        pytest.param(("--local-scope", "path", "--local-target", "selected"), id="selected-path"),
+        pytest.param(("--local-scope", "commit", "--local-target", "HEAD^!"), id="commit"),
+    ],
+)
+def test_entry_resumes_only_the_offered_local_run(entry_repository: Path, selection: tuple[str, ...]) -> None:
+    """New sessions find the latest matching allocation and refuse superseded confirmations."""
+    create = ("--skill", "code-review", "--branch", "topic", *selection)
+    first = _entry(CREATE_RUN_PATH, entry_repository, *create)
+    assert first.returncode == 0, first.stderr
+    run = (entry_repository / first.stdout.strip()).resolve()
+    lookup = ("--latest-run", *selection)
+    offered = _entry(FINDER_PATH, entry_repository, *lookup)
+    assert offered.returncode == 0, offered.stderr
+    assert Path(offered.stdout.strip()) == run
+    confirmed = _entry(FINDER_PATH, entry_repository, *lookup, "--expect-run", str(run))
+    assert (confirmed.returncode, confirmed.stdout) == (0, offered.stdout)
+    second = _entry(CREATE_RUN_PATH, entry_repository, *create)
+    assert second.returncode == 0, second.stderr
+    stale = _entry(FINDER_PATH, entry_repository, *lookup, "--expect-run", str(run))
+    assert stale.returncode == 1
+    assert not stale.stdout
+    assert "selected-review-run-changed" in stale.stderr
+
+
+@pytest.mark.integration
+def test_entry_binds_untracked_bytes_and_path_scope(entry_repository: Path) -> None:
+    """Another path, or changed untracked contents at an unchanged HEAD, cannot resume old evidence."""
+    (entry_repository / "extra").write_bytes(b"one")
+    selection = ("--local-scope", "path", "--local-target", "extra")
+    first = _entry(CREATE_RUN_PATH, entry_repository, "--skill", "code-review", "--branch", "topic", *selection)
+    assert first.returncode == 0, first.stderr
+    (entry_repository / "selected").write_bytes(b"unrelated")
+    same = _entry(FINDER_PATH, entry_repository, "--latest-run", *selection)
+    assert Path(same.stdout.strip()) == (entry_repository / first.stdout.strip()).resolve()
+    other = _entry(FINDER_PATH, entry_repository, "--latest-run", "--local-scope", "path", "--local-target", "selected")
+    assert other.returncode == 1
+    assert not other.stdout
+    assert MISSING in other.stderr
+    (entry_repository / "extra").write_bytes(b"two")
+    changed = _entry(FINDER_PATH, entry_repository, "--latest-run", *selection)
+    assert changed.returncode == 1
+    assert not changed.stdout
+    assert MISSING in changed.stderr
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("identity_file", "identity_text"),
+    [pytest.param("pr-target.txt", PR_URL, id="requested"), pytest.param("pr.json", _identity(), id="collected")],
+)
+def test_new_pr_collection_supersedes_numbered_run_for_producer_only(
+    tmp_path: Path, identity_file: str, identity_text: str
+) -> None:
+    """A newer staging run wins before promotion while historical PR result lookup preserves numeric precedence."""
+    old = _entry(CREATE_RUN_PATH, tmp_path, "--skill", "code-review", "--pr-number", "123")
+    assert old.returncode == 0, old.stderr
+    old_dir = tmp_path / old.stdout.strip()
+    _write_files(old_dir, {"pr.json": _identity()})
+    promoted = _entry(CREATE_RUN_PATH, tmp_path, "--skill", "code-review", "--promote-pr-run", str(old_dir))
+    assert promoted.returncode == 0, promoted.stderr
+    fresh = _entry(CREATE_RUN_PATH, tmp_path, "--skill", "code-review", "--pr-number", "123")
+    assert fresh.returncode == 0, fresh.stderr
+    retained = tmp_path / fresh.stdout.strip()
+    _write_files(retained, {identity_file: identity_text})
+    selected = _entry(FINDER_PATH, tmp_path, "--latest-run", "--target", PR_URL)
+    assert selected.returncode == 0, selected.stderr
+    assert Path(selected.stdout.strip()) == retained
+    intake = _entry(FINDER_PATH, tmp_path, "--target", PR_URL)
+    assert intake.returncode == 1
+    assert INCOMPLETE in intake.stderr
+    assert "run-001" in intake.stderr
+
+
+def _allocate_pr(root: Path, url: str) -> Path:
+    """Allocate the standalone review using its verified preflight identity."""
+    created = _entry(CREATE_RUN_PATH, root, "--skill", "code-review", "--pr-number", "123", "--pr-url", url)
+    assert created.returncode == 0, created.stderr
+    return (root / created.stdout.strip()).resolve()
+
+
+@pytest.mark.integration
+def test_entry_only_pr_run_supersedes_older_review_for_same_repository(tmp_path: Path) -> None:
+    """A repeat before collection offers the exact allocation, even when two repositories share a PR number."""
+    older = _allocate_pr(tmp_path, PR_URL)
+    _write_files(older, {"pr.json": _identity()})
+    promotion = _entry(CREATE_RUN_PATH, tmp_path, "--skill", "code-review", "--promote-pr-run", str(older))
+    assert promotion.returncode == 0, promotion.stderr
+    old_run = (tmp_path / promotion.stdout.strip()).resolve()
+    fresh = _allocate_pr(tmp_path, PR_URL)
+    other_url = PR_URL.replace("widgets", "gadgets")
+    other = _allocate_pr(tmp_path, other_url)
+    for url, run in ((PR_URL, fresh), (other_url, other)):
+        lookup = ("--latest-run", "--target", url)
+        assert {file.name for file in run.iterdir()} == {"review-entry.json"}
+        for confirmation in ((), ("--expect-run", str(run))):
+            selected = _entry(FINDER_PATH, tmp_path, *lookup, *confirmation)
+            assert selected.returncode == 0, selected.stderr
+            assert Path(selected.stdout.strip()) == run
+    stale = _entry(FINDER_PATH, tmp_path, "--latest-run", "--target", PR_URL, "--expect-run", str(old_run))
+    assert stale.returncode == 1
+    assert not stale.stdout
+    assert "selected-review-run-changed" in stale.stderr
+    intake = _entry(FINDER_PATH, tmp_path, "--target", other_url)
+    assert intake.returncode == 1
+    assert not intake.stdout
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        pytest.param("pr.json", "{", id="damaged-collection"),
+        pytest.param("pr.json", _identity(124, PR_URL.replace("123", "124")), id="collected-other-number"),
+        pytest.param("pr.json", _identity(url=PR_URL.replace("widgets", "gadgets")), id="collected-other-repo"),
+        pytest.param("pr.json", '{"number":123}', id="collected-without-url"),
+        pytest.param("pr-target.txt", PR_URL.replace("widgets", "gadgets"), id="requested-other-repo"),
+    ],
+)
+def test_collector_disagreement_blocks_bound_pr_allocation(tmp_path: Path, filename: str, content: str) -> None:
+    """A bound PR entry identifies damaged work but cannot authorize resumption over conflicting receipts."""
+    old = _allocate_pr(tmp_path, PR_URL)
+    _write_files(old, {"pr.json": _identity()})
+    assert _entry(CREATE_RUN_PATH, tmp_path, "--skill", "code-review", "--promote-pr-run", str(old)).returncode == 0
+    fresh = _allocate_pr(tmp_path, PR_URL)
+    _write_files(fresh, {filename: content})
+    rejected = _entry(FINDER_PATH, tmp_path, "--latest-run", "--target", PR_URL)
+    assert rejected.returncode == 1
+    assert not rejected.stdout
+    assert "unverified-review-run-identity" in rejected.stderr
+    assert fresh.name in rejected.stderr
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("artifact", "content", "diagnostic"),
+    [
+        pytest.param("diff.patch", "other bytes", "local-review-collected-diff-mismatch", id="replaced-patch"),
+        pytest.param(
+            "result.json",
+            _assessed_result_text("working-tree", reviewed_commit_sha="a" * 40),
+            "local-review-result-revision-mismatch",
+            id="wrong-revision",
+        ),
+        pytest.param("result.json", _assessed_result_text("path"), INVALID, id="wrong-scope"),
+        pytest.param(
+            "result.json",
+            _assessed_result_text("working-tree", review_status="unavailable"),
+            UNAVAILABLE,
+            id="unavailable",
+        ),
+        pytest.param("result.json", _assessed_result_text("working-tree", review_status="closed"), CLOSED, id="closed"),
+    ],
+)
+def test_current_local_damage_or_terminal_result_blocks_older_run(
+    entry_repository: Path, artifact: str, content: str, diagnostic: str
+) -> None:
+    """A matching newer allocation with conflicting evidence must never expose an older run."""
+    create = ("--skill", "code-review", "--branch", "topic", "--local-scope", "working-tree")
+    assert _entry(CREATE_RUN_PATH, entry_repository, *create).returncode == 0
+    newest = _entry(CREATE_RUN_PATH, entry_repository, *create)
+    assert newest.returncode == 0, newest.stderr
+    (entry_repository / newest.stdout.strip() / artifact).write_text(content, encoding="utf-8")
+    result = _entry(FINDER_PATH, entry_repository, "--latest-run", "--local-scope", "working-tree")
+    assert result.returncode == 1
+    assert not result.stdout
+    assert diagnostic in result.stderr
+
+
+@pytest.mark.integration
+def test_frozen_historical_path_can_resume_from_another_session(entry_repository: Path) -> None:
+    """Real historical collector and plan receipts establish a selected path, including its staged bytes."""
+    selected = entry_repository / "selected"
+    selected.write_text("updated\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(entry_repository), "add", "selected"], check=True)
+    created = _entry(CREATE_RUN_PATH, entry_repository, "--skill", "code-review", "--branch", "topic")
+    assert created.returncode == 0, created.stderr
+    run = (entry_repository / created.stdout.strip()).resolve()
+    collector = PLUGIN_ROOT / "shared" / "collect_diff.py"
+    collected = _entry(collector, entry_repository, "--scope", "path", "--target", "selected", "--out", str(run))
+    assert collected.returncode == 0, collected.stderr
+    mirror = _entry(
+        collector,
+        entry_repository,
+        "--review-worktree",
+        "--repository",
+        str(entry_repository),
+        "--out",
+        str(run / "local-source"),
+    )
+    assert mirror.returncode == 0, mirror.stderr
+    lookup = ("--latest-run", "--local-scope", "path", "--local-target", "selected")
+    unknown = _entry(FINDER_PATH, entry_repository, *lookup)
+    assert unknown.returncode == 1
+    assert MISSING in unknown.stderr
+    receipt = read_json(run / "local-source" / "review-worktree.json")
+    _write_files(
+        run, {"direct-plan.json": json.dumps({"scope_path": "selected", "source_root": receipt["review_worktree"]})}
+    )
+    found = _entry(FINDER_PATH, entry_repository, *lookup)
+    assert found.returncode == 0, found.stderr
+    assert Path(found.stdout.strip()) == run
+    subprocess.run(["git", "-C", str(entry_repository), "restore", "--staged", "selected"], check=True)
+    changed = _entry(FINDER_PATH, entry_repository, *lookup)
+    assert changed.returncode == 1
+    assert not changed.stdout
+    assert MISSING in changed.stderr
+
+
 def _drop_identity(result: Path) -> None:
     """Delete the `pr.json` identity beside a result."""
     (result.parent / "pr.json").unlink()

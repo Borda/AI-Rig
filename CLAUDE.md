@@ -65,6 +65,7 @@ Generic rule: `foundry:rules/claude-config.md` §Lint/Format (command forms: `fo
 - Broad local runs go parallel: `.venv/bin/python -m pytest -n 4 <paths>` (pytest-xdist, already in the test group). Measured on the full suite: 11556 tests in ~5 min at `-n 4`, several times faster than the same run serial. Use `-n 4` for any run wide enough to be worth waiting on; keep focused single-file runs serial, where worker startup costs more than it saves.
 - Coverage tracing is opt-in: CI passes the `--cov=<plugin>/bin` list (see `.github/workflows/ci-tests.yml`), and a local run measures only when you add `--cov=<path>` with `--cov-report=term-missing`. Keep sources out of `[tool.coverage]`: it also configures tests that start their own coverage run. Untraced is the default because tracing slows every test, most on Windows.
 - Reading a failure serially, and a pass-serial/fail-under-`-n` test being a real isolation defect: `foundry:rules/python-testing.md` §Parallel Runs (pytest-xdist).
+- Optional pytest triage through rtk: `rtk test .venv/bin/python -m pytest <paths>` (the pinned runner prefix) keeps the exit code but hides assertion messages, `-rs` skip reasons and warnings, so use it only to find which tests fail, then re-run those raw. Never for `--co`, `-rs`, `-s`, warning review or completion proof.
 
 ## Test Selection
 

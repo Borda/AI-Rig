@@ -930,6 +930,59 @@ class TestCodeRemediateWorktreeRoot:
     """The worktree root a remediation plan names must be a fresh, managed, non-escaping location."""
 
     @pytest.mark.parametrize(
+        "root_name",
+        [
+            pytest.param(".codex-rig-worktrees/fixture", id="external-sibling"),
+            pytest.param("authoritative-repository/.reports/codex/code-remediate-worktrees/fixture", id="source-local"),
+        ],
+    )
+    def test_protected_interval_detects_same_size_sibling_draft_change(
+        self, lifecycle: ModuleType, tmp_path: Path, repository_templates: RepositoryTemplates, root_name: str
+    ) -> None:
+        """Per-worktree snapshots detect a rewrite of a paused sibling's already dirty tracked file in either layout."""
+        plan_path, approval_path, source = _approved_code_remediate_plan(tmp_path, repository_templates)
+        _use_source_local_worktree_root(plan_path, approval_path, source)
+        _point_worktree_root(plan_path, approval_path, source, tmp_path / root_name)
+        state = _prepare_remediation(lifecycle, tmp_path, plan_path, approval_path)
+        active, sibling = _node_worktrees(tmp_path, state)
+        draft = sibling / "bucket-b.txt"
+        draft.write_bytes(b"first draft\n")
+        evidence = plan_path.parent / "protected-interval"
+        evidence.mkdir()
+        guard = [sys.executable, str(PLUGIN_ROOT / "shared" / "contributor_run_integrity.py")]
+
+        def snapshot(checkout: Path) -> list[str]:
+            """Take one baseline and retain the verifier invocation anchored to its printed digest."""
+            snapshot_file = evidence / f"integrity-{checkout.name}.json"
+            run = subprocess.run(
+                [
+                    *guard,
+                    "snapshot",
+                    "--repo",
+                    checkout,
+                    "--watch-surface",
+                    "--main-checkout",
+                    source,
+                    "--out",
+                    snapshot_file,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return [*guard, "verify", "--snapshot", str(snapshot_file), "--expect", json.loads(run.stdout)["sha256"]]
+
+        active_verify, sibling_verify = snapshot(active), snapshot(sibling)
+        subprocess.run(active_verify, check=True, capture_output=True)
+        subprocess.run(sibling_verify, check=True, capture_output=True)
+        draft.write_bytes(b"other draft\n")
+
+        mismatch = subprocess.run(sibling_verify, check=False, capture_output=True, text=True)
+
+        assert mismatch.returncode == 3, mismatch.stderr
+        assert "review:diff" in json.loads(mismatch.stdout)["changed"]
+
+    @pytest.mark.parametrize(
         ("bind_root", "expected"),
         [
             pytest.param(_root_not_ignored, "worktree-root-not-ignored", id="not-ignored"),

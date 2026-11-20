@@ -476,6 +476,9 @@ def test_branch_identity_is_bounded_portable_and_digest_bound(tmp_path: Path, br
         pytest.param(["--pr-number", "0"], id="zero"),
         pytest.param(["--pr-number", "-1"], id="negative"),
         pytest.param(["--branch", " "], id="blank-branch"),
+        pytest.param(["--pr-url", "https://github.com/acme/widgets/pull/1"], id="url-without-number"),
+        pytest.param(["--pr-number", "1", "--pr-url", "https://example.org/acme/widgets/pull/1"], id="foreign-url"),
+        pytest.param(["--pr-number", "1", "--pr-url", "https://github.com/acme/widgets/pull/2"], id="different-number"),
         pytest.param(["--pr-number", "1", "--branch", "topic"], id="conflicting"),
     ],
 )
@@ -497,6 +500,22 @@ def test_pr_named_promotion_checks_collected_identity(tmp_path: Path, collected:
     assert (promoted.returncode == 0) == (collected == 41)
     assert source.exists() == (collected != 41)
     assert (tmp_path / "code-review" / f"pr-{collected}").exists() == (collected == 41)
+
+
+def test_promotion_requires_the_allocated_repository(tmp_path: Path) -> None:
+    """A same-number PR from another repository must not be promoted into the allocated review."""
+    url = "https://github.com/acme/widgets/pull/41"
+    created = _run_create("--skill", "code-review", "--root", str(tmp_path), "--pr-number", "41", "--pr-url", url)
+    assert created.returncode == 0, created.stderr
+    source = Path(created.stdout.strip())
+    (source / "pr.json").write_text(
+        json.dumps({"number": 41, "url": url.replace("widgets", "other")}), encoding="utf-8"
+    )
+    rejected = _promote(tmp_path, "code-review", source)
+    assert rejected.returncode == 1
+    assert not rejected.stdout
+    assert source.is_dir()
+    assert not (source.parent / "pr-41").exists()
 
 
 def test_branch_named_run_promotes_collected_pr(tmp_path: Path) -> None:

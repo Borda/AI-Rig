@@ -1783,13 +1783,18 @@ function collectWords(words, found, depth, target, scripts = new Set(), facts = 
   if (interpreter >= 0) target.scanCode(words.slice(interpreter + 1).join(" "), found);
   for (const at of executablePrograms(words)) {
     const name = programName(words[at]);
+    // rtk runs argv programs too (`rtk sh -c STR`, `rtk env …`): only a modeled shell-string runner is exempt here,
+    // an empty reading falls through to the code-option check like any unmodeled executable.
+    const rtkSource = name === "rtk" ? rtkShellSource(words.slice(at + 1)) : [];
     if (
       SOURCE_RUNNERS.has(name) ||
       INTERPRETERS.test(name) ||
       PRINT_PROGRAMS.has(name) ||
       SEARCH_PROGRAMS.has(name) ||
       name === "git" ||
-      name === "gh"
+      name === "gh" ||
+      rtkSource === null ||
+      rtkSource.length > 0
     )
       continue;
     const args = words.slice(at + 1);
@@ -1866,6 +1871,151 @@ function collectWords(words, found, depth, target, scripts = new Set(), facts = 
       collect(arg, found, depth + 1, target, scripts, bindings, true);
     }
   }
+  // rtk runs its shell-string runners through a shell, so the string is source the guard must read like `sh -c`. Like
+  // sh and env, every word named rtk is found by scan, not only at positions executablePrograms can prove: behind a
+  // wrapper the parser does not model (`arch -arm64 rtk proxy STR`) rtk still runs STR.
+  const programs = new Set(executablePrograms(words));
+  for (let at = 0; at < words.length; at += 1) {
+    if (programName(words[at]) !== "rtk") continue;
+    if (!programs.has(at)) {
+      // an unproven rtk is data when the nearest proven program before it is a print or search program (`grep -l rtk`),
+      // and otherwise only a literal runner subcommand is read
+      const nearest = Math.max(-1, ...[...programs].filter((index) => index < at));
+      const before = programName(words[nearest] ?? "");
+      if (PRINT_PROGRAMS.has(before) || SEARCH_PROGRAMS.has(before) || !rtkRunnerSubcommand(words.slice(at + 1)))
+        continue;
+    }
+    if (behindReplacementWrapper(words, at)) {
+      // rtk behind xargs, parallel or find may receive its subcommand or its command string from input or a substituted
+      // name, which the guard cannot see, so every such rtk fails closed whatever its words look like
+      markTargetUnreadable(target, "rtk behind a replacement wrapper");
+      // empty text: re-scanning these words would reach this refusal again
+      target.unlexable("", found, true);
+      return;
+    }
+    const strings = rtkShellSource(words.slice(at + 1));
+    if (strings === null) {
+      markTargetUnreadable(target, "rtk shell-string runner option is not modeled");
+      target.unlexable("", found, true);
+      return;
+    }
+    if (depth >= MAX_NESTING) continue;
+    for (const { text, index, prefix = 0, spaced = false } of strings) {
+      const k = at + 1 + index;
+      const source = facts[k] & WORD_LITERAL ? text : consumerWord(text, depth + 1, bindings, texts[k]?.slice(prefix));
+      if (source === null) {
+        markTargetUnreadable(target, UNREADABLE_SYNTAX.printedSource);
+        target.unlexable(words[k], found, true);
+        return;
+      }
+      const wordList = spaced && RTK_PLAIN_WORD_LIST.test(source) ? rtkWordSeparators(source) : null;
+      if (spaced && wordList === null) {
+        markTargetUnreadable(target, "rtk bypass or proxy string is not a plain word list");
+        target.unlexable(words[k], found, true);
+        return;
+      }
+      collect(spaced ? wordList : source, found, depth + 1, target, scripts, bindings, true);
+    }
+  }
+}
+
+// rtk subcommands that can run one command string through a shell: `rtk run -c STR`, `rtk summary|err|test --shell SH STR`,
+// and a single string argument, which rtk hands to `sh -c`.
+const RTK_SHELL_RUNNERS = new Set(["run", "summary", "err", "test"]);
+// rtk subcommands that split one string argument into words and run it as a program.
+const RTK_STRING_RUNNERS = new Set(["bypass", "proxy"]);
+// A lone word that is plainly a program name or path; anything else may reach a shell and is read as source.
+const RTK_PLAIN_PROGRAM = /^[\w./@+,%=:-]+$/;
+// The only `rtk bypass|proxy` strings the guard judges: plain words and quotes split by space, tab or newline, where
+// rtk's own word split and shell lexing give the same argv. Any other character (a comment or operator character,
+// `$`, backslash, a non-blank whitespace such as `\v`) is read differently by rtk and a shell, so it fails closed.
+const RTK_PLAIN_WORD_LIST = /^[\w./@+,%=:'" \t\n-]*$/;
+
+/** Whether xargs, parallel or find precedes the word at `at` in its simple command. */
+function behindReplacementWrapper(words, at) {
+  return words.slice(0, at).some((word) => ["xargs", "parallel", "find"].includes(programName(word)));
+}
+
+/** The rtk subcommand when it runs a command string (`run`, `summary`, `err`, `test`, `bypass`, `proxy`), else `null`. */
+function rtkRunnerSubcommand(args) {
+  let k = 0;
+  while (k < args.length && /^(?:-v+|--verbose|--skip-env)$/.test(args[k])) k += 1;
+  const sub = args[k];
+  return RTK_SHELL_RUNNERS.has(sub) || RTK_STRING_RUNNERS.has(sub) ? sub : null;
+}
+
+/**
+ * The word list with each unquoted tab or newline turned into the space rtk treats it as, or `null` when a tab or
+ * newline sits inside quotes (rtk keeps it in the word, a shell lexer would see a changed value) or a quote is open.
+ */
+function rtkWordSeparators(source) {
+  let quote = "";
+  let out = "";
+  for (const ch of source) {
+    if (quote) {
+      if (ch === "\t" || ch === "\n") return null;
+      if (ch === quote) quote = "";
+      out += ch;
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+      out += ch;
+    } else out += ch === "\t" || ch === "\n" ? " " : ch;
+  }
+  return quote ? null : out;
+}
+
+/**
+ * The shell command strings an `rtk` invocation hands to a shell, as `{ text, index }` with `index` the word's offset in
+ * `args`. An empty list means argv execution or a subcommand that runs nothing, whose words the plain program scan
+ * reads. `null` means an option the parser does not model could move the string, so nothing can be proven.
+ */
+function rtkShellSource(args) {
+  let k = 0;
+  while (k < args.length && /^(?:-v+|--verbose|--skip-env)$/.test(args[k])) k += 1;
+  if (k >= args.length || /^(?:-V|--version|-h|--help)$/.test(args[k])) return [];
+  if (args[k].startsWith("-")) return null;
+  const sub = args[k];
+  const runner = RTK_SHELL_RUNNERS.has(sub);
+  if (!runner && !RTK_STRING_RUNNERS.has(sub)) return [];
+  let shell = false;
+  let command = null;
+  for (k += 1; k < args.length; k += 1) {
+    const arg = args[k];
+    if (arg === "--skip-env") continue;
+    if (arg === "--") {
+      k += 1;
+      break;
+    }
+    if (!runner) {
+      if (arg.startsWith("-")) return null;
+      break;
+    }
+    if (arg === "--shell" || arg === "-c" || arg === "--command") {
+      if (arg !== "--shell" && sub !== "run") return null;
+      if (k + 1 >= args.length) return null;
+      if (arg === "--shell") {
+        // rtk runs `<value> -c STR`: only a shell reads STR as shell source, anything else is another language
+        if (!STDIN_SHELLS.has(programName(args[k + 1]))) return null;
+        shell = true;
+      } else command = { text: args[k + 1], index: k + 1 };
+      k += 1;
+    } else if (arg.startsWith("--shell=")) {
+      if (!STDIN_SHELLS.has(programName(arg.slice(8)))) return null;
+      shell = true;
+    } else if (sub === "run" && arg.startsWith("--command=")) command = { text: arg.slice(10), index: k, prefix: 10 };
+    else if (arg.startsWith("-")) return null;
+    else break;
+  }
+  const rest = args.slice(k);
+  // rtk hands one argument to `sh -c` on a wider test than whitespace: a brace, quote or backslash word also qualifies
+  // (`rtk run '{git,status}'`, where /bin/sh brace expansion builds a full command). Only a plain program word is argv.
+  // bypass and proxy split that string into words themselves, not through a shell, so it is read only when it is a
+  // plain word list (RTK_PLAIN_WORD_LIST); unquoted tabs and newlines then count as the spaces rtk treats them as.
+  const single =
+    rest.length === 1 && !RTK_PLAIN_PROGRAM.test(rest[0]) ? [{ text: rest[0], index: k, spaced: !runner }] : [];
+  if (sub === "run" && command) return [command];
+  if (runner && shell) return rest.map((text, offset) => ({ text, index: k + offset }));
+  return single;
 }
 
 /** Refuse replacement fragments that can construct command names across the template/input boundary. */
@@ -2452,6 +2602,27 @@ function executablePrograms(words) {
     ) {
       s += 1;
       continue;
+    }
+    if (name === "rtk") {
+      // rtk passes stdin and argv through to the program it runs, so that program is a candidate beside rtk itself
+      // (rtk's own position stays: its shell-string runners are read from it). A runner subcommand is skipped; a
+      // filter or unknown subcommand is the program word.
+      let k = s + 1;
+      while (k < plain.length && /^(?:-v+|--verbose|--skip-env)$/.test(plain[k])) k += 1;
+      const sub = plain[k];
+      if (RTK_SHELL_RUNNERS.has(sub) || RTK_STRING_RUNNERS.has(sub)) {
+        const runner = RTK_SHELL_RUNNERS.has(sub);
+        k += 1;
+        // options the string reader models are skipped so the program after them is the one scanned
+        for (;;) {
+          const option = plain[k] ?? "";
+          if (option === "--skip-env" || (runner && /^--(?:shell|command)=/.test(option))) k += 1;
+          else if (runner && (option === "--shell" || option === "-c" || option === "--command")) k += 2;
+          else break;
+        }
+        if (plain[k] === "--") k += 1;
+      }
+      return [s, ...executablePrograms(plain.slice(k)).map((index) => index + k)];
     }
     const options = Object.hasOwn(EXEC_WRAPPERS, name) ? EXEC_WRAPPERS[name] : null;
     if (!options) return [s];

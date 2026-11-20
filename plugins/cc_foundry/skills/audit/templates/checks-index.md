@@ -13,7 +13,7 @@
 | 7 | codex plugin integration | medium | setup | Plugin installed and enabled; dispatches work |
 | 8 | foundry plugin correctness | critical/high/med | setup | 8a manifest, 8b symlinks, 8c hook scripts, 8d hooks.json, 8e dry-run validate, 8f perms drift, 8g init skill placement |
 | 9 | Agent color drift | medium | setup | statusline COLOR_MAP vs agent frontmatter color: |
-| 10 | RTK hook alignment | high/medium | setup | RTK_PREFIXES vs installed RTK subcommands - skip if rtk absent |
+| 10 | RTK hook alignment | high | setup | hook SAFE_PREFIXES/GUARDED_PREFIXES vs installed RTK subcommands - skip if rtk absent |
 | 11 | Memory health | low | setup | 11a duplicate rules, 11b stale version pins, 11c absorbed feedback files |
 | I1 | Plugin cache intact | high | setup | foundry in ~/.claude/plugins/installed_plugins.json; installPath exists |
 | I2 | Settings merge complete | medium | setup | statusLine, permissions.allow, enabledPlugins.bridge@borda-ai-rig in ~/.claude/settings.json |

@@ -9,8 +9,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
+import shutil
 import subprocess
 import sys
+from importlib.metadata import distribution
 from pathlib import Path
 
 import pytest
@@ -74,6 +77,20 @@ class Baseline:
         changed = json.loads(result.stdout)["changed"] if result.stdout.strip() else []
         return result.returncode, changed
 
+    def restart(self, observed: str, out: Path) -> subprocess.CompletedProcess[str]:
+        """Request a distinct baseline for the ignored state identified by a failed verification."""
+        return _helper(
+            "restart-inspected",
+            "--snapshot",
+            str(self.file),
+            "--expect",
+            self.expect,
+            "--inspected-sha256",
+            observed,
+            "--out",
+            str(out),
+        )
+
 
 @pytest.fixture
 def checkout(tmp_path: Path) -> Path:
@@ -99,11 +116,39 @@ def baseline(checkout: Path, tmp_path: Path) -> Baseline:
 
 
 @pytest.fixture
+def ignored_observation(checkout: Path, baseline: Baseline) -> str:
+    """Capture the verifier's observation for a single change in an ignored report."""
+    report = checkout / ".reports" / "result.txt"
+    report.parent.mkdir()
+    report.write_bytes(b"fixture result\n")
+    failure = _helper("verify", "--snapshot", str(baseline.file), "--expect", baseline.expect)
+    assert failure.returncode == 3
+    observed = json.loads(failure.stdout)
+    assert observed["changed"] == ["main-checkout:ignored"]
+    assert observed["ignored_changes"] == {"main-checkout:ignored": {"added": [".reports/result.txt"]}}
+    return observed["observed_sha256"]
+
+
+@pytest.fixture
 def review(checkout: Path, tmp_path: Path) -> Path:
     """Add a linked review worktree outside the user's checkout."""
     path = tmp_path / "review"
     _git(checkout, "worktree", "add", "-q", "--detach", str(path))
     return path
+
+
+@pytest.fixture(params=[3, 4])
+def watched_baseline(checkout: Path, review: Path, tmp_path: Path, request: pytest.FixtureRequest) -> Baseline:
+    """Capture a detached review, including retained snapshots from the aggregate-only schema."""
+    snap = Baseline(tmp_path / "integrity.json")
+    assert snap.take(review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
+    if request.param == 3:
+        body = json.loads(snap.file.read_text(encoding="utf-8"))
+        del body["ignored_details"]
+        body["schema"] = 3
+        snap.file.write_text(json.dumps(body), encoding="utf-8")
+        snap.expect = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return snap
 
 
 class TestVerify:
@@ -112,6 +157,234 @@ class TestVerify:
     def test_unchanged_metadata_passes(self, baseline: Baseline) -> None:
         """Nothing written between snapshot and verify exits 0 with an empty change list."""
         assert baseline.verify() == (0, [])
+
+    @pytest.mark.integration
+    @pytest.mark.installed_plugin
+    def test_targeted_pytest_failure_preserves_remediation_integrity(self, checkout: Path) -> None:
+        """A failed pytest run and a child import leave the checkout intact while retaining the failure cache."""
+        run = checkout / ".reports" / "run with spaces"
+        run.mkdir(parents=True)
+        with (checkout / ".gitignore").open("a", encoding="utf-8") as handle:
+            handle.write("__pycache__/\n.pytest_cache/\n")
+        # Put the active pytest entry point inside the checkout, distinct from the launcher's working directory.
+        runner = Path(".venv") / ("pytest.exe" if os.name == "nt" else "pytest")
+        entrypoint = next(path for path in distribution("pytest").files or () if path.name == runner.name)
+        shutil.copy2(entrypoint.locate(), checkout / runner)
+        (checkout / "child_module.py").write_text("VALUE = 42\n", encoding="utf-8")
+        (checkout / "test_sample.py").write_text(
+            "import subprocess\n"
+            "import sys\n\n"
+            "def test_child_import():\n"
+            "    subprocess.run([sys.executable, '-c', 'import child_module; assert child_module.VALUE == 42'],"
+            " check=True)\n\n"
+            "def test_failure():\n"
+            "    assert False\n\n"
+            "def test_excluded():\n"
+            "    assert False\n",
+            encoding="utf-8",
+        )
+        snap = Baseline(run / "integrity.json")
+        assert snap.take(checkout).returncode == 0
+
+        env = _ENV | {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTEST_ADDOPTS": "-k 'not excluded'"}
+        env.pop("PYTHONDONTWRITEBYTECODE", None)
+        env.pop("PYTHONPYCACHEPREFIX", None)
+        launcher = [sys.executable, "-I", str(HELPER.with_name("run_targeted_pytest.py"))]
+        pytest_cmd = [str(runner), "-q", "-p", "no:xdist", "test_sample.py"]
+        result = subprocess.run(
+            [*launcher, "--checkout", str(checkout), str(run), "--", *pytest_cmd],
+            cwd=checkout.parent,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "1 failed, 1 passed, 1 deselected" in result.stdout
+        lastfailed = run / "pytest-cache" / "v" / "cache" / "lastfailed"
+        assert json.loads(lastfailed.read_text(encoding="utf-8")) == {"test_sample.py::test_failure": True}
+        assert not (checkout / ".pytest_cache").exists()
+        assert not (checkout / "__pycache__").exists()
+        assert snap.verify() == (0, [])
+
+        bytecode = checkout / "__pycache__" / "explicit.pyc"
+        bytecode.parent.mkdir()
+        bytecode.write_bytes(b"explicit write")
+        assert snap.verify() == (3, ["main-checkout:ignored"])
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("use_cache", [pytest.param(True, id="explicit-cache"), pytest.param(False, id="no-cache")])
+    def test_nested_pytest_can_isolate_its_import_path(self, checkout: Path, use_cache: bool) -> None:
+        """A project startup hook can launch isolated pytest with run-local cache and raw coverage settings."""
+        run = checkout / ".reports" / "run with spaces"
+        run.mkdir(parents=True)
+        (checkout / "conftest.py").write_text(
+            "import os, subprocess, sys\n"
+            "env = os.environ.copy()\n"
+            "def pytest_sessionstart(session):\n"
+            "    env.pop('PYTHONPATH', None)\n"
+            "    subprocess.run([sys.executable, '-m', 'pytest', '--noconftest', '-q', 'nested.py'], env=env, check=True)\n",
+            encoding="utf-8",
+        )
+        (checkout / "nested.py").write_text(
+            "import os\nfrom pathlib import Path\n"
+            "def test_isolated(pytestconfig):\n"
+            "    assert not pytestconfig.pluginmanager.hasplugin('codex_rig_pytest_artifacts')\n"
+            "    data = Path(os.environ['COVERAGE_FILE'])\n"
+            "    assert data.name == '.coverage'\n"
+            "    assert data.parent == Path(os.environ['EXPECTED_RUN'])\n"
+            "    assert Path(pytestconfig.getini('cache_dir')) == Path(os.environ['EXPECTED_CACHE'])\n",
+            encoding="utf-8",
+        )
+        snap = Baseline(run / "integrity.json")
+        assert snap.take(checkout).returncode == 0
+        cache = run / ("selected cache" if use_cache else "pytest-cache")
+        options = ["-o", f"cache_dir={cache}"] if use_cache else ["-p", "no:cacheprovider"]
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                str(HELPER.with_name("run_targeted_pytest.py")),
+                "--checkout",
+                str(checkout),
+                str(run),
+                "--",
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "--collect-only",
+                *options,
+                "nested.py",
+            ],
+            env=_ENV
+            | {
+                "EXPECTED_RUN": str(run),
+                "EXPECTED_CACHE": str(cache),
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+                "PYTEST_ADDOPTS": "",
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert snap.verify() == (0, [])
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("selection", "expected"),
+        [
+            pytest.param("--lf", ["previous"], id="last-failed"),
+            pytest.param("--ff", ["previous", "first", "last"], id="failed-first"),
+            pytest.param("--sw", ["previous", "last"], id="stepwise"),
+        ],
+    )
+    def test_protected_pytest_resumes_project_selection(
+        self, checkout: Path, selection: str, expected: list[str]
+    ) -> None:
+        """A fresh run inherits the project's selected failures and later uses its own updated history."""
+        run = checkout / ".reports/run"
+        run.mkdir(parents=True)
+        (checkout / "pytest.ini").write_text("[pytest]\ncache_dir = history with spaces\n", encoding="utf-8")
+        (checkout / "test_order.py").write_text(
+            "import os\n"
+            "def test_first(): print('RUN=first')\n"
+            "def test_previous(): print('RUN=previous'); assert not os.environ.get('FAIL_PREVIOUS')\n"
+            "def test_last(): print('RUN=last')\n",
+            encoding="utf-8",
+        )
+        env = _ENV | {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTEST_ADDOPTS": "", "PYTHONDONTWRITEBYTECODE": "1"}
+        cmd = [sys.executable, "-m", "pytest", "-q", "-s"]
+        seed = subprocess.run([*cmd, "--sw"], cwd=checkout, env=env | {"FAIL_PREVIOUS": "1"}, capture_output=True)
+        assert seed.returncode == 2, seed.stdout
+        original = checkout / "history with spaces/v/cache/lastfailed"
+        original_bytes = original.read_bytes()
+        launcher = [
+            sys.executable,
+            "-I",
+            str(HELPER.with_name("run_targeted_pytest.py")),
+            "--checkout",
+            str(checkout),
+            str(run),
+            "--",
+            *cmd,
+        ]
+        result = subprocess.run([*launcher, selection], cwd=checkout, env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert [line.split("RUN=")[1] for line in result.stdout.splitlines() if "RUN=" in line] == expected
+        again = subprocess.run(
+            [*launcher, "--lf", "--lfnf=none"], cwd=checkout, env=env, capture_output=True, text=True
+        )
+        assert again.returncode == 5, again.stdout + again.stderr
+        assert original.read_bytes() == original_bytes
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("targeted", [pytest.param(True, id="targeted"), pytest.param(False, id="default-gate")])
+    @pytest.mark.parametrize("report", ["xml", "xml:.reports/run/custom.xml"])
+    def test_pytest_coverage_preserves_remediation_integrity(self, checkout: Path, targeted: bool, report: str) -> None:
+        """Configured worker coverage produces raw data and XML while preserving existing checkout data."""
+        run = checkout / ".reports" / "run"
+        run.mkdir(parents=True)
+        with (checkout / ".gitignore").open("a", encoding="utf-8") as handle:
+            handle.write("__pycache__/\n.pytest_cache/\n.coverage*\n")
+        (checkout / ".coverage").write_bytes(b"previous data")
+        (checkout / ".coveragerc").write_text("[json]\noutput=.reports/run/measured.json\n", encoding="utf-8")
+        (checkout / "sample.py").write_text("value = 42\n", encoding="utf-8")
+        (checkout / "test_sample.py").write_text(
+            "import sample\ndef test_value():\n    assert sample.value == 42\n", encoding="utf-8"
+        )
+        (checkout / "pytest.ini").write_text(
+            "[pytest]\naddopts = -p pytest_cov.plugin -p xdist.plugin -n 1 --cov=sample"
+            f" --cov-report={report} --cov-report=json --cov-report=html --cov-fail-under=100\n",
+            encoding="utf-8",
+        )
+        snap = Baseline(run / "integrity.json")
+        assert snap.take(checkout).returncode == 0
+        env = _ENV | {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTEST_ADDOPTS": "", "COVERAGE_FILE": ".coverage"}
+        env.pop("PYTHONDONTWRITEBYTECODE", None)
+        env.pop("PYTHONPYCACHEPREFIX", None)
+        if targeted:
+            arguments = [
+                "-I",
+                str(HELPER.with_name("run_targeted_pytest.py")),
+                "--checkout",
+                str(checkout),
+                str(run),
+                "--",
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+            ]
+            data = run / ".coverage"
+        else:
+            executable = (
+                "& '" + sys.executable.replace("'", "''") + "'"
+                if sys.platform == "win32"
+                else shlex.quote(sys.executable)
+            )
+            arguments = [
+                str(HELPER.with_name("run_gates.py")),
+                "--out",
+                str(run),
+                "--tests",
+                f"{executable} -m pytest -q",
+            ]
+            for gate in ("lint", "format", "types", "review"):
+                arguments.extend([f"--skip-{gate}", "not applicable"])
+            data = run / "checks" / ".coverage"
+        result = subprocess.run([sys.executable, *arguments], cwd=checkout, env=env, capture_output=True, text=True)
+        assert result.returncode == 0, (
+            result.stdout + result.stderr if targeted else (run / "checks/tests.stdout.txt").read_text(encoding="utf-8")
+        )
+        assert data.read_bytes().startswith(b"SQLite format 3")
+        xml = data.with_name("coverage.xml") if report == "xml" else run / "custom.xml"
+        assert 'filename="sample.py"' in xml.read_text(encoding="utf-8")
+        assert "sample.py" in json.loads((run / "measured.json").read_text(encoding="utf-8"))["files"]
+        assert (data.parent / "htmlcov/index.html").is_file()
+        assert (checkout / ".coverage").read_bytes() == b"previous data"
+        assert snap.verify() == (0, [])
 
     def test_ignored_drift_identifies_paths_in_each_checkout(
         self, checkout: Path, review: Path, tmp_path: Path
@@ -138,6 +411,7 @@ class TestVerify:
                 "review:ignored": {"added": [".coverage"]},
             },
         }
+        assert "review_checkout_slot.py hold" in result.stderr
 
     def test_large_ignored_store_reports_directory_and_bounds_snapshot(self, checkout: Path, tmp_path: Path) -> None:
         """A large store reports its directory while a small sibling still identifies the exact changed file."""
@@ -206,7 +480,7 @@ class TestVerify:
         }
 
     def test_historical_baseline_still_detects_ignored_writes(self, checkout: Path, baseline: Baseline) -> None:
-        """A retained digest from the previous aggregate-only schema still verifies and stops on later writes."""
+        """The aggregate-only schema retains its failing interval when a fully inspected new interval opens."""
         body = json.loads(baseline.file.read_text(encoding="utf-8"))
         body.pop("ignored_details", None)
         body["schema"] = 3
@@ -218,6 +492,16 @@ class TestVerify:
         baseline.expect = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         assert baseline.verify() == (0, [])
         (checkout / ".venv" / "added").touch()
+        failure = _helper("verify", "--snapshot", str(baseline.file), "--expect", baseline.expect)
+        assert failure.returncode == 3
+        observed = json.loads(failure.stdout)
+        assert observed["changed"] == ["main-checkout:ignored"]
+        assert "ignored_changes" not in observed
+        fresh = Baseline(baseline.file.with_name("integrity-restart.json"))
+        started = baseline.restart(observed["observed_sha256"], fresh.file)
+        assert started.returncode == 0, started.stderr
+        fresh.expect = json.loads(started.stdout)["sha256"]
+        assert fresh.verify() == (0, [])
         assert baseline.verify() == (3, ["main-checkout:ignored"])
 
     @pytest.mark.parametrize(
@@ -315,6 +599,7 @@ class TestVerify:
         """A missing snapshot never reads as unchanged: verify exits 1 and says why."""
         result = _helper("verify", "--snapshot", str(tmp_path / "missing.json"), "--expect", "0" * 64)
         assert (result.returncode, "snapshot unreadable" in result.stderr) == (1, True)
+        assert "review_checkout_slot.py hold" in result.stderr
 
     @_POSIX_ONLY
     def test_unreadable_fingerprinted_file_fails_closed(self, checkout: Path, baseline: Baseline) -> None:
@@ -423,6 +708,123 @@ class TestUserCheckout:
 
 class TestCheckoutUnderReview:
     """What a run may leave in the checkout under review, which the agent never edits during review."""
+
+    @_POSIX_ONLY
+    @pytest.mark.parametrize(
+        ("relative", "label"),
+        [
+            pytest.param("conftest.py", "surface:conftest.py", id="autoload-link"),
+            pytest.param(".reports/bytecode.pyc", "review:ignored", id="ignored-bytecode-link"),
+            pytest.param("untracked-link", "review:untracked", id="untracked-link"),
+        ],
+    )
+    def test_external_link_target_drift_holds_the_slot(
+        self, checkout: Path, review: Path, tmp_path: Path, relative: str, label: str
+    ) -> None:
+        """An unchanged review link can report a change to a file outside the isolated checkout."""
+        target = tmp_path / "external"
+        target.write_bytes(b"before")
+        link = review / relative
+        link.parent.mkdir(exist_ok=True)
+        link.symlink_to(target)
+        snap = Baseline(tmp_path / "integrity.json")
+        assert snap.take(review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
+        target.write_bytes(b"after")
+        failure = _helper("verify", "--snapshot", str(snap.file), "--expect", snap.expect)
+        assert failure.returncode == 3
+        observed = json.loads(failure.stdout)
+        assert label in observed["changed"]
+        assert "review_checkout_slot.py hold" in failure.stderr
+        assert ("observed_sha256" in observed) == (label == "review:ignored")
+
+    @_POSIX_ONLY
+    def test_linked_parent_of_tracked_surface_holds_the_slot(
+        self, checkout: Path, review: Path, tmp_path: Path
+    ) -> None:
+        """A tracked path can reach an external file through an ancestor even when its final component is regular."""
+        directory = review / "package"
+        directory.mkdir()
+        (directory / "conftest.py").write_bytes(b"before")
+        _git(review, "add", "package")
+        _git(review, "commit", "-q", "-m", "track nested startup file")
+        external = tmp_path / "external"
+        directory.rename(external)
+        directory.symlink_to(external, target_is_directory=True)
+        snap = Baseline(tmp_path / "integrity.json")
+        assert snap.take(review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
+        (external / "conftest.py").write_bytes(b"after")
+        failure = _helper("verify", "--snapshot", str(snap.file), "--expect", snap.expect)
+        assert failure.returncode == 3
+        assert "surface:package/conftest.py" in json.loads(failure.stdout)["changed"]
+        assert "review_checkout_slot.py hold" in failure.stderr
+
+    @_POSIX_ONLY
+    def test_truncated_private_changes_release_with_an_unchanged_external_link(
+        self, checkout: Path, review: Path, tmp_path: Path
+    ) -> None:
+        """All changed files can be private even when an unchanged sibling link points outside the checkout."""
+        reports = review / ".reports"
+        reports.mkdir()
+        target = tmp_path / "external"
+        target.touch()
+        (reports / "external.pyc").symlink_to(target)
+        snap = Baseline(tmp_path / "integrity.json")
+        assert snap.take(review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
+        _populate(reports, 70)
+        failure = _helper("verify", "--snapshot", str(snap.file), "--expect", snap.expect)
+        assert failure.returncode == 3
+        assert json.loads(failure.stdout)["ignored_changes"]["review:ignored"]["omitted"] == 6
+        assert "review_checkout_slot.py release" in failure.stderr
+        target.write_bytes(b"outside change")
+        mixed = _helper("verify", "--snapshot", str(snap.file), "--expect", snap.expect)
+        assert mixed.returncode == 3
+        assert json.loads(mixed.stdout)["ignored_changes"]["review:ignored"]["omitted"] == 7
+        assert "review_checkout_slot.py hold" in mixed.stderr
+
+    @_POSIX_ONLY
+    def test_opaque_ignored_group_with_removed_link_keeps_the_slot(
+        self, checkout: Path, review: Path, tmp_path: Path
+    ) -> None:
+        """The current contents of a changed directory cannot prove where its removed entries pointed."""
+        reports = review / ".reports"
+        reports.mkdir()
+        _populate(reports, 130)
+        target = tmp_path / "external"
+        target.touch()
+        link = reports / "cache.pyc"
+        link.symlink_to(target)
+        snap = Baseline(tmp_path / "integrity.json")
+        assert snap.take(review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
+        link.unlink()
+        (reports / "ordinary.pyc").touch()
+        failure = _helper("verify", "--snapshot", str(snap.file), "--expect", snap.expect)
+        assert failure.returncode == 3
+        assert json.loads(failure.stdout)["ignored_changes"] == {"review:ignored": {"directories": [".reports"]}}
+        assert "review_checkout_slot.py hold" in failure.stderr
+
+    @_POSIX_ONLY
+    def test_unreadable_auto_load_symlink_keeps_the_slot(self, checkout: Path, review: Path, tmp_path: Path) -> None:
+        """An unreadable file behind a tracked auto-load symlink gives no basis for releasing the repository slot."""
+        target = tmp_path / "startup.py"
+        target.write_bytes(b"")
+        (review / "conftest.py").symlink_to(target)
+        _git(review, "add", "conftest.py")
+        _git(review, "commit", "-q", "-m", "track startup symlink")
+        snap = Baseline(tmp_path / "integrity.json")
+        assert snap.take(review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
+        target.chmod(0)
+        try:
+            failure = _helper("verify", "--snapshot", str(snap.file), "--expect", snap.expect)
+            fresh = Baseline(tmp_path / "new.json")
+            refused = fresh.take(review, "--main-checkout", str(checkout), "--watch-surface")
+        finally:
+            target.chmod(0o600)
+        assert failure.returncode == 3
+        assert json.loads(failure.stdout)["changed"] == ["surface:conftest.py"]
+        assert "review_checkout_slot.py hold" in failure.stderr
+        assert refused.returncode == 1
+        assert "unreadable at snapshot" in refused.stderr
+        assert not fresh.file.exists()
 
     def test_edit_to_a_tracked_non_surface_file_is_caught(self, review: Path, tmp_path: Path) -> None:
         """A rewritten test or helper module would run unreviewed under a later escalated command."""
@@ -629,3 +1031,185 @@ class TestRemediationInTheUserCheckout:
         snap.take(checkout)
         (checkout / "a.txt").write_text("fixed\n", encoding="utf-8")
         assert snap.verify() == (0, [])
+
+
+@pytest.mark.integration
+@pytest.mark.installed_plugin
+class TestInspectedIntegrityRestart:
+    """A new baseline can cover an inspected interval while the original evidence remains reproducible."""
+
+    def test_restart_keeps_failed_interval_and_watches_new_changes(
+        self, checkout: Path, baseline: Baseline, ignored_observation: str, tmp_path: Path
+    ) -> None:
+        """The new interval verifies only until another write, with the old snapshot still failing separately."""
+        original_bytes = baseline.file.read_bytes()
+        fresh = Baseline(tmp_path / "integrity-restart.json")
+        started = baseline.restart(ignored_observation, fresh.file)
+        assert started.returncode == 0, started.stderr
+        fresh.expect = json.loads(started.stdout)["sha256"]
+        assert fresh.expect != baseline.expect
+        assert fresh.verify() == (0, [])
+        assert baseline.file.read_bytes() == original_bytes
+        assert baseline.verify() == (3, ["main-checkout:ignored"])
+        (checkout / ".reports" / "another.txt").touch()
+        assert fresh.verify() == (3, ["main-checkout:ignored"])
+
+    def test_different_ignored_state_requires_new_inspection(
+        self, checkout: Path, baseline: Baseline, ignored_observation: str, tmp_path: Path
+    ) -> None:
+        """An observation of the same change label cannot authorize later uninspected bytes."""
+        (checkout / ".reports" / "result.txt").write_bytes(b"a different fixture result\n")
+        out = tmp_path / "integrity-restart.json"
+        assert baseline.restart(ignored_observation, out).returncode != 0
+        assert not out.exists()
+
+    def test_wrong_original_digest_rejects_matching_observation(
+        self, baseline: Baseline, ignored_observation: str, tmp_path: Path
+    ) -> None:
+        """A correct inspected fingerprint cannot replace the original snapshot anchor."""
+        baseline.expect = "0" * 64
+        out = tmp_path / "integrity-restart.json"
+        assert baseline.restart(ignored_observation, out).returncode != 0
+        assert not out.exists()
+
+    def test_git_metadata_drift_has_no_restart_fingerprint(
+        self, checkout: Path, baseline: Baseline, ignored_observation: str, tmp_path: Path
+    ) -> None:
+        """A changed reference ends the eligible interval even with the inspected ignored report still present."""
+        _git(checkout, "branch", "other")
+        failure = _helper("verify", "--snapshot", str(baseline.file), "--expect", baseline.expect)
+        assert failure.returncode == 3
+        observed = json.loads(failure.stdout)
+        assert observed["changed"] == ["common:refs", "main-checkout:ignored"]
+        assert "observed_sha256" not in observed
+        assert "review_checkout_slot.py hold" in failure.stderr
+        out = tmp_path / "integrity-restart.json"
+        assert baseline.restart(ignored_observation, out).returncode != 0
+        assert not out.exists()
+
+    def test_review_restart_keeps_review_worktree_watched(self, checkout: Path, review: Path, tmp_path: Path) -> None:
+        """Inspecting the invoking checkout's ignored drift never exempts a later edit to the reviewed source."""
+        old = Baseline(tmp_path / "integrity.json")
+        assert old.take(review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
+        (checkout / ".venv" / "marker").write_bytes(b"reviewed fixture data")
+        failure = _helper("verify", "--snapshot", str(old.file), "--expect", old.expect)
+        assert failure.returncode == 3
+        observed = json.loads(failure.stdout)
+        assert observed["changed"] == ["main-checkout:ignored"]
+        assert "review_checkout_slot.py hold" in failure.stderr
+        fresh = Baseline(tmp_path / "integrity-restart.json")
+        started = old.restart(observed["observed_sha256"], fresh.file)
+        assert started.returncode == 0, started.stderr
+        fresh.expect = json.loads(started.stdout)["sha256"]
+        assert fresh.verify() == (0, [])
+        (review / "a.txt").write_bytes(b"changed review content")
+        failure = _helper("verify", "--snapshot", str(fresh.file), "--expect", fresh.expect)
+        assert failure.returncode == 3
+        observed = json.loads(failure.stdout)
+        assert any(label.startswith("review:") for label in observed["changed"])
+        assert "observed_sha256" not in observed
+        assert "review_checkout_slot.py release" in failure.stderr
+        assert "restart-inspected" not in failure.stderr
+
+    def test_detached_review_ignored_drift_can_start_an_inspected_interval(
+        self, watched_baseline: Baseline, checkout: Path, review: Path, tmp_path: Path
+    ) -> None:
+        """Both retained snapshot layouts admit exactly the inspected ignored change on the detached review side."""
+        before = watched_baseline.file.read_bytes()
+        logs = review / ".reports"
+        logs.mkdir()
+        report = logs / "compiled.pyc"
+        report.write_bytes(b"known result")
+        failure = _helper("verify", "--snapshot", str(watched_baseline.file), "--expect", watched_baseline.expect)
+        assert failure.returncode == 3
+        observed = json.loads(failure.stdout)
+        assert observed["changed"] == ["review:ignored"]
+        assert Path(observed["git_common_dir"]) == (checkout / ".git").resolve()
+        assert "review_checkout_slot.py release" in failure.stderr
+        assert "all writers" in failure.stderr
+        assert "failed interval" in failure.stderr
+        assert "user inspection" in failure.stderr
+        assert "restart-inspected" in failure.stderr
+        fresh = Baseline(tmp_path / "integrity-restart.json")
+        started = watched_baseline.restart(observed["observed_sha256"], fresh.file)
+        assert started.returncode == 0, started.stderr
+        fresh.expect = json.loads(started.stdout)["sha256"]
+        assert fresh.verify() == (0, [])
+        assert watched_baseline.file.read_bytes() == before
+        assert watched_baseline.verify() == (3, ["review:ignored"])
+        report.write_bytes(b"subsequent fixture result")
+        out = tmp_path / "unconfirmed.json"
+        assert watched_baseline.restart(observed["observed_sha256"], out).returncode != 0
+        assert not out.exists()
+        assert fresh.verify() == (3, ["review:ignored"])
+
+    def test_modified_ignored_review_file_holds_the_slot_and_allows_inspected_restart(
+        self, checkout: Path, review: Path, tmp_path: Path
+    ) -> None:
+        """An existing ignored file requires inspection before a held detached review can start a new interval."""
+        report = review / ".reports" / "run.log"
+        report.parent.mkdir()
+        report.write_bytes(b"before")
+        old = Baseline(tmp_path / "integrity.json")
+        assert old.take(review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
+        report.write_bytes(b"after")
+        failure = _helper("verify", "--snapshot", str(old.file), "--expect", old.expect)
+        assert failure.returncode == 3
+        observed = json.loads(failure.stdout)
+        assert observed["ignored_changes"] == {"review:ignored": {"modified": [".reports/run.log"]}}
+        assert "review_checkout_slot.py hold" in failure.stderr
+        assert "affected external" in failure.stderr
+        fresh = Baseline(tmp_path / "integrity-restart.json")
+        started = old.restart(observed["observed_sha256"], fresh.file)
+        assert started.returncode == 0, started.stderr
+        fresh.expect = json.loads(started.stdout)["sha256"]
+        assert fresh.verify() == (0, [])
+        assert old.verify() == (3, ["review:ignored"])
+
+    def test_ignored_drift_on_attached_review_surface_is_ineligible(
+        self, checkout: Path, review: Path, tmp_path: Path
+    ) -> None:
+        """A watched draft on an attached branch cannot use the detached review exception."""
+        _git(review, "switch", "-c", "draft")
+        old = Baseline(tmp_path / "integrity.json")
+        assert old.take(review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
+        logs = review / ".reports"
+        logs.mkdir()
+        (logs / "result.txt").touch()
+        failure = _helper("verify", "--snapshot", str(old.file), "--expect", old.expect)
+        assert failure.returncode == 3
+        observed = json.loads(failure.stdout)
+        assert observed["changed"] == ["review:ignored"]
+        assert "observed_sha256" not in observed
+        assert "review_checkout_slot.py hold" in failure.stderr
+
+    def test_unrecognized_review_fingerprint_keeps_the_slot_for_inspection(self, watched_baseline: Baseline) -> None:
+        """The review prefix alone cannot assign a fingerprint introduced by another verifier to a private checkout."""
+        body = json.loads(watched_baseline.file.read_text(encoding="utf-8"))
+        body["marks"]["review:unknown"] = "retained-value"
+        watched_baseline.file.write_text(json.dumps(body), encoding="utf-8")
+        digest = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        failure = _helper("verify", "--snapshot", str(watched_baseline.file), "--expect", digest)
+        assert failure.returncode == 3
+        assert json.loads(failure.stdout) == {"ok": False, "changed": ["review:unknown"]}
+        assert "review_checkout_slot.py hold" in failure.stderr
+
+    def test_existing_evidence_cannot_be_replaced(
+        self, baseline: Baseline, ignored_observation: str, tmp_path: Path
+    ) -> None:
+        """Neither the failed snapshot nor an occupied sibling path can be reused as a destination."""
+        original_bytes = baseline.file.read_bytes()
+        other = tmp_path / "evidence.json"
+        other.write_bytes(b"previous evidence")
+        assert baseline.restart(ignored_observation, baseline.file).returncode != 0
+        assert baseline.restart(ignored_observation, other).returncode != 0
+        assert baseline.file.read_bytes() == original_bytes
+        assert other.read_bytes() == b"previous evidence"
+
+    def test_restart_cannot_change_excluded_output_directory(
+        self, baseline: Baseline, ignored_observation: str, checkout: Path
+    ) -> None:
+        """A different directory would change the automatic evidence exclusion in a fresh snapshot."""
+        out = checkout / ".reports" / "integrity-restart.json"
+        assert baseline.restart(ignored_observation, out).returncode != 0
+        assert not out.exists()

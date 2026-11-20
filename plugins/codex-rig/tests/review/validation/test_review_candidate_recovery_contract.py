@@ -27,7 +27,7 @@ FINAL_HANDOFF_CONTRACT = PLUGIN_ROOT / "shared" / "final-handoff-contract.md"
 NATIVE_SKILL_CONTRACT = PLUGIN_ROOT / "shared" / "native-skill-contract.md"
 REMEDIATION_REFERENCES = ("intake.md", "selection.md", "implementation.md", "completion.md")
 VALIDATION_RECOVERY_LINK = "[Reviewer validation recovery](references/validation-recovery.md)"
-ENTRY_HEADING = "### Entry: resume or previous completed review"
+ENTRY_HEADING = "### Entry: resume or start fresh"
 
 
 def _read(path: Path) -> str:
@@ -150,31 +150,58 @@ class TestReviewEntryAndRoutes:
     """The review skill's entry choice, routing and handoff wording."""
 
     @pytest.mark.installed_plugin
-    def test_prior_report_does_not_pause_authorized_review(self) -> None:
-        """A prior report must not turn authorized review into a routine choice prompt.
-
-        The entry distinguishes fresh requests, completed reuse and incomplete resume before allocating a run, and
-        preserves validated tables and findings on delivery.
-        """
+    def test_repeat_invocation_chooses_before_allocating_or_collecting(self) -> None:
+        """An undecided standalone repeat offers the latest retained run even when it has no promoted report."""
+        skill_entry = flat(_section(_read(CODE_REVIEW_SKILL), "## Input Schema and entry"))
         entry = flat(_section(_review("source-and-scope.md"), ENTRY_HEADING, "### 01:"))
 
+        _assert_contains_all(skill_entry, ("standalone", "`Resume last`", "`Start fresh`", "before allocating"))
         _assert_contains_all(
             entry,
             (
-                "--target",
-                "--result",
-                "Do not ask a routine reuse/fresh question",
-                "A new review request proceeds fresh",
-                "An explicit resume of a completed run",
-                "summary table and findings",
-                "--complete-run",
-                "For a new review request without requested report recovery, no eligible completed report means fresh"
-                " review without a question",
-                "A failed requested-report recovery instead returns to the Incomplete review decision",
-                "before creating or promoting another run",
-                "recorded revision",
-                "current-head",
+                "--latest-run --target <canonical PR URL>",
+                "completed or incomplete",
+                "`Resume last` and `Start fresh`",
+                "before allocating a run or collecting source",
+                "No matching run",
+                "explicit choice",
+                "nested review",
+            ),
+        )
+
+    @pytest.mark.installed_plugin
+    def test_resume_returns_validated_standalone_handoff(self) -> None:
+        """Selecting resume continues incomplete work and delivers the completed review's validated tables."""
+        entry = flat(_section(_review("source-and-scope.md"), ENTRY_HEADING, "### 01:"))
+        _assert_contains_all(
+            entry,
+            (
+                "--expect-run <selected directory>",
+                "newer run",
+                "explicitly named historical run",
                 "first unmet checkpoint",
+                "--complete-run",
+                "successful stdout verbatim",
+                "summary table and findings",
+                "recorded revision",
+                "current-head freshness",
+            ),
+        )
+
+    @pytest.mark.installed_plugin
+    def test_early_reproduction_continues_through_review_closure(self) -> None:
+        """A Stop-hook continuation cannot end at the first reproduced defect with authorized checks still open."""
+        workflow = flat(_section(_read(CODE_REVIEW_SKILL), "## Workflow", "### Collect and inspect source"))
+        _assert_contains_all(
+            workflow,
+            (
+                "first reproduced defect",
+                "one-shot Stop hook",
+                "required reviewer coverage",
+                "reconcile the candidates",
+                "run the applicable gates",
+                "promotion",
+                "--complete-run",
             ),
         )
 
@@ -219,8 +246,8 @@ class TestReviewEntryAndRoutes:
                 "continuing without a completed report still requires the user's explicit choice",
             ),
         )
-        assert "fresh review" in readme
-        assert "requested report limitation disclosed" in readme
+        assert "only an explicit `+review` lets remediation start or resume code review" in readme
+        assert "explicit permission to use available findings" in readme
         assert "silently switch to online-only remediation" not in readme
 
     @pytest.mark.installed_plugin
@@ -303,7 +330,7 @@ class TestReviewEntryAndRoutes:
         )
 
     @pytest.mark.installed_plugin
-    def test_existing_merge_is_reported_and_handed_to_remediation(self) -> None:
+    def test_existing_merge_stays_inside_standalone_review(self) -> None:
         """A review-only run never finishes, aborts or authorizes an existing merge.
 
         Finish/abort/defer choices mutate the invoking worktree, which belongs to remediation; review inspects its own
@@ -316,12 +343,12 @@ class TestReviewEntryAndRoutes:
             guidance,
             (
                 "never finishes, aborts, or resolves that merge",
-                "never asks for that authorization",
-                "belongs to `code-remediate`",
+                "or asks for merge authorization",
                 "does not block collection or source review",
                 "never as a PR finding",
             ),
         )
+        assert "code-remediate" not in guidance.lower()
         assert "resume the active code-review workflow" not in skill
 
     @pytest.mark.installed_plugin

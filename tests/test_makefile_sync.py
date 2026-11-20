@@ -29,6 +29,14 @@ CONSENT_SCRIPT = ROOT / "plugins" / "bridge_cc-codex" / "bin" / "bridge_consent.
 CONSENT_SKIP_NOTICE = "consent unchanged: needs operator terminal or BRIDGE_OPERATOR_TOKEN"
 CONSENT_PROOF_ERROR = "APPROVE_CLAUDE_CONSENT=1 needs operator proof"
 ORIGINAL_CONFIG = 'model = "retained"\n'
+#: OpenCode sync stages in the order the entrypoint must run them.
+_OPENCODE_STAGE_ORDER = [
+    "register-opencode-rig",
+    "update-opencode-rig",
+    "verify-opencode-rig",
+    "install-opencode-agents",
+    "setup-opencode",
+]
 
 
 class FakeClaude(NamedTuple):
@@ -163,7 +171,7 @@ class TestSyncRtkPreflight:
         "migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace update-ext-plugins "
         "register-marketplace install-claude-plugins verify-claude-plugins prune-claude-cache "
         "warn-stale-claude-sessions install-codex-plugins sync-codex-home-policy sync-codex-bridge-consent "
-        "register-opencode-rig install-opencode-agents setup-opencode"
+        "register-opencode-rig update-opencode-rig verify-opencode-rig install-opencode-agents setup-opencode"
     )
 
     def _run_sync(self, tmp_path: Path, target: str, keep_going: bool, rtk_available: bool):
@@ -234,15 +242,21 @@ class TestSyncRtkPreflight:
         """With RTK discoverable the entrypoint runs its stages, and the OpenCode ones only where documented.
 
         A sentinel ``rtk`` satisfies preflight; the full-sync, OpenCode and default entrypoints must register and
-        install OpenCode Rig, the Claude and Codex entrypoints must not.
+        install OpenCode Rig, the Claude and Codex entrypoints must not. The OpenCode stages also run in install order,
+        so a refresh or verification can never trail the agent install that consumes it.
         """
         result = self._run_sync(tmp_path, target, keep_going, rtk_available=True)
 
         stage_log = (tmp_path / "stages.log").read_text(encoding="utf-8").splitlines()
         assert result.returncode == 0, result.stdout + result.stderr
         assert ("register-opencode-rig" in stage_log) == runs_opencode
+        assert ("update-opencode-rig" in stage_log) == runs_opencode
+        assert ("verify-opencode-rig" in stage_log) == runs_opencode
         assert ("install-opencode-agents" in stage_log) == runs_opencode
         assert ("setup-opencode" in stage_log) == runs_opencode
+        if runs_opencode:
+            opencode_stages = [stage for stage in stage_log if stage in _OPENCODE_STAGE_ORDER]
+            assert opencode_stages == _OPENCODE_STAGE_ORDER
 
 
 @_requires_gnu_make
@@ -1191,3 +1205,241 @@ class TestStaleSessionListing:
         status = verify_helpers["run_sessions"](argparse.Namespace(installed=installed), probe)
 
         assert (status, capsys.readouterr().out) == (0, "")
+
+
+class FakeOpencode(NamedTuple):
+    """A stub ``opencode`` CLI on disk, plus the log file it appends every invocation to."""
+
+    bin_dir: Path
+    log: Path
+
+
+@pytest.fixture(name="fake_opencode")
+def _fake_opencode(tmp_path: Path) -> FakeOpencode:
+    """Write an ``opencode`` stub that records argv and answers ``plugin list`` with one row."""
+    bin_dir = tmp_path / "opencode-bin"
+    bin_dir.mkdir()
+    log = tmp_path / "opencode-invocations.log"
+    log.write_text("", encoding="utf-8")
+    script = bin_dir / "opencode"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "opencode $*" >> "$OPENCODE_STUB_LOG"\n'
+        'if [[ "$1 $2" == "plugin list" && -z "${OPENCODE_STUB_NO_PLUGIN:-}" ]]; then\n'
+        '    printf "ID VERSION SOURCE\\nopencode-rig %s git\\n" "${OPENCODE_STUB_VERSION:-22bbdb7}"\n'
+        "fi\n"
+        'if [[ "$1 $2" == "plugin update" && -n "${OPENCODE_STUB_STALE_SERVICE:-}" && ! -e "$OPENCODE_STUB_LOG.stale" ]]; then\n'
+        '    : > "$OPENCODE_STUB_LOG.stale"\n'
+        '    echo "Error: Plugin is not configured: $3" >&2\n'
+        "    exit 1\n"
+        "fi\n"
+        'exit "${OPENCODE_STUB_EXIT:-0}"\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    if sys.platform == "win32":
+        # The timeout runner starts the program without a shell, where Windows finds only ``.exe`` or a PATHEXT shim:
+        # an installed OpenCode is an npm ``.cmd`` shim, so the stub gets the same shape and hands off to the script.
+        (bin_dir / "opencode.cmd").write_text('@bash "%~dp0opencode" %*\r\n', encoding="utf-8")
+    return FakeOpencode(bin_dir=bin_dir, log=log)
+
+
+def _opencode_env(fake: FakeOpencode, **extra: str) -> dict[str, str]:
+    """Return an environment that puts the ``opencode`` stub first on PATH and logs into its own file."""
+    env = os.environ.copy()
+    env.update(PATH=f"{fake.bin_dir}{os.pathsep}{env['PATH']}", OPENCODE_STUB_LOG=str(fake.log))
+    env.update(extra)
+    return env
+
+
+def _fake_cache(cache: Path, version: str, *, older: str | None = None) -> Path:
+    """Create OpenCode's package cache with one installed copy per version, the newest last."""
+    for index, stamp in enumerate([older, version] if older is not None else [version]):
+        manifest = cache / "npm" / "git-AI-Rig-0000" / str(index) / "node_modules" / "opencode-rig" / "package.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(json.dumps({"name": "opencode-rig", "version": stamp}), encoding="utf-8")
+        os.utime(manifest, (1_700_000_000 + index, 1_700_000_000 + index))
+    return cache
+
+
+@_requires_gnu_make
+@pytest.mark.integration
+class TestOpenCodeSyncStages:
+    """The OpenCode sync refreshes the package it registered, then proves the loaded version is the pushed one.
+
+    ``opencode plugin add`` is idempotent for a recorded spec, so a sync that only registered left the cached package at
+    its first-installed commit and the plugin kept loading that release's skills. These checks pin the refresh, the
+    version guard that keeps both halves of the install on one release, and the installed-version comparison that turns
+    a stale cache into a failed sync instead of a completion line. Assertions name the sentence, not its ✓/✗/→ glyph:
+    GNU make on Windows passes recipe text to bash through the ANSI code page, which garbles non-ASCII literals.
+    """
+
+    def test_update_refreshes_the_registered_package(self, fake_opencode: FakeOpencode) -> None:
+        """A recorded spec is never re-resolved by ``plugin add``, so the stage runs ``plugin update``."""
+        result = _run_make("update-opencode-rig", env=_opencode_env(fake_opencode))
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert fake_opencode.log.read_text(encoding="utf-8").splitlines() == [
+            "opencode plugin update github:Borda/AI-Rig#main::path:plugins/opencode-rig"
+        ]
+
+    def test_update_failure_fails_the_stage(self, fake_opencode: FakeOpencode) -> None:
+        """A failed or timed-out refresh must not be reported as a completed sync."""
+        result = _run_make("update-opencode-rig", env=_opencode_env(fake_opencode, OPENCODE_STUB_EXIT="1"))
+
+        assert result.returncode != 0
+        assert fake_opencode.log.read_text(encoding="utf-8").splitlines() == [
+            "opencode plugin update github:Borda/AI-Rig#main::path:plugins/opencode-rig"
+        ]
+
+    def test_update_restarts_a_stale_service_once_and_retries(self, fake_opencode: FakeOpencode) -> None:
+        """A service left on the previous CLI misreports the registration, so the stage replaces it and retries.
+
+        The update is the one operation that needs the background service to understand the current CLI's plugin list;
+        failing on its "not configured" answer would reject a registration that is already in the configuration.
+        """
+        result = _run_make("update-opencode-rig", env=_opencode_env(fake_opencode, OPENCODE_STUB_STALE_SERVICE="1"))
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert fake_opencode.log.read_text(encoding="utf-8").splitlines() == [
+            "opencode plugin update github:Borda/AI-Rig#main::path:plugins/opencode-rig",
+            "opencode service restart",
+            "opencode plugin update github:Borda/AI-Rig#main::path:plugins/opencode-rig",
+        ]
+
+    def test_register_rejects_a_checkout_that_differs_from_main(
+        self, fake_opencode: FakeOpencode, tmp_path: Path
+    ) -> None:
+        """Skills install from GitHub while agents install from the checkout, so a version gap stops the sync.
+
+        The guard runs before the registration, so a mismatched checkout leaves the configuration untouched.
+        """
+        checkout = tmp_path / "checkout"
+        checkout.mkdir()
+        (checkout / "package.json").write_text('{"version": "0.12.1"}', encoding="utf-8")
+        manifest = tmp_path / "main-package.json"
+        manifest.write_text('{"version": "0.11.0"}', encoding="utf-8")
+
+        result = _run_make(
+            "register-opencode-rig",
+            env=_opencode_env(fake_opencode),
+            extra_vars={"OPENCODE_RIG_DIR": checkout.as_posix(), "OPENCODE_RIG_MANIFEST": manifest.as_uri()},
+        )
+
+        assert result.returncode != 0
+        assert "this checkout has opencode-rig 0.12.1, GitHub main has 0.11.0" in result.stderr
+        assert fake_opencode.log.read_text(encoding="utf-8") == ""
+
+    def test_register_refreshes_when_the_versions_agree(self, fake_opencode: FakeOpencode, tmp_path: Path) -> None:
+        """An aligned checkout registers the Git specifier through the bounded external-command runner."""
+        checkout = tmp_path / "checkout"
+        checkout.mkdir()
+        (checkout / "package.json").write_text('{"version": "0.12.1"}', encoding="utf-8")
+        manifest = tmp_path / "main-package.json"
+        manifest.write_text('{"version": "0.12.1"}', encoding="utf-8")
+
+        result = _run_make(
+            "register-opencode-rig",
+            env=_opencode_env(fake_opencode),
+            extra_vars={"OPENCODE_RIG_DIR": checkout.as_posix(), "OPENCODE_RIG_MANIFEST": manifest.as_uri()},
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert fake_opencode.log.read_text(encoding="utf-8").splitlines() == [
+            "opencode plugin add github:Borda/AI-Rig#main::path:plugins/opencode-rig"
+        ]
+
+    def test_verify_passes_when_the_newest_cache_copy_is_published(
+        self, fake_opencode: FakeOpencode, tmp_path: Path
+    ) -> None:
+        """The newest installed copy is what a new session loads; an older copy left in the cache is ignored."""
+        cache = _fake_cache(tmp_path / "cache", "0.12.0", older="0.2.0")
+        manifest = tmp_path / "main-package.json"
+        manifest.write_text('{"version": "0.12.0"}', encoding="utf-8")
+
+        result = _run_make(
+            "verify-opencode-rig",
+            env=_opencode_env(fake_opencode),
+            extra_vars={"OPENCODE_CACHE_DIR": cache.as_posix(), "OPENCODE_RIG_MANIFEST": manifest.as_uri()},
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "opencode-rig 0.12.0 is the version GitHub main publishes" in result.stdout
+
+    def test_verify_fails_when_the_newest_cache_copy_is_stale(
+        self, fake_opencode: FakeOpencode, tmp_path: Path
+    ) -> None:
+        """An update that resolved nothing leaves the old copy newest, which must fail the sync.
+
+        ``opencode plugin list`` can still name a reconciled commit at that moment, so the installed copy is the signal
+        and the failure names the command that refreshes it.
+        """
+        cache = _fake_cache(tmp_path / "cache", "0.2.0")
+        manifest = tmp_path / "main-package.json"
+        manifest.write_text('{"version": "0.12.0"}', encoding="utf-8")
+
+        result = _run_make(
+            "verify-opencode-rig",
+            env=_opencode_env(fake_opencode),
+            extra_vars={"OPENCODE_CACHE_DIR": cache.as_posix(), "OPENCODE_RIG_MANIFEST": manifest.as_uri()},
+        )
+
+        assert result.returncode != 0
+        assert "installed opencode-rig is 0.2.0, GitHub main publishes 0.12.0" in result.stderr
+        assert "opencode plugin update" in result.stderr
+
+    def test_verify_warns_without_the_published_manifest(self, fake_opencode: FakeOpencode, tmp_path: Path) -> None:
+        """An offline host keeps the sync usable instead of failing on a comparison it cannot make."""
+        cache = _fake_cache(tmp_path / "cache", "0.12.0")
+
+        result = _run_make(
+            "verify-opencode-rig",
+            env=_opencode_env(fake_opencode),
+            extra_vars={
+                "OPENCODE_CACHE_DIR": cache.as_posix(),
+                "OPENCODE_RIG_MANIFEST": (tmp_path / "missing-package.json").as_uri(),
+            },
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "skipped the version comparison" in result.stdout
+
+    def test_verify_reports_a_missing_registration(self, fake_opencode: FakeOpencode) -> None:
+        """Without an install record there is no loaded package to trust, so the check fails."""
+        result = _run_make("verify-opencode-rig", env=_opencode_env(fake_opencode, OPENCODE_STUB_NO_PLUGIN="1"))
+
+        assert result.returncode != 0
+        assert "opencode-rig is not registered" in result.stderr
+
+    def test_verify_accepts_a_published_registry_version(self, fake_opencode: FakeOpencode, tmp_path: Path) -> None:
+        """A registry install names its version in the plugin list, and the published one is the contract."""
+        manifest = tmp_path / "main-package.json"
+        manifest.write_text('{"version": "0.13.0"}', encoding="utf-8")
+
+        result = _run_make(
+            "verify-opencode-rig",
+            env=_opencode_env(fake_opencode, OPENCODE_STUB_VERSION="0.13.0"),
+            extra_vars={
+                "OPENCODE_CACHE_DIR": (tmp_path / "cache").as_posix(),
+                "OPENCODE_RIG_MANIFEST": manifest.as_uri(),
+            },
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "opencode-rig 0.13.0 is the version GitHub main publishes" in result.stdout
+
+    def test_failed_stage_prints_no_completion_line(self, tmp_path: Path) -> None:
+        """A failed stage ends the sync without the completion and restart lines.
+
+        The recipe chains stages with ``&&``; a trailing ``;`` echo would still run after a failed ``&&`` list because
+        ``set -e`` does not exit on a command that is not the last of that list, so the assertion pins the chaining.
+        """
+        result = _run_make(
+            "sync-opencode",
+            env=os.environ.copy(),
+            extra_vars={"OPENCODE_RIG_MANIFEST": (tmp_path / "missing-package.json").as_uri()},
+        )
+
+        assert result.returncode != 0
+        assert "OpenCode sync complete" not in result.stdout
+        assert "restart running OpenCode sessions" not in result.stdout

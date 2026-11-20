@@ -15,7 +15,8 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 
 New handoffs set ``presentation_version=15`` for substantive outcome judgments, closing recommendations, readable
 prose, confidence tables, linked artifacts, and verification evidence in rows with other paths outside tables.
-Historical versions retain their exact presentation.
+New writers set ``action_policy=owned`` for concrete follow-ups or ``best-way-forward`` for one unblocking option.
+Unmarked handoffs retain their exact presentation.
 Run ``render`` after gates and handoff creation, then run ``check``
 directly or through the shared artifact validator
 before promoting ``result.candidate.json``. Before remediation selection, run ``selection --input selection.json
@@ -46,7 +47,9 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import sys
+import tempfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 from urllib.parse import quote
@@ -140,6 +143,17 @@ HANDOFF_FIELDS = {
 }
 #: Current presentation layout revision for rendered handoffs, written into new handoff documents.
 PRESENTATION_VERSION = 13
+#: Reserved absence markers for authored actions in current handoffs.
+ABSENT_VALUES = frozenset({"-", "—", "none", "n/a", "not applicable", "tbd"})
+NO_ACTION = ABSENT_VALUES | {
+    "done",
+    "completed",
+    "no change",
+    "no action",
+    "no action required",
+    "no further action is required",
+}
+NO_OWNER = ABSENT_VALUES | {"unknown", "unassigned"}
 #: One-sentence plain-English summary shown for each code-review recommendation.
 REVIEW_PLAIN_SUMMARIES = {
     "accept-as-is": "This review found no blocking change requests.",
@@ -600,7 +614,7 @@ def _validate_unavailable_review_verification(
         raise HandoffError("unavailable-review-verification-must-be-not-applicable")
 
 
-def _validate_remaining(payload: dict[str, Any], row_ids: set[str], branch: str) -> None:
+def _validate_remaining(payload: dict[str, Any], row_ids: set[str], branch: str, *, owned_actions: bool) -> None:
     """Bind every compact unresolved item to a unique owner and next action."""
     remaining = payload.get("remaining")
     if not isinstance(remaining, list):
@@ -623,7 +637,13 @@ def _validate_remaining(payload: dict[str, Any], row_ids: set[str], branch: str)
     next_steps = set(_require_string_list(payload.get("next_steps"), "next-steps"))
     if branch == "closed" and next_steps:
         raise HandoffError("closed-branch-next-steps-forbidden")
-    if branch != "closed" and next_steps != remaining_ids:
+    if owned_actions and branch not in {"closed", "caller-contract"}:
+        if not next_steps <= remaining_ids or bool(next_steps) != bool(remaining_ids):
+            raise HandoffError("next-steps-remaining-mismatch")
+        if len(next_steps) != len(payload["next_steps"]):
+            raise HandoffError("next-steps-duplicate")
+        _validate_owned_actions(payload, remaining_ids)
+    elif branch != "closed" and next_steps != remaining_ids:
         raise HandoffError("next-steps-remaining-mismatch")
     if payload["skill"] == "code-remediate":
         for table in payload["tables"]:
@@ -636,6 +656,24 @@ def _validate_remaining(payload: dict[str, Any], row_ids: set[str], branch: str)
                     and row["id"] not in remaining_ids
                 ):
                     raise HandoffError(f"remediation-unresolved-action-missing:{row['id']}")
+
+
+def _validate_owned_actions(handoff: dict[str, Any], remaining_ids: set[str]) -> None:
+    """Keep concrete result-row actions bound to owners and absence markers out of the closing recommendations."""
+    for item in handoff["remaining"]:
+        for field, placeholders in (("owner", NO_OWNER), ("next_action", NO_ACTION)):
+            if item[field].strip().casefold().rstrip(".") in placeholders:
+                raise HandoffError(f"remaining-{field}-placeholder:{item['row_id']}")
+    for table in handoff["tables"]:
+        if "Next action" not in table["columns"]:
+            continue
+        action_index = table["columns"].index("Next action")
+        for row in table["rows"]:
+            if (
+                row["id"] not in remaining_ids
+                and row["cells"][action_index].strip().casefold().rstrip(".") not in NO_ACTION
+            ):
+                raise HandoffError(f"table-action-requires-remaining:{row['id']}")
 
 
 def _validate_confidence(payload: dict[str, Any]) -> None:
@@ -730,7 +768,9 @@ def validate_handoff(payload: object) -> dict[str, Any]:
     return _validate_handoff(payload)
 
 
-def _validate_handoff(payload: object, *, allow_empty_remediation: bool = False) -> dict[str, Any]:
+def _validate_handoff(
+    payload: object, *, allow_empty_remediation: bool = False, owned_actions: bool = False
+) -> dict[str, Any]:
     """Validate a handoff while preserving the original presentation's empty-result rule."""
     handoff = _require_object(payload, "handoff")
     presentation_version = handoff.get("presentation_version")
@@ -739,11 +779,21 @@ def _validate_handoff(payload: object, *, allow_empty_remediation: bool = False)
         previous = 7 if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed" else 3
         if handoff.get("skill") == "code-remediate":
             previous = 6
+        base = {**handoff, "presentation_version": previous}
+        if "action_policy" in base:
+            if presentation_version != 15 or base.pop("action_policy") not in ("owned", "best-way-forward"):
+                raise HandoffError("handoff-action-policy-invalid")
+            owned_actions = True
         _validate_handoff(
-            {**handoff, "presentation_version": previous},
+            base,
+            owned_actions=owned_actions,
             allow_empty_remediation=handoff.get("skill") == "code-remediate"
             and presentation_version in {11, 12, 13, 14, 15},
         )
+        if handoff.get("action_policy") == "best-way-forward" and (
+            handoff["branch"] in {"closed", "caller-contract"} or len(handoff["next_steps"]) != 1
+        ):
+            raise HandoffError("best-way-forward-requires-one-step")
         return handoff
     expected_fields = HANDOFF_FIELDS if presentation_version is None else HANDOFF_FIELDS | {"presentation_version"}
     if "commit_disposition" in handoff:
@@ -807,7 +857,7 @@ def _validate_handoff(payload: object, *, allow_empty_remediation: bool = False)
     _validate_verification(handoff)
     _validate_commit_disposition(handoff)
     _validate_unavailable_review_verification(handoff, skill, branch, presentation_version)
-    _validate_remaining(handoff, row_ids, branch)
+    _validate_remaining(handoff, row_ids, branch, owned_actions=owned_actions)
     _validate_confidence(handoff)
     _validate_artifacts(handoff)
     _validate_caller_contract(handoff, branch)
@@ -1477,6 +1527,7 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
                 field_tables=handoff["presentation_version"] in {13, 14, 15},
                 confidence_table=handoff["presentation_version"] in {14, 15},
                 actionable_summary=handoff["presentation_version"] == 15,
+                owned_actions="action_policy" in handoff,
             ),
             readable_breaks=handoff["presentation_version"] in {13, 14, 15},
             keep_verification_table=handoff["presentation_version"] in {13, 14, 15},
@@ -1569,6 +1620,7 @@ def _render_v2_handoff(
     field_tables: bool = False,
     confidence_table: bool = False,
     actionable_summary: bool = False,
+    owned_actions: bool = False,
 ) -> str:
     """Render a plain-English-first report while retaining the validated machine fields."""
     outcome = handoff["outcome"]
@@ -1612,12 +1664,13 @@ def _render_v2_handoff(
             if actionable_summary and "Next action" in table["columns"]:
                 # Move authored recommendations, not inferred tasks. Canonical machine rows remain untouched.
                 action_index = table["columns"].index("Next action")
-                for row in table["rows"]:
-                    table_actions[row["id"]] = {
-                        "owner": "—",
-                        "item": row["cells"][0],
-                        "next_action": row["cells"][action_index],
-                    }
+                if not owned_actions:
+                    for row in table["rows"]:
+                        table_actions[row["id"]] = {
+                            "owner": "—",
+                            "item": row["cells"][0],
+                            "next_action": row["cells"][action_index],
+                        }
                 table = {
                     **table,
                     "columns": [value for index, value in enumerate(table["columns"]) if index != action_index],
@@ -1688,7 +1741,14 @@ def _render_v2_handoff(
         )
 
     remaining_by_id = {item["row_id"]: item for item in handoff["remaining"]}
-    if actionable_summary:
+    if owned_actions and handoff["branch"] != "closed":
+        selected = {row_id: remaining_by_id[row_id] for row_id in handoff["next_steps"]}
+        waiting = [item for row_id, item in remaining_by_id.items() if row_id not in selected]
+        if waiting:
+            lines.extend(("", "**Waiting items**", "", "| Owner | Issue |", "| -- | -- |"))
+            lines.extend(f"| {_table_cell(item['owner'])} | {_table_cell(item['item'])} |" for item in waiting)
+        remaining_by_id = selected
+    elif actionable_summary:
         # Owned follow-up supersedes its display-only recommendation; unrelated recommendations remain visible.
         remaining_by_id = {**table_actions, **remaining_by_id}
     action_lines = [] if actions_last else lines
@@ -1789,13 +1849,31 @@ def _require_siblings(*paths: Path) -> None:
 
 
 def render_files(handoff_path: Path, final_path: Path, validation_path: Path) -> dict[str, Any]:
-    """Render a current handoff with required commit disposition and bind its sibling files."""
+    """Render and bind a new handoff, preserving the bytes of a previously validated historical presentation."""
     _require_siblings(handoff_path, final_path, validation_path)
-    handoff = validate_handoff(_load_json(handoff_path))
-    # New writes must close this checkpoint; check_files still accepts retained historical bytes.
+    handoff = _load_json(handoff_path)
+    default_policy = handoff.get("presentation_version") == 15 and "action_policy" not in handoff
+    if default_policy:
+        if validation_path.exists():
+            return check_files(handoff_path, final_path, validation_path)
+        # Alternate output filenames can still refer to a canonical, already bound input.
+        canonical_proof = handoff_path.with_name("final-handoff.validation.json")
+        if handoff_path.name == "final-handoff.json" and canonical_proof.exists():
+            check_files(handoff_path, handoff_path.with_name("final.md"), canonical_proof)
+            default_policy = False
+        else:
+            handoff["action_policy"] = "owned"
+    validate_handoff(handoff)
     if handoff["skill"] == "code-remediate" and "commit_disposition" not in handoff:
         raise HandoffError("remediation-commit-disposition-missing")
     rendered = render_handoff(handoff, report_root=handoff_path.parent).encode("utf-8")
+    if default_policy:
+        # Replace the validated draft atomically so an interrupted write cannot truncate it or change a hard link.
+        with tempfile.TemporaryDirectory(dir=handoff_path.parent) as staging:
+            temporary = Path(staging) / handoff_path.name
+            temporary.write_bytes((json.dumps(handoff, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+            shutil.copymode(handoff_path, temporary)
+            temporary.replace(handoff_path)
     final_path.write_bytes(rendered)
     validation = {
         "schema_version": SCHEMA_VERSION,

@@ -234,21 +234,20 @@ class TestBarePullRequestIntake:
                     "not a new permission question",
                     "Inspect each claim against the verified current source",
                     "Do not start or offer an additional review solely because comments predate the head",
-                    "Use existing findings",
-                    "Update existing review",
-                    "Create a new review",
+                    "For existing-only reports",
+                    "Only an explicit `+review`",
                     "unknown",
                     "`+review`",
                     "do not ask again",
                     "current source",
                     "never edit or post GitHub comments",
-                    "set `REQUESTED_REPORT=true`",
                     "retain online evidence",
                     "exact returned canonical result",
                 ),
             ),
-            missing_phrases(decision, ("joined `+review`", "carry that authorization into Code Review")),
-        ) == ([], [])
+            missing_phrases(decision, ("Joined `+review`", "carry that authorization into Code Review")),
+            found_phrases(freshness, ("When an online-only run chooses an authorized update or new review",)),
+        ) == ([], [], [])
 
 
 class TestRequestedReviewDecision:
@@ -326,6 +325,13 @@ class TestRequestedReviewDecision:
                 ),
             ),
         ) == ([], [])
+
+    @pytest.mark.installed_plugin
+    def test_existing_report_cannot_launch_or_offer_a_review(self, decision: str) -> None:
+        """A missing report in ordinary remediation must keep all offered decisions inside finding intake."""
+        existing = _section(decision, "**Existing evidence only.**", "**Joined `+review`.**")
+        assert missing_phrases(existing, ("Provide a report", "Use available findings", "Stop")) == []
+        assert found_phrases(existing, ("New review", "Resume last one", "invoke Code Review")) == []
 
     def test_sibling_routes_cannot_bypass_decision(self, skill: str) -> None:
         """Incomplete, unavailable and candidate review evidence all pass the same checkpoint.

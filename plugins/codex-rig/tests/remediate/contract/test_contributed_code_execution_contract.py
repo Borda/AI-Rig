@@ -38,6 +38,8 @@ class TestContributedCodeSection:
             pytest.param("untrusted_code_guard.py scan", id="scan-before-first-run"),
             pytest.param("--host-sandbox", id="host-sandbox-flag"),
             pytest.param("code-scan.json", id="scan-record"),
+            pytest.param("An inline interpreter that imports the reviewed checkout", id="inline-probe-is-execution"),
+            pytest.param("never had a pre-execution snapshot", id="missed-snapshot-uses-lost-anchor-recovery"),
             pytest.param("contributor_run_integrity.py snapshot", id="integrity-snapshot"),
             pytest.param("verify --snapshot", id="integrity-verify-after-each-run"),
             pytest.param("restore nothing automatically", id="no-automatic-restore"),
@@ -50,6 +52,7 @@ class TestContributedCodeSection:
             pytest.param("--watch-surface", id="review-surface-watched"),
             pytest.param("Any non-zero exit means the same", id="every-failure-stops"),
             pytest.param("ask one native user question", id="escalation-asks-the-user-first"),
+            pytest.param("A pending answer keeps the retry paused", id="pending-approval-is-not-terminal"),
             pytest.param("Dependency preparation", id="dependency-preparation-covered"),
             pytest.param("Fetch wheels without builds", id="wheels-fetched-without-builds"),
             pytest.param("disposable task-local environment outside the user's `.venv`", id="task-local-environment"),
@@ -98,6 +101,53 @@ class TestWorkflowsPointAtTheRule:
         """A review worktree and an attached remediation branch run contributor code only under the shared rule."""
         text = _collapse((PLUGIN_ROOT / relative).read_text(encoding="utf-8"))
         assert ANCHOR in text
+
+
+class TestInspectedIntegrityRestart:
+    """Remediation may resume only from the user's inspected state while preserving original evidence and scope."""
+
+    def test_failed_verification_routes_only_to_the_inspected_restart(self) -> None:
+        """The ordinary failure path keeps the stop and points to the narrowly admitted recovery."""
+        rule = _section("## Contributed Code Execution")
+        integrity = rule.split("3. **Integrity around every execution.**", 1)[1].split("4. **", 1)[0]
+        assert "non-zero" in integrity
+        assert "#restart-after-inspected-integrity-drift" in integrity
+
+    def test_inspected_restart_binds_both_anchors_and_the_users_confirmation(self) -> None:
+        """The helper invocation needs independent user inspection and the two retained runtime digests."""
+        restart = _section("## Restart after inspected integrity drift")
+        assert "`main-checkout:ignored`" in restart
+        assert "`review:ignored`" in restart
+        assert "watched, detached linked review worktree" in restart
+        assert "keep the stop in force" in restart
+        assert "confirm this observation or keep the run stopped" in restart
+        assert "Otherwise show the new observation for confirmation" in restart
+        assert "restart-inspected --snapshot <original> --expect <original parent-held sha256>" in restart
+        assert "--inspected-sha256 <confirmed observation> --out <new sibling snapshot>" in restart
+        assert "A changed observation requires inspection again" in restart
+
+    def test_inspection_confirmation_names_the_owning_workflow(self) -> None:
+        """A standalone review offers review choices and a nested review resumes only its interrupted gate."""
+        restart = _section("## Restart after inspected integrity drift")
+        assert "Inspected; resume review" in restart
+        assert "Stop review" in restart
+        assert "nested review identifies the review gate and its remediation parent" in restart
+        assert "An inspection answer resumes only that gate" in restart
+
+    def test_remediation_resumes_its_gate_and_commit_contract(self) -> None:
+        """Remediation directs the resumed branch and owned changes through the gate and its commit authority."""
+        workflow = PLUGIN_ROOT / "skills" / "code-remediate" / "references" / "implementation.md"
+        assert "#restart-after-inspected-integrity-drift" in workflow.read_text(encoding="utf-8")
+        restart = _section("## Restart after inspected integrity drift")
+        assert "Verify the successor before ordinary Git reads" in restart
+        assert "exact HEAD, index, original pre-edit ownership and intended postimages" in restart
+        assert "repeat the interrupted check or gate and verify against the active successor" in restart
+        assert "Preserve the earlier interval as failed" in restart
+        assert (
+            "still-applicable commit decision only after verifying ownership, destination and the new gate" in restart
+        )
+        assert "Inspection alone grants no execution, escalation or commit permission" in restart
+        assert "Code Review stays read-only" in restart
 
 
 class TestSameRepositoryExemption:

@@ -1244,8 +1244,8 @@ class TestLocalMirror:
             ),
             pytest.param(
                 _GuardCase(
-                    "sys.stderr.buffer.write(b'x' * (1048576 - 1) + b'\\xe2\\x82\\xac')",
-                    b"x" * (1048576 - 1) + b"\xe2\n[output truncated after 1048576 bytes]\n",
+                    "sys.stderr.buffer.write(b'x' * (524288 - 1) + b'\\xe2\\x82\\xac' + b'z' * (524288 - 1))",
+                    b"x" * (524288 - 1) + b"\xe2\n[output truncated, omitted bytes: 1]\n\xac" + b"z" * (524288 - 1),
                     "fail",
                     0,
                     1,

@@ -259,6 +259,7 @@ class TestConvergenceAuthorization:
         it, and keep earlier explicit approval for the same scope valid.
         """
         remediate = _read("skills", "code-remediate", "SKILL.md")
+        assert "counts as an explicitly invoked loop" not in remediate
 
         assert (
             absent_phrases(
@@ -269,6 +270,16 @@ class TestConvergenceAuthorization:
             )
             == []
         )
+
+    @pytest.mark.parametrize(
+        "relative", ["assets/AGENTS.md", "shared/native-skill-contract.md", "shared/global-baseline-details.md"]
+    )
+    def test_inherited_automatic_loop_triggers_exclude_remediation(self, relative: str) -> None:
+        """A shared dispatch trigger must not override the remediation entry point's explicit opt-in."""
+        instructions = (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+        for paragraph in instructions.split("\n\n"):
+            if "counts as an explicitly invoked loop" in paragraph:
+                assert paragraph.startswith("**Outside Code Remediate only.**")
 
     def test_fork_pr_recovery_needs_separate_approval(self, skill_with_recovery: str) -> None:
         """A fork PR's adversarial recovery loop needs its own approval, apart from the remediation request.

@@ -112,11 +112,7 @@ class TestSandboxedTestRunsContract:
         )
 
     def test_code_remediate_applies_contract_at_each_checkpoint(self, remediate_skill: str):
-        """Code-remediate requests the pytest approval with the scope answer and leaves the final gates unchanged.
-
-        The scope step asks for the approval, the fix step runs sandbox loop runs, and the shared quality gates keep the
-        repository's configured test command, so the exception never reaches `run_gates.py`.
-        """
+        """Keep the configured first gate and recover an incidental pre-collection xdist bind failure in the sandbox."""
         scope = _span(remediate_skill, "### 05: Ask For Resolution Scope Before Editing", "### 06:")
         fixes = _span(remediate_skill, "### 07: Apply Fixes In Selected Scope", "### 08:")
         gates = _span(remediate_skill, "### 09: Run Shared Quality Gates", "### 10:")
@@ -131,7 +127,10 @@ class TestSandboxedTestRunsContract:
             + absent_phrases(fixes, SECTION_LINK, "add `-p no:xdist` when its conditions hold")
             + absent_phrases(
                 gates,
-                "Keep the repository's configured test command unchanged",
+                "configured test command unchanged on the first attempt",
+                "source-bound serial retry",
+                "worker isolation",
+                "sandbox-only",
                 "complete `run_gates.py` command without `prefix_rule`",
             )
         )

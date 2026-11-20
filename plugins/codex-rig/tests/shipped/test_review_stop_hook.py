@@ -111,6 +111,48 @@ def test_unfinished_review_requests_one_authorized_continuation(review_state, ga
     assert "not new authorization" in response["reason"]
     assert "first unmet checkpoint" in response["reason"]
     assert "denial" in response["reason"]
+    assert "--complete-run" in response["reason"]
+    assert "remediat" not in response["reason"].lower()
+    assert "+review" not in response["reason"]
+
+
+@pytest.mark.parametrize("platform", PLATFORM_CASES)
+@pytest.mark.parametrize(
+    ("entry_args", "relative_run"),
+    [
+        pytest.param("--target https://github.com/org/repo/pull/41", "code-review/pr-41/run-002", id="pr"),
+        pytest.param("--target https://github.com/org/repo/pull/41", "review/pr-41/run-002", id="legacy-pr"),
+        pytest.param("--local-scope working-tree", "code-review/local-run", id="working-tree"),
+        pytest.param("--local-scope path --local-target src", "code-review/local-run", id="path"),
+        pytest.param("--local-scope commit --local-target HEAD^!", "code-review/local-run", id="commit"),
+    ],
+)
+def test_chosen_resume_stays_active_through_completion(
+    review_state, answered_question, platform: dict, entry_args: str, relative_run: str
+) -> None:
+    """A confirmed retained run needs its own completion receipt in the new turn."""
+    payload, records = review_state
+    payload["cwd"] = platform["cwd"]
+    run = f"{platform['cwd']}/.reports/codex/{relative_run}"
+    finder = f'{platform["prefix"]}"{platform["root"]}/bin/{platform["launcher"]}" "{platform["root"]}/shared/find-review-report.py"'
+    selection = f"{finder} --latest-run {entry_args}"
+    lookup = command_record("", run + "\n")
+    item = lookup["payload"]["item"]
+    item.update(command=[*platform["shell"], selection], cwd=platform["item_cwd"])
+    records[2:] = [lookup]
+    assert HOOK.evaluate(payload, records, platform["root"]) == {}
+    answer = answered_question[1]["payload"]["item"]
+    answer["arguments"]["options"] = ["Resume last", "Start fresh"]
+    answer["result"]["structuredContent"]["answer"] = "Resume last"
+    records[2:2] = answered_question
+    item["command"][-1] += f' --expect-run "{run}"'
+    assert HOOK.evaluate(payload, records, platform["root"])["decision"] == "block"
+    receipt = command_record("")
+    receipt["payload"]["item"].update(
+        command=[*platform["shell"], f'{finder} --complete-run "{run}"'], cwd=platform["item_cwd"]
+    )
+    records.append(receipt)
+    assert HOOK.evaluate(payload, records, platform["root"]) == {}
 
 
 @pytest.mark.parametrize("skill", ["code-review", "code-remediate"])
@@ -175,6 +217,8 @@ def test_remediation_before_nested_review_requires_continuation(review_state) ->
 
     assert response["decision"] == "block"
     assert "remediation selection, selected fixes, verification and delivery" in response["reason"]
+    assert "explicit +review" in response["reason"]
+    assert "--complete-run" not in response["reason"]
 
 
 @pytest.mark.parametrize("skill", ["code-review", "code-remediate"])
@@ -222,7 +266,7 @@ def test_only_successful_parent_finalization_completes_remediation(
     same remediation run releases the stop, never a candidate, preflight, other run or review-skill finalization.
     """
     payload, records = review_state
-    records.append(create_run_record("code-remediate"))
+    records.insert(2, create_run_record("code-remediate"))
     records.append(
         command_record(
             '"/plugin/bin/python" "/plugin/shared/find-review-report.py" --complete-run '
@@ -235,6 +279,26 @@ def test_only_successful_parent_finalization_completes_remediation(
     )
 
     assert ("decision" not in HOOK.evaluate(payload, records, "/plugin")) is complete
+
+
+@pytest.mark.parametrize("review_complete", [False, True])
+def test_later_remediation_run_cannot_redirect_standalone_review(review_state, review_complete: bool) -> None:
+    """Keep the original review owner even if another workflow creates a run during that review."""
+    payload, records = review_state
+    records.append(create_run_record("code-remediate"))
+    if review_complete:
+        records.append(
+            command_record(
+                '"/plugin/bin/python" "/plugin/shared/find-review-report.py" --complete-run .reports/codex/code-review/run-a'
+            )
+        )
+    result = HOOK.evaluate(payload, records, "/plugin")
+    if review_complete:
+        assert result == {}
+    else:
+        assert result["decision"] == "block"
+        assert "--complete-run" in result["reason"]
+        assert "remediat" not in result["reason"].lower()
 
 
 @pytest.mark.parametrize(
@@ -290,7 +354,11 @@ def test_control_states_do_not_request_continuation(
     "message",
     [
         "Required download denied by the user.",
-        "Waiting for your decision before continuing.",
+        "Waiting for your decision. Reply Approve or Deny.",
+        "The retry awaits your decision.\n\n- Approve\n- Deny",
+        "The retry awaits your decision.\n\nApprove / Deny",
+        "Should I run the command? Reply `Approve` or `Deny`.",
+        "Waiting for your decision. The retry budget is exhausted.",
         "The retry limit is exhausted.",
         "The PR is closed.",
         "Source identity is unverified.",
@@ -306,6 +374,160 @@ def test_claimed_controlling_stop_is_preserved(review_state, message: str) -> No
     payload["last_assistant_message"] = message
 
     assert "decision" not in HOOK.evaluate(payload, records, "/plugin")
+
+
+@pytest.fixture
+def async_question() -> list[dict]:
+    """Build the host's direct async call, recorded question, and separately correlated acceptance."""
+    questions = [{"title": "Authorize the named check?", "options": ["Approve", "Deny"]}]
+    return [
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "request_user_input_async",
+                "call_id": "ask-1",
+                "arguments": json.dumps({"questions": questions}),
+            },
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "thread_id": "session",
+                "turn_id": "turn",
+                "item": {
+                    "type": "AgentMessage",
+                    "id": "ask-1",
+                    "phase": "final_answer",
+                    "delivery": "async",
+                    "questions": questions,
+                },
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "ask-1",
+                "output": '{"accepted":true}',
+            },
+        },
+    ]
+
+
+@pytest.mark.parametrize("delivered_async", [False, True])
+def test_status_without_actionable_decision_repairs_delivery_only(
+    review_state, async_question, delivered_async
+) -> None:
+    """Correct a status-only final without continuing dependent work or opening duplicate controls."""
+    payload, records = review_state
+    final = "The check awaits your decision.\n\n| Check | Status |\n| --- | --- |\n| Tests | Blocked |"
+    payload["last_assistant_message"] = final if delivered_async else "Waiting for your decision before continuing."
+    if delivered_async:
+        records.extend(async_question)
+        records.append(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "thread_id": "session",
+                    "turn_id": "turn",
+                    "item": {"type": "Extension", "id": "timer", "kind": "clock.sleep", "durationMs": 20},
+                },
+            }
+        )
+    result = HOOK.evaluate(payload, records, "/plugin")
+    assert result["decision"] == "block"
+    assert "question delivery only" in result["reason"]
+    assert "complete actionable choices" in result["reason"]
+    assert "explicit answer" in result["reason"]
+    assert "first unmet checkpoint" not in result["reason"]
+
+
+@pytest.mark.parametrize("status", ["waiting for the decision", "awaiting your decision"])
+def test_check_inventory_cannot_substitute_for_a_pending_decision(review_state, status: str) -> None:
+    """A bullet list of blocked checks still needs an actionable question."""
+    payload, records = review_state
+    payload["last_assistant_message"] = f"The review is {status}.\n\n- Tests blocked\n- Type check blocked"
+    assert "question delivery only" in HOOK.evaluate(payload, records, "/plugin")["reason"]
+
+
+def test_question_in_a_finding_cannot_suppress_normal_recovery(review_state) -> None:
+    """Questions quoted in a report do not automatically become live user decisions."""
+    payload, records = review_state
+    payload["last_assistant_message"] = 'The log records "Retry?" when a reply times out.'
+    assert "first unmet checkpoint" in HOOK.evaluate(payload, records, "/plugin")["reason"]
+
+
+@pytest.mark.parametrize("completed", [False, True])
+@pytest.mark.parametrize(
+    "status",
+    [
+        "I am waiting for your approval before running the command.",
+        "Pending user decision. The dependent checks are paused.",
+    ],
+)
+def test_concrete_missing_approval_status_reopens_only_delivery_for_active_run(
+    review_state, status: str, completed: bool
+):
+    """Recover two explicit waits while honoring a successful completion of the same review."""
+    payload, records = review_state
+    payload["last_assistant_message"] = status
+    if completed:
+        records.append(
+            command_record(
+                '"/plugin/bin/python" "/plugin/shared/find-review-report.py" --complete-run .reports/codex/code-review/run-a'
+            )
+        )
+    result = HOOK.evaluate(payload, records, "/plugin")
+    if completed:
+        assert result == {}
+    else:
+        assert result["decision"] == "block"
+        assert "question delivery only" in result["reason"]
+        assert "explicit answer" in result["reason"]
+
+
+def test_answer_to_review_entry_does_not_resolve_later_async_question(review_state, answered_question, async_question):
+    """An answered entry decision belongs to the previous control, even in the same turn."""
+    payload, records = review_state
+    entry = answered_question[-1]["payload"]["item"]
+    entry["arguments"]["options"] = ["Resume last", "Start fresh"]
+    entry["result"]["structuredContent"]["answer"] = "Start fresh"
+    records[2:2] = answered_question
+    records.extend(async_question)
+    payload["last_assistant_message"] = "The check awaits your decision."
+    assert "question delivery only" in HOOK.evaluate(payload, records, "/plugin")["reason"]
+
+
+@pytest.mark.parametrize("state", ["unaccepted", "mismatched", "answered", "already-recovered", "unknown-extension"])
+def test_uncertain_async_or_real_stop_never_reopens_decision(review_state, async_question, state: str) -> None:
+    """A live form, unrelated receipt, reply, or unknown host state never requests delivery recovery."""
+    payload, records = review_state
+    payload["last_assistant_message"] = "The check awaits your decision."
+    if state == "unaccepted":
+        async_question.pop()
+    if state == "mismatched":
+        async_question[-1]["payload"]["call_id"] = "another-call"
+    records.extend(async_question)
+    if state == "answered":
+        records.append({"type": "response_item", "payload": {"type": "message", "role": "user"}})
+    if state == "already-recovered":
+        payload["stop_hook_active"] = True
+    if state == "unknown-extension":
+        records.append(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "thread_id": "session",
+                    "turn_id": "turn",
+                    "item": {"type": "Extension", "kind": "unknown"},
+                },
+            }
+        )
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
 
 
 @pytest.mark.parametrize("same_run", [True, False])
@@ -649,7 +871,15 @@ def test_cli_truncated_final_record_in_large_transcript_is_not_continued(
     assert review.invoke() == {}
 
 
-@pytest.mark.parametrize("identity", ["--pr-number 41", '--branch "feature/topic"', "--pr-number=41"])
+@pytest.mark.parametrize(
+    "identity",
+    [
+        "--pr-number 41",
+        "--pr-number 41 --pr-url https://github.com/acme/widget/pull/41",
+        '--branch "feature/topic"',
+        "--pr-number=41",
+    ],
+)
 def test_identity_creation_promotion_and_completion_are_tracked(review_state, identity: str) -> None:
     """Track identifiable creation through promotion and clear only its promoted completion."""
     payload, records = review_state
@@ -675,6 +905,30 @@ def test_identity_creation_promotion_and_completion_are_tracked(review_state, id
 @pytest.mark.parametrize(
     "identity",
     [
+        "--branch feature --local-scope working-tree",
+        "--branch topic --local-scope path --local-target src",
+        "--branch main --local-scope commit --local-target HEAD^!",
+    ],
+)
+def test_fresh_local_entry_is_tracked_through_handoff(review_state, identity: str) -> None:
+    """Recording a cross-session review identity still registers the new local run."""
+    payload, records = review_state
+    run = ".reports/codex/code-review/local"
+    records[-1] = command_record(
+        f'"/plugin/bin/python" "/plugin/shared/create_run.py" --skill code-review {identity}', run
+    )
+    assert HOOK.evaluate(payload, records, "/plugin")["decision"] == "block"
+    records.append(command_record(f'"/plugin/bin/python" "/plugin/shared/find-review-report.py" --complete-run {run}'))
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        "--local-target src",
+        "--local-scope path",
+        "--branch main --local-scope commit",
+        "--branch main --local-scope working-tree --local-target src",
         "--pr-number 0",
         "--pr-number nope",
         "--pr-number 41 --pr-number 42",
@@ -865,7 +1119,10 @@ def test_unknown_nested_question_routes_preserve_pause(review_state, source: str
 
 @pytest.mark.parametrize("platform", PLATFORM_CASES)
 @pytest.mark.parametrize("tail_exit", [0, 1])
-def test_batched_creation_and_promotion_remain_active(review_state, platform: dict, tail_exit: int) -> None:
+@pytest.mark.parametrize("git_prefix", ["git", "rtk git"])
+def test_batched_creation_and_promotion_remain_active(
+    review_state, platform: dict, tail_exit: int, git_prefix: str
+) -> None:
     """Read-only suffix commands cannot hide an unfinished promoted remediation run."""
     payload, records = review_state
     payload["cwd"] = platform["cwd"]
@@ -886,7 +1143,7 @@ def test_batched_creation_and_promotion_remain_active(review_state, platform: di
         command=[
             *platform["shell"],
             helper
-            + " --promote-pr-run .reports/codex/code-remediate/run-a\nrtk git status --short\nrtk git rev-parse HEAD",
+            + f" --promote-pr-run .reports/codex/code-remediate/run-a\n{git_prefix} status\n{git_prefix} status --short\n{git_prefix} rev-parse HEAD",
         ],
         cwd=platform["item_cwd"],
         aggregated_output=".reports/codex/code-remediate/pr-7/run-001\n?? untouched.txt\n" + "a" * 40 + "\n",
@@ -912,6 +1169,8 @@ def test_batched_creation_and_promotion_remain_active(review_state, platform: di
     [
         "printf .reports/codex/code-review/run-a",
         "echo forged",
+        "git status; true",
+        "rtk git status; true",
         "rtk git status --short; true",
         "rtk git status --short && true",
         "rtk git rev-parse $REF",

@@ -32,19 +32,19 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <line x1="232" y1="158" x2="920" y2="158" stroke="#c8ccf2" stroke-width="1"/>
 <g class="fi" style="--d:0.26s"><rect x="40" y="180" width="880" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="181" width="5.5" height="110" rx="2.75" fill="#6670b8"/>
 <text x="56" y="199" font-size="10.5" fill="#4b559f" font-weight="700" text-anchor="start" letter-spacing="0.6">ENTRY · PREFLIGHT</text>
-<text x="56" y="217" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Scope, PR state and prior-report lookup</text>
+<text x="56" y="217" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Scope, PR state and previous run lookup</text>
 <g><path d="M878.0,216.0 L884.0,225.4 L896.0,225.4 L902.0,216.0 L902.0,220.6 L896.0,229.9 L884.0,229.9 L878.0,220.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="902.0,216.0 896.0,224.1 884.0,224.1 878.0,216.0 884.0,207.9 896.0,207.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M886.2,216.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
 <text x="56" y="237" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">Scope</tspan>: working-tree · path · commit · pr</text>
 <text x="56" y="253.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">bare number / #N / URL → <tspan font-style="italic">pr</tspan></text>
 <text x="56" y="270.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">reject</tspan> unsupported flags</text>
 <text x="56" y="286.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">resume</tspan> at first unmet checkpoint</text>
 <text x="490" y="237" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">PR State Preflight</tspan> <tspan font-style="italic">(PR only)</tspan></text>
-<text x="490" y="253.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">Prior report</tspan>: honor request</text>
-<text x="490" y="270.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">new → fresh · resume → retained run</tspan></text>
+<text x="490" y="253.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">Matching prior run</tspan>: completed or incomplete</text>
+<text x="490" y="270.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">repeat → ask Resume last / Start fresh</tspan></text>
 </g>
 <path d="M480,292 L480,332" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
 <g class="fi" style="--d:0.32s"><rect x="278.5" y="302" width="185.5" height="19.5" rx="9.8" fill="#fee6e2" stroke="#e0503f" stroke-width="1.1"/><text x="287.5" y="315.6" font-size="10.5" fill="#b8321f" font-weight="700" text-anchor="start">closed / merged PR · stop</text></g>
-<g class="fi" style="--d:0.38s"><rect x="496.0" y="302" width="292.7" height="19.5" rx="9.8" fill="#dcf5e9" stroke="#2f9e73" stroke-width="1.1"/><text x="505.0" y="315.6" font-size="10.5" fill="#1b7f59" font-weight="700" text-anchor="start">explicit reuse · validated bytes → COMPLETE</text></g>
+<g class="fi" style="--d:0.38s"><rect x="496.0" y="302" width="292.7" height="19.5" rx="9.8" fill="#dcf5e9" stroke="#2f9e73" stroke-width="1.1"/><text x="505.0" y="315.6" font-size="10.5" fill="#1b7f59" font-weight="700" text-anchor="start">resume completed → COMPLETE</text></g>
 <g class="fi" style="--d:0.44s"><rect x="40" y="332" width="880" height="28" rx="14" fill="#e6e9fa" stroke="#6670b8" stroke-width="1.3"/>
 <path d="M 56,346 h6 M 62,346 l8,-6 h4 M 62,346 h12 M 62,346 l8,6 h4" fill="none" stroke="#6670b8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="88" y="350.2" font-size="11.5" fill="#4b559f" font-weight="700" text-anchor="start">BRANCH · exactly one source route per run — local scope or PR (not a fan)</text>
@@ -130,7 +130,7 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <text x="356" y="941" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">independent review route</text>
 <text x="356" y="957.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">one child</tspan> per triggered role</text>
 <text x="356" y="974.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">read-only, instruction-bounded</tspan></text>
-<text x="356" y="990.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">source = <tspan font-style="italic">untrusted evidence</tspan></text>
+<text x="356" y="990.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">probes → <tspan font-style="italic">parent executes</tspan></text>
 </g>
 <g class="fi" style="--d:1.16s"><rect x="640" y="884" width="280" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="640" y="885" width="5.5" height="110" rx="2.75" fill="#e0a010"/>
 <text x="656" y="903" font-size="10.5" fill="#a86f00" font-weight="700" text-anchor="start" letter-spacing="0.6">LOCAL WAVE · APPROVED ONLY</text>
@@ -150,7 +150,7 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <g><path d="M578.0,1072.0 L584.0,1081.4 L596.0,1081.4 L602.0,1072.0 L602.0,1076.6 L596.0,1085.9 L584.0,1085.9 L578.0,1076.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="602.0,1072.0 596.0,1080.1 584.0,1080.1 578.0,1072.0 584.0,1063.9 596.0,1063.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M586.2,1072.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
 <text x="356" y="1093" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">validates <tspan font-style="italic">source hashes + routing</tspan></text>
 <text x="356" y="1109.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">rejects sensitive material</tspan></text>
-<text x="356" y="1126.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">plan: <tspan font-weight="700" fill="#1c2150">direct-plan.json</tspan></text>
+<text x="356" y="1126.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">PR: <tspan font-weight="700" fill="#1c2150">snapshot complete</tspan> before dispatch</text>
 <text x="356" y="1142.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">calls: <tspan font-weight="700" fill="#1c2150">dispatch.json</tspan> <tspan font-style="italic">unchanged</tspan></text>
 </g>
 <g class="fi" style="--d:1.34s"><rect x="640" y="1036" width="280" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="640" y="1037" width="5.5" height="110" rx="2.75" fill="#e0a010"/>
@@ -232,7 +232,7 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <text x="56" y="1758.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">manifest preflight</tspan></text>
 <text x="490" y="1725" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">remediation_finalize.py</tspan> --promote</text>
 <text x="490" y="1741.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">both validators</tspan> must pass</text>
-<text x="490" y="1758.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">failed gates recorded in result</tspan></text>
+<text x="490" y="1758.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">Inspected drift → rerun gate; retain failed attempt</tspan></text>
 </g>
 <path d="M480,1770 L480,1804" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
 <g class="fi" style="--d:2.06s"><rect x="40" y="1804" width="880" height="86" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="1805" width="5.5" height="84" rx="2.75" fill="#2f9e73"/>
@@ -331,9 +331,9 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <text x="230" y="2526" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">PR state before run · checkout slot before writes</text>
 <text x="600" y="2526" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">closed / merged stops</text>
 <line x1="52" y1="2534" x2="908" y2="2534" stroke="#dde0f4"/>
-<text x="56" y="2552" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">prior report</text>
-<text x="230" y="2552" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">new PR run</text>
-<text x="600" y="2552" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">fresh or explicit reuse</text>
+<text x="56" y="2552" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">previous run</text>
+<text x="230" y="2552" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">standalone repeat with matching run</text>
+<text x="600" y="2552" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">await choice unless already supplied</text>
 <line x1="52" y1="2560" x2="908" y2="2560" stroke="#dde0f4"/>
 <text x="56" y="2578" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">close screen</text>
 <text x="230" y="2578" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">open PR</text>

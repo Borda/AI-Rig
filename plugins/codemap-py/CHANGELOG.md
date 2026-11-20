@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.45.2
+
+- Shared Codex question guidance now preserves the Resume last or Start fresh choice when a standalone Code Review finds an eligible earlier run.
+
 ## 0.45.1
 
 - The shared Codemap context guidance now describes `coupled` as internal-import coupling, ranked by import count, instead of co-change coupling, so consuming skills no longer read its output as evidence of files that change together. The guidance also tells consumers to use only in-scope modules with `internal_dep_count` of at least 20, the field the ranking sorts on.

@@ -23,9 +23,9 @@ original branch recovery. Fork recovery stops for the remediation workflow's bou
 directory is supported because the collector removes its own prior evidence before starting a new attempt; a prior
 report-adjacent review worktree is reused only when it remains clean and bound to the same repository and exact commit.
 Each temporary fallback gets a fresh private parent; its path is retained in the checkout evidence. Freshly created
-review worktrees receive a private ownership marker for terminal cleanup by ``review_worktree_cleanup.py``.
-Collection failures and pre-existing worktrees remain available for inspection. An interrupted creation may leave
-an empty private parent.
+review worktrees receive a private ownership marker for terminal cleanup by ``review_worktree_cleanup.py``. Collection
+failures and pre-existing worktrees remain available for inspection. An interrupted creation may leave an empty private
+parent.
 
 ## Used by
 

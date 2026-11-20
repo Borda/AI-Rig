@@ -147,8 +147,11 @@ BUDGETS = (
     # policy (174 bytes) and for text already added after the previous raise without one (217 bytes). The marker must
     # sit in this file itself, so it cannot move to a lazily loaded home.
     # Raised from 43126 by 467 bytes for the always-on loop trigger: a lazily loaded rule cannot fire a loop
-    # that starts before it is read. The shortened trigger leaves no budget headroom.
-    Budget("plugins/codex-rig/assets/AGENTS.md", 43593),
+    # that starts before it is read.
+    # Raised by 19 bytes for the rtk line (use rtk only after `command -v rtk`, fall back raw only before its child
+    # starts, never re-run on the child's exit code): the line grew by 77 bytes, 58 of them taken from the headroom
+    # the previous raise left. It must be in force before the first shell command, so a lazy home cannot carry it.
+    Budget("plugins/codex-rig/assets/AGENTS.md", 43612),
 )
 
 

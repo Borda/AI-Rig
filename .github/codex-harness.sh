@@ -109,6 +109,10 @@ if [[ "\${1:-}" == -c && "\${2:-}" == core.hooksPath=/dev/null && "\${3:-}" == -
   LEAD+=("\$1" "\$2" "\$3")
   shift 3
 fi
+if [[ "\${1:-}" == --literal-pathspecs ]]; then
+  LEAD+=("\$1")
+  shift
+fi
 real_git() {
   exec "$REAL_GIT" \${LEAD[@]+"\${LEAD[@]}"} "\$@"
 }

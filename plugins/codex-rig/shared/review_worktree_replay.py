@@ -3,8 +3,8 @@
 ## Purpose
 
 Keep direct and batched reviews verifiable after their clean, detached worktree has been reclaimed. Their plans already
-contain the exact reviewed file records. The cleanup receipt fingerprints those plans and the source inventories used
-by the live validators before removal. Terminal closes bind their collection evidence. A create-only local Git ref seals
+contain the exact reviewed file records. The cleanup receipt fingerprints those plans and the source inventories used by
+the live validators before removal. Terminal closes bind their collection evidence. A create-only local Git ref seals
 the hashes outside the report.
 
 ## Scope
@@ -24,8 +24,8 @@ The cleanup writer stores one small Git blob and ref. Historical validators only
 
 ## Failure
 
-Reject changed inputs or mismatched checkout, commit, report and result identities. An interrupted native removal
-also requires proof that the worktree is no longer registered before its pre-removal receipt can supply source.
+Reject changed inputs or mismatched checkout, commit, report and result identities. An interrupted native removal also
+requires proof that the worktree is no longer registered before its pre-removal receipt can supply source.
 
 ## Used by
 

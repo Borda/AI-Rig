@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.1
+
+- Shared Codex question guidance now preserves the Resume last or Start fresh choice when a standalone Code Review finds an eligible earlier run.
+
 ## 0.15.0
 
 - `/bridge:review --split-file PATH` runs one to three narrow Codex review scopes in parallel and returns one merged envelope, so a review that is too wide for a synchronous caller's 230 second budget no longer times out with no findings: each scope is an ordinary review call under the same gates, the wall time is that of one call, `complete` means every scope completed, `partial` names the scopes that did not, and a scope that timed out, was blocked or errored is reported as a gap and never resent. A scope that never exits is stopped by a backstop below the caller's 595 second limit, so the finished scopes still print; a quota stop in any scope appears as the envelope's top-level `incident`; the plan file is read from one opened descriptor (no link, no FIFO wait, owner and size checked). New `bin/bridge_split.py` does the fan-out.

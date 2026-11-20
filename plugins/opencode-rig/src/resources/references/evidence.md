@@ -32,7 +32,7 @@ Use an installed native `rig-*` subagent when available; otherwise call `rig_dis
 
 ## Optional command compression
 
-When `command -v rtk` succeeds, use supported RTK commands for read-heavy work, such as `rtk git status --short`. RTK must already be installed; never install it during a run. For unsupported commands, run the original command. This guidance does not change permissions or verification requirements.
+Run every command raw. rtk, when installed, cuts or reshapes the output of `ls`, git, gh and find, and where it cannot store the cut part (a sandbox) the entries are lost, so no rig workflow routes a command through it. Never install it during a run. This guidance does not change permissions or verification requirements.
 
 ## Honesty boundaries
 

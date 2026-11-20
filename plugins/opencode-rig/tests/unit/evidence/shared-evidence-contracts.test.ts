@@ -53,9 +53,13 @@ describe("shared evidence rules", () => {
     const card = lines(`skills/${skill}/SKILL.md`)
     expect(card.some((line) => line.includes("evidence.md#optional-command-compression"))).toBe(true)
     expect(card.some((line) => line.includes("60-99%"))).toBe(false)
-    const guidance = lines("references/evidence.md").find((line) => line.includes("command -v rtk"))!
-    expect(guidance).toContain("rtk git status --short")
-    expect(guidance).toContain("never install it during a run")
+    const guidance = lines("references/evidence.md").find((line) => line.startsWith("Run every command raw."))!
+    expect(guidance).not.toContain("rtk ls <dir>")
+    expect(guidance).not.toContain("rtk git")
+    expect(guidance).not.toContain("rtk gh")
+    expect(guidance).not.toContain("rtk recall")
+    expect(guidance).toContain("no rig workflow routes a command through it")
+    expect(guidance).toContain("Never install it during a run")
   })
 
   it("records external inventory identifiers without passing outside paths to evidence readers", () => {

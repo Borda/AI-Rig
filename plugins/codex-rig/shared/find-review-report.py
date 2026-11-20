@@ -23,13 +23,16 @@ same script with ``--result <path>`` to accept assessed working-tree, path, comm
 supplied unavailable, closed, or unpromoted candidate results. The target search covers canonical
 ``pr-<number>/run-<NNN>`` directories, timestamped flat reports, and, for the default current root, the legacy
 ``.reports/codex/review`` root. ``--complete-run <run>`` validates the explicitly named promoted review and emits its
-bound final Markdown bytes, even when a newer run exists. It never promotes candidates or changes intake eligibility.
+bound final Markdown bytes, even when a newer run exists. For standalone PR review entry, add ``--latest-run`` to
+``--target <canonical PR URL>`` to locate the current retained producer directory, including unfinished work.
+Use ``--latest-run --local-scope <scope>`` for a working tree, path or commit. Path and commit reviews also take
+``--local-target <path-or-revision>``. Local matches bind the original checkout, selection, revision and changed bytes.
+Confirm the offered directory with ``--expect-run <path>`` before resuming it. Intake still requires a validated result.
 
 ## Used by
 
-The ``code-remediate #<PR> +review`` workflow and review-report lookup tests use this selector. Remediation is the
-consumer of the assessed/unavailable distinction because it must rerun code-review when no trustworthy prior assessment
-exists.
+Review and remediation use this selector to read existing results. Report-only consumers retain the lookup diagnostic.
+Only remediation invoked with the explicit +review argument may start or resume a review for that target.
 
 ## Outputs
 
@@ -67,8 +70,17 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
+
+# Support installed scripts and callers that load the finder directly from its path.
+sys.pycache_prefix = str(Path(__file__).resolve())
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from collect_diff import diff_sections, local_review_identity, review_file_digest  # noqa: E402
+from create_run import PR_URL_PATTERN, TIMESTAMP_RUN_ID, same_pr_url  # noqa: E402
 
 #: Maximum bytes accepted from a previous run's resolution ledger.
 MAX_LEDGER_BYTES = 16 * 1024 * 1024
@@ -101,15 +113,7 @@ def _matches_target(target: str, number: str, url: str) -> bool:
     numeric_target = target.lstrip("#")
     if numeric_target.isdecimal() and int(numeric_target) > 0 and number == numeric_target:
         return True
-    requested = PR_URL_PATTERN.fullmatch(target)
-    collected = PR_URL_PATTERN.fullmatch(url)
-    return bool(
-        requested
-        and collected
-        and requested.group("owner").casefold() == collected.group("owner").casefold()
-        and requested.group("repository").casefold() == collected.group("repository").casefold()
-        and requested.group("number") == collected.group("number")
-    )
+    return same_pr_url(target, url)
 
 
 def review_result_kind(result_path: Path, *, allow_local: bool = False) -> str:
@@ -226,11 +230,6 @@ CANDIDATE_RESULT_NAME = "result.candidate.json"
 PR_DIRECTORY_PATTERN = re.compile(r"pr-([1-9][0-9]*)")
 #: Pattern for a `run-NNN` report directory; the capture group is the run sequence number.
 RUN_DIRECTORY_PATTERN = re.compile(r"run-([0-9]{3,})")
-#: Canonical GitHub PR URL grammar; only scheme/host casing is ignored by the pattern.
-PR_URL_PATTERN = re.compile(
-    r"(?i:https://github[.]com)/(?P<owner>[A-Za-z0-9][A-Za-z0-9._-]*)/"
-    r"(?P<repository>[A-Za-z0-9][A-Za-z0-9._-]*)/pull/(?P<number>[1-9][0-9]*)"
-)
 
 
 class ReviewArtifact(NamedTuple):
@@ -279,10 +278,14 @@ def _review_artifacts(reports_dir: Path, *, root_priority: int = 0) -> list[Revi
             if notes.is_file():
                 artifacts.append(ReviewArtifact(notes, order, None))
             else:
-                # Collection records the requested PR before notes, identity, or a terminal result.
-                for pending_name in ("pr-target.txt", "pr.json"):
+                # A standalone PR allocation precedes both collector receipts.
+                name = TIMESTAMP_RUN_ID.fullmatch(report_dir.name)
+                pending_names = ["pr-target.txt", "pr.json"]
+                if name and name["pr_number"]:
+                    pending_names.append("review-entry.json")
+                for pending_name in pending_names:
                     pending = report_dir / pending_name
-                    if pending.is_file():
+                    if pending.is_file() or pending.is_symlink():
                         artifacts.append(ReviewArtifact(pending, order, None))
                         break
     return artifacts
@@ -334,7 +337,173 @@ def _artifact_matches_target(
     )
 
 
-def find_latest_review_report(target: str, reports_dirs: list[Path]) -> Path:
+def _entry_object(path: Path) -> dict:
+    """Read a retained object without following an evidence symlink or admitting another JSON shape."""
+    if path.is_symlink():
+        raise LookupError(f"redirected-review-run:{path}")
+    data = json.loads(path.read_bytes())
+    if not isinstance(data, dict):
+        raise ValueError(f"invalid-review-entry:{path}")
+    return data
+
+
+def _allocated_target_matches(artifact: ReviewArtifact, target: str) -> bool | None:
+    """Identify a producer by its allocation even when collection is absent or contradicts the entry."""
+    run = artifact.path.parent
+    name = TIMESTAMP_RUN_ID.fullmatch(run.name)
+    number = artifact.pull_number or (name["pr_number"] if name else None)
+    entry = run / "review-entry.json"
+    if number != _target_pr_number(target) or not (entry.exists() or entry.is_symlink()):
+        return None
+    try:
+        record = _entry_object(entry)
+    except (ValueError, OSError, LookupError):
+        # A damaged allocation with the right number still needs to block recovery if it is the latest.
+        return True
+    if "pr_url" not in record:
+        return None
+    url = record["pr_url"]
+    match = PR_URL_PATTERN.fullmatch(url) if isinstance(url, str) else None
+    return not match or match["number"] != number or _matches_target(target, number, url)
+
+
+def _producer_allocation(artifact: ReviewArtifact) -> str:
+    """Recover the UTC allocation time across promotion, with collector time for historical numbered runs."""
+    run = artifact.path.parent
+    entry = run / "review-entry.json"
+    if entry.exists() or entry.is_symlink():
+        record = _entry_object(entry)
+        name = record.get("allocated_as", "")
+        match = TIMESTAMP_RUN_ID.fullmatch(name) if isinstance(name, str) else None
+        if (
+            record.get("schema_version") != 1
+            or not match
+            or not match["pr_number"]
+            or (artifact.pull_number is not None and match["pr_number"] != artifact.pull_number)
+            or (artifact.pull_number is None and run.name != name)
+        ):
+            raise LookupError(f"invalid-review-entry:{run}")
+        return name.split("Z", 1)[0]
+    if artifact.pull_number is None:
+        return run.name.split("Z", 1)[0]
+    # Older promotions did not retain the original directory name. Prefer the collector's first receipt.
+    source = next((run / n for n in ("pr-target.txt", "pr.json") if (run / n).is_file()), run)
+    return datetime.fromtimestamp(source.stat().st_mtime, timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%f")
+
+
+def _latest_producer(matches: list[ReviewArtifact]) -> ReviewArtifact:
+    """Keep root and numbered sequence precedence while considering newer current-format staging allocations."""
+    latest = max(matches, key=lambda artifact: artifact.order)
+    if latest.pull_number is None:
+        return latest
+    staging = [
+        artifact
+        for artifact in matches
+        if artifact.order[0] == latest.order[0]
+        and artifact.pull_number is None
+        and TIMESTAMP_RUN_ID.fullmatch(artifact.path.parent.name)
+    ]
+    if staging:
+        pending = max(staging, key=lambda artifact: artifact.order)
+        if _producer_allocation(pending) > _producer_allocation(latest):
+            return pending
+    return latest
+
+
+def _frozen_local_match(run: Path, identity: dict, *, require_plan: bool) -> bool:
+    """Recover a historical local working-tree or path selection from its frozen collector and preparation evidence."""
+    directory = run / "local-source"
+    receipt_file = directory / "review-worktree.json"
+    if identity["scope"] == "commit" or directory.is_symlink() or not receipt_file.is_file():
+        return False
+    receipt = _entry_object(receipt_file)
+    if receipt.get("source_worktree") != identity["repository"] or receipt.get("revision") != identity["revision"]:
+        return False
+    target = identity["target"] if identity["scope"] == "path" else None
+    if require_plan:
+        if (run / "direct-plan.json").is_file():
+            arguments = _entry_object(run / "direct-plan.json")
+        elif (run / "batch-inventory.json").is_file():
+            arguments = _entry_object(run / "batch-inventory.json").get("source_arguments")
+        else:
+            return False
+        if not isinstance(arguments, dict) or arguments.get("source_root") != receipt.get("review_worktree"):
+            return False
+        if "scope_path" not in arguments or arguments["scope_path"] != target:
+            return False
+    snapshot = _entry_object(directory / "source-snapshot.json")
+    if snapshot.get("repository") != identity["repository"] or snapshot.get("revision") != identity["revision"]:
+        return False
+    records = snapshot["files"]
+    staged = directory / "staged.patch"
+    if staged.is_symlink() or not staged.is_file():
+        return False
+    staged_bytes = staged.read_bytes()
+    if target and target != ".":
+        records = [r for r in records if r["path"] == target or r["path"].startswith(target + "/")]
+        changes = diff_sections(staged_bytes)
+        staged_bytes = b"".join(
+            section for path, section in changes.items() if path == target or path.startswith(target + "/")
+        )
+    patch = run / "diff.patch"
+    return not patch.is_symlink() and (
+        hashlib.sha256(patch.read_bytes()).hexdigest() == identity["diff_sha256"]
+        and review_file_digest(records) == identity["files_sha256"]
+        and hashlib.sha256(staged_bytes).hexdigest() == identity["staged_sha256"]
+    )
+
+
+def latest_local_run(
+    root: Path, identity: dict, *, codex_home: Path | None = None, parent_thread_id: str | None = None
+) -> Path:
+    """Select the newest proven local entry, rejecting redirected, terminal and damaged evidence for that run."""
+    # The allocator's UTC names order only those directories whose independent selection evidence matches.
+    if any(path.is_symlink() for path in (root, *root.parents)):
+        raise LookupError("redirected-review-run")
+    for run in sorted(root.glob("*"), reverse=True):
+        if not TIMESTAMP_RUN_ID.fullmatch(run.name) or not run.is_dir():
+            continue
+        if run.is_symlink():
+            raise LookupError(f"redirected-review-run:{run}")
+        entry = run / "review-entry.json"
+        if entry.exists() or entry.is_symlink():
+            record = _entry_object(entry)
+            if record.get("local") != identity:
+                continue
+            if record.get("schema_version") != 1 or record.get("allocated_as") != run.name:
+                raise LookupError(f"invalid-review-entry:{run}")
+            if (run / "local-source" / "review-worktree.json").exists() and not _frozen_local_match(
+                run, identity, require_plan=False
+            ):
+                raise LookupError(f"local-review-frozen-source-mismatch:{run}")
+        elif not _frozen_local_match(run, identity, require_plan=True):
+            continue
+        for path in (run / "result.json", run / CANDIDATE_RESULT_NAME, run / "diff.patch"):
+            if path.is_symlink():
+                raise LookupError(f"redirected-review-run:{path}")
+        patch = run / "diff.patch"
+        if (
+            patch.is_file()
+            and "diff_sha256" in identity
+            and hashlib.sha256(patch.read_bytes()).hexdigest() != identity["diff_sha256"]
+        ):
+            raise LookupError(f"local-review-collected-diff-mismatch:{run}")
+        if (run / "result.json").is_file():
+            metadata = _entry_object(run / "result.json").get("metadata")
+            if not isinstance(metadata, dict) or metadata.get("scope") != identity["scope"]:
+                raise LookupError(f"invalid-review-report-rerun-code-review:{run}")
+            if review_result_kind(run / "result.json", allow_local=True) == "assessed":
+                revision = identity["revisions"][0] if identity["scope"] == "commit" else identity["revision"]
+                if metadata.get("reviewed_commit_sha") != revision:
+                    raise LookupError(f"local-review-result-revision-mismatch:{run}")
+            require_assessed_review_result(
+                run / "result.json", codex_home=codex_home, parent_thread_id=parent_thread_id
+            )
+        return run
+    raise LookupError("missing-matching-review-report")
+
+
+def find_latest_review_report(target: str, reports_dirs: list[Path], *, include_pending: bool = False) -> Path:
     """Discover the newest result; callers must validate it before treating it as assessed evidence."""
     normalized_target = target.strip().rstrip("/")
     matches: list[ReviewArtifact] = []
@@ -351,27 +520,25 @@ def find_latest_review_report(target: str, reports_dirs: list[Path]) -> Path:
         artifacts = _review_artifacts(reports_dir, root_priority=root_priority)
         for artifact in artifacts:
             result_path = artifact.path
-            if result_path.name in {"review-notes.md", "pr.json", "pr-target.txt"}:
-                if _artifact_matches_target(
-                    artifact, normalized_target, allow_target_file=True, allow_unverified_directory=True
-                ):
-                    incomplete_matches.append(artifact)
+            # A verified allocation identifies an interrupted or conflicting collection for producer recovery.
+            allocated_match = _allocated_target_matches(artifact, normalized_target) if include_pending else None
+            kind = review_result_kind(result_path) if result_path.name == "result.json" else None
+            if not allocated_match and not _artifact_matches_target(
+                artifact,
+                normalized_target,
+                allow_target_file=True,
+                allow_unverified_directory=allocated_match is None and kind != "unavailable",
+            ):
                 continue
             if result_path.name == CANDIDATE_RESULT_NAME:
-                if _artifact_matches_target(
-                    artifact, normalized_target, allow_target_file=True, allow_unverified_directory=True
-                ):
-                    candidate_matches.append(artifact)
+                candidate_matches.append(artifact)
                 continue
-            kind = review_result_kind(result_path)
+            if kind is None:
+                incomplete_matches.append(artifact)
+                continue
             if kind == "unavailable":
-                if _artifact_matches_target(artifact, normalized_target, allow_target_file=True):
-                    unavailable_matches.append(artifact)
                 # Collection failures contain no assessment and cannot clear an intervening incomplete review.
-                continue
-            if not _artifact_matches_target(
-                artifact, normalized_target, allow_target_file=True, allow_unverified_directory=True
-            ):
+                unavailable_matches.append(artifact)
                 continue
             # Damaged identity blocks admission, but must not let an older run choose the recovery anchor.
             promoted_matches.append(artifact)
@@ -391,6 +558,49 @@ def find_latest_review_report(target: str, reports_dirs: list[Path]) -> Path:
                 continue
             matches.append(artifact)
 
+    if include_pending:
+        # The producer may resume a pending run. Remediation still admits only validated results.
+        all_matches = incomplete_matches + candidate_matches + unavailable_matches + promoted_matches
+        if all_matches:
+            latest = _latest_producer(all_matches)
+            run = latest.path.parent
+            name = TIMESTAMP_RUN_ID.fullmatch(run.name)
+            metadata = run / "pr.json"
+            requested = run / "pr-target.txt"
+            entry = run / "review-entry.json"
+            receipt = _entry_object(entry) if entry.exists() or entry.is_symlink() else {}
+            staging = (
+                latest in incomplete_matches and name and name["pr_number"] == _target_pr_number(normalized_target)
+            )
+            if "pr_url" in receipt:
+                _producer_allocation(latest)  # Validate the allocation name even without an older numbered run.
+                url = receipt["pr_url"]
+                if (
+                    not same_pr_url(normalized_target, url)
+                    or requested.is_symlink()
+                    or (requested.exists() and not same_pr_url(url, requested.read_text(encoding="utf-8").strip()))
+                ):
+                    raise LookupError(f"unverified-review-run-identity:{run}")
+            # Only a staging producer may use its preflight or requested URL before authoritative collection.
+            pending_identity = (
+                staging
+                and not metadata.exists()
+                and not metadata.is_symlink()
+                and not requested.is_symlink()
+                and ("pr_url" in receipt or _artifact_matches_target(latest, normalized_target, allow_target_file=True))
+            )
+            if not pending_identity and not _artifact_matches_target(latest, normalized_target):
+                raise LookupError(f"unverified-review-run-identity:{run}")
+            if latest in incomplete_matches or latest in candidate_matches:
+                return latest.path
+            if latest in closed_matches:
+                raise LookupError(f"matching-review-closed-not-remediable:{latest.path}")
+            if latest in invalid_matches:
+                raise LookupError(f"invalid-review-report-rerun-code-review:{latest.path}")
+            if latest in matches:
+                return latest.path
+            if latest in unavailable_matches:
+                raise LookupError(f"matching-review-unavailable-rerun-code-review:{latest.path}")
     matches.sort(key=lambda artifact: artifact.order, reverse=True)
     closed_matches.sort(key=lambda artifact: artifact.order, reverse=True)
     candidate_matches.sort(key=lambda artifact: artifact.order, reverse=True)
@@ -687,6 +897,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Print the newest Codex code-review result matching a PR target.")
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--target", help="PR number, #number, or PR URL.")
+    source.add_argument(
+        "--local-scope", choices=("working-tree", "path", "commit"), help="Standalone local review scope."
+    )
+    parser.add_argument("--local-target", default="", help="Selected local path or Git revision expression.")
     source.add_argument("--result", type=Path, help="Explicit result path that must be an assessed review.")
     source.add_argument(
         "--archive-result", type=Path, help="Describe a schema-2 or schema-3 result as unverified archive data."
@@ -697,6 +911,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     source.add_argument(
         "--prior-resolutions", type=Path, help="Current pr-<n>/run-<NNN> directory; print the prior run's resolutions."
+    )
+    parser.add_argument(
+        "--latest-run", action="store_true", help="Print the latest matching standalone review run directory."
+    )
+    parser.add_argument(
+        "--expect-run", type=Path, help="Confirm that the offered --latest-run directory is still current."
     )
     parser.add_argument("--finding-id", help="Canonical finding or blocker ID for --finding-evidence.")
     parser.add_argument("--codex-home", type=Path, help="Completion or intake validator's rollout-log root.")
@@ -709,6 +929,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if args.expect_run is not None and not args.latest_run:
+        parser.error("--expect-run requires --latest-run")
+    if args.local_scope and not args.latest_run:
+        parser.error("--local-scope requires --latest-run")
+    if bool(args.local_target) != (args.local_scope in {"path", "commit"}):
+        parser.error("--local-target is required only for path or commit review")
+    if (
+        args.latest_run
+        and not args.local_scope
+        and not PR_URL_PATTERN.fullmatch((args.target or "").strip().rstrip("/"))
+    ):
+        parser.error("--latest-run requires --target with a canonical PR URL")
     if args.finding_evidence is not None and not args.finding_id:
         parser.error("--finding-evidence requires --finding-id")
     try:
@@ -734,14 +966,38 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 0
+        if args.local_scope:
+            if not args.reports_dir.is_dir():
+                raise LookupError("missing-matching-review-report")
+            local = local_review_identity(Path.cwd(), args.local_scope, args.local_target)
+            run = latest_local_run(
+                args.reports_dir, local, codex_home=args.codex_home, parent_thread_id=args.parent_thread_id
+            )
+            if args.expect_run is not None and run.resolve() != args.expect_run.resolve():
+                raise LookupError("selected-review-run-changed")
+            print(run.resolve())
+            return 0
         reports_dirs = [args.reports_dir]
         if args.reports_dir == CURRENT_REPORTS_DIR:
             reports_dirs.append(LEGACY_REPORTS_DIR)
-        selected = find_latest_review_report(args.target, reports_dirs)
-        print(
+        selected = find_latest_review_report(args.target, reports_dirs, include_pending=args.latest_run)
+        if args.latest_run:
+            # The next workflow step can write here. Reject redirected runs and retained identity files.
+            root = next((directory for directory in reports_dirs if selected.is_relative_to(directory)), None)
+            if (
+                root is None
+                or any(path.is_symlink() for path in (selected, *selected.parents) if path.is_relative_to(root))
+                or (selected.parent / "pr.json").is_symlink()
+            ):
+                raise LookupError("redirected-review-run")
+        if selected.name == "result.json" and args.latest_run:
+            complete_review_run(selected.parent, codex_home=args.codex_home, parent_thread_id=args.parent_thread_id)
+        elif selected.name == "result.json":
             require_assessed_review_result(selected, codex_home=args.codex_home, parent_thread_id=args.parent_thread_id)
-        )
-    except (LookupError, OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        if args.expect_run is not None and selected.parent.resolve() != args.expect_run.resolve():
+            raise LookupError("selected-review-run-changed")
+        print(selected.parent.resolve() if args.latest_run else selected)
+    except (LookupError, OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
         if args.complete_run is not None:
             print(
                 f"Review handoff blocked: {exc}\nRetained evidence: {args.complete_run}. Review not complete.",

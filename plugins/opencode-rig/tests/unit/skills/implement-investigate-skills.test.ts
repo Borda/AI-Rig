@@ -131,15 +131,16 @@ describe("implementation workflow", () => {
     expect(input.some((line) => line.includes("Performance") && line.includes("rig-optimize"))).toBe(true)
   })
 
-  it("shows an RTK command without an unverified savings claim", () => {
+  it("keeps RTK guidance to raw commands without an unverified savings claim", () => {
     const tooling = readFileSync(join(RESOURCES_DIR, "references", "evidence.md"), "utf8").split("\n")
     expect(readFileSync(join(RESOURCES_DIR, "skills", "rig-implement", "SKILL.md"), "utf8")).toContain(
       "evidence.md#optional-command-compression",
     )
-    expect(tooling.some((line) => line.includes("`rtk git status --short`"))).toBe(true)
+    expect(tooling.some((line) => line.includes("rtk ls") || line.includes("rtk recall"))).toBe(false)
+    expect(tooling.some((line) => line.includes("rtk git") || line.includes("rtk gh"))).toBe(false)
+    expect(tooling.some((line) => line.startsWith("Run every command raw.") && line.includes("rtk"))).toBe(true)
     expect(tooling.some((line) => /\d.*%/.test(line))).toBe(false)
-    expect(tooling.some((line) => line.includes("unsupported") && line.includes("original command"))).toBe(true)
-    expect(tooling.some((line) => line.includes("never install it during a run"))).toBe(true)
+    expect(tooling.some((line) => line.includes("Never install it during a run"))).toBe(true)
   })
 })
 

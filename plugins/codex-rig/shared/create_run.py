@@ -17,6 +17,9 @@ workflow.
 ## Usage
 
 Run ``python create_run.py --skill <canonical-skill-id> [--pr-number <number> | --branch <name>]`` once.
+For standalone local review, add ``--local-scope <scope>`` to ``--branch`` and supply ``--local-target`` for path and
+commit selection. Local entry metadata binds the checkout, revision and selected source. For a standalone PR review,
+pass the canonical preflight URL with ``--pr-url``. PR creation retains its allocation time across numbered promotion.
 Use the printed path literally in later commands.
 After PR collection, run it again with the same skill and ``--promote-pr-run <created-path>``. Pass ``--root``
 consistently when a workflow owns a different local artifact root; resumed runs retain their existing paths.
@@ -54,8 +57,20 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Support installed scripts and callers that load the creator directly from its path.
+sys.pycache_prefix = str(Path(__file__).resolve())
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from collect_diff import local_review_identity  # noqa: E402
+
 #: Pattern for a valid skill id: lowercase words joined by single hyphens.
 SKILL_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+#: Canonical GitHub PR URL grammar; only scheme/host casing is ignored by the pattern.
+PR_URL_PATTERN = re.compile(
+    r"(?i:https://github[.]com)/(?P<owner>[A-Za-z0-9][A-Za-z0-9._-]*)/"
+    r"(?P<repository>[A-Za-z0-9][A-Za-z0-9._-]*)/pull/(?P<number>[1-9][0-9]*)"
+)
 #: Pattern for a timestamp-named run directory, which is the only kind eligible for promotion.
 TIMESTAMP_RUN_ID = re.compile(
     r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{6}Z"
@@ -88,9 +103,21 @@ def parse_args() -> argparse.Namespace:
     identity = parser.add_mutually_exclusive_group()
     identity.add_argument("--pr-number", type=int, help="Known positive PR number for the initial run name")
     identity.add_argument("--branch", help="Local branch identity, encoded as a bounded portable slug and digest")
+    parser.add_argument("--pr-url", help="Canonical preflight URL for a standalone PR review allocation")
+    parser.add_argument("--local-scope", choices=("working-tree", "path", "commit"), help="Standalone review selection")
+    parser.add_argument("--local-target", default="", help="Selected path or revision expression for a local review")
     arguments = parser.parse_args()
+    if arguments.local_scope and (arguments.skill != "code-review" or arguments.branch is None):
+        parser.error("--local-scope requires --skill code-review and --branch")
+    if bool(arguments.local_target) != (arguments.local_scope in {"path", "commit"}):
+        parser.error("--local-target is required only for path or commit review")
+
     if arguments.pr_number is not None and arguments.pr_number <= 0:
         parser.error("PR number must be a positive integer")
+    if arguments.pr_url is not None:
+        url = PR_URL_PATTERN.fullmatch(arguments.pr_url)
+        if arguments.skill != "code-review" or not url or url["number"] != str(arguments.pr_number):
+            parser.error("--pr-url requires --skill code-review and the matching --pr-number")
     if arguments.branch is not None and not arguments.branch.strip():
         parser.error("branch must be nonempty")
     if arguments.promote_pr_run is not None and (arguments.pr_number is not None or arguments.branch is not None):
@@ -100,7 +127,18 @@ def parse_args() -> argparse.Namespace:
     return arguments
 
 
-def _read_pr_number(source: Path) -> int:
+def same_pr_url(expected: object, actual: object) -> bool:
+    """Compare complete canonical GitHub PR URLs under repository and owner case folding."""
+    return bool(
+        isinstance(expected, str)
+        and isinstance(actual, str)
+        and PR_URL_PATTERN.fullmatch(expected)
+        and PR_URL_PATTERN.fullmatch(actual)
+        and expected.casefold() == actual.casefold()
+    )
+
+
+def _read_pr_number(source: Path, *, check_review_entry: bool) -> int:
     """Read the positive integer PR identity from its owning collection directory."""
     identity_path = source / "pr.json"
     if source.is_symlink() or identity_path.is_symlink() or not identity_path.is_file():
@@ -112,6 +150,22 @@ def _read_pr_number(source: Path) -> int:
     number = payload.get("number") if isinstance(payload, dict) else None
     if type(number) is not int or number <= 0:
         raise RunPromotionError("pr.json number must be a positive integer")
+    entry = source / "review-entry.json"
+    if check_review_entry and (entry.exists() or entry.is_symlink()):
+        if entry.is_symlink() or not entry.is_file():
+            raise RunPromotionError("invalid review allocation identity")
+        try:
+            record = json.loads(entry.read_bytes())
+        except (OSError, ValueError, RecursionError) as error:
+            raise RunPromotionError("invalid review allocation identity") from error
+        if (
+            not isinstance(record, dict)
+            or record.get("allocated_as") != source.name
+            or record.get("schema_version") != 1
+        ):
+            raise RunPromotionError("invalid review allocation identity")
+        if "pr_url" in record and not same_pr_url(record["pr_url"], payload.get("url")):
+            raise RunPromotionError("initial PR URL does not match authoritative pr.json")
     return number
 
 
@@ -150,7 +204,9 @@ def promote_pr_run(root: Path, skill: str, source: Path) -> Path:
     if source.is_symlink() or not source.is_dir():
         raise RunPromotionError("promotion source must be a safe directory")
 
-    pr_number = _read_pr_number(source / "pr" if skill == "code-remediate" else source)
+    pr_number = _read_pr_number(
+        source / "pr" if skill == "code-remediate" else source, check_review_entry=skill == "code-review"
+    )
     named_number = source_identity.group("pr_number")
     if named_number is not None and int(named_number) != pr_number:
         raise RunPromotionError("initial PR run identity does not match authoritative pr.json")
@@ -196,6 +252,15 @@ def main() -> int:
         print(run_directory)
         return 0
 
+    entry: dict[str, object] = {"schema_version": 1}
+    if arguments.pr_url is not None:
+        entry["pr_url"] = arguments.pr_url
+    if arguments.local_scope:
+        try:
+            entry["local"] = local_review_identity(Path.cwd(), arguments.local_scope, arguments.local_target)
+        except (OSError, RuntimeError, ValueError) as error:
+            print(error, file=sys.stderr)
+            return 1
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
     skill_directory = arguments.root / arguments.skill
     skill_directory.mkdir(parents=True, exist_ok=True)
@@ -208,6 +273,11 @@ def main() -> int:
         digest = hashlib.sha256(arguments.branch.encode("utf-8")).hexdigest()[:12]
         identity = f"-branch-{slug}-{digest}"
     run_directory = Path(tempfile.mkdtemp(prefix=f"{timestamp}{identity}-", dir=skill_directory))
+    if arguments.skill == "code-review" and (arguments.local_scope or arguments.pr_number):
+        entry["allocated_as"] = run_directory.name
+        (run_directory / "review-entry.json").write_text(
+            json.dumps(entry, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+        )
     print(run_directory)
     return 0
 

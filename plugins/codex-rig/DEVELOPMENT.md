@@ -90,10 +90,10 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - Independent dispatches preserve every generated argument, including the digest-bound task name.
 - A missing expected direct child is reported separately from duplicate sessions, and permitted parent recovery runs through completion rather than ending with a fallback announcement.
 - Review preparation uses its packaged skill-local helper path and recovers incorrect invocations before asking for a decision. Recovery questions discover the packaged native form before considering async; an accepted async question receives no trailing final or status message.
-- When PR remediation requests existing report evidence (`+report`, report aliases or an explicit path) and no eligible completed report exists, Codex first assesses the retained evidence and recovers what it can on its own: deterministic derived repairs resume the owning Code Review run without a question, and a version mismatch alone never asks.
-- An actual interrupted-check decision uses Continue or Skip, preserving incomplete required proof; a missed ordering checkpoint alone continues automatically with honest disclosure and normal validation. Other substantive gaps that remain are a question, even when available findings can be fixed: **New review**, **Resume last one**, or **Stop**, with the feasibility and consequences of each route explained.
+- When PR remediation requests existing report evidence (`+report`, report aliases or an explicit path) and no eligible completed report exists, Codex assesses the retained evidence and repairs its own inventory. If no report can be admitted, it asks for a report, explicit use of available findings, or a stop.
+- In a review invoked by Code Remediate with `+review`, an actual interrupted-check decision uses Continue or Skip, preserving incomplete required proof; a missed ordering checkpoint alone continues automatically with honest disclosure and normal validation. Other substantive gaps that remain are a question, even when available findings can be fixed: **New review**, **Resume last one**, or **Stop**, with the feasibility and consequences of each route explained.
 - Continuing without a completed review requires explicit user confirmation; an existing answer for the unchanged target and decision is reused.
-- A fresh review invokes the normal Code Review skill end-to-end, returns its exact completed report to the same remediation run, and resumes report admission, source collection, selection and fixes without a review-only final stop; a failed checkpoint first follows the review's bounded recovery without a generic request for another message.
+- A fresh review under `+review` invokes the normal Code Review skill end-to-end, returns its exact completed report to the same remediation run, and resumes report admission, source collection, selection and fixes without a review-only final stop; a failed checkpoint first follows the review's bounded recovery without a generic request for another message.
 - A proved dispatch-order failure preserves the rejected wave and revalidates source before the existing parent fallback, rather than recollecting unchanged PR evidence; explicit independence, runtime denial and retry limits still apply.
 - Stop preserves artifacts and changes without continuing remediation; only a separate explicit instruction authorizes continuing with available findings.
 - An unanswered or dismissed question stays pending.
@@ -125,7 +125,7 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - Codex asks only for a genuinely missing decision, material input or protected action.
 - Authorized preparation, internal recovery and completion need no new consent; transport discovery follows that necessity check.
 - Existing answers, scope/digest confirmation and runtime permission remain authoritative.
-- Code Review resolves retained evidence before allocating another run, defaults new requests to fresh review without a routine question, and honors explicit resume/reuse through the normal completion gate and full table output.
+- Code Review resolves retained evidence before allocating another run, offers Resume last or Start fresh on a repeat standalone request, and honors explicit resume/reuse through the normal completion gate and full table output.
 - A user may explicitly waive additional reviewers, rounds or broader coverage, including previously requested independence.
 - Record the target and decision, preserve the original frozen plan, and complete a separate revised-scope parent fallback through all normal validators and completion checks.
 - Declining an optional repair alone does not waive required independence.
@@ -219,6 +219,7 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - It leaves changes unstaged when required authority is absent, ownership cannot be proved, or units overlap.
 - A pre-edit worktree baseline, clean-index check, explicit-path staging, and exact committed-path comparison prevent unrelated or pre-existing user changes from entering remediation commit.
 - Codex shows exact path list and complete message in chat, stages and commits in one owning command, `rtk git add -- <paths> && rtk git commit --cleanup=verbatim -m <message>`, using existing filesystem grants without escalation when Git metadata is writable, passes message literally as one argument, and verifies stored message and committed file set afterward.
+- The `rtk` prefix on that recipe is the named exception to `assets/AGENTS.md` §Shell Command Routing, which routes only a long-form `git status` through `rtk` (its other reads are lossy, elided without a recoverable hash in the sandbox, or identical so nothing is saved); without `rtk` the raw `git` commands run.
 - Argv-only tools and shells without `&&` fall back to two calls.
 - No agent-created message file, draft-file approval, or cleanup; full message can appear in runtime approval details and process arguments.
 - Runtime permissions and hook approvals remain enforced; existing matching allowances are reused.
@@ -663,7 +664,7 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - Source inspection continues whenever source is accessible, while unavailable source identity, unsafe execution, credential exposure or unauthorized credential access, and unauthorized destructive or remote mutations remain hard stops; authorized credential-broker reads and local changes continue.
 - Recovery guidance explains why a check rejected the work, distinguishes unknown causes, and recommends a concrete next action.
 - A necessary repair choice states what approval and decline each do: rejected reviewer evidence can permit fresh sequential review with disclosed missing independence; unavailable current PR source permits diagnosis or user-accepted discussion of an older assessed report, but no code edits.
-- Existing merge conflicts receive a separate diagnosis; Code Remediate offers the applicable finish/abort/defer choices with preservation and authorization effects, while a review-only Code Review reports the conflict, never finishes or aborts it, and hands it to Code Remediate while its detached-worktree review continues.
+- Existing merge conflicts receive a separate diagnosis; Code Remediate offers the applicable finish/abort/defer choices with preservation and authorization effects, while a review-only Code Review reports the conflict, never finishes or aborts it, and continues its detached-worktree review.
 - Once authorized recovery succeeds, Code Review and Code Remediate resume their first unmet checkpoint and normal completion gates without requiring another invocation; a remaining independent blocker gets its own explanation.
 - Repairs to validators, credentials, or Git history are never inferred from a generic error code.
 - Fresh ordinary native preparation uses direct source-pointer tasks without paging or size-driven batching.
@@ -736,8 +737,8 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - A genuine blocker reports remediation incomplete, implemented count and next action; a no-change completion requires evidence for every finding’s disposition.
 - The remediation entrypoint follows four phases: admit evidence, collect and select findings, implement and verify, then finalize and deliver.
 - Each phase loads its detailed rules when needed.
-- An authorized missing review runs before finding selection and returns its exact validated result to the waiting remediation; incomplete reporting never substitutes for an available authorized next step.
-- Bare PR remediation validates older online claims against current source without a review-choice question caused only by their age; additional review still requires authorization.
+- An explicit `+review` runs a needed review before finding selection and returns its exact validated result to the waiting remediation; incomplete reporting never substitutes for an available authorized next step.
+- Bare PR remediation validates older online claims against current source without a review-choice question caused only by their age.
 - PR-targeted remediation reports follow `.reports/codex/code-remediate/pr-<number>/run-<NNN>/`, matching review report grouping. After collection, `create_run.py --skill code-remediate --promote-pr-run <run-directory>` derives the PR identity from `pr/pr.json` and allocates the next run. Local report-only runs and collection failures keep timestamp directories; resume preserves its existing run.
 - The exact files vary by workflow, but completion requires requested output, explainable gate results, unresolved risks, and validated `result.json`.
 - Shared helpers provide diff collection, PR evidence collection, gate execution, artifact validation, severity mapping, and result writing.
@@ -919,9 +920,9 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
   - Code Review retains its separate opt-in rule.
   - Unfinished selected work remains explicit in the final report.
 - **Review evidence and freshness:** Joined `+review` authorizes the needed intake review step for the same target; reuse current evidence or update/create the review without asking for the same consent again, then resume remediation.
-  - Existing-only `+report`, report aliases and explicit report paths ask for a substantive missing-review decision after feasible automatic recovery.
+  - Existing-only `+report`, report aliases and explicit report paths stay in remediation. Following feasible consumer-owned recovery, ask for an existing report, explicit use of available findings, or a stop.
   - Saved reports and online comments use the same freshness rule: compare known reviewed revisions/outdated status with current source; fetching now does not make old findings current, and unknown freshness is disclosed.
-  - For stale evidence without existing review authorization, ask use existing findings, update existing review where feasible, or create a new review.
+  - For stale existing evidence, check each claim against the verified current source and retain the original reviewed revision.
   - Every finding is revalidated against current source.
   - Updates preserve original evidence/provenance and run through Code Review; online evidence is reassessed locally without posting or editing GitHub comments.
   - Unpromoted candidates remain inadmissible, missing independent proof stays explicit, and extra post-fix review rounds retain their separate authorization.
@@ -1213,7 +1214,7 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - Standing approval alone keeps ordinary readiness.
 - A selected commit must include all authorized owned content, including new files and incomplete fixes, with zero task-owned uncommitted residue before delivery and final output; unrelated pending work stays untouched.
 - Terminal handoffs keep verification results and evidence together in one `Check | Status | Evidence` table, using compact `Log` links. Other tables list file paths below as `- Item: file-path`.
-- Machine records and historical reports retain their full evidence.
+- Current handoffs select concrete, owned actions in priority order. When the goal remains blocked, the author can select one best way forward while preserving every waiting issue and its owner. Unmarked reports retain their recorded rendering.
 - Read-only audits rank findings without requiring remediation selection.
 - Implementation style corrections recover automatically; release headings and contributor credit accept equivalent Markdown while preserving identity and content checks.
 - Ambiguous path expressions move verbatim into item-labelled detail lists; presentation 15 keeps ordinary slash prose, version numbers and non-path code readable in cells.

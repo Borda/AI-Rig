@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 import test_review_direct as direct
 from _git_fixtures import git_bytes
-from test_review_prepare import HELPER, _build_review_inputs, _pr_fixture_receipt, _prepare
+from test_review_prepare import HELPER, _build_review_inputs, _pr_fixture_receipt, _pr_snapshot, _prepare
 
 COMPONENT_SEPARATOR = "\n--- UTF-8 component ---\n"
 KNOWN_COMPONENTS = {"direct-plan:file:1", "direct-diff:section:0", "direct-source:1"}
@@ -521,12 +521,13 @@ def test_receipt_backed_pr_base_change_requires_fresh_component_approval(tmp_pat
     assert all(bindings[0][i][0]["input_sha256"] != bindings[1][i][0]["input_sha256"] for i in expected_inputs)
     approval = "Explicit approval for the complete synthetic component in this comparison."
     _admit_bindings(run, exports[0].stdout, approval, "Known inert fixture.")
-    stale = _prepare(run, source_root=root, paged=False)
+    anchor = _pr_snapshot(run, root)
+    stale = _prepare(run, source_root=root, paged=False, pr_integrity=anchor)
     assert stale.returncode != 0
     assert SENSITIVE in stale.stderr
     _admit_bindings(run, exports[1].stdout, approval, "Known inert fixture.")
 
-    fresh = _prepare(run, source_root=root, paged=False)
+    fresh = _prepare(run, source_root=root, paged=False, pr_integrity=anchor)
 
     assert fresh.returncode == 0, fresh.stderr
     plan = json.loads((run / "direct-plan.json").read_bytes())

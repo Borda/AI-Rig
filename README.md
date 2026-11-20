@@ -224,9 +224,9 @@ opencode plugin add 'github:Borda/AI-Rig#main::path:plugins/opencode-rig'
 node plugins/opencode-rig/bin/opencode-rig.mjs init
 ```
 
-This repository already does the first step: [`opencode.jsonc`](opencode.jsonc) registers the same Git specifier for the project. `make sync-opencode` registers it in the global config and installs the role agents, following the same pushed-remote rule as the other sync targets.
+This repository already does the first step: [`opencode.jsonc`](opencode.jsonc) registers the same Git specifier for the project. `make sync-opencode` registers it in the global config, refreshes the cached package to the GitHub head, verifies the installed version, and installs the role agents, following the same pushed-remote rule as the other sync targets.
 
-`opencode plugin add` installs the package and adds it to the OpenCode configuration. `init` writes the seven `rig-*` role agents that a plugin package cannot register: `~/.config/opencode/agents/` by default, or `.opencode/agents/` with `--project`. `opencode plugin add` does not link the package's CLI on `PATH`, so run `init` with `npx` or the checked-out script. Plain local commits ask until you record an explicit grant with `rig_git_grant`; push and every other remote mutation keep asking.
+`opencode plugin add` installs the package and adds it to the OpenCode configuration. `init` writes the eight `rig-*` role agents that a plugin package cannot register: `~/.config/opencode/agents/` by default, or `.opencode/agents/` with `--project`. `opencode plugin add` does not link the package's CLI on `PATH`, so run `init` with `npx` or the checked-out script. Plain local commits ask until you record an explicit grant with `rig_git_grant`; push and every other remote mutation keep asking.
 
 Start a fresh session, then try:
 
@@ -439,7 +439,7 @@ Keep scope and evidence artifacts for the next session; this is not an unattende
 
 External add-ons are not hidden installation prerequisites. The owning plugin README is authoritative for flags, supported versions, and recovery.
 
-RTK is an output-compression convenience for supported shell commands, not a correctness gate or a replacement for Claude's native file tools. Codex's repository policy routes eligible commands explicitly because the current Codex path does not rewrite commands in place.
+RTK is an output-compression convenience for supported shell commands, not a correctness gate or a replacement for Claude's native file tools. Claude's hook routes only `git status`; Codex's repository policy routes only a long-form `git status` explicitly, because the current Codex path does not rewrite commands in place, and OpenCode routes nothing. Every other command runs raw because rtk cuts or reshapes its output.
 
 </details>
 
@@ -478,13 +478,13 @@ Direct marketplace installation is the normal public path. A source checkout add
 make sync-all         # Claude + Codex + OpenCode, plus standing Claude consent when operator proof exists (default target)
 make sync-claude      # Claude scope only
 make sync-codex       # Codex scope only
-make sync-opencode    # OpenCode scope only: GitHub registration + role agents
+make sync-opencode    # OpenCode scope only: GitHub refresh + version check + role agents
 make rig-check        # OpenCode Rig typecheck, formatting, tests, version, and package checks
 ```
 
 > The `Makefile` installs from the pushed GitHub remote, not uncommitted local files. Commit and push first if you want a checkout change to become installable; never use sync as a preview of a dirty worktree.
 
-Restart open Claude Code sessions after a sync: a session keeps the plugin versions it loaded at start.
+Restart open Claude Code and OpenCode sessions after a sync: a session keeps the plugin versions it loaded at start.
 
 Consent handling, sync internals, repository layout, and local development without installing: [DEVELOPMENT.md](DEVELOPMENT.md).
 
@@ -517,11 +517,11 @@ Remove with `codex plugin remove <plugin>@borda-ai-rig`. If pre-release Codex Ri
 OpenCode:
 
 ```bash
-opencode plugin update opencode-rig
+opencode plugin update 'github:Borda/AI-Rig#main::path:plugins/opencode-rig'
 opencode-rig init --upgrade
 ```
 
-Update the package, then refresh the role agents. `init --upgrade` replaces stale or locally edited stamped agents; without it, `init` and `check` stop on a conflict instead of overwriting your edits. Remove with:
+Update the package, then refresh the role agents. The update target is the configured specifier, not the package name; bare `opencode plugin update` refreshes every outdated configured plugin. `opencode-rig init --upgrade` replaces stale or locally edited stamped agents; without it, `init` and `check` stop on a conflict instead of overwriting your edits. A role card a later package no longer ships is reported `EXTRA`; `init --upgrade --prune-extra` removes it when you have not edited it, and `make sync-opencode` already does. Remove with:
 
 ```bash
 opencode-rig remove

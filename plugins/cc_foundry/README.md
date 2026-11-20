@@ -1109,7 +1109,7 @@ Session-end artifact cleanup preserves files when Git cannot reliably enumerate 
 | [`lint-on-save.js`](hooks/lint-on-save.js)                     | Runs pre-commit after Write/Edit; async, cross-session lock, 15 s timeout, skips `.temp/`                                    |
 | [`md-compress.js`](hooks/md-compress.js)                       | Normalizes Markdown whitespace and table padding on Edit                                                                     |
 | [`report-header-table.js`](hooks/report-header-table.js)       | Shared check that report headers and follow-up questions carry the required summary                                          |
-| [`rtk-rewrite.js`](hooks/rtk-rewrite.js)                       | Transparently rewrites CLI calls for token compression                                                                       |
+| [`rtk-rewrite.js`](hooks/rtk-rewrite.js)                       | Rewrites `git status` to `rtk` for token compression; lossy, unrecoverable and unmeasured verbs run raw                      |
 | [`rule-inject.js`](hooks/rule-inject.js)                       | Injects `agent-spawn.md` and `git-commit.md` on first use; restores the skill contract after compaction                      |
 | [`rules-check.js`](hooks/rules-check.js)                       | SessionStart: names missing `foundry-*.md` rule links when setup never ran                                                   |
 | [`sentinel-read-allow.js`](hooks/sentinel-read-allow.js)       | Decision module: allows sentinel reads and date stamps in read-only compounds                                                |

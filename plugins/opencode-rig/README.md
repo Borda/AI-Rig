@@ -1,6 +1,6 @@
 # opencode-rig
 
-Current version: `0.12.0`
+Current version: `0.13.0`
 
 Evidence-first delivery workflows for [OpenCode](https://opencode.ai): frozen plans, recorded gates, independent review, adversarial convergence, and Git guardrails that keep publication human-owned.
 
@@ -37,13 +37,13 @@ opencode plugin add 'github:Borda/AI-Rig#main::path:plugins/opencode-rig'
 node plugins/opencode-rig/bin/opencode-rig.mjs init   # or the path inside your clone
 ```
 
-A branch specifier follows `main`; replace it with a full commit hash when the install must stay pinned. `opencode plugin add` is idempotent and writes the package specifier into `~/.config/opencode/opencode.json`. It caches the package for loading but does not link this package's CLI on `PATH`, so run `init` through `npx` for a published version or the checked-out script otherwise.
+A branch specifier follows `main`; replace it with a full commit hash when the install must stay pinned. `opencode plugin add` is idempotent and writes the package specifier into `~/.config/opencode/opencode.json`, so an already-recorded specifier is never re-resolved: run `opencode plugin update '<specifier>'` (or `make sync-opencode`) to move the cached package to the branch head. The target is the configured specifier, not the package name; bare `opencode plugin update` refreshes every outdated plugin. It caches the package for loading but does not link this package's CLI on `PATH`, so run `init` through `npx` for a published version or the checked-out script otherwise.
 
-`init` writes the eight `rig-*` role agents that OpenCode cannot register from a plugin package; they land in `~/.config/opencode/agents/`, or in `.opencode/agents/` with `--project`. It also merges the shipped permission rules into your OpenCode configuration: `~/.config/opencode/opencode.jsonc` when that file exists, otherwise an existing `opencode.json` beside it, otherwise a new `opencode.jsonc` — and with `--project` the `opencode.jsonc` or `opencode.json` at the Git root, falling back to the current directory outside Git. A card the package itself revised is reported `STALE` and refreshed automatically, because the stamp records the digest it was installed with. Add `--upgrade` to replace a stamped agent you edited locally; without it, `init` and `check` stop on a locally edited file and never overwrite it.
+`init` writes the eight `rig-*` role agents that OpenCode cannot register from a plugin package; they land in `~/.config/opencode/agents/`, or in `.opencode/agents/` with `--project`. It also merges the shipped permission rules into your OpenCode configuration: `~/.config/opencode/opencode.jsonc` when that file exists, otherwise an existing `opencode.json` beside it, otherwise a new `opencode.jsonc` — and with `--project` the `opencode.jsonc` or `opencode.json` at the Git root, falling back to the current directory outside Git. A card the package itself revised is reported `STALE` and refreshed automatically, because the stamp records the digest it was installed with. Add `--upgrade` to replace a stamped agent you edited locally; without it, `init` and `check` stop on a locally edited file and never overwrite it. Add `--prune-extra` to remove a stamped card this package no longer ships: it is deleted only while its body still matches the stamp, an edited card is reported `KEEP` and left alone, and `check` never deletes.
 
 `opencode-rig setup` is the recommended command, and `init` is its alias. Besides the agents and rules above, it writes the shipped delivery principles into `~/.config/opencode/AGENTS.md` as a digest-stamped managed block. OpenCode reads that file instead of `~/.claude/CLAUDE.md`, so setup refuses to create it while your Claude global instructions exist; pass `--adopt-claude-instructions` to copy them in. The block is created owner-only, and `remove` strips it while restoring the surrounding bytes. `setup --agents-only` installs or verifies just the role agents. `OPENCODE_RIG_HOME` is a test-only seam that relocates the home directory and fails closed when it points at a directory that does not exist.
 
-The recommended registration is already checked in at the repository root as [`opencode.jsonc`](../../opencode.jsonc), and `make sync-opencode` performs the global registration, the agent-only install, and the full `setup` from pushed state. Set `OPENCODE_ADOPT_CLAUDE_INSTRUCTIONS=1` on that command when a global Claude instructions file should be copied in rather than refused.
+The recommended registration is already checked in at the repository root as [`opencode.jsonc`](../../opencode.jsonc), and `make sync-opencode` performs the global registration, refreshes the cached package to the GitHub head, verifies the installed version against it, then runs the agent-only install and the full `setup` from pushed state. Set `OPENCODE_ADOPT_CLAUDE_INSTRUCTIONS=1` on that command when a global Claude instructions file should be copied in rather than refused.
 
 Add the plugin options to `opencode.jsonc` if you want anything other than the defaults:
 
@@ -282,7 +282,7 @@ The CLI doctor checks installation and environment basics. With `--assets`, it a
 ## Upgrading and removal
 
 ```bash
-opencode plugin update opencode-rig
+opencode plugin update 'github:Borda/AI-Rig#main::path:plugins/opencode-rig'
 opencode-rig init --upgrade
 ```
 

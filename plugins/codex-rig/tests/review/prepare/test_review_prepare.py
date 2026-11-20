@@ -342,6 +342,7 @@ def _prepare(
     challenge_only: bool = False,
     batches: bool = False,
     paged: bool = True,
+    pr_integrity: tuple[Path, str] | None = None,
     discover_fixtures: bool = False,
     export_fixture_bindings: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
@@ -361,6 +362,8 @@ def _prepare(
         "--source-root",
         str(source_root),
     ]
+    if pr_integrity:
+        command.extend(["--pr-integrity", str(pr_integrity[0]), pr_integrity[1]])
     if paged:
         command.append("--paged")
     if challenge_only:
@@ -693,6 +696,9 @@ def _pr_fixture_receipt(root: Path, head: str, base: str) -> dict[str, str]:
 
     return {
         "worktree": root.as_posix(),
+        "source_worktree": Path(
+            git_text(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        ).parent.as_posix(),
         "expected_head": head,
         "diff_base_oid": base,
         "diff_head_oid": head,
@@ -728,7 +734,8 @@ def test_prepare_delivers_deleted_file_comparison(
     root = _review_worktree(run)
     head = arrange(run, root)
 
-    result = _prepare(run, source_root=root, expected_head=head)
+    anchored = _pr_snapshot(run, root) if arrange is _arrange_pr_deletion else None
+    result = _prepare(run, source_root=root, expected_head=head, pr_integrity=anchored)
 
     assert result.returncode == 0, result.stderr
     text = (run / "specialists/challenger-context.md").read_text(encoding="utf-8")
@@ -2851,7 +2858,7 @@ def test_prepare_uses_nested_pr_receipt_and_rejects_ambiguous_receipts(tmp_path:
     (run / "pr").mkdir()
     receipt = _pr_fixture_receipt(review, head, base)
     write_json(run / "pr/local-checkout.json", receipt)
-    result = _prepare(run, source_root=review)
+    result = _prepare(run, source_root=review, pr_integrity=_pr_snapshot(run, review))
     assert result.returncode == 0, result.stderr
     assert "value = 3\n" in (run / "specialists/challenger-context.md").read_text(encoding="utf-8")
     (run / "local-checkout.json").write_text(json.dumps(receipt), encoding="utf-8", newline="\n")
@@ -2871,6 +2878,102 @@ def _collected_pr_source(run: Path) -> Path:
         _pr_fixture_receipt(review, head, base),
     )
     return review
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("paged", [False, True])
+def test_pr_review_withholds_reviewer_tasks_until_snapshot_completes(tmp_path: Path, paged: bool) -> None:
+    """The presence of a snapshot file alone cannot authorize direct or paged reviewer dispatch."""
+    run = _review_inputs(tmp_path)
+    review = _collected_pr_source(run)
+    anchored = _pr_snapshot(run, review)
+
+    result = _prepare(run, source_root=review, paged=paged)
+
+    assert result.returncode == 2
+    assert "review-pr-dispatch-requires-parent-integrity" in result.stderr
+    assert not (run / "dispatch.json").exists()
+
+    result = _prepare(run, source_root=review, paged=paged, pr_integrity=anchored)
+
+    assert result.returncode == 0, result.stderr
+    assert (run / "dispatch.json").exists()
+
+
+@pytest.mark.integration
+def test_pr_replacement_requires_parent_anchor_before_issuing_arguments(tmp_path: Path) -> None:
+    """A stale plan and role name cannot launch a replacement via the separate retry command."""
+    run = _review_inputs(tmp_path)
+    review = _collected_pr_source(run)
+    result = _prepare(run, source_root=review, paged=False, pr_integrity=_pr_snapshot(run, review))
+    assert result.returncode == 0, result.stderr
+    calls = json.loads((run / "dispatch.json").read_bytes())["calls"]
+    assert all("Use static file reads only" in call["arguments"]["message"] for call in calls)
+    assert all(
+        "Return any executable probe as a request to the parent" in call["arguments"]["message"] for call in calls
+    )
+
+    retry = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER),
+            "prepare-direct-retry",
+            "--out",
+            str(run),
+            "--role",
+            "challenger",
+            "--reason",
+            "Request missing scope",
+            "--codex-home",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert retry.returncode == 2
+    assert "review-pr-dispatch-requires-parent-integrity" in retry.stderr
+    assert not (run / "retry/challenger.json").exists()
+
+
+def _pr_snapshot(run: Path, root: Path, *, watch: bool = True) -> tuple[Path, str]:
+    """Capture the real pre-dispatch integrity baseline and keep the digest the completed helper printed."""
+    path = run / "integrity.json"
+    command = [
+        sys.executable,
+        str(PLUGIN_ROOT / "shared/contributor_run_integrity.py"),
+        "snapshot",
+        "--out",
+        str(path),
+        "--repo",
+        str(root),
+        "--main-checkout",
+        str(run.parent / "repository"),
+    ]
+    if watch:
+        command.append("--watch-surface")
+    result = subprocess.run(command, capture_output=True, check=True, text=True)
+    return path, json.loads(result.stdout)["sha256"]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("invalid", ["lost-digest", "wrong-review", "unwatched"])
+def test_pr_review_rejects_unbound_dispatch_snapshot(tmp_path: Path, invalid: str) -> None:
+    """A digest for another checkout, an unmonitored review surface or an altered baseline cannot release tasks."""
+    run = _review_inputs(tmp_path)
+    review = _collected_pr_source(run)
+    path, digest = _pr_snapshot(
+        run, run.parent / "repository" if invalid == "wrong-review" else review, watch=invalid != "unwatched"
+    )
+
+    result = _prepare(
+        run, source_root=review, paged=False, pr_integrity=(path, "0" * 64 if invalid == "lost-digest" else digest)
+    )
+
+    assert result.returncode == 2
+    assert "review-pr-dispatch-integrity" in result.stderr
+    assert not (run / "dispatch.json").exists()
 
 
 @pytest.mark.parametrize(
@@ -2894,7 +2997,7 @@ def test_prepare_refuses_hidden_pr_source_after_collection(tmp_path: Path, mask:
     hidden.write_bytes(b"unreviewed = True\n")
     assert git_text(review, "status", "--porcelain") == ""
 
-    result = _prepare(run, source_root=review, paged=False)
+    result = _prepare(run, source_root=review, paged=False, pr_integrity=_pr_snapshot(run, review))
     assert result.returncode == 2
     assert "review-source-worktree-not-clean-detached" in result.stderr
     assert not (run / "direct-plan.json").exists()
@@ -2949,7 +3052,7 @@ def test_resumed_pr_freeze_binds_actual_collected_bytes_and_modes(
     assert git_text(review, "status", "--porcelain") == ""
     assert git_text(review, "diff", "--cached", "--name-only") == ""
 
-    result = _prepare(run, source_root=review, paged=False)
+    result = _prepare(run, source_root=review, paged=False, pr_integrity=_pr_snapshot(run, review))
     assert result.returncode == expected_code, result.stderr
     assert (run / "direct-plan.json").exists() == (expected_code == 0)
     if expected_code:
@@ -2962,12 +3065,12 @@ def test_resumed_pr_freeze_binds_actual_collected_bytes_and_modes(
 def test_frozen_pr_plan_allows_only_promoted_replay_of_test_caches(tmp_path: Path, self_ignoring_cache: bool) -> None:
     """Retained test caches may coexist with a completed plan, while new work still needs an uncontaminated checkout."""
     from coverage import CoverageData
-    from test_review_batches import _batch_producer
+    from test_review_batches import _batch_producer, _snapshot_once
 
     producer, _ = _batch_producer()
     run = _review_inputs(tmp_path)
     review = _collected_pr_source(run)
-    prepared = _prepare(run, source_root=review, paged=False)
+    prepared = _prepare(run, source_root=review, paged=False, pr_integrity=_pr_snapshot(run, review))
     assert prepared.returncode == 0, prepared.stderr
     plan_path = run / "direct-plan.json"
     plan = json.loads(plan_path.read_bytes())
@@ -3005,6 +3108,12 @@ def test_frozen_pr_plan_allows_only_promoted_replay_of_test_caches(tmp_path: Pat
         assert validate_frozen() == plan["source_snapshot"]
         with pytest.raises(ValueError, match="not-clean-detached"):
             producer._source_snapshot(run, review, plan["expected_head"], paths, plan["expected_diff_base"], None)
+        # Batch fixtures cache successful checks. Replaying the plan must never authorize fresh preparation.
+        cached_snapshot = _snapshot_once(producer._source_snapshot)
+        arguments = (run, review, plan["expected_head"], paths, plan["expected_diff_base"], None)
+        assert cached_snapshot(*arguments, replay_frozen_plan=True)[0] == plan["source_snapshot"]
+        with pytest.raises(ValueError, match="not-clean-detached"):
+            cached_snapshot(*arguments)
         (review / ".coverage.overlay.py").write_bytes(b"unreviewed")
         with pytest.raises(ValueError, match="not-clean-detached"):
             validate_frozen()

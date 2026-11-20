@@ -1,6 +1,7 @@
 /** The inspection allow is a positive, stateless model: reads and configured verification only. */
 import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
+import { classifyCommand } from "../../../src/guardrails.ts"
 import { inspectionSafe, inspectionSequence } from "../../../src/inspection.ts"
 
 describe("inspection allow", () => {
@@ -83,6 +84,15 @@ describe("inspection allow", () => {
     'cat "$HOME/x"',
   ])("does not allow %s", (command) => {
     expect(inspectionSafe(command).ok, command).toBe(false)
+  })
+
+  it("keeps the rtk listing out of the quiet set while the shell guard classifies it as an ordinary command", () => {
+    // `ls src` is quiet in a role agent; the rtk spellings are not, so the evidence guidance sends role agents to raw `ls`.
+    expect(inspectionSafe("ls src")).toMatchObject({ ok: true })
+    for (const command of ["rtk ls src", "rtk recall 0123456789abcdef"]) {
+      expect(inspectionSafe(command).ok, command).toBe(false)
+      expect(classifyCommand(command).kind, command).toBe("other")
+    }
   })
 
   it("is stateless and independent of the environment", () => {

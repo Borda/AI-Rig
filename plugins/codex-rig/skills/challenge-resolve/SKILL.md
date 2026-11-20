@@ -1,6 +1,6 @@
 ---
 name: challenge-resolve
-description: Independently review and fix a bounded task through convergence rounds, with evidence-backed closure and explicit stop/remediation decisions. Use for an explicitly invoked adversarial review-and-fix loop over an existing implementation, feature, problem, or diff, including repeated review/fix requests or a second independent review of the same change; not for ordinary review (code-review) or single-pass finding remediation (code-remediate).
+description: Independently review and fix a bounded task through convergence rounds, with evidence-backed closure and explicit stop/remediation decisions. Use for an explicitly invoked adversarial review-and-fix loop over an existing implementation, feature, problem, or diff, including repeated review/fix requests or, outside Code Remediate, a second independent review of the same change. Entry from Code Remediate requires the user to explicitly request the loop.
 ---
 
 > Before asking, read [User Questions](../../shared/codex-user-questions.md).

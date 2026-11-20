@@ -127,7 +127,7 @@ def test_import_bound_pytest_keeps_cache_and_coverage_outside_clean_source(
 ) -> None:
     """Configured coverage measures the reviewed module while leaving the guarded checkout clean."""
     output = tmp_path / "out"
-    monkeypatch.setenv("PYTEST_ADDOPTS", "--cov=tracked --cov-report=term --cov-fail-under=100")
+    monkeypatch.setenv("PYTEST_ADDOPTS", "--cov=tracked --cov-report=term --cov-report=xml --cov-fail-under=100")
     monkeypatch.setenv("COVERAGE_FILE", str(tmp_path / "caller.coverage"))
     skipped = [part for gate in ("lint", "format", "types", "review") for part in (f"--skip-{gate}", "out of scope")]
     arguments = [
@@ -152,6 +152,7 @@ def test_import_bound_pytest_keeps_cache_and_coverage_outside_clean_source(
     assert completed.returncode == 0, (output / "checks/tests.stderr.txt").read_text(encoding="utf-8")
     assert (output / "checks/pytest-cache").is_dir()
     assert (output / "checks/.coverage").read_bytes().startswith(b"SQLite format 3")
+    assert 'filename="tracked.py"' in (output / "checks/coverage.xml").read_text(encoding="utf-8")
     assert "tracked.py" in (output / "checks/tests.stdout.txt").read_text(encoding="utf-8")
     assert not (tmp_path / "caller.coverage").exists()
     assert not list(repository.glob(".coverage*"))
@@ -182,6 +183,31 @@ def test_worktree_child_tools_keep_caches_in_gate_output(
     assert (checks / "pytest-cache/v/cache/nodeids").is_file()
     assert not (repository / ".pytest_cache").exists()
     assert not (repository / "__pycache__").exists()
+
+
+@pytest.mark.integration
+@_skip_without_symlinks
+def test_linked_selection_file_fails_before_copying_cache(gates: ModuleType, repository: Path, tmp_path: Path) -> None:
+    """A symlink in the configured donor cache cannot copy an outside file into workflow evidence."""
+    donor = repository / ".pytest_cache/v/cache"
+    donor.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.write_text('{"test_tracked.py::test_value": true}', encoding="utf-8")
+    (donor / "lastfailed").symlink_to(outside)
+    output = tmp_path / "out"
+    output.mkdir()
+    args = [sys.executable, "-m", "pytest", "--lf", "-p", "no:xdist"]
+    code, _ = gates.execute_command(args, 60, output / "stdout", output / "stderr", repository)
+
+    assert code == 4
+    assert "cannot seed pytest selection through a symbolic link" in (output / "stderr").read_text(encoding="utf-8")
+    assert not (output / "pytest-cache").exists()
+    assert (donor / "lastfailed").is_symlink()
+
+    cleared, _ = gates.execute_command([*args, "--cache-clear"], 60, output / "stdout", output / "stderr", repository)
+    assert cleared == 0, (output / "stderr").read_text(encoding="utf-8")
+    assert (donor / "lastfailed").is_symlink()
+    assert json.loads(outside.read_text(encoding="utf-8")) == {"test_tracked.py::test_value": True}
 
 
 @pytest.mark.parametrize(

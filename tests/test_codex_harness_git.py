@@ -155,6 +155,11 @@ class TestCollectorHardeningPrefixes:
         [
             pytest.param(["-c", "core.fsmonitor=false", "status", "--short"], "tracked.txt", id="status"),
             pytest.param(
+                ["-c", "core.fsmonitor=false", "--literal-pathspecs", "status", "--short"],
+                "tracked.txt",
+                id="status-with-literal-pathspecs",
+            ),
+            pytest.param(
                 ["-c", "core.fsmonitor=false", "-c", "core.quotePath=true", "diff", "--binary", "HEAD"],
                 "-before\n+after",
                 id="diff-with-formatting-config",
@@ -216,6 +221,7 @@ class TestCollectorHardeningPrefixes:
     [
         pytest.param(["-c", "core.fsmonitor=true", "status"], id="fsmonitor-enabled"),
         pytest.param(["-c", "core.fsmonitor=false", "fetch"], id="fsmonitor-fetch"),
+        pytest.param(["-c", "core.fsmonitor=false", "--literal-pathspecs", "fetch"], id="literal-pathspecs-fetch"),
         pytest.param(["-c", "core.fsmonitor=false", "-c", "alias.send=push", "send"], id="fsmonitor-alias"),
         pytest.param(["-c", "core.hooksPath=/tmp/hooks", "--no-pager", "status"], id="other-hooks-path"),
         pytest.param([*_FILTER_SCAN_PREFIX, "fetch"], id="scan-prefix-fetch"),

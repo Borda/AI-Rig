@@ -13,7 +13,7 @@ import test_review_direct as direct
 from _artifact_files import read_json, write_json
 from _git_fixtures import git_text
 from test_review_batches import _batch_command, _batch_producer, _completed_source_only, _in_process_step
-from test_review_prepare import _pr_fixture_receipt, _prepare
+from test_review_prepare import _pr_fixture_receipt, _pr_snapshot, _prepare
 
 
 def _collect_fixture_pr(run: Path) -> Path:
@@ -41,7 +41,8 @@ def _direct_pr_evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tupl
 
     def prepare(run: Path) -> subprocess.CompletedProcess[str]:
         """Freeze the detached comparison using ordinary direct preparation."""
-        return _prepare(run, source_root=_collect_fixture_pr(run), paged=False)
+        worktree = _collect_fixture_pr(run)
+        return _prepare(run, source_root=worktree, paged=False, pr_integrity=_pr_snapshot(run, worktree))
 
     monkeypatch.setattr(direct, "_direct_prepare", prepare)
     run, home = direct._direct_evidence(tmp_path)
@@ -56,7 +57,10 @@ def _batched_pr_evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tup
     def prepare(run: Path, operation: str, home: Path | None = None, *, source_only: bool = False) -> None:
         """Use detached PR source during preparation and the ordinary native lifecycle afterwards."""
         if operation == "prepare":
-            result = _prepare(run, source_root=_collect_fixture_pr(run), paged=False, batches=True)
+            worktree = _collect_fixture_pr(run)
+            result = _prepare(
+                run, source_root=worktree, paged=False, batches=True, pr_integrity=_pr_snapshot(run, worktree)
+            )
             assert result.returncode == 0, result.stderr
         else:
             _in_process_step(run, operation, home, source_only=source_only)

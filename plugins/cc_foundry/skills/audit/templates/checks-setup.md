@@ -138,16 +138,16 @@ Use model reasoning to cross-reference every extracted agent color against found
 
 ## Check 10 — RTK hook alignment
 
-Verify prefix list in `.claude/hooks/rtk-rewrite.js` (`RTK_PREFIXES` array) consistent with commands installed RTK binary supports.
+Verify every program the plugin's `hooks/rtk-rewrite.js` routes (`SAFE_PREFIXES`, `GUARDED_PREFIXES`) is a subcommand the installed RTK binary supports. RTK subcommands the hook leaves out are measured exclusions (reasons in the hook header), never findings.
 
-Skip if RTK not installed (`rtk --version` fails) or `.claude/hooks/rtk-rewrite.js` not found.
+Skip if RTK not installed (`rtk --version` fails) or the hook not found.
 
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name foundry) || exit $?; export PLUGIN_ROOT
 python "$PLUGIN_ROOT/bin/check_rtk_alignment.py"  # timeout: 30000
 ```
 
-Severity: invalid prefix entries = **high**; missing filterable commands = **medium**. **Report only** — never auto-fix.
+Severity: invalid prefix entries = **high**. **Report only** — never auto-fix.
 
 ## Check 11 — Memory health (MEMORY.md noise accumulation)
 

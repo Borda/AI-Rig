@@ -89,6 +89,31 @@ class TestCheckoutSlot:
         assert len({record["owner"] for record in records}) == 1
         assert _invoke("status", "--checkout", checkout)["owner"] == records[0]["owner"]
 
+    def test_inspected_checkout_without_prior_claim_requires_free_slot(
+        self, checkout: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Legacy recovery claims a free slot without Git and cannot adopt any preexisting owner marker."""
+        common = Path(git_text(checkout, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+        slot = common / "codex-review-slot"
+        monkeypatch.setenv("PATH", "")
+        claim = {"status": "acquired", "owner": "recovering", "slot": str(slot)}
+        assert _invoke("acquire", "--slot", slot, "--owner", "recovering") == claim
+        busy = {**claim, "status": "busy"}
+        assert _invoke("acquire", "--slot", slot, "--owner", "peer", code=1) == busy
+        assert _invoke("acquire", "--slot", slot, "--owner", "recovering", code=1) == busy
+        held = {**claim, "status": "inspection-required"}
+        assert _invoke("hold", "--slot", slot, "--owner", "recovering") == held
+        assert _invoke("acquire", "--slot", slot, "--owner", "recovering", code=1) == held
+        assert _invoke("acquire", "--slot", slot, "--owner", "peer", code=1) == held
+        assert _invoke("status", "--slot", slot) == held
+
+    def test_acquire_rejects_locator_outside_git_metadata(self, checkout: Path) -> None:
+        """A recovery claim refuses a slot under an arbitrary directory and leaves that directory alone."""
+        slot = checkout / "codex-review-slot"
+        result = _invoke("acquire", "--slot", slot, "--owner", "recovering", code=2)
+        assert result["status"] == "error"
+        assert not slot.exists()
+
     def test_expired_wait_does_not_steal_interrupted_owner(self, checkout: Path) -> None:
         """A completed acquisition survives process exit and aging until its original owner releases it."""
         claim = _invoke("acquire", "--checkout", checkout, "--owner", "interrupted")
@@ -125,15 +150,14 @@ class TestCheckoutSlot:
     def test_inspection_hold_stops_waiter_until_explicit_owner_release(
         self, checkout: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A waiting peer receives the integrity stop, and only the inspected owner release reopens admission."""
+        """A queued peer resumes automatically only after the owner releases the inspected hold."""
         claim = _invoke("acquire", "--checkout", checkout, "--owner", "active")
         slot = claim["slot"]
         held = {**claim, "status": "inspection-required"}
         assert _invoke("hold", "--slot", slot, "--owner", "peer", code=1)["status"] == "not-owner"
+        assert _invoke("hold", "--slot", slot, "--owner", "active") == held
         with ThreadPoolExecutor(max_workers=1) as pool:
-            waiting = pool.submit(
-                _invoke, "acquire", "--checkout", checkout, "--owner", "peer", "--wait-seconds", "8", code=1
-            )
+            waiting = pool.submit(_invoke, "acquire", "--slot", slot, "--owner", "peer", "--wait-seconds", "10")
             with pytest.raises(FutureTimeoutError):
                 waiting.result(timeout=0.2)
             with monkeypatch.context() as patch:
@@ -146,12 +170,10 @@ class TestCheckoutSlot:
                     _invoke("release", "--inspected", "--slot", slot, "--owner", "peer", code=1)["status"]
                     == "not-owner"
                 )
-            assert waiting.result(timeout=4) == held
-        assert _invoke("acquire", "--checkout", checkout, "--owner", "active", code=1) == held
-        with monkeypatch.context() as patch:
-            patch.setenv("PATH", "")
+            assert _invoke("acquire", "--slot", slot, "--owner", "active", code=1) == held
+            assert _invoke("acquire", "--slot", slot, "--owner", "later", "--wait-seconds", "1", code=1) == held
             assert _invoke("release", "--inspected", "--slot", slot, "--owner", "active")["status"] == "released"
-        assert _invoke("acquire", "--checkout", checkout, "--owner", "peer") == {**claim, "owner": "peer"}
+            assert waiting.result(timeout=12) == {**claim, "owner": "peer"}
 
     def test_release_rejects_an_unrelated_directory(self, checkout: Path) -> None:
         """A correct-looking slot name outside Git metadata cannot release filesystem state."""

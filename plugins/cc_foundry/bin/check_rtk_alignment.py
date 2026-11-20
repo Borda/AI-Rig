@@ -1,18 +1,16 @@
 #!/usr/bin/env python
-"""check_rtk_alignment.py — compare the RTK rewrite hook's prefix list against the installed RTK.
+"""check_rtk_alignment.py — check that every program the RTK rewrite hook routes is a subcommand of the installed RTK.
 
-Replaces the inline Check 10 shell block of /foundry:audit. Two directions are
-checked, with the same wording the audit severity table maps onto:
+Replaces the inline Check 10 shell block of /foundry:audit. One direction is checked: a prefix listed in the hook's
+``SAFE_PREFIXES`` or ``GUARDED_PREFIXES`` that ``rtk --help`` does not mention → INVALID, because the hook would rewrite
+a command into ``rtk <prefix> …`` that RTK rejects.
 
-- a prefix listed in the hook that ``rtk --help`` does not mention → INVALID
-- a filterable RTK subcommand the hook does not list → MISSING
+The reverse direction (an RTK subcommand the hook does not route) is deliberately not reported. The hook routes only
+verbs whose RTK output passed a fidelity comparison against the raw command, so an RTK subcommand absent from the hook
+is a measured exclusion, never a gap; the exclusions and their reasons are listed in the hook's header comment.
 
-Meta subcommands (``gain``, ``discover``, ``proxy``, ``init``, ``version``,
-``help``) are never expected in the hook and are skipped in the MISSING pass.
-
-The check is skipped, with exit 0, when RTK is not installed or the hook file is
-absent — the same fail-open behaviour the shell block had. ``node`` is no longer
-needed: the prefix array is read with a regex here.
+The check is skipped, with exit 0, when RTK is not installed or the hook file is absent — the same fail-open behaviour
+the shell block had. ``node`` is not needed: the prefix arrays are read with a regex here.
 
 Usage:
     check_rtk_alignment.py [--hook <path>] [--timeout SECS]
@@ -33,52 +31,47 @@ import subprocess
 import sys
 from pathlib import Path
 
-#: Matches the start of the ``RTK_PREFIXES = [...]`` array in the hook source.
-_PREFIX_ARRAY = re.compile(r"RTK_PREFIXES\s*=\s*\[")
+#: Matches the start of the ``SAFE_PREFIXES = [...]`` or ``GUARDED_PREFIXES = [...]`` array in the hook source.
+_PREFIX_ARRAYS = (
+    re.compile(r"\bSAFE_PREFIXES\s*=\s*\["),
+    re.compile(r"\bGUARDED_PREFIXES\s*=\s*\["),
+)
 #: Matches a single- or double-quoted string, capturing its contents.
 _QUOTED = re.compile(r"""["']([^"']+)["']""")
-#: `rtk --help` lists subcommands indented two to four spaces.
-_HELP_COMMAND = re.compile(r"^\s{2,4}([a-z][a-z0-9_-]+)", re.MULTILINE)
-
-#: ``rtk`` subcommands that manage the tool itself and need no entry in the prefix list.
-META_COMMANDS = frozenset({"gain", "discover", "proxy", "init", "version", "help"})
+#: The hook ships next to ``bin/`` in the plugin, so the default needs no project-local copy.
+_DEFAULT_HOOK = Path(__file__).resolve().parent.parent / "hooks" / "rtk-rewrite.js"
 
 
 def hook_prefixes(hook: Path) -> list[str]:
-    """Return the prefixes declared in the hook's RTK_PREFIXES array."""
+    """Return the prefixes declared in the hook's SAFE_PREFIXES and GUARDED_PREFIXES arrays."""
     try:
         source = hook.read_text(encoding="utf-8")
     except OSError:
         return []
-    match = _PREFIX_ARRAY.search(source)
-    if not match:
-        return []
-    end = source.find("]", match.end())
-    return _QUOTED.findall(source[match.end() : end]) if end >= 0 else []
-
-
-def help_commands(help_text: str) -> set[str]:
-    """Return the subcommand names `rtk --help` advertises."""
-    return set(_HELP_COMMAND.findall(help_text))
+    prefixes: list[str] = []
+    for pattern in _PREFIX_ARRAYS:
+        match = pattern.search(source)
+        if not match:
+            continue
+        end = source.find("]", match.end())
+        if end >= 0:
+            prefixes.extend(_QUOTED.findall(source[match.end() : end]))
+    return prefixes
 
 
 def _word_in(needle: str, haystack: str) -> bool:
     """Report whether `needle` occurs in `haystack` as a whole word.
 
     Reproduces ``grep -w``: word characters are ``[0-9A-Za-z_]``, so a hyphen is a boundary and ``bar`` matches inside
-    ``foo-bar``. Membership in the parsed subcommand set is stricter than the shell original was — a command named only
-    in a prose line of ``rtk --help`` would be reported INVALID, a false positive at **high** severity.
+    ``foo-bar``. A command named only in a prose line of ``rtk --help`` counts as valid, the same as the shell original.
     """
     pattern = rf"(?<![0-9A-Za-z_]){re.escape(needle)}(?![0-9A-Za-z_])"
     return re.search(pattern, haystack) is not None
 
 
-def compare(prefixes: list[str], help_text: str) -> tuple[list[str], list[str]]:
-    """Return (invalid prefixes, missing subcommands) for one hook/RTK pair."""
-    invalid = [p for p in prefixes if not _word_in(p, help_text)]
-    listed = " ".join(prefixes)
-    missing = sorted(c for c in help_commands(help_text) if c not in META_COMMANDS and not _word_in(c, listed))
-    return invalid, missing
+def invalid_prefixes(prefixes: list[str], help_text: str) -> list[str]:
+    """Return the hook prefixes that `rtk --help` does not name as a whole word."""
+    return [p for p in prefixes if not _word_in(p, help_text)]
 
 
 def resolve_rtk() -> str | None:
@@ -102,9 +95,9 @@ def resolve_rtk() -> str | None:
 
 
 def main() -> int:
-    """Compare the RTK rewrite hook's prefix list against the installed RTK."""
+    """Check the RTK rewrite hook's routed prefixes against the installed RTK."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--hook", default=".claude/hooks/rtk-rewrite.js")
+    parser.add_argument("--hook", default=str(_DEFAULT_HOOK), help="hook to check (default: this plugin's hook)")
     parser.add_argument("--timeout", type=float, default=30.0, help="seconds for `rtk --help`")
     args = parser.parse_args()
 
@@ -120,7 +113,7 @@ def main() -> int:
 
     prefixes = hook_prefixes(hook)
     if not prefixes:
-        print("⚠ SKIPPED: Check 10 — could not parse RTK_PREFIXES from hook file")
+        print("⚠ SKIPPED: Check 10 — could not parse SAFE_PREFIXES or GUARDED_PREFIXES from hook file")
         return 0
 
     try:
@@ -137,13 +130,11 @@ def main() -> int:
         print("⚠ SKIPPED: Check 10 — `rtk --help` failed or timed out")
         return 0
 
-    invalid, missing = compare(prefixes, result.stdout + result.stderr)
+    invalid = invalid_prefixes(prefixes, result.stdout + result.stderr)
     for prefix in invalid:
         print(f"! INVALID hook prefix: '{prefix}' — not a recognized RTK subcommand")
-    for command in missing:
-        print(f"⚠ MISSING hook prefix: '{command}' — RTK supports filtering this command but hook does not list it")
-    if not invalid and not missing:
-        print("✓ OK: Check 10 — RTK hook prefixes aligned with installed RTK version")
+    if not invalid:
+        print("✓ OK: Check 10 — every routed hook prefix is an RTK subcommand")
     return 0
 
 

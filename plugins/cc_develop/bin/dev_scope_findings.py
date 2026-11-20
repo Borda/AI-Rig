@@ -100,7 +100,10 @@ _PYTEST_FAULTS = {2: "pytest interrupted", 3: "pytest internal error", 4: "pytes
 
 
 class ScopeError(Exception):
-    """Raised with the reason a findings, map or verdict file cannot be trusted (state ``! BLOCKED``)."""
+    """Raised with the reason a findings, map or verdict file cannot be trusted (state ``!
+
+    BLOCKED``).
+    """
 
 
 class NoVerdict(Exception):
@@ -403,7 +406,10 @@ def run_pins(run_dir: Path, nodes: list[str]) -> dict[str, str]:
 
 
 def _load(run_dir: Path) -> tuple[list[str], dict[str, list[str]]]:
-    """Validate findings and map; ``ScopeError`` means ``! BLOCKED``."""
+    """Validate findings and map; ``ScopeError`` means ``!
+
+    BLOCKED``.
+    """
     specials = special_cases(parse_findings(run_dir / FINDINGS_NAME))
     print(f"SPECIAL_CASES={len(specials)}{' ' + ' '.join(specials) if specials else ''}")
     return specials, read_map(run_dir / MAP_NAME, specials)

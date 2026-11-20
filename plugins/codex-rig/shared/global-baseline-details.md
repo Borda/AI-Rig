@@ -14,7 +14,7 @@ Applies only to instruction files an LLM host loads (`AGENTS.md`, `CLAUDE.md`, r
 
 ## Review cycle routing
 
-A request to repeat review and fix until a reviewer reports no findings or no security findings, or to resolve all findings; a second independent review round about to be dispatched for the same change; or a skill workflow repeating its review then fix cycle counts as an explicitly invoked loop from that moment: before the next reviewer dispatch, start ledger; follow packaged `shared/adversarial-loop.md` (helper output, stop/plateau rules, user's round budget).
+**Outside Code Remediate only.** A request to repeat review and fix until a reviewer reports no findings or no security findings, or to resolve all findings; a second independent review round about to be dispatched for the same change; or a skill workflow repeating its review then fix cycle counts as an explicitly invoked loop from that moment: before the next reviewer dispatch, start ledger; follow packaged `shared/adversarial-loop.md` (helper output, stop/plateau rules, user's round budget).
 
 - Code Remediate remains single-pass: collect findings, resolve selected work, obtain the bounded independent implementation challenge, verify, and report without convergence scoring. One plan or implementation challenge does not start a multi-round review → fix loop. When the user explicitly requests such a loop, follow packaged `shared/adversarial-loop.md`; read it before dispatch. Its scope, evidence ledger, strictly decreasing nonnegative integer score after baseline `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, stop and remediation rules are mandatory. Never fork the implementing conversation for review or treat a loop's local fix as closed before later independent verification.
 
@@ -255,7 +255,7 @@ Parent agent responsibilities:
 - Release readiness: `oss-shepherd` + `cicd-steward` + `doc-scribe` + `qa-specialist`
 - Research-paper implementation: `scientist` + `solution-architect` + `sw-engineer` + `qa-specialist`
 - High-risk plan validation: `challenger` + relevant domain specialist before implementation
-- PR review-to-resolution: `code-review` with `scope=pr` writes report after collecting PR evidence, fetching target branch, checking out/updating PR locally. Then `code-remediate` with `mode=pr` re-collects online PR reviews, fetches latest target branch + PR branch, records clean PR/target implementation context plus merge-conflict risk before editing, triages each comment, fixes only valid selected findings in local code.
+- Standalone PR review uses `code-review` in its verified checkout and ends with the review handoff. Only an explicit `code-remediate +review` invocation can run Code Review as a step and take its validated result back to the requesting remediation. Bare PR remediation verifies and triages online findings under its own workflow.
 
 ## Work handover patches
 

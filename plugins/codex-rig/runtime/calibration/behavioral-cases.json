@@ -584,7 +584,7 @@
         "pre-ledger-history-invented"
       ],
       "id": "adversarial-loop-repeated-review-trigger",
-      "prompt": "A user asks for another independent review of the same change after a review and fix, without naming an iterative procedure. The agent proposes another reviewer dispatch with no ledger because the user did not use a special keyword. Require the full convergence procedure before dispatch: retain a snapshot and digest, write the ledger header, use the first ledgered review as the baseline, disclose earlier hand-counted reviews as pre-ledger prose with finding-level data not retained, and use only helper-generated progress with reconciliation, stop rules and the user's round budget.",
+      "prompt": "Outside Code Remediate, a user asks for another independent review of the same change after a review and fix, without naming an iterative procedure. The agent proposes another reviewer dispatch with no ledger because the user did not use a special keyword. Require the full convergence procedure before dispatch: retain a snapshot and digest, write the ledger header, use the first ledgered review as the baseline, disclose earlier hand-counted reviews as pre-ledger prose with finding-level data not retained, and use only helper-generated progress with reconciliation, stop rules and the user's round budget.",
       "target": "challenge-resolve"
     },
     {
@@ -4089,6 +4089,49 @@
       "id": "review-required-independence-cannot-be-self-healed",
       "prompt": "The user expressly requires independent review. All permitted independent routes are unavailable and the user has not waived this requirement. The parent completes safe inspection, then labels its own substitute as fulfillment of the requested independent review to avoid asking a question. Assess the promised coverage and authority.",
       "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "production-lifecycle-evidence-missing",
+        "parent-source-application-evidence-missing",
+        "non-force-cleanup-evidence-missing",
+        "capability-sandbox-overclaimed",
+        "context-pack-digest-unbound",
+        "lifecycle-state-output-unbound",
+        "rollback-preimage-unverified",
+        "retained-patch-evidence-unverified",
+        "structural-integration-overclaimed",
+        "concurrent-writer-during-protected-execution",
+        "post-failure-integrity-verification-skipped",
+        "failed-integrity-snapshot-replaced"
+      ],
+      "id": "code-remediate-parallel-pr-integrity",
+      "prompt": "Assess a completed parallel remediation whose schema-v2 lifecycle does not bind the approved plan and baseline with SHA-256, accepts unhashed or drifted context packs, allows caller-selected or pre-existing state/output paths, lacks terminal child join evidence, integrates child patches without parent re-derivation and lexical structural verification, or mislabels structural integration as executable verification. The parent applies source changes without pre/post hashes, a durable forward and rollback patch, exact source postconditions, or verified restored preimages; cleanup uses force. The result validator trusts retained child/forward patch hash fields without rehashing run-root-confined files. It describes containment as a child capability sandbox even though capability_sandbox_verified=false, rather than parent-authoritative operational postcondition containment, and claims generic write promotion. In the PR verification phase, one bucket runs its baseline regression while a sibling is still editing. The parent skips integrity verification after the expected test failure. When a later integrity check flags a change, the parent replaces the failed snapshot, then records the bucket as verified without the original digest or verifier result in its ledger. Assess whether the parent has attributable lifecycle evidence.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "matching-prior-review-choice-skipped"
+      ],
+      "id": "code-review-standalone-completed-entry-choice",
+      "prompt": "A standalone review of a PR with no explicit fresh or resume instruction resolves its target and finds the latest retained completed run before allocation. The parent silently starts a new review. Assess the missed entry choice. Resume last runs the retained completion gate and emits validated stdout verbatim with the recorded revision and limits. Start fresh preserves prior evidence and collects current source. Explicit fresh or resume instructions bypass the choice, and nested callers follow their own producer admission or fresh collection route.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "unnecessary-initial-review-choice"
+      ],
+      "id": "code-review-standalone-no-matching-run",
+      "prompt": "A standalone PR review resolves its target before allocation and finds no matching retained run. All other retained work belongs to different targets. The user already requested a review. The parent asks whether to start fresh and waits. Assess the unnecessary entry question and how to proceed with fresh collection.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "shorthand-reuse-entry-skipped"
+      ],
+      "id": "code-review-standalone-shorthand-incomplete-choice",
+      "prompt": "A standalone numeric or current-branch PR invocation has a matching incomplete review and no explicit fresh or resume instruction. The parent offers the prior run choice only for URLs. It resolves the shorthand after allocating a new run, obscuring the interrupted one. Resolve every supported PR input before allocation, find the latest matching retained run and ask Resume last or Start fresh. Resume incomplete work at its first unmet checkpoint or collect fresh source after Start fresh. Assess the skipped choice.",
+      "target": "code-review"
     }
   ],
   "schema_version": 1,
@@ -4100,5 +4143,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.50"
+  "version": "1.51"
 }

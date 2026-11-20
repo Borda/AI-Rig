@@ -379,6 +379,28 @@ class TestParallelWorkBuckets:
             == []
         )
 
+    def test_parent_serializes_protected_checks_after_child_writes(self, parallel_lifecycle: str) -> None:
+        """Protected PR checks need an attributable snapshot and verification even when a check is expected to fail."""
+        phase = _section(parallel_lifecycle, "### Parent-coordinated PR verification", "\n### ")
+        assert (
+            _out_of_order(
+                phase.casefold(),
+                (
+                    "parent owns every protected execution",
+                    "all child writers have yielded",
+                    "one bucket at a time",
+                    "snapshot, execute, verify",
+                    "each prepared worktree",
+                    "--watch-surface",
+                    "expected failures",
+                    "verify every retained digest",
+                    "record the results in the parent ledger",
+                    "preserve the failed snapshot",
+                ),
+            )
+            == []
+        )
+
     def test_preflight_does_not_require_future_implementation(self, parallel_lifecycle: str) -> None:
         """A novel fix can be planned before postimages or passing regression assertions exist.
 

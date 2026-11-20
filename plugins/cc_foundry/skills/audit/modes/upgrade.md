@@ -68,10 +68,10 @@ Run **Claude Code docs freshness** check from Step 4 of main audit workflow: spa
 
 **RTK hook alignment** — also run Check 10 from main audit workflow (inline, no subagent):
 
-- `rtk` not installed or `.claude/hooks/rtk-rewrite.js` absent: skip silently.
-- Otherwise: run `rtk --help`, extract `RTK_PREFIXES` from hook, compare, add findings as **config proposals**:
-  - Invalid prefix (not valid RTK subcommand) → config proposal: remove from `RTK_PREFIXES`; severity **high**
-  - Filterable RTK command absent from hook → config proposal: add to `RTK_PREFIXES`; severity **medium**
+- `rtk` not installed or the plugin's `hooks/rtk-rewrite.js` absent: skip silently.
+- Otherwise: run `rtk --help`, extract `SAFE_PREFIXES` and `GUARDED_PREFIXES` from the hook, compare, add findings as **config proposals**:
+  - Invalid prefix (not valid RTK subcommand) → config proposal: remove it from the hook table; severity **high**
+  - RTK subcommands absent from the hook are measured exclusions, never proposals
 
 Include alongside docs-based proposals in same Upgrade Proposals table.
 

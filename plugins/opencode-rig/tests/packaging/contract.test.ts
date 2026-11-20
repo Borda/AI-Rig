@@ -175,8 +175,8 @@ describe("scope contract wording", () => {
     expect(text).toMatch(/serialise only rows that share a path/)
     expect(text).toMatch(/evidence\.md#optional-command-compression/)
     const guidance = readFileSync(join(RESOURCES_DIR, "references", "evidence.md"), "utf8")
-    expect(guidance).toMatch(/command -v rtk/)
-    expect(guidance).toMatch(/never install (it|rtk) during a run/)
+    expect(guidance).toMatch(/Run every command raw/)
+    expect(guidance).toMatch(/Never install (it|rtk) during a run/)
   })
 })
 

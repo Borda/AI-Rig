@@ -276,6 +276,6 @@ Registered by the Foundry hook manifest alongside `task-log.js`.
 
 ### `rtk-rewrite.js` (PreToolUse — Bash)
 
-- Rewrites supported CLI calls through the optional RTK proxy (`git status` → `rtk git status`).
-- RTK performs format-aware compression for Git, pytest, and build output; savings depend on the command and output, and compressed output still requires normal verification.
+- Rewrites `git status` (without `-b`/`--branch`) through the optional RTK proxy (`git status` → `rtk git status`); every other command runs unchanged.
+- A verb is routed only after a measured comparison against the raw command, a sandboxed run included; compressed output still requires normal verification.
 - No-op when RTK is not installed — see root [README → Optional integrations and add-ons](../README.md#optional-integrations-and-add-ons).

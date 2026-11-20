@@ -15,6 +15,8 @@ integrity stops and additional files (including ignored files and empty director
 
 Run with --run, --worktree, --checkout-sha256, --slot and --owner before releasing the slot. Supply the original
 --integrity-sha256 after contributor execution, or --no-contributor-execution when no contributor code ran.
+After an inspected restart, also supply --inspected-snapshot and its parent-held --inspected-sha256. Use
+--original-snapshot for an original baseline with a different name from integrity.json.
 Before publishing a witness under an integrity anchor, the helper emits its exact OID to stderr. On interruption,
 the parent can retry the same command with --retry-witness and the OID kept from that attempt.
 If Git already removed the checkout, the same owner can repeat the command under its slot. The helper validates
@@ -291,6 +293,51 @@ def _finish_removed(
     return removed
 
 
+def _terminal_snapshot(args: argparse.Namespace, run: Path, source: Path) -> tuple[Path, str] | None:
+    """Authenticate the original baseline and select the retained interval for terminal verification."""
+    original = args.original_snapshot or run / "integrity.json"
+    active = args.inspected_snapshot
+    if not args.integrity_sha256:
+        if (
+            args.original_snapshot
+            or active
+            or args.inspected_sha256
+            or args.retry_witness
+            or os.path.lexists(original)
+            or os.path.lexists(run / "integrity-retry.json")
+            or any(run.glob("integrity-restart*.json"))
+        ):
+            raise ValueError("original integrity digest required")
+        return None
+
+    if original.parent != run or not _regular(original):
+        raise ValueError("original integrity snapshot must be a regular file in the review run")
+    prior = json.loads(original.read_bytes())
+    if integrity_digest(prior) != args.integrity_sha256:
+        raise ValueError("original integrity digest does not match")
+    if not prior.get("watch_surface") or Path(prior["repo"]) != args.worktree or Path(prior["main_checkout"]) != source:
+        raise ValueError("integrity snapshot belongs to another checkout")
+    if active is None and not args.inspected_sha256:
+        if args.original_snapshot and original != run / "integrity.json":
+            raise ValueError("alternate original snapshot requires an inspected successor")
+        return original, args.integrity_sha256
+    if (
+        not active
+        or not args.inspected_sha256
+        or active.parent != run
+        or active == original
+        or not re.fullmatch(r"integrity-restart(?:-[1-9][0-9]*)?\.json", active.name)
+        or not _regular(active)
+    ):
+        raise ValueError("inspected cleanup requires a distinct restart snapshot in the review run and its digest")
+    current = json.loads(active.read_bytes())
+    if integrity_digest(current) != args.inspected_sha256:
+        raise ValueError("inspected integrity digest does not match")
+    if any(prior[key] != current[key] for key in ("repo", "main_checkout", "dirs", "watch_surface", "exclude")):
+        raise ValueError("inspected integrity snapshot changed the measurement scope")
+    return active, args.inspected_sha256
+
+
 def _cleanup(args: argparse.Namespace) -> dict[str, Any]:
     """Validate the caller's retained identities before allowing one native Git removal."""
     if review_checkout_slot._observe(args.slot) != ("busy", args.owner):
@@ -334,18 +381,9 @@ def _cleanup(args: argparse.Namespace) -> dict[str, Any]:
     if payload.get("status") != "pass" or payload["metadata"].get("review_status") not in {None, "closed"}:
         raise ValueError("review did not complete successfully")
     already_absent = _absent(worktree)
-    if args.integrity_sha256:
-        snapshot = run / "integrity.json"
-        body = json.loads(snapshot.read_bytes())
-        if not body.get("watch_surface") or Path(body["repo"]) != worktree or Path(body["main_checkout"]) != source:
-            raise ValueError("integrity snapshot belongs to another checkout")
-        if already_absent and integrity_digest(body) != args.integrity_sha256:
-            raise ValueError("original integrity digest does not match")
-    elif os.path.lexists(run / "integrity.json"):
-        raise ValueError("original integrity digest required")
-    elif args.retry_witness:
-        raise ValueError("cleanup retry requires the original integrity digest")
-    if args.integrity_sha256 and not already_absent:
+    interval = _terminal_snapshot(args, run, source)
+    if interval is not None and not already_absent:
+        snapshot, anchor = interval
         verified = subprocess.run(  # noqa: S603 - trusted helper verifies the retained pre-execution digest
             [
                 sys.executable,
@@ -358,7 +396,7 @@ def _cleanup(args: argparse.Namespace) -> dict[str, Any]:
                 "--snapshot",
                 str(snapshot),
                 "--expect",
-                args.integrity_sha256,
+                anchor,
             ],
             capture_output=True,
             check=False,
@@ -447,6 +485,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--retry-witness", help="Exact witness OID kept by the parent immediately before an interrupted cleanup."
     )
+    parser.add_argument("--original-snapshot", type=Path, help="Retained original baseline for an inspected restart.")
+    parser.add_argument("--inspected-snapshot", type=Path, help="Absolute path of the retained inspected successor.")
+    parser.add_argument("--inspected-sha256", help="Parent-held digest printed when the successor was created.")
     parser.add_argument("--codex-home", type=Path)
     execution = parser.add_mutually_exclusive_group(required=True)
     execution.add_argument("--integrity-sha256")

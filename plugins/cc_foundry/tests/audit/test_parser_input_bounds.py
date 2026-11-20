@@ -126,7 +126,7 @@ def test_cli_flag_scan_skips_recursive_ast(tmp_path: Path, monkeypatch: pytest.M
 def test_rtk_scan_finishes_repeated_unclosed_arrays(tmp_path: Path) -> None:
     """Missing array terminators cannot repeatedly rescan the hook's remaining source."""
     hook = tmp_path / "hook.js"
-    hook.write_text("RTK_PREFIXES = [" * 20000, encoding="utf-8")
+    hook.write_text("SAFE_PREFIXES = [GUARDED_PREFIXES = [" * 10000, encoding="utf-8")
     result = subprocess.run(
         [
             sys.executable,

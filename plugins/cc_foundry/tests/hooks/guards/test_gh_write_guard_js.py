@@ -133,6 +133,32 @@ class TestWritesBlocked:
     @pytest.mark.parametrize(
         "command",
         [
+            pytest.param("rtk gh pr create -t x", id="rtk-argv"),
+            pytest.param("rtk summary gh pr create -t x", id="rtk-summary-argv"),
+            pytest.param('rtk run -c "gh pr create -t x"', id="rtk-run-c"),
+            pytest.param('rtk run --shell bash -c "gh pr create -t x"', id="rtk-run-shell"),
+            pytest.param('rtk summary --shell sh "gh pr create -t x"', id="rtk-summary-shell"),
+            pytest.param('rtk err --shell sh "gh pr create -t x"', id="rtk-err-shell"),
+            pytest.param('rtk test --shell sh "gh pr create -t x"', id="rtk-test-shell"),
+            pytest.param("arch -arm64 rtk proxy 'gh pr create -t x'", id="unmodeled-wrapper-bypass"),
+            pytest.param("chrt 0 rtk run 'gh pr create -t x'", id="unmodeled-wrapper-run"),
+            pytest.param("fd -x rtk proxy 'gh pr create -t x'", id="fd-exec-bypass"),
+        ],
+    )
+    def test_blocks_write_behind_an_rtk_runner(self, run_hook, command: str) -> None:
+        """A write carried by rtk, as argv or as a string it hands to a shell, is denied like the raw command.
+
+        Scenario: rtk 1.2.0 runs ``run -c`` and ``summary|err|test --shell`` strings through a shell. The guard reads
+        that string like ``sh -c``, so the write needs the same user approval as the raw command.
+        """
+        result = run_hook("gh-write-guard.js", _bash(command))
+
+        assert result.returncode == 2, f"{command!r} was not blocked"
+        assert "gh write blocked" in result.stderr
+
+    @pytest.mark.parametrize(
+        "command",
+        [
             pytest.param("gh pr create -t x -b y", id="pr-create"),
             pytest.param("gh pr new -t x", id="pr-new-alias"),
             pytest.param("gh pr merge 1 --squash", id="pr-merge"),
@@ -966,6 +992,50 @@ class TestApiEscapeSequenceDisplay:
 @_skip_node_unavailable
 class TestReadsPass:
     """Reads, and gh commands the guard does not know, reach normal permission handling (exit 0)."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param('rtk run -c "gh pr view 1"', id="rtk-run-c"),
+            pytest.param('rtk summary --shell sh "gh issue list"', id="rtk-summary-shell"),
+            pytest.param("rtk gh pr view 1", id="rtk-argv"),
+            pytest.param("arch -arm64 rtk proxy 'gh pr view 1'", id="unmodeled-wrapper-bypass"),
+            pytest.param("rtk run --shell sh -c 'gh pr view 1'", id="rtk-run-shell-c"),
+            pytest.param("rtk bypass $'gh\\npr\\nview\\n1'", id="rtk-bypass-newline-words"),
+        ],
+    )
+    def test_passes_read_behind_an_rtk_runner(self, run_hook, command: str) -> None:
+        """A gh read carried by rtk is not denied, so unwrapping the runner adds no new stop.
+
+        Scenario: the runner forms that carry a write above carry ``gh pr view`` or ``gh issue list`` here. An ask
+        verdict also exits 0, so the output must hold no permission decision.
+        """
+        result = run_hook("gh-write-guard.js", _bash(command))
+
+        assert result.returncode == 0, result.stderr
+        assert "permissionDecision" not in result.stdout, result.stdout
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("rtk bypass 'gh api rate_limit --template #x -q .'", id="bypass-comment-word"),
+            pytest.param("rtk bypass $'gh api rate_limit -t\\v --include'", id="bypass-vertical-tab"),
+            pytest.param("printf 'gh pr view 1' | xargs -I{} rtk bypass '{}'", id="xargs-fed-runner"),
+            pytest.param("printf 'gh pr view 1' | xargs -I % rtk run %", id="xargs-plain-token-runner"),
+            pytest.param("printf 'gh pr view 1' | parallel rtk proxy", id="parallel-tail-runner"),
+            pytest.param("find . -prune -exec rtk run 'gh pr view 1' \\;", id="find-exec-runner"),
+            pytest.param("printf proxy | xargs -E echo -I % rtk % 'gh pr view 1'", id="xargs-option-value-named-echo"),
+            pytest.param(
+                "find p -maxdepth 0 -exec echo {} \\; -exec rtk {} 'gh pr view 1' \\;", id="find-earlier-clause-echo"
+            ),
+        ],
+    )
+    def test_an_rtk_string_it_cannot_read_exactly_asks(self, run_hook, command: str) -> None:
+        """A string that rtk and a shell split differently is sent to the usual approval instead of read in part."""
+        result = run_hook("gh-write-guard.js", _bash(command))
+
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"] == "ask"
 
     @pytest.mark.parametrize(
         "command",

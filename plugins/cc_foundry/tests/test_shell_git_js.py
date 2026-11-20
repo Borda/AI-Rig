@@ -2764,3 +2764,350 @@ class TestArrayAssignments:
         answer = json.loads(proc.stdout)
         assert answer["cases"] > 55000
         assert answer["suspicious"] == []
+
+
+@_skip_node_unavailable
+class TestRtkShellRunners:
+    """``rtk`` runners that hand one string to a shell are read like ``sh -c``, so a guard judges the inner command.
+
+    rtk 1.2.0 runs ``rtk run -c STR`` and ``rtk summary|err|test --shell SH STR`` through a shell. Before the unwrap the
+    string was one opaque argument (``--shell`` forms) or an unmodeled code option (``run -c``), so a guarded command
+    inside it either escaped the guards or only reached the host permission prompt.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param('rtk run -c "git push origin main"', id="run-c"),
+            pytest.param('rtk run --command "git push origin main"', id="run-command"),
+            pytest.param('rtk run --command="git push origin main"', id="run-command-equals"),
+            pytest.param('rtk -vv run -c "git push origin main"', id="global-verbose"),
+            pytest.param('rtk run --skip-env --shell bash -c "git push origin main"', id="run-shell-bash"),
+            pytest.param('rtk run --shell=bash -c "git push origin main"', id="run-shell-equals"),
+            pytest.param('rtk summary --shell sh "git push origin main"', id="summary-shell"),
+            pytest.param('rtk err --skip-env --shell sh "git push origin main"', id="err-shell"),
+            pytest.param('rtk test --shell=sh "git push origin main"', id="test-shell-equals"),
+            pytest.param('env FOO=1 rtk summary --shell sh "git push origin main"', id="behind-env"),
+            pytest.param("rtk run -c \"sh -c 'git push origin main'\"", id="nested-shell"),
+            pytest.param("rtk summary git push origin main", id="argv-form"),
+            pytest.param('rtk run -c "echo ok" && git push origin main', id="after-runner"),
+        ],
+    )
+    def test_a_push_inside_the_string_is_read(self, command: str) -> None:
+        """The guarded subcommand and its arguments surface, whichever rtk spelling carries them."""
+        assert "push origin main" in _readings(command)
+
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            pytest.param('rtk run -c "git status"', {"status"}, id="run-c"),
+            pytest.param('rtk summary --shell sh "git log -1"', {"log -1"}, id="summary-shell"),
+            pytest.param("rtk summary git status", {"status"}, id="argv-form"),
+            pytest.param("rtk run git status", {"status"}, id="run-argv"),
+            pytest.param("rtk gain", set(), id="no-git"),
+            pytest.param("rtk --version", set(), id="version"),
+            pytest.param('rtk run -c "echo ok"', set(), id="no-git-in-string"),
+        ],
+    )
+    def test_a_harmless_string_reads_exactly(self, command: str, expected: set[str]) -> None:
+        """A string without a guarded command adds nothing, so rtk use does not become a stop of its own."""
+        assert _readings(command) == expected
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param('rtk run --weird -c "gh pr view 1"', id="unknown-run-option"),
+            pytest.param('rtk summary --weird --shell sh "gh pr view 1"', id="unknown-summary-option"),
+            pytest.param('rtk -x run -c "gh pr view 1"', id="unknown-global-option"),
+            pytest.param("rtk run -c", id="missing-string"),
+            pytest.param("rtk summary --shell", id="missing-shell-operand"),
+            pytest.param('rtk summary -c "gh pr view 1"', id="run-only-option-on-summary"),
+        ],
+    )
+    def test_an_unmodeled_option_fails_closed(self, command: str) -> None:
+        """An option that could move the string widens the answer to unreadable, never to a guessed argv."""
+        assert _unreadable(command) is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param('rtk run -c "gh pr create --title x"', id="run-c"),
+            pytest.param('rtk summary --shell sh "gh pr create --title x"', id="summary-shell"),
+            pytest.param('rtk err --shell sh "gh pr create --title x"', id="err-shell"),
+            pytest.param('rtk test --shell sh "gh pr create --title x"', id="test-shell"),
+        ],
+    )
+    def test_the_same_unwrap_serves_the_gh_guard(self, command: str) -> None:
+        """``programInvocations`` for gh finds the inner invocation, the lookup ``gh-write-guard`` relies on."""
+        found = _invocations(command, "gh")
+        assert found is not None
+        assert ["gh", "pr", "create", "--title", "x"] in found
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param('rtk run "git push origin main"', id="run-single-string"),
+            pytest.param('rtk summary "git push origin main"', id="summary-single-string"),
+            pytest.param('rtk err "git push origin main"', id="err-single-string"),
+            pytest.param('rtk test "git push origin main"', id="test-single-string"),
+            pytest.param('rtk bypass "git push origin main"', id="bypass-single-string"),
+            pytest.param('rtk proxy "git push origin main"', id="proxy-single-string"),
+            pytest.param('rtk run -- "git push origin main"', id="after-end-of-options"),
+            pytest.param("rtk bypass git push origin main", id="bypass-argv"),
+        ],
+    )
+    def test_a_single_string_argument_is_read_as_shell_source(self, command: str) -> None:
+        """Rtk sends one whitespace-bearing argument through ``sh -c``, so the default spelling is read too."""
+        assert "push origin main" in _readings(command)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("rtk run '{git,push,origin,main}'", id="brace-expansion"),
+            pytest.param("rtk summary '{git,push,origin,main}'", id="brace-expansion-summary"),
+            pytest.param("rtk err '{git,push,origin,main}'", id="brace-expansion-err"),
+            pytest.param("rtk test '{git,push,origin,main}'", id="brace-expansion-test"),
+            pytest.param("rtk run 'g\"i\"t'' push origin main'", id="quote-joined-words"),
+            pytest.param("rtk bypass '{git,push,origin,main}'", id="brace-expansion-bypass"),
+        ],
+    )
+    def test_a_single_word_that_needs_a_shell_is_read_as_source(self, command: str) -> None:
+        """Rtk hands a lone brace, quote or backslash word to ``sh -c`` too, where a shell builds the command words."""
+        assert "push origin main" in _readings(command)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("rtk bypass $'git\\npush\\norigin\\nmain'", id="bypass-newline"),
+            pytest.param("rtk proxy $'git\\npush\\norigin\\nmain'", id="proxy-newline"),
+            pytest.param("rtk bypass $'git\\tpush origin\\nmain'", id="bypass-tab-and-newline"),
+            pytest.param("rtk bypass 'git push \"origin\" main'", id="bypass-quoted-word"),
+        ],
+    )
+    def test_newline_separated_words_behind_bypass_and_proxy_are_one_command(self, command: str) -> None:
+        """Rtk splits the string of bypass and proxy into words on space, tab and newline, so a newline is no separator.
+
+        The guard reads that string as shell source, where a newline would end the command and leave a bare ``git``.
+        """
+        assert "push origin main" in _readings(command)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("rtk bypass 'git --work-tree #x log -1 --oneline'", id="comment-word"),
+            pytest.param("rtk bypass 'git --work-tree ; log -1'", id="semicolon-word"),
+            pytest.param("rtk bypass 'git --work-tree && log -1'", id="and-word"),
+            pytest.param("rtk bypass 'git --work-tree | log -1'", id="pipe-word"),
+            pytest.param("rtk proxy 'git --work-tree >x log -1'", id="redirection-word"),
+            pytest.param("rtk bypass $'gh api rate_limit -t\\v --include'", id="vertical-tab"),
+            pytest.param("rtk bypass $'git\\rstatus'", id="carriage-return"),
+            pytest.param("rtk bypass $'git\\fstatus'", id="form-feed"),
+            pytest.param("rtk bypass 'git --work-tree $HOME log -1'", id="dollar-word"),
+            pytest.param("rtk bypass 'git --work-tree \\#x log -1'", id="backslash-word"),
+            pytest.param("rtk bypass 'git status (x)'", id="parenthesis-word"),
+        ],
+    )
+    def test_a_bypass_string_that_rtk_and_a_shell_read_differently_fails_closed(self, command: str) -> None:
+        """Rtk takes ``# ; & | < > ( ) $``, backslash and ``\\v \\r \\f`` as plain word characters, a shell does not.
+
+        The guard cannot prove both readings give one argv, so such a string is unreadable instead of cut short.
+        """
+        assert _unreadable(command) is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("printf 'git status -s' | xargs -I{} rtk bypass '{}'", id="xargs-bypass"),
+            pytest.param("printf 'git status -s' | xargs -I{} rtk run '{}'", id="xargs-run"),
+            pytest.param("printf 'git status -s' | xargs -I{} rtk proxy '{}'", id="xargs-proxy"),
+            pytest.param("printf 'git status -s' | xargs -I % rtk proxy %", id="plain-replace-token"),
+            pytest.param("printf 'git status -s' | xargs -I@@ rtk run @@", id="plain-replace-token-attached"),
+            pytest.param("printf 'git status -s' | xargs --replace=R rtk bypass R", id="long-replace-option"),
+            pytest.param("printf 'git status -s' | xargs -J % rtk bypass %", id="bsd-replace-option"),
+            pytest.param("printf 'git status -s' | xargs rtk bypass", id="xargs-input-tail"),
+            pytest.param("printf 'git status -s' | parallel rtk proxy", id="parallel-input-tail"),
+            pytest.param("printf 'git status -s' | parallel --replace @ rtk run @", id="parallel-replace-token"),
+            pytest.param("find . -prune -exec rtk run 'git status -- {}' \\;", id="find-exec-literal-string"),
+            pytest.param("find . -name x -exec rtk bypass {} \\;", id="find-exec-brace"),
+            pytest.param("find . -name x -execdir rtk proxy {} +", id="find-execdir-plus"),
+            pytest.param("printf proxy | xargs -E echo -I % rtk % 'gh pr view 1'", id="xargs-option-value-named-echo"),
+            pytest.param(
+                "find p -maxdepth 0 -exec echo {} \\; -exec rtk {} 'gh pr view 1' \\;", id="find-earlier-clause-echo"
+            ),
+            pytest.param(
+                "find p -maxdepth 0 -name echo -o -exec rtk {} 'gh pr view 1' \\;", id="find-predicate-operand-echo"
+            ),
+        ],
+    )
+    def test_an_rtk_string_runner_behind_xargs_parallel_or_find_fails_closed(self, command: str) -> None:
+        """An rtk runner behind xargs, parallel or find gets its string from input the guard cannot see: unreadable."""
+        assert _unreadable(command) is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git ls-files | parallel -j4 grep -l rtk {}", id="parallel-job-option"),
+            pytest.param("git ls-files | xargs -S 1024 grep -l rtk", id="xargs-size-option"),
+        ],
+    )
+    def test_a_search_for_rtk_after_an_unmodeled_wrapper_option_still_asks(self, command: str) -> None:
+        """An option the parser does not model leaves every later word a candidate program, so the data word `rtk`
+        asks."""
+        assert _unreadable(command) is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("printf proxy | xargs -I % rtk % 'gh pr view 1'", id="subcommand-from-replace-token"),
+            pytest.param("printf proxy | xargs -J % rtk % 'gh pr view 1'", id="subcommand-from-bsd-replace-token"),
+            pytest.param("printf proxy | xargs --replace=R rtk R 'gh pr view 1'", id="subcommand-from-long-replace"),
+            pytest.param("printf prox | xargs -I % rtk %y 'gh pr view 1'", id="subcommand-fragment-from-token"),
+            pytest.param("cat subs.txt | xargs -I % rtk % 'gh pr view 1'", id="subcommand-from-file-input"),
+            pytest.param("printf 'proxy gh' | xargs rtk", id="xargs-tail-without-rtk-words"),
+            pytest.param("find . -exec rtk git status \\;", id="find-exec-filter-subcommand"),
+            pytest.param("git ls-files | xargs rtk git status", id="xargs-filter-subcommand"),
+        ],
+    )
+    def test_any_rtk_behind_a_replacement_wrapper_fails_closed(self, command: str) -> None:
+        """The subcommand itself can come from the substituted input, so no rtk behind a wrapper is judged by its
+        words."""
+        assert _unreadable(command) is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("rtk proxy $'gh pr list --search=\"one\\ttwo\"'", id="tab-in-double-quotes"),
+            pytest.param("rtk proxy \"gh pr list --search='one\ttwo'\"", id="tab-in-single-quotes"),
+            pytest.param("rtk bypass $'gh pr list --search=\"one\\ntwo\"'", id="newline-in-quotes"),
+        ],
+    )
+    def test_a_tab_or_newline_inside_a_quoted_bypass_word_fails_closed(self, command: str) -> None:
+        """Rtk keeps a tab or newline inside quotes in the word, so rewriting it to a space would change the value."""
+        assert _unreadable(command) is True
+
+    @pytest.mark.parametrize(
+        "wrapper",
+        [
+            pytest.param("arch -arm64", id="arch"),
+            pytest.param("chrt 0", id="chrt"),
+            pytest.param("taskset 1", id="taskset"),
+            pytest.param("gxargs", id="gxargs"),
+            pytest.param("fd -x", id="fd-exec"),
+            pytest.param("direnv exec .", id="direnv"),
+            pytest.param("npx", id="npx"),
+        ],
+    )
+    def test_an_rtk_runner_behind_an_unmodeled_wrapper_is_read_like_the_raw_string(self, wrapper: str) -> None:
+        """Rtk is found by scan like sh and env, so a wrapper the parser does not model cannot hide the string it
+        runs."""
+        found = _invocations(f"{wrapper} rtk proxy 'gh pr create -t x'", "gh")
+
+        assert found is not None
+        assert ["gh", "pr", "create", "-t", "x"] in found
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git ls-files | xargs grep -l rtk", id="xargs-search"),
+            pytest.param("echo rtk proxy 'git status && git log'", id="print-argument"),
+            pytest.param("grep rtk proxy 'git status && x'", id="search-argument"),
+            pytest.param("grep -l rtk src", id="plain-search"),
+            pytest.param("arch -arm64 rtk git status", id="unmodeled-wrapper-filter-subcommand"),
+        ],
+    )
+    def test_the_word_rtk_as_a_search_pattern_or_filter_stays_readable(self, command: str) -> None:
+        """A harmless search for the name rtk, or an rtk filter subcommand, gains no new stop."""
+        assert _unreadable(command) is False
+
+    def test_newline_separated_gh_words_behind_bypass_are_one_invocation(self) -> None:
+        """The gh lookup sees the full argument list of a newline-spelled invocation, not a bare ``gh``."""
+        found = _invocations("rtk bypass $'gh\\npr\\ncreate\\n--title\\nx'", "gh")
+
+        assert found is not None
+        assert ["gh", "pr", "create", "--title", "x"] in found
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param('rtk summary --shell python3 "print(1)"', id="interpreter-shell"),
+            pytest.param('rtk summary --shell=python3 "print(1)"', id="interpreter-shell-equals"),
+            pytest.param('rtk run --shell python3 -c "print(1)"', id="run-interpreter-shell"),
+            pytest.param('rtk test --shell echo "git status"', id="non-shell-program"),
+        ],
+    )
+    def test_a_shell_option_naming_a_non_shell_fails_closed(self, command: str) -> None:
+        """Rtk runs ``<value> -c STR``: only a shell reads STR as shell source, so another program is unreadable."""
+        assert _unreadable(command) is True
+
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            pytest.param('rtk summary --shell=zsh "git push origin main"', {"push origin main"}, id="zsh"),
+            pytest.param('rtk summary --shell dash "git push origin main"', {"push origin main"}, id="dash"),
+            pytest.param('rtk run --shell sh -c "git status"', {"status"}, id="run-shell-and-c"),
+            pytest.param('rtk run --skip-env --shell=bash -c "git status"', {"status"}, id="run-skip-env-shell-equals"),
+        ],
+    )
+    def test_a_known_shell_option_reads_the_string_without_a_stop(self, command: str, expected: set[str]) -> None:
+        """The modeled runner options are skipped, so the string is read exactly and the harmless read adds no stop."""
+        assert _readings(command) == expected
+        assert _unreadable(command) is False
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("printf 'git push origin main\\n' | rtk sh", id="unknown-subcommand-shell"),
+            pytest.param("printf 'git push origin main\\n' | rtk run sh", id="run-argv-shell"),
+            pytest.param("printf 'git push origin main\\n' | rtk bypass sh", id="bypass-shell"),
+            pytest.param("printf 'git push origin main\\n' | rtk env sh", id="env-shell"),
+            pytest.param("printf 'git push origin main\\n' | rtk -v run --skip-env bash -s", id="options-before-shell"),
+            pytest.param("rtk run sh <<< 'git push origin main'", id="here-string"),
+            pytest.param("rtk sh <<'EOF'\ngit push origin main\nEOF", id="heredoc"),
+        ],
+    )
+    def test_shell_source_fed_through_stdin_behind_rtk_is_read(self, command: str) -> None:
+        """Rtk passes stdin to the program it runs, so a shell behind it reads source the guard must see."""
+        assert "push origin main" in _readings(command)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("printf 'echo ok\\n' | rtk run sh", id="harmless-stdin-shell"),
+            pytest.param("rtk run '{echo,ok}'", id="harmless-brace-word"),
+            pytest.param("rtk run ls", id="plain-program-word"),
+            pytest.param("rtk run ./scripts/check.sh", id="plain-program-path"),
+            pytest.param("printf 'x\\n' | rtk gain", id="stdin-to-a-filter"),
+        ],
+    )
+    def test_a_harmless_use_behind_rtk_adds_no_reading(self, command: str) -> None:
+        """The wider reading never turns an rtk use without a guarded command into a stop of its own."""
+        assert _readings(command) == set()
+        assert _unreadable(command) is False
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param('rtk sh -c "gh pr view 1"', id="unknown-subcommand-runs-a-program"),
+            pytest.param('rtk bash -c "gh pr view 1"', id="bash"),
+            pytest.param('rtk env sh -c "gh pr view 1"', id="env"),
+            pytest.param('rtk bypass sh -c "gh pr view 1"', id="bypass-argv-shell"),
+            pytest.param('rtk bypass -x "gh pr view 1"', id="bypass-unknown-option"),
+        ],
+    )
+    def test_a_program_run_through_rtk_keeps_the_code_option_check(self, command: str) -> None:
+        """Rtk runs an unknown subcommand as a program, so ``sh -c STR`` behind it is no less opaque than without
+        rtk."""
+        assert _unreadable(command) is True
+
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            pytest.param("rtk summary -- git status", {"status"}, id="summary-end-of-options"),
+            pytest.param("rtk err -- git log -1", {"log -1"}, id="err-end-of-options"),
+            pytest.param('rtk run "echo a; echo b"', set(), id="run-single-harmless-string"),
+        ],
+    )
+    def test_end_of_options_and_a_harmless_string_add_no_stop(self, command: str, expected: set[str]) -> None:
+        """``--`` ends the option list, so a read behind it neither fails closed nor reads wider than its own words."""
+        assert _readings(command) == expected
+        assert _unreadable(command) is False

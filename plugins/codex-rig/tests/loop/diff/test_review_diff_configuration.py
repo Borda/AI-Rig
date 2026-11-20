@@ -167,6 +167,30 @@ def commit_history(
     return CommitHistory(paths, base, head, tmp_path / "collected")
 
 
+@pytest.mark.integration
+def test_path_selection_with_brackets_remains_literal(repository, collector, tmp_path, monkeypatch) -> None:
+    """A bracketed directory and its pattern-matching sibling must produce disjoint review evidence."""
+    selected = repository / "[id]"
+    sibling = repository / "i"
+    selected.mkdir()
+    sibling.mkdir()
+    (selected / "tracked").write_text("before", encoding="utf-8")
+    (sibling / "tracked").write_text("other", encoding="utf-8")
+    _git(repository, "add", ".")
+    _git(repository, "commit", "-qm", "baseline")
+    (selected / "tracked").write_text("after", encoding="utf-8")
+    (sibling / "tracked").write_text("changed", encoding="utf-8")
+    monkeypatch.chdir(repository)
+    out = tmp_path / "evidence"
+    assert collector.collect_diff("path", "[id]/tracked", out) == 0
+    assert (out / "files.txt").read_text().splitlines() == ["[id]/tracked"]
+    assert not (out / "untracked.txt").read_bytes()
+    assert (
+        collector.local_review_identity(repository, "path", "[id]/tracked")["diff_sha256"]
+        == hashlib.sha256((out / "diff.patch").read_bytes()).hexdigest()
+    )
+
+
 class TestWorkingTreePatch:
     """The working-tree patch collected for review."""
 

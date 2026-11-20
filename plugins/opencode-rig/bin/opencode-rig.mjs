@@ -54,6 +54,8 @@ Options:
                   so the existing global Claude instructions keep applying
   --agents-only   Install or verify the role agents only; skip the permission merge and the
                   global delivery-principles instructions block
+  --prune-extra   Setup: remove stamped role cards this package no longer ships when their body
+                  still matches the stamp; a card edited after install is kept and reported
   --assets        Doctor: also curate shipped skill and role cards
   --version       Print the package version
   -h, --help      Show this help
@@ -67,6 +69,7 @@ const SETUP_FLAGS = [
   "--force",
   "--adopt-claude-instructions",
   "--agents-only",
+  "--prune-extra",
 ]
 const COMMAND_FLAGS = {
   setup: SETUP_FLAGS,
@@ -525,8 +528,11 @@ function install(flags) {
   const upgrade = flags.has("--upgrade")
   const force = flags.has("--force")
   const agentsOnly = flags.has("--agents-only")
+  // A check never deletes: reviewing the install must not change it.
+  const pruneExtra = flags.has("--prune-extra") && !checkOnly
   let problems = 0
   let changed = 0
+  let pruned = 0
 
   console.log(`opencode-rig ${VERSION}`)
   console.log(`target: ${dir}`)
@@ -616,7 +622,29 @@ function install(flags) {
         })
     : []
   for (const file of extra) {
-    console.log(`EXTRA    ${file}: stamped by opencode-rig but not in this package (remove manually)`)
+    const path = join(dir, file)
+    if (!pruneExtra) {
+      console.log(`EXTRA    ${file}: stamped by opencode-rig but not in this package (remove manually)`)
+      continue
+    }
+    try {
+      assertSafeTarget(path, base)
+    } catch (error) {
+      problems += 1
+      console.log(`KEEP     ${file}: ${error.message}`)
+      continue
+    }
+    // The stamp records the body digest captured at install, so only a card whose body still
+    // matches it is ours to delete; an edited card keeps its local work and stays reported.
+    const content = readFileSync(path, "utf8")
+    const stamp = readStamp(content)
+    if (!stamp || sha256(stripStamp(content).replace(/\n$/, "\n")) !== stamp.digest) {
+      console.log(`KEEP     ${file}: edited after install, left in place`)
+      continue
+    }
+    rmSync(path)
+    pruned += 1
+    console.log(`PRUNE    ${file}: no longer in this package, removed`)
   }
 
   // The approval rules ship inside the package so they can be reviewed before install;
@@ -677,7 +705,10 @@ function install(flags) {
     )
     return 1
   }
-  if (!checkOnly) console.log(`\n${changed} file(s) written, ${problems} problem(s).`)
+  if (!checkOnly) {
+    const prunedNote = pruned > 0 ? `, ${pruned} removed` : ""
+    console.log(`\n${changed} file(s) written${prunedNote}, ${problems} problem(s).`)
+  }
   return problems > 0 ? 1 : 0
 }
 
@@ -836,9 +867,9 @@ function doctor(flags) {
   lines.push(`node ${process.version}`)
   lines.push(`package ${PACKAGE_ROOT}`)
   if (commandExists("rtk")) {
-    lines.push("RTK   ok: rtk is on PATH; optionally prefix read-heavy commands with it to reduce output")
+    lines.push("RTK   ok: rtk is on PATH (optional); rig workflows run every command raw")
   } else {
-    lines.push("RTK   warn: rtk is not on PATH (optional); it can reduce read-heavy command output")
+    lines.push("RTK   warn: rtk is not on PATH (optional); rig workflows do not use it")
   }
   if (existsSync(join(RESOURCES, "agents.json"))) pass("shipped resources present")
   else fail("shipped resources are missing; reinstall the package")

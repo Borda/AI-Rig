@@ -5036,6 +5036,6 @@
       "src": "skills/audit/templates/checks-skills-sweep.md:33"
     }
   },
-  "plugin": "cc_foundry@0.81.1",
+  "plugin": "cc_foundry@0.81.2",
   "schema": 2
 }

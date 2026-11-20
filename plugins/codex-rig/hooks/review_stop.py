@@ -13,10 +13,9 @@ Read only the bounded host transcript supplied with the Stop event. Bind success
 the current session and turn, including run promotion and same-run completion. Creation may precede a bounded literal
 read-only suffix batch; completion requires its own successful direct command. This is an advisory recovery prompt, not
 an authorization or security boundary. Unknown lifecycle shapes, visible controlling stops and already-continued turns
-produce no continuation. Known native Continue answers resolve only outstanding question invocations with distinct host
-receipts and matching decision/scope identities; discovery text is not a question. Occurrence accounting does not prove
-exact outer JavaScript call correlation. Transcript compatibility is deliberately narrow because the host format is
-unstable.
+produce no continuation. Known native continuation and review-entry answers resolve only outstanding questions with
+distinct host receipts and matching decision/scope identities. Occurrence accounting does not prove exact outer
+JavaScript call correlation. Transcript compatibility is deliberately narrow because the host format is unstable.
 
 Pause recognition also searches the assistant's own final prose, so it is model-controllable: ordinary or injected words
 such as ``awaiting`` or ``denied`` can suppress continuation without host evidence of a stop. This conservative tradeoff
@@ -65,6 +64,15 @@ CONTROLLING_STOP = re.compile(
     r"user.{0,20}(?:stop|pause|cancel)",
     re.IGNORECASE,
 )
+DECISION_WAIT = re.compile(
+    r"\b(?:(?:awaits?|awaiting|waiting for) (?:your|the) (?:decision|answer)|"
+    r"waiting for your approval before running the command|pending user decision)\b",
+    re.IGNORECASE,
+)
+REPLY_INSTRUCTION = re.compile(r"(?:^|[?!.]\s+)(?:please\s+)?(?:reply|choose|select|enter)\s+\S", re.IGNORECASE | re.M)
+ACTION_LABEL = r"approve|deny|continue|skip|stop|resume last(?: one)?|start fresh|new review"
+CHOICE_LINE = re.compile(rf"^\s*(?:[-*]|\d+[.)])\s+[`*]*({ACTION_LABEL})\b", re.IGNORECASE | re.M)
+INLINE_CHOICES = re.compile(rf"^[`* ]*(?:{ACTION_LABEL})[`* ]*(?:/|\bor\b)[`* ]*(?:{ACTION_LABEL})\b", re.IGNORECASE)
 QUESTION = re.compile(r"request_user_input|ask_user|interrupt_agent")
 NESTED_QUESTION = re.compile(
     r"\btools\s*\.\s*(\w*(?:request_user_input(?:_async)?|ask_user|interrupt_agent))\b(\s*\()?"
@@ -76,7 +84,7 @@ QUESTION_DISCOVERY = re.compile(
 
 
 def _resolved_question(item: dict) -> bool:
-    """Recognize a bound Continue answer or the known scope error raised before opening a form."""
+    """Recognize a bound workflow continuation answer or the known scope error raised before opening a form."""
     if (
         item.get("server") != "codex-rig-input"
         or item.get("tool") != "ask_user"
@@ -108,16 +116,24 @@ def _resolved_question(item: dict) -> bool:
         or not identity.strip()
         or len(identity) > 128
         or not isinstance(options, list)
-        or "Continue" not in options
         or not isinstance(result, dict)
         or result.get("isError", False) is not False
     ):
         return False
-    return result.get("structuredContent") == {
+    submitted = result.get("structuredContent")
+    if not isinstance(submitted, dict):
+        return False
+    answer = submitted.get("answer")
+    if not (
+        (answer == "Continue" and answer in options)
+        or (options == ["Resume last", "Start fresh"] and answer in options)
+    ):
+        return False
+    return submitted == {
         "decision_id": identity,
         "scope_digest": scope,
         "status": "answered",
-        "answer": "Continue",
+        "answer": answer,
     }
 
 
@@ -155,7 +171,7 @@ def _argv(item: dict, plugin_root: str) -> list[str]:
         # Keep a quoted PowerShell option value attached to its equals-form key
         # when shlex applies its deliberately narrow non-POSIX tokenization.
         source = re.sub(
-            r"(?<!\S)(--(?:complete-run|codex-home|parent-thread-id|pr-number|branch|skill|promote-pr-run))=([\"'])(.*?)\2(?=\s|$)",
+            r"(?<!\S)(--(?:complete-run|codex-home|parent-thread-id|pr-number|pr-url|branch|skill|local-scope|local-target|promote-pr-run))=([\"'])(.*?)\2(?=\s|$)",
             r"\2\1=\3\2",
             source,
         )
@@ -193,7 +209,7 @@ def _creation_batch(item: dict, plugin_root: str) -> tuple[list[str], str]:
     if not first or _coordinate(first[1], plugin_root) != _coordinate("shared/create_run.py", plugin_root):
         return [], ""
     for line in lines[1:]:
-        if line.strip() in {"rtk git status --short", "rtk git rev-parse HEAD"}:
+        if line.strip().removeprefix("rtk ") in {"git status", "git status --short", "git rev-parse HEAD"}:
             continue
         tail = _argv({"command": [*command[:2], line]}, plugin_root)
         if (
@@ -217,14 +233,26 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
     message = payload.get("last_assistant_message")
     if not all(isinstance(value, str) and value for value in (session, turn, cwd, message, plugin_root)):
         return {}
-    if CONTROLLING_STOP.search(message):
+    delivery_only = DECISION_WAIT.search(message) is not None
+    # A typed fallback can end a turn independently of any wait-status wording.
+    # Inspect the terminal block so earlier evidence and ordinary lists of checks do not become a menu.
+    terminal_block = message.rstrip().rsplit("\n\n", 1)[-1]
+    if (
+        CONTROLLING_STOP.search(DECISION_WAIT.sub("", message))
+        or REPLY_INSTRUCTION.search(terminal_block)
+        or INLINE_CHOICES.match(terminal_block)
+        or len(set(CHOICE_LINE.findall(terminal_block.lower()))) >= 2
+    ):
         return {}
     if not records or records[0].get("type") != "session_meta" or records[0].get("payload", {}).get("id") != session:
         return {}
     active = False
     runs: dict[str, str] = {}
+    owner = ""
     pending_questions = 0
     question_receipts: set[str] = set()
+    async_call = ""
+    async_state = ""
     for record in records:
         data = record.get("payload", {})
         if not isinstance(data, dict):
@@ -233,8 +261,10 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
         if record.get("type") == "event_msg" and kind == "task_started":
             active = data.get("turn_id") == turn
             runs.clear()
+            owner = ""
             pending_questions = 0
             question_receipts.clear()
+            async_call = async_state = ""
             continue
         if not active:
             continue
@@ -266,7 +296,14 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                     return {}
             elif kind in {"function_call", "custom_tool_call"}:
                 name = str(data.get("name", ""))
-                if name == NATIVE_QUESTION:
+                if delivery_only and name == "request_user_input_async" and kind == "function_call":
+                    if async_call or not isinstance(data.get("call_id"), str) or not data["call_id"]:
+                        return {}
+                    async_call = data["call_id"]
+                    async_state = "called"
+                elif name == NATIVE_QUESTION:
+                    if async_call:
+                        return {}
                     pending_questions += 1
                 elif QUESTION.search(name):
                     return {}
@@ -284,9 +321,21 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                     for question in NESTED_QUESTION.finditer(source):
                         if question[1] != NATIVE_QUESTION or not question[2] or name != "exec":
                             return {}
+                        if async_call:
+                            return {}
                         pending_questions += 1
             elif kind in {"function_call_output", "custom_tool_call_output"}:
                 output = data.get("output", "")
+                if async_call and data.get("call_id") == async_call:
+                    if async_state != "recorded" or not isinstance(output, str):
+                        return {}
+                    try:
+                        receipt = json.loads(output)
+                    except ValueError:
+                        return {}
+                    if not isinstance(receipt, dict) or set(receipt) != {"accepted"} or receipt["accepted"] is not True:
+                        return {}
+                    async_state = "accepted"
                 # Host rejections can have no CommandExecution receipt. Do not retry them.
                 if re.search(
                     r"(?:(?:denied|rejected) by (?:the )?user|user denied|approval denied|auto.?review.{0,40}reject)",
@@ -316,6 +365,24 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                 return {}
             continue
         if item_type in {"Reasoning", "AgentMessage"}:
+            if delivery_only and item.get("questions"):
+                if (
+                    async_state != "called"
+                    or item.get("id") != async_call
+                    or item.get("delivery") != "async"
+                    or item.get("phase") != "final_answer"
+                ):
+                    return {}
+                async_state = "recorded"
+            continue
+        # A host timer after async delivery neither resolves nor cancels the decision.
+        if (
+            item_type == "Extension"
+            and async_state == "accepted"
+            and item.get("kind") == "clock.sleep"
+            and set(item) == {"type", "kind", "id", "durationMs"}
+            and type(item["durationMs"]) is int
+        ):
             continue
         if item_type == "FileChange":
             # Artifact writes (for example the review blueprint) emit this receipt.
@@ -380,7 +447,19 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             valid_creation = False
             for argument in arguments:
                 option, separator, value = argument.partition("=")
-                if option not in {"--skill", "--pr-number", "--branch", "--promote-pr-run"} or option in creation:
+                if (
+                    option
+                    not in {
+                        "--skill",
+                        "--pr-number",
+                        "--pr-url",
+                        "--branch",
+                        "--local-scope",
+                        "--local-target",
+                        "--promote-pr-run",
+                    }
+                    or option in creation
+                ):
                     break
                 if not separator:
                     value = next(arguments, "")
@@ -390,7 +469,21 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             else:
                 skill = creation.get("--skill", "")
                 identity_options = set(creation) - {"--skill"}
-                if skill not in {"code-review", "code-remediate"} or len(identity_options) > 1:
+                if "--local-scope" in creation or "--local-target" in creation:
+                    local_scope = creation.get("--local-scope")
+                    allowed = {"--branch", "--local-scope"}
+                    if local_scope in {"path", "commit"}:
+                        allowed.add("--local-target")
+                    if (
+                        skill != "code-review"
+                        or local_scope not in {"working-tree", "path", "commit"}
+                        or identity_options != allowed
+                    ):
+                        continue
+                elif "--pr-url" in creation:
+                    if skill != "code-review" or identity_options != {"--pr-number", "--pr-url"}:
+                        continue
+                elif skill not in {"code-review", "code-remediate"} or len(identity_options) > 1:
                     continue
                 number = creation.get("--pr-number")
                 if number is not None and (not number.isascii() or not number.isdecimal() or int(number) <= 0):
@@ -420,7 +513,29 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                     return {}
                 del runs[previous]
             runs[run] = skill
+            owner = owner or skill
         elif helper == _coordinate("shared/find-review-report.py", plugin_root):
+            # A lookup alone leaves the choice open. The producer confirms the exact
+            # offered directory after a resume decision, including in a later turn.
+            if args[2:3] == ["--latest-run"] and args[-2:-1] == ["--expect-run"]:
+                selection = args[3:-2]
+                pr = len(selection) == 2 and selection[0] == "--target"
+                local = selection == ["--local-scope", "working-tree"] or (
+                    len(selection) == 4
+                    and selection[0] == "--local-scope"
+                    and selection[1] in {"commit", "path"}
+                    and selection[2] == "--local-target"
+                )
+                report = output.strip().removesuffix("\\n")
+                if (pr or local) and report and "\n" not in report and "\r" not in report:
+                    run = _coordinate(args[-1], cwd)
+                    roots = tuple(
+                        _coordinate(f".reports/codex/{name}", cwd) + "/" for name in ("code-review", "review")
+                    )
+                    if run.startswith(roots) and _coordinate(report, cwd) == run:
+                        runs[run] = "code-review"
+                        owner = owner or "code-review"
+                continue
             # Context options do not change which run completed. Parse only known
             # valued options so an exit-zero --help call cannot clear active work.
             completion: dict[str, str] = {}
@@ -454,22 +569,45 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                     continue
             if runs.get(run) == "code-remediate":
                 del runs[run]
-    if not active or not runs or pending_questions:
+    # A later helper invocation cannot transfer ownership of the original workflow.
+    if not active or owner not in runs.values() or pending_questions:
         return {}
+    if delivery_only:
+        if (question_receipts and not async_call) or (async_call and async_state != "accepted"):
+            return {}
+        return {
+            "decision": "block",
+            "reason": (
+                "Recover question delivery only. Keep the dependent action paused. Check current eligibility against "
+                "the workflow's recorded safeguards first. Recover required evidence where possible and correct any "
+                "incomplete command or scope before asking. If eligible, preserve a still-visible, accurate question "
+                "for a typed reply. Otherwise, when an eligible question needs delivery, present it once through a "
+                "suitable control or end with the question and complete actionable choices in plain text. Keep work "
+                "pending until an explicit answer. Runtime permission remains with its dedicated host control. "
+                "Tool acceptance grants no permission."
+            ),
+        }
+    if owner == "code-remediate":
+        next_step = (
+            "Continue remediation selection, selected fixes, verification and delivery under the user's existing scope. "
+            "Only if the parent already has explicit +review authorization, finish its needed nested review and admit "
+            "the exact validated result before returning to remediation. A missing selection needs its normal question."
+        )
+    else:
+        next_step = (
+            "Continue the read-only review. Prepare eligible dependencies and continue independent inspection despite "
+            "failed tests. Use disposable source copies for autofixing hooks. Finish reviewer reconciliation and the "
+            "configured gates, promote the result, and deliver the validated tables from --complete-run. Disclose any "
+            "missed blind checkpoint and attempt normal finalization."
+        )
     return {
         "decision": "block",
         "reason": (
-            "Codex Rig detected that this turn started review or remediation without its completion check. "
-            "This is a one-time workflow diagnostic, not new authorization. First honor any user stop, denial, "
+            "Codex Rig detected an unfinished workflow. This is a one-time diagnostic, not new authorization. "
+            "First honor any user stop, denial, "
             "pending question, closed PR, unverified source or exhausted retry limit; if one applies, preserve "
             "that pause and ask the concrete missing decision without retrying a denied action. Otherwise execute "
-            "the first unmet checkpoint now under existing authority. For +review, complete the needed review, "
-            "admit its exact result, then return to remediation selection, selected fixes, verification and delivery. "
-            "A missing selection requires its normal user question; an unstarted step does not require permission. "
-            "Prepare eligible dependencies and continue independent inspection despite failed tests. Read-only review "
-            "does not waive configured checks: use disposable source copies for autofixing hooks. A missed blind "
-            "checkpoint stays disclosed; it does not replace an actual finalization attempt. Do not end "
-            "with a list of work you can already perform or ask the user to repeat the request."
+            f"the first unmet checkpoint now under existing authority. {next_step}"
         ),
     }
 

@@ -518,14 +518,24 @@ def test_dispatch_repair_rejects_shell_redirection(tmp_path: Path, redirect: str
     assert not (wave / "repair-dispatch.challenger.json").exists()
 
 
-def _snapshot_once(real: Callable[..., tuple[dict[str, object], set[str]]]) -> Callable[..., object]:
+def _snapshot_once(
+    real: Callable[..., tuple[dict[str, object], set[str], str]],
+) -> Callable[..., tuple[dict[str, object], set[str], str]]:
     """Wrap source verification so each distinct call signature runs the real Git checks exactly once."""
-    verified: dict[tuple[object, ...], tuple[dict[str, object], set[str]]] = {}
+    verified: dict[tuple[object, ...], tuple[dict[str, object], set[str], str]] = {}
 
-    def once(out, source_root, expected_head, paths, expected_diff_base, scope_path):
-        key = (out, source_root, expected_head, tuple(paths), expected_diff_base, scope_path)
+    def once(out, source_root, expected_head, paths, expected_diff_base, scope_path, *, replay_frozen_plan=False):
+        key = (out, source_root, expected_head, tuple(paths), expected_diff_base, scope_path, replay_frozen_plan)
         if key not in verified:
-            verified[key] = real(out, source_root, expected_head, paths, expected_diff_base, scope_path)
+            verified[key] = real(
+                out,
+                source_root,
+                expected_head,
+                paths,
+                expected_diff_base,
+                scope_path,
+                replay_frozen_plan=replay_frozen_plan,
+            )
         return copy.deepcopy(verified[key])
 
     return once

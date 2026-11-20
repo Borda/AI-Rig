@@ -532,7 +532,7 @@ def test_foundry_setup_passes_the_retirement_flags() -> None:
     retired = json.loads(
         (plugin_root / ".claude-plugin" / "permissions-allow-retired.json").read_text(encoding="utf-8")
     )
-    assert retired == [
+    assert retired[:6] == [
         _OLD_RULE,
         "Bash(claude:*)",
         "Bash(find:*)",
@@ -540,6 +540,8 @@ def test_foundry_setup_passes_the_retirement_flags() -> None:
         "Bash(sed:*)",
         "Bash(eval:*)",
     ]
+    # the remainder is the rtk mirrors a release dropped, pinned in full by the rtk-rewrite hook tests
+    assert all(rule.startswith("Bash(rtk ") for rule in retired[6:])
     assert '--retire-deny-file "$PLUGIN_ROOT/.claude-plugin/permissions-deny-retired.json"' in calls[0]
 
 

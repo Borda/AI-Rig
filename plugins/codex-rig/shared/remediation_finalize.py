@@ -1039,6 +1039,7 @@ def derive_handoff(
     ]
     handoff["confidence"] = _confidence_block(metadata, score)
     handoff["presentation_version"] = 15
+    handoff.setdefault("action_policy", "owned")
     if handoff.get("skill") != "code-remediate":
         handoff["artifacts"] = _result_artifact(handoff.get("artifacts") or [], artifact_path)
         if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed":

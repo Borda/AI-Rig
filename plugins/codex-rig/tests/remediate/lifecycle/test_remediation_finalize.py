@@ -219,6 +219,7 @@ class TestHandoffDerivation:
         )
 
         assert handoff["presentation_version"] == handoff_version
+        assert handoff["action_policy"] == "owned"
         assert [(row["id"], row["selected"]) for row in handoff["tables"][0]["rows"]] == [
             ("CLOSED", "Closed"),
             ("OMITTED", "No"),
@@ -250,6 +251,7 @@ class TestHandoffDerivation:
             run, metadata, _draft_handoff(run), result["confidence"], result["artifact_path"]
         )
         handoff["presentation_version"] = 5
+        del handoff["action_policy"]
         handoff["tables"][0]["rows"] = [
             {**row, "selected": row["selected"] == "Yes"} for row in handoff["tables"][0]["rows"]
         ]
@@ -304,6 +306,7 @@ class TestHandoffDerivation:
             run, metadata, _draft_handoff(run), result["confidence"], result["artifact_path"]
         )
         handoff["presentation_version"] = 4
+        del handoff["action_policy"]
         handoff["tables"][0]["rows"] = [_without_selected(row) for row in handoff["tables"][0]["rows"]]
         assert "| Selected |" not in HELPER.final_handoff.render_handoff(handoff)
         VALIDATOR._validate_code_remediate_final_handoff({"metadata": metadata}, handoff)
@@ -332,6 +335,7 @@ class TestHandoffDerivation:
             tmp_path, metadata, _draft_handoff(tmp_path), result["confidence"], result["artifact_path"]
         )
         handoff["presentation_version"] = 4
+        del handoff["action_policy"]
         handoff["tables"][0]["rows"] = [_without_selected(row) for row in handoff["tables"][0]["rows"]]
         (tmp_path / "final-handoff.json").write_text(json.dumps(handoff), encoding="utf-8")
         HELPER._bind_handoff(tmp_path, metadata, handoff)
@@ -1088,7 +1092,13 @@ class TestAuditFinalization:
                     "rows": [
                         {
                             "id": "finding",
-                            "cells": ["Scoped finding", "medium", "Keep", "audit-ledger.md", "Owner fixes"],
+                            "cells": [
+                                "Scoped finding",
+                                "medium",
+                                "Keep",
+                                "audit-ledger.md",
+                                "Restore the missing scope check.",
+                            ],
                             "source_ids": ["finding"],
                         }
                     ],
@@ -1100,8 +1110,15 @@ class TestAuditFinalization:
                 "represented_source_records_total": 1,
                 "omitted_source_records_total": 0,
             },
-            "remaining": [],
-            "next_steps": [],
+            "remaining": [
+                {
+                    "row_id": "finding",
+                    "item": "Scoped finding",
+                    "owner": "maintainer",
+                    "next_action": "Restore the missing scope check.",
+                }
+            ],
+            "next_steps": ["finding"],
             "caller_contract": None,
         }
         (run / "metadata-draft.json").write_text(json.dumps(metadata), encoding="utf-8")

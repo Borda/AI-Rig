@@ -3,26 +3,30 @@
 
 ## Purpose
 
-Give each review exclusive admission before creating its worktree or other run artifacts. Linked worktrees share
-an owner record in their Git common directory, while separate clones admit independent reviews.
+Give each review exclusive admission before creating its worktree or other run artifacts. Linked worktrees share an
+owner record in their Git common directory, while separate clones admit independent reviews.
 
 ## Scope
 
-An atomic rename publishes a complete owner marker across processes. An acquired slot survives interruption.
-The helper does not reclaim based on age, clean up review artifacts, or grant execution authority.
+An atomic rename publishes a complete owner marker across processes. An acquired slot survives interruption. The helper
+does not reclaim based on age, clean up review artifacts, or grant execution authority.
 
 ## Usage
 
-Use ``acquire --checkout PATH --owner RUN_ID [--wait-seconds N]`` at entry and keep the absolute slot locator
-and unique owner ID for resume. A repeated acquire by the same run succeeds. Inspect with ``status --slot PATH``
-or ``status --checkout PATH``. Finish with ``release --slot PATH --owner RUN_ID`` even if running Git has stopped.
-After an integrity stop use ``hold --slot PATH --owner RUN_ID`` instead. All acquisitions then report
-``inspection-required`` until human inspection authorizes the owner to run ``release --inspected`` with that locator.
+Use ``acquire --checkout PATH --owner RUN_ID [--wait-seconds N]`` at entry and keep the absolute slot locator and unique
+owner ID for resume. A repeated acquire by the same run succeeds. Inspect with ``status --slot PATH`` or ``status
+--checkout PATH``. Finish with ``release --slot PATH --owner RUN_ID`` even if running Git has stopped. After an
+integrity stop use ``hold --slot PATH --owner RUN_ID`` instead. A waiting peer stays queued through inspection
+and owner changes. An expired wait reports the current state. Only the owner may clear a held claim after inspection
+with ``release --inspected``. After human inspection of a run that predates slot acquisition, use
+``acquire --slot PATH --owner NEW_ID`` to claim a free slot without Git.
+Derive PATH from the original authenticated Git common directory and SLOT_NAME. This form never adopts an existing
+marker, even one bearing NEW_ID.
 
 ## Outputs
 
-Each operation prints a JSON object with status, absolute slot path and current owner when known. An ordinary
-release removes the matching marker and the empty slot directory. Empty or malformed slots never authorize entry.
+Each operation prints a JSON object with status, absolute slot path and current owner when known. An ordinary release
+removes the matching marker and the empty slot directory. Empty or malformed slots never authorize entry.
 
 ## Failure
 
@@ -124,7 +128,9 @@ def _marker_name(owner: str) -> str:
     return base64.b32encode(owner.encode("ascii")).decode("ascii")
 
 
-def _operate(action: str, slot: Path, owner: str | None, inspected: bool) -> tuple[str, str | None]:
+def _operate(
+    action: str, slot: Path, owner: str | None, inspected: bool, *, reuse_owner: bool = True
+) -> tuple[str, str | None]:
     """Observe, atomically publish, or remove only the marker belonging to the caller."""
     state, current = _observe(slot)
     if action == "status":
@@ -167,7 +173,7 @@ def _operate(action: str, slot: Path, owner: str | None, inspected: bool) -> tup
             state, current = _observe(slot)
     if state == "inspection-required":
         return state, current
-    return ("acquired" if current == owner else "busy"), current
+    return ("acquired" if reuse_owner and current == owner else "busy"), current
 
 
 def main() -> int:
@@ -175,7 +181,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="action", required=True)
     acquire = commands.add_parser("acquire")
-    acquire.add_argument("--checkout", type=Path, required=True)
+    location = acquire.add_mutually_exclusive_group(required=True)
+    location.add_argument("--checkout", type=Path)
+    location.add_argument(
+        "--slot", type=Path, help="Claim a free slot at an authenticated locator without running Git."
+    )
     acquire.add_argument("--wait-seconds", type=int, default=0, metavar="0..60", help="Wait for the current holder.")
     release = commands.add_parser("release")
     release.add_argument("--inspected", action="store_true", help="Clear a hold after human-confirmed inspection.")
@@ -200,9 +210,17 @@ def main() -> int:
             slot = _checkout_slot(args.checkout)
         deadline = time.monotonic() + wait
         while True:
-            state, current = _operate(args.action, slot, owner, getattr(args, "inspected", False))
+            state, current = _operate(
+                args.action,
+                slot,
+                owner,
+                getattr(args, "inspected", False),
+                reuse_owner=getattr(args, "slot", None) is None,
+            )
             remaining = deadline - time.monotonic()
-            if args.action != "acquire" or state != "busy" or remaining <= 0:
+            # The owning review handles inspection. A peer observes the claim until it is released or its wait expires.
+            waiting_for_owner = state == "busy" or (state == "inspection-required" and current != owner)
+            if args.action != "acquire" or not waiting_for_owner or remaining <= 0:
                 break
             time.sleep(min(1, remaining))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:

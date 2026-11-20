@@ -53,6 +53,12 @@ Anchoring:
     contributor_run_integrity.py snapshot --repo PATH [--main-checkout PATH] [--watch-surface] [--exclude PATH]...
         --out FILE
     contributor_run_integrity.py verify --snapshot FILE --expect SHA256
+    contributor_run_integrity.py restart-inspected --snapshot FILE --expect SHA256 --inspected-sha256 OBSERVED
+        --out NEW_SIBLING
+
+    On eligible ignored-file drift in one checkout, ordinary verification also prints an observed_sha256.
+    After inspection, the parent supplies that value to restart-inspected. The helper repeats verification and
+    records a new interval only if the same original baseline and inspected fingerprints still match.
 
     Terminal review cleanup alone uses ``verify-cleanup-retry`` when its parent retained the exact witness OID
     immediately before a previous publication was interrupted. It compares all original fingerprints, accounting
@@ -69,6 +75,8 @@ Anchoring:
     have their own groups. Each checkout keeps up to 128 ordinary groups and 128 review-run groups. Additional
     groups report their common directory. ``omitted`` counts rows beyond the first 64 for each changed label.
     Older aggregate-only snapshots still verify and report their original labels.
+    On an ordinary verification failure, stderr gives the Git-free disposition for an owned review slot.
+    The caller retains the failed interval and performs the slot operation. Verification never changes slot state.
 
 ## Failure
 
@@ -144,7 +152,14 @@ _CACHE_PARTS = frozenset(
 _MODULE_SKIP_DIRS = frozenset({"objects", "logs"})
 _MODULE_SKIP_FILES = frozenset({"index", "FETCH_HEAD", "ORIG_HEAD", "gc.log"})
 _UNREADABLE = "unreadable"
+# Symlink fingerprints prefix the target's fingerprint with the link text, including on nested links.
+_UNREADABLE_DIGEST = re.compile(rf"(?:^|:){_UNREADABLE}:(?:[0-9]+|tree)$")
 _GIT_ENV = os.environ | {"GIT_NO_REPLACE_OBJECTS": "1"}
+_SLOT_HOLD = (
+    "Shared Git or invoking checkout drift was detected, or verification could not establish isolation. "
+    "Stop execution, drain all writers and preserve the failed interval and checkout. If this run owns a review slot, "
+    "use Git-free review_checkout_slot.py hold with the retained slot and owner."
+)
 
 
 class IntegrityError(Exception):
@@ -403,19 +418,18 @@ def _config_targets(label: str, repo: str) -> dict[str, str]:
     return marks
 
 
-def _flagged(repo: str) -> str:
-    """Hash the bytes of every tracked file whose index entry hides it from status and diff.
-
-    Assume-unchanged, skip-worktree and fsmonitor-valid files are reported clean by Git however they were edited, so
-    the index is not trusted for them: the flag and the file's own bytes are fingerprinted instead.
-    """
+def _flagged_entries(repo: str) -> Iterable[tuple[str, str]]:
+    """List index entries whose flags can hide edits to the file from Git status and diff."""
     raw = _git(repo, "ls-files", "-z", "-v", "-f").decode(errors="surrogateescape")
-    parts = []
     for entry in raw.split("\0"):
         tag, _space, name = entry.partition(" ")
         if entry and tag != "H":
-            parts.append(f"{tag} {name}:{_digest(Path(repo) / name)}")
-    return _seal(sorted(parts))
+            yield tag, name
+
+
+def _flagged(repo: str) -> str:
+    """Hash each flag alongside the file's own bytes because Git can report the entry clean after an edit."""
+    return _seal(sorted(f"{tag} {name}:{_digest(Path(repo) / name)}" for tag, name in _flagged_entries(repo)))
 
 
 def _submodule_pointers(repo: str) -> str:
@@ -534,7 +548,7 @@ def snapshot(repo: str, main_checkout: str | None, watch_surface: bool, out: str
     spec = _spec(repo, main_checkout, watch_surface, out, exclude)
     ignored_details: dict[str, _IgnoredIndex] = {}
     marks = fingerprint(spec, ignored_details)
-    bad = sorted(label for label, value in marks.items() if _UNREADABLE in value.split(":", 2)[:2])
+    bad = sorted(label for label, value in marks.items() if _UNREADABLE_DIGEST.search(value))
     if bad:
         raise IntegrityError(f"unreadable at snapshot, nothing was recorded: {', '.join(bad)}")
     body = spec | {"marks": marks, "ignored_details": ignored_details}
@@ -555,7 +569,7 @@ def _load(snapshot_file: str, expect: str) -> dict[str, object]:
     if _canonical(body) != expect:
         print(json.dumps({"ok": False, "changed": ["snapshot-file"]}))
         raise IntegrityError("snapshot file does not match the digest kept from snapshot", 3)
-    return spec | {"marks": marks, "ignored_details": body.get("ignored_details", {})}
+    return spec | {"schema": body.get("schema"), "marks": marks, "ignored_details": body.get("ignored_details", {})}
 
 
 def _redirected(body: dict[str, object]) -> list[str]:
@@ -611,13 +625,82 @@ def verify(snapshot_file: str, expect: str) -> int:
     return _verify_snapshot(snapshot_file, expect, None)
 
 
-def _verify_snapshot(snapshot_file: str, expect: str, published_witness: tuple[str, str] | None) -> int:
+def _detached_review(body: dict[str, object]) -> bool:
+    """Check that a distinct watched review worktree shares the invoking checkout's original Git directory."""
+    if not body["watch_surface"] or not body["main_checkout"] or body["repo"] == body["main_checkout"]:
+        return False
+    dirs = dict(body["dirs"])  # type: ignore[arg-type]
+    common, own = Path(dirs["repo"]["common"]), Path(dirs["repo"]["own"])
+    if common != Path(dirs["main"]["common"]) or own == Path(dirs["main"]["own"]) or own.parent != common / "worktrees":
+        return False
+    try:
+        # Detached HEAD stores the object ID directly. Its fingerprint is part of the original admin marks.
+        head = (own / "HEAD").read_bytes()
+    except OSError:
+        return False
+    return re.fullmatch(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})\r?\n?", head) is not None
+
+
+def _review_files_confined(
+    repo: str,
+    changed: list[str],
+    before: dict[str, str],
+    prior_ignored: _IgnoredIndex | None,
+    current_ignored: _IgnoredIndex,
+) -> bool:
+    """Establish that the inputs to each changed review fingerprint are ordinary files in this checkout."""
+    root = Path(repo)
+    paths: set[Path] = set()
+    empty = hashlib.sha256(b"").hexdigest()
+    for label in changed:
+        if label.startswith("surface:"):
+            if before.get(label, "").startswith("symlink:"):
+                return False
+            paths.add(root / label.removeprefix("surface:"))
+        elif label != "review:ignored" and before[label] != empty:
+            # The old aggregate cannot identify a removed or replaced external link.
+            return False
+    if "review:diff" in changed:
+        names = _git(repo, "diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "HEAD")
+        paths.update(root / name for name in names.decode(errors="surrogateescape").split("\0") if name)
+    if "review:index-flags" in changed:
+        paths.update(root / name for _, name in _flagged_entries(repo))
+    if "review:untracked" in changed:
+        paths.update(_expand(_listed(repo, "-o", "--exclude-standard")))
+    if "review:ignored" in changed:
+        # An empty retained aggregate proves every current path was added, even on an older snapshot layout.
+        if prior_ignored is None and before["review:ignored"] != empty:
+            return False
+        rows = list(_changed_ignored_paths(prior_ignored or {}, current_ignored))
+        if not rows or any(operation != "added" for operation, _ in rows):
+            return False
+        paths.update(root / name for _, name in rows)
+    try:
+        # A leaf or ancestor link can redirect reads. A multiply linked inode can belong to another checkout.
+        return bool(paths) and all(
+            path.resolve(strict=True) == path
+            and path.is_relative_to(root)
+            and path.is_file()
+            and path.stat().st_nlink == 1
+            for path in paths
+        )
+    except (OSError, RuntimeError):
+        return False
+
+
+def _verify_snapshot(
+    snapshot_file: str,
+    expect: str,
+    published_witness: tuple[str, str] | None,
+    *,
+    restart: tuple[str, str] | None = None,
+) -> int:
     """Compare against the original external digest, retaining all ordinary checks during cleanup recovery."""
     body = _load(snapshot_file, expect)
     details: dict[str, _IgnoredIndex] = {}
     before, after = dict(body["marks"]), fingerprint(body, details, published_witness=published_witness)  # type: ignore[arg-type]
     drifted = [label for label in before.keys() | after.keys() if before.get(label) != after.get(label)]
-    unreadable = [label for label, value in after.items() if _UNREADABLE in value.split(":", 2)[:2]]
+    unreadable = [label for label, value in after.items() if _UNREADABLE_DIGEST.search(value)]
     changed = sorted(set(_redirected(body)) | set(drifted) | set(unreadable))
     result: dict[str, object] = {"ok": not changed, "changed": changed}
     if published_witness is not None:
@@ -630,6 +713,67 @@ def _verify_snapshot(snapshot_file: str, expect: str, published_witness: tuple[s
     }
     if diagnostics:
         result["ignored_changes"] = diagnostics
+    review_marks = {"review:diff", "review:index-flags", "review:untracked", "review:ignored"}
+    detached_review_drift = (
+        published_witness is None
+        and bool(changed)
+        and not unreadable
+        and body["schema"] in (3, SCHEMA)
+        and review_marks <= before.keys() & after.keys()
+        and all(label in review_marks or label.startswith("surface:") for label in changed)
+        and _detached_review(body)
+    )
+    if (
+        published_witness is None
+        and body["schema"] in (3, SCHEMA)
+        and (changed == ["main-checkout:ignored"] or (detached_review_drift and changed == ["review:ignored"]))
+        and before.keys() == after.keys()
+        and not unreadable
+    ):
+        successor = body | {"schema": SCHEMA, "marks": after, "ignored_details": details}
+        digest = _canonical(successor)
+        observed = _canonical({"original_sha256": expect, "successor_sha256": digest})
+        result["observed_sha256"] = observed
+        dirs = dict(body["dirs"])  # type: ignore[arg-type]
+        result["git_common_dir"] = (dirs["main"] or dirs["repo"])["common"]
+        if restart is not None:
+            inspected, out = restart
+            if inspected != observed:
+                raise IntegrityError("current fingerprints differ from the inspected observation", 3)
+            original, destination = Path(snapshot_file), Path(out)
+            if original.is_symlink() or destination.parent.resolve() != original.parent.resolve():
+                raise IntegrityError("restart requires a new sibling of the original snapshot", 2)
+            try:
+                # Exclusive creation also refuses existing links and the original failed baseline.
+                with destination.open("x", encoding="utf-8", newline="\n") as stream:
+                    stream.write(json.dumps(successor, indent=2, sort_keys=True) + "\n")
+            except OSError as exc:
+                raise IntegrityError(f"could not create restart snapshot: {exc}", 2) from exc
+            print(json.dumps({"ok": True, "recorded": len(after), "sha256": digest}))
+            return 0
+    if restart is not None:
+        print(json.dumps(result | {"ok": False}))
+        raise IntegrityError("restart requires an eligible, readable ignored-file change in exactly one checkout", 3)
+    if changed and published_witness is None:
+        message = _SLOT_HOLD
+        # Ordinary release needs evidence of confinement. A held slot can still resume after explicit inspection.
+        if detached_review_drift and _review_files_confined(
+            str(body["repo"]), changed, before, prior.get("review:ignored"), details["review:ignored"]
+        ):
+            message = (
+                "Verification detected changes only in the isolated review checkout. Stop execution and preserve "
+                "the checkout and failed interval. Once all writers have stopped and verification covers their last "
+                "writes, use Git-free review_checkout_slot.py release with the retained slot and owner if this run "
+                "owns a slot. Later unverified writes require holding the slot for inspection."
+            )
+            if "observed_sha256" in result:
+                message += " Resuming this checkout requires user inspection and restart-inspected."
+        elif "observed_sha256" in result:
+            message += (
+                " Before an inspected release or restart-inspected, obtain user inspection of the changed paths, "
+                "shared Git state, the invoking checkout and any affected external targets."
+            )
+        print(message, file=sys.stderr)
     print(json.dumps(result))
     return 3 if changed else 0
 
@@ -649,7 +793,10 @@ def _parser() -> argparse.ArgumentParser:
         "verify-cleanup-retry", help="Verify a terminal cleanup retry with its parent-retained witness OID."
     )
     retry.add_argument("--retry-witness", required=True)
-    for command in (check, retry):
+    restart = sub.add_parser("restart-inspected", help="Start a new interval from the exact inspected observation.")
+    restart.add_argument("--inspected-sha256", required=True)
+    restart.add_argument("--out", required=True)
+    for command in (check, retry, restart):
         command.add_argument("--snapshot", required=True)
         command.add_argument("--expect", required=True)
     return parser
@@ -662,6 +809,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.mode == "snapshot":
             repo = str(Path(args.repo).resolve())
             return snapshot(repo, args.main_checkout, args.watch_surface, args.out, args.exclude)
+        if args.mode == "restart-inspected":
+            return _verify_snapshot(args.snapshot, args.expect, None, restart=(args.inspected_sha256, args.out))
         if args.mode == "verify-cleanup-retry":
             # Only the review cleanup caller uses this route. Ordinary contributor execution always calls verify.
             sys.pycache_prefix = str(Path(__file__).resolve())
@@ -670,7 +819,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             snapshot_file = Path(args.snapshot)
             run = snapshot_file.parent
             if (
-                snapshot_file.name != "integrity.json"
+                not re.fullmatch(r"integrity(?:-restart(?:-[1-9][0-9]*)?)?\.json", snapshot_file.name)
                 or not re.fullmatch(r"run-[0-9]{3,}", run.name)
                 or not re.fullmatch(r"pr-[1-9][0-9]*", run.parent.name)
                 or not re.fullmatch(r"[a-f0-9]{40}|[a-f0-9]{64}", args.retry_witness)
@@ -680,6 +829,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return verify(args.snapshot, args.expect)
     except IntegrityError as exc:
         print(f"contributor-run-integrity: {exc}", file=sys.stderr)
+        if args.mode == "verify":
+            print(_SLOT_HOLD, file=sys.stderr)
         return exc.code
 
 

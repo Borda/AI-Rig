@@ -2,6 +2,12 @@
 
 All notable changes to this package are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.13.0
+
+- `setup --prune-extra` removes stamped role cards this package no longer ships, and `make sync-opencode` runs it. A card is deleted only while its body still matches the stamp it was installed with, so a card you edited is reported `KEEP` and left in place; `check` never deletes, and `remove` is unchanged.
+- Install and upgrade docs state that `opencode plugin add` never re-resolves a recorded Git specifier, so an existing install reaches a newer published commit only through `opencode plugin update '<specifier>'` or `make sync-opencode`. The update target is the configured specifier, not the package name, and the refresh step now sits beside the pinned-commit guidance where the install is described.
+- Optional rtk guidance in the shared evidence reference now tells agents to run every command raw: rtk cuts or reshapes the output of `ls`, git, gh and find, and where it cannot store the cut part (a sandbox) the entries are lost; the old `rtk git status --short` example made the shell guard ask on every use and compressed nothing. The `doctor` RTK line no longer tells users to prefix read-heavy commands and states that rig workflows run every command raw.
+
 ## 0.12.0
 
 - Review verdicts use one five-level source scale: `APPROVE`, `MINOR_EDITS`, `MAJOR_REVISION`, `INSUFFICIENT_BUT_PROMISING` and `REJECT`, or `null` when no defensible source judgment exists. The handoff table no longer offers `approved`, `approved with notes` or `changes requested`: an approval with notes, and a diagnostic pass or warning, is `APPROVE` with non-blocking notes, and a change request is `MINOR_EDITS` for a bounded, localized remedy or `MAJOR_REVISION` for material impact or substantial repair. `code-review`, the `code-remediate` re-review and a final challenge that judges a contribution pick the level from the remaining confirmed findings; a missing check or unavailable reviewer lowers confidence and never yields `INSUFFICIENT_BUT_PROMISING` or `REJECT`. `investigated` and `blocked` remain run states.

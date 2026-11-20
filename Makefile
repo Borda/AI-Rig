@@ -1,7 +1,8 @@
 # Install AI-Rig plugins for Claude Code, Codex, and/or OpenCode from the GitHub remote.
 # Codex sync also mirrors this checkout's model defaults, workflow approval policy, and personal policy into $CODEX_HOME.
-# OpenCode sync registers the npm package from its repository subdirectory, installs its role agents,
-# and writes the global delivery-principles instructions block through `setup`.
+# OpenCode sync registers the npm package from its repository subdirectory, refreshes it to the GitHub
+# remote head, verifies the installed version, installs its role agents, and writes the global
+# delivery-principles instructions block through `setup`.
 # Remote installs use pushed state — commit and push before running.
 #
 # Run from the project root:
@@ -106,7 +107,7 @@ endef
         update-ext-plugins register-marketplace install-claude-plugins prune-claude-cache \
         verify-claude-plugins warn-stale-claude-sessions \
         install-codex-plugins sync-codex-home-policy sync-codex-bridge-consent \
-        register-opencode-rig install-opencode-agents setup-opencode \
+        register-opencode-rig update-opencode-rig verify-opencode-rig install-opencode-agents setup-opencode \
         banner-claude banner-codex banner-opencode preflight-sync \
         rig-install rig-typecheck rig-test rig-format rig-pack rig-check \
         prune-benchmarks prune-benchmarks-apply
@@ -131,7 +132,7 @@ banner-codex:
 	@$(call section,Codex sync - plugins + session policy)
 
 banner-opencode:
-	@$(call section,OpenCode sync - package from GitHub + role agents)
+	@$(call section,OpenCode sync - refresh package + role agents)
 
 preflight-sync:
 	@command -v rtk >/dev/null 2>&1 || { \
@@ -165,11 +166,16 @@ sync-codex: preflight-sync banner-codex
 # The OpenCode registration belongs to opencode.json(c), not to this Makefile: `plugin add`
 # is idempotent and writes the Git specifier into the global config, so other checkouts load
 # it too. The checked-in project entry is what makes this repository use it without that.
+# Skills are registered by the loaded package, while role agents and the instructions block come
+# from this checkout, so the two halves only agree when the checkout matches the pushed package.
 sync-opencode: preflight-sync banner-opencode
 	@$(MAKE) register-opencode-rig && \
+	$(MAKE) update-opencode-rig && \
+	$(MAKE) verify-opencode-rig && \
 	$(MAKE) install-opencode-agents && \
 	$(MAKE) setup-opencode && \
-	echo "✓ OpenCode sync complete"
+	echo "✓ OpenCode sync complete" && \
+	echo "  – restart running OpenCode sessions to load the refreshed plugin and skills"
 
 register-opencode-rig:
 	@command -v opencode >/dev/null 2>&1 || { \
@@ -180,23 +186,93 @@ register-opencode-rig:
 		echo "curl is required to verify the pushed package before registering it." >&2; \
 		exit 1; \
 	}; \
-	curl -fsS --max-time 20 "$(OPENCODE_RIG_MANIFEST)" >/dev/null || { \
+	remote_manifest=$$(curl -fsS --max-time 20 "$(OPENCODE_RIG_MANIFEST)" 2>/dev/null) || { \
 		echo "plugins/opencode-rig is not on main yet — commit and push it before syncing." >&2; \
 		exit 1; \
 	}; \
+	remote_version=$$(jq -r '.version // ""' <<<"$$remote_manifest" 2>/dev/null); \
+	local_version=$$(jq -r '.version // ""' "$(OPENCODE_RIG_DIR)/package.json" 2>/dev/null); \
+	if [ -n "$$remote_version" ] && [ -n "$$local_version" ] && [ "$$remote_version" != "$$local_version" ]; then \
+		echo "  ✗ this checkout has opencode-rig $$local_version, GitHub main has $$remote_version" >&2; \
+		echo "    skills load from GitHub, role agents and instructions from this checkout;" >&2; \
+		echo "    commit and push (or pull) so both halves install one version, then rerun." >&2; \
+		exit 1; \
+	fi; \
 	$(call stage,Register OpenCode Rig from GitHub); \
-	opencode plugin add "$(OPENCODE_RIG_SPEC)"
+	python3 "$(TIMEOUT_RUNNER)" --timeout-seconds "$(EXTERNAL_PLUGIN_TIMEOUT_SECONDS)" --label "opencode-rig registration" -- opencode plugin add "$(OPENCODE_RIG_SPEC)"
+
+# `plugin add` only writes the configuration entry: an already-recorded spec is left alone, so the
+# cached Git package keeps the commit it was first installed from and the plugin-loaded skills stay
+# frozen there. `plugin update` is what moves that pin to the branch head; it targets the configured
+# specifier, since the package name is not a configured target.
+# A service still running the previous OpenCode CLI reports the Git package in a shape the current
+# CLI does not recognise, so `plugin update` answers "Plugin is not configured" even though the
+# registration is intact. That is a stale service, not a missing plugin: restart the service once
+# and retry. A service that already matches the CLI is left running, so no session is interrupted
+# for an update that would have succeeded anyway.
+update-opencode-rig:
+	@$(call stage,Refresh OpenCode Rig to the GitHub head); \
+	run_update() { python3 "$(TIMEOUT_RUNNER)" --timeout-seconds "$(EXTERNAL_PLUGIN_TIMEOUT_SECONDS)" --label "opencode-rig update" -- opencode plugin update "$(OPENCODE_RIG_SPEC)"; }; \
+	if update_output=$$(run_update 2>&1); then \
+		printf '%s\n' "$$update_output"; \
+	else \
+		printf '%s\n' "$$update_output" >&2; \
+		case "$$update_output" in \
+			*"Plugin is not configured"*) \
+				echo "  - background service predates this OpenCode CLI; restarting it and retrying the refresh" >&2; \
+				python3 "$(TIMEOUT_RUNNER)" --timeout-seconds "$(EXTERNAL_PLUGIN_TIMEOUT_SECONDS)" --label "opencode-rig service restart" -- opencode service restart || exit 1; \
+				run_update || exit 1 ;; \
+			*) exit 1 ;; \
+		esac; \
+	fi
+
+# A cache install, a stale install record, and an unreachable remote can each report success while
+# the plugin still loads older skills, so compare the version of the cached package a new session
+# loads with the pushed one and fail instead of printing a completion line over a stale package.
+# `opencode plugin list` can trail a fresh update until the server reconciles, and a published
+# registry version has no commit at all, so the installed copy is the signal.
+verify-opencode-rig:
+	@$(call stage,Verify installed opencode-rig is the pushed one); \
+	listed=$$(opencode plugin list 2>/dev/null | awk '$$1 == "opencode-rig" { print $$2; exit }'); \
+	if [ -z "$$listed" ]; then \
+		echo "  ✗ opencode-rig is not registered → opencode plugin add '$(OPENCODE_RIG_SPEC)'" >&2; \
+		exit 1; \
+	fi; \
+	manifest=$$(curl -fsS --max-time 20 "$(OPENCODE_RIG_MANIFEST)" 2>/dev/null) || { \
+		echo "  ⚠ cannot reach $(OPENCODE_RIG_MANIFEST) — skipped the version comparison"; \
+		exit 0; \
+	}; \
+	remote_version=$$(jq -r '.version // ""' <<<"$$manifest" 2>/dev/null); \
+	installed_version=""; \
+	case "$$listed" in \
+		*.*.*) installed_version="$$listed" ;; \
+		*) \
+			installed=$$(ls -t "$(OPENCODE_CACHE_DIR)"/npm/*/*/node_modules/opencode-rig/package.json 2>/dev/null | head -1); \
+			if [ -n "$$installed" ]; then installed_version=$$(jq -r '.version // ""' "$$installed" 2>/dev/null); fi \
+			;; \
+	esac; \
+	if [ -z "$$remote_version" ] || [ -z "$$installed_version" ]; then \
+		echo "  ⚠ could not read both versions — skipped the comparison"; \
+		exit 0; \
+	fi; \
+	if [ "$$installed_version" != "$$remote_version" ]; then \
+		echo "  ✗ installed opencode-rig is $$installed_version, GitHub main publishes $$remote_version" >&2; \
+		echo "    → opencode plugin update '$(OPENCODE_RIG_SPEC)' (then restart the session)" >&2; \
+		exit 1; \
+	fi; \
+	echo "  ✓ opencode-rig $$installed_version is the version GitHub main publishes"
 
 # `plugin add` caches the package for loading but does not link its bin on PATH, so the
 # CLI runs from this checkout. Role cards are packaged assets: sync from pushed state
-# only (commit and push first), exactly like every other install target here.
+# only (commit and push first), exactly like every other install target here. A card the
+# package no longer ships is removed only while it still carries an unedited stamp.
 install-opencode-agents:
 	@command -v node >/dev/null 2>&1 || { \
 		echo "Node.js 20 or newer is required to install the role agents: https://nodejs.org" >&2; \
 		exit 1; \
 	}; \
-	args="--agents-only"; \
-	if [ "$(OPENCODE_RIG_UPGRADE_AGENTS)" = "1" ]; then args="--agents-only --upgrade"; fi; \
+	args="--agents-only --prune-extra"; \
+	if [ "$(OPENCODE_RIG_UPGRADE_AGENTS)" = "1" ]; then args="--agents-only --upgrade --prune-extra"; fi; \
 	node "$(OPENCODE_RIG_DIR)/bin/opencode-rig.mjs" init $$args
 
 # `setup` is the full installation: role agents, the permission-rule merge, and the global
@@ -517,6 +593,9 @@ sync-codex-bridge-consent:
 ## OpenCode plugin targets -----------------------------------------------------
 
 OPENCODE_RIG_DIR := $(PROJECT_DIR)/plugins/opencode-rig
+# `opencode plugin update` installs a fresh timestamped copy here; the newest copy is what a new
+# session loads, so the verification reads it instead of the server's registry view.
+OPENCODE_CACHE_DIR ?= $(HOME)/.cache/opencode
 
 rig-install:
 	@npm --prefix "$(OPENCODE_RIG_DIR)" install --no-audit --no-fund

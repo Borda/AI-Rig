@@ -69,6 +69,41 @@ def test_case_quality_f1_scores_clean_negative_control_as_correct(
 
 
 @pytest.mark.installed_plugin
+def test_historical_observations_keep_their_original_scores(scorer: ModuleType) -> None:
+    """The August lifecycle fixture and October review-choice control still answer their original scenarios."""
+    result = _score_observations(scorer, OBSERVATIONS_PATH)
+    rows = {
+        (row["run_id"], row["case_id"]): (row["tp"], row["fp"], row["fn"], row["f1"]) for row in result["case_results"]
+    }
+
+    assert rows["fixture-v49", "code-remediate-parallel-production-lifecycle"] == (9, 0, 0, 1.0)
+    assert rows["fixture-review-flow-2026-10-03", "code-review-prior-completed-entry-choice"] == (0, 0, 0, 1.0)
+
+
+@pytest.mark.installed_plugin
+def test_parallel_integrity_scenario_scores_old_and_complete_answers(scorer: ModuleType, tmp_path: Path) -> None:
+    """An answer limited to the original lifecycle misses all three additional failures on the expanded scenario."""
+    records = [json.loads(line) for line in OBSERVATIONS_PATH.read_text(encoding="utf-8").splitlines()]
+    old_answer = next(
+        record
+        for record in records
+        if record["run_id"] == "fixture-v49" and record["case_id"] == "code-remediate-parallel-production-lifecycle"
+    )
+    complete = next(record for record in records if record["run_id"] == "fixture-parallel-pr-integrity")
+    partial = {**complete, "run_id": "controlled-partial", "reported_findings": old_answer["reported_findings"]}
+    observations = tmp_path / "integrity.jsonl"
+    observations.write_text(json.dumps(partial) + "\n" + json.dumps(complete) + "\n", encoding="utf-8")
+
+    rows = _score_observations(scorer, observations)["case_results"]
+
+    assert complete["case_id"] == "code-remediate-parallel-pr-integrity"
+    assert {(row["run_id"], row["tp"], row["fp"], row["fn"], row["recall"]) for row in rows} == {
+        ("controlled-partial", 9, 0, 3, 0.75),
+        ("fixture-parallel-pr-integrity", 12, 0, 0, 1.0),
+    }
+
+
+@pytest.mark.installed_plugin
 def test_shipped_negative_controls_add_no_overconfidence(scorer: ModuleType) -> None:
     """Every correctly answered shipped negative-control row carries zero overconfidence and F1 1.0.
 
