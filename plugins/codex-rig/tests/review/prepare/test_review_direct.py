@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 from _artifact_files import read_json, read_jsonl
-from test_review_prepare import HELPER, _remove_review_input_templates, _review_inputs, _write_jsonl
+from test_review_prepare import HELPER, _assembly_evidence, _remove_review_input_templates, _review_inputs, _write_jsonl
 
 OPAQUE_MESSAGE = "gAAAA-retained-host-opaque-message"
 OTHER_CHILD_MESSAGE = "gAAAA-other-child-message"
@@ -180,6 +180,70 @@ def _assemble_direct(run: Path, home: Path) -> subprocess.CompletedProcess[str]:
         text=True,
         check=False,
     )
+
+
+@pytest.fixture(params=["direct", "paged"])
+def child_context_evidence(request: pytest.FixtureRequest, tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Prepare a completed native review and select one child from its actual dispatch."""
+    if request.param == "direct":
+        run, home = _direct_evidence(tmp_path)
+        return run, home, home / "sessions/rollout-child-0.jsonl"
+    run, home, children = _assembly_evidence(tmp_path)
+    return run, home, children["challenger"]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("initial_fields", "replayed_fields", "accepted"),
+    [
+        pytest.param({}, {}, True, id="identical-context"),
+        pytest.param({}, {"model": "different-model"}, False, id="conflicting-model"),
+        pytest.param({}, {"effort": "different-effort"}, False, id="conflicting-effort"),
+        pytest.param({"effort": None}, {}, False, id="missing-effort-in-both"),
+        pytest.param(
+            {"sandbox_policy": {"network_access": False}},
+            {"sandbox_policy": {"network_access": 0}},
+            False,
+            id="conflicting-control-type",
+        ),
+    ],
+)
+def test_replayed_child_context_binds_to_original_receipt(
+    child_context_evidence: tuple[Path, Path, Path], initial_fields: dict, replayed_fields: dict, accepted: bool
+) -> None:
+    """Both assembly and independent intake require all context payloads for the selected child turn to agree."""
+    run, home, child_path = child_context_evidence
+    baseline = _assemble_direct(run, home)
+    assert baseline.returncode == 0, baseline.stderr
+    manifest_path = run / "specialist-manifest.json"
+    original = manifest_path.read_bytes()
+    child = read_jsonl(child_path)
+    context = next(row for row in child if row["type"] == "turn_context")
+    context["payload"].update(initial_fields)
+    replay = {**context, "timestamp": "2026-01-01T10:00:04.000Z", "payload": {**context["payload"], **replayed_fields}}
+    _write_jsonl(child_path, [*child[:-1], replay, child[-1]])
+
+    assembled = _assemble_direct(run, home)
+    validated = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER.with_name("validate_artifacts.py")),
+            "--out",
+            str(run),
+            "--manifest-only",
+            "--codex-home",
+            str(home),
+            "--parent-thread-id",
+            "parent",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert (assembled.returncode == 0) == accepted, assembled.stderr
+    assert (validated.returncode == 0) == accepted, validated.stderr
+    assert manifest_path.read_bytes() == original
 
 
 def _retry_direct(run: Path, home: Path, role: str) -> subprocess.CompletedProcess[str]:
@@ -865,6 +929,45 @@ class TestDirectCoverage:
 @pytest.mark.integration
 class TestDirectRetry:
     """Protect the bounded replacement of a failed or source-incomplete direct review task."""
+
+    @pytest.mark.parametrize(
+        ("fields", "allowed"),
+        [
+            pytest.param({}, True, id="identical-context"),
+            pytest.param({"model": "different-model"}, False, id="conflicting-context"),
+            pytest.param({"turn_id": "another-turn"}, False, id="additional-turn"),
+        ],
+    )
+    def test_partial_retry_authenticates_replayed_context(
+        self, partial_run: SimpleNamespace, fields: dict, allowed: bool
+    ) -> None:
+        """Replacement after a completed partial report retains every replayed row and requires one consistent turn."""
+        run, home, role = partial_run.run, partial_run.home, partial_run.role
+        path = home / "sessions/rollout-child-0.jsonl"
+        child = read_jsonl(path)
+        context = next(row for row in child if row["type"] == "turn_context")
+        replay = {**context, "timestamp": "2026-01-01T10:00:04.000Z", "payload": {**context["payload"], **fields}}
+        retained = [*child[:-1], replay, child[-1]]
+        _write_jsonl(path, retained)
+
+        retry = _retry_direct(run, home, role)
+
+        assert (retry.returncode == 0) == allowed, retry.stderr
+        assert (run / f"retry/{role}.json").exists() == allowed
+        assert read_jsonl(path) == retained
+
+    def test_aborted_retry_rejects_replayed_context(self, aborted_run: SimpleNamespace) -> None:
+        """The single-context proof for an aborted child remains required."""
+        run, home, role = aborted_run.run, aborted_run.home, aborted_run.role
+        path = home / "sessions/rollout-child-0.jsonl"
+        child = read_jsonl(path)
+        context = next(row for row in child if row["type"] == "turn_context")
+        _write_jsonl(path, [*child[:-1], context, child[-1]])
+
+        retry = _retry_direct(run, home, role)
+
+        assert "review-direct-failure-child-controls-invalid" in retry.stderr
+        assert not (run / f"retry/{role}.json").exists()
 
     @pytest.mark.parametrize("schema", [2, 3])
     def test_unreadable_session_prevents_no_child_retry(self, evidence: tuple[Path, Path], schema: int) -> None:

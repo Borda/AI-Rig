@@ -30,6 +30,8 @@ When chunk results are pending or non-clean, keep a separate schema-1 partial re
 
 > Current validation applies the same table, scope, action, source, and reviewer evidence checks to candidate and canonical results. Old JSON can be inspected as archive data; its filename does not grant current completion. A clean child or interaction result remains scoped evidence for the coordinator, which still needs its independent interaction and final coverage checks.
 
+When the acceptance criteria call for passing runtime checks, run those checks before freezing a read-only challenger’s brief. Include the command, exit status, observed result and source identity in the frozen specification so the challenger can assess whether the checks cover the assigned behavior. Disclose missing or stale checks as such. Preserve the readiness the challenger actually returns.
+
 ## Bind existing reviewers
 
 Keep `loop-evidence.json` alongside `loop-ledger.json`:
@@ -87,6 +89,8 @@ For local reviewer waves, require one raw JSON object with the fields below, wit
 Native assessments use the two-field `rating`/`rationale` contract shown above. A source-rated local reviewer wave additionally supplies `source_rating_version: 1` and `verification_readiness: "complete"`; incomplete or blocked assessments cannot certify a challenge round. Choose a rating consistent with `judgment` (1 for clean).
 
 For current native preparation, pass `--challenge-only` to both `review_prepare.py prepare` and `assemble`. Declare exactly one `challenger` in `review-routing.json` and `review-briefs.json`; the challenger brief contains the exact `Review request:`, `Frozen source:`, `Frozen diff:`, and optional `Supporting source:` envelope defined above, ending immediately after its final newline. Preparation retains the role card followed by that exact brief, validates selected source coverage, and does not append the ordinary Code Review task wrapper or source excerpts. Ordinary preparation retains its multi-axis routing contract.
+
+Fresh native schema-3 evidence binds version 2 of the challenge response contract. Each `open` or `fixed-pending-verification` finding must include a separate evidence string beginning exactly `invariant:` followed by the violated requirement. Include source evidence and reuse the invariant wording for repeated findings so the parent can bind its action to the reviewer's finding. A missing invariant requires a fresh independent assessment. Retained version-1 responses use their original contract.
 
 If the first native context read fails before any source evidence is available, retain a preassessment blocker with `source_sha256: null`, `diff_sha256: null`, `findings: []`, and assessment rating 5 plus a nonempty failure rationale. Only authenticated `incomplete-dispatch` recovery may read this unavailable-digest receipt, after proving no source was delivered and an observed malformed reader call failed. It certifies no source inspection or coverage and cannot become a loop round or completed review. Replacement inspection still requires the supplied exact digests and ordinary authenticated source/context/output evidence. Never invent unavailable digests.
 

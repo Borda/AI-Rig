@@ -588,9 +588,13 @@ class TestSetupConsent:
         """Sync keeps an operator's exact v1 block once and leaves the upgrade to the operator's own grant."""
         home = tmp_path / "codex-home"
         home.mkdir()
-        legacy = (ROOT / "plugins/bridge_cc-codex/rules/claude-transfer-policy-v1.txt").read_text(encoding="utf-8").strip()
+        legacy = (
+            (ROOT / "plugins/bridge_cc-codex/rules/claude-transfer-policy-v1.txt").read_text(encoding="utf-8").strip()
+        )
         config = home / "config.toml"
-        config.write_text('[auto_review]\npolicy = "primary"\nextra_policy = ' + json.dumps(legacy) + "\n", encoding="utf-8")
+        config.write_text(
+            '[auto_review]\npolicy = "primary"\nextra_policy = ' + json.dumps(legacy) + "\n", encoding="utf-8"
+        )
 
         namespace["sync"](SOURCE_CONFIG, SOURCE_POLICY, home)
 
@@ -663,7 +667,7 @@ class TestExtraPolicy:
             "only these project plugins",
             "every skill and flow in these plugins",
             "Normal substitutions",
-            "Never approve git push",
+            "Never approve a force-push or any remote mutation outside the PR worktree publication gate",
         )
 
         assert missing_phrases(extra_policy, phrases) == []
@@ -765,7 +769,7 @@ class TestExtraPolicy:
                 "task need neither a grant nor that question.",
                 id="non-commit-operations-need-no-authority",
             ),
-            pytest.param("The remote-mutation prohibition that follows it applies in every repository", id="push-ban"),
+            pytest.param("This local grant does not authorize publication in any repository.", id="no-publish-grant"),
             pytest.param(
                 "An escalated local Git request relies on that record only when its approval brief states it as "
                 "`git-approval: grant .git/codex-git-approval.json@<created_at>`",
@@ -788,15 +792,76 @@ class TestExtraPolicy:
         assert marker in extra_policy
         assert extra_policy.index(marker) < extra_policy.index(_core_git_paragraph(extra_policy))
 
-    def test_projected_git_grant_keeps_remote_mutation_ban(self, extra_policy: str) -> None:
-        """The grant paragraphs sit before the unchanged push ban, which still forbids every remote mutation.
+    def test_projected_git_grant_excludes_worktree_publication(self, extra_policy: str) -> None:
+        """Require runtime review of each verified one-ref push regardless of a local commit grant."""
+        boundary = "Never approve a force-push or any remote mutation outside the PR worktree publication gate."
+        assert extra_policy.index(_core_git_paragraph(extra_policy)) < extra_policy.index(boundary)
+        assert (
+            missing_phrases(
+                extra_policy,
+                (
+                    "The gate is excluded from recipe preapproval.",
+                    "For a successful PR-mode Code Remediate --worktree run only",
+                    "matching native Approve receipt",
+                    "sole refs/heads destination",
+                    "wrappers, force variants and reusable grants",
+                    "does not override a managed restriction or prior denial",
+                ),
+            )
+            == []
+        )
 
-        A grant covers local operations only; the projected policy must keep refusing ``git push`` and force-push
-        whether or not a checkout holds a grant.
+    def test_publication_policy_admits_only_the_contract_single_retry(self, extra_policy: str) -> None:
+        """The reviewer accepts the one retry the publication gate documents and still rejects every other retry.
+
+        The gate asks the user before one rerun after a refused pre-send check and then requests a fresh one-time
+        approval. A policy that rejected all retries would turn that documented Retry answer into a skipped publication,
+        so the policy names the same reason code, marker and question as the contract.
         """
-        ban = "Never approve git push, force-push, or another remote repository mutation under this policy."
+        assert "force variants, retries and reusable grants" not in extra_policy
+        sentences = extra_policy.split(". ")
+        admitted = next(sentence for sentence in sentences if sentence.startswith("Evaluate exactly one retry"))
+        for fragment in (
+            "fresh one-time runtime request for the same helper with the same run directory and offer digest",
+            "only when the helper reported `not-sent` with reason `publication-push-precheck-failed`",
+            "no execution marker `publication-executed` and no terminal record",
+            "the user's native Retry answer for decision `pr-worktree-publication-retry-<offer SHA-256>`",
+        ):
+            assert fragment in admitted
+        rejected = next(sentence for sentence in sentences if sentence.startswith("Reject every other retry"))
+        for fragment in (
+            "a second retry",
+            "a retry after any other reason",
+            "any run once the execution marker or a terminal record",
+        ):
+            assert fragment in rejected
+        assert "at most one retry of it" in extra_policy
+        contract = (ROOT / "plugins/codex-rig/shared/native-skill-contract.md").read_text(encoding="utf-8")
+        retry_step = next(line for line in contract.splitlines() if "pr-worktree-publication-retry-" in line)
+        for literal in (
+            "`publication-push-precheck-failed`",
+            "`publication-executed`",
+            "`publication.json`",
+            "pr-worktree-publication-retry-<offer SHA-256>",
+            "fresh one-time runtime approval for the same helper command",
+        ):
+            assert literal in retry_step
 
-        assert extra_policy.index(_core_git_paragraph(extra_policy)) < extra_policy.index(ban)
+    def test_publication_retry_policy_names_exactly_the_helpers_terminal_records(self, extra_policy: str) -> None:
+        """The policy closes the retry on the same records that make the helper refuse, no fewer and no more.
+
+        A policy naming fewer records would admit a retry the helper then refuses before its marker; one naming more
+        would reject a retry the gate documents. Every terminal-record list in the retry rules is compared with the
+        helper's own constant.
+        """
+        helper = runpy.run_path(str(ROOT / "plugins/codex-rig/shared/worktree_publication.py"))
+        terminal = set(helper["TERMINAL_RECORDS"])
+        sentences = extra_policy.split(". ")
+        for start in ("Evaluate exactly one retry", "Reject every other retry"):
+            sentence = next(sentence for sentence in sentences if sentence.startswith(start))
+            listed = re.search(r"terminal record \(([^)]*)\)", sentence)
+            assert listed is not None, start
+            assert set(re.findall(r"`([^`]+)`", listed.group(1))) == terminal, start
 
     def test_excludes_spawned_child_commits(self, extra_policy: str) -> None:
         """A spawned child agent's own stage or commit request is not covered by the projected auto-review policy.
@@ -823,6 +888,8 @@ class TestExtraPolicy:
             "current workspace binding",
             "implementation stays within the authorized edit scope",
             "Keep native user workspace confirmation",
+            "bridge_bind_workspace call is what raises that native confirmation form",
+            "allowed before any confirmation exists",
             "setup changes, authentication, and setup verify-live",
             "not an arbitrary MCP, shell, or interpreter grant",
             "paid calls not preapproved above",
@@ -832,8 +899,6 @@ class TestExtraPolicy:
         assert set(re.findall(r"\bbridge_[a-z_]+\b", extra_policy)) == tools
         assert missing_phrases(extra_policy, phrases) == []
 
-            "bridge_bind_workspace call is what raises that native confirmation form",
-            "allowed before any confirmation exists",
     def test_github_reads_reuse_the_opt_in_profile(self) -> None:
         """The default permission profile has no network and ``github-read`` opts in to GitHub only.
 
@@ -924,9 +989,8 @@ class TestCodexReadme:
                 id="claude-push-once-token",
             ),
             pytest.param(
-                "Codex has no such token: the `extra_policy` above never approves `git push`, force-push or another "
-                "remote mutation; Codex leaves those actions to the human and never asks approval for them",
-                id="codex-remote-mutations-human-owned",
+                "It requires a native user answer and separate one-time runtime approval.",
+                id="codex-pr-worktree-publication-approval",
             ),
             pytest.param("Force operations are forbidden on both hosts.", id="force-forbidden"),
             pytest.param(

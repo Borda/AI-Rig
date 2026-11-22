@@ -7,110 +7,596 @@ exercise filename framing and inspection failures without depending on host file
 
 from __future__ import annotations
 
-import base64
+import errno
 import hashlib
-import importlib.util
 import json
 import os
 import re
-import shlex
+import shutil
 import subprocess
 import sys
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
 import pytest
+from _gate_runner_support import (
+    CODEX_TRAILER,
+    PLUGIN_ROOT,
+    RUN_GATES,
+    _foreign_file,
+    _gate_check,
+    _git,
+    _git_steps,
+    _initialize_repository,
+    _interrupt_before_install,
+    _listing,
+    _load_run_gates,
+    _load_validator,
+    _marker_command,
+    _passing_proof,
+    _PendingPublication,
+    _python_command,
+    _receipt_text,
+    _rewrite_after_manifest_install,
+    _run,
+    _run_lint_gate,
+    _skip_gates,
+    _swap_directory,
+)
 from _modules import load_module
+from _platform import DIRECTORY_SYMLINKS_AVAILABLE, FILE_SYMLINKS_AVAILABLE, HARD_LINKS_AVAILABLE
 
-PLUGIN_ROOT = Path(__file__).resolve().parents[3]
-RUN_GATES = PLUGIN_ROOT / "shared" / "run_gates.py"
-GATE_IDS = ("lint", "format", "types", "tests", "review")
-CODEX_TRAILER = "Co-authored-by: Codex <codex@openai.com>"
 SOURCE_DIRTY_STATUS = "source-dirty"
 HEAD_MISMATCH = "source-head-mismatch"
 INVALID_FAIL_EXIT_CODE = "gate-check-invalid-fail-exit-code"
 
 
-def _git(repository: Path, *arguments: str) -> str:
-    """Run one successful local Git command and return its standard output."""
-    completed = subprocess.run(["git", *arguments], cwd=repository, capture_output=True, text=True, check=False)
-    assert completed.returncode == 0, completed.stderr
-    return completed.stdout.strip()
+def test_free_form_retry_preserves_unreferenced_inventories(tmp_path: Path) -> None:
+    """Inventory-shaped files outside the prior receipt keep their public names and stay out of its archive."""
+    output = tmp_path / "review"
+    assert _run_lint_gate(tmp_path, output, None, _python_command("print('first')")).returncode == 0
+    matched = hashlib.sha256(b"other owner").hexdigest()
+    foreign = [output / "checks" / f"tracked-source-{digest}.bin" for digest in ("a" * 64, matched)]
+    for path in foreign:
+        path.write_bytes(b"other owner")
+    identities = [path.stat() for path in foreign]
+    retry = _run_lint_gate(tmp_path, output, None, _python_command("print('second')"))
+    assert retry.returncode == 0, retry.stderr
+    archive = output / "gate-attempts/001"
+    for path, identity in zip(foreign, identities):
+        assert path.is_file()
+        assert os.path.samestat(identity, path.stat())
+        assert path.read_bytes() == b"other owner"
+        assert not (archive / "checks" / path.name).exists()
+    assert not (archive / "tracked-source-errors.json").exists()
+    assert _load_validator()._validate_gates(archive)["checks_failed"] == []
 
 
-def _git_steps(repository: Path, steps: list[tuple[str, ...]]) -> None:
-    """Run each listed Git command in order inside one repository."""
-    for step in steps:
-        _git(repository, *step)
+def test_candidate_ignores_inventory_files_absent_from_its_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unreferenced staged files cannot install new inputs or displace an intact public input."""
+    output = tmp_path / "review"
+    assert _run_lint_gate(tmp_path, output, None, _python_command("print('first')")).returncode == 0
+    public_bytes = b"retained input"
+    name = f"tracked-source-{hashlib.sha256(public_bytes).hexdigest()}.bin"
+    public = output / "checks" / name
+    public.write_bytes(public_bytes)
+    identity = public.stat()
+    extra = f"tracked-source-{hashlib.sha256(b'new input').hexdigest()}.bin"
+    gates = _load_run_gates(monkeypatch)
+    original = gates.run_check
+
+    def capture(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        record = original(*args, **kwargs)
+        if record["id"] == "review":
+            staged_checks = args[4] / "checks"
+            (staged_checks / name).write_bytes(b"different staged bytes")
+            (staged_checks / extra).write_bytes(b"new input")
+        return record
+
+    monkeypatch.setattr(gates, "run_check", capture)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [str(RUN_GATES), "--out", str(output), "--lint", _python_command("print('second')"), *_skip_gates("lint")],
+    )
+    assert gates.main() == 0
+    assert public.read_bytes() == public_bytes
+    assert os.path.samestat(identity, public.stat())
+    assert not (output / "checks" / extra).exists()
+    assert _load_validator()._validate_gates(output / "gate-attempts/001")["checks_failed"] == []
 
 
-def _initialize_repository(repository: Path) -> str:
-    """Create a clean committed repository whose commits retain Codex attribution."""
-    _git(repository, "init", "-q")
-    _git(repository, "config", "user.name", "Codex Rig Test")
-    _git(repository, "config", "user.email", "codex-rig@example.invalid")
-    (repository / "tracked.txt").write_text("base\n", encoding="utf-8", newline="\n")
-    _git(repository, "add", "tracked.txt")
-    _git(repository, "commit", "-m", f"fixture\n\n{CODEX_TRAILER}")
-    return _git(repository, "rev-parse", "HEAD")
+@pytest.mark.parametrize("failure", ["interrupted", "rejected"])
+def test_unpublished_structured_attempt_keeps_inventory_private(
+    repository: Path, output: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], failure: str
+) -> None:
+    """A stopped or invalid candidate leaves the previous report intact and no new public inventory."""
+    (repository / "example.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (repository / "test_example.py").write_text("import example\ndef test_value(): assert example.VALUE == 1\n")
+    _git(repository, "add", ".")
+    _git(repository, "commit", "-m", f"test fixture\n\n{CODEX_TRAILER}")
+    assert _run_lint_gate(repository, output, None, _python_command("print('prior')")).returncode == 0
+    previous = (output / "gates.json").read_bytes()
+    command = TestPytestGateRecovery._tests_gate_command(
+        output,
+        repository,
+        _git(repository, "rev-parse", "HEAD"),
+        sys.executable,
+        "--pytest-args-json",
+        json.dumps(["-q", "-p", "no:xdist", "-p", "no:cacheprovider"]),
+    )
+    gates = _load_run_gates(monkeypatch)
+    validate = gates._validate_staged_gates
+    visited = []
+
+    def stop_candidate(stage: Path, *args: Any) -> dict[str, Any]:
+        if stage.parent == output:
+            assert _gate_check(stage, "tests")["python_imports"]["status"] == "pass"
+            inventory = next((stage / "checks").glob("tracked-source-*.bin"))
+            assert not (output / "checks" / inventory.name).exists()
+            visited.append(inventory.name)
+            if failure == "interrupted":
+                raise InterruptedError("candidate validation interrupted")
+            inventory.write_bytes(b"invalid candidate")
+        return validate(stage, *args)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "argv", command[1:])
+        patch.setattr(gates, "_validate_staged_gates", stop_candidate)
+        assert gates.main() == 2
+    diagnostic = "candidate validation interrupted" if failure == "interrupted" else "gate-evidence-digest-mismatch"
+    assert diagnostic in capsys.readouterr().err
+    assert len(visited) == 1
+    public = output / "checks" / visited[0]
+    assert not public.exists()
+    assert (output / "gates.json").read_bytes() == previous
+    assert not (output / "gate-attempts/001").exists()
+    validator = _load_validator()
+    assert validator._validate_gates(output)["checks_failed"] == []
+    retry = _run(command)
+    assert retry.returncode == 0, retry.stderr
+    current = validator._validate_gates(output)
+    check = next(row for row in current["checks"] if row["id"] == "tests")
+    assert check["source"]["artifacts"][f"checks/{public.name}"] == hashlib.sha256(public.read_bytes()).hexdigest()
+    assert validator._validate_gates(output / "gate-attempts/001")["checks_failed"] == []
+    assert (output / "gate-attempts/001/gates.json").read_bytes() == previous
 
 
-def _python_command(source: str) -> str:
-    """Return a native-shell command that executes portable encoded Python source."""
-    encoded = base64.b64encode(source.encode("utf-8")).decode("ascii")
-    if sys.platform == "win32":
-        executable = "& '" + sys.executable.replace("'", "''") + "'"
-    else:
-        executable = shlex.quote(sys.executable)
-    return f"{executable} -c \"import base64;exec(compile(base64.b64decode('{encoded}'), '<gate>', 'exec'))\""
+@pytest.mark.parametrize(
+    "missing",
+    [
+        pytest.param("gates.txt", id="gate-statuses"),
+        pytest.param("failed.txt", id="failure-list"),
+        pytest.param("gates.checks.jsonl", id="gate-records"),
+    ],
+)
+def test_retry_requires_all_prior_summaries(tmp_path: Path, missing: str) -> None:
+    """A missing summary blocks commands and archive publication until the complete previous attempt is available."""
+    output = tmp_path / "review"
+    assert _run_lint_gate(tmp_path, output, None, _python_command("print('first')")).returncode == 0
+    summaries = {name: (output / name).read_bytes() for name in ("gates.txt", "failed.txt", "gates.checks.jsonl")}
+    prior = (output / "gates.json").read_bytes()
+    removed = output / missing
+    removed.unlink()
+    marker = tmp_path / "second-ran"
+    retry = _run_lint_gate(tmp_path, output, None, _marker_command(marker))
+    assert retry.returncode == 2, retry.stderr
+    assert missing in retry.stderr
+    assert not marker.exists()
+    assert (output / "gates.json").read_bytes() == prior
+    assert not (output / "gate-attempts/001").exists()
+    removed.write_bytes(summaries[missing])
+    retry = _run_lint_gate(tmp_path, output, None, _marker_command(marker))
+    assert retry.returncode == 0, retry.stderr
+    assert marker.is_file()
+    archive = output / "gate-attempts/001"
+    assert (archive / "gates.json").read_bytes() == prior
+    assert {name: (archive / name).read_bytes() for name in summaries} == summaries
 
 
-def _marker_command(marker: Path) -> str:
-    """Return a gate command whose only effect is to create ``marker``, proving the command ran."""
-    return _python_command(f"from pathlib import Path; Path({str(marker)!r}).write_text('ran', encoding='utf-8')")
+@pytest.mark.parametrize("reason", [pytest.param("", id="empty"), pytest.param(" \t ", id="whitespace")])
+def test_explicit_blank_skip_reason_is_rejected_before_execution(tmp_path: Path, reason: str) -> None:
+    """A supplied blank reason rejects the command line before another gate can have side effects."""
+    output = tmp_path / "review"
+    assert _run_lint_gate(tmp_path, output, None, _python_command("print('first')")).returncode == 0
+    prior = (output / "gates.json").read_bytes()
+    marker = tmp_path / "lint-ran"
+    args = [
+        sys.executable,
+        str(RUN_GATES),
+        "--out",
+        str(output),
+        "--lint",
+        _marker_command(marker),
+        "--format",
+        _python_command("print('format')"),
+        *_skip_gates("lint"),
+    ]
+    args[args.index("--skip-format") + 1] = reason
+    rejected = _run(args, cwd=tmp_path)
+    assert not marker.exists()
+    assert rejected.returncode == 2, rejected.stderr
+    assert "--skip-format" in rejected.stderr
+    assert "invalid-skip-reason" in rejected.stderr
+    assert (output / "gates.json").read_bytes() == prior
+    assert not (output / "gate-attempts/001").exists()
+    args[args.index("--skip-format") + 1] = "explicitly skipped"
+    assert _run(args, cwd=tmp_path).returncode == 0
+    assert marker.exists()
+    assert (output / "gate-attempts/001/gates.json").read_bytes() == prior
 
 
-def _skip_gates(keep: str) -> list[str]:
-    """Return the options that declare every canonical gate except ``keep`` out of scope."""
-    return [part for gate in GATE_IDS if gate != keep for part in (f"--skip-{gate}", "out of scope")]
+def test_running_retry_keeps_previous_report_complete(tmp_path: Path) -> None:
+    """The second command can read all of the first receipt before the second attempt is published."""
+    output = tmp_path / "review"
+    first = _run_lint_gate(tmp_path, output, None, _python_command("print('previous')"))
+    assert first.returncode == 0, first.stderr
+    check = _gate_check(output, "lint")
+    paths = [output / name for name in ("gates.json", check["command_path"], check["stdout"], check["stderr"])]
+    expected = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+    competing = [sys.executable, str(RUN_GATES), "--out", str(output), "--skip-lint", "unused", *_skip_gates("lint")]
+    probe = _python_command(
+        "import hashlib, subprocess; from pathlib import Path; "
+        f"other = subprocess.run({competing!r}, capture_output=True); "
+        "assert other.returncode == 2 and b'gate-writer-busy' in other.stderr; "
+        f"saved = {expected!r}; assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==s for p,s in saved.items()); "
+        f"assert not Path({str(output / '.gate-publication.json')!r}).exists(); print('next')"
+    )
+    second = _run_lint_gate(tmp_path, output, None, probe)
+    assert second.returncode == 0, second.stderr
+    validator = _load_validator()
+    assert validator._validate_gates(output)["checks_failed"] == []
+    assert validator._validate_gates(output / "gate-attempts/001")["checks_failed"] == []
 
 
-def _run(
-    arguments: list[str], cwd: Path | None = None, env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
-    """Run one command to completion, capturing text output and never raising on a failing exit status."""
-    return subprocess.run(arguments, cwd=cwd, env=env, capture_output=True, text=True, check=False)
+def test_damage_marker_created_during_gate_execution_blocks_publication(tmp_path: Path) -> None:
+    """A marker appearing after preflight keeps its bytes and prevents a successful unreadable publication."""
+    output = tmp_path / "review"
+    marker = output / "gate-log-errors.json"
+    result = _run_lint_gate(tmp_path, output, None, _marker_command(marker))
+    assert result.returncode == 2, result.stderr
+    assert marker.read_bytes() == b"ran"
+    assert not (output / "gates.json").exists()
+    assert not (output / ".gate-publication.json").exists()
+    with pytest.raises(SystemExit, match="gate-evidence-damaged-gate-log"):
+        _load_validator()._validate_gates(output)
 
 
-def _run_lint_gate(
-    repository: Path, output: Path, expected_head: str | None, command: str, worktree: Path | None = None
-) -> subprocess.CompletedProcess[str]:
-    """Run one executable lint check while declaring the other canonical gates unavailable."""
-    arguments = [sys.executable, str(RUN_GATES), "--out", str(output), "--lint", command]
-    if expected_head is not None:
-        arguments.extend(("--expected-head", expected_head))
-    if worktree is not None:
-        arguments.extend(("--worktree", str(worktree)))
-    return _run([*arguments, *_skip_gates("lint")], cwd=repository)
+def test_damage_marker_appearing_during_install_keeps_journal_until_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The public reader refuses a candidate interrupted by a new damage marker during manifest installation."""
+    output = tmp_path / "review"
+    marker = output / "gate-log-errors.json"
+    runner = _load_run_gates(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [str(RUN_GATES), "--out", str(output), "--lint", _python_command("print('first')"), *_skip_gates("lint")],
+    )
+    replace = os.replace
+
+    def mark_installed_candidate(source: str | Path, destination: str | Path) -> None:
+        """Model an independent marker writer at the installation boundary."""
+        replace(source, destination)
+        if Path(destination) == output / "gates.json":
+            marker.write_bytes(b"independent damage report")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "replace", mark_installed_candidate)
+        assert runner.main() == 2
+    journal = output / ".gate-publication.json"
+    assert journal.exists()
+    assert marker.read_bytes() == b"independent damage report"
+    validator = _load_validator()
+    with pytest.raises(SystemExit, match="gate-publication-in-progress"):
+        validator._validate_gates(output)
+    second = tmp_path / "second-command"
+    assert _run_lint_gate(tmp_path, output, None, _marker_command(second)).returncode == 2
+    assert not second.exists()
+    assert marker.read_bytes() == b"independent damage report"
+    marker.rename(tmp_path / "retained-damage-report")
+    retry = _run_lint_gate(tmp_path, output, None, _marker_command(second))
+    assert retry.returncode == 0, retry.stderr
+    assert second.exists()
+    assert not journal.exists()
+    assert validator._validate_gates(output / "gate-attempts/001")["status"] == "pass"
+    assert validator._validate_gates(output)["status"] == "pass"
 
 
-def _gate_check(output: Path, gate_id: str) -> dict[str, Any]:
-    """Load one generated gate record by id from a ``run_gates.py`` output directory."""
-    payload = json.loads((output / "gates.json").read_text(encoding="utf-8"))
-    return next(check for check in payload["checks"] if check["id"] == gate_id)
+def test_interrupted_publication_recovers_without_mixed_completed_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed file install withdraws the old manifest and the next writer finishes the authenticated candidate."""
+    output = tmp_path / "review"
+    assert _run_lint_gate(tmp_path, output, None, _python_command("print('old')")).returncode == 0
+    prior = (output / "gates.json").read_bytes()
+    gates = _load_run_gates(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [str(RUN_GATES), "--out", str(output), "--lint", _python_command("print('second')"), *_skip_gates("lint")],
+    )
+    replace = os.replace
+
+    def interrupt(source: str | Path, destination: str | Path) -> None:
+        if Path(destination) == output / "checks/lint.stdout.txt":
+            raise OSError("interrupted-publication")
+        replace(source, destination)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "replace", interrupt)
+        assert gates.main() == 2
+    assert (output / ".gate-publication.json").is_file()
+    assert not (output / "gates.json").exists()
+    assert (output / "gate-attempts/001/gates.json").read_bytes() == prior
+    validator = _load_validator()
+    with pytest.raises(SystemExit):
+        validator._validate_gates(output)
+    assert validator._validate_gates(output / "gate-attempts/001")["checks_failed"] == []
+    assert _run_lint_gate(tmp_path, output, None, _python_command("print('third')")).returncode == 0
+    assert not (output / ".gate-publication.json").exists()
+    assert validator._validate_gates(output / "gate-attempts/002")["checks_failed"] == []
+    assert (output / "gate-attempts/002/checks/lint.stdout.txt").read_text().strip() == "second"
+    assert validator._validate_gates(output)["checks_failed"] == []
 
 
-def _receipt_text(output: Path, check: dict[str, Any], stream: str = "stderr") -> str:
-    """Read the stdout or stderr receipt file that a gate record points at."""
-    return (output / str(check[stream])).read_text(encoding="utf-8")
+def test_resume_rechecks_inventory_membership_from_the_candidate_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An older sealed plan containing an extra inventory must stop before it changes the previous attempt."""
+    output = tmp_path / "review"
+    assert _run_lint_gate(tmp_path, output, None, _python_command("print('first')")).returncode == 0
+    prior = (output / "gates.json").read_bytes()
+    content = b"older public input"
+    name = f"checks/tracked-source-{hashlib.sha256(content).hexdigest()}.bin"
+    public = output / name
+    public.write_bytes(content)
+    identity = public.stat()
+    gates = _load_run_gates(monkeypatch)
+    finish = gates._finish_publication
+    marker = output / ".gate-publication.json"
+
+    def stop_before_install(root: Path) -> None:
+        if marker.exists():
+            raise OSError("simulated interruption")
+        finish(root)
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [str(RUN_GATES), "--out", str(output), "--lint", _python_command("print('second')"), *_skip_gates("lint")],
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr(gates, "_finish_publication", stop_before_install)
+        assert gates.main() == 2
+    owner = json.loads(marker.read_bytes())
+    stage = output / owner["stage"]
+    plan_path = stage / "publication.json"
+    plan = json.loads(plan_path.read_bytes())
+    (stage / name).write_bytes(b"unreferenced bytes")
+    plan["before"][name] = gates._file_state(public)
+    plan["after"][name] = hashlib.sha256((stage / name).read_bytes()).hexdigest()
+    plan_path.write_bytes(json.dumps(plan).encode())
+    owner["sha256"] = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    marker.write_bytes(json.dumps(owner).encode())
+    capsys.readouterr()
+    assert gates.main() == 2
+    assert "gate-recovery-blocked:gate-publication-unowned-inventory" in capsys.readouterr().err
+    assert marker.is_file()
+    assert (output / "gates.json").read_bytes() == prior
+    assert os.path.samestat(identity, public.stat())
+    assert public.read_bytes() == content
 
 
-def _load_validator() -> Any:
-    """Load the shared artifact validator without requiring a package import."""
-    return load_module("gate_artifact_validator", PLUGIN_ROOT / "shared/validate-artifacts.py")
+def _occupy_archive_slot(pending: _PendingPublication, outside: Path) -> Callable[[], object]:
+    """Fill the numbered history slot sealed into the journal with another owner's file."""
+    return _foreign_file(pending.output / "gate-attempts/001/occupant")
+
+
+def _change_staged_log(pending: _PendingPublication, outside: Path) -> Callable[[], object]:
+    """Rewrite a staged log the receipt does not authenticate, after the journal sealed its digest."""
+    (pending.stage / "checks/lint.stdout.txt").write_bytes(b"changed candidate\n")
+    return (pending.output / "checks/lint.stdout.txt").read_bytes
+
+
+def _occupy_withdrawn_manifest(pending: _PendingPublication, outside: Path) -> Callable[[], object]:
+    """Place another owner's file at the private name that receives the withdrawn live manifest."""
+    return _foreign_file(pending.stage / "previous-manifest")
+
+
+def _redirect_history_root(pending: _PendingPublication, outside: Path) -> Callable[[], object]:
+    """Replace the empty history root created for this archive by a link to an outside directory."""
+    history = pending.output / "gate-attempts"
+    history.rmdir()
+    history.symlink_to(outside, target_is_directory=True)
+    return _listing(outside)
+
+
+def _redirect_archive_slot(pending: _PendingPublication, outside: Path) -> Callable[[], object]:
+    """Place a link to an outside directory at the numbered history slot sealed into the journal."""
+    (pending.output / "gate-attempts/001").symlink_to(outside, target_is_directory=True)
+    return _listing(outside)
+
+
+_NEEDS_DIRECTORY_LINKS = pytest.mark.skipif(not DIRECTORY_SYMLINKS_AVAILABLE, reason="host cannot link directories")
+
+
+@pytest.mark.parametrize(
+    ("arrange", "code"),
+    [
+        pytest.param(_occupy_archive_slot, "gate-publication-archive-occupied", id="archive-slot-occupied"),
+        pytest.param(_change_staged_log, "gate-publication-candidate-changed", id="staged-member-changed"),
+        pytest.param(
+            _occupy_withdrawn_manifest, "gate-publication-previous-manifest-changed", id="withdrawn-manifest-occupied"
+        ),
+        pytest.param(
+            _redirect_history_root,
+            "gate-attempts-directory-redirected",
+            marks=_NEEDS_DIRECTORY_LINKS,
+            id="history-root-redirected",
+        ),
+        pytest.param(
+            _redirect_archive_slot,
+            "gate-attempts-directory-redirected",
+            marks=_NEEDS_DIRECTORY_LINKS,
+            id="archive-slot-redirected",
+        ),
+    ],
+)
+def test_resumed_publication_refuses_changed_journal_state(
+    pending_lint_retry: _PendingPublication,
+    outside_directory: Path,
+    arrange: Callable[[_PendingPublication, Path], Callable[[], object]],
+    code: str,
+) -> None:
+    """Each resume-time guard stops with its own code before the live receipt or another owner's state changes.
+
+    The sealed journal names a candidate, an archive slot and private staging names. Recovery that finds any of them
+    changed after sealing must refuse to install, keep the journal for inspection, and leave foreign files and
+    directories, including the target of a redirected history path, exactly as it found them.
+    """
+    pending = pending_lint_retry
+    observe = arrange(pending, outside_directory)
+    expected = observe()
+    with pytest.raises(ValueError, match=f"^{re.escape(code)}$"):
+        pending.gates._finish_publication(pending.output)
+    assert observe() == expected
+    assert (pending.output / "gates.json").read_bytes() == pending.prior
+    assert (pending.output / ".gate-publication.json").is_file()
+
+
+@_NEEDS_DIRECTORY_LINKS
+def test_resumed_publication_refuses_redirected_relocated_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outside_directory: Path
+) -> None:
+    """An archive already moved into history and then replaced by a link stops recovery without reading through it.
+
+    Installation stopped after the previous attempt was relocated and the old manifest withdrawn. If the relocated
+    archive path then becomes a link, resuming must refuse it by name instead of verifying or moving its target.
+    """
+    output = tmp_path / "review"
+    assert _run_lint_gate(tmp_path, output, None, _python_command("print('first')")).returncode == 0
+    gates = _load_run_gates(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [str(RUN_GATES), "--out", str(output), "--lint", _python_command("print('second')"), *_skip_gates("lint")],
+    )
+    replace = os.replace
+
+    def interrupt(source: str | Path, destination: str | Path) -> None:
+        if Path(destination) == output / "checks/lint.stdout.txt":
+            raise OSError("interrupted-publication")
+        replace(source, destination)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "replace", interrupt)
+        assert gates.main() == 2
+    archived = output / "gate-attempts/001"
+    archived.rename(outside_directory / "001")
+    archived.symlink_to(outside_directory / "001", target_is_directory=True)
+    relocated = _listing(outside_directory / "001")
+    expected = relocated()
+    with pytest.raises(ValueError, match=r"^gate-attempts-directory-redirected$"):
+        gates._finish_publication(output)
+    assert relocated() == expected
+    assert (output / ".gate-publication.json").is_file()
+
+
+@_NEEDS_DIRECTORY_LINKS
+def test_retry_refuses_redirected_history_root_before_execution(tmp_path: Path, outside_directory: Path) -> None:
+    """A linked history root stops the retry before any command runs or the previous receipt moves through it."""
+    output = tmp_path / "review"
+    assert _run_lint_gate(tmp_path, output, None, _python_command("print('first')")).returncode == 0
+    prior = (output / "gates.json").read_bytes()
+    (output / "gate-attempts").symlink_to(outside_directory, target_is_directory=True)
+    marker = tmp_path / "second-ran"
+    retry = _run_lint_gate(tmp_path, output, None, _marker_command(marker))
+    assert retry.returncode == 2, retry.stderr
+    assert "gate-recovery-blocked:gate-attempts-directory-redirected" in retry.stderr
+    assert not marker.exists()
+    assert _listing(outside_directory)() == ["sentinel"]
+    assert (output / "gates.json").read_bytes() == prior
+
+
+def test_resumed_publication_keeps_occupied_retirement_name(
+    repository: Path, head: str, output: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another owner's file at a retired member's private name stops recovery instead of being overwritten.
+
+    A lint-only retry after a structured pytest attempt retires the published import proof into the stage. The
+    retirement name must be free; an occupant there is foreign evidence and the live proof stays published.
+    """
+    (repository / "example.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (repository / "test_example.py").write_text("import example\ndef test_value(): assert example.VALUE == 1\n")
+    _git(repository, "add", ".")
+    _git(repository, "commit", "-m", f"test fixture\n\n{CODEX_TRAILER}")
+    command = TestPytestGateRecovery._tests_gate_command(
+        output,
+        repository,
+        _git(repository, "rev-parse", "HEAD"),
+        sys.executable,
+        "--pytest-args-json",
+        json.dumps(["-q", "-p", "no:xdist", "-p", "no:cacheprovider"]),
+    )
+    first = _run(command)
+    assert first.returncode == 0, first.stderr
+    proof = output / "checks/tests.python-imports.json"
+    published = proof.read_bytes()
+    gates = _load_run_gates(monkeypatch)
+    argv = [str(RUN_GATES), "--out", str(output), "--lint", _python_command("print('lint')"), *_skip_gates("lint")]
+    stage = _interrupt_before_install(gates, monkeypatch, output, argv)
+    occupant = _foreign_file(stage / f"retired-{proof.name}")
+    with pytest.raises(ValueError, match=r"^gate-publication-retired-member-occupied$"):
+        gates._finish_publication(output)
+    assert occupant() == b"foreign owner"
+    assert proof.read_bytes() == published
+    assert (output / ".gate-publication.json").is_file()
+
+
+def test_publication_stops_when_its_journal_changes_during_installation(
+    pending_lint_retry: _PendingPublication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A journal rewritten while members install is not this writer's journal, so it is never removed."""
+    pending = pending_lint_retry
+    marker = pending.output / ".gate-publication.json"
+    _rewrite_after_manifest_install(pending.output, marker, monkeypatch)
+    with pytest.raises(ValueError, match=r"^gate-publication-marker-changed$"):
+        pending.gates._finish_publication(pending.output)
+    assert marker.read_bytes().endswith(b"\n")
+
+
+def test_local_publication_stops_when_the_live_collector_receipt_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A collector receipt changed during installation no longer matches the staged copy the candidate was bound to."""
+    gate = _local_gate_inputs(tmp_path)
+    gates = _load_run_gates(monkeypatch)
+    _interrupt_before_install(gates, monkeypatch, gate.output, gate.args[1:])
+    receipt = gate.output / "local-source/review-worktree.json"
+    _rewrite_after_manifest_install(gate.output, receipt, monkeypatch)
+    with pytest.raises(ValueError, match=r"^gate-publication-collector-changed$"):
+        gates._finish_publication(gate.output)
+    assert (gate.output / ".gate-publication.json").is_file()
+
+
+def _child_proof(output: Path) -> Path:
+    """Read the exact child submission path recorded by a structured pytest invocation."""
+    command = _receipt_text(output, _gate_check(output, "tests"), "command_path")
+    return Path(json.loads(command.removeprefix("argv-json:"))[5])
+
+
+def _artifact_hashes(output: Path, check: dict[str, Any], *additional: str) -> dict[str, str]:
+    """Calculate expected digests from the actual command, captured streams and any import proof."""
+    paths = (check["command_path"], check["stdout"], check["stderr"], *additional)
+    return {path: hashlib.sha256((output / path).read_bytes()).hexdigest() for path in paths}
 
 
 def _edit_gates_json(output: Path, edit: Callable[[dict[str, Any]], None]) -> None:
@@ -119,27 +605,6 @@ def _edit_gates_json(output: Path, edit: Callable[[dict[str, Any]], None]) -> No
     payload = json.loads(path.read_text(encoding="utf-8"))
     edit(payload)
     path.write_text(json.dumps(payload), encoding="utf-8", newline="\n")
-
-
-@pytest.fixture
-def repository(tmp_path: Path) -> Path:
-    """Create a clean committed repository at ``tmp_path/repository``."""
-    path = tmp_path / "repository"
-    path.mkdir()
-    _initialize_repository(path)
-    return path
-
-
-@pytest.fixture
-def head(repository: Path) -> str:
-    """Return the commit id at the tip of the ``repository`` fixture."""
-    return _git(repository, "rev-parse", "HEAD")
-
-
-@pytest.fixture
-def output(tmp_path: Path) -> Path:
-    """Return where a gate run writes its receipts; the runner creates the directory."""
-    return tmp_path / "gates"
 
 
 @pytest.fixture
@@ -379,6 +844,7 @@ class TestSourceGuard:
             "expected_head": head,
             "before": {"head": head, "status": "", "ignored": "[]"},
             "after": {"head": head, "status": "", "ignored": "[]"},
+            "artifacts": _artifact_hashes(output, check),
         }
 
     @pytest.mark.parametrize(
@@ -438,6 +904,7 @@ class TestSourceGuard:
             "expected_head": head,
             "before": {"head": head, "status": "", "ignored": "[]"},
             "after": {"head": actual_head, "status": "", "ignored": "[]"},
+            "artifacts": _artifact_hashes(output, check),
         }
         assert HEAD_MISMATCH in _receipt_text(output, check)
 
@@ -463,6 +930,7 @@ class TestSourceGuard:
             "expected_head": head,
             "before": {"head": head, "status": "", "ignored": "[]"},
             "after": {"head": head, "status": "?? during-gate.txt", "ignored": "[]"},
+            "artifacts": _artifact_hashes(output, check),
         }
         assert SOURCE_DIRTY_STATUS in _receipt_text(output, check)
         validator = _load_validator()
@@ -495,17 +963,35 @@ class TestSourceGuard:
         assert source["after"] is None
         assert "source-inspection-failed" in _receipt_text(output, check)
 
-    def test_unflagged_run_omits_source_receipts(self, tmp_path: Path, output: Path) -> None:
-        """Without ``--expected-head`` a gate run is unchanged and records no source receipt.
-
-        Callers that do not ask for source binding must keep the pre-existing receipt shape.
-        """
-        result = _run_lint_gate(tmp_path, output, None, _python_command("pass"))
-
+    def test_unflagged_run_records_execution_directory_for_unstaged_remediation(
+        self, repository: Path, head: str, output: Path
+    ) -> None:
+        """An ordinary gate runs in the dirty collected checkout and reports where it observed the unstaged bytes."""
+        tracked = repository / "tracked.txt"
+        tracked.write_bytes(b"unstaged change\n")
+        digest = hashlib.sha256(tracked.read_bytes()).hexdigest()
+        command = _python_command(
+            "from pathlib import Path\nimport hashlib\nprint(Path.cwd().as_posix())\n"
+            "print(hashlib.sha256(Path('tracked.txt').read_bytes()).hexdigest())"
+        )
+        result = _run_lint_gate(repository, output, None, command)
         check = _gate_check(output, "lint")
-        assert result.returncode == 0
+        assert result.returncode == 0, result.stderr
         assert check["status"] == "pass"
         assert "source" not in check
+        receipt = _load_validator()._validate_gates(output)
+        assert "source" not in receipt
+        assert receipt["execution_cwd"] == repository.resolve().as_posix()
+        assert _receipt_text(output, check, "stdout").splitlines() == [receipt["execution_cwd"], digest]
+        assert _git(repository, "diff", "--cached") == ""
+        pr = output / "pr"
+        pr.mkdir()
+        (pr / "local-checkout.json").write_text(json.dumps({"worktree": repository.resolve().as_posix()}))
+        _load_validator()._validate_code_remediate_target_integration(
+            pr,
+            {"target_oid": head, "pre_merge_head": head, "post_merge_head": head, "status": "not-needed"},
+            current_checkout=True,
+        )
 
     @pytest.mark.parametrize(
         ("changed_name", "dependency_git_steps"),
@@ -775,6 +1261,179 @@ def editable_checkout(tmp_path: Path, request: pytest.FixtureRequest) -> _Editab
 class TestEditableSourceProvenance:
     """The tests gate proves, per import and per worker, that executed source comes from the selected worktree."""
 
+    def test_unstartable_interpreter_retains_failed_attempt_and_allows_retry(
+        self, editable_checkout: _EditableCheckout, output: Path, tmp_path: Path
+    ) -> None:
+        """A launch refusal between two passing structured runs preserves three independently readable receipts."""
+        checkout = editable_checkout
+        checkout.link_editable(checkout.selected)
+        first = checkout.run_tests(output)
+        assert first.returncode == 0, first.stderr
+        prior = (output / "gates.json").read_bytes()
+        proof = "checks/tests.python-imports.json"
+        prior_proof = (output / proof).read_bytes()
+        invalid = tmp_path / "unstartable.exe"
+        invalid.write_bytes(b"fixture")
+        invalid.chmod(0o600)
+        invocation = list(first.args)
+        invocation[invocation.index("--pytest-python") + 1] = str(invalid)
+        failed = _run(invocation, cwd=checkout.original, env=checkout.environment)
+        assert failed.returncode == 1, failed.stderr
+        check = _gate_check(output, "tests")
+        assert check["status"] == "fail"
+        assert check["exit_code"] == 126
+        assert check["execution_route"]["mode"] == "not-started"
+        assert "standard" in check["execution_route"]["reason"]
+        assert str(invalid) in _receipt_text(output, check)
+        assert _receipt_text(output, check, "stdout") == ""
+        assert "python_imports" not in check
+        assert not (output / proof).exists()
+        validator = _load_validator()
+        assert validator._validate_gates(output)["checks_failed"] == ["tests"]
+        archive = output / "gate-attempts/001"
+        assert (archive / "gates.json").read_bytes() == prior
+        assert (archive / proof).read_bytes() == prior_proof
+        assert validator._validate_gates(archive)["checks_failed"] == []
+        failed_receipt = (output / "gates.json").read_bytes()
+        retry = checkout.run_tests(output)
+        assert retry.returncode == 0, retry.stderr
+        assert validator._validate_gates(output)["checks_failed"] == []
+        archived_failure = output / "gate-attempts/002"
+        assert (archived_failure / "gates.json").read_bytes() == failed_receipt
+        assert validator._validate_gates(archived_failure)["checks_failed"] == ["tests"]
+
+    @pytest.mark.parametrize("middle", ["free-form", "skipped", "failed"])
+    def test_mode_change_archives_each_attempts_own_proof(
+        self, editable_checkout: _EditableCheckout, output: Path, middle: str
+    ) -> None:
+        """Switch away from structured pytest and back, validating each attempt against its own proof and logs."""
+        checkout = editable_checkout
+        checkout.link_editable(checkout.selected)
+        first = checkout.run_tests(output)
+        assert first.returncode == 0, first.stderr
+        first_receipt = (output / "gates.json").read_bytes()
+        previous_scratch = _child_proof(output).parent
+        middle_args = (
+            ["--skip-tests", "out of scope"]
+            if middle == "skipped"
+            else ["--tests", _python_command(f"raise SystemExit({int(middle == 'failed')})")]
+        )
+        second = _run(
+            [
+                sys.executable,
+                str(RUN_GATES),
+                "--out",
+                str(output),
+                "--worktree",
+                str(checkout.selected),
+                "--expected-head",
+                checkout.expected_head,
+                *middle_args,
+                *_skip_gates("tests"),
+            ]
+        )
+        assert second.returncode == int(middle == "failed"), second.stderr
+        validator = _load_validator()
+        failures = ["tests"] if middle == "failed" else []
+        assert validator._validate_gates(output)["checks_failed"] == failures
+        assert not (output / "checks/tests.python-imports.json").exists()
+        assert previous_scratch.is_dir()
+        third = checkout.run_tests(output)
+        assert third.returncode == 0, third.stderr
+        archive = output / "gate-attempts/001"
+        assert (archive / "gates.json").read_bytes() == first_receipt
+        assert validator._validate_gates(archive)["checks_failed"] == []
+        assert validator._validate_gates(output / "gate-attempts/002")["checks_failed"] == failures
+        assert validator._validate_gates(output)["checks_failed"] == []
+
+    def test_retry_preserves_replacement_scratch_directory(
+        self, editable_checkout: _EditableCheckout, output: Path
+    ) -> None:
+        """An unrelated directory at the old scratch path survives the retry and stays outside the archive."""
+        checkout = editable_checkout
+        checkout.link_editable(checkout.selected)
+        assert checkout.run_tests(output).returncode == 0
+        old_scratch = _child_proof(output).parent
+        old_scratch.rename(output / "moved-first-directory")
+        old_scratch.mkdir()
+        sentinel = old_scratch / "user-file"
+        sentinel.write_bytes(b"retain")
+        identity = old_scratch.stat()
+        retry = checkout.run_tests(output)
+        assert retry.returncode == 0, retry.stderr
+        assert _child_proof(output).parent != old_scratch
+        assert os.path.samestat(identity, old_scratch.stat())
+        assert sentinel.read_bytes() == b"retain"
+        archive = output / "gate-attempts/001"
+        assert not (archive / "checks" / old_scratch.name).exists()
+        assert _load_validator()._validate_gates(archive)["checks_failed"] == []
+        assert _load_validator()._validate_gates(output)["checks_failed"] == []
+
+    def test_mode_change_preserves_replaced_proof(self, editable_checkout: _EditableCheckout, output: Path) -> None:
+        """An archived receipt cannot authorize retiring different bytes at the canonical proof path."""
+        checkout = editable_checkout
+        checkout.link_editable(checkout.selected)
+        assert checkout.run_tests(output).returncode == 0
+        prior = (output / "gates.json").read_bytes()
+        proof = output / "checks/tests.python-imports.json"
+        proof.write_bytes(b"unowned")
+        skipped = _run(
+            [sys.executable, str(RUN_GATES), "--out", str(output), "--skip-tests", "unused", *_skip_gates("tests")]
+        )
+        assert skipped.returncode == 2
+        assert "source-gate-previous-proof-unowned" in skipped.stderr
+        assert (output / "gates.json").read_bytes() == prior
+        assert proof.read_bytes() == b"unowned"
+
+    @pytest.mark.parametrize(
+        ("rejection", "diagnostic"),
+        [
+            pytest.param("without-skip", "test-skip-approval-without-skip", id="approval-without-skip"),
+            pytest.param("invalid", "test-skip-approval-invalid", id="invalid-decision"),
+            pytest.param("missing", "test-skip-approval-unreadable", id="unreadable-decision"),
+            pytest.param("destination", "test-skip-approval-invalid-path", id="unwritable-decision-destination"),
+        ],
+    )
+    def test_rejected_skip_decision_leaves_prior_receipt_reusable(
+        self, editable_checkout: _EditableCheckout, output: Path, rejection: str, diagnostic: str
+    ) -> None:
+        """A rejected invocation preserves the prior structured receipt until a valid retry can archive it."""
+        checkout = editable_checkout
+        checkout.link_editable(checkout.selected)
+        first = checkout.run_tests(output)
+        assert first.returncode == 0, first.stderr
+        previous = (output / "gates.json").read_bytes()
+        decision = output / "decision.json"
+        if rejection == "invalid":
+            decision.write_text("{}", encoding="utf-8")
+        if rejection == "destination":
+            decision.write_text(
+                '{"decision":"skip-tests","reason":"unused","evidence":"user decision"}', encoding="utf-8"
+            )
+            (output / "checks/tests-skip-approval.json").mkdir()
+        extra = [] if rejection == "without-skip" else ["--skip-tests", "unused"]
+        rejected = _run(
+            [
+                sys.executable,
+                str(RUN_GATES),
+                "--out",
+                str(output),
+                "--test-skip-approval",
+                str(decision),
+                *extra,
+                *_skip_gates("tests"),
+            ]
+        )
+        assert rejected.returncode != 0
+        assert diagnostic in rejected.stderr
+        assert (output / "gates.json").read_bytes() == previous
+        assert _load_validator()._validate_gates(output)["checks_failed"] == []
+        assert not (output / "gate-attempts").exists()
+        retry = checkout.run_tests(output)
+        assert retry.returncode == 0, retry.stderr
+        assert (output / "gate-attempts/001/gates.json").read_bytes() == previous
+        assert _load_validator()._validate_gates(output / "gate-attempts/001")["checks_failed"] == []
+
     def test_editable_package_from_invoking_checkout_fails_gate(
         self, editable_checkout: _EditableCheckout, output: Path
     ) -> None:
@@ -812,6 +1471,26 @@ class TestEditableSourceProvenance:
         assert result.returncode == 0, result.stderr
         assert check["status"] == "pass"
         assert check["python_imports"]["status"] == "pass"
+        child_argv = json.loads(_receipt_text(output, check, "command_path").removeprefix("argv-json:"))
+        child_proof = Path(child_argv[5])
+        assert child_proof.name == "tests.python-imports.json"
+        private_checks = child_proof.parent.parent
+        assert private_checks.name == "checks"
+        assert private_checks.parent.parent == output
+        assert re.fullmatch(r"\.gate-stage-[0-9a-f]{32}", private_checks.parent.name)
+        assert re.fullmatch(r"pytest-scratch-[0-9a-f]{32}", child_proof.parent.name)
+        assert child_proof.read_bytes() == (output / "checks/tests.python-imports.json").read_bytes()
+        binding = json.loads(child_argv[-1])["tracked_inventory"]
+        inventory = Path(binding["path"])
+        assert inventory.parent == private_checks
+        assert hashlib.sha256(inventory.read_bytes()).hexdigest() == binding["sha256"]
+        assert (output / "checks" / inventory.name).read_bytes() == inventory.read_bytes()
+        assert check["source"]["artifacts"] == _artifact_hashes(
+            output, check, "checks/tests.python-imports.json", f"checks/{inventory.name}"
+        )
+        # The recorded command replays against its retained execution inputs after the runner exits.
+        replay = _run(child_argv, cwd=editable_checkout.selected, env=editable_checkout.environment)
+        assert replay.returncode == 0, replay.stderr
         assert check["python_imports"]["modules"]["demo_package"] == {
             "origin": _package_origin(editable_checkout.selected),
             "tracked": True,
@@ -841,7 +1520,10 @@ class TestEditableSourceProvenance:
         editable_checkout.environment["PYTHONDONTWRITEBYTECODE"] = "1"
         failed = editable_checkout.run_tests(output)
         assert failed.returncode == 1
+        assert _load_validator()._validate_gates(output)["checks_failed"] == ["tests"]
         assert "overlay_probe" in (output / "checks/tests.stderr.txt").read_text(encoding="utf-8")
+        stale = _child_proof(output).parent / "prior-run.cache"
+        stale.write_bytes(b"first attempt only")
         overlay = tmp_path / "overlay"
         overlay.mkdir()
         (overlay / "overlay_probe.py").write_text("VALUE = 1\n", encoding="utf-8")
@@ -858,6 +1540,14 @@ class TestEditableSourceProvenance:
         assert not list(overlay.rglob("*.pyc"))
         assert not list(editable_checkout.selected.rglob("*.pyc"))
         assert prior["checks_failed"] == ["tests"]
+        assert stale.read_bytes() == b"first attempt only"
+        assert not (_child_proof(output).parent / stale.name).exists()
+        assert not (output / "gate-attempts/001/checks" / stale.parent.name).exists()
+        binding = json.loads(json.loads(invocation)[-1])["tracked_inventory"]
+        current_input = Path(binding["path"])
+        archived_input = output / "gate-attempts/001/checks" / current_input.name
+        assert archived_input.read_bytes() == current_input.read_bytes()
+        assert hashlib.sha256(archived_input.read_bytes()).hexdigest() == binding["sha256"]
 
     @pytest.mark.parametrize("editable_checkout", ["-n 2"], indirect=True)
     @pytest.mark.parametrize(
@@ -1180,6 +1870,179 @@ class TestLocalMirror:
         assert all(record["path"] != "dependency" for record in snapshot["files"])
         assert bool(snapshot["gitlinks"]) is gitlink
 
+    def test_local_retry_preserves_unowned_scratch(self, tmp_path: Path) -> None:
+        """A local mirror submits into fresh scratch and leaves an unrelated sibling directory untouched."""
+        gate = _local_gate_inputs(tmp_path)
+        first = _run(gate.args)
+        assert first.returncode == 0, first.stderr
+        foreign = gate.output / "checks/pytest-scratch/user-file"
+        foreign.parent.mkdir()
+        foreign.write_bytes(b"retain")
+        retry = _run(gate.args)
+        assert retry.returncode == 0, retry.stderr
+        assert foreign.read_bytes() == b"retain"
+        assert _load_validator()._validate_gates(gate.output)["checks_failed"] == []
+        archive = gate.output / "gate-attempts/001"
+        validator = _load_validator()
+        assert validator._validate_gates(archive)["checks_failed"] == []
+        relocated = tmp_path / "unrelated/gate-attempts/001"
+        shutil.copytree(archive, relocated)
+        with pytest.raises(SystemExit, match="gate-evidence-local-source-mismatch"):
+            validator._validate_gates(relocated)
+        malformed = gate.output / "gate-attempts/01"
+        shutil.copytree(archive, malformed)
+        with pytest.raises(SystemExit, match="gate-evidence-local-source-mismatch"):
+            validator._validate_gates(malformed)
+        (archive / "local-source/review-worktree.json").write_bytes(b"changed")
+        with pytest.raises(SystemExit, match="gate-evidence-digest-mismatch"):
+            validator._validate_gates(archive)
+
+    def test_mirror_to_ordinary_retry_retires_only_the_archived_snapshot(self, tmp_path: Path) -> None:
+        """An ordinary gate following a mirror keeps the mirror evidence in its original attempt."""
+        gate = _local_gate_inputs(tmp_path)
+        assert _run(gate.args).returncode == 0
+        snapshot = Path("checks/local-source-snapshot.json")
+        original = (gate.output / snapshot).read_bytes()
+        collector = gate.output / "local-source/review-worktree.json"
+        receipt = collector.read_bytes()
+        ordinary = _run_lint_gate(gate.repository, gate.output, None, _python_command("print('ok')"))
+        assert ordinary.returncode == 0, ordinary.stderr
+        validator = _load_validator()
+        assert validator._validate_gates(gate.output)["checks_failed"] == []
+        archived = gate.output / "gate-attempts/001"
+        assert (archived / snapshot).read_bytes() == original
+        assert validator._validate_gates(archived)["checks_failed"] == []
+        assert not (gate.output / snapshot).exists()
+        assert collector.read_bytes() == receipt
+        assert _run(gate.args).returncode == 0
+        assert validator._validate_gates(gate.output / "gate-attempts/002")["checks_failed"] == []
+        assert validator._validate_gates(gate.output)["checks_failed"] == []
+
+    @pytest.mark.skipif(not HARD_LINKS_AVAILABLE, reason="host cannot hardlink files")
+    def test_mirror_to_ordinary_retry_preserves_shared_snapshot(self, tmp_path: Path) -> None:
+        """A shared snapshot cannot be retired, even if its content still matches the previous receipt."""
+        gate = _local_gate_inputs(tmp_path)
+        assert _run(gate.args).returncode == 0
+        current = gate.output / "gates.json"
+        prior = current.read_bytes()
+        snapshot = gate.output / "checks/local-source-snapshot.json"
+        shared = tmp_path / "other-owner"
+        os.link(snapshot, shared)
+        marker = tmp_path / "ordinary-ran"
+        ordinary = _run_lint_gate(gate.repository, gate.output, None, _marker_command(marker))
+        assert ordinary.returncode == 2, ordinary.stderr
+        assert "local-gate-previous-snapshot-invalid-file" in ordinary.stderr
+        assert snapshot.samefile(shared)
+        assert not marker.exists()
+        assert current.read_bytes() == prior
+        assert _load_validator()._validate_gates(gate.output)["checks_failed"] == []
+        history = gate.output / "gate-attempts"
+        assert not list(history.glob("[0-9]*"))
+        shared.unlink()
+        assert _run_lint_gate(gate.repository, gate.output, None, _marker_command(marker)).returncode == 0
+        assert [path.name for path in history.glob("[0-9]*")] == ["001"]
+        assert _load_validator()._validate_gates(history / "001")["checks_failed"] == []
+
+    def test_partial_mirror_submission_is_retained_without_blocking_retry(self, tmp_path: Path) -> None:
+        """An interrupted child submission stays private; the parent records and archives its own observation."""
+        trigger = tmp_path / "truncate"
+        hook = (
+            "import json, os\nfrom pathlib import Path\n"
+            "def pytest_unconfigure(config):\n"
+            f"    if Path({str(trigger)!r}).exists():\n"
+            "        task = json.loads(os.environ['CODEX_RIG_PYTEST_SOURCE_PROOF'])\n"
+            "        Path(task['proof_path']).write_bytes(b'{partial')\n"
+        )
+        gate = _local_gate_inputs(tmp_path, conftest=hook)
+        assert _run(gate.args).returncode == 0
+        trigger.touch()
+        failed = _run(gate.args)
+        assert failed.returncode == 1, failed.stderr
+        validator = _load_validator()
+        assert validator._validate_gates(gate.output)["checks_failed"] == ["tests"]
+        result = _gate_check(gate.output, "tests")
+        assert result["python_imports"]["status"] == "inconclusive"
+        submission = _child_proof(gate.output)
+        assert submission.read_bytes() == b"{partial"
+        assert submission != gate.output / "checks/tests.python-imports.json"
+        prior = (gate.output / "gates.json").read_bytes()
+        trigger.unlink()
+        assert _run(gate.args).returncode == 0
+        assert submission.read_bytes() == b"{partial"
+        archive = gate.output / "gate-attempts/002"
+        assert (archive / "gates.json").read_bytes() == prior
+        assert validator._validate_gates(archive)["checks_failed"] == ["tests"]
+        assert validator._validate_gates(gate.output)["checks_failed"] == []
+
+    def test_failed_mirror_process_without_proof_retains_verifiable_history(self, tmp_path: Path) -> None:
+        """A started interpreter that cannot import pytest retains its failure and an independently readable archive."""
+        gate = _local_gate_inputs(tmp_path)
+        assert _run(gate.args).returncode == 0
+        environment = tmp_path / "python-without-pytest"
+        subprocess.run(
+            [sys.executable, "-m", "venv", "--without-pip", str(environment)], check=True, capture_output=True
+        )
+        interpreter = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+        args = list(gate.args)
+        args[args.index("--pytest-python") + 1] = str(interpreter)
+        failed = _run(args)
+        assert failed.returncode == 1, failed.stderr
+        check = _gate_check(gate.output, "tests")
+        assert check["exit_code"] == 1
+        assert check["execution_route"]["mode"] == "standard"
+        assert "ModuleNotFoundError: No module named 'pytest'" in _receipt_text(gate.output, check)
+        assert check["python_imports"]["status"] == "inconclusive"
+        assert check["python_imports"]["modules"] == {}
+        validator = _load_validator()
+        assert validator._validate_gates(gate.output)["checks_failed"] == ["tests"]
+        prior = (gate.output / "gates.json").read_bytes()
+        proof_path = "checks/tests.python-imports.json"
+        proof = (gate.output / proof_path).read_bytes()
+        assert json.loads(proof) == check["python_imports"]
+        assert hashlib.sha256(proof).hexdigest() == check["source"]["artifacts"][proof_path]
+        retry = _run(gate.args)
+        assert retry.returncode == 0, retry.stderr
+        archive = gate.output / "gate-attempts/002"
+        assert (archive / "gates.json").read_bytes() == prior
+        assert (archive / proof_path).read_bytes() == proof
+        assert validator._validate_gates(archive)["checks_failed"] == ["tests"]
+        assert validator._validate_gates(gate.output / "gate-attempts/001")["checks_failed"] == []
+        assert validator._validate_gates(gate.output)["checks_failed"] == []
+
+    def test_unstartable_local_interpreter_preserves_mirror_evidence(self, tmp_path: Path) -> None:
+        """A mirror can prove its source observations when the target interpreter never starts."""
+        gate = _local_gate_inputs(tmp_path)
+        invalid = tmp_path / "unstartable.exe"
+        invalid.write_bytes(b"fixture")
+        invalid.chmod(0o600)
+        gate.args[gate.args.index("--pytest-python") + 1] = str(invalid)
+        run = _run(gate.args)
+        assert run.returncode == 1, run.stderr
+        check = _gate_check(gate.output, "tests")
+        assert check["exit_code"] == 126
+        assert check["execution_route"]["mode"] == "not-started"
+        assert check["source"]["before"] == check["source"]["after"]
+        assert "python_imports" not in check
+        assert not (gate.output / "checks/tests.python-imports.json").exists()
+        assert _load_validator()._validate_gates(gate.output)["checks_failed"] == ["tests"]
+
+    @pytest.mark.skipif(not HARD_LINKS_AVAILABLE, reason="host cannot hardlink files")
+    def test_rejected_mirror_destination_preserves_current_proof(self, tmp_path: Path) -> None:
+        """A mirror's unusable snapshot path is diagnosed before its previous structured receipt is retired."""
+        gate = _local_gate_inputs(tmp_path)
+        first = _run(gate.args)
+        assert first.returncode == 0, first.stderr
+        prior = (gate.output / "gates.json").read_bytes()
+        snapshot = gate.output / "checks/local-source-snapshot.json"
+        os.link(snapshot, tmp_path / "kept-snapshot.json")
+        assert _load_validator()._validate_gates(gate.output)["checks_failed"] == []
+        rejected = _run(gate.args)
+        assert rejected.returncode != 0
+        assert "local-gate-artifact-escape" in rejected.stderr
+        assert (gate.output / "gates.json").read_bytes() == prior
+        assert _load_validator()._validate_gates(gate.output)["checks_failed"] == []
+        assert not (gate.output / "gate-attempts").exists()
+
     def test_rejects_source_changed_during_run(self, tmp_path: Path) -> None:
         """A command that edits the mirror while it runs fails the gate and the failure cannot be edited away.
 
@@ -1254,6 +2117,7 @@ class TestLocalMirror:
                 id="truncated-utf8",
             ),
             pytest.param(_GuardCase("sys.exit(1)", b"", "fail", 1, 1), id="command-failed"),
+            pytest.param(_GuardCase("sys.exit(126)", b"", "fail", 126, 1), id="launched-command-exits-126"),
             pytest.param(
                 _GuardCase("sys.exit(127)", b"", "missing-command", 127, 1, reason_pattern=".+"),
                 id="missing-command",
@@ -1309,6 +2173,7 @@ class TestLocalMirror:
         assert completed.returncode == case.runner_exit, completed.stderr
         assert check["status"] == case.gate_status
         assert check["exit_code"] == case.exit_code
+        assert check["execution_route"]["mode"] == "standard"
         assert guard_error
         assert stderr.startswith(case.raw_prefix)
         assert guard_error.encode("utf-8") in stderr
@@ -1340,10 +2205,10 @@ class TestLocalMirror:
         assert all(record["tracked"] is False for record in proof["tests"].values())
 
     @pytest.mark.parametrize(
-        ("mutate", "expected_reads"),
+        "mutate",
         [
-            pytest.param(lambda path, content: path.unlink(), 1, id="deleted"),
-            pytest.param(lambda path, content: path.write_bytes(content + b" "), 2, id="changed"),
+            pytest.param(lambda path, content: path.unlink(), id="deleted"),
+            pytest.param(lambda path, content: path.write_bytes(content + b" "), id="changed"),
         ],
     )
     @pytest.mark.parametrize(
@@ -1359,11 +2224,12 @@ class TestLocalMirror:
                 id="missing-command",
             ),
             pytest.param(
-                "import time\ndef pytest_unconfigure(config):\n    time.sleep(20)\n",
+                "import time\nfrom pathlib import Path\n"
+                "def pytest_unconfigure(config):\n    Path({ready!r}).touch()\n    time.sleep(90)\n",
                 "timeout",
                 124,
-                3,
-                ".+",
+                1,
+                "timeout after 1 seconds",
                 id="timeout",
             ),
         ],
@@ -1373,23 +2239,39 @@ class TestLocalMirror:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         mutate: Callable[[Path, bytes], None],
-        expected_reads: int,
         conftest: str,
         expected_status: str,
         expected_exit: int,
         timeout_seconds: int,
         reason_pattern: str,
     ) -> None:
-        """A child proof file that is changed or deleted during real post-run capture is rejected, not hashed.
-
-        The import-proof sidecar is mutated right after the runner first reads it, for a passing, a missing-command and
-        a timed-out child. The proof the runner already consumed stays valid, but the gate must fail with the ``local-
-        gate-proof-artifact-changed`` error instead of recording a hash of mixed evidence.
-        """
-        gate = _local_gate_inputs(tmp_path, committed=False, conftest=conftest)
+        """Detect a parent-published sidecar changed before the final mirror guard while preserving child exit."""
+        ready = tmp_path / "pytest-teardown"
+        gate = _local_gate_inputs(tmp_path, committed=False, conftest=conftest.format(ready=str(ready)))
         gates = _load_run_gates(monkeypatch)
         local_source = _local_source_receipt(gates, gate.output, gate.mirror)
-        reads = _mutate_sidecar_after_first_read(monkeypatch, gate.output / "checks/tests.python-imports.json", mutate)
+        if expected_exit == 124:
+            # Let the real capture deadline run against a live child that has already closed its proof file.
+            # A missing teardown signal still reaches timeout cleanup after the bounded startup allowance.
+            def capture_clock() -> Iterator[float]:
+                yield 0.0
+                startup_deadline = time.monotonic() + 60
+                while not ready.is_file() and time.monotonic() < startup_deadline:
+                    time.sleep(0.05)
+                start = time.monotonic()
+                while True:
+                    yield time.monotonic() - start
+
+            monkeypatch.setattr(gates, "time", mock.Mock(wraps=time, monotonic=capture_clock().__next__))
+
+        publish = gates._publish_gate_proof
+
+        def change_published_proof(path: Path, content: bytes, identity: os.stat_result) -> None:
+            publish(path, content, identity)
+            assert json.loads(content)["status"] == "pass"
+            mutate(path, content)
+
+        monkeypatch.setattr(gates, "_publish_gate_proof", change_published_proof)
 
         result = gates.run_check(
             "tests",
@@ -1406,25 +2288,21 @@ class TestLocalMirror:
             local_source,
         )
 
-        assert result["python_imports"]["status"] == "pass"
+        proof = result["python_imports"]
+        assert proof["status"] == "pass"
+        assert proof["modules"]["localmod"]["status"] == "pass"
+        assert proof["tests"][(gate.mirror / "test_localmod.py").as_posix()]["status"] == "pass"
+        if expected_exit == 124:
+            assert ready.is_file()
+            assert result["duration_seconds"] >= timeout_seconds
+            assert "timeout: exceeded 1 seconds" in _receipt_text(gate.output, result)
         assert result["source"]["before"] == result["source"]["after"]
         assert result["status"] == expected_status
         assert result["exit_code"] == expected_exit
         assert re.fullmatch(reason_pattern, str(result.get("reason") or ""))
-        assert reads[0] == expected_reads
         assert "local-gate-proof-artifact-changed" in (gate.output / "checks/tests.stderr.txt").read_text(
             encoding="utf-8"
         )
-
-
-def _load_run_gates(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """Import ``run_gates.py`` as a module whose registration in ``sys.modules`` is undone after the test."""
-    monkeypatch.syspath_prepend(str(PLUGIN_ROOT / "shared"))
-    specification = importlib.util.spec_from_file_location("sidecar_gate_runner", RUN_GATES)
-    module = importlib.util.module_from_spec(specification)
-    monkeypatch.setitem(sys.modules, specification.name, module)
-    specification.loader.exec_module(module)
-    return module
 
 
 def _local_source_receipt(gates: Any, output: Path, mirror: Path) -> dict[str, str]:
@@ -1440,42 +2318,6 @@ def _local_source_receipt(gates: Any, output: Path, mirror: Path) -> dict[str, s
         "snapshot_path": "checks/local-source-snapshot.json",
         "snapshot_sha256": hashlib.sha256(content).hexdigest(),
     }
-
-
-def _mutate_sidecar_after_first_read(
-    monkeypatch: pytest.MonkeyPatch, sidecar: Path, mutate: Callable[[Path, bytes], None]
-) -> list[int]:
-    """Make ``mutate(path, bytes)`` run when ``sidecar`` is read, and return a one-item list counting its reads.
-
-    Both ``Path.read_bytes`` and ``Path.read_text`` are wrapped for exactly that path so the change lands after the
-    runner has consumed the proof once, whichever reader it uses. The bytes reader mutates only on its first read.
-    """
-    reads = [0]
-    read_bytes = Path.read_bytes
-    read_text = Path.read_text
-
-    def read_and_change_proof(path: Path) -> bytes:
-        """Read actual bytes, then synchronize an exact-path sidecar mutation after initial consumption."""
-        content = read_bytes(path)
-        if path == sidecar:
-            reads[0] += 1
-            if reads[0] == 1:
-                assert json.loads(content)["status"] == "pass"
-                mutate(path, content)
-        return content
-
-    def read_text_and_change_proof(path: Path, *arguments: Any, **keywords: Any) -> str:
-        """Apply the same exact-path timing control to the historical text reader."""
-        content = read_text(path, *arguments, **keywords)
-        if path == sidecar:
-            reads[0] += 1
-            assert json.loads(content)["status"] == "pass"
-            mutate(path, content.encode("utf-8"))
-        return content
-
-    monkeypatch.setattr(Path, "read_text", read_text_and_change_proof)
-    monkeypatch.setattr(Path, "read_bytes", read_and_change_proof)
-    return reads
 
 
 def test_gate_timeout_default_and_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -1535,11 +2377,11 @@ def test_project_environment_binds_nested_uv_run(tmp_path: Path) -> None:
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("parallel", [False, True])
-def test_source_proof_batches_git_inventory_per_process(
+@pytest.mark.parametrize("parallel", [pytest.param(False, id="serial"), pytest.param(True, id="xdist")])
+def test_clean_source_proof_needs_no_git_in_pytest_processes(
     tmp_path: Path, repository: Path, output: Path, parallel: bool
 ) -> None:
-    """Three collected files and an imported module share one real Git inventory in each pytest process."""
+    """The parent supplies index membership so confined controllers and workers never need to invoke Git."""
     audit_directory = tmp_path / "audit"
     audit_directory.mkdir()
     (repository / "example.py").write_text("VALUE = 1\n", encoding="utf-8")
@@ -1577,11 +2419,7 @@ def test_source_proof_batches_git_inventory_per_process(
     assert proof["status"] == "pass"
     assert len(proof["tests"]) == 3
     assert proof["modules"]["example"]["tracked"] is True
-    assert len(inventories) == (3 if parallel else 1)
-    assert all(len(records) == 1 for records in inventories), inventories
-    expected = ["git", "ls-files", "-z", "--"]
-    expected_audit = subprocess.list2cmdline(expected) if sys.platform == "win32" else expected
-    assert all(json.loads(records[0]) == expected_audit for records in inventories), inventories
+    assert inventories == []
 
 
 @pytest.mark.parametrize(
@@ -1610,6 +2448,7 @@ def test_source_inventory_matches_exact_nul_delimited_names(
     git.assert_called_once_with(
         ["git", "ls-files", "-z", "--", f":(literal){filename}"],
         cwd=tmp_path,
+        env=None,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         check=False,
@@ -1642,3 +2481,1718 @@ def test_source_inventory_failure_rejects_clean_tracking(
         "reason": "test-not-tracked",
     }
     git.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("change", "error"),
+    [
+        pytest.param("content", "tracked-source-inventory-changed", id="replaced-inventory"),
+        pytest.param("worktree", "tracked-source-inventory-identity-mismatch", id="different-worktree"),
+        pytest.param("head", "tracked-source-inventory-identity-mismatch", id="different-head"),
+    ],
+)
+def test_pytest_rejects_mismatched_tracked_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str, error: str
+) -> None:
+    """Reject changed inventory bytes and cross-checkout or cross-commit bindings before collecting tests."""
+    gates = _load_run_gates(monkeypatch)
+    head = "a" * 40
+    content = b"\0".join((os.fsencode(tmp_path.as_posix()), head.encode("ascii"), b"test_source.py"))
+    inventory = tmp_path / "tracked-paths"
+    inventory.write_bytes(content + (b"extra" if change == "content" else b""))
+    task = {
+        "worktree": (tmp_path / "other" if change == "worktree" else tmp_path).as_posix(),
+        "modules": ["demo"],
+        "tracked_inventory": {
+            "path": str(inventory),
+            "head": "b" * 40 if change == "head" else head,
+            "sha256": hashlib.sha256(content).hexdigest(),
+        },
+    }
+    monkeypatch.setenv("CODEX_RIG_PYTEST_SOURCE_PROOF", json.dumps(task))
+    with pytest.raises(ValueError, match=error):
+        gates.pytest_configure(None)
+
+
+def test_parent_rejects_changed_index_membership_after_passing_pytest(
+    editable_checkout: _EditableCheckout, output: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject a passing child receipt when the parent cannot reproduce the original tracked-file set."""
+    checkout = editable_checkout
+    checkout.link_editable(checkout.selected)
+    gates = _load_run_gates(monkeypatch)
+    index = ["git", "ls-files", "-z", "--"]
+    run = subprocess.run
+    original = run(index, cwd=checkout.selected, capture_output=True, check=True).stdout
+    test_marker = checkout.selected.parent / "selected-test-ran.txt"
+    review_marker = checkout.selected.parent / "review-started"
+    plugin = Path(checkout.environment["PYTHONPATH"]) / "fixture_progress.py"
+    plugin.write_text(
+        "import sys\n\ndef pytest_sessionfinish(session, exitstatus):\n    sys.stderr.write('progress')\n",
+        encoding="utf-8",
+    )
+    changes = []
+
+    def observe_postrun_index(arguments, *args, **kwargs):
+        """Report one changed live membership after the real pytest fixture records that it ran."""
+        if list(arguments) == index and kwargs.get("cwd") == checkout.selected and test_marker.exists() and not changes:
+            changes.append(True)
+            return subprocess.CompletedProcess(arguments, 0, stdout=original + b"fixture-notes.txt\0")
+        return run(arguments, *args, **kwargs)
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(RUN_GATES),
+            "--out",
+            str(output),
+            "--worktree",
+            str(checkout.selected),
+            "--expected-head",
+            checkout.expected_head,
+            "--pytest-python",
+            sys.executable,
+            "--pytest-import",
+            "demo_package",
+            "--pytest-args-json",
+            json.dumps(["-q", "-s", "-p", "fixture_progress", "-p", "no:xdist", "-o", "addopts="]),
+            "--review",
+            _marker_command(review_marker),
+            "--skip-lint",
+            "not selected",
+            "--skip-format",
+            "not selected",
+            "--skip-types",
+            "not selected",
+        ],
+    )
+    for key, value in checkout.environment.items():
+        monkeypatch.setenv(key, value)
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "run", observe_postrun_index)
+        assert gates.main() == 1
+    assert changes == [True]
+    assert test_marker.exists()
+    assert not review_marker.exists()
+    result = _gate_check(output, "tests")
+    assert result["python_imports"]["status"] == "pass"
+    assert result["status"] == "fail"
+    assert result["exit_code"] == 0
+    assert (output / result["stderr"]).read_bytes() == b"progress\ntracked-source-inventory-changed\n"
+    validator = _load_validator()
+    assert validator._validate_gates(output)["checks_failed"] == ["tests", "review"]
+    assert result["source"]["guard_error"] == "tracked-source-inventory-changed"
+    assert _gate_check(output, "review")["status"] == "fail"
+    assert _gate_check(output, "review")["source"]["after"] is None
+    inventory = next((output / "checks").glob("tracked-source-*.bin"))
+    admitted = inventory.read_bytes()
+    root, head, *names = admitted.split(b"\0")
+    assert names == sorted(original.split(b"\0")[:-1])
+    changed = b"\0".join([root, head, *sorted([*names, b"fixture-notes.txt"])])
+    assert result["source"]["after"]["expected_inventory_sha256"] == hashlib.sha256(admitted).hexdigest()
+    assert result["source"]["after"]["observed_inventory_sha256"] == hashlib.sha256(changed).hexdigest()
+    retry = _run([sys.executable, *sys.argv], cwd=checkout.original, env=checkout.environment)
+    assert retry.returncode == 0, retry.stderr
+    assert review_marker.exists()
+    assert validator._validate_gates(output / "gate-attempts/001")["checks_failed"] == ["tests", "review"]
+    assert validator._validate_gates(output)["checks_failed"] == []
+
+
+@pytest.mark.parametrize(
+    "redirect",
+    [
+        pytest.param(False, id="missing-input"),
+        pytest.param(
+            True, marks=pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="needs symlinks"), id="symlink"
+        ),
+    ],
+)
+def test_retry_recovers_missing_inventory_and_refuses_redirect_before_archiving(
+    editable_checkout: _EditableCheckout, output: Path, tmp_path: Path, redirect: bool
+) -> None:
+    """Preserve a missing input as a failed observation while refusing to follow a redirected index."""
+    editable_checkout.link_editable(editable_checkout.selected)
+    first = editable_checkout.run_tests(output)
+    assert first.returncode == 0, first.stderr
+    source = next((output / "checks").glob("tracked-source-*.bin"))
+    outside = tmp_path / "outside"
+    source.rename(outside)
+    content = outside.read_bytes()
+    if redirect:
+        source.symlink_to(outside)
+    retry = editable_checkout.run_tests(output)
+    if redirect:
+        assert retry.returncode == 2
+        assert "tracked-source-inventory-invalid-file" in retry.stderr
+        assert not (output / "gate-attempts").exists()
+    else:
+        assert retry.returncode == 0, retry.stderr
+        errors = json.loads((output / "gate-diagnostics/001/tracked-source-errors.json").read_text(encoding="utf-8"))
+        assert errors == {source.relative_to(output).as_posix(): None}
+        assert source.read_bytes() == content
+        assert not (output / "gate-attempts").exists()
+    assert outside.read_bytes() == content
+
+
+def test_retry_preserves_corrupt_inventory_and_recreates_admitted_bytes(
+    editable_checkout: _EditableCheckout, output: Path
+) -> None:
+    """Recover the executable check while retaining the old receipt together with its actual mismatched input."""
+    editable_checkout.link_editable(editable_checkout.selected)
+    first = editable_checkout.run_tests(output)
+    assert first.returncode == 0, first.stderr
+    inventory = next((output / "checks").glob("tracked-source-*.bin"))
+    original = inventory.read_bytes()
+    prior = (output / "gates.json").read_bytes()
+    inventory.write_bytes(b"corrupt previous attempt")
+    original_error = output / "checks/tests.stderr.txt"
+    saved_error = original_error.read_bytes()
+    original_error.write_bytes(saved_error + b"also changed")
+    blocked = editable_checkout.run_tests(output)
+    assert blocked.returncode == 2, blocked.stderr
+    assert "gate-evidence-digest-mismatch" in blocked.stderr
+    assert not list((output / "gate-attempts").glob("[0-9]*"))
+    assert (output / "gates.json").read_bytes() == prior
+    original_error.write_bytes(saved_error)
+    second = editable_checkout.run_tests(output)
+    assert second.returncode == 0, second.stderr
+    archive = output / "gate-diagnostics/001"
+    assert (archive / "gates.json").read_bytes() == prior
+    assert (archive / "checks" / inventory.name).read_bytes() == b"corrupt previous attempt"
+    errors = json.loads((archive / "tracked-source-errors.json").read_text(encoding="utf-8"))
+    assert errors == {inventory.relative_to(output).as_posix(): hashlib.sha256(b"corrupt previous attempt").hexdigest()}
+    assert inventory.read_bytes() == original
+    assert _gate_check(output, "tests")["status"] == "pass"
+    with pytest.raises(SystemExit, match="gate-evidence-digest-mismatch"):
+        _load_validator()._validate_gates(archive)
+    assert not (output / "gate-attempts").exists()
+    assert editable_checkout.run_tests(output).returncode == 0
+    assert _load_validator()._validate_gates(output / "gate-attempts/001")["checks_failed"] == []
+
+
+@pytest.mark.parametrize(
+    ("history", "log_suffix"),
+    [pytest.param("gate-attempts", b"", id="complete"), pytest.param("gate-diagnostics", b"modified", id="damaged")],
+)
+def test_retry_refuses_occupied_history_root_before_execution(
+    repository: Path, head: str, output: Path, tmp_path: Path, history: str, log_suffix: bytes
+) -> None:
+    """An ordinary file at the selected history root blocks execution and remains intact until its owner moves it."""
+    first = _run_lint_gate(repository, output, head, _python_command("print('original')"), worktree=repository)
+    assert first.returncode == 0, first.stderr
+    prior = (output / "gates.json").read_bytes()
+    stream = output / "checks/lint.stdout.txt"
+    prior_stdout = stream.read_bytes() + log_suffix
+    stream.write_bytes(prior_stdout)
+    history_root = output / history
+    history_root.write_bytes(b"independent history note")
+    identity = history_root.stat()
+    marker = tmp_path / "lint-started"
+
+    blocked = _run_lint_gate(repository, output, head, _marker_command(marker), worktree=repository)
+    assert blocked.returncode == 2, blocked.stderr
+    assert f"gate-recovery-blocked:gate-history-root-occupied:{history}\n" in blocked.stderr
+    assert not marker.exists()
+    assert os.path.samestat(identity, history_root.stat())
+    assert history_root.read_bytes() == b"independent history note"
+    assert (output / "gates.json").read_bytes() == prior
+    assert stream.read_bytes() == prior_stdout
+    assert not (output / ".gate-publication.json").exists()
+
+    history_root.rename(tmp_path / "retained-history-note")
+    retry = _run_lint_gate(repository, output, head, _marker_command(marker), worktree=repository)
+    assert retry.returncode == 0, retry.stderr
+    assert marker.exists()
+    assert (history_root / "001/gates.json").read_bytes() == prior
+    assert (history_root / "001/checks/lint.stdout.txt").read_bytes() == prior_stdout
+    assert _load_validator()._validate_gates(output)["checks_failed"] == []
+
+
+@pytest.fixture
+def structured_inventory_retry(
+    editable_checkout: _EditableCheckout, output: Path
+) -> tuple[list[str], Path, Path, Path]:
+    """Prepare a free-form current receipt and a structured retry whose selected input belongs to an older attempt."""
+    editable_checkout.link_editable(editable_checkout.selected)
+    pytest_arguments = ["-q", "-p", "no:xdist", "-o", "addopts=", "tests/test_demo.py"]
+    initial = editable_checkout.run_tests(output, pytest_arguments=pytest_arguments)
+    assert initial.returncode == 0, initial.stderr
+    test_marker = editable_checkout.selected.parent / "selected-test-ran.txt"
+    test_marker.unlink()
+    inventory = next((output / "checks").glob("tracked-source-*.bin"))
+    assert _run_lint_gate(editable_checkout.original, output, None, _python_command("print('lint')")).returncode == 0
+    # Lint precedes structured pytest, so both markers must stay absent when its future inventory is occupied.
+    lint_marker = editable_checkout.selected.parent / "lint-started"
+    command = list(initial.args)
+    lint = command.index("--skip-lint")
+    command[lint : lint + 2] = ["--lint", _marker_command(lint_marker)]
+    return command, inventory, lint_marker, test_marker
+
+
+@pytest.mark.parametrize(
+    ("failed_reads", "error", "attempts"),
+    [
+        pytest.param(0, "tracked-source-inventory-changed", 1, id="readable-index"),
+        pytest.param(1, "tracked-source-inventory-changed", 2, id="transient-git-failure"),
+        pytest.param(2, "tracked-source-inventory-unavailable", 2, id="unavailable-index"),
+    ],
+)
+def test_structured_retry_preserves_colliding_inventory_from_an_older_attempt(
+    editable_checkout: _EditableCheckout,
+    output: Path,
+    structured_inventory_retry: tuple[list[str], Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failed_reads: int,
+    error: str,
+    attempts: int,
+) -> None:
+    """A current free-form receipt cannot authorize repairing a file last used by an older structured attempt."""
+    command, inventory, lint_marker, test_marker = structured_inventory_retry
+    original = inventory.read_bytes()
+    prior = (output / "gates.json").read_bytes()
+    inventory.write_bytes(b"other owner's replacement")
+    identity = inventory.stat()
+    gates = _load_run_gates(monkeypatch)
+    monkeypatch.setenv("PYTHONPATH", editable_checkout.environment["PYTHONPATH"])
+    monkeypatch.setattr(sys, "argv", command[1:])
+    run = subprocess.run
+    prelaunch_reads = []
+
+    def read_committed_paths(arguments, *args, **kwargs):
+        """Fault only the requested commit's membership read, leaving child-side index checks intact."""
+        if (
+            "ls-tree" in arguments
+            and f"{editable_checkout.expected_head}^{{commit}}" in arguments
+            and kwargs.get("cwd") == editable_checkout.selected
+            and not lint_marker.exists()
+        ):
+            prelaunch_reads.append(arguments)
+            if len(prelaunch_reads) <= failed_reads:
+                return subprocess.CompletedProcess(arguments, 128, stdout=b"")
+        return run(arguments, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "run", read_committed_paths)
+        assert gates.main() == 2
+    assert error in capsys.readouterr().err
+    assert not lint_marker.exists()
+    assert not test_marker.exists()
+    assert len(prelaunch_reads) == attempts
+    assert os.path.samestat(identity, inventory.stat())
+    assert inventory.read_bytes() == b"other owner's replacement"
+    assert (output / "gates.json").read_bytes() == prior
+    assert not (output / "gate-attempts/002").exists()
+    inventory.write_bytes(original)
+    prelaunch_reads.clear()
+    failed_reads = min(failed_reads, 1)
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "run", read_committed_paths)
+        assert gates.main() == 0, capsys.readouterr().err
+    assert len(prelaunch_reads) == failed_reads + 1
+    assert lint_marker.exists()
+    assert test_marker.exists()
+    assert (output / "gate-attempts/002/gates.json").read_bytes() == prior
+    validator = _load_validator()
+    assert validator._validate_gates(output / "gate-attempts/002")["status"] == "pass"
+    assert validator._validate_gates(output)["status"] == "pass"
+
+
+@pytest.mark.parametrize(
+    ("failed_reads", "diagnostic"),
+    [
+        pytest.param(1, "tracked-source-inventory-changed", id="inspection-recovers"),
+        pytest.param(2, "source-inspection-failed", id="inspection-remains-unavailable"),
+    ],
+)
+def test_inventory_collision_with_unavailable_checkout_never_launches_gates(
+    editable_checkout, output, structured_inventory_retry, monkeypatch, capsys, failed_reads, diagnostic
+):
+    """Retry the separate checkout inspection once and keep the current receipt while the input conflict remains."""
+    command, inventory, lint_marker, test_marker = structured_inventory_retry
+    inventory.write_bytes(b"separate input")
+    identity = inventory.stat()
+    manifest = (output / "gates.json").read_bytes()
+    gates = _load_run_gates(monkeypatch)
+    monkeypatch.setenv("PYTHONPATH", editable_checkout.environment["PYTHONPATH"])
+    monkeypatch.setattr(sys, "argv", command[1:])
+    run = subprocess.run
+    status_reads = []
+
+    def inspect_status(arguments, *args, **kwargs):
+        """Fault the checkout status read alone, leaving all membership reads and later Git operations intact."""
+        if "status" in arguments and kwargs.get("cwd") == editable_checkout.selected:
+            status_reads.append(arguments)
+            if len(status_reads) <= failed_reads:
+                return subprocess.CompletedProcess(arguments, 128, stdout=b"", stderr=b"temporary status failure")
+        return run(arguments, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "run", inspect_status)
+        assert gates.main() == 2
+    assert diagnostic in capsys.readouterr().err
+    assert not lint_marker.exists()
+    assert not test_marker.exists()
+    assert len(status_reads) == 2
+    assert inventory.read_bytes() == b"separate input"
+    assert os.path.samestat(identity, inventory.stat())
+    assert (output / "gates.json").read_bytes() == manifest
+    assert not (output / "gate-attempts/002").exists()
+    assert _load_validator()._validate_gates(output)["checks_failed"] == []
+
+
+@pytest.fixture(params=["dirty", "different-head", "dirty-then-clean"])
+def mismatched_inventory_checkout(request, editable_checkout, structured_inventory_retry):
+    """Create a genuine checkout mismatch after preparing the original clean receipt and its retry arguments."""
+    checkout = editable_checkout.selected
+    tracked = checkout / "tracked.txt"
+    original = tracked.read_bytes()
+    if request.param == "different-head":
+        _git(checkout, "commit", "--allow-empty", "-m", f"different checkout\n\n{CODEX_TRAILER}")
+        reason = HEAD_MISMATCH
+    else:
+        tracked.write_bytes(b"modified checkout contents\n")
+        reason = SOURCE_DIRTY_STATUS
+    return request.param, original, reason
+
+
+def test_confirmed_checkout_mismatch_records_every_applicable_gate_without_execution(
+    editable_checkout, output, structured_inventory_retry, mismatched_inventory_checkout, monkeypatch
+):
+    """A confirmed mismatch remains the before observation in the failed receipt, including after external cleanup."""
+    state, original, reason = mismatched_inventory_checkout
+    command, inventory, lint_marker, test_marker = structured_inventory_retry
+    checkout = editable_checkout.selected
+    observed_head = _git(checkout, "rev-parse", "HEAD")
+    prior = (output / "gates.json").read_bytes()
+    inventory.write_bytes(b"separate input")
+    identity = inventory.stat()
+    gates = _load_run_gates(monkeypatch)
+    monkeypatch.setenv("PYTHONPATH", editable_checkout.environment["PYTHONPATH"])
+    monkeypatch.setattr(sys, "argv", command[1:])
+    run = subprocess.run
+
+    def read_then_clean(arguments, *args, **kwargs):
+        """Restore the fixture only after Git has observed the dirty checkout in the cleanup case."""
+        result = run(arguments, *args, **kwargs)
+        if state == "dirty-then-clean" and "status" in arguments and kwargs.get("cwd") == checkout and result.stdout:
+            (checkout / "tracked.txt").write_bytes(original)
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "run", read_then_clean)
+        assert gates.main() == 1
+    assert not lint_marker.exists()
+    assert not test_marker.exists()
+    assert bool(_git(checkout, "status", "--porcelain")) == (state == "dirty")
+    assert inventory.read_bytes() == b"separate input"
+    assert os.path.samestat(identity, inventory.stat())
+    validator = _load_validator()
+    archived = output / "gate-attempts/002"
+    assert (archived / "gates.json").read_bytes() == prior
+    assert validator._validate_gates(archived)["status"] == "pass"
+    receipt = validator._validate_gates(output)
+    assert receipt["checks_failed"] == ["lint", "tests"]
+    assert receipt["checks_not_applicable"] == ["format", "types", "review"]
+    lint = _gate_check(output, "lint")
+    tests = _gate_check(output, "tests")
+    assert lint["source"]["before"] == tests["source"]["before"]
+    assert lint["source"]["before"]["head"] == observed_head
+    assert lint["source"]["after"] is None
+    assert tests["source"]["after"] is None
+    assert reason in _receipt_text(output, lint)
+    assert reason in _receipt_text(output, tests)
+
+
+@pytest.mark.parametrize("later_membership", ["staged", "clean"])
+def test_conflicting_committed_inventory_prevents_dispatch_after_staged_membership(
+    editable_checkout, output, structured_inventory_retry, later_membership, monkeypatch
+):
+    """Keep the first staged observation when the clean commit's inventory is occupied, including after cleanup."""
+    command, inventory, lint_marker, test_marker = structured_inventory_retry
+    checkout = editable_checkout.selected
+    prior = (output / "gates.json").read_bytes()
+    inventory.write_bytes(b"independent retained input")
+    identity = inventory.stat()
+    gates = _load_run_gates(monkeypatch)
+    monkeypatch.setenv("PYTHONPATH", editable_checkout.environment["PYTHONPATH"])
+    monkeypatch.setattr(sys, "argv", command[1:])
+    index = ("git", "ls-files", "-z", "--")
+    status = (*gates.SOURCE_GIT, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
+    run = subprocess.run
+    clean = {args: run(args, cwd=checkout, capture_output=True, check=True) for args in (index, status)}
+    note = checkout / "fixture-notes.txt"
+    note.write_bytes(b"fixture notes\n")
+    _git(checkout, "add", "--", note.name)
+    staged = {args: run(args, cwd=checkout, capture_output=True, check=True) for args in (index, status)}
+    assert set(staged[index].stdout.split(b"\0")) - set(clean[index].stdout.split(b"\0")) == {note.name.encode()}
+    assert staged[status].stdout.strip() == b"A  fixture-notes.txt"
+    assert clean[status].stdout == b""
+    observations = []
+
+    def replay_observation(arguments, *args, **kwargs):
+        """Return captured Git results without changing the fixture checkout while the runner is inspecting it."""
+        key = tuple(arguments)
+        if kwargs.get("cwd") == checkout and key in staged:
+            snapshot = clean if observations and later_membership == "clean" else staged
+            if key == status:
+                observations.append(snapshot[status].stdout)
+            return snapshot[key]
+        return run(arguments, *args, **kwargs)
+
+    def unexpected_workload(*args, **kwargs):
+        """Record a dispatch decision at the executor boundary without starting the workload."""
+        pytest.fail("workload requested after observing conflicting membership")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "run", replay_observation)
+        patch.setattr(gates, "execute_command", unexpected_workload)
+        assert gates.main() == 1
+    assert observations[0] == staged[status].stdout
+    assert not lint_marker.exists()
+    assert not test_marker.exists()
+    assert inventory.read_bytes() == b"independent retained input"
+    assert os.path.samestat(identity, inventory.stat())
+    validator = _load_validator()
+    archive = output / "gate-attempts/002"
+    assert (archive / "gates.json").read_bytes() == prior
+    assert validator._validate_gates(archive)["status"] == "pass"
+    assert validator._validate_gates(output)["checks_failed"] == ["lint", "tests"]
+    lint = _gate_check(output, "lint")
+    tests = _gate_check(output, "tests")
+    assert lint["source"]["before"] == tests["source"]["before"]
+    assert lint["source"]["before"]["status"] == "A  fixture-notes.txt"
+    assert lint["source"]["after"] is None
+    assert tests["source"]["after"] is None
+
+
+@pytest.mark.parametrize(
+    ("observation", "diagnostic"),
+    [
+        pytest.param("membership", "tracked-source-inventory-changed", id="live-membership"),
+        pytest.param("checkout", SOURCE_DIRTY_STATUS, id="checkout-status"),
+    ],
+)
+def test_post_command_drift_preserves_completed_gate_and_stops_remaining_workloads(
+    editable_checkout, output, structured_inventory_retry, tmp_path, monkeypatch, observation, diagnostic
+):
+    """Preserve completed lint and format outcomes when an independently observed checkout change later clears."""
+    command, inventory, lint_marker, test_marker = structured_inventory_retry
+    checkout = editable_checkout.selected
+    prior = (output / "gates.json").read_bytes()
+    admitted = inventory.read_bytes()
+    format_marker = tmp_path / "format-ran"
+    review_marker = tmp_path / "review-ran"
+    position = command.index("--skip-format")
+    command[position : position + 2] = ["--format", _marker_command(format_marker)]
+    position = command.index("--skip-review")
+    command[position : position + 2] = ["--review", _marker_command(review_marker)]
+    gates = _load_run_gates(monkeypatch)
+    index = ["git", "ls-files", "-z", "--"]
+    status = [*gates.SOURCE_GIT, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"]
+    selected = {"membership": index, "checkout": status}[observation]
+    run = subprocess.run
+    # Capture a genuine local change and restore the fixture before starting any gate.
+    note = checkout / "fixture-notes.txt"
+    note.write_bytes(b"fixture notes\n")
+    _git(checkout, "add", "--", note.name)
+    changed = run(selected, cwd=checkout, capture_output=True, check=True)
+    assert note.name.encode() in changed.stdout
+    _git(checkout, "restore", "--staged", "--", note.name)
+    note.rename(tmp_path / "retained-fixture-notes.txt")
+    assert not _git(checkout, "status", "--porcelain")
+    delivered = []
+
+    def observe_after_format(arguments, *args, **kwargs):
+        """Return the changed observation once after format executes, then resume real reads of the clean fixture."""
+        if list(arguments) == selected and kwargs.get("cwd") == checkout and format_marker.exists() and not delivered:
+            delivered.append(True)
+            return changed
+        return run(arguments, *args, **kwargs)
+
+    execute = gates.execute_command
+
+    def observe_workload(command, timeout, stdout, stderr, *args, **kwargs):
+        """Reject a later dispatch at the executor boundary without starting another fixture process."""
+        assert stdout.name not in {"tests.stdout.txt", "review.stdout.txt"}, "later workload requested"
+        return execute(command, timeout, stdout, stderr, *args, **kwargs)
+
+    monkeypatch.setenv("PYTHONPATH", editable_checkout.environment["PYTHONPATH"])
+    monkeypatch.setattr(sys, "argv", command[1:])
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "run", observe_after_format)
+        patch.setattr(gates, "execute_command", observe_workload)
+        assert gates.main() == 1
+    assert lint_marker.exists()
+    assert format_marker.exists()
+    assert delivered == [True]
+    assert not test_marker.exists()
+    assert not review_marker.exists()
+    assert inventory.read_bytes() == admitted
+    assert list((output / "checks").glob("tracked-source-*.bin")) == [inventory]
+    validator = _load_validator()
+    receipt = validator._validate_gates(output)
+    assert receipt["checks_failed"] == ["format", "tests", "review"]
+    assert receipt["checks_not_applicable"] == ["types"]
+    by_id = {row["id"]: row for row in receipt["checks"]}
+    assert by_id["lint"]["status"] == "pass"
+    assert by_id["lint"]["exit_code"] == 0
+    assert by_id["lint"]["source"]["after"]["head"] == editable_checkout.expected_head
+    assert by_id["format"]["exit_code"] == 0
+    assert by_id["format"]["source"]["after"] == by_id["tests"]["source"]["before"]
+    assert by_id["format"]["source"]["after"] == by_id["review"]["source"]["before"]
+    assert diagnostic in _receipt_text(output, by_id["format"])
+    assert diagnostic in _receipt_text(output, by_id["tests"])
+    assert diagnostic in _receipt_text(output, by_id["review"])
+    assert by_id["tests"]["source"]["after"] is None
+    assert by_id["review"]["source"]["after"] is None
+    archive = output / "gate-attempts/002"
+    assert (archive / "gates.json").read_bytes() == prior
+    assert validator._validate_gates(archive)["status"] == "pass"
+
+
+@pytest.mark.parametrize("occupied_membership", ["live", "pinned"])
+def test_clean_status_with_different_index_membership_stops_before_lint(
+    editable_checkout, output, structured_inventory_retry, monkeypatch, occupied_membership
+):
+    """A confirmed membership mismatch fails before dispatch and preserves either occupied inventory."""
+    command, admitted_inventory, lint_marker, test_marker = structured_inventory_retry
+    checkout = editable_checkout.selected
+    tree = admitted_inventory.read_bytes()
+    root, head, *names = tree.split(b"\0")
+    assert root == os.fsencode(checkout.as_posix())
+    assert head == editable_checkout.expected_head.encode()
+    alternate_names = sorted([*names, b"other-tracked-note.txt"])
+    alternate = b"\0".join([root, head, *alternate_names])
+    name = f"tracked-source-{hashlib.sha256(alternate).hexdigest()}.bin"
+    foreign = admitted_inventory if occupied_membership == "pinned" else admitted_inventory.with_name(name)
+    foreign.write_bytes(b"other report's input")
+    identity = foreign.stat()
+    public_inventories = {admitted_inventory: tree, foreign: b"other report's input"}
+    prior = (output / "gates.json").read_bytes()
+    assert not _git(checkout, "status", "--porcelain")
+    gates = _load_run_gates(monkeypatch)
+    run = subprocess.run
+
+    def read_alternate_index(arguments, *args, **kwargs):
+        """Model the alternate live membership while the commit lookup and checkout observation remain real."""
+        if list(arguments) == ["git", "ls-files", "-z", "--"] and kwargs.get("cwd") == checkout:
+            return subprocess.CompletedProcess(arguments, 0, stdout=b"\0".join(alternate_names) + b"\0")
+        return run(arguments, *args, **kwargs)
+
+    def unexpected_workload(*args, **kwargs):
+        pytest.fail("workload requested with an unadmitted file list")
+
+    monkeypatch.setenv("PYTHONPATH", editable_checkout.environment["PYTHONPATH"])
+    monkeypatch.setattr(sys, "argv", command[1:])
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "run", read_alternate_index)
+        patch.setattr(gates, "execute_command", unexpected_workload)
+        assert gates.main() == 1
+    assert not lint_marker.exists()
+    assert not test_marker.exists()
+    assert {path: path.read_bytes() for path in foreign.parent.glob("tracked-source-*.bin")} == public_inventories
+    assert os.path.samestat(identity, foreign.stat())
+    validator = _load_validator()
+    assert validator._validate_gates(output)["checks_failed"] == ["lint", "tests"]
+    before = _gate_check(output, "lint")["source"]["before"]
+    assert before["expected_inventory_sha256"] == hashlib.sha256(tree).hexdigest()
+    assert before["observed_inventory_sha256"] == hashlib.sha256(alternate).hexdigest()
+    assert "tracked-source-inventory-changed" in _receipt_text(output, _gate_check(output, "lint"))
+    assert "tracked-source-inventory-changed" in _receipt_text(output, _gate_check(output, "tests"))
+    archive = output / "gate-attempts/002"
+    assert (archive / "gates.json").read_bytes() == prior
+    assert validator._validate_gates(archive)["status"] == "pass"
+
+
+def test_postrun_checkout_and_index_reads_recover_independently(
+    editable_checkout, output, structured_inventory_retry, monkeypatch
+):
+    """A transient checkout read and a later transient membership read each recover without rerunning lint."""
+    command, inventory, lint_marker, test_marker = structured_inventory_retry
+    command[command.index("--lint") + 1] = _python_command(
+        f"from pathlib import Path\nwith Path({str(lint_marker)!r}).open('ab') as stream:\n    stream.write(b'lint')"
+    )
+    admitted = inventory.read_bytes()
+    prior = (output / "gates.json").read_bytes()
+    checkout = editable_checkout.selected
+    gates = _load_run_gates(monkeypatch)
+    reads = []
+    run = subprocess.run
+    status = [*gates.SOURCE_GIT, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"]
+    index = ["git", "ls-files", "-z", "--"]
+
+    def read_after_lint(arguments, *args, **kwargs):
+        """Fail the first read at each Git boundary after lint has really run."""
+        if kwargs.get("cwd") == checkout and lint_marker.exists() and list(arguments) in (status, index):
+            kind = "status" if list(arguments) == status else "membership"
+            if (kind, "unavailable") not in reads:
+                reads.append((kind, "unavailable"))
+                return subprocess.CompletedProcess(arguments, 128, stdout=b"", stderr=b"temporary read failure")
+            reads.append((kind, "read"))
+        return run(arguments, *args, **kwargs)
+
+    monkeypatch.setenv("PYTHONPATH", editable_checkout.environment["PYTHONPATH"])
+    monkeypatch.setattr(sys, "argv", command[1:])
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "run", read_after_lint)
+        assert gates.main() == 0
+    assert reads[:4] == [
+        ("status", "unavailable"),
+        ("status", "read"),
+        ("membership", "unavailable"),
+        ("membership", "read"),
+    ]
+    assert lint_marker.read_bytes() == b"lint"
+    assert test_marker.exists()
+    assert inventory.read_bytes() == admitted
+    validator = _load_validator()
+    assert validator._validate_gates(output)["checks_failed"] == []
+    archive = output / "gate-attempts/002"
+    assert (archive / "gates.json").read_bytes() == prior
+    assert validator._validate_gates(archive)["checks_failed"] == []
+
+
+def test_structured_retry_preserves_other_inventory_while_publishing_its_selected_input(
+    editable_checkout, output, structured_inventory_retry
+):
+    """A different digest-named public input stays in place while a clean retry publishes the selected inventory."""
+    command, inventory, lint_marker, test_marker = structured_inventory_retry
+    selected = inventory.read_bytes()
+    prior = (output / "gates.json").read_bytes()
+    other_content = b"different retained input"
+    other = inventory.with_name(f"tracked-source-{hashlib.sha256(other_content).hexdigest()}.bin")
+    assert other != inventory
+    inventory.rename(other)
+    other.write_bytes(other_content)
+    identity = other.stat()
+    retry = _run(command, cwd=editable_checkout.original, env=editable_checkout.environment)
+    assert retry.returncode == 0, retry.stderr
+    assert lint_marker.exists()
+    assert test_marker.exists()
+    assert other.read_bytes() == other_content
+    assert os.path.samestat(identity, other.stat())
+    assert inventory.read_bytes() == selected
+    validator = _load_validator()
+    archive = output / "gate-attempts/002"
+    assert (archive / "gates.json").read_bytes() == prior
+    assert not (archive / "checks" / other.name).exists()
+    assert validator._validate_gates(archive)["checks_failed"] == []
+    assert validator._validate_gates(output)["checks_failed"] == []
+
+
+@pytest.fixture
+def tracked_file_comparison(request, editable_checkout, structured_inventory_retry, monkeypatch):
+    """Supply read-only index observations for local text files and record their real content comparisons."""
+    state, unavailable_reads = request.param
+    checkout = editable_checkout.selected
+    mode = {"executable": "100755", "link": "120000"}.get(state, "100644")
+    indexed_file = ".gitignore" if state in {"content", "two-file-comparison"} else "tracked.txt"
+    indexed_hash = _git(checkout, "rev-parse", f"HEAD:{indexed_file}")
+    assert not (checkout / "tracked.txt").is_symlink()
+    assert _git(checkout, "hash-object", "tracked.txt") != _git(checkout, "rev-parse", "HEAD:.gitignore")
+    if state == "dirty-with-unavailable-comparison":
+        (checkout / "notes.txt").write_bytes(b"working notes")
+    _git(checkout, "config", "core.filemode", "true")
+    _git(checkout, "config", "core.symlinks", "true")
+    names = [".gitignore", "tracked.txt"] if state == "two-file-comparison" else ["tracked.txt"]
+    recorded_flags = b"".join(f"h {name}\0".encode() for name in names)
+    recorded_index = b"".join(f"{mode} {indexed_hash} 0\t{name}\0".encode() for name in names)
+    inspections, comparisons = [], []
+    run = subprocess.run
+
+    def read_tracked_file(arguments, *args, **kwargs):
+        """Replay the selected index rows while using the filesystem and Git for all other observations."""
+        if kwargs.get("cwd") == checkout:
+            if arguments[-3:] == ["ls-files", "-v", "-z"]:
+                inspections.append("inspected")
+                return subprocess.CompletedProcess(arguments, 0, stdout=recorded_flags)
+            if arguments[-3:] == ["ls-files", "-s", "-z"]:
+                return subprocess.CompletedProcess(arguments, 0, stdout=recorded_index)
+            if arguments[-3:-1] == ["hash-object", "--"] and arguments[-1] in names:
+                comparisons.append("compared")
+                if arguments[-1] == ".gitignore" or len(comparisons) <= unavailable_reads:
+                    failed = subprocess.CompletedProcess(arguments, 1, stdout=b"", stderr=b"comparison unavailable")
+                    if kwargs.get("check"):
+                        failed.check_returncode()
+                    return failed
+        return run(arguments, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", read_tracked_file)
+    diagnostic = (
+        SOURCE_DIRTY_STATUS
+        if state == "dirty-with-unavailable-comparison"
+        else "git-index-concealed-entries:count=1:paths=['tracked.txt']"
+    )
+    return inspections, comparisons, diagnostic
+
+
+@pytest.mark.parametrize(
+    ("tracked_file_comparison", "expected_inspections", "expected_comparisons"),
+    [
+        pytest.param(("content", 0), 1, 1, id="content-difference"),
+        pytest.param(("executable", 0), 1, 0, id="executable-mode-difference"),
+        pytest.param(("link", 0), 1, 0, id="file-kind-difference"),
+        pytest.param(("content", 1), 2, 2, id="recovered-comparison-proves-difference"),
+        pytest.param(("dirty-with-unavailable-comparison", 2), 1, 1, id="observed-dirty-checkout"),
+        pytest.param(("two-file-comparison", 0), 1, 2, id="unavailable-file-and-confirmed-file"),
+    ],
+    indirect=["tracked_file_comparison"],
+)
+def test_inventory_collision_publishes_confirmed_tracked_file_failure(
+    editable_checkout,
+    output,
+    structured_inventory_retry,
+    tracked_file_comparison,
+    expected_inspections,
+    expected_comparisons,
+    monkeypatch,
+):
+    """Keep the prior attempt and publish the confirmed source failure without starting an applicable command."""
+    command, inventory, lint_marker, test_marker = structured_inventory_retry
+    prior = (output / "gates.json").read_bytes()
+    inventory.write_bytes(b"independent retained input")
+    identity = inventory.stat()
+    gates = _load_run_gates(monkeypatch)
+    monkeypatch.setenv("PYTHONPATH", editable_checkout.environment["PYTHONPATH"])
+    monkeypatch.setattr(sys, "argv", command[1:])
+    assert gates.main() == 1
+    inspections, comparisons, diagnostic = tracked_file_comparison
+    assert len(inspections) == expected_inspections
+    assert len(comparisons) == expected_comparisons
+    assert not lint_marker.exists()
+    assert not test_marker.exists()
+    assert os.path.samestat(identity, inventory.stat())
+    assert inventory.read_bytes() == b"independent retained input"
+    validator = _load_validator()
+    archive = output / "gate-attempts/002"
+    assert (archive / "gates.json").read_bytes() == prior
+    assert validator._validate_gates(archive)["status"] == "pass"
+    assert validator._validate_gates(output)["checks_failed"] == ["lint", "tests"]
+    lint = _gate_check(output, "lint")
+    tests = _gate_check(output, "tests")
+    assert lint["source"]["before"] == tests["source"]["before"]
+    assert lint["source"]["before"]["head"] == editable_checkout.expected_head
+    assert lint["source"]["after"] is None
+    assert tests["source"]["after"] is None
+    assert diagnostic in _receipt_text(output, lint)
+    assert diagnostic in _receipt_text(output, tests)
+
+
+@pytest.mark.parametrize(
+    ("tracked_file_comparison", "diagnostic"),
+    [
+        pytest.param(("unchanged", 1), "tracked-source-inventory-changed", id="retry-establishes-clean-source"),
+        pytest.param(("unchanged", 2), "source-inspection-failed", id="comparison-still-unavailable"),
+    ],
+    indirect=["tracked_file_comparison"],
+)
+def test_inventory_collision_retains_prior_receipt_after_unavailable_content_comparison(
+    editable_checkout, output, structured_inventory_retry, tracked_file_comparison, diagnostic, monkeypatch, capsys
+):
+    """Retry an inconclusive comparison once and retain the prior report when the source is unresolved or clean."""
+    command, inventory, lint_marker, test_marker = structured_inventory_retry
+    prior = (output / "gates.json").read_bytes()
+    inventory.write_bytes(b"independent retained input")
+    identity = inventory.stat()
+    gates = _load_run_gates(monkeypatch)
+    monkeypatch.setenv("PYTHONPATH", editable_checkout.environment["PYTHONPATH"])
+    monkeypatch.setattr(sys, "argv", command[1:])
+    assert gates.main() == 2
+    error = capsys.readouterr().err
+    assert diagnostic in error
+    assert "git-index-concealed-entries" not in error
+    inspections, comparisons, _ = tracked_file_comparison
+    assert len(inspections) == 2
+    assert len(comparisons) == 2
+    assert not lint_marker.exists()
+    assert not test_marker.exists()
+    assert os.path.samestat(identity, inventory.stat())
+    assert inventory.read_bytes() == b"independent retained input"
+    assert (output / "gates.json").read_bytes() == prior
+    assert not (output / "gate-attempts/002").exists()
+    assert _load_validator()._validate_gates(output)["status"] == "pass"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param(f"tracked-source-{'a' * 64}.bin", id="possible-inventory"),
+        pytest.param("other-check-notes.txt", id="ordinary-file"),
+    ],
+)
+def test_successful_empty_git_listing_retains_ordinary_failed_tests_receipt(
+    tmp_path: Path, output: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """An empty committed checkout runs lint and retains the tests guard's failure without retrying a valid listing."""
+    repository = tmp_path / "empty-checkout"
+    repository.mkdir()
+    _git(repository, "init", "-q")
+    _git(repository, "config", "user.name", "Gate Test")
+    _git(repository, "config", "user.email", "gate@example.invalid")
+    _git(repository, "commit", "--allow-empty", "-m", f"empty checkout\n\n{CODEX_TRAILER}")
+    command = TestPytestGateRecovery._tests_gate_command(
+        output, repository, _git(repository, "rev-parse", "HEAD"), sys.executable
+    )
+    lint = tmp_path / "lint-started"
+    position = command.index("--skip-lint")
+    command[position : position + 2] = ["--lint", _marker_command(lint)]
+    checks = output / "checks"
+    checks.mkdir(parents=True)
+    other = checks / name
+    other.write_bytes(b"unrelated retained file")
+    identity = other.stat()
+    gates = _load_run_gates(monkeypatch)
+    monkeypatch.setattr(sys, "argv", command[1:])
+    run = subprocess.run
+    observed = []
+
+    def observe_membership(arguments, *args, **kwargs):
+        """Record empty committed trees separately from empty live indexes at execution."""
+        result = run(arguments, *args, **kwargs)
+        if kwargs.get("cwd") == repository:
+            if "ls-tree" in arguments:
+                observed.append(("commit", lint.exists(), result.returncode, result.stdout))
+            elif list(arguments) == ["git", "ls-files", "-z", "--"]:
+                observed.append(("index", lint.exists(), result.returncode, result.stdout))
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "run", observe_membership)
+        assert gates.main() == 1
+    assert lint.exists()
+    assert observed == [
+        ("commit", False, 0, b""),  # Pin once, including when the output contains only an unrelated file.
+        ("index", False, 0, b""),  # Before lint.
+        ("index", True, 0, b""),  # After lint.
+        ("index", True, 0, b""),  # Before the selected tests, which cannot collect from an empty checkout.
+    ]
+    assert _load_validator()._validate_gates(output)["checks_failed"] == ["tests"]
+    assert "tracked-source-inventory-empty-or-unavailable" in _receipt_text(output, _gate_check(output, "tests"))
+    assert os.path.samestat(identity, other.stat())
+    assert other.read_bytes() == b"unrelated retained file"
+
+
+def test_interrupted_inventory_repair_recovers_its_former_archive_location(
+    editable_checkout: _EditableCheckout, output: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resume an older journal whose authenticated damaged attempt already moved into numbered history."""
+    editable_checkout.link_editable(editable_checkout.selected)
+    first = editable_checkout.run_tests(output)
+    assert first.returncode == 0, first.stderr
+    inventory = next((output / "checks").glob("tracked-source-*.bin"))
+    inventory.write_bytes(b"previously damaged")
+    gates = _load_run_gates(monkeypatch)
+    for key, value in editable_checkout.environment.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(sys, "argv", first.args[1:])
+    replace = os.replace
+
+    def interrupt(source: str | Path, destination: str | Path) -> None:
+        if Path(destination) == output / "gates.json":
+            raise OSError("interrupted manifest install")
+        replace(source, destination)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "replace", interrupt)
+        assert gates.main() == 2
+    assert (output / ".gate-publication.json").is_file()
+    diagnostic = output / "gate-diagnostics/001"
+    numbered = output / "gate-attempts/001"
+    numbered.parent.mkdir(exist_ok=True)
+    diagnostic.rename(numbered)
+    identity = numbered.stat()
+    retry = editable_checkout.run_tests(output)
+    assert retry.returncode == 0, retry.stderr
+    assert os.path.samestat(identity, diagnostic.stat())
+    assert (diagnostic / "checks" / inventory.name).read_bytes() == b"previously damaged"
+    validator = _load_validator()
+    assert validator._validate_gates(numbered)["checks_failed"] == []
+    assert validator._validate_gates(output)["checks_failed"] == []
+
+
+def test_relocated_diagnostic_recovers_with_file_at_other_history_root(
+    editable_checkout: _EditableCheckout, output: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Recovery finishes the damaged attempt even when an independent file blocks the following ordinary retry."""
+    editable_checkout.link_editable(editable_checkout.selected)
+    pytest_arguments = ["-q", "-p", "no:xdist", "-o", "addopts=", "tests/test_demo.py"]
+    first = editable_checkout.run_tests(output, pytest_arguments=pytest_arguments)
+    assert first.returncode == 0, first.stderr
+    manifest = (output / "gates.json").read_bytes()
+    inventory = next((output / "checks").glob("tracked-source-*.bin"))
+    inventory.write_bytes(b"historical damaged input")
+    alternate = output / "gate-attempts"
+    alternate.write_bytes(b"separate history note")
+    identity = alternate.stat()
+    gates = _load_run_gates(monkeypatch)
+    monkeypatch.setenv("PYTHONPATH", editable_checkout.environment["PYTHONPATH"])
+    monkeypatch.setattr(sys, "argv", first.args[1:])
+    replace = os.replace
+
+    def interrupt(source: str | Path, destination: str | Path) -> None:
+        """Stop after the damaged archive moves and before the replacement manifest reaches the reader."""
+        if Path(destination) == output / "gates.json":
+            raise OSError("interrupted after relocation")
+        replace(source, destination)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "replace", interrupt)
+        assert gates.main() == 2
+    journal = output / ".gate-publication.json"
+    moved = output / "gate-diagnostics/001"
+    moved_identity = moved.stat()
+    assert journal.exists()
+    validator = _load_validator()
+    with pytest.raises(SystemExit, match="gate-publication-in-progress"):
+        validator._validate_gates(output)
+
+    lint = tmp_path / "lint-started"
+    retry = _run_lint_gate(tmp_path, output, None, _marker_command(lint))
+    assert retry.returncode == 2, retry.stderr
+    assert not journal.exists()
+    assert validator._validate_gates(output)["status"] == "pass"
+    assert not lint.exists()
+    assert os.path.samestat(identity, alternate.stat())
+    assert alternate.read_bytes() == b"separate history note"
+    assert os.path.samestat(moved_identity, moved.stat())
+    assert (moved / "gates.json").read_bytes() == manifest
+    assert (moved / "checks" / inventory.name).read_bytes() == b"historical damaged input"
+
+    recovered = (output / "gates.json").read_bytes()
+    alternate.rename(tmp_path / "retained-history-note")
+    retry = _run_lint_gate(tmp_path, output, None, _marker_command(lint))
+    assert retry.returncode == 0, retry.stderr
+    assert lint.exists()
+    ordinary = alternate / "001"
+    assert (ordinary / "gates.json").read_bytes() == recovered
+    assert validator._validate_gates(ordinary)["status"] == "pass"
+    assert validator._validate_gates(output)["status"] == "pass"
+
+
+@pytest.mark.parametrize("prior_location", ["stage", "gate-attempts"])
+def test_interrupted_inventory_repair_preserves_occupied_diagnostic_across_restarts(
+    editable_checkout: _EditableCheckout, output: Path, monkeypatch: pytest.MonkeyPatch, prior_location: str
+) -> None:
+    """Restart an older damaged publication on either side of relocation while retaining an occupied diagnostic."""
+    editable_checkout.link_editable(editable_checkout.selected)
+    pytest_arguments = ["-q", "-p", "no:xdist", "-o", "addopts=", "tests/test_demo.py"]
+    first = editable_checkout.run_tests(output, pytest_arguments=pytest_arguments)
+    assert first.returncode == 0, first.stderr
+    inventory = next((output / "checks").glob("tracked-source-*.bin"))
+    inventory.write_bytes(b"previously damaged")
+    gates = _load_run_gates(monkeypatch)
+    monkeypatch.setattr(sys, "argv", first.args[1:])
+    monkeypatch.setenv("PYTHONPATH", editable_checkout.environment["PYTHONPATH"])
+    occupied = output / "gate-diagnostics/001"
+    former = output / "gate-attempts/001"
+    rename = os.rename
+
+    def interrupt_initial_move(source: str | Path, destination: str | Path) -> None:
+        """Leave the older archive in one of its two historical recovery locations."""
+        if Path(destination) == occupied:
+            if prior_location == "gate-attempts":
+                former.parent.mkdir(exist_ok=True)
+                rename(source, former)
+            raise OSError("interrupted older publication")
+        rename(source, destination)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "rename", interrupt_initial_move)
+        assert gates.main() == 2
+    marker = output / ".gate-publication.json"
+    stage = output / json.loads(marker.read_bytes())["stage"]
+    archive = {"stage": stage / "previous", "gate-attempts": former}[prior_location]
+    identity = archive.stat()
+    occupied.mkdir()
+    (occupied / "note.txt").write_bytes(b"independent diagnostic")
+    occupied_identity = occupied.stat()
+    replace = os.replace
+
+    def interrupt_manifest_install(source: str | Path, destination: str | Path) -> None:
+        """Interrupt a second time once the recovered archive has reached its diagnostic number."""
+        if Path(destination) == output / "gates.json":
+            raise OSError("interrupted manifest install")
+        replace(source, destination)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "replace", interrupt_manifest_install)
+        assert gates.main() == 2
+    moved = output / "gate-diagnostics/002"
+    assert os.path.samestat(identity, moved.stat())
+    assert (moved / "checks" / inventory.name).read_bytes() == b"previously damaged"
+    assert not former.exists()
+    assert marker.exists()
+
+    retry = editable_checkout.run_tests(output, pytest_arguments=pytest_arguments)
+    assert retry.returncode == 0, retry.stderr
+    assert not marker.exists()
+    assert os.path.samestat(identity, moved.stat())
+    assert os.path.samestat(occupied_identity, occupied.stat())
+    assert (occupied / "note.txt").read_bytes() == b"independent diagnostic"
+    assert set(occupied.parent.iterdir()) == {occupied, moved}
+    validator = _load_validator()
+    assert validator._validate_gates(former)["checks_failed"] == []
+    assert validator._validate_gates(output)["checks_failed"] == []
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        pytest.param("missing", id="missing-proof"),
+        pytest.param("oversized", id="oversized-proof"),
+        pytest.param("wrong-worktree", id="cross-worktree-proof"),
+        pytest.param("prepublished", id="preexisting-canonical-proof"),
+        pytest.param("prior-collision", id="canonical-file-present-before-launch"),
+        pytest.param(
+            "symlink", marks=pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="needs symlinks"), id="redirect"
+        ),
+    ],
+)
+def test_invalid_pytest_scratch_proof_cannot_certify_gate(
+    repository: Path, head: str, output: Path, monkeypatch: pytest.MonkeyPatch, replacement: str
+) -> None:
+    """Retain a validator-readable failed observation while preserving any canonical-file collision."""
+    gates = _load_run_gates(monkeypatch)
+    sentinel = repository.parent / "outside.json"
+    sentinel.write_text("untouched", encoding="utf-8")
+    checks = output / "checks"
+    checks.mkdir(parents=True)
+    canonical = checks / "tests.python-imports.json"
+    if replacement == "prior-collision":
+        canonical.write_text("unexpected", encoding="utf-8")
+
+    def submit(argv: list[str], timeout: int, stdout: Path, stderr: Path, *settings: Any) -> tuple[int, float]:
+        stdout.write_bytes(b"")
+        stderr.write_bytes(b"")
+        submitted = Path(argv[5])
+        assert submitted.parent == settings[-1]
+        assert submitted.parent.parent == checks
+        if replacement in {"missing", "prior-collision"}:
+            return 0, 0.0
+        if replacement == "symlink":
+            submitted.symlink_to(sentinel)
+        elif replacement == "oversized":
+            with submitted.open("wb") as stream:
+                stream.truncate(gates.MAX_TEST_PROOF_BYTES + 1)
+        else:
+            document = {
+                "mode": "in-process-pytest",
+                "status": "pass",
+                "worktree": (repository if replacement == "prepublished" else repository.parent).as_posix(),
+                "invoked_interpreter": Path(sys.executable).as_posix(),
+                "modules": {"example": {"status": "pass"}},
+                "tests": {"test.py": {"status": "pass"}},
+                "workers": {},
+                "errors": [],
+            }
+            submitted.write_text(json.dumps(document), encoding="utf-8")
+            if replacement == "prepublished":
+                canonical.write_text("unexpected", encoding="utf-8")
+        return 0, 0.0
+
+    monkeypatch.setattr(gates, "execute_command", submit)
+    spec = gates.PythonTestSpec(Path(sys.executable), ("example",), ())
+    result = gates.run_check("tests", "", "", 30, output, head, repository, spec)
+    assert result["status"] == "fail"
+    assert result["python_imports"]["reason"] == "proof-missing-or-invalid"
+    assert sentinel.read_text(encoding="utf-8") == "untouched"
+    validator = _load_validator()
+    if replacement in {"prepublished", "prior-collision"}:
+        assert canonical.read_text(encoding="utf-8") == "unexpected"
+        assert "source-gate-parent-proof-unavailable" in _receipt_text(output, result)
+        assert "checks/tests.python-imports.json" not in result["source"]["artifacts"]
+        with pytest.raises((SystemExit, ValueError)):
+            validator._validate_gate_artifacts(output, result, None)
+    else:
+        assert json.loads(canonical.read_bytes()) == result["python_imports"]
+        assert (
+            result["source"]["artifacts"]["checks/tests.python-imports.json"]
+            == hashlib.sha256(canonical.read_bytes()).hexdigest()
+        )
+        validator._validate_gate_artifacts(output, result, None)
+
+
+@pytest.mark.skipif(not DIRECTORY_SYMLINKS_AVAILABLE, reason="host cannot link directories")
+def test_redirected_pytest_scratch_root_prevents_launch(
+    repository: Path, head: str, output: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject a redirected scratch root before touching its target or running any project test."""
+    gates = _load_run_gates(monkeypatch)
+    checks = output / "checks"
+    checks.mkdir(parents=True)
+    token = "a" * 32
+    monkeypatch.setattr(gates.secrets, "token_hex", lambda size: token)
+    (checks / f"pytest-scratch-{token}").symlink_to(repository, target_is_directory=True)
+    launch = mock.Mock(side_effect=AssertionError("unexpected launch"))
+    monkeypatch.setattr(gates, "execute_command", launch)
+    spec = gates.PythonTestSpec(Path(sys.executable), ("example",), ())
+    result = gates.run_check("tests", "", "", 30, output, head, repository, spec)
+    assert result["status"] == "fail"
+    assert "source-gate-pytest-scratch-redirected" in _receipt_text(output, result)
+    assert not (repository / "tests.python-imports.json").exists()
+    launch.assert_not_called()
+
+
+def _swap_before_publication(monkeypatch: pytest.MonkeyPatch, checks: Path) -> Callable[[], None]:
+    """Swap the checks directory while the child runs and force the path-checked publication branch."""
+    monkeypatch.setattr(os, "supports_dir_fd", frozenset())
+    return lambda: _swap_directory(checks)
+
+
+def _swap_at_directory_open(monkeypatch: pytest.MonkeyPatch, checks: Path) -> Callable[[], None]:
+    """Swap the checks directory after its path check passes, as publication opens it by descriptor."""
+    real_open = os.open
+    swapped: list[Path] = []
+
+    def open_after_swap(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if not swapped and not isinstance(path, int) and Path(os.fspath(path)) == checks:
+            swapped.append(checks)
+            _swap_directory(checks)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", open_after_swap)
+    monkeypatch.setattr(os, "supports_dir_fd", {*os.supports_dir_fd, open_after_swap})
+    return lambda: None
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        pytest.param(_swap_before_publication, id="swapped-before-publication"),
+        pytest.param(
+            _swap_at_directory_open,
+            marks=pytest.mark.skipif(os.open not in os.supports_dir_fd, reason="host has no directory-relative open"),
+            id="swapped-at-directory-open",
+        ),
+    ],
+)
+def test_passing_proof_is_never_published_into_a_replaced_checks_directory(
+    repository: Path,
+    head: str,
+    output: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    arrange: Callable[[pytest.MonkeyPatch, Path], Callable[[], None]],
+) -> None:
+    """A checks directory replaced after admission receives no canonical proof, even from a valid submission.
+
+    The parent admits the checks directory before launch. Whether it is swapped before the path check or between that
+    check and the descriptor open, publication must refuse with the directory-changed code and fail the gate.
+    """
+    gates = _load_run_gates(monkeypatch)
+    checks = output / "checks"
+    checks.mkdir(parents=True)
+    swap = arrange(monkeypatch, checks)
+
+    def submit(argv: list[str], timeout: int, stdout: Path, stderr: Path, *settings: Any) -> tuple[int, float]:
+        stdout.write_bytes(b"")
+        stderr.write_bytes(b"")
+        Path(argv[5]).write_bytes(_passing_proof(repository))
+        swap()
+        return 0, 0.0
+
+    monkeypatch.setattr(gates, "execute_command", submit)
+    spec = gates.PythonTestSpec(Path(sys.executable), ("example",), ())
+    result = gates.run_check("tests", "", "", 30, output, head, repository, spec)
+    assert result["status"] == "fail"
+    assert "source-gate-proof-rejected:source-gate-checks-directory-changed" in _receipt_text(output, result)
+    assert not (checks / "tests.python-imports.json").exists()
+
+
+def test_proof_in_a_replaced_pytest_scratch_cannot_certify_gate(
+    repository: Path, head: str, output: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A valid proof inside a directory that replaced the attempt's scratch is not that attempt's submission.
+
+    The child may rename its scratch away and create a new one at the same path. The parent compares the admitted
+    scratch identity before reading, so the replacement's proof is rejected and the gate fails.
+    """
+    gates = _load_run_gates(monkeypatch)
+    (output / "checks").mkdir(parents=True)
+
+    def submit(argv: list[str], timeout: int, stdout: Path, stderr: Path, *settings: Any) -> tuple[int, float]:
+        stdout.write_bytes(b"")
+        stderr.write_bytes(b"")
+        scratch = Path(argv[5]).parent
+        scratch.rename(scratch.with_name("displaced-scratch"))
+        scratch.mkdir()
+        Path(argv[5]).write_bytes(_passing_proof(repository))
+        return 0, 0.0
+
+    monkeypatch.setattr(gates, "execute_command", submit)
+    spec = gates.PythonTestSpec(Path(sys.executable), ("example",), ())
+    result = gates.run_check("tests", "", "", 30, output, head, repository, spec)
+    assert result["status"] == "fail"
+    assert result["python_imports"]["reason"] == "proof-missing-or-invalid"
+    assert "source-gate-proof-rejected:source-gate-pytest-scratch-changed" in _receipt_text(output, result)
+
+
+@pytest.mark.skipif(not DIRECTORY_SYMLINKS_AVAILABLE, reason="host cannot link directories")
+def test_gate_replay_coordinates_match_when_output_ancestor_has_an_alias(
+    editable_checkout: _EditableCheckout, tmp_path: Path
+) -> None:
+    """Bind scratch and inventory under the same canonical checks directory even when the caller supplied an alias."""
+    editable_checkout.link_editable(editable_checkout.selected)
+    real_parent = tmp_path / "real-output"
+    real_parent.mkdir()
+    alias = tmp_path / "alias-output"
+    alias.symlink_to(real_parent, target_is_directory=True)
+    output = alias / "run"
+    run = editable_checkout.run_tests(output)
+    assert run.returncode == 0, run.stderr
+    check = _gate_check(output, "tests")
+    argv = json.loads(_receipt_text(output, check, "command_path").removeprefix("argv-json:"))
+    checks = Path(argv[5]).parent.parent
+    assert checks.parent.parent == output.resolve()
+    assert re.fullmatch(r"\.gate-stage-[0-9a-f]{32}", checks.parent.name)
+    assert checks.name == "checks"
+    assert re.fullmatch(r"pytest-scratch-[0-9a-f]{32}", Path(argv[5]).parent.name)
+    assert Path(argv[5]).name == "tests.python-imports.json"
+    assert Path(json.loads(argv[-1])["tracked_inventory"]["path"]).parent == checks
+
+
+@pytest.mark.parametrize(
+    ("decision", "status", "mode", "legacy", "reason"),
+    [
+        pytest.param("selected", "pass", "macos-worktree", False, "verified native Ruff", id="native-command"),
+        pytest.param("failed", "fail", "macos-worktree", False, "verified native Ruff", id="failed-tool-never-replays"),
+        pytest.param(
+            "denied",
+            "fail",
+            "not-started",
+            False,
+            "worktree profile preparation refused or failed",
+            id="denial-never-replays",
+        ),
+        pytest.param(
+            "launcher-missing",
+            "fail",
+            "not-started",
+            False,
+            "sandbox launcher refused or failed",
+            id="launcher-disappears",
+        ),
+        pytest.param(
+            "unavailable",
+            "pass",
+            "standard",
+            True,
+            "worktree profile unavailable or incompatible before launch",
+            id="prelaunch-ineligible",
+        ),
+        pytest.param(
+            "declined",
+            "pass",
+            "standard",
+            True,
+            "worktree sandbox declined: Ruff input includes private, linked or nested paths",
+            id="contributor-input-declines-confinement",
+        ),
+    ],
+)
+def test_normal_gate_routes_only_once(
+    linked_worktree: tuple[Path, Path, str],
+    output: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    decision: str,
+    status: str,
+    mode: str,
+    legacy: bool,
+    reason: str,
+) -> None:
+    """The public CLI records the command actually launched and never replays a refused or failed sandbox.
+
+    A profile the checkout's own inputs decline is recorded as a named standard route: the original command runs once,
+    unchanged, and the record never claims confinement it did not have.
+    """
+    gates = _load_run_gates(monkeypatch)
+    _, selected, head = linked_worktree
+    invocation = [
+        "run_gates.py",
+        "--out",
+        str(output),
+        "--worktree",
+        str(selected),
+        "--expected-head",
+        head,
+        "--format",
+        "ruff format --check .",
+        *_skip_gates("format"),
+    ]
+    monkeypatch.setattr(sys, "argv", invocation)
+    monkeypatch.setattr(gates, "sys", mock.Mock(wraps=sys, platform="darwin"))
+    monkeypatch.setattr(gates.shutil, "which", lambda *args, **kwargs: sys.executable)
+    monkeypatch.setattr(gates, "_ruff_configuration_reason", lambda *args: None)
+    legacy_invocations = []
+    prepared = []
+
+    def shell(command: str, platform: str) -> list[str]:
+        legacy_invocations.append(command)
+        return [sys.executable, "-c", "print('standard')"]
+
+    def prepare(executable: Path, args: list[str], work: Path, scratch: Path, env: dict) -> tuple | None:
+        prepared.append(args)
+        assert work == selected
+        assert scratch.is_dir()
+        if decision == "unavailable":
+            return None
+        if decision == "declined":
+            return "Ruff input includes private, linked or nested paths"
+        if decision == "denied":
+            raise PermissionError("execution denied")
+        if decision == "launcher-missing":
+            return [str(output / "missing-launcher")], env
+        return [sys.executable, "-c", f"print('confined'); raise SystemExit({int(decision == 'failed')})"], env
+
+    monkeypatch.setattr(gates, "command_argv", shell)
+    monkeypatch.setattr(gates.worktree_sandbox, "native_available", lambda: True)
+    monkeypatch.setattr(gates.worktree_sandbox, "prepare_ruff", prepare)
+    assert gates.main() == int(status == "fail")
+    result = _gate_check(output, "format")
+    assert result["status"] == status
+    assert result["execution_route"] == {"mode": mode, "reason": reason}
+    assert prepared == [["format", "--check", "."]]
+    assert legacy_invocations == (["ruff format --check ."] if legacy else [])
+    if decision not in {"denied", "launcher-missing"}:
+        assert _receipt_text(output, result, "stdout").strip() == ("standard" if legacy else "confined")
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "exit_code", "diagnostic"),
+    [
+        pytest.param(
+            FileNotFoundError(errno.ENOENT, "missing shell"),
+            "missing-command",
+            127,
+            "missing-command:",
+            id="missing-shell",
+        ),
+        pytest.param(OSError(errno.EAGAIN, "process limit"), "fail", 126, "process limit", id="process-limit"),
+    ],
+)
+def test_free_form_gate_records_unstarted_shell(
+    output: Path, monkeypatch: pytest.MonkeyPatch, error: OSError, status: str, exit_code: int, diagnostic: str
+) -> None:
+    """An OS refusal to launch the shell differs from a successfully launched shell returning a failure."""
+    gates = _load_run_gates(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["run_gates.py", "--out", str(output), "--lint", "exit 0", *_skip_gates("lint")])
+    launch = mock.Mock(side_effect=error)
+    monkeypatch.setattr(gates.subprocess, "Popen", launch)
+    assert gates.main() == 1
+    check = _gate_check(output, "lint")
+    assert check["status"] == status
+    assert check["exit_code"] == exit_code
+    assert check["execution_route"]["mode"] == "not-started"
+    assert diagnostic in _receipt_text(output, check)
+    assert _load_validator()._validate_gates(output)["checks_failed"] == ["lint"]
+    launch.assert_called_once()
+
+
+def test_single_process_declaration_requires_clean_import_bound_tests(repository: Path, output: Path) -> None:
+    """A compatibility declaration cannot attach to a free-form shell gate."""
+    result = _run(
+        [
+            sys.executable,
+            str(RUN_GATES),
+            "--out",
+            str(output),
+            "--single-process-pytest",
+            "--tests",
+            _python_command("pass"),
+            *_skip_gates("tests"),
+        ],
+        cwd=repository,
+    )
+    assert result.returncode == 2
+    assert "requires clean import-bound pytest" in result.stderr
+
+
+@pytest.fixture
+def simulated_system_git(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Run the fixed macOS system Git probe with this host's Git, checking the parent's command and PATH."""
+    executable = shutil.which("git")
+    original = subprocess.run
+    probes = []
+
+    def system_git(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+        assert argv[0] == "/usr/bin/git"
+        assert kwargs["env"]["PATH"] == os.defpath
+        probes.append(argv)
+        return original([executable, *argv[1:]], **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", system_git)
+    return probes
+
+
+@pytest.mark.parametrize(
+    ("setting", "lint", "plain_lint", "reason"),
+    [
+        pytest.param("fix = true", True, True, "enables fixes", id="original-default-can-fix"),
+        pytest.param("fix = true", True, False, None, id="explicit-no-fix"),
+        pytest.param("fix-only = true", True, False, "enables fixes", id="fix-only-overrides-no-fix"),
+        pytest.param("fix-only = true", False, False, None, id="format-check"),
+        pytest.param('extend = "../other.toml"', True, False, "inheritance", id="external-config"),
+        pytest.param("line-length = 120", True, True, None, id="read-only-default"),
+    ],
+)
+def test_worktree_ruff_config_controls_route(
+    linked_worktree: tuple[Path, Path, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    setting: str,
+    lint: bool,
+    plain_lint: bool,
+    reason: str | None,
+    simulated_system_git: list,
+) -> None:
+    """Inspect actual source configs while keeping the project environment out of parent Git resolution."""
+    _, work, _ = linked_worktree
+    (work / "ruff.toml").write_text(setting, encoding="utf-8")
+    gates = _load_run_gates(monkeypatch)
+    env = {"HOME": str(tmp_path), "PATH": str(work)}
+    observed = gates._ruff_configuration_reason(work, env, lint, plain_lint)
+    assert simulated_system_git
+    if reason is None:
+        assert observed is None
+    else:
+        assert reason in observed
+
+
+@pytest.mark.parametrize(
+    ("declaration", "worker_settings", "selected"),
+    [
+        pytest.param(False, "serial", False, id="absence-of-parallel-options-is-insufficient"),
+        pytest.param(True, "serial", True, id="declared-exact-selection"),
+        pytest.param(True, "cli", False, id="explicit-distribution-conflict"),
+        pytest.param(True, "nested-config", False, id="nested-project-workers"),
+        pytest.param(True, "override", False, id="override-configured-workers"),
+    ],
+)
+def test_pytest_profile_preserves_explicit_selection(
+    editable_checkout: _EditableCheckout,
+    output: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    declaration: bool,
+    worker_settings: str,
+    selected: bool,
+) -> None:
+    """Drive the public gate and keep argv, import receipts and the validator's proof path through routing."""
+    gates = _load_run_gates(monkeypatch)
+    checkout = editable_checkout
+    checkout.link_editable(checkout.selected)
+    options = ["-q", "tests/test_demo.py::test_value"]
+    if worker_settings == "nested-config":
+        (checkout.selected / "tests/pytest.ini").write_text("[pytest]\naddopts = -n 2\n", encoding="utf-8")
+        _git(checkout.selected, "add", "tests/pytest.ini")
+        _git(checkout.selected, "commit", "-qm", "nested pytest project")
+        checkout.expected_head = _git(checkout.selected, "rev-parse", "HEAD")
+    elif worker_settings == "override":
+        options.extend(["-o", "addopts=-n 2"])
+    else:
+        options.extend(["-o", "addopts=", *(["-n", "1"] if worker_settings == "cli" else ["-p", "no:xdist"])])
+    invocation = [
+        "run_gates.py",
+        "--out",
+        str(output),
+        "--worktree",
+        str(checkout.selected),
+        "--expected-head",
+        checkout.expected_head,
+        "--pytest-python",
+        sys.executable,
+        "--pytest-import",
+        "demo_package",
+        "--pytest-args-json",
+        json.dumps(options),
+        *_skip_gates("tests"),
+    ]
+    if declaration:
+        invocation.append("--single-process-pytest")
+    monkeypatch.setattr(sys, "argv", invocation)
+    monkeypatch.setattr(gates, "sys", mock.Mock(wraps=sys, platform="darwin"))
+    monkeypatch.setenv("PYTHONPATH", checkout.environment["PYTHONPATH"])
+    launches = []
+
+    def prepare(argv: list[str], work: Path, scratch: Path, env: dict) -> tuple:
+        launches.append(argv)
+        assert json.loads(argv[7]) == options
+        assert Path(argv[5]).parent == scratch
+        assert work == checkout.selected
+        return argv, env
+
+    monkeypatch.setattr(gates.worktree_sandbox, "native_available", lambda: True)
+    monkeypatch.setattr(gates.worktree_sandbox, "prepare_pytest", prepare)
+    assert gates.main() == 0
+    result = _gate_check(output, "tests")
+    assert bool(launches) == selected
+    assert result["execution_route"]["mode"] == ("macos-worktree" if selected else "standard")
+    assert result["python_imports"]["status"] == "pass"
+    assert list(result["python_imports"]["tests"]) == [_demo_test_path(checkout.selected)]
+    recorded = json.loads(_receipt_text(output, result, "command_path").removeprefix("argv-json:"))
+    assert json.loads(recorded[7]) == options
+    if worker_settings == "nested-config":
+        assert result["execution_route"]["reason"] == "pytest target may select nested configuration"
+    if worker_settings in {"nested-config", "override"}:
+        assert len(result["python_imports"]["workers"]) == 2
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        pytest.param(["-o", "addopts=-n 2"], id="short"),
+        pytest.param(["-oaddopts=-n 2"], id="short-joined"),
+        pytest.param(["-o=addopts=-n 2"], id="short-equals"),
+        pytest.param(["--override-ini", "addopts=-n 2"], id="long"),
+        pytest.param(["--override-ini=addopts=-n 2"], id="long-equals"),
+    ],
+)
+def test_pytest_nonempty_addopts_override_preserves_the_standard_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: list[str]
+) -> None:
+    """An ini override can configure workers indirectly before pytest parses its normal command line."""
+    gates = _load_run_gates(monkeypatch)
+    assert gates._pytest_configuration_reason(tmp_path, options) == "pytest addopts override needs the standard route"
+
+
+@pytest.mark.parametrize(
+    ("ignore", "reason"),
+    [
+        pytest.param("some-other-path.py", None, id="external-rule-misses-source"),
+        pytest.param("tracked.txt", "external Git exclusions", id="external-rule-selects-source"),
+    ],
+)
+def test_worktree_ruff_checks_external_ignore_against_real_inputs(
+    linked_worktree: tuple[Path, Path, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    ignore: str,
+    reason: str | None,
+    simulated_system_git: list,
+) -> None:
+    """Permit unrelated user ignores while keeping the original file set when an external pattern matches."""
+    _, work, _ = linked_worktree
+    home = tmp_path / "home"
+    config = home / ".config"
+    (config / "git").mkdir(parents=True)
+    (config / "git/ignore").write_text(ignore, encoding="utf-8")
+    gates = _load_run_gates(monkeypatch)
+    observed = gates._ruff_configuration_reason(work, {"HOME": str(home), "XDG_CONFIG_HOME": str(config)}, False, False)
+    assert simulated_system_git
+    if reason is None:
+        assert observed is None
+    else:
+        assert reason in observed
+
+
+def _nest_repository(work: Path) -> None:
+    """Create an untracked nested Git repository whose files Ruff would discover separately."""
+    _git(work, "init", "-q", "nested")
+
+
+def _ancestor_ignore(work: Path) -> None:
+    """Write an ignore file above the worktree that Ruff reads during file discovery."""
+    (work.parent / ".ignore").write_text("*.py\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("arrange", "reason"),
+    [
+        pytest.param(_nest_repository, "nested repository needs separate Ruff discovery", id="nested-repository"),
+        pytest.param(_ancestor_ignore, "Ruff may inherit an ancestor .ignore file", id="ancestor-ignore"),
+    ],
+)
+def test_worktree_ruff_discovery_outside_the_profile_keeps_standard_route(
+    linked_worktree: tuple[Path, Path, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    arrange: Callable[[Path], None],
+    reason: str,
+) -> None:
+    """Input discovery the confined Ruff cannot reproduce keeps the original route under its named reason."""
+    _, work, _ = linked_worktree
+    arrange(work)
+    # Simulate the fixed system Git only after the arrangement has used the host's Git.
+    request.getfixturevalue("simulated_system_git")
+    gates = _load_run_gates(monkeypatch)
+    assert gates._ruff_configuration_reason(work, {"HOME": str(tmp_path / "home")}, True, True) == reason
+
+
+def test_root_ruff_config_can_inherit_external_python_version(
+    linked_worktree: tuple[Path, Path, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    simulated_system_git: list,
+) -> None:
+    """An enclosing project's Python version matters even with a separate root Ruff config."""
+    _, work, _ = linked_worktree
+    (work.parent / "pyproject.toml").write_text('[project]\nrequires-python = ">=3.12"\n', encoding="utf-8")
+    config = work / "ruff.toml"
+    config.write_text("line-length = 100\n", encoding="utf-8")
+    gates = _load_run_gates(monkeypatch)
+    env = {"HOME": str(tmp_path)}
+    assert "target Python version" in gates._ruff_configuration_reason(work, env, True, True)
+    config.write_text('target-version = "py310"\n', encoding="utf-8")
+    assert gates._ruff_configuration_reason(work, env, True, True) is None
+
+
+def test_pytest_profile_rejects_external_and_worker_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Preserve exterior pytest configuration and declared project worker selection before launching a child."""
+    gates = _load_run_gates(monkeypatch)
+    work = tmp_path / "work"
+    work.mkdir()
+    (tmp_path / "pytest.ini").write_text("[pytest]\naddopts = -k external\n", encoding="utf-8")
+    assert "outside the worktree" in gates._pytest_configuration_reason(work, [])
+    (work / "pytest.ini").write_text("[pytest]\naddopts = -k local\n", encoding="utf-8")
+    assert gates._pytest_configuration_reason(work, []) is None
+    (work / "pytest.ini").write_text("[pytest]\naddopts = -n 2\n", encoding="utf-8")
+    assert (
+        gates._pytest_configuration_reason(work, [])
+        == "pytest arguments or project configuration request a distribution option"
+    )
+    (tmp_path / "conftest.py").touch()
+    assert "conftest" in gates._pytest_configuration_reason(work, [])
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        pytest.param("subproject/tests", id="directory"),
+        pytest.param("subproject/tests/test_sample.py::test_case", id="node-selector"),
+        pytest.param("sibling.py", id="unrelated-config"),
+    ],
+)
+def test_pytest_positional_target_preserves_nested_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    """Only a target under a nested project can select its worker settings ahead of the root configuration."""
+    gates = _load_run_gates(monkeypatch)
+    root = tmp_path / "work"
+    nested = root / "subproject"
+    (nested / "tests").mkdir(parents=True)
+    (nested / "tests/test_sample.py").touch()
+    (root / "sibling.py").touch()
+    (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (nested / "pytest.ini").write_text("[pytest]\naddopts = -n 2\n", encoding="utf-8")
+    reason = gates._pytest_configuration_reason(root, ["-q", "-k", "test_case", target])
+    assert reason == (None if target == "sibling.py" else "pytest target may select nested configuration")
+
+
+@pytest.mark.parametrize(
+    ("filename", "document"),
+    [
+        pytest.param("pyproject.toml", "[tool]\npytest = 1", id="scalar-pytest-table"),
+        pytest.param("pyproject.toml", "[tool.pytest]\nini_options = 1", id="scalar-ini-options"),
+        pytest.param("pytest.toml", "pytest = 1", id="scalar-native-table"),
+    ],
+)
+def test_malformed_pytest_table_keeps_standard_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, filename: str, document: str
+) -> None:
+    """A TOML scalar in place of a pytest table must return a routing reason without aborting the gate."""
+    gates = _load_run_gates(monkeypatch)
+    (tmp_path / filename).write_text(document, encoding="utf-8")
+    assert gates._pytest_configuration_reason(tmp_path, []) == "pytest configuration cannot be verified"

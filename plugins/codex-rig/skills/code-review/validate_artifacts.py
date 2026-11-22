@@ -2366,6 +2366,37 @@ def _validate_confidence_recovery(result: dict[str, Any], metadata: dict[str, An
         raise SystemExit("review-confidence-status-should-be-fair")
 
 
+def _local_test_snapshot_transport(command: bytes, out_dir: Path, source: dict[str, Any]) -> dict[str, str]:
+    """Recover the snapshot argument consumed by the recorded local pytest command."""
+    error = "local-confidence-tests-snapshot-command-invalid"
+    if not command.startswith(b"argv-json:"):
+        raise SystemExit(error)
+    try:
+        argv = json.loads(command.removeprefix(b"argv-json:"))
+        if (
+            not isinstance(argv, list)
+            or len(argv) != 10
+            or argv[3:5] != ["--_python-tests-child", source["worktree"]]
+            or not isinstance(argv[-1], str)
+        ):
+            raise ValueError(error)
+        binding = json.loads(argv[-1])
+    except (ValueError, UnicodeError):
+        raise SystemExit(error) from None
+    # Publication copies the private input byte-exact. Check its original coordinate without opening it.
+    root = re.escape(out_dir.resolve().as_posix().rstrip("/"))
+    relative = re.escape(source["snapshot_path"])
+    if (
+        not isinstance(binding, dict)
+        or set(binding) != {"snapshot_path", "snapshot_sha256"}
+        or binding["snapshot_sha256"] != source["snapshot_sha256"]
+        or not isinstance(binding["snapshot_path"], str)
+        or re.fullmatch(rf"{root}/(?:\.gate-stage-[0-9a-f]{{32}}/)?{relative}", binding["snapshot_path"]) is None
+    ):
+        raise SystemExit(error)
+    return binding
+
+
 def _consolidation_confidence_evidence(out_dir: Path, manifest: dict[str, Any]) -> set[str]:
     """Bind recovery references to admitted outputs and source-bound PR gates without judging relevance."""
     references: set[str] = set()
@@ -2453,13 +2484,17 @@ def _consolidation_confidence_evidence(out_dir: Path, manifest: dict[str, Any]) 
                 raise ValueError("proof-inline-mismatch")
         except (OSError, ValueError, UnicodeError):
             raise SystemExit("local-confidence-tests-proof-invalid") from None
-        current["transport"] = {"snapshot_path": snapshot_path.as_posix(), "snapshot_sha256": source["snapshot_sha256"]}
-        _validate_pr_tests_import_proof(gates["checks"], root.as_posix(), current)
         for key in ("command_path", "stdout", "stderr"):
             path = _resolve_path(out_dir, check[key])
-            if path.is_symlink() or not path.is_file() or receipt.get("artifacts", {}).get(check[key]) != _sha256(path):
+            if path.is_symlink() or not path.is_file():
                 raise SystemExit("local-confidence-tests-artifact-invalid")
+            content = path.read_bytes()
+            if receipt.get("artifacts", {}).get(check[key]) != hashlib.sha256(content).hexdigest():
+                raise SystemExit("local-confidence-tests-artifact-invalid")
+            if key == "command_path":
+                current["transport"] = _local_test_snapshot_transport(content, out_dir, source)
             references.add(path.relative_to(out_dir).as_posix())
+        _validate_pr_tests_import_proof(gates["checks"], root.as_posix(), current)
     return references
 
 

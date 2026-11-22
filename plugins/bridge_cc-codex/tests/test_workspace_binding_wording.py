@@ -113,7 +113,9 @@ class TestPeerTaskContext:
 
     def test_split_review_repeats_the_rule_for_every_scope(self) -> None:
         """A split review gives each scope its own context, since every scope is an independent peer call."""
-        assert any("`--split-file`, repeat this for every scope" in line for line in _lines("claude-skills/review/SKILL.md"))
+        assert any(
+            "`--split-file`, repeat this for every scope" in line for line in _lines("claude-skills/review/SKILL.md")
+        )
 
 
 class TestShippedDocs:

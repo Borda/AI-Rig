@@ -7,6 +7,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from threading import Event
 from types import ModuleType
 from typing import Any
 from unittest import mock
@@ -1138,6 +1139,111 @@ def test_collect_pr_remediation_stops_when_gh_checkout_fails(tmp_path: Path, mon
     assert not (output / "local-checkout.json").exists()
 
 
+@pytest.mark.parametrize(
+    ("checkout_fails", "threads_fail", "expected_status", "thread_status"),
+    [
+        pytest.param(False, False, 0, "available", id="verified-checkout"),
+        pytest.param(True, False, 2, "available", id="failed-checkout"),
+        pytest.param(False, True, 0, "unavailable", id="failed-supplement"),
+        pytest.param(True, True, 2, "unavailable", id="both-fail"),
+    ],
+)
+def test_remediation_overlaps_review_threads_with_native_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    checkout_fails: bool,
+    threads_fail: bool,
+    expected_status: int,
+    thread_status: str,
+) -> None:
+    """Checkout reaches its native GitHub command while the supplemental read is still pending."""
+    module = _load_collector()
+    runner = FakeRunner(
+        cross_repository=checkout_fails, gh_checkout_fails=checkout_fails, review_threads_failure=threads_fail
+    )
+    _configure_collector(monkeypatch, module, runner)
+    read_started = Event()
+    checkout_started = Event()
+    output = tmp_path / "pr"
+
+    def _runner(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Hold the transport response until the other stream reaches checkout."""
+        if argv[:3] == ["gh", "api", "graphql"]:
+            read_started.set()
+            assert checkout_started.wait(5), "thread lookup blocked native checkout"
+        elif argv[:3] == ["gh", "pr", "checkout"]:
+            assert read_started.wait(5), "native checkout blocked thread lookup"
+            checkout_started.set()
+        return runner(argv, **kwargs)
+
+    assert (
+        module.collect_pr(
+            target=PR_17_URL, output=output, checkout=True, checkout_mode="remediate", timeout_seconds=5, run=_runner
+        )
+        == expected_status
+    )
+    summary = json.loads((output / "online-review-summary.json").read_text(encoding="utf-8"))
+    assert summary["review_threads_status"] == thread_status
+    assert summary["review_thread_count"] == (0 if threads_fail else 3)
+    assert (output / "review-threads-error.txt").is_file() is threads_fail
+    assert (output / "local-checkout.json").is_file() is (not checkout_fails)
+    assert (output / "pr-error.txt").is_file() is checkout_fails
+
+
+@pytest.mark.parametrize(
+    ("checkout_failure", "expected_status"),
+    [
+        pytest.param("collection", 2, id="recoverable-checkout-error"),
+        pytest.param("os", None, id="unexpected-checkout-error"),
+        pytest.param(None, None, id="successful-checkout"),
+    ],
+)
+def test_remediation_checkout_error_survives_a_failed_evidence_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checkout_failure: str | None, expected_status: int | None
+) -> None:
+    """Surface the checkout failure first and keep the later artifact write failure attached as its context."""
+    module = _load_collector()
+    runner = FakeRunner(cross_repository=True, gh_checkout_fails=False)
+    _configure_collector(monkeypatch, module, runner)
+    output = tmp_path / "pr"
+    write_failure = OSError(28, "No space left on device")
+    failures = {
+        "collection": module.CollectionError("remediation-gh-checkout-recovery-required"),
+        "os": PermissionError(13, "checkout path denied"),
+    }
+    primary = failures.get(checkout_failure)
+
+    def checkout(*args: Any, **kwargs: Any) -> dict[str, str]:
+        """Fail like a checkout that stopped before producing evidence, or return nothing on success."""
+        if primary is not None:
+            raise primary
+        return {}
+
+    def write_artifacts(*args: Any, **kwargs: Any) -> None:
+        """Fail the supplemental artifact write that follows the checkout attempt."""
+        raise write_failure
+
+    monkeypatch.setattr(module, "_checkout", checkout)
+    monkeypatch.setattr(module, "_write_review_artifacts", write_artifacts)
+
+    def collect() -> int:
+        """Run remediation collection against the doubled checkout and artifact writer."""
+        return module.collect_pr(
+            target=PR_17_URL, output=output, checkout=True, checkout_mode="remediate", timeout_seconds=5
+        )
+
+    if expected_status is not None:
+        assert collect() == expected_status
+        assert (output / "pr-error.txt").read_text(encoding="utf-8") == f"{primary}\n"
+    else:
+        expected = primary or write_failure
+        with pytest.raises(OSError, match=expected.strerror) as raised:
+            collect()
+        assert raised.value is expected
+    if primary is not None:
+        assert primary.__context__ is write_failure
+
+
 def test_collect_pr_remediation_rejects_inconsistent_cross_repository_routing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1145,15 +1251,15 @@ def test_collect_pr_remediation_rejects_inconsistent_cross_repository_routing(
     module = _load_collector()
     runner = FakeRunner(cross_repository=True, gh_checkout_fails=True)
     _configure_collector(monkeypatch, module, runner)
-    original_review_artifacts = module._review_artifacts
+    original_pr_routing = module._pr_routing
 
-    def _inconsistent_review_artifacts(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    def _inconsistent_pr_routing(*args: Any, **kwargs: Any) -> dict[str, Any]:
         """Return deliberately inconsistent routing to exercise the recovery guard."""
-        routing = original_review_artifacts(*args, **kwargs)
+        routing = original_pr_routing(*args, **kwargs)
         routing["same_repo"] = True
         return routing
 
-    monkeypatch.setattr(module, "_review_artifacts", _inconsistent_review_artifacts)
+    monkeypatch.setattr(module, "_pr_routing", _inconsistent_pr_routing)
     output = tmp_path / "pr"
 
     result = module.collect_pr(

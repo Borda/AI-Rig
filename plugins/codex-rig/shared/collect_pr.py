@@ -12,6 +12,7 @@ inspects source.
 It orchestrates one PR evidence recipe and writes its artifact bundle; every GitHub read delegates to ``github_read.py``
 and remote mutation is forbidden. With ``--checkout``, it additionally selects the matching local remote, fetches the
 target/head evidence, and records checkout identity without using forced Git operations.
+Remediation overlaps the supplemental GraphQL request with verified Git preparation and joins both before returning.
 
 ## Usage
 
@@ -62,6 +63,8 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import Any, NamedTuple
 from urllib.parse import urlparse
@@ -722,25 +725,50 @@ def _review_threads(thread_payload: dict[str, Any]) -> list[dict[str, Any]]:
     return threads
 
 
-def _review_artifacts(
+def _read_review_threads(run: RunCommand, timeout: int, target: PRTarget) -> bytes:
+    """Read supplemental review threads for the already bound PR."""
+    return _run(
+        run,
+        [
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            f"owner={target.owner}",
+            "-f",
+            f"name={target.repository}",
+            "-F",
+            f"number={target.number}",
+            "-f",
+            f"query={GRAPHQL_QUERY}",
+        ],
+        timeout,
+        "gh-review-threads",
+    )
+
+
+def _write_review_artifacts(
     payload: dict[str, Any],
-    threads: list[dict[str, Any]],
+    read_threads: Callable[[], bytes],
     output: Path,
     *,
-    base_repo: str,
-    base_host: str,
-    thread_error: str | None,
     pr_metadata_transport: str,
-) -> dict[str, Any]:
-    """Validate core metadata and emit normalized online-review artifacts."""
+) -> None:
+    """Join supplemental evidence and record incomplete thread coverage separately."""
+    threads: list[dict[str, Any]] = []
+    thread_error = None
+    try:
+        raw_threads = read_threads()
+        thread_payload = _json(raw_threads, "review-threads")
+        (output / "review-threads.raw.json").write_bytes(raw_threads)
+        threads = _review_threads(thread_payload)
+    except CollectionError as error:
+        thread_error = str(error)
+        (output / "review-threads-error.txt").write_text(f"{thread_error}\n", encoding="utf-8")
+        if error.diagnostics is not None:
+            _write_json(output / "review-threads-command-failure.json", error.diagnostics)
     comments = payload.get("comments") or []
     reviews = payload.get("reviews") or []
-    files = payload.get("files") or []
-    if not isinstance(comments, list) or not isinstance(reviews, list) or not isinstance(files, list):
-        raise CollectionError("invalid-json:pr-view")
-    if not isinstance(payload.get("body"), str):
-        raise CollectionError("missing-pr-description")
-    file_names = sorted(item["path"] for item in files if isinstance(item, dict) and isinstance(item.get("path"), str))
     unresolved = [item for item in threads if isinstance(item, dict) and item.get("isResolved") is False]
     active = [item for item in unresolved if item.get("isOutdated") is not True]
     outdated = [item for item in unresolved if item.get("isOutdated") is True]
@@ -759,14 +787,28 @@ def _review_artifacts(
         "top_level_comment_count": len(comments),
         "review_count": len(reviews),
     }
+    _write_json(output / "comments.json", comments)
+    _write_json(output / "reviews.json", reviews)
+    _write_json(output / "review-threads.json", threads)
+    _write_json(output / "unresolved-review-threads.json", unresolved)
+    _write_json(output / "online-review-summary.json", summary)
+
+
+def _pr_routing(payload: dict[str, Any], target: PRTarget, output: Path, pr_metadata_transport: str) -> dict[str, Any]:
+    """Validate core PR metadata before any checkout or supplemental work."""
+    if any(not isinstance(payload.get(field) or [], list) for field in ("comments", "reviews", "files")):
+        raise CollectionError("invalid-json:pr-view")
+    if not isinstance(payload.get("body"), str):
+        raise CollectionError("missing-pr-description")
     pr_state = payload.get("state")
     if pr_state not in VALID_PR_STATES:
         raise CollectionError("unsupported-pr-state")
+    base_repo = f"{target.owner}/{target.repository}"
     head_repo = _head_repository(payload)
     review_path = output.resolve().with_name(f"{output.name}-review-worktree")
-    routing = {
+    return {
         "base_repo": base_repo,
-        "base_host": base_host,
+        "base_host": GITHUB_HOST,
         "base_identity_source": "pr_url",
         "pr_number": payload.get("number"),
         "pr_url": payload.get("url"),
@@ -789,14 +831,6 @@ def _review_artifacts(
         ),
         "pr_metadata_transport": pr_metadata_transport,
     }
-    (output / "files.txt").write_text("".join(f"{name}\n" for name in file_names), encoding="utf-8")
-    _write_json(output / "comments.json", comments)
-    _write_json(output / "reviews.json", reviews)
-    _write_json(output / "review-threads.json", threads)
-    _write_json(output / "unresolved-review-threads.json", unresolved)
-    _write_json(output / "online-review-summary.json", summary)
-    _write_json(output / "pr-routing.json", routing)
-    return routing
 
 
 def _selector(
@@ -1838,59 +1872,60 @@ def collect_pr(
             if returned_target.number != requested_target.number or returned_identity != requested_identity:
                 raise CollectionError("pr-identity-mismatch")
         (output / "pr.json").write_bytes(payload_bytes)
-        base_repo = f"{returned_target.owner}/{returned_target.repository}"
-        base_host = GITHUB_HOST
-        owner, repository = returned_target.owner, returned_target.repository
-        threads: list[dict[str, Any]] = []
-        thread_error: str | None = None
-        try:
-            threads_bytes = _run(
-                command_runner,
-                [
-                    "gh",
-                    "api",
-                    "graphql",
-                    "-f",
-                    f"owner={owner}",
-                    "-f",
-                    f"name={repository}",
-                    "-F",
-                    f"number={number}",
-                    "-f",
-                    f"query={GRAPHQL_QUERY}",
-                ],
-                timeout_seconds,
-                "gh-review-threads",
-            )
-            thread_payload = _json(threads_bytes, "review-threads")
-            (output / "review-threads.raw.json").write_bytes(threads_bytes)
-            threads = _review_threads(thread_payload)
-        except CollectionError as error:
-            thread_error = str(error)
-            (output / "review-threads-error.txt").write_text(f"{thread_error}\n", encoding="utf-8")
-            if error.diagnostics is not None:
-                _write_json(output / "review-threads-command-failure.json", error.diagnostics)
-        routing = _review_artifacts(
-            payload,
-            threads,
-            output,
-            base_repo=base_repo,
-            base_host=base_host,
-            thread_error=thread_error,
-            pr_metadata_transport=pr_metadata_transport,
+        routing = _pr_routing(payload, returned_target, output, pr_metadata_transport)
+        _write_json(output / "pr-routing.json", routing)
+        files = payload.get("files") or []
+        file_names = sorted(
+            item["path"] for item in files if isinstance(item, dict) and isinstance(item.get("path"), str)
         )
+        (output / "files.txt").write_text("".join(f"{name}\n" for name in file_names), encoding="utf-8")
         (output / "untracked.txt").write_bytes(b"")
-        if checkout:
-            checkout_evidence = _checkout(
-                command_runner,
-                timeout_seconds,
-                output,
-                payload,
-                routing,
-                selector,
-                checkout_mode=checkout_mode,
-                prior_checkout=prior_checkout,
+
+        read_threads = partial(_read_review_threads, command_runner, timeout_seconds, returned_target)
+        if checkout_mode == "remediate":
+            # Only the bounded supplemental read leaves the caller thread. Git and artifact writes
+            # keep a single owner, and a failed checkout still retains the online evidence.
+            write_artifacts = partial(
+                _write_review_artifacts, output=output, pr_metadata_transport=pr_metadata_transport
             )
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                threads = pool.submit(read_threads)
+                try:
+                    checkout_evidence = _checkout(
+                        command_runner,
+                        timeout_seconds,
+                        output,
+                        payload,
+                        routing,
+                        selector,
+                        checkout_mode=checkout_mode,
+                        prior_checkout=prior_checkout,
+                    )
+                except BaseException as checkout_failure:
+                    # The checkout failure decides the result and its recovery code. A failed evidence
+                    # write must not replace it: re-raising here keeps the write error as __context__
+                    # while leaving any __cause__ from the checkout itself intact.
+                    try:
+                        write_artifacts(payload, threads.result)
+                    except OSError:
+                        raise checkout_failure
+                    raise
+                write_artifacts(payload, threads.result)
+        else:
+            _write_review_artifacts(payload, read_threads, output, pr_metadata_transport=pr_metadata_transport)
+            if checkout:
+                checkout_evidence = _checkout(
+                    command_runner,
+                    timeout_seconds,
+                    output,
+                    payload,
+                    routing,
+                    selector,
+                    checkout_mode=checkout_mode,
+                    prior_checkout=prior_checkout,
+                )
+
+        if checkout:
             revision_range = f"{checkout_evidence['diff_base_oid']}...{checkout_evidence['diff_head_oid']}"
             diff_prefix = ["git", "-C", checkout_evidence["worktree"]] if checkout_mode == "review" else ["git"]
             diff = _run(

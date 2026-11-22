@@ -64,6 +64,33 @@ def _rate(validator: dict[str, object], response: Path, binding: dict[str, objec
 class TestNativeScopedResponse:
     """Admission of schema-bound native challenger responses against their interaction bindings."""
 
+    @pytest.mark.parametrize("disposition", ["open", "fixed-pending-verification"])
+    def test_current_actionable_finding_requires_its_own_invariant(
+        self, validator: dict[str, object], tmp_path: Path, disposition: str
+    ) -> None:
+        """Current intake requires the finding itself to name its invariant before an action can consume it."""
+        response = _write_response(tmp_path, [])
+        payload = json.loads(response.read_bytes())
+        finding = {
+            "signature": "caller-contract",
+            "tier": "high",
+            "structural": False,
+            "disposition": disposition,
+            "evidence": ["The caller discards its required argument.", "invariant:   "],
+        }
+        payload["findings"] = [finding]
+        response.write_text(json.dumps(payload), encoding="utf-8")
+        historical = _binding()
+        current = {**historical, "schema_version": 2}
+
+        assert _rate(validator, response, historical) == 1
+        with pytest.raises(SystemExit, match="review-challenge-finding-invariant-missing:challenger"):
+            _rate(validator, response, current)
+
+        finding["evidence"][1] = "invariant: The caller must forward its required argument."
+        response.write_text(json.dumps(payload), encoding="utf-8")
+        assert _rate(validator, response, current) == 1
+
     def test_requires_bound_interactions(self, validator: dict[str, object], tmp_path: Path) -> None:
         """A valid interaction shape is admitted only when the dispatch binding names the interaction.
 
@@ -279,6 +306,8 @@ def test_scoped_native_preparation_and_preflight_bind_real_sources(tmp_path: Pat
     preflight = _preflight(frozen)
 
     assert plan["challenge_response"]["interaction_requirements"] == frozen.requirements
+    assert plan["challenge_response"]["schema_version"] == 2
+    assert "invariant:" in message
     assert plan["challenge_response"]["source_sha256"] in message
     assert plan["challenge_response"]["diff_sha256"] in message
     assert "nonempty array of nonempty strings" in message

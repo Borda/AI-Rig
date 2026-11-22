@@ -101,13 +101,22 @@ def test_event_queue_retains_at_most_two_maximum_frames() -> None:
 
 
 def test_mcp_discovery_reads_configuration_without_starting_app_server(tmp_path: Path) -> None:
-    """Discover all configured names before launching a host with explicit denials."""
+    """Disable only servers that exist under the reviewer's own configuration."""
     reviewer = load_module_registered("reviewer_discovery_safety", SHARED / "local_reviewer_wave.py")
-    result = subprocess.CompletedProcess([], 0, stdout=json.dumps([{"name": "local", "enabled": True}]))
-    with mock.patch.object(reviewer.subprocess, "run", autospec=True, return_value=result) as run:
+
+    def list_servers(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        servers = [{"name": "local", "enabled": True}]
+        if "features.plugins=false" not in argv:
+            servers.append({"name": "plugin_only", "enabled": True})
+        return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(servers))
+
+    with mock.patch.object(reviewer.subprocess, "run", autospec=True, side_effect=list_servers) as run:
         names = reviewer._discover_mcp_servers(Path("codex"), tmp_path, time.monotonic() + 1)
+    discovery = run.call_args.args[0]
+    launch = reviewer._server_command(Path("codex"), names)
     assert names == ["local"]
-    assert run.call_args.args[0][:4] == ["codex", "mcp", "list", "--json"]
+    assert discovery[:4] == ["codex", "mcp", "list", "--json"]
+    assert launch == ["codex", "app-server", "--stdio", *discovery[4:], "-c", "mcp_servers.local.enabled=false"]
     assert run.call_args.kwargs["timeout"] <= 1
 
 

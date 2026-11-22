@@ -20,6 +20,7 @@ Derived, never authored by hand:
   ``gates.json`` and the derived metadata.
 - A source-checkout link naming the absolute path and branch from the current remediation branch receipt, preferring
   the recovered receipt when present. This is recorded location evidence, not a live Git status check.
+- The publication disposition and evidence link for a verified local PR worktree delivery, independent of local success.
 - Each item's latest outcome fields and each bucket's latest status from the append-only ``resolution-events.jsonl``.
   Growing ledgers (that event file, ``closure-log.md``, and the review run's ``resolution.jsonl``) are only appended,
   never rewritten; rendered tables are rebuilt from them.
@@ -42,7 +43,8 @@ appends one outcome per admitted review finding to that review run's ``resolutio
 --metadata <draft.json> --handoff <draft.json> --status <status> --confidence <score> --artifact-path <result path>``
 derives metadata and handoff, refreshes the remediation ledger, renders ``final.md``, writes ``result.candidate.json``
 through the shared result writer, and runs the shared validator in all-errors mode; ``--promote`` renames a passing
-candidate to ``result.json``.
+candidate to ``result.json``. ``publication-resume --run <run>`` reads the local delivery and terminal or consumed
+publication evidence so the same run can finish reports after locally rechecking its destination.
 
 ``obligations --run <run>`` derives inspectable report source occurrences from retained ``findings-input.txt``.
 Retain these as review context; they grant no admission, selection, or automatic action-item authority.
@@ -85,6 +87,7 @@ import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import ModuleType
 from typing import Any
+from urllib.parse import unquote
 
 # A source file cannot contain a bytecode cache directory.
 sys.pycache_prefix = str(Path(__file__).resolve())
@@ -106,6 +109,18 @@ APPROVAL_STATUS = {"approve": "approved", "parent-only": "parent-only", "not-req
 #: Maps a handoff presentation version to the table layout used when rendering the final handoff.
 #: Verification gate identifiers, in the order they are reported in the handoff.
 GATE_IDS = ("lint", "format", "types", "tests", "review")
+#: Contract version for the separately derived PR worktree publication metadata.
+PUBLICATION_CONTRACT_VERSION = 1
+#: Run-local artifacts unique to the current publication workflow.
+PUBLICATION_EVIDENCE_FILES = (
+    "worktree-delivery.json",
+    "publication.json",
+    "publication-offer.json",
+    "publication-attempt.json",
+    "publication-executed",
+    "publication-execution-result.json",
+    "publication-readback.json",
+)
 #: Workplan section headings this helper regenerates; any other section is preserved as written.
 MANAGED_SECTIONS = ("Work Bucket Plan", "Parallel Approval", "Execution Order", "Ungrouped Items")
 #: Action-items section headings this helper regenerates from the resolution ledger.
@@ -198,6 +213,206 @@ def _load(path: Path) -> dict[str, Any]:
 def _write(path: Path, payload: dict[str, Any]) -> None:
     """Write deterministic UTF-8 JSON with LF line endings."""
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+
+
+def _publication_record(run: Path, name: str) -> tuple[dict[str, Any], str]:
+    """Read and hash the same bytes from an ordinary run-local publication record."""
+    path = run / name
+    if path.is_symlink() or not path.is_file():
+        raise DeriveError(f"publication-evidence-missing:{name}")
+    try:
+        content = path.read_bytes()
+        record = json.loads(content.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise DeriveError(f"publication-evidence-invalid:{name}") from error
+    if not isinstance(record, dict):
+        raise DeriveError(f"publication-evidence-invalid:{name}")
+    return record, hashlib.sha256(content).hexdigest()
+
+
+def _absolute_coordinate(value: object) -> bool:
+    """Recognize persisted checkout paths from either supported path family."""
+    return isinstance(value, str) and (PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute())
+
+
+def _full_oid(value: object) -> bool:
+    """Check the full hexadecimal spelling of a Git object ID."""
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value) is not None
+
+
+def _publication_delivery(run: Path) -> dict[str, Any]:
+    """Require recorded worktree-only delivery at the selected absolute checkout."""
+    locator, _ = _publication_record(run, "remediation-worktree.json")
+    delivery, _ = _publication_record(run, "worktree-delivery.json")
+    detailed = run / "worktree-delivery.md"
+    if (
+        type(locator.get("schema_version")) is not int
+        or locator["schema_version"] != 1
+        or set(delivery) != {"schema_version", "status", "checkout", "branch", "head", "common_dir"}
+        or type(delivery["schema_version"]) is not int
+        or delivery["schema_version"] != 1
+        or delivery["status"] != "worktree-only"
+        or not _absolute_coordinate(delivery["checkout"])
+        or not _absolute_coordinate(delivery["common_dir"])
+        or not _absolute_coordinate(locator.get("invoking_checkout"))
+        or locator["invoking_checkout"] == delivery["checkout"]
+        or locator.get("worktree") != delivery["checkout"]
+        or locator.get("git_common_dir") != delivery["common_dir"]
+        or not _full_oid(delivery["head"])
+        or not isinstance(delivery["branch"], str)
+        or not delivery["branch"].strip()
+        or detailed.is_symlink()
+        or not detailed.is_file()
+    ):
+        raise DeriveError("publication-delivery-invalid")
+    return delivery
+
+
+def _publication_state(run: Path, delivery: dict[str, Any], *, resume: bool = False) -> dict[str, Any]:
+    """Resolve local publication evidence, allowing report-only closure of an interrupted optional offer.
+
+    The execution marker, written before the helper sends anything, decides what an approved attempt can claim. With no
+    entry at the marker path nothing was sent, so the only disposition is ``skipped``; with any entry there, even a
+    damaged one, the attempt started and only ``verified``, ``failed`` or ``unverified`` apply.
+    """
+    evidence = "publication.json"
+    attempt_path = run / "publication-attempt.json"
+    offer_path = run / "publication-offer.json"
+    offer = None
+    consumed = attempt_path.exists() or attempt_path.is_symlink()
+    started = os.path.lexists(run / "publication-executed")
+    result_present = os.path.lexists(run / "publication-execution-result.json")
+    if (not consumed and (started or result_present)) or (result_present and not started):
+        raise DeriveError("publication-attempt-invalid")
+    if consumed or offer_path.exists() or offer_path.is_symlink():
+        offer, offer_digest = _publication_record(run, offer_path.name)
+        if (
+            set(offer) != {"checkout", "branch", "common_dir", "url", "ref", "source_oid", "expected_oid"}
+            or offer["checkout"] != delivery["checkout"]
+            or offer["branch"] != delivery["branch"]
+            or offer["common_dir"] != delivery["common_dir"]
+            or offer["source_oid"] != delivery["head"]
+            or not _full_oid(offer["expected_oid"])
+            or not isinstance(offer["url"], str)
+            or not re.fullmatch(r"https://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9_.-]+\.git", offer["url"])
+            or not isinstance(offer["ref"], str)
+            or not offer["ref"].startswith("refs/heads/")
+            or offer["ref"] == "refs/heads/"
+        ):
+            raise DeriveError("publication-offer-invalid")
+    if consumed:
+        attempt, attempt_digest = _publication_record(run, attempt_path.name)
+        if attempt != {
+            "offer_digest": offer_digest,
+            "decision_id": f"pr-worktree-publication-{offer_digest}",
+            "answer": "Approve",
+        }:
+            raise DeriveError("publication-attempt-invalid")
+    terminal_path = run / evidence
+    if not terminal_path.exists() and not terminal_path.is_symlink():
+        if not consumed:
+            if resume:
+                evidence = "worktree-delivery.json" if offer is None else offer_path.name
+                _, digest = _publication_record(run, evidence)
+                return {
+                    "schema_version": 1,
+                    "status": "skipped",
+                    "reason": "Local delivery was recorded before the optional publication decision finished.",
+                    "observed_oid": None,
+                    "evidence": evidence,
+                    "evidence_sha256": digest,
+                }
+            raise DeriveError("publication-disposition-required")
+        if not started:
+            return {
+                "schema_version": 1,
+                "status": "skipped",
+                "reason": "Approval was consumed, but no push started: nothing was sent.",
+                "observed_oid": None,
+                "evidence": attempt_path.name,
+                "evidence_sha256": attempt_digest,
+            }
+        return {
+            "schema_version": 1,
+            "status": "unverified",
+            "reason": "Approval was consumed. Publication was not verified.",
+            "observed_oid": None,
+            "evidence": attempt_path.name,
+            "evidence_sha256": attempt_digest,
+        }
+
+    record, digest = _publication_record(run, evidence)
+    allowed = {"verified", "failed", "unverified"} if started else {"skipped"} if consumed else {"declined", "skipped"}
+    if (
+        set(record) != {"schema_version", "status", "reason", "observed_oid"}
+        or type(record["schema_version"]) is not int
+        or record["schema_version"] != 1
+        or not isinstance(record["status"], str)
+        or record["status"] not in allowed
+        or not isinstance(record["reason"], str)
+        or not record["reason"].strip()
+        or (record["observed_oid"] is not None and not _full_oid(record["observed_oid"]))
+    ):
+        raise DeriveError("publication-disposition-invalid")
+    binding = {"evidence": evidence, "evidence_sha256": digest, **record}
+    if record["status"] == "verified":
+        binding["readback_sha256"] = _verified_publication(run, offer, offer_digest, record["observed_oid"])
+    return binding
+
+
+def _readback_matches_offer(url: object, offer: dict[str, Any]) -> bool:
+    """Match the GitHub REST repository and decode only the escaped ref suffix once."""
+    repository = offer["url"].removeprefix("https://github.com/").removesuffix(".git")
+    prefix = f"https://api.github.com/repos/{repository}/git/refs/"
+    if not isinstance(url, str) or not url.startswith(prefix):
+        return False
+    suffix = url.removeprefix(prefix)
+    if re.search(r"[?#]|%(?![0-9a-fA-F]{2})", suffix):
+        return False
+    try:
+        return unquote(suffix, errors="strict") == offer["ref"].removeprefix("refs/")
+    except UnicodeDecodeError:
+        return False
+
+
+def _verified_publication(run: Path, offer: dict[str, Any], digest: str, observed_oid: str) -> str:
+    """Bind successful transport to the exact audited ref readback and return its byte digest."""
+    marker = run / "publication-executed"
+    try:
+        if marker.is_symlink() or not marker.is_file() or marker.read_bytes() != f"{digest}\n".encode("ascii"):
+            raise DeriveError("publication-execution-marker-invalid")
+        execution, _ = _publication_record(run, "publication-execution-result.json")
+        readback, readback_digest = _publication_record(run, "publication-readback.json")
+    except (DeriveError, OSError) as error:
+        raise DeriveError("publication-verification-unproven") from error
+    obj = readback.get("object")
+    if (
+        execution != {"status": "pushed", "offer_digest": digest}
+        or readback.get("ref") != offer["ref"]
+        or not _readback_matches_offer(readback.get("url"), offer)
+        or not isinstance(obj, dict)
+        or obj.get("type") != "commit"
+        or obj.get("sha") != observed_oid
+        or observed_oid != offer["source_oid"]
+    ):
+        raise DeriveError("publication-verification-unproven")
+    return readback_digest
+
+
+def publication_binding(run: Path) -> dict[str, Any]:
+    """Recompute publication disposition from retained worktree delivery and publication receipts."""
+    return _publication_state(run, _publication_delivery(run))
+
+
+def publication_evidence_present(run: Path) -> bool:
+    """Identify any retained current publication sidecar, including an invalid filesystem entry."""
+    return any(path.exists() or path.is_symlink() for path in (run / name for name in PUBLICATION_EVIDENCE_FILES))
+
+
+def publication_artifact(publication: dict[str, Any], artifact_path: str) -> dict[str, str]:
+    """Produce the machine-derived handoff link for the retained publication evidence."""
+    evidence_path = PurePosixPath(artifact_path.replace("\\", "/")).with_name(publication["evidence"])
+    return {"label": f"PR publication: {publication['status']}", "path": str(evidence_path)}
 
 
 def _append_text(path: Path, text: str) -> None:
@@ -939,6 +1154,7 @@ def _artifacts(run: Path, existing: list[Any], artifact_path: str) -> list[dict[
         for artifact in existing
         if isinstance(artifact, dict)
         and artifact.get("label") not in {"Result", "Action items"}
+        and not str(artifact.get("label", "")).startswith("PR publication:")
         and not str(artifact.get("label", "")).startswith("Source checkout:")
         and PurePosixPath(str(artifact.get("path", "")).replace("\\", "/")).name not in {"action-items.md"}
         and artifact.get("path") != artifact_path
@@ -956,8 +1172,7 @@ def _artifacts(run: Path, existing: list[Any], artifact_path: str) -> list[dict[
             or record.get("status") != "prepared"
             or not isinstance(branch, str)
             or not branch.strip()
-            or not isinstance(worktree, str)
-            or not (PurePosixPath(worktree).is_absolute() or PureWindowsPath(worktree).is_absolute())
+            or not _absolute_coordinate(worktree)
         ):
             raise DeriveError(f"checkout-receipt-invalid:{receipt.name}")
         artifacts.append({"label": f"Source checkout: {worktree} (branch {branch})", "path": worktree})
@@ -1097,6 +1312,12 @@ def derive_handoff(
     handoff["artifacts"] = _artifacts(run, handoff.get("artifacts") or [], artifact_path)
     if handoff.get("branch") == "caller-contract":
         return handoff
+    workplan = metadata.get("resolution_workplan")
+    if isinstance(workplan, dict) and workplan.get("production_lifecycle"):
+        validator = _load_module("codex_rig_validate_artifacts", "validate-artifacts.py")
+        grouped_disposition = validator._expected_grouped_commit_disposition(metadata, run)
+        if grouped_disposition is not None:
+            handoff["commit_disposition"] = grouped_disposition
     draft_tables = handoff.get("tables") or [{}]
     table, records = _resolution_table(metadata, draft_tables[0] if isinstance(draft_tables[0], dict) else {})
     handoff["tables"] = [table]
@@ -1312,13 +1533,29 @@ def finalize(arguments: argparse.Namespace) -> dict[str, Any]:
 
     def derive() -> dict[str, str]:
         draft = _load(arguments.metadata)
+        publication = None
         if arguments.skill == "code-remediate":
+            draft.pop("worktree_publication", None)
+            draft.pop("worktree_publication_contract_version", None)
+            locator = run / "remediation-worktree.json"
+            if (
+                arguments.promote
+                and arguments.status == "pass"
+                and (locator.exists() or locator.is_symlink() or publication_evidence_present(run))
+            ):
+                if draft.get("mode") != "pr":
+                    raise DeriveError("publication-requires-pr-mode")
+                publication = publication_binding(run)
             # Fold the final events into both machine and displayed counts before validating either consumer.
             render_ledger(run, draft)
         state["metadata"] = draft
         handoff = derive_handoff(
             run, state["metadata"], _load(arguments.handoff), arguments.confidence, arguments.artifact_path
         )
+        if publication is not None:
+            draft["worktree_publication_contract_version"] = PUBLICATION_CONTRACT_VERSION
+            draft["worktree_publication"] = publication
+            handoff["artifacts"].append(publication_artifact(publication, arguments.artifact_path))
         _write(run / "final-handoff.json", handoff)
         state["handoff"] = handoff
         return {"handoff": str(run / "final-handoff.json")}
@@ -1416,6 +1653,20 @@ def _ledger_action(arguments: argparse.Namespace) -> dict[str, Any]:
     """Rewrite the managed resolution-table sections of ``action-items.md``."""
     path = render_ledger(arguments.run.resolve(), _load(arguments.metadata))
     return {"status": "pass", "action_items": str(path)}
+
+
+def _publication_resume_action(arguments: argparse.Namespace) -> dict[str, Any]:
+    """Read retained evidence for report-only resume without contacting GitHub or writing run state."""
+    run = arguments.run.resolve()
+    delivery = _publication_delivery(run)
+    publication = _publication_state(run, delivery, resume=True)
+    return {
+        "status": "pass",
+        "delivery": delivery,
+        "evidence": publication["evidence"],
+        "publication": publication,
+        "needs_terminal_record": publication["status"] == "skipped" and publication["evidence"] != "publication.json",
+    }
 
 
 def _obligations_action(arguments: argparse.Namespace) -> dict[str, Any]:
@@ -1578,6 +1829,7 @@ ACTIONS = {
     "metadata": _metadata_action,
     "workplan": _workplan_action,
     "ledger": _ledger_action,
+    "publication-resume": _publication_resume_action,
     "append": lambda arguments: append_record(arguments.run.resolve(), arguments.ledger, arguments.record),
     "resolutions": lambda arguments: append_review_resolutions(
         arguments.run, arguments.review_run, arguments.sha, arguments.item_sha
@@ -1606,6 +1858,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     workplan = actions.add_parser("workplan", help="Rewrite the managed resolution-workplan.md sections.")
     ledger = actions.add_parser("ledger", help="Rewrite the action-items.md resolution table from items and events.")
     final = actions.add_parser("finalize", help="Derive, render, write, validate, and optionally promote a result.")
+    publication_resume = actions.add_parser(
+        "publication-resume", help="Read the retained local publication checkpoint."
+    )
     append = actions.add_parser(
         "append",
         help="Append a staged <ledger>.rec record to a run ledger, then remove it.",
@@ -1631,7 +1886,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     feedback = actions.add_parser(
         "resolutions", help="Append per-finding outcomes to the admitted review run's resolution.jsonl."
     )
-    for action in (metadata, workplan, ledger, final, append, feedback, obligations, preflight):
+    for action in (metadata, workplan, ledger, final, append, feedback, obligations, preflight, publication_resume):
         action.add_argument("--run", type=Path, required=True, help="Remediation run directory.")
     for action in (metadata, workplan, ledger, final):
         action.add_argument("--metadata", type=Path, required=True, help="Agent-authored metadata draft JSON.")

@@ -464,7 +464,7 @@ class TestCommitDisposition:
         ("extract", "forbidden"),
         [
             pytest.param(
-                partial(_paragraph, marker="### 12:", index=1),
+                partial(_paragraph, marker="An explicit user request to commit may invoke this step"),
                 "This exception does not waive required checks",
                 id="early-commit-step",
             ),

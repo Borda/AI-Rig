@@ -460,12 +460,10 @@ def test_successful_audit_requires_executed_review(audit_run: AuditRun) -> None:
     """
     _, directory, result = audit_run
     result["metadata"]["value_per_token"]["status"] = "not-run"
-    gates = json.loads((directory / "gates.json").read_text(encoding="utf-8"))
-    gates["checks"] = [
-        {**gate, "status": "not-applicable", "reason": "Unavailable diagnostic.", "exit_code": 0}
-        for gate in gates["checks"]
-    ]
-    (directory / "gates.json").write_text(json.dumps(gates), encoding="utf-8")
+    skip_args = [word for gate in GATES for word in (f"--skip-{gate}", "Unavailable diagnostic.")]
+    subprocess.run(
+        [sys.executable, str(PLUGIN_ROOT / "shared" / "run_gates.py"), "--out", str(directory), *skip_args], check=True
+    )
 
     with pytest.raises(SystemExit, match="audit-review-gate-required"):
         _validate(audit_run)

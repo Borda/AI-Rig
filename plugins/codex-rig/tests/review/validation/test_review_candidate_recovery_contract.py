@@ -97,8 +97,14 @@ class TestPrStatePreflight:
     """PR state is checked before any workflow intake in both caller skills."""
 
     @pytest.mark.installed_plugin
-    @pytest.mark.parametrize("skill_name", ["code-review", "code-remediate"])
-    def test_precedes_workflow_intake(self, skill_name: str) -> None:
+    @pytest.mark.parametrize(
+        ("skill_name", "resume_scope"),
+        [
+            pytest.param("code-review", "including resumed PR work", id="review"),
+            pytest.param("code-remediate", "including ordinary resumed PR work", id="remediation"),
+        ],
+    )
+    def test_precedes_workflow_intake(self, skill_name: str, resume_scope: str) -> None:
         """Closed PRs stop before work is allocated or a redundant review workflow is offered.
 
         In both skills the preflight anchor must come before the first numbered step and before any prior-report lookup,
@@ -114,7 +120,17 @@ class TestPrStatePreflight:
 
         assert preflight < workflow.index("### 01:")
         assert preflight < workflow.index("find-review-report.py")
-        assert "including resumed PR work" in flat(_before(workflow, "### 01:"))
+        assert resume_scope in flat(_before(workflow, "### 01:"))
+
+    @pytest.mark.installed_plugin
+    def test_report_only_remediation_resume_uses_local_evidence_before_preflight(self) -> None:
+        """A retained successful worktree can finish its report while GitHub is unavailable."""
+        workflow = _read(PLUGIN_ROOT / "skills/code-remediate/references/intake.md")
+        intake = flat(_before(workflow, "### 01:"))
+
+        assert "publication-resume --run <run-directory>` before remote preflight" in intake
+        assert "finish only the existing local handoff using that disposition" in intake
+        assert "cannot offer, authorize, or execute another publication attempt" in intake
 
     @pytest.mark.installed_plugin
     def test_covers_identity_terminal_states_and_unknown_state(self) -> None:

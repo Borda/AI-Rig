@@ -96,11 +96,14 @@ def gates_run(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _rewrite_first_command_path(output: Path, command_path: str) -> None:
-    """Replace the first recorded gate command-log path in a finished run's gates.json."""
+    """Replace the first command-log path in both records emitted by the gate runner."""
     gates_path = output / "gates.json"
     payload = json.loads(gates_path.read_text(encoding="utf-8"))
     payload["checks"][0]["command_path"] = command_path
     gates_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    (output / "gates.checks.jsonl").write_text(
+        "".join(json.dumps(check, sort_keys=True) + "\n" for check in payload["checks"]), encoding="utf-8"
+    )
 
 
 def test_collect_diff_runs_natively_and_writes_complete_artifacts(tmp_path: Path) -> None:

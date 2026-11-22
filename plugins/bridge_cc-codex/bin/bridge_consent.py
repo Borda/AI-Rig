@@ -131,7 +131,11 @@ def _state(extra: str, block: str, legacy: str) -> str:
     An edited, duplicated or unknown block is rejected rather than guessed at.
 
     Examples:
-        >>> _state("plain user rule", "<!-- bridge:claude-transfer-consent:v2 -->", "<!-- bridge:claude-transfer-consent:v1 -->")
+        >>> _state(
+        ...     "plain user rule",
+        ...     "<!-- bridge:claude-transfer-consent:v2 -->",
+        ...     "<!-- bridge:claude-transfer-consent:v1 -->",
+        ... )
         'absent'
     """
     if MARKER not in extra:
@@ -399,7 +403,9 @@ def main(argv: list[str] | None = None) -> int:
             reviewer = config.get("approvals_reviewer")
             report = {
                 "consent": "absent" if state == "absent" else "configured",
-                "configured_reviewer": reviewer if reviewer in ("auto_review", "user") else "unspecified-or-unsupported",
+                "configured_reviewer": reviewer
+                if reviewer in ("auto_review", "user")
+                else "unspecified-or-unsupported",
                 "session_effective": "unverified",
             }
             if state == "outdated":

@@ -27,6 +27,8 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <text x="688" y="116" font-size="10.5" fill="#6b72a8" font-weight="400" text-anchor="start">‖ same turn</text>
 <rect x="772" y="102" width="34" height="22" rx="6" fill="#fff" stroke="#c8ccf2" stroke-dasharray="4 3"/>
 <text x="814" y="116" font-size="10.5" fill="#454d87" font-weight="400" text-anchor="start">↺ reuse (matrix)</text>
+<g transform="translate(40 134)"><rect x="0" y="-9" width="103" height="18" rx="5" stroke="#17766e" fill="#e1f4ef"/><text x="51.5" y="3.8" text-anchor="middle" font-size="11" font-weight="700" fill="#145e55">Sandbox eligible</text></g><text x="153" y="138" font-size="11.5" fill="#275b55">Clean, verified macOS linked worktree · read-only Ruff or declared single-process pytest</text>
+
 <rect x="40" y="150" width="5" height="15" rx="2.5" fill="#6670b8"/>
 <text x="52" y="162" font-size="11" fill="#6670b8" font-weight="700" text-anchor="start" letter-spacing="1.1">BLOCKS — TOP TO BOTTOM</text>
 <line x1="232" y1="158" x2="920" y2="158" stroke="#c8ccf2" stroke-width="1"/>
@@ -214,6 +216,8 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <text x="56" y="1569" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">run_gates.py in the verified isolated source</text>
 <g><path d="M878.0,1568.0 L884.0,1577.4 L896.0,1577.4 L902.0,1568.0 L902.0,1572.6 L896.0,1581.9 L884.0,1581.9 L878.0,1572.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="902.0,1568.0 896.0,1576.1 884.0,1576.1 878.0,1568.0 884.0,1559.9 896.0,1559.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M886.2,1568.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
 <text x="56" y="1589" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">run_gates.py</tspan> in verified source</text>
+<g transform="translate(275 1585)"><rect x="0" y="-9" width="103" height="18" rx="5" stroke="#17766e" fill="#e1f4ef"/><text x="51.5" y="3.8" text-anchor="middle" font-size="11" font-weight="700" fill="#145e55">Sandbox eligible</text></g>
+
 <text x="56" y="1605.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">PR: <tspan font-style="italic">git diff --check base...head</tspan></text>
 <text x="56" y="1622.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">close advice: detailed checks N/A</tspan></text>
 <text x="490" y="1589" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">last gate</tspan>: full test selection · <tspan font-style="italic">docs-only: skipped</tspan></text>
@@ -328,7 +332,7 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <text x="600" y="2499" font-size="10.5" fill="#6b72a8" font-weight="700" text-anchor="start" letter-spacing="0.5">BLOCKS</text>
 <line x1="52" y1="2506" x2="908" y2="2506" stroke="#c8ccf2"/>
 <text x="56" y="2526" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">PR state preflight</text>
-<text x="230" y="2526" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">PR state before run · checkout slot before writes</text>
+<text x="230" y="2526" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">PR state check · one cancellable slot wait</text>
 <text x="600" y="2526" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">closed / merged stops</text>
 <line x1="52" y1="2534" x2="908" y2="2534" stroke="#dde0f4"/>
 <text x="56" y="2552" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">previous run</text>

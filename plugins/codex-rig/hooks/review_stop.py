@@ -14,12 +14,16 @@ the current session and turn, including run promotion and same-run completion. C
 read-only suffix batch; completion requires its own successful direct command. This is an advisory recovery prompt, not
 an authorization or security boundary. Unknown lifecycle shapes, visible controlling stops and already-continued turns
 produce no continuation. Known native continuation and review-entry answers resolve only outstanding questions with
-distinct host receipts and matching decision/scope identities. Occurrence accounting does not prove exact outer
-JavaScript call correlation. Transcript compatibility is deliberately narrow because the host format is unstable.
+distinct host receipts and matching decision/scope identities. Checkout-slot receipts can bind recovery before run
+creation and supersede an earlier observation at the same slot. Recovery ends for the turn on a terminal plain-text
+question before run creation, a user message after any validated slot receipt, or a helper error at a slot the turn
+already admitted. Receipt routing reads receipt fields; pause words inside owner IDs or slot paths are data. Every
+command receipt accepts the same host output endings. Occurrence accounting does not prove exact outer JavaScript call
+correlation. Transcript compatibility is deliberately narrow because the host format is unstable.
 
 Pause recognition also searches the assistant's own final prose, so it is model-controllable: ordinary or injected words
-such as ``awaiting`` or ``denied`` can suppress continuation without host evidence of a stop. This conservative tradeoff
-avoids unwanted turns but means the advisory cannot enforce completion against model-controlled text.
+such as ``awaiting`` or ``denied`` can suppress continuation without host evidence of a stop. Ordinary checkout wait
+wording yields to current peer evidence. The advisory cannot enforce completion against model-controlled text.
 
 ## Usage
 
@@ -51,6 +55,7 @@ import shlex
 import stat
 import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import NamedTuple
 from urllib.parse import unquote, urlsplit
 
 MAX_INPUT_BYTES = 65_536
@@ -58,10 +63,15 @@ MAX_TRANSCRIPT_BYTES = 32 * 1024 * 1024
 CONTROLLING_STOP = re.compile(
     r"denied|declined|rejected by|awaiting|waiting for|need your|requires? your|"
     r"pending (?:user |scope )?(?:decision|question|approval)|"
+    r"(?:your|user) (?:decision|answer|approval) is pending|"
     r"(?:retry|attempt) (?:limit|budget).{0,30}exhaust|"
     r"(?:closed|merged) (?:PR|pull request)|(?:PR|pull request) is (?:closed|merged)|"
     r"(?:unverified|unavailable|missing) source|source identity is (?:unverified|unavailable)|"
     r"user.{0,20}(?:stop|pause|cancel)",
+    re.IGNORECASE,
+)
+CHECKOUT_WAIT = re.compile(
+    r"\b(?:awaiting|waiting for) (?:the )?(?:(?:shared )?checkout (?:slot|admission)|other checkout owner)\b",
     re.IGNORECASE,
 )
 DECISION_WAIT = re.compile(
@@ -81,6 +91,35 @@ NATIVE_QUESTION = "mcp__codex_rig_input__ask_user"
 QUESTION_DISCOVERY = re.compile(
     r"\s*text\(ALL_TOOLS\.filter\(([A-Za-z_]\w*)\s*=>\s*/[A-Za-z_|]+/\.test\(\1\.name\)\)\);?\s*"
 )
+SLOT_OWNER = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}")
+# A final block ending in a question mark, optionally followed by closing emphasis, code or quote marks.
+TERMINAL_QUESTION = re.compile(r"\?[`*_\"')\]]*$")
+# Every continuation reason carries the same pause precedence, so no route answers a pending question.
+CONTROLLING_PAUSE = (
+    "First honor any user stop, denial, pending question, closed PR, unverified source or exhausted retry limit; "
+    "if one applies, preserve that pause and ask the concrete missing decision without retrying a denied action."
+)
+
+
+class CheckoutAdmission(NamedTuple):
+    """Retain the requester, locator and latest controlling observation for one admission."""
+
+    requester: str
+    slot: str
+    state: str
+    holder: str | None
+    via_checkout: bool
+
+
+class CheckoutSlotReceipt(NamedTuple):
+    """Represent one validated operation on a locator or its bound checkout."""
+
+    action: str
+    requester: str | None
+    slot: str | None
+    status: str
+    holder: str | None
+    via_checkout: bool
 
 
 def _resolved_question(item: dict) -> bool:
@@ -135,6 +174,16 @@ def _resolved_question(item: dict) -> bool:
         "status": "answered",
         "answer": answer,
     }
+
+
+def _host_output(output: str) -> str:
+    """Normalize one command record's text across the output endings hosts are known to record.
+
+    A host records a real terminal newline, no terminator, or the escaped two-character ``\\n`` that some
+    CommandExecution records retain. Only that terminal marker is removed. An escaped sequence elsewhere stays data,
+    because a JSON receipt can carry one inside a string value such as an error message.
+    """
+    return output.strip().removesuffix("\\n")
 
 
 def _coordinate(value: str, cwd: str) -> str:
@@ -225,6 +274,129 @@ def _creation_batch(item: dict, plugin_root: str) -> tuple[list[str], str]:
     return first, output.splitlines()[0]
 
 
+def _checkout_slot_receipt(args: list[str], output: str, exit_code: int, cwd: str) -> CheckoutSlotReceipt | None:
+    """Validate the packaged helper's invocation, coordinates, exit status and receipt fields together."""
+    requester = None
+    wait: list[str] = []
+    match args:
+        case ["acquire" as action, ("--checkout" | "--slot") as flag, target, "--owner", requester, *wait]:
+            if wait not in ([], ["--queue"]) and (
+                len(wait) != 2
+                or wait[0] != "--wait-seconds"
+                or not re.fullmatch(r"[0-9]{1,2}", wait[1])
+                or int(wait[1]) > 60
+            ):
+                return None
+        case ["status" as action, ("--checkout" | "--slot") as flag, target]:
+            pass
+        case [("hold" | "release") as action, "--slot" as flag, target, "--owner", requester]:
+            pass
+        case ["release" as action, "--inspected", "--slot" as flag, target, "--owner", requester] | [
+            "release" as action,
+            "--slot" as flag,
+            target,
+            "--owner",
+            requester,
+            "--inspected",
+        ]:
+            pass
+        case _:
+            return None
+    if requester is not None and not SLOT_OWNER.fullmatch(requester):
+        return None
+
+    path_type = PureWindowsPath if PureWindowsPath(cwd).drive else PurePosixPath
+    if not path_type(target).is_absolute():
+        return None
+    via_checkout = flag == "--checkout"
+    try:
+        output = _host_output(output)
+        if wait == ["--queue"]:
+            # The host combines peer-change progress from stderr with the final stdout record.
+            output = output.rsplit("\n", 1)[-1]
+        receipt = json.loads(output)
+        requested = _coordinate(target, cwd)
+        if via_checkout and requested != _coordinate(cwd, cwd):
+            return None
+        fields = {"status", "slot", "owner"}
+        if exit_code == 2:
+            fields.add("error")
+        if not isinstance(receipt, dict) or set(receipt) != fields:
+            return None
+        slot, status, holder = receipt["slot"], receipt["status"], receipt["owner"]
+        error = exit_code == 2 and status == "error" and holder is None and isinstance(receipt["error"], str)
+        if slot is None and error and via_checkout:
+            return CheckoutSlotReceipt(action, requester, None, status, holder, via_checkout)
+        if (
+            not isinstance(slot, str)
+            or not path_type(slot).is_absolute()
+            or path_type(slot).name != "codex-review-slot"
+        ):
+            return None
+        slot = _coordinate(slot, cwd)
+        if not via_checkout and requested != slot:
+            return None
+    except ValueError:
+        return None
+
+    if holder is not None and (not isinstance(holder, str) or not SLOT_OWNER.fullmatch(holder)):
+        return None
+    if error:
+        return CheckoutSlotReceipt(action, requester, slot, status, holder, via_checkout)
+    observation = status == "busy" or (status == "inspection-required" and holder is not None)
+    if (
+        (action == "acquire" and exit_code == 0 and status == "acquired" and holder == requester)
+        or (action == "acquire" and exit_code == 1 and observation)
+        or (action == "status" and exit_code == 0 and (observation or (status == "free" and holder is None)))
+        or (action == "hold" and exit_code == 0 and status == "inspection-required" and holder == requester)
+        or (action == "release" and exit_code == 0 and status == "released" and holder is None)
+        or (action in {"hold", "release"} and exit_code == 1 and status == "not-owner" and holder != requester)
+        or (
+            action == "release"
+            and exit_code == 1
+            and status == "inspection-required"
+            and holder == requester
+            and "--inspected" not in args
+        )
+    ):
+        return CheckoutSlotReceipt(action, requester, slot, status, holder, via_checkout)
+    return None
+
+
+def _checkout_admission(previous: CheckoutAdmission | None, receipt: CheckoutSlotReceipt) -> CheckoutAdmission | None:
+    """Update admission only from the same locator and an applicable requester or holder."""
+    action, requester, slot, status, holder, via_checkout = receipt
+    if slot is None:
+        # The outer checkout binding judges a failure before locator resolution.
+        return previous
+    if action == "acquire":
+        if requester is None or (previous is not None and (requester, slot) != (previous.requester, previous.slot)):
+            return previous
+        via_checkout = via_checkout or (previous is not None and previous.via_checkout)
+        if status in {"acquired", "error"}:
+            return CheckoutAdmission(requester, slot, status, holder, via_checkout)
+        if status == "inspection-required" and holder == requester:
+            return CheckoutAdmission(requester, slot, "stop", holder, via_checkout)
+        if previous is not None and holder == requester and previous.state in {"acquired", "stop"}:
+            return previous._replace(via_checkout=via_checkout)
+        return (
+            CheckoutAdmission(requester, slot, "peer", holder, via_checkout)
+            if holder not in (None, requester)
+            else None
+        )
+    if previous is None or slot != previous.slot or requester not in (None, previous.requester, previous.holder):
+        return previous
+    via_checkout = previous.via_checkout or via_checkout
+    if status == "error" or (status == "inspection-required" and holder == previous.requester):
+        return previous._replace(state="stop", holder=holder, via_checkout=via_checkout)
+    if status in {"busy", "inspection-required"}:
+        if previous.state == "acquired" and holder == previous.requester:
+            return previous._replace(via_checkout=via_checkout)
+        if previous.state == "peer" and holder not in (None, previous.requester):
+            return previous._replace(holder=holder, via_checkout=via_checkout)
+    return None
+
+
 def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
     """Continue positively bound review or remediation work without overriding a controlling pause."""
     if payload.get("hook_event_name") != "Stop" or payload.get("stop_hook_active") is not False:
@@ -234,11 +406,12 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
     if not all(isinstance(value, str) and value for value in (session, turn, cwd, message, plugin_root)):
         return {}
     delivery_only = DECISION_WAIT.search(message) is not None
+    stop_prose = DECISION_WAIT.sub("", message)
     # A typed fallback can end a turn independently of any wait-status wording.
     # Inspect the terminal block so earlier evidence and ordinary lists of checks do not become a menu.
     terminal_block = message.rstrip().rsplit("\n\n", 1)[-1]
     if (
-        CONTROLLING_STOP.search(DECISION_WAIT.sub("", message))
+        CONTROLLING_STOP.search(CHECKOUT_WAIT.sub("", stop_prose))
         or REPLY_INSTRUCTION.search(terminal_block)
         or INLINE_CHOICES.match(terminal_block)
         or len(set(CHOICE_LINE.findall(terminal_block.lower()))) >= 2
@@ -253,6 +426,12 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
     question_receipts: set[str] = set()
     async_call = ""
     async_state = ""
+    checkout: CheckoutAdmission | None = None
+    checkout_binding: CheckoutAdmission | None = None
+    # Turn-scoped slot evidence survives an admission reset, so a later receipt cannot erase an earlier pause.
+    slot_receipt_seen = False
+    admitted_slots: set[str] = set()
+    errored_slots: set[str] = set()
     for record in records:
         data = record.get("payload", {})
         if not isinstance(data, dict):
@@ -265,6 +444,11 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             pending_questions = 0
             question_receipts.clear()
             async_call = async_state = ""
+            checkout = None
+            checkout_binding = None
+            slot_receipt_seen = False
+            admitted_slots.clear()
+            errored_slots.clear()
             continue
         if not active:
             continue
@@ -343,7 +527,7 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                     re.I,
                 ):
                     return {}
-            elif kind == "message" and data.get("role") == "user" and runs:
+            elif kind == "message" and data.get("role") == "user" and (runs or slot_receipt_seen):
                 return {}
             elif kind not in {"message", "reasoning", "additional_tools", "agent_message"}:
                 return {}
@@ -361,7 +545,7 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
         item = data.get("item", {})
         item_type = item.get("type")
         if item_type == "UserMessage":
-            if runs:
+            if runs or slot_receipt_seen:
                 return {}
             continue
         if item_type in {"Reasoning", "AgentMessage"}:
@@ -418,10 +602,18 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
         output = item.get("aggregated_output", "")
         if not isinstance(output, str):
             return {}
-        if item.get("exit_code") != 0:
+        exit_code = item["exit_code"]
+        args = _argv(item, plugin_root) if exit_code in (0, 1, 2) else []
+        slot_helper = bool(args) and _coordinate(args[1], plugin_root) == _coordinate(
+            "shared/review_checkout_slot.py", plugin_root
+        )
+        slot_receipt = _checkout_slot_receipt(args[2:], output, exit_code, cwd) if slot_helper else None
+        # A validated helper receipt is routed by its fields: owner IDs and slot paths may contain these words.
+        if exit_code != 0 and slot_receipt is None:
             if re.search(r"denied|not permitted|approval|retry.{0,30}exhaust", output, re.I):
                 return {}
-        args = _argv(item, plugin_root) if item.get("exit_code") == 0 else []
+        if exit_code != 0 and not slot_helper:
+            args = []
         batched_creation = False
         if not args:
             args, output = _creation_batch(item, plugin_root)
@@ -439,6 +631,41 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             if re.match(r"^/[A-Za-z]:/", command_cwd):
                 command_cwd = command_cwd[1:]
         if _coordinate(command_cwd, cwd) != _coordinate(cwd, cwd):
+            continue
+        if slot_helper:
+            receipt = slot_receipt
+            if receipt is None:
+                continue
+            slot_receipt_seen = True
+            # A broken slot stays broken for the turn, in either order: a peer observation before or after
+            # the error cannot overwrite it.
+            if receipt.status == "error" and receipt.slot is not None:
+                if receipt.slot in admitted_slots:
+                    return {}
+                errored_slots.add(receipt.slot)
+            # Claim ownership can end when the workflow yields. Keep the original
+            # checkout identity through release so re-entry cannot inherit a new slot.
+            if checkout_binding is not None:
+                same_slot = receipt.slot == checkout_binding.slot
+                same_requester = receipt.requester == checkout_binding.requester
+                if receipt.via_checkout and (same_requester or receipt.requester is None) and not same_slot:
+                    return {}
+                if receipt.action == "acquire" and not (same_requester and same_slot):
+                    continue
+            elif (
+                checkout is not None
+                and receipt.via_checkout
+                and receipt.slot == checkout.slot
+                and receipt.requester in (None, checkout.requester)
+            ):
+                checkout_binding = checkout
+            checkout = _checkout_admission(checkout, receipt)
+            if checkout_binding is None and checkout is not None and checkout.via_checkout:
+                checkout_binding = checkout
+            if checkout is not None:
+                admitted_slots.add(checkout.slot)
+                if checkout.state == "error" or checkout.slot in errored_slots:
+                    return {}
             continue
         helper = _coordinate(args[1], plugin_root)
         if helper == _coordinate("shared/create_run.py", plugin_root):
@@ -492,8 +719,7 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                 valid_creation = True
             if not valid_creation:
                 continue
-            # Some host CommandExecution records retain escaped terminal newlines.
-            report = output.strip().removesuffix("\\n")
+            report = _host_output(output)
             if not report or "\n" in report or "\r" in report:
                 return {}
             run = _coordinate(report, cwd)
@@ -526,7 +752,7 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                     and selection[1] in {"commit", "path"}
                     and selection[2] == "--local-target"
                 )
-                report = output.strip().removesuffix("\\n")
+                report = _host_output(output)
                 if (pr or local) and report and "\n" not in report and "\r" not in report:
                     run = _coordinate(args[-1], cwd)
                     roots = tuple(
@@ -570,10 +796,15 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             if runs.get(run) == "code-remediate":
                 del runs[run]
     # A later helper invocation cannot transfer ownership of the original workflow.
-    if not active or owner not in runs.values() or pending_questions:
+    if not active or pending_questions:
+        return {}
+    checkout_state = checkout.state if checkout is not None else ""
+    if checkout_state == "stop" or (checkout_state != "peer" and CONTROLLING_STOP.search(stop_prose)):
         return {}
     if delivery_only:
-        if (question_receipts and not async_call) or (async_call and async_state != "accepted"):
+        if owner not in runs.values() or (question_receipts and not async_call):
+            return {}
+        if async_call and async_state != "accepted":
             return {}
         return {
             "decision": "block",
@@ -587,6 +818,33 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                 "Tool acceptance grants no permission."
             ),
         }
+    # Before a run is bound there is no workflow to resume: a question that ends the turn stays the user's to answer.
+    if owner not in runs.values() and TERMINAL_QUESTION.search(terminal_block):
+        return {}
+    if checkout_state == "peer":
+        return {
+            "decision": "block",
+            "reason": (
+                "The last checkout admission receipt reported a peer claim. This one-time diagnostic grants no "
+                f"authority. {CONTROLLING_PAUSE} Honor any newer slot status. If acquisition was interrupted and its "
+                "outcome is unknown, check `review_checkout_slot.py status --slot <retained locator>` first. While "
+                "still queued, keep one cancellable `--queue` acquisition active under the original owner ID. "
+                "If the host needs bounded waits, use `acquire --slot <retained locator> --owner <original owner ID> "
+                "--wait-seconds 60`. Preserve the peer's claim. After acquisition, refresh PR state when applicable "
+                "and resume the workflow."
+            ),
+        }
+    if checkout_state == "acquired" and not owner:
+        return {
+            "decision": "block",
+            "reason": (
+                "The checkout slot was acquired before an active run was recorded. This one-time diagnostic grants no "
+                f"authority. {CONTROLLING_PAUSE} Preserve the retained locator and original owner ID. Refresh PR state "
+                "when applicable and resume the existing authorized workflow from its first unmet checkpoint."
+            ),
+        }
+    if owner not in runs.values():
+        return {}
     if owner == "code-remediate":
         next_step = (
             "Continue remediation selection, selected fixes, verification and delivery under the user's existing scope. "
@@ -604,10 +862,8 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
         "decision": "block",
         "reason": (
             "Codex Rig detected an unfinished workflow. This is a one-time diagnostic, not new authorization. "
-            "First honor any user stop, denial, "
-            "pending question, closed PR, unverified source or exhausted retry limit; if one applies, preserve "
-            "that pause and ask the concrete missing decision without retrying a denied action. Otherwise execute "
-            f"the first unmet checkpoint now under existing authority. {next_step}"
+            f"{CONTROLLING_PAUSE} Otherwise execute the first unmet checkpoint now under existing authority. "
+            f"{next_step}"
         ),
     }
 

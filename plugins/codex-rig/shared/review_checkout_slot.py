@@ -13,13 +13,14 @@ does not reclaim based on age, clean up review artifacts, or grant execution aut
 
 ## Usage
 
-Use ``acquire --checkout PATH --owner RUN_ID [--wait-seconds N]`` at entry and keep the absolute slot locator and unique
+Use ``acquire --checkout PATH --owner RUN_ID --queue`` at entry and keep the absolute slot locator and unique
 owner ID for resume. A repeated acquire by the same run succeeds. Inspect with ``status --slot PATH`` or ``status
 --checkout PATH``. Finish with ``release --slot PATH --owner RUN_ID`` even if running Git has stopped. After an
 integrity stop use ``hold --slot PATH --owner RUN_ID`` instead. A waiting peer stays queued through inspection
-and owner changes. An expired wait reports the current state. Only the owner may clear a held claim after inspection
-with ``release --inspected``. After human inspection of a run that predates slot acquisition, use
-``acquire --slot PATH --owner NEW_ID`` to claim a free slot without Git.
+and owner changes until admitted or interrupted. Queue progress goes to stderr when the known blocking claim changes.
+The optional bounded ``--wait-seconds N`` form reports the current state when its interval expires. Only the owner may
+clear a held claim after inspection with ``release --inspected``. After human inspection of a run that predates slot
+acquisition, use ``acquire --slot PATH --owner NEW_ID`` to claim a free slot without Git.
 Derive PATH from the original authenticated Git common directory and SLOT_NAME. This form never adopts an existing
 marker, even one bearing NEW_ID.
 
@@ -48,6 +49,7 @@ import os
 import re
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -186,7 +188,9 @@ def main() -> int:
     location.add_argument(
         "--slot", type=Path, help="Claim a free slot at an authenticated locator without running Git."
     )
-    acquire.add_argument("--wait-seconds", type=int, default=0, metavar="0..60", help="Wait for the current holder.")
+    waiting = acquire.add_mutually_exclusive_group()
+    waiting.add_argument("--wait-seconds", type=int, default=0, metavar="0..60", help="Wait for the current holder.")
+    waiting.add_argument("--queue", action="store_true", help="Wait for admission until interrupted.")
     release = commands.add_parser("release")
     release.add_argument("--inspected", action="store_true", help="Clear a hold after human-confirmed inspection.")
     hold = commands.add_parser("hold")
@@ -200,6 +204,7 @@ def main() -> int:
     args = parser.parse_args()
     owner = getattr(args, "owner", None)
     wait = getattr(args, "wait_seconds", 0)
+    queue = getattr(args, "queue", False)
     slot = getattr(args, "slot", None)
     try:
         if owner is not None and not OWNER_PATTERN.fullmatch(owner):
@@ -209,6 +214,7 @@ def main() -> int:
         if slot is None:
             slot = _checkout_slot(args.checkout)
         deadline = time.monotonic() + wait
+        previous = None
         while True:
             state, current = _operate(
                 args.action,
@@ -220,9 +226,24 @@ def main() -> int:
             remaining = deadline - time.monotonic()
             # The owning review handles inspection. A peer observes the claim until it is released or its wait expires.
             waiting_for_owner = state == "busy" or (state == "inspection-required" and current != owner)
-            if args.action != "acquire" or not waiting_for_owner or remaining <= 0:
+            if args.action != "acquire" or not waiting_for_owner:
                 break
-            time.sleep(min(1, remaining))
+            if queue:
+                observation = state, current
+                # Give an in-progress release one interval to remove its empty directory.
+                # An existing same-owner marker at a free-only locator requires explicit recovery.
+                if current == owner or (current is None and observation == previous):
+                    break
+                if current is not None and observation != previous:
+                    print(
+                        json.dumps({"status": state, "owner": current, "slot": str(slot)}), file=sys.stderr, flush=True
+                    )
+                previous = observation
+                time.sleep(1)
+            elif remaining > 0:
+                time.sleep(min(1, remaining))
+            else:
+                break
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         print(json.dumps({"status": "error", "owner": None, "slot": str(slot) if slot else None, "error": str(error)}))
         return 2

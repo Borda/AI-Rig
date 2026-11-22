@@ -855,6 +855,34 @@ def _prepared_preflight(tmp_path: Path, options: dict[str, Any]) -> tuple[Module
 class TestDocumentedContracts:
     """The packaged examples are accepted by the gates they document."""
 
+    @pytest.mark.integration
+    def test_paid_challenger_brief_contains_consumable_coverage_example(
+        self, local_loop: Callable[..., tuple[ModuleType, Path, Path]]
+    ) -> None:
+        """A reviewer can copy the delivered assessment format through both paid output and loop intake gates."""
+        validator, run, _ = local_loop(current_assessment=True)
+        evidence_path = run / "loop-evidence.json"
+        review = run / json.loads(evidence_path.read_bytes())["rounds"][0]["review_run"]
+        manifest = json.loads((review / "specialist-manifest.json").read_bytes())
+        plan_path = Path(manifest["app_server_execution"]["plan_path"])
+        validator.preflight_review_plan(plan_path, evidence_path, None)
+        plan = json.loads(plan_path.read_bytes())
+        context = (plan_path.parent / plan["nodes"][0]["context_path"]).read_text(encoding="utf-8")
+        directions, _ = context.split("Review request:\n", maxsplit=1)
+        examples = _fenced_blocks(directions, "json")
+        assert len(examples) == 1, "Missing source-rated assessment example in delivered challenger directions"
+        assessment = json.loads(examples[0])["assessment"]
+        payload = {
+            "source_sha256": plan["source_sha256"],
+            "diff_sha256": plan["diff_sha256"],
+            "findings": [],
+            "assessment": assessment,
+        }
+        _module(PLUGIN_ROOT / "shared" / "local_reviewer_wave.py")._validate_review_output(json.dumps(payload), plan)
+        assert (
+            validator._findings_from_payload(payload, plan["source_sha256"], plan["diff_sha256"], ["module.py"]) == []
+        )
+
     def test_isolated_response_example_matches_output_schema(self) -> None:
         """The packaged isolated-response example passes the actual Code Review output gate.
 
@@ -1653,10 +1681,18 @@ def _assessed_report(tmp_path: Path, assessment: dict[str, object]) -> Path:
     return report
 
 
-def _coverage_assessment(reviewed_paths: object = None, *, rationale: str | None = None) -> dict[str, object]:
+def _coverage_assessment(
+    reviewed_paths: object = None, *, rationale: str | None = None, **coverage_fields: object
+) -> dict[str, object]:
     """Build an assessment whose rationale declares `reviewed_paths` (or carries a literal `rationale`)."""
     declared = json.dumps(
-        {"reviewed_paths": reviewed_paths, "unreviewed_paths": [], "limits": "none", "judgment": "clean"}
+        {
+            "reviewed_paths": reviewed_paths,
+            "unreviewed_paths": [],
+            "limits": "none",
+            "judgment": "clean",
+            **coverage_fields,
+        }
     )
     return {"rating": 1, "rationale": declared if rationale is None else rationale}
 
@@ -1770,6 +1806,8 @@ class TestReportAssessment:
             pytest.param(_coverage_assessment(["widget.py", {}]), id="non-string-path"),
             pytest.param(_coverage_assessment("widget.py"), id="not-a-list"),
             pytest.param(_coverage_assessment(rationale="No stated coverage."), id="no-stated-coverage"),
+            pytest.param(_coverage_assessment(["widget.py"], limits=[]), id="array-limits"),
+            pytest.param(_coverage_assessment(["widget.py"], uncertainty="none"), id="extra-coverage-key"),
         ],
     )
     def test_rejects_missing_or_corrupt_coverage(self, tmp_path: Path, assessment: dict[str, object]) -> None:
@@ -1779,9 +1817,11 @@ class TestReportAssessment:
         declaration at all, all leave the required `widget.py` unproven.
         """
         report = _assessed_report(tmp_path, assessment)
+        original = report.read_bytes()
 
         with pytest.raises(ValueError, match=COVERAGE_MISSING):
             _validator()._findings_from_report(report, SOURCE_SHA, DIFF_SHA, ["widget.py"])
+        assert report.read_bytes() == original
 
 
 class TestContinuation:

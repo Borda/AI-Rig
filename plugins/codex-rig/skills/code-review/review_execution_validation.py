@@ -529,17 +529,13 @@ def _validate_direct_review(
         if len(metadata) != 1 or metadata[0].get("agent_role", "default") != "default":
             raise SystemExit(f"review-direct-child-role-mismatch:{role}")
         controls[role] = _child_controls(child_rows, attempt.get("turn_id"))
-        turns = [
-            row["payload"]
-            for row in child_rows
-            if row.get("type") == "turn_context" and row["payload"].get("turn_id") == attempt.get("turn_id")
-        ]
+        turn = _child_turn_context(child_rows, attempt.get("turn_id"))
         if (
-            len(turns) != 1
-            or turns[0].get("model") != observed_model
-            or turns[0].get("effort") != role_card["model_reasoning_effort"]
-            or attempt.get("model") != turns[0]["model"]
-            or attempt.get("effort") != turns[0]["effort"]
+            turn is None
+            or turn["model"] != observed_model
+            or turn["effort"] != role_card["model_reasoning_effort"]
+            or attempt.get("model") != turn["model"]
+            or attempt.get("effort") != turn["effort"]
         ):
             raise SystemExit(f"review-direct-model-effort-mismatch:{role}")
         completed_turns = _event_payloads(child_rows, "task_complete")
@@ -892,7 +888,7 @@ def _validate_challenge_response(value: object, diff_sha256: str) -> None:
         raise SystemExit("review-challenge-response-invalid")
     if (
         type(value["schema_version"]) is not int
-        or value["schema_version"] != 1
+        or value["schema_version"] not in {1, 2}
         or type(value["evidence_schema_version"]) is not int
         or value["evidence_schema_version"] != 3
     ):
@@ -1046,18 +1042,40 @@ def _validate_inspection_plan(
     return plan, contexts, independent_required, evidence
 
 
+def _child_turn_context(
+    child_rows: list[dict[str, Any]], turn_id: object, *, only_turn: bool = False
+) -> dict[str, Any] | None:
+    """Recover consistent child settings, optionally requiring the selected turn to be the session's only turn."""
+    if not isinstance(turn_id, str) or not turn_id:
+        return None
+    contexts = []
+    for row in child_rows:
+        if row.get("type") != "turn_context":
+            continue
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("turn_id") == turn_id:
+            contexts.append(payload)
+        elif only_turn:
+            return None
+    if not contexts:
+        return None
+    first = contexts[0]
+    if not all(isinstance(first.get(key), str) and first[key] for key in ("model", "effort")):
+        return None
+    # Compaction can replay a context with a new envelope timestamp. Compare the entire JSON payload,
+    # including nested settings and their types (Python equality alone treats true as equal to 1).
+    if len(contexts) > 1 and len({json.dumps(context, sort_keys=True) for context in contexts}) != 1:
+        return None
+    return first
+
+
 def _child_controls(child_rows: list[dict[str, Any]], turn_id: str) -> dict[str, str]:
     """Report observed child controls without treating them as an isolation guarantee."""
-    contexts = [
-        row["payload"]
-        for row in child_rows
-        if row.get("type") == "turn_context"
-        and isinstance(row.get("payload"), dict)
-        and row["payload"].get("turn_id") == turn_id
-    ]
-    if len(contexts) != 1:
+    context = _child_turn_context(child_rows, turn_id)
+    if context is None:
         raise SystemExit("review-inspection-turn-context-missing")
-    context = contexts[0]
     sandbox = context.get("sandbox_mode")
     if sandbox is None and isinstance(context.get("sandbox_policy"), dict):
         sandbox = context["sandbox_policy"].get("type")
@@ -2466,6 +2484,16 @@ def _validate_instruction_bounded_review(
             joined = _joined_terminal_result(parent_rows, attempt["agent_path"], message)
         if not joined:
             raise SystemExit(f"review-inspection-parent-join-missing:{role}")
+        challenge_response = plan.get("challenge_response")
+        if challenge_response is not None and challenge_response["schema_version"] == 2:
+            _retained_reviewer_rating(
+                _resolve_path(out_dir, attempt["output_path"]),
+                local_reviewer_wave=False,
+                main=False,
+                role=role,
+                structured_native=True,
+                challenge_response=challenge_response,
+            )
         if manifest.get("schema_version") not in {7, 8}:
             intervals.append((started_at, completed_at))
         if item.get("recovery") is not None:
@@ -2803,6 +2831,16 @@ def _retained_reviewer_rating(
                     ):
                         raise SystemExit(f"review-challenge-disposition-invalid:{role}")
                     raise SystemExit(f"review-assessment-content-invalid:{role}")
+                if (
+                    challenge_response is not None
+                    and challenge_response["schema_version"] == 2
+                    and finding["disposition"] in {"open", "fixed-pending-verification"}
+                    and not any(
+                        entry.startswith("invariant:") and entry.removeprefix("invariant:").strip()
+                        for entry in finding["evidence"]
+                    )
+                ):
+                    raise SystemExit(f"review-challenge-finding-invariant-missing:{role}:{finding['signature']}")
             if challenge_response is not None and not preassessment_blocker:
                 requirements = challenge_response["interaction_requirements"]
                 interactions = payload["interactions"]
@@ -4037,16 +4075,9 @@ def _validate_spawn_attempts(
             raise SystemExit(f"manifest-unverified-transient-failure:{role}:{attempt['attempt']}")
 
         turn_id = attempt.get("turn_id")
-        contexts = [
-            row["payload"]
-            for row in child_rows
-            if row.get("type") == "turn_context"
-            and isinstance(row.get("payload"), dict)
-            and row["payload"].get("turn_id") == turn_id
-        ]
-        if len(contexts) != 1:
+        context = _child_turn_context(child_rows, turn_id)
+        if context is None:
             raise SystemExit(f"provenance-turn-context-mismatch:{thread_id}")
-        context = contexts[0]
         if context.get("model") != attempt.get("model") or context.get("effort") != attempt.get("effort"):
             raise SystemExit(f"provenance-model-effort-mismatch:{thread_id}")
         if context.get("model") != observed_model:

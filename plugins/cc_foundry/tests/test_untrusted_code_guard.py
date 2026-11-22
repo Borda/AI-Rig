@@ -627,6 +627,223 @@ class TestDeltaSinceApproval:
         _commit(repo, {"a.txt": "x\n"}, "unrelated")
         assert _run(repo, base, head, approval, cmd, *_ENV_ONLY) == 3
 
+    def test_a_crlf_checkout_is_not_work_since_the_approved_head(self, approved) -> None:
+        """Line endings git writes on checkout (``core.autocrlf``) are not a change, so the CRLF copy of the base's
+        ``requirements.txt`` does not count as touching a dependency file."""
+        repo, base, head, approval, cmd = approved
+        _crlf_checkout(repo)
+        assert _run(repo, base, head, approval, cmd, *_ENV_ONLY) == 0
+
+
+def _checkout_again(repo: Path) -> None:
+    """Delete and re-check-out every tracked file, so the repository's current conversion settings write its bytes."""
+    for rel in _git(repo, "ls-files").splitlines():
+        (repo / rel).unlink()
+    _git(repo, "checkout", "--", ".")
+
+
+def _crlf_checkout(repo: Path) -> None:
+    """Check the head out again with ``core.autocrlf=true`` and prove git itself calls the CRLF tree clean."""
+    _git(repo, "config", "core.autocrlf", "true")
+    _checkout_again(repo)
+    assert b"\r\n" in (repo / "tests" / "test_x.py").read_bytes()
+    assert _git(repo, "status", "--porcelain") == ""
+
+
+#: A clean/smudge pair in the shape of Git LFS: the blob holds less than the working tree, and the clean side maps
+#: the checked-out bytes back to the blob.
+_WRAP_FILTER = """\
+import sys
+MARK = b"# smudged payload\\n"
+data = sys.stdin.buffer.read()
+if sys.argv[1] == "smudge":
+    sys.stdout.buffer.write(MARK + data)
+else:
+    sys.stdout.buffer.write(data[len(MARK):] if data.startswith(MARK) else data)
+"""
+
+
+@pytest.mark.integration
+class TestExactHeadDecision:
+    """``--decision exact-head`` limits an approval nobody decided by hand to the scanned head's own bytes."""
+
+    _OPTS = (*_ENV_ONLY, "--decision", "exact-head")
+
+    @pytest.fixture(name="approved")
+    def _approved(self, project, tmp_path: Path) -> tuple[Path, str, str, Path, tuple[str, ...]]:
+        """Approve a clean contribution for its exact head and return what ``run`` needs."""
+        repo, base, head = project(_CLEAN)
+        approval = tmp_path / "approved.txt"
+        cmd = (sys.executable, "-c", "pass")
+        assert _bind(repo, base, head, approval, cmd, *self._OPTS) == 0
+        return repo, base, head, approval, cmd
+
+    def test_the_scanned_head_itself_runs(self, approved) -> None:
+        """A clean tree equal to the approved head runs."""
+        repo, base, head, approval, cmd = approved
+        assert _run(repo, base, head, approval, cmd, *self._OPTS) == 0
+
+    def test_a_benign_follow_up_commit_is_refused(self, approved) -> None:
+        """A later commit that the delta scan would admit is still outside an exact-head approval (exit 3)."""
+        repo, base, head, approval, cmd = approved
+        _commit(repo, {"tests/test_x.py": "def test_x():\n    assert 2\n"}, "later")
+        assert _run(repo, base, head, approval, cmd, *self._OPTS) == 3
+
+    def test_an_untracked_file_is_refused(self, approved) -> None:
+        """A file the scan never read, even a harmless-looking one, voids the approval before anything runs."""
+        repo, base, head, approval, cmd = approved
+        (repo / "tests" / "conftest.py").write_text("X = 1\n", encoding="utf-8")
+        assert _run(repo, base, head, approval, cmd, *self._OPTS) == 3
+
+    def test_a_deleted_file_is_refused(self, approved) -> None:
+        """A tracked file removed from the working tree changes what the command sees, so the approval no longer
+        holds."""
+        repo, base, head, approval, cmd = approved
+        deleted = next(path for path in sorted((repo / "tests").glob("*.py")))
+        deleted.unlink()
+        assert _run(repo, base, head, approval, cmd, *self._OPTS) == 3
+
+    def test_the_restriction_is_part_of_the_approval(self, approved) -> None:
+        """Running without the exact-head decision does not match the approval the parent recorded."""
+        repo, base, head, approval, cmd = approved
+        assert _run(repo, base, head, approval, cmd, *_ENV_ONLY) == 3
+
+    @pytest.mark.skipif(os.name == "nt", reason="native Windows has no executable bit for git to record")
+    def test_an_executable_bit_change_is_refused(self, approved) -> None:
+        """Same bytes with a new executable bit is a different file to git and to the command, so it is refused."""
+        repo, base, head, approval, cmd = approved
+        changed = next(path for path in sorted((repo / "tests").glob("*.py")))
+        changed.chmod(0o755)
+        assert _run(repo, base, head, approval, cmd, *self._OPTS) == 3
+
+    @pytest.mark.skipif(os.name == "nt", reason="native Windows has no executable bit for git to record")
+    def test_an_executable_bit_change_git_ignores_still_runs(self, approved) -> None:
+        """With ``core.fileMode`` off git treats the bit as noise, and so does the exact-head check."""
+        repo, base, head, approval, cmd = approved
+        _git(repo, "config", "core.fileMode", "false")
+        changed = next(path for path in sorted((repo / "tests").glob("*.py")))
+        changed.chmod(0o755)
+        assert _run(repo, base, head, approval, cmd, *self._OPTS) == 0
+
+    @pytest.mark.skipif(os.name == "nt", reason="creating symlinks needs extra rights on native Windows")
+    def test_a_symlink_replaced_by_a_file_holding_its_target_is_refused(self, project, tmp_path: Path) -> None:
+        """A regular file whose bytes equal the link target has the same blob id, but not the same mode."""
+        repo, base, _head = project(_CLEAN)
+        (repo / "tests" / "link.py").symlink_to("test_x.py")
+        _git(repo, "add", "tests/link.py")
+        _git(repo, "commit", "-q", "-m", "link")
+        head = _git(repo, "rev-parse", "HEAD").strip()
+        approval = tmp_path / "approved.txt"
+        cmd = (sys.executable, "-c", "pass")
+        assert _bind(repo, base, head, approval, cmd, *self._OPTS) == 0
+        assert _run(repo, base, head, approval, cmd, *self._OPTS) == 0
+        (repo / "tests" / "link.py").unlink()
+        (repo / "tests" / "link.py").write_text("test_x.py", encoding="utf-8", newline="")
+        assert _run(repo, base, head, approval, cmd, *self._OPTS) == 3
+        _git(repo, "config", "core.symlinks", "false")
+        assert _run(repo, base, head, approval, cmd, *self._OPTS) == 0  # git's own checkout of a link without symlinks
+
+    def test_binding_refuses_a_tree_that_already_differs(self, project, tmp_path: Path) -> None:
+        """``bind`` applies the same rule before recording, so a caller can ask instead of binding an approval that
+        every run would refuse; no approval file is written."""
+        repo, base, head = project(_CLEAN)
+        (repo / "tests" / "conftest.py").write_text("X = 1\n", encoding="utf-8")
+        approval = tmp_path / "approved.txt"
+        assert _bind(repo, base, head, approval, (sys.executable, "-c", "pass"), *self._OPTS) == 3
+        assert not approval.exists()
+
+    def test_binding_without_the_restriction_ignores_the_tree(self, project, tmp_path: Path) -> None:
+        """An approval without ``exact-head`` still binds over a differing tree; its runs rescan the delta instead."""
+        repo, base, head = project(_CLEAN)
+        (repo / "tests" / "conftest.py").write_text("X = 1\n", encoding="utf-8")
+        assert _bind(repo, base, head, tmp_path / "approved.txt", (sys.executable, "-c", "pass"), *_ENV_ONLY) == 0
+
+
+@pytest.mark.integration
+class TestExactHeadCheckoutConversion:
+    """The exact-head check calls a file the scanned head exactly when git would, for the conversions the scan covers.
+
+    Git stores a checked-out file after its clean conversion, so a CRLF checkout of LF blobs is a clean tree; comparing
+    raw bytes refused every run on such a host. A clean/smudge filter is different: its working-tree payload is not the
+    blob the scan read, so a filtered path still has to match the head byte for byte.
+    """
+
+    _OPTS = TestExactHeadDecision._OPTS
+
+    def _bind_clean_tree(self, repo: Path, base: str, head: str, tmp_path: Path) -> tuple[Path, tuple[str, ...]]:
+        """Bind an exact-head approval on the current tree, assert it was accepted and return what ``run`` needs."""
+        approval = tmp_path / "approved.txt"
+        cmd = (sys.executable, "-c", "pass")
+        assert _bind(repo, base, head, approval, cmd, *self._OPTS) == 0
+        return approval, cmd
+
+    def test_an_autocrlf_checkout_of_the_scanned_head_runs(self, project, tmp_path: Path) -> None:
+        """``core.autocrlf=true`` writes CRLF over LF blobs; git calls the tree clean, and so does the check."""
+        repo, base, head = project(_CLEAN)
+        _crlf_checkout(repo)
+        approval, cmd = self._bind_clean_tree(repo, base, head, tmp_path)
+        assert _run(repo, base, head, approval, cmd, *self._OPTS) == 0
+
+    def test_a_content_change_under_autocrlf_is_refused(self, project, tmp_path: Path) -> None:
+        """Normalising line endings never hides an edit: changed content in CRLF form still differs (exit 3)."""
+        repo, base, head = project(_CLEAN)
+        _crlf_checkout(repo)
+        approval, cmd = self._bind_clean_tree(repo, base, head, tmp_path)
+        (repo / "tests" / "test_x.py").write_bytes(b"def test_x():\r\n    assert 2\r\n")
+        assert _run(repo, base, head, approval, cmd, *self._OPTS) == 3
+
+    def test_an_eol_attribute_checkout_of_the_scanned_head_runs(self, project, tmp_path: Path) -> None:
+        """A ``text eol=crlf`` attribute the head carries converts the same way without any ``core.autocrlf``."""
+        repo, base, head = project({**_CLEAN, ".gitattributes": "*.py text eol=crlf\n*.txt text eol=crlf\n"})
+        _checkout_again(repo)
+        assert b"\r\n" in (repo / "tests" / "test_x.py").read_bytes()
+        assert _git(repo, "status", "--porcelain") == ""
+        approval, cmd = self._bind_clean_tree(repo, base, head, tmp_path)
+        assert _run(repo, base, head, approval, cmd, *self._OPTS) == 0
+
+    def test_line_endings_no_setting_converts_are_refused(self, project, tmp_path: Path) -> None:
+        """Without a conversion setting a CRLF rewrite is a real change to git, and the check never normalises on its
+        own (exit 3)."""
+        repo, base, head = project(_CLEAN)
+        approval, cmd = self._bind_clean_tree(repo, base, head, tmp_path)
+        (repo / "tests" / "test_x.py").write_bytes(b"def test_x():\r\n    assert 1\r\n")
+        assert _git(repo, "status", "--porcelain") != ""
+        assert _run(repo, base, head, approval, cmd, *self._OPTS) == 3
+
+    def test_a_smudge_filtered_checkout_is_refused_but_runs_without_the_restriction(
+        self, project, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A filter driver's payload is bytes the scan never read, even though git calls the tree clean: an exact-head
+        approval refuses to bind it, and an approval without the restriction rescans those bytes and runs."""
+        repo, base, head = project({**_CLEAN, ".gitattributes": "tests/*.py filter=wrap\n"})
+        script = tmp_path / "filter" / "wrap_filter.py"
+        script.parent.mkdir()
+        script.write_text(_WRAP_FILTER, encoding="utf-8")
+        python = Path(sys.executable).as_posix()
+        for side in ("clean", "smudge"):
+            _git(repo, "config", f"filter.wrap.{side}", f'"{python}" "{script.as_posix()}" {side}')
+        _checkout_again(repo)
+        assert (repo / "tests" / "test_x.py").read_bytes().startswith(b"# smudged payload\n")
+        assert _git(repo, "status", "--porcelain") == ""
+        cmd = (sys.executable, "-c", "pass")
+        capsys.readouterr()
+        assert _bind(repo, base, head, tmp_path / "exact.txt", cmd, *self._OPTS) == 3
+        assert "tree differs in tests/test_a.py, tests/test_x.py" in capsys.readouterr().err
+        assert _bind(repo, base, head, tmp_path / "delta.txt", cmd, *_ENV_ONLY) == 0
+        assert _run(repo, base, head, tmp_path / "delta.txt", cmd, *_ENV_ONLY) == 0
+
+    def test_a_conversion_check_that_cannot_finish_refuses(
+        self, project, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When git cannot judge the converted bytes in time, nothing is bound and nothing runs (exit 3)."""
+        repo, base, head = project(_CLEAN)
+        _crlf_checkout(repo)
+        approval, cmd = self._bind_clean_tree(repo, base, head, tmp_path)
+        monkeypatch.setattr(guard, "_CONVERSION_TIMEOUT", 1e-6)
+        assert _bind(repo, base, head, tmp_path / "again.txt", cmd, *self._OPTS) == 3
+        assert not (tmp_path / "again.txt").exists()
+        assert _run(repo, base, head, approval, cmd, *self._OPTS) == 3
+
 
 _SANDBOX_USABLE = guard.probe_isolation(str(Path.cwd())) == "sandbox"
 _requires_sandbox = pytest.mark.skipif(

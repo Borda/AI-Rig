@@ -254,7 +254,7 @@ Write tool takes your text as a parameter, not as shell source, so it carries no
 your own summary happens to quote something from the comment above. Then read it back:
 _SUMMARY=$(cat \"<absolute path — substitute $IMPL_DIR>/summary-<id>.txt\")
 export RESOLVE_APPROVED_HOOKS=\"\"
-IFS= read -r RESOLVE_APPROVED_HOOKS < \"<absolute path — substitute $IMPL_DIR/approved-hooks.txt>\" 2>/dev/null || RESOLVE_APPROVED_HOOKS=\"\"
+IFS= read -r RESOLVE_APPROVED_HOOKS < \"<absolute path — substitute $IMPL_DIR/approved-hooks.txt>\" 2>/dev/null || [ -n \"$RESOLVE_APPROVED_HOOKS\" ] || RESOLVE_APPROVED_HOOKS=\"\"
 python \"${CLAUDE_PLUGIN_ROOT}/bin/commit_action_item.py\" --build --summary \"$_SUMMARY\" \\
     --item-id \"<id>\" --author \"$_AUTHOR\" --pr \"$_PR_REF\" --comment \"$_COMMENT\" \\
     --challenge \"evidence=VALID suggestion=<VALID|REJECT> resolution=<as-suggested|self-resolved>\" \\

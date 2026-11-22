@@ -3744,6 +3744,9 @@ def _rename_test_outside(worker: dict[str, Any], module_name: str, test_name: st
 
 #: Damage to one worker proof keyed by case; ``neutral-module`` is the only one the intake must still admit.
 _WORKER_FORGERIES: dict[str, Callable[[dict[str, Any], str, str, Path], object]] = {
+    "different-snapshot-input": lambda worker, module_name, test_name, outside: worker["local_source"].update(
+        snapshot_path=outside.as_posix()
+    ),
     "external-test-unimported": _unimported_test,
     "empty-worker": lambda worker, module_name, test_name, outside: worker.update(tests={}),
     "failed-worker": lambda worker, module_name, test_name, outside: worker.update(status="fail"),
@@ -3802,6 +3805,28 @@ def _evidence_with_tests_status(
     _tests_gate(changed_gates)["status"] = status
     (run / "gates.json").write_text(json.dumps(changed_gates), encoding="utf-8")
     return validator._consolidation_confidence_evidence(run, manifest)
+
+
+@pytest.mark.parametrize(
+    ("stage", "accepted"),
+    [
+        pytest.param("", True, id="historical-published-snapshot"),
+        pytest.param(".gate-stage-" + "a" * 32, True, id="private-submission"),
+        pytest.param(".gate-stage-other", False, id="unrecognized-stage"),
+        pytest.param("another-run/.gate-stage-" + "a" * 32, False, id="different-submission-root"),
+    ],
+)
+def test_local_test_command_binds_snapshot_to_the_same_run(tmp_path: Path, stage: str, accepted: bool) -> None:
+    """Admit the two local snapshot layouts only under the verified publication root."""
+    validator = _load_validator("local_command_transport")
+    snapshot = "checks/local-source-snapshot.json"
+    worktree = (tmp_path / "local-source-review-worktree").as_posix()
+    source = {"worktree": worktree, "snapshot_path": snapshot, "snapshot_sha256": "a" * 64}
+    binding = {"snapshot_path": (tmp_path / stage / snapshot).as_posix(), "snapshot_sha256": source["snapshot_sha256"]}
+    argv = ["python", "-B", "run_gates.py", "--_python-tests-child", worktree, "proof", "[]", "[]", "python"]
+    command = ("argv-json:" + json.dumps([*argv, json.dumps(binding)])).encode()
+    with contextlib.nullcontext() if accepted else pytest.raises(SystemExit, match="local-confidence-tests-snapshot"):
+        assert validator._local_test_snapshot_transport(command, tmp_path, source) == binding
 
 
 @pytest.mark.parametrize("workers", [0, 2])
@@ -3898,10 +3923,16 @@ def test_local_source_gate_evidence_reaches_ordinary_confidence_intake(
     sidecar_path = run / _IMPORTS_SIDECAR
     sidecar_bytes = sidecar_path.read_bytes()
 
+    def write_proof_change(gates: dict[str, Any]) -> None:
+        """Keep the published rows in sync so ordinary intake judges the changed proof."""
+        (run / "gates.json").write_bytes(json.dumps(gates).encode())
+        rows = "".join(json.dumps(check, sort_keys=True) + "\n" for check in gates["checks"])
+        (run / "gates.checks.jsonl").write_bytes(rows.encode())
+
     def reject_tampered_proof(problem: str) -> None:
         changed_gates = json.loads(gates_bytes)
         _PROOF_TAMPERS[problem](_tests_gate(changed_gates), sidecar_path, sidecar_bytes, tmp_path / "other-python")
-        (run / "gates.json").write_bytes(json.dumps(changed_gates).encode())
+        write_proof_change(changed_gates)
         with pytest.raises(LookupError, match="local-confidence-tests-proof"):
             finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
 
@@ -3920,7 +3951,7 @@ def test_local_source_gate_evidence_reaches_ordinary_confidence_intake(
         changed_sidecar = json.dumps(proof).encode()
         sidecar_path.write_bytes(changed_sidecar)
         gate["source"]["artifacts"][_IMPORTS_SIDECAR] = hashlib.sha256(changed_sidecar).hexdigest()
-        (run / "gates.json").write_text(json.dumps(changed_gates), encoding="utf-8")
+        write_proof_change(changed_gates)
         outcome = _admit_local_proof if problem == "neutral-module" else _refuse_local_proof
         outcome(finder, path, home)
 

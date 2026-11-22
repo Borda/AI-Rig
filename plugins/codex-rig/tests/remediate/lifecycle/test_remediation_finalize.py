@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import subprocess
 import sys
@@ -19,7 +20,7 @@ from test_audit_acceptance import (
     _validator,  # noqa: F401
     audit_run,  # noqa: F401
 )
-from test_finding_presentation import VALIDATOR, _write_remediation_candidate
+from test_finding_presentation import VALIDATOR, _write_pr_run_artifacts, _write_remediation_candidate
 
 # Importing the fixture function registers the shared `assessed_pr` fixture in this module.
 from test_review_completion_gate import (
@@ -103,6 +104,35 @@ def _clear_workplan(workplan: dict[str, object]) -> None:
 
 class TestHandoffDerivation:
     """Protect the derived handoff: checkout location, selection marks and presentation versions."""
+
+    def test_reports_exact_delivered_topic_commits(self, valid_run: tuple[Path, dict[str, object]]) -> None:
+        """Use the verified lifecycle's ordered commits in the ordinary handoff producer."""
+        run, result = valid_run
+        metadata = result["metadata"]
+        commits = ["1" * 40, "2" * 40]
+        lifecycle = run / "production-lifecycle.json"
+        lifecycle.write_text(
+            json.dumps(
+                {"schema_version": 3, "status": "completed", "commit_mode": "grouped", "integrated_commits": commits}
+            ),
+            encoding="utf-8",
+        )
+        (run / "work-bucket-plan.json").write_text('{"schema_version": 3}', encoding="utf-8")
+        metadata["resolution_workplan"]["production_lifecycle"] = {
+            "path": lifecycle.name,
+            "status": "completed",
+            "sha256": hashlib.sha256(lifecycle.read_bytes()).hexdigest(),
+        }
+        draft = _draft_handoff(run)
+        draft["commit_disposition"] = {"status": "committed", "reason": "Wrong commits", "evidence": "gates.json"}
+
+        handoff = HELPER.derive_handoff(run, metadata, draft, result["confidence"], result["artifact_path"])
+
+        assert handoff["commit_disposition"] == {
+            "status": "committed",
+            "reason": f"Delivered topic commits in order ({', '.join(commits)}).",
+            "evidence": lifecycle.name,
+        }
 
     @pytest.mark.parametrize(
         ("receipt_name", "worktree"),
@@ -411,6 +441,280 @@ def _assert_promoted_for_owner(run: Path, exit_code: int, summary: dict[str, obj
     final_text = (run / "final.md").read_text(encoding="utf-8")
     assert final_text.index("**Artifact**") < final_text.index("**Recommendations / next steps**")
     assert final_text.endswith(f"| {owner} | A verification step remains. | Run the required check. |\n")
+
+
+def _write_worktree_delivery(run: Path) -> dict[str, object]:
+    """Write the local destination evidence for an explicitly selected linked PR worktree."""
+    checkout = (run.parent / "worktree").as_posix()
+    common = (run.parent / "caller" / ".git").as_posix()
+    delivery = {
+        "schema_version": 1,
+        "status": "worktree-only",
+        "checkout": checkout,
+        "branch": "fix/guard",
+        "head": "b" * 40,
+        "common_dir": common,
+    }
+    locator = {
+        "schema_version": 1,
+        "worktree": checkout,
+        "invoking_checkout": (run.parent / "caller").as_posix(),
+        "git_common_dir": common,
+        "initial_head": "c" * 40,
+    }
+    (run / "remediation-worktree.json").write_text(json.dumps(locator), encoding="utf-8")
+    (run / "worktree-delivery.json").write_text(json.dumps(delivery), encoding="utf-8")
+    (run / "worktree-delivery.md").write_text("Recorded local verification.\n", encoding="utf-8")
+    return delivery
+
+
+def _write_publication_offer(run: Path, delivery: dict[str, object], *, ref: str = "refs/heads/fix/guard") -> str:
+    """Record the offer scoped to the delivered commit and exact remote tip."""
+    offer = {
+        "checkout": delivery["checkout"],
+        "branch": delivery["branch"],
+        "common_dir": delivery["common_dir"],
+        "url": "https://github.com/acme/widgets.git",
+        "ref": ref,
+        "source_oid": delivery["head"],
+        "expected_oid": "a" * 40,
+    }
+    body = json.dumps(offer).encode()
+    (run / "publication-offer.json").write_bytes(body)
+    return hashlib.sha256(body).hexdigest()
+
+
+def _write_publication_attempt(run: Path, delivery: dict[str, object], *, ref: str = "refs/heads/fix/guard") -> str:
+    """Bind a consumed native approval to the retained offer."""
+    digest = _write_publication_offer(run, delivery, ref=ref)
+    attempt = {"offer_digest": digest, "decision_id": f"pr-worktree-publication-{digest}", "answer": "Approve"}
+    (run / "publication-attempt.json").write_text(json.dumps(attempt), encoding="utf-8")
+    return digest
+
+
+def test_resumes_local_delivery_without_a_publication_approval(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Let a delivered run finish locally after interruption while the optional question was open."""
+    delivery = _write_worktree_delivery(tmp_path)
+    _write_publication_offer(tmp_path, delivery)
+    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+
+    exit_code = HELPER.main(["publication-resume", "--run", str(tmp_path)])
+
+    assert exit_code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["publication"]["status"] == "skipped"
+    assert result["evidence"] == "publication-offer.json"
+    assert result["needs_terminal_record"] is True
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
+
+
+@pytest.mark.parametrize(
+    ("marker", "status", "needs_terminal_record"),
+    [
+        pytest.param(False, "skipped", True, id="approved-but-nothing-sent"),
+        pytest.param(True, "unverified", False, id="started-attempt"),
+    ],
+)
+def test_consumed_publication_resumes_without_remote_read_or_reoffer(
+    tmp_path: Path, capsys: pytest.CaptureFixture, marker: bool, status: str, needs_terminal_record: bool
+) -> None:
+    """Read consumed local evidence without persisting a new offer or guessing that the push ran.
+
+    The execution marker is written before anything is sent, so without it the approved attempt sent nothing and resumes
+    as ``skipped``; with it, an outcome nobody recorded stays ``unverified``.
+    """
+    delivery = _write_worktree_delivery(tmp_path)
+    digest = _write_publication_attempt(tmp_path, delivery)
+    if marker:
+        (tmp_path / "publication-executed").write_bytes(f"{digest}\n".encode())
+    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+
+    exit_code = HELPER.main(["publication-resume", "--run", str(tmp_path)])
+
+    assert exit_code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["delivery"] == delivery
+    assert result["publication"]["status"] == status
+    assert result["evidence"] == "publication-attempt.json"
+    assert result["needs_terminal_record"] is needs_terminal_record
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
+
+
+@pytest.mark.parametrize(
+    ("marker", "status", "accepted"),
+    [
+        pytest.param(None, "skipped", True, id="unsent-skipped"),
+        pytest.param(None, "failed", False, id="unsent-cannot-claim-failed"),
+        pytest.param(None, "unverified", False, id="unsent-cannot-claim-unverified"),
+        pytest.param(None, "declined", False, id="approved-cannot-claim-declined"),
+        pytest.param("file", "failed", True, id="started-failed"),
+        pytest.param("file", "unverified", True, id="started-unverified"),
+        pytest.param("file", "skipped", False, id="started-cannot-claim-skipped"),
+        pytest.param("empty", "skipped", False, id="damaged-marker-cannot-claim-skipped"),
+    ],
+)
+def test_the_execution_marker_decides_what_an_approved_attempt_can_report(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], marker: str | None, status: str, accepted: bool
+) -> None:
+    """Without a marker nothing was sent, so only ``skipped`` is true; any marker entry means the attempt started."""
+    delivery = _write_worktree_delivery(tmp_path)
+    digest = _write_publication_attempt(tmp_path, delivery)
+    if marker == "file":
+        (tmp_path / "publication-executed").write_bytes(f"{digest}\n".encode())
+    elif marker == "empty":
+        (tmp_path / "publication-executed").touch()
+    terminal = {"schema_version": 1, "status": status, "reason": "Recorded outcome.", "observed_oid": None}
+    (tmp_path / "publication.json").write_text(json.dumps(terminal), encoding="utf-8")
+
+    exit_code = HELPER.main(["publication-resume", "--run", str(tmp_path)])
+
+    result = json.loads(capsys.readouterr().out)
+    assert exit_code == int(not accepted)
+    if accepted:
+        assert result["publication"]["status"] == status
+        assert result["needs_terminal_record"] is False
+    else:
+        assert result["code"] == "publication-disposition-invalid"
+
+
+def test_a_push_with_an_unknown_outcome_resolves_unverified_never_verified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The publication helper's ``unverified`` report is a terminal status the finalizer accepts once the marker exists.
+
+    The remote may hold the update, but without the transport's ``pushed`` receipt a ``verified`` claim is refused.
+    """
+    publication = load_module("codex_rig_worktree_publication", PLUGIN_ROOT / "shared" / "worktree_publication.py")
+    delivery = _write_worktree_delivery(tmp_path)
+    digest = _write_publication_attempt(tmp_path, delivery)
+
+    def start_then_lose_the_verdict(*args: object, **kwargs: object) -> None:
+        """Spend the attempt, then end like a push that timed out after sending."""
+        kwargs["before_push"]()
+        raise ValueError("publication-push-outcome-unknown")
+
+    monkeypatch.setattr(publication, "_isolated_push", start_then_lose_the_verdict)
+    argv = ["--run", str(tmp_path), "--offer-digest", digest, "--credential-helper", "osxkeychain"]
+    assert publication.main(argv) == 1
+    reported = json.loads(capsys.readouterr().out)
+    assert reported["status"] == "unverified"
+
+    terminal = {"schema_version": 1, "status": reported["status"], "reason": reported["reason"], "observed_oid": None}
+    (tmp_path / "publication.json").write_text(json.dumps(terminal), encoding="utf-8")
+    assert HELPER.main(["publication-resume", "--run", str(tmp_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["publication"]["status"] == "unverified"
+
+    claimed = {**terminal, "status": "verified", "observed_oid": delivery["head"]}
+    (tmp_path / "publication.json").write_text(json.dumps(claimed), encoding="utf-8")
+    assert HELPER.main(["publication-resume", "--run", str(tmp_path)]) == 1
+    assert json.loads(capsys.readouterr().out)["code"] == "publication-verification-unproven"
+
+
+@pytest.mark.parametrize(
+    "status",
+    [pytest.param(["skipped"], id="list"), pytest.param({"skipped": 1}, id="object")],
+)
+def test_a_terminal_status_that_is_not_a_string_is_rejected(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], status: object
+) -> None:
+    """A malformed status is an invalid record, never a crash of the report-only resume."""
+    delivery = _write_worktree_delivery(tmp_path)
+    _write_publication_attempt(tmp_path, delivery)
+    terminal = {"schema_version": 1, "status": status, "reason": "Recorded outcome.", "observed_oid": None}
+    (tmp_path / "publication.json").write_text(json.dumps(terminal), encoding="utf-8")
+
+    assert HELPER.main(["publication-resume", "--run", str(tmp_path)]) == 1
+    assert json.loads(capsys.readouterr().out)["code"] == "publication-disposition-invalid"
+
+
+def test_an_execution_result_without_its_marker_is_invalid(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A transport receipt with no marker contradicts the helper's order, so it never resumes as nothing sent."""
+    delivery = _write_worktree_delivery(tmp_path)
+    digest = _write_publication_attempt(tmp_path, delivery)
+    (tmp_path / "publication-execution-result.json").write_text(
+        json.dumps({"status": "pushed", "offer_digest": digest}), encoding="utf-8"
+    )
+
+    assert HELPER.main(["publication-resume", "--run", str(tmp_path)]) == 1
+    assert json.loads(capsys.readouterr().out)["code"] == "publication-attempt-invalid"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("branch", "fix/other", id="wrong-local-branch"),
+        pytest.param("common_dir", "C:/work/caller/.git", id="wrong-git-common-dir"),
+    ],
+)
+def test_publication_offer_requires_the_delivered_local_identity(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], field: str, value: str
+) -> None:
+    """Reject an offer that belongs to a different local branch or Git common directory."""
+    delivery = _write_worktree_delivery(tmp_path)
+    _write_publication_attempt(tmp_path, {**delivery, field: value})
+
+    assert HELPER.main(["publication-resume", "--run", str(tmp_path)]) == 1
+    assert json.loads(capsys.readouterr().out)["code"] == "publication-offer-invalid"
+
+
+@pytest.mark.parametrize(
+    ("transport_status", "remote_oid", "remote_url", "expected_status"),
+    [
+        pytest.param(
+            None, "b" * 40, "acme/widgets/git/refs/heads/fix/stra%C3%9Fe%25route", "fail", id="interrupted-push"
+        ),
+        pytest.param(
+            "pushed", "b" * 40, "acme/widgets/git/refs/heads/fix/stra%C3%9Fe%25route", "pass", id="encoded-ref-agrees"
+        ),
+        pytest.param(
+            "pushed", "a" * 40, "acme/widgets/git/refs/heads/fix/stra%C3%9Fe%25route", "fail", id="readback-disagrees"
+        ),
+        pytest.param(
+            "pushed", "b" * 40, "fork/widgets/git/refs/heads/fix/stra%C3%9Fe%25route", "fail", id="crossed-repository"
+        ),
+        pytest.param("pushed", "b" * 40, "acme/widgets/git/refs/heads/fix/other", "fail", id="crossed-branch-url"),
+    ],
+)
+def test_verified_publication_requires_successful_execution_and_matching_ref(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    transport_status: str | None,
+    remote_oid: str,
+    remote_url: str,
+    expected_status: str,
+) -> None:
+    """Require both transport success and the exact remote ref readback before accepting verified publication."""
+    delivery = _write_worktree_delivery(tmp_path)
+    ref = "refs/heads/fix/straße%route"
+    digest = _write_publication_attempt(tmp_path, delivery, ref=ref)
+    (tmp_path / "publication-executed").write_bytes(f"{digest}\n".encode())
+    (tmp_path / "publication-execution-result.json").write_text(
+        json.dumps({"status": transport_status, "offer_digest": digest}), encoding="utf-8"
+    )
+    (tmp_path / "publication-readback.json").write_text(
+        json.dumps(
+            {
+                "ref": ref,
+                "url": f"https://api.github.com/repos/{remote_url}",
+                "object": {"type": "commit", "sha": remote_oid},
+            }
+        ),
+        encoding="utf-8",
+    )
+    terminal = {"schema_version": 1, "status": "verified", "reason": "Ref matches", "observed_oid": delivery["head"]}
+    (tmp_path / "publication.json").write_text(json.dumps(terminal), encoding="utf-8")
+
+    exit_code = HELPER.main(["publication-resume", "--run", str(tmp_path)])
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == expected_status
+    assert exit_code == int(expected_status == "fail")
+    readback_digest = hashlib.sha256((tmp_path / "publication-readback.json").read_bytes()).hexdigest()
+    assert result.get("publication", {}).get("readback_sha256") == (
+        readback_digest if expected_status == "pass" else None
+    )
 
 
 class TestAllErrors:
@@ -948,6 +1252,195 @@ class TestReviewActionDerivation:
 
 class TestFinalizePromotion:
     """Protect one-call finalization of remediation runs from judgement-only drafts."""
+
+    @pytest.mark.parametrize("version", [True, 0, 2, "1", None])
+    def test_publication_contract_version_requires_supported_integer(self, tmp_path: Path, version: object) -> None:
+        """Reject unsupported versions and JSON values that only compare equal to the version integer."""
+        result = {"status": "pass", "metadata": {"mode": "pr", "worktree_publication_contract_version": version}}
+
+        with pytest.raises(SystemExit, match="code-remediate-publication-contract-version-invalid"):
+            VALIDATOR._validate_remediation_publication(result, [], tmp_path, candidate=False)
+
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "worktree-delivery.json",
+            "publication.json",
+            "publication-offer.json",
+            "publication-attempt.json",
+            "publication-executed",
+            "publication-execution-result.json",
+            "publication-readback.json",
+        ],
+    )
+    def test_lingering_sidecar_identifies_new_passing_result(self, tmp_path: Path, filename: str) -> None:
+        """Demand a binding for promoted success while preserving preliminary and failed workflows."""
+        (tmp_path / filename).touch()
+        result = {"status": "pass", "metadata": {"mode": "pr"}}
+
+        with pytest.raises(SystemExit, match="code-remediate-publication-binding-required"):
+            VALIDATOR._validate_remediation_publication(result, [], tmp_path, candidate=False)
+
+        VALIDATOR._validate_remediation_publication(result, [], tmp_path, candidate=True)
+        VALIDATOR._validate_remediation_publication({**result, "status": "fail"}, [], tmp_path, candidate=False)
+
+    def test_pr_worktree_cannot_promote_without_publication_disposition(
+        self,
+        valid_run: tuple[Path, dict[str, object]],
+        tmp_path_factory: pytest.TempPathFactory,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Block promotion before a successful linked delivery has a publication disposition."""
+        run, result = valid_run
+        result["metadata"]["mode"] = "pr"
+        _write_worktree_delivery(run)
+        assert not (run / "result.json").exists()
+
+        exit_code, summary = _finalize_judgement_drafts(run, result, tmp_path_factory.mktemp("drafts"), "codex", capsys)
+
+        assert exit_code == 1
+        assert summary["promoted"] is False
+        assert summary["steps"][-1]["code"] == "publication-disposition-required"
+        assert not (run / "result.json").exists()
+
+    def test_promotes_local_pr_worktree_with_skipped_publication(
+        self, tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Keep local delivery successful and render the machine-derived optional publication evidence."""
+        result_path = _write_remediation_candidate(tmp_path, "code")
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        pr_dir = tmp_path / "pr"
+        pr_dir.mkdir()
+        relevance = {
+            "evaluated": True,
+            "connected_items_marked_out_of_scope": 0,
+            "connected_open_items_total": 0,
+            "connected_selectable_items_total": 0,
+            "connected_required_followup_total": 0,
+        }
+        result["metadata"].update(
+            mode="pr",
+            pr_relevance=relevance,
+            merge_resolution={
+                "artifact_path": str(pr_dir / "merge-resolution.json"),
+                "authorization": "not-required",
+                "conflicts_detected": False,
+                "status": "not-needed",
+            },
+        )
+        selection_path = tmp_path / "selection.json"
+        selection = json.loads(selection_path.read_text(encoding="utf-8"))
+        selection["pr_relevance"] = relevance
+        selection_path.write_text(json.dumps(selection), encoding="utf-8")
+        (tmp_path / "resolution-scope.md").write_bytes(HELPER.final_handoff.render_selection(selection).encode())
+        with (tmp_path / "action-items.md").open("a", encoding="utf-8") as stream:
+            stream.write("\n## PR Relevance Summary\n\nNo open selected items are PR-connected.\n")
+        _write_pr_run_artifacts(pr_dir, "a" * 40, "b" * 40)
+        (tmp_path / "merge-prestage.md").write_text(
+            "\n".join(
+                f"## {heading}\n\nRecorded evidence."
+                for heading in (
+                    "PR And Target Refresh",
+                    "Clean PR Implementation Context",
+                    "Target Branch Context",
+                    "Conflict Risk",
+                    "Resolution Strategy",
+                    "Merge Execution",
+                )
+            ),
+            encoding="utf-8",
+        )
+        delivery = _write_worktree_delivery(tmp_path)
+        _write_publication_offer(tmp_path, delivery)
+        terminal = {"schema_version": 1, "status": "skipped", "reason": "No eligible commits.", "observed_oid": None}
+        evidence = json.dumps(terminal).encode()
+
+        drafts = tmp_path_factory.mktemp("drafts")
+        metadata, handoff = drafts / "metadata.json", drafts / "handoff.json"
+        draft = {**result["metadata"], "worktree_publication_contract_version": 99, "worktree_publication": {}}
+        metadata.write_text(json.dumps(draft), encoding="utf-8")
+        handoff.write_text(json.dumps(_draft_handoff(tmp_path)), encoding="utf-8")
+        argv = ["finalize", "--run", str(tmp_path), "--metadata", str(metadata), "--handoff", str(handoff)]
+        argv += [
+            "--status",
+            "pass",
+            "--confidence",
+            str(result["confidence"]),
+            "--artifact-path",
+            result["artifact_path"],
+        ]
+        assert HELPER.main(argv) == 0
+        assert json.loads(capsys.readouterr().out)["promoted"] is False
+        preliminary_result = (tmp_path / "result.candidate.json").read_bytes()
+        preliminary_handoff = (tmp_path / "final-handoff.json").read_bytes()
+        preliminary_render = (tmp_path / "final.md").read_bytes()
+        preliminary_validation = (tmp_path / "final-handoff.validation.json").read_bytes()
+        assert "worktree_publication_contract_version" not in json.loads(preliminary_result)["metadata"]
+        assert "worktree_publication" not in json.loads(preliminary_result)["metadata"]
+        (tmp_path / "publication-offer.json").unlink()
+        assert HELPER.main(["publication-resume", "--run", str(tmp_path)]) == 0
+        resume = json.loads(capsys.readouterr().out)
+        assert resume["publication"]["status"] == "skipped"
+        assert resume["evidence"] == "worktree-delivery.json"
+        assert resume["needs_terminal_record"] is True
+        (tmp_path / "publication.json").write_bytes(evidence)
+        locator = tmp_path / "remediation-worktree.json"
+        locator_bytes = locator.read_bytes()
+        locator.unlink()
+        assert HELPER.main([*argv, "--promote"]) == 1
+        blocked = json.loads(capsys.readouterr().out)
+        assert blocked["promoted"] is False
+        assert blocked["steps"][-1]["code"] == "publication-evidence-missing:remediation-worktree.json"
+        assert not (tmp_path / "result.json").exists()
+        locator.write_bytes(locator_bytes)
+
+        exit_code = HELPER.main([*argv, "--promote"])
+        summary = json.loads(capsys.readouterr().out)
+
+        assert summary["promoted"], summary
+        assert exit_code == 0
+        published = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+        assert published["status"] == "pass"
+        assert published["metadata"]["worktree_publication"] == {
+            **terminal,
+            "evidence": "publication.json",
+            "evidence_sha256": hashlib.sha256(evidence).hexdigest(),
+        }
+        rendered = (tmp_path / "final.md").read_text(encoding="utf-8")
+        assert f"[PR publication: skipped](<{tmp_path.as_posix()}/publication.json>)" in rendered
+        VALIDATOR.validate("code-remediate", tmp_path, tmp_path / "result.json")
+        (tmp_path / "publication.json").write_bytes(evidence + b"\n")
+        with pytest.raises(SystemExit, match="code-remediate-publication-binding-mismatch"):
+            VALIDATOR.validate("code-remediate", tmp_path, tmp_path / "result.json")
+
+        published["metadata"].pop("worktree_publication")
+        (tmp_path / "result.json").write_text(json.dumps(published), encoding="utf-8")
+        (tmp_path / "worktree-delivery.json").unlink()
+        with pytest.raises(SystemExit, match="code-remediate-publication-binding-required"):
+            VALIDATOR.validate("code-remediate", tmp_path, tmp_path / "result.json")
+
+        assert published["metadata"]["worktree_publication_contract_version"] == 1
+        (tmp_path / "publication.json").unlink()
+        published["metadata"].pop("worktree_publication_contract_version")
+        (tmp_path / "result.json").write_text(json.dumps(published), encoding="utf-8")
+        with pytest.raises(SystemExit, match="code-remediate-publication-binding-required"):
+            VALIDATOR.validate("code-remediate", tmp_path, tmp_path / "result.json")
+        (tmp_path / "result.json").write_text(json.dumps({**published, "schema_version": 1}), encoding="utf-8")
+        with pytest.raises(SystemExit, match="code-remediate-publication-binding-required"):
+            VALIDATOR.validate("code-remediate", tmp_path, tmp_path / "result.json")
+
+        # A historical local handoff still has the locator and Markdown delivery, with no publication evidence.
+        (tmp_path / "final-handoff.json").write_bytes(preliminary_handoff)
+        (tmp_path / "final.md").write_bytes(preliminary_render)
+        (tmp_path / "final-handoff.validation.json").write_bytes(preliminary_validation)
+        (tmp_path / "result.json").write_bytes(preliminary_result)
+        VALIDATOR.validate("code-remediate", tmp_path, tmp_path / "result.json")
+
+        marker_only = json.loads(preliminary_result)
+        marker_only["metadata"]["worktree_publication_contract_version"] = 1
+        (tmp_path / "result.json").write_text(json.dumps(marker_only), encoding="utf-8")
+        with pytest.raises(SystemExit, match="code-remediate-publication-binding-required"):
+            VALIDATOR.validate("code-remediate", tmp_path, tmp_path / "result.json")
 
     @pytest.mark.parametrize("owner", ["user", "codex"])
     def test_promotes_judgement_drafts_on_historical_selection(

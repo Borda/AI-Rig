@@ -142,7 +142,7 @@
       "parent_owned_groups": 0,
       "production_lifecycle": {
         "path": "production-lifecycle.json",
-        "sha256": "sha256 of exact schema-v2 lifecycle bytes",
+        "sha256": "sha256 of exact production lifecycle bytes",
         "status": "completed"
       },
       "specialist_owned_groups": 0,

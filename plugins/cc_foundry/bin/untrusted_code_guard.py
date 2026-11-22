@@ -19,9 +19,11 @@
     name does not prove where the installed copy came from. A dependency the contribution adds, a direct URL, VCS or
     path reference, an index override or a lookalike of a known name is reported. The scan is a static heuristic,
     never a safety claim: its verdict is ``needs-attention``, ``review`` or ``no-findings``, and obfuscated or
-    dynamically built payloads pass it. The risk level is presentation for the user's decision. It never relaxes
-    isolation: every run uses the strongest tier, and a run below the sandbox needs the user's recorded
-    ``unsandboxed`` decision whatever the scan said.
+    dynamically built payloads pass it. The risk level is presentation for the user's decision, and this helper never
+    lowers isolation because of it: every run uses the strongest tier, and a run below the sandbox needs a recorded
+    ``unsandboxed`` decision. That decision is the user's, with one exception a calling workflow owns: after a clean
+    scan ``oss:review`` binds ``unsandboxed`` together with ``exact-head`` without asking, so the run is limited to
+    the exact bytes the scan read (``oss:resolve`` skips its question after two clean scans but keeps the sandbox).
 
     Borderline code (low or medium findings) is not rejected: the recommendation is to run it in the sandbox. A high
     finding is put to the user with its evidence. An attack-shaped combination (private data read beside a way to
@@ -40,7 +42,7 @@
         [RUN OPTIONS] -- CMD ...
     python untrusted_code_guard.py run --approval-file FILE [--repo DIR] [--head REF (--base REF | --whole-tree)]
         [RUN OPTIONS] [--timeout SEC] [--report FILE] -- CMD ...
-    RUN OPTIONS: [--env NAME ...] [--allow-loopback] [--tier auto|sandbox|env-only] [--decision unsandboxed]
+    RUN OPTIONS: [--env NAME ...] [--allow-loopback] [--tier auto|sandbox|env-only] [--decision unsandboxed|exact-head]
         [--bind-file FILE ...] [--scope command|run]
 
     ``--bind-file`` names a file outside the repository that the command runs (an issue snippet, a generated script):
@@ -50,6 +52,16 @@
     loopback, environment and decisions only, for a workflow whose agents run many test commands under one user
     answer. ``bind`` writes the options it covers into the approval file, so ``run`` needs only ``--approval-file``
     and the command; an option ``run`` passes that differs from the record fails the hash check.
+
+    ``--decision exact-head`` limits an approval to the exact scanned head: ``run`` refuses (exit 3) when any copied
+    file differs from that head, including later commits, deleted files, untracked files and a changed file mode
+    (executable bit or symlink, judged as git judges them under ``core.fileMode`` and ``core.symlinks``). Content is
+    judged as ``git status`` judges it: line endings and ``ident`` keywords git wrote on checkout (``core.autocrlf``,
+    ``core.eol``, the ``text`` and ``eol`` attributes) are the scanned head, while a path under a ``filter`` or
+    ``working-tree-encoding`` attribute must match byte for byte, because a smudge filter writes bytes the scan never
+    read. ``bind`` with this decision applies the same check to the checkout and refuses (exit 3) when it already
+    differs, so a caller can ask the user instead of recording an approval no run could use. A workflow that records
+    no user decision adds it so a clean scan never authorizes code the scan did not read.
 
 ## Outputs
 
@@ -106,6 +118,12 @@ _GIT_TIMEOUT = 60
 #: Replace objects are ignored so a planted ``refs/replace`` entry cannot change which bytes the scan reads.
 _GIT_ENV = {**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"}
 _PROBE_TIMEOUT = 20
+#: One ``git check-attr`` or ``git hash-object`` pass reads every file whose raw bytes differ from the head blob; a CRLF
+#: checkout makes that most of the tree, so it gets more time than one plumbing call. Running out refuses the run.
+_CONVERSION_TIMEOUT = 300
+#: Attributes whose conversion writes working-tree bytes the scan never read: a smudge filter's payload (Git LFS keeps
+#: only a pointer in the blob) or a re-encoding of the text. A path carrying one is the head only byte for byte.
+_RAW_ONLY_ATTRIBUTES = ("filter", "working-tree-encoding")
 _EXCERPT_CHARS = 120
 _DEFAULT_SNAPSHOT_MB = 500
 
@@ -947,17 +965,28 @@ def _safe_relative(rel: str) -> bool:
     return bool(parts) and not PurePosixPath(rel).is_absolute() and ".." not in parts and ".git" not in parts
 
 
-def snapshot_repo(repo: str, dest: Path, max_bytes: int) -> list[str]:
-    """Copy every tracked and untracked-but-not-ignored file into ``dest`` (no ``.git``) and return the copied paths."""
+def listed_files(repo: str) -> list[str]:
+    """Return every tracked and untracked-but-not-ignored regular file or symlink of the working tree (no ``.git``).
+
+    These are the paths ``snapshot_repo`` copies; a submodule checkout or other directory is never listed.
+    """
     listing = _git(repo, "ls-files", "-z", "--cached", "--others", "--exclude-standard").decode(
         "utf-8", "surrogateescape"
     )
+    files = []
+    for rel in (p for p in listing.split("\0") if p and _safe_relative(p)):
+        src = Path(repo) / rel
+        if src.is_symlink() or src.is_file():
+            files.append(rel)
+    return files
+
+
+def snapshot_repo(repo: str, dest: Path, max_bytes: int) -> list[str]:
+    """Copy every tracked and untracked-but-not-ignored file into ``dest`` (no ``.git``) and return the copied paths."""
     copied: list[str] = []
     total = 0
-    for rel in (p for p in listing.split("\0") if p and _safe_relative(p)):
+    for rel in listed_files(repo):
         src, dst = Path(repo) / rel, dest / rel
-        if src.is_dir() and not src.is_symlink():
-            continue
         if not (src.is_symlink() or src.is_file()):
             continue
         total += 0 if src.is_symlink() else src.stat().st_size
@@ -980,16 +1009,151 @@ def _snapshot_bytes(path: Path) -> bytes:
     return os.readlink(path).encode() if path.is_symlink() else path.read_bytes()
 
 
+def _git_bool(repo: str, key: str, default: bool) -> bool:
+    """Read a boolean git setting for ``repo``; an unset or unreadable value gives ``default``, as git's own does."""
+    try:
+        value = _git(repo, "config", "--bool", "--get", key).decode().strip()
+    except GuardError:
+        return default
+    return value == "true" if value in ("true", "false") else default
+
+
+def _snapshot_mode(path: Path, *, exec_bit: bool) -> str:
+    """Return the git tree mode of a snapshot entry: ``120000`` for a symlink, else ``100755`` or ``100644``."""
+    if path.is_symlink():
+        return "120000"
+    return "100755" if exec_bit and path.stat().st_mode & 0o100 else "100644"
+
+
+def _tree_git(repo: str, tree: Path, args: Sequence[str], stdin: bytes) -> bytes:
+    """Run one git command with the repository's own configuration and ``tree`` (a snapshot or the checkout) as its work
+    tree, so attributes come from the ``.gitattributes`` files in ``tree``, as ``git status`` reads them.
+
+    Raises exit 3 on any failure or timeout: a file git could not judge is never taken for the scanned head.
+    """
+    git_dir = _git(repo, "rev-parse", "--absolute-git-dir").decode("utf-8", "surrogateescape").strip()
+    try:
+        done = subprocess.run(  # noqa: S603
+            [_GIT, f"--git-dir={git_dir}", f"--work-tree={tree}", "-C", str(tree), "-c", "core.fsmonitor=false", *args],
+            input=stdin,
+            check=True,
+            capture_output=True,
+            timeout=_CONVERSION_TIMEOUT,
+            env=_GIT_ENV,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise GuardError(f"git {args[0]} could not compare the working tree with the approved head: {exc}", 3) from exc
+    return done.stdout
+
+
+def _raw_only(repo: str, tree: Path, paths: Sequence[str]) -> set[str]:
+    """Return the paths a ``filter`` or ``working-tree-encoding`` attribute applies to (``_RAW_ONLY_ATTRIBUTES``)."""
+    if not paths:
+        return set()
+    stdin = b"".join(p.encode("utf-8", "surrogateescape") + b"\0" for p in paths)
+    out = _tree_git(repo, tree, ["check-attr", "-z", "--stdin", *_RAW_ONLY_ATTRIBUTES], stdin).split(b"\0")
+    return {
+        path.decode("utf-8", "surrogateescape")
+        for path, _name, value in zip(out[0::3], out[1::3], out[2::3])
+        if value not in (b"unspecified", b"unset")
+    }
+
+
+def _c_quoted(path: str) -> bytes:
+    """Quote a repository path the way git's ``--stdin-paths`` unquotes a line that starts with a double quote."""
+    out = bytearray(b'"')
+    for byte in path.encode("utf-8", "surrogateescape"):
+        if byte in b'"\\':
+            out += b"\\" + bytes([byte])
+        elif byte < 0x20 or byte == 0x7F:
+            out += b"\\%03o" % byte
+        else:
+            out.append(byte)
+    return bytes(out + b'"')
+
+
+def _cleaned_blob_ids(repo: str, tree: Path, paths: Sequence[str]) -> list[str]:
+    """Return the blob id git stores for each file of ``tree`` after its clean conversion (end of line and ``ident``).
+
+    One ``git hash-object --stdin-paths`` call, without ``-w``: it writes no object and is what ``git add`` would hash.
+    """
+    if not paths:
+        return []
+    stdin = b"".join(_c_quoted(p) + b"\n" for p in paths)
+    ids = _tree_git(repo, tree, ["hash-object", "--stdin-paths"], stdin).decode("ascii", "replace").split()
+    if len(ids) != len(paths):
+        raise GuardError(f"git hash-object returned {len(ids)} ids for {len(paths)} files: the run is refused", 3)
+    return ids
+
+
+def changed_files(repo: str, entries: dict[str, tuple[str, str]], tree: Path, files: Sequence[str]) -> list[str]:
+    """Return the listed files whose content is not the head's, judged the way ``git status`` judges a checkout.
+
+    A file is the head's when its raw bytes hash to the head blob, or when the head holds it as a regular file and git's
+    own clean conversion of its bytes hashes to that blob: ``core.autocrlf``, ``core.eol``, the ``text`` and ``eol``
+    attributes and ``ident`` only rewrite line endings and keyword expansions of the scanned text, so a CRLF checkout of
+    LF blobs is the scanned head. A path a ``filter`` or ``working-tree-encoding`` attribute applies to counts only byte
+    for byte, since those write bytes the scan never read; such a path never reaches ``git hash-object``, so no filter
+    program runs here. Files the head lacks, links, gitlinks and paths the head holds as something else differ unless
+    their raw bytes match. Modes are ``mode_delta``'s concern.
+    """
+    pending: list[str] = []
+    changed: set[str] = set()
+    for rel in files:
+        mode, oid = entries.get(rel, ("", ""))
+        path = tree / rel
+        if oid == _blob_sha(_snapshot_bytes(path)):
+            continue
+        if mode in ("100644", "100755") and not path.is_symlink():
+            pending.append(rel)
+        else:
+            changed.add(rel)
+    raw_only = _raw_only(repo, tree, pending)
+    changed |= raw_only
+    convertible = [rel for rel in pending if rel not in raw_only]
+    changed |= {
+        rel for rel, oid in zip(convertible, _cleaned_blob_ids(repo, tree, convertible)) if oid != entries[rel][1]
+    }
+    return [rel for rel in files if rel in changed]
+
+
+def mode_delta(repo: str, entries: dict[str, tuple[str, str]], snapshot: Path, copied: Sequence[str]) -> list[str]:
+    """Return copied files whose mode differs from the head tree, judged the way git judges a working tree.
+
+    A blob id covers bytes only, so a new executable bit, or a symlink swapped for a regular file holding the link
+    target, would pass the content comparison. Git records the executable bit only while ``core.fileMode`` is on (it is
+    off on native Windows and some mounted filesystems), and with ``core.symlinks`` off it checks a link out as a
+    regular file holding the target; those differences are ignored here as git ignores them. Paths the head does not
+    hold as a file or link are left to the content comparison (``changed_files``).
+    """
+    exec_bit = _git_bool(repo, "core.fileMode", default=True)
+    symlinks = _git_bool(repo, "core.symlinks", default=True)
+    changed = []
+    for rel in copied:
+        expected = entries.get(rel, ("", ""))[0]
+        if expected not in ("100644", "100755", "120000"):
+            continue
+        actual = _snapshot_mode(snapshot / rel, exec_bit=exec_bit)
+        if not exec_bit and expected == "100755":
+            expected = "100644"
+        if not symlinks and expected == "120000" and actual == "100644":
+            continue
+        if actual != expected:
+            changed.append(rel)
+    return changed
+
+
 def check_delta(repo: str, report: dict[str, object], snapshot: Path, copied: Sequence[str]) -> list[str]:
     """Require the approved head to be an ancestor of ``HEAD``, rescan what changed since it, and return those paths.
 
-    Raises exit 3 when the approved head is stale or the delta adds a high finding or touches a dependency manifest.
+    What changed is judged as ``git status`` judges it (``changed_files``), so line endings git wrote on checkout are
+    not work since the head. Raises exit 3 when the approved head is stale, the delta adds a high finding or touches a
+    dependency manifest, or git cannot judge a converted file.
     """
     head = str(report["head"])
     if not _is_ancestor(repo, head, "HEAD"):
         raise GuardError("approved head is not an ancestor of HEAD: rescan and ask again", 3)
-    entries = _tree_entries(repo, head)
-    delta = [rel for rel in copied if entries.get(rel, ("", ""))[1] != _blob_sha(_snapshot_bytes(snapshot / rel))]
+    delta = changed_files(repo, _tree_entries(repo, head), snapshot, copied)
     manifests = sorted(rel for rel in delta if is_dependency_manifest(rel))
     if manifests:
         raise GuardError(
@@ -1004,6 +1168,29 @@ def check_delta(repo: str, report: dict[str, object], snapshot: Path, copied: Se
         high = [f for f in _scan_text(rel, data.decode("utf-8", "replace")) if f["severity"] == "high"]
         if b"\0" not in data[:8192] and high:
             raise GuardError(f"work since the approved head adds a high finding in {rel}: rescan and ask again", 3)
+    return delta
+
+
+def require_exact_head(repo: str, report: dict[str, object], tree: Path, files: Sequence[str]) -> list[str]:
+    """Refuse (exit 3) unless ``tree`` is exactly the approved head: no changed, added or deleted file, no new mode.
+
+    ``files`` are the paths ``listed_files`` gives for ``tree``: ``run`` passes its snapshot, ``bind`` the checkout
+    itself, so an approval no run could use is refused before it is recorded. Returns the (empty) delta.
+    """
+    delta = check_delta(repo, report, tree, files)
+    kept, entries = set(files), _tree_entries(repo, str(report["head"]))
+    delta += sorted(
+        rel
+        for rel, (mode, _oid) in entries.items()
+        if mode in ("100644", "100755", "120000") and _safe_relative(rel) and rel not in kept
+    )  # a file deleted since the scanned head changes what the command sees too
+    delta += sorted(set(mode_delta(repo, entries, tree, files)) - set(delta))
+    if delta:
+        raise GuardError(
+            f"the approval covers only the exact scanned head, but the tree differs in {', '.join(delta[:6])}: "
+            "rescan and ask again",
+            3,
+        )
     return delta
 
 
@@ -1196,7 +1383,10 @@ def run_command(args: argparse.Namespace) -> int:
         for directory in (home, tmp, snapshot):
             directory.mkdir()
         copied = snapshot_repo(repo, snapshot, args.max_snapshot_mb * 1024 * 1024)
-        delta = check_delta(repo, report, snapshot, copied)
+        if "exact-head" in args.decision:
+            delta = require_exact_head(repo, report, snapshot, copied)
+        else:
+            delta = check_delta(repo, report, snapshot, copied)
         tier, prefix, mechanism = choose_isolation(
             args.tier, repo, str(snapshot), str(workdir), os.path.expanduser("~"), args.allow_loopback
         )
@@ -1228,7 +1418,7 @@ def _add_run_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--env", action="append")
     p.add_argument("--allow-loopback", action="store_true")
     p.add_argument("--tier", choices=("auto", "sandbox", "env-only"))
-    p.add_argument("--decision", action="append", choices=("unsandboxed",))
+    p.add_argument("--decision", action="append", choices=("unsandboxed", "exact-head"))
     p.add_argument("--bind-file", action="append")
     p.add_argument("--scope", choices=("command", "run"))
     p.add_argument("cmd", nargs=argparse.REMAINDER)
@@ -1262,6 +1452,18 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _require_exact_checkout(repo: str, report: dict[str, object]) -> None:
+    """Refuse an exact-head ``bind`` (exit 3) when the checkout already differs from the scanned head.
+
+    Every run of such an approval would be refused, and the caller can still ask the user instead. ``run`` repeats the
+    check on its own snapshot, since the checkout can change after binding; a file that vanishes mid-check refuses.
+    """
+    try:
+        require_exact_head(repo, report, Path(repo), listed_files(repo))
+    except OSError as exc:
+        raise GuardError(f"the working tree changed while it was compared with the scanned head: {exc}", 3) from exc
+
+
 def _strip_separator(cmd: list[str]) -> list[str]:
     """Drop the ``--`` that separates options from the command."""
     return cmd[1:] if cmd[:1] == ["--"] else cmd
@@ -1292,6 +1494,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             host_sandbox=host_sandbox,
         )
         if args.mode == "bind":
+            if "exact-head" in args.decision:
+                _require_exact_checkout(repo, report)
             digest = approval_hash(report, args)
             Path(args.out).write_text(approval_record(digest, args), encoding="utf-8")
             print(digest)

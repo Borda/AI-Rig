@@ -748,7 +748,7 @@
     },
     "23eefbf744adbe1d035200bf130dbb080b24625ecf0f4325d5bb5f213a2fbdd3": {
       "kind": "block",
-      "src": "rules/_full/git-commit.md:237"
+      "src": "rules/_full/git-commit.md:238"
     },
     "246b52808f7483875dcd35d639221bff2109f874ac7c287a46dd788fc64bd7c9": {
       "kind": "block",
@@ -5036,6 +5036,6 @@
       "src": "skills/audit/templates/checks-skills-sweep.md:33"
     }
   },
-  "plugin": "cc_foundry@0.81.2",
+  "plugin": "cc_foundry@0.82.0",
   "schema": 2
 }

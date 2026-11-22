@@ -945,7 +945,9 @@ _MUTATING_HELPERS = {
     "purge_plugin_cache.py": "deletes only orphaned plugin cache versions; --apply is opt-in, --protect keeps live ones",
     "remove_hook_from_registry.py": "drops one named hook from a hooks registry JSON file",
     "resolve_commit_hooks.py": (
-        "oss:resolve: inspection only reads hook/configuration files; --commit-merge requires MERGE_HEAD and"
+        "oss:resolve: inspection only reads hook/configuration files; --decide and --refresh-approval write only the"
+        " approval and decision files they are given, and a refresh only keeps, re-decides or empties an approval;"
+        " --commit-merge requires MERGE_HEAD and"
         " commits the existing merge index, never pushes; hooks are disabled unless RESOLVE_APPROVED_HOOKS"
         " matches the displayed fingerprint; approved formatter recovery restages only selected paths and"
         " retries once, refusing recovery after unrelated worktree or index changes"

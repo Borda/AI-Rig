@@ -498,7 +498,7 @@ _BUILD_ARGS=(--build-group --topic "$_TOPIC" --summaries-file "$IMPL_DIR/group-s
 _GROUP_FILES=()
 while IFS= read -r _f; do [ -n "$_f" ] && _GROUP_FILES+=("$_f"); done < "$IMPL_DIR/group-files.txt"
 export RESOLVE_APPROVED_HOOKS=""
-IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" 2>/dev/null || RESOLVE_APPROVED_HOOKS=""
+IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" 2>/dev/null || [ -n "$RESOLVE_APPROVED_HOOKS" ] || RESOLVE_APPROVED_HOOKS=""
 if python "$PLUGIN_ROOT/bin/commit_action_item.py" "${_BUILD_ARGS[@]}" \
     --files "${_GROUP_FILES[@]}"; then  # timeout: 10000
     echo ok > "$IMPL_DIR/group-commit-status.txt"
@@ -566,7 +566,7 @@ N_SELF_RESOLVED=$(grep -ciE '^id[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]+resol
 N_REJECTED=$(grep -ciE '^id[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]+resolution[[:space:]]*=[[:space:]]*rejected' "$IMPL_DIR/challenge-log.txt" 2>/dev/null || :); N_REJECTED=${N_REJECTED:-0}  # same anchored pattern as _REJECTED_IDS below — must agree with it or the printed count and the actually-closed ids diverge
 SUMMARIES_FILE=""
 export RESOLVE_APPROVED_HOOKS=""
-IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" 2>/dev/null || RESOLVE_APPROVED_HOOKS=""
+IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" 2>/dev/null || [ -n "$RESOLVE_APPROVED_HOOKS" ] || RESOLVE_APPROVED_HOOKS=""
 # Codex trailer only when a C1 item finished (a c1-item-files.tsv row, written for Git-verified C1 DONE items only); CODEX_AVAILABLE stays true after a quota stop, so keying on it credited Codex for specialist-only commits
 python "$PLUGIN_ROOT/bin/commit_all_items.py" "$PR_REF" "$N_AS_SUGGESTED" "$N_SELF_RESOLVED" "$N_REJECTED" "$SUMMARIES_FILE" $(awk -F'\t' '$1 ~ /^[0-9]+$/ && $2 != "" {found=1} END {exit !found}' "$IMPL_DIR/c1-item-files.tsv" 2>/dev/null && echo "--codex")  # timeout: 10000
 ```

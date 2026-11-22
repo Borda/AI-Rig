@@ -24,6 +24,7 @@ This checkout selects native automatic approval review for required plugin workf
 - Keeps actual managed restrictions, denials, protected actions and scope limits effective. Automatic review can reject an action with a concrete reason; configuration and source tests do not guarantee every live decision.
 - Excludes Code Review's ephemeral dependency overlay by name: its dependency support check, fetch and any escalated test run over it are never approved as recipe or dependency-download work, and a single command that downloads a dependency and runs reviewed code is never approved.
 - Excludes any escalation that would run contributed code (a pull request, fork or contributor branch) outside the sandbox, including the one-time `run_gates.py` gate and a project install that builds contributor code: the automatic reviewer approves it only when the brief cites a recorded user answer for that exact command.
+- Keeps the PR worktree publication push out of recipe preapproval: each run of the publication helper is a separate one-time request, and exactly one fresh request of the same helper is allowed after it reported `not-sent` with `publication-push-precheck-failed` (nothing sent, no execution marker, no terminal record `publication.json` or `result.json`) and you answered **Retry**. Any other retry, a force variant or a reusable grant is rejected.
 
 <!-- policy-sibling: .codex/config.toml, .codex/README.md, plugins/codex-rig/shared/native-skill-contract.md, plugins/codex-rig/README.md (local Git approval grant) -->
 
@@ -33,7 +34,7 @@ Local Git approval is interactive. A plain commit that needs authorization asks 
 
 You give it once per project; it applies to every worktree and lasts until you delete it with `rm "$(git rev-parse --git-common-dir)/codex-git-approval.json"`. The grant's scope:
 
-Task-scoped local Git work other than a plain commit runs without an authorization question: inspection, staging reviewed owned changes, branch/worktree preparation, merges and their local merge commits, cherry-picks and other non-destructive operations. A destructive local operation (discarding uncommitted work, deleting a branch or unique history, `reset --hard`, `clean`) keeps its action-specific question on Codex, an intentional difference from Claude Code, which runs it without one. A local Git approval grant covers plain commits. Judge the actual effects, not merely the command name. Verify the branch, target and operation state, preserve unrelated changes and unique commits, run required checks, and proceed. Retain exact-path staging, commit messages, attribution and post-operation verification. Explicit denials, `no commit`, `leave unstaged`, read-only or summary-only requests, and an explicit decision to wait still control. Ambiguous scope or resolution intent needs only that missing decision. Codex never performs remote mutations or requests approval for them; publication remains human-owned and force operations are forbidden. A grant permits a commit within the active task; it does not require inventing Git work or committing unrelated changes.
+Task-scoped local Git work other than a plain commit runs without an authorization question: inspection, staging reviewed owned changes, branch/worktree preparation, merges and their local merge commits, cherry-picks and other non-destructive operations. A destructive local operation (discarding uncommitted work, deleting a branch or unique history, `reset --hard`, `clean`) keeps its action-specific question on Codex, an intentional difference from Claude Code, which runs it without one. A local Git approval grant covers plain commits. Judge the actual effects, not merely the command name. Verify the branch, target and operation state, preserve unrelated changes and unique commits, run required checks, and proceed. Retain exact-path staging, commit messages, attribution and post-operation verification. Explicit denials, `no commit`, `leave unstaged`, read-only or summary-only requests, and an explicit decision to wait still control. Ambiguous scope or resolution intent needs only that missing decision. Codex remote writes are prohibited outside the optional PR worktree publication gate. Force operations are forbidden. A grant permits a commit within the active task; it does not require inventing Git work or committing unrelated changes.
 
 How the grant behaves in practice:
 
@@ -308,12 +309,12 @@ A not-applicable gate is recorded with its reason rather than silently omitted.
 
 ## 🧭 PR and network boundaries
 
-Codex Rig can read GitHub evidence and prepare local changes when the runtime authorizes the owning command. It does not silently enable persistent network access. In this repository's policy, `gh` and `git` remote mutations—pushes, comments, reviews, merges, release publication, workflow dispatch, and forced updates—remain human-owned.
+Codex Rig can read GitHub evidence and prepare local changes when the runtime authorizes the owning command. It does not silently enable persistent network access. The PR worktree publication gate is the only Codex remote write route. Comments, remote merges, release publication, workflow dispatch and forced updates remain human-owned.
 
 **Push approval differs by host:**
 
 - Claude Code's foundry plugin asks a `git-push` question with only **Approve** and **Deny**; **Approve** records a single-use `push-once` token that allows one non-force push of the same branch at the same `HEAD` to a configured remote, remote and branch written out, within 15 minutes, and the allowed push spends it.
-- Codex has no such token: the `extra_policy` above never approves `git push`, force-push or another remote mutation; Codex leaves those actions to the human and never asks approval for them.
+- Codex uses no push token. After a verified and committed PR `code-remediate --worktree` run, the parent offers one push of the exact commit to the original PR branch. It requires a native user answer and separate one-time runtime approval.
 - Force operations are forbidden on both hosts.
 - Both hosts agree on an explicit request such as "commit this": it authorizes that commit with no further question.
 
@@ -321,7 +322,7 @@ Codex Rig can read GitHub evidence and prepare local changes when the runtime au
 
 - Claude Code auto-allows recognised read-only `gh` commands with no question and no approval record.
 - Codex records no grant file for GitHub reads: it reuses the opt-in `github-read` permission profile in `config.toml` and Codex Rig's reader rules, and the default `local-workflow` profile keeps network access off.
-- Without the profile, this checkout's `[auto_review].extra_policy` approves the network escalation of the audited readers (`github_read.py`, `collect_pr.py`) only, so a read does not ask the user while a push or `gh` write still meets the network approval.
+- Without the profile, this checkout's `[auto_review].extra_policy` approves the network escalation of the audited readers (`github_read.py`, `collect_pr.py`) only, so a read does not ask the user. The PR worktree publication gate has its own approval.
 - On both hosts that widens only what is read; fetched content stays data, and write and exfiltration paths never widen.
 - A spawned subagent, teammate or bridge child gains nothing from any grant or token on either host; the only exception is a workflow step that explicitly assigns it the commit.
 
@@ -338,13 +339,13 @@ The Kaggle workflow requires the authenticated Kaggle CLI. Codex Rig explains mi
 <details>
 <summary><strong>Show human-owned actions and network evidence rules</strong></summary>
 
-| Area                | Codex Rig may do                                                                                                                | Human/runtime remains responsible for                                                                          |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| GitHub PR review    | Read approved evidence, check out the exact PR head locally, derive a diff, and prepare findings/remediation artifacts.         | Authentication recovery, network approval, comments, reviews, merges, pushes, and every other remote mutation. |
-| Public PR fallback  | Use limited HTTPS metadata only for approved network/auth/rate-limit/timeout failure classes with an unambiguous GitHub target. | Accepting reduced evidence; private review evidence cannot be reconstructed by the fallback.                   |
-| Kaggle              | Ground a notebook when the authenticated CLI is available.                                                                      | Credentials, dataset access, competition terms, and any upload or submission.                                  |
-| Marketplace refresh | Inspect configured Git marketplace state and refresh only after explicit approval.                                              | Deciding whether new package bytes are trusted and resolving authentication or network failures.               |
-| Release             | Assess SemVer, changelog, migration, packaging, and readiness.                                                                  | Tags, publication, package uploads, force-pushes, and release announcements.                                   |
+| Area                | Codex Rig may do                                                                                                                | Human/runtime remains responsible for                                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub PR review    | Read approved evidence, check out the exact PR head locally, derive a diff, and prepare findings/remediation artifacts.         | Authentication recovery, network approval, comments, reviews, merges, and every remote mutation except the approved PR worktree publication push. |
+| Public PR fallback  | Use limited HTTPS metadata only for approved network/auth/rate-limit/timeout failure classes with an unambiguous GitHub target. | Accepting reduced evidence; private review evidence cannot be reconstructed by the fallback.                                                      |
+| Kaggle              | Ground a notebook when the authenticated CLI is available.                                                                      | Credentials, dataset access, competition terms, and any upload or submission.                                                                     |
+| Marketplace refresh | Inspect configured Git marketplace state and refresh only after explicit approval.                                              | Deciding whether new package bytes are trusted and resolving authentication or network failures.                                                  |
+| Release             | Assess SemVer, changelog, migration, packaging, and readiness.                                                                  | Tags, publication, package uploads, force-pushes, and release announcements.                                                                      |
 
 Network approval applies to the complete owning collector/helper command when nested subprocesses or HTTPS are involved; approving only a nested executable is not proof that the workflow can complete.
 

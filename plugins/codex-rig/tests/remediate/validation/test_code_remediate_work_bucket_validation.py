@@ -7,6 +7,7 @@ completed run) production lifecycle evidence are mutually consistent. Each test 
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from collections.abc import Callable
@@ -192,17 +193,42 @@ def _parent_bucket(indexes: list[int]) -> dict[str, Any]:
 
 
 def _write_completed_production_lifecycle(
-    metadata: dict[str, Any], out_dir: Path, evidence_root: str = DEFAULT_EVIDENCE_ROOT
+    metadata: dict[str, Any],
+    out_dir: Path,
+    evidence_root: str = DEFAULT_EVIDENCE_ROOT,
+    *,
+    grouped: bool = False,
+    workspace: str | None = None,
 ) -> Path:
-    """Write one truthful schema-v2 completed lifecycle projection for approved buckets."""
+    """Write a completed patch or grouped commit lifecycle for approved buckets."""
     _write_workplan(metadata, out_dir)
     workplan = metadata["resolution_workplan"]
     buckets = workplan["work_buckets"]
+    worker_commands = ["pytest -q tests/test_feature.py"]
+    choice = {"mode": "grouped", "source": "explicit-input"}
+    if grouped:
+        for bucket in buckets:
+            bucket["verification_commands"] = worker_commands
+        with (out_dir / "resolution-workplan.md").open("a", encoding="utf-8", newline="\n") as stream:
+            stream.write(
+                "\n\n## Upfront Decisions\n\nCommit choice: group findings by topic (explicit-input)\n"
+                "Full test command: pytest -q\n"
+            )
     plan_path = out_dir / "work-bucket-plan.json"
     _write_json(
         plan_path,
         {
-            "schema_version": 2,
+            "schema_version": 3 if grouped else 2,
+            **(
+                {
+                    "commit_mode": "grouped",
+                    "commit_choice": choice,
+                    "source_branch": "refs/heads/feature",
+                    "tests_command": "pytest -q",
+                }
+                if grouped
+                else {}
+            ),
             "consumer": "code-remediate",
             "write_parallel_promoted": False,
             "source_repository": "authoritative-repository",
@@ -297,7 +323,95 @@ def _write_completed_production_lifecycle(
         "sha256": _sha256(lifecycle_path),
         "status": "completed",
     }
+    if grouped:
+        lifecycle = _read_lifecycle(lifecycle_path)
+        lifecycle.update(
+            schema_version=3,
+            commit_mode="grouped",
+            commit_choice=choice,
+            tests_command="pytest -q",
+            source_branch="refs/heads/feature",
+            workspace_root=workspace or str(out_dir),
+            worktree_root=".codex-rig-worktrees/example",
+            integration_worktree=".codex-rig-worktrees/example/integration",
+        )
+        parent = lifecycle["source"]["baseline_head"]
+        commits = []
+        objects = []
+        for bucket in buckets:
+            body = (
+                f"tree {'b' * 40}\nparent {parent}\nauthor Fixture <fixture@example.org> 1 +0000\n"
+                f"committer Fixture <fixture@example.org> 1 +0000\n\nTopic {bucket['bucket_id']}\n"
+            ).encode()
+            git_object = f"commit {len(body)}\0".encode() + body
+            parent = hashlib.sha1(git_object, usedforsecurity=False).hexdigest()
+            commits.append(parent)
+            objects.append(base64.b64encode(body).decode())
+        lifecycle.update(integration_head=parent, integrated_commits=commits, integrated_commit_objects=objects)
+        for index, (node, joined) in enumerate(zip(lifecycle["nodes"], lifecycle["joined_nodes"], strict=True), 3):
+            oid = str(index) * 40
+            node_id = node["node_id"]
+            output = out_dir / f"{node_id}-targeted.log"
+            output.write_bytes(b"passed\n")
+            receipt = out_dir / f"{node_id}-verification.json"
+            _write_json(
+                receipt,
+                {
+                    "node_id": node_id,
+                    "commit_oid": oid,
+                    "checks": [
+                        {
+                            "command": worker_commands[0],
+                            "exit_code": 0,
+                            "stdout": output.name,
+                            "stdout_sha256": _sha256(output),
+                        }
+                    ],
+                },
+            )
+            node["commit_oid"] = oid
+            node["verification_commands"] = worker_commands
+            node["handover"] = {"commit_oid": oid, "verification": {"path": receipt.name, "sha256": _sha256(receipt)}}
+            joined["commit_oid"] = oid
+        lifecycle["source"]["applied_head"] = lifecycle["integration_head"]
+        gates_path = out_dir / "gates.json"
+        _write_grouped_gates(gates_path, lifecycle)
+        lifecycle["source_application"].update(gates_path=gates_path.name, gates_sha256=_sha256(gates_path))
+        _rewrite_lifecycle(metadata, lifecycle_path, lifecycle)
     return lifecycle_path
+
+
+def _write_grouped_gates(path: Path, lifecycle: dict[str, Any]) -> None:
+    """Record a full, clean gate run against the actual grouped integration head."""
+    head = lifecycle["integration_head"]
+    workspace = lifecycle["workspace_root"].replace("\\", "/")
+    source = {
+        "worktree": f"{workspace}/{lifecycle['integration_worktree']}",
+        "expected_head": head,
+    }
+    snapshot = {"head": head, "status": "", "ignored": "[]"}
+    checks = []
+    for gate in ("lint", "format", "types", "tests", "review"):
+        logs = {key: f"{gate}-{key}.txt" for key in ("command_path", "stdout", "stderr")}
+        (path.parent / logs["command_path"]).write_bytes(b"pytest -q\n")
+        (path.parent / logs["stdout"]).write_bytes(b"passed\n")
+        (path.parent / logs["stderr"]).write_bytes(b"")
+        checks.append(
+            {
+                "id": gate,
+                "status": "pass",
+                "exit_code": 0,
+                "duration_seconds": 0,
+                "source": {
+                    **source,
+                    "before": snapshot,
+                    "after": snapshot,
+                    "artifacts": {name: _sha256(path.parent / name) for name in logs.values()},
+                },
+                **logs,
+            }
+        )
+    _write_json(path, {"status": "pass", "checks_failed": [], "failed_count": 0, "checks": checks, "source": source})
 
 
 def _read_lifecycle(lifecycle_path: Path) -> dict[str, Any]:
@@ -413,6 +527,130 @@ def parallel_metadata() -> dict[str, Any]:
 def lifecycle_path(parallel_metadata: dict[str, Any], tmp_path: Path) -> Path:
     """Write a completed, truthful production lifecycle for the default plan and return its path."""
     return _write_completed_production_lifecycle(parallel_metadata, tmp_path)
+
+
+@pytest.mark.parametrize("workspace", ["/workspace", r"D:\workspace"])
+def test_grouped_lifecycle_accepts_source_bound_gate_run(
+    parallel_metadata: dict[str, Any], tmp_path: Path, workspace: str
+) -> None:
+    """Complete a grouped lifecycle only when its worker commits and passing gate source agree."""
+    _write_completed_production_lifecycle(parallel_metadata, tmp_path, grouped=True, workspace=workspace)
+    _validate(parallel_metadata, tmp_path)
+
+
+@pytest.mark.parametrize("log", ["tests-command_path.txt", "tests-stdout.txt", "tests-stderr.txt"])
+def test_grouped_lifecycle_rejects_replaced_gate_log(
+    parallel_metadata: dict[str, Any], tmp_path: Path, log: str
+) -> None:
+    """Retain the exact executed test evidence after applying grouped commits."""
+    _write_completed_production_lifecycle(parallel_metadata, tmp_path, grouped=True)
+    (tmp_path / log).write_bytes(b"replacement\n")
+
+    with pytest.raises(SystemExit, match=r"^gate-evidence-digest-mismatch$"):
+        _validate(parallel_metadata, tmp_path)
+
+
+def test_grouped_lifecycle_rejects_a_false_ancestor_of_gated_tip(
+    parallel_metadata: dict[str, Any], tmp_path: Path
+) -> None:
+    """The unchanged tested tip cannot validate a false earlier commit in the delivered list."""
+    path = _write_completed_production_lifecycle(parallel_metadata, tmp_path, grouped=True)
+    lifecycle = _read_lifecycle(path)
+    lifecycle["integrated_commits"][0] = "9" * 40
+    _rewrite_lifecycle(parallel_metadata, path, lifecycle)
+
+    with pytest.raises(SystemExit, match=r"^code-remediate-production-lifecycle-integration-mismatch$"):
+        _validate(parallel_metadata, tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        pytest.param("commit_mode", "all-at-once", "plan-schema-invalid", id="wrong-commit-mode"),
+        pytest.param("source_branch", "refs/heads/elsewhere", "source-mismatch", id="wrong-source-branch"),
+        pytest.param("integrated_commits", ["2" * 40], "integration-mismatch", id="missing-integrated-commit"),
+        pytest.param("integration_head", "3" * 40, "integration-mismatch", id="wrong-integration-head"),
+    ],
+)
+def test_grouped_lifecycle_rejects_mismatched_history(
+    parallel_metadata: dict[str, Any], tmp_path: Path, field: str, value: Any, error: str
+) -> None:
+    """Rebinding the lifecycle digest cannot conceal drift in grouped commit history."""
+    path = _write_completed_production_lifecycle(parallel_metadata, tmp_path, grouped=True)
+    lifecycle = _read_lifecycle(path)
+    lifecycle[field] = value
+    _rewrite_lifecycle(parallel_metadata, path, lifecycle)
+    with pytest.raises(SystemExit, match=f"^{LIFECYCLE_ERROR}{error}$"):
+        _validate(parallel_metadata, tmp_path)
+
+
+@pytest.mark.parametrize("record", ["joined_nodes", "nodes"])
+def test_grouped_lifecycle_rejects_mismatched_worker_commit(
+    parallel_metadata: dict[str, Any], tmp_path: Path, record: str
+) -> None:
+    """Collected and joined worker OIDs must match the one verified in that worker's handover."""
+    path = _write_completed_production_lifecycle(parallel_metadata, tmp_path, grouped=True)
+    lifecycle = _read_lifecycle(path)
+    lifecycle[record][1]["commit_oid"] = "5" * 40
+    _rewrite_lifecycle(parallel_metadata, path, lifecycle)
+    with pytest.raises(SystemExit, match=f"^{LIFECYCLE_ERROR}node-mismatch$"):
+        _validate(parallel_metadata, tmp_path)
+
+
+def test_grouped_pre_edit_rejects_shared_paths(parallel_metadata: dict[str, Any], tmp_path: Path) -> None:
+    """A grouped frozen plan cannot let two workers own the same file."""
+    first, second = _buckets(parallel_metadata)
+    second["owned_paths"] = first["owned_paths"].copy()
+    _write_completed_production_lifecycle(parallel_metadata, tmp_path, grouped=True)
+    with pytest.raises(SystemExit, match=r"^code-remediate-parallel-ownership-overlap$"):
+        _validate(parallel_metadata, tmp_path, pre_edit=True)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("head", "0" * 40, id="wrong-head"),
+        pytest.param("status", " M src/feature.py", id="dirty-worktree"),
+        pytest.param("ignored", '["unexpected.py"]', id="ignored-python-source"),
+    ],
+)
+def test_grouped_lifecycle_rejects_unverified_gate_source(
+    parallel_metadata: dict[str, Any], tmp_path: Path, field: str, value: str
+) -> None:
+    """Passing tests and updated digests cannot conceal a gate run over a different source."""
+    path = _write_completed_production_lifecycle(parallel_metadata, tmp_path, grouped=True)
+    lifecycle = _read_lifecycle(path)
+    gates_path = tmp_path / "gates.json"
+    gates = _read_lifecycle(gates_path)
+    gates["checks"][3]["source"]["after"][field] = value
+    _write_json(gates_path, gates)
+    lifecycle["source_application"]["gates_sha256"] = _sha256(gates_path)
+    _rewrite_lifecycle(parallel_metadata, path, lifecycle)
+    with pytest.raises(SystemExit, match=f"^{LIFECYCLE_ERROR}gates-source-mismatch$"):
+        _validate(parallel_metadata, tmp_path)
+
+
+def test_grouped_lifecycle_rejects_unbound_gate_result(parallel_metadata: dict[str, Any], tmp_path: Path) -> None:
+    """Changing the retained gate receipt after source delivery invalidates the completed lifecycle."""
+    _write_completed_production_lifecycle(parallel_metadata, tmp_path, grouped=True)
+    path = tmp_path / "gates.json"
+    path.write_bytes(path.read_bytes() + b"\n")
+    with pytest.raises(SystemExit, match=f"^{LIFECYCLE_ERROR}gates-mismatch$"):
+        _validate(parallel_metadata, tmp_path)
+
+
+def test_grouped_lifecycle_requires_executed_tests(parallel_metadata: dict[str, Any], tmp_path: Path) -> None:
+    """A passing gate summary with skipped tests cannot authorize grouped commit delivery."""
+    path = _write_completed_production_lifecycle(parallel_metadata, tmp_path, grouped=True)
+    lifecycle = _read_lifecycle(path)
+    gates_path = tmp_path / "gates.json"
+    gates = _read_lifecycle(gates_path)
+    gates["checks"][3].update(status="not-applicable", reason="tests skipped")
+    _write_json(gates_path, gates)
+    lifecycle["source_application"]["gates_sha256"] = _sha256(gates_path)
+    _rewrite_lifecycle(parallel_metadata, path, lifecycle)
+    with pytest.raises(SystemExit, match=f"^{LIFECYCLE_ERROR}gates-mismatch$"):
+        _validate(parallel_metadata, tmp_path)
 
 
 # Mutators for invalid plans: each breaks exactly one rule of the valid six-item, two-bucket plan.

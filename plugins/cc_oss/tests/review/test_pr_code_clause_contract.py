@@ -6,6 +6,7 @@ the resolve QA gate writes the direct-run clause for a run that has no PR.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -50,6 +51,13 @@ def _line_starting(path: Path, prefix: str) -> str:
     return hits[0]
 
 
+def _block_after(path: Path, marker: str) -> list[str]:
+    """Return the lines of the first fenced bash block that follows the line ``marker``."""
+    lines = _lines(path)
+    start = lines.index("```bash", lines.index(marker)) + 1
+    return lines[start : lines.index("```", start)]
+
+
 class TestReviewClause:
     """Review agents obey the clause file or, before it exists, run nothing."""
 
@@ -80,8 +88,398 @@ class TestReviewClause:
 
     def test_clause_is_written_before_step_two_agents(self) -> None:
         """The gate paragraph orders the clause write ahead of every Step 2 spawn."""
-        gate = _line_starting(_REVIEW / "templates/agent-prompts.md", "**PR-code execution gate")
-        assert "before spawning any Step 2 agent" in gate
+        clause = _line_starting(_REVIEW / "templates/agent-prompts.md", "**PR-code clause")
+        assert "before spawning any Step 2 agent" in clause
+
+    def test_gate_scans_and_checks_in_one_fixed_block_before_selecting_a_path(self) -> None:
+        """Only the scan helper's exact auto line enters the clean path, and the scan comes from a fixed block."""
+        path = _REVIEW / "templates/agent-prompts.md"
+        gate = _line_starting(path, "**PR-code execution gate")
+        assert "fixed scan block below" in gate
+        assert "Only the exact line `auto` takes the clean path" in gate
+        assert "failed scan, any other line, no line or a nonzero exit takes the ask path" in gate
+        block = _block_after(path, gate)
+        assert block[0].startswith('PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py"')
+        assert block[0].endswith("|| exit $?; export PLUGIN_ROOT")
+        scan = next(line for line in block if 'untrusted_code_guard.py" scan' in line)
+        assert '--head "$PR_HEAD_SHA" "${_SCOPE[@]}" --out "$RUN_DIR/code-scan.json"' in scan
+        assert block[-1].startswith(
+            'python "$PLUGIN_ROOT/bin/code_safety_status.py" check-scan --scan "$RUN_DIR/code-scan.json"'
+        )
+        assert block.index(scan) < len(block) - 1
+
+    def test_auto_path_shows_evidence_and_binds_without_asking(self) -> None:
+        """A clean scan uses an env-only, exact-head approval for the exact command and never asks."""
+        path = _REVIEW / "templates/agent-prompts.md"
+        auto = _line_starting(path, "**Auto")
+        assert "skips the question" in auto
+        assert "summary text, including its risk level, in a user-facing message before binding" in auto
+        assert "show that command in the same message" in auto
+        assert "successful bind takes the approval-recorded clause" in auto
+        assert "failed bind takes the no-approval clause" in auto
+        lines = _lines(path)
+        ask = _line_starting(path, "**Ask")
+        auto_path = lines[lines.index(auto) : lines.index(ask)]
+        bind = next(line for line in auto_path if 'untrusted_code_guard.py" bind' in line)
+        assert '--tier env-only --decision unsandboxed --decision exact-head --out "$RUN_DIR/code-approval.txt"' in bind
+        assert ' -- "${PR_CODE_COMMAND[@]}"' in bind
+        assert bind.endswith('&& { echo auto > "$RUN_DIR/pr-code-decision.txt"; exit 0; }')
+        assert all("AskUserQuestion" not in line for line in auto_path)
+
+    def test_a_differing_checkout_routes_the_auto_bind_to_the_ask_path(self) -> None:
+        """The guard refuses an exact-head bind over a checkout that is not the scanned head; the parent asks then."""
+        path = _REVIEW / "templates/agent-prompts.md"
+        auto = _line_starting(path, "**Auto")
+        assert "prints `ask reason=tree-differs` and takes the Ask path" in auto
+        assert "Any other failed bind takes the no-approval clause" in auto
+        ask = _line_starting(path, "**Ask")
+        assert "an automatic bind that printed `ask reason=tree-differs`" in ask
+        assert "the checkout is not exactly the scanned head" in ask
+
+    def test_auto_bind_block_rechecks_the_scan_before_binding(self) -> None:
+        """The bind block itself re-runs the scan check and stops unless it prints exactly ``auto``."""
+        path = _REVIEW / "templates/agent-prompts.md"
+        auto = _line_starting(path, "**Auto")
+        assert "stops before binding unless the check prints exactly `auto`" in auto
+        block = _block_after(path, auto)
+        check = next(i for i, line in enumerate(block) if 'code_safety_status.py" check-scan' in line)
+        assert '--scan "$RUN_DIR/code-scan.json" --head "$PR_HEAD_SHA"' in block[check]
+        gate = next(i for i, line in enumerate(block) if line.startswith('[ "$_CHECK" = auto ] ||'))
+        assert "exit 1" in block[gate]
+        bind = next(i for i, line in enumerate(block) if 'untrusted_code_guard.py" bind' in line)
+        assert check < gate < bind
+
+    def test_ask_path_keeps_all_three_choices(self) -> None:
+        """Findings and unavailable scans still ask with sandbox first and preserve the malicious warning."""
+        ask = _line_starting(_REVIEW / "templates/agent-prompts.md", "**Ask")
+        assert "asks with `AskUserQuestion`" in ask
+        assert "**Run in sandbox** / **Do not run**, plus **Run without sandbox**, always offered" in ask
+        assert '`likely-malicious` risk leads the question with "do not run"' in ask
+        assert "choosing to run is the user's explicit override" in ask
+
+    def test_clause_and_record_describe_the_auto_path(self) -> None:
+        """The clause names the failed-bind and moved-tree outcomes; the record carries the automatic decision."""
+        path = _REVIEW / "templates/agent-prompts.md"
+        clause = _line_starting(path, "**PR-code clause")
+        assert (
+            "an automatic bind that failed for another reason than a differing checkout (nothing is asked then)"
+            in clause
+        )
+        assert "refuses any run whose tree changed after the bind" in clause
+        record = _line_starting(path, "**Code-safety record")
+        assert "run_decision: auto" in record
+        assert "--run-decision auto" in "\n".join(_block_after(path, record))
+
+    @staticmethod
+    def _run_block(
+        block: str, tmp_path: Path, *, meta: dict[str, object] | None, mock: str, files: dict[str, str]
+    ) -> str:
+        """Run one fixed block with sentinels in ``tmp_path`` and a mocked ``python``/``git``; return stdout."""
+        (tmp_path / "oss-review-snap-dir-s").write_text(f"{tmp_path}\n", encoding="utf-8", newline="\n")
+        (tmp_path / "oss-review-run-dir-s").write_text(f"{tmp_path}\n", encoding="utf-8", newline="\n")
+        if meta is not None:
+            (tmp_path / "pr-meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        for name, text in files.items():
+            (tmp_path / name).write_text(text, encoding="utf-8")
+        env = {**os.environ, "TMPDIR": str(tmp_path), "CLAUDE_CODE_SESSION_ID": "s", "CLAUDE_PLUGIN_ROOT": "/plugin"}
+        done = subprocess.run(
+            [_BASH, "-c", mock + block], env=env, capture_output=True, text=True, timeout=20, check=False
+        )
+        return done.stdout + "|rc=" + str(done.returncode)
+
+    _BIND_MOCK = r"""python() {
+    case "$1" in
+        */resolve_plugin_root.py) printf '/plugin\n' ;;
+        */code_safety_status.py) printf '%s\n' "${CHECK_LINE:-auto}"; return "${CHECK_EXIT:-0}" ;;
+        *) printf '%s\0' "$@" ;;
+    esac
+}
+"""
+
+    _REFUSE_MOCK = r"""python() {
+    case "$1" in
+        */resolve_plugin_root.py) printf '/plugin\n' ;;
+        */code_safety_status.py) printf '%s\n' "${CHECK_LINE:-auto}"; return "${CHECK_EXIT:-0}" ;;
+        *) printf bound ;;
+    esac
+}
+"""
+
+    _SCAN_MOCK = r"""python() {
+    case "$1" in
+        */resolve_plugin_root.py) printf '/plugin\n' ;;
+        -I) [ "${SCAN_FAILS:-}" = 1 ] && return 2; printf '%s ' "$@" >> "$TMPDIR/scan-args"; printf 'summary\n' ;;
+        *) printf '%s\n' "${CHECK_LINE:-auto}"; [ -z "${CHECK_EXIT:-}" ] || return "$CHECK_EXIT" ;;
+    esac
+}
+git() { return "${GIT_BASE_STATUS:-0}"; }
+"""
+
+    @pytest.mark.skipif(_BASH is None or shutil.which("jq") is None, reason="The scan block uses Bash and jq")
+    @pytest.mark.parametrize(
+        ("meta", "env", "expected_out"),
+        [
+            pytest.param({"headRefOid": "a" * 40, "baseRefOid": "b" * 40}, {}, "auto\n|rc=0", id="clean-base-scan"),
+            pytest.param(
+                {"headRefOid": "a" * 40, "baseRefOid": "b" * 40},
+                {"CHECK_LINE": "ask reason=findings-present"},
+                "ask reason=findings-present\n|rc=0",
+                id="check-says-ask",
+            ),
+            pytest.param(
+                {"headRefOid": "a" * 40, "baseRefOid": "b" * 40},
+                {"CHECK_EXIT": "1"},
+                "auto\nask reason=check-failed\n|rc=0",
+                id="check-fails",
+            ),
+            pytest.param(
+                {"headRefOid": "a" * 40, "baseRefOid": "b" * 40},
+                {"SCAN_FAILS": "1"},
+                "ask reason=no-scan\n|rc=0",
+                id="scan-fails",
+            ),
+            pytest.param(None, {}, "ask reason=no-scan\n|rc=0", id="snapshot-missing"),
+            pytest.param({"baseRefOid": "b" * 40}, {}, "ask reason=no-scan\n|rc=0", id="head-oid-missing"),
+        ],
+    )
+    def test_scan_block_prints_one_line_and_fails_closed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        meta: dict[str, object] | None,
+        env: dict[str, str],
+        expected_out: str,
+    ) -> None:
+        """Every failure of the fixed scan block ends in an ask line, never in silence or a bare success."""
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        block = "\n".join(
+            _block_after(
+                _REVIEW / "templates/agent-prompts.md",
+                _line_starting(_REVIEW / "templates/agent-prompts.md", "**PR-code execution gate"),
+            )
+        )
+        out = self._run_block(block, tmp_path, meta=meta, mock=self._SCAN_MOCK, files={})
+        assert out == expected_out
+
+    @pytest.mark.skipif(_BASH is None or shutil.which("jq") is None, reason="The scan block uses Bash and jq")
+    @pytest.mark.parametrize(
+        ("git_status", "scope"),
+        [
+            pytest.param("0", "--base " + "b" * 40, id="base-present"),
+            pytest.param("1", "--whole-tree", id="base-not-local"),
+        ],
+    )
+    def test_scan_block_scopes_the_scan_to_the_snapshot_base(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, git_status: str, scope: str
+    ) -> None:
+        """The scan always names the snapshot head and scans against its base, or the whole tree when it is not
+        local."""
+        monkeypatch.setenv("GIT_BASE_STATUS", git_status)
+        path = _REVIEW / "templates/agent-prompts.md"
+        block = "\n".join(_block_after(path, _line_starting(path, "**PR-code execution gate")))
+        self._run_block(
+            block, tmp_path, meta={"headRefOid": "a" * 40, "baseRefOid": "b" * 40}, mock=self._SCAN_MOCK, files={}
+        )
+        args = (tmp_path / "scan-args").read_text(encoding="utf-8")
+        assert f"--repo . --head {'a' * 40} {scope} --out {tmp_path}/code-scan.json --text" in args
+
+    @pytest.mark.skipif(_BASH is None or shutil.which("jq") is None, reason="The auto bind block uses Bash and jq")
+    @pytest.mark.parametrize(
+        ("whole_tree", "scan_fields", "base_args"),
+        [
+            pytest.param(False, {"base": "c" * 40}, ["--base", "c" * 40], id="base-scan-uses-the-scans-own-base"),
+            pytest.param(True, {}, ["--whole-tree"], id="whole-tree-scan"),
+        ],
+    )
+    def test_auto_bind_uses_the_scan_scope_and_exact_argv(
+        self, tmp_path: Path, whole_tree: bool, scan_fields: dict[str, str], base_args: list[str]
+    ) -> None:
+        """The fixed block preserves exact command arguments, binds the scan's own scope and the exact-head decision."""
+        path = _REVIEW / "templates/agent-prompts.md"
+        block = "\n".join(_block_after(path, _line_starting(path, "**Auto")))
+        head = "a" * 40
+        command = ["test runner", "path with spaces", "line\nbreak", ""]
+        # the snapshot base differs from the scan base: the bind must follow the scan the check judged
+        meta = {"headRefOid": head, "baseRefOid": "b" * 40}
+        mock_python = self._BIND_MOCK
+        files = {
+            "code-scan.json": json.dumps({"whole_tree": whole_tree, **scan_fields}),
+            "code-command.json": json.dumps(command),
+        }
+        out = self._run_block(block, tmp_path, meta=meta, mock=mock_python, files=files)
+        body, rc = out.rsplit("|rc=", 1)
+        assert rc == "0"
+        assert body.split("\0")[:-1] == [
+            "-I",
+            "/plugin/bin/untrusted_code_guard.py",
+            "bind",
+            "--repo",
+            ".",
+            "--head",
+            head,
+            *base_args,
+            "--tier",
+            "env-only",
+            "--decision",
+            "unsandboxed",
+            "--decision",
+            "exact-head",
+            "--out",
+            str(tmp_path / "code-approval.txt"),
+            "--",
+            *command,
+        ]
+        assert (tmp_path / "pr-code-decision.txt").read_text(encoding="utf-8") == "auto\n"
+
+    @pytest.mark.skipif(_BASH is None or shutil.which("jq") is None, reason="The auto bind block uses Bash and jq")
+    @pytest.mark.parametrize(
+        ("meta", "files", "snap_sentinel"),
+        [
+            pytest.param(
+                {"headRefOid": "a" * 40},
+                {"code-scan.json": '{"whole_tree": null}', "code-command.json": '["t"]'},
+                True,
+                id="scope-unavailable",
+            ),
+            pytest.param(
+                {"headRefOid": "a" * 40},
+                {"code-scan.json": '{"whole_tree": false}', "code-command.json": '["t"]'},
+                True,
+                id="base-missing",
+            ),
+            pytest.param(
+                {"headRefOid": "a" * 40},
+                {"code-scan.json": '{"whole_tree": true}', "code-command.json": "[]"},
+                True,
+                id="empty-argv",
+            ),
+            pytest.param(
+                {"headRefOid": "a" * 40},
+                {"code-scan.json": '{"whole_tree": true}', "code-command.json": "[1]"},
+                True,
+                id="non-string-argv",
+            ),
+            pytest.param(
+                {"headRefOid": "a" * 40},
+                {"code-scan.json": '{"whole_tree": true}', "code-command.json": '[""]'},
+                True,
+                id="empty-command-word",
+            ),
+            pytest.param(
+                {},
+                {"code-scan.json": '{"whole_tree": true}', "code-command.json": '["t"]'},
+                True,
+                id="head-oid-missing",
+            ),
+        ],
+    )
+    def test_auto_bind_refuses_and_records_nothing(
+        self, tmp_path: Path, meta: dict[str, object], files: dict[str, str], snap_sentinel: bool
+    ) -> None:
+        """A bad scope or command array stops the bind block with a nonzero status and no automatic decision."""
+        path = _REVIEW / "templates/agent-prompts.md"
+        block = "\n".join(_block_after(path, _line_starting(path, "**Auto")))
+        mock_python = self._REFUSE_MOCK
+        out = self._run_block(block, tmp_path, meta=meta, mock=mock_python, files=files)
+        assert not out.endswith("|rc=0"), out
+        assert "bound" not in out
+        assert not (tmp_path / "pr-code-decision.txt").exists()
+
+    @pytest.mark.skipif(_BASH is None or shutil.which("jq") is None, reason="The auto bind block uses Bash and jq")
+    def test_auto_bind_blocks_without_sentinels(self, tmp_path: Path) -> None:
+        """Missing sentinels stop the bind block before any guard call."""
+        path = _REVIEW / "templates/agent-prompts.md"
+        block = "\n".join(_block_after(path, _line_starting(path, "**Auto")))
+        mock_python = self._REFUSE_MOCK
+        env = {**os.environ, "TMPDIR": str(tmp_path), "CLAUDE_CODE_SESSION_ID": "s", "CLAUDE_PLUGIN_ROOT": "/plugin"}
+        done = subprocess.run(
+            [_BASH, "-c", mock_python + block], env=env, capture_output=True, text=True, timeout=20, check=False
+        )
+        assert done.returncode == 1
+        assert "BLOCKED" in done.stdout
+        assert "bound" not in done.stdout
+
+    @pytest.mark.skipif(_BASH is None or shutil.which("jq") is None, reason="The auto bind block uses Bash and jq")
+    @pytest.mark.parametrize(
+        ("check_env", "files"),
+        [
+            pytest.param(
+                {"CHECK_LINE": "ask reason=findings-present"},
+                {"code-scan.json": '{"whole_tree": true}', "code-command.json": '["t"]'},
+                id="check-finds-the-scan-not-clean",
+            ),
+            pytest.param(
+                {"CHECK_LINE": "ask reason=head-mismatch"},
+                {"code-scan.json": '{"whole_tree": true}', "code-command.json": '["t"]'},
+                id="check-finds-another-head",
+            ),
+            pytest.param(
+                {"CHECK_LINE": "", "CHECK_EXIT": "2"},
+                {"code-scan.json": '{"whole_tree": true}', "code-command.json": '["t"]'},
+                id="check-fails",
+            ),
+            pytest.param(
+                {"CHECK_LINE": "auto extra"},
+                {"code-scan.json": '{"whole_tree": true}', "code-command.json": '["t"]'},
+                id="check-line-is-not-exactly-auto",
+            ),
+        ],
+    )
+    def test_auto_bind_refuses_unless_its_own_scan_check_says_auto(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, check_env: dict[str, str], files: dict[str, str]
+    ) -> None:
+        """Reaching the bind block with a scan that is not clean binds nothing and records no automatic decision."""
+        for key, value in check_env.items():
+            monkeypatch.setenv(key, value)
+        path = _REVIEW / "templates/agent-prompts.md"
+        block = "\n".join(_block_after(path, _line_starting(path, "**Auto")))
+        out = self._run_block(block, tmp_path, meta={"headRefOid": "a" * 40}, mock=self._REFUSE_MOCK, files=files)
+        assert out.endswith("|rc=1"), out
+        assert "BLOCKED" in out
+        assert "bound" not in out
+        assert not (tmp_path / "pr-code-decision.txt").exists()
+
+    _BIND_STATUS_MOCK = r"""python() {
+    case "$1" in
+        */resolve_plugin_root.py) printf '/plugin\n' ;;
+        */code_safety_status.py) printf 'auto\n' ;;
+        *) return "${BIND_RC:-0}" ;;
+    esac
+}
+"""
+
+    @pytest.mark.skipif(_BASH is None or shutil.which("jq") is None, reason="The auto bind block uses Bash and jq")
+    @pytest.mark.parametrize(
+        ("bind_rc", "expected_out"),
+        [
+            pytest.param("0", "|rc=0", id="bound"),
+            pytest.param("3", "ask reason=tree-differs\n|rc=0", id="checkout-differs-asks"),
+            pytest.param("1", "|rc=1", id="other-failure-fails"),
+            pytest.param("4", "|rc=4", id="other-refusal-fails"),
+        ],
+    )
+    def test_auto_bind_routes_the_guard_status(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bind_rc: str, expected_out: str
+    ) -> None:
+        """Only a successful bind records ``auto``; exit 3 prints the ask line, every other status fails the block."""
+        monkeypatch.setenv("BIND_RC", bind_rc)
+        path = _REVIEW / "templates/agent-prompts.md"
+        block = "\n".join(_block_after(path, _line_starting(path, "**Auto")))
+        files = {"code-scan.json": '{"whole_tree": true}', "code-command.json": '["t"]'}
+        out = self._run_block(block, tmp_path, meta={"headRefOid": "a" * 40}, mock=self._BIND_STATUS_MOCK, files=files)
+        assert out == expected_out
+        assert (tmp_path / "pr-code-decision.txt").exists() is (bind_rc == "0")
+
+    @pytest.mark.skipif(_BASH is None or shutil.which("jq") is None, reason="The auto bind block uses Bash and jq")
+    def test_auto_bind_proceeds_when_its_own_scan_check_says_auto(self, tmp_path: Path) -> None:
+        """The same inputs with a clean check reach the guard, so the refusals above come from the check alone."""
+        path = _REVIEW / "templates/agent-prompts.md"
+        block = "\n".join(_block_after(path, _line_starting(path, "**Auto")))
+        files = {"code-scan.json": '{"whole_tree": true}', "code-command.json": '["t"]'}
+        out = self._run_block(block, tmp_path, meta={"headRefOid": "a" * 40}, mock=self._REFUSE_MOCK, files=files)
+        assert out == "bound|rc=0"
+        assert (tmp_path / "pr-code-decision.txt").read_text(encoding="utf-8") == "auto\n"
 
 
 @pytest.mark.skipif(_BASH is None, reason="The clause line is a Bash block line")
@@ -174,8 +572,8 @@ class TestDirectClauseNeedsTheRecordedAnswer:
     def _review(tmp_path: Path, meta: str | None, clause: str | None) -> str | None:
         """Run the review reconcile block against a scratch snapshot and run directory; return the clause or None."""
         lines = _lines(_REVIEW / "templates/agent-prompts.md")
-        gate = next(i for i, line in enumerate(lines) if line.startswith("**PR-code execution gate"))
-        start = next(i for i in range(gate, len(lines)) if lines[i] == "```bash") + 1
+        clause_rule = next(i for i, line in enumerate(lines) if line.startswith("**PR-code clause"))
+        start = lines.index("```bash", clause_rule) + 1
         end = next(i for i in range(start, len(lines)) if lines[i] == "```")
         snap, run = tmp_path / "snap", tmp_path / "run"
         snap.mkdir()

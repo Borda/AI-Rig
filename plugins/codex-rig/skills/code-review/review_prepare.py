@@ -164,6 +164,12 @@ def _compact_dispatch_message(
             "of objects with id and verdict for each assigned unit in order."
             f" Use source_sha256 {challenge_response['source_sha256']} and diff_sha256 {challenge_response['diff_sha256']}."
         )
+        if challenge_response["schema_version"] == 2:
+            replacement += (
+                " For each open or fixed-pending-verification finding, include a separate string in that finding's "
+                "evidence beginning exactly 'invariant:' followed by the violated requirement. Include the source "
+                "evidence and reuse the invariant wording for a recurrence."
+            )
         if message.count(original) != 1:
             raise ValueError("review-challenge-response-dispatch-invalid")
         message = message.replace(original, replacement)
@@ -861,12 +867,22 @@ def _direct_failure_evidence(out: Path, codex_home: Path, context: dict[str, Any
         if len(children) != 1:
             raise ValueError(f"review-direct-failure-child-not-unique:{role}")
         rows = validator._read_jsonl(children[0])
+        completed = validator._event_payloads(rows, "task_complete")
+        has_result = any(str(event.get("last_agent_message", "")).strip() for event in completed)
+        aborted = validator._event_payloads(rows, "turn_aborted")
         if plan.get("schema_version") in {2, 3}:
-            turns = [row["payload"] for row in rows if row.get("type") == "turn_context"]
+            if len(completed) == 1 and has_result and not aborted:
+                turn = review_execution_validation._child_turn_context(
+                    rows, completed[0].get("turn_id"), only_turn=True
+                )
+            else:
+                # Failure and abort receipts still require one original context record.
+                turns = [row.get("payload") for row in rows if row.get("type") == "turn_context"]
+                turn = turns[0] if len(turns) == 1 else None
             if (
-                len(turns) != 1
-                or turns[0].get("model") != observed_model
-                or turns[0].get("effort") != card["model_reasoning_effort"]
+                not isinstance(turn, dict)
+                or turn.get("model") != observed_model
+                or turn.get("effort") != card["model_reasoning_effort"]
             ):
                 raise ValueError(f"review-direct-failure-child-controls-invalid:{role}")
             session = rows[0].get("payload", {})
@@ -889,11 +905,9 @@ def _direct_failure_evidence(out: Path, codex_home: Path, context: dict[str, Any
                 effort=card["model_reasoning_effort"],
             ):
                 raise ValueError(f"review-direct-failure-lineage-invalid:{role}")
-            aborted = validator._event_payloads(rows, "turn_aborted")
-            if aborted and (len(aborted) != 1 or aborted[0].get("turn_id") != turns[0].get("turn_id")):
+            if aborted and (len(aborted) != 1 or aborted[0].get("turn_id") != turn.get("turn_id")):
                 raise ValueError(f"review-direct-failure-turn-invalid:{role}")
-        completed = validator._event_payloads(rows, "task_complete")
-        if any(str(event.get("last_agent_message", "")).strip() for event in completed):
+        if has_result:
             archived = out / f"retry/{role}.manifest.json"
             manifest_path = archived if archived.exists() else out / "specialist-manifest.json"
             if not manifest_path.is_file():
@@ -913,7 +927,7 @@ def _direct_failure_evidence(out: Path, codex_home: Path, context: dict[str, Any
                 raise ValueError(f"review-direct-partial-evidence-invalid:{error}") from error
             if not summary["source_coverage"].get(role, {}).get("missing"):
                 raise ValueError(f"review-direct-completed-result-replacement-forbidden:{role}")
-        if not validator._event_payloads(rows, "turn_aborted") and not completed:
+        if not aborted and not completed:
             raise ValueError(f"review-direct-child-failure-unverified:{role}")
         evidence["child"] = rows
     elif plan.get("schema_version") not in {2, 3}:
@@ -1535,12 +1549,8 @@ def _observed_pass(
     if len(terminals) != 1 or (not interrupted and not isinstance(terminals[0].get("last_agent_message"), str)):
         raise ValueError(f"review-child-not-completed:{role}")
     terminal = terminals[0]
-    turns = [
-        row["payload"]
-        for row in rows
-        if row["type"] == "turn_context" and row["payload"].get("turn_id") == terminal.get("turn_id")
-    ]
-    if len(turns) != 1:
+    turn = review_execution_validation._child_turn_context(rows, terminal.get("turn_id"))
+    if turn is None:
         raise ValueError(f"review-child-turn-not-unique:{role}")
     calls = []
     for row in parent_rows:
@@ -1607,8 +1617,8 @@ def _observed_pass(
         "context_path": context["context_path"],
         "context_sha256": context["context_sha256"],
         "turn_id": terminal["turn_id"],
-        "model": turns[0]["model"],
-        "effort": turns[0]["effort"],
+        "model": turn["model"],
+        "effort": turn["effort"],
     }
     if not interrupted:
         attempt.update(

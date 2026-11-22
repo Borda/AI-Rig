@@ -49,10 +49,10 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import re
 import subprocess
 import sys
-from html import escape
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, NamedTuple
 
@@ -65,15 +65,42 @@ SHARED_DIRECTORY = Path(__file__).resolve().parent
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
-from adversarial_loop import SCHEMA_VERSION as LOOP_LEDGER_SCHEMA_VERSION  # noqa: E402
-from adversarial_loop import load_ledger  # noqa: E402
-from audit_consolidation import settle_consolidation  # noqa: E402
+from adversarial_loop import load_ledger  # noqa: E402,F401 (loaders and tests read it from this module)
+from audit_consolidation import settle_consolidation  # noqa: E402,F401 (loaders and tests read it from this module)
 from collect_diff import canonical_diff_arguments  # noqa: E402
 from collect_pr import _github_remote_identity, _head_repository, dirty_path_record_is_consistent  # noqa: E402
-from final_handoff import HandoffError, challenge_report_path, review_commit_sha  # noqa: E402
 from gate_test_approval import validate_pass, validate_tests  # noqa: E402
-from parallel_worktrees import PilotError, _portable_relative  # noqa: E402
+from parallel_worktrees import (  # noqa: E402
+    PilotError,
+    _git_environment,
+    _portable_relative,
+    _require_grouped_commit_chain,
+    _require_grouped_commit_choice,
+    _require_grouped_gates,
+    _require_grouped_verification_commands,
+    _require_grouped_worker_verification,
+)
 from release_evidence import release_sections, validate_release_evidence  # noqa: E402
+from remediation_finalize import (  # noqa: E402
+    PUBLICATION_CONTRACT_VERSION,
+    DeriveError,
+    publication_artifact,
+    publication_binding,
+    publication_evidence_present,
+)
+from review_evidence_validation import (  # noqa: E402,F401 (the moved validators stay reachable under their old names)
+    _audit_cost_artifact,
+    _audit_cost_number,
+    _code_review_pr_ci_snapshot,
+    _load_json,
+    _validate_adversarial_loop,
+    _validate_adversarial_loop_rows,
+    _validate_audit_evidence,
+    _validate_challenge_scope,
+    _validate_chunked_coordinator,
+    _validate_code_review_final_handoff,
+    _validate_scoped_coverage_limit,
+)
 
 #: Fields every result.json must contain regardless of skill.
 COMMON_RESULT_FIELDS = {
@@ -108,6 +135,8 @@ EXPECTED_GATE_IDS = {"lint", "format", "types", "tests", "review"}
 FAILING_GATE_STATUSES = {"fail", "missing-command", "timeout"}
 #: All gate statuses gates.json may record.
 VALID_GATE_STATUSES = {"pass", "fail", "missing-command", "not-applicable", "timeout"}
+#: Parent guard that can fail an otherwise passing structured pytest child.
+TRACKED_MEMBERSHIP_GUARD = "tracked-source-inventory-changed"
 #: Gate ids, in order, that a code-review result must list as not-applicable when gates were unavailable.
 CODE_REVIEW_UNAVAILABLE_GATE_IDS = ("lint", "format", "types", "tests", "review")
 
@@ -338,14 +367,6 @@ SKILL_REQUIREMENTS: dict[str, dict[str, object]] = {
         },
     },
 }
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    with path.open(encoding="utf-8") as handle:
-        payload = json.load(handle)
-    if not isinstance(payload, dict):
-        raise SystemExit(f"expected-json-object:{path}")
-    return payload
 
 
 def _load_json_list(path: Path) -> list[Any]:
@@ -590,289 +611,6 @@ def _validate_code_remediate_final_handoff(
         raise SystemExit("code-remediate-final-handoff-source-coverage-mismatch")
 
 
-def _code_review_pr_ci_snapshot(rollup: object) -> str:
-    """Summarize collected PR checks using failure, pending, then passing precedence."""
-    if rollup is None or rollup == []:
-        return "unavailable"
-    if not isinstance(rollup, list):
-        raise SystemExit("code-review-final-handoff-pr-snapshot-source-invalid")
-    failed: list[str] = []
-    pending: list[str] = []
-    for check in rollup:
-        if not isinstance(check, dict):
-            raise SystemExit("code-review-final-handoff-pr-snapshot-source-invalid")
-        if check.get("__typename") == "CheckRun":
-            name = check.get("name")
-            status = check.get("status")
-            conclusion = check.get("conclusion")
-            is_pending = status != "COMPLETED"
-            is_failed = not is_pending and conclusion not in {"SUCCESS", "NEUTRAL", "SKIPPED"}
-        elif check.get("__typename") == "StatusContext":
-            name = check.get("context")
-            state = check.get("state")
-            is_pending = state not in {"SUCCESS", "FAILURE", "ERROR"}
-            is_failed = state in {"FAILURE", "ERROR"}
-        else:
-            raise SystemExit("code-review-final-handoff-pr-snapshot-source-invalid")
-        if not isinstance(name, str) or not name:
-            raise SystemExit("code-review-final-handoff-pr-snapshot-source-invalid")
-        if is_failed:
-            failed.append(name)
-        elif is_pending:
-            pending.append(name)
-    if failed:
-        return f"failing — {', '.join(failed)}"
-    if pending:
-        return f"pending — {', '.join(pending)}"
-    return "passing"
-
-
-def _validate_code_review_final_handoff(
-    result: dict[str, Any],
-    handoff: dict[str, Any],
-    *,
-    candidate: bool = False,
-    out_dir: Path | None = None,
-    fresh_candidate: bool = False,
-) -> None:
-    """Bind review branches and retained attribution while requiring compact presentation for fresh candidates."""
-    metadata = result.get("metadata")
-    if not isinstance(metadata, dict):
-        raise SystemExit("code-review-final-handoff-metadata-invalid")
-    review_status = metadata.get("review_status")
-    expected_branch = review_status if review_status in {"unavailable", "closed"} else "assessed"
-    if handoff.get("branch") == "caller-contract" and result.get("schema_version") != 3:
-        return
-    if handoff.get("branch") != expected_branch:
-        raise SystemExit("code-review-final-handoff-branch-mismatch")
-    if result.get("schema_version") == 3 and expected_branch == "assessed":
-        if fresh_candidate and handoff.get("presentation_version") not in {8, 9, 10, 11, 12, 13, 14, 15}:
-            raise SystemExit("review-current-handoff-presentation-v8-required")
-        if handoff.get("presentation_version") not in {3, 7, 8, 9, 10, 11, 12, 13, 14, 15}:
-            raise SystemExit("review-current-handoff-presentation-invalid")
-    if expected_branch == "assessed":
-        decision = metadata.get("review_decision")
-        recommendation = decision.get("recommendation") if isinstance(decision, dict) else None
-        expected_outcome = {
-            "title": "Review Decision",
-            "summary": f"Recommendation: {recommendation}.",
-        }
-        if handoff.get("outcome") != expected_outcome:
-            raise SystemExit("code-review-final-handoff-outcome-mismatch")
-    tables = handoff.get("tables")
-    if not isinstance(tables, list):
-        raise SystemExit("code-review-final-handoff-tables-invalid")
-    tables_by_heading = {
-        table.get("heading"): table
-        for table in tables
-        if isinstance(table, dict) and isinstance(table.get("heading"), str)
-    }
-    headings = set(tables_by_heading)
-    if result.get("schema_version") == 3 and expected_branch == "assessed":
-        expected_snapshot = "PR Snapshot" if metadata.get("scope") == "pr" else "Review Snapshot"
-        if headings & {"PR Snapshot", "Review Snapshot"} != {expected_snapshot}:
-            raise SystemExit("code-review-final-handoff-snapshot-scope-mismatch")
-    reviewer_tables = [table for table in tables if isinstance(table, dict) and "reviewers" in table]
-    assessments = metadata.get("reviewer_assessments")
-    if (candidate or result.get("schema_version") == 3) and expected_branch == "assessed":
-        snapshot_heading = "PR Snapshot" if metadata.get("scope") == "pr" else "Review Snapshot"
-        if (
-            not isinstance(assessments, list)
-            or not assessments
-            or len(reviewer_tables) != 1
-            or reviewer_tables[0].get("heading") != snapshot_heading
-            or reviewer_tables[0]["reviewers"] != assessments
-        ):
-            raise SystemExit("code-review-final-handoff-candidate-attribution-missing")
-    if assessments is not None or reviewer_tables:
-        if expected_branch != "assessed" or len(reviewer_tables) != 1 or reviewer_tables[0]["reviewers"] != assessments:
-            raise SystemExit("code-review-final-handoff-reviewers-mismatch")
-        if reviewer_tables[0].get("summary") != metadata["review_decision"].get("summary"):
-            raise SystemExit("code-review-final-handoff-review-summary-mismatch")
-        validation = metadata.get("review_validation")
-        if validation is not None and (
-            reviewer_tables[0].get("source_rating_version") != validation.get("source_rating_version")
-            or reviewer_tables[0].get("verification_readiness") != validation.get("verification_readiness")
-        ):
-            raise SystemExit("code-review-final-handoff-source-rating-version-mismatch")
-        if validation is not None:
-            remaining = {item.get("row_id"): item for item in handoff.get("remaining", [])}
-            for concern in validation.get("candidates", []):
-                if concern.get("disposition") not in {None, "unverified"}:
-                    continue
-                action = remaining.get(concern["id"], {})
-                if (
-                    action.get("owner") != concern["owner"]
-                    or concern["claim"] not in action.get("item", "")
-                    or concern["missing_prerequisite"] not in action.get("item", "")
-                    or concern["next_check"] not in action.get("next_action", "")
-                    or concern["closure_condition"] not in action.get("next_action", "")
-                ):
-                    raise SystemExit(f"code-review-final-handoff-open-concern-missing:{concern['id']}")
-    if expected_branch in {"unavailable", "closed"} and tables:
-        raise SystemExit("code-review-terminal-final-handoff-table-forbidden")
-    if expected_branch == "assessed" and metadata.get("scope") == "pr" and "PR Snapshot" not in headings:
-        raise SystemExit("code-review-final-handoff-pr-snapshot-missing")
-    # `Review Snapshot` is the non-PR counterpart and carries the reviewed target and revision where the PR
-    # snapshot names the pull request. The heading is new in this release, so no stored artifact predates it.
-    snapshot_fields = {
-        "PR Snapshot": ("PR", "Author", "CI", "Type", "Suggestion"),
-        "Review Snapshot": ("Scope", "Revision", "CI", "Type", "Suggestion"),
-    }
-    snapshot_heading = next((heading for heading in snapshot_fields if heading in headings), None)
-    if expected_branch == "assessed" and snapshot_heading:
-        label = "pr-snapshot" if snapshot_heading == "PR Snapshot" else "review-snapshot"
-        snapshot = tables_by_heading[snapshot_heading]
-        rows = snapshot.get("rows")
-        expected_fields = snapshot_fields[snapshot_heading]
-        reviewed_commit = metadata.get("reviewed_commit_sha")
-        if reviewed_commit is not None:
-            expected_fields = (*expected_fields[:-1], "Commit", expected_fields[-1])
-        if (
-            not isinstance(rows, list)
-            or tuple(
-                row["cells"][0]
-                if isinstance(row, dict) and isinstance(row.get("cells"), list) and len(row["cells"]) == 2
-                else None
-                for row in rows
-            )
-            != expected_fields
-        ):
-            raise SystemExit(f"code-review-final-handoff-{label}-fields-mismatch")
-        if fresh_candidate and reviewed_commit is None:
-            raise SystemExit("review-commit-missing")
-        if reviewed_commit is not None:
-            if out_dir is None:
-                raise SystemExit("review-commit-source-missing")
-            try:
-                retained_commit = review_commit_sha(out_dir, metadata.get("scope"))
-            except HandoffError as error:
-                raise SystemExit(str(error)) from error
-            if reviewed_commit != retained_commit:
-                raise SystemExit("review-commit-metadata-mismatch")
-            expected_commit = (
-                f"{retained_commit} (working-tree base)"
-                if metadata.get("scope") in {"working-tree", "path"}
-                else retained_commit
-            )
-            if rows[-2]["cells"][1] != expected_commit:
-                raise SystemExit("review-commit-row-mismatch")
-        decision = metadata.get("review_decision")
-        recommendation = decision.get("recommendation") if isinstance(decision, dict) else None
-        suggestions = {
-            "accept-as-is": "approve",
-            "minor-changes": "minor changes",
-            "needs-more-work": "needs work",
-            "insufficient-but-promising": "insufficient, but a good initiative",
-            "reject": "reject",
-            "not-aligned": "not aligned",
-            None: "no source judgment",
-        }
-        if metadata.get("review_validation") is not None:
-            # Source-rated reviews: a version 1 name and its version 2 token render the same Suggestion cell.
-            suggestions.update(
-                {
-                    "needs-more-work": "major revision",
-                    "reject": "block",
-                    "APPROVE": "approve",
-                    "MINOR_EDITS": "minor changes",
-                    "MAJOR_REVISION": "major revision",
-                    "INSUFFICIENT_BUT_PROMISING": "insufficient, but a good initiative",
-                    "REJECT": "block",
-                }
-            )
-        suggestion_cells = rows[-1].get("cells")
-        if (
-            not isinstance(suggestion_cells, list)
-            or len(suggestion_cells) != 2
-            or suggestion_cells[1] != suggestions.get(recommendation)
-        ):
-            raise SystemExit(f"code-review-final-handoff-{label}-suggestion-mismatch")
-        if snapshot_heading == "Review Snapshot" and result.get("schema_version") == 3:
-            if rows[0]["cells"][1] != metadata.get("scope"):
-                raise SystemExit("code-review-final-handoff-review-snapshot-scope-mismatch")
-            if out_dir is None:
-                raise SystemExit("code-review-final-handoff-review-snapshot-source-invalid")
-            try:
-                diff_digest = hashlib.sha256((out_dir / "diff.patch").read_bytes()).hexdigest()
-            except OSError as exception:
-                raise SystemExit("code-review-final-handoff-review-snapshot-source-invalid") from exception
-            if metadata.get("review_input_sha256") != diff_digest:
-                raise SystemExit("code-review-final-handoff-review-snapshot-source-invalid")
-            if rows[1]["cells"][1] != f"diff sha256:{diff_digest}":
-                raise SystemExit("code-review-final-handoff-review-snapshot-revision-mismatch")
-            # A local review has no retained remote CI run. Keep its status explicit.
-            if rows[2]["cells"][1] != "unavailable":
-                raise SystemExit("code-review-final-handoff-review-snapshot-ci-mismatch")
-            if rows[3]["cells"][1] not in {"fix", "feat", "refactor", "perf", "docs", "ci", "chore", "test", "mixed"}:
-                raise SystemExit("code-review-final-handoff-review-snapshot-type-invalid")
-        if candidate and snapshot_heading == "PR Snapshot" and out_dir is not None:
-            pr = _load_json(out_dir / "pr.json")
-            number = pr.get("number")
-            title = pr.get("title")
-            url = pr.get("url")
-            author = pr.get("author")
-            login = author.get("login") if isinstance(author, dict) else None
-            if (
-                type(number) is not int
-                or number < 1
-                or not isinstance(title, str)
-                or not title.strip()
-                or not isinstance(url, str)
-                or not url.strip()
-                or not isinstance(login, str)
-                or not login.strip()
-            ):
-                raise SystemExit("code-review-final-handoff-pr-snapshot-source-invalid")
-            expected_values = (
-                f"[#{number} — {escape(title, quote=False).replace('[', '&#91;').replace(']', '&#93;')}]({url})",
-                f"@{login}",
-                _code_review_pr_ci_snapshot(pr.get("statusCheckRollup")),
-            )
-            types = {"fix", "feat", "refactor", "perf", "docs", "ci", "chore", "test", "mixed"}
-            if tuple(row["cells"][1] for row in rows[:3]) != expected_values or rows[3]["cells"][1] not in types:
-                raise SystemExit("code-review-final-handoff-pr-snapshot-value-mismatch")
-    finding_total = sum(result["findings"].values())
-    if expected_branch == "assessed" and finding_total and "Review Findings and Merge Blocks" not in headings:
-        raise SystemExit("code-review-final-handoff-findings-table-missing")
-    if expected_branch == "assessed" and result.get("schema_version") in {2, 3}:
-        records = metadata.get("review_findings")
-        blockers = metadata.get("operational_blockers", [])
-        if not isinstance(records, list) or not isinstance(blockers, list):
-            raise SystemExit("code-review-final-handoff-finding-records-missing")
-        if metadata.get("finding_records_version") not in {1, 2}:
-            raise SystemExit("code-review-final-handoff-records-version-missing")
-        identities = [record.get("id") if isinstance(record, dict) else None for record in records + blockers]
-        if any(not isinstance(identity, str) or not identity.strip() for identity in identities):
-            raise SystemExit("code-review-final-handoff-finding-records-invalid")
-        table = tables_by_heading.get("Review Findings and Merge Blocks", {})
-        if identities and table.get("layout") not in {"grouped", "concise"}:
-            raise SystemExit("code-review-final-handoff-grouped-layout-required")
-        rows = table.get("rows", [])
-        row_identities = [
-            row["cells"][0] if isinstance(row, dict) and isinstance(row.get("cells"), list) and row["cells"] else None
-            for row in rows
-        ]
-        if len(row_identities) != len(identities) or set(row_identities) != set(identities):
-            raise SystemExit("code-review-final-handoff-finding-identity-mismatch")
-        if table.get("layout") in {"grouped", "concise"}:
-            by_id = {record["id"]: record for record in records + blockers}
-            for row in rows:
-                record = by_id[row["cells"][0]]
-                if row.get("title") != record.get("title", record["id"]):
-                    raise SystemExit("code-review-final-handoff-finding-title-mismatch")
-                for field in ("summary", "closure_evidence"):
-                    if row.get(field) != record.get(field):
-                        raise SystemExit(f"code-review-final-handoff-finding-{field}-mismatch")
-                if row.get("authors") != record.get("authors"):
-                    raise SystemExit("code-review-final-handoff-finding-authors-mismatch")
-                if "required_change" in record and row["cells"][1:3] != [
-                    record["required_change"],
-                    "; ".join(record["evidence"]),
-                ]:
-                    raise SystemExit("code-review-final-handoff-finding-content-mismatch")
-
-
 def _explicit_commit_with_incomplete_verification(
     result: dict[str, Any], unresolved: dict[str, Any], open_items: list[dict[str, Any]]
 ) -> bool:
@@ -886,6 +624,56 @@ def _explicit_commit_with_incomplete_verification(
         and local_open <= unresolved["local_actionable_items_unresolved"] <= len(open_items)
         and not (local_open and unresolved["all_local_actionable_items_closed"])
     )
+
+
+def _validate_remediation_publication(
+    result: dict[str, Any], artifacts: list[Any], out_dir: Path, *, candidate: bool
+) -> None:
+    """Reconcile a publication handoff with its retained receipts on direct validation."""
+    metadata = result.get("metadata") or {}
+    marker = "worktree_publication_contract_version"
+    has_marker = marker in metadata
+    if has_marker and (type(metadata[marker]) is not int or metadata[marker] != PUBLICATION_CONTRACT_VERSION):
+        raise SystemExit("code-remediate-publication-contract-version-invalid")
+    publication_artifacts = [
+        artifact
+        for artifact in artifacts
+        if isinstance(artifact, dict) and str(artifact.get("label", "")).startswith("PR publication:")
+    ]
+    if "worktree_publication" not in metadata:
+        if has_marker or (
+            result["status"] == "pass"
+            and (publication_artifacts or (not candidate and publication_evidence_present(out_dir)))
+        ):
+            raise SystemExit("code-remediate-publication-binding-required")
+        return
+    if not has_marker:
+        raise SystemExit("code-remediate-publication-contract-version-required")
+    if metadata.get("mode") != "pr" or result["status"] != "pass":
+        raise SystemExit("code-remediate-publication-binding-mismatch")
+    if result.get("schema_version", 1) == 1:
+        raise SystemExit("code-remediate-publication-result-schema-invalid")
+    try:
+        expected = publication_binding(out_dir)
+    except DeriveError as error:
+        raise SystemExit(f"code-remediate-publication-evidence-invalid:{error}") from error
+    if metadata["worktree_publication"] != expected:
+        raise SystemExit("code-remediate-publication-binding-mismatch")
+    if publication_artifacts != [publication_artifact(expected, result["artifact_path"])]:
+        raise SystemExit("code-remediate-publication-artifact-mismatch")
+
+
+def _retained_legacy_handoff_artifacts(out_dir: Path) -> list[Any]:
+    """Find affirmative publication evidence even when a result claims an older schema."""
+    path = out_dir / "final-handoff.json"
+    if path.is_symlink() or not path.is_file():
+        return []
+    try:
+        artifacts = _load_json(path).get("artifacts")
+    except (OSError, ValueError, SystemExit):
+        # Legacy results did not require a handoff or its validation.
+        return []
+    return artifacts if isinstance(artifacts, list) else []
 
 
 def _validate_final_handoff(
@@ -902,6 +690,10 @@ def _validate_final_handoff(
         current_contract = candidate
     schema_version = result.get("schema_version", 1)
     if schema_version == 1:
+        if skill == "code-remediate":
+            _validate_remediation_publication(
+                result, _retained_legacy_handoff_artifacts(out_dir), out_dir, candidate=candidate
+            )
         return
     if schema_version != RESULT_SCHEMA_VERSION and not (skill == "code-review" and schema_version == 3):
         raise SystemExit("unsupported-result-schema-version")
@@ -958,9 +750,13 @@ def _validate_final_handoff(
     }:
         raise SystemExit(f"{skill}-final-handoff-result-artifact-missing")
     if skill == "code-remediate":
+        _validate_remediation_publication(result, artifacts, out_dir, candidate=candidate)
         disposition = handoff.get("commit_disposition")
         if current_contract and disposition is None:
             raise SystemExit("remediation-commit-disposition-missing")
+        grouped_disposition = _expected_grouped_commit_disposition(metadata, out_dir)
+        if grouped_disposition is not None and disposition != grouped_disposition:
+            raise SystemExit("remediation-grouped-commit-disposition-mismatch")
         if disposition is not None:
             if disposition["status"] in {"pending", "committed"}:
                 if result["status"] != "pass" and not isinstance(metadata.get("unresolved_summary"), dict):
@@ -1068,17 +864,52 @@ def _validate_jsonl(path: Path) -> None:
             raise SystemExit(f"jsonl-row-not-object:{path}:{index}")
 
 
-def _resolve_gate_log(out_dir: Path, recorded: Path) -> Path:
+def _numbered_gate_archive_origin(out_dir: Path) -> Path | None:
+    """Recover the original run coordinates for a complete numbered gate archive."""
+    run = out_dir.resolve()
+    if (
+        run.parent.name == "gate-attempts"
+        and re.fullmatch(r"00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,}", run.name)
+        and not out_dir.is_symlink()
+        and not out_dir.parent.is_symlink()
+    ):
+        return run.parent.parent
+    return None
+
+
+def _resolve_gate_log(out_dir: Path, recorded: Path, *, original_run: Path | None = None) -> Path | None:
     """Locate one relative gate log without consulting the caller's working directory.
 
     Every candidate comes from `_anchored_candidates`, and the caller's containment check still rejects anything
     resolving outside the output directory.
     """
-    candidates = _anchored_candidates(out_dir, recorded)
+    out_dir = out_dir.resolve()
+    if original_run is None:
+        candidates = _anchored_candidates(out_dir, recorded)
+    else:
+        # Rebase only coordinates originally inside the run. Read the archived copy, never the live log.
+        origin = original_run.resolve()
+        candidates = [
+            out_dir / candidate.relative_to(origin)
+            for candidate in _anchored_candidates(origin, recorded)
+            if candidate.is_relative_to(origin)
+        ]
+    missing = None
     for candidate in candidates:
+        if candidate.is_relative_to(out_dir) and ".." in candidate.relative_to(out_dir).parts:
+            # A canceled directory must actually be traversable. Refuse redirects and excursions above the
+            # report root even when lexical normalization would make the final filename appear contained.
+            parents = (parent for parent in candidate.parents if parent.is_relative_to(out_dir))
+            if any(
+                parent.is_symlink() or not parent.is_dir() or not parent.resolve().is_relative_to(out_dir)
+                for parent in parents
+            ):
+                continue
         if candidate.is_file():
             return candidate
-    return candidates[0]
+        if missing is None:
+            missing = candidate
+    return missing
 
 
 def _gate_evidence_file(out_dir: Path, relative: object, digest: object) -> Path:
@@ -1099,7 +930,7 @@ def _gate_evidence_file(out_dir: Path, relative: object, digest: object) -> Path
     return path
 
 
-def _validate_local_gate_receipt(out_dir: Path, source: dict[str, Any]) -> None:
+def _validate_local_gate_receipt(out_dir: Path, source: dict[str, Any], *, mirror_root: Path | None = None) -> None:
     """Bind the local gate snapshot to its retained collector receipt and mirror coordinates."""
     if (
         source.get("receipt_path") != "local-source/review-worktree.json"
@@ -1110,9 +941,17 @@ def _validate_local_gate_receipt(out_dir: Path, source: dict[str, Any]) -> None:
     snapshot_path = _gate_evidence_file(out_dir, source["snapshot_path"], source.get("snapshot_sha256"))
     receipt, snapshot = _load_json(receipt_path), _load_json(snapshot_path)
     worktree = source.get("worktree")
+    run = out_dir.resolve()
+    expected = (mirror_root.resolve() if mirror_root is not None else run) / "local-source-review-worktree"
+    # A byte-exact archived receipt still names the original mirror. Only the runner's numbered
+    # attempt directories under that same output can use the parent run's historical coordinates.
+    if mirror_root is None and worktree != expected.as_posix():
+        origin = _numbered_gate_archive_origin(out_dir)
+        if origin is not None:
+            expected = origin / "local-source-review-worktree"
     if (
         not isinstance(worktree, str)
-        or worktree != (out_dir.resolve() / "local-source-review-worktree").as_posix()
+        or worktree != expected.as_posix()
         or receipt.get("review_worktree") != worktree
         or snapshot.get("repository") != worktree
         or receipt.get("revision") != snapshot.get("revision")
@@ -1139,9 +978,171 @@ def _validate_gate_imports(out_dir: Path, check: dict[str, Any]) -> None:
         raise SystemExit("gate-evidence-python-proof-failed")
 
 
-def _validate_gate_artifacts(out_dir: Path, check: dict[str, Any], local_source: dict[str, Any] | None) -> None:
+def _validate_tracked_inventory(out_dir: Path, check: dict[str, Any]) -> bool:
+    """Verify and identify a structured test command that consumed a tracked Git inventory."""
+    if check["id"] != "tests":
+        return False
+    command = out_dir / "checks/tests.command.txt"
+    if command.parent.is_symlink() or command.is_symlink():
+        raise SystemExit("gate-evidence-invalid-path")
+    if not command.is_file():
+        return False
+    text = command.read_text(encoding="utf-8")
+    if not text.startswith("argv-json:"):
+        return False
+    try:
+        argv = json.loads(text.removeprefix("argv-json:"))
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(argv, list) or len(argv) != 10 or argv[3] != "--_python-tests-child":
+        return False
+    try:
+        extra = json.loads(argv[-1])
+    except (TypeError, ValueError) as error:
+        raise SystemExit("gate-evidence-tracked-inventory-invalid") from error
+    if not isinstance(extra, dict) or "tracked_inventory" not in extra:
+        return False  # Historical local-mirror commands have a separate snapshot argument.
+    binding = extra["tracked_inventory"]
+    source = check.get("source")
+    if not isinstance(binding, dict) or not isinstance(source, dict):
+        raise SystemExit("gate-evidence-tracked-inventory-invalid")
+    digest = binding.get("sha256")
+    if not isinstance(digest, str) or not re.fullmatch("[0-9a-f]{64}", digest):
+        raise SystemExit("gate-evidence-tracked-inventory-invalid")
+    relative = f"checks/tracked-source-{digest}.bin"
+    artifacts = source.get("artifacts")
+    # These absolute command arguments retain the original run location in archived output.
+    # Compare their portable coordinates, and resolve retained evidence only inside this archive.
+    if not isinstance(binding.get("path"), str) or not isinstance(argv[5], str):
+        raise SystemExit("gate-evidence-tracked-inventory-invalid")
+    path_type = PureWindowsPath if PureWindowsPath(argv[5]).drive else PurePosixPath
+    inventory = path_type(binding["path"])
+    checks = inventory.parent
+    original_proof = path_type(argv[5])
+    proof_name = "tests.python-imports.json"
+    scratch = original_proof.parent
+    scratch_proof = (
+        original_proof.name == proof_name
+        and scratch.parent == checks
+        and re.fullmatch(r"pytest-scratch(?:-[0-9a-f]{32})?", scratch.name) is not None
+    )
+    if (
+        not inventory.is_absolute()
+        or ".." in inventory.parts
+        or checks.name != "checks"
+        or inventory.name != PurePosixPath(relative).name
+        or (original_proof != checks / proof_name and not scratch_proof)
+        or "python_imports" not in check
+        or binding.get("head") != source.get("expected_head")
+        or argv[4] != source.get("worktree")
+        or not isinstance(artifacts, dict)
+        or artifacts.get(relative) != digest
+    ):
+        raise SystemExit("gate-evidence-tracked-inventory-mismatch")
+    return True
+
+
+def _has_parent_membership_failure(out_dir: Path, gates: dict[str, Any], check: dict[str, Any]) -> bool:
+    """Recognize the admitted tracked inventory and separate parent failure after a passing pytest child."""
+    source = check.get("source")
+    if check["id"] != "tests" or not isinstance(source, dict) or source.get("mode") is not None:
+        return False
+    head, worktree = source.get("expected_head"), source.get("worktree")
+    aggregate = gates.get("source")
+    proof = check.get("python_imports")
+    stderr = "checks/tests.stderr.txt"
+    if (
+        not isinstance(head, str)
+        or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", head) is None
+        or not isinstance(worktree, str)
+        or not (PurePosixPath(worktree).is_absolute() or PureWindowsPath(worktree).is_absolute())
+        or not isinstance(aggregate, dict)
+        or aggregate.get("expected_head") != head
+        or aggregate.get("worktree") != worktree
+        or not isinstance(proof, dict)
+        or proof.get("status") != "pass"
+        or proof.get("mode") != "in-process-pytest"
+        or proof.get("worktree") != worktree
+        or check["command_path"] != "checks/tests.command.txt"
+        or check["stderr"] != stderr
+        or not all(
+            isinstance(observation, dict)
+            and observation.get("head") == head
+            and observation.get("status") == ""
+            and "error" not in observation
+            for observation in (source.get("before"), source.get("after"))
+        )
+        or not _validate_tracked_inventory(out_dir, check)
+    ):
+        return False
+    # The usual gate-evidence pass also requires hashes for the remaining logs, inventory and child proof.
+    path = _gate_evidence_file(out_dir, stderr, source["artifacts"].get(stderr))
+    return TRACKED_MEMBERSHIP_GUARD in path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+
+def _verify_historical_inventory_damage(out_dir: Path, damage: dict[str, str | None]) -> set[str]:
+    """Verify the exact historical inventory discrepancies admitted by the gate publisher."""
+    error = "gate-evidence-inventory-damage-report-mismatch"
+    report = out_dir / "tracked-source-errors.json"
+    if report.is_symlink() or not report.is_file() or report.stat().st_nlink != 1 or _load_json(report) != damage:
+        raise SystemExit(error)
+    for relative, observed in damage.items():
+        match = re.fullmatch(r"checks/tracked-source-([0-9a-f]{64})\.bin", relative)
+        if match is None:
+            raise SystemExit(error)
+        inventory = out_dir / relative
+        if inventory.parent.is_symlink() or inventory.is_symlink():
+            raise SystemExit(error)
+        if observed is None:
+            if inventory.exists():
+                raise SystemExit(error)
+        else:
+            if not isinstance(observed, str) or re.fullmatch(r"[0-9a-f]{64}", observed) is None or observed == match[1]:
+                raise SystemExit(error)
+            path = _gate_evidence_file(out_dir, relative, observed)
+            if path.stat().st_nlink != 1:
+                raise SystemExit(error)
+    return set(damage)
+
+
+def _verify_damaged_gate_logs(out_dir: Path, checks: list[dict[str, Any]], damage: dict[str, str]) -> set[str]:
+    """Admit only a canonical log whose observed digest differs from its bound expected digest."""
+    error = "gate-evidence-gate-log-damage-mismatch"
+    report = out_dir / "gate-log-errors.json"
+    if report.is_symlink() or not report.is_file() or report.stat().st_nlink != 1 or _load_json(report) != damage:
+        raise SystemExit(error)
+    by_id = {check["id"]: check for check in checks}
+    for relative, observed in damage.items():
+        matched = re.fullmatch(r"checks/(lint|format|types|tests|review)\.(stdout|stderr)\.txt", relative)
+        if matched is None or not isinstance(observed, str) or re.fullmatch(r"[0-9a-f]{64}", observed) is None:
+            raise SystemExit(error)
+        gate, kind = matched.groups()
+        check = by_id[gate]
+        source = check.get("source")
+        artifacts = source.get("artifacts") if isinstance(source, dict) else None
+        expected = artifacts.get(relative) if isinstance(artifacts, dict) else None
+        if (
+            check[kind] != relative
+            or not isinstance(expected, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected) is None
+            or observed == expected
+            or _gate_evidence_file(out_dir, relative, observed).stat().st_nlink != 1
+        ):
+            raise SystemExit(error)
+    return set(damage)
+
+
+def _validate_gate_artifacts(
+    out_dir: Path,
+    check: dict[str, Any],
+    local_source: dict[str, Any] | None,
+    damaged_inventory_paths: set[str] | None = None,
+    damaged_log_paths: set[str] | None = None,
+) -> None:
     """Recheck retained gate bytes and local before/after bindings rather than trusting status alone."""
     _validate_gate_imports(out_dir, check)
+    if check["status"] == "pass":
+        _validate_tracked_inventory(out_dir, check)
     source = check.get("source")
     if not isinstance(source, dict):
         if local_source is not None and check["status"] == "pass":
@@ -1168,29 +1169,102 @@ def _validate_gate_artifacts(out_dir: Path, check: dict[str, Any], local_source:
     if not isinstance(artifacts, dict) or not required.issubset(artifacts):
         raise SystemExit("gate-evidence-artifact-hashes-missing")
     for relative, digest in artifacts.items():
+        if damaged_log_paths and relative in damaged_log_paths and relative in required:
+            continue
+        if (
+            damaged_inventory_paths
+            and relative in damaged_inventory_paths
+            and relative == f"checks/tracked-source-{digest}.bin"
+        ):
+            continue
         _gate_evidence_file(out_dir, relative, digest)
 
 
-def _validate_gate_evidence(out_dir: Path, gates: dict[str, Any]) -> None:
+def _validate_gate_evidence(
+    out_dir: Path,
+    gates: dict[str, Any],
+    *,
+    mirror_root: Path | None = None,
+    damaged_inventory_paths: set[str] | None = None,
+    damaged_log_paths: set[str] | None = None,
+) -> None:
     """Validate source receipts and hash-bound artifacts after checking the five-gate record structure."""
     source = gates.get("source")
     local = isinstance(source, dict) and source.get("mode") == "local-review-mirror"
     if (out_dir / "checks/local-source-snapshot.json").exists() and not local:
         raise SystemExit("gate-evidence-local-source-missing")
     if local:
-        _validate_local_gate_receipt(out_dir, source)
+        _validate_local_gate_receipt(out_dir, source, mirror_root=mirror_root)
     for check in gates["checks"]:
         if check["status"] != "not-applicable":
-            _validate_gate_artifacts(out_dir, check, source if local else None)
+            _validate_gate_artifacts(
+                out_dir, check, source if local else None, damaged_inventory_paths, damaged_log_paths
+            )
         elif check.get("id") == "tests" and "approval" in check:
             validate_tests(gates, {}, out_dir)
 
 
-def _validate_gates(out_dir: Path) -> dict[str, Any]:
+def _validate_gate_summaries(out_dir: Path, gates: dict[str, Any], checks: list[dict[str, Any]]) -> None:
+    """Reconcile public gate summaries with the manifest, including in private attempts and archives."""
+    summaries = {
+        "gates.txt": [f"{check['id']}:{check['status']}" for check in checks],
+        "failed.txt": gates["checks_failed"],
+        "gates.checks.jsonl": [json.dumps(check, sort_keys=True) for check in checks],
+    }
+    present = {name for name in summaries if os.path.lexists(out_dir / name)}
+    aggregates = {"checks_run", "failed_count", "checks_not_applicable"}.intersection(gates)
+    # Legacy producers can have a pair of aggregate fields without emitting summaries. The remaining
+    # summary files or explicit runtime observations identify a runner receipt despite a missing field.
+    runner_receipt = (
+        "execution_cwd" in gates
+        or any("execution_route" in check for check in checks)
+        or (len(aggregates) >= 2 and ("checks_run" in aggregates or bool(present)))
+    )
+    for name, expected in summaries.items():
+        path = out_dir / name
+        if not runner_receipt and name not in present:
+            continue
+        if path.is_symlink() or not path.is_file():
+            raise SystemExit(f"gate-summary-missing:{name}")
+        try:
+            content = path.read_text(encoding="utf-8")
+            actual = content.removesuffix("\n").split("\n") if content else []
+            if name == "gates.checks.jsonl":
+                actual = [json.dumps(json.loads(line), sort_keys=True) for line in actual]
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"gate-summary-mismatch:{name}") from exc
+        if actual != expected:
+            raise SystemExit(f"gate-summary-mismatch:{name}")
+
+
+def _validate_gates(
+    out_dir: Path,
+    *,
+    mirror_root: Path | None = None,
+    damaged_inventories: dict[str, str | None] | None = None,
+    damaged_logs: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Check five-gate outcomes against their retained logs and source evidence."""
+    marker = out_dir / ".gate-publication.json"
+    original_run = mirror_root or _numbered_gate_archive_origin(out_dir)
+
+    def require_published() -> None:
+        """Reject evidence while a publisher may be replacing fixed canonical paths."""
+        try:
+            marker.lstat()
+        except FileNotFoundError:
+            return
+        raise SystemExit("gate-publication-in-progress")
+
+    require_published()
+    if not damaged_logs and os.path.lexists(out_dir / "gate-log-errors.json"):
+        raise SystemExit("gate-evidence-damaged-gate-log")
     gates_path = out_dir / "gates.json"
-    if not gates_path.exists():
-        raise SystemExit("missing-gates-json")
+    try:
+        manifest = gates_path.stat()
+    except FileNotFoundError as exc:
+        require_published()
+        raise SystemExit("missing-gates-json") from exc
     gates = _load_json(gates_path)
     checks = gates.get("checks")
     if not isinstance(checks, list):
@@ -1223,21 +1297,32 @@ def _validate_gates(out_dir: Path) -> dict[str, Any]:
         expected_exit = expected_exit_codes.get(check["status"])
         if expected_exit is not None and check["exit_code"] != expected_exit:
             raise SystemExit(f"gate-check-exit-status-mismatch:{index}")
-        if check["status"] == "fail" and check["exit_code"] in {0, 124, 127}:
-            source = check.get("source")
+        source = check.get("source")
+        membership_failure = (
+            isinstance(source, dict)
+            and source.get("mode") != "local-review-mirror"
+            and source.get("guard_error") == TRACKED_MEMBERSHIP_GUARD
+        )
+        if membership_failure:
+            if (
+                check["status"] != "fail"
+                or check["exit_code"] != 0
+                or not _has_parent_membership_failure(out_dir, gates, check)
+            ):
+                raise SystemExit(f"gate-check-invalid-fail-exit-code:{index}")
+        elif check["status"] == "fail" and check["exit_code"] in {0, 124, 127}:
             before = source.get("before") if isinstance(source, dict) else None
             after = source.get("after") if isinstance(source, dict) else None
             changed_source = isinstance(before, dict) and isinstance(after, dict) and before != after
             guard_error = source.get("guard_error") if isinstance(source, dict) else None
-            stderr_path = Path(str(check["stderr"]))
-            if not stderr_path.is_absolute():
-                stderr_path = _resolve_gate_log(out_dir, stderr_path)
+            stderr_path = _resolve_gate_log(out_dir, Path(str(check["stderr"])), original_run=original_run)
             failed_guard = (
                 isinstance(source, dict)
                 and source.get("mode") == "local-review-mirror"
                 and isinstance(before, dict)
                 and isinstance(guard_error, str)
                 and bool(guard_error.strip())
+                and stderr_path is not None
                 and not stderr_path.is_symlink()
                 and stderr_path.resolve().is_relative_to(out_dir.resolve())
                 and stderr_path.is_file()
@@ -1248,9 +1333,9 @@ def _validate_gates(out_dir: Path) -> dict[str, Any]:
             if check["exit_code"] != 0 or not (changed_source or failed_guard or failed_proof):
                 raise SystemExit(f"gate-check-invalid-fail-exit-code:{index}")
         for key in ("command_path", "stdout", "stderr"):
-            path = Path(str(check[key]))
-            if not path.is_absolute():
-                path = _resolve_gate_log(out_dir, path)
+            path = _resolve_gate_log(out_dir, Path(str(check[key])), original_run=original_run)
+            if path is None:
+                raise SystemExit(f"gate-check-log-outside-output:{index}:{key}")
             resolved = path.resolve()
             if not resolved.is_relative_to(out_dir.resolve()):
                 raise SystemExit(f"gate-check-log-outside-output:{index}:{key}")
@@ -1265,7 +1350,26 @@ def _validate_gates(out_dir: Path) -> dict[str, Any]:
         raise SystemExit("gates-status-mismatch")
     if gates.get("checks_failed") != failing_ids:
         raise SystemExit("gates-failed-list-mismatch")
-    _validate_gate_evidence(out_dir, gates)
+    _validate_gate_summaries(out_dir, gates, checks)
+    damage = (
+        _verify_historical_inventory_damage(out_dir, damaged_inventories) if damaged_inventories is not None else set()
+    )
+    affected_logs = _verify_damaged_gate_logs(out_dir, checks, damaged_logs) if damaged_logs else set()
+    _validate_gate_evidence(
+        out_dir, gates, mirror_root=mirror_root, damaged_inventory_paths=damage, damaged_log_paths=affected_logs
+    )
+    try:
+        current = gates_path.stat()
+    except FileNotFoundError as exc:
+        require_published()
+        raise SystemExit("gate-publication-manifest-changed") from exc
+    require_published()
+    if not os.path.samestat(manifest, current) or (manifest.st_size, manifest.st_mtime_ns, manifest.st_ctime_ns) != (
+        current.st_size,
+        current.st_mtime_ns,
+        current.st_ctime_ns,
+    ):
+        raise SystemExit("gate-publication-manifest-changed")
     return gates
 
 
@@ -2143,10 +2247,46 @@ def _code_remediate_run_path(out_dir: Path, value: object, error_code: str) -> P
     return path
 
 
+def _expected_grouped_commit_disposition(metadata: dict[str, Any], out_dir: Path) -> dict[str, str] | None:
+    """Derive the visible ordered topic commits from the completed lifecycle bytes."""
+    workplan = metadata.get("resolution_workplan")
+    reference = workplan.get("production_lifecycle") if isinstance(workplan, dict) else None
+    if not isinstance(reference, dict) or reference.get("status") != "completed":
+        return None
+    plan_error = "code-remediate-work-bucket-plan-content-mismatch"
+    plan = _code_remediate_run_path(out_dir, "work-bucket-plan.json", plan_error)
+    if not plan.is_file():
+        raise SystemExit(plan_error)
+    if _load_json(plan).get("schema_version") != 3:
+        return None
+    error = "remediation-grouped-commit-disposition-mismatch"
+    path = _code_remediate_run_path(out_dir, reference.get("path"), error)
+    if not path.is_file() or reference.get("sha256") != hashlib.sha256(path.read_bytes()).hexdigest():
+        raise SystemExit(error)
+    lifecycle = _load_json(path)
+    commits = lifecycle.get("integrated_commits")
+    if (
+        lifecycle.get("schema_version") != 3
+        or lifecycle.get("status") != "completed"
+        or lifecycle.get("commit_mode") != "grouped"
+        or not isinstance(commits, list)
+        or not commits
+        or any(
+            not isinstance(oid, str) or re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", oid) is None for oid in commits
+        )
+    ):
+        raise SystemExit(error)
+    return {
+        "status": "committed",
+        "reason": f"Delivered topic commits in order ({', '.join(commits)}).",
+        "evidence": reference["path"],
+    }
+
+
 def _validate_code_remediate_production_lifecycle(
     workplan: dict[str, Any], bucket_plan: dict[str, Any], out_dir: Path, bucket_plan_sha256: str
-) -> None:
-    """Reconcile completed parallel remediation with its schema-v2 lifecycle evidence."""
+) -> dict[str, Any]:
+    """Validate and return the completed parallel remediation lifecycle."""
     reference = workplan.get("production_lifecycle")
     if not isinstance(reference, dict):
         raise SystemExit("code-remediate-production-lifecycle-required")
@@ -2160,11 +2300,22 @@ def _validate_code_remediate_production_lifecycle(
     if not isinstance(digest, str) or digest != hashlib.sha256(lifecycle_path.read_bytes()).hexdigest():
         raise SystemExit("code-remediate-production-lifecycle-digest-mismatch")
     lifecycle = _load_json(lifecycle_path)
-    if lifecycle.get("schema_version") != 2 or lifecycle.get("consumer") != "code-remediate":
+    schema_version = lifecycle.get("schema_version")
+    if schema_version not in (2, 3) or lifecycle.get("consumer") != "code-remediate":
         raise SystemExit("code-remediate-production-lifecycle-schema-invalid")
     if lifecycle.get("status") != "completed" or lifecycle.get("plan_sha256") != bucket_plan_sha256:
         raise SystemExit("code-remediate-production-lifecycle-plan-mismatch")
-    if bucket_plan.get("schema_version") != 2 or bucket_plan.get("consumer") != "code-remediate":
+    grouped = schema_version == 3
+    if (
+        bucket_plan.get("schema_version") != schema_version
+        or bucket_plan.get("consumer") != "code-remediate"
+        or (
+            grouped
+            and any(
+                lifecycle.get(key) != bucket_plan.get(key) for key in ("commit_mode", "commit_choice", "tests_command")
+            )
+        )
+    ):
         raise SystemExit("code-remediate-production-lifecycle-plan-schema-invalid")
     if bucket_plan.get("write_parallel_promoted") is not False:
         raise SystemExit("code-remediate-production-lifecycle-promotion-invalid")
@@ -2262,7 +2413,10 @@ def _validate_code_remediate_production_lifecycle(
         or [node.get("node_id") for node in nodes if isinstance(node, dict)] != expected_nodes
     ):
         raise SystemExit("code-remediate-production-lifecycle-node-mismatch")
-    for node, recorded, owned_paths in zip(nodes, recorded_nodes, expected_bucket_paths, strict=True):
+    baseline_head = bucket_plan.get("baseline_head")
+    oid_pattern = r"[0-9a-f]{64}" if isinstance(baseline_head, str) and len(baseline_head) == 64 else r"[0-9a-f]{40}"
+    worker_oids = set()
+    for node, recorded, owned_paths, bucket in zip(nodes, recorded_nodes, expected_bucket_paths, buckets, strict=True):
         if (
             not isinstance(node, dict)
             or node.get("owned_paths") != owned_paths
@@ -2271,6 +2425,29 @@ def _validate_code_remediate_production_lifecycle(
             or node["patch_sha256"] != recorded["patch_sha256"]
         ):
             raise SystemExit("code-remediate-production-lifecycle-node-mismatch")
+        if grouped:
+            commit_oid = node.get("commit_oid")
+            handover = recorded.get("handover")
+            if (
+                not isinstance(commit_oid, str)
+                or re.fullmatch(oid_pattern, commit_oid) is None
+                or commit_oid == baseline_head
+                or commit_oid in worker_oids
+                or recorded.get("commit_oid") != commit_oid
+                or not isinstance(handover, dict)
+                or handover.get("commit_oid") != commit_oid
+            ):
+                raise SystemExit("code-remediate-production-lifecycle-node-mismatch")
+            try:
+                commands = bucket.get("verification_commands")
+                if recorded.get("verification_commands") != commands:
+                    raise PilotError("child-verification-commands-drift")
+                _require_grouped_worker_verification(
+                    out_dir, handover.get("verification"), node["node_id"], commit_oid, commands
+                )
+            except PilotError as error:
+                raise SystemExit("code-remediate-production-lifecycle-child-verification-mismatch") from error
+            worker_oids.add(commit_oid)
     integration = lifecycle.get("integration")
     if not isinstance(integration, dict) or integration != {
         "status": "structurally-verified",
@@ -2278,6 +2455,27 @@ def _validate_code_remediate_production_lifecycle(
         "paths": expected_paths,
     }:
         raise SystemExit("code-remediate-production-lifecycle-integration-mismatch")
+    applied_head = baseline_head
+    if grouped:
+        integrated_commits = lifecycle.get("integrated_commits")
+        if (
+            not isinstance(baseline_head, str)
+            or re.fullmatch(oid_pattern, baseline_head) is None
+            or not isinstance(integrated_commits, list)
+            or len(integrated_commits) != len(expected_nodes)
+            or any(
+                not isinstance(oid, str) or re.fullmatch(oid_pattern, oid) is None or oid == baseline_head
+                for oid in integrated_commits
+            )
+            or len(set(integrated_commits)) != len(integrated_commits)
+            or lifecycle.get("integration_head") != integrated_commits[-1]
+        ):
+            raise SystemExit("code-remediate-production-lifecycle-integration-mismatch")
+        try:
+            _require_grouped_commit_chain(baseline_head, integrated_commits, lifecycle.get("integrated_commit_objects"))
+        except PilotError as error:
+            raise SystemExit("code-remediate-production-lifecycle-integration-mismatch") from error
+        applied_head = integrated_commits[-1]
     reconciliation = lifecycle.get("reconciliation")
     failed_node = lifecycle.get("integration_failed_node")
     conflict_paths = lifecycle.get("integration_conflict_paths")
@@ -2288,7 +2486,8 @@ def _validate_code_remediate_production_lifecycle(
         error = "code-remediate-production-lifecycle-reconciliation-mismatch"
         final_hashes = lifecycle.get("integration_final_sha256")
         if (
-            not isinstance(reconciliation, dict)
+            grouped
+            or not isinstance(reconciliation, dict)
             or set(reconciliation)
             != {"status", "record_path", "record_sha256", "changed_paths", "failed_node", "postimage_sha256"}
             or reconciliation.get("status") != "verified"
@@ -2340,9 +2539,10 @@ def _validate_code_remediate_production_lifecycle(
     source = lifecycle.get("source")
     if (
         not isinstance(source, dict)
-        or source.get("baseline_head") != bucket_plan.get("baseline_head")
+        or source.get("baseline_head") != baseline_head
         or source.get("baseline_tree") != bucket_plan.get("baseline_tree")
-        or source.get("applied_head") != source.get("baseline_head")
+        or source.get("applied_head") != applied_head
+        or (grouped and lifecycle.get("source_branch") != bucket_plan.get("source_branch"))
     ):
         raise SystemExit("code-remediate-production-lifecycle-source-mismatch")
     for key in ("preimage_sha256", "postimage_sha256"):
@@ -2383,6 +2583,12 @@ def _validate_code_remediate_production_lifecycle(
             or application.get(digest_key) != hashlib.sha256(patch_path.read_bytes()).hexdigest()
         ):
             raise SystemExit(mismatch_error)
+    if grouped:
+        try:
+            _require_grouped_commit_choice(bucket_plan.get("commit_choice"), out_dir, bucket_plan.get("tests_command"))
+        except PilotError as error:
+            raise SystemExit("code-remediate-production-lifecycle-plan-schema-invalid") from error
+        _validate_code_remediate_grouped_gates(lifecycle, bucket_plan, application, out_dir)
     cleanup = lifecycle.get("cleanup")
     if not isinstance(cleanup, dict) or cleanup.get("status") != "removed" or cleanup.get("force") is not False:
         raise SystemExit("code-remediate-production-lifecycle-cleanup-mismatch")
@@ -2391,6 +2597,49 @@ def _validate_code_remediate_production_lifecycle(
         "capability_sandbox_verified": False,
     }:
         raise SystemExit("code-remediate-production-lifecycle-containment-mismatch")
+    return lifecycle
+
+
+def _validate_code_remediate_grouped_gates(
+    lifecycle: dict[str, Any], bucket_plan: dict[str, Any], application: dict[str, Any], out_dir: Path
+) -> None:
+    """Bind the canonical gate run to the clean integration checkout and commits applied to source."""
+    digest_error = "code-remediate-production-lifecycle-gates-mismatch"
+    if application.get("gates_path") != "gates.json":
+        raise SystemExit(digest_error)
+    path = _code_remediate_run_path(out_dir, application["gates_path"], digest_error)
+    if not path.is_file() or application.get("gates_sha256") != hashlib.sha256(path.read_bytes()).hexdigest():
+        raise SystemExit(digest_error)
+    gates = _validate_gates(out_dir)
+    tests = next(check for check in gates["checks"] if check["id"] == "tests")
+    if gates["status"] != "pass" or tests["status"] != "pass":
+        raise SystemExit(digest_error)
+
+    source_error = "code-remediate-production-lifecycle-gates-source-mismatch"
+    workspace = lifecycle.get("workspace_root")
+    integration = lifecycle.get("integration_worktree")
+    worktree_root = bucket_plan.get("worktree_root")
+    try:
+        worktree_root = _portable_relative(worktree_root, "worktree-root")
+    except PilotError as error:
+        raise SystemExit(source_error) from error
+    if (
+        not isinstance(workspace, str)
+        or lifecycle.get("worktree_root") != worktree_root
+        or integration != f"{worktree_root}/integration"
+    ):
+        raise SystemExit(source_error)
+    # Source receipts survive promotion and may have originated on either supported path syntax.
+    workspace_path = PurePosixPath(workspace) if PurePosixPath(workspace).is_absolute() else PureWindowsPath(workspace)
+    if not workspace_path.is_absolute() or ".." in workspace_path.parts:
+        raise SystemExit(source_error)
+    expected_worktree = workspace_path.joinpath(*PurePosixPath(integration).parts)
+    try:
+        _require_grouped_gates(
+            gates, expected_worktree, lifecycle["integration_head"], tests_command=bucket_plan.get("tests_command")
+        )
+    except PilotError as error:
+        raise SystemExit(source_error) from error
 
 
 # ``NamedTuple``, not ``@dataclass``: callers load this validator by file path without registering it in
@@ -2518,8 +2767,25 @@ def _validate_workplan_evidence_files(
     approval_record = _load_json(approval_path)
     if bucket_plan.get("work_buckets") != workplan["work_buckets"]:
         raise SystemExit("code-remediate-work-bucket-plan-content-mismatch")
-    if bucket_plan.get("schema_version") not in {1, 2}:
+    schema_version = bucket_plan.get("schema_version")
+    if schema_version not in (1, 2, 3):
         raise SystemExit("code-remediate-work-bucket-plan-content-mismatch")
+    if schema_version == 3:
+        try:
+            _require_grouped_commit_choice(bucket_plan.get("commit_choice"), out_dir, bucket_plan.get("tests_command"))
+            for bucket in workplan["work_buckets"]:
+                _require_grouped_verification_commands(bucket.get("verification_commands"))
+        except PilotError as error:
+            raise SystemExit("code-remediate-production-lifecycle-plan-schema-invalid") from error
+        branch = bucket_plan.get("source_branch")
+        if (
+            bucket_plan.get("commit_mode") != "grouped"
+            or workplan["execution_mode"] != "parallel-specialists"
+            or not isinstance(branch, str)
+            or not branch.startswith("refs/heads/")
+            or branch == "refs/heads/"
+        ):
+            raise SystemExit("code-remediate-production-lifecycle-plan-schema-invalid")
     observed_plan_sha256 = hashlib.sha256(bucket_plan_path.read_bytes()).hexdigest()
     if approval.bucket_plan_sha256 != observed_plan_sha256:
         raise SystemExit("code-remediate-work-bucket-plan-digest-mismatch")
@@ -2603,8 +2869,10 @@ def _validate_specialist_context_pack(bucket: dict[str, Any], out_dir: Path) -> 
         raise SystemExit("code-remediate-specialist-context-pack-missing")
 
 
-def _validate_parallel_bucket_paths(owned_paths: list[str], parallel_owned_paths: dict[str, str]) -> None:
-    """Allow exact shared files while rejecting unsafe path aliases and ancestry."""
+def _validate_parallel_bucket_paths(
+    owned_paths: list[str], parallel_owned_paths: dict[str, str], *, allow_shared: bool
+) -> None:
+    """Reject unsafe aliases and ancestry, allowing shared files only for patch integration."""
     bucket_owned_paths: set[str] = set()
     for path in owned_paths:
         raw_path = path.replace("\\", "/").strip()
@@ -2612,6 +2880,11 @@ def _validate_parallel_bucket_paths(owned_paths: list[str], parallel_owned_paths
             raise SystemExit("code-remediate-parallel-owned-path-invalid")
         if any(character in raw_path for character in "*?[]"):
             raise SystemExit("code-remediate-parallel-owned-path-pattern-forbidden")
+        if not allow_shared:
+            try:
+                _portable_relative(path, "owned-path")
+            except PilotError as error:
+                raise SystemExit("code-remediate-parallel-owned-path-invalid") from error
         normalized_path = PurePosixPath(raw_path).as_posix().removeprefix("./").rstrip("/")
         canonical_path = normalized_path.casefold()
         if not canonical_path or canonical_path == "." or canonical_path in bucket_owned_paths:
@@ -2622,12 +2895,14 @@ def _validate_parallel_bucket_paths(owned_paths: list[str], parallel_owned_paths
             for existing in parallel_owned_paths
         ):
             raise SystemExit("code-remediate-parallel-ownership-overlap")
-        if canonical_path in parallel_owned_paths and parallel_owned_paths[canonical_path] != normalized_path:
+        if canonical_path in parallel_owned_paths and (
+            not allow_shared or parallel_owned_paths[canonical_path] != normalized_path
+        ):
             raise SystemExit("code-remediate-parallel-ownership-overlap")
         parallel_owned_paths[canonical_path] = normalized_path
 
 
-def _validate_work_buckets(work_buckets: list[Any], out_dir: Path) -> _WorkBucketObservations:
+def _validate_work_buckets(work_buckets: list[Any], out_dir: Path, *, allow_shared: bool) -> _WorkBucketObservations:
     """Validate every declared work bucket and accumulate the observed ownership counts."""
     observed_indexes: list[int] = []
     observed_parent_groups = 0
@@ -2660,7 +2935,7 @@ def _validate_work_buckets(work_buckets: list[Any], out_dir: Path) -> _WorkBucke
             observed_verifier_groups += 1
         if bucket_mode == "parallel":
             parallel_bucket_count += 1
-            _validate_parallel_bucket_paths(owned_paths, parallel_owned_paths)
+            _validate_parallel_bucket_paths(owned_paths, parallel_owned_paths, allow_shared=allow_shared)
 
     return _WorkBucketObservations(
         indexes=observed_indexes,
@@ -2835,7 +3110,7 @@ def _validate_workplan_document(
         if bucket_id.casefold() not in workplan_text:
             raise SystemExit("code-remediate-workplan-bucket-id-missing")
     if workplan["execution_mode"] == "parallel-specialists":
-        if bucket_plan.get("schema_version") != 2 or bucket_plan.get("consumer") != "code-remediate":
+        if bucket_plan.get("schema_version") not in (2, 3) or bucket_plan.get("consumer") != "code-remediate":
             raise SystemExit("code-remediate-production-lifecycle-required")
         if not pre_edit:
             _validate_code_remediate_production_lifecycle(workplan, bucket_plan, out_dir, approval.bucket_plan_sha256)
@@ -2866,7 +3141,7 @@ def _validate_code_remediate_workplan(
         raise SystemExit("code-remediate-missing-parallel-approval")
     bucket_plan = _validate_workplan_evidence_files(out_dir, workplan, approval)
     _validate_workplan_aggregate_counts(workplan, work_buckets)
-    observed = _validate_work_buckets(work_buckets, out_dir)
+    observed = _validate_work_buckets(work_buckets, out_dir, allow_shared=bucket_plan.get("schema_version") != 3)
     _validate_workplan_coverage_counts(workplan, work_buckets, selected_indexes, observed)
     _validate_workplan_execution_mode_approval(workplan, approval, observed)
     _validate_workplan_document(out_dir, workplan, approval, observed, bucket_plan, pre_edit=pre_edit)
@@ -3537,36 +3812,109 @@ def _validate_code_remediate_pr_source(
         raise SystemExit("code-remediate-pr-source-worktree-preflight-invalid")
 
 
+def _grouped_pr_plan(out_dir: Path, workplan: dict[str, Any] | None) -> tuple[Path, dict[str, Any]] | None:
+    """Identify the current grouped route from its plan and lifecycle reference."""
+    if not isinstance(workplan, dict) or not isinstance(workplan.get("production_lifecycle"), dict):
+        return None
+    plan_path = _code_remediate_run_path(
+        out_dir, "work-bucket-plan.json", "code-remediate-target-integration-source-mismatch"
+    )
+    if not plan_path.is_file():
+        return None
+    plan = _load_json(plan_path)
+    return (plan_path, plan) if plan.get("schema_version") == 3 else None
+
+
+def _grouped_pr_delivery(
+    out_dir: Path, workplan: dict[str, Any] | None, checkout: dict[str, Any], post_merge_head: str
+) -> tuple[str, str] | None:
+    """Bind the verified grouped gate and delivered tip to this PR's collected branch."""
+    grouped = _grouped_pr_plan(out_dir, workplan)
+    if grouped is None or workplan is None:
+        return None
+    plan_path, plan = grouped
+    error = "code-remediate-target-integration-source-mismatch"
+    plan_digest = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    if workplan.get("bucket_plan_sha256") != plan_digest:
+        raise SystemExit(error)
+    lifecycle = _validate_code_remediate_production_lifecycle(workplan, plan, out_dir, plan_digest)
+
+    # The gate ran on the detached integration tip, while delivery moved the collected PR branch.
+    # Accept that different gate directory only through the exact source coordinates and commit chain.
+    workspace = lifecycle["workspace_root"]
+    workspace_path = PurePosixPath(workspace) if PurePosixPath(workspace).is_absolute() else PureWindowsPath(workspace)
+    try:
+        source = _portable_relative(plan.get("source_repository"), "source-repository")
+    except PilotError as exc:
+        raise SystemExit(error) from exc
+    branch = checkout.get("local_branch")
+    if (
+        lifecycle.get("source_repository") != source
+        or workspace_path.joinpath(*PurePosixPath(source).parts).as_posix() != checkout.get("worktree")
+        or not isinstance(branch, str)
+        or not branch
+        or lifecycle["source_branch"] != f"refs/heads/{branch}"
+        or lifecycle["source"]["baseline_head"] != post_merge_head
+    ):
+        raise SystemExit(error)
+    return lifecycle["source"]["applied_head"], lifecycle["source_branch"]
+
+
 def _validate_code_remediate_target_integration(
-    pr_dir: Path, resolution: dict[str, Any], *, current_checkout: bool
+    pr_dir: Path, resolution: dict[str, Any], *, current_checkout: bool, workplan: dict[str, Any] | None = None
 ) -> None:
     """Prove target inclusion and merge identity from the collected repository's Git objects."""
     checkout = _load_json(pr_dir / "local-checkout.json")
     worktree = checkout.get("worktree")
     if not isinstance(worktree, str) or not Path(worktree).is_absolute():
         raise SystemExit("code-remediate-target-integration-worktree-invalid")
-    gates_path = pr_dir.parent / "gates.json"
-    if gates_path.is_file():
-        source = _load_json(gates_path).get("source")
-        if not isinstance(source, dict) or source.get("worktree") != worktree:
-            raise SystemExit("code-remediate-target-integration-source-mismatch")
     target, pre, post = (resolution.get(key) for key in ("target_oid", "pre_merge_head", "post_merge_head"))
     if any(not isinstance(oid, str) or re.fullmatch(r"[0-9a-f]{40}", oid) is None for oid in (target, pre, post)):
         raise SystemExit("code-remediate-merge-resolution-execution-head-invalid")
+    gates_path = pr_dir.parent / "gates.json"
+    delivery = None
+    if gates_path.is_file():
+        gates = _load_json(gates_path)
+        delivery = _grouped_pr_delivery(pr_dir.parent, workplan, checkout, post)
+        if "execution_cwd" in gates and (delivery is not None or gates["execution_cwd"] != worktree):
+            raise SystemExit("code-remediate-target-integration-source-mismatch")
+        if delivery is None and "source" in gates:
+            source = gates["source"]
+            if not isinstance(source, dict) or source.get("worktree") != worktree:
+                raise SystemExit("code-remediate-target-integration-source-mismatch")
+        elif delivery is None:
+            # Ordinary remediation can test unstaged changes. Its launch directory binds only this comparison.
+            checks = gates.get("checks")
+            if (
+                gates.get("execution_cwd") != worktree
+                or not isinstance(checks, list)
+                or not checks
+                or any(
+                    not isinstance(check, dict) or "source" in check or "python_imports" in check for check in checks
+                )
+            ):
+                raise SystemExit("code-remediate-target-integration-source-mismatch")
     # Use retained source coordinates, never the caller's unrelated current directory.
     commands = [("merge-base", "--is-ancestor", target, post), ("merge-base", "--is-ancestor", pre, post)]
+    if delivery is not None:
+        delivered_head, branch = delivery
+        commands.insert(0, ("rev-parse", "--show-toplevel"))
+        commands.append(("merge-base", "--is-ancestor", delivered_head, branch))
     if resolution["status"] == "completed":
         commands.append(("show", "--no-textconv", "-s", "--format=%P", post))
     if current_checkout:
-        commands.extend([("merge-base", "--is-ancestor", post, "HEAD"), ("ls-files", "--unmerged")])
+        head = delivery[0] if delivery else post
+        commands.extend([("merge-base", "--is-ancestor", head, "HEAD"), ("ls-files", "--unmerged")])
         commands.extend(
             ("rev-parse", "--git-path", marker)
             for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply")
         )
+    environment = _git_environment()
     for args in commands:
         try:
             result = subprocess.run(  # noqa: S603 - fixed Git operations and validated object IDs, no shell
                 ["git", "--no-pager", "-c", "core.fsmonitor=false", "-C", worktree, *args],  # noqa: S607 - declared prerequisite
+                env=environment,
                 capture_output=True,
                 text=True,
                 check=False,
@@ -3575,6 +3923,8 @@ def _validate_code_remediate_target_integration(
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise SystemExit("code-remediate-target-integration-git-unavailable") from exc
         if args[0] == "merge-base" and result.returncode == 1:
+            if delivery is not None and args[-1] == delivery[1]:
+                raise SystemExit("code-remediate-target-integration-grouped-delivery-mismatch")
             code = "target-integration-checkout-head-mismatch" if args[-1] == "HEAD" else "target-not-integrated"
             raise SystemExit("code-remediate-" + code)
         if result.returncode != 0:
@@ -3583,7 +3933,10 @@ def _validate_code_remediate_target_integration(
             raise SystemExit("code-remediate-target-merge-parents-invalid")
         if args[0] == "ls-files" and result.stdout.strip():
             raise SystemExit("code-remediate-target-integration-unmerged-paths")
-        if args[0] == "rev-parse":
+        if args[1] == "--show-toplevel":
+            if Path(result.stdout.strip()).as_posix() != worktree:
+                raise SystemExit("code-remediate-target-integration-worktree-invalid")
+        elif args[0] == "rev-parse":
             marker = Path(result.stdout.strip())
             if not marker.is_absolute():
                 marker = Path(worktree) / marker
@@ -3638,6 +3991,9 @@ def _validate_code_remediate_merge_resolution(
             raise SystemExit("code-remediate-merge-resolution-pre-merge-head-mismatch")
         if any(not isinstance(oid, str) or re.fullmatch(r"[0-9a-f]{40}", oid) is None for oid in (pre_head, post_head)):
             raise SystemExit("code-remediate-merge-resolution-execution-head-invalid")
+    workplan = metadata.get("resolution_workplan")
+    if resolution["schema_version"] == 1 and _grouped_pr_plan(pr_dir.parent, workplan) is not None:
+        raise SystemExit("code-remediate-grouped-merge-resolution-current-required")
     strict = require_integrated or resolution["schema_version"] == 2
     if type(conflicts) is not bool:
         raise SystemExit("code-remediate-merge-conflict-decision-invalid")
@@ -3663,7 +4019,9 @@ def _validate_code_remediate_merge_resolution(
         raise SystemExit("code-remediate-merge-conflict-decision-invalid")
 
     if strict:
-        _validate_code_remediate_target_integration(pr_dir, resolution, current_checkout=require_integrated)
+        _validate_code_remediate_target_integration(
+            pr_dir, resolution, current_checkout=require_integrated, workplan=workplan
+        )
 
     summary = metadata.get("merge_resolution")
     if not isinstance(summary, dict):
@@ -3678,338 +4036,6 @@ def _validate_code_remediate_merge_resolution(
     }
     if any(summary.get(key) != value for key, value in expected_summary.items()):
         raise SystemExit("code-remediate-merge-resolution-metadata-mismatch")
-
-
-def _validate_adversarial_loop(
-    result: dict[str, Any],
-    out_dir: Path,
-    gates: dict[str, Any],
-    *,
-    candidate: bool,
-    current_result: bool = False,
-    repository: Path | None = None,
-) -> None:
-    """Bind the loop decision to retained snapshots, reports, and visible result rows."""
-    if result.get("schema_version") != 2:
-        raise SystemExit("adversarial-loop-schema-v2-required")
-    table_version = result.get("metadata", {}).get("challenge_table_contract_version")
-    if table_version is None:
-        raise SystemExit("adversarial-loop-table-contract-required")
-    if type(table_version) is not int:
-        raise SystemExit("adversarial-loop-table-contract-version-invalid")
-    if table_version not in {1, 2}:
-        raise SystemExit("adversarial-loop-table-contract-version-required")
-    tables = _load_json(out_dir / "final-handoff.json")["tables"]
-    if any((table.get("layout") == "challenge-history") != (table_version == 2) for table in tables):
-        raise SystemExit("adversarial-loop-table-contract-version-required")
-    scope = result["metadata"].get("challenge_scope")
-    if "child_runs" in _load_json(out_dir / "final-handoff.json") and not (
-        isinstance(scope, dict) and scope.get("mode") in ("chunked", "scoped")
-    ):
-        raise SystemExit("adversarial-loop-child-scores-scope-invalid")
-    if isinstance(scope, dict) and scope.get("mode") in ("chunked", "scoped"):
-        _validate_chunked_coordinator(
-            result, out_dir, gates, candidate=candidate, current_result=current_result, repository=repository
-        )
-        return
-    if candidate or "challenge_scope" in result["metadata"]:
-        _validate_challenge_scope(result["metadata"], out_dir, repository=repository)
-    ledger_path = out_dir / "loop-ledger.json"
-    completed = subprocess.run(  # noqa: S603 - argv list, no shell
-        [sys.executable, str(Path(__file__).with_name("adversarial_loop.py")), "--ledger", str(ledger_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode:
-        raise SystemExit("adversarial-loop-invalid-ledger:" + completed.stderr.strip())
-    # Historical schema-1 ledgers rewrote every round inline; a current result keeps rounds in the append-only log.
-    ledger = load_ledger(ledger_path)
-    if ledger["schema_version"] != LOOP_LEDGER_SCHEMA_VERSION:
-        raise SystemExit("adversarial-loop-ledger-schema-v2-required")
-    action_contract = result.get("metadata", {}).get("action_contract_version")
-    # Actions schema 3 names an invariant on every action; schema-1 and schema-2 records stay archives only.
-    if type(action_contract) is not int or action_contract != 3:
-        raise SystemExit("adversarial-loop-action-contract-required")
-    actions_path = out_dir / "loop-actions.json"
-    actions = subprocess.run(  # noqa: S603 - argv list, no shell
-        [
-            sys.executable,
-            str(Path(__file__).with_name("adversarial_loop.py")),
-            "--ledger",
-            str(ledger_path),
-            "--actions",
-            str(actions_path),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if actions.returncode:
-        raise SystemExit("adversarial-loop-invalid-actions:" + actions.stderr.strip())
-    if _load_json(actions_path).get("schema_version") != action_contract:
-        raise SystemExit("adversarial-loop-action-contract-required")
-    summary = json.loads(completed.stdout)
-    if result.get("metadata", {}).get("adversarial_loop") != summary:
-        raise SystemExit("adversarial-loop-summary-mismatch")
-    if result["status"] == "pass" and summary["reason"] != "clean":
-        raise SystemExit("adversarial-loop-incomplete-review")
-    review_gate = next(check for check in gates["checks"] if check["id"] == "review")
-    if summary["reason"] != "clean" and (review_gate["status"] != "fail" or "review" not in result["checks_failed"]):
-        raise SystemExit("adversarial-loop-nonclean-review-gate")
-    snapshots = [("current.diff", ledger["current_snapshot"])]
-    snapshots.extend((f"round-{item['index']}.diff", item["snapshot"]) for item in ledger["rounds"])
-    for filename, snapshot in snapshots:
-        path = out_dir / filename
-        if not path.is_file() or not path.resolve().is_relative_to(out_dir.resolve()):
-            raise SystemExit(f"adversarial-loop-snapshot-missing:{filename}")
-        if hashlib.sha256(path.read_bytes()).hexdigest() != snapshot["diff_digest"]:
-            raise SystemExit(f"adversarial-loop-snapshot-digest-mismatch:{filename}")
-    for item in ledger["rounds"]:
-        report = out_dir / item["report_path"]
-        if not report.resolve().is_relative_to(out_dir.resolve()) or not report.is_file():
-            raise SystemExit("adversarial-loop-report-missing-or-outside-run")
-        if not report.read_text(encoding="utf-8").strip():
-            raise SystemExit("adversarial-loop-report-empty")
-    counts = (
-        summary["rounds"][-1]["counts"]
-        if summary["rounds"]
-        else dict.fromkeys(("security", "critical", "high", "medium", "low", "nit"), 0)
-    )
-    expected_findings = {
-        "critical": counts["critical"] + counts["security"],
-        "high": counts["high"],
-        "medium": counts["medium"],
-        "low": counts["low"] + counts["nit"],
-    }
-    if result["findings"] != expected_findings:
-        raise SystemExit("adversarial-loop-finding-count-mismatch")
-    _validate_adversarial_loop_rows(out_dir, ledger, summary, table_version=table_version)
-    evidence_validator = (
-        Path(__file__).resolve().parent.parent / "skills" / "challenge-resolve" / "validate_evidence.py"
-    )
-    evidence = subprocess.run(  # noqa: S603 - argv list, no shell
-        [sys.executable, str(evidence_validator), "--out", str(out_dir)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if evidence.returncode:
-        raise SystemExit("adversarial-loop-evidence-invalid:" + evidence.stderr.strip())
-    loop_evidence = _load_json(out_dir / "loop-evidence.json")
-    if (candidate or current_result) and (
-        type(loop_evidence.get("schema_version")) is not int
-        or loop_evidence["schema_version"] not in {2, 3}
-        or "origin" not in loop_evidence
-    ):
-        raise SystemExit("adversarial-loop-evidence-contract-required")
-    if "origin" in loop_evidence and result["metadata"].get("challenge_origin") != loop_evidence["origin"]:
-        raise SystemExit("adversarial-loop-origin-mismatch")
-
-
-def _validate_challenge_scope(
-    metadata: dict[str, Any],
-    out_dir: Path,
-    *,
-    summary: bool = False,
-    stopped: bool = False,
-    repository: Path | None = None,
-) -> dict[str, Any] | None:
-    """Recheck declared chunk coverage and return a clean or stopped child-backed summary."""
-    scope = metadata.get("challenge_scope")
-    if not isinstance(scope, dict):
-        raise SystemExit("adversarial-loop-challenge-scope-required")
-    chunks_dir = out_dir / "chunks"
-    if scope == {"mode": "single"}:
-        if chunks_dir.exists() or chunks_dir.is_symlink():
-            raise SystemExit("adversarial-loop-challenge-scope-mismatch")
-        return
-    mode = scope.get("mode")
-    if mode not in ("chunked", "scoped") or scope != {
-        "mode": mode,
-        "manifest_path": "chunks/chunks.json",
-        "results_path": "chunks/results.json",
-    }:
-        raise SystemExit("adversarial-loop-challenge-scope-invalid")
-    manifest = chunks_dir / "chunks.json"
-    results = chunks_dir / "results.json"
-    if (
-        chunks_dir.is_symlink()
-        or manifest.is_symlink()
-        or results.is_symlink()
-        or not manifest.is_file()
-        or not results.is_file()
-        or not manifest.resolve().is_relative_to(out_dir.resolve())
-        or not results.resolve().is_relative_to(out_dir.resolve())
-    ):
-        raise SystemExit("adversarial-loop-chunk-coverage-invalid")
-    # Prevent an old exhaustive result label from promoting a scoped manifest, or vice versa.
-    try:
-        manifest_value = json.loads(manifest.read_bytes())
-    except (OSError, ValueError):
-        manifest_value = None
-    manifest_version = manifest_value.get("schema_version") if isinstance(manifest_value, dict) else None
-    if type(manifest_version) is int and manifest_version in (1, 2):
-        if manifest_version != {"chunked": 1, "scoped": 2}[mode]:
-            raise SystemExit("adversarial-loop-chunk-coverage-invalid:scope-schema-mismatch")
-    checker = Path(__file__).resolve().parent.parent / "skills" / "challenge-resolve" / "chunk_diff.py"
-    checked = subprocess.run(  # noqa: S603 - argv list, no shell
-        [
-            sys.executable,
-            str(checker),
-            "check-stopped" if stopped else "check",
-            "--manifest",
-            str(manifest),
-            "--results",
-            str(results),
-        ]
-        + (["--repository", str(repository)] if repository is not None else [])
-        + (["--summary"] if summary else []),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if checked.returncode:
-        raise SystemExit("adversarial-loop-chunk-coverage-invalid:" + checked.stderr.strip())
-    if not summary:
-        return None
-    try:
-        return json.loads(checked.stdout)
-    except json.JSONDecodeError as error:
-        raise SystemExit("adversarial-loop-chunk-summary-invalid") from error
-
-
-def _validate_scoped_coverage_limit(checked: dict[str, Any], handoff: dict[str, Any]) -> None:
-    """Require the checked semantic-coverage limit in the human-visible handoff."""
-    limit = checked.get("coverage_limit")
-    confidence = handoff.get("confidence")
-    remaining = handoff.get("remaining")
-    if not isinstance(limit, str) or not limit.strip() or not isinstance(confidence, dict):
-        raise SystemExit("adversarial-loop-scoped-coverage-limit-missing")
-    limits = confidence.get("limits")
-    if not isinstance(limits, list) or not isinstance(remaining, list):
-        raise SystemExit("adversarial-loop-scoped-coverage-limit-missing")
-    visible = [re.sub(r"^\(-0\.\d{2}\)\s*", "", item) for item in limits if isinstance(item, str)]
-    visible.extend(item.get("item") for item in remaining if isinstance(item, dict))
-    if limit not in visible:
-        raise SystemExit("adversarial-loop-scoped-coverage-limit-missing")
-
-
-def _validate_chunked_coordinator(
-    result: dict[str, Any],
-    out_dir: Path,
-    gates: dict[str, Any],
-    *,
-    candidate: bool,
-    current_result: bool = False,
-    repository: Path | None = None,
-) -> None:
-    """Bind a clean or stopped coordinator to checked child evidence without an invented parent score."""
-    recorded = result["metadata"].get("chunked_review")
-    stopped = result["status"] == "fail" and isinstance(recorded, dict) and recorded.get("status") in {None, "stopped"}
-    checked = _validate_challenge_scope(
-        result["metadata"], out_dir, summary=True, stopped=stopped, repository=repository
-    )
-    if not isinstance(checked, dict) or not checked.get("runs"):
-        raise SystemExit("adversarial-loop-chunk-summary-invalid")
-    manifest_path = out_dir / "chunks" / "chunks.json"
-    if manifest_path.is_file():
-        manifest = _load_json(manifest_path)
-        scope = result["metadata"].get("challenge_scope", {})
-        mode = scope.get("mode", "chunked") if isinstance(scope, dict) else "chunked"
-        expected_version = {"chunked": 1, "scoped": 2}.get(mode) if isinstance(mode, str) else None
-        if current_result and (
-            type(manifest.get("schema_version")) is not int or manifest["schema_version"] != expected_version
-        ):
-            raise SystemExit("adversarial-loop-chunk-origin-contract-required")
-        if manifest.get("schema_version") in (1, 2) and result["metadata"].get("challenge_origin") != manifest.get(
-            "origin"
-        ):
-            raise SystemExit("adversarial-loop-chunk-origin-mismatch")
-    metadata = result["metadata"]
-    if metadata.get("chunked_review") != checked or "adversarial_loop" in metadata:
-        raise SystemExit("adversarial-loop-chunk-summary-mismatch")
-    review_gate = next(check for check in gates["checks"] if check["id"] == "review")
-    if stopped:
-        if (
-            result["status"] != "fail"
-            or review_gate["status"] != "fail"
-            or "review" not in result["checks_failed"]
-            or any(result["findings"].values())
-        ):
-            raise SystemExit("adversarial-loop-chunk-coordinator-must-stop")
-    elif (
-        result["status"] != "pass"
-        or review_gate["status"] != "pass"
-        or result["checks_failed"]
-        or any(result["findings"].values())
-        or any(
-            run.get("decision") != "clean" or not run.get("scores") or run["scores"][-1] != 0 for run in checked["runs"]
-        )
-    ):
-        raise SystemExit("adversarial-loop-chunk-coordinator-clean-result-invalid")
-    handoff = _load_json(out_dir / "final-handoff.json")
-    scope = metadata.get("challenge_scope")
-    if isinstance(scope, dict) and scope.get("mode") == "scoped":
-        _validate_scoped_coverage_limit(checked, handoff)
-    if candidate and handoff.get("presentation_version") not in {3, 8, 9, 10, 11, 12, 13, 14, 15}:
-        raise SystemExit("adversarial-loop-child-scores-presentation-required")
-    if (
-        handoff.get("presentation_version") in {3, 8, 9, 10, 11, 12, 13, 14, 15}
-        and handoff.get("child_runs") != checked["runs"]
-    ):
-        raise SystemExit("adversarial-loop-child-scores-mismatch")
-    rows = [row["cells"] for table in handoff["tables"] for row in table["rows"]]
-    if any(row.get("admission") == "advisory" for table in handoff["tables"] for row in table["rows"]):
-        raise SystemExit("adversarial-loop-coordinator-advisory-invalid")
-    if rows != [["not-run", *(["N/A"] * 7), "chunk-only", "chunks/results.json"]]:
-        raise SystemExit("adversarial-loop-chunk-coordinator-table-mismatch")
-    if stopped and (not handoff["remaining"] or not handoff["next_steps"]):
-        raise SystemExit("adversarial-loop-recovery-guidance-missing")
-
-
-def _validate_adversarial_loop_rows(
-    out_dir: Path, ledger: dict[str, Any], summary: dict[str, Any], *, table_version: int
-) -> None:
-    """Keep displayed round scores and decisions equal to their ledger evidence."""
-    handoff = _load_json(out_dir / "final-handoff.json")
-    records = [row for table in handoff["tables"] for row in table["rows"]]
-    advisory = [row for row in records if table_version == 2 and row.get("admission") == "advisory"]
-    rows = [row["cells"] for row in records if row not in advisory]
-    for row in advisory:
-        challenge_report_path(out_dir, row["cells"][-1])
-    expected = []
-    seen: set[str] = set()
-    weights = {"security": 20, "critical": 10, "high": 6, "medium": 4, "low": 2, "nit": 1}
-    for item in summary["rounds"]:
-        round_record = ledger["rounds"][item["index"] - 1]
-        report = round_record["report_path"]
-        counts = item["counts"]
-        if table_version in {1, 2}:
-            new_counts = dict.fromkeys(weights, 0)
-            for finding in round_record["findings"]:
-                if (
-                    finding["disposition"] in {"open", "fixed-pending-verification"}
-                    and finding["signature"] not in seen
-                ):
-                    new_counts[finding["tier"]] += 1
-            new_score = sum(new_counts[tier] * weight for tier, weight in weights.items())
-            expected.append(
-                [
-                    str(item["index"]),
-                    *(f"{counts[tier] - new_counts[tier]} + {new_counts[tier]}" for tier in weights),
-                    f"{item['score'] - new_score} + {new_score}",
-                    item["decision"],
-                    report,
-                ]
-            )
-        seen.update(finding["signature"] for finding in round_record["findings"])
-    if not expected and not advisory:
-        expected = [["not-run", *(["N/A"] * 7), summary["reason"], "loop-report.md"]]
-    if rows != expected:
-        raise SystemExit("adversarial-loop-table-mismatch")
-    if summary["reason"] != "clean" and (not handoff["remaining"] or not handoff["next_steps"]):
-        raise SystemExit("adversarial-loop-recovery-guidance-missing")
 
 
 def _validate_release_communication(result: dict[str, Any], out_dir: Path, gates: dict[str, Any]) -> None:
@@ -4590,217 +4616,6 @@ def _validate_code_remediate_pass_closure(result: dict[str, Any], metadata: dict
             raise SystemExit("code-remediate-pass-with-required-unresolved-work")
 
 
-def _audit_cost_artifact(out_dir: Path, record: object, field: str) -> Any:
-    """Read digest-bound audit evidence without accepting paths outside the run."""
-    if not isinstance(record, dict) or set(record) != {"path", "sha256"}:
-        raise SystemExit(f"audit-cost-invalid-evidence:{field}")
-    raw_path = record["path"]
-    if not isinstance(raw_path, str) or not raw_path or "\\" in raw_path:
-        raise SystemExit(f"audit-cost-invalid-path:{field}")
-    declared = PurePosixPath(raw_path)
-    if declared.is_absolute() or PureWindowsPath(raw_path).drive or ".." in declared.parts:
-        raise SystemExit(f"audit-cost-invalid-path:{field}")
-    path = out_dir.resolve() / declared
-    components = [out_dir.resolve().joinpath(*declared.parts[:index]) for index in range(1, len(declared.parts) + 1)]
-    if any(component.is_symlink() for component in components) or not path.is_file():
-        raise SystemExit(f"audit-cost-missing-evidence:{field}")
-    if not path.resolve().is_relative_to(out_dir.resolve()):
-        raise SystemExit(f"audit-cost-invalid-path:{field}")
-    if record["sha256"] != hashlib.sha256(path.read_bytes()).hexdigest():
-        raise SystemExit(f"audit-cost-evidence-digest-mismatch:{field}")
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (ValueError, UnicodeError) as error:
-        raise SystemExit(f"audit-cost-invalid-json:{field}") from error
-
-
-def _audit_cost_number(value: object, field: str, *, positive: bool = False) -> float:
-    """Reject boolean, nonfinite, or negative cost and failure measurements."""
-    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
-        raise SystemExit(f"audit-cost-invalid-number:{field}")
-    if value < 0 or (positive and value == 0):
-        raise SystemExit(f"audit-cost-invalid-number:{field}")
-    return float(value)
-
-
-def _validate_audit_evidence(result: dict[str, Any], gates: dict[str, Any], out_dir: Path) -> None:
-    """Require assessed audit completion and retained proof for optimization acceptance.
-
-    Validation establishes evidence shape, digest integrity, matching identities, and declared guard outcomes. The
-    workflow owner still verifies source completeness, reviewer independence, and provider provenance.
-    """
-    if result["status"] == "pass" and not any(
-        check["id"] == "review" and check["status"] == "pass" for check in gates["checks"]
-    ):
-        raise SystemExit("audit-review-gate-required")
-    consolidation = result["metadata"].get("consolidation")
-    if result["metadata"].get("axis") == "consolidate" or consolidation is not None:
-        if not isinstance(consolidation, dict):
-            raise SystemExit("audit-consolidation-evidence-required")
-        report = _audit_cost_artifact(out_dir, consolidation.get("report"), "consolidation")
-        try:
-            settled = settle_consolidation(report)
-        except (OSError, ValueError) as error:
-            raise SystemExit(f"audit-consolidation-invalid:{error}") from error
-        if consolidation.get("outcomes") != settled["outcomes"]:
-            raise SystemExit("audit-consolidation-settlement-mismatch")
-        cost = result["metadata"].get("value_per_token")
-        if isinstance(cost, dict) and cost.get("status") == "accepted":
-            raise SystemExit("audit-consolidation-advisory-only")
-    value = result["metadata"].get("value_per_token")
-    if value is None:
-        return
-    if not isinstance(value, dict) or value.get("status") not in {
-        "not-run",
-        "insufficient-evidence",
-        "rejected",
-        "accepted",
-    }:
-        raise SystemExit("audit-cost-invalid-status")
-    if value["status"] != "accepted":
-        return
-    if type(value.get("schema_version")) is not int or value["schema_version"] != 2:
-        raise SystemExit("audit-cost-acceptance-schema-required")
-    for field in ("scope_roots", "conditional_load_trace", "residual_limits"):
-        if (
-            not isinstance(value.get(field), list)
-            or not value[field]
-            or not all(isinstance(item, str) and item.strip() for item in value[field])
-        ):
-            raise SystemExit(f"audit-cost-missing-evidence:{field}")
-    for field in ("baseline_sha256", "candidate_sha256"):
-        if not isinstance(value.get(field), str) or not re.fullmatch(r"[0-9a-f]{64}", value[field]):
-            raise SystemExit(f"audit-cost-invalid-digest:{field}")
-    if value["baseline_sha256"] == value["candidate_sha256"]:
-        raise SystemExit("audit-cost-unchanged-snapshot")
-    if not isinstance(value.get("decision"), str) or not value["decision"].strip():
-        raise SystemExit("audit-cost-missing-decision")
-    measurements = value.get("static_measurements")
-    if not isinstance(measurements, list) or not measurements:
-        raise SystemExit("audit-cost-missing-measurements")
-    for measurement in measurements:
-        if not isinstance(measurement, dict) or measurement.get("source") not in {
-            "provider-native",
-            "tiktoken:o200k_base",
-        }:
-            raise SystemExit("audit-cost-token-source-required")
-        for field in ("baseline_sha256", "candidate_sha256"):
-            if measurement.get(field) != value[field]:
-                raise SystemExit("audit-cost-measurement-snapshot-mismatch")
-        for field in ("baseline_tokens", "candidate_tokens"):
-            _audit_cost_number(measurement.get(field), field, positive=True)
-    map_path = value.get("obligation_map_path")
-    if not isinstance(map_path, str) or not map_path:
-        raise SystemExit("audit-cost-missing-obligation-map")
-    obligations = _audit_cost_artifact(
-        out_dir, {"path": map_path, "sha256": value.get("obligation_map_sha256")}, "obligation-map"
-    )
-    if (
-        not isinstance(obligations, list)
-        or not obligations
-        or not all(
-            isinstance(item, dict)
-            and item.get("preserved") is True
-            and all(
-                isinstance(item.get(field), str) and item[field].strip()
-                for field in ("baseline", "candidate", "evidence")
-            )
-            for item in obligations
-        )
-    ):
-        raise SystemExit("audit-cost-obligation-map-incomplete")
-    static_gates = value.get("static_gates")
-    expected = {"package", "tests", "calibration", "contract-markers", "adversarial-review"}
-    if not isinstance(static_gates, list) or len(static_gates) != len(expected):
-        raise SystemExit("audit-cost-static-guards-required")
-    seen: set[str] = set()
-    for guard in static_gates:
-        if (
-            not isinstance(guard, dict)
-            or not isinstance(guard.get("id"), str)
-            or guard.get("id") not in expected
-            or guard["id"] in seen
-            or guard.get("status") != "pass"
-        ):
-            raise SystemExit("audit-cost-static-guard-failed")
-        seen.add(guard["id"])
-        proof = _audit_cost_artifact(out_dir, guard.get("evidence"), guard["id"])
-        if (
-            not isinstance(proof, dict)
-            or proof.get("status") != "pass"
-            or any(proof.get(field) != value[field] for field in ("baseline_sha256", "candidate_sha256"))
-        ):
-            raise SystemExit("audit-cost-static-guard-failed")
-    behavioral = _audit_cost_artifact(out_dir, value.get("behavioral_comparison"), "behavioral")
-    live = _audit_cost_artifact(out_dir, value.get("live_comparison"), "live")
-    for comparison in (behavioral, live):
-        if not isinstance(comparison, dict) or any(
-            comparison.get(field) != value[field] for field in ("baseline_sha256", "candidate_sha256")
-        ):
-            raise SystemExit("audit-cost-comparison-snapshot-mismatch")
-    critical = _audit_cost_number(behavioral.get("critical_regressions"), "critical-regressions")
-    baseline_failures = _audit_cost_number(behavioral.get("baseline_failures"), "baseline-failures")
-    candidate_failures = _audit_cost_number(behavioral.get("candidate_failures"), "candidate-failures")
-    if critical != 0 or candidate_failures > baseline_failures:
-        raise SystemExit("audit-cost-behavior-regression")
-    tasks = behavioral.get("tasks")
-    if not isinstance(tasks, list) or not tasks:
-        raise SystemExit("audit-cost-paired-tasks-required")
-    seen_tasks: set[str] = set()
-    for task in tasks:
-        if (
-            not isinstance(task, dict)
-            or not isinstance(task.get("id"), str)
-            or not task["id"].strip()
-            or task["id"] in seen_tasks
-        ):
-            raise SystemExit("audit-cost-invalid-task-identity")
-        seen_tasks.add(task["id"])
-        # Aggregate successes must not conceal worse completion or more tool/check failures on a paired task.
-        assessments = []
-        for side in ("baseline", "candidate"):
-            assessment = task.get(side)
-            if (
-                not isinstance(assessment, dict)
-                or not isinstance(assessment.get("evidence"), list)
-                or not assessment["evidence"]
-                or not all(isinstance(item, str) and item.strip() for item in assessment["evidence"])
-            ):
-                raise SystemExit("audit-cost-task-evidence-required")
-            values = {
-                field: _audit_cost_number(assessment.get(field), f"task-{side}-{field}")
-                for field in ("completion_quality", "tool_failures", "check_failures")
-            }
-            if values["completion_quality"] > 1:
-                raise SystemExit("audit-cost-invalid-completion-quality")
-            assessments.append(values)
-        baseline, candidate = assessments
-        if (
-            candidate["completion_quality"] < baseline["completion_quality"]
-            or candidate["tool_failures"] > baseline["tool_failures"]
-            or candidate["check_failures"] > baseline["check_failures"]
-        ):
-            raise SystemExit("audit-cost-task-behavior-regression")
-    identity = live.get("baseline_identity")
-    if (
-        not isinstance(identity, dict)
-        or set(identity) != {"model", "effort", "task_contract_sha256", "prompt_sha256"}
-        or not all(isinstance(item, str) and item.strip() for item in identity.values())
-        or live.get("candidate_identity") != identity
-    ):
-        raise SystemExit("audit-cost-unmatched-live-identity")
-    if live.get("source") != "provider-native":
-        raise SystemExit("audit-cost-native-live-evidence-required")
-    for field in ("task_contract_sha256", "prompt_sha256"):
-        if not re.fullmatch(r"[0-9a-f]{64}", identity[field]):
-            raise SystemExit("audit-cost-invalid-live-identity-digest")
-    baseline_cost = _audit_cost_number(live.get("baseline_cost"), "baseline-cost", positive=True)
-    candidate_cost = _audit_cost_number(live.get("candidate_cost"), "candidate-cost", positive=True)
-    minimum = _audit_cost_number(live.get("min_cost_reduction"), "minimum-reduction", positive=True)
-    if minimum >= 1 or (baseline_cost - candidate_cost) / baseline_cost + 1e-12 < minimum:
-        raise SystemExit("audit-cost-insufficient-reduction")
-
-
 class _ValidationStep(NamedTuple):
     """One named validation check and the earlier steps whose success it needs."""
 
@@ -4822,6 +4637,8 @@ VALIDATION_HINTS = {
     "routing-": "Compare routing declarations with observed execution and retained source scope; preserve actual "
     "independence requirements and use only the documented recovery route supported by the evidence.",
     "missing-gates-json": "Run run_gates.py into this run directory before writing or validating the result.",
+    "gate-publication-in-progress": "Wait for the gate publisher or recover its retained attempt before validating.",
+    "gate-publication-manifest-changed": "Read the current gate evidence again after publication has completed.",
     "final-handoff-validation-failed": "Re-render final-handoff.json with final_handoff.py render, then rewrite the "
     "result so its final_handoff digests match.",
     "code-remediate-final-handoff-verification-mismatch": "handoff verification must list every gates.json check "
@@ -4844,6 +4661,10 @@ VALIDATION_HINTS = {
     "selected; derive with remediation_finalize.py metadata.",
     "code-remediate-work-bucket-plan-content-mismatch": "resolution_workplan.work_buckets must equal "
     "work-bucket-plan.json work_buckets exactly; derive with remediation_finalize.py metadata.",
+    "code-remediate-production-lifecycle-gates-": "Retain the passing canonical gate run from the integrated "
+    "checkout and bind its exact gates.json to the grouped lifecycle before delivering the commits.",
+    "remediation-grouped-commit-disposition-mismatch": "Report the actual delivered grouped commits using "
+    "the committed disposition and retained production lifecycle evidence.",
     "code-remediate-work-bucket-plan-digest-mismatch": "bucket_plan_sha256 must be the SHA-256 of the "
     "work-bucket-plan.json bytes; derive with remediation_finalize.py metadata.",
     "code-remediate-parallel-approval-evidence-mismatch": "parallel-approval.json must hold exactly plan_sha256, "

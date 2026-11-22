@@ -502,7 +502,7 @@ def native_response_contract(evidence_path: Path, diff_bytes: bytes) -> dict[str
         else None
     )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "evidence_schema_version": 3,
         "request_sha256": _sha256(json.dumps(request, sort_keys=True, ensure_ascii=True).encode("utf-8")),
         "source_sha256": _sha256(source),
@@ -919,7 +919,7 @@ def _validate_review_round(
             if request_text is None:
                 raise ValueError("loop-evidence-preflight-request-invalid")
             expected_contract = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "evidence_schema_version": 3,
                 "request_sha256": _sha256(request_text.encode("utf-8")),
                 "source_sha256": _sha256(source_bytes),
@@ -927,8 +927,13 @@ def _validate_review_round(
                 "diff_sha256": _sha256(diff_bytes),
                 "interaction_requirements": interaction_requirements,
             }
-        if (schema in {7, 8} or "challenge_response" in plan) and plan.get("challenge_response") != expected_contract:
-            raise ValueError("loop-evidence-review-native-binding-mismatch")
+        if schema in {7, 8} or "challenge_response" in plan:
+            # The authenticated manifest replays the original version's dispatch and response checks.
+            contracts = (
+                (expected_contract, {**expected_contract, "schema_version": 1}) if expected_contract else (None,)
+            )
+            if plan.get("challenge_response") not in contracts:
+                raise ValueError("loop-evidence-review-native-binding-mismatch")
         selected_output, reviewer_identity, _ = _selected_native_pass(manifest, review_run, selected_role)
         selector = _selected_native_pass
     elif schema == 4:

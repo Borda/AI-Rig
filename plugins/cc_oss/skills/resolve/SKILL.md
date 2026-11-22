@@ -178,7 +178,7 @@ Execute its blocks (loaded above).
 
 ## Step 3d: User item selection
 
-<!-- loads: item-selection.md -->
+<!-- loads: item-selection.md, exec-approval.md -->
 
 For `bridge:implement`, this gate's recorded user decision naming the selected task set is the approval; workspace is the skill's absolute launch directory and network is `none` unless that decision names otherwise. After the answer, use Write to record the user's decision with its conversation reference, selected task ids, absolute workspace and network in `$IMPL_DIR/bridge-approval.md`; never manufacture approval from an internal invocation. Cite the decision and selected tasks in each dispatch brief; reuse it only for tasks in that set. A subagent may dispatch only when its brief carries the orchestrating skill's recorded approval; otherwise return `blocked` and never dispatch. If no approval exists, use AskUserQuestion before dispatch; if AskUserQuestion is unavailable, return `blocked` and never dispatch.
 
@@ -195,6 +195,15 @@ python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_RESOLVE/modes/item-select
 
 Execute its blocks (loaded above).
 
+`pr` and `pr+report` modes also load `exec-approval.md` **before the first selection call** and re-run its Decide block (idempotent: a recorded decision stays recorded, and it settles anything Step 4 could not). Any approval that still needs the user rides last in the Step 3d calls (slot table in `item-selection.md`). `report` mode skips it.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_RESOLVE/modes/exec-approval.md"  # timeout: 5000
+```
+
 ## Step 7b join: dispatch and collect conflict resolutions — Run 2 coordination
 
 <!-- loads: modes/dispatch-coordination.md -->
@@ -207,12 +216,20 @@ python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_RESOLVE/modes/dispatch-co
 
 ## Step 4: Checkout PR branch
 
-<!-- loads: modes/checkout.md -->
+<!-- loads: modes/checkout.md, modes/exec-approval.md -->
 
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 _OSS_RESOLVE="$PLUGIN_ROOT/skills/resolve"
 python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_RESOLVE/modes/checkout.md"  # timeout: 5000
+```
+
+After checkout, before any merge or action-item commit (every mode that checks out a PR: `pr`, `pr+report`, and `report` with a PR number in its header), load `exec-approval.md` and run its Decide block. It asks nothing; Step 3d asks what is left, and `report` mode, which reaches Step 3d before this checkout, leaves its questions in `exec-plan.txt` for the Step 8 prelude to ask from the saved inspection.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+_OSS_RESOLVE="$PLUGIN_ROOT/skills/resolve"
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$_OSS_RESOLVE/modes/exec-approval.md"  # timeout: 5000
 ```
 
 ## Steps 5–7: Conflict detection, context, and resolution
@@ -344,7 +361,8 @@ Non-calibratable — multi-gate interactive workflow dispatching sub-agents, wit
 - **GROUP_STRATEGY**: values, default `domain`, typed labels → `$IMPL_DIR/group-labels.tsv` — Step 3d topic-group question. Read only when `COMMIT_MODE=grouped`; no strategy adds a user round-trip at Step 8.
 - **DISPATCH_MODE**: values, default `auto`, the 5→8 per-spawn widening and the never-widened correctness guards — Step 3d dispatch-granularity question. Read by Phase 2 for sub-group splitting and wave width only. Distinct from `GROUP_STRATEGY=specialist`, a commit-grouping strategy on its own sentinel. `preview` resolves at the Phase 1 → Phase 2 gate (`dispatch-phase2.md`) to one of the other three.
 - **AskUserQuestion usage**: the normal action-item path, after successful source resolution and without diagnostic or conflict recovery, takes at most 3 calls at Step 3d (10-18 pending: two checkbox pages + the commit-mode/topic-group/dispatch/push-intent follow-up; every other nonempty band takes 2, while zero pending with no closed items and a PR takes 1 push-intent call) plus 1 Step 10 push confirmation unless the push intent was an explicit "don't push" or a Step 3d run approval (`git-push-run` `Approve`, which is itself the push authorization) — plus 1 Step 10 drift question first when `BASE_FRESH=no`. Picking topic-group (d) without typing labels adds one Step 3d call for the topic-label question.
-  - Every decision a later step needs and can see at Step 3d is asked there: commit mode, grouping strategy and typed labels, dispatch width, push intent, and the post-PR browser action. Between Step 3d and the Step 10 push confirmation, nothing is asked on this path.
+  - Every decision a later step needs and can see at Step 3d is asked there: commit mode, grouping strategy and typed labels, dispatch width, push intent, the post-PR browser action, and in `pr` and `pr+report` modes the PR-code sandbox question (fork PRs) and the repository-hook question (PR changes hook inputs). Between Step 3d and the Step 10 push confirmation, nothing is asked on this path.
+  - The two execution approvals (`exec-approval.md`) ask last. They share the last Step 3d call when it has a free slot; in the 4-18 pending bands they add one extra call straight after it, so an approval that needs the user raises the longest Step 3d path from 3 calls to 4; with none needed the count above holds. The PR-code question is skipped, and the tests run in the sandbox, when `oss:review` scanned the same head (`code-safety.json` beside the report, risk `none`), this run's scan also finds nothing and this host has a usable sandbox; the report says so. Any finding, a moved head, a missing review record or a host without a sandbox asks, with the sandbox as the first option.
   - Only `DISPATCH_MODE=preview` adds a call after Step 3d — the user elects it there by choosing Custom.
   - Other paths can add questions for unsupported flags, missing reports, too many conflicts, codemap index gates (all before Step 3d), an unresolved item status, a challenge that timed out twice (one batched question per wave), a lost typed-labels file, or a push-intent question left unanswered at Step 3d (Step 10 then also asks the post-PR question); they are outside this normal-path count.
   - The Step 3d push question has two forms. In `pr` and `pr+report` (Step 4 done, remote, head ref and PR head known) it is the `git-push-run` run approval: `Approve` authorizes the one push of the run, Step 10 asks nothing unless the guard refuses it, and the post-PR action stays `skip` (the report's Link line opens the PR). Otherwise (`report` mode) it is the intent menu: push intent and the post-PR browser action in one 4-option menu, Step 10 then asks the scope-bearing confirmation (Q1, plus Q2 only without a recorded intent) and Step 11 reads the stored post-PR action.

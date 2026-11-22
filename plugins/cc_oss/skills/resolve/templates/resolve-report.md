@@ -69,6 +69,14 @@
 
 > Report the linting-expert fix count or “no violations,” and the foundry:qa-specialist blocking-fix and warning counts or “clean.”
 
+**PR code**: \[one line from `$IMPL_DIR/pr-code-decision.txt`\]
+
+> Only for a fork PR. `auto`: `sandbox approved without asking — review and this run's scan both risk none at head <first 12 chars of PR_HEAD_OID>`; `sandbox`: `sandbox approved`; `unsandboxed`: `run WITHOUT sandbox approved (your choice)`; `deny`, `stale` or any other content: `tests not run — PR-code execution not approved`. The line states the approval only, never that code ran: whether tests ran comes from the execution-gap lines (a guard refusal or a skipped selection still reports `tests not run`). Omit the line for a same-repo PR and when the file is absent (a `report` run with no PR number records none). This line is the only place the user sees why the question was skipped, since Bash output is not reliably shown.
+
+**Repository hooks**: `disabled from the merge on — the approved hooks changed (base merge or conflict resolution); commits ran without hooks`
+
+> Only when `$IMPL_DIR/hooks-decision.txt` reads `stale` (the merge-commit refresh in `conflict-resolution.md` set the approval aside); omit the line otherwise.
+
 ### Push
 
 ✓ Pushed to [Remote]/[Branch] — N new commits

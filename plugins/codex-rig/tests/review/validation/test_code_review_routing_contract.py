@@ -694,27 +694,20 @@ class TestPathInventoryRouting:
 
         Both names are literal text files, so risk stays TRIVIAL and no Python source review is demanded.
         """
-        from collect_pr import _review_artifacts
+        from collect_pr import PRTarget, _pr_routing
 
         paths = ['"auth"', '"bad\\x.py"']
         payload = {"state": "OPEN", "body": "review", "files": [{"path": path} for path in paths]}
         _write_json(tmp_path / "pr.json", payload)
-        _review_artifacts(
-            payload,
-            [],
-            tmp_path,
-            base_repo="owner/repo",
-            base_host="github.com",
-            thread_error=None,
-            pr_metadata_transport="gh",
-        )
+        _write_json(tmp_path / "pr-routing.json", _pr_routing(payload, PRTarget("owner", "repo", 1), tmp_path, "gh"))
+        (tmp_path / "files.txt").write_text("\n".join(paths) + "\n", encoding="utf-8", newline="\n")
         patch = "".join(
             f"diff --git {json.dumps('a/' + path)} {json.dumps('b/' + path)}\n"
             f"--- /dev/null\n+++ {json.dumps('b/' + path)}\n"
             for path in paths
         )
         (tmp_path / "diff.patch").write_text(patch, encoding="utf-8", newline="\n")
-        # No files.txt: the PR file inventory is derived from pr.json and the patch, not from a local listing.
+        # The PR listing contains literal GitHub paths and must not be unquoted as a local Git listing.
         (tmp_path / "untracked.txt").write_bytes(b"")
         (tmp_path / "numstat.txt").write_bytes(b"")
         _write_routing(tmp_path, _routing_record(_signals(), evidence=_size_evidence(2, 0)))

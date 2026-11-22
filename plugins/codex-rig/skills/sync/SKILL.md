@@ -94,7 +94,7 @@ On native Windows, use PowerShell:
 
 The helper has no positional install verb:
 
-- Owns the marked `CODEX_HOME/config.toml` profile settings and state file. The profile extends `:workspace`, enables the network proxy for `api.github.com` and `github.com`, and permits `.git` writes under workspace roots. GitHub helper validation and the remote-mutation ban remain mandatory because domain rules do not restrict HTTP methods.
+- Owns the marked `CODEX_HOME/config.toml` profile settings and state file. The profile extends `:workspace`, enables the network proxy for `api.github.com` and `github.com`, and permits `.git` writes under workspace roots. GitHub helper validation remains mandatory because domain rules do not restrict HTTP methods, and read approval grants no publish authority: the PR worktree publication gate is the only Codex remote write route.
 - Validate installed cache location, manifest name/version, complete package hashes/closure, ordinary reader, owned state, and unchanged managed config settings. Refuse a conflicting user profile or edited owned content.
 - Remove only verified plugin-owned legacy reader and PR rules; migrate exact canonical reader entries from `default.rules`. Preserve unrelated bytes. Repeated setup is idempotent.
 - `--no-codex-global-agents` skips only global `AGENTS.md` block. Native `sync_codex.py clear` invokes `--remove --codex-home <CODEX_HOME>` before removing plugins and restores prior root/feature settings while preserving unrelated later edits.

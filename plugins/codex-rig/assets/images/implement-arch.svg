@@ -31,6 +31,8 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <rect x="610" y="104" width="34" height="18" rx="5" fill="#fff" stroke="#c8ccf2" stroke-dasharray="4 3"/>
 <text x="652.0" y="116.0" font-size="10.5" fill="#454d87" font-weight="400" text-anchor="start">↺ reuse ghost</text>
 <text x="752.0" y="116.0" font-size="10.5" fill="#6b72a8" font-weight="400" text-anchor="start">FAN n = concurrent lanes</text>
+<g transform="translate(40 140)"><rect x="0" y="-9" width="103" height="18" rx="5" stroke="#17766e" fill="#e1f4ef"/><text x="51.5" y="3.8" text-anchor="middle" font-size="11" font-weight="700" fill="#145e55">Sandbox eligible</text></g><text x="153" y="144" font-size="11.5" fill="#275b55">Clean, verified macOS linked worktree · read-only Ruff or declared single-process pytest</text>
+
 <g class="fi" style="--d:0.26s">
 <rect x="40" y="170" width="280" height="105" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/>
 <rect x="40" y="171" width="5.5" height="103" rx="2.75" fill="#6670b8"/>
@@ -284,6 +286,8 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <text x="526.0" y="1493.0" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Shared quality gates</text>
 <text x="526.0" y="1512.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">development-notes.md</tspan> first</text>
 <text x="526.0" y="1529.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">run_gates.py</tspan>: review · tests · artifact</text>
+<g transform="translate(784 1525)"><rect x="0" y="-9" width="103" height="18" rx="5" stroke="#17766e" fill="#e1f4ef"/><text x="51.5" y="3.8" text-anchor="middle" font-size="11" font-weight="700" fill="#145e55">Sandbox eligible</text></g>
+
 <text x="526.0" y="1546.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">lint · types · calibration if changed</tspan></text>
 <use href="#gate" x="862.0" y="1467.0"/>
 </g>

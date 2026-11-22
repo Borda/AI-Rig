@@ -150,9 +150,11 @@ def test_import_bound_pytest_keeps_cache_and_coverage_outside_clean_source(
     completed = subprocess.run(arguments, cwd=tmp_path, capture_output=True, check=False)
 
     assert completed.returncode == 0, (output / "checks/tests.stderr.txt").read_text(encoding="utf-8")
-    assert (output / "checks/pytest-cache").is_dir()
-    assert (output / "checks/.coverage").read_bytes().startswith(b"SQLite format 3")
-    assert 'filename="tracked.py"' in (output / "checks/coverage.xml").read_text(encoding="utf-8")
+    command = (output / "checks/tests.command.txt").read_text(encoding="utf-8")
+    scratch = Path(json.loads(command.removeprefix("argv-json:"))[5]).parent
+    assert (scratch / "pytest-cache").is_dir()
+    assert (scratch / ".coverage").read_bytes().startswith(b"SQLite format 3")
+    assert 'filename="tracked.py"' in (scratch / "coverage.xml").read_text(encoding="utf-8")
     assert "tracked.py" in (output / "checks/tests.stdout.txt").read_text(encoding="utf-8")
     assert not (tmp_path / "caller.coverage").exists()
     assert not list(repository.glob(".coverage*"))
@@ -187,13 +189,17 @@ def test_worktree_child_tools_keep_caches_in_gate_output(
 
 @pytest.mark.integration
 @_skip_without_symlinks
-def test_linked_selection_file_fails_before_copying_cache(gates: ModuleType, repository: Path, tmp_path: Path) -> None:
+def test_linked_selection_file_fails_before_copying_cache(
+    gates: ModuleType, repository: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A symlink in the configured donor cache cannot copy an outside file into workflow evidence."""
     donor = repository / ".pytest_cache/v/cache"
     donor.mkdir(parents=True)
     outside = tmp_path / "outside"
     outside.write_text('{"test_tracked.py::test_value": true}', encoding="utf-8")
     (donor / "lastfailed").symlink_to(outside)
+    # An enclosing gate passes its own cache to subprocesses. This child exercises the repository's default cache.
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
     output = tmp_path / "out"
     output.mkdir()
     args = [sys.executable, "-m", "pytest", "--lf", "-p", "no:xdist"]

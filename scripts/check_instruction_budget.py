@@ -151,7 +151,10 @@ BUDGETS = (
     # Raised by 19 bytes for the rtk line (use rtk only after `command -v rtk`, fall back raw only before its child
     # starts, never re-run on the child's exit code): the line grew by 77 bytes, 58 of them taken from the headroom
     # the previous raise left. It must be in force before the first shell command, so a lazy home cannot carry it.
-    Budget("plugins/codex-rig/assets/AGENTS.md", 43612),
+    # Raised by 132 bytes for the remote-write boundary that now names the one gated PR worktree publication route
+    # (two sentences replaced shorter "never push" statements). Every Codex session reads it before any git or gh
+    # command, so a lazy home would let the old absolute wording stand until the contract file is loaded.
+    Budget("plugins/codex-rig/assets/AGENTS.md", 43744),
 )
 
 

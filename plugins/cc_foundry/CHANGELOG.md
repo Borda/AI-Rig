@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.82.0
+
+- Checks approved for an exact commit stop if files change, are deleted or new files appear before execution.
+- Claude credits Codex without a question. Codex calls made by this conversation, including its subagents' calls, are judged by whether Codex shaped the commit. With no such call since the last commit, a Codex thread or bridge record from another session adds the credit. A timed-out call no longer prompts you about attribution.
+- `/oss:resolve` skips the fork PR code question when review and its own scan both found the same commit clean and the host has a sandbox; its tests then run in the sandbox. The report identifies the commit and how the tests ran.
+- Checks approved for an exact commit also stop when a file's executable bit or symlink type changes, matching how Git judges it. The untrusted-code rule now states that resolve stays in the sandbox and only review runs the exact scanned commit without one.
+- Checks approved for an exact commit accept a checkout Git calls clean after line-ending or text conversion (`core.autocrlf`, `eol`, `text`), and sandboxed resolve runs no longer stop on CRLF copies of dependency files. Files routed through a clean or smudge filter (LFS style) are still judged on their raw bytes and refused.
+
 ## 0.81.2
 
 - The rtk rewrite hook now routes only `git status` (not with `-b`/`--branch`, a machine-read branch header rtk rewrites, and not when a quote, backslash, `$` or `{` could hide that flag, as in `git status "-sb"`), the one verb whose rtk output kept every path in a measured comparison with the command the agent runs. `ls` (rtk cuts a listing by size and by build-directory names and prints no recall hash inside the sandbox, so the entries are lost there; several paths also lose their `dir:` headers), `grep` (the Bash tool's gitignore-aware shell function, which `rtk grep` does not match: it searched `node_modules` and rejected `-P`), `git log`, `git diff`, `git show`, `wc`, the measured `gh` list and view verbs, and the docker, kubectl, aws, cargo, next and tree verbs now run unchanged, so no output is cut or reshaped without a recovery hint.

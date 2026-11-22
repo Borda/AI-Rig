@@ -631,9 +631,11 @@ class TestChunkedCoordinator:
             "remaining": [],
             "next_steps": [],
         }
-        monkeypatch.setattr(validator, "_validate_challenge_scope", lambda *_, **__: summary)
+        # The coordinator validator lives in the evidence module and resolves these two names there, not on the CLI.
+        owner = sys.modules["review_evidence_validation"]
+        monkeypatch.setattr(owner, "_validate_challenge_scope", lambda *_, **__: summary)
         monkeypatch.setattr(
-            validator,
+            owner,
             "_load_json",
             lambda path: json.loads(path.read_text()) if path.name == "chunks.json" else handoff,
         )

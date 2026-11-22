@@ -53,7 +53,7 @@ Record mode, authorized output paths, target version, working-tree baseline, and
 
 ### 03: Collect release evidence
 
-Use [GitHub Reader Runtime Boundary](../../shared/native-skill-contract.md#github-reader-runtime-boundary) when the normal workflow calls `github_read.py`. Do not create or modify runtime approval rules files. Runtime denial stops the current attempt under the existing recovery policy. Remote publication, tagging, uploading, and other remote mutation remain forbidden.
+Use [GitHub Reader Runtime Boundary](../../shared/native-skill-contract.md#github-reader-runtime-boundary) when the normal workflow calls `github_read.py`. Do not create or modify runtime approval rules files. Runtime denial stops the current attempt under the existing recovery policy. Remote publication, tagging, uploading, and other remote mutation remain forbidden; the PR worktree publication gate is not available to this skill.
 
 Follow `release-evidence.md`: pin the release head, select a channel-appropriate baseline, inventory the release branch, and subtract changes already shipped to that release line using ancestry and patch evidence. A nearest tag, same subject, PR number, merge label, or default-branch listing alone cannot establish membership. Save the full candidate log to `<run-directory>/commits.txt` and the scope decision to `release-scope.md`. Initial releases include the root commit; empty or unavailable evidence is never a successful empty release.
 

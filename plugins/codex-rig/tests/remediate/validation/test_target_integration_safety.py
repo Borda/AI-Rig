@@ -56,3 +56,30 @@ def test_integration_rejects_another_repository(collected_source, monkeypatch):
             current_checkout=False,
         )
     execute.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        pytest.param({}, id="missing-coordinates"),
+        pytest.param({"execution_cwd": "elsewhere"}, id="wrong-directory"),
+        pytest.param({"source": None, "execution_cwd": "collected"}, id="malformed-strict-source"),
+        pytest.param({"source": {"worktree": "other"}, "execution_cwd": "collected"}, id="wrong-strict-source"),
+        pytest.param({"source": {"worktree": "collected"}, "execution_cwd": "other"}, id="conflicting-directory"),
+        pytest.param({"execution_cwd": "collected", "checks": [{"source": {}}]}, id="missing-aggregate-source"),
+    ],
+)
+def test_integration_rejects_missing_or_contradictory_coordinates(collected_source, monkeypatch, receipt):
+    """A directory observation cannot replace a missing or conflicting strict source binding."""
+    pr, source = collected_source
+    document = json.dumps(receipt).replace('"collected"', json.dumps(source))
+    (pr.parent / "gates.json").write_text(document, encoding="utf-8")
+    execute = Mock()
+    monkeypatch.setattr(VALIDATOR.subprocess, "run", execute)
+    with pytest.raises(SystemExit, match="target-integration-source-mismatch"):
+        VALIDATOR._validate_code_remediate_target_integration(
+            pr,
+            {"target_oid": "a" * 40, "pre_merge_head": "a" * 40, "post_merge_head": "a" * 40, "status": "not-needed"},
+            current_checkout=False,
+        )
+    execute.assert_not_called()

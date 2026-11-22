@@ -1307,9 +1307,8 @@ def _terminate(process: subprocess.Popen[str]) -> None:
         raise ReviewRouteError("app-server-process-group-cleanup-unproven")
 
 
-def _server_command(codex: Path, disabled_servers: list[str]) -> list[str]:
-    """Build invocation-only local reviewer wave restrictions without changing host configuration."""
-    command = [str(codex), "app-server", "--stdio"]
+def _review_config_args() -> list[str]:
+    """Select the same restricted configuration for server discovery and reviewer startup."""
     overrides = (
         'sandbox_mode="read-only"',
         'approval_policy="never"',
@@ -1331,8 +1330,14 @@ def _server_command(codex: Path, disabled_servers: list[str]) -> list[str]:
         'web_search="disabled"',
         "mcp_servers={}",
     )
-    for override in (*overrides, *(f"mcp_servers.{name}.enabled=false" for name in disabled_servers)):
-        command.extend(("-c", override))
+    return [argument for override in overrides for argument in ("-c", override)]
+
+
+def _server_command(codex: Path, disabled_servers: list[str]) -> list[str]:
+    """Start the read-only reviewer with explicit denials for its configured servers."""
+    command = [str(codex), "app-server", "--stdio", *_review_config_args()]
+    for name in disabled_servers:
+        command.extend(("-c", f"mcp_servers.{name}.enabled=false"))
     return command
 
 
@@ -1390,7 +1395,9 @@ def _discover_mcp_servers(codex: Path, cwd: Path, deadline: float) -> list[str]:
         raise ReviewRouteError("app-server-timeout")
     try:
         completed = subprocess.run(  # noqa: S603 - local configuration listing, no MCP startup
-            [str(codex), "mcp", "list", "--json"],
+            # Plugin-provided servers can disappear under review restrictions. A denial for an absent server
+            # creates a transportless entry, which the CLI rejects before it can verify the effective controls.
+            [str(codex), "mcp", "list", "--json", *_review_config_args()],
             cwd=cwd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,

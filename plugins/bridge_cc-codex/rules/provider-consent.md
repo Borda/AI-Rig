@@ -21,7 +21,7 @@ An absent, invalid, unreadable or unsupported result stops dispatch under standi
 Read the `bridge_bind_workspace` result before any executable call. Only `status=bound` with `binding_status=bound` and a nonempty `binding_id` allows dispatch. A bind attempt clears any earlier binding before it validates, so every outcome below except `bound` leaves the bridge unbound.
 
 | Result | Meaning | Next step |
-| ------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| -- | -- | -- |
 | `status=bound` | The user confirmed the exact folder. | Retain `binding_id`; dispatch. |
 | `status=cancelled` or `declined` | The user declined the form, the typed folder failed validation, or the folder changed meanwhile. | Report it; offer a fresh bind with a known folder; never dispatch. |
 | error `-32602` | The proposal is not an allowed, existing, absolute project folder. | Agree a corrected folder with the user; call again. |

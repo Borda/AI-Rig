@@ -1176,6 +1176,20 @@ class TestReviewOutput:
 class TestCheckHost:
     """No-turn host check: effective denials, thread controls and rejection before any process launch."""
 
+    def test_rejects_enabled_mcp_server_before_starting_threads(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Reject a host that still reports an enabled MCP server after receiving the per-server denial."""
+        plan_path, _ = review_evidence_files(tmp_path)
+        frames = [_response(1, {}), _response(2, _effective_config(disabled=False))]
+        factory = _fake_public_processes(monkeypatch, [frames])
+
+        with pytest.raises(_adapter().ReviewRouteError, match="app-server-mcp-disable-unproven"):
+            _adapter().check_host(plan_path, Path("codex"), 10)
+
+        assert "mcp_servers.local.enabled=false" in factory.commands[0]
+        assert "thread/start" not in _request_methods(factory)
+
     def test_uses_public_preparation_without_turn_start(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Verify effective denials and observed thread controls without a paid model turn.
 

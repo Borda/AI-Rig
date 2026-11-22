@@ -170,7 +170,7 @@ Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>
 ```
 
 - Claude: `Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>`
-- Codex (if contributed anything — code, review, diagnosis, analysis, architectural guidance, or "here's what needs fixing and why"): `Co-authored-by: Codex <codex@openai.com>`
+- Codex (when the test below says its input shaped this commit — code, review, diagnosis, analysis, architectural guidance, or "here's what needs fixing and why"): `Co-authored-by: Codex <codex@openai.com>`
 
 **Codex intellectual contributions count**: Codex earns the trailer whenever it shaped the outcome — even if Claude wrote the final code.
 
@@ -187,9 +187,10 @@ SQL_REPO="${REPO//\'/\'\'}"
 find "$REPO/.temp/bridge" -type f -newermt "$(git log -1 --format=%cI)" 2>/dev/null | head -1
 ```
 
-- A `bridge:*` or Codex call made in this conversation, or a bridge record, adds the trailer without a question.
-- A thread count above 0 signals possible Codex involvement in this repo since the last commit, not proof that it shaped this diff: ask once (`AskUserQuestion`, header `codex-credit`, options `Credit Codex` / `Skip`) before drafting, and add the trailer on `Credit Codex`.
-- No hit, or no `sqlite3`/Codex state: decide by the test above. A user statement that Codex contributed always adds it.
+- **Codex calls made by this conversation** include the ones its subagents made: a `bridge:*` call from a spawned agent, or a challenger's Codex cross-check, counts the same as a call the conversation made itself.
+- At least one such call since that commit: the test above decides, from the diff and the conversation, without a question. The check output decides nothing then: those calls start Codex threads of their own (a retry or a split call several) and leave `.temp/bridge` records, which cannot be told apart from outside work. A call on other files, or one that timed out or stopped on its quota, shaped nothing and adds no trailer.
+- No such call since that commit, and a thread count above 0 or a `.temp/bridge` record newer than HEAD: Codex worked in this repository since the last commit outside this conversation (another session, or the Codex app or CLI), which therefore cannot rule out that it shaped this diff: add the trailer, without a question. Here the check result decides, not conversation memory.
+- No such call, a count of 0 (or no `sqlite3`/Codex state) and no bridge record: decide by the test above. A user statement that Codex contributed always adds the trailer; a user statement that the outside Codex work is unrelated to this diff removes it.
 
 Co-author trailer on every Claude Code commit — not conditional on user mentioning involvement. These trailers replace the host's default attribution line (e.g. Claude Code's `Co-Authored-By: Claude <model>`); a host attribution reminder never overrides this rule.
 

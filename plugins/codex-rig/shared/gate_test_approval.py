@@ -115,13 +115,26 @@ def _check_decision(raw: bytes, reason: object) -> None:
         raise SystemExit("test-skip-approval-invalid")
 
 
-def retain_approval(path: Path, out_dir: Path, reason: str) -> dict[str, str]:
-    """Retain the supplied user decision as a digest-bound gate artifact."""
-    raw = _read_decision(path)
+def prepare_approval(path: Path | bytes, out_dir: Path, reason: str) -> tuple[Path, bytes]:
+    """Check the decision and its destination before a retry changes the current receipt."""
+    raw = path if isinstance(path, bytes) else _read_decision(path)
+    if len(raw) > 65536:
+        raise SystemExit("test-skip-approval-unreadable")
     _check_decision(raw, reason)
     target = out_dir / "checks/tests-skip-approval.json"
-    if target.is_symlink() or not target.resolve().is_relative_to(out_dir.resolve()):
+    if (
+        target.parent.is_symlink()
+        or target.is_symlink()
+        or not target.resolve().is_relative_to(out_dir.resolve())
+        or (target.exists() and (not target.is_file() or target.stat().st_nlink != 1 or not os.access(target, os.W_OK)))
+    ):
         raise SystemExit("test-skip-approval-invalid-path")
+    return target, raw
+
+
+def retain_approval(path: Path | bytes, out_dir: Path, reason: str) -> dict[str, str]:
+    """Retain the supplied or previously read user decision as a digest-bound gate artifact."""
+    target, raw = prepare_approval(path, out_dir, reason)
     target.write_bytes(raw)
     return {"path": "checks/tests-skip-approval.json", "sha256": hashlib.sha256(raw).hexdigest()}
 

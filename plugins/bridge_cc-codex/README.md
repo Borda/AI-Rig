@@ -112,18 +112,18 @@ Every skill and shipped rule is listed here; each links to its own file.
 | [`$bridge:review`](codex-skills/review/)        | Codex       | Read-only adversarial review by Claude Code.                    |
 | [`$bridge:setup`](codex-skills/setup/)          | Codex       | Approval-bound setup lifecycle for the peer.                    |
 
-| Rule                                                             | Covers                                                                                                         |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| [`envelope.md`](rules/envelope.md)                               | Result envelope: model-authored core and harness metadata.                                                     |
-| [`escalation-policy.md`](rules/escalation-policy.md)             | Effort and timeout policy.                                                                                     |
-| [`prompting.md`](rules/prompting.md)                             | Neutral task prompting and budget preamble.                                                                    |
-| [`recursion-guard.md`](rules/recursion-guard.md)                 | Depth and `run_id` propagation.                                                                                |
-| [`self-healing.md`](rules/self-healing.md)                       | Bounded self-healing; no write-timeout retries.                                                                |
-| [`provider-consent.md`](rules/provider-consent.md)               | Claude provider consent.                                                                                       |
-| [`claude-transfer-policy.txt`](rules/claude-transfer-policy.txt) | Exact approved consent block (v2).                                                                             |
-| [`claude-transfer-policy-v1.txt`](rules/claude-transfer-policy-v1.txt) | Superseded v1 block, recognised and reported as outdated until the operator grants again. |
-| [`codex-user-questions.md`](rules/codex-user-questions.md)       | Codex question routing; details in [`codex-user-questions-details.md`](rules/codex-user-questions-details.md). |
-| [`cli-baseline.json`](rules/cli-baseline.json)                   | Verified host CLI surface baseline.                                                                            |
+| Rule                                                                   | Covers                                                                                                         |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| [`envelope.md`](rules/envelope.md)                                     | Result envelope: model-authored core and harness metadata.                                                     |
+| [`escalation-policy.md`](rules/escalation-policy.md)                   | Effort and timeout policy.                                                                                     |
+| [`prompting.md`](rules/prompting.md)                                   | Neutral task prompting and budget preamble.                                                                    |
+| [`recursion-guard.md`](rules/recursion-guard.md)                       | Depth and `run_id` propagation.                                                                                |
+| [`self-healing.md`](rules/self-healing.md)                             | Bounded self-healing; no write-timeout retries.                                                                |
+| [`provider-consent.md`](rules/provider-consent.md)                     | Claude provider consent.                                                                                       |
+| [`claude-transfer-policy.txt`](rules/claude-transfer-policy.txt)       | Exact approved consent block (v2).                                                                             |
+| [`claude-transfer-policy-v1.txt`](rules/claude-transfer-policy-v1.txt) | Superseded v1 block, recognised and reported as outdated until the operator grants again.                      |
+| [`codex-user-questions.md`](rules/codex-user-questions.md)             | Codex question routing; details in [`codex-user-questions-details.md`](rules/codex-user-questions-details.md). |
+| [`cli-baseline.json`](rules/cli-baseline.json)                         | Verified host CLI surface baseline.                                                                            |
 
 <a id="-requirements"></a>
 

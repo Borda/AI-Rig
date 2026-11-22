@@ -528,8 +528,8 @@ def test_git_reads_and_local_configuration_reuse_authorization() -> None:
                 "local config, upstream, and tracking changes",
                 "existing grants or the configured native automatic approval reviewer",
                 "only a verified missing capability",
-                "Never use `git` for remote repository mutation",
-                "no push",
+                "only the optional PR worktree publication gate",
+                "Remote branch/tag deletion and server-side configuration changes are forbidden",
                 "authorized `git pull --ff-only`",
                 "verified upstream and confirmed clean index/worktree",
                 "Do not merge, rebase, reset, discard user changes, or manually change tracking configuration merely to refresh",
@@ -600,7 +600,7 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
                 "A local Git approval grant covers plain commits.",
                 "ordinary finding-fix commits",
                 "leave unstaged",
-                "Codex never performs remote mutations",
+                "Codex remote writes are prohibited outside the optional PR worktree publication gate",
             ),
         )
         == []
@@ -773,8 +773,8 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
         ),
         pytest.param(
             "shared/native-skill-contract.md",
-            "Codex never performs remote mutations or requests approval for them; publication remains human-owned and force operations are forbidden",
-            id="native-remote-mutations-forbidden",
+            "Codex remote writes are prohibited outside the optional PR worktree publication gate. Force operations are forbidden.",
+            id="native-remote-write-scope",
         ),
         pytest.param(
             "shared/native-skill-contract.md",
@@ -1012,7 +1012,7 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
         ),
         pytest.param(
             "shared/native-skill-contract.md",
-            "Codex never performs remote mutations or requests approval for them; push, remote branch deletion, comments, merges and publication remain human-owned.",
+            "The [PR worktree publication gate](#pr-worktree-publication-gate) is the only Codex remote write route.",
             id="native-remote-boundary",
         ),
         pytest.param(
@@ -1033,7 +1033,7 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
         ),
         pytest.param(
             "README.md",
-            "**Codex never performs remote mutations** or requests approval for them",
+            "Codex requires a native user answer and separate one-time runtime approval for that exact non-force push.",
             id="readme-push-asymmetry",
         ),
         pytest.param(
@@ -1051,6 +1051,33 @@ def test_local_git_approval_requires_a_recorded_grant(relative: str, marker: str
     otherwise give a contributor or the agent itself commit authority.
     """
     assert flat(marker) in _contract(relative)
+
+
+@pytest.mark.installed_plugin
+def test_worktree_publication_requires_native_consent_and_single_runtime_attempt() -> None:
+    """Bind publication to verified worktree delivery, the exact destination, and two approvals."""
+    gate = _between(_NATIVE_CONTRACT, "### PR worktree publication gate", "### Local merge approval")
+
+    assert (
+        missing_phrases(
+            gate,
+            (
+                "successful PR-mode Code Remediate invocation explicitly using `--worktree`",
+                "Independently read the exact destination branch ref from the verified head repository",
+                "a strict ancestor of the delivered commit",
+                "Ask once through native User Questions with **Approve** and **Deny**",
+                "After approval recheck the same source, clean state, current open PR and exact destination branch ref OID",
+                "a direct, one-time runtime approval for the complete owning helper",
+                "The trusted temporary pre-push check requires exactly one update with the approved old commit",
+                "Git's receiver compares that same old commit",
+                "consume the approval before runtime review",
+                "No direct push fallback",
+                "Preserve the local delivery on every outcome",
+            ),
+        )
+        == []
+    )
+    assert "only to successful PR runs with the `remediation-worktree.json` locator" in _contract(_REMEDIATE_SKILL)
 
 
 @pytest.mark.installed_plugin

@@ -341,8 +341,9 @@ class TestParallelWorkBuckets:
                 skill + parallel_lifecycle,
                 (
                     "Production Parallel Lifecycle",
-                    "`parallel-specialists` is planning-only until",
+                    "`parallel-specialists` needs a completed production lifecycle and shared artifact validation",
                     "`schema_version=2`",
+                    "`schema_version=3`",
                     "parent-authoritative operational postcondition containment",
                     "`capability_sandbox_verified=false`",
                     "parent re-derives",
@@ -374,6 +375,23 @@ class TestParallelWorkBuckets:
                     "must not delete verification output after the command",
                     "use an available parent-owned or sequential route",
                     "Do not ask permission to use that fallback",
+                ),
+            )
+            == []
+        )
+
+    def test_parallel_testing_scopes_buckets_and_reserves_full_suite_for_parent(self, parallel_lifecycle: str) -> None:
+        """The frozen child plan selects affected tests and the final gate runs on consolidated source."""
+        assert (
+            _out_of_order(
+                parallel_lifecycle,
+                (
+                    "assigned modules and directly affected tests",
+                    "Record exact test selectors in the frozen context pack before dispatch",
+                    "The parent runs the configured full test suite once on the consolidated source",
+                    "For schema 2, run them after source application",
+                    "For schema 3, run them on the detached integration tip before source application",
+                    "require the full test command to pass",
                 ),
             )
             == []
@@ -468,8 +486,9 @@ class TestParallelWorkBuckets:
                     "already-collected comments, reviews, and threads",
                     "do not fetch the same review data again",
                     "immutable fetched target OID",
-                    "Never run their fetches concurrently because each fetch changes `FETCH_HEAD`",
-                    "never run concurrent source or Git mutations",
+                    "Only the parent-owned integration arm may run Git operations",
+                    "dispatch one read-only worker on the frozen online artifacts",
+                    "continue target integration in the same response",
                     "The online-review arm must not read the worktree while integration may change it",
                     "Join the preparation before writing `action-items.md` or `resolution-scope.md`",
                     "1 requires the authorized target merge below even when conflict-free",

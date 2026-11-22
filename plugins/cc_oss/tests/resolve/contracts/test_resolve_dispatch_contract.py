@@ -103,7 +103,7 @@ _SPLIT_RULE = (
 _POST_SELECTION_ASK_ALLOWLIST = (
     # explicitly approved execution boundary for PR-supplied hooks (Repository hook approval, step 4)
     "The parent calls `AskUserQuestion` with **Run these hooks** / **Keep hooks disabled**",
-    "**PR-code approval — same question call",  # PR-code execution boundary, asked in the hook-approval call: no extra stop
+    "**PR-code approval — recorded at Step 3d",  # PR-code boundary: Step 3d records it, the prelude asks only as recovery
     "No confirming commit found",  # straggler gate: unresolved item status
     "**Push confirmation — one `AskUserQuestion` call.**",  # Step 10: scope-bearing push confirmation (git-push)
     "**Drift question — its own `AskUserQuestion` call",  # Step 10: target moved since Step 9 (BASE_FRESH=no only)

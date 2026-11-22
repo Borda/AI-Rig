@@ -135,6 +135,40 @@ class TestCheckoutSlot:
             _invoke("release", "--slot", claim["slot"], "--owner", "active")
             assert waiting.result(timeout=12) == {**claim, "owner": "queued"}
 
+    def test_queue_reports_peer_and_acquires_after_release(self, checkout: Path) -> None:
+        """One cancellable command stays queued and publishes a claim only after peer release."""
+        claim = _invoke("acquire", "--checkout", checkout, "--owner", "active")
+        slot = claim["slot"]
+        argv = [sys.executable, str(HELPER), "acquire", "--slot", slot, "--owner", "queued", "--queue"]
+        with (
+            subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as queued,
+            ThreadPoolExecutor(max_workers=1) as pool,
+        ):
+            try:
+                peer_status = pool.submit(queued.stderr.readline)
+                assert json.loads(peer_status.result(timeout=5)) == {**claim, "status": "busy"}
+                assert queued.poll() is None
+                assert _invoke("status", "--slot", slot) == {**claim, "status": "busy"}
+                held = _invoke("hold", "--slot", slot, "--owner", "active")
+                assert json.loads(pool.submit(queued.stderr.readline).result(timeout=5)) == held
+                assert _invoke("release", "--inspected", "--slot", slot, "--owner", "active")["status"] == "released"
+                stdout, stderr = queued.communicate(timeout=5)
+                assert queued.returncode == 0, stderr
+                assert json.loads(stdout) == {**claim, "owner": "queued"}
+            finally:
+                if queued.poll() is None:
+                    queued.terminate()
+
+    def test_queue_returns_unowned_busy_slot_for_inspection(self, checkout: Path) -> None:
+        """An empty marker directory cannot keep an automated waiter indefinitely."""
+        slot = Path(_invoke("status", "--checkout", checkout)["slot"])
+        slot.mkdir()
+        assert _invoke("acquire", "--slot", slot, "--owner", "queued", "--queue", code=1) == {
+            "status": "busy",
+            "owner": None,
+            "slot": str(slot),
+        }
+
     def test_empty_slot_is_blocked_until_owner_is_reconciled(self, checkout: Path) -> None:
         """Interrupted release leaves an empty slot that cannot admit an unrelated review."""
         slot = Path(_invoke("status", "--checkout", checkout)["slot"])

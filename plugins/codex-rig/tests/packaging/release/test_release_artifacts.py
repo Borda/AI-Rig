@@ -1378,6 +1378,16 @@ class TestContributorCredit:
             validate_run(validator, release_run)
 
 
+def _format_legacy_gate_paths(manifest: Path, template: str) -> bytes:
+    """Write legacy log paths in the selected coordinate format and return exact manifest bytes."""
+    gates = json.loads(manifest.read_text(encoding="utf-8"))
+    for check in gates["checks"]:
+        for key in ("command_path", "stdout", "stderr"):
+            check[key] = template.format(root=manifest.parent.resolve().as_posix(), name=check[key])
+    manifest.write_text(json.dumps(gates), encoding="utf-8")
+    return manifest.read_bytes()
+
+
 @pytest.mark.integration
 class TestReleaseSource:
     """Pinned Git coordinates, gate receipts, and candidate accounting bind the release to real source."""
@@ -1493,13 +1503,20 @@ class TestReleaseSource:
         with pytest.raises(SystemExit, match="release-evidence-scope-record"):
             validate_run(validator, release_run)
 
-    def test_real_gate_runner_receipts_validate_end_to_end(self, validator: ModuleType, release_run: Run) -> None:
+    @pytest.mark.parametrize(
+        ("log_template", "out_template"),
+        [pytest.param("{name}", "..", id="relative"), pytest.param("{root}/{name}", "{root}", id="absolute")],
+    )
+    def test_real_gate_runner_receipts_validate_end_to_end(
+        self, validator: ModuleType, release_run: Run, log_template: str, out_template: str
+    ) -> None:
         """Actual runner evidence from a clean pinned source is accepted by the release consumer.
 
         The gate runner executes for real against the private repository copy after a second commit gives the release a
         baseline, and the validator then reads the receipts it wrote.
         """
         directory, result = release_run
+        legacy_bytes = _format_legacy_gate_paths(directory / "gates.json", log_template)
         repository = directory / "source"
         git(repository, "commit", "--allow-empty", "-m", "fixture\n\nCo-authored-by: Codex <codex@openai.com>")
         head, final_tree, baseline = git(repository, "rev-parse", "HEAD", "HEAD^{tree}", "HEAD^").split()
@@ -1509,7 +1526,7 @@ class TestReleaseSource:
                 sys.executable,
                 str(PLUGIN_ROOT / "shared/run_gates.py"),
                 "--out",
-                str(directory),
+                out_template.format(root=directory.resolve().as_posix()),
                 "--expected-head",
                 head,
                 *gates,
@@ -1520,6 +1537,9 @@ class TestReleaseSource:
             check=False,
         )
         assert completed.returncode == 0, completed.stderr
+        archived = directory / "gate-attempts/001"
+        assert (archived / "gates.json").read_bytes() == legacy_bytes
+        assert validator._validate_gates(archived)["status"] == "pass"
         recorded = json.loads((directory / "gates.json").read_text(encoding="utf-8"))
         assert recorded["source"] == {"worktree": repository.resolve().as_posix(), "expected_head": head}
         assert all(

@@ -259,7 +259,7 @@ class TestSequentialPlan:
         metadata = _small_sequential_plan(tmp_path)
         plan = metadata["resolution_workplan"]
         damage(metadata)
-        observed = VALIDATOR._validate_work_buckets(plan["work_buckets"], tmp_path)
+        observed = VALIDATOR._validate_work_buckets(plan["work_buckets"], tmp_path, allow_shared=True)
         with pytest.raises(SystemExit, match="code-remediate-"):
             VALIDATOR._validate_workplan_coverage_counts(
                 plan, plan["work_buckets"], metadata["resolution_scope"]["selected_indexes"], observed

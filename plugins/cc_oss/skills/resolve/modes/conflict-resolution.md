@@ -105,10 +105,22 @@ No conflicted files → `MERGE_STATE=in-progress`: complete the merge here; `MER
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
+IFS= read -r PR_HEAD_OID < "${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}" 2>/dev/null || PR_HEAD_OID=""
 export RESOLVE_APPROVED_HOOKS=""
-[ ! -f "$IMPL_DIR/approved-hooks.txt" ] || IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" || RESOLVE_APPROVED_HOOKS=""
+if [ -n "$IMPL_DIR" ] && [ -f "$IMPL_DIR/approved-hooks.txt" ]; then
+    python "$PLUGIN_ROOT/bin/resolve_commit_hooks.py" --refresh-approval --base "origin/$BASE_REF" --head "$PR_HEAD_OID" --approved-file "$IMPL_DIR/approved-hooks.txt" --decision-file "$IMPL_DIR/hooks-decision.txt" || { : > "$IMPL_DIR/approved-hooks.txt"; printf 'stale\n' > "$IMPL_DIR/hooks-decision.txt"; echo "⚠ hook approval refresh failed — hooks stay disabled for the rest of this run"; }  # timeout: 30000
+    IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" || [ -n "$RESOLVE_APPROVED_HOOKS" ] || RESOLVE_APPROVED_HOOKS=""
+fi
 python "$PLUGIN_ROOT/bin/resolve_commit_hooks.py" --commit-merge # timeout: 6000
 ```
+
+**Hook approval before every merge commit.** The merge can change hook inputs after the approval was recorded (a base-side `package.json` bump), and a digest that no longer matches refuses the commit and leaves the merge pending. So each merge-commit block (this one, Step 7b's, and both again when Step 9.0 re-merges) first runs `resolve_commit_hooks.py --refresh-approval` and prints one `hooks-refresh=` line:
+
+- `pending` (hook question not answered yet) or `disabled` (hooks off): nothing changes; the merge commits with hooks disabled.
+- `current`: the recorded digest still matches; the approved hooks run.
+- `refreshed`: the helper's own `run` (`hooks-decision.txt` says `run`) is decided again on the merged tree and its new digest recorded; base-side edits never count, while any hook input the checked-out branch commits (PR commits pulled after the recorded head, this run's own commits) or that conflict resolution staged differently from both sides does.
+- `stale`: every other approval whose hooks changed (a user's answer, a re-decision that now asks, a failed inspection or refresh) is set aside: `approved-hooks.txt` is emptied and `hooks-decision.txt` says `stale`. The merge and every later commit of this run go ahead with hooks disabled, no question is asked, and the final report's `Repository hooks` line says so. Unapproved hook bytes never run, and the merge is never left uncommitted for a stale approval.
 
 Report clean merge (or already up to date). Steps 6–7 and the Step 7b join become no-ops — return to Run 1 (await the `INTEL_AGENT` envelope, then Step 3c).
 
@@ -217,14 +229,19 @@ RESOLVED_FILES=$(git diff --cached --name-only 2>/dev/null)
 [ -n "$RESOLVED_FILES" ] || { echo "! BLOCKED — No staged files found — sw-engineer may not have staged resolutions"; exit 1; }
 ```
 
-Complete merge (editor-safe, produces proper 2-parent merge commit):
+Complete merge (editor-safe, produces proper 2-parent merge commit; the hook approval is refreshed first, exactly as in Step 5 above, because conflict resolution can stage hook inputs):
 
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
+IFS= read -r PR_HEAD_OID < "${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}" 2>/dev/null || PR_HEAD_OID=""
 export RESOLVE_APPROVED_HOOKS=""
-[ ! -f "$IMPL_DIR/approved-hooks.txt" ] || IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" || RESOLVE_APPROVED_HOOKS=""
+if [ -n "$IMPL_DIR" ] && [ -f "$IMPL_DIR/approved-hooks.txt" ]; then
+    python "$PLUGIN_ROOT/bin/resolve_commit_hooks.py" --refresh-approval --base "origin/$BASE_REF" --head "$PR_HEAD_OID" --approved-file "$IMPL_DIR/approved-hooks.txt" --decision-file "$IMPL_DIR/hooks-decision.txt" || { : > "$IMPL_DIR/approved-hooks.txt"; printf 'stale\n' > "$IMPL_DIR/hooks-decision.txt"; echo "⚠ hook approval refresh failed — hooks stay disabled for the rest of this run"; }  # timeout: 30000
+    IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" || [ -n "$RESOLVE_APPROVED_HOOKS" ] || RESOLVE_APPROVED_HOOKS=""
+fi
 python "$PLUGIN_ROOT/bin/resolve_commit_hooks.py" --commit-merge # timeout: 6000
 ```
 

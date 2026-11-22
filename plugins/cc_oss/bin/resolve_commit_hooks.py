@@ -18,9 +18,25 @@ Decision:
     there is nothing to ask. Installed hooks run when the PR leaves every in-tree hook input (hook scripts, ``.husky``,
     ``.githooks``, ``.pre-commit-config.*``, ``package.json``) identical to the base, because then the contributor
     supplies none of the hook code. A PR that changes a hook input, or a base that cannot be compared, yields ``ask``.
-    ``--remember approved`` saves the inspected digest and ``--remember never`` disables hooks for this repository in
+    ``--head REF`` applies only while a merge is pending (``MERGE_HEAD`` exists): the decision then compares what the
+    PR head and the checked-out commit commit, plus unstaged and untracked edits and staged entries that match neither
+    side of the merge, so base-side edits the merge already staged do not count. With no merge pending it is ignored
+    and the working tree is judged as before.
+    ``--remember approved --sha DIGEST`` saves the digest the user was shown (never one inspected later, since hooks can
+    change between the question and the answer) and ``--remember never`` disables hooks for this repository in
     ``<git-common-dir>/resolve-hooks-policy.json``; ``--forget`` removes it. A saved approval covers the exact hook
     bytes only, so changed hooks ask again.
+
+Refresh:
+    ``--refresh-approval --approved-file FILE --decision-file FILE [--base REF] [--head REF]`` runs before every
+    merge commit, because a merge can change hook inputs (a base-side ``package.json`` bump) after the approval was
+    recorded, and a digest that no longer matches refuses the commit and leaves the merge pending. A missing approval
+    file (a question still pending) and an empty one (hooks disabled) are left alone; a digest that still matches is
+    kept. A stale digest the helper recorded itself (the decision file says ``run``) is decided again on the merged
+    tree and replaced. Every other stale digest (a user's answer, a re-decision that now asks, a failed inspection)
+    is set aside: the approval file is emptied and the decision file says ``stale``, so the merge and every later
+    commit of the run go ahead with hooks disabled and never run hook bytes nobody approved. It prints one line,
+    ``hooks-refresh=<outcome> — <reason>``.
 """
 
 from __future__ import annotations
@@ -29,6 +45,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -40,6 +57,7 @@ from typing import Any
 _PLUMBING_TIMEOUT = 30
 _POLICY_FILE = "resolve-hooks-policy.json"
 _POLICY_VERSION = 1
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 #: Repository-relative paths a contribution can change that decide which hook code runs.
 _TREE_HOOK_INPUTS = (
     ".husky",
@@ -69,6 +87,20 @@ class PolicyMode(str, Enum):
     NEVER = "never"
 
 
+class RefreshOutcome(str, Enum):
+    """What ``--refresh-approval`` did to the recorded hook approval before a merge commit."""
+
+    PENDING = "pending"
+    DISABLED = "disabled"
+    CURRENT = "current"
+    REFRESHED = "refreshed"
+    STALE = "stale"
+
+
+#: Decision-file word for an approval set aside because the hooks it covered changed.
+STALE_DECISION = "stale"
+
+
 @dataclass
 class HookDecision:
     """Decision, its reason, the inspected digest and the hook inputs the PR changed."""
@@ -78,6 +110,14 @@ class HookDecision:
     sha256: str = ""
     changed: list[str] = field(default_factory=list)
     inspection: dict[str, Any] = field(default_factory=dict)
+
+
+def _merge_in_progress(git: str) -> bool:
+    """Tell whether a merge is pending (``MERGE_HEAD`` exists), i.e. the index may hold base-side staged content."""
+    done = subprocess.run(  # noqa: S603
+        [git, "rev-parse", "-q", "--verify", "MERGE_HEAD"], capture_output=True, timeout=_PLUMBING_TIMEOUT
+    )
+    return done.returncode == 0
 
 
 def _git_output(git: str, *args: str) -> bytes:
@@ -156,9 +196,15 @@ def _load_policy(git: str) -> tuple[PolicyMode, str] | None:
         return None
 
 
-def save_policy(git: str, mode: PolicyMode) -> Path:
-    """Save the per-repository choice, binding an approval to the digest of the hooks inspected now."""
-    sha = str(inspect_repository_hooks(git)["sha256"]) if mode is PolicyMode.APPROVED else ""
+def save_policy(git: str, mode: PolicyMode, approved_sha: str = "") -> Path:
+    """Save the per-repository choice; an approval binds to ``approved_sha``, the digest the user was shown.
+
+    Raises:
+        ValueError: If an approval carries anything but a 64-digit lowercase hex digest.
+    """
+    sha = approved_sha if mode is PolicyMode.APPROVED else ""
+    if mode is PolicyMode.APPROVED and not _SHA256.fullmatch(sha):
+        raise ValueError("an approved policy needs the shown 64-digit sha256")
     path = _policy_path(git)
     record = {"version": _POLICY_VERSION, "mode": mode.value, "sha256": sha}
     with tempfile.NamedTemporaryFile(
@@ -188,20 +234,59 @@ def _tree_hook_inputs(git: str, hooks_path: str) -> list[str]:
     return specs
 
 
-def _changed_inputs(git: str, base: str, specs: list[str]) -> list[str]:
-    """Return hook inputs that differ from the merge base: committed, staged, unstaged or untracked."""
-    if base.startswith("-"):
-        raise RuntimeError(f"base {base!r} is not a reference")
-    merge_base = os.fsdecode(_git_output(git, "merge-base", base, "HEAD")).strip()
-    diff = ("diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", merge_base, "--")
-    tracked = _git_output(git, "--literal-pathspecs", *diff, *specs)
+def _changed_inputs(git: str, base: str, specs: list[str], head: str | None = None) -> list[str]:
+    """Return hook inputs that differ from the merge base.
+
+    Without ``head`` the comparison runs against the working tree (committed, staged, unstaged or untracked). With
+    ``head`` and a merge in progress (``MERGE_HEAD`` exists) it counts what that commit changes since the merge base,
+    what the checked-out commit changes since its own merge base with ``base`` (PR commits pulled after ``head`` was
+    recorded, this run's own commits), unstaged and untracked edits, and every staged entry (content, mode, deletion or
+    unresolved conflict) that matches neither the checked-out commit nor ``MERGE_HEAD``: such an entry was written
+    during the merge, by conflict resolution for example, so it is neither the PR's commits nor the base. What the merge
+    staged from either side does not count. Without a merge in progress ``head`` is ignored, so a clean pre-merge
+    checkout is judged exactly as before and a staged edit still counts.
+    """
+    for ref in (base, head):
+        if ref is not None and ref.startswith("-"):
+            raise RuntimeError(f"{ref!r} is not a reference")
+    if head and not _merge_in_progress(git):
+        head = None
+    merge_base = os.fsdecode(_git_output(git, "merge-base", base, head or "HEAD")).strip()
+    diff = ("diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", merge_base)
+    tracked = _git_output(git, "--literal-pathspecs", *diff, *([head] if head else []), "--", *specs)
+    if head:
+        # the checked-out commit can hold more than ``head``: PR commits pulled after it was recorded, and this
+        # run's own commits after an earlier merge; what it commits beyond the base counts as well
+        checkout_base = os.fsdecode(_git_output(git, "merge-base", base, "HEAD")).strip()
+        committed = ("diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", checkout_base)
+        tracked += b"\0" + _git_output(git, "--literal-pathspecs", *committed, "HEAD", "--", *specs)
     untracked = _git_output(
         git, "--literal-pathspecs", "ls-files", "--others", "--exclude-standard", "-z", "--", *specs
     )
-    return sorted({os.fsdecode(name) for name in (tracked + untracked).split(b"\0") if name})
+    names = {os.fsdecode(name) for name in (tracked + untracked).split(b"\0") if name}
+    if head:
+        # worktree-vs-index edits only: what the staged merge brought in is in the index, so it stays out
+        unstaged_diff = ("diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", "--")
+        names |= {os.fsdecode(n) for n in _git_output(git, "--literal-pathspecs", *unstaged_diff, *specs).split(b"\0")}
+        names |= _staged_from_neither_side(git, specs)
+    return sorted(name for name in names if name)
 
 
-def _classify(git: str, base: str, report: dict[str, Any]) -> HookDecision:
+def _staged_from_neither_side(git: str, specs: list[str]) -> set[str]:
+    """Return staged hook inputs whose index entry differs from both ``HEAD`` and ``MERGE_HEAD``.
+
+    ``git diff --cached <commit>`` lists every path whose index entry (blob, mode, presence or unmerged state) differs
+    from that commit, so a path in both lists matches neither side of the merge.
+    """
+    sides = []
+    for commit in ("HEAD", "MERGE_HEAD"):
+        cached = ("diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", commit)
+        raw = _git_output(git, "--literal-pathspecs", *cached, "--", *specs)
+        sides.append({os.fsdecode(name) for name in raw.split(b"\0") if name})
+    return sides[0] & sides[1]
+
+
+def _classify(git: str, base: str, report: dict[str, Any], head: str | None = None) -> HookDecision:
     """Apply the saved policy, then the installed-hooks and PR-change rules, to one hook inspection."""
     sha = str(report["sha256"])
     policy = _load_policy(git)
@@ -212,7 +297,7 @@ def _classify(git: str, base: str, report: dict[str, Any]) -> HookDecision:
     if policy and policy[1] == sha:
         return HookDecision(Decision.RUN, "saved approval matches these exact hooks", sha)
     try:
-        changed = _changed_inputs(git, base, _tree_hook_inputs(git, str(report["active_hooks_directory"])))
+        changed = _changed_inputs(git, base, _tree_hook_inputs(git, str(report["active_hooks_directory"])), head)
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         return HookDecision(Decision.ASK, f"cannot compare hook inputs with base {base}: {exc}", sha)
     if changed:
@@ -220,12 +305,79 @@ def _classify(git: str, base: str, report: dict[str, Any]) -> HookDecision:
     return HookDecision(Decision.RUN, "installed hooks and the PR leaves every hook input identical to base", sha)
 
 
-def decide_hooks(git: str, base: str) -> HookDecision:
+def decide_hooks(git: str, base: str, head: str | None = None) -> HookDecision:
     """Decide whether repository hooks run, are disabled, or need the user's approval."""
     report = inspect_repository_hooks(git)
-    decision = _classify(git, base, report)
+    decision = _classify(git, base, report, head)
     decision.inspection = report
     return decision
+
+
+def _first_line(path: Path) -> str:
+    """Return the first line of ``path`` without surrounding whitespace, or an empty string when it cannot be read."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return ""
+    return text.splitlines()[0].strip() if text.strip() else ""
+
+
+def _set_aside(approved_file: Path, decision_file: Path, reason: str) -> tuple[RefreshOutcome, str]:
+    """Disable hooks for the rest of the run: empty the approval and record ``stale`` as the decision."""
+    approved_file.write_text("", encoding="utf-8")
+    decision_file.write_text(STALE_DECISION + "\n", encoding="utf-8")
+    return RefreshOutcome.STALE, f"{reason}; hooks stay disabled for the rest of this run"
+
+
+def refresh_approval(
+    git: str, approved_file: Path, decision_file: Path, base: str | None = None, head: str | None = None
+) -> tuple[RefreshOutcome, str]:
+    """Keep the recorded hook approval valid for the tree about to be committed, or set it aside.
+
+    Only a digest this helper recorded itself (``decision_file`` says ``run``) is decided again, on the current tree
+    with ``base`` and ``head``. A user's approval is never re-decided: when the hooks it covered changed it is set
+    aside like every other approval that cannot be refreshed, so the commit goes ahead with hooks disabled.
+
+    Raises:
+        OSError: If the approval file exists but cannot be read, or the files cannot be written.
+    """
+    try:
+        recorded = approved_file.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return RefreshOutcome.PENDING, "no hook approval recorded yet, so this commit runs with hooks disabled"
+    if not recorded:
+        return RefreshOutcome.DISABLED, "hooks are disabled for this run"
+    try:
+        if str(inspect_repository_hooks(git)["sha256"]) == recorded:
+            return RefreshOutcome.CURRENT, "the recorded approval matches these exact hooks"
+        decision = _decide_again(git, decision_file, base, head)
+    except _CannotRefreshError as exc:
+        return _set_aside(approved_file, decision_file, str(exc))
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        return _set_aside(approved_file, decision_file, f"hook inspection failed: {exc}")
+    if decision.decision is Decision.ASK:
+        detail = ", ".join(decision.changed) or decision.reason
+        return _set_aside(approved_file, decision_file, f"the merged tree changes hook inputs: {detail}")
+    approved_file.write_text(decision.sha256 if decision.decision is Decision.RUN else "", encoding="utf-8")
+    decision_file.write_text(decision.decision.value + "\n", encoding="utf-8")
+    return RefreshOutcome.REFRESHED, f"{decision.decision.value}: {decision.reason}"
+
+
+class _CannotRefreshError(Exception):
+    """A stale approval that only a person could renew: a user's answer, or a helper decision without a base."""
+
+
+def _decide_again(git: str, decision_file: Path, base: str | None, head: str | None) -> HookDecision:
+    """Decide a stale helper-made approval again on the current tree.
+
+    Raises:
+        _CannotRefreshError: If the approval was not made by this helper or there is no base to compare with.
+    """
+    if _first_line(decision_file) != Decision.RUN.value:
+        raise _CannotRefreshError("the hooks changed since they were approved")
+    if not base:
+        raise _CannotRefreshError("no base reference to decide the hooks again")
+    return decide_hooks(git, base, head or None)
 
 
 def _working_files(git: str) -> dict[str, tuple[int, str] | None]:
@@ -323,29 +475,58 @@ def main(argv: list[str] | None = None) -> int:
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--commit-merge", action="store_true", help="Finish an active merge using the hook boundary.")
     action.add_argument("--decide", action="store_true", help="Decide none/run/ask/disabled from Git and the PR diff.")
+    action.add_argument(
+        "--refresh-approval",
+        action="store_true",
+        help="Before a merge commit: keep, re-decide (helper-made run) or set aside (stale) the recorded approval.",
+    )
     action.add_argument("--remember", choices=[mode.value for mode in PolicyMode], help="Save a per-repository choice.")
     action.add_argument("--forget", action="store_true", help="Remove the saved per-repository choice.")
+    parser.add_argument("--sha", help="With --remember approved: the hook digest the user was shown (required).")
     parser.add_argument("--base", help="Base reference the PR is compared with; required by --decide.")
     parser.add_argument(
-        "--approved-file", help="With --decide: write the digest (run) or an empty file (none, disabled)."
+        "--head",
+        help="With --decide and a merge pending: compare what this PR head commits, plus unstaged and untracked"
+        " edits, instead of the working tree; ignored when no merge is pending.",
+    )
+    parser.add_argument(
+        "--approved-file",
+        help="With --decide: write the digest (run) or an empty file (none, disabled). With --refresh-approval: the"
+        " recorded approval to keep, replace or empty.",
+    )
+    parser.add_argument(
+        "--decision-file",
+        help="With --refresh-approval: the recorded decision word (run marks a helper-made approval).",
     )
     args = parser.parse_args(argv)
     if args.decide and not args.base:
         parser.error("--decide requires --base")
+    if args.refresh_approval and not (args.approved_file and args.decision_file):
+        parser.error("--refresh-approval requires --approved-file and --decision-file")
+    if args.remember == PolicyMode.APPROVED.value and not _SHA256.fullmatch(args.sha or ""):
+        parser.error("--remember approved requires --sha with the 64-digit digest the user was shown")
     try:
         if args.commit_merge:
             _git_output("git", "rev-parse", "--verify", "MERGE_HEAD")
             return commit_with_hooks("git", ["commit", "--no-edit"], None, 600)
         if args.decide:
-            _print_decision(decide_hooks("git", args.base), args.approved_file)
+            _print_decision(decide_hooks("git", args.base, args.head), args.approved_file)
+        elif args.refresh_approval:
+            outcome, reason = refresh_approval(
+                "git", Path(args.approved_file), Path(args.decision_file), args.base, args.head
+            )
+            print(f"hooks-refresh={outcome.value} — {reason}")
         elif args.remember:
-            print(f"resolve hooks: saved '{args.remember}' in {save_policy('git', PolicyMode(args.remember))}")
+            print(
+                f"resolve hooks: saved '{args.remember}' in {save_policy('git', PolicyMode(args.remember), args.sha or '')}"
+            )
         elif args.forget:
             _policy_path("git").unlink(missing_ok=True)
         else:
             print(json.dumps(inspect_repository_hooks("git"), ensure_ascii=True, indent=2))
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-        print(f"resolve hooks: {'merge commit' if args.commit_merge else 'inspection'} failed: {exc}", file=sys.stderr)
+        stage = "merge commit" if args.commit_merge else "approval refresh" if args.refresh_approval else "inspection"
+        print(f"resolve hooks: {stage} failed: {exc}", file=sys.stderr)
         return 1
     return 0
 

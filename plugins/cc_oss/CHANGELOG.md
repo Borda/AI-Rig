@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.66.0
+
+- `/oss:review` shows the safety scan and the command it ran. A clean scan of the exact fork PR commit lets checks run in a disposable copy without a sandbox prompt. A changed checkout or incomplete scan requires a new decision.
+- `/oss:resolve` skips the fork PR code question when its scan and the earlier review both found the same commit clean and the host has a sandbox: tests then run in the sandbox, because resolve merges the base and edits files before testing and so never runs exactly the scanned commit. The final report identifies the commit and execution mode. Otherwise you can choose sandboxed tests, direct execution, or skip the tests.
+- `/oss:resolve` groups PR-code and hook questions with item selection and remembers your answers when you resume. Report-only runs settle these choices at checkout.
+- Remembered hook approvals apply to the hook version you inspected. Base-branch changes alone no longer trigger a hook prompt during a merge, and a previously unanswered hook question returns when you resume.
+- `/oss:resolve` re-checks the hook approval before every merge commit, including the unattended drift re-merge. An approval resolve made itself follows the merged files. A hook approval you gave that no longer matches the merged files is dropped: the merge commits with hooks disabled, nothing unapproved runs, and the report names it under Repository hooks. Staged edits to hook files and PR commits pulled in during the merge now count as changed hook inputs.
+- `/oss:resolve` skips the fork PR code question only when the host has a usable sandbox; without one it asks, so tests are never silently skipped. `/oss:review` re-checks the clean scan inside its own approval step and refuses to bind anything but an exact `auto` result. When the checkout already differs from the scanned commit, the review's no-prompt approval is not bound and you get the normal sandbox question instead of a silent refusal.
+- A hook question still pending when the base merge lands now shows the hooks of the merged files, drops itself when no hook needs approval, and says when it could not be refreshed.
+
 ## 0.65.0
 
 - `/oss:resolve` decides about repository git hooks from the local Git setup instead of asking every run: with no installed hook, or installed hooks whose in-tree inputs (hook scripts, `.husky`, `.githooks`, `.pre-commit-config.*`, `package.json`) the PR leaves identical to its base, hooks run or stay off with no question (Git's inactive `.sample` files do not count as hooks). Only a PR that changes a hook input, or a base that cannot be compared, shows the exact hook commands and asks, now with **Run and remember for this repo** and **Never run hooks in this repo** beside the per-run choices; a remembered approval is bound to the exact hook bytes (changed hooks ask again) and both choices live in the Git common directory, shared by linked worktrees, until `resolve_commit_hooks.py --forget`. An answered run, even a declined one, is never asked a second time, and the PR-code question is asked on its own when no hook question is needed.

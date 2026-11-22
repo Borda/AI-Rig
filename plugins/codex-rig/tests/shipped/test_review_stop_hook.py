@@ -37,10 +37,34 @@ PLATFORMS = {
     },
 }
 PLATFORM_CASES = [pytest.param(platform, id=name) for name, platform in PLATFORMS.items()]
+#: Direct POSIX launcher prefix for the packaged checkout-slot helper.
+SLOT_HELPER = '"/plugin/bin/python" "/plugin/shared/review_checkout_slot.py"'
+#: Slot locator the helper reports for the default POSIX workspace.
+SLOT = "/workspace/.git/codex-review-slot"
+#: Supported host receipts for a human steering message in the active turn.
+USER_STEERING_RECORDS = [
+    pytest.param(
+        {"type": "response_item", "payload": {"type": "message", "role": "user", "content": "Stop"}},
+        id="response-message",
+    ),
+    pytest.param(
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "thread_id": "session",
+                "turn_id": "turn",
+                "item": {"type": "UserMessage", "message": "Stop"},
+            },
+        },
+        id="user-message-item",
+    ),
+]
 
 
-def command_record(command: str, output: str = "", exit_code: int = 0) -> dict:
+def command_record(command: str, output: str = "", exit_code: int = 0, *, platform: dict | None = None) -> dict:
     """Represent an actual completed shell command in the active host turn."""
+    platform = PLATFORMS["posix"] if platform is None else platform
     return {
         "type": "event_msg",
         "payload": {
@@ -49,8 +73,8 @@ def command_record(command: str, output: str = "", exit_code: int = 0) -> dict:
             "turn_id": "turn",
             "item": {
                 "type": "CommandExecution",
-                "command": ["/bin/bash", "-lc", command],
-                "cwd": "file:///workspace",
+                "command": [*platform["shell"], command],
+                "cwd": platform["item_cwd"],
                 "status": "completed",
                 "exit_code": exit_code,
                 "aggregated_output": output,
@@ -114,6 +138,841 @@ def test_unfinished_review_requests_one_authorized_continuation(review_state, ga
     assert "--complete-run" in response["reason"]
     assert "remediat" not in response["reason"].lower()
     assert "+review" not in response["reason"]
+
+
+@pytest.mark.parametrize("platform", PLATFORM_CASES)
+@pytest.mark.parametrize("locator", ["checkout", "slot"])
+@pytest.mark.parametrize(
+    ("status", "holder", "expected"),
+    [
+        pytest.param("busy", "peer", "queue", id="peer-active"),
+        pytest.param("inspection-required", "peer", "queue", id="peer-inspection"),
+        pytest.param("inspection-required", "queued", "pause", id="own-inspection"),
+        pytest.param("busy", None, "workflow", id="empty-slot"),
+    ],
+)
+def test_checkout_admission_routes_first_receipt_by_holder(
+    review_state, platform: dict, locator: str, status: str, holder: str | None, expected: str
+) -> None:
+    """Distinguish a peer's queue from an own inspection hold or an interrupted empty slot."""
+    payload, records = review_state
+    cwd = platform["cwd"]
+    root = platform["root"]
+    slot = f"{cwd}/.git/codex-review-slot"
+    target = cwd if locator == "checkout" else slot
+    command = platform["prefix"] + f'"{root}/bin/{platform["launcher"]}"'
+    payload["cwd"] = cwd
+    payload["last_assistant_message"] = "Review incomplete. The checkout slot remains busy."
+    records[2:] = [
+        command_record(
+            f'{command} "{root}/shared/create_run.py" --skill code-review',
+            ".reports/codex/code-review/run-a",
+            platform=platform,
+        ),
+        command_record(
+            f'{command} "{root}/shared/review_checkout_slot.py" acquire --{locator} "{target}" --owner queued --wait-seconds 60',
+            json.dumps({"status": status, "owner": holder, "slot": slot}),
+            exit_code=1,
+            platform=platform,
+        ),
+    ]
+
+    response = HOOK.evaluate(payload, records, root)
+
+    assert response.get("decision") == (None if expected == "pause" else "block")
+    assert ("--queue" in response.get("reason", "")) is (expected == "queue")
+    assert ("--complete-run" in response.get("reason", "")) is (expected == "workflow")
+
+
+@pytest.mark.parametrize(
+    ("success_owner", "success_slot", "expected_queue"),
+    [
+        pytest.param("queued", "/workspace/.git/codex-review-slot", False, id="matched-acquisition"),
+        pytest.param("other", "/workspace/.git/codex-review-slot", True, id="distinct-acquisition"),
+        pytest.param("queued", "/other/.git/codex-review-slot", True, id="different-slot"),
+    ],
+)
+def test_checkout_admission_clears_queue_only_after_matching_acquisition(
+    review_state, success_owner: str, success_slot: str, expected_queue: bool
+) -> None:
+    """A successful matching acquire resumes normal continuation for the same owner and slot."""
+    payload, records = review_state
+    launcher = '"/plugin/bin/python" "/plugin/shared/review_checkout_slot.py"'
+    slot = "/workspace/.git/codex-review-slot"
+    records.extend(
+        [
+            command_record(
+                f"{launcher} acquire --checkout /workspace --owner queued --wait-seconds 60",
+                json.dumps({"status": "busy", "owner": "peer", "slot": slot}),
+                1,
+            ),
+            command_record(
+                f'{launcher} acquire --slot "{success_slot}" --owner {success_owner} --queue',
+                "\n".join(
+                    [
+                        json.dumps({"status": "busy", "owner": "peer", "slot": success_slot}),
+                        json.dumps({"status": "acquired", "owner": success_owner, "slot": success_slot}),
+                    ]
+                ),
+            ),
+        ]
+    )
+
+    response = HOOK.evaluate(payload, records, "/plugin")
+
+    assert response["decision"] == "block"
+    assert ("--queue" in response["reason"]) is expected_queue
+
+
+@pytest.mark.parametrize(
+    ("status", "holder", "expected"),
+    [
+        pytest.param("busy", None, "workflow", id="empty-slot"),
+        pytest.param("busy", "queued", "workflow", id="same-owner-at-free-only-locator"),
+        pytest.param("inspection-required", "queued", "pause", id="own-inspection-hold"),
+    ],
+)
+def test_checkout_admission_discards_old_peer_after_a_matched_nonpeer_result(
+    review_state, status: str, holder: str | None, expected: str
+) -> None:
+    """A newer terminal receipt supersedes an older peer claim for the same admission."""
+    payload, records = review_state
+    launcher = '"/plugin/bin/python" "/plugin/shared/review_checkout_slot.py"'
+    slot = "/workspace/.git/codex-review-slot"
+    records.extend(
+        [
+            command_record(
+                f"{launcher} acquire --checkout /workspace --owner queued --wait-seconds 60",
+                json.dumps({"status": "busy", "owner": "peer", "slot": slot}),
+                1,
+            ),
+            command_record(
+                f'{launcher} acquire --slot "{slot}" --owner queued --queue',
+                json.dumps({"status": status, "owner": holder, "slot": slot}),
+                1,
+            ),
+        ]
+    )
+
+    response = HOOK.evaluate(payload, records, "/plugin")
+
+    assert response.get("decision") == (None if expected == "pause" else "block")
+    assert ("--complete-run" in response.get("reason", "")) is (expected == "workflow")
+
+
+def test_checkout_admission_preserves_matching_slot_error(review_state) -> None:
+    """A malformed slot supersedes an earlier peer claim and requires inspection."""
+    payload, records = review_state
+    launcher = '"/plugin/bin/python" "/plugin/shared/review_checkout_slot.py"'
+    slot = "/workspace/.git/codex-review-slot"
+    records.extend(
+        [
+            command_record(
+                f"{launcher} acquire --checkout /workspace --owner queued --wait-seconds 60",
+                json.dumps({"status": "busy", "owner": "peer", "slot": slot}),
+                1,
+            ),
+            command_record(
+                f'{launcher} acquire --slot "{slot}" --owner queued --queue',
+                json.dumps({"status": "error", "owner": None, "slot": slot, "error": "invalid review slot marker"}),
+                2,
+            ),
+        ]
+    )
+
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+def test_checkout_admission_ignores_an_unrelated_slot_receipt(review_state) -> None:
+    """A mismatched returned locator cannot redirect the current workflow's continuation."""
+    payload, records = review_state
+    records.append(
+        command_record(
+            '"/plugin/bin/python" "/plugin/shared/review_checkout_slot.py" '
+            "acquire --slot /workspace/.git/codex-review-slot --owner queued --wait-seconds 60",
+            json.dumps({"status": "busy", "owner": "peer", "slot": "/other/.git/codex-review-slot"}),
+            1,
+        )
+    )
+
+    response = HOOK.evaluate(payload, records, "/plugin")
+
+    assert response["decision"] == "block"
+    assert "--complete-run" in response["reason"]
+
+
+@pytest.mark.parametrize("platform", PLATFORM_CASES)
+@pytest.mark.parametrize(
+    ("later_event", "expected_decision"),
+    [
+        pytest.param([], "block", id="queue"),
+        pytest.param([{"type": "message", "role": "user"}], None, id="user-steering"),
+        pytest.param([{"type": "function_call", "name": HOOK.NATIVE_QUESTION}], None, id="pending-question"),
+    ],
+)
+def test_checkout_admission_routes_peer_wait_before_run_creation(
+    review_state, platform: dict, later_event: list[dict], expected_decision: str | None
+) -> None:
+    """Treat a peer receipt as admission evidence before a run exists and preserve later pauses."""
+    payload, records = review_state
+    cwd = platform["cwd"]
+    root = platform["root"]
+    launcher = platform["prefix"] + f'"{root}/bin/{platform["launcher"]}"'
+    payload["cwd"] = cwd
+    payload["last_assistant_message"] = "Checkout admission remains queued."
+    records[2] = command_record(
+        f'{launcher} "{root}/shared/review_checkout_slot.py" acquire --checkout "{cwd}" --owner queued --wait-seconds 60',
+        json.dumps({"status": "busy", "owner": "peer", "slot": f"{cwd}/.git/codex-review-slot"}),
+        exit_code=1,
+        platform=platform,
+    )
+    records.extend({"type": "response_item", "payload": event} for event in later_event)
+
+    response = HOOK.evaluate(payload, records, root)
+
+    assert response.get("decision") == expected_decision
+    bounded_retry = "acquire --slot <retained locator> --owner <original owner ID> --wait-seconds 60"
+    assert (bounded_retry in response.get("reason", "")) is (expected_decision == "block")
+
+
+@pytest.mark.parametrize("skill", ["code-review", "code-remediate"])
+@pytest.mark.parametrize(
+    ("arguments", "status", "holder", "exit_code", "expected"),
+    [
+        pytest.param("status --slot {slot}", "free", None, 0, "workflow", id="status-free"),
+        pytest.param("status --slot {slot}", "busy", None, 0, "workflow", id="status-empty"),
+        pytest.param("status --slot {slot}", "busy", "new-peer", 0, "queue", id="status-peer"),
+        pytest.param("status --slot {slot}", "error", None, 2, "pause", id="status-error"),
+        pytest.param("status --checkout /workspace", "busy", "queued", 0, "workflow", id="status-current-owner"),
+        pytest.param("status --slot {slot}", "inspection-required", "queued", 0, "pause", id="status-own-hold"),
+        pytest.param("hold --slot {slot} --owner queued", "inspection-required", "queued", 0, "pause", id="own-hold"),
+        pytest.param("hold --slot {slot} --owner peer", "inspection-required", "peer", 0, "queue", id="peer-hold"),
+        pytest.param("release --slot {slot} --owner peer", "released", None, 0, "workflow", id="peer-release"),
+        pytest.param(
+            "release --inspected --slot {slot} --owner peer", "released", None, 0, "workflow", id="inspected-release"
+        ),
+        pytest.param("release --slot {slot} --owner other", "released", None, 0, "queue", id="unrelated-release"),
+        pytest.param("status --slot /other/.git/codex-review-slot", "free", None, 0, "queue", id="other-locator"),
+        pytest.param("status --slot {slot}", "free", "peer", 0, "queue", id="invalid-status-owner"),
+        pytest.param("hold --slot {slot} --owner queued", "inspection-required", "queued", 1, "queue", id="bad-exit"),
+    ],
+)
+def test_checkout_admission_uses_latest_matching_observation(
+    review_state, skill: str, arguments: str, status: str, holder: str | None, exit_code: int, expected: str
+) -> None:
+    """Apply only newer receipts the checkout helper could emit for the bound slot and owner."""
+    payload, records = review_state
+    records[2] = create_run_record(skill)
+    launcher = '"/plugin/bin/python" "/plugin/shared/review_checkout_slot.py"'
+    slot = "/workspace/.git/codex-review-slot"
+    receipt = {"status": status, "owner": holder, "slot": slot}
+    receipt.update({"error": "invalid review slot marker"} if exit_code == 2 else {})
+    records.extend(
+        [
+            command_record(
+                f"{launcher} acquire --checkout /workspace --owner queued --wait-seconds 60",
+                json.dumps({"status": "busy", "owner": "peer", "slot": slot}),
+                1,
+            ),
+            command_record(f"{launcher} {arguments.format(slot=slot)}", json.dumps(receipt), exit_code),
+        ]
+    )
+
+    response = HOOK.evaluate(payload, records, "/plugin")
+
+    assert response.get("decision") == (None if expected == "pause" else "block")
+    assert ("--queue" in response.get("reason", "")) is (expected == "queue")
+    continuation = "Continue remediation selection" if skill == "code-remediate" else "--complete-run"
+    assert (continuation in response.get("reason", "")) is (expected == "workflow")
+
+
+@pytest.mark.parametrize("platform", PLATFORM_CASES)
+@pytest.mark.parametrize(
+    ("initial_flag", "status_flag", "matching_target", "expected"),
+    [
+        pytest.param("--checkout", "--checkout", True, None, id="bound-checkout"),
+        pytest.param("--checkout", "--checkout", False, "block", id="different-checkout"),
+        pytest.param("--slot", "--checkout", True, "block", id="slot-only-admission"),
+        pytest.param("--checkout", "--slot", True, "block", id="invalid-null-locator"),
+    ],
+)
+def test_checkout_resolution_error_supersedes_only_a_bound_checkout(
+    review_state, platform: dict, initial_flag: str, status_flag: str, matching_target: bool, expected: str | None
+) -> None:
+    """Use a slotless error only when an earlier receipt tied this checkout to the queue."""
+    payload, records = review_state
+    cwd = platform["cwd"]
+    root = platform["root"]
+    launcher = platform["prefix"] + f'"{root}/bin/{platform["launcher"]}" "{root}/shared/review_checkout_slot.py"'
+    slot = f"{cwd}/.git/codex-review-slot"
+    initial_target = cwd if initial_flag == "--checkout" else slot
+    status_target = (cwd if matching_target else f"{cwd}/unrelated") if status_flag == "--checkout" else slot
+    payload["cwd"] = cwd
+    records[2:] = [
+        command_record(
+            f'{launcher} acquire {initial_flag} "{initial_target}" --owner queued',
+            json.dumps({"status": "busy", "owner": "peer", "slot": slot}),
+            1,
+            platform=platform,
+        ),
+        command_record(
+            f'{launcher} status {status_flag} "{status_target}"',
+            json.dumps({"status": "error", "owner": None, "slot": None, "error": "invalid Git common directory"}),
+            2,
+            platform=platform,
+        ),
+    ]
+
+    response = HOOK.evaluate(payload, records, root)
+
+    assert response.get("decision") == expected
+    assert ("--queue" in response.get("reason", "")) is (expected == "block")
+
+
+@pytest.mark.parametrize("platform", PLATFORM_CASES)
+@pytest.mark.parametrize(
+    ("initial_flag", "initial_status", "holder", "initial_exit", "arguments", "status", "new_holder", "expected"),
+    [
+        pytest.param(
+            "--checkout", "busy", "peer", 1, 'status --checkout "{cwd}"', "free", None, None, id="peer-status"
+        ),
+        pytest.param(
+            "--checkout", "acquired", "queued", 0, 'status --checkout "{cwd}"', "free", None, None, id="acquired-status"
+        ),
+        pytest.param(
+            "--checkout",
+            "busy",
+            "peer",
+            1,
+            'acquire --checkout "{cwd}" --owner queued',
+            "acquired",
+            "queued",
+            None,
+            id="same-requester-reacquire",
+        ),
+        pytest.param(
+            "--checkout",
+            "busy",
+            "peer",
+            1,
+            'acquire --checkout "{cwd}" --owner other',
+            "acquired",
+            "other",
+            "--queue",
+            id="different-requester",
+        ),
+        pytest.param(
+            "--checkout",
+            "busy",
+            "peer",
+            1,
+            'status --checkout "{cwd}/different"',
+            "free",
+            None,
+            "--queue",
+            id="different-checkout",
+        ),
+        pytest.param(
+            "--checkout",
+            "busy",
+            "peer",
+            1,
+            'status --slot "{new_slot}"',
+            "free",
+            None,
+            "--queue",
+            id="different-locator",
+        ),
+        pytest.param(
+            "--slot",
+            "busy",
+            "peer",
+            1,
+            'status --checkout "{cwd}"',
+            "free",
+            None,
+            "--queue",
+            id="locator-only-admission",
+        ),
+    ],
+)
+def test_checkout_slot_drift_requires_the_bound_checkout_and_requester(
+    review_state,
+    platform: dict,
+    initial_flag: str,
+    initial_status: str,
+    holder: str,
+    initial_exit: int,
+    arguments: str,
+    status: str,
+    new_holder: str | None,
+    expected: str | None,
+) -> None:
+    """A verified re-resolution of the bound checkout invalidates its earlier slot claim."""
+    payload, records = review_state
+    cwd = platform["cwd"]
+    root = platform["root"]
+    launcher = platform["prefix"] + f'"{root}/bin/{platform["launcher"]}" "{root}/shared/review_checkout_slot.py"'
+    slot = f"{cwd}/.git/codex-review-slot"
+    new_slot = f"{cwd}/new-common-dir/codex-review-slot"
+    initial_target = cwd if initial_flag == "--checkout" else slot
+    payload["cwd"] = cwd
+    records[2:] = [
+        command_record(
+            f'{launcher} acquire {initial_flag} "{initial_target}" --owner queued',
+            json.dumps({"status": initial_status, "owner": holder, "slot": slot}),
+            initial_exit,
+            platform=platform,
+        ),
+        command_record(
+            f"{launcher} {arguments.format(cwd=cwd, new_slot=new_slot)}",
+            json.dumps({"status": status, "owner": new_holder, "slot": new_slot}),
+            platform=platform,
+        ),
+    ]
+
+    response = HOOK.evaluate(payload, records, root)
+
+    assert response.get("decision") == ("block" if expected else None)
+    assert expected is None or expected in response["reason"]
+
+
+@pytest.mark.parametrize("skill", ["code-review", "code-remediate"])
+@pytest.mark.parametrize("observed_action", ["status", "acquire"])
+@pytest.mark.parametrize(
+    ("release_first", "changed_locator", "expected"),
+    [
+        pytest.param(False, True, None, id="drift-before-release"),
+        pytest.param(True, True, None, id="release-before-drift"),
+        pytest.param(True, False, "block", id="release-and-same-locator"),
+    ],
+)
+def test_checkout_identity_survives_claim_release(
+    review_state, skill: str, observed_action: str, release_first: bool, changed_locator: bool, expected: str | None
+) -> None:
+    """A release ends ownership but does not erase the checkout identity used to detect drift."""
+    payload, records = review_state
+    records[2] = create_run_record(skill)
+    launcher = '"/plugin/bin/python" "/plugin/shared/review_checkout_slot.py"'
+    slot = "/workspace/.git/codex-review-slot"
+    observed_slot = "/workspace/new-common-dir/codex-review-slot" if changed_locator else slot
+    records.append(
+        command_record(
+            f"{launcher} acquire --checkout /workspace --owner queued",
+            json.dumps({"status": "acquired", "owner": "queued", "slot": slot}),
+        )
+    )
+    acquiring = observed_action == "acquire"
+    observation = command_record(
+        f"{launcher} {observed_action} --checkout /workspace" + (" --owner queued" if acquiring else ""),
+        json.dumps(
+            {
+                "status": "acquired" if acquiring else "free",
+                "owner": "queued" if acquiring else None,
+                "slot": observed_slot,
+            }
+        ),
+    )
+    release = command_record(
+        f'{launcher} release --slot "{slot}" --owner queued',
+        json.dumps({"status": "released", "owner": None, "slot": slot}),
+    )
+    records.extend((release, observation) if release_first else (observation, release))
+
+    response = HOOK.evaluate(payload, records, "/plugin")
+    assert response.get("decision") == expected
+    assert "--queue" not in response.get("reason", "")
+
+
+@pytest.mark.parametrize("skill", ["code-review", "code-remediate"])
+@pytest.mark.parametrize(
+    ("arguments", "status", "slot", "holder", "exit_code", "expected"),
+    [
+        pytest.param("--checkout /workspace --owner queued", "error", None, None, 2, None, id="bound-acquire-error"),
+        pytest.param("--checkout /workspace --owner other", "error", None, None, 2, "block", id="unrelated-error"),
+        pytest.param(
+            "--checkout /workspace --owner other",
+            "busy",
+            "/other/codex-review-slot",
+            "peer",
+            1,
+            "block",
+            id="different-requester",
+        ),
+        pytest.param(
+            "--slot /other/codex-review-slot --owner queued",
+            "busy",
+            "/other/codex-review-slot",
+            "peer",
+            1,
+            "block",
+            id="different-slot",
+        ),
+    ],
+)
+def test_checkout_release_preserves_scope_for_later_acquisition(
+    review_state,
+    skill: str,
+    arguments: str,
+    status: str,
+    slot: str | None,
+    holder: str | None,
+    exit_code: int,
+    expected: str | None,
+) -> None:
+    """Stop on failed re-entry of the bound checkout without adopting another invocation's queue."""
+    payload, records = review_state
+    records[2] = create_run_record(skill)
+    launcher = '"/plugin/bin/python" "/plugin/shared/review_checkout_slot.py"'
+    original = "/workspace/.git/codex-review-slot"
+    receipt = {"status": status, "slot": slot, "owner": holder}
+    receipt.update({"error": "Git could not resolve the checkout"} if exit_code == 2 else {})
+    records.extend(
+        (
+            command_record(
+                f"{launcher} acquire --checkout /workspace --owner queued",
+                json.dumps({"status": "acquired", "owner": "queued", "slot": original}),
+            ),
+            command_record(
+                f"{launcher} release --slot {original} --owner queued",
+                json.dumps({"status": "released", "owner": None, "slot": original}),
+            ),
+            command_record(f"{launcher} acquire {arguments}", json.dumps(receipt), exit_code),
+        )
+    )
+
+    response = HOOK.evaluate(payload, records, "/plugin")
+    assert response.get("decision") == expected
+    assert "--queue" not in response.get("reason", "")
+
+
+@pytest.mark.parametrize("user_record", USER_STEERING_RECORDS)
+def test_checkout_release_preserves_user_steering_before_run_creation(review_state, user_record: dict) -> None:
+    """Honor supported human steering receipts after release and before a new claim."""
+    payload, records = review_state
+    launcher = '"/plugin/bin/python" "/plugin/shared/review_checkout_slot.py"'
+    slot = "/workspace/.git/codex-review-slot"
+    acquire = command_record(
+        f"{launcher} acquire --checkout /workspace --owner queued",
+        json.dumps({"status": "acquired", "owner": "queued", "slot": slot}),
+    )
+    release = command_record(
+        f"{launcher} release --slot {slot} --owner queued",
+        json.dumps({"status": "released", "owner": None, "slot": slot}),
+    )
+    records[2:] = [acquire, release, user_record, acquire]
+
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+@pytest.mark.parametrize(
+    ("later_records", "expected"),
+    [
+        pytest.param([], "before an active run", id="before-run"),
+        pytest.param([create_run_record("code-review")], "--complete-run", id="review-run"),
+        pytest.param([create_run_record("code-remediate")], "Continue remediation selection", id="remediation-run"),
+        pytest.param([{"type": "response_item", "payload": {"type": "message", "role": "user"}}], None, id="user-stop"),
+        pytest.param(
+            [
+                command_record(
+                    '"/plugin/bin/python" "/plugin/shared/review_checkout_slot.py" '
+                    "release --slot /workspace/.git/codex-review-slot --owner queued",
+                    '{"status":"released","owner":null,"slot":"/workspace/.git/codex-review-slot"}',
+                ),
+            ],
+            None,
+            id="released",
+        ),
+        pytest.param(
+            [
+                create_run_record("code-review"),
+                command_record(
+                    '"/plugin/bin/python" "/plugin/shared/find-review-report.py" --complete-run .reports/codex/code-review/run-a'
+                ),
+            ],
+            None,
+            id="completed-review",
+        ),
+    ],
+)
+def test_checkout_acquisition_recovers_before_workflow_binding(
+    review_state, later_records: list[dict], expected: str | None
+) -> None:
+    """A confirmed acquired checkout can recover before a run exists, then yields to its lifecycle."""
+    payload, records = review_state
+    records[2:] = [
+        command_record(
+            '"/plugin/bin/python" "/plugin/shared/review_checkout_slot.py" acquire --checkout /workspace --owner queued --queue',
+            '{"status":"acquired","owner":"queued","slot":"/workspace/.git/codex-review-slot"}',
+        ),
+        *later_records,
+    ]
+
+    response = HOOK.evaluate(payload, records, "/plugin")
+
+    reason = response.get("reason", "")
+    assert response.get("decision") == ("block" if expected else None)
+    assert expected is None or expected in reason
+    assert "--queue" not in reason
+
+
+@pytest.mark.parametrize(
+    ("arguments", "status", "exit_code", "expected"),
+    [
+        pytest.param("status --slot {slot}", "busy", 0, "block", id="status-confirms-owner"),
+        pytest.param("acquire --slot {slot} --owner queued", "busy", 1, "block", id="free-only-acquire-sees-owner"),
+        pytest.param("hold --slot {slot} --owner queued", "inspection-required", 0, None, id="own-hold"),
+    ],
+)
+def test_checkout_acquisition_uses_newer_owner_evidence(
+    review_state, arguments: str, status: str, exit_code: int, expected: str | None
+) -> None:
+    """Continue with a confirmed own claim and preserve a newer inspection hold."""
+    payload, records = review_state
+    launcher = '"/plugin/bin/python" "/plugin/shared/review_checkout_slot.py"'
+    slot = "/workspace/.git/codex-review-slot"
+    records[2:] = [
+        command_record(
+            f"{launcher} acquire --checkout /workspace --owner queued",
+            json.dumps({"status": "acquired", "owner": "queued", "slot": slot}),
+        ),
+        command_record(
+            f"{launcher} {arguments.format(slot=slot)}",
+            json.dumps({"status": status, "owner": "queued", "slot": slot}),
+            exit_code,
+        ),
+    ]
+
+    response = HOOK.evaluate(payload, records, "/plugin")
+
+    assert response.get("decision") == expected
+    assert ("before an active run" in response.get("reason", "")) is (expected == "block")
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        pytest.param("Waiting for the checkout slot to become free.", "block", id="checkout-slot"),
+        pytest.param("Waiting for the shared checkout slot.", "block", id="shared-checkout-slot"),
+        pytest.param("Review is waiting for the other checkout owner.", "block", id="checkout-owner"),
+        pytest.param("Awaiting checkout admission.", "block", id="checkout-admission"),
+        pytest.param("Waiting for the checkout slot. The user paused this run.", None, id="explicit-user-pause"),
+        pytest.param("Waiting for checkout admission. Your approval is pending.", None, id="approval"),
+        pytest.param("Waiting for the checkout slot. The retry limit is exhausted.", None, id="retry-exhausted"),
+    ],
+)
+def test_checkout_wait_wording_preserves_evidenced_queue_recovery(
+    review_state, message: str, expected: str | None
+) -> None:
+    """Advisory checkout progress yields to current host evidence and preserves controlling stops."""
+    payload, records = review_state
+    payload["last_assistant_message"] = message
+    records[2] = command_record(
+        '"/plugin/bin/python" "/plugin/shared/review_checkout_slot.py" acquire --checkout /workspace --owner queued --wait-seconds 60',
+        '{"status":"busy","owner":"peer","slot":"/workspace/.git/codex-review-slot"}',
+        1,
+    )
+
+    response = HOOK.evaluate(payload, records, "/plugin")
+
+    assert response.get("decision") == expected
+    assert ("--queue" in response.get("reason", "")) is (expected == "block")
+
+
+@pytest.mark.parametrize(
+    ("arguments", "status", "holder", "exit_code"),
+    [
+        pytest.param("acquire --checkout /workspace --owner me --queue", "acquired", "me", 0, id="acquired"),
+        pytest.param("acquire --checkout /workspace --owner me --wait-seconds 60", "busy", "peer", 1, id="peer-queue"),
+    ],
+)
+@pytest.mark.parametrize("run_bound", [pytest.param(False, id="before-run"), pytest.param(True, id="run-bound")])
+@pytest.mark.parametrize(
+    ("message", "question"),
+    [
+        pytest.param(
+            "The PR head moved.\n\nShould I review the new head or the old one?", True, id="terminal-question"
+        ),
+        pytest.param("The PR head moved.\n\nShould I review the new head or the *old* one?**", True, id="emphasis"),
+        pytest.param("Should I wait? The checkout admission remains open.", False, id="earlier-question"),
+        pytest.param("The checkout admission remains open.", False, id="statement"),
+    ],
+)
+def test_checkout_continuation_respects_a_terminal_question(
+    review_state,
+    arguments: str,
+    status: str,
+    holder: str,
+    exit_code: int,
+    run_bound: bool,
+    message: str,
+    question: bool,
+) -> None:
+    """A terminal question before run creation ends the turn; every continuation keeps the shared pause clause."""
+    payload, records = review_state
+    payload["last_assistant_message"] = message
+    receipt = command_record(
+        f"{SLOT_HELPER} {arguments}", json.dumps({"status": status, "owner": holder, "slot": SLOT}), exit_code
+    )
+    records[2:] = [receipt, *([create_run_record("code-review")] if run_bound else [])]
+
+    response = HOOK.evaluate(payload, records, "/plugin")
+
+    if question and not run_bound:
+        assert response == {}
+    else:
+        assert response["decision"] == "block"
+        assert "pending question" in response["reason"]
+        assert "preserve that pause" in response["reason"]
+
+
+@pytest.mark.parametrize("user_record", [*USER_STEERING_RECORDS, pytest.param(None, id="no-steering")])
+def test_user_message_after_slot_only_receipts_suppresses_continuation(review_state, user_record: dict | None) -> None:
+    """A user message after any validated slot receipt stops later peer recovery, even after a free status."""
+    payload, records = review_state
+    peer = command_record(
+        f"{SLOT_HELPER} acquire --slot {SLOT} --owner me --wait-seconds 60",
+        json.dumps({"status": "busy", "owner": "peer", "slot": SLOT}),
+        1,
+    )
+    free = command_record(
+        f"{SLOT_HELPER} status --slot {SLOT}", json.dumps({"status": "free", "owner": None, "slot": SLOT})
+    )
+    records[2:] = [peer, free, *([user_record] if user_record else []), peer]
+
+    response = HOOK.evaluate(payload, records, "/plugin")
+
+    if user_record:
+        assert response == {}
+    else:
+        assert response["decision"] == "block"
+        assert "--queue" in response["reason"]
+
+
+@pytest.mark.parametrize("order", ["after-peer", "after-free", "before-admission"])
+@pytest.mark.parametrize(
+    ("arguments", "error_slot", "expected"),
+    [
+        pytest.param("status --slot {slot}", SLOT, None, id="status-error"),
+        pytest.param("hold --slot {slot} --owner me", SLOT, None, id="hold-error"),
+        pytest.param("release --slot {slot} --owner me", SLOT, None, id="release-error"),
+        pytest.param("acquire --slot {slot} --owner other", SLOT, None, id="other-requester-error"),
+        pytest.param("status --slot {slot}", "/other/.git/codex-review-slot", "block", id="unrelated-slot-error"),
+    ],
+)
+def test_matching_slot_helper_error_ends_continuation(
+    review_state, order: str, arguments: str, error_slot: str, expected: str | None
+) -> None:
+    """A helper error at a slot this turn uses, before or after admission, outlasts any peer observation."""
+    payload, records = review_state
+    peer = command_record(
+        f"{SLOT_HELPER} acquire --slot {SLOT} --owner me --wait-seconds 60",
+        json.dumps({"status": "busy", "owner": "peer", "slot": SLOT}),
+        1,
+    )
+    free = command_record(
+        f"{SLOT_HELPER} status --slot {SLOT}", json.dumps({"status": "free", "owner": None, "slot": SLOT})
+    )
+    error = command_record(
+        f"{SLOT_HELPER} {arguments.format(slot=error_slot)}",
+        json.dumps({"status": "error", "owner": None, "slot": error_slot, "error": "invalid review slot marker"}),
+        2,
+    )
+    sequences = {
+        "after-peer": [peer, error, peer],
+        "after-free": [peer, free, error, peer],
+        "before-admission": [error, peer],
+    }
+    records[2:] = sequences[order]
+
+    response = HOOK.evaluate(payload, records, "/plugin")
+
+    assert response.get("decision") == expected
+    assert ("--queue" in response.get("reason", "")) is (expected == "block")
+
+
+@pytest.mark.parametrize(
+    ("arguments", "output", "expected"),
+    [
+        pytest.param(
+            "acquire --checkout /workspace --owner me --wait-seconds 60",
+            json.dumps({"status": "busy", "owner": "approval-run", "slot": SLOT}),
+            "block",
+            id="owner-approval",
+        ),
+        pytest.param(
+            "acquire --checkout /workspace --owner me --wait-seconds 60",
+            json.dumps({"status": "busy", "owner": "denied-peer", "slot": SLOT}),
+            "block",
+            id="owner-denied",
+        ),
+        pytest.param(
+            "acquire --checkout /workspace --owner me --wait-seconds 60",
+            json.dumps({"status": "busy", "owner": "peer", "slot": "/srv/not permitted/codex-review-slot"}),
+            "block",
+            id="slot-not-permitted",
+        ),
+        pytest.param(
+            "acquire --slot /srv/approval/codex-review-slot --owner me",
+            json.dumps({"status": "busy", "owner": "peer", "slot": "/srv/approval/codex-review-slot"}),
+            "block",
+            id="slot-approval",
+        ),
+        pytest.param(
+            "acquire --checkout /workspace --owner me --wait-seconds 60",
+            "Command approval denied by the user.",
+            None,
+            id="host-denial-text",
+        ),
+    ],
+)
+def test_slot_receipt_routing_uses_fields_not_identifier_words(
+    review_state, arguments: str, output: str, expected: str | None
+) -> None:
+    """Pause words in a validated owner ID or slot path keep the peer route; host denial text still stops it."""
+    payload, records = review_state
+    records[2:] = [command_record(f"{SLOT_HELPER} {arguments}", output, 1)]
+
+    response = HOOK.evaluate(payload, records, "/plugin")
+
+    assert response.get("decision") == expected
+    assert ("--queue" in response.get("reason", "")) is (expected == "block")
+
+
+@pytest.mark.parametrize(
+    "terminator", [pytest.param("", id="bare"), pytest.param("\n", id="newline"), pytest.param("\\n", id="escaped")]
+)
+@pytest.mark.parametrize(
+    ("arguments", "lines", "exit_code", "expected"),
+    [
+        pytest.param(
+            "acquire --checkout /workspace --owner me --wait-seconds 60",
+            [{"status": "busy", "owner": "peer", "slot": SLOT}],
+            1,
+            "--queue",
+            id="bounded-wait",
+        ),
+        pytest.param(
+            "acquire --checkout /workspace --owner me --queue",
+            [{"status": "busy", "owner": "peer", "slot": SLOT}, {"status": "acquired", "owner": "me", "slot": SLOT}],
+            0,
+            "before an active run",
+            id="queue-progress",
+        ),
+    ],
+)
+def test_slot_receipt_accepts_documented_host_output_shapes(
+    review_state, terminator: str, arguments: str, lines: list[dict], exit_code: int, expected: str
+) -> None:
+    """Slot receipts accept the same bare, newline and escaped-newline endings as run creation receipts."""
+    payload, records = review_state
+    output = "\n".join(json.dumps(line) for line in lines) + terminator
+    records[2:] = [command_record(f"{SLOT_HELPER} {arguments}", output, exit_code)]
+
+    response = HOOK.evaluate(payload, records, "/plugin")
+
+    assert response["decision"] == "block"
+    assert expected in response["reason"]
 
 
 @pytest.mark.parametrize("platform", PLATFORM_CASES)
