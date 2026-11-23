@@ -242,8 +242,14 @@ class TestNativeCheckout:
         "ignored",
         [pytest.param(True, id="ignored-report-directory"), pytest.param(False, id="visible-report-directory")],
     )
+    @pytest.mark.parametrize("locator_name", ["remediation-worktree.json", "recovery-worktree.json"])
     def test_worktree_delivery_binds_collected_source_after_report_promotion(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repository_template: RepositoryTemplate, ignored: bool
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        repository_template: RepositoryTemplate,
+        ignored: bool,
+        locator_name: str,
     ) -> None:
         """The retained checkout survives report promotion, identifies the fork branch, and rejects swapped locators."""
         source, caller, base, _old, head = _setup_repositories(tmp_path, repository_template)
@@ -254,7 +260,7 @@ class TestNativeCheckout:
         (caller / ".gitignore").write_text(".reports/\n" if ignored else "", encoding="utf-8")
         for variable in ("TMPDIR", "TEMP", "TMP"):
             monkeypatch.setenv(variable, str(tmp_path))
-        locator = run / "remediation-worktree.json"
+        locator = run / locator_name
         created = _run_helper(caller, "worktree", "--receipt", str(locator))
         assert created.returncode == 0, created.stderr
         linked = Path(json.loads(created.stdout)["worktree"])
@@ -283,6 +289,16 @@ class TestNativeCheckout:
         assert "remediation-worktree-mismatch" in rejected.stderr
         assert not receipt.exists()
         locator.write_bytes(original)
+        other_name = (
+            "recovery-worktree.json" if locator_name == "remediation-worktree.json" else "remediation-worktree.json"
+        )
+        other_locator = promoted / other_name
+        other_locator.write_bytes(original)
+        ambiguous = _run_helper(linked, *prepare_args)
+        assert ambiguous.returncode == 2
+        assert "conflicting-remediation-worktree-locators" in ambiguous.stderr
+        assert not receipt.exists()
+        other_locator.unlink()
         prepared = _run_helper(linked, *prepare_args)
         assert prepared.returncode == 0, prepared.stderr
         assert _check(linked, receipt, head).returncode == 0

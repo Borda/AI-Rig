@@ -122,7 +122,9 @@ IFS= read -r REPO_ROOT < "${TMPDIR:-/tmp}/release-setup-${CSID}/REPO_ROOT" 2>/de
 python "$PLUGIN_ROOT/bin/scan_unreleased_leftovers.py" --repo-root "$REPO_ROOT" ${TARGET:+--version "$TARGET"}; echo "leftovers-rc: $?"  # timeout: 60000
 ```
 
-`leftovers-rc: 0` → `Unreleased leftovers` row ✓. `1` → row ✗ with the hit count; every printed `path:line: <marker>` row becomes its own Findings summary row, severity `high`, listed as a ✗ blocking item under `NEEDS_ATTENTION` (`BLOCKED` stays reserved for `critical`, so `prepare` continues past Phase 1 and its Phase 2c gate stops it after the changelog); never auto-edit the docs. `2` → row ⚠ with the scanner's error line.
+`leftovers-rc: 0` → `Unreleased leftovers` row ✓. `1` → row ✗ with the hit count; every printed `path:line: <marker>` row becomes its own Findings summary row, severity `high`, listed as a ✗ blocking item under `NEEDS_ATTENTION` (`BLOCKED` stays reserved for `critical`, so `prepare` continues past Phase 1 and its Phase 2c gate stops it after the changelog); never auto-edit the docs. `2` → row ⚠ with the scanner's error line. After hits are fixed or reviewed as false positives and the user accepts them, the row flips to ✓ with detail `N fixed; M reviewed false positives accepted` — never leave ⚠/✗ on a resolved row, and drop their Findings summary rows and `NEEDS_ATTENTION` items.
+
+**Resolved rows flip to ✓ (every check row, not only leftovers)** — when a ⚠/✗ finding is fixed or reviewed and accepted during the run, re-render its row `✓` with detail naming the outcome (`N fixed; M accepted`), drop its Findings summary rows and `NEEDS_ATTENTION`/blocking items, and recompute the verdict. `⚠`/`✗` stay only for still-open findings. See `templates/audit-checks.md` §Resolved findings read ✓.
 
 After readiness table, if issues found, append **Findings summary** table:
 

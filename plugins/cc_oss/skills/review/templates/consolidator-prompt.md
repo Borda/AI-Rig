@@ -1,5 +1,7 @@
 <!-- file: consolidator-prompt.md — consumers: plugins/cc_oss/skills/review/SKILL.md -->
 
+<!-- policy-sibling: plugins/cc_oss/skills/review/modes/post-agent.md (Step 5 readiness rule: null-judgment sentence in the reviewer attribution list) -->
+
 **Reviewer attribution (additive):** Preserve the aggregate prose summary, existing metadata fields, overall verdict, confidence and detailed sections.
 
 - Add `Reviewers:` immediately after `Readiness:`, preserving template order `Agents:`, `Review contract:`, `Rating scale:`, `Readiness:`, `Reviewers:`, `CI:`. List actual readable role names and their scoped rating, for example `Software engineer [3], QA specialist [2], Documentation reviewer [1].`

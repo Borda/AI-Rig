@@ -1946,6 +1946,149 @@ def _validate_pr_review_gate_command(out_dir: Path, checks: list[dict[str, Any]]
         raise SystemExit("pr-source-review-gate-command-invalid")
 
 
+#: The gate records which completed CI jobs supplied the disposition, with commas preserved in matrix names.
+_CI_TEST_REASON = re.compile(r"ci-(?P<outcome>covered|failed): (?P<names>.+) at (?P<head>[0-9a-f]{7,40})")
+_CI_TEST_CLAIM = re.compile(r"\s*(?:ci[\s_-]*(?P<covered>cover)|ci-failed\b)", re.IGNORECASE)
+
+
+def _ci_check_outcome(entry: dict[str, Any]) -> str | None:
+    """Return the reported conclusion of a completed check run or the state of a legacy commit status."""
+    if entry.get("status") == "COMPLETED":
+        return entry.get("conclusion")
+    return entry.get("state")
+
+
+#: Paths a CI test step executes or reads: workflow and action files, dependency declarations, test configuration and
+#: runners. A PR touching one must show observed test counts, since a green job may no longer run the cited tests.
+_CI_EXECUTION_PATH = re.compile(
+    r"(?:^|/)(?:\.github/(?:workflows|actions)/"
+    r"|(?:Makefile|makefile|noxfile\.py|tox\.ini|pytest\.ini|setup\.cfg|setup\.py|pyproject\.toml|conftest\.py"
+    r"|requirements[^/]*\.txt|uv\.lock|poetry\.lock|package(?:-lock)?\.json)$)"
+)
+#: The tests-gate skip reason admitted for a documentation-only change, also named in ``gate_test_approval``.
+_DOCUMENTATION_ONLY_REASON = "documentation-only change"
+
+
+def _reject_local_ci_claim(check: dict[str, Any]) -> None:
+    """Refuse a local-source tests skip that claims CI coverage: a local review has no PR rollup to back it."""
+    reason = check.get("reason")
+    if check.get("status") == "not-applicable" and isinstance(reason, str) and _CI_TEST_CLAIM.match(reason):
+        raise SystemExit("local-confidence-tests-ci-claim-unsupported")
+
+
+def _changes_ci_execution_path(out_dir: Path) -> bool:
+    """Return whether the retained PR diff touches a file the CI test step executes or reads."""
+    patch = out_dir / "diff.patch"
+    if not patch.is_file():
+        return True
+    text = patch.read_text(encoding="utf-8", errors="replace")
+    return any(_CI_EXECUTION_PATH.search(path) for path in re.findall(r"^diff --git a/\S+ b/(\S+)$", text, re.M))
+
+
+def _validate_ci_tests_skip(
+    out_dir: Path,
+    checks: list[dict[str, Any]],
+    head_oid: str,
+    *,
+    readiness: str | None = None,
+    base_oid: str | None = None,
+) -> None:
+    """Bind required test skips to the reviewed PR revision, observed job execution and reported readiness."""
+    tests = [check for check in checks if isinstance(check, dict) and check.get("id") == "tests"]
+    reason = tests[0].get("reason") if len(tests) == 1 and tests[0].get("status") == "not-applicable" else None
+    if not isinstance(reason, str):
+        return
+    failed_outcomes = {"FAILURE", "ERROR", "TIMED_OUT", "STARTUP_FAILURE"}
+    claim = _CI_TEST_CLAIM.match(reason)
+    if claim is None:
+        # Older runs could name a failed required CI job in ordinary prose. Its known failure still limits readiness.
+        lowered = reason.casefold()
+        # A historical explicit required-failure disposition can omit every matrix job name.
+        if readiness == "complete" and re.search(
+            r"\brequired\s+ci(?:\s+(?:tests?|checks?|jobs?))?\s+(?:(?:has|have)\s+)?failed\b", lowered
+        ):
+            raise SystemExit("pr-source-review-ci-failed-readiness")
+        names_required_ci = re.search(r"\brequired\s+ci\b|^\s*ci\s+failed\s*:", lowered)
+        failure_word = re.search(r"\bfail(?:ed|ure|ing)\b", lowered)  # codespell:ignore ure
+        if readiness == "complete" and names_required_ci and failure_word:
+            rollup = _load_json(out_dir / "pr.json").get("statusCheckRollup")
+            for entry in rollup if isinstance(rollup, list) else ():
+                if isinstance(entry, dict) and _ci_check_outcome(entry) in failed_outcomes:
+                    name = entry.get("name") or entry.get("context")
+                    if isinstance(name, str) and name and name.casefold() in lowered:
+                        raise SystemExit("pr-source-review-ci-failed-readiness")
+        # A skip that cites no verified CI evidence, no documentation-only change and no user approval proves nothing.
+        if readiness == "complete" and "approval" not in tests[0] and reason != _DOCUMENTATION_ONLY_REASON:
+            raise SystemExit("pr-source-review-tests-skip-unverified-readiness")
+        return
+    outcome = "covered" if claim["covered"] else "failed"
+    error = f"pr-source-review-ci-{outcome}"
+    match = _CI_TEST_REASON.fullmatch(reason)
+    if match is None:
+        raise SystemExit(f"{error}-reason-invalid")
+    if not head_oid.startswith(match["head"]):
+        raise SystemExit(f"{error}-head-mismatch")
+    pr_payload = _load_json(out_dir / "pr.json")
+    rollup = pr_payload.get("statusCheckRollup")
+    if pr_payload.get("headRefOid") != head_oid or not isinstance(rollup, list):
+        raise SystemExit(f"{error}-rollup-unavailable")
+    cited = [name.strip() for name in match["names"].split("|") if name.strip()]
+    if not cited:
+        raise SystemExit(f"{error}-reason-invalid")
+    # Rollups associate jobs with a PR, including jobs that checked out a synthetic merge or ran no tests.
+    # The reviewer records the actual checkout and test result from the cited job, once, in the review notes.
+    notes = out_dir / "review-notes.md"
+    observed: dict[str, dict[str, Any]] = {}
+    for line in notes.read_text(encoding="utf-8").splitlines() if notes.is_file() else ():
+        if not line.startswith("CI test evidence: "):
+            continue
+        try:
+            row = json.loads(line.removeprefix("CI test evidence: "))
+        except ValueError as error:
+            raise SystemExit("pr-source-review-ci-test-evidence-invalid") from error
+        if not isinstance(row, dict) or not isinstance(row.get("check"), str) or row["check"] in observed:
+            raise SystemExit("pr-source-review-ci-test-evidence-invalid")
+        observed[row["check"]] = row
+    for name in cited:
+        entries = [
+            entry for entry in rollup if isinstance(entry, dict) and (entry.get("name") or entry.get("context")) == name
+        ]
+        conclusions = [_ci_check_outcome(entry) for entry in entries]
+        if outcome == "covered" and (not entries or any(value != "SUCCESS" for value in conclusions)):
+            raise SystemExit("pr-source-review-ci-covered-check-not-successful")
+        if outcome == "failed" and (not entries or any(value not in failed_outcomes for value in conclusions)):
+            raise SystemExit("pr-source-review-ci-failed-check-not-failed")
+        row = observed.get(name, {})
+        url = row.get("job_url")
+        links = [link for entry in entries if (link := entry.get("detailsUrl") or entry.get("targetUrl"))]
+        passed = row.get("passed")
+        # The job must have checked out the reviewed head, or a merge commit whose two parents are exactly the verified
+        # base and head, which tests the same bytes the review judges merged onto that base.
+        parents = row.get("merge_parents")
+        merge_of_base_and_head = (
+            base_oid is not None
+            and isinstance(parents, list)
+            and sorted(parents) == sorted([base_oid, head_oid])
+            and re.fullmatch(r"[0-9a-f]{40}", str(row.get("checkout_oid"))) is not None
+        )
+        if (
+            not (row.get("checkout_oid") == head_oid or merge_of_base_and_head)
+            or not isinstance(url, str)
+            or not url.startswith("https://")
+            or url not in links
+        ):
+            raise SystemExit("pr-source-review-ci-test-evidence-invalid")
+        counted = type(passed) is int and passed > 0
+        named_test = passed is None and isinstance(row.get("passing_test"), str) and row["passing_test"].strip()
+        if outcome == "covered" and not (
+            all(isinstance(row.get(key), str) and row[key].strip() for key in ("selection", "matrix"))
+            and (counted or (named_test and not _changes_ci_execution_path(out_dir)))
+        ):
+            raise SystemExit("pr-source-review-ci-test-evidence-invalid")
+    if outcome == "failed" and readiness not in {"incomplete", "blocked"}:
+        raise SystemExit("pr-source-review-ci-failed-readiness")
+
+
 def _validate_pr_tests_import_proof(
     checks: list[dict[str, Any]], worktree: str, local_snapshot: dict[str, Any] | None = None
 ) -> None:
@@ -2455,6 +2598,7 @@ def _consolidation_confidence_evidence(out_dir: Path, manifest: dict[str, Any]) 
             raise SystemExit("local-confidence-tests-invalid")
         check = tests[0]
         if check["status"] != "pass":
+            _reject_local_ci_claim(check)
             return references
         receipt = check.get("source")
         fields = ("mode", "worktree", "receipt_path", "receipt_sha256", "snapshot_path", "snapshot_sha256")
@@ -3204,6 +3348,14 @@ def _validate_pr_review_scope(
     _validate_pr_diff_provenance(checkout, routing)
     if result.get("schema_version") in {2, 3}:
         _validate_verified_pr_source(out_dir, routing, target_branch, checkout)
+    gates = _load_json(out_dir / "gates.json")
+    _validate_ci_tests_skip(
+        out_dir,
+        gates.get("checks", []),
+        routing["head_oid"],
+        readiness=metadata.get("review_validation", {}).get("verification_readiness"),
+        base_oid=routing.get("base_oid"),
+    )
     _validate_pr_review_threads(out_dir, online_summary, metadata, notes_text)
     if (out_dir / "head-files").exists():
         raise SystemExit("pr-raw-head-file-snapshots-forbidden")

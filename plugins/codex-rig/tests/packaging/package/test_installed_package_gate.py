@@ -16,7 +16,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 PACKAGE_SAFE_TEST_MARKER = "installed_plugin"
 #: Keep the measured Windows acceptance bound while sharing expensive fixture variants across shards and workers.
 INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS = 240
-INSTALLED_PACKAGE_SHARDS = 8
+INSTALLED_PACKAGE_SHARDS = 12
 #: Checkout-only entries a copied package payload must neither ship nor grow while its tests run.
 CHECKOUT_CONTEXT_NAMES = ("Makefile", ".github", ".git")
 
@@ -100,6 +100,7 @@ def _run_package_safe_selection(installed_root: Path, shard: int) -> subprocess.
 @pytest.mark.packaging
 @pytest.mark.integration
 @pytest.mark.timeout(INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS + 60)
+@pytest.mark.xdist_group(name="installed-package-shards")
 @pytest.mark.parametrize("shard", range(INSTALLED_PACKAGE_SHARDS))
 def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Path, shard: int) -> None:
     """Prevent checkout-only tests from being mistaken for installed-package coverage.
@@ -109,9 +110,11 @@ def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Pa
     scoring. The complete worktree module carries the marker because the shipped lifecycle contract requires it. A
     separate source-checkout suite retains the valid sync, CI-harness, and Git metadata contracts.
 
-    Eight deterministic partitions cover every selected node exactly once. Each runs with two child workers; explicit
-    fixture groups stay on one shard and worker so expensive lifecycle setup is shared by its receipt checks.
-    Partitioning never changes marker membership or skips Windows cases.
+    Twelve deterministic partitions cover every selected node exactly once. Each runs with two child workers; explicit
+    fixture groups stay on one shard and worker so expensive lifecycle setup is shared by its receipt checks. The shards
+    share one outer group, so they run one after another on one worker: each child starts its own worker pool, and
+    several pools beside the rest of the suite would leave the fixed deadline measuring CPU contention instead of the
+    shard's own work. Partitioning never changes marker membership or skips Windows cases.
 
     The outer deadline includes package copying and child cleanup; sharing the child's deadline lets the Windows pytest-
     timeout thread terminate the worker before subprocess.run can reap and report a timed-out selection.

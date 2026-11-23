@@ -88,11 +88,13 @@ if [ "$PR_COUNT" -eq 500 ]; then
     echo "⚠ gh pr list reached its 500-item cap; retrying discovery within the release date window"
     PR_SINCE=$(TZ=UTC git log --date=format-local:%Y-%m-%d --format=%cd --end-of-options "$RANGE" | sort | head -1)
     if [ -n "$PR_SINCE" ]; then
-        PR_RECOVERY_ARGS=(pr list --state merged --limit 500 --json "$PR_FIELDS" --search "merged:>=$PR_SINCE")
         if [ -n "$TRUNK" ]; then
-            PR_RECOVERY_ARGS+=(--base "$TRUNK")
+            RECOVERED_PRS=$(gh pr list --state merged --limit 500 --json "$PR_FIELDS" --search "merged:>=$PR_SINCE" --base "$TRUNK")  # timeout: 60000
+        else
+            RECOVERED_PRS=$(gh pr list --state merged --limit 500 --json "$PR_FIELDS" --search "merged:>=$PR_SINCE")  # timeout: 60000
         fi
-        if RECOVERED_PRS=$(gh "${PR_RECOVERY_ARGS[@]}"); then  # timeout: 60000
+        RECOVERY_RC=$?  # literal gh in both branches: a variable subcommand makes gh-write-guard block the block
+        if [ "$RECOVERY_RC" -eq 0 ]; then
             PRS="$RECOVERED_PRS"
             PR_COUNT=$(printf '%s' "$PRS" | jq 'length') || { echo "Error: could not count bounded PR recovery" >&2; exit 1; }
         else

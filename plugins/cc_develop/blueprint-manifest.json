@@ -50,7 +50,7 @@
     },
     "03557b19ae604b3b56da75250819993a6e8b10e575c6858d64a16b45669fa971": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "0375b780dafc428b67ccecbebac38e9d2f1cde480635f032f931bc92503871d9": {
       "kind": "command",
@@ -203,6 +203,10 @@
     "0e2673445fa125944d5c6e98179f5f7fe6b31a9734e9dc130396d1773b56772e": {
       "kind": "command",
       "src": "skills/_shared/batch-bisect.md:33"
+    },
+    "0f10a835cd7929f053bd46548522e2c38db2641e0bc162c27366cdd603b25d54": {
+      "kind": "command",
+      "src": "skills/_shared/ci-log-extract.md:16"
     },
     "0f1163c91018b6315fbaa922843be2c9c5b023bea632ce5dfa07365573c6deae": {
       "kind": "block",
@@ -520,7 +524,7 @@
     },
     "1f55ad1e16db206f79cc802737e8ac756f7c4084dce84803a7a86faa195fb3c1": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "1fb563b654277e666c5a67e83ad6d51d211bc8a8c43156fcba7d7d71b461e13d": {
       "kind": "command",
@@ -559,6 +563,11 @@
     "22b95bc07f7d1137910f18c8acec2337e573686ef131cd118f0e9df70b4d6154": {
       "kind": "command",
       "src": "skills/_shared/worktree-isolation.md:102"
+    },
+    "234eb16c3048a83d567f0d15a963ec35a1fa48b1cadc26f11f02810e9ed8375a": {
+      "kind": "block",
+      "src": "skills/_shared/ci-log-extract.md:16",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CI_RUN_ID < \"${TMPDIR:-/tmp}/dev-ci-run-id-${CSID}\" 2>/dev/null || CI_RUN_ID=\"\"\n_RAW_CI=\"$CI_RUN_ID\"\nIFS= read -r CI_REPO < \"${TMPDIR:-/tmp}/dev-upstream-${CSID}\" 2>/dev/null || CI_REPO=\"\"\nCI_ATTEMPT=\"\"\n_CI_PATH=\"${CI_RUN_ID#http://}\"; _CI_PATH=\"${_CI_PATH#https://}\"\n_CI_RE='^(www\\.)?github\\.com/([^/]+/[^/]+)/actions/runs/([0-9]+)(/attempts/([0-9]+))?(/jobs/[0-9]+)?/?([?#].*)?$'\nif [[ \"$_CI_PATH\" =~ $_CI_RE ]]; then\n    CI_REPO=\"${BASH_REMATCH[2]}\"\n    CI_RUN_ID=\"${BASH_REMATCH[3]}\"\n    CI_ATTEMPT=\"${BASH_REMATCH[5]}\"\nfi\n\ncase \"$CI_RUN_ID\" in ''|*[!0-9]*) printf \"! --ci-run is neither a run ID nor an Actions run URL with /runs/<digits>: %s\\n\" \"$_RAW_CI\"; exit 1;; esac\n[ -z \"$CI_REPO\" ] || python \"$PLUGIN_ROOT/bin/dev_ci_log_fence.py\" \"--check-repo=$CI_REPO\" || exit 1\necho \"$CI_RUN_ID\" > \"${TMPDIR:-/tmp}/dev-ci-run-number-${CSID}\"\necho \"$CI_REPO\" > \"${TMPDIR:-/tmp}/dev-ci-repo-${CSID}\"\necho \"$CI_ATTEMPT\" > \"${TMPDIR:-/tmp}/dev-ci-attempt-${CSID}\""
     },
     "23a368f53dd472c1417edaced2d8644ffc18c9afeb4d05c567d341911476a98c": {
       "kind": "command",
@@ -1239,7 +1248,7 @@
     },
     "4f613a5ff7f22bff83879d9890088941f537e39c88349b8d99e141a52f178559": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "4f67b1529fe5fca6087187099018ce19d94982b0c324777b47c9a470b33a4e93": {
       "kind": "command",
@@ -1370,7 +1379,7 @@
     },
     "566f4b407f0667ff4cbe6a68ac21badb7dc76fa2413360d481f630bb2ab07900": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "568f307842ab22b1d99f3e8ecb7186d23365fb17d18bdfdf40ab195a55f1d3b8": {
       "kind": "command",
@@ -2032,7 +2041,7 @@
     },
     "808b33ea3fa288eb81034a3ac263aec2a64062f08f7e7421eb11c79c221421dd": {
       "kind": "block",
-      "src": "skills/_shared/ci-log-extract.md:44",
+      "src": "skills/_shared/ci-log-extract.md:45",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CI_RUN_ID < \"${TMPDIR:-/tmp}/dev-ci-run-number-${CSID}\" 2>/dev/null || CI_RUN_ID=\"\"\n[ -n \"$CI_RUN_ID\" ] || { echo \"! dev-ci-run-number missing \u2014 run \u00a7URL Normalization first\"; exit 1; }\nCI_LOG=\"${TMPDIR:-/tmp}/dev-ci-log-${CSID}\"\nCI_RAW=\"${TMPDIR:-/tmp}/dev-ci-log-raw-${CSID}\"\nCI_FALLBACK=\"${TMPDIR:-/tmp}/dev-ci-log-fallback-${CSID}\"\nIFS= read -r CI_REPO < \"${TMPDIR:-/tmp}/dev-ci-repo-${CSID}\" 2>/dev/null || CI_REPO=\"\"\nIFS= read -r CI_ATTEMPT < \"${TMPDIR:-/tmp}/dev-ci-attempt-${CSID}\" 2>/dev/null || CI_ATTEMPT=\"\"\nset -- \"$CI_RUN_ID\"\n[ -z \"$CI_REPO\" ] || set -- \"$@\" --repo \"$CI_REPO\"\ncase \"$CI_ATTEMPT\" in '') ;; *[!0-9]*) echo \"! invalid CI attempt\"; exit 1;; *) set -- \"$@\" --attempt \"$CI_ATTEMPT\";; esac\ngh run view \"$@\" --log-failed > \"$CI_RAW\" 2>&1 || printf \"\u26a0 gh run view exited %s \u2014 continuing with partial log\\n\" \"$?\"\ngrep -v '::set-output\\|##\\[group\\]\\|##\\[endgroup\\]' \"$CI_RAW\" > \"$CI_LOG\"\nif ! grep -qE 'FAILED|ERROR|error:|Traceback' \"$CI_LOG\"; then\n  gh run view \"$@\" --log 2>&1 | grep -A 40 'FAILED\\|ERROR\\|Traceback' > \"$CI_FALLBACK\"\n  [ -s \"$CI_FALLBACK\" ] && cat \"$CI_FALLBACK\" > \"$CI_LOG\"\nfi\n[ -s \"$CI_LOG\" ] || echo \"! CI log unavailable for run $CI_RUN_ID \u2014 fall back to local pytest if possible\"\nwc -l \"$CI_LOG\"\npython \"$PLUGIN_ROOT/bin/dev_ci_log_fence.py\" \"$CI_LOG\" --label \"github actions log\" --preview-lines 200"
     },
     "80b09c2a76a5ad23ad2f75fca9f3cfcc975a69f88bd4521450e0463a4abb9105": {
@@ -2061,7 +2070,7 @@
     },
     "8286c95aff5e287d0ee51097a89d471d39c7fe1511b3017b377e1fc349665132": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "83271ffbebea35ca3dad3141b6aa9cd6c07a24f89d839ee94ba1550a9109869c": {
       "kind": "command",
@@ -2122,7 +2131,7 @@
     },
     "87393678a9929ad6f6787653950abdb76d8ab6e7ffcae4d8d77d365e6a01e162": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "87dbbf667abfa11525b229e15eadd32bd092b1975251a5504f2457e74056210f": {
       "kind": "command",
@@ -2268,7 +2277,7 @@
     },
     "905f6cced1fc445e9ef9ec69e1426bb4d3f680a03a4f16ffb3123cfccbd01778": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "90a5a5848493f9a8268f791c0da28f14e3bd273cb7d8e602ba2e2c643edd9236": {
       "kind": "command",
@@ -2281,7 +2290,7 @@
     },
     "90f534ff629bead989d36609f75347c0b7096700906f82a3935d54620edb60f3": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "9107543c4d9248b5eb9db93073a6b50578976f3525b2bffb3009a67eb406e2f4": {
       "kind": "block",
@@ -2314,7 +2323,7 @@
     },
     "922368058d450bc3ac884b33998907a14cef71d673f9125ed9c897aa29a24024": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "922c7e9f5dc4718c32ca9c03457396f773d534696c0502eddcc1842838c29dd1": {
       "kind": "block",
@@ -2649,7 +2658,7 @@
     },
     "a3553bb5144d28330f7c23ad933e50f8d81cbe31f371153cca0ad44c0fea8dc1": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "a3fb9ec23537d933fca4aeb36c3b3d0a1d031a98c6af1f63264282a6a4cc11e2": {
       "kind": "command",
@@ -3008,7 +3017,7 @@
     },
     "bf2e8e04315dda604bf7f8da576c597fbd651a4aa89046cdbe37756476a374df": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "bf911a21242f678820d7871fa2063cf5c4cbdf47f3b57c49727ad740a241c613": {
       "kind": "command",
@@ -3100,7 +3109,7 @@
     },
     "c2fd07932ec6d9a3b94fda177b119bad87022be972d0825c067596cb25b38fcb": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "c3265a6cf1056e787bdcbcc962366956da717b4686d010f474b4e688e0e11185": {
       "kind": "command",
@@ -3608,7 +3617,7 @@
     },
     "e06bf952171a193294e0bf21f721a431a596caed826dfdce15ac9b3352f4c386": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "e096da1d01276975b8f404203ee0fa00729364a75067e1121e5a2dadb1265bfd": {
       "kind": "block",
@@ -3659,7 +3668,7 @@
     },
     "e265c84701593d3c3269d6c66ba9c288e11f0807acbf0a58a4ee50f18702472e": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "e27743f6544506eb9c653eae3c5152be470b8665d2c013399375b2303913dd52": {
       "kind": "block",
@@ -3790,7 +3799,7 @@
     },
     "e91b8bec52e9bf80ba4e314a57ea3a543402301d73ee49993063db301c627e65": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "e92d8c026b80ca98b0466bf04a2b096cd8c76893dd821c4e3d35ce18c06ef39a": {
       "kind": "command",
@@ -3962,7 +3971,7 @@
     },
     "f3fabf4b46809a61a97eb1da8e05e53d0bd37a78cf2504b8fa7698fd62bf934c": {
       "kind": "command",
-      "src": "skills/_shared/ci-log-extract.md:44"
+      "src": "skills/_shared/ci-log-extract.md:45"
     },
     "f420f31d4dafa2c1012e397d07e1bdbe611a733860a3d6aa971fce3232637980": {
       "kind": "command",
@@ -4164,6 +4173,6 @@
       "src": "skills/debug/SKILL.md:378"
     }
   },
-  "plugin": "cc_develop@0.50.0",
+  "plugin": "cc_develop@0.51.0",
   "schema": 2
 }

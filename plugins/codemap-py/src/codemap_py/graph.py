@@ -1884,7 +1884,7 @@ def _resolve_out_path(root: Path) -> Path:
     if identity.override:
         return identity.index_path
     target = root / ".cache" / "codemap" / f"{root.name}.json"
-    if not target.parent.resolve().is_relative_to(root.resolve()):
+    if not index_paths.is_within(target.parent, root):
         raise rwgate.CoordinationUnavailable(f"index directory escapes project root: {target.parent}")
     return target
 

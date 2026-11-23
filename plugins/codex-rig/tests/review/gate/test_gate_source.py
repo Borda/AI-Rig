@@ -3487,7 +3487,7 @@ def test_interrupted_inventory_repair_preserves_occupied_diagnostic_across_resta
     monkeypatch.setenv("PYTHONPATH", editable_checkout.environment["PYTHONPATH"])
     occupied = output / "gate-diagnostics/001"
     former = output / "gate-attempts/001"
-    rename = os.rename
+    rename = Path.rename
 
     def interrupt_initial_move(source: str | Path, destination: str | Path) -> None:
         """Leave the older archive in one of its two historical recovery locations."""
@@ -3499,7 +3499,8 @@ def test_interrupted_inventory_repair_preserves_occupied_diagnostic_across_resta
         rename(source, destination)
 
     with monkeypatch.context() as patch:
-        patch.setattr(os, "rename", interrupt_initial_move)
+        # Path.rename: Python 3.10's pathlib binds os.rename at import, so patching os.rename never reaches the runner.
+        patch.setattr(Path, "rename", interrupt_initial_move)
         assert gates.main() == 2
     marker = output / ".gate-publication.json"
     stage = output / json.loads(marker.read_bytes())["stage"]
@@ -3791,7 +3792,7 @@ def test_gate_replay_coordinates_match_when_output_ancestor_has_an_alias(
         ),
     ],
 )
-def test_normal_gate_routes_only_once(
+def test_contributor_gate_routes_only_once(
     linked_worktree: tuple[Path, Path, str],
     output: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3808,6 +3809,9 @@ def test_normal_gate_routes_only_once(
     """
     gates = _load_run_gates(monkeypatch)
     _, selected, head = linked_worktree
+    # An existing protected contributor interval activates the optional native profiles.
+    output.mkdir()
+    (output / "integrity.json").write_text("{}", encoding="utf-8")
     invocation = [
         "run_gates.py",
         "--out",
@@ -3991,6 +3995,8 @@ def test_pytest_profile_preserves_explicit_selection(
         options.extend(["-o", "addopts=-n 2"])
     else:
         options.extend(["-o", "addopts=", *(["-n", "1"] if worker_settings == "cli" else ["-p", "no:xdist"])])
+    output.mkdir()
+    (output / "integrity.json").write_text("{}", encoding="utf-8")
     invocation = [
         "run_gates.py",
         "--out",

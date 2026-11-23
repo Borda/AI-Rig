@@ -13,6 +13,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from importlib.metadata import distribution
 from pathlib import Path
 
@@ -54,6 +55,30 @@ def _populate_runs(family: Path, count: int) -> None:
         run = family / f"run-{number:03}"
         run.mkdir(parents=True)
         (run / "gate.json").write_text("{}", encoding="utf-8")
+
+
+def _set_lock_attribute(lock: Path) -> None:
+    """Write a real user extended attribute through the API available on this host."""
+    if hasattr(os, "setxattr"):
+        os.setxattr(lock, "user.integrity", b"changed")
+    else:
+        subprocess.run(["/usr/bin/xattr", "-w", "user.integrity", "changed", str(lock)], check=True)
+
+
+def _lock_metadata_available(lock: Path) -> bool:
+    """Check whether this actual test file exposes creation time, access metadata and filesystem flags."""
+    try:
+        if sys.platform == "darwin":
+            attributes = subprocess.check_output(["/usr/bin/xattr", str(lock)]).splitlines()
+            acl = subprocess.check_output(["/bin/ls", "-lde", str(lock)]).splitlines()[1:]
+            return set(attributes) <= {b"com.apple.provenance"} and not acl
+        if sys.platform.startswith("linux") and not os.listxattr(lock):
+            birth = subprocess.check_output(["/usr/bin/stat", "-c", "%W", str(lock)]).strip()
+            flags = subprocess.check_output(["/usr/bin/lsattr", "-d", str(lock)]).split()
+            return int(birth) > 0 and bool(flags)
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        pass
+    return False
 
 
 class Baseline:
@@ -137,15 +162,39 @@ def review(checkout: Path, tmp_path: Path) -> Path:
     return path
 
 
-@pytest.fixture(params=[3, 4])
+@pytest.fixture
+def independent_review(checkout: Path, tmp_path: Path) -> Path:
+    """Create a registered detached checkout in an independent Git repository with its own object store."""
+    private = tmp_path / "private"
+    _git(checkout, "clone", "-q", "--no-local", str(checkout), str(private))
+    review = tmp_path / "private-review"
+    _git(private, "worktree", "add", "-q", "--detach", str(review))
+    return review
+
+
+def _slot(*args: str) -> dict[str, str]:
+    """Run an ownership transition or read its state using the shipped checkout scheduler."""
+    done = subprocess.run(
+        [sys.executable, "-I", str(HELPER.with_name("review_checkout_slot.py")), *args],
+        env=_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(done.stdout)
+
+
+@pytest.fixture(params=[3, 4, 5])
 def watched_baseline(checkout: Path, review: Path, tmp_path: Path, request: pytest.FixtureRequest) -> Baseline:
     """Capture a detached review, including retained snapshots from the aggregate-only schema."""
     snap = Baseline(tmp_path / "integrity.json")
     assert snap.take(review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
-    if request.param == 3:
+    if request.param < 5:
         body = json.loads(snap.file.read_text(encoding="utf-8"))
-        del body["ignored_details"]
-        body["schema"] = 3
+        if request.param == 3:
+            del body["ignored_details"]
+        del body["marks"]["common:info/refs"]
+        body["schema"] = request.param
         snap.file.write_text(json.dumps(body), encoding="utf-8")
         snap.expect = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return snap
@@ -157,6 +206,63 @@ class TestVerify:
     def test_unchanged_metadata_passes(self, baseline: Baseline) -> None:
         """Nothing written between snapshot and verify exits 0 with an empty change list."""
         assert baseline.verify() == (0, [])
+
+    @_POSIX_ONLY
+    def test_empty_environment_lock_ctime_preserves_only_the_same_lock(self, checkout: Path, tmp_path: Path) -> None:
+        """A ctime-only touch is benign, while an ordinary replacement with identical size, mode and mtime is drift."""
+        lock = checkout / ".venv" / ".lock"
+        lock.touch()
+        original = lock.stat()
+        snap = Baseline(tmp_path / "integrity.json")
+        assert snap.take(checkout).returncode == 0
+        lock.chmod(original.st_mode)
+        changed_time = lock.stat().st_ctime_ns != original.st_ctime_ns
+        expected = (3, ["main-checkout:ignored"]) if changed_time and not _lock_metadata_available(lock) else (0, [])
+        assert snap.verify() == expected
+        replacement = lock.with_name("replacement")
+        replacement.touch()
+        replacement.chmod(original.st_mode)
+        os.utime(replacement, ns=(original.st_atime_ns, original.st_mtime_ns))
+        replacement.replace(lock)
+        assert snap.verify() == (3, ["main-checkout:ignored"])
+
+    @pytest.mark.parametrize("mutation", ["content", "link", "mtime", "mode", "sibling"])
+    @_POSIX_ONLY
+    def test_material_environment_lock_changes_hold(self, checkout: Path, tmp_path: Path, mutation: str) -> None:
+        """Lock normalization preserves content, hardlinks, material metadata and changes to nearby files."""
+        lock = checkout / ".venv" / ".lock"
+        lock.touch()
+        st = lock.stat()
+        snap = Baseline(tmp_path / "integrity.json")
+        assert snap.take(checkout).returncode == 0
+        operations = {
+            "content": lambda: lock.write_bytes(b"changed"),
+            "link": lambda: os.link(lock, tmp_path / "external"),
+            "mtime": lambda: os.utime(lock, ns=(st.st_atime_ns, st.st_mtime_ns - 1_000_000_000)),
+            "mode": lambda: lock.chmod(st.st_mode ^ 0o100),
+            "sibling": lambda: (lock.parent / "marker").chmod((lock.parent / "marker").stat().st_mode),
+        }
+        operations[mutation]()
+        assert snap.verify() == (3, ["main-checkout:ignored"])
+
+    @pytest.mark.skipif(
+        not hasattr(os, "setxattr") and not Path("/usr/bin/xattr").is_file(),
+        reason="extended file attribute writer unavailable",
+    )
+    def test_extended_environment_lock_metadata_holds(self, checkout: Path, tmp_path: Path) -> None:
+        """Adding an extended attribute changes the empty lock fingerprint even when ordinary mode and size match."""
+        lock = checkout / ".venv" / ".lock"
+        lock.touch()
+        snap = Baseline(tmp_path / "integrity.json")
+        assert snap.take(checkout).returncode == 0
+        _set_lock_attribute(lock)
+        assert snap.verify() == (3, ["main-checkout:ignored"])
+        # An existing opaque attribute prevents independent identification of a later metadata-only change.
+        assert snap.take(checkout).returncode == 0
+        before = lock.stat()
+        lock.chmod(before.st_mode)
+        expected = (3, ["main-checkout:ignored"]) if lock.stat().st_ctime_ns != before.st_ctime_ns else (0, [])
+        assert snap.verify() == expected
 
     @pytest.mark.integration
     @pytest.mark.installed_plugin
@@ -484,6 +590,7 @@ class TestVerify:
         body = json.loads(baseline.file.read_text(encoding="utf-8"))
         body.pop("ignored_details", None)
         body["schema"] = 3
+        del body["marks"]["common:info/refs"]
         marker = checkout / ".venv" / "marker"
         st = marker.lstat()
         record = f"{marker}:{st.st_size}:{st.st_mode:o}:{st.st_ino}:{st.st_ctime_ns}:"
@@ -709,6 +816,25 @@ class TestUserCheckout:
 class TestCheckoutUnderReview:
     """What a run may leave in the checkout under review, which the agent never edits during review."""
 
+    def test_large_new_ignored_group_releases_peers(self, checkout: Path, review: Path, tmp_path: Path) -> None:
+        """A new private report group can exceed the detail budget when an unrelated old group remains unchanged."""
+        unrelated = review / ".venv"
+        unrelated.mkdir()
+        _populate(unrelated, 130)
+        snap = Baseline(tmp_path / "integrity.json")
+        assert snap.take(review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
+        reports = review / ".reports"
+        reports.mkdir()
+        _populate(reports, 129)
+        failure = _helper("verify", "--snapshot", str(snap.file), "--expect", snap.expect)
+        assert failure.returncode == 3
+        assert json.loads(failure.stdout)["ignored_changes"] == {"review:ignored": {"directories": [".reports"]}}
+        assert "review_checkout_slot.py release" in failure.stderr
+        os.link(reports / "entry-128", tmp_path / "external")
+        linked = _helper("verify", "--snapshot", str(snap.file), "--expect", snap.expect)
+        assert linked.returncode == 3
+        assert "review_checkout_slot.py hold" in linked.stderr
+
     @_POSIX_ONLY
     @pytest.mark.parametrize(
         ("relative", "label"),
@@ -874,6 +1000,109 @@ class TestLinkedWorktree:
         assert (code, "git-dir-redirect:main" in changed) == (3, True)
 
 
+@pytest.mark.integration
+@pytest.mark.installed_plugin
+class TestIndependentReview:
+    """A separately registered review can release only its own checkout while both repositories stay guarded."""
+
+    def test_clean_private_execution_releases_while_caller_is_held(
+        self, checkout: Path, independent_review: Path, tmp_path: Path
+    ) -> None:
+        """An actual read-only project check can finish and release a separate review without clearing the peer hold."""
+        peer = _slot("acquire", "--checkout", str(checkout), "--owner", "peer")
+        _slot("hold", "--slot", peer["slot"], "--owner", "peer")
+        own = _slot("acquire", "--checkout", str(independent_review), "--owner", "review")
+        program = independent_review / "check_source.py"
+        program.write_text(
+            'from pathlib import Path\nassert Path("a.txt").read_text().strip() == "a"\n', encoding="utf-8"
+        )
+        _git(independent_review, "add", "check_source.py")
+        _git(independent_review, "commit", "-q", "-m", "source check")
+        snap = Baseline(tmp_path / "evidence" / "integrity.json")
+        snap.file.parent.mkdir()
+        assert snap.take(independent_review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
+        subprocess.run([sys.executable, "-I", "-B", str(program)], cwd=independent_review, env=_ENV, check=True)
+        assert snap.verify() == (0, [])
+        assert _slot("release", "--slot", own["slot"], "--owner", "review")["status"] == "released"
+        assert _slot("status", "--slot", peer["slot"]) == dict(peer, status="inspection-required")
+
+    def test_private_report_releases_only_the_independent_claim(
+        self, checkout: Path, independent_review: Path, tmp_path: Path
+    ) -> None:
+        """A held caller claim stays held as the independent review checks its last writer and releases its own."""
+        peer = _slot("acquire", "--checkout", str(checkout), "--owner", "peer")
+        assert _slot("hold", "--slot", peer["slot"], "--owner", "peer")["status"] == "inspection-required"
+        own = _slot("acquire", "--checkout", str(independent_review), "--owner", "review")
+        assert own["slot"] != peer["slot"]
+        snap = Baseline(tmp_path / "evidence" / "integrity.json")
+        snap.file.parent.mkdir()
+        assert snap.take(independent_review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
+        assert snap.verify() == (0, [])
+        reports = independent_review / ".reports"
+        reports.mkdir()
+        _populate(reports, 129)
+        failure = _helper("verify", "--snapshot", str(snap.file), "--expect", snap.expect)
+        assert failure.returncode == 3
+        state = json.loads(failure.stdout)
+        assert state["changed"] == ["review:ignored"]
+        assert "review_checkout_slot.py release" in failure.stderr
+        assert Path(state["git_common_dir"]) == Path(own["slot"]).parent
+        assert _slot("release", "--slot", own["slot"], "--owner", "review")["status"] == "released"
+        assert _slot("status", "--slot", peer["slot"]) == dict(peer, status="inspection-required")
+
+    @pytest.mark.parametrize(
+        ("side", "surface", "label"),
+        [
+            pytest.param("review", "refs", "common:refs", id="private-ref"),
+            pytest.param("caller", "refs", "main:common:refs", id="caller-ref"),
+            pytest.param("review", "hooks", "common:hooks/", id="private-hook"),
+            pytest.param("caller", "hooks", "main:common:hooks/", id="caller-hook"),
+            pytest.param("caller", "tracked", "main-checkout:dirty-content", id="caller-tracked-file"),
+            pytest.param("caller", "ignored", "main-checkout:ignored", id="caller-ignored-peer-report"),
+        ],
+    )
+    def test_mixed_private_and_protected_drift_holds(
+        self, checkout: Path, independent_review: Path, tmp_path: Path, side: str, surface: str, label: str
+    ) -> None:
+        """Private files cannot account for a simultaneous change to either repository or the real caller's files."""
+        snap = Baseline(tmp_path / "evidence" / "integrity.json")
+        snap.file.parent.mkdir()
+        assert snap.take(independent_review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
+        (independent_review / "fresh.txt").touch()
+        target = {"review": independent_review, "caller": checkout}[side]
+        common = Path(_git(target, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+        report = checkout / ".reports"
+        report.mkdir()
+        mutate = {
+            "refs": lambda: _git(target, "branch", "unexpected"),
+            "hooks": lambda: (common / "hooks" / "pre-commit").write_text("changed", encoding="utf-8"),
+            "tracked": lambda: (target / "a.txt").write_text("changed", encoding="utf-8"),
+            "ignored": lambda: (report / "peer-report").touch(),
+        }
+        mutate[surface]()
+        failure = _helper("verify", "--snapshot", str(snap.file), "--expect", snap.expect)
+        assert failure.returncode == 3
+        state = json.loads(failure.stdout)
+        assert {"review:untracked", label} <= set(state["changed"])
+        assert "observed_sha256" not in state
+        assert "review_checkout_slot.py hold" in failure.stderr
+
+    def test_mismatched_private_worktree_registration_holds(
+        self, checkout: Path, independent_review: Path, tmp_path: Path
+    ) -> None:
+        """A detached HEAD under worktrees is insufficient when its registration points back to a different checkout."""
+        admin = Path(_git(independent_review, "rev-parse", "--absolute-git-dir"))
+        (admin / "gitdir").write_bytes(os.fsencode(checkout / ".git") + b"\n")
+        snap = Baseline(tmp_path / "evidence" / "integrity.json")
+        snap.file.parent.mkdir()
+        assert snap.take(independent_review, "--main-checkout", str(checkout), "--watch-surface").returncode == 0
+        (independent_review / "fresh.txt").touch()
+        failure = _helper("verify", "--snapshot", str(snap.file), "--expect", snap.expect)
+        assert failure.returncode == 3
+        assert json.loads(failure.stdout)["changed"] == ["review:untracked"]
+        assert "review_checkout_slot.py hold" in failure.stderr
+
+
 class TestIndexFlagsAndRefs:
     """Git's own view of a checkout is steerable by contributor-writable state, so it is not trusted alone."""
 
@@ -904,6 +1133,43 @@ class TestIndexFlagsAndRefs:
         other = _git(checkout, "commit-tree", "HEAD^{tree}", "-m", "planted")
         _git(checkout, "replace", "HEAD", other)
         assert snap.verify() == (3, ["common:refs"])
+
+    @pytest.mark.parametrize("maintenance", ["gc", "update-server-info"])
+    def test_git_maintenance_can_publish_verified_refs(self, checkout: Path, tmp_path: Path, maintenance: str) -> None:
+        """Git-generated advertisements include all namespaces and fully peeled nested tags, without hiding edits."""
+        _git(checkout, "tag", "-a", "inner", "-m", "inner")
+        _git(checkout, "tag", "-a", "outer", "inner", "-m", "outer")
+        _git(checkout, "update-ref", "refs/remotes/origin/main", "HEAD")
+        snap = Baseline(tmp_path / "integrity.json")
+        assert snap.take(checkout).returncode == 0
+        _git(checkout, maintenance)
+        assert snap.verify() == (0, [])
+        advertised = checkout / ".git" / "info" / "refs"
+        original = advertised.read_bytes()
+        advertised.write_bytes(original.replace(b"refs/tags/outer^{}", b"refs/tags/forged^{}"))
+        assert snap.verify() == (3, ["common:info/refs"])
+        advertised.write_bytes(original)
+        _git(checkout, "tag", "unexpected")
+        _git(checkout, "update-server-info")
+        assert snap.verify() == (3, ["common:refs"])
+
+    @pytest.mark.parametrize("already_stale", [False, True])
+    def test_remote_ref_refresh_preserves_advertisement(
+        self, checkout: Path, tmp_path: Path, already_stale: bool
+    ) -> None:
+        """A remote ref can move before or after the snapshot while the advertisement waits for maintenance."""
+        _git(checkout, "update-server-info")
+        if already_stale:
+            _git(checkout, "update-ref", "refs/remotes/upstream/main", "HEAD")
+        snap = Baseline(tmp_path / "integrity.json")
+        assert snap.take(checkout).returncode == 0
+        if not already_stale:
+            _git(checkout, "update-ref", "refs/remotes/upstream/main", "HEAD")
+        assert snap.verify() == (0, [])
+        _git(checkout, "update-server-info")
+        assert snap.verify() == (0, [])
+        (checkout / ".git" / "info" / "refs").unlink()
+        assert snap.verify() == (3, ["common:info/refs"])
 
     def test_packing_refs_is_not_a_change(self, checkout: Path, tmp_path: Path) -> None:
         """``git pack-refs`` moves ref values into ``packed-refs`` without changing any, which is storage, not state."""
@@ -1031,6 +1297,205 @@ class TestRemediationInTheUserCheckout:
         snap.take(checkout)
         (checkout / "a.txt").write_text("fixed\n", encoding="utf-8")
         assert snap.verify() == (0, [])
+
+
+@dataclass
+class _RefRestart:
+    """A real retained review claim and the parent's independently known branch endpoints."""
+
+    checkout: Path
+    baseline: Baseline
+    slot: str
+    old: str
+    new: str
+
+    @property
+    def out(self) -> Path:
+        """Return the fresh sibling evidence path."""
+        return self.baseline.file.with_name("successor.json")
+
+    def move(self, old: str, new: str) -> None:
+        """Capture the prior checkout and move only its local target branch."""
+        assert self.baseline.take(self.checkout).returncode == 0
+        _git(self.checkout, "update-ref", "-m", "parent fast-forward", "refs/heads/main", new, old)
+
+    def restart(self, **overrides: str) -> subprocess.CompletedProcess[str]:
+        """Pass the parent's evidence to the public recovery entry point."""
+        options = {
+            "--snapshot": str(self.baseline.file),
+            "--expect": self.baseline.expect,
+            "--branch": "main",
+            "--old-oid": self.old,
+            "--new-oid": self.new,
+            "--slot": self.slot,
+            "--owner": "review",
+            "--out": str(self.out),
+        }
+        options.update(overrides)
+        return _helper("restart-ref-fast-forward", *(arg for pair in options.items() for arg in pair))
+
+    def assert_refused(self, **overrides: str) -> None:
+        """Require unsafe restart to preserve the previous hold and leave no successor."""
+        _slot("hold", "--slot", self.slot, "--owner", "review")
+        done = self.restart(**overrides)
+        assert done.returncode in (2, 3), done.stderr
+        assert done.stderr.startswith("contributor-run-integrity:"), done.stderr
+        assert not self.out.exists()
+        assert _slot("status", "--slot", self.slot) == {
+            "status": "inspection-required",
+            "slot": self.slot,
+            "owner": "review",
+        }
+
+
+@pytest.fixture
+def ref_move(checkout: Path, tmp_path: Path) -> _RefRestart:
+    """Leave main available to advance while a review owns the shared checkout on its topic branch."""
+    _git(checkout, "commit", "--allow-empty", "-qm", "target baseline")
+    _git(checkout, "switch", "-qc", "topic")
+    old = _git(checkout, "rev-parse", "HEAD")
+    new = _git(checkout, "commit-tree", "HEAD^{tree}", "-p", old, "-m", "published target")
+    slot = _slot("acquire", "--checkout", str(checkout), "--owner", "review")
+    return _RefRestart(checkout, Baseline(tmp_path / "integrity.json"), slot["slot"], old, new)
+
+
+@pytest.mark.integration
+@pytest.mark.installed_plugin
+class TestRefFastForwardRestart:
+    """Only one independently authorized local branch move can start a fresh exclusive review interval."""
+
+    @pytest.mark.parametrize(
+        "claim_action",
+        [pytest.param(("status",), id="active"), pytest.param(("hold", "--owner", "review"), id="held")],
+    )
+    def test_attested_move_keeps_claim_and_restarts_verification(
+        self, ref_move: _RefRestart, claim_action: tuple[str, ...]
+    ) -> None:
+        """The restarted interval verifies, the original still fails, and the same owner retains the exclusive slot."""
+        ref_move.move(ref_move.old, ref_move.new)
+        original = ref_move.baseline.file.read_bytes()
+        assert ref_move.baseline.verify() == (3, ["common:refs"])
+        _slot(*claim_action, "--slot", ref_move.slot)
+        done = ref_move.restart()
+        assert done.returncode == 0, done.stderr
+        fresh = Baseline(ref_move.out)
+        fresh.expect = json.loads(done.stdout)["sha256"]
+        assert fresh.expect != ref_move.baseline.expect
+        assert fresh.verify() == (0, [])
+        assert ref_move.baseline.file.read_bytes() == original
+        assert ref_move.baseline.verify() == (3, ["common:refs"])
+        assert _slot("status", "--slot", ref_move.slot) == {"owner": "review", "slot": ref_move.slot, "status": "busy"}
+        _git(ref_move.checkout, "tag", "later")
+        assert fresh.verify() == (3, ["common:refs"])
+
+    def test_fetch_while_formatting_in_linked_worktree(self, ref_move: _RefRestart, tmp_path: Path) -> None:
+        """A real fetch can advance the unused base without losing the interrupted remediation edit."""
+        caller = ref_move.checkout
+        worktree = tmp_path / "linked"
+        _git(caller, "worktree", "add", "-qb", "fix", str(worktree))
+        assert ref_move.baseline.take(worktree, "--main-checkout", str(caller)).returncode == 0
+        edit = worktree / "a.txt"
+        edit.write_text("formatted local fix\n", encoding="utf-8")
+        _git(caller, "fetch", "--no-tags", ".", ref_move.new + ":refs/heads/main")
+        assert ref_move.baseline.verify() == (3, ["common:refs"])
+        _slot("hold", "--slot", ref_move.slot, "--owner", "review")
+        recovered = ref_move.restart()
+        assert recovered.returncode == 0, recovered.stderr
+        receipt = json.loads(recovered.stdout)
+        successor = Baseline(ref_move.out)
+        successor.expect = receipt["sha256"]
+        assert successor.verify() == (0, [])
+        assert edit.read_text(encoding="utf-8") == "formatted local fix\n"
+        assert _git(worktree, "rev-parse", "HEAD") == ref_move.old
+        assert _git(caller, "rev-parse", "main") == ref_move.new
+
+    def test_incomplete_ref_inventory_preserves_hold(self, ref_move: _RefRestart) -> None:
+        """Git warns about an unreadable ref that its normal listing otherwise omits from the hash."""
+        ref_move.move(ref_move.old, ref_move.new)
+        (ref_move.checkout / ".git" / "refs" / "heads" / "broken").write_text("invalid\n", encoding="ascii")
+        ref_move.assert_refused()
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            pytest.param(("tag", "unexpected"), id="additional-ref-within-same-aggregate"),
+            pytest.param(("config", "user.name", "other"), id="other-metadata"),
+        ],
+    )
+    def test_other_drift_keeps_hold(self, ref_move: _RefRestart, change: tuple[str, ...]) -> None:
+        """The expected target is insufficient when any other recorded state has changed."""
+        ref_move.move(ref_move.old, ref_move.new)
+        _git(ref_move.checkout, *change)
+        ref_move.assert_refused()
+
+    def test_rewind_keeps_hold(self, ref_move: _RefRestart) -> None:
+        """A precisely described backward move fails even though restoring the old value would match the aggregate."""
+        _git(ref_move.checkout, "update-ref", "refs/heads/main", ref_move.new, ref_move.old)
+        ref_move.move(ref_move.new, ref_move.old)
+        ref_move.assert_refused(**{"--old-oid": ref_move.new, "--new-oid": ref_move.old})
+
+    def test_branch_checked_out_elsewhere_keeps_hold(self, ref_move: _RefRestart, tmp_path: Path) -> None:
+        """An unrelated linked worktree can occupy the branch even while the guarded checkout stays on its topic."""
+        _git(ref_move.checkout, "worktree", "add", "-q", str(tmp_path / "occupied"), "main")
+        ref_move.move(ref_move.old, ref_move.new)
+        ref_move.assert_refused()
+
+    @pytest.mark.parametrize(
+        ("option", "revision"),
+        [
+            pytest.param("--old-oid", "HEAD^", id="ancestor-that-was-never-the-prior-tip"),
+            pytest.param("--new-oid", "HEAD", id="stale-attested-tip-despite-reflog-message"),
+            pytest.param("--new-oid", "HEAD^{tree}", id="tree-object"),
+        ],
+    )
+    def test_wrong_attestation_keeps_hold(self, ref_move: _RefRestart, option: str, revision: str) -> None:
+        """Existing Git objects and a convincing reflog message cannot substitute for the attested commit pair."""
+        ref_move.move(ref_move.old, ref_move.new)
+        ref_move.assert_refused(**{option: _git(ref_move.checkout, "rev-parse", revision)})
+
+    def test_unapproved_tip_keeps_hold_even_with_matching_reflog(self, ref_move: _RefRestart) -> None:
+        """A different descendant and a matching reflog message cannot establish the parent's new target."""
+        sibling = _git(ref_move.checkout, "commit-tree", "HEAD^{tree}", "-p", ref_move.old, "-m", "unapproved target")
+        ref_move.move(ref_move.old, sibling)
+        ref_move.assert_refused()
+
+    def test_wrong_original_digest_keeps_hold(self, ref_move: _RefRestart) -> None:
+        """Even a valid fast-forward requires the original evidence digest kept outside the snapshot."""
+        ref_move.move(ref_move.old, ref_move.new)
+        ref_move.assert_refused(**{"--expect": "0" * 64})
+
+    def test_another_owner_cannot_restart(self, ref_move: _RefRestart) -> None:
+        """The correct object IDs give a peer no authority over this run's exclusive claim."""
+        ref_move.move(ref_move.old, ref_move.new)
+        ref_move.assert_refused(**{"--owner": "peer"})
+
+    def test_exclusive_claim_from_other_repository_cannot_restart(
+        self, ref_move: _RefRestart, independent_review: Path
+    ) -> None:
+        """Equal owner names never transfer an exclusive claim between independent common directories."""
+        other = _slot("acquire", "--checkout", str(independent_review), "--owner", "review")
+        _slot("hold", "--slot", other["slot"], "--owner", "review")
+        ref_move.move(ref_move.old, ref_move.new)
+        ref_move.assert_refused(**{"--slot": other["slot"]})
+        assert _slot("status", "--slot", other["slot"]) == dict(other, status="inspection-required")
+
+    def test_existing_evidence_survives_restart_attempt(self, ref_move: _RefRestart) -> None:
+        """A valid ref transition cannot overwrite a previous evidence file or clear the hold as a side effect."""
+        ref_move.move(ref_move.old, ref_move.new)
+        previous = ref_move.baseline.file.with_name("previous.json")
+        previous.write_bytes(b"prior evidence")
+        ref_move.assert_refused(**{"--out": str(previous)})
+        assert previous.read_bytes() == b"prior evidence"
+
+    def test_scoped_claim_cannot_restart(self, checkout: Path, tmp_path: Path) -> None:
+        """A retained target-scoped hold cannot authorize a repository-wide ref change."""
+        _git(checkout, "switch", "-qc", "topic")
+        old = _git(checkout, "rev-parse", "HEAD")
+        new = _git(checkout, "commit-tree", "HEAD^{tree}", "-p", old, "-m", "published target")
+        target = _slot("acquire", "--checkout", str(checkout), "--local", "--owner", "review")
+        ref_move = _RefRestart(checkout, Baseline(tmp_path / "integrity.json"), target["slot"], old, new)
+        ref_move.move(old, new)
+        ref_move.assert_refused()
 
 
 @pytest.mark.integration

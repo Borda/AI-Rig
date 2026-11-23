@@ -343,6 +343,8 @@ def _prepare(
     batches: bool = False,
     paged: bool = True,
     pr_integrity: tuple[Path, str] | None = None,
+    checkout_sha256: str | None = None,
+    same_repository_checkout_sha256: str | None = None,
     discover_fixtures: bool = False,
     export_fixture_bindings: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
@@ -364,6 +366,10 @@ def _prepare(
     ]
     if pr_integrity:
         command.extend(["--pr-integrity", str(pr_integrity[0]), pr_integrity[1]])
+    if checkout_sha256:
+        command.extend(["--checkout-sha256", checkout_sha256])
+    if same_repository_checkout_sha256:
+        command.extend(["--same-repository-checkout-sha256", same_repository_checkout_sha256])
     if paged:
         command.append("--paged")
     if challenge_only:
@@ -2878,6 +2884,96 @@ def _collected_pr_source(run: Path) -> Path:
         _pr_fixture_receipt(review, head, base),
     )
     return review
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("paged", [False, True])
+def test_same_repository_dispatch_uses_original_checkout_receipt(tmp_path: Path, paged: bool) -> None:
+    """Direct and paged dispatch accept verified same-repository source without an integrity snapshot."""
+    run = _review_inputs(tmp_path)
+    review = _collected_pr_source(run)
+    checkout = run / "local-checkout.json"
+    write_json(checkout, {**json.loads(checkout.read_bytes()), "verified_same_repository": True})
+    digest = hashlib.sha256(checkout.read_bytes()).hexdigest()
+
+    result = _prepare(run, source_root=review, paged=paged, same_repository_checkout_sha256=digest)
+
+    assert result.returncode == 0, result.stderr
+    assert (run / "dispatch.json").is_file()
+    assert not (run / "integrity.json").exists()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("paged", [False, True])
+def test_static_fork_dispatch_authenticates_original_checkout(tmp_path: Path, paged: bool) -> None:
+    """Static reviewers can inspect a verified fork, while a changed collection receipt cannot release a worker."""
+    run = _review_inputs(tmp_path)
+    review = _collected_pr_source(run)
+    checkout = run / "local-checkout.json"
+    write_json(checkout, {**json.loads(checkout.read_bytes()), "verified_same_repository": False})
+    original = checkout.read_bytes()
+    digest = hashlib.sha256(original).hexdigest()
+    checkout.write_bytes(original + b" ")
+
+    rejected = _prepare(run, source_root=review, paged=paged, checkout_sha256=digest)
+    assert rejected.returncode == 2
+    assert "review-pr-dispatch-checkout-receipt-invalid" in rejected.stderr
+    assert not (run / "dispatch.json").exists()
+
+    checkout.write_bytes(original)
+    accepted = _prepare(run, source_root=review, paged=paged, checkout_sha256=digest)
+    assert accepted.returncode == 0, accepted.stderr
+    assert (run / "dispatch.json").is_file()
+    assert not (run / "integrity.json").exists()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("origin", "retained_origin"),
+    [
+        pytest.param({}, {}, id="missing"),
+        pytest.param({"verified_same_repository": False}, {"verified_same_repository": False}, id="fork"),
+        pytest.param({"verified_same_repository": True}, {"verified_same_repository": False}, id="rewritten-fork"),
+    ],
+)
+def test_legacy_same_repository_flag_requires_authenticated_origin(
+    tmp_path: Path, origin: dict[str, bool], retained_origin: dict[str, bool]
+) -> None:
+    """The legacy flag accepts only the original receipt with a verified same-repository identity."""
+    run = _review_inputs(tmp_path)
+    review = _collected_pr_source(run)
+    checkout = run / "local-checkout.json"
+    receipt = json.loads(checkout.read_bytes())
+    write_json(checkout, {**receipt, **retained_origin})
+    digest = hashlib.sha256(checkout.read_bytes()).hexdigest()
+    write_json(checkout, {**receipt, **origin})
+    write_json(run / "pr-routing.json", {"same_repo": True, "is_cross_repository": False})
+
+    result = _prepare(run, source_root=review, paged=False, same_repository_checkout_sha256=digest)
+
+    assert result.returncode == 2
+    assert "review-pr-dispatch-same-repository-receipt-invalid" in result.stderr
+    assert not (run / "dispatch.json").exists()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("receipt_flag", ["same_repository_checkout_sha256", "checkout_sha256"])
+def test_pr_dispatch_preserves_started_contributor_interval(tmp_path: Path, receipt_flag: str) -> None:
+    """A retained integrity baseline requires its parent-held anchor even with the original checkout digest."""
+    run = _review_inputs(tmp_path)
+    review = _collected_pr_source(run)
+    checkout = run / "local-checkout.json"
+    write_json(checkout, {**json.loads(checkout.read_bytes()), "verified_same_repository": True})
+    digest = hashlib.sha256(checkout.read_bytes()).hexdigest()
+    snapshot = _pr_snapshot(run, review)
+
+    result = _prepare(run, source_root=review, paged=False, **{receipt_flag: digest})
+    assert result.returncode == 2
+    assert "review-pr-dispatch-requires-parent-integrity" in result.stderr
+    assert not (run / "dispatch.json").exists()
+
+    result = _prepare(run, source_root=review, paged=False, pr_integrity=snapshot)
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.integration

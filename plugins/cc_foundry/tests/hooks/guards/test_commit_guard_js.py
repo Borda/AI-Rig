@@ -211,10 +211,11 @@ def test_completed_reading_keeps_token_gate_after_deadline(
     clock = tmp_path / "clock.cjs"
     clock.write_text(
         f"const site = {json.dumps(site)}; let reads = 0;\n"
-        "Date.now = () => {\n"
-        "  const caller = new Error().stack.split('\\n')[2] || '';\n"
-        "  if (site === 'main') return caller.includes('at Socket.handlePayload (') && ++reads > 1 ? 2001 : 0;\n"
-        "  return caller.includes('at ' + site + ' (') ? 2001 : 0;\n"
+        "const clock = (ms) => ({ user: ms * 1000, system: 0 });\n"
+        "process.cpuUsage = () => {\n"
+        "  const caller = new Error().stack.split('\\n')[3] || '';\n"
+        "  if (site === 'main') return clock(caller.includes('at Socket.handlePayload (') && ++reads > 1 ? 2001 : 0);\n"
+        "  return clock(caller.includes('at ' + site + ' (') ? 2001 : 0);\n"
         "};\n",
         encoding="utf-8",
     )
@@ -258,11 +259,11 @@ def test_completed_push_reading_blocks_when_scope_deadline_expires(
         "  if (expiry === 'remote' && file === 'git' && args[0] === 'remote') expire();\n"
         "  return result;\n"
         "};\n"
-        "Date.now = () => {\n"
+        "process.cpuUsage = () => {\n"
         "  const frames = new Error().stack.split('\\n');\n"
-        "  if (expiry === 'git-read' && frames[3]?.includes('at findInvocations (') &&\n"
+        "  if (expiry === 'git-read' && frames[4]?.includes('at findInvocations (') &&\n"
         "      frames.some(frame => frame.includes('at uncoveredProblem (')) && ++reads === 5) expire();\n"
-        "  return expired ? 2001 : 0;\n"
+        "  return { user: (expired ? 2001 : 0) * 1000, system: 0 };\n"
         "};\n",
         encoding="utf-8",
     )
@@ -306,9 +307,9 @@ def test_git_discovery_time_preserves_approved_push(
     observed = tmp_path / "discovery-ms.txt"
     clock.write_text(
         "const cp = require('child_process'); const fs = require('fs');\n"
-        "const exec = cp.execFileSync; const now = Date.now; let elapsed = 0;\n"
+        "const exec = cp.execFileSync; const now = process.cpuUsage; let elapsed = 0;\n"
         f"const delay = {discovery_ms}; const observed = {json.dumps(str(observed))};\n"
-        "Date.now = () => now() + elapsed;\n"
+        "process.cpuUsage = () => ({ user: now().user + elapsed * 1000, system: 0 });\n"
         "cp.execFileSync = function(file, args, options) {\n"
         "  const result = exec(file, args, options);\n"
         "  if (file === 'git') { elapsed += delay; fs.writeFileSync(observed, String(elapsed)); }\n"
@@ -339,7 +340,9 @@ def test_pathological_text_inspection_still_reaches_deadline(
     """
     token = push_token(git_repo)
     clock = tmp_path / "inspection-clock.cjs"
-    clock.write_text("let reads = 0; Date.now = () => ++reads * 100;\n", encoding="utf-8")
+    clock.write_text(
+        "let reads = 0; process.cpuUsage = () => ({ user: ++reads * 100000, system: 0 });\n", encoding="utf-8"
+    )
     result = run_hook(
         "commit-guard.js",
         _push_payload(APPROVED + "; echo x" * 1000, git_repo),

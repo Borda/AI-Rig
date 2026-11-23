@@ -30,6 +30,7 @@ import re
 import secrets
 import stat
 import tempfile
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
@@ -348,6 +349,27 @@ def _health_dir(hook: str) -> Path:
     return directory
 
 
+#: Newest timestamp this process stamped on a failure record, so a coarse clock cannot hand two records one value.
+_LAST_RECORD_NS = [0]
+_RECORD_NS_LOCK = threading.Lock()
+
+
+def _next_record_ns() -> int:
+    """Return an epoch-nanosecond stamp that is strictly greater than every earlier stamp of this process.
+
+    Windows before Python 3.13 reads a timer that advances every 15.6 ms, so a burst of failures shares one value and
+    the record names would fall back to their random token to order, which trimmed the newest records first.
+
+    Examples:
+        >>> first = _next_record_ns()
+        >>> _next_record_ns() > first
+        True
+    """
+    with _RECORD_NS_LOCK:
+        _LAST_RECORD_NS[0] = stamp = max(time.time_ns(), _LAST_RECORD_NS[0] + 1)
+    return stamp
+
+
 def _failure_record_name(exc: BaseException) -> str:
     """Return a new failure record name carrying only the class name of *exc* and the current UTC time.
 
@@ -360,7 +382,7 @@ def _failure_record_name(exc: BaseException) -> str:
     cls = _UNSAFE_CLASS.sub("_", type(exc).__name__)[:_CLASS_NAME_MAX]
     if not cls or cls[0].isdigit():
         cls = f"_{cls}"[:_CLASS_NAME_MAX]
-    return f"fail-{time.time_ns():020d}-{secrets.token_hex(4)}-{cls}"
+    return f"fail-{_next_record_ns():020d}-{secrets.token_hex(4)}-{cls}"
 
 
 def _trim_failures(directory: Path) -> None:

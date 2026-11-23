@@ -267,16 +267,80 @@ class TestRiskPresentation:
         assert ("planted" in _git(repo, "cat-file", "-p", head), "planted" in guarded) == (True, False)
 
     def test_borderline_recommends_the_sandbox_for_unusual_but_unrejected_code(self, project) -> None:
-        """A network import in a test is unusual, not rejected: run it in the sandbox."""
-        repo, base, head = project({"tests/test_net.py": "import socket\n\n\ndef test_n():\n    assert socket\n"})
+        """A download tool in a test script is unusual, not rejected: sandbox it and say why in plain words."""
+        repo, base, head = project({"tests/run.sh": "curl -s https://example.com/data.json\n"})
         risk = _scan(repo, head, base)["risk"]
         assert (risk["level"], risk["recommendation"]) == ("borderline", "run-in-sandbox")  # type: ignore[index]
+        assert risk["reasons"] == ["tests/run.sh: it calls a network download tool such as curl or wget"]  # type: ignore[index]
+
+    def test_an_install_hint_in_a_python_message_is_data_not_a_finding(self, project) -> None:
+        """Words such as ``pip install x`` inside an error message run nothing, so the scan stays clean."""
+        code = 'def test_n():\n    raise ImportError("missing: pip install requests")\n'
+        repo, base, head = project({"tests/test_hint.py": code})
+        report = _scan(repo, head, base)
+        assert (report["findings"], report["risk"]["level"], report["risk"]["recommendation"]) == ([], "none", "run")  # type: ignore[index]
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            pytest.param(
+                'CMD = "pip install evilpkg"\nsubprocess.call(CMD.split())\n', id="string-run-on-another-line"
+            ),
+            pytest.param('print(run_it("pip install evilpkg"))\n', id="string-inside-a-nested-call"),
+            pytest.param('x = ["a"]  # note\nCMD = "pip install evilpkg"  # fine\n', id="comment-after-the-string"),
+            pytest.param("# !pip install evilpkg\n", id="notebook-command-comment"),
+            pytest.param('def f(:\n    raise ImportError("pip install x")\n', id="file-python-cannot-parse"),
+        ],
+    )
+    def test_install_text_outside_a_message_stays_a_finding(self, project, code: str) -> None:
+        """Only comments, docstrings and message-call strings are data; any other string with install text asks."""
+        repo, base, head = project({"tests/test_split.py": code})
+        risk = _scan(repo, head, base)["risk"]
+        assert (risk["level"], risk["reasons"]) == (
+            "borderline",
+            ["tests/test_split.py: it installs packages while it runs"],
+        )  # type: ignore[index]
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            pytest.param('"""Run pip install requests first."""\n', id="module-docstring"),
+            pytest.param('def f():\n    """Needs\n    pip install requests.\n    """\n', id="multi-line-docstring"),
+            pytest.param("# pip install requests\nx = 1\n", id="plain-comment"),
+            pytest.param('import warnings\nwarnings.warn("try pip install requests")\n', id="warning-message"),
+            pytest.param('print(f"run pip install {name}")\n', id="formatted-print"),
+        ],
+    )
+    def test_install_text_in_a_message_stays_clean(self, project, code: str) -> None:
+        """A docstring, a comment and a string handed to a message call run nothing, so the scan stays clean."""
+        repo, base, head = project({"tests/test_msg.py": code})
+        assert _scan(repo, head, base)["findings"] == []  # type: ignore[index]
+
+    def test_a_python_call_that_installs_packages_is_still_a_finding(self, project) -> None:
+        """The same words handed to ``subprocess`` do install packages, so they stay a low finding that asks."""
+        code = 'import subprocess\n\n\ndef test_n():\n    subprocess.run("pip install requests", shell=True)\n'
+        repo, base, head = project({"tests/test_install.py": code})
+        risk = _scan(repo, head, base)["risk"]
+        assert (risk["level"], risk["recommendation"]) == ("borderline", "run-in-sandbox")  # type: ignore[index]
+        assert "tests/test_install.py: it installs packages while it runs" in risk["reasons"]  # type: ignore[operator]
+
+    def test_a_lone_network_import_is_never_clean(self, project) -> None:
+        """Every low category is a capability, so a network import alone asks and says why in plain words."""
+        repo, base, head = project({"tests/test_net.py": "import requests\n\n\ndef test_n():\n    assert requests\n"})
+        risk = _scan(repo, head, base)["risk"]
+        assert (risk["level"], risk["reasons"]) == (
+            "borderline",
+            ["tests/test_net.py: it imports a library that can reach the network"],
+        )  # type: ignore[index]
 
     def test_high_when_a_single_high_finding_stands_alone(self, project) -> None:
         """A lone high finding is put to the user with its evidence."""
         repo, base, head = project({"tests/test_x.py": 'KEY = "~/.ssh/id_rsa"\n'})
         risk = _scan(repo, head, base)["risk"]
-        assert (risk["level"], risk["reasons"]) == ("high", ["tests/test_x.py: credential_path"])  # type: ignore[index]
+        assert (risk["level"], risk["reasons"]) == (
+            "high",
+            ["tests/test_x.py: it reads a place where passwords or keys are kept"],
+        )  # type: ignore[index]
 
     def test_likely_malicious_when_private_reads_meet_a_way_out(self, project) -> None:
         """Reading a credential and posting it to an exfiltration endpoint in one file recommends not running it."""
@@ -805,6 +869,8 @@ class TestExactHeadCheckoutConversion:
         """Without a conversion setting a CRLF rewrite is a real change to git, and the check never normalises on its
         own (exit 3)."""
         repo, base, head = project(_CLEAN)
+        # the guard reads the machine's git config (Git for Windows ships ``core.autocrlf=true``); pin "no setting" here
+        _git(repo, "config", "core.autocrlf", "false")
         approval, cmd = self._bind_clean_tree(repo, base, head, tmp_path)
         (repo / "tests" / "test_x.py").write_bytes(b"def test_x():\r\n    assert 1\r\n")
         assert _git(repo, "status", "--porcelain") != ""

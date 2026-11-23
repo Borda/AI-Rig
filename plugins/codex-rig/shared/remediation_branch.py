@@ -65,7 +65,9 @@ from collect_pr import (  # noqa: E402
     _head_repository,
     pr_worktree_index_unmasked,
     pr_worktree_is_clean,
+    verify_pr_tracking,
 )
+from review_workspace import workspace_namespace  # noqa: E402
 
 
 def _git(*arguments: str, optional: bool = False) -> str:
@@ -79,17 +81,20 @@ def _git(*arguments: str, optional: bool = False) -> str:
 
 
 def create_worktree(receipt: Path) -> dict[str, Any]:
-    """Create a private detached worktree for native PR checkout while preserving the invoking branch and index."""
+    """Create a linked detached worktree for native PR checkout while preserving the invoking branch and index."""
     caller = Path(_git("rev-parse", "--show-toplevel")).resolve()
     common = Path(_git("rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+    if workspace_namespace(common) is not None or workspace_namespace(caller) is not None:
+        raise ValueError("retained-review-repository:use-original-checkout")
     head = _git("rev-parse", "--verify", "HEAD")
     # Keep the new checkout outside the run directory so canonical PR report promotion cannot move it.
     parent = receipt.parent.resolve(strict=True).parent
-    if parent.is_relative_to(caller) and (
-        parent == caller or not _git("check-ignore", "--", str(parent), optional=True)
+    if parent.is_relative_to(common) or (
+        parent.is_relative_to(caller)
+        and (parent == caller or not _git("check-ignore", "--", str(parent), optional=True))
     ):
         parent = Path(tempfile.gettempdir()).resolve()
-        if parent.is_relative_to(caller):
+        if parent.is_relative_to(caller) or parent.is_relative_to(common):
             raise ValueError("no-isolated-remediation-worktree-location")
     if receipt.is_symlink():
         raise ValueError("invalid-remediation-worktree-locator")
@@ -185,44 +190,7 @@ def _destination(
     allow_pull_ref: bool = False,
 ) -> None:
     """Verify branch or native fork pull-ref tracking identifies the recorded PR source."""
-    expected = _github_remote_identity(f"https://github.com/{head_repository}.git")
-    if (
-        expected is None
-        or not head_ref
-        or type(pr_number) is not int
-        or pr_number <= 0
-        or not isinstance(pr_url, str)
-        or not re.fullmatch(rf"(?i:https://github\.com)/[^/]+/[^/]+/pull/{pr_number}", pr_url)
-    ):
-        raise ValueError("invalid-pr-destination")
-    # gh may prefix a fork's local branch to avoid collisions. Tracking identifies
-    # the remote ref; the collector receipt separately binds the actual local name.
-    _git("check-ref-format", f"refs/heads/{head_ref}")
-    merge = _git("config", "--get", f"branch.{branch}.merge", optional=True)
-    remote = _git("config", "--get", f"branch.{branch}.remote", optional=True)
-    base = _github_remote_identity(pr_url.rsplit("/pull/", 1)[0])
-    # Native gh may track the base repository's pull ref when no contributor
-    # remote is configured. Bind that ref to this fork PR, never to a push target.
-    if (
-        allow_pull_ref
-        and base is not None
-        and tuple(part.casefold() for part in base) != tuple(part.casefold() for part in expected)
-        and merge == f"refs/pull/{pr_number}/head"
-    ):
-        expected = base
-    elif merge != f"refs/heads/{head_ref}":
-        raise ValueError("pr-upstream-mismatch:stop-without-changing-tracking")
-    if not remote:
-        raise ValueError("pr-upstream-mismatch:stop-without-changing-tracking")
-    remotes = _git("remote").splitlines()
-    # gh can configure a fork URL directly instead of adding a named local remote.
-    urls = _git("remote", "get-url", "--all", "--", remote).splitlines() if remote in remotes else [remote]
-    if not urls or any(
-        tuple(part.casefold() for part in (_github_remote_identity(url) or ()))
-        != tuple(part.casefold() for part in expected)
-        for url in urls
-    ):
-        raise ValueError("pr-remote-mismatch:stop-without-changing-tracking")
+    verify_pr_tracking(_git, branch, head_ref, head_repository, pr_url, pr_number, allow_pull_ref=allow_pull_ref)
 
 
 def check(receipt: Path, expected_head: str) -> dict[str, Any]:
@@ -384,8 +352,17 @@ def prepare(pr_dir: Path, receipt: Path) -> dict[str, Any]:
         raise ValueError("collected-worktree-mismatch")
     if not pr_worktree_index_unmasked(Path(worktree)):
         raise ValueError("remediation-worktree-index-masks-local-state")
-    locator = pr_dir.parent / "remediation-worktree.json"
-    if locator.exists() or locator.is_symlink():
+    locators = [
+        path
+        for path in (pr_dir.parent / "remediation-worktree.json", pr_dir.parent / "recovery-worktree.json")
+        if path.exists() or path.is_symlink()
+    ]
+    if len(locators) > 1:
+        raise ValueError("conflicting-remediation-worktree-locators")
+    if locators:
+        locator = locators[0]
+        if locator.is_symlink() or not locator.is_file():
+            raise ValueError("invalid-remediation-worktree-locator")
         selected = _read(locator)
         caller = selected.get("invoking_checkout")
         if (

@@ -138,7 +138,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r REPLY_MODE < "${TMPDIR:-/tmp}/analyse-reply-mode-${CSID}" 2>/dev/null || REPLY_MODE="false"
 IFS= read -r DIRECT_PATH_MODE < "${TMPDIR:-/tmp}/analyse-direct-path-mode-${CSID}" 2>/dev/null || DIRECT_PATH_MODE="false"
 IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/analyse-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
-# both aborts drop the sentinel — leftover path to a never-written report would make enforce-analyse-header.js deny the Step6a follow-up question
+# both aborts drop the sentinel — leftover path to a never-written report would make enforce-analyse-header.js's Stop check wait for a report that never lands
 if [ "$DIRECT_PATH_MODE" = "true" ] && [ "$REPLY_MODE" = "false" ]; then
     echo "! Error: report path '$REPORT_FILE' passed without --reply."
     echo "  Re-run as: /oss:analyse $REPORT_FILE --reply"
@@ -231,7 +231,9 @@ if [ -n "$CACHE_AT" ]; then
     CACHE_TS=$(TZ=UTC date -d "$CACHE_AT" +%s 2>/dev/null || TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$CACHE_AT" +%s 2>/dev/null)  # timeout: 5000
 fi
 # Date parse failure → treat as drifted (conservative)
-if [[ ! "$UPDATED_TS" =~ ^[0-9]+$ || ! "$CACHE_TS" =~ ^[0-9]+$ ]]; then
+if [[ ! "$UPDATED_TS" =~ ^[0-9]+$ ]]; then
+    DRIFT=true
+elif [[ ! "$CACHE_TS" =~ ^[0-9]+$ ]]; then  # one =~ per [[ ]]: =~ after && or || makes gh-write-guard ask
     DRIFT=true
 elif [ "$UPDATED_TS" -ge "$CACHE_TS" ]; then
     DRIFT=true
@@ -362,11 +364,12 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || _CLEAN_ARGS=""
 IFS= read -r _REPORT_FILE < "${TMPDIR:-/tmp}/analyse-report-file-${CSID}" 2>/dev/null || _REPORT_FILE="pending"
 IFS= read -r _REPLY_MODE < "${TMPDIR:-/tmp}/analyse-reply-mode-${CSID}" 2>/dev/null || _REPLY_MODE="false"
-_PRESERVE="target=#${_CLEAN_ARGS}, cache-dir=.cache/gh, report=${_REPORT_FILE}, reply-mode=${_REPLY_MODE}"
-python "$PLUGIN_ROOT/bin/write_skill_contract.py" --keep-sentinel analyse-keep-items "oss:analyse" "synthesis (after gather/fetch)" ".cache/gh" "${_PRESERVE}" "reply gate (Step 6) or shepherd reply (Step 7)"  # timeout: 5000
+_CACHE_DIR=.cache/gh  # literal python arg ending /gh: gh-write-guard asks, and blocks when a $var arg follows
+_PRESERVE="target=#${_CLEAN_ARGS}, cache-dir=${_CACHE_DIR}, report=${_REPORT_FILE}, reply-mode=${_REPLY_MODE}"
+python "$PLUGIN_ROOT/bin/write_skill_contract.py" --keep-sentinel analyse-keep-items "oss:analyse" "synthesis (after gather/fetch)" "$_CACHE_DIR" "${_PRESERVE}" "final report (Step 6) or shepherd reply (Step 7)"  # timeout: 5000
 ```
 
-## Step 6: Reply gate — STOP CHECK
+## Step 6: Final report — STOP CHECK
 
 **Run before Confidence block regardless of `--reply` mode.**
 
@@ -374,49 +377,32 @@ python "$PLUGIN_ROOT/bin/write_skill_contract.py" --keep-sentinel analyse-keep-i
 
 `REPLY_MODE=false` — do NOT proceed to Step 7. Execute both sub-steps below, then end response.
 
-### 6a — Follow-up gate
+### 6a — Final reply: report and follow-up suggestions
 
-**Hook-enforced**: on `Stop`, `hooks/enforce-analyse-header.js` keeps a turn going once per report when its final reply lacks the matching full header table — skipping the follow-up question does not skip delivery. At question time it blocks only this workflow's follow-up until the current report exists and the first question's text names the report path and its `Title`, `Outcome` values as a short plain summary, no table. Option descriptions and previews do not supply the summary. Missing evidence blocks this transition; apply the placement the deny reason names, then retry. Diagnostic/recovery questions remain available; use their own question header, not `oss-analyse`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
+**No follow-up question.** Analyse ends with the report and plain-text suggestions: never call `AskUserQuestion` after the report, never offer a review, resolve or reply as a menu. The user starts any follow-up by typing it.
 
-**Delivery — once**: build the mode's delivery block from the current report (all `---` header fields as a `Field | Value` table, then its compact summary and `→ saved to <path>`). Print it once in the final reply after the answer, after its last tool call, never as Bash/tool stdout. Do not print the header table before the follow-up question or put it in option previews. The full table stays in the report file; the question carries only the plain summary below. `REPLY_MODE=true` (no 6a question): the block opens the final reply after Step 7's last tool call. The `Stop` hook requires the matching full header table there; the question summary does not satisfy final delivery.
+**Hook-enforced**: on `Stop`, `hooks/enforce-analyse-header.js` keeps a turn going once per report when its final reply lacks the matching full header table.
 
-> **Output-Routing exemption**: the 6a question carries only a plain summary; quality-gates.md §Report File Format's table-first-in-reply rule and Output Routing step 2a apply to the final reply after the answer and to the `REPLY_MODE=true` path.
+**Delivery — once**: build the mode's delivery block from the current report (all `---` header fields as a `Field | Value` table, then its compact summary and `→ saved to <path>`). Print it once in the final reply after the answer, after its last tool call, never as Bash/tool stdout. `REPLY_MODE=true`: the block opens the final reply after Step 7's last tool call. The `Stop` hook requires the matching full header table there.
 
-Invoke `AskUserQuestion`. In both menus, the question text carries at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description only, no `preview`:
+**Suggestions**: after the block print `Next:` with the lines below that apply, one per line as `` `<command>` — <one-line effect> ``, then stop. Mode picks the lines:
 
-**Thread mode** (`$CLEAN_ARGS` is a number; `TYPE` from `oss-detect-type-${CSID}`):
-
-- header: `oss-analyse`
-- question: `Title: <report Title>`; `Outcome: <report Outcome>`; finding counts and blockers where present; `→ <REPORT_FILE>`; `What next?`; "Long wait? `/compact` now — report saved, resume lossless." Use short plain lines, not a table.
 - `TYPE=issue` or `discussion`:
-  - (a) label: `/develop:fix` — description: diagnose and fix the reported issue (requires `develop` plugin)
-  - (b) label: `/develop:feature` — description: implement as new feature (requires `develop` plugin)
-  - (c) label: `draft reply` — description: run `/oss:analyse $CLEAN_ARGS --reply` to shepherd a contributor-facing reply
-  - (d) label: `skip` — description: no action
-- `TYPE=pr` (PR thread — the follow-ups are review and resolve, not new implementation). The question text also names the report's PR Vitality verdict (none when the PR is not open). Verdict `SUPERSEDED` or `OBSOLETE` → omit (a) and (b), lead with `draft reply` (close with thanks, link and reason). `REVIVE-MAJOR` → (a) description adds "after the named rework":
-  - (a) label: `/oss:review $CLEAN_ARGS` — description: full multi-agent code review of this PR
-  - (b) label: `/oss:resolve $CLEAN_ARGS` — description: apply the PR's review action items
-  - (c) label: `draft reply` — description: run `/oss:analyse $CLEAN_ARGS --reply` to shepherd a contributor-facing reply
-  - (d) label: `skip` — description: no action
+  - `/develop:fix` — diagnose and fix the reported issue (requires `develop` plugin)
+  - `/develop:feature` — implement as new feature (requires `develop` plugin)
+  - `/oss:analyse $CLEAN_ARGS --reply` — shepherd a contributor-facing reply draft
+- `TYPE=pr` — name the report's PR Vitality verdict first (none when the PR is not open). Verdict `SUPERSEDED` or `OBSOLETE` → only the reply line (close with thanks, link and reason). `REVIVE-MAJOR` → the review and resolve lines say "after the named rework":
+  - `/oss:review $CLEAN_ARGS` — full multi-agent code review of this PR
+  - `/oss:resolve $CLEAN_ARGS` — apply the PR's review action items
+  - `/oss:analyse $CLEAN_ARGS --reply` — shepherd a contributor-facing reply draft
+- Vitality / ecosystem (`$CLEAN_ARGS` is `vitality` or `ecosystem`): `<N>` = the highest-priority thread or PR number the report names, substituted before printing; none named → print no suggestion lines:
+  - `/oss:analyse <N> --reply` — draft reply for that thread
+  - `/oss:review <N>` — full code review of that PR (only when `<N>` is a PR)
+- Evolution (`$CLEAN_ARGS` starts with `evolution`):
+  - edit `<store root>/overrides.csv` (one line per cell: fix_id, column_id, assert|deny, note), then rerun `/oss:analyse $CLEAN_ARGS` — rescore with no new blame
+  - `/oss:analyse $CLEAN_ARGS --adjudicate` — the LLM decides the ambiguous rows (only when the report lists any)
 
-**Vitality / ecosystem mode** (`$CLEAN_ARGS` is `vitality` or `ecosystem`):
-
-- header: `oss-analyse`
-- question: `Title: <report Title>`; `Outcome: <report Outcome>`; finding counts and blockers where present; `→ <REPORT_FILE>`; `What next?`; "Long wait? `/compact` now — report saved, resume lossless." Use short plain lines, not a table.
-- `<N>` below = the highest-priority thread or PR number named in the report, substituted before asking; the report names none → omit options (a) and (b)
-- (a) label: `/oss:analyse <N> --reply` — description: draft reply for that thread
-- (b) label: `/oss:review <N>` — description: full code review of that PR (only when `<N>` is a PR)
-- (c) label: `skip` — description: no action
-
-**Evolution mode** (`$CLEAN_ARGS` starts with `evolution`):
-
-- header: `oss-analyse`
-- question: `Title: <report Title>`; `Outcome: <report Outcome>`; fix count, residue share, provisional-weights note when present; `→ <REPORT_FILE>`; `What next?`; "Long wait? `/compact` now — store saved, resume lossless." Use short plain lines, not a table.
-- (a) label: `revise` — description: edit `<store root>/overrides.csv` (one line per cell: fix_id, column_id, assert|deny, note), then rerun `/oss:analyse $CLEAN_ARGS` to rescore with no new blame
-- (b) label: `adjudicate` — description: rerun with `--adjudicate` so the LLM decides the ambiguous rows (only when the report lists any)
-- (c) label: `skip` — description: no action
-
-`/develop:fix`, `/develop:feature` and `/oss:resolve` have `disable-model-invocation: true`. After `AskUserQuestion` returns, present the chosen command with the actual target for the user to run manually (e.g. `Run: /oss:resolve 123`); no `Skill()` call. Missing optional `develop` plugin: state the prerequisite and print the manual command. Handle `draft reply`, `walk through findings` if offered, and `skip` inline; invoke other available follow-ups only when their skill permits model invocation.
+`/develop:fix`, `/develop:feature` and `/oss:resolve` have `disable-model-invocation: true`: print each command with the actual target for the user to run manually (`Run: /oss:resolve 123` form); no `Skill()` call. Missing optional `develop` plugin: state the prerequisite beside its command.
 
 ### 6b — Confidence block (REPLY_MODE=false only)
 

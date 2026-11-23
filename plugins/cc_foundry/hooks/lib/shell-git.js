@@ -136,7 +136,8 @@
 //   Text the shell or git builds at run time is beyond any string inspection: a variable used as a
 //   argument (`git push "$REMOTE"`), configuration read from a file (`git ci`
 //   aliased in ~/.gitconfig, `include.path`), a shell alias or function defined in an rc file, a
-//   pre-existing script on disk, and an interpreter assembling the git words from fragments. Code consumers
+//   pre-existing script on disk (a `PATH=`, `export PATH` or `hash -p` rebinding of a program name runs one), and an
+//   interpreter assembling the git words from fragments. Code consumers
 //   fail closed on unknown generated output reaching them, matching modeled file writes, and modeled commands
 //   shadowed by functions or aliases. Unknown programs are not inferred to write files. Literal print output and
 //   literal cat/tee input written to a script are followed. Runtime executable words are unreadable when the text
@@ -161,8 +162,9 @@
 //     * commands git itself runs from configuration or options: `-c core.pager=…`,
 //       `-c core.sshCommand=…`, `rebase --exec`, `submodule foreach`, `difftool --extcmd`,
 //       `filter-branch` filters.
-//     * Windows shells as source runners: `cmd /c "git push -f"`, `pwsh -c '…'`, `powershell`
-//       (an unquoted `cmd /c git push -f` is still found as a git word).
+//     * Windows shells (`cmd`, `powershell`, `pwsh`): their command text is not modeled, so any argument that names git
+//       or gh (after their own escapes, a switch chain and `%NAME%` are read away) makes the command unreadable.
+//       PowerShell run-time spellings (`$env:X`, `& (gcm g*)`) are not followed.
 //     * globs naming the program or the subcommand: `/usr/bin/gi? push`, `git pu?h` (after
 //       `touch push`); zsh's `=git push`.
 //     * aliases defined through the environment: GIT_CONFIG_COUNT/GIT_CONFIG_KEY_n/
@@ -177,7 +179,14 @@
 //     * GitHub API force updates (`gh repo sync --force`, `gh api -X PATCH …/git/refs/…`) run no git
 //       push; gh-write-guard.js denies them as gh writes.
 //     * interpreter code arriving on stdin or in a heredoc (`python3 <<'EOF'`), or positional code outside INTERPRETERS
-//       (`awk 'BEGIN{system(…)}'`). Unknown executables' eval/-e/-c style options naming git or gh are unreadable.
+//       (`awk 'BEGIN{system(…)}'`). Of an unlisted executable whose arguments name git or gh, any word that is not literal text
+//       free of a leading `-`, `+`, `/` segment, expansion or glob is read as an option and makes the command unreadable.
+//       A glob spelling of git inside quoted code text (`g?t`) needs a file of that name in the working directory and is
+//       not followed. File writes by listed programs (`cp`, `mv`, `rm`, `xxd IN OUT`, `find -fprint`/`-delete`) are not
+//       judged: unknown programs are not inferred to write files. Code reaching a program through its standard input or
+//       an `@file` argument (`printf … | ssh -F /dev/stdin host`) is read as data when git is outside that program's
+//       arguments, as before; a program the command rebinds through a file write in another way than the listed
+//       writers or a redirect is not followed.
 //     * a `!` shell alias re-lexes the arguments appended to it, so a quoted glob character there
 //       reads as unquoted: a false force reading only, never a missed one.
 //   Unquoted prose naming git in another command's arguments (`echo run git push -f`) is detected
@@ -276,6 +285,9 @@ const EXEC_WRAPPERS = {
     flags: /^(?:-[0ortx]+|--null|--no-run-if-empty|--open-tty|--verbose|--exit)$/,
     values: /^(?:-[adEIJLnPs]|--arg-file|--delimiter|--eof|--replace|--max-lines|--max-args|--max-procs|--max-chars)$/,
   },
+  // `arch -arm64 PROGRAM` only selects the architecture PROGRAM runs under; its `-e VAR=value` and `-c` stay unmodeled.
+  // Short options parse per letter: these are the letters of `-arm64`, `-x86_64` and `-i386` only.
+  arch: { flags: /^-[arm64x8_i3]$/, values: /^$/ },
   time: { flags: /^(?:-[apqv]+|--append|--portability|--quiet|--verbose)$/, values: /^(?:-[fo]|--format|--output)$/ },
   nohup: { flags: /^$/, values: /^$/ },
   command: { flags: /^-p+$/, values: /^$/ },
@@ -296,7 +308,8 @@ const EXEC_WRAPPERS = {
   ionice: { flags: /^(?:-t|--ignore)$/, values: /^(?:-[cnpPu]|--class|--classdata|--pid|--pgid|--uid)$/ },
   unbuffer: { flags: /^-p$/, values: /^$/ },
   busybox: { flags: /^$/, values: /^$/ },
-  ssh: { flags: /^-[1246AaCfGgKkMNnqsTtVvXxYy]+$/, values: /^-[BbcDEeFIiJLlmOopQRSWw]$/ },
+  // `-o` is not a plain value: `-o ProxyCommand=…` runs code, so it stays an unmodeled option.
+  ssh: { flags: /^-[1246AaCfGgKkMNnqsTtVvXxYy]+$/, values: /^-[BbcDEeFIiJLlmOpQRSWw]$/ },
 };
 EXEC_WRAPPERS.parallel = EXEC_WRAPPERS.xargs;
 // Shell startup options share the value grammar, including letters embedded in clusters (`bash -co pipefail`).
@@ -336,14 +349,109 @@ const SUBSCRIPT_BUILTINS = new Set([
 // (printf numeric conversions, substring offsets, array-element keys, integer-parameter assignments) are a run-time
 // re-expansion residual the lexer does not follow — see LIMITS; the blueprint and sentinel lanes refuse them.
 const ARITHMETIC_COUNT_BUILTINS = new Set(["shift", "break", "continue", "return", "exit", "repeat"]);
+// The count builtins that take no command: `repeat N COMMAND` (zsh) runs COMMAND, so it stays judged like a wrapper.
+const COUNT_ONLY_BUILTINS = new Set([...ARITHMETIC_COUNT_BUILTINS].filter((builtin) => builtin !== "repeat"));
+// Reserved words whose operands are a loop variable, `in`, a word list or a pattern subject, never options or a command:
+// `for f in $(git ls-files)` expands the list but runs nothing from it.
+const LIST_KEYWORDS = new Set(["for", "select", "case"]);
+// Programs that create or replace a file at an operand path.
+const FILE_WRITERS = new Set(["cp", "mv", "ln", "install", "dd", "tee", "touch", "mkdir"]);
 // Stands for the words xargs appends at run time; reads as run-time text (`$`), never as a literal.
 const XARGS_TAIL = "$(xargs)";
 // A git subcommand that may push once xargs appends its arguments (`xargs git push` + `-f`).
 const PUSH_FAMILY = /^(?:push|send-pack|http-push|subtree)$/i;
+// An unmodeled executable that names git or gh in its arguments stays unreadable on any option-shaped word: it may
+// carry code (`-cmd`, `-ex`, `-eval`, `--to-command=…`, clusters such as `-ce`), and no spelling list can name them
+// all. Only a positive entry below clears a program or one of its options. `eval` as a bare word is a code word too.
+// A word counts as a non-option only when it is literal text that starts with none of `-`, `+`, `/` (one segment) or an
+// expansion: a program may read `-x`/`--long`, vi/less style `+command` or a Windows switch of any length (`/tr`,
+// `/c:text`, Git Bash `//c`) as an option. A slash word with a further slash is a path.
+const OPTION_WORD = /^(?:-(?!-?$)|\+.|\/{1,2}[A-Za-z][^/]*$)/;
+// Run-time text that leads a word (`$O`, `${O:--e}`, `$(…)`, a glob) can become any option. It counts as one only when
+// another word of the command names the target (`foo $O 'git …'`): the word's own `$(git …)` runs under the shell and
+// hands the program its output, not code (`cd "$(git rev-parse --show-toplevel)"`).
+const RUNTIME_WORD = /^[$`\uE003-\uE005]/;
+const CODE_WORD = /^eval$/;
+// Per program, the option words that carry no code, matched with a doubled leading dash folded to one (`--readonly`).
+// Keyed by the exact bare command word (`tableKey`). `requires` is an option that must also be present: sqlite3 runs
+// dot-commands (`.shell`, `.system`) from its arguments unless `-safe` is on, so its options clear only with it.
+// sqlite3 `-cmd` and `-init` (runs `.shell`) stay unlisted. rtk's own global flags are listed; any other asks.
+// An entry may also carry a `pattern` for a flag family (`-v`, `-vv`, …).
+const RTK_OWN_FLAG = /^(?:-v+|--verbose|--skip-env)$/;
+const NON_CODE_OPTION_WORDS = new Map([
+  [
+    "sqlite3",
+    {
+      requires: "-safe",
+      words: new Set(
+        "-safe -readonly -csv -echo -column -header -noheader -json -line -list -html -markdown -table -box -ascii -quote -bail -batch -separator -newline -nullvalue".split(
+          " ",
+        ),
+      ),
+    },
+  ],
+  ["rtk", { words: new Set(), pattern: RTK_OWN_FLAG }],
+]);
+
+const VALUE_OPTIONS = new Set(["-separator", "-newline", "-nullvalue"]);
+const foldDash = (word) => word.replace(/^--/, "-");
+
+/** The option words the program reads as options: up to `--`, and never the value of a value-taking option. */
+function optionsRead(own) {
+  const read = [];
+  for (let i = 0; i < own.length && own[i] !== "--"; i += 1) {
+    read.push(own[i]);
+    if (VALUE_OPTIONS.has(foldDash(own[i]))) i += 1;
+  }
+  return read;
+}
+
+/** Whether the table lists the option and its required option (read as an option, not as a value) is present. */
+function optionCleared(key, arg, own) {
+  const entry = NON_CODE_OPTION_WORDS.get(key);
+  return (
+    Boolean(entry?.words.has(foldDash(arg)) || entry?.pattern?.test(arg)) &&
+    (!entry.requires || optionsRead(own).some((word) => foldDash(word) === entry.requires))
+  );
+}
+
+/** A table program that needs an option to be safe (sqlite3 `-safe`) and does not have it: its query is code too. */
+function requiredOptionMissing(key, own) {
+  const entry = NON_CODE_OPTION_WORDS.get(key);
+  return Boolean(entry?.requires) && !optionsRead(own).some((word) => foldDash(word) === entry.requires);
+}
+
+// Programs whose options do not hand code to another program, so a `git` named in a path argument is data. Some write
+// files (cp, mv, rm, ln, touch, mkdir, xxd's output operand, find -fprint/-delete): this table only decides whether an
+// option can hand code to a program, and those writes are not judged anywhere (see LIMITS). `test`, `[` and `[[` array
+// subscripts are judged by the SUBSCRIPT lane, and `find -exec`/`-ok` programs by the wrapper lane. A positive table
+// keyed by `tableKey` (the exact bare command word; `./cat`, `CAT` and `cat.exe` are other programs) and dropped when a function or alias redefines the name. Programs with a
+// code-running option stay out: rsync (`-e` remote shell), make (`-E` eval), psql (`-c` runs SQL with `\!`), tar
+// (`--to-command`, `-I`). A `PATH` or `hash` rebinding of a listed name is a pre-existing-script residual, see LIMITS.
+const LETTER_OPTION_DATA_PROGRAMS = new Set(
+  "ls cp mv rm ln touch mkdir stat date cat head tail wc uniq cut du diff cmp test [ [[ jq column od xxd file readlink realpath basename dirname tr tac rev sha256sum shasum md5sum find".split(
+    " ",
+  ),
+);
+/** Whether the bare program word has an option table entry: its own judgement decides its options. */
+const inOptionTable = (key) => LETTER_OPTION_DATA_PROGRAMS.has(key) || NON_CODE_OPTION_WORDS.has(key);
 // Interpreters whose `-c`/`-e` code can run git through a library call (`os.system`, `system`,
 // `child_process`). Their syntax is not shell syntax, so the code is scanned as raw text rather than
 // lexed.
-const INTERPRETERS = /^(?:python|pypy|perl|ruby|node|nodejs)[\d.]*$/;
+const INTERPRETERS = /^(?:python|pypy|perl|ruby|node|nodejs|cmd|powershell|pwsh)[\d.]*$/;
+// Interpreters whose command text the raw code scan cannot read exactly (cmd carets and `%var%`, PowerShell backticks
+// and concatenation can spell a subcommand without its letters together): their code option stays judged like an
+// unlisted program's, beside the scan.
+const UNMODELED_SHELLS = /^(?:cmd|powershell|pwsh)[\d.]*$/;
+/**
+ * The readings of an unmodeled shell's command text. Its caret and PowerShell's backtick escape a letter without
+ * changing the word (`pu^sh`, `g`it`), and `%NAME%` is a run-time value read like `$NAME`. cmd takes its command attached
+ * to a chain of slash switches (`/s/cgit …`), so a second reading puts every switch letter apart from what follows.
+ */
+const unmodeledShellTexts = (text) => {
+  const plain = text.replace(/[\^`]/g, "").replace(/%([^%\s]*)%/g, "$$$1");
+  return [plain, plain.replace(/\/{1,2}([A-Za-z])/g, " $1 ")];
+};
 // Standalone words in interpreter code: not part of `shell-git.js`, `.git` or `github`, and not a
 // `.push(` method call.
 const CODE_GIT = /(?<![\w.-])git(?:\.exe)?(?![\w.])/i;
@@ -356,6 +464,15 @@ const MAX_COMMANDS = 256;
 const MAX_WORDS = 2048;
 const MAX_LEX_DEPTH = 32;
 const INSPECTION_MS = 1000;
+/**
+ * CPU milliseconds this process has used. Every inspection deadline reads it, never wall time: the work the
+ * deadline bounds is pure computation, so a scheduler stall on a busy host must not turn a command the guard
+ * reads in 0.2 s into "deadline exceeded" and a different verdict.
+ */
+const inspectionNow = () => {
+  const usage = process.cpuUsage();
+  return (usage.user + usage.system) / 1000;
+};
 const SHELL_SYNTAX = /[\s;&|`$()<>]/;
 // Value-taking git global options must consume their argument, or the value would read as the
 // subcommand. Options in neither set are read both ways.
@@ -744,7 +861,7 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
     if (broken) return unreadable(acc, broken);
     if (acc.unreadable) return -1;
     if (acc.commands.length > MAX_COMMANDS) return unreadable(acc, "simple command limit exceeded");
-    if (Date.now() > acc.deadline) return unreadable(acc, "command inspection deadline exceeded");
+    if (inspectionNow() > acc.deadline) return unreadable(acc, "command inspection deadline exceeded");
     if (word === null) wordStart = i;
     const c = src[i];
     const next = src[i + 1];
@@ -1360,7 +1477,7 @@ function lexShell(src, redirections = true, failure = {}) {
   }
   const acc = {
     wordCount: 0,
-    deadline: failure.deadline ?? Date.now() + INSPECTION_MS,
+    deadline: failure.deadline ?? inspectionNow() + INSPECTION_MS,
     commands: [],
     incomplete: new Set(),
     wordFacts: new Map(),
@@ -1639,7 +1756,7 @@ function coarseCommandTokens(segment) {
 
 /** Stop inspection when the caller's wall-clock budget has elapsed. */
 function checkInspectionDeadline(deadline) {
-  if (Date.now() > deadline) throw new Error("command inspection deadline exceeded");
+  if (inspectionNow() > deadline) throw new Error("command inspection deadline exceeded");
 }
 
 /** Find a shell source candidate's boundary without splitting its quoted options or descriptor redirections. */
@@ -1694,7 +1811,7 @@ function coarseShellSource(text, start, limit) {
 }
 
 /** Read plain program segments and literal shell source without consulting the bounded lexer. */
-function coarseProgramInvocations(command, name, depth = 0, deadline = Date.now() + INSPECTION_MS) {
+function coarseProgramInvocations(command, name, depth = 0, deadline = inspectionNow() + INSPECTION_MS) {
   if (typeof command !== "string" || depth >= MAX_NESTING) return [];
   checkInspectionDeadline(deadline);
   const prefix = command.slice(0, MAX_COMMAND_CHARS);
@@ -1750,6 +1867,15 @@ function basename(word) {
   return word.split(/[/\\]/).pop();
 }
 
+/**
+ * The key a positive program table is looked up by: the bare command word only when it is the program's own exact
+ * spelling. `./cat`, `CAT` and `cat.exe` give null, so they are other programs and never inherit a table entry.
+ */
+function tableKey(word, target) {
+  const bare = unmarkGlobs(word);
+  return programName(bare) === bare && !target?.rebound?.has(bare) ? bare : null;
+}
+
 /** The program a word runs, case folded with `.exe` dropped: macOS and Windows run `GIT` as git. */
 function programName(word) {
   return basename(word)
@@ -1780,32 +1906,77 @@ function collectWords(words, found, depth, target, scripts = new Set(), facts = 
     else if (interpreter < 0 && INTERPRETERS.test(name)) interpreter = j;
     else if (subscript < 0 && SUBSCRIPT_BUILTINS.has(unmarkGlobs(name))) subscript = j;
   });
-  if (interpreter >= 0) target.scanCode(words.slice(interpreter + 1).join(" "), found);
-  for (const at of executablePrograms(words)) {
+  // cmd takes its command attached to the switch (`/cgit …`): split it so the scan sees the word
+  if (interpreter >= 0)
+    target.scanCode(
+      words
+        .slice(interpreter + 1)
+        .join(" ")
+        .replace(/(?:^|\s)\/{1,2}[ck](?=\S)/gi, (switchWord) => `${switchWord} `),
+      found,
+    );
+  const programWords = executablePrograms(words);
+  programWords.forEach((at, position) => {
     const name = programName(words[at]);
+    const key = tableKey(words[at], target);
     // rtk runs argv programs too (`rtk sh -c STR`, `rtk env …`): only a modeled shell-string runner is exempt here,
     // an empty reading falls through to the code-option check like any unmodeled executable.
     const rtkSource = name === "rtk" ? rtkShellSource(words.slice(at + 1)) : [];
+    const unmodeledShell = UNMODELED_SHELLS.test(name);
     if (
-      SOURCE_RUNNERS.has(name) ||
-      INTERPRETERS.test(name) ||
+      (!unmodeledShell && (SOURCE_RUNNERS.has(name) || INTERPRETERS.test(name))) ||
       PRINT_PROGRAMS.has(name) ||
       SEARCH_PROGRAMS.has(name) ||
+      LETTER_OPTION_DATA_PROGRAMS.has(key) ||
+      COUNT_ONLY_BUILTINS.has(key) ||
+      LIST_KEYWORDS.has(key) ||
       name === "git" ||
       name === "gh" ||
       rtkSource === null ||
       rtkSource.length > 0
     )
-      continue;
-    const args = words.slice(at + 1);
+      return;
+    const all = words.slice(at + 1);
+    // rtk is judged on its own words before a table program it runs: that program's options belong to its own table
+    // entry and its own judgement (`rtk ls -r …`, `rtk sqlite3 -safe …`).
+    const childAt = name === "rtk" ? programWords[position + 1] : undefined;
+    const own =
+      childAt !== undefined && inOptionTable(tableKey(words[childAt], target)) ? words.slice(at + 1, childAt) : all;
+    // Only rtk's own position cuts at the program it runs: the words before it stay judged, and a wrapper option that
+    // makes executablePrograms uncertain sits before it. Every other position judges all its words, a git-named
+    // operand included (`foo ./git -e …`); that git word is then read by its own reader.
+    const targetAt =
+      name === "rtk"
+        ? own.findIndex((word, i) => programName(word) === target.name && programWords.includes(at + 1 + i))
+        : -1;
+    // A position whose own word looks like an option (`flock FILE -c CMD` leaves `-c` as the command word) is judged too.
+    // zsh `repeat COUNT COMMAND` takes no option: its first operand is the count, an arithmetic string that the count
+    // lane below re-reads for a command substitution, so it is not an option word; the command after it is judged.
+    const operands = name === "repeat" ? own.slice(1) : own;
+    const args = [
+      ...(OPTION_WORD.test(words[at]) ? [words[at]] : []),
+      ...(targetAt < 0 ? operands : operands.slice(0, targetAt)),
+    ];
+    const judged = new Set(args);
+    // The candidate's own word is part of the text it is judged by: an attached option value (`ssh -oProxyCommand=git …`)
+    // lives in it. An unmodeled shell runs its positional argument too (`powershell 'git …'`), so every word counts.
+    const text = [...(OPTION_WORD.test(words[at]) ? [words[at]] : []), ...all].join(" ");
     if (
-      args.some((arg) => /^(?:-[ecEr]|--(?:eval|execute|expression|command|code)(?:=|$)|eval$)/.test(arg)) &&
-      namesProgram(args.join(" "), target.name)
+      (unmodeledShell ||
+        args.some((arg) => CODE_WORD.test(arg) || (OPTION_WORD.test(arg) && !optionCleared(key, arg, all))) ||
+        requiredOptionMissing(key, all) ||
+        all.some(
+          (word, i) =>
+            judged.has(word) &&
+            RUNTIME_WORD.test(word) &&
+            namesProgram(all.filter((_, j) => j !== i).join(" "), target.name),
+        )) &&
+      (unmodeledShell ? unmodeledShellTexts(text) : [text]).some((reading) => namesProgram(reading, target.name))
     ) {
       markTargetUnreadable(target, "code option of an unmodeled executable");
       target.unlexable("", found, true);
     }
-  }
+  });
   if (subscript >= 0 && depth < MAX_NESTING) {
     for (const arg of words.slice(subscript + 1).map(unmarkGlobs)) {
       if (arg.includes("[") && /[$`]/.test(arg)) collect(arg, found, depth + 1, target, scripts);
@@ -2608,7 +2779,7 @@ function executablePrograms(words) {
       // (rtk's own position stays: its shell-string runners are read from it). A runner subcommand is skipped; a
       // filter or unknown subcommand is the program word.
       let k = s + 1;
-      while (k < plain.length && /^(?:-v+|--verbose|--skip-env)$/.test(plain[k])) k += 1;
+      while (k < plain.length && RTK_OWN_FLAG.test(plain[k])) k += 1;
       const sub = plain[k];
       if (RTK_SHELL_RUNNERS.has(sub) || RTK_STRING_RUNNERS.has(sub)) {
         const runner = RTK_SHELL_RUNNERS.has(sub);
@@ -2641,7 +2812,8 @@ function executablePrograms(words) {
       const option = programOption(plain, s, options);
       if (name === "parallel" && ["--replace", "-i"].includes(arg) && s + 1 < plain.length)
         Object.assign(option, { value: plain[s + 1], next: s + 2 });
-      if (option.unknown) return uncertain(s + 1);
+      // the unknown option itself stays a candidate: it is judged as an option by the code-option check
+      if (option.unknown) return uncertain(s);
       s = option.next;
     }
     if (name === "ssh") s += 1; // destination, after ssh's options
@@ -3094,6 +3266,16 @@ function collect(command, found, depth, target, scripts = new Set(), bindings = 
       }
     }
   }
+  // A file written under a table program's name rebinds it as surely as a function does (`ln -s sh cat; cat -c …`,
+  // `cp x ~/.local/bin/ls`, `echo … > bin/cat`): the table then no longer stands for the real program.
+  const rebinding = (file) => {
+    const key = path.posix.basename(unmarkGlobs(file).replace(/^of=/, ""));
+    if (inOptionTable(key)) (target.rebound ??= new Set()).add(key);
+  };
+  for (const words of lexed.commands)
+    for (const r of executablePrograms(words))
+      if (FILE_WRITERS.has(programName(words[r]))) words.slice(r + 1).forEach(rebinding);
+  for (const redirect of lexed.redirectFiles) if (redirect.write) rebinding(redirect.file);
   const shadowed = [...definitions].some(
     (name) =>
       name === "gh" ||
@@ -3116,6 +3298,7 @@ function collect(command, found, depth, target, scripts = new Set(), bindings = 
         "perl",
       ].includes(name) ||
       DATA_PROGRAMS.has(name) ||
+      inOptionTable(name) ||
       OPTION_SETTERS.has(name) ||
       ARRAY_DECLARERS.has(name) ||
       ARITHMETIC_COUNT_BUILTINS.has(name) ||
@@ -3358,7 +3541,7 @@ function findInvocations(command, target, info = {}, exact = null) {
   if (typeof command !== "string") return [];
   const found = [];
   const run = Object.create(target); // per-call state: GIT is shared across calls
-  run.deadline = info.deadline ?? Date.now() + INSPECTION_MS;
+  run.deadline = info.deadline ?? inspectionNow() + INSPECTION_MS;
   run.command = command;
   run.coarseInvocations = info.coarseInvocations;
   run.unreadable = false;
@@ -3466,7 +3649,7 @@ function readInvocation(tokens, unknownTakesValue, inherited, depth, readings, b
     budget.seen.add(identity);
     budget.remaining -= 1;
   }
-  if (budget.remaining < 0 || Date.now() > budget.deadline) {
+  if (budget.remaining < 0 || inspectionNow() > budget.deadline) {
     budget.info.unreadable = true;
     budget.info.unreadableReason = depth ? "git alias inspection limit exceeded" : "git invocation limit exceeded";
     return;
@@ -3586,7 +3769,7 @@ function gitSubcommandArgs(command, info = {}) {
   const configured = [];
   const budget = {
     remaining: MAX_COMMANDS,
-    deadline: info.deadline ?? Date.now() + INSPECTION_MS,
+    deadline: info.deadline ?? inspectionNow() + INSPECTION_MS,
     info,
     configured,
     seen: new Set(),
@@ -3688,6 +3871,7 @@ function programInvocations(command, name, info = {}) {
 }
 
 module.exports = {
+  inspectionNow,
   gitSubcommandArgs,
   programInvocations,
   coarseProgramInvocations,

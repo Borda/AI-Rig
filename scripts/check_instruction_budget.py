@@ -154,7 +154,11 @@ BUDGETS = (
     # Raised by 132 bytes for the remote-write boundary that now names the one gated PR worktree publication route
     # (two sentences replaced shorter "never push" statements). Every Codex session reads it before any git or gh
     # command, so a lazy home would let the old absolute wording stand until the contract file is loaded.
-    Budget("plugins/codex-rig/assets/AGENTS.md", 43744),
+    # Raised by 740 bytes: 663 for the committed review and remediation wording of linked worktrees and the
+    # push-on-request route, 77 for the final-handover publication gate (a worktree remediation that created a
+    # commit asks once, with no request). Both bind before a Codex session's first git or gh command, so no lazily
+    # loaded file can carry them.
+    Budget("plugins/codex-rig/assets/AGENTS.md", 44484),
 )
 
 

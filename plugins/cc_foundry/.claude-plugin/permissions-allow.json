@@ -94,6 +94,7 @@
   "Bash(pip show:*)",
   "Bash(pip-audit:*)",
   "Bash(pre-commit run:*)",
+  "Bash(printenv AI_RIG_FOOTER)",
   "Bash(printf:*)",
   "Bash(pytest:*)",
   "Bash(python -m cProfile:*)",

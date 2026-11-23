@@ -44,11 +44,13 @@ Bad/good examples:
 - Maintainer always listed last with infra / CI / docs scope
 - Precede Contributors section with `---` separator
 
+<!-- policy-sibling: plugins/cc_foundry/rules/public-github.md, plugins/cc_foundry/rules/_full/public-github.md, plugins/cc_oss/skills/release/modes/demo.md, plugins/cc_oss/skills/release/modes/notes-draft.md, plugins/cc_oss/skills/release/modes/release-draft-template.md, plugins/cc_oss/skills/release/templates/release-draft.md — AI_RIG_FOOTER opt-out wording restated for each consumer; edit all seven together. -->
+
 **Last line (required):**
 
 Every release entry must end with:
 
 `**Full changelog**: https://github.com/[org]/[repo]/compare/vPREV...vNEXT`
 
-- Must be final line of entry, after Contributors section — no notes, annotations, separators, or prose may follow
+- Must be final line of entry, after Contributors section — no notes, annotations, separators, or prose may follow; the one exception is `DRAFT.md`'s closing drafted-by line from `templates/release-draft.md` (omitted when `printenv AI_RIG_FOOTER`, run bare (no redirect, no `|| true`), prints `off`, any case), which is never part of a `CHANGELOG.md` entry
 - Never omit, even for patch releases

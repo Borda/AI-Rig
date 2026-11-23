@@ -120,12 +120,14 @@ const path = require("path");
 let programInvocations = null;
 let XARGS_TAIL = null;
 let coarseProgramInvocations = null;
+let inspectionNow = Date.now;
 // Library unavailable: ask on every Bash command rather than guessing program names.
 let namesProgram = () => true;
 try {
   const lexer = require(path.join(__dirname, "lib", "shell-git.js"));
   ({ programInvocations, XARGS_TAIL, coarseProgramInvocations } = lexer);
   if (lexer.namesProgram) namesProgram = lexer.namesProgram;
+  if (lexer.inspectionNow) inspectionNow = lexer.inspectionNow;
 } catch {
   // programInvocations stays null
 }
@@ -658,7 +660,7 @@ process.stdin.on("end", () => {
   if (typeof command !== "string" || command === "") process.exit(0);
 
   let found;
-  const info = { deadline: Date.now() + 1000 };
+  const info = { deadline: inspectionNow() + 1000 };
   try {
     if (programInvocations === null) throw new Error("lib/shell-git.js did not load");
     found = findWrite(command, info);

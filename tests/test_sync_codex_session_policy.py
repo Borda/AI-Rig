@@ -801,7 +801,10 @@ class TestExtraPolicy:
                 extra_policy,
                 (
                     "The gate is excluded from recipe preapproval.",
-                    "For a successful PR-mode Code Remediate --worktree run only",
+                    "For a successful PR-mode Code Remediate delivery",
+                    "user request to publish the verified delivered commit",
+                    "whether made before, during or after remediation",
+                    "publication-request",
                     "matching native Approve receipt",
                     "sole refs/heads destination",
                     "wrappers, force variants and reusable grants",
@@ -989,7 +992,7 @@ class TestCodexReadme:
                 id="claude-push-once-token",
             ),
             pytest.param(
-                "It requires a native user answer and separate one-time runtime approval.",
+                "Each push requires a native user answer and separate one-time runtime approval.",
                 id="codex-pr-worktree-publication-approval",
             ),
             pytest.param("Force operations are forbidden on both hosts.", id="force-forbidden"),

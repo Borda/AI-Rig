@@ -309,7 +309,7 @@ def _interrupt_legacy_rotation(output, monkeypatch):
     monkeypatch.syspath_prepend(str(script.parent))
     monkeypatch.setattr(sys, "argv", arguments)
     runner = load_module_scoped("legacy_gate_runner", script, monkeypatch)
-    rename = os.rename
+    rename = Path.rename
     numbered = output / "gate-attempts/001"
 
     def interrupt_rotation(source, destination):
@@ -319,7 +319,8 @@ def _interrupt_legacy_rotation(output, monkeypatch):
         rename(source, destination)
 
     with monkeypatch.context() as patch:
-        patch.setattr(os, "rename", interrupt_rotation)
+        # Path.rename: Python 3.10's pathlib binds os.rename at import, so patching os.rename never reaches the runner.
+        patch.setattr(Path, "rename", interrupt_rotation)
         assert runner.main() == 2
     return output / json.loads((output / ".gate-publication.json").read_bytes())["stage"]
 

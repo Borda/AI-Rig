@@ -18,7 +18,7 @@ Bucket session **clock time** from `~/.claude/logs/{timings,invocations}.jsonl` 
 
 ...and bucket session **tokens/cost** from Claude Code transcripts (`~/.claude/projects/**`, main-loop + subagent files) into:
 
-6. **Sessions ranked by cost** (window mode) — main $ vs subagent $ vs total $ per session, plus a per-command rollup; or **one session's deep-dive** (`--session-id`) — cost by main/sidechain × model tier, agent roster, top cache-rebuild calls, cold-start share
+6. **Sessions ranked by cost** (window mode) — main $ vs subagent $ vs total $ per session, plus a per-command rollup; or **one session's deep-dive** (`--session-id`) — cost by main/sidechain × model tier, agent roster, per-agent rows for the 25 costliest agents and a phase table over all (long, chain-link, challenge-\* retry flags), top cache-rebuild calls, cold-start share
 
 Outputs a markdown report at `.reports/profile/<UTC-timestamp>/report.md` plus a `.temp/output-profile-...md` copy: per-session clock table, per-skill clock rollup, top-N longest single calls, plus a `## Tokens & cost` section scoped to same window / `--session-id`.
 

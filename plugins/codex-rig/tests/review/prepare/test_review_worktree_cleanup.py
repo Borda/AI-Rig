@@ -8,10 +8,13 @@ import os
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
+from threading import Barrier
 
 import pytest
-from _git_fixtures import git_text
+from _git_fixtures import git_text, historical_review_workspace
 from _modules import load_module
 
 SHARED = Path(__file__).resolve().parents[3] / "shared"
@@ -83,6 +86,105 @@ def test_removes_only_verified_clean_worktree_and_records_result(review) -> None
     assert receipt["status"] == "removed"
     assert receipt["head"] == git_text(root, "rev-parse", "HEAD").strip()
     assert receipt["result_sha256"] == hashlib.sha256((run / "result.json").read_bytes()).hexdigest()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("number", "protected", "reason"),
+    [
+        pytest.param(7, False, None, id="matching-ordinary-pr"),
+        pytest.param(7, True, "protected cleanup requires the repository-wide review slot", id="protected-pr"),
+        pytest.param(8, False, "source checkout belongs to a different slot", id="other-pr"),
+    ],
+)
+def test_cleanup_binds_ordinary_claim_to_pr_and_execution_scope(
+    review, capsys: pytest.CaptureFixture[str], number: int, protected: bool, reason: str | None
+) -> None:
+    """Allow only the matching PR claim for ordinary cleanup and require exclusive ownership for integrity checks."""
+    helper, command, run, root, worktree = review
+    checkout_path = run / "local-checkout.json"
+    record = json.loads(checkout_path.read_bytes())
+    record["pr_url"] = "https://github.com/acme/widgets/pull/7"
+    checkout_path.write_text(json.dumps(record), encoding="utf-8")
+    command[command.index("--checkout-sha256") + 1] = hashlib.sha256(checkout_path.read_bytes()).hexdigest()
+    locator = command.index("--slot") + 1
+    scheduler = helper.review_checkout_slot
+    assert scheduler._operate("release", Path(command[locator]), "run-owner", False)[0] == "released"
+    slot = scheduler._target_slot(root / ".git", f"https://github.com/acme/widgets/pull/{number}")
+    assert scheduler._schedule("acquire", slot, "run-owner", False, reuse_owner=True)[0] == "acquired"
+    command[locator] = str(slot)
+    if protected:
+        (run / "integrity.json").write_text("{}", encoding="utf-8")
+        command[-1:] = ["--integrity-sha256", "a" * 64]
+    assert helper.main(command) == int(reason is not None)
+    assert worktree.exists() is (reason is not None)
+    assert json.loads(capsys.readouterr().out).get("reason") == reason
+
+
+@pytest.mark.integration
+def test_cleanup_preserves_worktree_for_stale_finalizer_digest(review, capsys: pytest.CaptureFixture[str]) -> None:
+    """An accidentally stale result digest must be rejected before the witness or removal is published."""
+    helper, command, run, root, worktree = review
+    previous = hashlib.sha256(b"previous review output").hexdigest()
+    assert helper.main([*command, "--review-result-sha256", previous]) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "review result differs from producer digest"
+    assert worktree.is_dir()
+    assert not (run / helper.RECEIPT).exists()
+    assert git_text(root, "for-each-ref", helper.review_worktree_replay.witness_ref(run)) == ""
+
+
+@pytest.mark.integration
+def test_historical_witness_resumes_without_authenticating_producer_result(review) -> None:
+    """A schema-one witness interrupted before journaling can finish cleanup while preserving its original scope."""
+    helper, command, run, root, worktree = review
+    checkout_path = run / "local-checkout.json"
+    result_path = run / "result.json"
+    digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    legacy = {
+        "schema_version": 1,
+        "status": "removal-authorized",
+        "run_dir": run.as_posix(),
+        "worktree": worktree.as_posix(),
+        "source_worktree": root.as_posix(),
+        "head": json.loads(checkout_path.read_bytes())["expected_head"],
+        "result_sha256": digest,
+        "local_checkout_sha256": hashlib.sha256(checkout_path.read_bytes()).hexdigest(),
+        "source_inputs": {},
+    }
+    replay = helper.review_worktree_replay
+    replay.seal_source_witness(run, root, legacy)
+    assert helper.main(command) == 0
+    assert json.loads((run / helper.RECEIPT).read_bytes()) == {**legacy, "status": "removed"}
+    assert replay.verified_archive(run, result_path) is not None
+    assert replay.verified_archive(run, result_path, producer_result_sha256=digest) is None
+
+
+@pytest.mark.integration
+def test_cleanup_requires_execution_record_for_unknown_origin(review, capsys: pytest.CaptureFixture[str]) -> None:
+    """A legacy invocation on an unknown origin must supply its execution decision before removal."""
+    helper, command, run, _, worktree = review
+    assert helper.main(command[:-1]) == 1
+    assert "contributor integrity digest or confirmation" in json.loads(capsys.readouterr().out)["reason"]
+    assert worktree.exists()
+    assert not (run / "review-worktree-cleanup.json").exists()
+
+
+@pytest.mark.integration
+def test_ordinary_cleanup_preserves_worktree_without_producer_or_with_existing_interval(
+    review, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An ordinary execution decision needs promotion proof and cannot close an existing protected interval."""
+    helper, command, run, _, worktree = review
+    ordinary = [*command[:-1], "--ordinary-execution"]
+    assert helper.main(ordinary) == 1
+    assert "promoting finalizer's result digest" in json.loads(capsys.readouterr().out)["reason"]
+
+    (run / "integrity.json").write_text("{}", encoding="utf-8")
+    digest = hashlib.sha256((run / "result.json").read_bytes()).hexdigest()
+    assert helper.main([*ordinary, "--review-result-sha256", digest]) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "original integrity digest required"
+    assert worktree.is_dir()
+    assert not (run / helper.RECEIPT).exists()
 
 
 @pytest.mark.integration
@@ -398,19 +500,47 @@ def test_inspected_ignored_worktree_output_is_retained(review, capsys: pytest.Ca
 @pytest.mark.integration
 @pytest.mark.parametrize(
     "interval",
-    ["original", "inspected", "no-contributor-execution"],
+    [
+        pytest.param(x, id=x)
+        for x in ("original", "inspected", "no-contributor-execution", "same-repository", "ordinary-fork", "private")
+    ],
 )
 def test_terminal_cli_removes_collected_worktree_and_keeps_report_intake(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interval: str
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch, interval: str
 ) -> None:
     """Exercise collection, completion, cleanup, replay and remediation intake on one real detached checkout."""
-    verify_integrity = interval != "no-contributor-execution"
+    verify_integrity = interval in {"original", "inspected", "private"}
     validation = Path(__file__).resolve().parents[1] / "validation"
     completion = load_module("cleanup_completion_fixture", validation / "test_review_completion_gate.py")
     routing = load_module("cleanup_routing_fixture", validation / "test_code_review_routing_contract.py")
     project = tmp_path / "source"
     project.mkdir()
     git_text(project, "init", "-q")
+    caller = project
+    if interval == "private":
+        # Keep a real peer claim alive throughout prepare, source collection, verification and cleanup.
+        git_text(caller, "remote", "add", "origin", "https://github.com/acme/widgets.git")
+        git_text(
+            caller,
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "caller",
+        )
+        # A 64-character workspace name under this test's own directory passes the 260-character Windows path limit
+        # inside Git's object paths; a shared short parent keeps the retained workspace below it.
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path_factory.mktemp("s")))
+        peer = [sys.executable, str(SHARED / "review_checkout_slot.py")]
+        claim = subprocess.run(
+            [*peer, "acquire", "--checkout", str(caller), "--owner", "peer"], capture_output=True, check=True
+        )
+        peer_slot = json.loads(claim.stdout)["slot"]
+        subprocess.run([*peer, "hold", "--slot", peer_slot, "--owner", "peer"], check=True, capture_output=True)
+        project = historical_review_workspace(caller, "https://github.com/acme/widgets/pull/123")
     for word in ("Wdiget", "Widget"):
         (project / "widget.txt").write_text(word + "\n", encoding="utf-8")
         git_text(project, "add", "widget.txt")
@@ -424,6 +554,7 @@ def test_terminal_cli_removes_collected_worktree_and_keeps_report_intake(
             str(project),
             "--owner",
             "terminal-fixture",
+            *([] if verify_integrity else ["--target", "https://github.com/acme/widgets/pull/123"]),
         ],
         capture_output=True,
         check=True,
@@ -436,6 +567,9 @@ def test_terminal_cli_removes_collected_worktree_and_keeps_report_intake(
     monkeypatch.chdir(project)
     collector = load_module("cleanup_offline_collector", SHARED / "collect_pr.py")
     metadata = json.loads((run / "pr-routing.json").read_bytes())
+    metadata.update(same_repo=interval == "same-repository", is_cross_repository=interval != "same-repository")
+    # Reconstruct retained source evidence for an already collected historical run.
+    # Fresh CLI collection rejects these repositories before fetching or checking out source.
     checkout = collector._review_worktree_checkout(
         collector.DEFAULT_RUN_COMMAND,
         30,
@@ -444,8 +578,12 @@ def test_terminal_cli_removes_collected_worktree_and_keeps_report_intake(
         base_oid=metadata["base_oid"],
         head_oid=metadata["head_oid"],
         prior_checkout={},
+        source_context=(project, project / ".git") if interval == "private" else None,
     )
     worktree = Path(checkout["worktree"])
+    if interval == "private":
+        checkout["integrity_main_checkout"] = caller.as_posix()
+        (run / "local-checkout.json").write_text(json.dumps(checkout), encoding="utf-8")
     assert worktree != project
     assert worktree.is_dir()
     assert checkout["worktree_location"] == ("report-adjacent" if verify_integrity else "temporary-fallback")
@@ -470,7 +608,12 @@ def test_terminal_cli_removes_collected_worktree_and_keeps_report_intake(
     (run / review_check["command_path"]).write_text(
         f"git diff --check {metadata['base_oid']}...{metadata['head_oid']}\n", encoding="utf-8"
     )
-    execution = ["--no-contributor-execution"]
+    execution = [] if interval == "same-repository" else ["--no-contributor-execution"]
+    if interval == "ordinary-fork":
+        monkeypatch.syspath_prepend(str(validation))
+        producer = load_module("cleanup_safety_fixture", validation / "test_review_code_safety.py")
+        result_digest = producer._promote(run, "unassessed", codex_home=tmp_path)
+        execution = ["--ordinary-execution", "--review-result-sha256", result_digest]
     if interval == "inspected":
         with (project / ".git" / "info" / "exclude").open("a", encoding="utf-8") as stream:
             stream.write("\ninspection-output.txt\n")
@@ -484,7 +627,7 @@ def test_terminal_cli_removes_collected_worktree_and_keeps_report_intake(
                 "--repo",
                 str(worktree),
                 "--main-checkout",
-                str(project),
+                str(caller),
                 "--watch-surface",
                 "--out",
                 str(run / "integrity.json"),
@@ -493,6 +636,28 @@ def test_terminal_cli_removes_collected_worktree_and_keeps_report_intake(
             check=True,
         )
         execution = ["--integrity-sha256", json.loads(snapshot.stdout)["sha256"]]
+    if interval == "private":
+        prepare = load_module("split_review_prepare", SHARED.parent / "skills/code-review/review_prepare.py")
+        prepare._require_pr_dispatch_integrity(run, [str(run / "integrity.json"), execution[1]], None)
+        wrong = run / "wrong-scope.json"
+        digest = json.loads(
+            subprocess.check_output(
+                [
+                    sys.executable,
+                    str(SHARED / "contributor_run_integrity.py"),
+                    "snapshot",
+                    "--repo",
+                    str(worktree),
+                    "--main-checkout",
+                    str(project),
+                    "--watch-surface",
+                    "--out",
+                    str(wrong),
+                ]
+            )
+        )["sha256"]
+        with pytest.raises(ValueError, match="integrity-surface-mismatch"):
+            prepare._require_pr_dispatch_integrity(run, [str(wrong), digest], None)
     finder = [sys.executable, str(SHARED / "find-review-report.py")]
     complete = [*finder, "--complete-run", str(run), "--codex-home", str(tmp_path)]
     original = subprocess.run(complete, capture_output=True, check=False)
@@ -598,6 +763,9 @@ def test_terminal_cli_removes_collected_worktree_and_keeps_report_intake(
     )
     assert intake.returncode == 0, intake.stderr.decode()
     assert Path(intake.stdout.decode().strip()) == run / "result.json"
+    if interval == "private":
+        peer_status = json.loads(subprocess.check_output([*peer, "status", "--slot", peer_slot]))
+        assert (peer_status["status"], peer_status["owner"]) == ("inspection-required", "peer")
     if verify_integrity:
         # Replacing report files and their sidecar digest together cannot change the independently pinned evidence.
         inventory = run / "files.txt"
@@ -612,3 +780,70 @@ def test_terminal_cli_removes_collected_worktree_and_keeps_report_intake(
         rejected = subprocess.run(cleanup_command, capture_output=True, check=False)
         assert rejected.returncode == 1
         assert "witness" in json.loads(rejected.stdout)["detail"]
+
+
+@pytest.mark.integration
+def test_two_prs_collect_linked_worktrees_before_either_releases_its_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two reviews with independent PR claims collect exact commits in the same repository at the same time."""
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    git_text(caller, "init", "-q")
+    git_text(caller, "remote", "add", "origin", "https://github.com/acme/widgets.git")
+    commits = []
+    for content in ("base", "first change", "second change"):
+        (caller / "change.txt").write_text(content, encoding="utf-8")
+        git_text(caller, "add", "change.txt")
+        git_text(caller, "-c", "user.name=fixture", "-c", "user.email=test@example.invalid", "commit", "-qm", content)
+        commits.append(git_text(caller, "rev-parse", "HEAD").strip())
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    collector = load_module("concurrent_source_collector", SHARED / "collect_pr.py")
+    scheduler = [sys.executable, str(SHARED / "review_checkout_slot.py")]
+    (caller / ".git" / "info" / "exclude").write_text("/.reports/\n", encoding="utf-8")
+    together = Barrier(2, timeout=30)
+
+    def collect(number: int) -> tuple[Path, str]:
+        url = f"https://github.com/acme/widgets/pull/{number}"
+        workspace = Path(
+            subprocess.check_output(
+                [sys.executable, str(SHARED / "review_workspace.py"), "--checkout", str(caller), "--target", url],
+                text=True,
+            ).strip()
+        )
+        owner = f"review-{number}"
+        claim = json.loads(
+            subprocess.check_output(
+                [*scheduler, "acquire", "--checkout", str(workspace), "--target", url, "--owner", owner]
+            )
+        )
+        assert workspace == caller
+        run = workspace / ".reports" / "codex" / "code-review" / f"pr-{number}" / "run-001"
+        run.mkdir(parents=True)
+        checkout = collector._review_worktree_checkout(
+            partial(subprocess.run, cwd=workspace),
+            30,
+            run,
+            {"pr_url": url, "pr_number": number},
+            base_oid=commits[0],
+            head_oid=commits[number],
+            prior_checkout={},
+        )
+        assert checkout["source_worktree"] == caller.as_posix()
+        assert checkout["created_worktree"]["slot_owner"] == owner
+        tree = Path(checkout["worktree"])
+        common = ("rev-parse", "--path-format=absolute", "--git-common-dir")
+        assert git_text(tree, *common) == git_text(caller, *common)
+        assert (tree / "change.txt").read_text(encoding="utf-8") == ("first change" if number == 1 else "second change")
+        together.wait()
+        subprocess.run(
+            [*scheduler, "release", "--slot", claim["slot"], "--owner", owner], capture_output=True, check=True
+        )
+        return tree, claim["slot"]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = pool.map(collect, (1, 2))
+    assert first[0] != second[0]
+    assert first[1] != second[1]
+    assert git_text(caller, "status", "--porcelain") == ""
+    assert git_text(caller, "worktree", "list", "--porcelain").count("worktree ") == 3

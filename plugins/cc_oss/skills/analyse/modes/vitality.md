@@ -292,9 +292,9 @@ cat "$_OSS_SHARED/terminal-summaries.md"  # timeout: 5000
 
 Compact block format (loaded above). File absent → warn "run /foundry:setup — printing plain terminal output instead."
 
-**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up while `$REPORT_FILE` is missing/empty. Denial `oss:analyse report gate` = the write never produced the report — write it, put its path and `Title`, `Outcome` values in the question text as a short plain summary, then re-issue the question. The full matching header table is required in the final reply after the answer; build it below, never put it in an option `preview`.
+**Hook-enforced**: on `Stop`, `hooks/enforce-analyse-header.js` requires the matching full header table in the final reply after the answer once `$REPORT_FILE` exists; the write must therefore produce the report. Build the delivery block below, never print it earlier.
 
-<!-- policy-sibling: plugins/cc_oss/skills/analyse/modes/thread.md (report write: same enforce-analyse-header.js denial-recovery paragraph) -->
+<!-- policy-sibling: plugins/cc_oss/skills/analyse/modes/thread.md (report write: same enforce-analyse-header.js Stop-check paragraph) -->
 
 Build compact delivery block — not printed here; delivered once in the final reply after the answer per SKILL.md Step 6a (`REPLY_MODE=true` → final reply after Step 7's last tool call), opening with the report's `---` header as a `Field | Value` table. Then three sections: header, exec summary, simplified scorecard. Axis rows must appear in numeric order 1–9; never reorder by score, weight, or status:
 

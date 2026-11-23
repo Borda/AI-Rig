@@ -90,7 +90,9 @@ cat "$SKILL_DIR/templates/release-draft.md"  # timeout: 5000
 
 **DRAFT.md format guard**: must NOT start with `# Changelog`, must NOT use CHANGELOG section structure. CHANGELOG-format classification = internal working doc only — derive sections from it, don't copy verbatim.
 
-Template (loaded above). Fill `[Full changelog URL]` as `<https form of $ORIGIN_URL>/compare/<LAST_TAG>...<new tag>` (no previous tag → link the release tag's commit history). Omit empty sections.
+Template (loaded above). Fill `[Full changelog URL]` as `<https form of $ORIGIN_URL>/compare/<LAST_TAG>...<new tag>` (no previous tag → link the release tag's commit history). Omit empty sections. Footer opt-out: run `printenv AI_RIG_FOOTER` bare (no redirect, no `|| true`) once (empty output with exit 1 = unset, keep the line); `off` (any case) → drop the closing drafted-by line.
+
+<!-- policy-sibling: plugins/cc_foundry/rules/public-github.md, plugins/cc_foundry/rules/_full/public-github.md, plugins/cc_oss/skills/release/guidelines/writing-rules.md, plugins/cc_oss/skills/release/modes/demo.md, plugins/cc_oss/skills/release/modes/release-draft-template.md, plugins/cc_oss/skills/release/templates/release-draft.md — AI_RIG_FOOTER opt-out wording restated for each consumer; edit all seven together. -->
 
 Key difference from `prepare`: `notes` runs these phases in the main context, spawning subagents only where a step says so (over-50-commit gather under the Size guard, Adversarial review, shepherd voice review), and publishes `DRAFT.md` and the resolved `$CHANGELOG_FILE` from the staged candidate (`modes/release-draft-template.md`); `prepare` writes `releases/$VERSION/DRAFT.md` (`modes/prepare.md` Phase 5).
 

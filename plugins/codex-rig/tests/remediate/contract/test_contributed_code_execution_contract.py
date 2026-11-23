@@ -1,4 +1,4 @@
-"""Contract text for running contributor code: scan first, integrity around each run, escalation owned by the user.
+"""Validate command-specific PR execution decisions and integrity for protected intervals.
 
 The checks read the shipped Markdown line by line (heading-anchored spans, whitespace collapsed), so reflowing a
 paragraph never breaks an assertion.
@@ -6,7 +6,6 @@ paragraph never breaks an assertion.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
@@ -38,29 +37,29 @@ class TestContributedCodeSection:
             pytest.param("untrusted_code_guard.py scan", id="scan-before-first-run"),
             pytest.param("--host-sandbox", id="host-sandbox-flag"),
             pytest.param("code-scan.json", id="scan-record"),
-            pytest.param("An inline interpreter that imports the reviewed checkout", id="inline-probe-is-execution"),
-            pytest.param("never had a pre-execution snapshot", id="missed-snapshot-uses-lost-anchor-recovery"),
+            pytest.param("imports, automatically loaded configuration", id="command-imports-and-auto-loads"),
+            pytest.param("pre-execution snapshot", id="missed-snapshot-uses-lost-anchor-recovery"),
             pytest.param("contributor_run_integrity.py snapshot", id="integrity-snapshot"),
             pytest.param("verify --snapshot", id="integrity-verify-after-each-run"),
             pytest.param("restore nothing automatically", id="no-automatic-restore"),
             pytest.param("never by the configured automatic approval reviewer", id="escalation-user-owned"),
             pytest.param("only when the risk is `none`", id="reusable-prefix-only-for-clean-code"),
             pytest.param("likely-malicious", id="do-not-run-level"),
-            pytest.param("never a safety claim", id="scan-is-not-proof"),
-            pytest.param("never re-read the file", id="scan-values-kept-not-reread"),
+            pytest.param("A scan hit by itself", id="scan-is-not-proof"),
+            pytest.param("from the trusted command output", id="retain-scan-output"),
             pytest.param("--expect <kept sha256>", id="integrity-baseline-anchored"),
             pytest.param("--watch-surface", id="review-surface-watched"),
             pytest.param("Any non-zero exit means the same", id="every-failure-stops"),
             pytest.param("ask one native user question", id="escalation-asks-the-user-first"),
             pytest.param("A pending answer keeps the retry paused", id="pending-approval-is-not-terminal"),
-            pytest.param("Dependency preparation", id="dependency-preparation-covered"),
+            pytest.param("Protected dependency preparation", id="dependency-preparation-covered"),
             pytest.param("Fetch wheels without builds", id="wheels-fetched-without-builds"),
             pytest.param("disposable task-local environment outside the user's `.venv`", id="task-local-environment"),
             pytest.param("PYTHONDONTWRITEBYTECODE=1", id="no-bytecode-into-user-environments"),
             pytest.param("run `snapshot` again to a new file", id="agent-owned-operation-resnapshot"),
-            pytest.param("never covers contributor code", id="earlier-prefix-grant-never-covers-contributor-code"),
+            pytest.param("unless this run's own answer granted", id="protected-command-prefix-is-scoped"),
             pytest.param("**Lost anchors.**", id="lost-anchors-stop-the-run"),
-            pytest.param("scan the collected PR head before any dependency preparation", id="scan-before-preparation"),
+            pytest.param("including dependency preparation", id="baseline-before-protected-preparation"),
             pytest.param("any ref (a replace ref included)", id="every-ref-namespace-counts"),
             pytest.param("an index flag that hides a file from status", id="index-flags-counted"),
             pytest.param("a bytecode file that still appears there is a change", id="stray-bytecode-is-a-change"),
@@ -109,7 +108,7 @@ class TestInspectedIntegrityRestart:
     def test_failed_verification_routes_only_to_the_inspected_restart(self) -> None:
         """The ordinary failure path keeps the stop and points to the narrowly admitted recovery."""
         rule = _section("## Contributed Code Execution")
-        integrity = rule.split("3. **Integrity around every execution.**", 1)[1].split("4. **", 1)[0]
+        integrity = rule.split("3. **Integrity around protected execution.**", 1)[1].split("4. **", 1)[0]
         assert "non-zero" in integrity
         assert "#restart-after-inspected-integrity-drift" in integrity
 
@@ -150,40 +149,33 @@ class TestInspectedIntegrityRestart:
         assert "Code Review stays read-only" in restart
 
 
-class TestSameRepositoryExemption:
-    """The exemption is decided once at entry and kept in context, never re-read from the run directory."""
+class TestCommandExecutionDecision:
+    """Bind the launch route to the command's effective inputs across PR origins."""
 
-    def test_exemption_answer_is_kept_in_context(self) -> None:
-        """Contributor code can rewrite run-directory files, so the routing file is read only at entry."""
-        paragraph = next(
-            line for line in _section("## Contributed Code Execution").split("**Same-repository exemption.**")[1:]
-        )
-        assert "keep the answer" in paragraph
-        assert "never re-reads `pr-routing.json`" in paragraph
+    def test_origin_alone_cannot_require_an_integrity_interval(self) -> None:
+        """An external PR may use ordinary project commands after inspecting reachable inputs."""
+        rule = _section("## Contributed Code Execution")
+        assert "all PR origins by default" in rule
+        assert "Fork provenance alone never selects confinement" in rule
+        assert "the source or other specific evidence, how the command can reach it" in rule
+        assert "Apply rules 3–8 to the protected execution and its active interval only" in rule
 
-    def test_missing_exemption_answer_is_a_lost_anchor(self) -> None:
-        """After a compaction a forgotten exemption never counts as exempt."""
-        section = _section("## Contributed Code Execution")
-        assert "the exemption answer" in section
-        assert "A missing exemption answer is a lost anchor and never counts as exempt" in section
+    def test_remediation_reassesses_hazard_after_patch(self) -> None:
+        """Remediation can patch first and return an unaffected command to its ordinary route."""
+        rule = _section("## Contributed Code Execution")
+        assert "inspect and patch selected suspicious behavior before any probe" in rule
+        assert "Reassess reachable inputs in the actual patched tree" in rule
+        assert "Return to ordinary execution once the hazard is removed" in rule
 
-    def test_dependency_rule_states_the_exemption(self) -> None:
-        """Rule 6 no longer demands a scan the exemption skips."""
-        assert "(under the same-repository exemption, snapshot only)" in _section("## Contributed Code Execution")
+    def test_unavailable_evidence_limits_the_affected_execution(self) -> None:
+        """A failed scan permits direct inspection, while missing essential inputs leave one command pending."""
+        rule = _section("## Contributed Code Execution")
+        assert "use direct static inspection" in rule
+        assert "continue independent checks and defer that execution" in rule
 
-
-class TestEveryCallerStatesTheExemption:
-    """A line that sends a reader to a scan-based rule also says what a same-repository PR does instead."""
-
-    def test_scan_based_references_name_the_exemption(self) -> None:
-        """Lines naming Contributed Code Execution with rule 2, 4, 5 or the scan must mention the exemption."""
-        rule = re.compile(r"\brules? [2-5]\b|\brules 3 to 5\b|\bscan\b", re.IGNORECASE)
-        offenders: list[str] = []
-        for folder in ("skills", "shared"):
-            for path in sorted((PLUGIN_ROOT / folder).rglob("*.md")):
-                for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-                    if "Contributed Code Execution" not in line or not rule.search(line):
-                        continue
-                    if "exemption" not in line.lower() and "same-repository" not in line.lower():
-                        offenders.append(f"{path.relative_to(PLUGIN_ROOT)}:{number}")
-        assert offenders == []
+    @pytest.mark.parametrize("relative", ["SKILL.md", "references/routing.md"])
+    def test_initial_and_replacement_dispatch_preserve_verified_checkout(self, relative: str) -> None:
+        """A static reviewer keeps a verified checkout receipt and a protected interval keeps its anchor."""
+        lines = (PLUGIN_ROOT / "skills" / "code-review" / relative).read_text(encoding="utf-8").splitlines()
+        assert any("--checkout-sha256" in line for line in lines)
+        assert any("--pr-integrity" in line for line in lines)

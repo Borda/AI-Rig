@@ -88,6 +88,10 @@ If `oss:shepherd` not available, use draft content directly — skip shepherd re
 
 Read `$SHEPHERD_DIR/shepherd-revised.md` → validate: `if [ -s "$SHEPHERD_DIR/shepherd-revised.md" ]; then SHEPHERD_REVISED_PATH="$SHEPHERD_DIR/shepherd-revised.md"; else echo "⚠ shepherd output empty or missing — using original draft"; SHEPHERD_REVISED_PATH="$SHEPHERD_DIR/draft.md"; fi`. Shepherd runs once per invocation.
 
+**Closing line** — after the shepherd and humanizer passes and before the write, make the candidate's last line the italic drafted-by line from the end of `templates/release-draft.md`, or no such line when `printenv AI_RIG_FOOTER`, run bare (no redirect, no `|| true`), prints `off` (any case; empty output with exit 1 means unset, so keep it). Drop any earlier copy first, so the line appears exactly once and last; a rewrite pass may have reworded or removed it.
+
+<!-- policy-sibling: plugins/cc_foundry/rules/public-github.md, plugins/cc_foundry/rules/_full/public-github.md, plugins/cc_oss/skills/release/guidelines/writing-rules.md, plugins/cc_oss/skills/release/modes/demo.md, plugins/cc_oss/skills/release/modes/notes-draft.md, plugins/cc_oss/skills/release/templates/release-draft.md — AI_RIG_FOOTER opt-out wording restated for each consumer; edit all seven together. -->
+
 Write to disk:
 
 Shepherd review policy (applies when `$SHEPHERD_AVAILABLE == true`):
@@ -196,7 +200,7 @@ Shepherd review policy (applies when `$SHEPHERD_AVAILABLE == true`):
     fi
     ```
 
-    **Overwrite guard** — if `$APPEND_STAGE/DRAFT.md` is non-empty, invoke `AskUserQuestion` ("DRAFT.md already exists — overwrite, append, or abort?") with: (a) **Overwrite** · (b) **Append** (after `---` separator) · (c) **Abort**. Skip prompt only when the candidate draft is empty or missing. Notify: `→ written to DRAFT.md` / `→ appended to DRAFT.md` / `→ DRAFT.md unchanged — aborted`.
+    **Overwrite guard** — if `$APPEND_STAGE/DRAFT.md` is non-empty, invoke `AskUserQuestion` ("DRAFT.md already exists — overwrite, append, or abort?") with: (a) **Overwrite** · (b) **Append** (after `---` separator; first drop the existing closing drafted-by line so the new one is the only copy, last) · (c) **Abort**. Skip prompt only when the candidate draft is empty or missing. Notify: `→ written to DRAFT.md` / `→ appended to DRAFT.md` / `→ DRAFT.md unchanged — aborted`.
 
 <!-- branch: changelog-confirm — only with --changelog flag; call 2 of ≤2 on notes+changelog path; max 4 total on prepare+changelog+draft path -->
 

@@ -79,7 +79,7 @@ python "$PLUGIN_ROOT/bin/evolution_scan.py" ingest --root "$EVO_ROOT" --project-
 
 ## E4 — Delivery
 
-Report already written by the script — no analysis to terminal. Delivery block per SKILL.md Step 6a: report `---` header as `Field | Value` table, 2–3 sentence summary (top-fixed features, share of fixes repairing features ≤1 release old, residue share, provisional-weights note), `→ saved to <REPORT_FILE>` and the HTML path. Then SKILL.md Step 6a **Evolution mode** menu.
+Report already written by the script — no analysis to terminal. Delivery block per SKILL.md Step 6a: report `---` header as `Field | Value` table, 2–3 sentence summary (top-fixed features, share of fixes repairing features ≤1 release old, residue share, provisional-weights note), `→ saved to <REPORT_FILE>` and the HTML path. Then SKILL.md Step 6a **Evolution** suggestion lines (plain text, no question).
 
 </workflow>
 

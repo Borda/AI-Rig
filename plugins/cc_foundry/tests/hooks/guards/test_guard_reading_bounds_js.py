@@ -50,9 +50,11 @@ def test_pathological_source_text_finishes_within_two_seconds(hook: str, command
     ],
 )
 def test_expired_inspection_deadline_requests_permission(hook: str, command: str, tmp_path: Path) -> None:
-    """An elapsed wall-clock budget always asks when the command names the protected program."""
+    """An elapsed CPU-time budget always asks when the command names the protected program."""
     clock = tmp_path / "clock.cjs"
-    clock.write_text("let now = 0; Date.now = () => (now += 1001);\n", encoding="utf-8")
+    clock.write_text(
+        "let now = 0; process.cpuUsage = () => ({ user: (now += 1001) * 1000, system: 0 });\n", encoding="utf-8"
+    )
     result = _inspect(hook, command, tmp_path, "--require", str(clock))
     assert result.returncode == 0, result.stderr
     verdict = json.loads(result.stdout)["hookSpecificOutput"]

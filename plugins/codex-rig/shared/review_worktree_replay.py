@@ -20,7 +20,9 @@ completed_source_validation around promoted-result checks. Its nested plan valid
 
 ## Outputs
 
-The cleanup writer stores one small Git blob and ref. Historical validators only read the witness and report.
+The cleanup writer stores one small Git blob and ref. Version two records whether its result hash matched the promoting
+finalizer's digest. Historical source validators accept version one and version two. Execution routing can require a
+producer-bound version-two witness for the exact bytes it read.
 
 ## Failure
 
@@ -44,6 +46,9 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
+
+from create_run import PR_URL_PATTERN, PROMOTED_RUN_ID, same_pr_url
+from review_workspace import _check_path, report_root_caller, workspace_caller, workspace_namespace
 
 #: PR artifact files that must be present for a closed-PR review.
 CLOSED_REQUIRED_PR_ARTIFACTS = {
@@ -124,30 +129,71 @@ def _report_repository(run: Path) -> Path | None:
     """Locate the repository ancestor independently of paths supplied by a canonical report."""
     if len(run.parents) >= 5 and run.parents[1].parts[-3:] == (".reports", "codex", "code-review"):
         return run.parents[4]
+    if len(run.parents) >= 3 and run.parents[1].name == "code-review":
+        return report_root_caller(run.parents[2])
     return None
 
 
+def _private_report_owner(run: Path, repository: Path) -> tuple[Path, str] | None:
+    """Authenticate the private workspace's configured caller and PR independently of the report or checkout receipt."""
+    namespace = workspace_namespace(repository)
+    if namespace is None:
+        return None
+    if repository.parent != namespace:
+        raise ValueError("review-cleanup-witness-repository-mismatch")
+    _check_path(run, namespace)
+    config = repository / ".git" / "config"
+    _check_path(config, namespace, regular_file=True)
+    target = os.fsdecode(
+        _git(repository, "config", "--no-includes", "--file", str(config), "--get", "codexrig.reviewtarget").stdout
+    ).strip()
+    pr = PR_URL_PATTERN.fullmatch(target)
+    sequence = PROMOTED_RUN_ID.fullmatch(run.name)
+    if (
+        not pr
+        or run.parent.name != f"pr-{pr['number']}"
+        or not sequence
+        or int(sequence[1]) < 1
+        or run.name != f"run-{int(sequence[1]):03d}"
+    ):
+        raise ValueError("review-cleanup-witness-repository-mismatch")
+    caller = workspace_caller(repository, target)
+    if caller is None:
+        raise ValueError("review-cleanup-witness-repository-mismatch")
+    return caller, target
+
+
+def existing_witness(run: Path, source: Path) -> dict[str, Any] | None:
+    """Read the bounded, path-specific sealed identity for restart and live-checkout verification."""
+    witness = _git(source, "rev-parse", "--verify", witness_ref(run) + "^{blob}", check=False)
+    if witness.returncode:
+        return None
+    oid = witness.stdout.decode("ascii").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid) or int(_git(source, "cat-file", "-s", oid).stdout) > 16384:
+        raise ValueError("review-cleanup-witness-object-invalid")
+    sealed = json.loads(_git(source, "cat-file", "blob", oid).stdout)
+    if not isinstance(sealed, dict):
+        raise ValueError("review-cleanup-witness-object-invalid")
+    return sealed
+
+
 def _require_live_checkout_if_sealed(run: Path, checkout_path: Path, live: bool) -> None:
-    """Prevent deleting the cleanup receipt or redirecting its worktree to bypass an existing canonical witness."""
+    """Prevent removing a cleanup receipt or substituting a different live checkout for an already sealed review."""
     repository = _report_repository(run)
     if repository is None:
         return
-    witness = _git(repository, "rev-parse", "--verify", witness_ref(run) + "^{blob}", check=False)
-    if witness.returncode:
-        return
-    if not live:
-        raise ValueError("review-cleanup-witness-missing")
-    # A crash may leave a live checkout between publication of the witness and the cleanup journal.
-    # Check that exact checkout before falling back to ordinary live validation.
-    oid = witness.stdout.decode("ascii").strip()
-    if (
-        not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid)
-        or int(_git(repository, "cat-file", "-s", oid).stdout) > 16384
-    ):
-        raise ValueError("review-cleanup-witness-object-invalid")
-    sealed = json.loads(_git(repository, "cat-file", "blob", oid).stdout)
-    if sealed.get("local_checkout_sha256") != _digest(checkout_path):
-        raise ValueError("review-cleanup-witness-mismatch")
+    # A nested review seals its witness in the original caller. Derive both possible witnesses without trusting the
+    # mutable report's source_worktree. Replacing its receipt must not conceal a previously published caller witness.
+    owner = _private_report_owner(run, repository)
+    for source in (repository, owner[0]) if owner else (repository,):
+        sealed = existing_witness(run, source)
+        if sealed is None:
+            continue
+        if not live:
+            raise ValueError("review-cleanup-witness-missing")
+        # A crash may leave a live checkout between publication of the witness and the cleanup journal.
+        if sealed.get("local_checkout_sha256") != _digest(checkout_path):
+            raise ValueError("review-cleanup-witness-mismatch")
 
 
 def _witness(
@@ -172,8 +218,19 @@ def _witness(
     repository = _report_repository(run)
     if repository is not None:
         owner = _git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir", check=False)
-        if owner.returncode == 0 and Path(os.fsdecode(owner.stdout.removesuffix(b"\n"))).resolve(strict=True) != common:
+        if owner.returncode and workspace_namespace(repository) is not None:
             raise ValueError("review-cleanup-witness-repository-mismatch")
+        if owner.returncode == 0 and Path(os.fsdecode(owner.stdout.removesuffix(b"\n"))).resolve(strict=True) != common:
+            managed = _private_report_owner(run, repository)
+            if managed is None or managed[0] != source:
+                raise ValueError("review-cleanup-witness-repository-mismatch")
+            # Only the matching PR may store a caller-owned witness beneath this separately registered repository.
+            checkout_path = run / "local-checkout.json"
+            if _digest(checkout_path) != receipt["local_checkout_sha256"]:
+                raise ValueError("review-cleanup-witness-repository-mismatch")
+            checkout = json.loads(checkout_path.read_bytes())
+            if not isinstance(checkout, dict) or not same_pr_url(checkout.get("pr_url"), managed[1]):
+                raise ValueError("review-cleanup-witness-repository-mismatch")
     # Status changes after Git removes the checkout. All identity and evidence fields stay byte-exact.
     fields = (
         "schema_version",
@@ -185,6 +242,8 @@ def _witness(
         "local_checkout_sha256",
         "source_inputs",
     )
+    if receipt["schema_version"] == 2:
+        fields += ("producer_result_verified",)
     data = json.dumps({key: receipt[key] for key in fields}, sort_keys=True, separators=(",", ":")).encode()
     if len(data) > 16384:
         raise ValueError("review-cleanup-witness-oversized")
@@ -221,7 +280,9 @@ def seal_source_witness(
     _witness(run.resolve(), source, receipt, seal=True, before_publish=before_publish)
 
 
-def verified_archive(run: Path, result_path: Path) -> tuple[Path, dict[str, Any], dict[str, str]] | None:
+def verified_archive(
+    run: Path, result_path: Path, *, producer_result_sha256: str | None = None
+) -> tuple[Path, dict[str, Any], dict[str, str]] | None:
     """Admit exact retained evidence only for a completed removal of a freshly collected detached PR worktree."""
     receipt_path = run / "review-worktree-cleanup.json"
     if result_path != run / "result.json":
@@ -241,7 +302,8 @@ def verified_archive(run: Path, result_path: Path) -> tuple[Path, dict[str, Any]
     if (
         not isinstance(receipt, dict)
         or type(receipt.get("schema_version")) is not int
-        or receipt["schema_version"] != 1
+        or receipt["schema_version"] not in (1, 2)
+        or (receipt["schema_version"] == 2 and type(receipt.get("producer_result_verified")) is not bool)
         or receipt.get("status") not in {"removed", "removal-authorized"}
         or receipt.get("run_dir") != run.as_posix()
         or receipt.get("result_sha256") != _digest(result_path)
@@ -268,6 +330,13 @@ def verified_archive(run: Path, result_path: Path) -> tuple[Path, dict[str, Any]
         Path(os.fsdecode(field[9:])) == worktree for field in registered.split(b"\0") if field.startswith(b"worktree ")
     ):
         raise ValueError("review-cleanup-worktree-still-registered")
+    # A schema-one witness binds historical source but made no claim about which bytes the producer selected.
+    if producer_result_sha256 is not None and (
+        receipt["schema_version"] != 2
+        or not receipt["producer_result_verified"]
+        or receipt["result_sha256"] != producer_result_sha256
+    ):
+        return None
     return run, checkout, inputs
 
 

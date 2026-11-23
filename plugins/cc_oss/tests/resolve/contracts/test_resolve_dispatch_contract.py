@@ -1160,6 +1160,32 @@ class TestItemCaps:
         assert "all draw from the opus pool" not in phase2
         assert '<model="sonnet", — §Spawn wave cap model tier only; drop otherwise>' in phase2
 
+    def test_sw_engineer_effort_follows_the_group_label_below_xhigh(self) -> None:
+        """A high- or medium-effort sw-engineer group passes its effort at spawn; an xhigh group passes none.
+
+        The agent's frontmatter pins xhigh, so a label that never reaches ``Agent()`` leaves every implementer at xhigh
+        (measured: none of the 7 sidecars of recent runs carried an effort). A chain keeps one tier and one effort.
+        """
+        phase2 = _phase2_text()
+        wave = _between(phase2, "**Spawn wave cap**", "Snapshot the worktree list before dispatch")
+        effort_line = next(line for line in wave.splitlines() if line.startswith("- **Effort**"))
+        template = next(line for line in phase2.splitlines() if line.startswith("Agent(subagent_type="))
+
+        assert 'passes `effort="<that max>"`' in effort_line
+        assert "an `xhigh` group passes no `effort` argument" in effort_line
+        assert "every link of a chain runs the same tier and effort" in effort_line
+        assert '<effort="<highest ITEM_EFFORT in group>", — §Spawn wave cap effort only; drop otherwise>' in template
+
+    def test_single_item_challenge_retry_has_its_own_spawn_name(self) -> None:
+        """The chunk spawn is named ``challenge-<domain>`` and its single-item retry ``challenge-<domain>-retry-<id>``.
+
+        A cost report classifies challenge-phase agents by spawn name, so a retry that reused the chunk name would be
+        counted as a chunk and the retry fan-out would stay invisible.
+        """
+        text = " ".join(_dispatch_text().split())
+        assert 'name="challenge-<domain>"' in text
+        assert 'same domain, `name="challenge-<domain>-retry-<id>"`' in text
+
     def test_challenge_prompt_asks_part_two_for_every_existing_problem(self) -> None:
         """The Phase 1 challenge prompt asks its second part for every item whose problem exists.
 

@@ -281,7 +281,8 @@ class TestPrArtifactPathContract:
         assert skill.index(collection) < skill.index(promotion)
         _assert_states(
             skill,
-            ".reports/codex/code-review/pr-<number>/run-<NNN>/",
+            "using the same `--root` as allocation",
+            "`code-review/pr-<number>/run-<NNN>/` under that root",
             "Use the printed promoted path literally for every later helper",
             "It is not an assessed PR review and must not be promoted.",
         )

@@ -134,8 +134,8 @@ A refactor stays within unchanged scope and reviewed coverage. Each later review
 | -- | -- | -- | -- | -- |
 | 0 | 1 critical, 2 high, 3 medium, 4 low | 10 + 12 + 12 + 8 = 42 | — | first review |
 | 1 | 1 high, 2 medium, 3 low | 6 + 8 + 6 = 20 | 0.48 | converging — continue |
-| 2 | 2 low, 1 nit | 4 + 1 = 5 | 0.25 | converging — continue |
-| 3 | 1 low | 2 | 0.40 | converging — continue |
+| 2 | 2 low, 1 nit | 4 + 1 = 5 | 0.25 | converging — continue, or stop early (eligible; not clean) |
+| 3 | 1 low | 2 | 0.40 | converging — continue, or stop early (eligible; not clean) |
 | 4 | none | 0 | 0 | independently clean — complete remaining caller gates |
 
 The third review has open findings but still decreases the total integer score, so it does not trigger a generic round cap. Continue only with valid authority, independence, current snapshots and caller budgets; plateau, increase or a third occurrence of the same invariant (same signature or same invariant evidence) still stops the affected route. The final zero needs current independent coverage and the owning workflow's post-clean gates. Preserve every completed row and any earlier stopped history.
@@ -158,7 +158,7 @@ After merging two blocks (combining e.g. `<antipatterns>` + `<quality-checks>` i
 
 ## Confidence Block (required on all analysis tasks)
 
-<!-- policy-sibling: plugins/cc_oss/rules/quality-gates.md, plugins/cc_develop/rules/quality-gates.md, plugins/cc_research/rules/quality-gates.md -->
+<!-- policy-sibling: plugins/cc_oss/rules/quality-gates.md, plugins/cc_develop/rules/quality-gates.md, plugins/cc_research/rules/quality-gates.md, plugins/cc_foundry/rules/quality-gates.md (stub restates the Gaps shape) -->
 
 Name the process or claim being assessed. Assess the correctness of the delivered result and how it was produced and checked within its stated scope; do not substitute likelihood of later task completion. When process confidence is requested, score the process rather than certainty about status. Report completion status separately: unfinished work alone does not determine confidence, and a high score never marks incomplete work complete. Scores for acceptance or handover gates must assess the relevant process or substantive judgment; status certainty alone cannot satisfy them. Deduct only for evidence gaps that materially limit the assessed claim; retain other relevant limitations with `(-0.00)`.
 
@@ -179,6 +179,7 @@ Every analysis agent **must** end with:
 
 - Omit **Refinements** if 0 passes (don't write "0 passes") — omit individual **Gaps** bullets only at Score 1.0, but keep the **Gaps** header
 - **Score**, **Gaps**, **Refinements** = peer top-level fields — never nest Refinements under Gaps; blank line before **Refinements** required
+- **Gaps** = bare header line, never a list item (`- **Gaps**:` ✗). Same shape (bare header, each gap `- (-0.NN)` first) wherever a score's gaps are listed (chat summary, report), not only in an agent's closing block. The one-line `Confidence:` field of a report header is exempt: score plus gap names, no deductions
 - Score < 0.85 → ⚠ on the score line AND on the line immediately after (standalone, not a Gaps bullet): "review limitations are explicit; no extra review is authorized by this score alone"
 - Gaps = factual review limits. They do not become source findings, remediation tasks, or authorization for another review. Any review beyond the invoked workflow's authorized scope needs one explicit user decision naming the exact gap, expected evidence/output, and stop condition. If declined or dismissed, skip it without asking again or carrying the request into findings/action items; retain only the factual limitation needed to describe what was not verified.
 - **Each Gap opens with its deduction** `- (-0.NN) <gap>`: its share of the `1.0 - Score` shortfall — an attribution, approximate when gaps overlap. Deductions sum to exactly `1.0 - Score`, so a reader can drop or re-weigh a gap and re-assess the score. A cap, floor, or band that set the score is itself a gap: name it, carry its delta. A limitation that did not lower the score stays as `(-0.00)`. Uncertainty no named gap explains goes in one `residual` bullet — never spread silently across gaps. ASCII `-`, two decimals. Score below 1.0 with no Gaps bullets = rule violation

@@ -79,6 +79,7 @@ Generic marker discipline ships in the global template (§Testing). This reposit
 ## Project Workflow
 
 - Python minimum: 3.10. The repository root is an environment anchor, not an installable package.
+- Python 3.10 is past end of life and will be deprecated soon: keep code and tests compatible on a best-effort basis, and fix a 3.10 failure at its source when the fix is small. Only when compatibility is too costly, mark that test `@pytest.mark.skipif(sys.version_info < (3, 11), reason="<why>")` instead of contorting the code; never skip a test whose failure shows a real defect.
 - Bootstrap test tooling with `uv sync --only-group test`; benchmark-only dependencies use `uv sync --only-group bench`.
 - Run focused tests with `.venv/bin/python -m pytest <paths>` and broaden to the affected suite before completion.
 - The `plugins/opencode-rig` npm package is the Node exception: `make rig-check` runs its typecheck, Prettier, Vitest, version-source, and tarball gates, and `npx vitest run <paths>` is the focused form.

@@ -60,14 +60,14 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r TODAY < "${TMPDIR:-/tmp}/analyse-today-${CSID}" 2>/dev/null || TODAY=$(date +%Y-%m-%d)
 mkdir -p .reports/analyse/ecosystem  # timeout: 5000
 REPORT_FILE=".reports/analyse/ecosystem/output-analyse-ecosystem-$TODAY.md"
-# Sentinel rewritten here, before the report exists — enforce-analyse-header.js gates SKILL.md Step 6a on this path
+# Sentinel rewritten here, before the report exists — enforce-analyse-header.js's Stop check reads this path (SKILL.md Step 6a)
 echo "$REPORT_FILE" > "${TMPDIR:-/tmp}/analyse-report-file-${CSID}"  # timeout: 5000
 echo "[analyse] report → $REPORT_FILE"
 ```
 
 Write full report to `$REPORT_FILE` (echoed above) via Write tool — **no full analysis to terminal**.
 
-**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up while `$REPORT_FILE` is missing/empty. Denial `oss:analyse report gate` = the write never produced the report — write it, put its path and `Title`, `Outcome` values in the question text as a short plain summary, then re-issue the question. The full matching header table is required in the final reply after the answer; build it below, never put it in an option `preview`.
+**Hook-enforced**: on `Stop`, `hooks/enforce-analyse-header.js` requires the matching full header table in the final reply after the answer once `$REPORT_FILE` exists; the write must therefore produce the report. Build the delivery block below, never print it earlier.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"

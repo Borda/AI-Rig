@@ -22,6 +22,8 @@
       every submodule checkout;
     - every linked worktree's admin files, and the target of ``core.hooksPath`` and of every included configuration
       file, resolved against the file that names it.
+    When the two checkouts have independent Git directories, the same protections cover both. Private review-only
+    disposition requires a detached worktree registered in its own Git directory in both directions.
     The user's checkout is also fingerprinted, without trusting the index, by: the bytes of every tracked file that is
     marked assume-unchanged, skip-worktree or fsmonitor-valid; status; the bytes of every modified or untracked file;
     and for ignored files the bytes of executable surfaces (``*.pth``, ``*.py``, ``*.pyc``, native extensions, scripts,
@@ -55,6 +57,8 @@ Anchoring:
     contributor_run_integrity.py verify --snapshot FILE --expect SHA256
     contributor_run_integrity.py restart-inspected --snapshot FILE --expect SHA256 --inspected-sha256 OBSERVED
         --out NEW_SIBLING
+    contributor_run_integrity.py restart-ref-fast-forward --snapshot FILE --expect SHA256 --branch NAME
+        --old-oid ORIGINAL --new-oid VERIFIED_UPSTREAM_TIP --out NEW_SIBLING --slot EXCLUSIVE_SLOT --owner RUN_ID
 
     On eligible ignored-file drift in one checkout, ordinary verification also prints an observed_sha256.
     After inspection, the parent supplies that value to restart-inspected. The helper repeats verification and
@@ -74,14 +78,17 @@ Anchoring:
     A tree with over 128 files reports its directory. Review runs under ``.reports/codex/code-review/pr-*/run-*``
     have their own groups. Each checkout keeps up to 128 ordinary groups and 128 review-run groups. Additional
     groups report their common directory. ``omitted`` counts rows beyond the first 64 for each changed label.
-    Older aggregate-only snapshots still verify and report their original labels.
+    Schema 5 compares an empty environment lock using identity and material metadata where those fields can be
+    established independently of ctime. It separately checks Git's generated info/refs against all advertised refs.
+    Older snapshots still verify with their original fingerprints and labels.
     On an ordinary verification failure, stderr gives the Git-free disposition for an owned review slot.
     The caller retains the failed interval and performs the slot operation. Verification never changes slot state.
 
 ## Failure
 
-    The helper fails closed. Every failure is handled like a detected change: the caller stops running contributor
-    code and reports the labels, restores nothing automatically, and asks the user before it continues.
+    The helper fails closed. A sole authenticated upstream branch fast-forward may start a new interval through
+    ``restart-ref-fast-forward`` under the original exclusive claim. Other failures retain their stop or inspected
+    restart procedure. No recovery changes a Git ref or accepts the interrupted check.
 
     Exit codes:
     0 — nothing changed
@@ -104,12 +111,14 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path
+from typing import NamedTuple
 
-SCHEMA = 4
+SCHEMA = 5
 _MAX_IGNORED_GROUPS = 128
 _MAX_IGNORED_FILES_PER_GROUP = 128
 _MAX_REPORTED_CHANGES = 64
@@ -154,12 +163,27 @@ _MODULE_SKIP_FILES = frozenset({"index", "FETCH_HEAD", "ORIG_HEAD", "gc.log"})
 _UNREADABLE = "unreadable"
 # Symlink fingerprints prefix the target's fingerprint with the link text, including on nested links.
 _UNREADABLE_DIGEST = re.compile(rf"(?:^|:){_UNREADABLE}:(?:[0-9]+|tree)$")
-_GIT_ENV = os.environ | {"GIT_NO_REPLACE_OBJECTS": "1"}
+# Integrity measurements read existing objects and must never trigger a partial clone's lazy fetch.
+_GIT_ENV = os.environ | {"GIT_NO_REPLACE_OBJECTS": "1", "GIT_NO_LAZY_FETCH": "1", "GIT_ALLOW_PROTOCOL": ""}
 _SLOT_HOLD = (
     "Shared Git or invoking checkout drift was detected, or verification could not establish isolation. "
     "Stop execution, drain all writers and preserve the failed interval and checkout. If this run owns a review slot, "
     "use Git-free review_checkout_slot.py hold with the retained slot and owner."
 )
+
+
+class _RefAdvance(NamedTuple):
+    """Parent-retained recovery inputs.
+
+    Branch identity and remote tip require independent upstream evidence.
+    """
+
+    branch: str
+    old_oid: str
+    new_oid: str
+    out: str
+    slot: Path
+    owner: str
 
 
 class IntegrityError(Exception):
@@ -171,10 +195,12 @@ class IntegrityError(Exception):
         self.code = code
 
 
-def _git(repo: str, *args: str, optional: bool = False) -> bytes:
+def _git(repo: str, *args: str, optional: bool = False, reject_warnings: bool = False) -> bytes:
     """Run one read-only Git command in ``repo``; an ``optional`` query that exits non-zero yields empty output."""
     cmd = ["git", "-c", "core.fsmonitor=false", "-C", repo, *args]
     done = subprocess.run(cmd, capture_output=True, check=False, env=_GIT_ENV)  # noqa: S603 - fixed argv, no shell
+    if reject_warnings and done.stderr:
+        raise IntegrityError("Git could not provide a warning-free ref inventory", 3)
     if done.returncode and not optional:
         raise IntegrityError(f"git {' '.join(args)} failed in {repo}: {done.stderr.decode(errors='replace').strip()}")
     return b"" if done.returncode else done.stdout
@@ -216,7 +242,7 @@ def _link_digest(path: Path, seen: frozenset[str]) -> str:
     return f"symlink:{text}:" + _digest(target, seen | {str(target)})
 
 
-def _digest(path: Path, seen: frozenset[str] = frozenset()) -> str:
+def _digest(path: Path, seen: frozenset[str] = frozenset(), *, exclude: Path | None = None) -> str:
     """Hash a file, or every file below a directory by relative name and content; absent paths hash as ``absent``.
 
     Symlinks, including symlinked directories met while walking, are followed once per target, so a cycle ends.
@@ -232,7 +258,9 @@ def _digest(path: Path, seen: frozenset[str] = frozenset()) -> str:
     for root, dirs, names in os.walk(path, onerror=lambda _e: parts.append(f"walk:{_UNREADABLE}:0")):
         linked = [d for d in dirs if Path(root, d).is_symlink()]
         parts += [
-            f"{Path(root, n).relative_to(path).as_posix()}:{_digest(Path(root, n), seen)}" for n in names + linked
+            f"{Path(root, n).relative_to(path).as_posix()}:{_digest(Path(root, n), seen)}"
+            for n in names + linked
+            if Path(root, n) != exclude
         ]
     return _seal(sorted(parts))
 
@@ -269,12 +297,57 @@ def _expand(paths: Iterable[Path]) -> list[Path]:
     return out
 
 
-def _ignored_entry(path: Path) -> str:
-    """Fingerprint one ignored file with the same metadata and executable-content fields as schema 3."""
+def _lock_stat_output(*argv: str) -> bytes:
+    """Read metadata using the platform's fixed system tools in a stable locale and timezone."""
+    result = subprocess.run(  # noqa: S603 - callers provide the system executable and fixed options, no shell
+        argv, capture_output=True, check=True, env=os.environ | {"TZ": "UTC0", "LC_ALL": "C"}
+    )
+    return result.stdout
+
+
+def _empty_lock_identity(path: Path, st: os.stat_result) -> str | None:
+    """Recognize an unchanged empty uv lock when its platform exposes material metadata independently of ctime."""
+    if not stat.S_ISREG(st.st_mode) or st.st_size or st.st_nlink != 1 or path.parent.is_symlink():
+        return None
+    # Creation time guards against unlink/recreate with inode reuse. Inspect extended permissions and flags
+    # before dropping ctime, which otherwise provides the only evidence for a change to these fields.
+    try:
+        if sys.platform == "darwin":
+            # Darwin Python has no listxattr. ls reports ACLs and attribute names; only the ordinary system
+            # provenance attribute is recognized, and its value is included. Other metadata retains ctime.
+            listing = _lock_stat_output("/bin/ls", "-ldneq@", str(path))
+            extras = listing.splitlines()[1:]
+            if extras and not (len(extras) == 1 and re.fullmatch(rb"\s*com\.apple\.provenance\s+\d+\s*", extras[0])):
+                return None
+            provenance = b""
+            if extras:
+                provenance = _lock_stat_output("/usr/bin/xattr", "-px", "com.apple.provenance", str(path))
+            extended = (st.st_birthtime, st.st_flags, provenance)
+        elif sys.platform.startswith("linux") and not os.listxattr(path):
+            birth = _lock_stat_output("/usr/bin/stat", "--printf=%w", str(path))
+            if birth in (b"", b"-"):
+                return None
+            flags = _lock_stat_output("/usr/bin/lsattr", "-d", str(path)).split(maxsplit=1)
+            if not flags:
+                return None
+            extended = (birth, flags[0])
+        else:
+            return None
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return f"{path}:empty-lock:{st.st_mode:o}:{st.st_dev}:{st.st_ino}:{st.st_uid}:{st.st_gid}:{st.st_mtime_ns}:{extended!r}"
+
+
+def _ignored_entry(path: Path, lock: Path | None) -> str:
+    """Fingerprint an ignored file, using the historical ctime preimage unless a lock has a stronger identity."""
     try:
         st = path.lstat()
     except OSError as exc:
         return f"{path}:{_UNREADABLE}:{exc.errno}"
+    if path == lock:
+        identity = _empty_lock_identity(path, st)
+        if identity is not None:
+            return identity
     if path.is_dir() and not path.is_symlink() and not os.access(path, os.R_OK | os.X_OK):
         return f"{path}:{_UNREADABLE}:walk"
     body = _digest(path) if _is_exec_surface(path) and not path.is_dir() else ""
@@ -300,15 +373,16 @@ class _IgnoredGroup:
                 self.files = None
 
 
-def _ignored_digest(paths: Sequence[Path], root: Path, detail: _IgnoredIndex) -> str:
+def _ignored_digest(paths: Sequence[Path], root: Path, detail: _IgnoredIndex, schema: int) -> str:
     """Seal every original entry while recording bounded diagnostic fingerprints in the same filesystem pass."""
+    lock = root / ".venv" / ".lock" if schema == SCHEMA else None
     depth = len(root.parts)
     aggregate = hashlib.sha256()
     unreadable = False
     groups: dict[str, _IgnoredGroup] = {}
     report_groups: dict[str, _IgnoredGroup] = {}
     for index, path in enumerate(sorted(p for p in paths if not _noise(p, root))):
-        entry = _ignored_entry(path)
+        entry = _ignored_entry(path, lock)
         data = entry.encode(errors="surrogateescape")
         unreadable |= f":{_UNREADABLE}:" in entry
         # The aggregate reproduces the original newline-joined preimage without retaining every record.
@@ -372,18 +446,110 @@ def _refs(repo: str, published_witness: tuple[str, str] | None = None) -> str:
         listing = _git(repo, "for-each-ref", "--format=%(refname) %(objectname) %(symref)")
         rows = (row.removesuffix(b"\r") for row in listing.split(b"\n"))
         raw = b"\n".join(row.rpartition(b" ")[0] for row in rows if row and row != expected)
+    return _ref_digest(raw)
+
+
+def _ref_digest(raw: bytes) -> str:
+    """Use the original snapshot encoding for both the observed and reconstructed ref sets."""
     kept = [line for line in raw.decode(errors="surrogateescape").splitlines() if not line.startswith("refs/remotes/")]
     return hashlib.sha256("\n".join(kept).encode(errors="surrogateescape")).hexdigest()
 
 
+def _prove_ref_advance(repo: str, advance: _RefAdvance, before: str, after: str) -> None:
+    """Reconstruct both aggregate hashes from one listing, changing only the named unoccupied direct branch."""
+    old, new = advance.old_oid, advance.new_oid
+    if (
+        old == new
+        or len(old) != len(new)
+        or not all(re.fullmatch(r"(?:[a-f0-9]{40}|[a-f0-9]{64})", x) for x in (old, new))
+    ):
+        raise IntegrityError("recovery requires distinct full commit IDs", 3)
+    ref = "refs/heads/" + advance.branch
+    _git(repo, "check-ref-format", ref)
+    ref_bytes = os.fsencode(ref)
+    if any(_git(repo, "cat-file", "-t", oid, optional=True).strip() != b"commit" for oid in (old, new)):
+        raise IntegrityError("both branch tips must be local commit objects", 3)
+    if os.path.lexists(Path(_git_dir(repo, "--git-common-dir")) / "info" / "grafts") or "GIT_GRAFT_FILE" in _GIT_ENV:
+        raise IntegrityError("cannot prove ancestry with grafts", 3)
+    if _git(repo, "-c", "core.commitGraph=false", "merge-base", old, new, optional=True).strip() != old.encode():
+        raise IntegrityError("branch change is not a strict fast-forward", 3)
+    # Read branch type, checkout occupancy and both hash inputs from the same inventory. Emit a flag instead of
+    # embedding a worktree path, which can contain newlines. Warnings such as a skipped broken ref invalidate proof.
+    listing = _git(
+        repo,
+        "for-each-ref",
+        "--format=%(refname)%00%(objectname)%00%(symref)%00%(if)%(worktreepath)%(then)occupied%(end)",
+        reject_warnings=True,
+    )
+    current_rows = []
+    original_rows = []
+    found = False
+    for row in listing.splitlines():
+        name, oid, symref, occupied = row.split(b"\0")
+        current_rows.append(name + b" " + oid)
+        if name == ref_bytes:
+            if found or symref or occupied or oid != new.encode():
+                raise IntegrityError("branch is occupied, symbolic or its tip changed", 3)
+            found = True
+            oid = old.encode()
+        original_rows.append(name + b" " + oid)
+    if not found or _ref_digest(b"\n".join(current_rows)) != after:
+        raise IntegrityError("ref set changed during recovery or the attested branch is missing", 3)
+    if _ref_digest(b"\n".join(original_rows)) != before:
+        raise IntegrityError("the proposed old branch tip does not reconstruct the original ref set", 3)
+
+
+def _advertised_refs(path: Path, repo: str) -> str:
+    """Recognize a regular, Git-generated advertisement only when its bytes match every current ref and peeled tag."""
+    digest = _digest(path)
+    if not os.path.lexists(path) or path.parent.is_symlink() or path.is_symlink():
+        return digest
+    st = path.lstat()
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+        return f"nonprivate:{st.st_mode:o}:{st.st_nlink}:{digest}"
+    # Windows synthesizes all write permission bits from the read-only attribute.
+    if st.st_mode & (stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX | 0o111) or (os.name != "nt" and st.st_mode & 0o002):
+        return digest
+    listing = _git(repo, "show-ref", "--dereference", optional=True)
+    if listing:
+        expected = b"".join(
+            line.removesuffix(b"\r").replace(b" ", b"\t", 1) + b"\n" for line in listing.split(b"\n") if line
+        )
+        mode = f"{stat.S_IMODE(st.st_mode):o}"
+        if digest == f"{mode}:{hashlib.sha256(expected).hexdigest()}":
+            return f"canonical:{digest}"
+    return digest
+
+
+def _same_advertisement(before: str, after: str) -> bool:
+    """Allow an unchanged file or a canonical refresh that keeps the original permissions."""
+    original = before.removeprefix("canonical:")
+    current = after.removeprefix("canonical:")
+    if original == current:
+        return True
+    # A stale regular file carries a raw mode and digest when refs already moved before the snapshot.
+    return after.startswith("canonical:") and (
+        before == "absent" or original.partition(":")[0] == current.partition(":")[0]
+    )
+
+
 def _git_metadata(
-    common: Path, own: Path, repo: str, prefix: str, with_common: bool, published_witness: tuple[str, str] | None = None
+    common: Path,
+    own: Path,
+    repo: str,
+    prefix: str,
+    with_common: bool,
+    schema: int,
+    published_witness: tuple[str, str] | None = None,
 ) -> dict[str, str]:
     """Fingerprint one checkout's Git directories: config, hooks, refs, submodules, admin files and pointers."""
     marks: dict[str, str] = {}
     if with_common:
         marks = {f"{prefix}common:{n}": _digest(common / n) for n in _FILES}
-        marks |= {f"{prefix}common:{n}/": _digest(common / n) for n in _TREES}
+        advertised = common / "info" / "refs" if schema == SCHEMA else None
+        marks |= {f"{prefix}common:{n}/": _digest(common / n, exclude=advertised) for n in _TREES}
+        if advertised is not None:
+            marks[f"{prefix}common:info/refs"] = _advertised_refs(advertised, repo)
         marks[f"{prefix}common:refs"] = _refs(repo, published_witness)
         marks[f"{prefix}common:modules"] = _modules_digest(common / "modules")
         for admin in sorted(common.glob("worktrees/*")):
@@ -453,7 +619,7 @@ def _status(repo: str, skip: Sequence[Path]) -> str:
 
 
 def _checkout_content(
-    repo: str, skip: Sequence[Path], ignored_details: dict[str, _IgnoredIndex], *, edits_expected: bool
+    repo: str, skip: Sequence[Path], ignored_details: dict[str, _IgnoredIndex], schema: int, *, edits_expected: bool
 ) -> dict[str, str]:
     """Fingerprint the user's checkout; with ``edits_expected`` the tracked and untracked content is left out."""
     root = Path(repo)
@@ -462,6 +628,7 @@ def _checkout_content(
             _expand(_listed(repo, "-o", "-i", "--exclude-standard", skip=skip)),
             root,
             ignored_details.setdefault("main-checkout:ignored", {}),
+            schema,
         ),
         "main-checkout:index-flags": _flagged(repo),
         "main-checkout:submodule-pointers": _submodule_pointers(repo),
@@ -475,7 +642,7 @@ def _checkout_content(
     return marks
 
 
-def _review_content(repo: str, ignored_details: dict[str, _IgnoredIndex]) -> dict[str, str]:
+def _review_content(repo: str, ignored_details: dict[str, _IgnoredIndex], schema: int) -> dict[str, str]:
     """Fingerprint the checkout under review: tracked edits, untracked and ignored files, auto-loaded files."""
     root = Path(repo)
     diff = _git(repo, "diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD", optional=True)
@@ -487,7 +654,7 @@ def _review_content(repo: str, ignored_details: dict[str, _IgnoredIndex]) -> dic
         "review:diff": hashlib.sha256(diff).hexdigest(),
         "review:index-flags": _flagged(repo),
         "review:untracked": _seal([f"{p}:{_digest(p)}" for p in sorted(fresh) if not _noise(p, root)]),
-        "review:ignored": _ignored_digest(ignored, root, ignored_details.setdefault("review:ignored", {})),
+        "review:ignored": _ignored_digest(ignored, root, ignored_details.setdefault("review:ignored", {}), schema),
     }
     return marks | {f"surface:{p.relative_to(repo).as_posix()}": _digest(p) for p in sorted(set(picked))}
 
@@ -501,22 +668,30 @@ def fingerprint(
     """Return the digest of every fingerprinted path for one recorded spec, keyed by a stable label."""
     repo = str(spec["repo"])
     main = spec["main_checkout"]
+    schema = spec.get("schema")
     dirs = dict(spec["dirs"])  # type: ignore[arg-type]
     skip = [Path(p) for p in spec["exclude"]]  # type: ignore[union-attr]
-    marks = _git_metadata(Path(dirs["repo"]["common"]), Path(dirs["repo"]["own"]), repo, "", True, published_witness)
+    marks = _git_metadata(
+        Path(dirs["repo"]["common"]), Path(dirs["repo"]["own"]), repo, "", True, schema, published_witness
+    )
     marks |= _config_targets("repo", repo)
     if main:
         mdirs = dirs["main"]
         marks |= _git_metadata(
-            Path(mdirs["common"]), Path(mdirs["own"]), str(main), "main:", mdirs["common"] != dirs["repo"]["common"]
+            Path(mdirs["common"]),
+            Path(mdirs["own"]),
+            str(main),
+            "main:",
+            mdirs["common"] != dirs["repo"]["common"],
+            schema,
         )
         marks |= _config_targets("main", str(main)) | _checkout_content(
-            str(main), skip, ignored_details, edits_expected=False
+            str(main), skip, ignored_details, schema, edits_expected=False
         )
     else:
-        marks |= _checkout_content(repo, skip, ignored_details, edits_expected=True)
+        marks |= _checkout_content(repo, skip, ignored_details, schema, edits_expected=True)
     if spec["watch_surface"]:
-        marks |= _review_content(repo, ignored_details)
+        marks |= _review_content(repo, ignored_details, schema)
     return marks
 
 
@@ -626,17 +801,32 @@ def verify(snapshot_file: str, expect: str) -> int:
 
 
 def _detached_review(body: dict[str, object]) -> bool:
-    """Check that a distinct watched review worktree shares the invoking checkout's original Git directory."""
+    """Require a distinct, detached review with matching forward and backward registration in its own Git common dir."""
     if not body["watch_surface"] or not body["main_checkout"] or body["repo"] == body["main_checkout"]:
         return False
     dirs = dict(body["dirs"])  # type: ignore[arg-type]
     common, own = Path(dirs["repo"]["common"]), Path(dirs["repo"]["own"])
-    if common != Path(dirs["main"]["common"]) or own == Path(dirs["main"]["own"]) or own.parent != common / "worktrees":
+    if own == Path(dirs["main"]["own"]) or own.parent != common / "worktrees":
         return False
+    repo = Path(str(body["repo"]))
+    pointer, backlink, head_file = repo / ".git", own / "gitdir", own / "HEAD"
     try:
-        # Detached HEAD stores the object ID directly. Its fingerprint is part of the original admin marks.
-        head = (own / "HEAD").read_bytes()
-    except OSError:
+        # Both pointers are fingerprinted. Require the pair to identify this checkout, including for Git's
+        # relative-worktree-links format, before classifying its files as private to the recorded worktree.
+        for path in (pointer, backlink, head_file):
+            if not path.is_file() or path.resolve(strict=True) != path:
+                return False
+        prefix, separator, dest = os.fsdecode(pointer.read_bytes().rstrip(b"\r\n")).partition("gitdir: ")
+        back = os.fsdecode(backlink.read_bytes().rstrip(b"\r\n"))
+        if (
+            prefix
+            or not separator
+            or (repo / dest).resolve(strict=True) != own
+            or (own / back).resolve(strict=True) != pointer
+        ):
+            return False
+        head = head_file.read_bytes()
+    except (OSError, RuntimeError, ValueError):
         return False
     return re.fullmatch(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})\r?\n?", head) is not None
 
@@ -672,9 +862,25 @@ def _review_files_confined(
         if prior_ignored is None and before["review:ignored"] != empty:
             return False
         rows = list(_changed_ignored_paths(prior_ignored or {}, current_ignored))
-        if not rows or any(operation != "added" for operation, _ in rows):
+        if not rows:
             return False
-        paths.update(root / name for _, name in rows)
+        fresh_trees: set[Path] = set()
+        for operation, name in rows:
+            if operation == "added":
+                paths.add(root / name)
+            elif operation == "directories" and name not in (prior_ignored or {}):
+                # A group absent from the old bounded index might still have been folded into its overflow.
+                overflow = _REVIEW_REPORT_ROOT if name.startswith(_REVIEW_REPORT_ROOT + "/") else "."
+                if overflow in (prior_ignored or {}) or (name in {".", _REVIEW_REPORT_ROOT} and prior_ignored):
+                    return False
+                fresh_trees.add(root / name)
+            else:
+                return False
+        if fresh_trees:
+            candidates = _expand(_listed(repo, "-o", "-i", "--exclude-standard"))
+            paths.update(
+                p for p in candidates if not _noise(p, root) and any(p.is_relative_to(tree) for tree in fresh_trees)
+            )
     try:
         # A leaf or ancestor link can redirect reads. A multiply linked inode can belong to another checkout.
         return bool(paths) and all(
@@ -688,6 +894,80 @@ def _review_files_confined(
         return False
 
 
+def _write_successor(snapshot_file: str, out: str, successor: dict[str, object]) -> None:
+    """Create a fresh sibling, retaining the original baseline and every prior recovery attempt."""
+    original, destination = Path(snapshot_file), Path(out)
+    if original.is_symlink() or destination.parent.resolve() != original.parent.resolve():
+        raise IntegrityError("restart requires a new sibling of the original snapshot", 2)
+    try:
+        with destination.open("x", encoding="utf-8", newline="\n") as stream:
+            stream.write(json.dumps(successor, indent=2, sort_keys=True) + "\n")
+    except OSError as exc:
+        raise IntegrityError(f"could not create restart snapshot: {exc}", 2) from exc
+
+
+def _changed_labels(
+    body: dict[str, object], before: dict[str, str], after: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    """Report all changed and unreadable fingerprints using the snapshot's original comparison rules."""
+    drifted = [
+        label
+        for label in before.keys() | after.keys()
+        if before.get(label) != after.get(label)
+        and not (
+            label in {"common:info/refs", "main:common:info/refs"}
+            and label in before
+            and label in after
+            and _same_advertisement(before[label], after[label])
+        )
+    ]
+    unreadable = [label for label, value in after.items() if _UNREADABLE_DIGEST.search(value)]
+    changed = sorted(set(_redirected(body)) | set(drifted) | set(unreadable))
+    return changed, unreadable
+
+
+def _restart_ref_fast_forward(snapshot_file: str, expect: str, advance: _RefAdvance) -> int:
+    """Seal the next interval under the same exclusive claim only after independently checking the old interval."""
+    sys.pycache_prefix = str(Path(__file__).resolve())
+    if str(Path(__file__).resolve().parent) not in sys.path:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from review_checkout_slot import recovery_claim
+
+    body = _load(snapshot_file, expect)
+    dirs = dict(body["dirs"])  # type: ignore[arg-type]
+    common = Path(dirs["repo"]["common"])
+    if body["schema"] not in (3, 4, SCHEMA) or (dirs["main"] and Path(dirs["main"]["common"]) != common):
+        raise IntegrityError("recovery requires a supported baseline in the same repository", 3)
+    try:
+        with recovery_claim(common, advance.slot, advance.owner):
+            details: dict[str, _IgnoredIndex] = {}
+            before, after = dict(body["marks"]), fingerprint(body, details)  # type: ignore[arg-type]
+            changed, unreadable = _changed_labels(body, before, after)
+            if changed != ["common:refs"] or unreadable:
+                raise IntegrityError(f"ref recovery requires sole shared ref drift; changed={changed}", 3)
+            _prove_ref_advance(str(body["repo"]), advance, before["common:refs"], after["common:refs"])
+            successor = body | {"marks": after, "ignored_details": details}
+            _write_successor(snapshot_file, advance.out, successor)
+    except (OSError, ValueError) as exc:
+        raise IntegrityError(f"could not recover exclusive claim: {exc}", 3) from exc
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "status": "restarted",
+                "sha256": _canonical(successor),
+                "recorded": len(after),
+                "branch": advance.branch,
+                "old_oid": advance.old_oid,
+                "new_oid": advance.new_oid,
+                "slot": str(advance.slot),
+                "owner": advance.owner,
+            }
+        )
+    )
+    return 0
+
+
 def _verify_snapshot(
     snapshot_file: str,
     expect: str,
@@ -699,9 +979,7 @@ def _verify_snapshot(
     body = _load(snapshot_file, expect)
     details: dict[str, _IgnoredIndex] = {}
     before, after = dict(body["marks"]), fingerprint(body, details, published_witness=published_witness)  # type: ignore[arg-type]
-    drifted = [label for label in before.keys() | after.keys() if before.get(label) != after.get(label)]
-    unreadable = [label for label, value in after.items() if _UNREADABLE_DIGEST.search(value)]
-    changed = sorted(set(_redirected(body)) | set(drifted) | set(unreadable))
+    changed, unreadable = _changed_labels(body, before, after)
     result: dict[str, object] = {"ok": not changed, "changed": changed}
     if published_witness is not None:
         result["scope"] = "terminal-cleanup-retry"
@@ -718,37 +996,35 @@ def _verify_snapshot(
         published_witness is None
         and bool(changed)
         and not unreadable
-        and body["schema"] in (3, SCHEMA)
+        and body["schema"] in (3, 4, SCHEMA)
         and review_marks <= before.keys() & after.keys()
         and all(label in review_marks or label.startswith("surface:") for label in changed)
         and _detached_review(body)
     )
     if (
         published_witness is None
-        and body["schema"] in (3, SCHEMA)
+        and body["schema"] in (3, 4, SCHEMA)
         and (changed == ["main-checkout:ignored"] or (detached_review_drift and changed == ["review:ignored"]))
         and before.keys() == after.keys()
         and not unreadable
     ):
-        successor = body | {"schema": SCHEMA, "marks": after, "ignored_details": details}
+        # Preserve the algorithm of an older interval (and any digest already inspected by its parent).
+        successor = body | {
+            "schema": 4 if body["schema"] == 3 else body["schema"],
+            "marks": after,
+            "ignored_details": details,
+        }
         digest = _canonical(successor)
         observed = _canonical({"original_sha256": expect, "successor_sha256": digest})
         result["observed_sha256"] = observed
         dirs = dict(body["dirs"])  # type: ignore[arg-type]
-        result["git_common_dir"] = (dirs["main"] or dirs["repo"])["common"]
+        slot_dirs = dirs["repo"] if _detached_review(body) else dirs["main"] or dirs["repo"]
+        result["git_common_dir"] = slot_dirs["common"]
         if restart is not None:
             inspected, out = restart
             if inspected != observed:
                 raise IntegrityError("current fingerprints differ from the inspected observation", 3)
-            original, destination = Path(snapshot_file), Path(out)
-            if original.is_symlink() or destination.parent.resolve() != original.parent.resolve():
-                raise IntegrityError("restart requires a new sibling of the original snapshot", 2)
-            try:
-                # Exclusive creation also refuses existing links and the original failed baseline.
-                with destination.open("x", encoding="utf-8", newline="\n") as stream:
-                    stream.write(json.dumps(successor, indent=2, sort_keys=True) + "\n")
-            except OSError as exc:
-                raise IntegrityError(f"could not create restart snapshot: {exc}", 2) from exc
+            _write_successor(snapshot_file, out, successor)
             print(json.dumps({"ok": True, "recorded": len(after), "sha256": digest}))
             return 0
     if restart is not None:
@@ -796,7 +1072,11 @@ def _parser() -> argparse.ArgumentParser:
     restart = sub.add_parser("restart-inspected", help="Start a new interval from the exact inspected observation.")
     restart.add_argument("--inspected-sha256", required=True)
     restart.add_argument("--out", required=True)
-    for command in (check, retry, restart):
+    advance = sub.add_parser("restart-ref-fast-forward", help="Recover a verified upstream branch fast-forward.")
+    for option in ("branch", "old-oid", "new-oid", "out", "owner"):
+        advance.add_argument("--" + option, required=True)
+    advance.add_argument("--slot", type=Path, required=True)
+    for command in (check, retry, restart, advance):
         command.add_argument("--snapshot", required=True)
         command.add_argument("--expect", required=True)
     return parser
@@ -809,6 +1089,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.mode == "snapshot":
             repo = str(Path(args.repo).resolve())
             return snapshot(repo, args.main_checkout, args.watch_surface, args.out, args.exclude)
+        if args.mode == "restart-ref-fast-forward":
+            advance = _RefAdvance(args.branch, args.old_oid, args.new_oid, args.out, args.slot, args.owner)
+            return _restart_ref_fast_forward(args.snapshot, args.expect, advance)
         if args.mode == "restart-inspected":
             return _verify_snapshot(args.snapshot, args.expect, None, restart=(args.inspected_sha256, args.out))
         if args.mode == "verify-cleanup-retry":

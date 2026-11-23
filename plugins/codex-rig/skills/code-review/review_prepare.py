@@ -20,8 +20,10 @@ code, contacts GitHub, installs dependencies, or changes permissions.
 Run ``review_prepare.py prepare --out RUN --run-id ID --parent-thread-id THREAD --source-root WORKTREE`` after writing
 review-routing.json and review-briefs.json. Briefs map each role to axis, contained evidence_path, and source_paths.
 Local path reviews declare ``--scope-path``; otherwise the complete local patch and untracked inventory are required.
-For PR task preparation and replacement, pass the active snapshot file and parent-retained digest with
-``--pr-integrity SNAPSHOT SHA256``. Committed reviews also require immutable ``--expected-head`` and
+For PR task preparation and replacement, pass the parent-retained original checkout receipt digest with
+``--checkout-sha256 SHA256`` for static review of verified PR source. For protected intervals, pass the active snapshot
+and parent-retained digest with ``--pr-integrity SNAPSHOT SHA256``.
+Committed reviews also require immutable ``--expected-head`` and
 ``--expected-diff-base`` object IDs. Preparation binds
 actual selected bytes and diff to the collected local/PR source or exact committed comparison. Dispatch every generated
 call as capacity allows and join every final answer. Then write specialist-assessments.json, mapping each role to the
@@ -92,7 +94,12 @@ import contributor_run_integrity  # noqa: E402
 import review_execution_validation  # noqa: E402
 import review_worktree_replay  # noqa: E402
 from parallel_execution import _SECRET_PATTERNS, _runtime_parent_rows, review_fixture_discovery  # noqa: E402
-from review_worktree_cleanup import filesystem_content_digest, recorded_content_digest  # noqa: E402
+from review_worktree_cleanup import (  # noqa: E402
+    filesystem_content_digest,
+    has_integrity_interval,
+    integrity_main_checkout,
+    recorded_content_digest,
+)
 
 #: Historical ordinary context ceiling; oversized ordinary contexts use bounded batches, challenges retain full scope.
 MAX_REVIEW_CONTEXT_BYTES = 262144
@@ -2028,18 +2035,30 @@ def recover_native_provenance(
     return {"candidate_path": candidate_path.as_posix(), "status": "validated-native-provenance", "summary": summary}
 
 
-def _require_pr_dispatch_integrity(out: Path, anchor: list[str] | None) -> None:
-    """Bind shell-capable PR dispatch to the review baseline whose digest the parent retained at completion."""
+def _require_pr_dispatch_integrity(
+    out: Path, anchor: list[str] | None, checkout_digest: str | None, *, same_repository_only: bool = False
+) -> None:
+    """Bind PR dispatch to the parent-retained collection identity or contributor integrity snapshot."""
     run = out.resolve()
     if run.parent.name == "batches" and (run.parent.parent / "batch-inventory.json").is_file():
         run = run.parent.parent
     receipts = [path for path in (run / "local-checkout.json", run / "pr/local-checkout.json") if path.exists()]
     if not receipts:
-        if anchor or any((run / path).exists() for path in ("pr.json", "pr/pr.json")):
+        if anchor or checkout_digest is not None or any((run / path).exists() for path in ("pr.json", "pr/pr.json")):
             raise ValueError("review-pr-dispatch-integrity-checkout-missing")
         return
     if len(receipts) != 1:
         raise ValueError("review-source-receipt-ambiguous")
+    if checkout_digest is not None:
+        original = receipts[0].read_bytes()
+        if hashlib.sha256(original).hexdigest() != checkout_digest or (
+            same_repository_only and json.loads(original).get("verified_same_repository") is not True
+        ):
+            reason = "same-repository-receipt-invalid" if same_repository_only else "checkout-receipt-invalid"
+            raise ValueError(f"review-pr-dispatch-{reason}")
+        if has_integrity_interval(run):
+            raise ValueError("review-pr-dispatch-requires-parent-integrity")
+        return
     if not anchor:
         raise ValueError("review-pr-dispatch-requires-parent-integrity")
     path, digest = anchor
@@ -2054,7 +2073,7 @@ def _require_pr_dispatch_integrity(out: Path, anchor: list[str] | None) -> None:
         body["watch_surface"] is not True
         or not body["main_checkout"]
         or Path(body["repo"]).as_posix() != checkout.get("worktree")
-        or Path(body["main_checkout"]).as_posix() != checkout.get("source_worktree")
+        or Path(body["main_checkout"]) != integrity_main_checkout(checkout)
         or body["repo"] == body["main_checkout"]
     ):
         raise ValueError("review-pr-dispatch-integrity-surface-mismatch")
@@ -2135,7 +2154,16 @@ def main() -> int:
         "--codex-home", type=Path, default=Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
     )
     for issuing_parser in (*issuing_parsers, direct_retry_parser, repair_parser):
-        issuing_parser.add_argument(
+        origin = issuing_parser.add_mutually_exclusive_group()
+        origin.add_argument(
+            "--checkout-sha256",
+            help="Original collector receipt digest retained by the parent for static review outside a protected interval.",
+        )
+        origin.add_argument(
+            "--same-repository-checkout-sha256",
+            help="Original collector receipt digest retained by the parent before execution on a verified same-repository PR.",
+        )
+        origin.add_argument(
             "--pr-integrity",
             nargs=2,
             metavar=("SNAPSHOT", "SHA256"),
@@ -2146,7 +2174,12 @@ def main() -> int:
         if hasattr(args, "pr_integrity") and not (
             args.command == "prepare" and (args.discover_fixtures or args.export_fixture_bindings is not None)
         ):
-            _require_pr_dispatch_integrity(args.out, args.pr_integrity)
+            _require_pr_dispatch_integrity(
+                args.out,
+                args.pr_integrity,
+                args.checkout_sha256 if args.checkout_sha256 is not None else args.same_repository_checkout_sha256,
+                same_repository_only=args.same_repository_checkout_sha256 is not None,
+            )
         if args.command == "prepare":
             fixture_selections = None
             if args.export_fixture_bindings is not None:

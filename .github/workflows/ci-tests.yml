@@ -149,6 +149,13 @@ jobs:
           $sudo_cmd git config --system --remove-section filter.lfs || echo "::warning::system Git LFS filter was not removed"
           git config --show-origin --get-regexp '^filter\.' || echo "no ambient system Git filters remain"
 
+      # A pytest temp directory plus a 64-character review-workspace name and Git's object paths pass the 260-character
+      # Windows path limit, so Git fails with "Filename too long" inside fixtures; a real install sits far shallower.
+      - name: 📏 Allow long paths in Git on Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: git config --system core.longpaths true
+
       # Four workers run each scope, including Node, coverage, and subprocess tests; work stealing keeps the
       # few multi-minute tests from landing last on one worker in Claude/shared scopes. Codex uses loadgroup to honor
       # its existing lifecycle fixture groups instead of rebuilding those expensive fixtures on multiple workers.

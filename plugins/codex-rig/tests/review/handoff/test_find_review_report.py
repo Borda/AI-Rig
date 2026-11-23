@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from _artifact_files import read_json
+from _git_fixtures import historical_review_workspace
 from test_review_completion_gate import _assessed_pr, _module
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
@@ -1642,12 +1643,14 @@ class TestAssessedPrReports:
         intakes = [["--result", str(path)], ["--target", "123", "--reports-dir", str(run.parent.parent)]]
 
         accepted = [_run_finder(*args) for args in intakes]
+        other_archive = _run_finder("--result", str(path), "--reports-dir", str(tmp_path / "other-reports"))
         (run / "diff.patch").write_text("Unreviewed replacement diff.\n", encoding="utf-8")
         damaged = _run_finder("--result", str(path))
 
         assert [(p.returncode, Path(p.stdout.strip())) for p in accepted] == [(0, path), (0, path)], [
             p.stderr for p in accepted
         ]
+        assert (other_archive.returncode, other_archive.stderr.strip()) == (1, MISSING)
         assert damaged.returncode == 1
         assert damaged.stdout == ""
         assert "review-validation-failed:" in damaged.stderr
@@ -1752,6 +1755,174 @@ class TestAssessedPrReports:
 
         with pytest.raises(LookupError, match=diagnostic):
             finder.require_assessed_review_result(run / "result.json", parent_thread_id="thread")
+
+
+@pytest.fixture
+def github_checkout(entry_repository: Path) -> Path:
+    """Give the local checkout a GitHub identity for offline PR lookup."""
+    subprocess.run(
+        ["git", "-C", str(entry_repository), "remote", "add", "origin", "https://github.com/acme/widgets.git"],
+        check=True,
+    )
+    return entry_repository
+
+
+def _record_allocation(run: Path, day: str) -> None:
+    """Keep the original allocation time on a promoted run in a sequence independent of its peers."""
+    entry = {"schema_version": 1, "pr_url": PR_URL, "allocated_as": f"{day}T00-00-00-000000Z-pr-123-test"}
+    _write_files(run, {"review-entry.json": json.dumps(entry)})
+
+
+@pytest.mark.integration
+def test_report_lookup_from_a_caller_subdirectory(
+    github_checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Discover caller-local staging and promoted runs without creating any secondary storage."""
+    state = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state))
+    subdir = github_checkout / "source"
+    subdir.mkdir()
+    missing = _entry(FINDER_PATH, subdir, "--latest-run", "--target", PR_URL)
+    assert (missing.returncode, missing.stdout, missing.stderr.strip()) == (1, "", MISSING)
+    assert not state.exists()
+    assert not (github_checkout / ".git/codex-review-locations").exists()
+    root = github_checkout / ".reports/codex/code-review"
+    stage = root / "2024-02-01T00-00-00-000000Z-pr-123-test"
+    stage.mkdir(parents=True)
+    _write_files(
+        stage, {"review-entry.json": json.dumps({"schema_version": 1, "pr_url": PR_URL, "allocated_as": stage.name})}
+    )
+    staging = _entry(FINDER_PATH, subdir, "--latest-run", "--target", PR_URL)
+    assert (staging.returncode, staging.stdout.strip()) == (0, str(stage)), staging.stderr
+    promoted = root / "pr-123" / "run-001"
+    promoted.parent.mkdir()
+    stage.rename(promoted)
+    _write_files(promoted, {"pr.json": _identity(), "result.candidate.json": _assessed_result_text()})
+    numeric = _entry(FINDER_PATH, subdir, "--target", "#123")
+    assert numeric.returncode == 1
+    assert UNPROMOTED in numeric.stderr
+    assert str(promoted) in numeric.stderr
+    retained = _entry(FINDER_PATH, subdir, "--latest-run", "--target", PR_URL)
+    assert (retained.returncode, retained.stdout.strip()) == (0, str(promoted)), retained.stderr
+    explicit_root = _entry(
+        FINDER_PATH, subdir, "--latest-run", "--target", PR_URL, "--reports-dir", str(tmp_path / "custom")
+    )
+    assert (explicit_root.returncode, explicit_root.stderr.strip()) == (1, MISSING)
+    archive = subdir / "archive/.reports/codex/code-review"
+    archive.mkdir(parents=True)
+    archived = _entry(FINDER_PATH, subdir, "--latest-run", "--target", PR_URL, "--reports-dir", str(archive))
+    assert (archived.returncode, archived.stderr.strip()) == (1, MISSING)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("selector", "explicit_root"),
+    [
+        pytest.param("--result", False, id="explicit-result"),
+        pytest.param("--result", True, id="explicit-result-and-managed-root"),
+        pytest.param("--target", True, id="target-and-managed-root"),
+    ],
+)
+def test_explicit_assessed_result_cannot_hide_a_newer_private_candidate(
+    finder: Any,
+    github_checkout: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    selector: str,
+    explicit_root: bool,
+) -> None:
+    """A validated caller-local result must also pass the standalone PR workspace freshness check."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.chdir(github_checkout)
+    run = _assessed_pr.__wrapped__(tmp_path / "caller")
+    monkeypatch.setattr(finder, "CURRENT_REPORTS_DIR", run.parent.parent)
+    root = historical_review_workspace(github_checkout, PR_URL)
+    newer = _write_nested_report(root / ".reports/codex/code-review", "run-001", result_name="result.candidate.json")
+    _record_allocation(run, "2024-01-01")
+    _record_allocation(newer.parent, "2024-02-01")
+
+    target = str(run / "result.json") if selector == "--result" else PR_URL
+    options = ["--reports-dir", str(run.parent.parent)] if explicit_root else []
+    assert finder.main([selector, target, "--parent-thread-id", "thread", *options]) == 1
+    assert f"{UNPROMOTED}:{newer}" in capsys.readouterr().err
+
+
+@pytest.mark.integration
+def test_prior_resolutions_include_earlier_standalone_producers(
+    finder: Any, github_checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Separate run numbers preserve feedback from the prior review and exclude a later producer's ledger."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    caller_root = github_checkout / ".reports/codex/code-review"
+    current = _write_nested_report(caller_root, "run-001")
+    private = historical_review_workspace(github_checkout, PR_URL)
+    private_root = private / ".reports/codex/code-review"
+    earlier, later = _write_nested_report(private_root, "run-005"), _write_nested_report(private_root, "run-006")
+    _record_allocation(earlier.parent, "2024-01-01")
+    _record_allocation(current.parent, "2024-02-01")
+    _record_allocation(later.parent, "2024-03-01")
+    _write_files(earlier.parent, {"resolution.jsonl": '{"finding_id":"older","verdict":"fixed"}'})
+    _write_files(later.parent, {"resolution.jsonl": '{"finding_id":"later","verdict":"fixed"}'})
+
+    summary = finder.prior_resolutions(current.parent)
+
+    assert summary["review_run"] == str(earlier.parent)
+    assert [row["finding_id"] for row in summary["resolutions"]] == ["older"]
+
+
+@pytest.mark.parametrize(
+    ("private_date", "expected_newer"),
+    [
+        pytest.param("2024-03-01", "private", id="private-run-one-after-caller-run-nine"),
+        pytest.param("2024-01-01", "caller", id="newer-caller-run-after-private-run"),
+    ],
+)
+def test_independent_numbered_roots_compare_allocation_time(
+    finder: Any, tmp_path: Path, private_date: str, expected_newer: str
+) -> None:
+    """Separate run sequences cannot order a nested remediation review against a standalone review."""
+    caller = tmp_path / "caller" / ".reports/codex/code-review"
+    private = tmp_path / "private" / ".reports/codex/code-review"
+    nested = _write_nested_report(caller, "run-009")
+    standalone = _write_nested_report(private, "run-001")
+    _record_allocation(nested.parent, "2024-02-01")
+    _record_allocation(standalone.parent, private_date)
+    expected = {"caller": nested, "private": standalone}[expected_newer]
+
+    assert finder.find_latest_review_report(PR_URL, [caller, private]) == expected
+    assert finder.find_latest_review_report(PR_URL, [private, caller], include_pending=True) == expected
+
+
+@pytest.mark.parametrize("pending", [pytest.param(False, id="remediation"), pytest.param(True, id="review-resume")])
+def test_cross_root_recency_requires_retained_allocation(finder: Any, tmp_path: Path, pending: bool) -> None:
+    """Copying a historical report today cannot make it supersede a dated report from another producer."""
+    caller = tmp_path / "caller" / ".reports/codex/code-review"
+    private = tmp_path / "private" / ".reports/codex/code-review"
+    current = _write_nested_report(private, "run-001", result_name="result.candidate.json")
+    _record_allocation(current.parent, "2024-01-01")
+    historical = _write_nested_report(caller, "run-009")
+
+    assert finder.find_latest_review_report(PR_URL, [caller], include_pending=pending) == historical
+    with pytest.raises(LookupError, match="ambiguous-review-allocation-time"):
+        finder.find_latest_review_report(PR_URL, [caller, private], include_pending=pending)
+
+
+@pytest.mark.parametrize(
+    "flat_name",
+    [pytest.param("archive", id="renamed-report"), pytest.param("2024-13-01T00-00-00Z", id="invalid-month")],
+)
+def test_cross_root_flat_name_requires_a_real_allocation(finder: Any, tmp_path: Path, flat_name: str) -> None:
+    """An arbitrary archive name or invalid date cannot outrank a private producer's pending assessment."""
+    caller = tmp_path / "caller" / ".reports/codex/code-review"
+    private = tmp_path / "private" / ".reports/codex/code-review"
+    caller.mkdir(parents=True)
+    _write_report(caller, flat_name, unavailable=False)
+    current = _write_nested_report(private, "run-001", result_name="result.candidate.json")
+    _record_allocation(current.parent, "2024-01-01")
+
+    with pytest.raises(LookupError, match="ambiguous-review-allocation-time"):
+        finder.find_latest_review_report(PR_URL, [caller, private])
 
 
 class TestCanonicalRoot:

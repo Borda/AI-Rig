@@ -36,7 +36,7 @@
     },
     "010def08bc17a6a112e63b2bd2c484c18211ed3e2fdd2c9297dcd29adedc1800": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "0120607da65fcfe7e8405c3eab9142773a471364b8a4bfc0285bca57e5316053": {
       "kind": "command",
@@ -44,11 +44,11 @@
     },
     "0160577b361e3db371a198208383f0adca00fa46bbed59e7bbed2c5229dc154b": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "0166ed723972ea8506de010df1be4c9aa73d7afc78c17c672a1195e22e41a847": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "01755dfb2d52cd1b7de874e7b99dbf34fc2899e0ceb8aa273022ec47987ab19e": {
       "kind": "command",
@@ -74,6 +74,11 @@
       "kind": "block",
       "src": "skills/release/modes/audit.md:59",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r TARGET < \"${TMPDIR:-/tmp}/release-audit-target-${CSID}\" 2>/dev/null || TARGET=\"\"\npython \"$PLUGIN_ROOT/bin/compare_removal_version.py\" \"<remove_in_value>\" \"${TARGET:-0}\""
+    },
+    "01d0c0baa57947cf142e193ddfc868b171358f5553ae8d688148e8a0cb20f6b8": {
+      "kind": "block",
+      "src": "skills/resolve/modes/exec-approval.md:28",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r IMPL_DIR < \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" 2>/dev/null || IMPL_DIR=\"\"\nIFS= read -r PR_NUMBER < \"${TMPDIR:-/tmp}/resolve-pr-number-${CSID}\" 2>/dev/null || PR_NUMBER=\"\"\nIFS= read -r PR_HEAD_OID < \"${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}\" 2>/dev/null || PR_HEAD_OID=\"\"\nIFS= read -r BASE_REF < \"${TMPDIR:-/tmp}/resolve-base-ref-${CSID}\" 2>/dev/null || BASE_REF=\"\"\nIFS= read -r _XREPO < \"${TMPDIR:-/tmp}/resolve-is-cross-repo-${CSID}\" 2>/dev/null || _XREPO=true\nIFS= read -r REPORT_FILE < \"${TMPDIR:-/tmp}/resolve-report-file-${CSID}\" 2>/dev/null || REPORT_FILE=\"\"\n[ -n \"$IMPL_DIR\" ] || { echo \"! BLOCKED \u2014 IMPL_DIR sentinel missing; Step 3a/3b did not finish\"; exit 1; }\ncase \"$PR_NUMBER\" in ''|*[!0-9]*) _NO_PR=true ;; *) _NO_PR=false ;; esac\nIFS= read -r _PREV < \"$IMPL_DIR/exec-plan.txt\" 2>/dev/null || _PREV=\"\"\nif [ \"$_NO_PR\" = true ] || [ -z \"$PR_HEAD_OID\" ] || [ -z \"$BASE_REF\" ]; then\n    _KEEP=deferred; [ -s \"$IMPL_DIR/hooks-inspection.json\" ] && [ \"${_PREV#*hooks=ask}\" != \"$_PREV\" ] && _KEEP=ask\n    echo \"pr-code=deferred hooks=$_KEEP\" > \"$IMPL_DIR/exec-plan.txt\"; cat \"$IMPL_DIR/exec-plan.txt\"; exit 0\nfi\nif [ -e \"$IMPL_DIR/approved-hooks.txt\" ]; then\n    _HOOKS=recorded\n    IFS= read -r _HD < \"$IMPL_DIR/hooks-decision.txt\" 2>/dev/null || _HD=\"\"\n    [ \"$_HD\" != run ] || python \"$PLUGIN_ROOT/bin/resolve_commit_hooks.py\" --refresh-approval --base \"origin/$BASE_REF\" --head \"$PR_HEAD_OID\" --approved-file \"$IMPL_DIR/approved-hooks.txt\" --decision-file \"$IMPL_DIR/hooks-decision.txt\" || { : > \"$IMPL_DIR/approved-hooks.txt\"; printf 'stale\\n' > \"$IMPL_DIR/hooks-decision.txt\"; }\nelif [ -s \"$IMPL_DIR/hooks-inspection.json\" ] && [ \"${_PREV#*hooks=ask}\" != \"$_PREV\" ]; then\n    _HOOKS=ask; _RD=\"\"\n    echo \"the digest below was taken before the base merge was staged (re-inspection failed: $IMPL_DIR/hooks-refresh.err); if the merge changes the hooks, an approval of it no longer matches at the merge commit and hooks then stay disabled\" > \"$IMPL_DIR/hooks-inspection-note.txt\"\n    if python \"$PLUGIN_ROOT/bin/resolve_commit_hooks.py\" --decide --base \"origin/$BASE_REF\" --head \"$PR_HEAD_OID\" > \"$IMPL_DIR/hooks-refresh.json\" 2> \"$IMPL_DIR/hooks-refresh.err\"; then\n        jq -b -r '.decision // empty' \"$IMPL_DIR/hooks-refresh.json\" > \"$IMPL_DIR/hooks-refresh-decision.txt\" 2> /dev/null\n        IFS= read -r _RD < \"$IMPL_DIR/hooks-refresh-decision.txt\" 2>/dev/null || _RD=\"\"\n    fi\n    case \"$_RD\" in\n        ask|run) jq -b . \"$IMPL_DIR/hooks-refresh.json\" > \"$IMPL_DIR/hooks-inspection.json\" && : > \"$IMPL_DIR/hooks-inspection-note.txt\" ;;\n        none|disabled)\n            jq -b . \"$IMPL_DIR/hooks-refresh.json\" > \"$IMPL_DIR/hooks-inspection.json\"; : > \"$IMPL_DIR/hooks-inspection-note.txt\"\n            : > \"$IMPL_DIR/approved-hooks.txt\"; echo \"$_RD\" > \"$IMPL_DIR/hooks-decision.txt\"; _HOOKS=$_RD\n            jq -b -r '\"\u2192 repository hooks: \" + .decision + \" \u2014 \" + (.reason // \"\") + \"; the earlier hook question is dropped\"' \"$IMPL_DIR/hooks-inspection.json\" ;;\n    esac\nelse\n    _HOOKS=\"\"\n    if python \"$PLUGIN_ROOT/bin/resolve_commit_hooks.py\" --decide --base \"origin/$BASE_REF\" --head \"$PR_HEAD_OID\" --approved-file \"$IMPL_DIR/approved-hooks.txt\" > \"$IMPL_DIR/hooks-inspection.json\" 2> \"$IMPL_DIR/hooks-inspection.err\"; then\n        jq -b -r '.decision // empty' \"$IMPL_DIR/hooks-inspection.json\" > \"$IMPL_DIR/hooks-decision.txt\" 2>/dev/null\n        IFS= read -r _HOOKS < \"$IMPL_DIR/hooks-decision.txt\" 2>/dev/null || _HOOKS=\"\"\n    fi\n    case \"$_HOOKS\" in\n        ask) ;;\n        none|run|disabled) jq -b -r '\"\u2192 repository hooks: \" + .decision + \" \u2014 \" + (.reason // \"\")' \"$IMPL_DIR/hooks-inspection.json\" ;;\n        *) : > \"$IMPL_DIR/approved-hooks.txt\"; _HOOKS=disabled; echo \"\u26a0 hook inspection failed \u2014 hooks stay disabled for this run ($IMPL_DIR/hooks-inspection.err)\" ;;\n    esac\nfi\n_DEC=\"\"\nif [ -e \"$IMPL_DIR/pr-code-decision.txt\" ]; then\n    IFS= read -r _DEC < \"$IMPL_DIR/pr-code-decision.txt\" || [ -n \"$_DEC\" ] || _DEC=deny\nfi\nif [ \"$_XREPO\" = false ]; then\n    _PRCODE=same-repo\nelif [ \"$_DEC\" = deny ] || { { [ \"$_DEC\" = auto ] || [ \"$_DEC\" = sandbox ] || [ \"$_DEC\" = unsandboxed ]; } && [ -e \"$IMPL_DIR/code-approval.txt\" ]; }; then\n    _PRCODE=recorded\nelif [ -s \"$IMPL_DIR/code-scan.txt\" ] && [ \"${_PREV#*pr-code=ask}\" != \"$_PREV\" ]; then\n    _PRCODE=ask\nelse\n    _PRCODE=ask\n    if python -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" scan --head \"$PR_HEAD_OID\" --base \"origin/$BASE_REF\" --out \"$IMPL_DIR/code-scan.json\" --text > \"$IMPL_DIR/code-scan.txt\" 2> \"$IMPL_DIR/code-scan.err\"; then\n        case \"$REPORT_FILE\" in\n            */*) python \"$PLUGIN_ROOT/bin/code_safety_status.py\" check --status \"${REPORT_FILE%/*}/code-safety.json\" --scan \"$IMPL_DIR/code-scan.json\" --head \"$PR_HEAD_OID\" > \"$IMPL_DIR/code-safety-check.txt\" ;;\n            *) echo \"ask reason=no-review-status\" > \"$IMPL_DIR/code-safety-check.txt\" ;;\n        esac\n        IFS= read -r _CHECK < \"$IMPL_DIR/code-safety-check.txt\" 2>/dev/null || _CHECK=\"ask reason=check-failed\"\n        [ \"$_DEC\" != stale ] || _CHECK=\"ask reason=stale-approval\"\n        if [ \"$_CHECK\" = auto ] && python -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" bind --head \"$PR_HEAD_OID\" --base \"origin/$BASE_REF\" --scope run --out \"$IMPL_DIR/code-approval.txt\" > /dev/null; then\n            echo auto > \"$IMPL_DIR/pr-code-decision.txt\"; _PRCODE=auto\n            echo \"\u2192 PR code: review and this scan both found nothing at head ${PR_HEAD_OID:0:12}; runs in the sandbox, no question\"\n            cat \"$IMPL_DIR/code-scan.txt\"\n        fi\n    else\n        echo \"scan unavailable (see $IMPL_DIR/code-scan.err): no verdict or risk level to show; decide without it\" > \"$IMPL_DIR/code-scan.txt\"\n    fi\nfi\necho \"pr-code=$_PRCODE hooks=$_HOOKS\" > \"$IMPL_DIR/exec-plan.txt\"; cat \"$IMPL_DIR/exec-plan.txt\""
     },
     "023e3c88767dbdd00b4deec579f8544206ef1e09014b5008fd40114eb3c21252": {
       "kind": "command",
@@ -207,7 +212,7 @@
     },
     "0704fc2c3025a7a88688f7556bd9c1ceaef3060ca261340c8271d66d675dd180": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "070974d3ff56cce112e7d590404ede4d0d857b821309756acb7bc0af1d7ab560": {
       "kind": "command",
@@ -252,7 +257,7 @@
     },
     "07f34d2a5d4b74c2960c1346cc42ce75ec8a95593c933f2b91982eae80761386": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "07ff09255094a21132ed90a0cf299040b8e594f61313c00e77fcf015aa39e67c": {
       "kind": "command",
@@ -288,11 +293,11 @@
     },
     "08a35ad6590df5a26f5b539b98dd886a1f738f13ac2cc51286518a7b9d022d99": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "08c72814f229cce03d0a6500c0d25ec21b6d79978cca801d15de17693d1d1eac": {
       "kind": "block",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "08d58af721d25f1d7c43d6f4e4a74f3955a6ee09956e26bec0b938cb04795b0f": {
       "kind": "command",
@@ -329,7 +334,7 @@
     },
     "095541d1e562dbbaf64f052bc6283f0d0ed1fe9bd8cb5ad02debabce7e66fb4a": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "09c8e2e99abc51944c726ec044bd2a3b9c308b84563f6d8fc897f93fdc72be49": {
       "kind": "command",
@@ -376,7 +381,7 @@
     },
     "0b1683d0ca8f03f81962a0aee6e6ad5a81f2d3d9803010b04589c1bd59445f45": {
       "kind": "command",
-      "src": "skills/release/modes/gather-changes.md:151"
+      "src": "skills/release/modes/gather-changes.md:153"
     },
     "0b1fda2eb517391657fc0e0e19f12c63ec9ea1bc55476934600675fea49e6a43": {
       "kind": "command",
@@ -396,7 +401,7 @@
     },
     "0be15e75d98210467f8b828f56a191db5b3e48fb365a27d36067e0d577fda6d1": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "0c3ea76ca95fd2a4c322559a4cbbabf2ba9e4c05a71ee484db3e449b5b0f039f": {
       "kind": "command",
@@ -485,7 +490,7 @@
     },
     "0e9342867d657fafba3a0ee589b9b3e1b11e17d7d447a15546d97bb6efa7d5c9": {
       "kind": "command",
-      "src": "skills/release/modes/gather-changes.md:115"
+      "src": "skills/release/modes/gather-changes.md:117"
     },
     "0e9a01ad1598d5daf0d8d8467836e609668365a0b3a48c853d342db8aca4cdce": {
       "kind": "command",
@@ -498,7 +503,7 @@
     },
     "0eb0d5ce853ca17873306c8f8c64965b4e5a2cb9d87f8ab8dac54962b30188c0": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "0eb1c6bb7a192d948443ec6a372fe015451a326ad5f1744a6bc29cec1bd9ca99": {
       "kind": "command",
@@ -579,7 +584,7 @@
     },
     "11387f33bd4826ab14426580c88a638544792d4eba0ad4963eb77cc1e1c212dd": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:437"
+      "src": "skills/analyse/SKILL.md:423"
     },
     "113e42561bd9d23a44b172123cec11a8cc21133abf127c3857c059b9642338d0": {
       "kind": "command",
@@ -599,7 +604,7 @@
     },
     "120f4cfd3048386752bda28011ec92f394d6cc3e681e229bbbd230f3f62b612a": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:453"
+      "src": "skills/analyse/SKILL.md:439"
     },
     "124b29f8c160535f00184a5565b3570fa6d891a6f123b12abebf6f92337669ea": {
       "kind": "command",
@@ -607,7 +612,7 @@
     },
     "125c5764ab67f28e929841e8c8862b6f5f2a99e653bfef63f79f61b69cd13f8c": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:453"
+      "src": "skills/analyse/SKILL.md:439"
     },
     "1280eef13dc67a3508845cdaca5519d7199c7198787ab73a085a076396a22308": {
       "kind": "command",
@@ -719,7 +724,7 @@
     },
     "1657667c317532927394e32cacaa0bdf2f687496426422e0499164a5300c53ba": {
       "kind": "command",
-      "src": "skills/release/modes/release-draft-template.md:375"
+      "src": "skills/release/modes/release-draft-template.md:379"
     },
     "1674dd315f750a11c1ac0fb276f6dd4a7e11d89b05611a019b225e18e004f43e": {
       "kind": "command",
@@ -821,7 +826,7 @@
     },
     "18e98bde99d56bff5c78502c8497ee6841361ae9c7441109d4e5bc160878b39f": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "19436813208769d773a04a92b1145c4c3c36950b771428506956dddceda91a1c": {
       "kind": "command",
@@ -871,7 +876,7 @@
     },
     "1a8066ff50232051820338f59ad26cea293d9891ebc8181c7a2980e7765166ac": {
       "kind": "block",
-      "src": "skills/review/modes/post-agent.md:222",
+      "src": "skills/review/modes/post-agent.md:225",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _RUN_DIR < \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\" 2>/dev/null || _RUN_DIR=\"\"\nIFS= read -r _REPORT_DIR < \"${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}\" 2>/dev/null || _REPORT_DIR=\"\"\nIFS= read -r _PR_TAG < \"${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}\" 2>/dev/null || _PR_TAG=\"n/a\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" \"oss:review\" \"follow-up gate (Step 7a)\" \"$_RUN_DIR\" \"final-report=$_REPORT_DIR/review-report.md, pr=$_PR_TAG\" \"resume: re-read report header, re-issue Step 7a AskUserQuestion; /oss:resolve reads the report file directly\""
     },
     "1ac92bfe6135571fd0808d858323dd2b5299c4c497d094e14910ed1bc9936193": {
@@ -909,7 +914,7 @@
     },
     "1c1e2873509fd9cf9944419df858bc7ed24c91f3b59626b16361a90655ddc6bb": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "1c45edd372b4b2ed2818384c4a83f5973c10eb8f5ab97657923b14a519a2f307": {
       "kind": "command",
@@ -1063,7 +1068,7 @@
     },
     "20d8fecec733fa06a567d261c49fe0033d1a5cfc6ca18c7276da95813aeef25e": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:288"
+      "src": "skills/analyse/SKILL.md:290"
     },
     "20d985b829be0e621458c9633e46abc4835830859cdc6963a3a7f76c45d9ecbb": {
       "kind": "command",
@@ -1083,7 +1088,7 @@
     },
     "2173775c3ef8d17ccad3b41e6ee2fcb8ce474c792db61b3520f24aa9fadafcc1": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:150"
+      "src": "skills/review/modes/post-agent.md:153"
     },
     "21a05c797693c799c71241e34eb079159c69f580e0b339e34236ff885e00d01d": {
       "kind": "command",
@@ -1245,7 +1250,7 @@
     },
     "286067499c7adb761e16fc283d5b6e335c4feb49b5a207d32920b5c71f5f8240": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "2863550950b49af13b369f6721e60d6e6deee40ace5b61bc2f9979b0e0fa66ec": {
       "kind": "command",
@@ -1294,7 +1299,7 @@
     },
     "2932d3585acd1e440f3052c293b0ec7dccd0b05426837c1c9494949152520a2d": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "2934fffc5c952804930a6ccb4d721108a87eec16b96aa45559a5aa31c1545afa": {
       "kind": "command",
@@ -1351,7 +1356,7 @@
     },
     "2ad1b0c225b8b2367771a867f727f763d6541fd368368eeabba76ac86eb1f261": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "2add4fa2d34f450ba10eb9fe32157e723a62888c1580255455f4f005c4a9eb7e": {
       "kind": "block",
@@ -1401,7 +1406,7 @@
     },
     "2bbffae62681140388a1918ce8a83a2de96dfcf6959c951d65468d52ba6088ae": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:68"
+      "src": "skills/resolve/modes/dispatch-phase2.md:69"
     },
     "2c0ef5c9fa31eecc7bac3cb5e65a00278042c10e3dad892997958451d2252427": {
       "kind": "command",
@@ -1449,7 +1454,7 @@
     },
     "2e5707d7c3908c433f1be1691c859edb158ce00808276c62cadbe5e1f32f716e": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "2e5f3c9c96888a3d691ed1d1b5580f620d4b8f0c732fadb367f54a415d917456": {
       "kind": "command",
@@ -1501,7 +1506,7 @@
     },
     "2f5b9255869e7f0a9036b73db378ba890462a18dd95c53be8801dd329048c599": {
       "kind": "command",
-      "src": "skills/release/modes/demo.md:113"
+      "src": "skills/release/modes/demo.md:124"
     },
     "2f5de112128d3e91ccdbaa11f63759024098f8f525073746baadedfc69befec2": {
       "kind": "command",
@@ -1517,15 +1522,11 @@
     },
     "2f7ebb0f5dc44cbf65bb27e917f84941320d2aa27595c4d09b1ee43911c45cac": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:437"
+      "src": "skills/analyse/SKILL.md:423"
     },
     "2fc9de70a71f47b2947f542ad5be74a9ffdd3259abd635f7f1ad39892c4db1af": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:117"
-    },
-    "2fe773f27fa19ea7b60e876081c4674b640c85dfdc8dde5f3d02390865babf6b": {
-      "kind": "command",
-      "src": "skills/release/modes/gather-changes.md:11"
     },
     "2feb80d93dd4d47ed432406868f6011d07e4e36b0530489a303af7df784651b6": {
       "kind": "command",
@@ -1603,7 +1604,7 @@
     },
     "33fac8fce933d105fec13ae26737fd9aa00f3488780e9321a241dba0c872080a": {
       "kind": "command",
-      "src": "skills/release/modes/demo.md:113"
+      "src": "skills/release/modes/demo.md:124"
     },
     "3400f3418ec3127588c9634b6141aa4148e0931daff1217c6b2047532861f108": {
       "kind": "command",
@@ -1611,7 +1612,7 @@
     },
     "340999f7b09944116e9e89d985b60a55f02be9454abe73d5cc50b19f2d116aed": {
       "kind": "block",
-      "src": "skills/release/modes/release-draft-template.md:375",
+      "src": "skills/release/modes/release-draft-template.md:379",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r BRANCH < \"${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH\" 2>/dev/null || BRANCH=\"\"\nIFS= read -r DO_APPEND < \"${TMPDIR:-/tmp}/release-do-append-${CSID}\" 2>/dev/null || DO_APPEND=\"false\"\nIFS= read -r RELEASE_MODE < \"${TMPDIR:-/tmp}/release-mode-${CSID}\" 2>/dev/null || RELEASE_MODE=\"notes\"\nIFS= read -r APPEND_STAGE < \"${TMPDIR:-/tmp}/release-append-stage-${CSID}\" 2>/dev/null || APPEND_STAGE=\"\"\n[ \"$RELEASE_MODE\" != notes ] || [ -n \"$APPEND_STAGE\" ] || { echo \"Error: append stage missing \u2014 nothing published\" >&2; exit 1; }\nif [ -n \"$APPEND_STAGE\" ]; then\n    [ -f \"$APPEND_STAGE/candidate.json\" ] || { echo \"Error: sealed append candidate missing\" >&2; exit 1; }\n    python \"$PLUGIN_ROOT/bin/release_append_publish.py\" publish --branch \"$BRANCH\" --stage \"$APPEND_STAGE\" || exit 1\nfi"
     },
     "340da878d9ec527bad674ebab67e73b0f53bf0dea71de383d5bdf76af77678f8": {
@@ -1697,7 +1698,7 @@
     },
     "35ffd97c94d0581a962174120428e06f08449b9fde71623ab0461976d2217bb0": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:68"
+      "src": "skills/resolve/modes/dispatch-phase2.md:69"
     },
     "364b3ea319bf006b1f68a798abbcf768ffb7ea4f0fb353f443b86b97057ab488": {
       "kind": "command",
@@ -1766,7 +1767,7 @@
     },
     "3816a3d0c7b05a566ff20a4a139aef08962f26f06e6f30f783b57df5ab1aa4b7": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "381b90c5f4e2cb8b3082e02a4ab347b5011c8319527fbabdf8e848d553055c18": {
       "kind": "block",
@@ -1774,7 +1775,7 @@
     },
     "383247fc0f2e4e7886d99a39e5220bd47a7e058bf2b04acd73ec9d91397ee0fc": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "386e0deb7bc600a104a22d9d50e6f3a13362f982fc712a7aaf57cdd04159668f": {
       "kind": "block",
@@ -1787,7 +1788,7 @@
     },
     "3949674263de23f0d5f8f4143ebc2cb19cc82af3282d240e34684d123fb6abb6": {
       "kind": "command",
-      "src": "skills/release/modes/gather-changes.md:115"
+      "src": "skills/release/modes/gather-changes.md:117"
     },
     "397866c89b1f76f1b8508837e351ae3aa60a65df0539e71c887646c4f3efdac8": {
       "kind": "command",
@@ -1803,7 +1804,7 @@
     },
     "39cd5e36f9c19377f55376302c79f15df94aa70bfc22fc2d32678e348cab0049": {
       "kind": "command",
-      "src": "skills/release/modes/gather-changes.md:151"
+      "src": "skills/release/modes/gather-changes.md:153"
     },
     "3a04a1c2c9d6704e66718c3de85398fb8d628bca4310077f34a6af63e26bc808": {
       "kind": "block",
@@ -1829,11 +1830,11 @@
     },
     "3aebfb8f86fa2b1786440cd2f205522bbc14c6a5bd4906d6484f2a876dcc3343": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "3af376e5fadb03f7a0f0d8c961eb75f67f37f91baaa4b939d9b7980c9a3678d0": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "3b142b09f0ac195983dc3e2ae967efbb9379c10dc4c77858e0a9f2c80d995062": {
       "kind": "command",
@@ -1902,16 +1903,11 @@
     },
     "3cec631311e5ef5905b9b8855a70b078bfab6b7246bfe450c7b9c99c6991a20f": {
       "kind": "command",
-      "src": "skills/release/modes/release-draft-template.md:230"
+      "src": "skills/release/modes/release-draft-template.md:234"
     },
     "3d1db1970f209e181745a02537f932e48c90e4c48a0746d4e962eb7387e39915": {
       "kind": "command",
       "src": "skills/resolve/modes/report-intelligence.md:56"
-    },
-    "3d28178f8c53e0f0b83d363eedb46cb35856cd0360f7eacd25cbbd7affda2b49": {
-      "kind": "block",
-      "src": "skills/analyse/SKILL.md:358",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r _CLEAN_ARGS < \"${TMPDIR:-/tmp}/analyse-clean-args-${CSID}\" 2>/dev/null || _CLEAN_ARGS=\"\"\nIFS= read -r _REPORT_FILE < \"${TMPDIR:-/tmp}/analyse-report-file-${CSID}\" 2>/dev/null || _REPORT_FILE=\"pending\"\nIFS= read -r _REPLY_MODE < \"${TMPDIR:-/tmp}/analyse-reply-mode-${CSID}\" 2>/dev/null || _REPLY_MODE=\"false\"\n_PRESERVE=\"target=#${_CLEAN_ARGS}, cache-dir=.cache/gh, report=${_REPORT_FILE}, reply-mode=${_REPLY_MODE}\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-sentinel analyse-keep-items \"oss:analyse\" \"synthesis (after gather/fetch)\" \".cache/gh\" \"${_PRESERVE}\" \"reply gate (Step 6) or shepherd reply (Step 7)\""
     },
     "3d31e28f589785b9546adf999185ea670142fffde241d4545503073fbceb5f0e": {
       "kind": "command",
@@ -1987,7 +1983,7 @@
     },
     "3fb4f8778596d3f33581405cfa00edcdc2d286f7c7e87aba6add8427368c0a82": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "402ba91cf07ebd4bde48bd96bfc811179c682a06b3b449d39044da1af7f6eaec": {
       "kind": "command",
@@ -2022,13 +2018,9 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-closeout.md:106"
     },
-    "40e868f79ade4220f2c54e65950603cc6cdc5b66b4668e6218fbe6d01b190e6b": {
-      "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
-    },
     "40eb933f26fbf16f636efa2eaac5b1ae8d2d532c4805e16b24a961eda2d44007": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "40faceba18a26b806ff4bd73cc3f50fa6f57f80356b7008d554d619e681b0e02": {
       "kind": "command",
@@ -2040,7 +2032,7 @@
     },
     "411b902636741f6d2f583f9e19a49d3612e1b4e3eafb501a5ec8249dc3fe184b": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "4133fc6fea3fb96095ce88eb61a5ba30ec5400c06d611a983944d517f524e72f": {
       "kind": "command",
@@ -2065,10 +2057,6 @@
     "4208b25f043de14b4bc18ae3361613830fe16b8051d1b841bfcd3413c43464c2": {
       "kind": "command",
       "src": "skills/release/templates/audit-checks.md:7"
-    },
-    "42215825e79a6a064687561cf31c289f883161363fa1eee4917b25836729ce05": {
-      "kind": "command",
-      "src": "skills/release/modes/gather-changes.md:11"
     },
     "423d728ba9a304904e5d40fc839f4da7dd3f9ce3e7db46477d48b22785194088": {
       "kind": "command",
@@ -2154,7 +2142,7 @@
     },
     "45b46b246d9a45a215b2b6cb399ea792382e24270a89a4f558bb5b926d57d11b": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "45d3ba409aa70c08fa4751101ca48b871a4e5ad83c83595dfc370a84b2fe862c": {
       "kind": "command",
@@ -2228,7 +2216,7 @@
     },
     "47af6ea91d046113dc0a696cce184ec4fc1be03ef6e0ffc08188b0fe00f1ef44": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:453"
+      "src": "skills/analyse/SKILL.md:439"
     },
     "47f8d057654d760666064380ff8789f26359908aa60d7c7b054f088e47c651e9": {
       "kind": "command",
@@ -2298,10 +2286,6 @@
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:107"
     },
-    "4a057722ad321498d2a37a8f9bc5890f439b26877fd947493f1dde28e6547e89": {
-      "kind": "block",
-      "src": "skills/analyse/SKILL.md:202"
-    },
     "4a08369e9ee64d3307235a21090d7d63e68a60d7436e1747f804417b5a989390": {
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:107"
@@ -2312,7 +2296,7 @@
     },
     "4a5de69c5fc91c40e5eb23bda0021306d2b992df9b5294eccdcba827225d738b": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "4a6238a66fed8258cab00b6cdf984700b34eda3935c7dd3bdabe5ee96f172a4f": {
       "kind": "command",
@@ -2324,7 +2308,7 @@
     },
     "4ab868b28e12e5a36cde162e8f24eee3edd2ae7bc64ba733a057c44d54386a26": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "4ac0b35d5bf808bb929011f946e945a5146cd0df74f787d47a7688de5dcc16b6": {
       "kind": "command",
@@ -2373,7 +2357,7 @@
     },
     "4c2042c11aae88647dbdde618c5a6ea01b77dc7cfe8af29cc3bd99a3d08be5f3": {
       "kind": "command",
-      "src": "skills/release/modes/gather-changes.md:115"
+      "src": "skills/release/modes/gather-changes.md:117"
     },
     "4c2532513ba9f1b97ce81e430f955a43fa4f36f2b05ed4896679f455b7c06d35": {
       "kind": "command",
@@ -2409,7 +2393,7 @@
     },
     "4d16d27414a5754ccec98f62c249f4ff982bc8b21659f5087e35ad886d7bab83": {
       "kind": "block",
-      "src": "skills/release/modes/release-draft-template.md:241"
+      "src": "skills/release/modes/release-draft-template.md:245"
     },
     "4d5bd6479a6c363bbed2a9dbe04ad238be2b787454c89821f561a2dd31dd947e": {
       "kind": "block",
@@ -2426,7 +2410,7 @@
     },
     "4deedda0b4719131b4fd5cfe9757cbe1326d10fb311cf3c3b4a3cb22a11c1af9": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "4e1f0545f32acd41a0345ee05950e36f63f7e289407464f0e6b6570d1b92fe73": {
       "kind": "block",
@@ -2458,7 +2442,7 @@
     },
     "4e91e7c1bfb09dab19f26013436b23598c90dcfbcddabb4591d2607652943f58": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "4ea77702180e653beab6d942123ce00ca0370b8689283e26fc55d9cd6525c707": {
       "kind": "command",
@@ -2514,7 +2498,7 @@
     },
     "50999923a5f8571d636ba4f68d2b1398acd7781f85b140c68dcf87e3972543b6": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "509d8e046206aa7418ad37d474c2aaadd243b8074b844829e492d7a8cdcb4664": {
       "kind": "command",
@@ -2611,7 +2595,7 @@
     },
     "537d0b294d88dd44dd598bb0f01627475e3b5ed3726c8aef0f17667e8b0f9380": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "5383f6c85488a02bc63a730d7726f0be0647b14451e7e6cb8b8d63769a820684": {
       "kind": "command",
@@ -2631,7 +2615,7 @@
     },
     "53e8d617abd5974c15833312f2ab8faa0a167e881b1b836d213e094c875a3f24": {
       "kind": "block",
-      "src": "skills/resolve/modes/dispatch-phase2.md:68",
+      "src": "skills/resolve/modes/dispatch-phase2.md:69",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r _PR_NUMBER < \"${TMPDIR:-/tmp}/resolve-pr-number-${CSID}\" 2>/dev/null || _PR_NUMBER=\"n/a\"\nIFS= read -r DISPATCH_MODE < \"${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}\" 2>/dev/null || DISPATCH_MODE=\"auto\"\ncase \"$DISPATCH_MODE\" in auto|sequential|per-specialist|preview) ;; *) DISPATCH_MODE=auto ;; esac\n[ -f \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" ] && IFS= read -r IMPL_DIR < \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" || IMPL_DIR=\"\"\n[ -n \"$IMPL_DIR\" ] || { echo \"! BLOCKED \u2014 IMPL_DIR sentinel missing; prelude never ran\"; exit 1; }\necho \"DISPATCH_MODE=$DISPATCH_MODE\"\nIFS= read -r _PUSH_AUTH < \"${TMPDIR:-/tmp}/resolve-push-auth-${CSID}\" 2>/dev/null || _PUSH_AUTH=\"unset\"\n_PRESERVE=\"pr=${_PR_NUMBER}, impl-dir=${IMPL_DIR}, dispatch-mode=${DISPATCH_MODE}, push-auth=${_PUSH_AUTH} (Step 3d answer),  selected-items=${IMPL_DIR}/selected-items.txt, challenge-log=${IMPL_DIR}/challenge-log.txt, skipped-items=${IMPL_DIR}/skipped-items.txt, item-tasks=${IMPL_DIR}/item-tasks.tsv, phase2-groups=${IMPL_DIR}/phase2-groups.tsv, phase2-base=${IMPL_DIR}/phase2-base-sha, spawn-now=${IMPL_DIR}/phase2-spawn-now.txt (still present = tags declared, spawn-base block not yet run), spawned=${IMPL_DIR}/phase2-spawned.tsv (links already spawned), merge-plan=${IMPL_DIR}/merge-plan.json, merge-result=${IMPL_DIR}/merge-result.json (Phase 3: present = merge pass already ran)\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-sentinel resolve-keep-items \"oss:resolve\" \"Phase 2 dispatch (after Phase 1 challenge verdicts)\" \"$IMPL_DIR\" \"${_PRESERVE}; phase-reports=${IMPL_DIR}/challenge-domain-*.md\" \"resume: re-cat own agent-resolution.md, worktree-isolation.md, modes/conflict-resolution.md, modes/dispatch-prelude.md plus the phase file of the first unfinished phase (current phase only): modes/dispatch-phase2.md, or modes/dispatch-phase3.md once every group's envelope is in phase2-commits.jsonl; re-read challenge-log.txt for verdicts + item-tasks.tsv for created tasks (report mode: item-tasks.tsv does not exist \u2014 use selected-items.txt as scope instead), continue Phase 2 implementation for items not yet in phase2-commits.jsonl, else re-enter Phase 3 (its fences resume from merge-plan.json / merge-result.json); group tags and per-link items come from phase2-groups.tsv, never re-derived; a chained group resumes at its next link from chain-<tag>.tsv via the spawn-base block, never re-formed; a link listed in phase2-spawned.tsv is in flight or done, never spawned again \u2014 never re-issue Step 3d, item selection already answered\" -- calls_ahead=40 \"drop=expanded challenge analysis\"\nIFS= read -r _OSS_SHARED < \"${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}\" 2>/dev/null || _OSS_SHARED=\"\"\npython \"$PLUGIN_ROOT/bin/compaction_boundary.py\" \"$_OSS_SHARED\"\ngit worktree list --porcelain | sed -n 's/^worktree //p' > \"$IMPL_DIR/worktrees-before.txt\""
     },
     "53ea3a057e96562997b1632f4c8bb32bd0eab78d353c89de523a10b81f3844c9": {
@@ -2640,7 +2624,7 @@
     },
     "53f6c99e5d76a87f357112788852c46acf471f1f32787d315b685510f7811243": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "53fad3843b8cdfc1c90e21c8eae245530d30a8f9325111d03aaa98f0b1f26452": {
       "kind": "command",
@@ -2648,7 +2632,7 @@
     },
     "5465796862103ee972073852cff42e247ee0e461174b2e758cb524ad7032b486": {
       "kind": "block",
-      "src": "skills/analyse/SKILL.md:342",
+      "src": "skills/analyse/SKILL.md:344",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$PLUGIN_ROOT/skills/analyse/modes/ecosystem.md\""
     },
     "547569e59f54d8ce27ddc4baea7dbc4b8c12432aa771c0041e8774df280c4737": {
@@ -2690,7 +2674,7 @@
     },
     "55b63c0e0a7bad6ec1bf54ff54ca08f8b4b9711fa64ed837167792835abe9476": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "55d44fbd526a5a1e443d8a678a0b0d27634f4bcfad8605f7847fc959420915ef": {
       "kind": "command",
@@ -2799,11 +2783,11 @@
     },
     "596931351e0a070c02e515a478e9c4dca9e20ab50ee024d1f6f4b0af95b1b4f9": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:141"
+      "src": "skills/review/modes/post-agent.md:144"
     },
     "597e0ea052bda524394cd952f0c121894f6bdd0e26f1af9321a4e6c684e59a75": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "5a01c7e890dd1d5d1d232654c44fbd76d05f4ee4c501b98561e7a672adb242e9": {
       "kind": "command",
@@ -2911,7 +2895,7 @@
     },
     "5ce83c7b3a742d1521e166df8ed3937091d161849ea4e693aa830c3d88207647": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:437"
+      "src": "skills/analyse/SKILL.md:423"
     },
     "5ce894abed175eb949e0a182c22b9f084ce6f0b048598ac685e0d65493ae2086": {
       "kind": "command",
@@ -2952,7 +2936,7 @@
     },
     "5daef14baff1f838e70df4dd420cbde7e8fb09b01b5919be6a62f65d60dd1c06": {
       "kind": "block",
-      "src": "skills/analyse/SKILL.md:288",
+      "src": "skills/analyse/SKILL.md:290",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r DRIFT < \"${TMPDIR:-/tmp}/analyse-drift-${CSID}\" 2>/dev/null || DRIFT=\"false\"\nIFS= read -r FAST_PATH_TENTATIVE < \"${TMPDIR:-/tmp}/analyse-fast-path-tentative-${CSID}\" 2>/dev/null || FAST_PATH_TENTATIVE=\"false\"\nIFS= read -r REPORT_MTIME < \"${TMPDIR:-/tmp}/analyse-report-mtime-${CSID}\" 2>/dev/null || REPORT_MTIME=\"0\"\nIFS= read -r CLEAN_ARGS < \"${TMPDIR:-/tmp}/analyse-clean-args-${CSID}\" 2>/dev/null || CLEAN_ARGS=\"\"\n\nif [ \"$FAST_PATH_TENTATIVE\" = \"true\" ]; then\n    python \"$PLUGIN_ROOT/bin/detect_thread_type.py\" --number \"$CLEAN_ARGS\" --report-mtime \"$REPORT_MTIME\" 2>/dev/null\nelse\n    python \"$PLUGIN_ROOT/bin/detect_thread_type.py\" --number \"$CLEAN_ARGS\" 2>/dev/null\nfi\nIFS= read -r TYPE < \"${TMPDIR:-/tmp}/oss-detect-type-${CSID}\" 2>/dev/null || TYPE=\"unknown\"\nIFS= read -r DRIFT < \"${TMPDIR:-/tmp}/oss-detect-drift-${CSID}\" 2>/dev/null || DRIFT=\"false\"\nif [ \"$FAST_PATH_TENTATIVE\" = \"true\" ] && [ \"$TYPE\" != \"unknown\" ] && [ \"$TYPE\" != \"pr\" ] && [ \"$DRIFT\" = \"false\" ]; then\n    FAST_PATH=true\n    echo \"[resume] reusing existing report for #$CLEAN_ARGS\"\nfi\n\nif [ \"$TYPE\" = \"unknown\" ]; then\n    echo \"Item #$CLEAN_ARGS not found on GitHub. Re-run with a different number, or use \\`/oss:analyse vitality\\` for repo overview.\"\n    exit 1\nfi"
     },
     "5de3e16388ffe34aecaa1c754d0791b628ccae022986f3a73c9351a89e51c9bc": {
@@ -2994,7 +2978,7 @@
     },
     "5f0ee5071c35fde4cda30ed5cf519d4c1ab70c915af7e5f5086591d9784bdbac": {
       "kind": "command",
-      "src": "skills/release/modes/release-draft-template.md:241"
+      "src": "skills/release/modes/release-draft-template.md:245"
     },
     "5f4ef2fbbc9735f042a5328effaba6ed2ab25272275abc4ba6be31b52cf539b3": {
       "kind": "command",
@@ -3007,7 +2991,7 @@
     },
     "5fa726729187e21c50f643fcb78c310d2dc0ef3d8e8c75b80abce4fe5a97ca6a": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "5fb51e60d6114ffe481328b5853000efc61bc500b08f706dd96ca228f49b8fc2": {
       "kind": "command",
@@ -3032,7 +3016,7 @@
     },
     "60427ef538942c1b60126230635580e30c59a8a599f4a72169dd0ad07183e058": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "604c28c9218f99b922b6ce9aa3c834cca48a336a304f2c24cbbe001256c5e673": {
       "kind": "command",
@@ -3065,7 +3049,7 @@
     },
     "60f9859c7e92bf71b7ec9d591edc8704a6704538a92efe500a124699a7e088f7": {
       "kind": "command",
-      "src": "skills/release/modes/release-draft-template.md:241"
+      "src": "skills/release/modes/release-draft-template.md:245"
     },
     "6121d660b237c5c7d2eac12cdb11e5d05a8a30a8f687d4edc09ea878e32cb795": {
       "kind": "command",
@@ -3100,7 +3084,7 @@
     },
     "621c49b5b272374d557faab028d425e27f91f497218786f8f08611f36691d401": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "623380c6e6744a305e378652fc54112137410926a35f6152f178f185b1f257fb": {
       "kind": "command",
@@ -3116,7 +3100,7 @@
     },
     "62c2d1cca7caf3d1044e5e8cec5c4a95e562ecdb7508b5cf51e50256b5135f8a": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "62c93163c0673fcd6699bee3afe532d7edd14985b0897cf304b0ad1a153890a1": {
       "kind": "command",
@@ -3136,7 +3120,7 @@
     },
     "6361927bc5b481ed3499ac14ae1fbfb735eb72f15f8c9a40d20804ab9b58cf99": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:358"
+      "src": "skills/analyse/SKILL.md:360"
     },
     "636a3fcb6ff7ffa7288a74d1e5c807654e3d2fbe40d6735250a0169e30dc9bbb": {
       "kind": "command",
@@ -3160,7 +3144,7 @@
     },
     "63e519f08cb624961f9e63c630be401c056b4a3e8c2a531a9d0c355e50ee7cb4": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:288"
+      "src": "skills/analyse/SKILL.md:290"
     },
     "63eb1ed37bf5cb2663cb59e50fcc8ebab64ef193abc5e26da370e3e7f860d1e6": {
       "kind": "command",
@@ -3180,7 +3164,7 @@
     },
     "6418a79eb8b8b6d3a84a55de35903302eadb5694d4869503b59e871d7a2aa14c": {
       "kind": "block",
-      "src": "skills/analyse/SKILL.md:453"
+      "src": "skills/analyse/SKILL.md:439"
     },
     "6437e325f32924a86d26ca98ce9a4a3f52932755fe8df6228eb5c091d622bd56": {
       "kind": "block",
@@ -3318,7 +3302,7 @@
     },
     "68c72c1d99c7cda11b0ddee455c7d7b4b0cc95a7d22a04a96e80598c9abd6354": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:68"
+      "src": "skills/resolve/modes/dispatch-phase2.md:69"
     },
     "68d68bb0aa280678b107ea59e8c7148c4e88226d282287fcd76b299271f08a0f": {
       "kind": "block",
@@ -3330,7 +3314,7 @@
     },
     "690d8003884438f88ca4f7dccba503274edca588d0db91362890ffdcb4976c2c": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:358"
+      "src": "skills/analyse/SKILL.md:360"
     },
     "69210b147c6096af212fd79bcea7454441d0883e41d778456fc7f84448fa89db": {
       "kind": "command",
@@ -3396,6 +3380,11 @@
     "6b911e1b6332d09703df5467bce9a06d330772d4140d09ce18b06f39586fd00d": {
       "kind": "command",
       "src": "skills/release/SKILL.md:147"
+    },
+    "6b9730592a2f8f674714486369123ef9af807f09f721cd360aa54605afc0a55d": {
+      "kind": "block",
+      "src": "skills/release/modes/gather-changes.md:11",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r LAST_TAG < \"${TMPDIR:-/tmp}/release-setup-${CSID}/LAST_TAG\" 2>/dev/null || LAST_TAG=\"\"\nIFS= read -r CHERRY_PICK_SUBJECTS < \"${TMPDIR:-/tmp}/release-setup-${CSID}/CHERRY_PICK_SUBJECTS\" 2>/dev/null || CHERRY_PICK_SUBJECTS=\"\"\nIFS= read -r BRANCH < \"${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH\" 2>/dev/null || BRANCH=\"\"\nIFS= read -r BRANCH_REF < \"${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH_REF\" 2>/dev/null || BRANCH_REF=\"\"\nIFS= read -r BRANCH_KEY < \"${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH_KEY\" 2>/dev/null || BRANCH_KEY=\"\"\nIFS= read -r DO_APPEND < \"${TMPDIR:-/tmp}/release-do-append-${CSID}\" 2>/dev/null || DO_APPEND=\"false\"\nIFS= read -r RELEASE_MODE < \"${TMPDIR:-/tmp}/release-mode-${CSID}\" 2>/dev/null || RELEASE_MODE=\"\"\n\n[ -n \"$RANGE\" ] || IFS= read -r RANGE < \"${TMPDIR:-/tmp}/release-range-${CSID}\" 2>/dev/null || RANGE=\"\"\nif [ -z \"$RANGE\" ] && [ \"$DO_APPEND\" = \"true\" ]; then\n\n    RANGE=$(python \"$PLUGIN_ROOT/bin/release_append_marker.py\" resolve --branch \"$BRANCH_REF\" --last-tag \"$LAST_TAG\")\nelse\n    RANGE=\"${RANGE:-$LAST_TAG..HEAD}\"\nfi\n[ -z \"$RANGE\" ] && echo \"Error: could not determine commit range\" && exit 1\nif [ \"$RELEASE_MODE\" = notes ]; then\nFROZEN_HEAD=$(git rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || { echo \"Error: notes HEAD unresolved\" >&2; exit 1; }\nFROZEN_BRANCH=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || { echo \"Error: notes branch unresolved\" >&2; exit 1; }\n[ -n \"$BRANCH_REF\" ] && [ \"$FROZEN_BRANCH\" = \"$BRANCH_REF\" ] || { echo \"Error: notes branch changed after release setup\" >&2; exit 1; }\nFROZEN_TAGS_FILE=\"${TMPDIR:-/tmp}/release-append-tags-${CSID}\"\ngit for-each-ref --sort=refname --format='%(refname) %(objectname)' refs/tags > \"$FROZEN_TAGS_FILE\" || { echo \"Error: notes tag refs unresolved\" >&2; exit 1; }\ncase \"$RANGE\" in *...*|*..*..*) echo \"Error: notes range must have one two-dot endpoint\" >&2; exit 1;; *..*) ;; *) echo \"Error: notes range must have one two-dot endpoint\" >&2; exit 1;; esac\nRANGE_START=\"${RANGE%..*}\"\nRANGE_END=\"${RANGE##*..}\"\nFROZEN_START=$(git rev-parse --verify \"$RANGE_START^{commit}\" 2>/dev/null) || { echo \"Error: notes range start unresolved\" >&2; exit 1; }\nFROZEN_END=$(git rev-parse --verify \"$RANGE_END^{commit}\" 2>/dev/null) || { echo \"Error: notes range endpoint unresolved\" >&2; exit 1; }\ngit merge-base --is-ancestor --end-of-options \"$FROZEN_START\" \"$FROZEN_END\" || { echo \"Error: notes range start is not an ancestor of endpoint\" >&2; exit 1; }\ngit merge-base --is-ancestor --end-of-options \"$FROZEN_END\" \"$FROZEN_HEAD\" || { echo \"Error: notes range endpoint is not on gathered HEAD\" >&2; exit 1; }\nif [ \"$DO_APPEND\" = \"true\" ]; then\n    [ \"$FROZEN_END\" = \"$FROZEN_HEAD\" ] || { echo \"Error: append range does not end at frozen HEAD\" >&2; exit 1; }\nfi\nif [ \"$(python \"$PLUGIN_ROOT/bin/release_append_marker.py\" is-valid --branch \"$BRANCH_REF\" --last-tag \"$LAST_TAG\")\" = true ]; then\n    IFS= read -r SAVED_MARKER < \".temp/release-state-v2/$BRANCH_KEY/marker\" || { echo \"Error: saved marker unreadable\" >&2; exit 1; }\n    if [ \"$DO_APPEND\" = \"true\" ]; then\n        [ \"$FROZEN_START\" = \"$SAVED_MARKER\" ] || { echo \"Error: append range does not start at saved marker\" >&2; exit 1; }\n    else\n        git merge-base --is-ancestor --end-of-options \"$FROZEN_START\" \"$SAVED_MARKER\" || { echo \"Error: plain notes range skips commits after saved marker\" >&2; exit 1; }\n        git merge-base --is-ancestor --end-of-options \"$SAVED_MARKER\" \"$FROZEN_END\" || { echo \"Error: plain notes range ends before saved marker\" >&2; exit 1; }\n    fi\nfi\nRANGE=\"$FROZEN_START..$FROZEN_END\"\nprintf '%s\\n' \"$FROZEN_HEAD\" > \"${TMPDIR:-/tmp}/release-append-head-${CSID}\"\nprintf '%s\\n' \"$FROZEN_START\" > \"${TMPDIR:-/tmp}/release-append-start-${CSID}\"\nprintf '%s\\n' \"$FROZEN_END\" > \"${TMPDIR:-/tmp}/release-append-end-${CSID}\"\nprintf '%s\\n' \"$FROZEN_BRANCH\" > \"${TMPDIR:-/tmp}/release-append-branch-${CSID}\"\nfi\nif [ \"$DO_APPEND\" = \"true\" ] && [ \"$(git rev-list --count --end-of-options \"$RANGE\" 2>/dev/null)\" = 0 ]; then\n    echo \"No new commits to append; release artifacts unchanged. Stop this invocation.\"\n    exit 0\nfi\n\necho \"${RANGE:-}\" > \"${TMPDIR:-/tmp}/release-range-${CSID}\"\n\ngit log --oneline --no-merges --end-of-options \"$RANGE\"\ngit log --no-merges --format=\"--- %H%n%B\" --end-of-options \"$RANGE\"\ngit diff --stat --end-of-options \"$RANGE\"\n\nTRUNK=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null)\nif [ -z \"$TRUNK\" ]; then\n    TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | { read -r _ _ val; echo \"$val\"; })\nfi\nPR_FIELDS=\"number,title,body,labels,mergedAt,author\"\nif [ -n \"$TRUNK\" ]; then\n    PRS=$(gh pr list --state merged --base \"$TRUNK\" --limit 500 --json \"$PR_FIELDS\") || { echo \"Error: gh pr list failed; cannot classify release PRs\" >&2; exit 1; }\nelse\n    echo \"\u26a0 Could not detect default branch \u2014 listing all merged PRs\"\n    PRS=$(gh pr list --state merged --limit 500 --json \"$PR_FIELDS\") || { echo \"Error: gh pr list failed; cannot classify release PRs\" >&2; exit 1; }\nfi\nPR_COUNT=$(printf '%s' \"$PRS\" | jq 'length') || { echo \"Error: could not count gh pr list results\" >&2; exit 1; }\nif [ \"$PR_COUNT\" -eq 500 ]; then\n    echo \"\u26a0 gh pr list reached its 500-item cap; retrying discovery within the release date window\"\n    PR_SINCE=$(TZ=UTC git log --date=format-local:%Y-%m-%d --format=%cd --end-of-options \"$RANGE\" | sort | head -1)\n    if [ -n \"$PR_SINCE\" ]; then\n        if [ -n \"$TRUNK\" ]; then\n            RECOVERED_PRS=$(gh pr list --state merged --limit 500 --json \"$PR_FIELDS\" --search \"merged:>=$PR_SINCE\" --base \"$TRUNK\")\n        else\n            RECOVERED_PRS=$(gh pr list --state merged --limit 500 --json \"$PR_FIELDS\" --search \"merged:>=$PR_SINCE\")\n        fi\n        RECOVERY_RC=$?\n        if [ \"$RECOVERY_RC\" -eq 0 ]; then\n            PRS=\"$RECOVERED_PRS\"\n            PR_COUNT=$(printf '%s' \"$PRS\" | jq 'length') || { echo \"Error: could not count bounded PR recovery\" >&2; exit 1; }\n        else\n            echo \"\u26a0 PR discovery coverage gap: bounded recovery failed; retaining the initial contextual list\" >&2\n        fi\n    fi\n    if [ \"$PR_COUNT\" -eq 500 ]; then\n        echo \"\u26a0 PR discovery coverage gap: list remains capped; use per-commit associations below for release membership and credits\" >&2\n    fi\nfi\nprintf '%s\\n' \"$PRS\""
     },
     "6be32097da34071fb41f59a8f56bfe0e77fa0d55cfe2f35da10127bfe666bfc9": {
       "kind": "command",
@@ -3581,6 +3570,10 @@
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:107"
     },
+    "719e78e154350030bad8c54c03558021ab3369980e62dba73fc16a8f76876981": {
+      "kind": "command",
+      "src": "skills/release/modes/gather-changes.md:11"
+    },
     "71a814762db1d4caa1d6d5ce942c7cd43dca9d9aad6f67838b57ddb8aff48934": {
       "kind": "command",
       "src": "skills/resolve/modes/push.md:11"
@@ -3619,7 +3612,7 @@
     },
     "72b0736b099b2d469d16263b16c2f742644908d8c7cae68a254ea2c515f92726": {
       "kind": "command",
-      "src": "skills/release/modes/notes-draft.md:99"
+      "src": "skills/release/modes/notes-draft.md:101"
     },
     "72c375f7bc1a264bc7dfa662c340e58ea0cf932184b52f5759982577f596b10c": {
       "kind": "command",
@@ -3699,7 +3692,7 @@
     },
     "74344f0542d63481bbc22a2ef4d878640deef83065e0ed3be7c5636700ad2005": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:453"
+      "src": "skills/analyse/SKILL.md:439"
     },
     "7440552bfbf903321bd7decff4c06aa80a8b4d39b7b9d537fa0e834c8865a4f1": {
       "kind": "command",
@@ -3708,6 +3701,10 @@
     "7451103b14751c936495755738a28eb5356f392dd7be735f3de052007565eb58": {
       "kind": "command",
       "src": "skills/review/modes/acceptance-gate.md:77"
+    },
+    "745ac27ea3fccef5ab428826b2acd1e66535deee7fb77387893e353082eb4b2a": {
+      "kind": "block",
+      "src": "skills/analyse/SKILL.md:202"
     },
     "7468dfc70164f5e354f16fa07eaa0c41626d7172d425c717569ced8ba59284bd": {
       "kind": "command",
@@ -3752,11 +3749,11 @@
     },
     "7500015ab0422447065acd14bb1040b82d3feeb41a9500a90df3ce0ae8673e55": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "7531ff71fcc615866809e504826240b799aaf4eeab02ee1abc2a219753592209": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:202"
+      "src": "skills/review/modes/post-agent.md:205"
     },
     "7589cae078692f1fb5824365afa8c416311dc97a946929689e3c7fb23f46a07c": {
       "kind": "command",
@@ -3817,7 +3814,7 @@
     },
     "7789350b71ec320efd42c6941781331d00d950e569e7bd69c2c9caff6b6d0145": {
       "kind": "block",
-      "src": "skills/review/modes/post-agent.md:125",
+      "src": "skills/review/modes/post-agent.md:128",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _REPORT_DIR < \"${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}\" 2>/dev/null || _REPORT_DIR=\"\"\n[ -n \"$_REPORT_DIR\" ] || { echo \"! BLOCKED \u2014 report-dir sentinel missing; cannot validate publication\"; exit 1; }\npython \"$PLUGIN_ROOT/bin/find_review_report.py\" --report \"$_REPORT_DIR/review-report.md\" --producer"
     },
     "77ebd6c061cc7f47ed92275d5491fc7a0069afae2be704c5b2264ddb1b6de0bc": {
@@ -3855,7 +3852,7 @@
     },
     "79bf2f76a688225af3218dcc80cd77373cd45e1bc087335cfbf35a5d94ad9315": {
       "kind": "block",
-      "src": "skills/review/modes/post-agent.md:177",
+      "src": "skills/review/modes/post-agent.md:180",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r _PR_TAG < \"${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}\" 2>/dev/null || _PR_TAG=\"unknown\"\nIFS= read -r _REPORT_DIR < \"${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}\" 2>/dev/null || _REPORT_DIR=\"\"\nIFS= read -r _RUN_DIR < \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\" 2>/dev/null || _RUN_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" \"oss:review\" \"reply (after consolidation)\" \"$_RUN_DIR\" \"final-report=$_REPORT_DIR/review-report.md, pr=$_PR_TAG\" \"draft contributor reply (--reply) or stop at Step 7\"\n[ -s \"$_REPORT_DIR/findings.jsonl\" ] && jq -r 'select(.codex_eligible == true) | \"\\(.id)\\t\\(.title)\"' \"$_REPORT_DIR/findings.jsonl\""
     },
     "7a02645b61157802a847cef3ac1d2ed199fd1ced822fa7448674206727c45686": {
@@ -3876,7 +3873,7 @@
     },
     "7a3a52db5b55b20d5122c03b87c59356c43e8f78ddd37fd7e1162861e3da8e1e": {
       "kind": "block",
-      "src": "skills/analyse/SKILL.md:257"
+      "src": "skills/analyse/SKILL.md:259"
     },
     "7a51bbe00e2f12736913f2f56ebd135a4596f6273055ed1813cce7576f5d916d": {
       "kind": "command",
@@ -3888,7 +3885,7 @@
     },
     "7a7863b382260bfddc658083ea42ea0fc0bc1d81efc5e735fb4f2a67ee0d197c": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "7a9acca36801ff9f803484cd4694d3e74dfe92c17dbe236782fea485ca7d5e3a": {
       "kind": "command",
@@ -3916,7 +3913,7 @@
     },
     "7af882b8327dbdc7fb003f635af5f98eb80325d6c80e37922a44cb06b8b02077": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "7b050914312c5a9370654fde79bf9e6e46d2665f864687557c186f18c7f1b676": {
       "kind": "command",
@@ -3994,6 +3991,10 @@
     "7d9f75d5e25be2b82857bb60f4c5b51af7fdd94c470710d51fe0982726654d2a": {
       "kind": "command",
       "src": "skills/review/modes/preflight.md:28"
+    },
+    "7db5ae872c69b3d5844ce0ce308c462d3298ec2ca88006fca4f1f2bfdd5a068e": {
+      "kind": "command",
+      "src": "skills/release/templates/audit-checks.md:7"
     },
     "7dcb746f80035e7c78bf1cadedac63ee399367a70189acf7400b49b459e84b3d": {
       "kind": "command",
@@ -4173,7 +4174,7 @@
     },
     "83ff9479c746ea591b5962a6290068badf07c388c8212b87a68f0f288c799c86": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:453"
+      "src": "skills/analyse/SKILL.md:439"
     },
     "8413f692536f109cf50a73ff17d8c7b505479dcd5751bbf320ac55cc50d69319": {
       "kind": "command",
@@ -4225,7 +4226,7 @@
     },
     "84fa3be142880214d6c4da23dde0bab7325567ede5e6fa615ecde1f29faa553a": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:257"
+      "src": "skills/analyse/SKILL.md:259"
     },
     "850bdf4d969438db285816b1ae1161e2222f5491ee0e90b74bd8f120da0decd2": {
       "kind": "command",
@@ -4253,7 +4254,7 @@
     },
     "85fb74f10c9f6ff6748f1f63d4fb6e7bebf5b849869ac1dc0ecd4a60970e14b8": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:202"
+      "src": "skills/review/modes/post-agent.md:205"
     },
     "86006195620836c8b23cc367f23ab7cd304ac4bab6ab455790a8d42abae73286": {
       "kind": "command",
@@ -4278,11 +4279,11 @@
     },
     "86a85a902f1b0d0387d215277ee24be8fdcdcbd13db5245e8734854c27f54e03": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:453"
+      "src": "skills/analyse/SKILL.md:439"
     },
     "86b4678a638193da5b70360aaad6184bc78bd8e656fcf58675a6d030a864c93b": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:453"
+      "src": "skills/analyse/SKILL.md:439"
     },
     "86e2fd5ebe7e1616ee3f58bb317ca90a6ebcd7234fe51fb2326cea96207d4ccf": {
       "kind": "command",
@@ -4302,7 +4303,7 @@
     },
     "874a81b032c904c6235ad7ca172f8442b16b29264f7bdbb776577293a2b61ba1": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "876329d45358343da640de8633815ddf0faf3859aabce3c5ce7ff557231f379b": {
       "kind": "command",
@@ -4346,7 +4347,7 @@
     },
     "8831af9bd38caf066623b323b763669ecab1567519e86f08d9dd924f3435b009": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "88345e5c6573a62e9a9e264a52afac37674b772988c0241937f8f29414ee4d55": {
       "kind": "command",
@@ -4378,7 +4379,7 @@
     },
     "88dd057c930ff2fc77ab394f87977bb4e7379d872221e9c10edc357595dfecbf": {
       "kind": "block",
-      "src": "skills/analyse/SKILL.md:335",
+      "src": "skills/analyse/SKILL.md:337",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$PLUGIN_ROOT/skills/analyse/modes/vitality.md\""
     },
     "88fa0a63df8a793c70f7ca14da4785ab14596c906610add4c55100a8ef6c7364": {
@@ -4395,7 +4396,7 @@
     },
     "89663ed5df937ce6d3762df12ce9bd27bb5dbf4e272ec680d22010b9ce1e712e": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "896d394445c220a923d09e87f8e0cacf099597c861d709caf57a57b9fcca3723": {
       "kind": "command",
@@ -4445,11 +4446,16 @@
     },
     "89ff9c0428007508a612b1cd84643f19d836382e87912032c2c31823565de47f": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "8a05d4ceb764fa19c366e8fc66e2721409669444f1f399bd49c96cce61c03636": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase1.md:137"
+    },
+    "8a12abf9361e0f5f247c5ebb9efaf36d2fe6e403e208071344f802092689bf89": {
+      "kind": "block",
+      "src": "skills/release/templates/audit-checks.md:7",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r CLEAN_ARGS < \"${TMPDIR:-/tmp}/release-clean-args-${CSID}\" 2>/dev/null || CLEAN_ARGS=\"\"\nTARGET=$(echo \"$CLEAN_ARGS\" | awk '{print $2}')\n\nIFS= read -r RANGE < \"${TMPDIR:-/tmp}/release-range-${CSID}\" 2>/dev/null || RANGE=\"\"\nif [ -z \"$RANGE\" ]; then\n    LAST_TAG=$(git describe --tags --abbrev=0 --exclude='*rc*' --exclude='*dev*' --exclude='*alpha*' --exclude='*beta*' 2>/dev/null || git rev-list --max-parents=0 HEAD)\n    RANGE=\"$LAST_TAG..HEAD\"\nfi\necho \"audit scope: target=${TARGET:-none} range=$RANGE\"\nIFS= read -r SHIPPED_TAGS < \"${TMPDIR:-/tmp}/release-setup-${CSID}/SHIPPED_ELSEWHERE_TAGS\" 2>/dev/null || SHIPPED_TAGS=\"\"\n[ -z \"$SHIPPED_TAGS\" ] || echo \"! off-branch tags already shipped: $SHIPPED_TAGS - unreleased-commit and changed-file sections below include their backports; read them against release-shipped-${CSID}\"\n\nREPO_SLUG=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)\nAUDIT_OUT=$(python \"$PLUGIN_ROOT/bin/run_audit_checks.py\" \\\n    --repo \"$REPO_SLUG\" \\\n    ${TARGET:+--tag \"$TARGET\"} \\\n    ${RANGE:+--range \"$RANGE\"})\nAUDIT_RC=$?\necho \"$AUDIT_OUT\"\necho \"audit-rc: $AUDIT_RC\"\nprintf '%s\\n' \"$AUDIT_OUT\" | grep -q '^pip-audit-status: not-installed' && echo \"PIP_AUDIT_MISSING=1\" || echo \"PIP_AUDIT_MISSING=0\""
     },
     "8a1603b0eb9f586ff39bc747c8ef037cafad753e21128ac5e93b3a5e7adcb8be": {
       "kind": "block",
@@ -4525,7 +4531,7 @@
     },
     "8c503b5c264b1da87eeade395764464e33fc7bf2e8b1bafafb54681a94743869": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:288"
+      "src": "skills/analyse/SKILL.md:290"
     },
     "8c5379234897674090e0a6aba0d57f9ba55be3850016599deabec6860152276a": {
       "kind": "command",
@@ -4535,9 +4541,13 @@
       "kind": "command",
       "src": "skills/review/modes/preflight.md:117"
     },
+    "8c7f92f883353c11cae535446bf8164e866e5a4cce34cc0f3ddc80eb4149e597": {
+      "kind": "command",
+      "src": "skills/analyse/SKILL.md:360"
+    },
     "8c951964b8aa0b420b03817297b38b317143308dab72bfb94f942fff102816c5": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:222"
+      "src": "skills/review/modes/post-agent.md:225"
     },
     "8cb55986e2d1da1061e334529e96516aae9e3a427ecf2e9a0899171336f3c21e": {
       "kind": "command",
@@ -4569,7 +4579,7 @@
     },
     "8dd5cfd7513f303b5eea39c4a155e909c10d64e796fa2de1ba168979cce7bec1": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "8def0a0879c499b350ba0b6dfcb3170e01550a3097d0cd6357c05bd342654f87": {
       "kind": "command",
@@ -4585,7 +4595,7 @@
     },
     "8e37042b9290e4fc0d54e3d0d62273dabd877b848804540716dcbd8bbf2f0edb": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:288"
+      "src": "skills/analyse/SKILL.md:290"
     },
     "8e3f8b8e10c1c1e7f38651180c6e07c5b5fa0958874d3a7f14e07955033a702c": {
       "kind": "command",
@@ -4601,7 +4611,7 @@
     },
     "8efa00e107ef9c3790281a81f9d1a003e74a2ed33b6250be962816069d5b0043": {
       "kind": "block",
-      "src": "skills/release/modes/demo.md:113"
+      "src": "skills/release/modes/demo.md:124"
     },
     "8f21ee9a3e42d159e4d150d9d7c9d928559f6ce1d9b243b016f7b8b226088665": {
       "kind": "command",
@@ -4681,7 +4691,7 @@
     },
     "91cf27f2b5dfd36299a7d5ae036de3a7d162ddf2f3c934443cbcd7a85f8baef5": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "927f85766a7c481ad3ff1b1451083ed3d1110a223d4ca22b46ace689310be2d1": {
       "kind": "command",
@@ -4713,7 +4723,7 @@
     },
     "92fc83816d24f3e801ff65e2be7931f238738d10890144c0300904a52535f183": {
       "kind": "command",
-      "src": "skills/release/modes/release-draft-template.md:375"
+      "src": "skills/release/modes/release-draft-template.md:379"
     },
     "930abe9f98ad3dbf98088b327a0d4a1b548cb395dd9d441129d345886cb70206": {
       "kind": "block",
@@ -4726,7 +4736,7 @@
     },
     "936f97d0d27bed711e4ff41f8acfed9c169ba3e3b8d5a3069c418e5e149da389": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:68"
+      "src": "skills/resolve/modes/dispatch-phase2.md:69"
     },
     "9371be4a36869fdcee0fce5e2c2e5219274e209f3cbeee78a20da31f9dbc4c87": {
       "kind": "command",
@@ -4781,6 +4791,10 @@
       "kind": "block",
       "src": "skills/review/modes/reply.md:5"
     },
+    "9559cf7886dfe8b92363fabd43ccfd7980a092089b0307c29ef033d915985d73": {
+      "kind": "command",
+      "src": "skills/analyse/SKILL.md:360"
+    },
     "957ec623608de86a39644914bfb81a5b0bc461a74e9a78df9bfcbbc58468f74a": {
       "kind": "command",
       "src": "agents/gh-scraper.md:36"
@@ -4793,14 +4807,9 @@
       "kind": "command",
       "src": "skills/resolve/modes/conflict-resolution.md:104"
     },
-    "95a701d24785a0f46519ade44f767c26b8ccfb6a5811d09b42328374e9c32f6e": {
-      "kind": "block",
-      "src": "skills/resolve/modes/exec-approval.md:28",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r IMPL_DIR < \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" 2>/dev/null || IMPL_DIR=\"\"\nIFS= read -r PR_NUMBER < \"${TMPDIR:-/tmp}/resolve-pr-number-${CSID}\" 2>/dev/null || PR_NUMBER=\"\"\nIFS= read -r PR_HEAD_OID < \"${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}\" 2>/dev/null || PR_HEAD_OID=\"\"\nIFS= read -r BASE_REF < \"${TMPDIR:-/tmp}/resolve-base-ref-${CSID}\" 2>/dev/null || BASE_REF=\"\"\nIFS= read -r _XREPO < \"${TMPDIR:-/tmp}/resolve-is-cross-repo-${CSID}\" 2>/dev/null || _XREPO=true\nIFS= read -r REPORT_FILE < \"${TMPDIR:-/tmp}/resolve-report-file-${CSID}\" 2>/dev/null || REPORT_FILE=\"\"\n[ -n \"$IMPL_DIR\" ] || { echo \"! BLOCKED \u2014 IMPL_DIR sentinel missing; Step 3a/3b did not finish\"; exit 1; }\ncase \"$PR_NUMBER\" in ''|*[!0-9]*) _NO_PR=true ;; *) _NO_PR=false ;; esac\nIFS= read -r _PREV < \"$IMPL_DIR/exec-plan.txt\" 2>/dev/null || _PREV=\"\"\nif [ \"$_NO_PR\" = true ] || [ -z \"$PR_HEAD_OID\" ] || [ -z \"$BASE_REF\" ]; then\n    _KEEP=deferred; [ -s \"$IMPL_DIR/hooks-inspection.json\" ] && [ \"${_PREV#*hooks=ask}\" != \"$_PREV\" ] && _KEEP=ask\n    echo \"pr-code=deferred hooks=$_KEEP\" > \"$IMPL_DIR/exec-plan.txt\"; cat \"$IMPL_DIR/exec-plan.txt\"; exit 0\nfi\nif [ -e \"$IMPL_DIR/approved-hooks.txt\" ]; then\n    _HOOKS=recorded\n    IFS= read -r _HD < \"$IMPL_DIR/hooks-decision.txt\" 2>/dev/null || _HD=\"\"\n    [ \"$_HD\" != run ] || python \"$PLUGIN_ROOT/bin/resolve_commit_hooks.py\" --refresh-approval --base \"origin/$BASE_REF\" --head \"$PR_HEAD_OID\" --approved-file \"$IMPL_DIR/approved-hooks.txt\" --decision-file \"$IMPL_DIR/hooks-decision.txt\" || { : > \"$IMPL_DIR/approved-hooks.txt\"; printf 'stale\\n' > \"$IMPL_DIR/hooks-decision.txt\"; }\nelif [ -s \"$IMPL_DIR/hooks-inspection.json\" ] && [ \"${_PREV#*hooks=ask}\" != \"$_PREV\" ]; then\n    _HOOKS=ask; _RD=\"\"\n    echo \"the digest below was taken before the base merge was staged (re-inspection failed: $IMPL_DIR/hooks-refresh.err); if the merge changes the hooks, an approval of it no longer matches at the merge commit and hooks then stay disabled\" > \"$IMPL_DIR/hooks-inspection-note.txt\"\n    if python \"$PLUGIN_ROOT/bin/resolve_commit_hooks.py\" --decide --base \"origin/$BASE_REF\" --head \"$PR_HEAD_OID\" > \"$IMPL_DIR/hooks-refresh.json\" 2> \"$IMPL_DIR/hooks-refresh.err\"; then\n        jq -r '.decision // empty' \"$IMPL_DIR/hooks-refresh.json\" > \"$IMPL_DIR/hooks-refresh-decision.txt\" 2> /dev/null\n        IFS= read -r _RD < \"$IMPL_DIR/hooks-refresh-decision.txt\" 2>/dev/null || _RD=\"\"\n    fi\n    case \"$_RD\" in\n        ask|run) jq . \"$IMPL_DIR/hooks-refresh.json\" > \"$IMPL_DIR/hooks-inspection.json\" && : > \"$IMPL_DIR/hooks-inspection-note.txt\" ;;\n        none|disabled)\n            jq . \"$IMPL_DIR/hooks-refresh.json\" > \"$IMPL_DIR/hooks-inspection.json\"; : > \"$IMPL_DIR/hooks-inspection-note.txt\"\n            : > \"$IMPL_DIR/approved-hooks.txt\"; echo \"$_RD\" > \"$IMPL_DIR/hooks-decision.txt\"; _HOOKS=$_RD\n            jq -r '\"\u2192 repository hooks: \" + .decision + \" \u2014 \" + (.reason // \"\") + \"; the earlier hook question is dropped\"' \"$IMPL_DIR/hooks-inspection.json\" ;;\n    esac\nelse\n    _HOOKS=\"\"\n    if python \"$PLUGIN_ROOT/bin/resolve_commit_hooks.py\" --decide --base \"origin/$BASE_REF\" --head \"$PR_HEAD_OID\" --approved-file \"$IMPL_DIR/approved-hooks.txt\" > \"$IMPL_DIR/hooks-inspection.json\" 2> \"$IMPL_DIR/hooks-inspection.err\"; then\n        jq -r '.decision // empty' \"$IMPL_DIR/hooks-inspection.json\" > \"$IMPL_DIR/hooks-decision.txt\" 2>/dev/null\n        IFS= read -r _HOOKS < \"$IMPL_DIR/hooks-decision.txt\" 2>/dev/null || _HOOKS=\"\"\n    fi\n    case \"$_HOOKS\" in\n        ask) ;;\n        none|run|disabled) jq -r '\"\u2192 repository hooks: \" + .decision + \" \u2014 \" + (.reason // \"\")' \"$IMPL_DIR/hooks-inspection.json\" ;;\n        *) : > \"$IMPL_DIR/approved-hooks.txt\"; _HOOKS=disabled; echo \"\u26a0 hook inspection failed \u2014 hooks stay disabled for this run ($IMPL_DIR/hooks-inspection.err)\" ;;\n    esac\nfi\n_DEC=\"\"\nif [ -e \"$IMPL_DIR/pr-code-decision.txt\" ]; then\n    IFS= read -r _DEC < \"$IMPL_DIR/pr-code-decision.txt\" || [ -n \"$_DEC\" ] || _DEC=deny\nfi\nif [ \"$_XREPO\" = false ]; then\n    _PRCODE=same-repo\nelif [ \"$_DEC\" = deny ] || { { [ \"$_DEC\" = auto ] || [ \"$_DEC\" = sandbox ] || [ \"$_DEC\" = unsandboxed ]; } && [ -e \"$IMPL_DIR/code-approval.txt\" ]; }; then\n    _PRCODE=recorded\nelif [ -s \"$IMPL_DIR/code-scan.txt\" ] && [ \"${_PREV#*pr-code=ask}\" != \"$_PREV\" ]; then\n    _PRCODE=ask\nelse\n    _PRCODE=ask\n    if python -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" scan --head \"$PR_HEAD_OID\" --base \"origin/$BASE_REF\" --out \"$IMPL_DIR/code-scan.json\" --text > \"$IMPL_DIR/code-scan.txt\" 2> \"$IMPL_DIR/code-scan.err\"; then\n        case \"$REPORT_FILE\" in\n            */*) python \"$PLUGIN_ROOT/bin/code_safety_status.py\" check --status \"${REPORT_FILE%/*}/code-safety.json\" --scan \"$IMPL_DIR/code-scan.json\" --head \"$PR_HEAD_OID\" > \"$IMPL_DIR/code-safety-check.txt\" ;;\n            *) echo \"ask reason=no-review-status\" > \"$IMPL_DIR/code-safety-check.txt\" ;;\n        esac\n        IFS= read -r _CHECK < \"$IMPL_DIR/code-safety-check.txt\" 2>/dev/null || _CHECK=\"ask reason=check-failed\"\n        [ \"$_DEC\" != stale ] || _CHECK=\"ask reason=stale-approval\"\n        if [ \"$_CHECK\" = auto ] && python -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" bind --head \"$PR_HEAD_OID\" --base \"origin/$BASE_REF\" --scope run --out \"$IMPL_DIR/code-approval.txt\" > /dev/null; then\n            echo auto > \"$IMPL_DIR/pr-code-decision.txt\"; _PRCODE=auto\n            echo \"\u2192 PR code: review and this scan both found nothing at head ${PR_HEAD_OID:0:12}; runs in the sandbox, no question\"\n            cat \"$IMPL_DIR/code-scan.txt\"\n        fi\n    else\n        echo \"scan unavailable (see $IMPL_DIR/code-scan.err): no verdict or risk level to show; decide without it\" > \"$IMPL_DIR/code-scan.txt\"\n    fi\nfi\necho \"pr-code=$_PRCODE hooks=$_HOOKS\" > \"$IMPL_DIR/exec-plan.txt\"; cat \"$IMPL_DIR/exec-plan.txt\""
-    },
     "95cc242f8aab98735503e6eeb3614d17cbe5dc9da7b172426924224bb2ee9ea8": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "95dfbed31d6b568b8213f795cc5b8831ea54cf6c05efb863101c5d7598791695": {
       "kind": "command",
@@ -4808,7 +4817,7 @@
     },
     "96295ecf6bf66dfa9c831cf52b60f9d7c1b0f721f24e199478a5fa63e9f90093": {
       "kind": "block",
-      "src": "skills/release/modes/gather-changes.md:130",
+      "src": "skills/release/modes/gather-changes.md:132",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n[ -n \"$RANGE\" ] || IFS= read -r RANGE < \"${TMPDIR:-/tmp}/release-range-${CSID}\" 2>/dev/null || RANGE=\"\"\n[ -n \"$RANGE\" ] || { echo \"Error: release range unresolved; cannot enumerate candidate commits\" >&2; exit 1; }\npython \"$PLUGIN_ROOT/bin/gh_batch_query.py\" commit-prs --range \"$RANGE\" --exclude-file \"${TMPDIR:-/tmp}/release-shipped-${CSID}\" --offset-file \"${TMPDIR:-/tmp}/release-assoc-offset-${CSID}\" || { echo \"Error: PR association coverage unavailable; retain gap, do not claim complete credits\" >&2; exit 1; }"
     },
     "9644358c08dc2d07475e6bb4e2246cf14a9d5114d832985abc2beffed2598c27": {
@@ -4846,7 +4855,7 @@
     },
     "97b34e5382288b318517c99397e30cf0ae5a203c9c6f995584132072f6cfd025": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "97b8de6734af3938f36493203fcf1f446938f2458d5e87cee652b71b95471a0f": {
       "kind": "command",
@@ -4895,7 +4904,7 @@
     },
     "985e4224bf8a44e3caa0312ec5f567e2f7e3c48daff98e99f781d487604daa78": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:437"
+      "src": "skills/analyse/SKILL.md:423"
     },
     "989ebf8a922537031adf2d5cb7b32b83fa0a7ea5b404b5af13900f839df9437e": {
       "kind": "command",
@@ -4915,7 +4924,7 @@
     },
     "9917f900c018a5b93e9f00d3c6dcf84cdc1318fdf9df3132e72c7d2da2214034": {
       "kind": "block",
-      "src": "skills/release/modes/release-draft-template.md:391"
+      "src": "skills/release/modes/release-draft-template.md:395"
     },
     "992791814c792e552109754234fbba503db949243c3de3e69fb6410ae30ae3d4": {
       "kind": "command",
@@ -4937,7 +4946,7 @@
     },
     "9a1bdf621c6df5b98b13c575a22c3160c4eff3e786d9448d495b03906bba18e4": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "9a795e591ff22c6b7b88c0a96f50fbb26e33de5b94adef5f652b3b90bf2912d6": {
       "kind": "command",
@@ -5001,11 +5010,11 @@
     },
     "9c803df592d78b5ac0c907259bdd1d1d882db4602613c915292d94b1ba692b1b": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:202"
+      "src": "skills/review/modes/post-agent.md:205"
     },
     "9c815fb61a2a343b7361ab57b6b71b8b0d7b5a9e60ef681cd245d37969182248": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:125"
+      "src": "skills/review/modes/post-agent.md:128"
     },
     "9c82e2829eb3953bde0f5286154fe8bf4145f169b7f3695b152f48493a3be1ae": {
       "kind": "command",
@@ -5050,7 +5059,7 @@
     },
     "9d507107513f25b262127e3ae49adfb8818f73fed55593a2ff533c32a05d7392": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:68"
+      "src": "skills/resolve/modes/dispatch-phase2.md:69"
     },
     "9d958f14926f21a126585906cbf83b3aa9527ec527d2419089a269160faa9331": {
       "kind": "command",
@@ -5074,7 +5083,7 @@
     },
     "9e0eb8f21e40dcc6365411c03a6d1d8cd3f83f9f8192eabe583d37b4b7743714": {
       "kind": "block",
-      "src": "skills/release/modes/notes-draft.md:110",
+      "src": "skills/release/modes/notes-draft.md:112",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r SKILL_DIR < \"${TMPDIR:-/tmp}/release-setup-${CSID}/SKILL_DIR\" 2>/dev/null || SKILL_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$SKILL_DIR/modes/release-draft-template.md\""
     },
     "9e3848213264eaae0f2f35be76cf013b4faa8ad1bc83e985f08d6b392d4d8f88": {
@@ -5129,7 +5138,7 @@
     },
     "a0411a83d34fdeeace7ba52b99b4fc8f3cb86d6170290bad3532fd0629e714bc": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "a04258965589585942c9d9a42b05055d7da221276811570ed9d70d7200647e9f": {
       "kind": "command",
@@ -5153,7 +5162,7 @@
     },
     "a189bdca8fa3df8d518296e1b527c6c73e9f822f52bc0f7ee5fb175517315116": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "a19dca5e52cd1d525944ee881db5c3354b972d184078f07907cc7cf18e8b7c65": {
       "kind": "command",
@@ -5177,7 +5186,7 @@
     },
     "a29670b098835c6694bcbe9e9cba70625706a234083a9b55df72439a8ff528b1": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:453"
+      "src": "skills/analyse/SKILL.md:439"
     },
     "a299b3b69fd9dbcc486280cfe4cfb2315c16bd0b64bf5dd42f26be5c3d001144": {
       "kind": "command",
@@ -5201,7 +5210,7 @@
     },
     "a3196318f67f52922da24e4db94e803d81d71550ce16e739e66356224f00501a": {
       "kind": "block",
-      "src": "skills/analyse/SKILL.md:492",
+      "src": "skills/analyse/SKILL.md:478",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/agent_watch.py\" --state-dir \"${TMPDIR:-/tmp}/oss-analyse-watch-${CSID}\""
     },
     "a322bb4e97408f00c6ef225755e7482a4c1249a838612e46c8c1ab9a04099039": {
@@ -5214,7 +5223,7 @@
     },
     "a33236d0ca685eee6fad3e89247540d3bde47c2a7edd0922e47164b4a452f8ca": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:202"
+      "src": "skills/review/modes/post-agent.md:205"
     },
     "a39f6093a72333224384fda434a5aed1564b80063b08b0e9fcb5a412c073a5cb": {
       "kind": "block",
@@ -5246,7 +5255,7 @@
     },
     "a411345cb59e8e898f75a7be2cd65a53e850c8d2f85c2d8030fc4af20a74dc05": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:437"
+      "src": "skills/analyse/SKILL.md:423"
     },
     "a42bc5b8611d22e6775c275870461cf3c8e65d3727160d2001587ec0ffa93112": {
       "kind": "command",
@@ -5263,7 +5272,7 @@
     },
     "a462ad0b2db4f52fbeeaa0cb5a7879790600d801e5e27b284cdf33d1305f0ad0": {
       "kind": "block",
-      "src": "skills/release/modes/notes-draft.md:99"
+      "src": "skills/release/modes/notes-draft.md:101"
     },
     "a46fe6d59e81483dae51faa39e662db7a1b05391e187ce773ffe490ab2a2b905": {
       "kind": "command",
@@ -5332,7 +5341,7 @@
     },
     "a5efb1e6e0f6e00b6d601e18ca2bfdc9e1b4b1dbb3ccb3a1ce6a7bb6e4317f18": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "a6336f2317dfb9d051fd606c654f19fd3c1d670be9a2922fbdd7462bf1ce1c13": {
       "kind": "command",
@@ -5405,7 +5414,7 @@
     },
     "a91db7981afd5fba434648dec9f2c00eb9a64c938e9a3bc411e3f9edf8f28205": {
       "kind": "block",
-      "src": "skills/analyse/SKILL.md:328",
+      "src": "skills/analyse/SKILL.md:330",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$PLUGIN_ROOT/skills/analyse/modes/thread.md\""
     },
     "a91e467b95a3d83af7f57c873539ea72bb42ff3becac3e1d5c0bd964d6a93320": {
@@ -5422,7 +5431,7 @@
     },
     "a9773ff7a563f91d50e4e2a8c7bcd96f2a38743484761284c6f8a4e74f762aa2": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:453"
+      "src": "skills/analyse/SKILL.md:439"
     },
     "a9a8514f3bdebfde07637c59ea9d9f62338bcb4db2b0c204b20fd3c6338645e9": {
       "kind": "command",
@@ -5451,7 +5460,7 @@
     },
     "aad9b98a537e42a14cf31a15a3083756fdc36d724c01ddb217ac3e574150649a": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "ab025803b76e162a2db10d96fa7b782a480b04963d45bf4687e38783a97421ad": {
       "kind": "command",
@@ -5476,7 +5485,7 @@
     },
     "ab2f532d0a125ebac21f57d977f0638cf5d3bd49be43d17fedcd8d0eb99565f7": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "ab4eeade980c9a37bee51bf9b3bb961ec3e45bc5cd76e4da220f2a6c9a24adfb": {
       "kind": "command",
@@ -5557,7 +5566,7 @@
     },
     "ad19626c1da7ee19fb11fe5e421b6847562091711727e3ddd88ec0e7643f13aa": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:257"
+      "src": "skills/analyse/SKILL.md:259"
     },
     "ad4874b2085a91a6685c0530dfee485b51b3fa34c2d6bee656c13551a8c53f6b": {
       "kind": "block",
@@ -5575,6 +5584,10 @@
     "ada30a59bbbe1f763274ae47801296aff601a271578b7167b4b897d3343983d0": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-prelude.md:462"
+    },
+    "ada9a384e86c0ff4a0773dcb56c33e0c3524907ef73faf0d33bcdc0d7e25e381": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:28"
     },
     "adee64e56942572b714ba75ed1b360be005a8bfe9489b94ab4c40304dfdc3795": {
       "kind": "command",
@@ -5619,7 +5632,7 @@
     },
     "aed39a284e33cbaae6770a00ae98e186eaba9f6ad723e9939279453f3ee0de29": {
       "kind": "block",
-      "src": "skills/review/modes/post-agent.md:202"
+      "src": "skills/review/modes/post-agent.md:205"
     },
     "aeee9a666b2d29d8e3cb86b1f89597914d5a32e23179966f7e62b56a2f93c20d": {
       "kind": "command",
@@ -5717,7 +5730,7 @@
     },
     "b27dedb29d93cb2e580891f2298fbd0f6502e26952d3ebf5420ac3334ce08e40": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:177"
+      "src": "skills/review/modes/post-agent.md:180"
     },
     "b28308b5c2b1f57bc679b2a2c7f7516fdce28d608d406e75451f004228f21597": {
       "kind": "command",
@@ -5807,7 +5820,7 @@
     },
     "b473b7d8e0ac51d90fc1c71a59e2c802f3324d266e832f58e0574ac388cf5ef2": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "b4a79f162fb3a506a9ba698a6a17844e855c7ce85143ee4a30034630d81add04": {
       "kind": "block",
@@ -5951,11 +5964,11 @@
     },
     "b88a619a5420816dadf8fb27cfbbb7c345a127d90efca9ac093e5e56cedddda1": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "b89117716fba1237ed74d5bec7ca3cbeec5b49dfc0368fb7405ae69999cd3909": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "b8ad2e8b4e842d533d7f0f0ef8681015fa9cd7b83581509b5e97a563f2654f59": {
       "kind": "command",
@@ -5967,7 +5980,7 @@
     },
     "b8e9e46e547e7fd8f3e6ef651525702c5a75ac9189f81a26f89ad997b9dad181": {
       "kind": "block",
-      "src": "skills/release/modes/audit.md:139",
+      "src": "skills/release/modes/audit.md:141",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nCODEX_STATUS=$(python \"$PLUGIN_ROOT/bin/check_bridge.py\" --status 2>/dev/null || echo \"absent\")\nif [ \"$CODEX_STATUS\" = \"available\" ]; then CODEX_AVAILABLE=1; echo \"bridge@borda-ai-rig available\"; else CODEX_AVAILABLE=0; echo \"\u26a0 bridge@borda-ai-rig is ${CODEX_STATUS} \u2014 skipping adversarial audit pass\"; fi"
     },
     "b905e22c52e796867e77503c0e887fb0e944ac7895ff2f9d5ffd271e7e78e635": {
@@ -5985,7 +5998,7 @@
     },
     "b978be05eede92649c7d31a6e68c2efc58fd19a87f88a659627e709a7f3dfb3a": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "b99ba6253aa7744ba5a77c6678e143577712a789f652d7ea359f76314bf5553e": {
       "kind": "command",
@@ -6010,7 +6023,7 @@
     },
     "ba115bf34864fa4a68763376bed8af8ebd975f11fbf65865be550221cbc7f88f": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "ba1d1e1e78855f091d9e6052900a9313da20de535451d78db77f50c6639d1277": {
       "kind": "command",
@@ -6023,6 +6036,11 @@
     "ba9793af14139d1e68c7132b0747417123a2b1a0bd041e7738f5d1fa739adaab": {
       "kind": "block",
       "src": "skills/review/modes/scope-context.md:253"
+    },
+    "bac95875c1cacd9a1d801baf27d90e6a5747d7f122c7ed0c37c444dc9b8dc1fb": {
+      "kind": "block",
+      "src": "skills/analyse/SKILL.md:360",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r _CLEAN_ARGS < \"${TMPDIR:-/tmp}/analyse-clean-args-${CSID}\" 2>/dev/null || _CLEAN_ARGS=\"\"\nIFS= read -r _REPORT_FILE < \"${TMPDIR:-/tmp}/analyse-report-file-${CSID}\" 2>/dev/null || _REPORT_FILE=\"pending\"\nIFS= read -r _REPLY_MODE < \"${TMPDIR:-/tmp}/analyse-reply-mode-${CSID}\" 2>/dev/null || _REPLY_MODE=\"false\"\n_CACHE_DIR=.cache/gh\n_PRESERVE=\"target=#${_CLEAN_ARGS}, cache-dir=${_CACHE_DIR}, report=${_REPORT_FILE}, reply-mode=${_REPLY_MODE}\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-sentinel analyse-keep-items \"oss:analyse\" \"synthesis (after gather/fetch)\" \"$_CACHE_DIR\" \"${_PRESERVE}\" \"final report (Step 6) or shepherd reply (Step 7)\""
     },
     "bada791beaaa1ed40e4884848359a78119ed36ab9ebf295bbe71ab69706acfbe": {
       "kind": "command",
@@ -6141,7 +6159,7 @@
     },
     "bd92c31970ae47ed45c44934ae8fa4a3ee6efdddc93ba66e0db6851071eb98e6": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "bda41d5e2f6abd8f5b8fb488d3a3dad3d5b2b16f48aeeb215033484bc7698315": {
       "kind": "command",
@@ -6153,7 +6171,7 @@
     },
     "be3fa7618840f55d16b144981367ec5538aa0d590ca34d817660ce54884bea47": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "be5b66daa7eed562960887d83c329c41a0f889997ef6d8a46bba33318120f3d0": {
       "kind": "command",
@@ -6182,7 +6200,7 @@
     },
     "bea1c6c7365567e64b112b24efdab3bc1555dc95c1a98c1ec22deefc2514527f": {
       "kind": "block",
-      "src": "skills/release/modes/gather-changes.md:151"
+      "src": "skills/release/modes/gather-changes.md:153"
     },
     "beda4dcbc41f832197504fcbc313015d140592e2f71b4a6ed149fcd50c7ca2f2": {
       "kind": "command",
@@ -6194,7 +6212,7 @@
     },
     "bf0a64f159e22ca8c7e3018e7bd09e06ad16bed459a048ed4da6fc084b3b3e0d": {
       "kind": "block",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "bf17914d7f159f03fd2e247ad3aec2491087788ad73cacf7beb45165261ded18": {
       "kind": "command",
@@ -6214,7 +6232,7 @@
     },
     "bf38dc6f43785b4c5c30cd130625e5c7d41ad55eedda739c93fd06502a8c1fdb": {
       "kind": "block",
-      "src": "skills/release/modes/gather-changes.md:115",
+      "src": "skills/release/modes/gather-changes.md:117",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r RANGE < \"${TMPDIR:-/tmp}/release-range-${CSID}\" 2>/dev/null || RANGE=\"\"\nIFS= read -r SHIPPED_TAGS < \"${TMPDIR:-/tmp}/release-setup-${CSID}/SHIPPED_ELSEWHERE_TAGS\" 2>/dev/null || SHIPPED_TAGS=\"\"\nSHIPPED_FILE=\"${TMPDIR:-/tmp}/release-shipped-${CSID}\"\n: > \"$SHIPPED_FILE\"\n[ -z \"$SHIPPED_TAGS\" ] || python \"$PLUGIN_ROOT/bin/release_shipped_elsewhere.py\" --range \"$RANGE\" --tags \"$SHIPPED_TAGS\" --out \"$SHIPPED_FILE\" || { echo \"! BLOCKED \u2014 shipped-elsewhere subtraction failed; do not claim the range holds only new work\" >&2; exit 1; }\ngit log --no-merges --format='%H%x09%s' --end-of-options \"$RANGE\" | awk -F'\\t' 'NR==FNR{if($2==\"shipped\")x[$1]=1;next}!($1 in x)' \"$SHIPPED_FILE\" -"
     },
     "bf55b454d606fbf87358f3c305332b039f46183f1d43171896e7cddb4dbf41db": {
@@ -6231,7 +6249,7 @@
     },
     "c011a306aebe328b8ece9eadff26888318fd137edfb5ac3828f530966bae9e8a": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "c0139aa1fcd78d9d85d53b1539fac4b154100d70344103ef5c080ebc7bb8c1bf": {
       "kind": "command",
@@ -6244,7 +6262,7 @@
     },
     "c023d303695f050252a21ca30bb23fe5f14be686aedf00a70fabc0ebcb96f326": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "c0262f950e7155c2fa596d7ebae2d3a016ee58fc61e54453072ab0f941b484dc": {
       "kind": "command",
@@ -6314,7 +6332,7 @@
     },
     "c23ffaabf13ad64260c8ee7885e3dfbb3c6a891078cd8bbff74d0cef0c375041": {
       "kind": "command",
-      "src": "skills/release/modes/demo.md:113"
+      "src": "skills/release/modes/demo.md:124"
     },
     "c24e8f33edfb7c1138463c3c99bd5caafd384fd9dec587847116a9e5aa1bc010": {
       "kind": "command",
@@ -6416,7 +6434,7 @@
     },
     "c4b61691c069654bfa73b3992885b280982a0c9cce43e953dc6e6a3a080e2e6f": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "c4b77dce73c5774ca2755d25324500045480715698fe89da69e5103277bf6f6d": {
       "kind": "command",
@@ -6448,7 +6466,7 @@
     },
     "c57381ac5821810c7e0facbaac939c748e167a5f3aef8f7d3945deb1cf142872": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "c57cb1fe70b9572d5f5f1d39962d97ffbe5987af83d8a450c389e45231a1ff10": {
       "kind": "command",
@@ -6508,7 +6526,7 @@
     },
     "c81c8e77d2dd26d77b25746fce4932a041f1d645999c8276408b399331cf6454": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:437"
+      "src": "skills/analyse/SKILL.md:423"
     },
     "c82410f56ecce1a33bf47dece75df2c2bdb06af5124a530f7a73aa3533f6645f": {
       "kind": "command",
@@ -6520,11 +6538,11 @@
     },
     "c854c0eb251d6309aba1ae4f5bc3c323d2267537d4b52c5c44b0b70130b0c443": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:437"
+      "src": "skills/analyse/SKILL.md:423"
     },
     "c8775d40682ae2b9e387ebd994827b16cd002b03be46e371786363c6fdcc71a6": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:288"
+      "src": "skills/analyse/SKILL.md:290"
     },
     "c87913b20941b30e9d4c5f8dba96eaa9bcc577358c635e2bfc5c6bc552f571b2": {
       "kind": "command",
@@ -6538,7 +6556,7 @@
     },
     "c884e05afeb6ba368a65ebff4fa3c5d8fd78a4c4dc2e05a3b2989bf93a80c6b9": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "c8eaa2c956f2271e4904b5b35ee4600feeed79c5542362b90344a28568368d7f": {
       "kind": "command",
@@ -6634,7 +6652,7 @@
     },
     "cc75fea2d5487c1fd1b186a0b44f641b6fbf94fd943d2afd3112c460fb5ab74d": {
       "kind": "command",
-      "src": "skills/release/modes/release-draft-template.md:391"
+      "src": "skills/release/modes/release-draft-template.md:395"
     },
     "cc8ecf2be9f29dc2369b0fc5dade0105ab50f5088a6349bf41f0b5534654522e": {
       "kind": "command",
@@ -6650,11 +6668,11 @@
     },
     "ccd971bd35b179413ff19dad7086a53aaef28e5ecfc9b0691846ed502696b56c": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:437"
+      "src": "skills/analyse/SKILL.md:423"
     },
     "cd0c58e00a478a8c0e6f9b83d1938204f02bbd8baa2048fe9e34407233af1bd7": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:358"
+      "src": "skills/analyse/SKILL.md:360"
     },
     "cd32ecadba69271e8e70c164f54042f28380af4a0659ce68ab2f7a6968a419e9": {
       "kind": "command",
@@ -6666,7 +6684,7 @@
     },
     "cd77d7dfd7d57f68e3bfc5690f5cb66aa8bb54a445eccab9ce4b9d85271124a1": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "cdc749a4dc6ef9e2a24e216d95c35a6997a896830a321d8049d8a62cc6eaa5c0": {
       "kind": "command",
@@ -6783,7 +6801,7 @@
     },
     "d114d4139eb7f258f6bec77c1b4aa265e3f628c0e915599dbcc74b12ab9842ae": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "d129c5c9a129ccc7eab0911be27f9ad6e55234a0700143b42c2588aee262a460": {
       "kind": "command",
@@ -6799,7 +6817,7 @@
     },
     "d159e466e7c4ad7c0cae3f0810eefd8ecef1649dacb39fa4b6baf8a2b994e60c": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "d1742ac6c8d2c00a23384f62bc6f647a41a0082bc80f3a3be7872cd8906d7125": {
       "kind": "block",
@@ -6807,7 +6825,7 @@
     },
     "d1a6a4c85102c44232ac4804b3091c4f420be2fc46d2a214ccf9899bed1b49a5": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "d1cbbfe79bb909488a430049d3626c2623aee059aab7abb299e75f5914d0b419": {
       "kind": "command",
@@ -6825,9 +6843,13 @@
       "kind": "command",
       "src": "skills/review/modes/preflight.md:253"
     },
+    "d238463e9e0859e11b14634aa4e81b05294b7730d0382a443e35f8de33ee829c": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:28"
+    },
     "d24a3961fd6c0627fee7a84a1b315f8c8fe748518dbabd3e5f9dac0494a4c1d2": {
       "kind": "block",
-      "src": "skills/review/modes/post-agent.md:150"
+      "src": "skills/review/modes/post-agent.md:153"
     },
     "d253e10191a575ea47bf5acd0c9d6c34875b73c637b7836d451b5019d0f381dc": {
       "kind": "command",
@@ -6889,13 +6911,13 @@
       "kind": "command",
       "src": "skills/resolve/modes/preflight.md:14"
     },
+    "d4b56606f758cdad9d59e501dd981a0a97cd4766cd0c38d61c6d4763c2be7c94": {
+      "kind": "command",
+      "src": "skills/release/modes/gather-changes.md:11"
+    },
     "d5143f2e4c95bc5e8113eedbe48de572da8149f761347caf337b024aee9ca588": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-prelude.md:386"
-    },
-    "d51fc4d9211ec6954c28ac7abf70c7a119554b4d62949f29cba8c5fb9797858d": {
-      "kind": "command",
-      "src": "skills/analyse/SKILL.md:358"
     },
     "d52ee8623db450d1c8c1c6ce4cce8afa6664e330b47a5eec392365f55080bfb5": {
       "kind": "command",
@@ -6923,7 +6945,7 @@
     },
     "d6579c781374caa0acf6169a442122b3dfb3e4434256c4095f41a05fd863d4a4": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:453"
+      "src": "skills/analyse/SKILL.md:439"
     },
     "d6bb887649089dbd1b95bae5d81a8b47f31ad3d83ccf95a74274d7849b1f3855": {
       "kind": "command",
@@ -6948,7 +6970,7 @@
     },
     "d73259b16e044e11c9e655d769a185ac0f9e34a44b0bc403418c72ebdc50a48b": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "d7361ddd633a959d6dc3beb17d3df2fb3a5f0df258e0e1e582349121ac718601": {
       "kind": "command",
@@ -7066,7 +7088,7 @@
     },
     "da8b882d5e04e54042a5717ed8eb8a87218761b41dc3f4b447a0b9d35a0311c0": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:437"
+      "src": "skills/analyse/SKILL.md:423"
     },
     "da9a162b1f02ed1793ce8ac2dfc605d3d139568b1b92890224c0115ef2431fce": {
       "kind": "command",
@@ -7107,7 +7129,7 @@
     },
     "db68f113f607b3f21e3cb28969dbe65459ea41087d185e469f3267b19e3f9365": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "dba33253ebc45efe10a0c6d4705dce140b2c2444ec8ca3d4da82c758eeb89e9c": {
       "kind": "block",
@@ -7210,7 +7232,7 @@
     },
     "de694476da2fb3437b2decb93bebdd394cfcffb0fa7f47aca014ed9164fb05fe": {
       "kind": "block",
-      "src": "skills/analyse/SKILL.md:437"
+      "src": "skills/analyse/SKILL.md:423"
     },
     "de8cbbf893e6cff5e8ad81003967956ff602fccb7aacea24f69a6d48c70b4f75": {
       "kind": "command",
@@ -7222,7 +7244,7 @@
     },
     "deb87da3dc7dd38b491b126e29375cfd995a56f42ceb974cc993b6d22cfa236e": {
       "kind": "block",
-      "src": "skills/analyse/SKILL.md:349",
+      "src": "skills/analyse/SKILL.md:351",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$PLUGIN_ROOT/skills/analyse/modes/evolution.md\""
     },
     "decb595f8ccb0f8a0a87309daa363ce13c28e3827b5bb290252b3db6348d506e": {
@@ -7235,7 +7257,7 @@
     },
     "dee8b8d0451cd0a7fdaf70d7c2b142ea09e94b3aafbe0a2b4b5d8f36aae341ac": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "df09dded7ca090d5b29ed37dfc85b2abbbcd6f5764ee210b4d4718967fdc24e5": {
       "kind": "command",
@@ -7275,16 +7297,12 @@
     },
     "dff0e133a4e3c9ce87a26c09b576465de24c99bdf62fbe4488ef2c7c4b9ff9b0": {
       "kind": "command",
-      "src": "skills/release/modes/release-draft-template.md:241"
+      "src": "skills/release/modes/release-draft-template.md:245"
     },
     "dff229df6ebca49a162c63ee1b6454e8fbd27739e3a283fab345bc7be1aba35b": {
       "kind": "block",
       "src": "skills/review/modes/agent-launch.md:15",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nTIMESTAMP=$(date -u +%Y-%m-%dT%H-%M-%SZ)\nRUN_DIR=\".temp/review/$TIMESTAMP\"\nmkdir -p \"$RUN_DIR\" || { echo \"! BLOCKED \u2014 run directory allocation failed\"; exit 1; }\n\necho \"$RUN_DIR\" > \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\"\n\nIFS= read -r _REPORT_BASE < \"${TMPDIR:-/tmp}/oss-review-orig-root-${CSID}\" 2>/dev/null || _REPORT_BASE=\"$(pwd)\"\n[ -n \"$_REPORT_BASE\" ] || _REPORT_BASE=\"$(pwd)\"\nIFS= read -r CLEAN_ARGS < \"${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}\" 2>/dev/null || CLEAN_ARGS=\"\"\n\n[[ \"$CLEAN_ARGS\" =~ ^[0-9]+$ ]] || { echo \"! BLOCKED \u2014 PR tag sentinel empty or non-numeric ('$CLEAN_ARGS') \u2014 refusing to allocate a report dir\"; exit 1; }\n\nIFS= read -r _FILL_REPORT < \"${TMPDIR:-/tmp}/oss-review-fill-report-${CSID}\" 2>/dev/null || _FILL_REPORT=\"\"\nIFS= read -r _FILL_HEAD < \"${TMPDIR:-/tmp}/oss-review-fill-head-${CSID}\" 2>/dev/null || _FILL_HEAD=\"\"\n[ -z \"$_FILL_REPORT\" ] || [ -n \"$_FILL_HEAD\" ] || { echo \"! BLOCKED \u2014 --fill-gaps has no plan (fill-gaps gate not passed); refusing to allocate a report dir\"; exit 1; }\n\nPR_REPORT_DIR=\"$_REPORT_BASE/.reports/review/pr-$CLEAN_ARGS\"\nREPORT_DIR=$(python \"$PLUGIN_ROOT/bin/next_run_dir.py\" --pr-dir \"$PR_REPORT_DIR\") || { echo \"! BLOCKED \u2014 report directory allocation failed\"; exit 1; }\n[ -n \"$REPORT_DIR\" ] && [ -d \"$REPORT_DIR\" ] || { echo \"! BLOCKED \u2014 report allocator returned no directory\"; exit 1; }\necho \"$REPORT_DIR\" > \"${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}\"\n\nIFS= read -r SNAP_DIR < \"${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}\" 2>/dev/null || SNAP_DIR=\"\"\n_HEAD_SHA=$(jq -r '.headRefOid // empty' \"$SNAP_DIR/pr-meta.json\" 2>/dev/null)\n\n[ -n \"$_FILL_HEAD\" ] && { _HEAD_SHA=\"$_FILL_HEAD\"; cp \"${TMPDIR:-/tmp}/oss-review-fill-plan-${CSID}\" \"$REPORT_DIR/fill-gaps.json\"; }\n[ -n \"$_HEAD_SHA\" ] && echo \"$_HEAD_SHA\" > \"$REPORT_DIR/head-sha.txt\" || :\n\nIFS= read -r _OSS_SHARED < \"${TMPDIR:-/tmp}/review-oss-shared-${CSID}\" 2>/dev/null || _OSS_SHARED=\"\"\nIFS= read -r REVIEW_SKILL_DIR < \"${TMPDIR:-/tmp}/review-skill-dir-${CSID}\" 2>/dev/null || REVIEW_SKILL_DIR=\"\"\ncat \"$_OSS_SHARED/file-handoff-protocol.md\" 2>/dev/null || echo \"\u26a0 file-handoff-protocol.md absent \u2014 continuing without it\"\nCODEX_STATUS=$(python \"$PLUGIN_ROOT/bin/check_bridge.py\" --status 2>/dev/null || echo \"absent\")\nif [ \"$CODEX_STATUS\" = \"available\" ]; then CODEX_AVAILABLE=1; echo \"bridge@borda-ai-rig available\"; else CODEX_AVAILABLE=0; echo \"\u26a0 bridge@borda-ai-rig is ${CODEX_STATUS} \u2014 skipping co-review\"; fi\necho \"$CODEX_AVAILABLE\" > \"${TMPDIR:-/tmp}/oss-review-codex-available-${CSID}\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$REVIEW_SKILL_DIR/templates/agent-prompts.md\""
-    },
-    "dffb383327b92179752711db8e98c4a5379d9966aa76022fc384f3622026a079": {
-      "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
     },
     "dffe329b25db812d8a04c51e2a91cbb2327665c81512b689bcdaa3d5518474e4": {
       "kind": "block",
@@ -7325,7 +7343,7 @@
     },
     "e1a1aef7624c0ac4996dc0ee0c03503196da685049b80e88e156a7083d21e59a": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "e1a772bb6275497f9c6c5246b49ad55749177c6d1631ae57bc29939fea2951e7": {
       "kind": "command",
@@ -7341,11 +7359,11 @@
     },
     "e2150daa843e295c39d0b2128d25a855e5c568631c4628ccff3311d87acd2817": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:453"
+      "src": "skills/analyse/SKILL.md:439"
     },
     "e23239c494dbbb7a2733d87a28cc3de725ad0526b1ea8d4e5a81c5ac0194e305": {
       "kind": "command",
-      "src": "skills/release/modes/gather-changes.md:130"
+      "src": "skills/release/modes/gather-changes.md:132"
     },
     "e244df334d5d296e67effb2ec68c83b5ad9a81dee8c141d5c4f20bbd1efa69d0": {
       "kind": "command",
@@ -7389,7 +7407,7 @@
     },
     "e311109f62bd343a50039d916163f2a5e30771a0d077bd55d0c80d7311f2f8b3": {
       "kind": "command",
-      "src": "skills/release/modes/release-draft-template.md:230"
+      "src": "skills/release/modes/release-draft-template.md:234"
     },
     "e329f2414a80baf7c3e36c7c8e1c75f773e8ee2109bb6e2bfd19657790c62c75": {
       "kind": "command",
@@ -7421,11 +7439,11 @@
     },
     "e4b83eab057fb153c4fbca94e0fd0523e8a78862835a0bc27a57234ec5a45e83": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:257"
+      "src": "skills/analyse/SKILL.md:259"
     },
     "e52bbd24f3b43d543e309f8e36e42015e60bf7e0049632bc7d429f7f86b9ffc4": {
       "kind": "block",
-      "src": "skills/review/modes/post-agent.md:141"
+      "src": "skills/review/modes/post-agent.md:144"
     },
     "e55f3d748309f49bf7a9a7f45369939cc6f6a20687bade734eae449142077c09": {
       "kind": "command",
@@ -7514,7 +7532,7 @@
     },
     "e87b36fec677c68833681ef68d7cf1eca3258e0b0ecc30a6aa07366b2deac7af": {
       "kind": "block",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "e8ae5bd281d640e600cc26d4f67a51e3accdd4a09b6b0ad9fcc80ae090d86c31": {
       "kind": "command",
@@ -7611,7 +7629,7 @@
     },
     "eb7d871b9601788ec9244eaf4288e5070ab1bcfab1ce57dc8c3ea4b8c82f0773": {
       "kind": "command",
-      "src": "skills/release/modes/audit.md:139"
+      "src": "skills/release/modes/audit.md:141"
     },
     "eb9b5bccace32b93996c00ddf77de1d956346d6f8d25f2f1511c9d9b040c5d4e": {
       "kind": "command",
@@ -7716,11 +7734,15 @@
     },
     "ee48706ae40890014668a16c26ab2a753e3a362961368fd8419004c3892da8f0": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:437"
+      "src": "skills/analyse/SKILL.md:423"
     },
     "ee4f7d4f0480b857037f75c03f0c14e7661a7f3a5da3e5c2cc28c35046486916": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
+    },
+    "ee5164431664f925e81f1d757b5d312f8b591c32fe0d21575a94dfd8964491a9": {
+      "kind": "command",
+      "src": "skills/release/modes/gather-changes.md:11"
     },
     "eecdd6376c871ee4821330a25650a5dfadf882350cb20f7caa3ecc970cb00638": {
       "kind": "command",
@@ -7802,7 +7824,7 @@
     },
     "f1e8b325765a51a1bdf769b55da2b74859428ad7b45b1f3ca5183aad06ddb110": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:453"
+      "src": "skills/analyse/SKILL.md:439"
     },
     "f1e9f39da48bfd25c4b616f944be1aabac718d878e2936cb9f41845018e3e545": {
       "kind": "block",
@@ -7918,13 +7940,17 @@
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:107"
     },
+    "f62d79d18e3f3645a5341019d62fe76960bf2b82a70daa9666f94949733a536f": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:28"
+    },
     "f63a5a48ea66b31ea03e8384b97832743d275e5d151ecb2c43884e4c0923d014": {
       "kind": "command",
       "src": "skills/review/modes/agent-launch.md:15"
     },
     "f64081f963a8c933179684eaf96964b138a4bddee49de62ef35410e8af091070": {
       "kind": "block",
-      "src": "skills/release/modes/release-draft-template.md:230"
+      "src": "skills/release/modes/release-draft-template.md:234"
     },
     "f640db813f1591646ee7648d86be90aadcd5fe1f0fc5f07337d1141f88badedd": {
       "kind": "command",
@@ -7994,17 +8020,13 @@
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:107"
     },
-    "f8ca5a8d80bd647a099b2a024435651b4cc8ee4779caa515f9141542fa6614b4": {
-      "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
-    },
     "f8cbff61724700a1441415b63ac29a3b62956fb056290fa6320c9163957a84f2": {
       "kind": "command",
       "src": "skills/release/SKILL.md:147"
     },
     "f8d98f4be63a67124cd73bd6cfbfe8f4fed7926a2a14018e51891910c6499a59": {
       "kind": "command",
-      "src": "skills/release/modes/gather-changes.md:115"
+      "src": "skills/release/modes/gather-changes.md:117"
     },
     "f8dabd3fcd90eca843b93434feffa0d206dfc6e0728426738424d97289be52e5": {
       "kind": "command",
@@ -8052,7 +8074,7 @@
     },
     "fa1e889434bfe2066e05aaad1f607d4a353b643c401ee8f5550caf4795daeab6": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "fa350f75267c19508535f1e0bb1bff83328a546c8e950bc96864a2d78e2e15ff": {
       "kind": "command",
@@ -8098,7 +8120,7 @@
     },
     "faf5ad7e83cbee2058efdc042bb59b0e8e6a955d2248daf776cad5d938ab13ac": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "fb01377569f881002710f8f847142fe49646fafb2618f768952510c8e8b587f6": {
       "kind": "command",
@@ -8110,7 +8132,7 @@
     },
     "fb4238db77865d6467615c797df9565f907869b4fc658e956874636fedef4968": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:288"
+      "src": "skills/analyse/SKILL.md:290"
     },
     "fb4771936bba7ae327ca5ac21cff6826dad1398c2e19043582a5935774475995": {
       "kind": "command",
@@ -8118,7 +8140,7 @@
     },
     "fb47eb43ce9ac658f4677a2c232c52ede3a931ed9dd30480d42e98de2fc9ac82": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:371"
+      "src": "skills/resolve/modes/dispatch-phase2.md:372"
     },
     "fb4c86432b7639509fb13b981e3bbefd49eb651a48fbb163c3a26aa9521bd59e": {
       "kind": "command",
@@ -8134,7 +8156,7 @@
     },
     "fb8b4252fe1d3a0c8303f6c1db93498969280afad2b2a6259140970e4c8c11e3": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:150"
+      "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
     "fba1889a8bc1d8ae4c803bce27838329c631c60d1dd02f8b63ae00d8bb384df3": {
       "kind": "command",
@@ -8142,7 +8164,7 @@
     },
     "fbaaaeebeb4a01665f71c93f65929ac58a95cd27b612ffd45d971ae2ac5344d9": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "fbab6a7d3354d5f2a1d5212cd9c55abfd76fa078ac5eb90a770892248026a552": {
       "kind": "command",
@@ -8159,11 +8181,6 @@
     "fbdc3cc5248ee06d22aa0a084e1f72f9ccbf89a04ae3d284aeb511dcb15c4074": {
       "kind": "command",
       "src": "skills/analyse/modes/codemap-signals.md:34"
-    },
-    "fbe8a68f754ebf21c5722546786bf5f688393edb430e59d079c544957b70272a": {
-      "kind": "block",
-      "src": "skills/release/modes/gather-changes.md:11",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r LAST_TAG < \"${TMPDIR:-/tmp}/release-setup-${CSID}/LAST_TAG\" 2>/dev/null || LAST_TAG=\"\"\nIFS= read -r CHERRY_PICK_SUBJECTS < \"${TMPDIR:-/tmp}/release-setup-${CSID}/CHERRY_PICK_SUBJECTS\" 2>/dev/null || CHERRY_PICK_SUBJECTS=\"\"\nIFS= read -r BRANCH < \"${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH\" 2>/dev/null || BRANCH=\"\"\nIFS= read -r BRANCH_REF < \"${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH_REF\" 2>/dev/null || BRANCH_REF=\"\"\nIFS= read -r BRANCH_KEY < \"${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH_KEY\" 2>/dev/null || BRANCH_KEY=\"\"\nIFS= read -r DO_APPEND < \"${TMPDIR:-/tmp}/release-do-append-${CSID}\" 2>/dev/null || DO_APPEND=\"false\"\nIFS= read -r RELEASE_MODE < \"${TMPDIR:-/tmp}/release-mode-${CSID}\" 2>/dev/null || RELEASE_MODE=\"\"\n\n[ -n \"$RANGE\" ] || IFS= read -r RANGE < \"${TMPDIR:-/tmp}/release-range-${CSID}\" 2>/dev/null || RANGE=\"\"\nif [ -z \"$RANGE\" ] && [ \"$DO_APPEND\" = \"true\" ]; then\n\n    RANGE=$(python \"$PLUGIN_ROOT/bin/release_append_marker.py\" resolve --branch \"$BRANCH_REF\" --last-tag \"$LAST_TAG\")\nelse\n    RANGE=\"${RANGE:-$LAST_TAG..HEAD}\"\nfi\n[ -z \"$RANGE\" ] && echo \"Error: could not determine commit range\" && exit 1\nif [ \"$RELEASE_MODE\" = notes ]; then\nFROZEN_HEAD=$(git rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || { echo \"Error: notes HEAD unresolved\" >&2; exit 1; }\nFROZEN_BRANCH=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || { echo \"Error: notes branch unresolved\" >&2; exit 1; }\n[ -n \"$BRANCH_REF\" ] && [ \"$FROZEN_BRANCH\" = \"$BRANCH_REF\" ] || { echo \"Error: notes branch changed after release setup\" >&2; exit 1; }\nFROZEN_TAGS_FILE=\"${TMPDIR:-/tmp}/release-append-tags-${CSID}\"\ngit for-each-ref --sort=refname --format='%(refname) %(objectname)' refs/tags > \"$FROZEN_TAGS_FILE\" || { echo \"Error: notes tag refs unresolved\" >&2; exit 1; }\ncase \"$RANGE\" in *...*|*..*..*) echo \"Error: notes range must have one two-dot endpoint\" >&2; exit 1;; *..*) ;; *) echo \"Error: notes range must have one two-dot endpoint\" >&2; exit 1;; esac\nRANGE_START=\"${RANGE%..*}\"\nRANGE_END=\"${RANGE##*..}\"\nFROZEN_START=$(git rev-parse --verify \"$RANGE_START^{commit}\" 2>/dev/null) || { echo \"Error: notes range start unresolved\" >&2; exit 1; }\nFROZEN_END=$(git rev-parse --verify \"$RANGE_END^{commit}\" 2>/dev/null) || { echo \"Error: notes range endpoint unresolved\" >&2; exit 1; }\ngit merge-base --is-ancestor --end-of-options \"$FROZEN_START\" \"$FROZEN_END\" || { echo \"Error: notes range start is not an ancestor of endpoint\" >&2; exit 1; }\ngit merge-base --is-ancestor --end-of-options \"$FROZEN_END\" \"$FROZEN_HEAD\" || { echo \"Error: notes range endpoint is not on gathered HEAD\" >&2; exit 1; }\nif [ \"$DO_APPEND\" = \"true\" ]; then\n    [ \"$FROZEN_END\" = \"$FROZEN_HEAD\" ] || { echo \"Error: append range does not end at frozen HEAD\" >&2; exit 1; }\nfi\nif [ \"$(python \"$PLUGIN_ROOT/bin/release_append_marker.py\" is-valid --branch \"$BRANCH_REF\" --last-tag \"$LAST_TAG\")\" = true ]; then\n    IFS= read -r SAVED_MARKER < \".temp/release-state-v2/$BRANCH_KEY/marker\" || { echo \"Error: saved marker unreadable\" >&2; exit 1; }\n    if [ \"$DO_APPEND\" = \"true\" ]; then\n        [ \"$FROZEN_START\" = \"$SAVED_MARKER\" ] || { echo \"Error: append range does not start at saved marker\" >&2; exit 1; }\n    else\n        git merge-base --is-ancestor --end-of-options \"$FROZEN_START\" \"$SAVED_MARKER\" || { echo \"Error: plain notes range skips commits after saved marker\" >&2; exit 1; }\n        git merge-base --is-ancestor --end-of-options \"$SAVED_MARKER\" \"$FROZEN_END\" || { echo \"Error: plain notes range ends before saved marker\" >&2; exit 1; }\n    fi\nfi\nRANGE=\"$FROZEN_START..$FROZEN_END\"\nprintf '%s\\n' \"$FROZEN_HEAD\" > \"${TMPDIR:-/tmp}/release-append-head-${CSID}\"\nprintf '%s\\n' \"$FROZEN_START\" > \"${TMPDIR:-/tmp}/release-append-start-${CSID}\"\nprintf '%s\\n' \"$FROZEN_END\" > \"${TMPDIR:-/tmp}/release-append-end-${CSID}\"\nprintf '%s\\n' \"$FROZEN_BRANCH\" > \"${TMPDIR:-/tmp}/release-append-branch-${CSID}\"\nfi\nif [ \"$DO_APPEND\" = \"true\" ] && [ \"$(git rev-list --count --end-of-options \"$RANGE\" 2>/dev/null)\" = 0 ]; then\n    echo \"No new commits to append; release artifacts unchanged. Stop this invocation.\"\n    exit 0\nfi\n\necho \"${RANGE:-}\" > \"${TMPDIR:-/tmp}/release-range-${CSID}\"\n\ngit log --oneline --no-merges --end-of-options \"$RANGE\"\ngit log --no-merges --format=\"--- %H%n%B\" --end-of-options \"$RANGE\"\ngit diff --stat --end-of-options \"$RANGE\"\n\nTRUNK=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null)\nif [ -z \"$TRUNK\" ]; then\n    TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | { read -r _ _ val; echo \"$val\"; })\nfi\nPR_FIELDS=\"number,title,body,labels,mergedAt,author\"\nif [ -n \"$TRUNK\" ]; then\n    PRS=$(gh pr list --state merged --base \"$TRUNK\" --limit 500 --json \"$PR_FIELDS\") || { echo \"Error: gh pr list failed; cannot classify release PRs\" >&2; exit 1; }\nelse\n    echo \"\u26a0 Could not detect default branch \u2014 listing all merged PRs\"\n    PRS=$(gh pr list --state merged --limit 500 --json \"$PR_FIELDS\") || { echo \"Error: gh pr list failed; cannot classify release PRs\" >&2; exit 1; }\nfi\nPR_COUNT=$(printf '%s' \"$PRS\" | jq 'length') || { echo \"Error: could not count gh pr list results\" >&2; exit 1; }\nif [ \"$PR_COUNT\" -eq 500 ]; then\n    echo \"\u26a0 gh pr list reached its 500-item cap; retrying discovery within the release date window\"\n    PR_SINCE=$(TZ=UTC git log --date=format-local:%Y-%m-%d --format=%cd --end-of-options \"$RANGE\" | sort | head -1)\n    if [ -n \"$PR_SINCE\" ]; then\n        PR_RECOVERY_ARGS=(pr list --state merged --limit 500 --json \"$PR_FIELDS\" --search \"merged:>=$PR_SINCE\")\n        if [ -n \"$TRUNK\" ]; then\n            PR_RECOVERY_ARGS+=(--base \"$TRUNK\")\n        fi\n        if RECOVERED_PRS=$(gh \"${PR_RECOVERY_ARGS[@]}\"); then\n            PRS=\"$RECOVERED_PRS\"\n            PR_COUNT=$(printf '%s' \"$PRS\" | jq 'length') || { echo \"Error: could not count bounded PR recovery\" >&2; exit 1; }\n        else\n            echo \"\u26a0 PR discovery coverage gap: bounded recovery failed; retaining the initial contextual list\" >&2\n        fi\n    fi\n    if [ \"$PR_COUNT\" -eq 500 ]; then\n        echo \"\u26a0 PR discovery coverage gap: list remains capped; use per-commit associations below for release membership and credits\" >&2\n    fi\nfi\nprintf '%s\\n' \"$PRS\""
     },
     "fbf42384e6f2753fd6059362cc34232bc9ebc04f29a2e9d5084c4b37ffc2455a": {
       "kind": "command",
@@ -8183,7 +8200,7 @@
     },
     "fc7ffdebb20cd90f3408e9d7cfbb2de63ff9e705f38bbbdfe901872f67d092b9": {
       "kind": "command",
-      "src": "skills/analyse/SKILL.md:453"
+      "src": "skills/analyse/SKILL.md:439"
     },
     "fcc0f24f34aed5a298994c3e3129f74b41fca489439997fe0208aef812453df0": {
       "kind": "command",
@@ -8252,7 +8269,7 @@
     },
     "fe3e104ca59b49f087c105417b60463dd69d1d187b107713d1298e739f56f1ab": {
       "kind": "command",
-      "src": "skills/resolve/modes/dispatch-phase2.md:310"
+      "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
     "fe443cca6425406cd24674b4326102cb9a182b3e4a4bd26b29aa0013cd2dc02c": {
       "kind": "command",
@@ -8298,11 +8315,6 @@
       "kind": "command",
       "src": "skills/release/modes/adversarial-review.md:9"
     },
-    "ff051fbaa48458e2497eeb6e079e1836b7bf4f18b000fe393b2138e5117f7d33": {
-      "kind": "block",
-      "src": "skills/release/templates/audit-checks.md:7",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r CLEAN_ARGS < \"${TMPDIR:-/tmp}/release-clean-args-${CSID}\" 2>/dev/null || CLEAN_ARGS=\"\"\nTARGET=$(echo \"$CLEAN_ARGS\" | awk '{print $2}')\n\nIFS= read -r RANGE < \"${TMPDIR:-/tmp}/release-range-${CSID}\" 2>/dev/null || RANGE=\"\"\nif [ -z \"$RANGE\" ]; then\n    LAST_TAG=$(git describe --tags --abbrev=0 --exclude='*rc*' --exclude='*dev*' --exclude='*alpha*' --exclude='*beta*' 2>/dev/null || git rev-list --max-parents=0 HEAD)\n    RANGE=\"$LAST_TAG..HEAD\"\nfi\necho \"audit scope: target=${TARGET:-none} range=$RANGE\"\nIFS= read -r SHIPPED_TAGS < \"${TMPDIR:-/tmp}/release-setup-${CSID}/SHIPPED_ELSEWHERE_TAGS\" 2>/dev/null || SHIPPED_TAGS=\"\"\n[ -z \"$SHIPPED_TAGS\" ] || echo \"! off-branch tags already shipped: $SHIPPED_TAGS - unreleased-commit and changed-file sections below include their backports; read them against release-shipped-${CSID}\"\nAUDIT_OUT=$(python \"$PLUGIN_ROOT/bin/run_audit_checks.py\" \\\n    --repo \"$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)\" \\\n    ${TARGET:+--tag \"$TARGET\"} \\\n    ${RANGE:+--range \"$RANGE\"})\nAUDIT_RC=$?\necho \"$AUDIT_OUT\"\necho \"audit-rc: $AUDIT_RC\"\nprintf '%s\\n' \"$AUDIT_OUT\" | grep -q '^pip-audit-status: not-installed' && echo \"PIP_AUDIT_MISSING=1\" || echo \"PIP_AUDIT_MISSING=0\""
-    },
     "ff0767c670c318834ff6fe6bae7415207a876f766b65041a2083627ade39dc59": {
       "kind": "command",
       "src": "skills/resolve/modes/report-intelligence.md:21"
@@ -8338,6 +8350,6 @@
       "src": "skills/resolve/modes/preflight.md:14"
     }
   },
-  "plugin": "cc_oss@0.66.0",
+  "plugin": "cc_oss@0.67.0",
   "schema": 2
 }

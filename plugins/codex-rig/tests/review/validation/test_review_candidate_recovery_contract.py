@@ -166,6 +166,39 @@ class TestReviewEntryAndRoutes:
     """The review skill's entry choice, routing and handoff wording."""
 
     @pytest.mark.installed_plugin
+    def test_fresh_pr_holds_invoking_repository_slot_through_detached_review(self) -> None:
+        """A fresh PR review claims its target before allocating a run or creating the detached checkout."""
+        entry = _section(_read(CODE_REVIEW_SKILL), "## Input Schema and entry").splitlines()
+        source = _read(CODE_REVIEW_SKILL.parent / "references/source-and-scope.md")
+        route = _section(source, "### Standalone PR workspace", "### ").splitlines()
+
+        assert any("references/source-and-scope.md#standalone-pr-workspace" in line for line in entry)
+        admission = next(i for i, line in enumerate(route) if "acquire --checkout <original invoking checkout>" in line)
+        allocation = next(i for i, line in enumerate(route) if "create_run.py" in line)
+        collection = next(i for i, line in enumerate(route) if "collect_pr.py" in line)
+        assert admission < allocation <= collection
+        assert "--target <canonical PR URL>" in route[admission]
+        assert "--queue" in route[admission]
+        assert any("report-root --checkout <original invoking checkout>" in line and "--root" in line for line in route)
+        assert "--checkout --checkout-mode review" in route[collection]
+        assert any("detached worktree" in line for line in route)
+        assert all("review_workspace.py" not in line for line in route)
+        assert any("--main-checkout <original invoking checkout>" in line for line in route)
+        assert any("legacy" in line and "slot" in line and "nested" in line for line in route)
+
+    @pytest.mark.installed_plugin
+    def test_review_sandbox_request_reaches_gate_and_unsafe_execution_keeps_automatic_protection(self) -> None:
+        """A requested plugin sandbox reaches the gate, and a trusted origin alone cannot waive evidenced risk."""
+        entry = _section(_read(CODE_REVIEW_SKILL), "## Input Schema and entry").splitlines()
+        source = _read(CODE_REVIEW_SKILL.parent / "references/source-and-scope.md").splitlines()
+        assert any('"flags"' in line and "--sandbox" in line for line in entry)
+        assert any("run_gates.py --sandbox" in line and "nested" in line and "retry" in line for line in source)
+        assert any(
+            "concrete evidence" in line and "unsafe execution" in line and "--sandbox-gate <gate>" in line
+            for line in source
+        )
+
+    @pytest.mark.installed_plugin
     def test_repeat_invocation_chooses_before_allocating_or_collecting(self) -> None:
         """An undecided standalone repeat offers the latest retained run even when it has no promoted report."""
         skill_entry = flat(_section(_read(CODE_REVIEW_SKILL), "## Input Schema and entry"))

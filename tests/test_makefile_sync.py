@@ -1228,10 +1228,14 @@ def _fake_opencode(tmp_path: Path) -> FakeOpencode:
         'if [[ "$1 $2" == "plugin list" && -z "${OPENCODE_STUB_NO_PLUGIN:-}" ]]; then\n'
         '    printf "ID VERSION SOURCE\\nopencode-rig %s git\\n" "${OPENCODE_STUB_VERSION:-22bbdb7}"\n'
         "fi\n"
-        'if [[ "$1 $2" == "plugin update" && -n "${OPENCODE_STUB_STALE_SERVICE:-}" && ! -e "$OPENCODE_STUB_LOG.stale" ]]; then\n'
-        '    : > "$OPENCODE_STUB_LOG.stale"\n'
-        '    echo "Error: Plugin is not configured: $3" >&2\n'
-        "    exit 1\n"
+        # OPENCODE_STUB_STALE_SERVICE is how many `plugin update` calls answer "not configured" before one succeeds.
+        'if [[ "$1 $2" == "plugin update" && -n "${OPENCODE_STUB_STALE_SERVICE:-}" ]]; then\n'
+        '    seen=$(cat "$OPENCODE_STUB_LOG.stale" 2>/dev/null || echo 0)\n'
+        "    if (( seen < OPENCODE_STUB_STALE_SERVICE )); then\n"
+        '        echo $(( seen + 1 )) > "$OPENCODE_STUB_LOG.stale"\n'
+        '        echo "Error: Plugin is not configured: $3" >&2\n'
+        "        exit 1\n"
+        "    fi\n"
         "fi\n"
         'exit "${OPENCODE_STUB_EXIT:-0}"\n',
         encoding="utf-8",
@@ -1305,6 +1309,23 @@ class TestOpenCodeSyncStages:
             "opencode plugin update github:Borda/AI-Rig#main::path:plugins/opencode-rig",
             "opencode service restart",
             "opencode plugin update github:Borda/AI-Rig#main::path:plugins/opencode-rig",
+        ]
+
+    def test_update_retries_until_a_restarted_service_reports_the_plugin(self, fake_opencode: FakeOpencode) -> None:
+        """A restarted service listens before it loads the configuration, so the first retry can fail too.
+
+        The restart returns once the service accepts connections; the plugin list follows a moment later. Retrying once
+        and giving up turned a healthy registration into a failed sync, so the stage polls until the answer changes.
+        """
+        result = _run_make("update-opencode-rig", env=_opencode_env(fake_opencode, OPENCODE_STUB_STALE_SERVICE="2"))
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        update = "opencode plugin update github:Borda/AI-Rig#main::path:plugins/opencode-rig"
+        assert fake_opencode.log.read_text(encoding="utf-8").splitlines() == [
+            update,
+            "opencode service restart",
+            update,
+            update,
         ]
 
     def test_register_rejects_a_checkout_that_differs_from_main(

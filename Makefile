@@ -210,6 +210,10 @@ register-opencode-rig:
 # registration is intact. That is a stale service, not a missing plugin: restart the service once
 # and retry. A service that already matches the CLI is left running, so no session is interrupted
 # for an update that would have succeeded anyway.
+# `service restart` returns as soon as the new service listens, before it has loaded the plugin
+# configuration, so an immediate retry answers "Plugin is not configured" a second time (observed:
+# the first retry after a restart fails, one made about 3 seconds later succeeds). The retry
+# therefore polls until the service reports the plugin, and fails only when that never happens.
 update-opencode-rig:
 	@$(call stage,Refresh OpenCode Rig to the GitHub head); \
 	run_update() { python3 "$(TIMEOUT_RUNNER)" --timeout-seconds "$(EXTERNAL_PLUGIN_TIMEOUT_SECONDS)" --label "opencode-rig update" -- opencode plugin update "$(OPENCODE_RIG_SPEC)"; }; \
@@ -221,7 +225,16 @@ update-opencode-rig:
 			*"Plugin is not configured"*) \
 				echo "  - background service predates this OpenCode CLI; restarting it and retrying the refresh" >&2; \
 				python3 "$(TIMEOUT_RUNNER)" --timeout-seconds "$(EXTERNAL_PLUGIN_TIMEOUT_SECONDS)" --label "opencode-rig service restart" -- opencode service restart || exit 1; \
-				run_update || exit 1 ;; \
+				attempt=1; \
+				while :; do \
+					if retry_output=$$(run_update 2>&1); then printf '%s\n' "$$retry_output"; break; fi; \
+					case "$$retry_output" in \
+						*"Plugin is not configured"*) \
+							if [ "$$attempt" -ge 8 ]; then printf '%s\n' "$$retry_output" >&2; exit 1; fi; \
+							attempt=$$((attempt + 1)); sleep 2 ;; \
+						*) printf '%s\n' "$$retry_output" >&2; exit 1 ;; \
+					esac; \
+				done ;; \
 			*) exit 1 ;; \
 		esac; \
 	fi

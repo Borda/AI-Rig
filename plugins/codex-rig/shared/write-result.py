@@ -351,7 +351,7 @@ def validate_artifact_path(out_path: Path, artifact_path: str) -> None:
         raise SystemExit("result-artifact-path-mismatch")
 
 
-def build_payload(args: argparse.Namespace) -> dict[str, Any]:
+def build_payload(args: argparse.Namespace, *, measured_code_safety: dict[str, Any] | None = None) -> dict[str, Any]:
     """Build and validate the canonical result payload from parsed arguments."""
     checks_run = split_csv(args.checks_run)
     checks_failed = split_csv(args.checks_failed)
@@ -368,6 +368,19 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
         "unavailable",
         "closed",
     }
+    if current_review and (metadata.get("scope") != "pr" or review_status in {"unavailable", "closed"}):
+        metadata.pop("code_safety", None)
+    elif current_review:
+        from review_code_safety import review_record
+
+        try:
+            metadata["code_safety"] = (
+                measured_code_safety
+                if measured_code_safety is not None
+                else review_record(args.out.parent, metadata, getattr(args, "code_safety", "unassessed"))
+            )
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            raise SystemExit(f"review-code-safety-unavailable:{error}") from error
     payload = {
         "schema_version": 3 if current_review else RESULT_SCHEMA_VERSION,
         "status": status.value,
@@ -393,6 +406,12 @@ def parse_args() -> argparse.Namespace:
     """Parse command line arguments for result writing."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path, help="Candidate or final result JSON to write.")
+    parser.add_argument(
+        "--code-safety",
+        choices=("safe", "unsafe", "unassessed"),
+        default="unassessed",
+        help="Review parent's assessment of the source's suitability for ordinary execution.",
+    )
     parser.add_argument("--gates", required=True, type=Path, help="Canonical gates.json evidence path.")
     parser.add_argument(
         "--status", required=True, choices=[s.value for s in ResultStatus], help="Overall result status."

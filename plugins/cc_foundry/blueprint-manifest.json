@@ -2072,7 +2072,7 @@
     },
     "67fadfb22e0ac029115cc3d3a468585fa971a3dfac5ffbf23fdf9422237eab58": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:306"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:308"
     },
     "68146abba6f4ba2b2e7c786471f45a5e57f054ece22d3df5d377aed3f8bb1488": {
       "kind": "command",
@@ -3016,7 +3016,7 @@
     },
     "9561be9cd3805a0ada18ebe4d8c27ff794f8ace1eb85a535a21863eb652b01c0": {
       "kind": "block",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:306"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:308"
     },
     "95a072144179105d838904c6e40336e6ae7f60851442039c0a7ac26ad9654cd2": {
       "kind": "command",
@@ -5036,6 +5036,6 @@
       "src": "skills/audit/templates/checks-skills-sweep.md:33"
     }
   },
-  "plugin": "cc_foundry@0.82.0",
+  "plugin": "cc_foundry@0.83.0",
   "schema": 2
 }

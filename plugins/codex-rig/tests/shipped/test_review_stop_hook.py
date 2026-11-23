@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -690,7 +691,7 @@ def test_checkout_release_preserves_user_steering_before_run_creation(review_sta
                     '"/plugin/bin/python" "/plugin/shared/find-review-report.py" --complete-run .reports/codex/code-review/run-a'
                 ),
             ],
-            None,
+            "release --slot",
             id="completed-review",
         ),
     ],
@@ -749,10 +750,60 @@ def test_checkout_acquisition_uses_newer_owner_evidence(
     assert ("before an active run" in response.get("reason", "")) is (expected == "block")
 
 
+@pytest.mark.parametrize("platform", PLATFORM_CASES)
+@pytest.mark.parametrize("proof", ["matched", "different-owner", "different-slot", "unbound-receipt", "failed"])
+def test_fast_forward_restart_resumes_only_matching_inspection_hold(review_state, platform: dict, proof: str) -> None:
+    """Resume a held review only on a successful direct proof for the same exclusive owner and slot."""
+    payload, records = review_state
+    root, cwd = platform["root"], platform["cwd"]
+    payload["cwd"] = cwd
+    launcher = platform["prefix"] + f'"{root}/bin/{platform["launcher"]}"'
+    scheduler = f'{launcher} "{root}/shared/review_checkout_slot.py"'
+    slot = f"{cwd}/.git/codex-review-slot"
+    held = {"owner": "original", "slot": slot}
+    claim = {"owner": "other" if proof == "different-owner" else "original", "slot": slot}
+    if proof == "different-slot":
+        claim["slot"] = f"{cwd}/other/.git/codex-review-slot"
+    digest = "a" * 64
+    proof_command = (
+        f'{launcher} "{root}/shared/contributor_run_integrity.py" restart-ref-fast-forward --snapshot before.json '
+        f"--expect {digest} --branch main --old-oid {'a' * 40} --new-oid {'b' * 40} --out after.json "
+        f'--slot "{claim["slot"]}" --owner {claim["owner"]}'
+    )
+    proof_output = {"status": "restarted", "ok": True, "sha256": digest, **claim}
+    if platform == PLATFORMS["windows"]:
+        proof_output["slot"] = claim["slot"].replace("/", "\\")
+    if proof == "unbound-receipt":
+        proof_output["owner"] = "other"
+    records[2:] = [
+        command_record(
+            f'{scheduler} acquire --checkout "{cwd}" --owner original',
+            json.dumps({"status": "acquired", **held}),
+            platform=platform,
+        ),
+        command_record(
+            f'{scheduler} hold --slot "{slot}" --owner original',
+            json.dumps({"status": "inspection-required", **held}),
+            platform=platform,
+        ),
+        command_record(proof_command, json.dumps(proof_output), int(proof == "failed"), platform=platform),
+    ]
+    response = HOOK.evaluate(payload, records, root)
+    assert response.get("decision") == ("block" if proof == "matched" else None)
+    assert ("before an active run" in response.get("reason", "")) is (proof == "matched")
+
+
 @pytest.mark.parametrize(
     ("message", "expected"),
     [
         pytest.param("Waiting for the checkout slot to become free.", "block", id="checkout-slot"),
+        pytest.param("Waiting for another review to release the checkout slot.", "block", id="peer-release"),
+        pytest.param(
+            "Waiting for another review to release the checkout slot. Waiting for your approval.",
+            None,
+            id="peer-and-approval",
+        ),
+        pytest.param("Waiting for your approval.", None, id="human-approval"),
         pytest.param("Waiting for the shared checkout slot.", "block", id="shared-checkout-slot"),
         pytest.param("Review is waiting for the other checkout owner.", "block", id="checkout-owner"),
         pytest.param("Awaiting checkout admission.", "block", id="checkout-admission"),
@@ -975,6 +1026,600 @@ def test_slot_receipt_accepts_documented_host_output_shapes(
     assert expected in response["reason"]
 
 
+def test_free_slot_before_run_still_requires_admission(review_state) -> None:
+    """A free observation ends the wait but never grants admission to the queued requester."""
+    payload, records = review_state
+    records[2:] = [
+        command_record(
+            f"{SLOT_HELPER} acquire --checkout /workspace --owner queued --wait-seconds 60",
+            json.dumps({"status": "busy", "owner": "peer", "slot": SLOT}),
+            1,
+        ),
+        command_record(
+            f"{SLOT_HELPER} status --slot {SLOT}", json.dumps({"status": "free", "owner": None, "slot": SLOT})
+        ),
+    ]
+    result = HOOK.evaluate(payload, records, "/plugin")
+    assert result["decision"] == "block"
+    assert "original owner ID" in result["reason"]
+    assert "acquire" in result["reason"]
+
+
+@pytest.mark.parametrize(
+    ("parent", "released", "expected"),
+    [
+        pytest.param("code-review", False, "release --slot", id="standalone-release-pending"),
+        pytest.param("code-review", True, None, id="standalone-released"),
+        pytest.param("code-remediate", False, "Continue remediation selection", id="nested-release-belongs-to-parent"),
+    ],
+)
+def test_completed_review_slot_release_respects_parent(
+    review_state, parent: str, released: bool, expected: str | None
+) -> None:
+    """An active own claim outlives a standalone report and stays with the parent across nested completion."""
+    payload, records = review_state
+    records[2:] = [
+        command_record(
+            f"{SLOT_HELPER} acquire --checkout /workspace --owner own --queue",
+            json.dumps({"status": "acquired", "owner": "own", "slot": SLOT}),
+        ),
+        create_run_record(parent),
+    ]
+    if parent == "code-remediate":
+        records.append(create_run_record("code-review"))
+    records.append(
+        command_record(
+            '"/plugin/bin/python" "/plugin/shared/find-review-report.py" --complete-run .reports/codex/code-review/run-a'
+        )
+    )
+    if released:
+        records.append(
+            command_record(
+                f"{SLOT_HELPER} release --slot {SLOT} --owner own",
+                json.dumps({"status": "released", "owner": None, "slot": SLOT}),
+            )
+        )
+    response = HOOK.evaluate(payload, records, "/plugin")
+    if expected is None:
+        assert response == {}
+    else:
+        assert response["decision"] == "block"
+        assert expected in response["reason"]
+
+
+@pytest.fixture
+def standalone_receipts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, review_state) -> tuple:
+    """Record the real offline report-root receipt from the invoking Git repository."""
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    target = "https://github.com/acme/widgets/pull/12"
+    subprocess.run(["git", "init", "-q", str(caller)], check=True)
+    subprocess.run(
+        ["git", "-C", str(caller), "remote", "add", "origin", "https://github.com/acme/widgets.git"], check=True
+    )
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "Application Support"))
+    prepared = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/review_code_safety.py"),
+            "report-root",
+            "--checkout",
+            str(caller),
+            "--pr-url",
+            target,
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    report_root = Path(prepared.stdout.strip())
+    payload, records = review_state
+    payload["cwd"] = str(caller)
+    platform = PLATFORMS["windows" if os.name == "nt" else "posix"]
+    launcher = f'{platform["prefix"]}"{platform["root"]}/bin/{platform["launcher"]}"'
+
+    def command(cwd: Path, helper: str, arguments: str, output: str, exit_code: int = 0) -> dict:
+        """Record a packaged helper under the working directory actually supplied to the host."""
+        return command_record(
+            f'{launcher} "{platform["root"]}/shared/{helper}.py" {arguments}',
+            output,
+            exit_code,
+            platform={**platform, "item_cwd": cwd.as_uri()},
+        )
+
+    prepare = command(
+        caller, "review_code_safety", f'report-root --checkout "{caller}" --pr-url {target}', prepared.stdout
+    )
+    return payload, records[:2], prepare, caller, report_root, target, command, platform["root"]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("scope", "bound"),
+    [
+        pytest.param("original", True, id="parent-finalization"),
+        pytest.param("unrelated-root", False, id="different-report-root"),
+        pytest.param("unrelated-pr", False, id="different-pr"),
+        pytest.param("unrelated-checkout", False, id="different-report-caller"),
+        pytest.param("missing-claim", False, id="missing-original-claim"),
+    ],
+)
+def test_external_remediation_evidence_keeps_original_claim_and_parent(
+    standalone_receipts, scope: str, bound: bool
+) -> None:
+    """External allocation and promotion bind only the selected PR's reports to the original parent checkout."""
+    payload, start, _, caller, workspace, target, command, plugin_root = standalone_receipts
+    slot = str(caller / ".git/codex-review-slot")
+    claim = command(
+        caller,
+        "review_checkout_slot",
+        f'acquire --checkout "{caller}" --owner original --queue',
+        json.dumps({"status": "acquired", "owner": "original", "slot": slot}),
+    )
+    prepared = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/review_code_safety.py"),
+            "report-root",
+            "--checkout",
+            str(caller),
+            "--pr-url",
+            target,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report_root = Path(prepared.stdout.strip())
+    assert report_root == workspace == caller / ".git/codex-rig/reports"
+    root_caller = workspace if scope == "unrelated-checkout" else caller
+    receipt = command(
+        caller, "review_code_safety", f'report-root --checkout "{root_caller}" --pr-url {target}', str(report_root)
+    )
+    requested = caller / "other" if scope == "unrelated-root" else report_root
+    pr_number = 14 if scope == "unrelated-pr" else 12
+    staging = requested / "code-remediate/staging"
+    parent_run = requested / f"code-remediate/pr-{pr_number}/run-001"
+    create = command(
+        caller, "create_run", f'--skill code-remediate --pr-number {pr_number} --root "{requested}"', str(staging)
+    )
+    promote = command(
+        caller,
+        "create_run",
+        f'--skill code-remediate --root "{requested}" --promote-pr-run "{staging}"',
+        str(parent_run),
+    )
+    early = [*start, *([] if scope == "missing-claim" else [claim]), receipt, create, promote]
+    state = HOOK.evaluate(payload, early, plugin_root)
+    assert ("Continue remediation selection" in state.get("reason", "")) is bound
+    if bound:
+        child = requested / "code-review/child"
+        child_create = command(
+            caller,
+            "create_run",
+            f'--root "{requested}" --skill code-review --pr-url {target} --pr-number 12',
+            str(child),
+        )
+        child_done = command(caller, "find-review-report", f'--complete-run "{child}"', "Validated child.")
+        finish = command(
+            caller, "remediation_finalize", f'finalize --run "{parent_run}" --promote', "Validated parent."
+        )
+        nested = [*early, child_create, child_done]
+        assert "Continue remediation selection" in HOOK.evaluate(payload, nested, plugin_root)["reason"]
+        assert "release --slot" in HOOK.evaluate(payload, [*nested, finish], plugin_root)["reason"]
+        release = command(
+            caller,
+            "review_checkout_slot",
+            f'release --slot "{slot}" --owner original',
+            json.dumps({"status": "released", "owner": None, "slot": slot}),
+        )
+        assert HOOK.evaluate(payload, [*nested, finish, release], plugin_root) == {}
+        stopped = {"type": "response_item", "payload": {"type": "message", "role": "user", "content": "Stop"}}
+        assert HOOK.evaluate(payload, [*nested, stopped], plugin_root) == {}
+
+
+@pytest.mark.integration
+def test_branch_collision_ends_after_release_without_changing_repositories(standalone_receipts) -> None:
+    """Report the local and remote divergence and leave the next branch decision to the user."""
+    payload, start, _, caller, _, target, command, root = standalone_receipts
+    slot = str(caller / ".git/codex-review-slot")
+    run = caller / ".reports/codex/code-remediate/staging"
+    claim = command(
+        caller,
+        "review_checkout_slot",
+        f'acquire --checkout "{caller}" --owner own',
+        json.dumps({"status": "acquired", "owner": "own", "slot": slot}),
+    )
+    create = command(caller, "create_run", "--skill code-remediate --pr-number 12", str(run))
+    failed = command(
+        caller,
+        "collect_pr",
+        f'--target "{target}" --out "{run}/pr" --checkout --checkout-mode remediate',
+        json.dumps({"status": "remediation-fork-checkout-branch-collision", "pr_url": target}),
+        2,
+    )
+    release = command(
+        caller,
+        "review_checkout_slot",
+        f'release --slot "{slot}" --owner own',
+        json.dumps({"status": "released", "owner": None, "slot": slot}),
+    )
+    active = [*start, claim, create, failed]
+    reason = HOOK.evaluate(payload, active, root)["reason"]
+    assert "checkout-state.json" in reason
+    assert "separate repository" not in reason
+    assert HOOK.evaluate(payload, [*active, release], root) == {}
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "terminal", ["completed", "remediation-fork-checkout-stopped", "remediation-fork-checkout-branch-collision"]
+)
+def test_writer_release_is_required_after_terminal_remediation(standalone_receipts, terminal: str) -> None:
+    """A completed run or stopped collector must release the writer even after releasing its ordinary claim."""
+    payload, start, prepare, caller, reports, target, command, root = standalone_receipts
+    common = caller / ".git"
+    writer = str(
+        common
+        / "codex-review-writers"
+        / hashlib.sha256(os.fsencode(os.path.normcase(str(common)))).hexdigest()
+        / "codex-review-slot"
+    )
+    ordinary = str(
+        common / "codex-review-targets" / hashlib.sha256(target.encode("ascii")).hexdigest() / "codex-review-slot"
+    )
+    stage = reports / "code-remediate/staging"
+
+    def acquire(option: str, slot: str) -> dict:
+        """Record the holder and checkout attested by a successful acquisition."""
+        return command(
+            caller,
+            "review_checkout_slot",
+            f'acquire --checkout "{caller}" {option} --owner own --queue',
+            json.dumps({"status": "acquired", "owner": "own", "slot": slot}),
+        )
+
+    def release(slot: str, owner: str) -> dict:
+        """Record the release using the specified requester and retained locator."""
+        return command(
+            caller,
+            "review_checkout_slot",
+            f'release --slot "{slot}" --owner {owner}',
+            json.dumps({"status": "released", "owner": None, "slot": slot}),
+        )
+
+    create = command(caller, "create_run", f'--skill code-remediate --pr-number 12 --root "{reports}"', str(stage))
+    finish = (
+        command(caller, "remediation_finalize", f'finalize --run "{stage}" --promote', "Validated.")
+        if terminal == "completed"
+        else command(
+            caller,
+            "collect_pr",
+            f'--target {target} --out "{stage}/pr" --checkout --checkout-mode remediate',
+            json.dumps({"status": terminal, "pr_url": target}),
+            2,
+        )
+    )
+    ended = [
+        *start,
+        acquire("--writer", writer),
+        acquire(f"--target {target}", ordinary),
+        prepare,
+        create,
+        finish,
+        release(ordinary, "own"),
+    ]
+    assert "writer claim" in HOOK.evaluate(payload, ended, root)["reason"]
+    assert "writer claim" in HOOK.evaluate(payload, [*ended, release(writer, "other")], root)["reason"]
+    other_locator = str(common / "codex-review-writers" / ("0" * 64) / "codex-review-slot")
+    assert "writer claim" in HOOK.evaluate(payload, [*ended, release(other_locator, "own")], root)["reason"]
+    assert HOOK.evaluate({**payload, "last_assistant_message": "Waiting for your decision."}, ended, root) == {}
+    assert HOOK.evaluate(payload, [*ended, release(writer, "own")], root) == {}
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("use_root", [True, False])
+def test_original_remediation_from_checkout_subdirectory(standalone_receipts, use_root: bool) -> None:
+    """Original-checkout remediation keeps its acquired claim through finalization from either session directory."""
+    payload, start, _, caller, _, _, command, root = standalone_receipts
+    subdir = caller / "session"
+    subdir.mkdir()
+    payload = {**payload, "cwd": str(subdir)}
+    workdir = caller if use_root else subdir
+    slot = str(caller / ".git/codex-review-slot")
+    own = command(
+        workdir,
+        "review_checkout_slot",
+        f'acquire --checkout "{caller}" --owner own --queue',
+        json.dumps({"status": "acquired", "owner": "own", "slot": slot}),
+    )
+    run = ".reports/codex/code-remediate/staging"
+    create = command(workdir, "create_run", "--skill code-remediate --pr-number 12", run)
+    finish = command(workdir, "remediation_finalize", f"finalize --run {run} --promote", "Validated")
+    release = command(
+        workdir,
+        "review_checkout_slot",
+        f'release --slot "{slot}" --owner own',
+        json.dumps({"status": "released", "owner": None, "slot": slot}),
+    )
+    active = [*start, own, create]
+    assert "Continue remediation selection" in HOOK.evaluate(payload, active, root)["reason"]
+    assert "release --slot" in HOOK.evaluate(payload, [*active, finish], root)["reason"]
+    assert HOOK.evaluate(payload, [*active, finish, release], root) == {}
+    subprocess.run(["git", "init", "-q", str(subdir)], check=True)
+    assert "release --slot" not in HOOK.evaluate(payload, [*active, finish], root).get("reason", "")
+
+
+@pytest.mark.integration
+def test_pr_admission_stays_bound_across_exclusivity_and_completion(standalone_receipts) -> None:
+    """Only the original PR claim can resume after an exclusive phase, and final release closes the handoff."""
+    payload, start, prepare, caller, reports, target, command, root = standalone_receipts
+    digest = hashlib.sha256(target.lower().encode("ascii")).hexdigest()
+    slot = str(caller / ".git/codex-review-targets" / digest / "codex-review-slot")
+    exclusive = str(caller / ".git/codex-review-slot")
+    writer = str(caller / ".git/codex-review-writers" / ("d" * 64) / "codex-review-slot")
+    stage = reports / "code-review/staging"
+    run = reports / "code-review/pr-12/run-001"
+
+    def operation(action: str, args: str, slot_path: str, owner: str | None) -> dict:
+        """Record the scoped helper's exit-zero receipt."""
+        state = {"acquire": "acquired", "release": "released"}[action]
+        return command(
+            caller,
+            "review_checkout_slot",
+            f"{action} {args} --owner own",
+            json.dumps({"status": state, "slot": slot_path, "owner": owner}),
+        )
+
+    acquire = operation("acquire", f'--checkout "{caller}" --target {target}', slot, "own")
+    release = operation("release", f'--slot "{slot}"', slot, None)
+    writer_acquire = operation("acquire", f'--checkout "{caller}" --writer', writer, "own")
+    writer_release = operation("release", f'--slot "{writer}"', writer, None)
+    create = command(
+        caller, "create_run", f'--root "{reports}" --skill code-review --pr-number 12 --pr-url {target}', str(stage)
+    )
+    promote = command(
+        caller, "create_run", f'--root "{reports}" --skill code-review --promote-pr-run "{stage}"', str(run)
+    )
+    complete = command(caller, "find-review-report", f'--complete-run "{run}"', "Validated review.")
+    active = [*start, acquire, prepare, writer_acquire, writer_release, create]
+    assert "Continue the read-only review" in HOOK.evaluate(payload, active, root)["reason"]
+    take_exclusive = operation("acquire", f'--checkout "{caller}"', exclusive, "own")
+    release_exclusive = operation("release", f'--slot "{exclusive}"', exclusive, None)
+    assert HOOK.evaluate(payload, [*active, take_exclusive], root) == {}
+    transitioned = [
+        *active,
+        release,
+        take_exclusive,
+        release_exclusive,
+        operation("acquire", f'--slot "{slot}"', slot, "own"),
+        promote,
+        complete,
+    ]
+    assert "release --slot" in HOOK.evaluate(payload, transitioned, root)["reason"]
+    assert HOOK.evaluate(payload, [*transitioned, release], root) == {}
+
+
+@pytest.mark.integration
+def test_local_review_keeps_its_ordinary_claim_until_final_release(standalone_receipts) -> None:
+    """A real checkout-local admission survives the local report's completion and binds its matching release."""
+    payload, start, _, caller, _, _, command, root = standalone_receipts
+    args = ["acquire", "--checkout", str(caller), "--local", "--owner", "own"]
+    helper = PLUGIN_ROOT / "shared/review_checkout_slot.py"
+    acquired = subprocess.run([sys.executable, str(helper), *args], check=True, capture_output=True, text=True)
+    claim = command(
+        caller, "review_checkout_slot", f'acquire --checkout "{caller}" --local --owner own', acquired.stdout
+    )
+    slot = json.loads(acquired.stdout)["slot"]
+    run = caller / ".reports/codex/code-review/local"
+    create = command(caller, "create_run", "--skill code-review --branch main --local-scope working-tree", str(run))
+    complete = command(caller, "find-review-report", f'--complete-run "{run}"', "Validated local review.")
+    finished = [*start, claim, create, complete]
+    assert "release --slot" in HOOK.evaluate(payload, finished, root)["reason"]
+    released = subprocess.run(
+        [sys.executable, str(helper), "release", "--slot", slot, "--owner", "own"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    release = command(caller, "review_checkout_slot", f'release --slot "{slot}" --owner own', released.stdout)
+    assert HOOK.evaluate(payload, [*finished, release], root) == {}
+
+
+@pytest.mark.integration
+def test_linked_remediation_receipt_binds_collector_in_same_common_directory(standalone_receipts) -> None:
+    """The scoped locator and allocator receipt must name the same repository before routing a failed checkout."""
+    payload, start, prepare, caller, reports, target, command, root = standalone_receipts
+    env = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        **dict.fromkeys(("TMPDIR", "TMP", "TEMP"), str(caller.parent)),
+    }
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(caller),
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+        env=env,
+    )
+    run = reports / "code-remediate/staging"
+    run.mkdir(parents=True)
+    locator = run / "remediation-worktree.json"
+    allocation = subprocess.run(
+        [sys.executable, str(PLUGIN_ROOT / "shared/remediation_branch.py"), "worktree", "--receipt", str(locator)],
+        cwd=caller,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    source = Path(json.loads(allocation.stdout)["worktree"])
+    digest = hashlib.sha256(target.encode("ascii")).hexdigest()
+    slot = str(caller / ".git/codex-review-targets" / digest / "codex-review-slot")
+    claim = command(
+        caller,
+        "review_checkout_slot",
+        f'acquire --checkout "{caller}" --target {target} --owner own',
+        json.dumps({"status": "acquired", "slot": slot, "owner": "own"}),
+    )
+    create = command(caller, "create_run", f'--skill code-remediate --pr-number 12 --root "{reports}"', str(run))
+    stopped = command(
+        source,
+        "collect_pr",
+        f'--target {target} --out "{run}/pr" --checkout --checkout-mode remediate',
+        json.dumps({"status": "remediation-fork-checkout-stopped", "pr_url": target}),
+        2,
+    )
+    prefix = [*start, claim, prepare, create]
+    allocated = command(caller, "remediation_branch", f'worktree --receipt "{locator}"', allocation.stdout)
+    assert "stopped at fork checkout" in HOOK.evaluate(payload, [*prefix, allocated, stopped], root)["reason"]
+    wrong = {**json.loads(allocation.stdout), "git_common_dir": str(caller.parent / "other")}
+    unrelated = command(caller, "remediation_branch", f'worktree --receipt "{locator}"', json.dumps(wrong))
+    assert "stopped at fork checkout" not in HOOK.evaluate(payload, [*prefix, unrelated, stopped], root)["reason"]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("scope", ["other-target", "wrong-receipt", "writer"])
+def test_foreign_claim_cannot_bind_standalone_reports(standalone_receipts, scope: str) -> None:
+    """A different target, a mismatched digest or only a writer lock never admits the selected review."""
+    payload, start, prepare, caller, reports, target, command, root = standalone_receipts
+    other = target.replace("/12", "/13")
+    claimed = target if scope == "wrong-receipt" else other
+    digest = hashlib.sha256(other.encode("ascii")).hexdigest()
+    namespace = "codex-review-writers" if scope == "writer" else "codex-review-targets"
+    slot = caller / ".git" / namespace / digest / "codex-review-slot"
+    option = "--writer" if scope == "writer" else f"--target {claimed}"
+    claim = command(
+        caller,
+        "review_checkout_slot",
+        f'acquire --checkout "{caller}" {option} --owner own',
+        json.dumps({"status": "acquired", "slot": str(slot), "owner": "own"}),
+    )
+    stage = reports / "code-review/stage"
+    create = command(
+        caller, "create_run", f'--root "{reports}" --skill code-review --pr-number 12 --pr-url {target}', str(stage)
+    )
+    response = HOOK.evaluate(payload, [*start, claim, prepare, create], root)
+    assert "Continue the read-only review" not in response.get("reason", "")
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("historical", [False, True])
+def test_confirmed_report_resumes_from_its_registered_location(standalone_receipts, historical: bool) -> None:
+    """The invoking checkout can resume a confirmed PR report in current or historical storage."""
+    payload, start, _, caller, reports, target, command, root = standalone_receipts
+    workspace = caller.parent / "codex-rig/review-workspaces" / ("a" * 64)
+    base = workspace / ".reports/codex" if historical else reports
+    run = base / "code-review/pr-12/run-001"
+    selected = command(caller, "find-review-report", f'--latest-run --target {target} --expect-run "{run}"', str(run))
+    complete = command(
+        workspace if historical else caller, "find-review-report", f'--complete-run "{run}"', "Validated review."
+    )
+    assert "Continue the read-only review" in HOOK.evaluate(payload, [*start, selected], root)["reason"]
+    assert HOOK.evaluate(payload, [*start, selected, complete], root) == {}
+
+
+@pytest.mark.parametrize(
+    ("ending", "continues"),
+    [
+        pytest.param("live", True, id="peer-inspection-is-live"),
+        pytest.param("labeled-progress", True, id="labeled-peer-progress"),
+        pytest.param("user-before-progress", False, id="user-stop-before-first-peer-receipt"),
+        pytest.param("caller-interrupt", True, id="caller-interrupted-peer-wait"),
+        pytest.param("host-interrupt", False, id="unattributed-interrupt"),
+        pytest.param("different-process", False, id="unrelated-caller-interrupt"),
+        pytest.param("user-stop", False, id="user-steering-after-progress"),
+        pytest.param("question", False, id="question-after-progress"),
+        pytest.param("denied", False, id="denial-after-progress"),
+    ],
+)
+def test_live_queue_progress_and_interruption(review_state, ending: str, continues: bool) -> None:
+    """Bind code-mode live peer receipts and the host's terminal process status across a queue interruption."""
+    payload, records = review_state
+    payload["last_assistant_message"] = "The review is blocked before collection while its peer inspects the checkout."
+    del records[2:]
+    command = f"{SLOT_HELPER} acquire --checkout /workspace --owner queued --queue"
+    label = {"queue": "waiting"} if ending == "labeled-progress" else {}
+    peer = json.dumps({"status": "busy", "owner": "peer", "slot": SLOT, **label})
+    held = json.dumps({"status": "inspection-required", "owner": "peer", "slot": SLOT, **label})
+    poll = 'const r = await tools.write_stdin({session_id:17,chars:"",yield_time_ms:20000}); text(r.output); text(r.session_id)'
+
+    def code_call(source: str, call_id: str) -> dict:
+        """Record a literal Code Mode invocation with the host-provided correlation ID."""
+        return {
+            "type": "response_item",
+            "payload": {"type": "custom_tool_call", "name": "exec", "input": source, "call_id": call_id},
+        }
+
+    def code_output(value: str, call_id: str) -> dict:
+        """Emit the separate stdout and process ID text blocks from the running command session."""
+        blocks = [
+            {"type": "input_text", "text": text}
+            for text in ("Script completed\nWall time 1.0 seconds\nOutput:\n", value + "\n", "17")
+        ]
+        return {
+            "type": "response_item",
+            "payload": {"type": "custom_tool_call_output", "call_id": call_id, "output": blocks},
+        }
+
+    records.extend(
+        [
+            code_call(
+                f"const r = await tools.exec_command({{cmd:{json.dumps(command)},yield_time_ms:1000}}); text(r.output); text(r.session_id)",
+                "start",
+            ),
+            code_output(peer, "start"),
+            code_call(poll, "poll"),
+            code_output(held, "poll"),
+        ]
+    )
+    if ending in {"caller-interrupt", "host-interrupt", "different-process"}:
+        if ending != "host-interrupt":
+            process = 17 if ending == "caller-interrupt" else 18
+            records.append(
+                code_call(
+                    poll.replace("session_id:17", f"session_id:{process}")
+                    .replace('chars:""', r'chars:"\u0003"')
+                    .replace("text(r.session_id)", "text(r.exit_code)"),
+                    "interrupt",
+                )
+            )
+        terminal = command_record(
+            command,
+            f'{peer}\n{held}\nTraceback (most recent call last):\n  File "helper", line 1, in main\n    time.sleep(1)\nKeyboardInterrupt\n',
+            130,
+        )
+        terminal["payload"]["item"].update(status="failed", process_id="17")
+        records.append(terminal)
+    elif ending in {"user-stop", "user-before-progress"}:
+        records.insert(
+            3 if ending == "user-before-progress" else len(records),
+            {"type": "response_item", "payload": {"type": "message", "role": "user", "content": "Stop"}},
+        )
+    elif ending == "question":
+        records.append({"type": "response_item", "payload": {"type": "function_call", "name": HOOK.NATIVE_QUESTION}})
+    elif ending == "denied":
+        records.append(
+            {"type": "response_item", "payload": {"type": "function_call_output", "output": "approval denied"}}
+        )
+    result = HOOK.evaluate(payload, records, "/plugin")
+    assert (result.get("decision") == "block") is continues
+    if continues:
+        assert "peer" in result["reason"]
+        assert "--queue" in result["reason"]
+
+
 @pytest.mark.parametrize("platform", PLATFORM_CASES)
 @pytest.mark.parametrize(
     ("entry_args", "relative_run"),
@@ -1047,6 +1692,135 @@ def test_file_change_preserves_workflow_or_controlling_stop(review_state, skill:
     response = HOOK.evaluate(payload, records, "/plugin")
 
     assert response.get("decision") == ("block" if status == "completed" else None)
+
+
+@pytest.mark.parametrize("output_dir", ["run", "pr"])
+def test_terminal_fork_checkout_requires_bound_collector_and_owner_release(review_state, output_dir: str) -> None:
+    """A terminal checkout can be reported after its own released claim, without entering remediation selection."""
+    payload, start = review_state
+    run = "/workspace/.reports/codex/code-remediate/run-a"
+    target = "https://github.com/acme/widgets/pull/17"
+    out = run if output_dir == "run" else run + "/pr"
+    acquire = command_record(
+        f"{SLOT_HELPER} acquire --checkout /workspace --owner agent --queue",
+        json.dumps({"status": "acquired", "owner": "agent", "slot": SLOT}),
+    )
+    create = command_record(
+        '"/plugin/bin/python" "/plugin/shared/create_run.py" --skill code-remediate --pr-number 17', run
+    )
+    active = [*start[:2], acquire, create]
+    invocation = f'"/plugin/bin/python" "/plugin/shared/collect_pr.py" --out "{out}" --target {target} --checkout --checkout-mode remediate'
+    output = json.dumps({"status": "remediation-fork-checkout-stopped", "pr_url": target})
+    failure = command_record(invocation, output, 2)
+    release = command_record(
+        f"{SLOT_HELPER} release --slot {SLOT} --owner agent",
+        json.dumps({"status": "released", "owner": None, "slot": SLOT}),
+    )
+    assert "release" in HOOK.evaluate(payload, [*active, failure], "/plugin")["reason"].lower()
+    assert HOOK.evaluate(payload, [*active, failure, release], "/plugin") == {}
+    help_call = command_record('"/plugin/bin/python" "/plugin/shared/collect_pr.py" --help')
+    assert HOOK.evaluate(payload, [*active, failure, help_call, release], "/plugin") == {}
+    assert HOOK.evaluate(payload, [*active, release, failure], "/plugin")["decision"] == "block"
+    assert HOOK.evaluate(payload, [*active, failure, release, acquire], "/plugin")["decision"] == "block"
+
+    # The native failure is an intermediate step for recoverable checkouts. A newer attempt supersedes the old result.
+    for other in (
+        command_record(invocation, "", 2),
+        command_record(invocation, "github-command-failed:local-pr-checkout", 2),
+        command_record(invocation.replace(out, out + "-other"), output, 2),
+        command_record(invocation.replace(target, target + "0"), output, 2),
+        command_record(invocation.replace("--checkout-mode remediate", "--checkout-mode review"), output, 2),
+        command_record(invocation, output, 0),
+    ):
+        assert HOOK.evaluate(payload, [*active, other, release], "/plugin")["decision"] == "block"
+    assert (
+        HOOK.evaluate(payload, [*active, failure, release, command_record(invocation)], "/plugin")["decision"]
+        == "block"
+    )
+    wrong_release = command_record(
+        f"{SLOT_HELPER} release --slot {SLOT} --owner another",
+        json.dumps({"status": "released", "owner": None, "slot": SLOT}),
+    )
+    assert HOOK.evaluate(payload, [*active, failure, wrong_release], "/plugin")["decision"] == "block"
+
+
+def test_terminal_checkout_in_verified_linked_worktree(review_state) -> None:
+    """A collector run from another checkout needs its own earlier allocation in the same remediation run."""
+    payload, records = review_state
+    run = "/workspace/.reports/codex/code-remediate/run-a"
+    target = "https://github.com/acme/widgets/pull/17"
+    tree = "/private/allocated/worktree"
+    acquire = command_record(
+        f"{SLOT_HELPER} acquire --checkout /workspace --owner own",
+        json.dumps({"status": "acquired", "owner": "own", "slot": SLOT}),
+    )
+    creation = command_record(
+        '"/plugin/bin/python" "/plugin/shared/create_run.py" --skill code-remediate --pr-number 17', run
+    )
+    allocator = '"/plugin/bin/python" "/plugin/shared/remediation_branch.py" worktree --receipt'
+    identity = json.dumps(
+        {
+            "schema_version": 1,
+            "initial_head": "a" * 40,
+            "invoking_checkout": "/workspace",
+            "git_common_dir": "/workspace/.git",
+            "worktree": tree,
+        }
+    )
+    allocation = command_record(f'{allocator} "{run}/remediation-worktree.json"', identity)
+    failure = command_record(
+        f'"/plugin/bin/python" "/plugin/shared/collect_pr.py" --target {target} --out "{run}/pr" --checkout --checkout-mode remediate',
+        json.dumps({"pr_url": target, "status": "remediation-fork-checkout-stopped"}),
+        2,
+    )
+    failure["payload"]["item"]["cwd"] = tree
+    release = command_record(
+        f"{SLOT_HELPER} release --slot {SLOT} --owner own",
+        json.dumps({"status": "released", "owner": None, "slot": SLOT}),
+    )
+    current = [*records[:2], acquire, creation]
+    assert HOOK.evaluate(payload, [*current, failure, release], "/plugin")["decision"] == "block"
+    wrong_run = command_record(f'{allocator} "{run}-other/remediation-worktree.json"', identity)
+    assert HOOK.evaluate(payload, [*current, wrong_run, failure, release], "/plugin")["decision"] == "block"
+    assert HOOK.evaluate(payload, [*current, allocation, failure, release], "/plugin") == {}
+
+
+@pytest.mark.parametrize("platform", PLATFORM_CASES)
+@pytest.mark.parametrize("status", ["remediation-fork-checkout-stopped", "remediation-fork-checkout-branch-collision"])
+def test_bound_terminal_checkout_accepts_host_path_forms(review_state, platform: dict, status: str) -> None:
+    """Canonical option values and GitHub owner case identify the same run across Unix and Windows hosts."""
+    payload, start = review_state
+    root, cwd = platform["root"], platform["cwd"]
+    payload["cwd"] = cwd
+    launcher = f'{platform["prefix"]}"{root}/bin/{platform["launcher"]}"'
+    slot = f"{cwd}/.git/codex-review-slot"
+    run = f"{cwd}/.reports/codex/code-remediate/two words"
+    target = "https://github.com/Acme/Widgets/pull/17"
+
+    def receipt(helper: str, args: str, output: str, status: int = 0) -> dict:
+        return command_record(f'{launcher} "{root}/shared/{helper}.py" {args}', output, status, platform=platform)
+
+    captured = [
+        *start[:2],
+        receipt(
+            "review_checkout_slot",
+            f'acquire --checkout "{cwd}" --owner own',
+            json.dumps({"status": "acquired", "owner": "own", "slot": slot}),
+        ),
+        receipt("create_run", "--skill code-remediate --pr-number=17", run),
+        receipt(
+            "collect_pr",
+            f'--checkout-mode=remediate --checkout --out="{run}/pr" --target={target}',
+            json.dumps({"pr_url": target.lower(), "status": status}),
+            2,
+        ),
+        receipt(
+            "review_checkout_slot",
+            f'release --slot "{slot}" --owner own',
+            json.dumps({"status": "released", "owner": None, "slot": slot}),
+        ),
+    ]
+    assert HOOK.evaluate(payload, captured, root) == {}
 
 
 def test_remediation_before_nested_review_requires_continuation(review_state) -> None:

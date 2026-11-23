@@ -443,8 +443,8 @@ def _assert_promoted_for_owner(run: Path, exit_code: int, summary: dict[str, obj
     assert final_text.endswith(f"| {owner} | A verification step remains. | Run the required check. |\n")
 
 
-def _write_worktree_delivery(run: Path) -> dict[str, object]:
-    """Write the local destination evidence for an explicitly selected linked PR worktree."""
+def _write_worktree_delivery(run: Path, *, recovery: bool = False) -> dict[str, object]:
+    """Record linked checkout delivery with the locator selected by the user's worktree option."""
     checkout = (run.parent / "worktree").as_posix()
     common = (run.parent / "caller" / ".git").as_posix()
     delivery = {
@@ -462,8 +462,10 @@ def _write_worktree_delivery(run: Path) -> dict[str, object]:
         "git_common_dir": common,
         "initial_head": "c" * 40,
     }
-    (run / "remediation-worktree.json").write_text(json.dumps(locator), encoding="utf-8")
-    (run / "worktree-delivery.json").write_text(json.dumps(delivery), encoding="utf-8")
+    locator_name = "recovery-worktree.json" if recovery else "remediation-worktree.json"
+    (run / locator_name).write_text(json.dumps(locator), encoding="utf-8")
+    if not recovery:
+        (run / "worktree-delivery.json").write_text(json.dumps(delivery), encoding="utf-8")
     (run / "worktree-delivery.md").write_text("Recorded local verification.\n", encoding="utf-8")
     return delivery
 
@@ -508,6 +510,18 @@ def test_resumes_local_delivery_without_a_publication_approval(
     assert result["evidence"] == "publication-offer.json"
     assert result["needs_terminal_record"] is True
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
+
+
+def test_recovery_without_worktree_option_cannot_resume_publication_with_conflicting_locator(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An extra explicit locator cannot turn a retained recovery checkout into an eligible publication run."""
+    delivery = _write_worktree_delivery(tmp_path)
+    (tmp_path / "recovery-worktree.json").write_bytes((tmp_path / "remediation-worktree.json").read_bytes())
+    _write_publication_offer(tmp_path, delivery)
+
+    assert HELPER.main(["publication-resume", "--run", str(tmp_path)]) == 1
+    assert "publication-ineligible-recovery-worktree" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -703,6 +717,18 @@ def test_verified_publication_requires_successful_execution_and_matching_ref(
         ),
         encoding="utf-8",
     )
+    # The audited readback can be durable before the terminal summary. Recovery must use exactly the same proof.
+    assert HELPER.main(["publication-resume", "--run", str(tmp_path)]) == 0
+    recovered = json.loads(capsys.readouterr().out)
+    proven = expected_status == "pass"
+    readback_digest = hashlib.sha256((tmp_path / "publication-readback.json").read_bytes()).hexdigest()
+    assert recovered["publication"]["status"] == ("verified" if proven else "unverified")
+    assert recovered["publication"]["observed_oid"] == (delivery["head"] if proven else None)
+    assert recovered["publication"].get("readback_sha256") == (readback_digest if proven else None)
+    assert recovered["needs_terminal_record"] is proven
+    assert HELPER.publication_binding(tmp_path) == recovered["publication"]
+    assert not (tmp_path / "publication.json").exists()
+
     terminal = {"schema_version": 1, "status": "verified", "reason": "Ref matches", "observed_oid": delivery["head"]}
     (tmp_path / "publication.json").write_text(json.dumps(terminal), encoding="utf-8")
 
@@ -711,7 +737,6 @@ def test_verified_publication_requires_successful_execution_and_matching_ref(
     result = json.loads(capsys.readouterr().out)
     assert result["status"] == expected_status
     assert exit_code == int(expected_status == "fail")
-    readback_digest = hashlib.sha256((tmp_path / "publication-readback.json").read_bytes()).hexdigest()
     assert result.get("publication", {}).get("readback_sha256") == (
         readback_digest if expected_status == "pass" else None
     )
@@ -1303,10 +1328,9 @@ class TestFinalizePromotion:
         assert summary["steps"][-1]["code"] == "publication-disposition-required"
         assert not (run / "result.json").exists()
 
-    def test_promotes_local_pr_worktree_with_skipped_publication(
-        self, tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Keep local delivery successful and render the machine-derived optional publication evidence."""
+    @pytest.fixture
+    def pr_delivery_argv(self, tmp_path: Path, tmp_path_factory: pytest.TempPathFactory) -> list[str]:
+        """Create the complete inputs for finalizing a delivered PR remediation."""
         result_path = _write_remediation_candidate(tmp_path, "code")
         result = json.loads(result_path.read_text(encoding="utf-8"))
         pr_dir = tmp_path / "pr"
@@ -1350,11 +1374,6 @@ class TestFinalizePromotion:
             ),
             encoding="utf-8",
         )
-        delivery = _write_worktree_delivery(tmp_path)
-        _write_publication_offer(tmp_path, delivery)
-        terminal = {"schema_version": 1, "status": "skipped", "reason": "No eligible commits.", "observed_oid": None}
-        evidence = json.dumps(terminal).encode()
-
         drafts = tmp_path_factory.mktemp("drafts")
         metadata, handoff = drafts / "metadata.json", drafts / "handoff.json"
         draft = {**result["metadata"], "worktree_publication_contract_version": 99, "worktree_publication": {}}
@@ -1369,6 +1388,50 @@ class TestFinalizePromotion:
             "--artifact-path",
             result["artifact_path"],
         ]
+        return argv
+
+    def test_independent_fork_recovery_without_worktree_option_promotes_without_publication(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        pr_delivery_argv: list[str],
+    ) -> None:
+        """A separately selected recovery destination finishes and validates locally without publication records."""
+        delivery = _write_worktree_delivery(tmp_path, recovery=True)
+        receipt = {
+            "schema_version": 2,
+            "status": "prepared",
+            "branch": delivery["branch"],
+            "worktree": delivery["checkout"],
+        }
+        (tmp_path / "remediation-branch.json").write_text(json.dumps(receipt), encoding="utf-8")
+        code = HELPER.main([*pr_delivery_argv, "--promote"])
+        summary = json.loads(capsys.readouterr().out)
+
+        assert code == 0, summary
+        assert summary["promoted"]
+        result_path = tmp_path / "result.json"
+        VALIDATOR.validate("code-remediate", tmp_path, result_path)
+        metadata = json.loads(result_path.read_bytes())["metadata"]
+        assert "worktree_publication" not in metadata
+        assert "worktree_publication_contract_version" not in metadata
+        handoff = json.loads((tmp_path / "final-handoff.json").read_bytes())
+        assert any(artifact["path"] == delivery["checkout"] for artifact in handoff["artifacts"])
+        assert not list(tmp_path.glob("publication*"))
+
+    def test_promotes_local_pr_worktree_with_skipped_publication(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        pr_delivery_argv: list[str],
+    ) -> None:
+        """Keep local delivery successful and render the machine-derived optional publication evidence."""
+        argv = pr_delivery_argv
+        delivery = _write_worktree_delivery(tmp_path)
+        _write_publication_offer(tmp_path, delivery)
+        terminal = {"schema_version": 1, "status": "skipped", "reason": "No eligible commits.", "observed_oid": None}
+        evidence = json.dumps(terminal).encode()
+
         assert HELPER.main(argv) == 0
         assert json.loads(capsys.readouterr().out)["promoted"] is False
         preliminary_result = (tmp_path / "result.candidate.json").read_bytes()

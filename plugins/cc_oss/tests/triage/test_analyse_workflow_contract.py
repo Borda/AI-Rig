@@ -242,6 +242,15 @@ def test_followup_prints_manual_only_commands() -> None:
     assert any("Run:" in line and "manually" in line and "no `Skill()`" in line for line in lines)
 
 
+def test_final_reply_asks_no_follow_up_question() -> None:
+    """End analyse with the report and plain-text suggestions, never a follow-up menu."""
+    lines = _section(_SKILL, "### 6a", "### 6b")
+    assert any("No follow-up question" in line and "never call `AskUserQuestion`" in line for line in lines)
+    assert any(line.startswith("**Suggestions**") and "`Next:`" in line for line in lines)
+    assert not any(line.lstrip().startswith("Invoke `AskUserQuestion`") for line in lines)
+    assert not any("header: `oss-analyse`" in line for line in lines)
+
+
 @_SHELL
 def test_title_search_escapes_syntax(tmp_path: Path, shell_env: dict[str, str]) -> None:
     """Keep quoted title punctuation from becoming search qualifiers."""

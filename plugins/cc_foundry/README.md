@@ -221,6 +221,7 @@ GitHub reads through `gh` run without a question. Every GitHub write through `gh
 - A later Approve replaces the token, a later Deny removes it, and a new session or `/clear` deletes it.
 - Outside a git repository nothing is recorded, so you run the command yourself.
 - Claude Code still applies a settings deny rule after a hook allows a call, so the plugins no longer ship gh write deny entries. Re-run `/foundry:setup` once to remove the ones an earlier setup merged.
+- Pull request bodies Claude drafts end with `🐰 Drafted with AI help from [AI Rig](https://github.com/Borda/AI-Rig), the open-source agent setup I use. If it saved you time, a ⭐ helps others find it.`, replacing the host's default Claude Code footer; the footer sits in the body you approve. Set `AI_RIG_FOOTER=off` in the `env` block of Claude Code settings to omit it.
 
 > Single-use approvals take an exclusive reservation in the git common directory while a token is validated, spent, replaced or revoked. Concurrent calls wait at most one second, then deny if it remains busy. If a hook crashes, stop active hooks before manually deleting `<token-file>.spent-lock` from the git common directory; Foundry also removes these reservations at SessionStart and `/clear`.
 
@@ -233,7 +234,7 @@ Behaviors the shipped rules and skills apply across workflows.
 ### Review and challenge loops
 
 - Review loops fix feasible authorized findings, investigate repeated signatures, and continue whenever the weighted score decreases; structural labels alone do not stop remediation.
-- Each round challenges and collects findings, reports the cumulative old/new table, resolves feasible authorized findings, and escalates unfixable `security`/`critical`/`high` findings. It repeats until clean or plateau/non-convergence, subject to authority, evidence, recurrence and stricter caller budgets.
+- Each round challenges and collects findings, reports the cumulative old/new table, resolves feasible authorized findings, and escalates unfixable `security`/`critical`/`high` findings. It repeats until clean, plateau/non-convergence or an eligible early stop (only low and nit findings open; outcome `converged-no-medium`, never clean), subject to authority, evidence, recurrence and stricter caller budgets.
 - The table is `Iteration | Security | Critical | High | Medium | Low | Nits | Weighted score`. Score weights are `20/10/6/4/2/1`. Before any completed round, no progress table is printed; pending reviews and unrelated status updates do not repeat it.
 - Before the baseline review of a diff the parent or its resolver wrote, the author records an attestation (invariant, sibling routes, consumer, failing-before/passing-after check) and fixes the gaps it exposes. The reviewer never sees it, and it never counts toward scoring.
 - Each open finding needs a recorded fix, escalation, or justified deferral. Each round's cost lands in an advisory `loop-metrics.jsonl`.
@@ -393,7 +394,7 @@ Benchmarks agents and skills against synthetic problems with defined ground trut
 Problems are checked before they count.
 
 - A deterministic validator rejects any problem whose answer key the input does not support.
-- Every high or extreme problem first goes to a weak solver (Haiku with no domain instructions): one it fully solves is regenerated or downgraded.
+- Every high or extreme problem first goes to a weak solver (Haiku with no domain instructions): one it fully solves is downgraded to medium.
 - Reports show the weak-solver recall per tier, so a perfect score on a tier the weak solver also aces reads as "does not discriminate", not as a strong target.
 - With `--full`, a domain can add frozen real cases (public issue threads whose outcome a maintainer recorded, cut before the verdict, kept only when a weak solver missed them); they report as `recall_real`, and a domain whose generated problems stay too easy can take its verdict from them (`verdict_tier: real`).
 - A domain whose answers follow from a rubric the skill ships, such as vitality scoring, skips the weak solver (it cannot answer without the rubric) and gets hard problems from band edges instead.
@@ -585,7 +586,7 @@ Buckets session **clock time** from `~/.claude/logs/{timings,invocations}.jsonl`
 **Covers**:
 
 - Per-session clock breakdown (local% / agent% / skill% / reasoning% / idle), per-skill clock rollup (runs, total, mean, median, p90), top-N longest single calls, headline split over window.
-- `## Tokens & cost` section: sessions ranked by cost (main $ / subagent $ / total $), per-command rollup. With `--session-id`: cost by main/sidechain × model tier, agent roster, top cache-rebuild calls, cold-start share. Subagent spend is read directly from each session's `subagents/agent-*.jsonl` transcripts, not inferred.
+- `## Tokens & cost` section: sessions ranked by cost (main $ / subagent $ / total $), per-command rollup. With `--session-id`: cost by main/sidechain × model tier, agent roster, per-agent rows for the 25 costliest agents (type, model, effort, API and tool calls, cache-read, cost) flagged `long` (over 60 tool calls), `link` (chained continuation) or `challenge` / `challenge-retry` (spawn named `challenge-*`), an agent-phase table over all agents, top cache-rebuild calls, cold-start share. Subagent spend is read directly from each session's `subagents/agent-*.jsonl` transcripts, not inferred.
 
 **Not for**: per-line Python perf (use `foundry:perf-optimizer`); known failure diagnosis (use `/foundry:investigate`); a real billing statement (prices are public list rates, not effective plan rates).
 

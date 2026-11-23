@@ -418,15 +418,15 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload NUMBER/TODAY (Check 41)
 IFS= read -r NUMBER < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || NUMBER=""
 IFS= read -r TODAY < "${TMPDIR:-/tmp}/analyse-today-${CSID}" 2>/dev/null || TODAY=$(date +%Y-%m-%d)
-# builder owns the path (Step 2 fast path probes the same string); sentinel rewritten before report exists — gates SKILL.md Step6a (enforce-analyse-header.js)
+# builder owns the path (Step 2 fast path probes the same string); sentinel rewritten before report exists — feeds SKILL.md Step 6a's Stop check (enforce-analyse-header.js)
 python "$PLUGIN_ROOT/bin/build_analyse_paths.py" --mode report-file --clean-args "$NUMBER" --today "$TODAY"  # timeout: 15000
 ```
 
 Write full report to `$REPORT_FILE` (the path echoed above, `.reports/analyse/thread/output-analyse-thread-<repo-slug>-<N>-<date>.md`) using Write tool — **do not print full analysis to terminal**.
 
-**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up while `$REPORT_FILE` is missing/empty. Denial `oss:analyse report gate` = the write never produced the report — write it, put its path and `Title`, `Outcome` values in the question text as a short plain summary, then re-issue the question. The full matching header table is required in the final reply after the answer; build it below, never put it in an option `preview`.
+**Hook-enforced**: on `Stop`, `hooks/enforce-analyse-header.js` requires the matching full header table in the final reply after the answer once `$REPORT_FILE` exists; the write must therefore produce the report. Build the delivery block below, never print it earlier.
 
-<!-- policy-sibling: plugins/cc_oss/skills/analyse/modes/vitality.md (Step 7: same enforce-analyse-header.js denial-recovery paragraph) -->
+<!-- policy-sibling: plugins/cc_oss/skills/analyse/modes/vitality.md (Step 7: same enforce-analyse-header.js Stop-check paragraph) -->
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"

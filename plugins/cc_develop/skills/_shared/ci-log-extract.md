@@ -22,7 +22,8 @@ _RAW_CI="$CI_RUN_ID"
 IFS= read -r CI_REPO < "${TMPDIR:-/tmp}/dev-upstream-${CSID}" 2>/dev/null || CI_REPO=""
 CI_ATTEMPT=""
 _CI_PATH="${CI_RUN_ID#http://}"; _CI_PATH="${_CI_PATH#https://}"
-if [[ "$_CI_PATH" =~ ^(www\.)?github\.com/([^/]+/[^/]+)/actions/runs/([0-9]+)(/attempts/([0-9]+))?(/jobs/[0-9]+)?/?([?#].*)?$ ]]; then
+_CI_RE='^(www\.)?github\.com/([^/]+/[^/]+)/actions/runs/([0-9]+)(/attempts/([0-9]+))?(/jobs/[0-9]+)?/?([?#].*)?$'  # regex in a variable: an unquoted ( inside [[ =~ ]] makes gh-write-guard ask
+if [[ "$_CI_PATH" =~ $_CI_RE ]]; then
     CI_REPO="${BASH_REMATCH[2]}"
     CI_RUN_ID="${BASH_REMATCH[3]}"
     CI_ATTEMPT="${BASH_REMATCH[5]}"

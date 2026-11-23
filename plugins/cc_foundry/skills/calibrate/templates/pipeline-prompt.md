@@ -29,8 +29,8 @@ Optional caller inputs: `PROBLEMS_PATH` (an existing local problem-set path; def
 
 Deadline arithmetic assumes serial execution:
 
-- About 13 initial fast children, up to 21 with probe retries, at 120 s each plus 600 s fixed overhead (3120 s fast).
-- Dual fast adds up to three 576 s generation calls and two 432 s scoring attempts per problem (rounded to 8340 s).
+- About 11 initial fast children, up to 21 with probe retries (scorer-chunk retries come on top), at 120 s each plus 600 s fixed overhead (3120 s fast).
+- Dual fast adds up to three 576 s generation allowances (one call, two kept as headroom) and two 432 s scoring attempts per problem (rounded to 8340 s).
 - Full and A/B use SKILL.md's `6 × PROBE_PROBLEMS + 2 × TOTAL_PROBLEMS × ARMS + 1` child count plus its Codex allowance, rounded up to minutes.
 
 These allowances are planning estimates, not child runtime guarantees.
@@ -272,11 +272,13 @@ A problem the generator calls hard is hard only if it defeats a solver without d
 
 The weak solver must see nothing but the problem: a probe that reads the target's shipped rubric, mode file or skill from the workspace measures the target's instructions, not the problem's difficulty, and its recall is void. When a weak response quotes or cites such a file, discard it and re-probe once.
 
-Score each weak response with one Phase 3a Claude scorer (same prompt, precision gate included, response file `-weak`, output `score-<problem_id>-weak.json`), one at a time after the probe finishes, within the shared spawn budget. Then per problem:
+Score each weak response with one Phase 3a Claude scorer (a batch of one: same prompt, precision gate included, `AB_MODE` false so it never reads a `-general` response; its read path is `response-<problem_id>-weak.md` and its write path and the `<PROBLEM_ID>` file name in the rules become `score-<problem_id>-weak.json`, filled with that problem's ID; that file is read only when valid per Phase 3a's file rule), one at a time after the probe finishes, within the shared spawn budget. Then per problem:
 
 - weak recall < 1.0 → keep; record `probe_weak_recall` on the problem in `problems.json`
-- weak recall = 1.0 → regenerate once by the same generator with the note "a solver without domain instructions found every ground-truth item; move the decisive evidence behind cross-section reasoning or a near-miss ruling; keep schema v2", rerun the validator, probe again
-- still 1.0 → set `difficulty: "medium"` and `"probe": "downgraded"` on that problem
+- weak recall = 1.0 → set `difficulty: "medium"` and `"probe": "downgraded"` on that problem: a solver without domain instructions found every ground-truth item, so it is too easy for its tier
+- weak score missing or invalid, or the re-probe's response again quotes a shipped file → keep the problem unprobed (no `probe_weak_recall`) and add gap `weak probe unscored: <problem_id>`
+
+This phase never regenerates a problem and never reruns the validator: only Phase 1b writes `problems.json` from the problem files, so the annotations above stay in it for Phase 4.
 
 Real problems are not probed here: they were filtered against a weak solver before they were frozen, and each carries that result as `provenance.probe` (`{model, hit}`). Probe responses never enter Phase 3 scoring of the target.
 
@@ -317,7 +319,7 @@ if awk 'BEGIN{b=sprintf("%c",96)} FNR==1{s=0;fl=0} s==2{next} {t=$0;sub(/^ +/,""
 
 A subagent that finishes while you are between turns cannot hand its result back ("the agent that spawned you is no longer running"), so acknowledgment lines are unreliable: in two full runs none of 53 arrived as an `Agent()` result. Advance on the run dir instead:
 
-- At every wake-up count the phase's deliverables on disk (`response-<problem_id>.md`, `score-<problem_id>-claude.json`, `proposal.md`); one present is done, however or whether its acknowledgment arrived.
+- At every wake-up count the phase's deliverables on disk (`response-<problem_id>.md`, `score-<problem_id>-claude.json`, `proposal.md`); one present is done, however or whether its acknowledgment arrived (Phase 3a and the Phase 1c weak scorers: only a valid score file, see Phase 3a; a weak response discarded for quoting a shipped file counts as not present).
 - The phase is complete when every spawned problem has its file or is marked timed out.
 
 This holds for Phases 1c, 2, 2b, 3a and 5.
@@ -351,13 +353,15 @@ Spawn one `general-purpose` subagent per problem using **identical prompt** as P
 
 **Completion handling** — same as Phase 2 (`_FOUNDRY_SHARED/agent-spawn-protocol.md`): each subagent returns, check for `response-<problem_id>-general.md`; missing: proceed with partial baseline data.
 
-### Phase 3a — Score responses via Claude scorers (parallel)
+### Phase 3a — Score responses via Claude scorers (batched)
 
-Spawn one `general-purpose` scorer subagent per problem using **Agent tool** — never via Bash or CLI. Dispatch one at a time within the shared spawn budget.
+Scorer batch size `SCORER_BATCH` = 3 problems per scorer, a maintainer-set constant (`1` = one scorer per problem). The cap is 3; do not raise it without a new single-vs-batched scoring check.
 
-Each scorer receives this prompt (substitute `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON>`, `<NEAR_MISSES_JSON>` from the problem; `<TEMPLATE_SECTIONS_NOT_FP>`, `<SEV_LABEL>` and `<PRECISION_GATE>` from the domain entry, empty when absent; `<RUN_DIR>`, `<AB_MODE>`):
+Spawn one `general-purpose` scorer subagent per chunk of up to `SCORER_BATCH` problems, chunked in problem order, using **Agent tool** — never via Bash or CLI. `SCORER_BATCH=1` is one scorer per problem. Dispatch one at a time within the shared spawn budget.
 
-> Scoring agent responses against calibration ground truth.
+Each scorer receives this prompt once for its chunk. Repeat the lines from **Problem ID** through `Read target response` (the problem block) once per problem in the chunk, in order, substituting `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON>`, `<NEAR_MISSES_JSON>` from that problem; `<TEMPLATE_SECTIONS_NOT_FP>` and `<SEV_LABEL>` come from the domain entry, empty when absent, and `<PRECISION_GATE>` is its `precision_gate:` value or `none` when absent (the scorer sees exactly `per-role` or `none`, never a note about empty values); also substitute `<RUN_DIR>`, `<AB_MODE>` and `<PROBLEM_ID_LIST>` (the chunk's problem IDs, comma-separated, in order). Leave `<PROBLEM_ID>` literal in the rules after the problem block: it names the problem being scored, so the scorer fills it per problem, never with one ID for the whole chunk:
+
+> Scoring agent responses against calibration ground truth. Score each problem from its own response files only, in the order listed; never compare or rank problems, and carry nothing from one problem into the next. Every rule below applies to each problem in turn, using only that problem's ground truth, near misses and response files. Write one result file per problem.
 >
 > **Problem ID**: `<PROBLEM_ID>`
 >
@@ -375,9 +379,9 @@ Each scorer receives this prompt (substitute `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON
 >
 > For each ground-truth item: mark `true` only if the response states the item's `decisive` token in the item's `role` (the exact token or an unambiguous equivalent — same issue number, same symbol, same value). Topic overlap, or `decisive` listed under a different role, is `false`. An item with `decisive: none` is `true` when the response states that nothing fills `role` (e.g. "no duplicate among the candidates") and asserts no candidate in that role.
 >
-> Count false positives: (a) every near-miss `ref` the response asserts in its `wrong_role`; (b) every other reported finding with no matching ground-truth item — except entries inside the listed template sections, which count only under (a). Extract confidence from `## Confidence` block (use 0.5 if absent).
+> Count false positives: (a) every near-miss `ref` the response asserts in its `wrong_role`; (b) every other reported finding with no matching ground-truth item of this problem — except entries inside the listed template sections, which count only under (a). Extract confidence from `## Confidence` block (use 0.5 if absent).
 >
-> **Precision gate**: `<PRECISION_GATE>` (empty = none). When `per-role`: ground-truth items sharing one `role` form a group; if the response names anything in that role that no item of the group carries, set every item of the group to `false` and count each extra name as a false positive — naming every candidate never scores.
+> **Precision gate**: `<PRECISION_GATE>`. When `per-role`: ground-truth items of this problem sharing one `role` form a group; if the response names anything in that role that no item of the group carries, set every item of the group to `false` and count each extra name as a false positive — naming every candidate never scores.
 >
 > **For out-of-scope problems** (`ground_truth: []`): recall = N/A (skip from recall aggregate). Count all reported findings as false positives. If response declines or reports nothing, false_positives = 0 (correct scope discipline). Set severity_accuracy = N/A and format_score = N/A for this problem.
 >
@@ -394,13 +398,13 @@ Each scorer receives this prompt (substitute `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON
 >
 > Compute: `recall = found / total` (skip if total=0), `precision = found / (found + fp + 1e-9)`, `f1 = 2·r·p / (r+p+1e-9)`.
 >
-> Write following JSON (no prose, no markdown fences) to `<RUN_DIR>/score-<PROBLEM_ID>-claude.json` using Write tool: `{"problem_id":"<PROBLEM_ID>","found":[true/false,...],"false_positives":N,"confidence":0.N,"recall":0.N,"precision":0.N,"f1":0.N,"severity_accuracy":0.N,"severity_assigned":["high",null,...],"format_score":0.N,"target_chars":N,"scorer":"claude"}`
+> For each problem, write following JSON (no prose, no markdown fences) to `<RUN_DIR>/score-<PROBLEM_ID>-claude.json` using Write tool: `{"problem_id":"<PROBLEM_ID>","found":[true/false,...],"false_positives":N,"confidence":0.N,"recall":0.N,"precision":0.N,"f1":0.N,"severity_accuracy":0.N,"severity_assigned":["high",null,...],"format_score":0.N,"target_chars":N,"scorer":"claude"}`
 >
 > \[If AB_MODE is true, also include before closing `}`: `,"recall_general":0.N,"precision_general":0.N,"f1_general":0.N,"confidence_general":0.N,"severity_accuracy_general":0.N,"severity_assigned_general":["high",null,...],"format_score_general":0.N,"general_chars":N`\]
 >
-> Then return ONLY one line: `Scored: <PROBLEM_ID>`
+> After the last problem, return ONLY one line: `Scored: <PROBLEM_ID_LIST>`
 
-**Context discipline**: scorers write results to `score-<PROBLEM_ID>-claude.json`, return single-line acknowledgment (`Scored: <PROBLEM_ID>`). Do NOT accumulate inline JSON in pipeline context — Phase 3c reads from disk.
+**Context discipline**: scorers write one result per problem to `score-<PROBLEM_ID>-claude.json`, return single-line acknowledgment (`Scored: <PROBLEM_ID_LIST>`). Do NOT accumulate inline JSON in pipeline context — Phase 3c reads from disk. A result file counts as present only when it is valid, the one rule every reader of a score file applies (this completion check, the Phase 1c probe check and the Phase 3c merge): it parses, its `problem_id` equals the problem ID in its file name and `len(found)` equals that problem's ground-truth item count (0 for an out-of-scope problem); any other file is treated as missing. A chunk's deliverable (for any deadline row armed for it) is its last problem's file, written in order. When a scorer of a chunk with more than one problem finishes (notification or idle) and a problem's file is missing or invalid, that problem is scored once more by its own scorer (a batch of one) before it counts as timed out; that retry is never retried, and a chunk of one is never re-scored, so `SCORER_BATCH=1` spawns exactly one scorer per problem. A passed deadline never starts a retry, because the overdue scorer may still write: its missing or invalid problems count as timed out.
 
 ### Phase 3b — Score responses via Codex (skip when CODEX_AVAILABLE=false — requires `bridge@borda-ai-rig`)
 
@@ -440,11 +444,11 @@ Also record `severity_assigned`: per ground-truth item in order, the severity la
 
 Return ONLY this JSON as the single string in `findings[0]` (no prose, no markdown fences, no trailing commas), and do not attempt to write a file yourself: {"problem_id":"\<PROBLEM_ID>","found":[true/false,...],"false_positives":N,"confidence":0.N,"recall":0.N,"precision":0.N,"f1":0.N,"severity_accuracy":0.N,"severity_assigned":["high",null,...],"format_score":0.N,"scorer":"codex"} \[If AB_MODE is true, append before closing }: ,"recall_general":0.N,"confidence_general":0.N,"precision_general":0.N,"f1_general":0.N,"severity_accuracy_general":0.N,"severity_assigned_general":["high",null,...],"format_score_general":0.N\]")
 
-Substitute `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON>`, `<NEAR_MISSES_JSON>`, `<TEMPLATE_SECTIONS_NOT_FP>`, `<SEV_LABEL>` and `<PRECISION_GATE>` per problem, as for Phase 3a. Parse `findings[0]` from the call's return value, write it to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/score-<PROBLEM_ID>-codex.json` yourself. Returned payload missing or unparsable after one retry: set `scorer_mode: "single"` for that problem — Phase 3c uses Claude's score only.
+Substitute `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON>`, `<NEAR_MISSES_JSON>`, `<TEMPLATE_SECTIONS_NOT_FP>`, `<SEV_LABEL>` and `<PRECISION_GATE>` per problem, as for Phase 3a, except `<PRECISION_GATE>` stays empty when the domain has none. Parse `findings[0]` from the call's return value, write it to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/score-<PROBLEM_ID>-codex.json` yourself. Returned payload missing or unparsable after one retry: set `scorer_mode: "single"` for that problem — Phase 3c uses Claude's score only.
 
 ### Phase 3c — Consensus merge
 
-For each problem, read `score-<PROBLEM_ID>-claude.json` (Phase 3a output) and `score-<PROBLEM_ID>-codex.json` (Phase 3b output) from `<RUN_DIR>` and merge:
+For each problem, read `score-<PROBLEM_ID>-claude.json` (Phase 3a output, merged only when valid per Phase 3a's file rule: an invalid or missing Claude file marks the problem timed out and it is not merged) and `score-<PROBLEM_ID>-codex.json` (Phase 3b output, used only when valid per the same rule: an invalid Codex file counts as absent) from `<RUN_DIR>` and merge:
 
 **When both scores present**:
 
@@ -460,7 +464,7 @@ For each problem, read `score-<PROBLEM_ID>-claude.json` (Phase 3a output) and `s
 - `scorer_agreement` = (issues where both scorers agreed on found/not-found) / total_issues; N/A for scope problems
 - `scorer_mode` = `"dual"`
 
-**When only Claude score present** (Codex unavailable or failed for this problem):
+**When only Claude score present** (Codex unavailable, failed or invalid for this problem):
 
 Use Claude score directly; `scorer_agreement` = null; `scorer_mode` = `"single"`
 
@@ -497,6 +501,7 @@ Compute aggregates (exclude out-of-scope problem from recall/F1/severity/format 
 - `generator_recall_delta` = `recall_claude_problems − recall_codex_problems` (null if either is null)
 - `source_mode` = `"dual"` if Codex generation succeeded (`CODEX_GENERATION_FAILED` unset and the validated set holds at least one in-scope `source: "codex"` problem), else `"claude-only"`; decided from the generated problem set, never from the live `bridge-status`, which a later quota stop rewrites
 - `scoring` = `"dual"` if any problem dual-scored, else `"single"`
+- `scorer_batch` = the `SCORER_BATCH` value Phase 3a used (3 unless a maintainer changed it), so a run scored with batched Claude scorers is told apart from older single-scored runs
 - `codex_generation_failed` = true if Codex generation attempted but failed, else false
 
 Verdict:
@@ -565,7 +570,7 @@ Verdict, first match wins: `significant` (delta_recall or delta_f1 > 0.10) / `ma
 
 Write single-line JSONL result to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/result.jsonl`: (one line per pipeline run — orchestrating skill appends these across runs to `.notes/logs/calibrations.jsonl`)
 
-`{"ts":"<TIMESTAMP>","target":"<TARGET_LABEL>","problem_set_version":"<PROBLEM_SET_VERSION>","mode":"<MODE>","mean_recall":0.N,"extreme_recall":0.N_or_null,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"problems":<N>,"scope_fp":N,"verdict":"...","gaps":["..."],"source_mode":"dual|claude-only","scoring":"dual|single","scorer_agreement":0.N_or_null,"recall_trivial":0.N_or_null,"recall_low":0.N_or_null,"recall_medium":0.N_or_null,"recall_high":0.N_or_null,"recall_extreme":0.N_or_null,"recall_claude_problems":0.N_or_null,"recall_codex_problems":0.N_or_null,"generator_recall_delta":0.N_or_null,"severity_disputed_count":N,"codex_generation_failed":false,"recall_real":0.N_or_null,"real_weak_hit_rate":0.N_or_null,"real_fp":N,"verdict_tier":"synthetic|real","synthetic_recall":0.N_or_null,"weak_solver_recall_high":0.N_or_null,"weak_solver_recall_extreme":0.N_or_null,"probe_downgraded":N}`
+`{"ts":"<TIMESTAMP>","target":"<TARGET_LABEL>","problem_set_version":"<PROBLEM_SET_VERSION>","mode":"<MODE>","mean_recall":0.N,"extreme_recall":0.N_or_null,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"problems":<N>,"scope_fp":N,"verdict":"...","gaps":["..."],"source_mode":"dual|claude-only","scoring":"dual|single","scorer_batch":N,"scorer_agreement":0.N_or_null,"recall_trivial":0.N_or_null,"recall_low":0.N_or_null,"recall_medium":0.N_or_null,"recall_high":0.N_or_null,"recall_extreme":0.N_or_null,"recall_claude_problems":0.N_or_null,"recall_codex_problems":0.N_or_null,"generator_recall_delta":0.N_or_null,"severity_disputed_count":N,"codex_generation_failed":false,"recall_real":0.N_or_null,"real_weak_hit_rate":0.N_or_null,"real_fp":N,"verdict_tier":"synthetic|real","synthetic_recall":0.N_or_null,"weak_solver_recall_high":0.N_or_null,"weak_solver_recall_extreme":0.N_or_null,"probe_downgraded":N}`
 
 **If AB_MODE is true**, append these fields to same JSON line: `"delta_recall":0.N,"delta_f1":0.N,"delta_severity_accuracy":0.N,"delta_format_score":0.N,"token_ratio":0.N,"scope_fp_general":N,"ab_verdict":"significant|marginal|baseline-ahead|inconclusive|no-lift"`
 
@@ -616,6 +621,6 @@ Write foundry:curator response verbatim to `.reports/calibrate/<TIMESTAMP>/<RUN_
 
 Return **only** this compact JSON (no prose before or after):
 
-`{"target":"<TARGET_LABEL>","problem_set_version":"<PROBLEM_SET_VERSION>","mean_recall":0.N,"extreme_recall":0.N_or_null,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"scope_fp":N,"verdict":"calibrated|borderline|overconfident|underconfident","gaps":["..."],"proposed_changes":N,"source_mode":"dual|claude-only","scoring":"dual|single","scorer_agreement":0.N_or_null,"generator_recall_delta":0.N_or_null,"recall_real":0.N_or_null,"weak_solver_recall_high":0.N_or_null,"weak_solver_recall_extreme":0.N_or_null}`
+`{"target":"<TARGET_LABEL>","problem_set_version":"<PROBLEM_SET_VERSION>","mean_recall":0.N,"extreme_recall":0.N_or_null,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"scope_fp":N,"verdict":"calibrated|borderline|overconfident|underconfident","gaps":["..."],"proposed_changes":N,"source_mode":"dual|claude-only","scoring":"dual|single","scorer_batch":N,"scorer_agreement":0.N_or_null,"generator_recall_delta":0.N_or_null,"recall_real":0.N_or_null,"weak_solver_recall_high":0.N_or_null,"weak_solver_recall_extreme":0.N_or_null}`
 
 If AB_MODE is true, also include: `"delta_recall":0.N,"delta_f1":0.N,"delta_severity_accuracy":0.N,"delta_format_score":0.N,"token_ratio":0.N,"scope_fp_general":N,"ab_verdict":"significant|marginal|baseline-ahead|inconclusive|no-lift"`

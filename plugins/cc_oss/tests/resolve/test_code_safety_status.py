@@ -6,6 +6,8 @@ They cover when review may skip its PR-code question after one scan and when res
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import code_safety_status as css
@@ -225,6 +227,18 @@ def test_check_prints_decision(tmp_path: Path, capsys: pytest.CaptureFixture[str
     css.main(["write", "--scan", str(scan_file), "--out", str(out)])
     css.main(["check", "--status", str(out), "--scan", str(scan_file), "--head", _HEAD])
     assert capsys.readouterr().out == "auto\n"
+
+
+def test_check_words_end_with_a_bare_line_feed(tmp_path: Path) -> None:
+    """Bash compares the printed word exactly, so a carriage return before the line feed would hide ``auto``."""
+    scan_file = tmp_path / "scan.json"
+    scan_file.write_text(json.dumps(_scan()), encoding="utf-8")
+    done = subprocess.run(
+        [sys.executable, str(Path(css.__file__)), "check-scan", "--scan", str(scan_file), "--head", _HEAD],
+        capture_output=True,
+        check=True,
+    )
+    assert done.stdout == b"auto\n"
 
 
 @pytest.mark.parametrize(

@@ -20,8 +20,10 @@ fi
 echo "audit scope: target=${TARGET:-none} range=$RANGE"
 IFS= read -r SHIPPED_TAGS < "${TMPDIR:-/tmp}/release-setup-${CSID}/SHIPPED_ELSEWHERE_TAGS" 2>/dev/null || SHIPPED_TAGS=""
 [ -z "$SHIPPED_TAGS" ] || echo "! off-branch tags already shipped: $SHIPPED_TAGS - unreleased-commit and changed-file sections below include their backports; read them against release-shipped-${CSID}"
+# slug on its own line: gh text inside python args makes gh-write-guard ask
+REPO_SLUG=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)
 AUDIT_OUT=$(python "$PLUGIN_ROOT/bin/run_audit_checks.py" \
-    --repo "$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)" \
+    --repo "$REPO_SLUG" \
     ${TARGET:+--tag "$TARGET"} \
     ${RANGE:+--range "$RANGE"})  # timeout: 300000
 AUDIT_RC=$?
@@ -137,5 +139,7 @@ Date: [date] | Range: [last-tag]..HEAD ([N] commits)
 ### Next steps
 [next actions]
 ```
+
+**Resolved findings read ✓** — a row whose findings are all resolved this run (fixed, or reviewed as false positive and accepted by the user) shows `✓`, never `⚠`/`✗`. Detail states the outcome, e.g. `2 fixed; 9 reviewed false positives accepted`. `⚠`/`✗` stay only for findings still open; never keep `⚠` on a row because it once had hits or an override was needed.
 
 **Terminal output** — after writing report file, print readiness check table (`| Check | Status | Detail |` rows only, no YAML header, no verdict prose) directly to terminal, inline in Claude response. Mandatory even when audit runs as sub-phase of `/release prepare` — never treat table as intermediate pipeline output or route only to report file; must appear in terminal before prepare proceeds to Phase 2.

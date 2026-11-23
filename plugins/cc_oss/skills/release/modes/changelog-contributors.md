@@ -141,7 +141,7 @@ For each resolved human handle, find a LinkedIn link via this ordered chain — 
 2. **Fallback A — `.blog` field**:
 
    ```bash
-   gh api /users/<login> --jq '{blog: .blog, twitter: .twitter_username}' 2>/dev/null  # timeout: 6000
+   gh api "/users/<login>" --jq '{blog: .blog, twitter: .twitter_username}' 2>/dev/null  # timeout: 6000
    ```
 
    `.blog` contains `linkedin.com` → use directly, done.

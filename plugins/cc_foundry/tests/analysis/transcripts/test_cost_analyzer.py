@@ -355,6 +355,179 @@ class TestLoadSession:
         assert session.agent_spends == []
 
 
+def _tool_row(message_id: str, tool_ids: list[str], *, model: str = "claude-opus-5", **usage) -> list[dict]:
+    """Build one message split into one row per tool_use block, as Claude Code writes it.
+
+    Examples:
+        >>> [r["message"]["content"][0]["id"] for r in _tool_row("m", ["a", "b"], output_tokens=1)]
+        ['a', 'b']
+    """
+    return [
+        {
+            "timestamp": "2030-01-01T00:00:00Z",
+            "isSidechain": True,
+            "message": {
+                "id": message_id,
+                "model": model,
+                "usage": usage,
+                "content": [{"type": "tool_use", "id": tool_id, "name": "Bash", "input": {}}],
+            },
+        }
+        for tool_id in tool_ids
+    ]
+
+
+def _agent_tree(tmp_path: Path, agents: dict[str, dict]) -> Path:
+    """Write a main transcript plus one subagent transcript and sidecar per entry of *agents*.
+
+    Each value carries ``meta`` (sidecar dict) and ``tools`` (tool_use ids the agent's single message holds).
+    """
+    project = tmp_path / "projects" / "-slug-a"
+    main = _write_jsonl(project / "sid1.jsonl", [_usage_row("main1", output_tokens=100)])
+    for key, spec in agents.items():
+        _write_jsonl(
+            project / "sid1" / "subagents" / f"agent-{key}.jsonl",
+            _tool_row(f"msg-{key}", spec["tools"], output_tokens=1_000_000),
+        )
+        (project / "sid1" / "subagents" / f"agent-{key}.meta.json").write_text(json.dumps(spec["meta"]), "utf-8")
+    return main
+
+
+class TestPerAgentSpend:
+    """Per-agent rows: tool-call count, dominant model, agent type, flags and phase split."""
+
+    def test_tool_calls_count_every_block_of_a_split_message(self, tmp_path: Path):
+        """A message written as one row per tool_use block counts all its blocks, not only the first row's."""
+        main = _agent_tree(tmp_path, {"a": {"meta": {"agentType": "t", "name": "impl-x"}, "tools": ["t1", "t2", "t3"]}})
+        spend = ca.load_session(main).agent_spends[0]
+        assert (spend.calls, spend.tool_calls) == (1, 3)
+
+    def test_repeated_tool_use_id_counted_once(self, tmp_path: Path):
+        """The same tool_use id repeated across rows is one call."""
+        main = _agent_tree(tmp_path, {"a": {"meta": {"agentType": "t"}, "tools": ["t1", "t1"]}})
+        assert ca.load_session(main).agent_spends[0].tool_calls == 1
+
+    def test_roster_carries_name_and_dominant_model(self, tmp_path: Path):
+        """The sidecar name is kept beside the model that carried most of the agent's cost."""
+        meta = {"agentType": "foundry:sw-engineer", "name": "impl-alpha", "description": "alpha fixes"}
+        main = _agent_tree(tmp_path, {"a": {"meta": meta, "tools": ["t1"]}})
+        spend = ca.load_session(main).agent_spends[0]
+        assert (spend.name, spend.model) == ("impl-alpha", "claude-opus-5")
+
+    @pytest.mark.parametrize(
+        ("meta", "expected"),
+        [
+            pytest.param({"agentType": "foundry:sw-engineer"}, "foundry:sw-engineer", id="plain-spawn"),
+            pytest.param(
+                {"agentType": "review-lead", "spawnedAgentType": "foundry:challenger"},
+                "foundry:challenger",
+                id="named-teammate-reports-spawned-type",
+            ),
+            pytest.param({"agentType": "", "name": "x"}, "?", id="missing-type-placeholder"),
+        ],
+    )
+    def test_agent_type_is_the_spawned_type(self, tmp_path: Path, meta: dict[str, str], expected: str):
+        """The type column names the agent type, not the teammate name a named spawn records as ``agentType``."""
+        main = _agent_tree(tmp_path, {"a": {"meta": meta, "tools": ["t1"]}})
+        assert ca.load_session(main).agent_spends[0].agent_type == expected
+
+    @pytest.mark.parametrize(
+        ("name", "description", "tool_calls", "expected"),
+        [
+            pytest.param("impl-alpha", "alpha fixes", 10, [], id="plain"),
+            pytest.param("impl-alpha", "alpha fixes", 61, ["long"], id="over-the-call-bound"),
+            pytest.param("impl-alpha", "alpha fixes", 60, [], id="at-the-call-bound"),
+            pytest.param("impl-beta", "fix dead link 404", 5, [], id="description-never-flags-link"),
+            pytest.param("impl-parser-link4", "parser", 5, ["link"], id="chain-link-in-name"),
+            pytest.param("challenge-alpha", "five items", 5, ["challenge"], id="challenge-chunk"),
+            pytest.param("challenge-alpha-retry-x", "single item", 5, ["challenge-retry"], id="challenge-retry"),
+            pytest.param("impl-beta-link3", "beta retry 9", 5, ["link"], id="impl-retry-is-not-challenge"),
+            pytest.param("challenge-retry-logic", "five items", 5, ["challenge"], id="domain-slug-starting-with-retry"),
+            pytest.param("challenge-net-retry-2", "single item", 5, ["challenge-retry"], id="retry-after-a-domain"),
+            pytest.param("plan-review", "challenge the plan", 5, [], id="description-never-flags-challenge"),
+            pytest.param("challenger-pass", "scan", 5, [], id="challenge-needs-the-dash"),
+            pytest.param("unlinked", "hyperlink 2 words", 5, [], id="link-needs-terminal-suffix"),
+            pytest.param(
+                "challenge-link-1", "link docs chunk", 5, ["challenge"], id="domain-named-link-is-not-a-chain"
+            ),
+            pytest.param("impl-link-2", "link docs", 5, [], id="link-domain-group-is-not-a-chain"),
+        ],
+    )
+    def test_agent_flags(self, name: str, description: str, tool_calls: int, expected: list[str]):
+        """Flags mark long agents, chain links and challenge-phase spawns, with retries kept separate."""
+        spend = ca.AgentSpend("t", description, 1, 1.0, name=name, tool_calls=tool_calls)
+        assert ca.agent_flags(spend) == expected
+
+    def test_session_detail_lists_agents_and_phase_split(self, tmp_path: Path):
+        """The deep-dive prints one row per agent and a phase table that keeps challenge retries separate."""
+        agents = {
+            "a": {"meta": {"agentType": "foundry:sw-engineer", "name": "impl-alpha"}, "tools": ["t1"]},
+            "b": {"meta": {"agentType": "foundry:sw-engineer", "name": "challenge-alpha"}, "tools": ["t2"]},
+            "c": {"meta": {"agentType": "foundry:sw-engineer", "name": "challenge-alpha-retry-1"}, "tools": ["t3"]},
+        }
+        lines = ca.render_session_detail(ca.load_session(_agent_tree(tmp_path, agents)), top_n=3)
+        text = "\n".join(lines)
+        phase_rows = {
+            line.split("|")[1].strip(): line for line in lines if line.startswith("| ") and "phase" not in line
+        }
+        assert "### Per-agent spend" in text
+        assert "impl-alpha" in text
+        assert "challenge-alpha-retry-1" in text
+        assert "### Agent phases" in text
+        assert "challenge-* retries" in phase_rows
+        assert phase_rows["challenge-* retries"].split("|")[2].strip() == "1"
+
+    def test_agent_row_cells_escape_pipes_and_line_breaks(self):
+        """Sidecar free text with a pipe or newline stays inside its own table cell."""
+        spend = ca.AgentSpend("foundry:x|y", "fix dead link 404 | pipes\nnext", 1, 1.0, name="", tool_calls=1)
+        row = next(line for line in ca.render_agent_detail([spend]) if "pipes" in line)
+        assert len(row.replace("\\|", "").split("|")) == 11
+        assert "fix dead link 404 \\| pipes next" in row
+        assert "`foundry:x\\|y`" in row
+
+    def test_roster_carries_the_sidecar_effort(self, tmp_path: Path):
+        """The effort a spawn recorded in its sidecar reaches the roster; a missing or non-string value stays empty."""
+        agents = {
+            "a": {"meta": {"agentType": "t", "name": "with", "effort": "high"}, "tools": ["t1"]},
+            "b": {"meta": {"agentType": "t", "name": "without"}, "tools": ["t2"]},
+            "c": {"meta": {"agentType": "t", "name": "odd", "effort": 3}, "tools": ["t3"]},
+        }
+        efforts = {s.name: s.effort for s in ca.load_session(_agent_tree(tmp_path, agents)).agent_spends}
+        assert efforts == {"with": "high", "without": "", "odd": ""}
+
+    def test_agent_table_shows_effort_and_a_dash_when_absent(self):
+        """The effort column prints the recorded level, or a dash when the sidecar had none."""
+        spends = [
+            ca.AgentSpend("t", "d", 1, 2.0, name="set", effort="high"),
+            ca.AgentSpend("t", "d", 1, 1.0, name="unset"),
+        ]
+        rows = [line.split("|") for line in ca.render_agent_detail(spends) if line.startswith(("| set", "| unset"))]
+        assert {cells[1].strip(): cells[4].strip() for cells in rows} == {"set": "high", "unset": "-"}
+
+    def test_agent_rows_beyond_the_limit_collapse_but_phases_count_all(self):
+        """Rows past the limit fold into one overflow row with their count and cost; the phase table still sees them."""
+        spends = [
+            ca.AgentSpend("t", "d", 1, cost_usd, name=f"challenge-{key}", tool_calls=1)
+            for key, cost_usd in (("a", 5.0), ("b", 3.0), ("c", 2.0))
+        ]
+        lines = ca.render_agent_detail(spends, limit=1)
+        text = "\n".join(lines)
+        header = next(line for line in lines if line.startswith("| agent"))
+        assert next(line for line in lines if "more agents" in line).count("|") == header.count("|")
+        assert "challenge-a" in text
+        assert "challenge-b" not in text
+        assert "… 2 more agents, $5.00" in text
+        phase = next(line for line in text.splitlines() if line.startswith("| challenge-* spawns"))
+        assert phase.split("|")[2].strip() == "3"
+
+    def test_session_without_agents_prints_no_agent_sections(self, tmp_path: Path):
+        """A session with no subagents prints neither per-agent table."""
+        main = _write_jsonl(tmp_path / "projects" / "-slug-a" / "sid2.jsonl", [_usage_row("m1", output_tokens=1)])
+        text = "\n".join(ca.render_session_detail(ca.load_session(main), top_n=3))
+        assert "Per-agent spend" not in text
+        assert "Agent phases" not in text
+
+
 @pytest.fixture
 def projects_root(tmp_path: Path) -> Path:
     """Return the isolated projects-root path for one CLI test."""

@@ -54,10 +54,11 @@ def _assessed_pr(tmp_path: Path) -> Path:
     return _write_assessed_pr(tmp_path)
 
 
-def _write_assessed_pr(tmp_path: Path, checkout: Path | None = None) -> Path:
+def _write_assessed_pr(tmp_path: Path, checkout: Path | None = None, *, run: Path | None = None) -> Path:
     """Use real commits and patch bytes when an integration test supplies its disposable checkout."""
-    run = tmp_path / "reports" / "pr-123" / "run-001"
-    run.mkdir(parents=True)
+    if run is None:
+        run = tmp_path / "reports" / "pr-123" / "run-001"
+        run.mkdir(parents=True)
     # Reuse collector/gate construction; keep assessed behavior visible here.
     fixture = _module(Path(__file__).with_name("test_code_review_close_contract.py"))
     if checkout is not None:
@@ -75,10 +76,19 @@ def _write_assessed_pr(tmp_path: Path, checkout: Path | None = None) -> Path:
     result = json.loads(result_path.read_text(encoding="utf-8"))
     pr_path = run / "pr.json"
     pr = json.loads(pr_path.read_text(encoding="utf-8"))
+    job_url = "https://github.com/acme/widgets/actions/runs/42/job/84"
     pr.update(
         title="Correct widget spelling",
         author={"login": "contributor"},
-        statusCheckRollup=[{"__typename": "CheckRun", "name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+        statusCheckRollup=[
+            {
+                "__typename": "CheckRun",
+                "name": "tests",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "detailsUrl": job_url,
+            }
+        ],
     )
     pr_path.write_text(json.dumps(pr), encoding="utf-8")
     base, head = fixture.BASE_OID, fixture.HEAD_OID
@@ -181,6 +191,24 @@ def _write_assessed_pr(tmp_path: Path, checkout: Path | None = None) -> Path:
     )
     with (run / "review-notes.md").open("a", encoding="utf-8") as notes:
         notes.write(
+            f"\nCI tests passed for {head} on Linux with Python 3.12 and the full pytest selection. "
+            f"Local tests were not rerun. [Job]({job_url})\n"
+        )
+        notes.write(
+            "CI test evidence: "
+            + json.dumps(
+                {
+                    "check": "tests",
+                    "job_url": job_url,
+                    "checkout_oid": head,
+                    "selection": "pytest",
+                    "matrix": "Linux, Python 3.12",
+                    "passed": 7,
+                }
+            )
+            + "\n"
+        )
+        notes.write(
             "\n\n## Main Reviewer Assessment\n\nSource rating version: 1\nRating: 1\nVerification readiness: complete\nRationale: The spelling change is safe.\n"
         )
     metadata = result["metadata"]
@@ -188,20 +216,8 @@ def _write_assessed_pr(tmp_path: Path, checkout: Path | None = None) -> Path:
     gates_path = run / "gates.json"
     gates = json.loads(gates_path.read_text(encoding="utf-8"))
     tests_gate = next(check for check in gates["checks"] if check["id"] == "tests")
-    approval_path = run / "tests-skip-decision.json"
-    approval_path.write_text(
-        json.dumps(
-            {
-                "decision": "skip-tests",
-                "reason": tests_gate["reason"],
-                "evidence": "Fixture user approves skipping code tests for this spelling-only review.",
-            }
-        ),
-        encoding="utf-8",
-    )
-    (run / "checks").mkdir(exist_ok=True)
-    approval = _module(PLUGIN_ROOT / "shared/gate_test_approval.py")
-    tests_gate["approval"] = approval.retain_approval(approval_path, run, tests_gate["reason"])
+    tests_gate["reason"] = f"ci-covered: tests at {head[:12]}"
+    (run / tests_gate["command_path"]).write_text(f"not-applicable: {tests_gate['reason']}\n", encoding="utf-8")
     gates_path.write_text(json.dumps(gates), encoding="utf-8")
     metadata.update(
         {
@@ -860,6 +876,51 @@ def _alter_card(card: Path) -> None:
 class TestCompleteRun:
     """Completion CLI: emits the bound final text only for validated, promoted results."""
 
+    def test_missing_job_observation_blocks_legacy_checkout_completion(self, assessed_pr: Path) -> None:
+        """An assessed PR cannot claim CI coverage when its job evidence is missing from historical checkout notes."""
+        notes = assessed_pr / "review-notes.md"
+        kept = [
+            line for line in notes.read_text(encoding="utf-8").splitlines() if not line.startswith("CI test evidence: ")
+        ]
+        notes.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        completed = _complete_run(assessed_pr)
+        assert completed.returncode != 0
+        assert "pr-source-review-ci-test-evidence-invalid" in completed.stderr
+
+    @pytest.mark.parametrize(
+        "historical", [pytest.param(False, id="named-job"), pytest.param(True, id="legacy-matrix")]
+    )
+    def test_failed_required_ci_cannot_complete_approved_review(self, assessed_pr: Path, historical: bool) -> None:
+        """A real failed-job skip and a truthful failing snapshot cannot certify complete readiness."""
+        pr_path = assessed_pr / "pr.json"
+        pr = _load_json(pr_path)
+        job = "pytest (ubuntu, 3.12)" if historical else "tests"
+        pr["statusCheckRollup"][0].update(name=job, conclusion="FAILURE")
+        _save_json(pr_path, pr)
+        gates_path = assessed_pr / "gates.json"
+        gates = _load_json(gates_path)
+        check = next(check for check in gates["checks"] if check["id"] == "tests")
+        check["reason"] = "required CI tests failed" if historical else f"ci-failed: {job} at {pr['headRefOid'][:12]}"
+        (assessed_pr / check["command_path"]).write_text(f"not-applicable: {check['reason']}\n", encoding="utf-8")
+        _save_json(gates_path, gates)
+        notes = assessed_pr / "review-notes.md"
+        notes.write_text(
+            notes.read_text(encoding="utf-8")
+            .replace("CI tests passed", "CI tests failed")
+            .replace('"passed": 7', '"failure": "pytest returned 1"'),
+            encoding="utf-8",
+        )
+        handoff = _load_json(assessed_pr / "final-handoff.json")
+        ci = next(row for row in handoff["tables"][0]["rows"] if row["cells"][0] == "CI")
+        ci["cells"][1] = f"failing — {job}"
+        result = _load_json(assessed_pr / "result.json")
+        _rerender(assessed_pr, handoff, result)
+        _save_json(assessed_pr / "result.json", result)
+
+        completed = _complete_run(assessed_pr)
+        assert completed.returncode != 0
+        assert "pr-source-review-ci-failed-readiness" in completed.stderr
+
     def test_emits_bound_final_and_finder_locates_it(self, assessed_pr: Path) -> None:
         """Completion prints the bound final text and a separate lookup finds the promoted result.
 
@@ -869,6 +930,10 @@ class TestCompleteRun:
         completed = _complete_run(assessed_pr, text=False)
         lookup = _find_target(assessed_pr.parent.parent)
 
+        tests = next(check for check in _load_json(assessed_pr / "gates.json")["checks"] if check["id"] == "tests")
+        head = _load_json(assessed_pr / "pr.json")["headRefOid"]
+        assert (tests["status"], tests["reason"]) == ("not-applicable", f"ci-covered: tests at {head[:12]}")
+        assert "approval" not in tests
         assert completed.returncode == 0, completed.stderr
         assert completed.stdout == (assessed_pr / "final.md").read_bytes()
         assert lookup.returncode == 0, lookup.stderr

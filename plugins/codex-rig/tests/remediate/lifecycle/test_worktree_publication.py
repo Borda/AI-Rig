@@ -204,6 +204,56 @@ def test_transport_accepts_clean_linked_worktree(publication_repositories, tmp_p
 
 
 @pytest.mark.integration
+def test_publication_uses_existing_repository_without_changing_its_metadata(
+    publication_repositories, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The temporary transport files cannot serve as a repository, and the source Git files stay byte-identical."""
+    source, remote, _, old, new = publication_repositories
+    common = source / ".git"
+    before = {path: path.read_bytes() for path in common.rglob("*") if path.is_file()}
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+    def inspect_transport() -> None:
+        """Ask Git itself whether the helper prepared another repository."""
+        (scratch,) = tmp_path.glob("codex-pr-publication-*")
+        with pytest.raises(subprocess.CalledProcessError):
+            _git(scratch, "--git-dir", str(scratch), "rev-parse", "--absolute-git-dir")
+
+    _push(source, remote, new, old, before_push=inspect_transport)
+
+    assert {path: path.read_bytes() for path in common.rglob("*") if path.is_file()} == before
+    assert _git(remote, "rev-parse", BRANCH) == new
+
+
+@pytest.mark.integration
+def test_publication_refuses_to_refresh_the_sources_shared_index(publication_repositories) -> None:
+    """Git normally touches the source split index even on reads; a refused publication must leave it intact."""
+    source, remote, _, old, new = publication_repositories
+    _git(source, "update-index", "--split-index")
+    (shared_index,) = (source / ".git").glob("sharedindex.*")
+    before = shared_index.stat().st_mtime_ns
+
+    with pytest.raises(ValueError, match=r"^publication-source-index-unverifiable$"):
+        _push(source, remote, new, old)
+
+    assert shared_index.stat().st_mtime_ns == before
+    assert _git(remote, "rev-parse", BRANCH) == old
+
+
+@pytest.mark.integration
+def test_publication_accepts_full_index_with_leftover_shared_index(publication_repositories) -> None:
+    """Disabling split index leaves a companion behind; publication can still use the self-contained index."""
+    source, remote, _, old, new = publication_repositories
+    _git(source, "update-index", "--split-index")
+    _git(source, "update-index", "--no-split-index")
+    assert list((source / ".git").glob("sharedindex.*"))
+
+    _push(source, remote, new, old)
+
+    assert _git(remote, "rev-parse", BRANCH) == new
+
+
+@pytest.mark.integration
 def test_transport_refuses_new_branch_at_same_commit(publication_repositories) -> None:
     """The offered SHA alone does not prove the delivered branch is still attached."""
     source, remote, _, old, new = publication_repositories
@@ -333,8 +383,8 @@ def test_the_attempt_is_spent_only_right_before_bytes_are_sent(publication_repos
 def test_a_shallow_source_history_is_refused_with_a_named_reason(publication_repositories, tmp_path: Path) -> None:
     """A shallow checkout holds the approved tip but not its parents; the isolated ancestry walk cannot finish.
 
-    The isolated repository borrows the checkout's objects without its shallow boundary, so Git fails instead of
-    answering. That is a named, unspent refusal, not an unexplained Git error.
+    The transport reads the checkout's objects without its shallow boundary, so Git fails instead of answering. That is
+    a named, unspent refusal, not an unexplained Git error.
     """
     source, remote, _, old, new = publication_repositories
     shallow = tmp_path / "shallow"
@@ -532,8 +582,9 @@ def _open_attempt(run: Path, offer: dict[str, str]) -> str:
     raw = json.dumps(offer).encode()
     digest = hashlib.sha256(raw).hexdigest()
     (run / PUBLICATION.OFFER_FILE).write_bytes(raw)
+    prefix = "pr-worktree-publication-request" if run.name == "publication-request" else "pr-worktree-publication"
     (run / PUBLICATION.ATTEMPT_FILE).write_text(
-        json.dumps({"offer_digest": digest, "decision_id": f"pr-worktree-publication-{digest}", "answer": "Approve"}),
+        json.dumps({"offer_digest": digest, "decision_id": f"{prefix}-{digest}", "answer": "Approve"}),
         encoding="utf-8",
     )
     return digest
@@ -754,6 +805,7 @@ def test_a_ref_name_with_a_unicode_line_separator_still_verifies(publication_rep
         pytest.param("", 0, 1, id="reserved-attempt"),
         pytest.param("publication.json", 1, 0, id="terminal-publication"),
         pytest.param("result.json", 1, 0, id="promoted-local-result"),
+        pytest.param("recovery-worktree.json", 1, 0, id="independent-recovery-without-worktree-option"),
     ],
 )
 def test_cli_consumes_one_matching_attempt(
@@ -1160,3 +1212,239 @@ def test_a_push_with_an_unknown_outcome_is_reported_unverified_and_never_rerun(
 
     assert PUBLICATION.main(argv) == 1
     assert json.loads(capsys.readouterr().out) == {"status": "failed", "reason": "publication-attempt-already-started"}
+
+
+def _record_destination(original: Path, offer: dict[str, str]) -> None:
+    """Retain the published destination separately from the historical source checkout."""
+    original.joinpath("worktree-delivery.md").write_text(
+        f"Status: delivered.\n- Local destination: {offer['checkout']}, branch {offer['branch']}, head {offer['source_oid']}.\n"
+        f"- Git common directory: {offer['common_dir']}.\n"
+    )
+    handoff = json.dumps(
+        {
+            "skill": "code-remediate",
+            "commit_disposition": {"status": "committed"},
+            "artifacts": [{"label": "Delivery checkout", "path": offer["checkout"]}],
+        }
+    ).encode()
+    (original / "final-handoff.json").write_bytes(handoff)
+    metadata = {"mode": "pr", "final_handoff": {"handoff_sha256": hashlib.sha256(handoff).hexdigest()}}
+    (original / "result.json").write_text(json.dumps({"status": "pass", "metadata": metadata}))
+
+
+@pytest.fixture
+def delivered_request(publication_repositories, tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
+    """Retain a completed in-place PR remediation with its original fork identity and an empty follow-up checkpoint."""
+    source, remote, _, old, new = publication_repositories
+    parent = tmp_path / "completed-run"
+    (parent / "pr").mkdir(parents=True)
+    request = parent / "publication-request"
+    request.mkdir()
+    offer = {
+        "checkout": source.as_posix(),
+        "branch": "source",
+        "common_dir": (source / ".git").as_posix(),
+        "url": "https://github.com/contributor/widgets.git",
+        "ref": BRANCH,
+        "source_oid": new,
+        "expected_oid": old,
+    }
+    receipt = {
+        "schema_version": 2,
+        "status": "prepared",
+        "worktree": offer["checkout"],
+        "branch": "source",
+        "head_repository": "contributor/widgets",
+        "head_ref": "change",
+        "pr_number": 123,
+        "pr_url": "https://github.com/upstream/widgets/pull/123",
+        "initial_head": old,
+    }
+    (parent / "remediation-branch.json").write_text(json.dumps(receipt))
+    pr = {
+        "url": receipt["pr_url"],
+        "number": 123,
+        "headRefOid": old,
+        "headRefName": "change",
+        "headRepository": {"nameWithOwner": "contributor/widgets"},
+    }
+    (parent / "pr" / "pr.json").write_text(json.dumps(pr))
+    routing = {
+        "pr_url": pr["url"],
+        "pr_number": 123,
+        "head_oid": old,
+        "head_ref": "change",
+        "head_repo": "contributor/widgets",
+    }
+    (parent / "pr" / "pr-routing.json").write_text(json.dumps(routing))
+    _record_destination(parent, offer)
+    return request, offer, remote
+
+
+@pytest.fixture(params=["in-place", "independent", "returned-to-invoking", "previously-skipped"])
+def offered_delivery(delivered_request, request: pytest.FixtureRequest) -> tuple[Path, dict[str, str], Path]:
+    """Bind the offer to the actual destination retained from each supported delivery mode."""
+    checkpoint, offer, remote = delivered_request
+    original = checkpoint.parent
+    if request.param == "previously-skipped":
+        skipped = {"schema_version": 1, "status": "skipped", "reason": "Question unavailable.", "observed_oid": None}
+        (original / "publication.json").write_text(json.dumps(skipped))
+    if request.param == "independent":
+        control = Path(offer["checkout"])
+        linked = control.parent / "independent linked checkout"
+        _git(control, "worktree", "add", "-b", "fork-change", str(linked), offer["source_oid"])
+        offer.update(checkout=linked.as_posix(), branch="fork-change")
+        receipt = json.loads((original / "remediation-branch.json").read_bytes())
+        (original / "remediation-branch.json").write_text(
+            json.dumps({**receipt, "worktree": offer["checkout"], "branch": offer["branch"]})
+        )
+        locator = {
+            "schema_version": 1,
+            "invoking_checkout": control.as_posix(),
+            "worktree": linked.as_posix(),
+            "git_common_dir": offer["common_dir"],
+        }
+        (original / "recovery-worktree.json").write_text(json.dumps(locator))
+        _record_destination(original, offer)
+    if request.param == "returned-to-invoking":
+        invoking = Path(offer["checkout"])
+        historical_source = invoking.parent / "prior linked source"
+        _git(invoking, "worktree", "add", "--detach", str(historical_source), offer["source_oid"])
+        receipt = json.loads((original / "remediation-branch.json").read_bytes())
+        (original / "remediation-branch.json").write_text(
+            json.dumps({**receipt, "worktree": historical_source.as_posix()})
+        )
+    return checkpoint, offer, remote
+
+
+@pytest.mark.integration
+def test_later_request_publishes_delivered_branch_once(
+    offered_delivery, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A fresh offer publishes committed delivery once, preserving the already promoted result."""
+    request, offer, remote = offered_delivery
+    parent = request.parent
+    digest = _open_attempt(request, offer)
+    (request / "publication-answer.json").write_bytes((request / PUBLICATION.ATTEMPT_FILE).read_bytes())
+    original = (parent / "result.json").read_bytes()
+    real_push = PUBLICATION._isolated_push
+
+    def local_endpoint(git: str, checkout: Path, url: str, *args: object, **kwargs: object) -> None:
+        """Exercise real Git against the fixture remote only after the exact approved destination has matched."""
+        assert url == offer["url"]
+        real_push(git, checkout, remote.as_uri(), *args, protocol="file", **kwargs)
+
+    monkeypatch.setattr(PUBLICATION, "_isolated_push", local_endpoint)
+    args = ["--run", str(request), "--offer-digest", digest, *HELPER_ARGS]
+    assert PUBLICATION.main(args) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "pushed"
+    assert _git(remote, "rev-parse", BRANCH) == offer["source_oid"]
+    assert PUBLICATION.main(args) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "publication-attempt-already-started"
+    assert (parent / "result.json").read_bytes() == original
+    assert not (parent / "remediation-worktree.json").exists()
+    assert not (parent / "worktree-delivery.json").exists()
+
+    finalize = load_module("requested_publication_finalize", PLUGIN_ROOT / "shared" / "remediation_finalize.py")
+    readback = {
+        "ref": BRANCH,
+        "object": {"type": "commit", "sha": offer["source_oid"]},
+        "url": "https://api.github.com/repos/contributor/widgets/git/refs/heads/change",
+    }
+    (request / "publication-readback.json").write_text(json.dumps(readback))
+    assert finalize.main(["publication-resume", "--run", str(request)]) == 0
+    assert json.loads(capsys.readouterr().out)["publication"]["status"] == "verified"
+
+
+@pytest.mark.parametrize(
+    ("record", "content", "reason"),
+    [
+        pytest.param("publication.json", '{"status":"declined"}', "publication-prior-decision", id="prior-denial"),
+        pytest.param("publication-attempt.json", "{}", "publication-prior-decision", id="prior-consumed"),
+        pytest.param("worktree-delivery.md", "Pending.", "publication-delivery-mismatch", id="unverified-commit"),
+        pytest.param("recovery-worktree.json", "{}", "publication-delivery-mismatch", id="different-repository"),
+    ],
+)
+def test_followup_refuses_conflicting_completed_evidence(
+    delivered_request, record, content, reason, monkeypatch, capsys
+) -> None:
+    """A follow-up cannot bypass a prior decision or substitute unrelated delivery coordinates."""
+    request, offer, _ = delivered_request
+    (request.parent / record).write_text(content)
+    digest = _open_attempt(request, offer)
+    (request / "publication-answer.json").write_bytes((request / PUBLICATION.ATTEMPT_FILE).read_bytes())
+    monkeypatch.setattr(PUBLICATION, "_isolated_push", lambda *a, **kw: pytest.fail("transport reached"))
+    assert PUBLICATION.main(["--run", str(request), "--offer-digest", digest, *HELPER_ARGS]) == 1
+    assert json.loads(capsys.readouterr().out) == {"status": "not-sent", "reason": reason}
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        pytest.param("url", "https://github.com/upstream/widgets.git", id="base-repo-substitution"),
+        pytest.param("ref", "refs/heads/another", id="wrong-destination-ref"),
+        pytest.param("expected_oid", "f" * 40, id="wrong-remote-tip"),
+        pytest.param("source_oid", "f" * 40, id="undelivered-commit"),
+    ],
+)
+def test_later_offer_must_match_the_original_pr(delivered_request, field, replacement, monkeypatch, capsys) -> None:
+    """Runtime approval cannot redirect an offer away from the original PR or its delivered commit."""
+    request, offer, _ = delivered_request
+    digest = _open_attempt(request, {**offer, field: replacement})
+    (request / "publication-answer.json").write_bytes((request / PUBLICATION.ATTEMPT_FILE).read_bytes())
+    monkeypatch.setattr(PUBLICATION, "_isolated_push", lambda *a, **kw: pytest.fail("transport reached"))
+    assert PUBLICATION.main(["--run", str(request), "--offer-digest", digest, *HELPER_ARGS]) == 1
+    assert json.loads(capsys.readouterr().out)["status"] == "not-sent"
+
+
+def test_followup_deny_is_retained_after_interruption(delivered_request, capsys) -> None:
+    """An interrupted later request can report its recorded denial without contacting the remote or sending again."""
+    request, offer, _ = delivered_request
+    digest = _open_attempt(request, offer)
+    (request / PUBLICATION.ATTEMPT_FILE).unlink()
+    deny = {"offer_digest": digest, "decision_id": f"pr-worktree-publication-request-{digest}", "answer": "Deny"}
+    (request / "publication-answer.json").write_text(json.dumps(deny))
+    finalize = load_module("requested_publication_finalize", PLUGIN_ROOT / "shared" / "remediation_finalize.py")
+    assert finalize.main(["publication-resume", "--run", str(request)]) == 0
+    disposition = json.loads(capsys.readouterr().out)
+    assert disposition["publication"]["status"] == "declined"
+    assert disposition["needs_terminal_record"] is True
+    assert not (request / PUBLICATION.EXECUTED_FILE).exists()
+
+
+def test_followup_rejects_another_oid_mentioned_in_the_delivery_note(delivered_request) -> None:
+    """Prior or invoking heads mentioned beside the actual delivery do not become publishable."""
+    request, offer, _ = delivered_request
+    note = request.parent / "worktree-delivery.md"
+    another = "c" * 40
+    note.write_text(note.read_text() + f"- Invoking checkout previously held {another}.\n")
+    with pytest.raises(ValueError, match="publication-delivery-mismatch"):
+        PUBLICATION.requested_delivery(request, {**offer, "source_oid": another})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("pr_number", 456, id="different-pr-number"),
+        pytest.param("pr_url", "https://github.com/other/repo/pull/123", id="different-base-repository"),
+    ],
+)
+def test_followup_rejects_receipt_for_different_pr(delivered_request, field, value) -> None:
+    """A fork's branch can be proposed in multiple PRs, so repository and ref alone do not identify the PR."""
+    request, offer, _ = delivered_request
+    path = request.parent / "remediation-branch.json"
+    receipt = json.loads(path.read_bytes())
+    path.write_text(json.dumps({**receipt, field: value}))
+    with pytest.raises(ValueError, match="publication-pr-receipt-mismatch"):
+        PUBLICATION.requested_delivery(request, offer)
+
+
+def test_unoffered_interrupted_request_remains_closed_without_source_or_remote_reads(delivered_request, capsys) -> None:
+    """An interruption after reserving the exclusive directory has no spending authority and a reportable outcome."""
+    request, _, _ = delivered_request
+    finalize = load_module("requested_publication_finalize", PLUGIN_ROOT / "shared" / "remediation_finalize.py")
+    assert finalize.main(["publication-resume", "--run", str(request)]) == 0
+    disposition = json.loads(capsys.readouterr().out)
+    assert disposition["publication"]["status"] == "skipped"
+    assert disposition["needs_terminal_record"] is True
+    assert list(request.iterdir()) == []

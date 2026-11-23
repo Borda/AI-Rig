@@ -20,7 +20,8 @@ Run ``python collect_pr.py --target <number-or-url> --out <directory> [--checkou
 from code-review or code-remediate PR mode. Review creates or verifies a detached worktree at the exact fetched PR
 commit, beside the report when ignored by Git or in a private temporary directory otherwise; it never changes the
 invoking checkout. Remediation first requires GitHub's attached branch checkout, then permits only a same-repository
-original branch recovery. Fork recovery stops for the remediation workflow's bounded adversarial path. Reusing an output
+original branch recovery. When it verifies local-only commits on the tracked fork branch and a compatible native
+checkout outcome, the collector reports the branch collision and the file changes between the tips. Reusing an output
 directory is supported because the collector removes its own prior evidence before starting a new attempt; a prior
 report-adjacent review worktree is reused only when it remains clean and bound to the same repository and exact commit.
 Each temporary fallback gets a fresh private parent; its path is retained in the checkout evidence. Freshly created
@@ -43,6 +44,8 @@ records compare every local dirty path, including ignored files, with the incomi
 paths plus a bounded sample; the remaining paths are counted by class instead of listed. For isolated review, an
 oversized invoking-worktree context scan is recorded as unavailable and does not replace or block verification of the
 separate exact-commit review worktree. Attached remediation checkout still requires complete preservation checks.
+A completed fork checkout assessment also prints one JSON object with the next action and canonical PR URL. Its
+``checkout-state.json`` keeps the observed local commit counts separate from the classified native failure.
 
 ## Failure
 
@@ -86,6 +89,7 @@ from github_read import (  # noqa: E402
     run_bounded_command,
     run_gh_read,
 )
+from review_workspace import _fetch_transport, workspace_namespace  # noqa: E402
 from review_worktree_cleanup import filesystem_content_digest, record_creation, recorded_content_digest  # noqa: E402
 
 #: Largest ordinary command stdout or stderr; complete local untracked inventories are exempt on stdout.
@@ -94,6 +98,17 @@ MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 VALID_PR_STATES = frozenset({"OPEN", "MERGED", "CLOSED"})
 #: Accepted values for the checkout mode argument: review or remediate.
 CHECKOUT_MODES = frozenset({"review", "remediate"})
+#: Native failure reasons compatible with a separately verified fork branch history collision.
+FORK_BRANCH_COLLISION_REASONS = frozenset(
+    {
+        "unclassified",
+        "local-branch-exists",
+        "local-branch-in-other-worktree",
+        "local-fast-forward-unavailable",
+        "local-fetch-non-fast-forward",
+        "local-ref-lock-failed",
+    }
+)
 #: Shape revision of worktree preflight records. Revision 1 lists only overlapping dirty paths plus a bounded sample and
 #: counts the rest; unversioned historical records listed every dirty path, including whole ignored trees.
 WORKTREE_PREFLIGHT_SCHEMA_VERSION = 1
@@ -237,6 +252,15 @@ class CollectionError(RuntimeError):
         self.diagnostics = diagnostics
 
 
+class _ForkCheckoutStopped(CollectionError):
+    """Carry the next remediation action from a completed native fork checkout assessment."""
+
+    def __init__(self, code: str, receipt_status: str, *, diagnostics: dict[str, Any] | None = None) -> None:
+        """Preserve the checkout failure and its independently verified disposition."""
+        super().__init__(code, diagnostics=diagnostics)
+        self.receipt_status = receipt_status
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse collector options without allowing a saved approval target to be overridden."""
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
@@ -268,13 +292,15 @@ def _run(
     *,
     input_bytes: bytes | None = None,
     full_local_inventory: bool = False,
+    local_objects_only: bool = False,
+    checkout_branches: tuple[str, ...] = (),
 ) -> bytes:
     """Run one argv-only command, retaining complete local inventories and bounding other output."""
     if argv and argv[0] == "gh":
         if input_bytes is not None:
             raise CollectionError(f"unsafe-gh-command:{label}")
         try:
-            return run_gh_read(run, argv, timeout=timeout, label=label)
+            return run_gh_read(run, argv, timeout=timeout, label=label, checkout_branches=checkout_branches)
         except GitHubReadError as error:
             raise CollectionError(str(error), diagnostics=error.diagnostics) from error
     inventory = full_local_inventory or argv in (
@@ -282,6 +308,9 @@ def _run(
         ["git", "ls-files", "--others", "--exclude-standard", "-z"],
     )
     environment = canonical_diff_environment() if argv[0] == "git" else None
+    if local_objects_only and environment is not None:
+        # Partial clones can otherwise fetch missing blobs while formatting optional tree statistics.
+        environment.update(GIT_NO_LAZY_FETCH="1", GIT_ALLOW_PROTOCOL="")
     try:
         completed = (
             run_bounded_command(
@@ -407,6 +436,57 @@ def _github_remote_identity(url: str) -> tuple[str, str] | None:
     if not GITHUB_PATH_COMPONENT_PATTERN.fullmatch(owner) or not GITHUB_PATH_COMPONENT_PATTERN.fullmatch(repository):
         return None
     return owner, repository
+
+
+def verify_pr_tracking(
+    git: Callable[..., str],
+    branch: str,
+    head_ref: str,
+    head_repository: str,
+    pr_url: str,
+    pr_number: int,
+    *,
+    allow_pull_ref: bool = False,
+) -> None:
+    """Verify branch or native fork pull-ref tracking identifies the recorded PR source."""
+    expected = _github_remote_identity(f"https://github.com/{head_repository}.git")
+    if (
+        expected is None
+        or not head_ref
+        or type(pr_number) is not int
+        or pr_number <= 0
+        or not isinstance(pr_url, str)
+        or not re.fullmatch(rf"(?i:https://github\.com)/[^/]+/[^/]+/pull/{pr_number}", pr_url)
+    ):
+        raise ValueError("invalid-pr-destination")
+    # gh may prefix a fork's local branch to avoid collisions. Tracking identifies
+    # the remote ref; the collector receipt separately binds the actual local name.
+    git("check-ref-format", f"refs/heads/{head_ref}")
+    merge = git("config", "--get", f"branch.{branch}.merge", optional=True)
+    remote = git("config", "--get", f"branch.{branch}.remote", optional=True)
+    base = _github_remote_identity(pr_url.rsplit("/pull/", 1)[0])
+    # Native gh may track the base repository's pull ref when no contributor
+    # remote is configured. Bind that ref to this fork PR, never to a push target.
+    if (
+        allow_pull_ref
+        and base is not None
+        and tuple(part.casefold() for part in base) != tuple(part.casefold() for part in expected)
+        and merge == f"refs/pull/{pr_number}/head"
+    ):
+        expected = base
+    elif merge != f"refs/heads/{head_ref}":
+        raise ValueError("pr-upstream-mismatch:stop-without-changing-tracking")
+    if not remote:
+        raise ValueError("pr-upstream-mismatch:stop-without-changing-tracking")
+    remotes = git("remote").splitlines()
+    # gh can configure a fork URL directly instead of adding a named local remote.
+    urls = git("remote", "get-url", "--all", "--", remote).splitlines() if remote in remotes else [remote]
+    if not urls or any(
+        tuple(part.casefold() for part in (_github_remote_identity(url) or ()))
+        != tuple(part.casefold() for part in expected)
+        for url in urls
+    ):
+        raise ValueError("pr-remote-mismatch:stop-without-changing-tracking")
 
 
 def _configured_github_repositories(run: RunCommand, timeout: int) -> dict[str, tuple[str, str]]:
@@ -833,23 +913,8 @@ def _pr_routing(payload: dict[str, Any], target: PRTarget, output: Path, pr_meta
     }
 
 
-def _selector(
-    run: RunCommand,
-    timeout: int,
-    script: Path,
-    url: str,
-    *,
-    identity_only: bool,
-) -> dict[str, Any]:
-    """Resolve repository identity or matching local remote through the packaged selector."""
-    argv = [sys.executable, str(script), "--expected-url", url]
-    if identity_only:
-        argv.append("--identity-only")
-    return _json(_run(run, argv, timeout, "select-git-remote"), "select-git-remote")
-
-
-def _fetch_exact_ref(run: RunCommand, timeout: int, remote_name: str, source_ref: str, label: str) -> str:
-    """Resolve and fetch one immutable remote commit without shared FETCH_HEAD state."""
+def _advertised_oid(run: RunCommand, timeout: int, remote_name: str, source_ref: str, label: str) -> str:
+    """Read the single advertised object for a specific remote ref."""
     remote_ref = source_ref if source_ref.startswith("refs/") else f"refs/heads/{source_ref}"
     advertised = (
         _run(run, ["git", "ls-remote", "--exit-code", "--refs", remote_name, remote_ref], timeout, f"{label}-resolve")
@@ -862,7 +927,12 @@ def _fetch_exact_ref(run: RunCommand, timeout: int, remote_name: str, source_ref
     fields = advertised[0].split()
     if len(fields) != 2 or re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", fields[0]) is None or fields[1] != remote_ref:
         raise CollectionError(f"invalid-remote-ref:{label}")
-    oid = fields[0]
+    return fields[0]
+
+
+def _fetch_exact_ref(run: RunCommand, timeout: int, remote_name: str, source_ref: str, label: str) -> str:
+    """Resolve and fetch one immutable remote commit without shared FETCH_HEAD state."""
+    oid = _advertised_oid(run, timeout, remote_name, source_ref, label)
     # FETCH_HEAD belongs to the shared repository. Resolve once, then fetch that immutable
     # advertised object so another collector cannot replace the identity between commands.
     _run(run, ["git", "fetch", "--no-tags", "--refmap=", "--no-write-fetch-head", remote_name, oid], timeout, label)
@@ -1170,6 +1240,27 @@ def pr_worktree_is_clean(worktree: Path, *, run: RunCommand = DEFAULT_RUN_COMMAN
     )
 
 
+def _checkout_source(run: RunCommand, timeout: int) -> tuple[Path, Path]:
+    """Locate the invoking checkout and its shared Git storage before any PR fetch or checkout."""
+    source = Path(
+        _run(run, ["git", "rev-parse", "--show-toplevel"], timeout, "source-worktree").decode().strip()
+    ).resolve()
+    common = Path(
+        _run(run, ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], timeout, "source-common-git-dir")
+        .decode()
+        .strip()
+    )
+    if not common.is_absolute():
+        raise CollectionError("invalid-source-common-git-dir")
+    try:
+        retained = workspace_namespace(common) is not None or workspace_namespace(source) is not None
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        raise CollectionError("source-worktree-identity-invalid") from error
+    if retained:
+        raise CollectionError("retained-review-repository:use-original-checkout")
+    return source, common.resolve()
+
+
 def _review_worktree_checkout(
     run: RunCommand,
     timeout: int,
@@ -1179,17 +1270,17 @@ def _review_worktree_checkout(
     base_oid: str,
     head_oid: str,
     prior_checkout: dict[str, Any],
+    source_context: tuple[Path, Path] | None = None,
 ) -> dict[str, Any]:
     """Create or verify an isolated detached worktree at the fetched PR head."""
-    source = Path(
-        _run(run, ["git", "rev-parse", "--show-toplevel"], timeout, "source-worktree").decode().strip()
-    ).resolve()
+    source, main_common = source_context or _checkout_source(run, timeout)
     report = output.resolve()
     review = report.with_name(f"{output.name}-review-worktree")
     worktree_location = "report-adjacent"
     if source == review:
         raise CollectionError("review-worktree-path-is-source")
-    if source in review.parents:
+    use_temporary = review.is_relative_to(main_common)
+    if not use_temporary and source in review.parents:
         relative = review.relative_to(source).as_posix()
         try:
             _run(run, ["git", "check-ignore", "-q", "--", relative], timeout, "review-worktree-ignore-check")
@@ -1198,10 +1289,13 @@ def _review_worktree_checkout(
                 raise
             if error.diagnostics.get("exit_code") != 1:
                 raise
-            review = Path(tempfile.mkdtemp(prefix="codex-pr-review-")).resolve() / "review-worktree"
-            worktree_location = "temporary-fallback"
-            if source == review or source in review.parents:
-                raise CollectionError("review-worktree-temporary-path-not-isolated")
+            use_temporary = True
+    if use_temporary:
+        temporary_root = Path(tempfile.gettempdir()).resolve()
+        if any(temporary_root.is_relative_to(root) for root in (source, main_common)):
+            raise CollectionError("review-worktree-temporary-path-not-isolated")
+        review = Path(tempfile.mkdtemp(prefix="codex-pr-review-", dir=temporary_root)) / "review-worktree"
+        worktree_location = "temporary-fallback"
     current_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "pre-checkout-head").decode().strip()
     try:
         _worktree_preflight(
@@ -1258,9 +1352,6 @@ def _review_worktree_checkout(
                 "worktree": review.as_posix(),
             },
         )
-    main_git_dir = (
-        _run(run, ["git", "rev-parse", "--git-common-dir"], timeout, "source-common-git-dir").decode().strip()
-    )
     try:
         review_git_dir = (
             _run(run, ["git", "-C", str(review), "rev-parse", "--git-common-dir"], timeout, "review-common-git-dir")
@@ -1269,7 +1360,6 @@ def _review_worktree_checkout(
         )
     except CollectionError as error:
         raise CollectionError("review-worktree-path-not-registered") from error
-    main_common = (source / main_git_dir).resolve()
     review_common = (review / review_git_dir).resolve()
     if main_common != review_common:
         raise CollectionError("review-worktree-repository-mismatch")
@@ -1342,6 +1432,7 @@ def _review_worktree_checkout(
         "status": "checked-out",
         "pr_number": routing.get("pr_number"),
         "pr_url": routing.get("pr_url"),
+        "verified_same_repository": routing.get("same_repo") is True and routing.get("is_cross_repository") is False,
         "local_branch": "",
         "worktree": review.as_posix(),
         "collection_run_dir": output.resolve().as_posix(),
@@ -1379,7 +1470,7 @@ def _review_worktree_checkout(
         # Collection remains valid on filesystems where a private removal claim cannot be established.
         # Cleanup requires this exact fresh receipt; reverified pre-existing trees never acquire a claim.
         try:
-            checkout_evidence["created_worktree"] = record_creation(review, main_common)
+            checkout_evidence["created_worktree"] = record_creation(review, main_common, routing.get("pr_url"))
         except (OSError, ValueError) as error:
             checkout_evidence["cleanup_unavailable"] = str(error)
             try:
@@ -1444,13 +1535,25 @@ def _resolve_checkout_remote(
     output: Path,
     selector: Path,
     url: Any,
+    *,
+    review: bool,
 ) -> tuple[str, str]:
-    """Select the git remote matching the PR base and record the selection evidence."""
-    remote = _selector(run, timeout, selector, url, identity_only=False)
+    """Select the caller's matching remote and record the Git transport for this PR."""
+    argv = [sys.executable, str(selector), "--expected-url", url]
+    remote = _json(_run(run, argv, timeout, "select-git-remote"), "select-git-remote")
     remote_name = remote.get("remote")
     remote_url = remote.get("remote_url")
     if not isinstance(remote_name, str) or not isinstance(remote_url, str):
         raise CollectionError("missing-matching-git-remote-for-pr-base")
+    if review:
+        # The selector may return credentials in selected or unrelated URLs. Keep only the admitted transport.
+        try:
+            remote_url = _fetch_transport(remote_url, url)
+        except ValueError as error:
+            raise CollectionError("review-caller-fetch-transport-invalid") from error
+        # A named remote can have multiple URLs. Fetch the selected one even when Git would default to another.
+        remote_name = remote_url
+        remote = {"expected": remote.get("expected"), "remote": remote_name, "remote_url": remote_url}
     _write_json(output / "remote-selection.json", remote)
     (output / "remote-selection-error.txt").write_bytes(b"")
     (output / "remote.txt").write_text(f"{remote_name} {remote_url}\n", encoding="utf-8")
@@ -1613,12 +1716,233 @@ def _remediation_branch_fallback(
     return _remediation_tracking_branch_checkout(run, timeout, routing, remote_name, error)
 
 
+def _compare_fork_branch(run: RunCommand, timeout: int, head_ref: str, head_oid: str) -> dict[str, Any]:
+    """Compare a named local branch with the fetched pull-request revision."""
+    ref = f"refs/heads/{head_ref}"
+    comparison: dict[str, Any] = {"relation": "unavailable", "pr_head_oid": head_oid}
+    try:
+        _run(run, ["git", "check-ref-format", ref], timeout, "fork-local-branch-format")
+        comparison["ref"] = ref
+        local_oid = _git_optional_ref(run, timeout, ref, "fork-local-branch")
+        if local_oid is None:
+            return {**comparison, "relation": "absent"}
+        comparison["local_head_oid"] = local_oid
+        if local_oid == head_oid:
+            return {**comparison, "relation": "equal", "behind": 0, "ahead": 0}
+        # Shallow roots may hide a common ancestor or an ancestry path between these exact tips.
+        shallow = _run(run, ["git", "rev-parse", "--is-shallow-repository"], timeout, "fork-history-depth").strip()
+        if shallow != b"false":
+            return {**comparison, "reason": "shallow-history" if shallow == b"true" else "unknown-history-depth"}
+        # Count immutable tips so a concurrent ref update cannot change the comparison halfway through.
+        counts = _run(
+            run,
+            ["git", "rev-list", "--left-right", "--count", f"{head_oid}...{local_oid}"],
+            timeout,
+            "fork-local-branch-history",
+        )
+    except CollectionError as error:
+        return {**comparison, "error": str(error)}
+    match = re.fullmatch(rb"([0-9]{1,19})[ \t]+([0-9]{1,19})\s*", counts)
+    if not match:
+        return comparison
+    behind, ahead = map(int, match.groups())
+    if not (behind or ahead):
+        return comparison
+    relation = "diverged" if behind and ahead else "behind" if behind else "ahead"
+    return {**comparison, "relation": relation, "behind": behind, "ahead": ahead}
+
+
+def _fork_branch_names(routing: dict[str, Any]) -> tuple[str, str]:
+    """Return the native head name and fork-owner alias for this PR."""
+    head_ref = routing["head_ref"]
+    return head_ref, f"{routing['head_repo'].split('/')[0]}/{head_ref}"
+
+
+def _fork_branch_comparison(
+    run: RunCommand,
+    timeout: int,
+    routing: dict[str, Any],
+    *,
+    target: str | None = None,
+    require_unique_name: bool = False,
+) -> dict[str, Any]:
+    """Find a source-tracked native branch among the head name and its fork-owner alias."""
+    head_ref, head_oid = routing["head_ref"], routing["head_oid"]
+    names = _fork_branch_names(routing)
+    unavailable = {"pr_head_oid": head_oid, "relation": "unavailable", "reason": "ambiguous-or-unverified-branch"}
+    verified = []
+    observed = 0
+
+    def read_git(*arguments: str, optional: bool = False) -> str:
+        try:
+            return _run(run, ["git", *arguments], timeout, "fork-branch-tracking").decode().strip()
+        except CollectionError as error:
+            if optional and (error.diagnostics or {}).get("exit_code") == 1:
+                return ""
+            raise
+
+    for name in names:
+        if target is not None and name != target:
+            continue
+        comparison = _compare_fork_branch(run, timeout, name, head_oid)
+        if comparison["relation"] == "absent":
+            continue
+        observed += 1
+        if "local_head_oid" not in comparison:
+            return unavailable
+        try:
+            verify_pr_tracking(
+                read_git,
+                name,
+                head_ref,
+                routing["head_repo"],
+                routing["pr_url"],
+                routing["pr_number"],
+                allow_pull_ref=True,
+            )
+        except CollectionError:
+            return unavailable
+        except ValueError:
+            continue
+        verified.append(comparison)
+    if len(verified) == 1 and (not require_unique_name or observed == 1):
+        return verified[0]
+    if not observed and (target is None or target in names):
+        return {"ref": f"refs/heads/{target or head_ref}", "pr_head_oid": head_oid, "relation": "absent"}
+    return unavailable
+
+
+def _record_fork_checkout_stop(
+    output: Path,
+    head: str,
+    comparison: dict[str, Any],
+    gh_failure: dict[str, Any] | None,
+    *,
+    branch: str | None = None,
+    branch_collision: bool = False,
+) -> _ForkCheckoutStopped:
+    """Retain the native command outcome and the source-verified disposition for this attempt."""
+    diagnostics = gh_failure["diagnostics"] if gh_failure else None
+    status = "remediation-fork-checkout-branch-collision" if branch_collision else "remediation-fork-checkout-stopped"
+    _write_json(
+        output / "checkout-state.json",
+        {
+            "status": status,
+            "native_checkout_status": "failed" if gh_failure else "succeeded",
+            "local_state": "changed-or-unknown",
+            "post_checkout_head": head,
+            "post_checkout_branch": branch,
+            "local_branch_comparison": comparison,
+            "gh_checkout_failure": gh_failure,
+        },
+    )
+    code = "remediation-gh-checkout-recovery-required" if gh_failure else "local-checkout-head-mismatch"
+    return _ForkCheckoutStopped(code, status, diagnostics=diagnostics)
+
+
+def _assess_fork_checkout(
+    run: RunCommand,
+    timeout: int,
+    output: Path,
+    routing: dict[str, Any],
+    remote: str,
+    local_head: str,
+    *,
+    branch: str | None = None,
+    gh_failure: dict[str, Any] | None = None,
+) -> CollectionError:
+    """Distinguish preserved local commits from a PR that moved during either native checkout outcome."""
+    head_oid = routing["head_oid"]
+    diagnostics = (gh_failure or {}).get("diagnostics") or {}
+    compatible = (
+        diagnostics.get("failure_class") == "github-command-failed"
+        and diagnostics.get("failure_reason") in FORK_BRANCH_COLLISION_REASONS
+    )
+    # A failed checkout may leave a different branch attached. An unnamed failure with two existing
+    # candidates cannot identify the obstruction, even when only one candidate tracks the PR.
+    target = diagnostics.get("checkout_branch") if gh_failure else branch
+    comparison = _fork_branch_comparison(run, timeout, routing, target=target, require_unique_name=compatible)
+    local_commits = comparison["relation"] in {"ahead", "diverged"}
+    if gh_failure:
+        # A ref advertisement is necessary only to confirm a local-only collision. A terminal native failure
+        # keeps its original diagnostic even if the remote is unavailable for any further read.
+        if not local_commits or not compatible:
+            return _record_fork_checkout_stop(output, local_head, comparison, gh_failure)
+    state = {
+        "status": "gh-checkout-failed-recovery-assessment-started"
+        if gh_failure
+        else "native-fork-checkout-head-mismatch",
+        "native_checkout_status": "failed" if gh_failure else "succeeded",
+        "post_checkout_branch": branch,
+        "post_checkout_head": local_head,
+        "expected_head": head_oid,
+        "gh_checkout_failure": gh_failure,
+    }
+    if "reason" in comparison:
+        state["local_branch_comparison"] = comparison
+    # If remote verification fails, retain the observed checkout without declaring a local-only change.
+    _write_json(output / "checkout-state.json", state)
+    if not gh_failure and (not local_commits or comparison.get("local_head_oid") != local_head):
+        return CollectionError("local-checkout-head-mismatch")
+    current_pr = _advertised_oid(
+        run, timeout, remote, f"refs/pull/{routing['pr_number']}/head", "post-checkout-pr-head"
+    )
+    if current_pr != head_oid:
+        _write_json(output / "checkout-state.json", {**state, "post_checkout_pr_head_oid": current_pr})
+        return CollectionError(
+            "pr-head-changed-during-checkout", diagnostics=gh_failure["diagnostics"] if gh_failure else None
+        )
+    if not gh_failure:
+        _worktree_preflight(
+            run,
+            timeout,
+            output,
+            phase="after-checkout",
+            current_head=local_head,
+            base_oid=routing["base_oid"],
+            head_oid=head_oid,
+        )
+    # Compare the complete tip trees so a diverged branch shows both sides' changes. The count limit
+    # bounds path rows while Git's final totals still cover every file. Never run configured diff drivers.
+    try:
+        diffstat = _run(
+            run,
+            [
+                "git",
+                "--no-pager",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.quotePath=true",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--no-renames",
+                "--no-relative",
+                "--ignore-submodules=none",
+                "--submodule=short",
+                "--stat=100,60,12",
+                head_oid,
+                comparison["local_head_oid"],
+                "--",
+            ],
+            timeout,
+            "fork-branch-diffstat",
+            local_objects_only=True,
+        )
+        comparison["diffstat"] = diffstat.decode("utf-8", errors="backslashreplace").rstrip("\n") or "0 files changed"
+    except CollectionError as error:
+        comparison["diffstat"] = f"unavailable:{error}"
+    return _record_fork_checkout_stop(output, local_head, comparison, gh_failure, branch=branch, branch_collision=True)
+
+
 def _gh_checkout_with_fallback(
     run: RunCommand,
     timeout: int,
     output: Path,
     routing: dict[str, Any],
-    payload: dict[str, Any],
+    repository_kind: str,
     remote_name: str,
     gh_checkout_argv: list[str],
 ) -> _CheckoutResult:
@@ -1632,7 +1956,13 @@ def _gh_checkout_with_fallback(
     )
     gh_checkout_failure: dict[str, Any] | None = None
     try:
-        _run(run, gh_checkout_argv, timeout, "local-pr-checkout")
+        _run(
+            run,
+            gh_checkout_argv,
+            timeout,
+            "local-pr-checkout",
+            checkout_branches=_fork_branch_names(routing) if repository_kind == "fork" else (),
+        )
         checkout_command = " ".join(gh_checkout_argv)
         checkout_method = "gh-pr-checkout"
     except CollectionError as error:
@@ -1659,7 +1989,11 @@ def _gh_checkout_with_fallback(
             base_oid=base_oid,
             head_oid=head_oid,
         )
-        if routing.get("same_repo") is not True or payload.get("isCrossRepository") is not False:
+        if repository_kind == "fork":
+            raise _assess_fork_checkout(
+                run, timeout, output, routing, remote_name, post_gh_head, gh_failure=gh_checkout_failure
+            ) from error
+        if repository_kind != "same-repository":
             raise CollectionError("remediation-gh-checkout-recovery-required", diagnostics=error.diagnostics) from error
         fallback_argv = _remediation_branch_fallback(run, timeout, routing, remote_name, error)
         _run(run, fallback_argv, timeout, "remediation-original-branch-checkout")
@@ -1683,6 +2017,7 @@ def _finalize_checkout_evidence(
     routing: dict[str, Any],
     checkout_mode: str,
     result: _CheckoutResult,
+    fork_remote: str | None,
 ) -> dict[str, Any]:
     """Read back the worktree state, verify it is at the PR head, and write checkout evidence."""
     base_oid = routing.get("base_oid")
@@ -1698,6 +2033,7 @@ def _finalize_checkout_evidence(
         "status": "checked-out",
         "pr_number": routing.get("pr_number"),
         "pr_url": routing.get("pr_url"),
+        "verified_same_repository": routing.get("same_repo") is True and routing.get("is_cross_repository") is False,
         "local_branch": branch,
         "worktree": Path(worktree).resolve().as_posix(),
         "local_head": local_head,
@@ -1719,6 +2055,8 @@ def _finalize_checkout_evidence(
         "source_policy": "local checkout is authoritative for code inspection and edits",
     }
     if not matches:
+        if fork_remote and result.method == "gh-pr-checkout":
+            raise _assess_fork_checkout(run, timeout, output, routing, fork_remote, local_head, branch=branch)
         raise CollectionError("local-checkout-head-mismatch")
     if checkout_mode == "remediate" and not branch:
         raise CollectionError("remediation-checkout-detached")
@@ -1760,13 +2098,23 @@ def _checkout(
     url = routing.get("pr_url")
     base_oid = routing.get("base_oid")
     head_oid = routing.get("head_oid")
-    remote_name, remote_url = _resolve_checkout_remote(run, timeout, output, selector, url)
+    source_context = _checkout_source(run, timeout)
+    remote_name, remote_url = _resolve_checkout_remote(
+        run, timeout, output, selector, url, review=checkout_mode == "review"
+    )
     _fetch_and_verify_target_branch(run, timeout, output, routing, remote_name, remote_url)
     _select_and_fetch_pr_head(run, timeout, output, routing, remote_name)
 
     if checkout_mode == "review":
         return _review_worktree_checkout(
-            run, timeout, output, routing, base_oid=base_oid, head_oid=head_oid, prior_checkout=prior_checkout
+            run,
+            timeout,
+            output,
+            routing,
+            base_oid=base_oid,
+            head_oid=head_oid,
+            prior_checkout=prior_checkout,
+            source_context=source_context,
         )
 
     current_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "pre-checkout-head").decode().strip()
@@ -1783,15 +2131,20 @@ def _checkout(
     routing["checkout_mode"] = checkout_mode
     routing["local_checkout_command"] = " ".join(gh_checkout_argv)
     _write_json(output / "pr-routing.json", routing)
-    result = _CheckoutResult(
-        command="not-run: already at expected PR head",
-        method="already-at-head",
-        gh_failure=None,
+    if (
+        routing.get("same_repo") is False
+        and payload.get("isCrossRepository") is True
+        and _github_remote_identity(f"https://{GITHUB_HOST}/{routing['head_repo']}") is not None
+    ):
+        repository_kind = "fork"
+    elif routing.get("same_repo") is True and payload.get("isCrossRepository") is False:
+        repository_kind = "same-repository"
+    else:
+        repository_kind = "unknown"
+    result = _gh_checkout_with_fallback(run, timeout, output, routing, repository_kind, remote_name, gh_checkout_argv)
+    return _finalize_checkout_evidence(
+        run, timeout, output, routing, checkout_mode, result, remote_name if repository_kind == "fork" else None
     )
-    needs_checkout = current_head != head_oid or checkout_mode == "remediate"
-    if needs_checkout:
-        result = _gh_checkout_with_fallback(run, timeout, output, routing, payload, remote_name, gh_checkout_argv)
-    return _finalize_checkout_evidence(run, timeout, output, routing, checkout_mode, result)
 
 
 def _clear_collector_artifacts(output: Path) -> None:
@@ -1988,6 +2341,8 @@ def collect_pr(
         if error.diagnostics is not None:
             _write_json(output / "command-failure.json", error.diagnostics)
         (output / "pr-error.txt").write_text(f"{error}\n", encoding="utf-8")
+        if isinstance(error, _ForkCheckoutStopped):
+            print(json.dumps({"status": error.receipt_status, "pr_url": returned_target.url}))
         return 2
 
 

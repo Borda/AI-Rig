@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.35.0
+
+- Shared rules:
+  - The adversarial convergence loop can now stop early: `adversarial_loop.py --early-stop --actions <loop-actions.json>` exits 0 and reports `eligible` when the latest independent review of the current snapshot of a current-schema ledger has no open or pending security, critical, high or medium finding while a low or nit finding remains. The parent may then stop dispatching reviewers with outcome `converged-no-medium` (never clean) instead of running more rounds for low and nit findings. Filter or gate reviews and callers or users requiring a clean result are excluded, and the summary reason, exit status and `--require-clean` are unchanged.
+  - The Confidence Block rule now states that `**Gaps**` is a bare header line, never a list item, and each gap opens with its `(-0.NN)` deduction, wherever a score's gaps are listed, chat summaries included; the one-line `Confidence:` field of a report header stays exempt. Before, a chat summary could show `- Gaps:` with deductions at the end of each line.
+
 ## 0.34.1
 
 - The review report-header table check in the delivered `report-header-table.js` accepts the shorter terminal table for review reports, and the quality-gates rule example shows `MAJOR_REVISION` as the level 3 review outcome.

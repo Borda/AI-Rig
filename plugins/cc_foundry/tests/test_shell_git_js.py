@@ -132,6 +132,7 @@ class TestModule:
         proc = _node("process.stdout.write(JSON.stringify(Object.keys(lib)));")
 
         assert json.loads(proc.stdout) == [
+            "inspectionNow",
             "gitSubcommandArgs",
             "programInvocations",
             "coarseProgramInvocations",
@@ -2617,6 +2618,308 @@ class TestSearchPatternNamingAProgram:
         assert reading.unreadable is True or reading.invocations
 
 
+class TestLongSingleDashOptionNamingAProgram:
+    """An option word of an unlisted program stays a code option unless the program's own flag table clears it."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param(
+                'sqlite3 -safe -readonly db.sqlite "select $(git log -1 --format=%ct)"', id="sqlite-safe-readonly"
+            ),
+            pytest.param(
+                'sqlite3 -csv -echo -safe db.sqlite "select $(git log -1 --format=%ct)"', id="sqlite-safe-last"
+            ),
+            pytest.param("sqlite3 --safe -column db.sqlite \"select 'git'\"", id="sqlite-double-dash-safe"),
+        ],
+    )
+    def test_a_listed_flag_word_of_a_known_program_does_not_stop_the_guard(self, command: str) -> None:
+        """A positive per-program entry clears an option that carries no code once its required option is present."""
+        reading = _analyse(command, "git")
+        assert reading.unreadable is False
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param(
+                'sqlite3 -readonly db.sqlite "select $(git log -1 --format=%ct)"', id="sqlite-readonly-without-safe"
+            ),
+            pytest.param('sqlite3 -csv db.sqlite ".shell $(git rev-parse HEAD)"', id="sqlite-dot-command-without-safe"),
+        ],
+    )
+    def test_sqlite_options_clear_only_in_safe_mode(self, command: str) -> None:
+        """Without ``-safe`` sqlite3 runs dot-commands from its arguments, so no option of it is cleared."""
+        assert _analyse(command, "git").unreadable is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param('sqlite3 -cmd ".print git" db.sqlite', id="sqlite-cmd"),
+            pytest.param('sqlite3 -readonly -cmd ".shell git push" db.sqlite', id="sqlite-cmd-after-listed-flag"),
+            pytest.param("gdb -batch -ex 'shell git push' a.out", id="gdb-ex"),
+            pytest.param("emacs -batch -eval '(shell-command \"git push\")'", id="emacs-eval"),
+            pytest.param("foo -ce 'print git'", id="short-flag-cluster"),
+            pytest.param("foo -e 'print git'", id="separate-operand"),
+            pytest.param("foo -e'print git'", id="attached-code"),
+            pytest.param('foo -e="print git"', id="attached-equals"),
+            pytest.param("/usr/bin/sqlite3 -cmd '.print git' db.sqlite", id="path-named-program"),
+        ],
+    )
+    def test_an_unlisted_code_letter_option_naming_git_stops_the_guard(self, command: str) -> None:
+        """Any other option word, in any spelling, fails closed for an unmodeled program."""
+        reading = _analyse(command, "git")
+        assert reading.unreadable is True
+
+
+class TestUnmodeledProgramOptionsFailClosed:
+    """An unlisted program with any option beside a git word stops the guard; no list names every code option."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("tar -x --to-command='git push origin main' -f x.tar", id="tar-long-option"),
+            pytest.param("sqlite3 --cmd '.shell git push' db", id="double-dash-spelling-of-a-code-option"),
+            pytest.param("gdb -iex 'shell git push'", id="other-letter-code-option"),
+            pytest.param("sort --compress-program='git push' f", id="long-option-running-a-program"),
+            pytest.param("foo -xe 'git push origin main'", id="cluster-with-the-code-letter-later"),
+            pytest.param("foo +'!git push' file", id="plus-command-option"),
+            pytest.param("time -l foo git -e inert", id="wrapper-option-outside-its-table-before-an-operand"),
+            pytest.param("sudo -i foo git -e inert", id="sudo-unmodeled-option-before-an-operand"),
+            pytest.param("xargs -Q foo git -e inert", id="xargs-unmodeled-option-before-an-operand"),
+            pytest.param("ssh -o ProxyCommand='git push origin main' host", id="ssh-option-value-runs-code"),
+            pytest.param("flock lock -c 'git push origin main'", id="flock-command-string-option"),
+            pytest.param("sqlite3 -readonly db '.print git' -- -safe", id="safe-after-the-end-of-options"),
+            pytest.param("sqlite3 -separator -safe db 'select $(git log -1)'", id="safe-as-an-option-value"),
+            pytest.param("sqlite3 db '.print git'", id="sqlite-query-without-safe-mode"),
+            pytest.param('curl -s "https://x/$(git rev-parse HEAD)"', id="ordinary-option-on-an-unlisted-program"),
+            pytest.param("pytest -q $(git diff --name-only)", id="ordinary-option-before-a-git-substitution"),
+            pytest.param("foo /tr 'inert git' /sc once", id="windows-switch-with-a-long-name"),
+            pytest.param("foo /c:inert git", id="windows-switch-with-an-attached-value"),
+            pytest.param("foo /ab inert git", id="windows-switch-of-two-letters"),
+            pytest.param("O=-e; foo $O 'inert git'", id="variable-bound-to-an-option-in-the-same-command"),
+            pytest.param("foo \"$O\" 'inert git'", id="quoted-variable-as-an-argument"),
+            pytest.param("foo ${O:--e} 'inert git'", id="parameter-default-as-an-argument"),
+            pytest.param("foo $(printf %s -e) 'inert git'", id="command-substitution-as-an-argument"),
+            pytest.param("foo ?e 'inert git'", id="leading-glob-that-can-name-an-option-file"),
+            pytest.param("rtk -vvvv foo -e 'inert git'", id="rtk-flag-then-an-unlisted-program-with-an-option"),
+            pytest.param('cmd /c "inert git"', id="cmd-switch-with-code-naming-git"),
+            pytest.param("cmd /c git lo^g", id="cmd-caret-hides-a-subcommand"),
+            pytest.param("cmd /c git pu^sh origin main", id="cmd-caret-hides-a-push"),
+            pytest.param("ssh -oProxyCommand='git push origin main' host", id="ssh-attached-option-value-runs-code"),
+            pytest.param("ssh -oLocalCommand='git push origin main' host", id="ssh-attached-local-command"),
+            pytest.param("cmd /cgit pu^sh origin main", id="cmd-attached-switch-with-a-caret"),
+            pytest.param("cmd //cgit pu^sh origin main", id="cmd-doubled-slash-attached-switch"),
+            pytest.param("cmd /s/cgit push origin main", id="cmd-chained-switches"),
+            pytest.param("cmd /kgit pu%X%sh origin main", id="cmd-run-time-value-in-the-command"),
+            pytest.param("powershell 'git pu`sh origin main'", id="powershell-positional-command-with-a-backtick"),
+            pytest.param("powershell -Command 'git push origin main'", id="powershell-command-option"),
+            pytest.param("pwsh -NoProfile -c 'git push origin main'", id="pwsh-option-before-the-command"),
+            pytest.param("pwsh -NoLogo -c 'git push origin main'", id="pwsh-flag-whose-letter-is-a-shell-value-option"),
+            pytest.param("pwsh -CommandWithArgs 'git push origin main'", id="pwsh-command-with-args"),
+        ],
+    )
+    def test_an_option_of_an_unlisted_program_stops_the_guard(self, command: str) -> None:
+        """Permission follows a positive table of understood programs, so an unlisted program is asked about."""
+        assert _analyse(command, "git").unreadable is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param(
+                'sqlite3 --safe --readonly db "select $(git log -1 --format=%ct)"', id="double-dash-listed-option"
+            ),
+            pytest.param(
+                'sqlite3 -safe -readonly -json db "select $(git log -1 --format=%ct)"', id="listed-display-option"
+            ),
+            pytest.param(
+                'rtk -v ls -r "$(git rev-parse --show-toplevel)"', id="rtk-listed-flag-before-a-cleared-child"
+            ),
+            pytest.param('rtk -vvvv ls -r "$(git rev-parse --show-toplevel)"', id="rtk-verbose-flag-of-any-length"),
+            pytest.param(
+                'rtk sqlite3 -safe -readonly db "select $(git log -1 --format=%ct)"',
+                id="rtk-before-a-sqlite3-call-cleared-by-safe",
+            ),
+            pytest.param('find . -type f -newermt "$(git log -1 --format=%cI)"', id="find-predicate"),
+            pytest.param('basename -s .git "$(git rev-parse --show-toplevel)"', id="basename-suffix-option"),
+            pytest.param("rtk err -- git log -1", id="options-after-the-target-program-belong-to-it"),
+        ],
+    )
+    def test_a_listed_program_or_a_target_programs_own_options_stay_quiet(self, command: str) -> None:
+        """A listed program's options, and options that come after the git word, are not judged at the wrapper."""
+        assert _analyse(command, "git").unreadable is False
+
+    @pytest.mark.parametrize(
+        ("command", "program"),
+        [
+            pytest.param("foo git -e inert", "git", id="operand-named-git-before-a-code-option"),
+            pytest.param("foo ./git -e inert", "git", id="path-operand-named-git"),
+            pytest.param("foo gh -e inert", "gh", id="operand-named-gh-for-the-gh-target"),
+            pytest.param("repeat 1 foo -e inert git", "git", id="zsh-repeat-runs-its-command"),
+            pytest.param("rtk err -- foo -e inert git", "git", id="unlisted-program-behind-an-rtk-filter"),
+        ],
+    )
+    def test_a_code_option_is_judged_unless_it_follows_the_targets_own_command_position(
+        self, command: str, program: str
+    ) -> None:
+        """A git-named operand is data, and ``repeat N COMMAND`` runs COMMAND, so neither hides the option."""
+        assert _analyse(command, program).unreadable is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("rtk err -- git log -1", id="rtk-filter-then-git"),
+            pytest.param("rtk summary -- git log --oneline", id="rtk-filter-then-git-long-option"),
+            pytest.param("shift 2", id="count-builtin-without-a-command"),
+            pytest.param("arch -arm64 git log --oneline", id="arch-architecture-flag-before-git"),
+        ],
+    )
+    def test_the_options_of_the_targets_own_command_position_stay_quiet(self, command: str) -> None:
+        """A real ``git`` command position behind an rtk filter keeps its options for the git reader to judge."""
+        assert _analyse(command, "git").unreadable is False
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("foo /usr/bin/x 'inert git'", id="path-with-more-than-one-segment"),
+            pytest.param("foo plain 'inert git'", id="literal-word-without-a-leading-option-character"),
+            pytest.param('cd "$(git rev-parse --show-toplevel)"', id="substitution-that-is-the-only-git-word"),
+            pytest.param("ruff check $(git ls-files '*.py')", id="substitution-operand-beside-literal-words"),
+            pytest.param('npm version "$(git describe)"', id="substitution-argument-of-an-unlisted-program"),
+            pytest.param('for f in $(git ls-files); do wc -l "$f"; done', id="for-loop-word-list"),
+            pytest.param("select f in $(git ls-files); do echo x; done", id="select-word-list"),
+            pytest.param("case $(git branch --show-current) in main) echo m;; esac", id="case-subject"),
+        ],
+    )
+    def test_literal_words_that_cannot_be_options_stay_quiet(self, command: str) -> None:
+        """A literal word with no leading dash, plus, single slash segment or expansion is a known non-option."""
+        assert _analyse(command, "git").unreadable is False
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("git log --oneline | tee file", id="tee-writes-a-file-named-like-no-table-program"),
+            pytest.param("git diff > diff; git status", id="redirect-to-a-file-named-like-a-table-program"),
+            pytest.param("mkdir -p tests/test && git status", id="mkdir-of-a-directory-named-like-a-table-program"),
+            pytest.param("touch date && git add date", id="touch-of-a-file-named-like-a-table-program"),
+            pytest.param("cp a.txt b.txt; git status", id="copy-between-plain-files"),
+        ],
+    )
+    def test_a_file_written_under_a_table_name_that_never_runs_stays_quiet(self, command: str) -> None:
+        """A write only drops the exemption of the program the command runs by that name, not the whole command."""
+        assert _analyse(command, "git").unreadable is False
+
+    def test_an_rtk_flag_before_a_cleared_child_is_judged_as_rtks_own(self) -> None:
+        """Only rtk's listed global flags before the program it runs clear; any other rtk word still asks."""
+        assert _analyse('rtk -x ls -r "$(git rev-parse --show-toplevel)"', "git").unreadable is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("cmd /c 'git push origin main'", id="windows-slash-switch"),
+            pytest.param("cmd //c 'git push origin main'", id="git-bash-double-slash-switch"),
+            pytest.param("cmd /cgit push origin main", id="attached-value"),
+        ],
+    )
+    def test_a_windows_command_interpreter_surfaces_the_git_it_is_given(self, command: str) -> None:
+        """``cmd`` is an interpreter, so the git call in its text is read as an invocation or the guard stops."""
+        reading = _analyse(command, "git")
+        assert reading.unreadable or any(call[:2] == ["git", "push"] for call in reading.invocations or [])
+
+    def test_find_exec_still_surfaces_the_program_it_runs(self) -> None:
+        """``find`` is cleared for its predicates only; the program behind ``-exec`` is read by the wrapper lane."""
+        reading = _analyse("find . -exec sh -c 'git push origin main' \\;", "git")
+        assert ["git", "push", "origin", "main"] in (reading.invocations or [])
+
+
+class TestDataProgramsWithLetterOptions:
+    """``cp -r``, ``ls -r``, ``stat -c`` and kin never take code, so a ``git`` in their path argument is only data."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param('cp -r "$(git rev-parse --show-toplevel)/a" /tmp/b', id="cp-r"),
+            pytest.param('ls -r "$(git rev-parse --show-toplevel)"', id="ls-r"),
+            pytest.param('stat -c %Y "$(git rev-parse --git-dir)"', id="stat-c"),
+            pytest.param("date -r $(git log -1 --format=%ct)", id="date-r"),
+            pytest.param('cat -e "$(git rev-parse --show-toplevel)/x"', id="cat-e"),
+            pytest.param('test -e "$(git rev-parse --show-toplevel)/x"', id="test-e"),
+            pytest.param('[ -e "$(git rev-parse --show-toplevel)/x" ]', id="bracket-e"),
+            pytest.param('[[ -e "$(git rev-parse --show-toplevel)/x" ]]', id="double-bracket-e"),
+            pytest.param('jq -e ".a" "$(git rev-parse --show-toplevel)/f.json"', id="jq-e"),
+            pytest.param('head -c 10 "$(git rev-parse --show-toplevel)/f"', id="head-c"),
+            pytest.param('diff -r a "$(git rev-parse --show-toplevel)/b"', id="diff-r"),
+        ],
+    )
+    def test_a_letter_option_of_a_data_program_does_not_stop_the_guard(self, command: str) -> None:
+        """A positive table of programs with no code-running option keeps routine commands quiet, git still read."""
+        reading = _analyse(command, "git")
+        assert reading.unreadable is False
+        assert reading.invocations, "the git call inside the path argument must still surface as an invocation"
+
+    def test_a_push_inside_a_data_programs_argument_is_still_read(self) -> None:
+        """The exemption only clears the code-option check; a substitution holding a push is still judged."""
+        reading = _analyse('cat -e "$(git push origin main)"', "git")
+        assert ["git", "push", "origin", "main"] in (reading.invocations or [])
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("rsync -e \"ssh -o ProxyCommand='git push'\" a b", id="rsync-e-remote-shell"),
+            pytest.param('make -E "\\$(shell git push)"', id="make-eval"),
+            pytest.param('psql -c "\\\\! git push"', id="psql-c"),
+            pytest.param("tar -c --to-command='git push origin main' -f x.tar a", id="tar-create-flag-not-in-table"),
+            pytest.param("./cat -e 'git push origin main'", id="path-named-like-a-data-program"),
+            pytest.param("/tmp/x/ls -r 'git push origin main'", id="absolute-path-named-like-a-data-program"),
+            pytest.param("CAT -e 'git push origin main'", id="case-variant-of-a-data-program"),
+            pytest.param("cat.exe -e 'git push origin main'", id="exe-variant-of-a-data-program"),
+        ],
+    )
+    def test_a_program_outside_the_table_or_spelled_differently_still_stops_the_guard(self, command: str) -> None:
+        """``rsync -e``, ``make -E``, ``psql -c``, ``tar`` and non-bare spellings of a table name fail closed."""
+        reading = _analyse(command, "git")
+        assert reading.unreadable is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("ls() { eval \"$@\"; }; ls -r 'git push origin main'", id="function-redefines-ls"),
+            pytest.param("alias stat=sh; stat -c 'git push origin main'", id="alias-redefines-stat"),
+            pytest.param("head() { sh \"$@\"; }; head -c 'git push origin main'", id="function-redefines-head"),
+            pytest.param("alias sqlite3=sh; sqlite3 -safe -readonly db \"select 'git'\"", id="alias-redefines-sqlite3"),
+            pytest.param("ln -s /bin/sh cat; cat -c 'inert git'", id="symlink-writer-rebinds-cat"),
+            pytest.param("cp /bin/sh ~/.local/bin/ls; ls -r 'inert git'", id="copy-writer-rebinds-ls"),
+            pytest.param("echo x > bin/cat; cat -e 'inert git'", id="redirect-rebinds-cat"),
+        ],
+    )
+    def test_a_function_or_alias_redefining_a_table_name_drops_its_exemption(self, command: str) -> None:
+        """A listed name stands for the real program only until the same command redefines it."""
+        reading = _analyse(command, "git")
+        assert reading.unreadable is True
+
+    def test_a_writer_that_names_no_table_program_leaves_the_table_in_force(self) -> None:
+        """Only a file written under a table program's own name drops its exemption; other writes stay quiet."""
+        assert _analyse("cp a.txt b.txt; git status", "git").unreadable is False
+
+    def test_a_wrapper_clears_the_program_it_runs_not_its_own_arguments(self) -> None:
+        """``rtk`` is judged on its own options; ``ls -r`` behind it is cleared by the table like a bare ``ls -r``."""
+        cleared = _analyse('rtk ls -r "$(git rev-parse --show-toplevel)"', "git")
+        assert cleared.unreadable is False
+        assert cleared.invocations, "the git call inside the wrapped program's argument must still surface"
+
+    def test_a_sqlite3_call_without_safe_still_asks_behind_rtk(self) -> None:
+        """Clearing the child is its own table entry's decision: without ``-safe`` the same call asks under rtk."""
+        assert _analyse('rtk sqlite3 -readonly db "select $(git log -1 --format=%ct)"', "git").unreadable is True
+
+    def test_the_alias_param_asks_only_because_of_the_alias(self) -> None:
+        """The same sqlite3 call without the alias is quiet, so the alias lane is what the alias test exercises."""
+        assert _analyse("sqlite3 -safe -readonly db \"select 'git'\"", "git").unreadable is False
+
+    def test_a_wrapped_program_outside_the_table_still_stops_the_guard(self) -> None:
+        """The program behind a wrapper keeps its own code-option judgment."""
+        reading = _analyse("rtk foo -c 'git push origin main'", "git")
+        assert reading.unreadable is True
+
+
 class TestArrayAssignments:
     """Elements of ``name=(…)`` and ``name+=(…)`` are data words, so a read-only command beside git stays readable."""
 
@@ -2992,7 +3295,6 @@ class TestRtkShellRunners:
             pytest.param("chrt 0", id="chrt"),
             pytest.param("taskset 1", id="taskset"),
             pytest.param("gxargs", id="gxargs"),
-            pytest.param("fd -x", id="fd-exec"),
             pytest.param("direnv exec .", id="direnv"),
             pytest.param("npx", id="npx"),
         ],
@@ -3004,6 +3306,17 @@ class TestRtkShellRunners:
 
         assert found is not None
         assert ["gh", "pr", "create", "-t", "x"] in found
+
+    @pytest.mark.parametrize(
+        "wrapper",
+        [
+            pytest.param("fd -x", id="fd-exec-option"),
+            pytest.param("arch -e FOO=1", id="arch-unlisted-option"),
+        ],
+    )
+    def test_an_option_of_an_unmodeled_wrapper_fails_closed_before_it_can_hide_a_runner(self, wrapper: str) -> None:
+        """An unmodeled wrapper's option may carry code, so the string behind it is neither skipped nor trusted."""
+        assert _analyse(f"{wrapper} rtk proxy 'gh pr create -t x'", "gh").unreadable is True
 
     @pytest.mark.parametrize(
         "command",
@@ -3111,3 +3424,22 @@ class TestRtkShellRunners:
         """``--`` ends the option list, so a read behind it neither fails closed nor reads wider than its own words."""
         assert _readings(command) == expected
         assert _unreadable(command) is False
+
+
+@_skip_node_unavailable
+def test_inspection_deadline_counts_cpu_time_not_wall_time() -> None:
+    """A stalled host must not turn a command the guard reads quickly into ``deadline exceeded``."""
+    stalled = _node(
+        "const start = lib.inspectionNow();"
+        "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);"
+        "console.log(lib.inspectionNow() - start);"
+    )
+    assert stalled.returncode == 0, stalled.stderr
+    assert float(stalled.stdout) < 200
+    busy = _node(
+        "const start = lib.inspectionNow(); let n = 0;"
+        "while (lib.inspectionNow() - start < 50) n += 1;"
+        "console.log(lib.inspectionNow() - start);"
+    )
+    assert busy.returncode == 0, busy.stderr
+    assert float(busy.stdout) >= 50

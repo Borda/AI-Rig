@@ -200,8 +200,10 @@ def _collect(
     switch_source_after_checkout: bool = False,
     checkout_mode: str = "review",
     gh_checkout_fails: bool = True,
+    gh_failure_stderr: bytes = b"connection reset by peer",
     gh_local_branch: str = "topic",
     gh_pull_ref_tracking: bool = False,
+    after_native_checkout: Callable[[], None] | None = None,
     mutate_after_gh_failure: bool = False,
     move_source_after_head_fetch: bool = False,
 ) -> tuple[int, list[list[str]]]:
@@ -225,8 +227,10 @@ def _collect(
             if gh_checkout_fails:
                 if mutate_after_gh_failure:
                     (worktree / "module.py").write_text("value = 'partial-gh-checkout'\n", encoding="utf-8")
-                return subprocess.CompletedProcess(arguments, 1, stdout=b"", stderr=b"connection reset by peer")
-            if gh_local_branch != "topic":
+                if after_native_checkout:
+                    after_native_checkout()
+                return subprocess.CompletedProcess(arguments, 1, stdout=b"", stderr=gh_failure_stderr)
+            if not _git(worktree, "branch", "--list", gh_local_branch):
                 _git(worktree, "branch", gh_local_branch, head)
             checkout = subprocess.run(["git", "checkout", gh_local_branch], cwd=worktree, **kwargs)
             if checkout.returncode == 0:
@@ -242,6 +246,8 @@ def _collect(
                     f"branch.{gh_local_branch}.merge",
                     "refs/pull/17/head" if gh_pull_ref_tracking else "refs/heads/topic",
                 )
+                if after_native_checkout:
+                    after_native_checkout()
             return checkout
         if arguments[:3] == ["git", "checkout", "--detach"]:
             result = subprocess.run(arguments, cwd=worktree, **kwargs)
@@ -256,7 +262,12 @@ def _collect(
         assert arguments[0] != "gh", arguments
         if arguments[:2] in (["git", "fetch"], ["git", "ls-remote"]):
             is_same_repo_head_fetch = arguments[-1] == head and "--refmap=" in arguments
-            arguments = [str(source) if argument == "origin" else argument for argument in arguments]
+            assert arguments[-2] in {
+                "origin",
+                "git@github.com:example/project.git",
+                "https://github.com/example/project.git",
+            }
+            arguments = [*arguments[:-2], str(source), arguments[-1]]
             result = subprocess.run(arguments, cwd=worktree, **kwargs)
             if move_source_after_head_fetch and is_same_repo_head_fetch:
                 (source / "module.py").write_text("value = 'source moved'\n", encoding="utf-8")
@@ -311,6 +322,59 @@ def _write_ignored_tree(worktree: Path, pattern: str) -> None:
 
 class TestReviewWorktree:
     """Review-mode checkout in a detached worktree beside the report, against real Git repositories."""
+
+    @pytest.mark.integration
+    def test_review_fetches_from_caller_and_shares_its_git_common_directory(
+        self, tmp_path: Path, repository_template: RepositoryTemplate
+    ) -> None:
+        """Fetch through the caller's selected remote and retain its branch, config and unpublished files."""
+        module = _load_collector()
+        source, caller, base, _, head = _setup_repositories(tmp_path, repository_template)
+        ssh = "git@github.com:example/project.git"
+        _git(caller, "remote", "set-url", "origin", "https://token@example.invalid/unused")
+        _git(caller, "remote", "set-url", "--add", "origin", ssh)
+        (caller / "personal.txt").write_bytes(b"unfinished work")
+        original_config = (caller / ".git/config").read_bytes()
+        output = tmp_path / "report"
+
+        code, calls = _collect(module, source, caller, output, base, head)
+        assert code == 0, (output / "pr-error.txt").read_text(encoding="utf-8")
+        assert [call[-2:] for call in calls if call[:2] == ["git", "ls-remote"]] == [
+            [ssh, "refs/heads/main"],
+            [ssh, "refs/pull/17/head"],
+        ]
+        assert [call[-2:] for call in calls if call[:2] == ["git", "fetch"]] == [[ssh, base], [ssh, head]]
+        selection = json.loads((output / "remote-selection.json").read_bytes())
+        assert (selection["remote"], selection["remote_url"]) == (ssh, ssh)
+        assert "token@" not in json.dumps(selection)
+        checkout = json.loads((output / "local-checkout.json").read_bytes())
+        tree = Path(checkout["worktree"])
+        common = ("rev-parse", "--path-format=absolute", "--git-common-dir")
+        assert tree != caller
+        assert _git(tree, *common) == _git(caller, *common)
+        assert checkout["source_worktree"] == caller.resolve().as_posix()
+        assert _git(tree, "rev-parse", "HEAD") == head
+        assert (caller / ".git/config").read_bytes() == original_config
+        assert (caller / "personal.txt").read_bytes() == b"unfinished work"
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("checkout_mode", ["review", "remediate"])
+    def test_retained_private_repository_stops_before_git_transport(
+        self, tmp_path: Path, repository_template: RepositoryTemplate, checkout_mode: str
+    ) -> None:
+        """A linked checkout belonging to a retired independent repository cannot fetch fresh PR evidence."""
+        module = _load_collector()
+        source, caller, base, _, head = _setup_repositories(tmp_path, repository_template)
+        retained = tmp_path / "codex-rig" / "review-workspaces" / ("a" * 64)
+        retained.parent.mkdir(parents=True)
+        caller.rename(retained)
+        linked = tmp_path / "linked"
+        _git(retained, "worktree", "add", "--detach", str(linked), head)
+        output = tmp_path / "report"
+        code, calls = _collect(module, source, linked, output, base, head, checkout_mode=checkout_mode)
+        assert code != 0
+        assert "use-original-checkout" in (output / "pr-error.txt").read_text(encoding="utf-8")
+        assert not any(call[:2] in (["git", "ls-remote"], ["git", "fetch"]) for call in calls)
 
     def test_large_tracked_index_checks_flags_through_last_entry(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -568,6 +632,32 @@ class TestReviewWorktree:
         assert _git(review, "rev-parse", "HEAD") == head
         assert ["git", "worktree", "add", "--detach", str(review), head] in calls
         assert not (main / "reports" / "run-001-review-worktree").exists()
+
+    @pytest.mark.integration
+    def test_git_admin_report_keeps_review_files_outside_shared_metadata(
+        self, tmp_path: Path, repository_template: RepositoryTemplate, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A caller already in a linked checkout uses shared Git objects and places reviewed files outside metadata."""
+        module = _load_collector()
+        source, main, base, _, head = _setup_repositories(tmp_path, repository_template)
+        caller = tmp_path / "invoking-linked"
+        _git(main, "worktree", "add", "--detach", str(caller), base)
+        common = main / ".git"
+        report = common / "codex-rig" / "reports" / "code-review" / "pr-17" / "run-001"
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+        code, _ = _collect(module, source, caller, report, base, head)
+
+        assert code == 0, (report / "pr-error.txt").read_text()
+        receipt = json.loads((report / "local-checkout.json").read_bytes())
+        tree = Path(receipt["worktree"])
+        assert receipt["source_worktree"] == caller.as_posix()
+        assert receipt["worktree_location"] == "temporary-fallback"
+        assert not tree.is_relative_to(common)
+        assert not tree.is_relative_to(caller)
+        assert Path(_git(tree, "rev-parse", "--path-format=absolute", "--git-common-dir")) == common
+        assert _git(tree, "rev-parse", "HEAD") == head
+        assert _git(caller, "rev-parse", "HEAD") == base
 
     def test_preserves_occupied_temporary_fallback(
         self, tmp_path: Path, repository_template: RepositoryTemplate, monkeypatch: pytest.MonkeyPatch
@@ -1231,6 +1321,420 @@ class TestRemediation:
         assert preflight["dirty_path_counts"]["ignored"] == _IGNORED_TREE_FILES
         assert len(preflight["dirty_paths"]) <= module.DIRTY_PATH_SAMPLE_LIMIT + 1
         assert module.dirty_path_record_is_consistent(preflight)
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("cross_repository", "branch", "scenario", "expected_error", "branch_collision"),
+        [
+            pytest.param(True, "topic", "head", "local-checkout-head-mismatch", True, id="preserved-fork-tip"),
+            pytest.param(True, "contributor/topic", "head", "local-checkout-head-mismatch", True, id="fork-head-alias"),
+            pytest.param(True, "contributor/topic", "pull", "local-checkout-head-mismatch", True, id="fork-pull-alias"),
+            pytest.param(True, "contributor/topic", "wrong", "local-checkout-head-mismatch", False, id="unbound-alias"),
+            pytest.param(True, "topic", "advance", "pr-head-changed-during-checkout", False, id="concurrent-pr-update"),
+            pytest.param(False, "topic", "head", "local-checkout-head-mismatch", False, id="same-repository"),
+            pytest.param(True, "unrelated", "head", "local-checkout-head-mismatch", False, id="unrelated-branch"),
+        ],
+    )
+    def test_native_checkout_success_with_local_commits(
+        self,
+        tmp_path: Path,
+        repository_template: RepositoryTemplate,
+        capsys: pytest.CaptureFixture[str],
+        cross_repository: bool,
+        branch: str,
+        scenario: str,
+        expected_error: str,
+        branch_collision: bool,
+    ) -> None:
+        """Distinguish preserved fork commits from a concurrently updated PR or unrelated checkout."""
+        source, caller, base, _, reviewed = _setup_repositories(tmp_path, repository_template)
+        if branch != "topic":
+            _git(caller, "checkout", "-b", branch)
+        _git(caller, "commit", "--allow-empty", "-m", "Unpublished work")
+        local = _git(caller, "rev-parse", "HEAD")
+        output = tmp_path / "collected"
+
+        def after_checkout() -> None:
+            if scenario == "advance":
+                _git(source, "commit", "--allow-empty", "-m", "New PR revision")
+                _git(source, "update-ref", "refs/pull/17/head", "HEAD", reviewed)
+            if scenario == "wrong":
+                _git(caller, "config", f"branch.{branch}.merge", "refs/pull/18/head")
+
+        code, calls = _remediate(
+            _load_collector(),
+            source,
+            caller,
+            output,
+            base,
+            reviewed,
+            cross_repository=cross_repository,
+            gh_local_branch=branch,
+            gh_checkout_fails=False,
+            gh_pull_ref_tracking=scenario == "pull",
+            after_native_checkout=after_checkout,
+        )
+        assert code == 2
+        assert (output / "pr-error.txt").read_text().strip() == expected_error
+        assert not (output / "local-checkout.json").exists()
+        assert _git(caller, "rev-parse", "HEAD") == local
+        assert _git(caller, "branch", "--show-current") == branch
+        assert calls.count(["gh", "pr", "checkout", "https://github.com/example/project/pull/17"]) == 1
+        stdout = capsys.readouterr().out
+        if branch_collision:
+            assert json.loads(stdout) == {
+                "status": "remediation-fork-checkout-branch-collision",
+                "pr_url": "https://github.com/example/project/pull/17",
+            }
+            state = json.loads((output / "checkout-state.json").read_bytes())
+            assert state["native_checkout_status"] == "succeeded"
+            assert state["gh_checkout_failure"] is None
+            assert state["local_branch_comparison"] == {
+                "ref": f"refs/heads/{branch}",
+                "relation": "ahead",
+                "pr_head_oid": reviewed,
+                "local_head_oid": local,
+                "ahead": 1,
+                "behind": 0,
+                "diffstat": "0 files changed",
+            }
+        else:
+            assert stdout == ""
+        if cross_repository:
+            state = json.loads((output / "checkout-state.json").read_bytes())
+            assert (state["post_checkout_branch"], state["post_checkout_head"]) == (branch, local)
+            if scenario == "wrong" or branch == "unrelated":
+                assert state["local_branch_comparison"]["reason"] == "ambiguous-or-unverified-branch"
+                assert "ahead" not in state["local_branch_comparison"]
+            if scenario == "advance":
+                assert state["post_checkout_pr_head_oid"] == _git(source, "rev-parse", "refs/pull/17/head") != reviewed
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "remote_available",
+        [
+            pytest.param(True, id="advanced-to-local-tip"),
+            pytest.param(False, id="advertisement-unavailable"),
+        ],
+    )
+    def test_failed_native_checkout_rechecks_pr_before_reporting_local_commits(
+        self,
+        tmp_path: Path,
+        repository_template: RepositoryTemplate,
+        capsys: pytest.CaptureFixture[str],
+        remote_available: bool,
+    ) -> None:
+        """Withhold a local-only finding when the PR advanced or its current revision is unknown."""
+        source, caller, base, _, reviewed = _setup_repositories(tmp_path, repository_template)
+        _git(caller, "config", "branch.topic.merge", "refs/pull/17/head")
+        _git(caller, "config", "branch.topic.remote", "origin")
+        _git(caller, "commit", "--allow-empty", "-m", "Local tip")
+        local = _git(caller, "rev-parse", "HEAD")
+        output = tmp_path / "collected"
+
+        def change_remote() -> None:
+            if remote_available:
+                _git(source, "fetch", "--no-tags", str(caller), local)
+                _git(source, "update-ref", "refs/pull/17/head", local, reviewed)
+            else:
+                source.rename(tmp_path / "unavailable")
+
+        code, calls = _remediate(
+            _load_collector(),
+            source,
+            caller,
+            output,
+            base,
+            reviewed,
+            gh_failure_stderr=b"checkout failed",
+            after_native_checkout=change_remote,
+        )
+        assert code == 2
+        assert capsys.readouterr().out == ""
+        assert calls.count(["git", "ls-remote", "--exit-code", "--refs", "origin", "refs/pull/17/head"]) == 2
+        expected = (
+            "pr-head-changed-during-checkout" if remote_available else "command-failed:post-checkout-pr-head-resolve"
+        )
+        assert (output / "pr-error.txt").read_text().strip() == expected
+        state = json.loads((output / "checkout-state.json").read_bytes())
+        assert state["native_checkout_status"] == "failed"
+        assert state["gh_checkout_failure"]["diagnostics"]["failure_reason"] == "unclassified"
+        assert state["post_checkout_head"] == _git(caller, "rev-parse", "HEAD") == local
+        assert "local_branch_comparison" not in state
+        assert not (output / "local-checkout.json").exists()
+        if remote_available:
+            assert state["post_checkout_pr_head_oid"] == local
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("also_bound", "native_error", "branch_collision"),
+        [
+            pytest.param(False, b"fatal: not possible to fast-forward, aborting.", True, id="local-fast-forward"),
+            pytest.param(False, b"checkout failed", True, id="unclassified"),
+            pytest.param(True, b"checkout failed", False, id="ambiguous-source"),
+            pytest.param(False, b"permission denied", False, id="permission-denied"),
+            pytest.param(False, b"HTTP 401", False, id="authentication-failed"),
+            pytest.param(
+                False,
+                b"fatal: unable to access 'https://github.com/acme/project/': The requested URL returned error: 403",
+                False,
+                id="git-http-forbidden",
+            ),
+            pytest.param(False, b"remote: HTTP Basic: Access denied", False, id="git-http-basic-denied"),
+            pytest.param(False, b"connection reset by peer", False, id="transport-failure"),
+            pytest.param(False, b"the response contains terminal escape sequences", False, id="unrelated-failure"),
+        ],
+    )
+    def test_failed_native_checkout_diagnoses_only_unique_tracked_source(
+        self,
+        tmp_path: Path,
+        repository_template: RepositoryTemplate,
+        capsys: pytest.CaptureFixture[str],
+        also_bound: bool,
+        native_error: bytes,
+        branch_collision: bool,
+    ) -> None:
+        """Route only compatible native failures with a unique, tracked branch that diverged from the PR."""
+        source, caller, base, _, reviewed = _setup_repositories(tmp_path, repository_template)
+        alias = "contributor/topic"
+        _git(caller, "checkout", "-b", alias, "old-topic")
+        _git(caller, "config", f"branch.{alias}.merge", "refs/pull/17/head")
+        _git(caller, "config", f"branch.{alias}.remote", "origin")
+        if also_bound:
+            _git(caller, "config", "branch.topic.merge", "refs/heads/topic")
+            _git(caller, "config", "branch.topic.remote", "https://github.com/contributor/project.git")
+        else:
+            _git(caller, "branch", "-m", "topic", "other-topic")
+        _git(caller, "commit", "--allow-empty", "-m", "Unpublished alias change")
+        local = _git(caller, "rev-parse", "HEAD")
+        output = tmp_path / "collected"
+        code, calls = _remediate(
+            _load_collector(), source, caller, output, base, reviewed, gh_failure_stderr=native_error
+        )
+        assert code == 2
+        expected_status = (
+            "remediation-fork-checkout-branch-collision" if branch_collision else "remediation-fork-checkout-stopped"
+        )
+        url = "https://github.com/example/project/pull/17"
+        assert json.loads(capsys.readouterr().out) == {"status": expected_status, "pr_url": url}
+        assert calls.count(["gh", "pr", "checkout", url]) == 1
+        assert calls.count(["git", "ls-remote", "--exit-code", "--refs", "origin", "refs/pull/17/head"]) == (
+            2 if branch_collision else 1
+        )
+        assert _git(caller, "rev-parse", "HEAD") == local
+        assert _git(caller, "config", f"branch.{alias}.merge") == "refs/pull/17/head"
+        assert _git(caller, "config", f"branch.{alias}.remote") == "origin"
+        state = json.loads((output / "checkout-state.json").read_bytes())
+        assert state["native_checkout_status"] == "failed"
+        comparison = state["local_branch_comparison"]
+        if branch_collision:
+            stats = comparison.pop("diffstat")
+            assert "module.py" in stats
+            assert "1 insertion(+), 1 deletion(-)" in stats
+        else:
+            assert "diffstat" not in comparison
+        if also_bound:
+            assert comparison == {
+                "pr_head_oid": reviewed,
+                "relation": "unavailable",
+                "reason": "ambiguous-or-unverified-branch",
+            }
+        else:
+            assert comparison == {
+                "ref": f"refs/heads/{alias}",
+                "relation": "diverged",
+                "local_head_oid": local,
+                "pr_head_oid": reviewed,
+                "ahead": 2,
+                "behind": 1,
+            }
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("failure", "collision"),
+        [
+            pytest.param(b"fatal: 'topic' is already used by worktree at '/private/other'", False, id="held-head"),
+            pytest.param(None, False, id="native-occupied-worktree"),
+            pytest.param(b"fatal: a branch named 'topic' already exists", False, id="existing-head"),
+            pytest.param(
+                b"fatal: cannot lock ref 'refs/remotes/origin/topic': is at abc but expected def",
+                False,
+                id="tracking-ref",
+            ),
+            pytest.param(b" ! [rejected] refs/pull/17/head -> topic (non-fast-forward)", False, id="rejected-head"),
+            pytest.param(b"fatal: a branch named 'contributor/topic' already exists", True, id="existing-alias"),
+            pytest.param(b"checkout failed", False, id="unknown-target"),
+        ],
+    )
+    def test_cleanup_targets_the_branch_named_by_checkout(
+        self, tmp_path: Path, repository_template: RepositoryTemplate, failure: bytes | None, collision: bool
+    ) -> None:
+        """Withhold cleanup of a tracked alias when the native error identifies another branch or ref."""
+        source, caller, base, _, reviewed = _setup_repositories(tmp_path, repository_template)
+        alias = "contributor/topic"
+        _git(caller, "checkout", "-b", alias, "old-topic")
+        _git(caller, "config", f"branch.{alias}.remote", "origin")
+        _git(caller, "config", f"branch.{alias}.merge", "refs/pull/17/head")
+        _git(caller, "worktree", "add", str(tmp_path / "other"), "topic")
+        diagnostic = failure or subprocess.run(["git", "checkout", "topic"], cwd=caller, capture_output=True).stderr
+        out = tmp_path / "pr"
+
+        code, _ = _remediate(_load_collector(), source, caller, out, base, reviewed, gh_failure_stderr=diagnostic)
+
+        assert code == 2
+        state = json.loads((out / "checkout-state.json").read_bytes())
+        assert state["status"] == (
+            "remediation-fork-checkout-branch-collision" if collision else "remediation-fork-checkout-stopped"
+        )
+        assert ("diffstat" in state["local_branch_comparison"]) is collision
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("native_failed", "expected_state"),
+        [
+            pytest.param(True, "remediation-fork-checkout-stopped", id="failed-native-checkout"),
+            pytest.param(False, "native-fork-checkout-head-mismatch", id="attached-shallow-tip"),
+        ],
+    )
+    def test_shallow_history_cannot_prove_unpublished_commits(
+        self, tmp_path: Path, repository_template: RepositoryTemplate, native_failed: bool, expected_state: str
+    ) -> None:
+        """A pruned parent edge must not turn a genuine ancestor into a diverged local branch."""
+        source, _, ancestor, _, base = _setup_repositories(tmp_path, repository_template)
+        _git(source, "update-ref", "refs/heads/main", base, ancestor)
+        _git(source, "commit", "--allow-empty", "-m", "Current PR change")
+        reviewed = _git(source, "rev-parse", "HEAD")
+        _git(source, "update-ref", "refs/pull/17/head", reviewed, base)
+        caller = tmp_path / "shallow"
+        _git(tmp_path, "clone", "--depth=2", source.as_uri(), str(caller))
+        _git(caller, "fetch", "--no-tags", "--refmap=", "--no-write-fetch-head", str(source), ancestor)
+        _git(caller, "switch", "--detach", reviewed)
+        _git(caller, "update-ref", "refs/heads/topic", ancestor, reviewed)
+        _git(caller, "remote", "set-url", "origin", "https://github.com/example/project.git")
+        _git(caller, "config", "branch.topic.merge", "refs/pull/17/head")
+        out = tmp_path / "pr"
+
+        code, _ = _remediate(
+            _load_collector(),
+            source,
+            caller,
+            out,
+            base,
+            reviewed,
+            gh_checkout_fails=native_failed,
+            gh_failure_stderr=b"checkout failed",
+        )
+
+        assert _git(source, "rev-list", "--left-right", "--count", f"{reviewed}...{ancestor}") == "2\t0"
+        assert code == 2
+        state = json.loads((out / "checkout-state.json").read_bytes())
+        assert state["status"] == expected_state
+        comparison = state["local_branch_comparison"]
+        assert comparison["relation"] == "unavailable"
+        assert comparison["reason"] == "shallow-history"
+        assert {"ahead", "behind", "diffstat"}.isdisjoint(comparison)
+
+    @pytest.mark.integration
+    def test_collision_diffstat_bounds_paths_and_quotes_binary_names(
+        self,
+        tmp_path: Path,
+        repository_template: RepositoryTemplate,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """List a bounded sample of paths, with complete totals and quoted names even for binary files."""
+        source, caller, base, _, reviewed = _setup_repositories(tmp_path, repository_template)
+        monkeypatch.setenv("LC_ALL", "C")
+        _git(caller, "config", "branch.topic.merge", "refs/pull/17/head")
+        _git(caller, "config", "branch.topic.remote", "origin")
+        (caller / "00-\u202e.bin").write_bytes(b"\x00\xff")
+        for index in range(13):
+            (caller / f"file-{index:02d}.txt").write_bytes(b"local\n")
+        _git(caller, "add", "--all")
+        _git(caller, "commit", "-m", "Local files")
+        (caller / ".git" / "info" / "attributes").write_text("*.bin diff=custom\n", encoding="utf-8")
+        _git(caller, "config", "diff.custom.textconv", "missing-text-converter")
+        monkeypatch.setenv("GIT_EXTERNAL_DIFF", "missing-external-diff")
+
+        output = tmp_path / "collected"
+        code, calls = _remediate(
+            _load_collector(), source, caller, output, base, reviewed, gh_failure_stderr=b"checkout failed"
+        )
+
+        assert code == 2
+        state = json.loads((output / "checkout-state.json").read_bytes())
+        assert state["status"] == "remediation-fork-checkout-branch-collision"
+        summary = state["local_branch_comparison"]["diffstat"]
+        assert r"\342\200\256.bin" in summary
+        assert "Bin 0 -> 2 bytes" in summary
+        assert "14 files changed, 13 insertions(+)" in summary
+        assert summary.count(" | ") == 12
+        command = next(call for call in calls if "--stat=100,60,12" in call)
+        assert {"--no-ext-diff", "--no-textconv", "--no-color"} <= set(command)
+        assert command[-3:] == [reviewed, _git(caller, "rev-parse", "HEAD"), "--"]
+
+    @pytest.mark.integration
+    def test_fork_checkout_collision_preserves_shared_branch_and_callers_local_commits(
+        self,
+        tmp_path: Path,
+        repository_template: RepositoryTemplate,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Preserve the occupied fork branch and report its unpublished commit from a linked remediation worktree."""
+        source, caller, base, _, reviewed = _setup_repositories(tmp_path, repository_template)
+        url = "https://github.com/example/project/pull/17"
+        _git(caller, "remote", "add", "contributor", "https://github.com/contributor/project.git")
+        _git(caller, "update-ref", "refs/remotes/contributor/topic", reviewed)
+        _git(caller, "branch", "--set-upstream-to=contributor/topic", "topic")
+        (caller / "notes.txt").write_bytes(b"local commit\n")
+        _git(caller, "commit", "-am", "Unpublished change")
+        local = _git(caller, "rev-parse", "HEAD")
+        (caller / "personal.txt").write_bytes(b"untracked work\n")
+        collector = _load_collector()
+        stopped = tmp_path / "caller-attempt"
+        code, calls = _remediate(
+            collector,
+            source,
+            caller,
+            stopped,
+            base,
+            reviewed,
+            gh_failure_stderr=b"fatal: a branch named 'topic' already exists",
+        )
+        assert code == 2
+        assert json.loads(capsys.readouterr().out) == {
+            "status": "remediation-fork-checkout-branch-collision",
+            "pr_url": url,
+        }
+        assert ["gh", "pr", "checkout", url] in calls
+        assert (stopped / "pr-error.txt").read_text().strip() == "remediation-gh-checkout-recovery-required"
+        comparison = json.loads((stopped / "checkout-state.json").read_bytes())["local_branch_comparison"]
+        assert (comparison["relation"], comparison["local_head_oid"], comparison["pr_head_oid"]) == (
+            "ahead",
+            local,
+            reviewed,
+        )
+        assert (comparison["ahead"], comparison["behind"]) == (1, 0)
+
+        branch = load_module("recovery_branch", PLUGIN_ROOT / "shared/remediation_branch.py")
+        run = tmp_path / "recovery"
+        run.mkdir()
+        monkeypatch.chdir(caller)
+        destination = Path(branch.create_worktree(run / "recovery-worktree.json")["worktree"])
+        common = ("rev-parse", "--path-format=absolute", "--git-common-dir")
+        assert _git(destination, *common) == _git(caller, *common)
+        assert _git(destination, "rev-parse", "refs/heads/topic") == local
+        pr = run / "pr"
+        code, calls = _remediate(collector, source, destination, pr, base, reviewed, gh_checkout_fails=False)
+        assert code == 2
+        assert ["gh", "pr", "checkout", url] in calls
+        assert not (pr / "local-checkout.json").exists()
+        assert not _git(destination, "branch", "--show-current")
+        assert _git(caller, "branch", "--show-current") == "topic"
+        assert _git(caller, "rev-parse", "HEAD") == local
+        assert _git(caller, "rev-parse", "--abbrev-ref", "@{upstream}") == "contributor/topic"
+        assert (caller / "notes.txt").read_bytes() == b"local commit\n"
+        assert (caller / "personal.txt").read_bytes() == b"untracked work\n"
 
     def test_keeps_github_attached_branch(self, tmp_path: Path, repository_template: RepositoryTemplate) -> None:
         """Require the GitHub checkout route and its branch tracking for remediation.

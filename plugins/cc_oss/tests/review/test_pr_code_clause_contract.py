@@ -326,7 +326,7 @@ git() { return "${GIT_BASE_STATUS:-0}"; }
             "--decision",
             "exact-head",
             "--out",
-            str(tmp_path / "code-approval.txt"),
+            f"{tmp_path}/code-approval.txt",  # the block joins the sentinel path with "/", also on Windows
             "--",
             *command,
         ]

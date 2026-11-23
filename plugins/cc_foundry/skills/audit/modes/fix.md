@@ -227,7 +227,7 @@ Confirm a broken-name fix with the Grep tool: pattern = the broken name from the
 
 Track pass count via `$RUN_DIR/fix-passes.txt` (persists across bash calls — shell state doesn't). At each Step 10 entry: `IFS= read -r PASS_COUNT < "$RUN_DIR/fix-passes.txt" 2>/dev/null || PASS_COUNT=0; PASS_COUNT=$((PASS_COUNT + 1)); echo "$PASS_COUNT" > "$RUN_DIR/fix-passes.txt"`. If `$PASS_COUNT >= 5`, stop loop immediately — do not re-enter Step 8 regardless of remaining findings. Never suppress findings to clean counter.
 
-Audit-fix sub-agent (when used) must apply this loop internally — instruct it to keep spawning fix agents and re-audit agents until clean or 5-pass limit.
+Audit-fix sub-agent (when used) must apply this loop internally — instruct it to keep spawning fix agents and re-audit agents until clean or 5-pass limit (a loop of its own: the adversarial loop's early stop never applies here).
 
 **Cross-file re-validation**: after per-file re-audit, re-run Step 4 checks sensitive to modified files:
 

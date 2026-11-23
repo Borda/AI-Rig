@@ -25,14 +25,13 @@ def _present(text: str, *retired: str) -> list[str]:
     return [phrase for phrase in retired if phrase in text]
 
 
-@pytest.mark.parametrize("skill", ["review", "analyse"])
-def test_report_followup_uses_a_plain_summary_and_final_header(skill: str) -> None:
+def test_review_followup_uses_a_plain_summary_and_final_header() -> None:
     """The first question carries the report facts without duplicating or clipping its header table.
 
-    Both report-producing skills must put a plain-text summary in the question, defer the header table to the final
-    reply after the answer, and no longer describe option previews or a preview cap.
+    The review skill must put a plain-text summary in the question, defer the header table to the final reply after the
+    answer, and no longer describe option previews or a preview cap. Analyse asks no question at all.
     """
-    text = _read(skill, "modes", "post-agent.md") if skill == "review" else _read(skill, "SKILL.md")
+    text = _read("review", "modes", "post-agent.md")
     missing = _missing(
         text,
         "first question's text",
@@ -51,14 +50,14 @@ def test_report_followup_uses_a_plain_summary_and_final_header(skill: str) -> No
 
 @pytest.mark.parametrize("mode", ["ecosystem", "thread", "vitality"])
 def test_analysis_modes_build_the_header_for_final_delivery(mode: str) -> None:
-    """All analysis modes recover a missing report into a question summary and a final header.
+    """All analysis modes end with the complete header in the final reply and ask no follow-up question.
 
-    A mode that rebuilds the report must still end with the complete header in its final reply, and must not fall back
-    to the retired option-preview wording.
+    A mode that writes the report must leave the header to the final reply after the answer, and must not describe a
+    follow-up question, option previews or a preview cap.
     """
     text = _read("analyse", "modes", f"{mode}.md")
-    assert _missing(text, "question text", "`Title`, `Outcome`", "final reply after the answer") == []
-    assert _present(text, "option previews", "preview cap") == []
+    assert _missing(text, "final reply after the answer") == []
+    assert _present(text, "question text", "option previews", "preview cap", "re-issue the question") == []
 
 
 def test_review_header_task_stays_open_until_final_delivery() -> None:

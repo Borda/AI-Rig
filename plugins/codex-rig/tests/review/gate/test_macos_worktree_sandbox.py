@@ -222,7 +222,9 @@ def test_final_probe_launch_errors_stop_the_selected_gate(
         mock.patch.object(builder.subprocess, "run", autospec=True, side_effect=probe_error) as probe,
         mock.patch.object(runner, "execute_command", autospec=True, return_value=(0, 0.0)) as workload,
     ):
-        code, _, route = runner._launch_gate(gate, command, 5, paths, root, head, worktree, {}, scratch, True)
+        code, _, route = runner._launch_gate(
+            gate, command, 5, paths, root, head, worktree, {}, scratch, True, sandbox_policy="contributor"
+        )
     probe.assert_called_once()
     assert probe.call_args.args[0][-1] == "/usr/bin/true"
     assert route["mode"] == "not-started", route
@@ -243,12 +245,233 @@ def test_missing_optional_native_input_uses_one_standard_launch(native_probe_inp
         mock.patch.object(builder.subprocess, "run", autospec=True) as probe,
         mock.patch.object(runner, "execute_command", autospec=True, return_value=(0, 0.0)) as workload,
     ):
-        code, _, route = runner._launch_gate(gate, command, 5, paths, root, head, worktree, {}, scratch, True)
+        code, _, route = runner._launch_gate(
+            gate, command, 5, paths, root, head, worktree, {}, scratch, True, sandbox_policy="contributor"
+        )
     assert route == {"mode": "standard", "reason": f"worktree sandbox declined: {builder.INPUT_MISSING}"}
     assert code == 0
     probe.assert_not_called()
     workload.assert_called_once()
     assert workload.call_args.args[0] == command
+
+
+def test_ordinary_gate_uses_standard_launcher_without_profile_preparation(native_probe_inputs: tuple) -> None:
+    """A normal clean linked worktree needs no plugin probe even when its Ruff command could be confined."""
+    runner, root, head, worktree, scratch, paths, commands = native_probe_inputs
+    command, _ = commands["lint"]
+    with (
+        mock.patch.object(runner, "_prepare_gate_profile", autospec=True, return_value="unexpected probe") as prepare,
+        mock.patch.object(runner, "execute_command", autospec=True, return_value=(0, 0.0)) as workload,
+    ):
+        code, _, route = runner._launch_gate("lint", command, 5, paths, root, head, worktree, {}, scratch, False)
+    assert (code, route["mode"]) == (0, "standard")
+    prepare.assert_not_called()
+    workload.assert_called_once()
+    assert workload.call_args.args[0] == command
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("options", "existing_interval", "failed_gates"),
+    [
+        pytest.param([], False, [], id="ordinary-free-form-command"),
+        pytest.param(["--sandbox"], False, ["lint", "format"], id="required-profile-unavailable"),
+        pytest.param(["--sandbox-gate", "lint"], False, ["lint"], id="confine-selected-gate"),
+        pytest.param(["--sandbox-gate", "format"], False, ["format"], id="unaffected-gate-ordinary"),
+        pytest.param(["--sandbox-gate", "format"], True, ["format"], id="preserve-existing-interval"),
+        pytest.param(["--sandbox", "--sandbox-gate", "lint"], False, ["lint", "format"], id="whole-request-wins"),
+    ],
+)
+def test_public_gate_respects_requested_sandbox(
+    tmp_path: Path, options: list[str], existing_interval: bool, failed_gates: list[str]
+) -> None:
+    """Only the requested gates require confinement, while an existing interval retains its automatic profiles."""
+    runner = SHARED / "run_gates.py"
+    out = tmp_path / "run"
+    work = tmp_path
+    if existing_interval:
+        work, _ = _main(tmp_path)
+        out.mkdir()
+        snapshot = out / "integrity.json"
+        proof = _helper("contributor_run_integrity.py", "snapshot", "--repo", str(work), "--out", str(snapshot))
+        options = [*options, "--pr-integrity", str(snapshot), proof["sha256"]]
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(runner),
+            "--out",
+            str(out),
+            *options,
+            "--lint",
+            "echo ran > marker",
+            "--format",
+            "echo formatted > format-marker",
+            "--skip-types",
+            "fixture",
+            "--skip-tests",
+            "fixture",
+            "--skip-review",
+            "fixture",
+        ],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == int(bool(failed_gates)), result.stderr
+    receipt = json.loads((out / "gates.json").read_bytes())
+    assert receipt["checks_failed"] == failed_gates
+    for gate, marker in (("lint", "marker"), ("format", "format-marker")):
+        check = next(check for check in receipt["checks"] if check["id"] == gate)
+        blocked = gate in failed_gates
+        assert (work / marker).exists() is not blocked
+        assert check["execution_route"]["mode"] == ("not-started" if blocked else "standard")
+        assert ("sandbox required" in (out / check["stderr"]).read_text(encoding="utf-8")) is blocked
+        if not blocked:
+            expected_reason = (
+                "macOS clean worktree profile not applicable" if existing_interval else "worktree sandbox not requested"
+            )
+            assert check["execution_route"]["reason"] == expected_reason
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("change", ["shared-config", "sibling-checkout"])
+def test_mixed_gates_stop_at_integrity_drift_before_post_command_git(tmp_path: Path, change: str) -> None:
+    """Drift from the first ordinary gate stops source observation and later gates across active draft snapshots."""
+    work, git = _main(tmp_path)
+    out = tmp_path / "run"
+    out.mkdir()
+    sibling = tmp_path / "peer"
+    subprocess.run([*git, "worktree", "add", "-q", "--detach", str(sibling), "HEAD"], check=True)
+    head = subprocess.check_output([*git, "rev-parse", "HEAD"], text=True).strip()
+    anchors = []
+    for root, name in ((work, "integrity.json"), (sibling, "integrity-peer.json")):
+        snapshot = out / name
+        receipt = _helper(
+            "contributor_run_integrity.py", "snapshot", "--repo", str(root), "--watch-surface", "--out", str(snapshot)
+        )
+        anchors.extend(["--pr-integrity", str(snapshot), receipt["sha256"]])
+    command = (
+        "git config --local fixture.observed true" if change == "shared-config" else "echo changed >> ../peer/sample.py"
+    )
+    trace = tmp_path / "git-events.jsonl"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(SHARED / "run_gates.py"),
+            "--out",
+            str(out),
+            "--expected-head",
+            head,
+            "--worktree",
+            str(work),
+            *anchors,
+            "--sandbox-gate",
+            "format",
+            "--lint",
+            command,
+            "--format",
+            "echo format",
+            "--types",
+            "echo later > ../next-gate",
+            "--skip-tests",
+            "fixture",
+            "--skip-review",
+            "fixture",
+        ],
+        env=os.environ | {"GIT_TRACE2_EVENT": str(trace)},
+        cwd=work,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 3, (result.stdout, result.stderr)
+    diagnostic = json.loads(result.stdout)
+    assert diagnostic["ok"] is False
+    assert ("common:config" if change == "shared-config" else "review:diff") in diagnostic["changed"]
+    assert "Stop execution" in result.stderr
+    observations = [json.loads(line).get("argv", []) for line in trace.read_text(encoding="utf-8").splitlines()]
+    assert (
+        sum(
+            args[-3:] == ["--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"]
+            for args in observations
+        )
+        == 1
+    )
+    assert not (tmp_path / "next-gate").exists()
+    assert not (out / "gates.json").exists()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("evidence", ["absent", "other-checkout", "tampered"])
+def test_mixed_gates_require_original_anchor_for_execution_checkout(tmp_path: Path, evidence: str) -> None:
+    """Missing, misplaced and altered snapshots stop mixed execution during admission."""
+    work, git = _main(tmp_path)
+    sibling = tmp_path / "peer"
+    subprocess.run([*git, "worktree", "add", "-q", "--detach", str(sibling), "HEAD"], check=True)
+    out = tmp_path / "run"
+    out.mkdir()
+    snapshot = out / "integrity.json"
+    root = sibling if evidence == "other-checkout" else work
+    receipt = _helper("contributor_run_integrity.py", "snapshot", "--repo", str(root), "--out", str(snapshot))
+    digest = "0" * 64 if evidence == "tampered" else receipt["sha256"]
+    anchors = [] if evidence == "absent" else ["--pr-integrity", str(snapshot), digest]
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(SHARED / "run_gates.py"),
+            "--out",
+            str(out),
+            *anchors,
+            "--sandbox-gate",
+            "format",
+            "--lint",
+            "echo started > marker",
+            "--skip-format",
+            "fixture",
+            "--skip-types",
+            "fixture",
+            "--skip-tests",
+            "fixture",
+            "--skip-review",
+            "fixture",
+        ],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    expected = {
+        "absent": (2, "mixed gates in an active interval require"),
+        "other-checkout": (2, "requires a snapshot for the actual execution checkout"),
+        "tampered": (3, "snapshot-file"),
+    }
+    code, diagnostic = expected[evidence]
+    assert result.returncode == code
+    assert diagnostic in result.stderr + result.stdout
+    assert not (work / "marker").exists()
+    assert not (out / "gates.json").exists()
+
+
+@pytest.mark.parametrize("gate", ["lint", "tests"])
+def test_required_profile_decline_never_launches_a_workload(native_probe_inputs: tuple, gate: str) -> None:
+    """A profile-capable checkout whose specific input is unavailable cannot fall back from explicit isolation."""
+    runner, root, head, worktree, scratch, paths, commands = native_probe_inputs
+    command, optional_input = commands[gate]
+    optional_input.unlink()
+    with mock.patch.object(runner, "execute_command", autospec=True) as workload:
+        code, _, route = runner._launch_gate(
+            gate, command, 5, paths, root, head, worktree, {}, scratch, True, sandbox_policy="required"
+        )
+    workload.assert_not_called()
+    assert code == 1
+    assert route == {
+        "mode": "not-started",
+        "reason": f"sandbox required: worktree sandbox declined: {builder.INPUT_MISSING}",
+    }
 
 
 def test_launch_profile_scopes_metadata_to_grants_and_lookup_ancestors(native_probe_inputs: tuple) -> None:
@@ -344,7 +567,9 @@ def test_checkout_inputs_that_decline_confinement_keep_one_named_standard_launch
         mock.patch.object(builder.subprocess, "run", autospec=True) as probe,
         mock.patch.object(runner, "execute_command", autospec=True, return_value=(0, 0.0)) as workload,
     ):
-        code, _, route = runner._launch_gate(gate, command, 5, paths, root, head, worktree, {}, scratch, True)
+        code, _, route = runner._launch_gate(
+            gate, command, 5, paths, root, head, worktree, {}, scratch, True, sandbox_policy="contributor"
+        )
     assert route == {"mode": "standard", "reason": reason}
     assert code == 0
     probe.assert_not_called()
@@ -427,7 +652,9 @@ def test_project_addopts_naming_locations_keep_the_standard_route(
         mock.patch.object(builder.subprocess, "run", autospec=True, return_value=success) as probe,
         mock.patch.object(runner, "execute_command", autospec=True, return_value=(0, 0.0)) as workload,
     ):
-        code, _, observed = runner._launch_gate("tests", command, 5, paths, root, head, worktree, {}, scratch, True)
+        code, _, observed = runner._launch_gate(
+            "tests", command, 5, paths, root, head, worktree, {}, scratch, True, sandbox_policy="contributor"
+        )
     assert observed == route
     assert code == 0
     workload.assert_called_once()
@@ -741,7 +968,7 @@ def _crossed_registration(root: Path) -> Path:
     """Return a linked worktree whose administrative entry points back at a different worktree."""
     main = root / "main"
     main.mkdir()
-    git = ["git", "-C", str(main), "-c", "core.hooksPath=/dev/null"]
+    git = ["git", "-C", str(main), "-c", f"core.hooksPath={os.devnull}"]
     subprocess.run([*git, "init", "-q"], check=True)
     identity = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid"]
     subprocess.run([*git, *identity, "commit", "-q", "--allow-empty", "-m", "fixture"], check=True)
@@ -774,7 +1001,7 @@ def test_unverifiable_worktree_registration_declines_with_its_reason(
 
 def _prepare_command(main: Path, work: Path, scratch: Path) -> tuple[list[str], dict[str, str]]:
     """Prepare a checked-out fixture revision and its parent-bound command before taking the legacy snapshot."""
-    git = ["git", "-C", str(main), "-c", "core.hooksPath=/dev/null"]
+    git = ["git", "-C", str(main), "-c", f"core.hooksPath={os.devnull}"]
     subprocess.run([*git, "worktree", "add", "-q", "--detach", str(work), "HEAD"], check=True)
     (work / "alias").symlink_to(main.parent / "private-marker")
     (work / ".env.local").write_text("fixture only", encoding="utf-8")
@@ -885,7 +1112,7 @@ def _main(root: Path) -> tuple[Path, list[str]]:
     """Build the parent checkout used by each real native tool."""
     main = root / "main"
     main.mkdir()
-    git = ["git", "-C", str(main), "-c", "core.hooksPath=/dev/null"]
+    git = ["git", "-C", str(main), "-c", f"core.hooksPath={os.devnull}"]
     subprocess.run([*git, "init", "-q"], check=True)
     (main / "sample.py").write_text("answer = 42\n", encoding="utf-8")
     (main / "test_fixture.py").write_text(INNER_TEST, encoding="utf-8")
@@ -1009,6 +1236,18 @@ def _public_gate_checkout(root: Path, source_path: str, source: bytes) -> _Publi
 
 def _run_public_gate(gate: _PublicGate, *lint_and_format: str) -> subprocess.CompletedProcess[str]:
     """Run the public gate CLI with the declared single-process pytest and the given lint and format options."""
+    gate.out.mkdir(parents=True, exist_ok=True)
+    _helper(
+        "contributor_run_integrity.py",
+        "snapshot",
+        "--repo",
+        str(gate.work),
+        "--main-checkout",
+        str(gate.main),
+        "--watch-surface",
+        "--out",
+        str(gate.out / "integrity.json"),
+    )
     return subprocess.run(
         [
             sys.executable,
@@ -1054,7 +1293,7 @@ def test_public_gate_confines_import_bound_pytest_without_ruff(tmp_path: Path) -
     """
     gate = _public_gate_checkout(tmp_path.resolve(), "visible.py", b"x = 1\n")
     skipped = ("--skip-lint", "no native Ruff in fixture", "--skip-format", "no native Ruff in fixture")
-    result = _run_public_gate(gate, *skipped)
+    result = _run_public_gate(gate, "--sandbox", *skipped)
     assert result.returncode == 0, (result.stdout, result.stderr)
     validator = load_module("gate_route_validator", SHARED / "validate-artifacts.py")
     receipt = validator._validate_gates(gate.out)

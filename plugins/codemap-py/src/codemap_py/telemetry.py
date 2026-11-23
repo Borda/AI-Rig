@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import TracebackType
 
-from codemap_py.index_paths import canonical_root, root_key
+from codemap_py.index_paths import canonical_root, is_within, root_key
 from codemap_py.runtime_log import invocation_id, log_dir_for, resolve_runtime
 from codemap_py.runtime_log import plugin_version as runtime_plugin_version
 
@@ -190,11 +190,7 @@ def log_cli(
         scoped_log_dir = log_dir if log_dir is not None else log_dir_for(runtime, root=project_root)
         sid = session_id(project_root) if log_dir is not None else runtime_session(runtime, root=project_root)
         log_file = log_path_for(sid, scoped_log_dir)
-        if (
-            log_dir is None
-            and not os.environ.get("CODEMAP_LOG_DIR")
-            and not log_file.parent.resolve().is_relative_to(project_root)
-        ):
+        if log_dir is None and not os.environ.get("CODEMAP_LOG_DIR") and not is_within(log_file.parent, project_root):
             raise OSError("default telemetry directory escapes project root")
         log_file.parent.mkdir(parents=True, exist_ok=True)
         if log_file.exists() and log_file.stat().st_size > LOG_MAX_BYTES:

@@ -506,7 +506,9 @@ def test_unstarted_launch_keeps_its_route_decision(
         lambda *args: ([str(missing)], {}) if prepared == "confined" else declined,
     )
     paths = {name: tmp_path / f"{name}.txt" for name in ("stdout", "stderr")}
-    code, _, route = gates._launch_gate("tests", [str(missing)], 5, paths, tmp_path, None, None, None, None, False)
+    code, _, route = gates._launch_gate(
+        "tests", [str(missing)], 5, paths, tmp_path, None, None, None, None, False, sandbox_policy="contributor"
+    )
     assert route == {"mode": "not-started", "reason": reason}
     assert code == exit_code
     assert paths["stderr"].read_text(encoding="utf-8").startswith(diagnostic)

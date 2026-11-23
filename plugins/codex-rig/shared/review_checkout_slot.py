@@ -3,8 +3,8 @@
 
 ## Purpose
 
-Give each review exclusive admission before creating its worktree or other run artifacts. Linked worktrees share an
-owner record in their Git common directory, while separate clones admit independent reviews.
+Schedule ordinary PR work per target, serialize writers within one checkout, and reserve the shared Git directory for
+protected operations. Different PRs can use linked worktrees concurrently.
 
 ## Scope
 
@@ -13,14 +13,16 @@ does not reclaim based on age, clean up review artifacts, or grant execution aut
 
 ## Usage
 
-Use ``acquire --checkout PATH --owner RUN_ID --queue`` at entry and keep the absolute slot locator and unique
-owner ID for resume. A repeated acquire by the same run succeeds. Inspect with ``status --slot PATH`` or ``status
---checkout PATH``. Finish with ``release --slot PATH --owner RUN_ID`` even if running Git has stopped. After an
-integrity stop use ``hold --slot PATH --owner RUN_ID`` instead. A waiting peer stays queued through inspection
-and owner changes until admitted or interrupted. Queue progress goes to stderr when the known blocking claim changes.
-The optional bounded ``--wait-seconds N`` form reports the current state when its interval expires. Only the owner may
-clear a held claim after inspection with ``release --inspected``. After human inspection of a run that predates slot
-acquisition, use ``acquire --slot PATH --owner NEW_ID`` to claim a free slot without Git.
+Use ``acquire --checkout PATH --target PR_URL --owner RUN_ID --queue`` for ordinary PR work. Omit the target for
+protected shared-state operations. In-place remediation also takes a checkout-local ``--writer`` claim. Retain the
+absolute locator and owner ID for resume. A repeated checkout-bound acquire by the same run succeeds. Inspect with
+``status --slot PATH`` or ``status --checkout PATH``. Finish with ``release --slot PATH --owner RUN_ID`` even if running
+Git has stopped. After an integrity stop use ``hold --slot PATH --owner RUN_ID`` instead. A waiting peer stays queued
+through inspection and owner changes until admitted or interrupted. Peer progress carries queue=waiting on stderr when
+the blocking claim changes. The optional bounded ``--wait-seconds N`` form reports the current state when its interval
+expires. Only the owner may clear a held claim after inspection with ``release --inspected``. The integrity helper uses
+``recovery_claim`` to seal a proven restart and reactivate that owner's exclusive claim in place. After human inspection
+of a run that predates slot acquisition, use ``acquire --slot PATH --owner NEW_ID`` to claim a free slot without Git.
 Derive PATH from the original authenticated Git common directory and SLOT_NAME. This form never adopts an existing
 marker, even one bearing NEW_ID.
 
@@ -44,6 +46,7 @@ from __future__ import annotations
 import argparse
 import base64
 import errno
+import hashlib
 import json
 import os
 import re
@@ -52,25 +55,57 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
+# Helpers also run directly from an installed plugin. Keep its payload read-only.
+sys.dont_write_bytecode = True
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from create_run import PR_URL_PATTERN  # noqa: E402
+
 SLOT_NAME = "codex-review-slot"
+TARGETS = "codex-review-targets"
+WRITERS = "codex-review-writers"
 OWNER_PATTERN = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}")
 
 
-def _checkout_slot(checkout: Path) -> Path:
+def _checkout_slot(checkout: Path, target: str | None = None, *, writer: bool = False, local: bool = False) -> Path:
     """Resolve the shared Git directory without inheriting repository-selection overrides."""
     result = subprocess.run(  # noqa: S603 - fixed Git operation, no shell
-        ["git", "-C", str(checkout), "rev-parse", "--path-format=absolute", "--git-common-dir"],  # noqa: S607
+        ["git", "-C", str(checkout), "rev-parse", "--path-format=absolute", "--git-common-dir", "--absolute-git-dir"],  # noqa: S607
         env={key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")},
         capture_output=True,
         check=True,
         timeout=10,
     )
-    common = Path(os.fsdecode(result.stdout.rstrip(b"\r\n")))
+    common, git_dir = (Path(os.fsdecode(line)) for line in result.stdout.splitlines())
     if not common.is_absolute() or not common.is_dir():
         raise ValueError("invalid Git common directory")
-    return common.resolve(strict=True) / SLOT_NAME
+    common = common.resolve(strict=True)
+    if writer or local:
+        key = os.fsencode(os.path.normcase(str(git_dir.resolve(strict=True))))
+        namespace = WRITERS if writer else TARGETS
+        digest = hashlib.sha256(b"local:" + key).hexdigest()
+        return common / namespace / digest / SLOT_NAME
+    return _target_slot(common, target) if target else common / SLOT_NAME
+
+
+def _target_slot(common: Path, target: str) -> Path:
+    """Bind every spelling of a canonical PR URL to the same ordinary claim."""
+    if not PR_URL_PATTERN.fullmatch(target):
+        raise ValueError("expected a canonical GitHub PR URL")
+    return common / TARGETS / hashlib.sha256(target.lower().encode("ascii")).hexdigest() / SLOT_NAME
+
+
+def _common(slot: Path) -> Path:
+    """Find the common directory for either a retained scoped or repository-wide locator."""
+    if slot.parent.parent.name in {TARGETS, WRITERS}:
+        if not re.fullmatch(r"[0-9a-f]{64}", slot.parent.name):
+            raise ValueError("invalid scoped slot locator")
+        return slot.parents[2]
+    return slot.parent
 
 
 def _validate_locator(slot: Path) -> None:
@@ -82,11 +117,11 @@ def _validate_locator(slot: Path) -> None:
         try:
             _mode_without_links(path)
         except FileNotFoundError:
-            if path == slot:
+            if _common(slot) in path.parents:
                 break
             raise
     for name in ("HEAD", "objects", "refs"):
-        mode = _mode_without_links(slot.parent / name)
+        mode = _mode_without_links(_common(slot) / name)
         if not (stat.S_ISREG(mode) if name == "HEAD" else stat.S_ISDIR(mode)):
             raise ValueError("slot parent is not a Git common directory")
 
@@ -178,6 +213,96 @@ def _operate(
     return ("acquired" if reuse_owner and current == owner else "busy"), current
 
 
+@contextmanager
+def _admission_lock(common: Path) -> Iterator[None]:
+    """Make checking competing scopes and publishing their marker one cross-process operation."""
+    path = common / "codex-review-admission.lock"
+    try:
+        if not stat.S_ISREG(_mode_without_links(path)):
+            raise ValueError("invalid admission lock")
+    except FileNotFoundError:
+        pass
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("invalid admission lock")
+        if os.name == "nt":
+            import msvcrt
+
+            # The CRT stops waiting after ten seconds. A protected recovery can still be measuring the checkout.
+            while True:
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                    break
+                except OSError as error:
+                    if error.errno != errno.EDEADLK:
+                        raise
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        # Closing the descriptor releases the kernel lock, including on process termination.
+        os.close(fd)
+
+
+@contextmanager
+def recovery_claim(common: Path, slot: Path, owner: str) -> Iterator[None]:
+    """Seal recovery evidence under an existing exclusive claim and reactivate its owner only on success."""
+    if slot != common / SLOT_NAME or _common(slot) != common or not OWNER_PATTERN.fullmatch(owner):
+        raise ValueError("recovery requires the original repository-wide slot and owner")
+    _validate_locator(slot)
+    with _admission_lock(common):
+        state, holder = _observe(slot)
+        if holder != owner or state not in {"busy", "inspection-required"}:
+            raise ValueError("recovery requires the original owner's active or held exclusive claim")
+        yield
+        if state == "inspection-required":
+            # Renaming only the marker keeps the slot occupied through the transition.
+            marker = _marker_name(owner)
+            (slot / ("inspection-" + marker)).rename(slot / marker)
+
+
+def _schedule(
+    action: str, slot: Path, owner: str | None, inspected: bool, *, reuse_owner: bool
+) -> tuple[str, str | None]:
+    """Admit independent targets together and exclude active targets during a protected interval."""
+    _validate_locator(slot)
+    if action == "status":
+        return _observe(slot)
+    common = _common(slot)
+    with _admission_lock(common):
+        if action == "acquire":
+            if common == slot.parent:
+                targets = common / TARGETS
+                try:
+                    if not stat.S_ISDIR(_mode_without_links(targets)):
+                        raise ValueError("invalid review target directory")
+                    peers = sorted(targets.iterdir())
+                except FileNotFoundError:
+                    peers = []
+                for peer in peers:
+                    state, holder = _observe(peer / SLOT_NAME)
+                    if state != "free":
+                        return state, holder
+            else:
+                if slot.parent.parent.name == TARGETS:
+                    state, holder = _observe(common / SLOT_NAME)
+                    if state != "free":
+                        return state, holder
+                # Local review and remediation must not read and switch the same checkout concurrently.
+                other_scope = WRITERS if slot.parent.parent.name == TARGETS else TARGETS
+                state, holder = _observe(common / other_scope / slot.parent.name / SLOT_NAME)
+                if state != "free":
+                    return state, holder
+                slot.parent.mkdir(parents=True, exist_ok=True)
+        result = _operate(action, slot, owner, inspected, reuse_owner=reuse_owner)
+        if result[0] == "released" and common != slot.parent:
+            slot.parent.rmdir()
+        return result
+
+
 def main() -> int:
     """Parse one scheduling request and emit its decision after publishing or releasing the claim."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -198,7 +323,13 @@ def main() -> int:
         command.add_argument("--slot", type=Path, required=True)
     for command in (acquire, release, hold):
         command.add_argument("--owner", required=True, help="Unique review run ID, retained across resume.")
-    status = commands.add_parser("status").add_mutually_exclusive_group(required=True)
+    status_parser = commands.add_parser("status")
+    for command in (acquire, status_parser):
+        scope = command.add_mutually_exclusive_group()
+        scope.add_argument("--target", help="Canonical URL for an ordinary PR claim.")
+        scope.add_argument("--local", action="store_true", help="Claim ordinary local review of this checkout.")
+        scope.add_argument("--writer", action="store_true", help="Serialize in-place writers to this checkout.")
+    status = status_parser.add_mutually_exclusive_group(required=True)
     status.add_argument("--checkout", type=Path)
     status.add_argument("--slot", type=Path)
     args = parser.parse_args()
@@ -212,11 +343,13 @@ def main() -> int:
         if not 0 <= wait <= 60:
             raise ValueError("wait must be between 0 and 60 seconds")
         if slot is None:
-            slot = _checkout_slot(args.checkout)
+            slot = _checkout_slot(args.checkout, args.target, writer=args.writer, local=args.local)
+        elif any(getattr(args, flag, None) for flag in ("target", "writer", "local")):
+            raise ValueError("scope is already bound to the retained locator")
         deadline = time.monotonic() + wait
         previous = None
         while True:
-            state, current = _operate(
+            state, current = _schedule(
                 args.action,
                 slot,
                 owner,
@@ -236,7 +369,9 @@ def main() -> int:
                     break
                 if current is not None and observation != previous:
                     print(
-                        json.dumps({"status": state, "owner": current, "slot": str(slot)}), file=sys.stderr, flush=True
+                        json.dumps({"status": state, "owner": current, "slot": str(slot), "queue": "waiting"}),
+                        file=sys.stderr,
+                        flush=True,
                     )
                 previous = observation
                 time.sleep(1)

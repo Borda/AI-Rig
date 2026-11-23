@@ -49,25 +49,25 @@ elif [ -s "$IMPL_DIR/hooks-inspection.json" ] && [ "${_PREV#*hooks=ask}" != "$_P
     _HOOKS=ask; _RD=""  # an earlier ask never becomes an unasked run; deciding again on the staged merge tree refreshes the digest the question shows
     echo "the digest below was taken before the base merge was staged (re-inspection failed: $IMPL_DIR/hooks-refresh.err); if the merge changes the hooks, an approval of it no longer matches at the merge commit and hooks then stay disabled" > "$IMPL_DIR/hooks-inspection-note.txt"
     if python "$PLUGIN_ROOT/bin/resolve_commit_hooks.py" --decide --base "origin/$BASE_REF" --head "$PR_HEAD_OID" > "$IMPL_DIR/hooks-refresh.json" 2> "$IMPL_DIR/hooks-refresh.err"; then  # timeout: 30000
-        jq -r '.decision // empty' "$IMPL_DIR/hooks-refresh.json" > "$IMPL_DIR/hooks-refresh-decision.txt" 2> /dev/null
+        jq -b -r '.decision // empty' "$IMPL_DIR/hooks-refresh.json" > "$IMPL_DIR/hooks-refresh-decision.txt" 2> /dev/null
         IFS= read -r _RD < "$IMPL_DIR/hooks-refresh-decision.txt" 2>/dev/null || _RD=""
     fi
     case "$_RD" in
-        ask|run) jq . "$IMPL_DIR/hooks-refresh.json" > "$IMPL_DIR/hooks-inspection.json" && : > "$IMPL_DIR/hooks-inspection-note.txt" ;;  # run keeps the question, shown with the merged tree's digest
+        ask|run) jq -b . "$IMPL_DIR/hooks-refresh.json" > "$IMPL_DIR/hooks-inspection.json" && : > "$IMPL_DIR/hooks-inspection-note.txt" ;;  # run keeps the question, shown with the merged tree's digest
         none|disabled)  # no hook would run (none installed, or a saved never policy): nothing left to approve
-            jq . "$IMPL_DIR/hooks-refresh.json" > "$IMPL_DIR/hooks-inspection.json"; : > "$IMPL_DIR/hooks-inspection-note.txt"
+            jq -b . "$IMPL_DIR/hooks-refresh.json" > "$IMPL_DIR/hooks-inspection.json"; : > "$IMPL_DIR/hooks-inspection-note.txt"
             : > "$IMPL_DIR/approved-hooks.txt"; echo "$_RD" > "$IMPL_DIR/hooks-decision.txt"; _HOOKS=$_RD
-            jq -r '"→ repository hooks: " + .decision + " — " + (.reason // "") + "; the earlier hook question is dropped"' "$IMPL_DIR/hooks-inspection.json" ;;
+            jq -b -r '"→ repository hooks: " + .decision + " — " + (.reason // "") + "; the earlier hook question is dropped"' "$IMPL_DIR/hooks-inspection.json" ;;
     esac
 else
     _HOOKS=""
     if python "$PLUGIN_ROOT/bin/resolve_commit_hooks.py" --decide --base "origin/$BASE_REF" --head "$PR_HEAD_OID" --approved-file "$IMPL_DIR/approved-hooks.txt" > "$IMPL_DIR/hooks-inspection.json" 2> "$IMPL_DIR/hooks-inspection.err"; then  # timeout: 30000
-        jq -r '.decision // empty' "$IMPL_DIR/hooks-inspection.json" > "$IMPL_DIR/hooks-decision.txt" 2>/dev/null
+        jq -b -r '.decision // empty' "$IMPL_DIR/hooks-inspection.json" > "$IMPL_DIR/hooks-decision.txt" 2>/dev/null
         IFS= read -r _HOOKS < "$IMPL_DIR/hooks-decision.txt" 2>/dev/null || _HOOKS=""
     fi
     case "$_HOOKS" in
         ask) ;;
-        none|run|disabled) jq -r '"→ repository hooks: " + .decision + " — " + (.reason // "")' "$IMPL_DIR/hooks-inspection.json" ;;
+        none|run|disabled) jq -b -r '"→ repository hooks: " + .decision + " — " + (.reason // "")' "$IMPL_DIR/hooks-inspection.json" ;;
         *) : > "$IMPL_DIR/approved-hooks.txt"; _HOOKS=disabled; echo "⚠ hook inspection failed — hooks stay disabled for this run ($IMPL_DIR/hooks-inspection.err)" ;;
     esac
 fi
@@ -106,7 +106,7 @@ echo "pr-code=$_PRCODE hooks=$_HOOKS" > "$IMPL_DIR/exec-plan.txt"; cat "$IMPL_DI
 
 **Placement — last, never first.** Each value `ask` adds one question. They take the last free slots of the last Step 3d call, after push and topic-group. Where that call already holds 4 questions, they go together in one extra call straight after it, still before Run 2 starts. A bulk answer that stops the run (skip-all) never reaches them. Unanswered or dismissed: record nothing; the Step 8 prelude then asks as its recovery path, never a silent skip.
 
-**PR-code question** (`pr-code` is `ask`; single-select, header `pr-code`). The question text carries the evidence, never reply text before the call (5.5-family models may return that as an empty progress update). It holds why PR code runs (every test the run executes, the QA gate and the full suite), the scan's `verdict`, `risk` and `why` lines copied from `$IMPL_DIR/code-scan.txt`, and `→ $IMPL_DIR/code-scan.txt` for the full evidence, at most 1,500 characters in all. When risk is `likely-malicious`, lead with "do not run"; choosing to run is the user's explicit override. Options:
+**PR-code question** (`pr-code` is `ask`; single-select, header `pr-code`). The question text carries the evidence, never reply text before the call (5.5-family models may return that as an empty progress update). It holds why PR code runs (every test the run executes, the QA gate and the full suite), the scan's `verdict`, `risk` and `why` lines copied from `$IMPL_DIR/code-scan.txt`, and `→ $IMPL_DIR/code-scan.txt` for the full evidence, at most 1,500 characters in all. The first line is one plain sentence on why this code is not treated as safe, built from the `why` lines in everyday words (it calls curl, so it can reach the internet), never a bare category name. When risk is `likely-malicious`, lead with "do not run"; choosing to run is the user's explicit override. Options:
 
 - **Run PR code in sandbox** — disposable copy, network denied, home hidden.
 - **Do not run PR code** — tests are reported as not run.

@@ -96,17 +96,19 @@ def test_required_decision_boundary_remains(relative: str, phrase: str) -> None:
     assert phrase in _text(relative)
 
 
-def test_review_test_gate_runs_the_full_selection() -> None:
-    """Keep the review test gate on the project's full selection; targeted selection is only for loops.
-
-    The review gate is that skill's final gate, so it runs once with the repository's own settings. Fresh CI evidence
-    may be cited but must never replace or skip the local gate.
-    """
+def test_review_reuses_completed_ci_and_checks_missing_coverage() -> None:
+    """Reuse equivalent CI while retaining source, configuration, outcome and local coverage obligations."""
     review = _text("skills/code-review/references/findings-and-completion.md")
 
     assert "pass the project's full test selection with its own settings, never a changed-file subset" in review
     assert "record the exact pytest arguments in `review-notes.md`" in review
-    assert "never replace or skip the local gate" in review
+    assert "never replace or skip the local gate" not in review
+    assert '--skip-tests "ci-covered: <check names> at <short head OID>"' in review
+    assert "actual checked-out revision" in review
+    assert "A failed job" in review
+    assert "uncovered condition" in review
+    assert "neutral or skipped" in review
+    assert "inspect the relevant base-to-head change" in review
     assert "pass its targets to `--pytest-args-json`" not in review
 
 

@@ -43,6 +43,10 @@ Never combine navigation and a command in one Bash call: always two separate cal
 
 A Bash call naming `git` or `gh` writes the program as literal text. A variable or `$(…)` as the command word (`R=$(command -v ruff); git show … | "$R" check -`) makes `commit-guard` fail closed: it cannot rule out a hidden push, so it asks the user to confirm. Write `ruff` or `.venv/bin/ruff` directly, or split into two Bash calls (`git show … > "$F"`, then the tool on `"$F"`). A fixed assignment (`R=.venv/bin/ruff`) stays readable; a captured one does not.
 
+## Shipped Skill Blocks — Run As Written
+
+Run a skill's fenced Bash block as its own call, exactly as shipped, feeding it only through its sentinel and Write-tool input files. Never copy fence text into a script file, loop over it or retype it: such a call misses the blueprint auto-allow and `commit-guard` cannot read a generated script, so each one prompts. Deviate only for a clear, major advantage, and state what changed and why.
+
 ## TMPDIR Sentinel Scoping
 
 > Before applying, Read `_full/claude-config.md` §TMPDIR Sentinel Scoping; binding inline. If it cannot be read, stop and report the missing prerequisite.

@@ -54,12 +54,30 @@ with Path(os.environ["STUB_LOG"]).open("a") as log:
     log.write("check " + " ".join(sys.argv[1:]) + "\\n")
 if os.environ.get("STUB_CHECK_RC", "0") != "0":
     sys.exit(int(os.environ["STUB_CHECK_RC"]))
+sys.stdout.reconfigure(newline="\\n")  # the real helper's contract: a bare line feed, pinned in test_code_safety_status
 print(os.environ.get("STUB_CHECK", "ask reason=stub"))
 """
 
 _ROOT_STUB = """\
 import os
 print(os.environ["STUB_PLUGIN_ROOT"])
+"""
+
+# A shell function, not a symlink: a venv launcher resolves its ``pyvenv.cfg`` from where it is invoked, so a symlink to
+# it fails on Windows (``failed to locate pyvenv.cfg``).
+_PYTHON_FUNCTION = f'python() {{ "{Path(sys.executable).as_posix()}" "$@"; }}\n'
+
+# Native Windows jq ends every output line with CRLF unless ``-b`` is passed; modelling it on every host makes a jq call
+# that omits ``-b`` fail here as it does on Windows, where the stray carriage return turns ``run`` into an unknown word.
+_JQ_CRLF = r"""jq() {
+    for option in "$@"; do
+        if [ "$option" = "-b" ] || [ "$option" = "--binary" ]; then
+            command jq "$@"
+            return
+        fi
+    done
+    command jq "$@" | sed 's/$/\r/'
+}
 """
 
 pytestmark = pytest.mark.skipif(_BASH is None or _JQ is None, reason="needs bash and jq")
@@ -108,10 +126,7 @@ def world(tmp_path: Path) -> Path:
         ("code_safety_status.py", _CHECK_STUB),
         ("resolve_plugin_root.py", _ROOT_STUB),
     ):
-        (plugin / "bin" / name).write_text(body, encoding="utf-8")
-    pybin = tmp_path / "pybin"
-    pybin.mkdir()
-    (pybin / "python").symlink_to(sys.executable)
+        (plugin / "bin" / name).write_text(body, encoding="utf-8", newline="\n")
     (tmp_path / "tmp").mkdir()
     (tmp_path / "impl").mkdir()
     for key, value in (
@@ -122,7 +137,7 @@ def world(tmp_path: Path) -> Path:
         ("is-cross-repo", "true"),
         ("report-file", "/reports/pr42/review.md"),
     ):
-        (tmp_path / "tmp" / f"resolve-{key}-t1").write_text(value + "\n", encoding="utf-8")
+        (tmp_path / "tmp" / f"resolve-{key}-t1").write_text(value + "\n", encoding="utf-8", newline="\n")
     return tmp_path
 
 
@@ -130,7 +145,7 @@ def _run(world: Path, **env: str) -> Run:
     """Run the Decide block once with the given stub behaviour and return what it recorded."""
     impl = world / "impl"
     environ = {
-        "PATH": f"{world / 'pybin'}{os.pathsep}{os.environ['PATH']}",
+        "PATH": os.environ["PATH"],
         "CLAUDE_PLUGIN_ROOT": str(world / "plugin"),
         "STUB_PLUGIN_ROOT": str(world / "plugin"),
         "STUB_LOG": str(world / "stub.log"),
@@ -138,7 +153,13 @@ def _run(world: Path, **env: str) -> Run:
         "CLAUDE_CODE_SESSION_ID": "t1",
         **env,
     }
-    done = subprocess.run([_BASH, "-c", _decide_block()], env=environ, capture_output=True, text=True, check=False)
+    done = subprocess.run(
+        [_BASH, "-c", _PYTHON_FUNCTION + _JQ_CRLF + _decide_block()],
+        env=environ,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert done.returncode == 0, done.stdout + done.stderr
     decision_file = impl / "pr-code-decision.txt"
     log_file = world / "stub.log"
@@ -219,7 +240,7 @@ def test_a_failed_scan_asks_with_an_unavailable_note(world: Path) -> None:
 
 def test_a_report_path_without_a_directory_never_reads_a_sidecar(world: Path) -> None:
     """An empty or bare ``REPORT_FILE`` cannot name the PR's report directory, so the check is not even run."""
-    (world / "tmp" / "resolve-report-file-t1").write_text("review.md\n", encoding="utf-8")
+    (world / "tmp" / "resolve-report-file-t1").write_text("review.md\n", encoding="utf-8", newline="\n")
     run = _run(world, STUB_CHECK="auto")
     assert run.plan == "pr-code=ask hooks=run"
     assert not run.called("check")
@@ -229,7 +250,8 @@ def test_the_sidecar_is_read_beside_the_report(world: Path) -> None:
     """The status file is the one next to the report named by the sentinel."""
     run = _run(world, STUB_CHECK="ask reason=x")
     (check,) = run.called("check")
-    assert "--status /reports/pr42/code-safety.json" in check
+    # an MSYS bash hands a leading-slash argument to a native program as a drive path, so only the tail is compared
+    assert check.replace("\\", "/").split("--status ")[1].split(" --scan")[0].endswith("/reports/pr42/code-safety.json")
 
 
 def test_a_missing_cross_repo_sentinel_is_treated_as_a_fork(world: Path) -> None:
@@ -242,7 +264,7 @@ def test_a_missing_cross_repo_sentinel_is_treated_as_a_fork(world: Path) -> None
 
 def test_a_same_repo_pr_has_no_guard_and_no_question(world: Path) -> None:
     """Only the recorded answer ``false`` skips the gate, and it scans nothing."""
-    (world / "tmp" / "resolve-is-cross-repo-t1").write_text("false\n", encoding="utf-8")
+    (world / "tmp" / "resolve-is-cross-repo-t1").write_text("false\n", encoding="utf-8", newline="\n")
     run = _run(world, STUB_CHECK="auto")
     assert run.plan == "pr-code=same-repo hooks=run"
     assert not run.called("guard")
@@ -272,9 +294,9 @@ def test_a_same_repo_pr_has_no_guard_and_no_question(world: Path) -> None:
 def test_recorded_decision_words(world: Path, content: str, approval: bool, expected: str) -> None:
     """A word with its approval file, or deny, is never rescanned; any other state is decided again like the prelude
     does."""
-    (world / "impl" / "pr-code-decision.txt").write_text(content, encoding="utf-8")
+    (world / "impl" / "pr-code-decision.txt").write_text(content, encoding="utf-8", newline="\n")
     if approval:
-        (world / "impl" / "code-approval.txt").write_text("approval\n", encoding="utf-8")
+        (world / "impl" / "code-approval.txt").write_text("approval\n", encoding="utf-8", newline="\n")
     run = _run(world, STUB_CHECK="ask reason=stub")
     assert run.plan == f"pr-code={expected} hooks=run"
     assert run.decision == content
@@ -283,9 +305,9 @@ def test_recorded_decision_words(world: Path, content: str, approval: bool, expe
 
 def test_a_lost_sentinel_does_not_erase_an_earlier_hook_ask(world: Path) -> None:
     """A run that loses its PR number after a hook question was found necessary keeps that question for the prelude."""
-    (world / "impl" / "exec-plan.txt").write_text("pr-code=ask hooks=ask\n", encoding="utf-8")
-    (world / "impl" / "hooks-inspection.json").write_text('{"decision": "ask"}\n', encoding="utf-8")
-    (world / "tmp" / "resolve-pr-number-t1").write_text("\n", encoding="utf-8")
+    (world / "impl" / "exec-plan.txt").write_text("pr-code=ask hooks=ask\n", encoding="utf-8", newline="\n")
+    (world / "impl" / "hooks-inspection.json").write_text('{"decision": "ask"}\n', encoding="utf-8", newline="\n")
+    (world / "tmp" / "resolve-pr-number-t1").write_text("\n", encoding="utf-8", newline="\n")
     run = _run(world)
     assert run.plan == "pr-code=deferred hooks=ask"
     assert _prelude_check(world) == "hooks=ask-kept"
@@ -293,15 +315,15 @@ def test_a_lost_sentinel_does_not_erase_an_earlier_hook_ask(world: Path) -> None
 
 def test_a_lost_sentinel_without_an_earlier_ask_defers_both(world: Path) -> None:
     """The earlier ask is kept only with its saved inspection; an ask without the text defers like a first run."""
-    (world / "impl" / "exec-plan.txt").write_text("pr-code=ask hooks=ask\n", encoding="utf-8")
-    (world / "tmp" / "resolve-pr-head-oid-t1").write_text("\n", encoding="utf-8")
+    (world / "impl" / "exec-plan.txt").write_text("pr-code=ask hooks=ask\n", encoding="utf-8", newline="\n")
+    (world / "tmp" / "resolve-pr-head-oid-t1").write_text("\n", encoding="utf-8", newline="\n")
     run = _run(world)
     assert run.plan == "pr-code=deferred hooks=deferred"
 
 
 def test_a_recorded_deny_is_not_overridden_by_a_clean_check(world: Path) -> None:
     """The refusal outlives a rerun that would otherwise skip the question."""
-    (world / "impl" / "pr-code-decision.txt").write_text("deny", encoding="utf-8")
+    (world / "impl" / "pr-code-decision.txt").write_text("deny", encoding="utf-8", newline="\n")
     run = _run(world, STUB_CHECK="auto")
     assert run.decision == "deny"
     assert not run.called("check")
@@ -309,8 +331,8 @@ def test_a_recorded_deny_is_not_overridden_by_a_clean_check(world: Path) -> None
 
 def test_an_earlier_pr_code_ask_is_kept_not_rescanned_into_a_skip(world: Path) -> None:
     """A question found necessary at Step 4 stays one: the scan and the check do not run again."""
-    (world / "impl" / "exec-plan.txt").write_text("pr-code=ask hooks=run\n", encoding="utf-8")
-    (world / "impl" / "code-scan.txt").write_text("verdict: x\n", encoding="utf-8")
+    (world / "impl" / "exec-plan.txt").write_text("pr-code=ask hooks=run\n", encoding="utf-8", newline="\n")
+    (world / "impl" / "code-scan.txt").write_text("verdict: x\n", encoding="utf-8", newline="\n")
     run = _run(world, STUB_CHECK="auto")
     assert run.plan == "pr-code=ask hooks=run"
     assert run.decision is None
@@ -320,17 +342,17 @@ def test_an_earlier_pr_code_ask_is_kept_not_rescanned_into_a_skip(world: Path) -
 
 def test_a_stale_pr_code_ask_without_evidence_is_decided_afresh(world: Path) -> None:
     """The earlier ask is only kept together with the scan evidence it showed."""
-    (world / "impl" / "exec-plan.txt").write_text("pr-code=ask hooks=run\n", encoding="utf-8")
+    (world / "impl" / "exec-plan.txt").write_text("pr-code=ask hooks=run\n", encoding="utf-8", newline="\n")
     run = _run(world, STUB_CHECK="auto")
     assert run.plan == "pr-code=auto hooks=run"
 
 
 def _earlier_hook_ask(world: Path) -> Path:
     """Write the state a Step 4 hook question leaves and return the saved inspection file."""
-    (world / "impl" / "exec-plan.txt").write_text("pr-code=ask hooks=ask\n", encoding="utf-8")
+    (world / "impl" / "exec-plan.txt").write_text("pr-code=ask hooks=ask\n", encoding="utf-8", newline="\n")
     inspection = world / "impl" / "hooks-inspection.json"
-    inspection.write_text('{"decision": "ask", "reason": "earlier"}\n', encoding="utf-8")
-    (world / "impl" / "code-scan.txt").write_text("verdict: x\n", encoding="utf-8")
+    inspection.write_text('{"decision": "ask", "reason": "earlier"}\n', encoding="utf-8", newline="\n")
+    (world / "impl" / "code-scan.txt").write_text("verdict: x\n", encoding="utf-8", newline="\n")
     return inspection
 
 
@@ -406,19 +428,19 @@ def test_a_later_successful_re_decision_clears_the_note(world: Path) -> None:
 
 def test_a_helper_made_run_decision_refreshes_its_digest_after_the_merge(world: Path) -> None:
     """The helper's own ``run`` is bound to the merged tree, or the merge commit is refused for a base-side edit."""
-    (world / "impl" / "approved-hooks.txt").write_text("0" * 64 + "\n", encoding="utf-8")
-    (world / "impl" / "hooks-decision.txt").write_text("run\n", encoding="utf-8")
+    (world / "impl" / "approved-hooks.txt").write_text("0" * 64 + "\n", encoding="utf-8", newline="\n")
+    (world / "impl" / "hooks-decision.txt").write_text("run\n", encoding="utf-8", newline="\n")
     run = _run(world, STUB_HOOKS="run")
     (call,) = run.called("hooks")
     assert f"--head {_HEAD}" in call
-    assert f"--approved-file {world / 'impl' / 'approved-hooks.txt'}" in call
+    assert f"--approved-file {(world / 'impl' / 'approved-hooks.txt').as_posix()}" in call.replace("\\", "/")
     assert run.plan.endswith("hooks=recorded")
 
 
 def test_a_users_hook_approval_is_never_rewritten(world: Path) -> None:
     """An approval the user gave (the helper had asked) is not recomputed on a later pass."""
-    (world / "impl" / "approved-hooks.txt").write_text("0" * 64 + "\n", encoding="utf-8")
-    (world / "impl" / "hooks-decision.txt").write_text("ask\n", encoding="utf-8")
+    (world / "impl" / "approved-hooks.txt").write_text("0" * 64 + "\n", encoding="utf-8", newline="\n")
+    (world / "impl" / "hooks-decision.txt").write_text("ask\n", encoding="utf-8", newline="\n")
     run = _run(world, STUB_HOOKS="run")
     assert not run.called("hooks")
     assert run.plan.endswith("hooks=recorded")
@@ -449,7 +471,7 @@ def test_a_failed_hook_inspection_disables_hooks_with_an_empty_approval(world: P
 
 def test_a_recorded_hook_choice_is_not_decided_again(world: Path) -> None:
     """The approval file existing, even empty, means the choice is made."""
-    (world / "impl" / "approved-hooks.txt").write_text("", encoding="utf-8")
+    (world / "impl" / "approved-hooks.txt").write_text("", encoding="utf-8", newline="\n")
     run = _run(world, STUB_HOOKS="ask")
     assert run.plan.endswith("hooks=recorded")
     assert not run.called("hooks")
@@ -494,15 +516,15 @@ def test_prelude_recovery_keeps_an_earlier_hook_ask_only_with_its_inspection(
 ) -> None:
     """The Step 8 recovery asks from the saved inspection only when both the earlier ask and its text exist."""
     if plan is not None:
-        (world / "impl" / "exec-plan.txt").write_text(plan + "\n", encoding="utf-8")
+        (world / "impl" / "exec-plan.txt").write_text(plan + "\n", encoding="utf-8", newline="\n")
     if inspection is not None:
-        (world / "impl" / "hooks-inspection.json").write_text(inspection, encoding="utf-8")
+        (world / "impl" / "hooks-inspection.json").write_text(inspection, encoding="utf-8", newline="\n")
     assert _prelude_check(world) == expected
 
 
 def test_a_run_without_a_pr_defers_both_to_the_prelude(world: Path) -> None:
     """With no PR number nothing is decided here; the Step 8 prelude decides."""
-    (world / "tmp" / "resolve-pr-number-t1").write_text("\n", encoding="utf-8")
+    (world / "tmp" / "resolve-pr-number-t1").write_text("\n", encoding="utf-8", newline="\n")
     run = _run(world)
     assert run.plan == "pr-code=deferred hooks=deferred"
     assert not run.log
@@ -564,7 +586,7 @@ def _stale_block(world: Path) -> subprocess.CompletedProcess[str]:
 def test_the_first_stale_refusal_saves_the_current_commit_and_asks_again(world: Path) -> None:
     """The first refusal records ``stale`` plus the checkout's current commit for the new scan and bind."""
     impl = world / "impl"
-    (impl / "code-approval.txt").write_text("approval\n", encoding="utf-8")
+    (impl / "code-approval.txt").write_text("approval\n", encoding="utf-8", newline="\n")
     done = _stale_block(world)
     assert done.returncode == 0, done.stdout + done.stderr
     assert (impl / "pr-code-decision.txt").read_text(encoding="utf-8") == "stale\n"
@@ -574,8 +596,8 @@ def test_the_first_stale_refusal_saves_the_current_commit_and_asks_again(world: 
 def test_a_second_refusal_at_the_same_commit_is_final(world: Path) -> None:
     """A committed rebind cannot cover uncommitted work, so the same commit refusing again is a reported gap."""
     impl = world / "impl"
-    (impl / "pr-code-rebind-head.txt").write_text(_head(_checkout(world)) + "\n", encoding="utf-8")
-    (impl / "code-approval.txt").write_text("approval\n", encoding="utf-8")
+    (impl / "pr-code-rebind-head.txt").write_text(_head(_checkout(world)) + "\n", encoding="utf-8", newline="\n")
+    (impl / "code-approval.txt").write_text("approval\n", encoding="utf-8", newline="\n")
     done = _stale_block(world)
     assert done.returncode == 0, done.stdout + done.stderr
     assert (impl / "pr-code-decision.txt").read_text(encoding="utf-8") == "deny\n"
@@ -587,7 +609,7 @@ def test_a_refusal_after_the_commit_moved_asks_again(world: Path) -> None:
     """Work committed since the last rebind is new ground, so the question is asked once more at the new commit."""
     impl = world / "impl"
     repo = _checkout(world)
-    (impl / "pr-code-rebind-head.txt").write_text(_head(repo) + "\n", encoding="utf-8")
+    (impl / "pr-code-rebind-head.txt").write_text(_head(repo) + "\n", encoding="utf-8", newline="\n")
     subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "more"], cwd=repo, check=True, capture_output=True)
     done = _stale_block(world)
     assert done.returncode == 0, done.stdout + done.stderr
@@ -605,7 +627,7 @@ def test_a_refusal_after_the_commit_moved_asks_again(world: Path) -> None:
 def test_declining_or_staling_an_approval_sets_the_approval_file_aside(world: Path, marker: str, word: str) -> None:
     """A decision word that is not an approval never sits beside a usable ``code-approval.txt``."""
     impl = world / "impl"
-    (impl / "code-approval.txt").write_text("approval\n", encoding="utf-8")
+    (impl / "code-approval.txt").write_text("approval\n", encoding="utf-8", newline="\n")
     environ = {"PATH": os.environ["PATH"], "TMPDIR": str(world / "tmp"), "CLAUDE_CODE_SESSION_ID": "t1"}
     done = subprocess.run(
         [_BASH, "-c", _answer_block(marker)],
@@ -631,10 +653,12 @@ def test_declining_or_staling_an_approval_sets_the_approval_file_aside(world: Pa
 def test_a_failed_set_aside_blocks_instead_of_leaving_a_usable_approval(world: Path, marker: str, word: str) -> None:
     """When the approval file cannot be moved away the block stops, and no decision word is written beside it."""
     impl = world / "impl"
-    (impl / "code-approval.txt").write_text("approval\n", encoding="utf-8")
+    (impl / "code-approval.txt").write_text("approval\n", encoding="utf-8", newline="\n")
     # Git-style mv cannot replace a non-empty directory with a file, which makes the set-aside fail
     (impl / "code-approval.set-aside" / "code-approval.txt").mkdir(parents=True)
-    (impl / "code-approval.set-aside" / "code-approval.txt" / "occupied").write_text("x", encoding="utf-8")
+    (impl / "code-approval.set-aside" / "code-approval.txt" / "occupied").write_text(
+        "x", encoding="utf-8", newline="\n"
+    )
     environ = {"PATH": os.environ["PATH"], "TMPDIR": str(world / "tmp"), "CLAUDE_CODE_SESSION_ID": "t1"}
     done = subprocess.run(
         [_BASH, "-c", _answer_block(marker)],
@@ -670,9 +694,9 @@ def test_an_answer_binds_the_commit_a_stale_refusal_saved(
     """After a stale refusal the answer binds the saved commit; otherwise it binds the PR head."""
     impl = world / "impl"
     if saved is not None:
-        (impl / "pr-code-rebind-head.txt").write_text(saved, encoding="utf-8")
+        (impl / "pr-code-rebind-head.txt").write_text(saved, encoding="utf-8", newline="\n")
     environ = {
-        "PATH": f"{world / 'pybin'}{os.pathsep}{os.environ['PATH']}",
+        "PATH": os.environ["PATH"],
         "CLAUDE_PLUGIN_ROOT": str(world / "plugin"),
         "STUB_PLUGIN_ROOT": str(world / "plugin"),
         "STUB_LOG": str(world / "stub.log"),
@@ -680,7 +704,11 @@ def test_an_answer_binds_the_commit_a_stale_refusal_saved(
         "CLAUDE_CODE_SESSION_ID": "t1",
     }
     done = subprocess.run(
-        [_BASH, "-c", _answer_block(marker)], env=environ, capture_output=True, text=True, check=False
+        [_BASH, "-c", _PYTHON_FUNCTION + _answer_block(marker)],
+        env=environ,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert done.returncode == 0, done.stdout + done.stderr
     (bind,) = [
@@ -692,7 +720,7 @@ def test_an_answer_binds_the_commit_a_stale_refusal_saved(
 
 def test_a_stale_word_never_rebinds_on_a_clean_check(world: Path) -> None:
     """A refused approval asks again even when both scans are clean."""
-    (world / "impl" / "pr-code-decision.txt").write_text("stale\n", encoding="utf-8")
+    (world / "impl" / "pr-code-decision.txt").write_text("stale\n", encoding="utf-8", newline="\n")
     run = _run(world, STUB_CHECK="auto")
     assert run.plan == "pr-code=ask hooks=run"
     assert not [line for line in run.called("guard") if line.startswith("guard bind")]

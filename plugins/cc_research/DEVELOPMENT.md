@@ -44,7 +44,7 @@ Round procedure:
 2. It reports the cumulative old/new table.
 3. It resolves feasible authorized findings.
 4. It escalates unfixable `security`/`critical`/`high` findings.
-5. It repeats until clean or plateau/non-convergence, subject to authority, evidence, recurrence and stricter caller budgets.
+5. It repeats until clean, plateau/non-convergence or an eligible early stop (only low and nit findings open; outcome `converged-no-medium`, never clean), subject to authority, evidence, recurrence and stricter caller budgets.
 
 Table and scoring:
 

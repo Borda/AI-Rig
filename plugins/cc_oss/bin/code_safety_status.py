@@ -183,6 +183,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.mode == "write":
         return _write(args)
+    # Bash compares the printed word exactly; Windows text mode would end it with a carriage return.
+    sys.stdout.reconfigure(newline="\n")  # type: ignore[union-attr]
     scan = _load(args.scan)
     if args.mode == "check-scan":
         print(decide_scan(scan, args.head))

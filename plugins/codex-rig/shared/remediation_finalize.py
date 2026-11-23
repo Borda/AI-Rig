@@ -98,6 +98,7 @@ if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
 import final_handoff  # noqa: E402
+import worktree_publication  # noqa: E402
 
 #: Maximum bytes accepted from the append-only remediation event ledger.
 MAX_LEDGER_BYTES = 16 * 1024 * 1024
@@ -210,9 +211,11 @@ def _load(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _write(path: Path, payload: dict[str, Any]) -> None:
-    """Write deterministic UTF-8 JSON with LF line endings."""
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+def _write(path: Path, payload: dict[str, Any]) -> bytes:
+    """Write deterministic UTF-8 JSON with LF line endings and return the exact bytes supplied by the producer."""
+    encoded = (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode()
+    path.write_bytes(encoded)
+    return encoded
 
 
 def _publication_record(run: Path, name: str) -> tuple[dict[str, Any], str]:
@@ -242,6 +245,8 @@ def _full_oid(value: object) -> bool:
 
 def _publication_delivery(run: Path) -> dict[str, Any]:
     """Require recorded worktree-only delivery at the selected absolute checkout."""
+    if os.path.lexists(run / "recovery-worktree.json"):
+        raise DeriveError("publication-ineligible-recovery-worktree")
     locator, _ = _publication_record(run, "remediation-worktree.json")
     delivery, _ = _publication_record(run, "worktree-delivery.json")
     detailed = run / "worktree-delivery.md"
@@ -300,17 +305,42 @@ def _publication_state(run: Path, delivery: dict[str, Any], *, resume: bool = Fa
             or offer["ref"] == "refs/heads/"
         ):
             raise DeriveError("publication-offer-invalid")
+    denied_answer = None
+    if run.name == worktree_publication.REQUEST_DIRECTORY and (
+        consumed or os.path.lexists(run / "publication-answer.json")
+    ):
+        answer, answer_digest = _publication_record(run, "publication-answer.json")
+        if (
+            offer is None
+            or set(answer) != {"offer_digest", "decision_id", "answer"}
+            or answer["offer_digest"] != offer_digest
+            or answer["decision_id"] != worktree_publication.publication_decision_id(run, offer_digest)
+            or answer["answer"] not in ("Approve", "Deny")
+            or (consumed and answer["answer"] != "Approve")
+        ):
+            raise DeriveError("publication-answer-mismatch")
+        if answer["answer"] == "Deny":
+            denied_answer = answer_digest
     if consumed:
         attempt, attempt_digest = _publication_record(run, attempt_path.name)
         if attempt != {
             "offer_digest": offer_digest,
-            "decision_id": f"pr-worktree-publication-{offer_digest}",
+            "decision_id": worktree_publication.publication_decision_id(run, offer_digest),
             "answer": "Approve",
         }:
             raise DeriveError("publication-attempt-invalid")
     terminal_path = run / evidence
     if not terminal_path.exists() and not terminal_path.is_symlink():
         if not consumed:
+            if resume and denied_answer:
+                return {
+                    "schema_version": 1,
+                    "status": "declined",
+                    "reason": "The user declined this publication request.",
+                    "observed_oid": None,
+                    "evidence": "publication-answer.json",
+                    "evidence_sha256": denied_answer,
+                }
             if resume:
                 evidence = "worktree-delivery.json" if offer is None else offer_path.name
                 _, digest = _publication_record(run, evidence)
@@ -332,6 +362,17 @@ def _publication_state(run: Path, delivery: dict[str, Any], *, resume: bool = Fa
                 "evidence": attempt_path.name,
                 "evidence_sha256": attempt_digest,
             }
+        readback_digest = _verified_readback_digest(run, offer, offer_digest, offer["source_oid"])
+        if readback_digest is not None:
+            return {
+                "schema_version": 1,
+                "status": "verified",
+                "reason": "Successful transport and the audited destination ref confirm the delivered commit.",
+                "observed_oid": offer["source_oid"],
+                "evidence": attempt_path.name,
+                "evidence_sha256": attempt_digest,
+                "readback_sha256": readback_digest,
+            }
         return {
             "schema_version": 1,
             "status": "unverified",
@@ -343,6 +384,8 @@ def _publication_state(run: Path, delivery: dict[str, Any], *, resume: bool = Fa
 
     record, digest = _publication_record(run, evidence)
     allowed = {"verified", "failed", "unverified"} if started else {"skipped"} if consumed else {"declined", "skipped"}
+    if run.name == worktree_publication.REQUEST_DIRECTORY and not consumed:
+        allowed = {"declined"} if denied_answer else {"skipped"}
     if (
         set(record) != {"schema_version", "status", "reason", "observed_oid"}
         or type(record["schema_version"]) is not int
@@ -356,7 +399,10 @@ def _publication_state(run: Path, delivery: dict[str, Any], *, resume: bool = Fa
         raise DeriveError("publication-disposition-invalid")
     binding = {"evidence": evidence, "evidence_sha256": digest, **record}
     if record["status"] == "verified":
-        binding["readback_sha256"] = _verified_publication(run, offer, offer_digest, record["observed_oid"])
+        readback_digest = _verified_readback_digest(run, offer, offer_digest, record["observed_oid"])
+        if readback_digest is None:
+            raise DeriveError("publication-verification-unproven")
+        binding["readback_sha256"] = readback_digest
     return binding
 
 
@@ -375,16 +421,16 @@ def _readback_matches_offer(url: object, offer: dict[str, Any]) -> bool:
         return False
 
 
-def _verified_publication(run: Path, offer: dict[str, Any], digest: str, observed_oid: str) -> str:
-    """Bind successful transport to the exact audited ref readback and return its byte digest."""
+def _verified_readback_digest(run: Path, offer: dict[str, Any], digest: str, observed_oid: str | None) -> str | None:
+    """Return the audited ref readback digest only when it proves the approved push reached its destination."""
     marker = run / "publication-executed"
     try:
         if marker.is_symlink() or not marker.is_file() or marker.read_bytes() != f"{digest}\n".encode("ascii"):
-            raise DeriveError("publication-execution-marker-invalid")
+            return None
         execution, _ = _publication_record(run, "publication-execution-result.json")
         readback, readback_digest = _publication_record(run, "publication-readback.json")
-    except (DeriveError, OSError) as error:
-        raise DeriveError("publication-verification-unproven") from error
+    except (DeriveError, OSError):
+        return None
     obj = readback.get("object")
     if (
         execution != {"status": "pushed", "offer_digest": digest}
@@ -395,7 +441,7 @@ def _verified_publication(run: Path, offer: dict[str, Any], digest: str, observe
         or obj.get("sha") != observed_oid
         or observed_oid != offer["source_oid"]
     ):
-        raise DeriveError("publication-verification-unproven")
+        return None
     return readback_digest
 
 
@@ -1242,7 +1288,13 @@ def _resolution_table(metadata: dict[str, Any], draft: dict[str, Any]) -> tuple[
 
 
 def derive_handoff(
-    run: Path, metadata: dict[str, Any], handoff: dict[str, Any], score: float, artifact_path: str
+    run: Path,
+    metadata: dict[str, Any],
+    handoff: dict[str, Any],
+    score: float,
+    artifact_path: str,
+    *,
+    measured_code_safety: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Fill every handoff field that copies gates, confidence metadata, artifacts, or resolution items."""
     gates = _load(run / "gates.json")
@@ -1305,6 +1357,23 @@ def derive_handoff(
                         stream.write(("\n\n" + source + "\n").encode("utf-8"))
                 elif source not in notes:
                     raise DeriveError("review-commit-report-mismatch")
+                if measured_code_safety is not None:
+                    field = f"Code safety: {measured_code_safety['assessment']}"
+                    if measured_code_safety.get("reason"):
+                        field += "\nReason: " + measured_code_safety["reason"]
+                    # Preserve the original report bytes, including CRLF, when refreshing the derived field on retry.
+                    content = report.read_bytes()
+                    marker = rb"(?m)^## Code Safety\r?\n\r?\n(Code safety: (?:safe|unsafe|unassessed)(?:\r?\nReason: [^\r\n]+)?)\r?$"
+                    matches = list(re.finditer(marker, content))
+                    if "## Code Safety" not in notes.splitlines():
+                        with report.open("ab") as stream:
+                            stream.write(("\n## Code Safety\n\n" + field + "\n").encode("utf-8"))
+                    elif len(matches) == 1 and notes.splitlines().count("## Code Safety") == 1:
+                        start, end = matches[0].span(1)
+                        if content[start:end] != field.encode():
+                            report.write_bytes(content[:start] + field.encode() + content[end:])
+                    else:
+                        raise DeriveError("review-code-safety-report-mismatch")
             except (OSError, UnicodeError) as error:
                 raise DeriveError("review-commit-report-unavailable") from error
             _derive_review_actions(run, metadata, handoff)
@@ -1481,6 +1550,7 @@ def _result_arguments(
         recommendations=arguments.recommendations,
         follow_up=arguments.follow_up,
         metadata=json.dumps(metadata),
+        code_safety=getattr(arguments, "code_safety", "unassessed"),
     )
 
 
@@ -1548,9 +1618,25 @@ def finalize(arguments: argparse.Namespace) -> dict[str, Any]:
                 publication = publication_binding(run)
             # Fold the final events into both machine and displayed counts before validating either consumer.
             render_ledger(run, draft)
+        if arguments.skill == "code-review" and (
+            draft.get("scope") != "pr" or draft.get("review_status") in {"closed", "unavailable"}
+        ):
+            draft.pop("code_safety", None)
+        elif arguments.skill == "code-review":
+            from review_code_safety import review_record
+
+            try:
+                draft["code_safety"] = review_record(run, draft, arguments.code_safety)
+            except (OSError, ValueError, TypeError, KeyError) as error:
+                raise DeriveError(f"review-code-safety-unavailable:{error}") from error
         state["metadata"] = draft
         handoff = derive_handoff(
-            run, state["metadata"], _load(arguments.handoff), arguments.confidence, arguments.artifact_path
+            run,
+            state["metadata"],
+            _load(arguments.handoff),
+            arguments.confidence,
+            arguments.artifact_path,
+            measured_code_safety=draft.get("code_safety") if arguments.skill == "code-review" else None,
         )
         if publication is not None:
             draft["worktree_publication_contract_version"] = PUBLICATION_CONTRACT_VERSION
@@ -1562,8 +1648,13 @@ def finalize(arguments: argparse.Namespace) -> dict[str, Any]:
 
     def write_result() -> dict[str, str]:
         writer = _load_module("codex_rig_write_result", "write-result.py")
-        payload = writer.build_payload(_result_arguments(arguments, run, _load(run / "gates.json"), state["metadata"]))
-        _write(run / "result.candidate.json", payload)
+        payload = writer.build_payload(
+            _result_arguments(arguments, run, _load(run / "gates.json"), state["metadata"]),
+            measured_code_safety=state["metadata"].get("code_safety") if arguments.skill == "code-review" else None,
+        )
+        encoded = _write(run / "result.candidate.json", payload)
+        if arguments.skill == "code-review":
+            state["review_result_sha256"] = hashlib.sha256(encoded).hexdigest()
         return {"candidate": str(run / "result.candidate.json"), "status": payload["status"]}
 
     steps = (
@@ -1601,6 +1692,8 @@ def finalize(arguments: argparse.Namespace) -> dict[str, Any]:
         os.replace(run / "result.candidate.json", run / "result.json")
         summary["promoted"] = True
         summary["result"] = str(run / "result.json")
+        if arguments.skill == "code-review":
+            summary["review_result_sha256"] = state["review_result_sha256"]
     return summary
 
 
@@ -1657,15 +1750,61 @@ def _ledger_action(arguments: argparse.Namespace) -> dict[str, Any]:
 
 def _publication_resume_action(arguments: argparse.Namespace) -> dict[str, Any]:
     """Read retained evidence for report-only resume without contacting GitHub or writing run state."""
+    if arguments.run.is_symlink():
+        raise DeriveError("publication-checkpoint-symlink")
     run = arguments.run.resolve()
-    delivery = _publication_delivery(run)
-    publication = _publication_state(run, delivery, resume=True)
+    if run.name == worktree_publication.REQUEST_DIRECTORY and not os.path.lexists(run / "publication-offer.json"):
+        # Directory creation claims the single follow-up before the offer is written. A crash there sent nothing.
+        if not run.is_dir() or any(
+            os.path.lexists(run / name)
+            for name in (
+                "publication-answer.json",
+                "publication-attempt.json",
+                "publication-executed",
+                "publication-execution-result.json",
+                "publication-readback.json",
+                "result.json",
+            )
+        ):
+            raise DeriveError("publication-offer-missing")
+        delivery = None
+        if os.path.lexists(run / "publication.json"):
+            publication = _publication_state(run, {}, resume=True)
+        else:
+            original_result, digest = _publication_record(run.parent, "result.json")
+            metadata = original_result.get("metadata")
+            if (
+                original_result.get("status") != "pass"
+                or not isinstance(metadata, dict)
+                or metadata.get("mode") != "pr"
+            ):
+                raise DeriveError("publication-promoted-delivery-required")
+            publication = {
+                "schema_version": 1,
+                "status": "skipped",
+                "reason": "The follow-up ended before an offer was recorded.",
+                "observed_oid": None,
+                "evidence": "../result.json",
+                "evidence_sha256": digest,
+            }
+    else:
+        if run.name == worktree_publication.REQUEST_DIRECTORY:
+            _, digest = _publication_record(run, "publication-offer.json")
+            try:
+                offer = worktree_publication.read_offer(run, digest)
+                delivery = worktree_publication.requested_delivery(run, offer)
+            except (ValueError, OSError) as error:
+                raise DeriveError(str(error)) from error
+        else:
+            delivery = _publication_delivery(run)
+        publication = _publication_state(run, delivery, resume=True)
     return {
         "status": "pass",
         "delivery": delivery,
         "evidence": publication["evidence"],
         "publication": publication,
-        "needs_terminal_record": publication["status"] == "skipped" and publication["evidence"] != "publication.json",
+        "needs_terminal_record": publication["status"] in {"skipped", "verified", "declined"}
+        and publication["evidence"] != "publication.json",
     }
 
 
@@ -1905,6 +2044,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=("code-remediate", "code-review", "audit"),
         default="code-remediate",
         help="Owning workflow; audit derives shared fields and validates audit evidence; review adds its validator.",
+    )
+    final.add_argument(
+        "--code-safety",
+        choices=("safe", "unsafe", "unassessed"),
+        default="unassessed",
+        help="Code Review parent's explicit assessment, independently checked against the source.",
     )
     final.add_argument("--parent-thread-id", help="code-review: parent thread for review-validator provenance.")
     final.add_argument("--codex-home", type=Path, help="code-review: actual Codex home for the review validator.")

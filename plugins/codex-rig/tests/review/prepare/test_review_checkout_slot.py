@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import subprocess
@@ -9,12 +10,31 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from _git_fixtures import git_text
+from _modules import load_module
 from _platform import DIRECTORY_SYMLINKS_AVAILABLE
 
 HELPER = Path(__file__).resolve().parents[3] / "shared/review_checkout_slot.py"
+
+
+def test_windows_peer_waits_through_recovery_measurement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A verifier can hold the lock longer than the Windows CRT's ten attempts to acquire it."""
+    scheduler = load_module("recovery_lock_wait", HELPER)
+    attempts = []
+
+    def try_lock(fd: int, mode: int, length: int) -> None:
+        attempts.append((fd, mode, length))
+        if len(attempts) == 1:
+            raise OSError(errno.EDEADLK, "contended byte-range lock")
+
+    with monkeypatch.context() as patch:
+        patch.setitem(sys.modules, "msvcrt", SimpleNamespace(locking=try_lock, LK_LOCK=1))
+        patch.setattr(os, "name", "nt")
+        with scheduler._admission_lock(tmp_path):
+            assert len(attempts) == 2
 
 
 @pytest.fixture
@@ -45,6 +65,47 @@ def _invoke(*arguments: str | Path, code: int = 0) -> dict[str, str | None]:
 @pytest.mark.integration
 class TestCheckoutSlot:
     """Repository owners serialize across linked worktrees and release by their retained locator."""
+
+    @pytest.mark.parametrize("held", [True, False])
+    def test_proved_recovery_keeps_exclusive_owner(self, checkout: Path, held: bool) -> None:
+        """A successful proof restores a held owner and preserves an already active exclusive owner."""
+        scheduler = load_module("recovery_slot", HELPER)
+        claim = _invoke("acquire", "--checkout", checkout, "--owner", "first")
+        slot = Path(claim["slot"])
+        state = _invoke("hold", "--slot", slot, "--owner", "first") if held else {**claim, "status": "busy"}
+        with scheduler.recovery_claim(slot.parent, slot, "first"):
+            assert _invoke("status", "--slot", slot) == state
+        assert _invoke("acquire", "--slot", slot, "--owner", "peer", code=1) == {**claim, "status": "busy"}
+        assert _invoke("release", "--slot", slot, "--owner", "first")["status"] == "released"
+
+    def test_failed_proof_keeps_inspection_hold(self, checkout: Path) -> None:
+        """An exception sealing the successor leaves the original hold intact."""
+        scheduler = load_module("recovery_slot", HELPER)
+        slot = Path(_invoke("acquire", "--checkout", checkout, "--owner", "first")["slot"])
+        hold = _invoke("hold", "--slot", slot, "--owner", "first")
+        with pytest.raises(OSError, match="could not seal"), scheduler.recovery_claim(slot.parent, slot, "first"):
+            raise OSError("could not seal")
+        assert _invoke("status", "--slot", slot) == hold
+
+    @pytest.mark.parametrize("mismatch", ["owner", "common", "scope", "free"])
+    def test_recovery_rejects_unbound_claim(self, checkout: Path, mismatch: str) -> None:
+        """A proof can only use the current owner's exclusive claim in its authenticated common directory."""
+        scheduler = load_module("recovery_slot", HELPER)
+        common = (checkout / ".git").resolve()
+        option = ["--local"] if mismatch == "scope" else []
+        claim = _invoke("acquire", "--checkout", checkout, *option, "--owner", "first")
+        slot = Path(claim["slot"])
+        if mismatch == "free":
+            _invoke("release", "--slot", slot, "--owner", "first")
+        before = _invoke("status", "--slot", slot)
+        with (
+            pytest.raises(ValueError, match="recovery requires the original"),
+            scheduler.recovery_claim(
+                checkout if mismatch == "common" else common, slot, "peer" if mismatch == "owner" else "first"
+            ),
+        ):
+            pytest.fail("unbound recovery entered the evidence-sealing section")
+        assert _invoke("status", "--slot", slot) == before
 
     def test_linked_worktrees_share_ownership_and_independent_repositories_do_not(
         self, checkout: Path, monkeypatch: pytest.MonkeyPatch
@@ -146,11 +207,11 @@ class TestCheckoutSlot:
         ):
             try:
                 peer_status = pool.submit(queued.stderr.readline)
-                assert json.loads(peer_status.result(timeout=5)) == {**claim, "status": "busy"}
+                assert json.loads(peer_status.result(timeout=5)) == {**claim, "status": "busy", "queue": "waiting"}
                 assert queued.poll() is None
                 assert _invoke("status", "--slot", slot) == {**claim, "status": "busy"}
                 held = _invoke("hold", "--slot", slot, "--owner", "active")
-                assert json.loads(pool.submit(queued.stderr.readline).result(timeout=5)) == held
+                assert json.loads(pool.submit(queued.stderr.readline).result(timeout=5)) == {**held, "queue": "waiting"}
                 assert _invoke("release", "--inspected", "--slot", slot, "--owner", "active")["status"] == "released"
                 stdout, stderr = queued.communicate(timeout=5)
                 assert queued.returncode == 0, stderr
@@ -228,3 +289,69 @@ class TestCheckoutSlot:
         slot.symlink_to(target["slot"], target_is_directory=True)
         assert _invoke("release", "--slot", slot, "--owner", "first", code=2)["status"] == "error"
         assert _invoke("status", "--slot", target["slot"])["owner"] == "first"
+
+
+@pytest.mark.integration
+def test_distinct_review_targets_share_checkout_until_protected_operation(checkout: Path) -> None:
+    """Ordinary peers overlap, while an exclusive interval conflicts in both directions."""
+    first = "https://github.com/acme/project/pull/1"
+    second = "https://github.com/acme/project/pull/2"
+    linked = checkout / "linked"
+    git_text(checkout, "worktree", "add", "--detach", str(linked))
+    a = _invoke("acquire", "--checkout", checkout, "--target", first, "--owner", "a")
+    b = _invoke("acquire", "--checkout", linked, "--target", second, "--owner", "b")
+    assert a["slot"] != b["slot"]
+    assert _invoke("acquire", "--checkout", linked, "--target", first, "--owner", "c", code=1)["owner"] == "a"
+    assert _invoke("acquire", "--checkout", checkout, "--owner", "c", code=1)["status"] == "busy"
+    for claim in (a, b):
+        _invoke("release", "--slot", claim["slot"], "--owner", claim["owner"])
+    protected = _invoke("acquire", "--checkout", linked, "--owner", "protected")
+    assert _invoke("acquire", "--slot", a["slot"], "--owner", "a", code=1)["owner"] == "protected"
+    _invoke("hold", "--slot", protected["slot"], "--owner", "protected")
+    assert (
+        _invoke("acquire", "--checkout", linked, "--target", second, "--owner", "b", code=1)["status"]
+        == "inspection-required"
+    )
+
+
+@pytest.mark.integration
+def test_writers_bind_to_worktree_independently_of_review(checkout: Path) -> None:
+    """A second writer cannot switch the invoking branch underneath an active remediation."""
+    linked = checkout / "linked"
+    git_text(checkout, "worktree", "add", "--detach", str(linked))
+    writer = _invoke("acquire", "--checkout", checkout, "--writer", "--owner", "a")
+    assert _invoke("acquire", "--checkout", checkout, "--writer", "--owner", "b", code=1)["owner"] == "a"
+    assert _invoke("acquire", "--checkout", linked, "--writer", "--owner", "b")["slot"] != writer["slot"]
+    assert _invoke("acquire", "--checkout", checkout, "--local", "--owner", "c", code=1)["owner"] == "a"
+    _invoke("release", "--slot", writer["slot"], "--owner", "a")
+    local = _invoke("acquire", "--checkout", checkout, "--local", "--owner", "c")
+    assert _invoke("acquire", "--checkout", checkout, "--writer", "--owner", "a", code=1)["owner"] == "c"
+    _invoke("release", "--slot", local["slot"], "--owner", "c")
+    assert _invoke("acquire", "--checkout", checkout, "--owner", "a")["status"] == "acquired"
+
+
+@pytest.mark.integration
+def test_racing_protected_and_ordinary_acquisitions_never_both_enter(checkout: Path) -> None:
+    """Conflicting requests issued together must select one winner, including first use of the scheduler."""
+    target = "https://github.com/acme/project/pull/3"
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        for attempt in range(4):
+            processes = [
+                pool.submit(
+                    subprocess.run,
+                    [sys.executable, str(HELPER), "acquire", "--checkout", str(checkout), *scope, "--owner", owner],
+                    capture_output=True,
+                    check=False,
+                    timeout=10,
+                )
+                for scope, owner in (([], f"protected-{attempt}"), (["--target", target], f"review-{attempt}"))
+            ]
+            responses = [process.result() for process in processes]
+            assert sorted(response.returncode for response in responses) == [0, 1]
+            winner, loser = sorted(responses, key=lambda response: response.returncode)
+            claim = json.loads(winner.stdout)
+            peer = json.loads(loser.stdout)
+            assert claim["status"] == "acquired"
+            assert peer["status"] == "busy"
+            assert peer["owner"] == claim["owner"]
+            _invoke("release", "--slot", claim["slot"], "--owner", claim["owner"])

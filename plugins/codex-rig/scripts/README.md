@@ -256,6 +256,8 @@ plugins/codex-rig/bin/python plugins/codex-rig/scripts/verify_role_link.py --plu
 plugins/codex-rig/bin/python plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --append --progress
 plugins/codex-rig/bin/python plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --actions <run-directory>/loop-actions.json
 plugins/codex-rig/bin/python plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --append --progress --append-metrics --plateau-kind
+plugins/codex-rig/bin/python plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --append --progress --early-stop  # preliminary; the --actions form below decides
+plugins/codex-rig/bin/python plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --actions <run-directory>/loop-actions.json --early-stop
 plugins/codex-rig/bin/python plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --brief-arm
 ```
 

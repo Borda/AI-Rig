@@ -71,7 +71,6 @@ _FALLBACK_FILES = (
 #: Skills that render a quality-gates report header (or audit's findings report) and so must exempt the question path.
 _EXEMPTION_FILES = (
     "cc_oss/skills/review/modes/post-agent.md",
-    "cc_oss/skills/analyse/SKILL.md",
     "cc_develop/skills/review/SKILL.md",
     "cc_foundry/skills/profile/SKILL.md",
     "cc_foundry/skills/audit/modes/steps-4-5-7.md",

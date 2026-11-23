@@ -136,7 +136,8 @@ def _persist(path: Path, payload: dict[str, Any]) -> None:
         handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
         handle.flush()
         os.fsync(handle.fileno())
-    temporary.replace(path)
+    # os.replace, not Path.replace: Python 3.10's pathlib binds os.replace at import, so a host-level spy never sees it.
+    os.replace(temporary, path)
     _fsync_directory(path.parent)
 
 
@@ -365,6 +366,11 @@ def _create_lock_file(path: Path, text: str) -> bool:
             cannot be written; a partly written file is removed again.
     """
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    # Native Windows has no O_NOFOLLOW and raises PermissionError, not FileExistsError,
+    # for a directory: an occupied path is reported as existing so the caller classifies it,
+    # and a dangling link is never followed to create its target.
+    if os.path.lexists(path):
+        return False
     try:
         descriptor = os.open(path, flags, 0o600)
     except FileExistsError:

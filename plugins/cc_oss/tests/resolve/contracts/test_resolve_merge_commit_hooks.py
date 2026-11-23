@@ -19,6 +19,9 @@ _PLUGIN = Path(__file__).resolve().parents[3]
 _MODES = _PLUGIN / "skills/resolve/modes"
 _BASH = shutil.which("bash")
 _GIT = shutil.which("git")
+# A shell function, not a symlink: a venv launcher resolves its ``pyvenv.cfg`` from where it is invoked, so a symlink to
+# it fails on Windows (``failed to locate pyvenv.cfg``).
+_PYTHON_FUNCTION = f'python() {{ "{Path(sys.executable).as_posix()}" "$@"; }}\n'
 _HOOK = "#!/bin/sh\necho ran > ran-hook\nexit 0\n"
 _ROOT_STUB = "import os\nprint(os.environ['REAL_PLUGIN_ROOT'])\n"
 
@@ -90,7 +93,7 @@ def _git(repo: Path, *args: str, env: dict[str, str]) -> str:
 def merge_world(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
     """Return a repository with a pending base merge that bumps ``package.json``, its impl dir and environment."""
     empty = tmp_path / "gitconfig"
-    empty.write_text("", encoding="utf-8")
+    empty.write_text("", encoding="utf-8", newline="\n")
     env = {
         **os.environ,
         "GIT_CONFIG_GLOBAL": str(empty),
@@ -124,17 +127,13 @@ def merge_world(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
     impl.mkdir()
     stub = tmp_path / "stub-plugin" / "bin"
     stub.mkdir(parents=True)
-    (stub / "resolve_plugin_root.py").write_text(_ROOT_STUB, encoding="utf-8")
-    pybin = tmp_path / "pybin"
-    pybin.mkdir()
-    (pybin / "python").symlink_to(sys.executable)
+    (stub / "resolve_plugin_root.py").write_text(_ROOT_STUB, encoding="utf-8", newline="\n")
     sentinels = tmp_path / "tmp"
     sentinels.mkdir()
     for key, value in (("impl-dir", str(impl)), ("base-ref", "main"), ("pr-head-oid", pr_head)):
-        (sentinels / f"resolve-{key}-t1").write_text(value + "\n", encoding="utf-8")
+        (sentinels / f"resolve-{key}-t1").write_text(value + "\n", encoding="utf-8", newline="\n")
     env.update(
         {
-            "PATH": f"{pybin}{os.pathsep}{env['PATH']}",
             "CLAUDE_PLUGIN_ROOT": str(stub.parent),
             "REAL_PLUGIN_ROOT": str(_PLUGIN),
             "TMPDIR": str(sentinels),
@@ -158,13 +157,15 @@ def _record(repo: Path, impl: Path, env: dict[str, str], *, helper_made: bool) -
             str(impl / "approved-hooks.txt"),
         ]
         done = subprocess.run(cmd, cwd=repo, env=env, capture_output=True, text=True, timeout=60, check=True)
-        (impl / "hooks-decision.txt").write_text(json.loads(done.stdout)["decision"] + "\n", encoding="utf-8")
+        (impl / "hooks-decision.txt").write_text(
+            json.loads(done.stdout)["decision"] + "\n", encoding="utf-8", newline="\n"
+        )
         return
     done = subprocess.run(
         [sys.executable, helper], cwd=repo, env=env, capture_output=True, text=True, timeout=60, check=True
     )
-    (impl / "approved-hooks.txt").write_text(json.loads(done.stdout)["sha256"], encoding="utf-8")
-    (impl / "hooks-decision.txt").write_text("ask\n", encoding="utf-8")
+    (impl / "approved-hooks.txt").write_text(json.loads(done.stdout)["sha256"], encoding="utf-8", newline="\n")
+    (impl / "hooks-decision.txt").write_text("ask\n", encoding="utf-8", newline="\n")
 
 
 @pytest.mark.integration
@@ -192,7 +193,13 @@ def test_each_merge_commit_block_commits_a_merge_that_changed_package_json(
     _git(repo, "merge", "--no-commit", "--no-ff", "origin/main", env=env)
     assert _BASH is not None
     done = subprocess.run(
-        [_BASH, "-c", "\n".join(block)], cwd=repo, env=env, capture_output=True, text=True, timeout=120, check=False
+        [_BASH, "-c", _PYTHON_FUNCTION + "\n".join(block)],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
     )
     assert done.returncode == 0, (name, done.stdout, done.stderr)
     assert outcome in done.stdout

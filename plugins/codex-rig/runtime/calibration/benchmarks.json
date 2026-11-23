@@ -331,6 +331,9 @@
     ],
     "code-remediate": [
       "## Input Schema",
+      "Complete local remediation",
+      "a skipped feasible check",
+      "required live verification",
       "No review findings were fixed by a new code change",
       "Passing gates do not close selected items",
       "Never render bare `unresolved`",

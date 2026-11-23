@@ -31,7 +31,7 @@ Independent challenge loops show the cumulative old/new table once after each ne
 
 Adversarial workflow reviews include unchanged downstream consumers and the next ordinary user action, checking whether local success establishes the promised outcome and recording untested handoffs.
 
-- Each round challenges and collects findings, reports the cumulative old/new table, resolves feasible authorized findings, escalates unfixable `security`/`critical`/`high` findings, then repeats until clean or plateau/non-convergence, subject to authority, evidence, recurrence and stricter caller budgets.
+- Each round challenges and collects findings, reports the cumulative old/new table, resolves feasible authorized findings, escalates unfixable `security`/`critical`/`high` findings, then repeats until clean, plateau/non-convergence or an eligible early stop (only low and nit findings open; outcome `converged-no-medium`, never clean), subject to authority, evidence, recurrence and stricter caller budgets.
 - The table is `Iteration | Security | Critical | High | Medium | Low | Nits | Weighted score`; open and fixed-pending-verification signatures split into old and new, while verified-fixed and rejected findings stay excluded.
 - Security and critical have separate columns; score weights remain `20/10/6/4/2/1`.
 - Empty rounds print no progress table.

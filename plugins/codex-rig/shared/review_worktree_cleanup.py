@@ -13,8 +13,11 @@ integrity stops and additional files (including ignored files and empty director
 
 ## Usage
 
-Run with --run, --worktree, --checkout-sha256, --slot and --owner before releasing the slot. Supply the original
---integrity-sha256 after contributor execution, or --no-contributor-execution when no contributor code ran.
+Run with --run, --worktree, --checkout-sha256, --slot and --owner before releasing the slot. These arguments suffice
+for a verified same-repository checkout with no contributor integrity interval. For an ordinary assessed PR execution,
+supply --ordinary-execution and the promoting finalizer’s --review-result-sha256. Supply the original --integrity-sha256
+for a protected interval, or --no-contributor-execution when no contributor code ran. Supply --review-result-sha256
+from the promoting finalizer to authenticate its chosen result for a later execution-safety decision.
 After an inspected restart, also supply --inspected-snapshot and its parent-held --inspected-sha256. Use
 --original-snapshot for an original baseline with a different name from integrity.json.
 Before publishing a witness under an integrity anchor, the helper emits its exact OID to stderr. On interruption,
@@ -60,6 +63,7 @@ import review_checkout_slot  # noqa: E402
 import review_worktree_replay  # noqa: E402
 from collect_diff import reject_executable_filters  # noqa: E402
 from contributor_run_integrity import _canonical as integrity_digest  # noqa: E402
+from review_workspace import workspace_caller  # noqa: E402
 
 MARKER = "codex-review-owner"
 RECEIPT = "review-worktree-cleanup.json"
@@ -138,9 +142,14 @@ def recorded_content_digest(checkout: dict[str, Any]) -> str | None:
     return digests[0] if digests else None
 
 
-def record_creation(worktree: Path, common: Path) -> dict[str, Any]:
+def record_creation(worktree: Path, common: Path, target: str | None = None) -> dict[str, Any]:
     """Tie a fresh checkout to its Git registration, so a later worktree at the same address is preserved."""
-    slot_state, invocation = review_checkout_slot._observe(common / review_checkout_slot.SLOT_NAME)
+    slot = common / review_checkout_slot.SLOT_NAME
+    if target:
+        scoped = review_checkout_slot._target_slot(common, target)
+        if scoped.exists():
+            slot = scoped
+    slot_state, invocation = review_checkout_slot._observe(slot)
     if slot_state != "busy" or not invocation:
         raise ValueError("no active review invocation owns this checkout")
     pointer = worktree / ".git"
@@ -257,11 +266,11 @@ def _require_clean(worktree: Path) -> None:
 
 
 def _finish_removed(
-    args: argparse.Namespace, run: Path, source: Path, admin: Path, receipt: dict[str, Any]
+    args: argparse.Namespace, run: Path, source: Path, common: Path, admin: Path, receipt: dict[str, Any]
 ) -> dict[str, Any]:
     """Validate both durable proofs before acknowledging a missing checkout or finalizing its journal."""
     journal = run / RECEIPT
-    if admin.parent != args.slot.parent / "worktrees" or admin != admin.resolve() or not _absent(admin):
+    if admin.parent != common / "worktrees" or admin != admin.resolve() or not _absent(admin):
         raise ValueError("original worktree registration is not absent")
     if not _regular(journal):
         raise ValueError("missing original cleanup receipt")
@@ -270,8 +279,6 @@ def _finish_removed(
     removed = receipt | {"status": "removed"}
     if saved not in (receipt, removed):
         raise ValueError("existing cleanup receipt belongs to different evidence")
-    if review_checkout_slot._checkout_slot(source) != args.slot:
-        raise ValueError("source checkout belongs to a different slot")
     if (
         args.retry_witness
         and _git(source, "show-ref", "--verify", "--hash", review_worktree_replay.witness_ref(run)).strip().decode()
@@ -293,6 +300,24 @@ def _finish_removed(
     return removed
 
 
+def has_integrity_interval(run: Path) -> bool:
+    """Recognize retained contributor baselines and successors before choosing an execution route."""
+    return (
+        os.path.lexists(run / "integrity.json")
+        or os.path.lexists(run / "integrity-retry.json")
+        or any(run.glob("integrity-restart*.json"))
+    )
+
+
+def integrity_main_checkout(checkout: dict[str, Any]) -> Path:
+    """Bind contributor monitoring to the original caller even when collection used a private repository."""
+    source = Path(checkout["source_worktree"])
+    caller = workspace_caller(source, str(checkout.get("pr_url") or ""))
+    if checkout.get("integrity_main_checkout") != (caller.as_posix() if caller is not None else None):
+        raise ValueError("private review integrity checkout mismatch")
+    return caller if caller is not None else source
+
+
 def _terminal_snapshot(args: argparse.Namespace, run: Path, source: Path) -> tuple[Path, str] | None:
     """Authenticate the original baseline and select the retained interval for terminal verification."""
     original = args.original_snapshot or run / "integrity.json"
@@ -303,9 +328,7 @@ def _terminal_snapshot(args: argparse.Namespace, run: Path, source: Path) -> tup
             or active
             or args.inspected_sha256
             or args.retry_witness
-            or os.path.lexists(original)
-            or os.path.lexists(run / "integrity-retry.json")
-            or any(run.glob("integrity-restart*.json"))
+            or has_integrity_interval(run)
         ):
             raise ValueError("original integrity digest required")
         return None
@@ -373,15 +396,36 @@ def _cleanup(args: argparse.Namespace) -> dict[str, Any]:
         or not re.fullmatch(r"run-[0-9]{3,}", run.name)
     ):
         raise ValueError("missing fresh collector ownership or mismatched run/worktree")
+    exclusive = review_checkout_slot._checkout_slot(source)
+    common = exclusive.parent
+    target = checkout.get("pr_url")
+    if args.slot != exclusive and (not target or args.slot != review_checkout_slot._target_slot(common, target)):
+        raise ValueError("source checkout belongs to a different slot")
     result_path = run / "result.json"
     if not _regular(result_path) or os.path.lexists(run / "result.candidate.json"):
         raise ValueError("review has pending or missing results")
     result = result_path.read_bytes()
+    result_digest = hashlib.sha256(result).hexdigest()
+    if args.review_result_sha256 is not None and args.review_result_sha256 != result_digest:
+        raise ValueError("review result differs from producer digest")
     payload = json.loads(result)
     if payload.get("status") != "pass" or payload["metadata"].get("review_status") not in {None, "closed"}:
         raise ValueError("review did not complete successfully")
     already_absent = _absent(worktree)
-    interval = _terminal_snapshot(args, run, source)
+    if args.slot != exclusive and (args.integrity_sha256 or has_integrity_interval(run)):
+        raise ValueError("protected cleanup requires the repository-wide review slot")
+    interval = _terminal_snapshot(args, run, integrity_main_checkout(checkout))
+    if args.ordinary_execution and args.review_result_sha256 is None:
+        raise ValueError("ordinary execution requires the promoting finalizer's result digest")
+    if (
+        interval is None
+        and not args.no_contributor_execution
+        and not args.ordinary_execution
+        and checkout.get("verified_same_repository") is not True
+    ):
+        raise ValueError(
+            "specify ordinary execution, contributor integrity digest or confirmation of no contributor execution"
+        )
     if interval is not None and not already_absent:
         snapshot, anchor = interval
         verified = subprocess.run(  # noqa: S603 - trusted helper verifies the retained pre-execution digest
@@ -409,24 +453,30 @@ def _cleanup(args: argparse.Namespace) -> dict[str, Any]:
     inputs = review_worktree_replay.verified_source_inputs(run)
     admin = Path(created["git_dir"])
     receipt = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "producer_result_verified": args.review_result_sha256 is not None,
         "status": "removal-authorized",
         "run_dir": run.as_posix(),
         "worktree": worktree.as_posix(),
         "source_worktree": source.as_posix(),
         "head": head,
-        "result_sha256": hashlib.sha256(result).hexdigest(),
+        "result_sha256": result_digest,
         "local_checkout_sha256": args.checkout_sha256,
         "source_inputs": inputs,
     }
+    # Resume an already sealed historical cleanup with its original byte contract. Its evidence stays unverified
+    # for execution safety, and the ordinary replay checks still require the exact existing Git witness.
+    if args.review_result_sha256 is None:
+        sealed = review_worktree_replay.existing_witness(run, source)
+        if sealed is not None and sealed.get("schema_version") == 1:
+            receipt["schema_version"] = 1
+            del receipt["producer_result_verified"]
     journal = run / RECEIPT
     if already_absent:
-        return _finish_removed(args, run, source, admin, receipt)
-    if review_checkout_slot._checkout_slot(source) != args.slot:
-        raise ValueError("source checkout belongs to a different slot")
+        return _finish_removed(args, run, source, common, admin, receipt)
     _verify_completion(run, args.codex_home)
     if (
-        admin.parent != args.slot.parent / "worktrees"
+        admin.parent != common / "worktrees"
         or admin != admin.resolve(strict=True)
         or not _regular(admin / MARKER)
         or (admin / MARKER).read_text(encoding="ascii") != created["owner"]
@@ -482,6 +532,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--slot", type=Path, required=True)
     parser.add_argument("--owner", required=True)
     parser.add_argument("--checkout-sha256", required=True)
+    parser.add_argument("--review-result-sha256", help="Digest retained from the trusted promoting review finalizer.")
     parser.add_argument(
         "--retry-witness", help="Exact witness OID kept by the parent immediately before an interrupted cleanup."
     )
@@ -489,9 +540,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--inspected-snapshot", type=Path, help="Absolute path of the retained inspected successor.")
     parser.add_argument("--inspected-sha256", help="Parent-held digest printed when the successor was created.")
     parser.add_argument("--codex-home", type=Path)
-    execution = parser.add_mutually_exclusive_group(required=True)
+    execution = parser.add_mutually_exclusive_group()
     execution.add_argument("--integrity-sha256")
     execution.add_argument("--no-contributor-execution", action="store_true")
+    execution.add_argument(
+        "--ordinary-execution",
+        action="store_true",
+        help="Parent confirms assessed execution outside a protected interval.",
+    )
     args = parser.parse_args(argv)
     try:
         result = _cleanup(args)

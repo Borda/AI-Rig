@@ -6,7 +6,7 @@ paths:
 
 ## Commit Message Format
 
-Subject line format: `type(scope): detail` or `type: detail` — ≤50 chars total; name up to 3 most significant changes only.
+Subject line format: `type(scope): detail` or `type: detail` — ≤50 chars total; name up to 3 most significant changes only. Fit a limit by choosing and rephrasing, most impactful first, and cut a clause where the room ends; never write `...`, `…` or `(+N more)` in a subject, bullet or approval summary.
 
 **type** — pick lowest that fits:
 

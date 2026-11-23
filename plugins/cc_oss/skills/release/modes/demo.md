@@ -101,6 +101,17 @@ Structure in order:
    - `## <N+1>. Next steps` header
    - Bullet list: docs link, changelog link (GitHub compare URL), migration guide link if breaking changes, links to prior release demos; use `<placeholder-url>` format — never invent real URLs
 
+7. **Closing cell** (`# %% [markdown]`) — last cell, after Next steps, verbatim:
+
+   ```python
+   # %% [markdown]
+   # *Drafted by [`/oss:release`](https://borda.github.io/AI-Rig/cc_oss/#oss-release), an AI skill in [AI Rig](https://github.com/Borda/AI-Rig).*
+   ```
+
+   Both URLs are real and verified, so the placeholder rule below does not apply to them. Skip this cell when `printenv AI_RIG_FOOTER`, run bare (no redirect, no `|| true`), prints `off` (any case); empty output with exit 1 means unset, so keep it.
+
+   <!-- policy-sibling: plugins/cc_foundry/rules/public-github.md, plugins/cc_foundry/rules/_full/public-github.md, plugins/cc_oss/skills/release/guidelines/writing-rules.md, plugins/cc_oss/skills/release/modes/notes-draft.md, plugins/cc_oss/skills/release/modes/release-draft-template.md, plugins/cc_oss/skills/release/templates/release-draft.md — AI_RIG_FOOTER opt-out wording restated for each consumer; edit all seven together. -->
+
 Demo-only content rules (on top of `notebook-style.md` above — its compact-docstring and narrative-depth anchors still apply):
 
 - All code must be syntactically valid Python

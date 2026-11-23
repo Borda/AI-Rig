@@ -47,6 +47,7 @@ import json
 import math
 import os
 import re
+import runpy
 import shlex
 import subprocess
 import sys
@@ -1683,6 +1684,8 @@ def check_shared_scripts(run: CalibrationRun) -> None:
         cli_paths["remediation-finalize"] = run.paths.shared_dir / "remediation_finalize.py"
         cli_paths["test-targets"] = run.paths.shared_dir / "test_targets.py"
         cli_paths["contributor-run-integrity"] = run.paths.shared_dir / "contributor_run_integrity.py"
+        cli_paths["review-workspace"] = run.paths.shared_dir / "review_workspace.py"
+        cli_paths["review-code-safety"] = run.paths.shared_dir / "review_code_safety.py"
         cli_paths["review-checkout-slot"] = run.paths.shared_dir / "review_checkout_slot.py"
         cli_paths["review-worktree-cleanup"] = run.paths.shared_dir / "review_worktree_cleanup.py"
         cli_paths["untrusted-code-guard"] = run.paths.shared_dir / "untrusted_code_guard.py"
@@ -1878,28 +1881,43 @@ def _run_selftests(run: CalibrationRun) -> None:
             run.fail_and_leak("shared-script-selftests", "selftest-missing:result.json")
 
     if is_executable(run.paths.collect_diff):
-        diff_repo = selftest_dir / "collect-diff-repo"
-        diff_repo.mkdir(parents=True, exist_ok=True)
-        fixture = diff_repo / "fixture.txt"
-        fixture.write_text("before\n", encoding="utf-8")
-        setup_commands = (
-            ["git", "init", "-q"],
-            ["git", "config", "user.email", "codex-selftest@example.invalid"],
-            ["git", "config", "user.name", "Codex Selftest"],
-            ["git", "add", "fixture.txt"],
-            ["git", "commit", "-q", "-m", "selftest fixture"],
-        )
-        if any(run_command(command, cwd=diff_repo).returncode != 0 for command in setup_commands):
-            run.fail_and_leak("shared-script-selftests", "selftest-setup:collect-diff")
-        fixture.write_text("after\n", encoding="utf-8")
+        # An empty committed range exercises the real collector without changing refs, index or source files.
+        # An installation outside Git can exercise the collector's missing-repository failure instead.
+        env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+        env["GIT_OPTIONAL_LOCKS"] = "0"
+        root = run.paths.root
+        checkout = next((path for path in (root, *root.parents) if (path / ".git").exists()), None)
+        diff = selftest_dir / "diff"
         result = run_command(
-            cli_argv(run.paths.collect_diff, "--scope", "working-tree", "--out", selftest_dir / "diff"),
-            cwd=diff_repo,
+            cli_argv(run.paths.collect_diff, "--scope", "commit", "--target", "HEAD..HEAD", "--out", diff),
+            cwd=root,
+            env=env,
         )
-        expected_files = ("status.txt", "diff.patch", "files.txt", "diffstat.txt", "numstat.txt", "untracked.txt")
-        for expected in expected_files:
-            if result.returncode != 0 or not (selftest_dir / "diff" / expected).exists():
-                run.fail_and_leak("shared-script-selftests", f"selftest-missing:collect-diff:{expected}")
+        if checkout is None:
+            if result.returncode == 0 or (diff / "diff.patch").exists():
+                run.fail_and_leak("shared-script-selftests", "selftest-fail-open:collect-diff-outside-checkout")
+            else:
+                run.append_check("collect-diff-selftest=missing-repository-rejected")
+        elif result.returncode:
+            # Only an unborn HEAD explains this rejection. A failed collector in a committed checkout is a failure.
+            head = run_command(["git", "rev-parse", "--verify", "--quiet", "HEAD^{commit}"], cwd=root, env=env)
+            scope_error = diff / "scope-error.txt"
+            if (
+                result.returncode == 2
+                and head.returncode == 1
+                and scope_error.is_file()
+                and scope_error.read_text(encoding="utf-8").strip() == "invalid-commit-target"
+                and not (diff / "diff.patch").exists()
+            ):
+                run.append_check("collect-diff-selftest=unborn-head-rejected")
+            else:
+                run.fail_and_leak("shared-script-selftests", "selftest-failed:collect-diff")
+        else:
+            empty_range_files = ("diff.patch", "files.txt", "diffstat.txt", "numstat.txt", "untracked.txt")
+            if not all((diff / name).is_file() for name in (*empty_range_files, "status.txt")):
+                run.fail_and_leak("shared-script-selftests", "selftest-missing:collect-diff")
+            elif any((diff / name).stat().st_size for name in empty_range_files):
+                run.fail_and_leak("shared-script-selftests", "selftest-wrong:collect-diff-empty-range")
 
     if is_executable(run.paths.collect_pr):
         result = run_command([sys.executable, "-m", "py_compile", run.paths.collect_pr])
@@ -1910,7 +1928,7 @@ def _run_selftests(run: CalibrationRun) -> None:
         if result.returncode != 0:
             run.fail_and_leak("shared-script-selftests", "selftest-syntax:github-read")
     if run.paths.select_git_remote.exists():
-        selftest_select_git_remote(run, selftest_dir)
+        selftest_select_git_remote(run)
     if run.paths.live_ab_runner.exists() and run.paths.live_route_policy.exists():
         selftest_live_ab_contract(run, selftest_dir)
     if run.paths.code_review_validate_artifacts.exists():
@@ -1927,45 +1945,18 @@ def _run_selftests(run: CalibrationRun) -> None:
             run.append_check("code-remediate-validator-selftest=not-applicable:source-agent-config-required")
 
 
-def selftest_select_git_remote(run: CalibrationRun, selftest_dir: Path) -> None:
-    """Verify authoritative PR URL matching in a multi-remote local repository."""
-    repo = selftest_dir / "remote-selection-repo"
-    repo.mkdir(parents=True, exist_ok=True)
-    commands = (
-        ["git", "init", "-q", repo],
-        ["git", "-C", repo, "remote", "add", "origin", "git@github.com:fork/repo.git"],
-        ["git", "-C", repo, "remote", "add", "upstream", "https://github.com/owner/repo.git"],
-    )
-    if any(run_command(command).returncode != 0 for command in commands):
-        run.fail_and_leak("shared-script-selftests", "selftest-setup:select-git-remote")
-        return
-    selected = run_command(
-        [
-            sys.executable,
-            run.paths.select_git_remote,
-            "--expected-url",
-            "https://github.com/owner/repo/pull/17",
-            "--cwd",
-            repo,
-        ]
-    )
-    if selected.returncode != 0:
-        run.fail_and_leak("shared-script-selftests", "selftest-failed:select-git-remote")
-        return
-    payload = json.loads(selected.stdout)
-    if payload.get("remote") != "upstream":
+def selftest_select_git_remote(run: CalibrationRun) -> None:
+    """Check fork and upstream selection against explicit remote records without configuring a repository."""
+    select = runpy.run_path(str(run.paths.select_git_remote))["select_remote"]
+    remotes = {"origin": ["git@github.com:fork/repo.git"], "upstream": ["https://github.com/owner/repo.git"]}
+    if select("https://github.com/owner/repo/pull/17", remotes)["remote"] != "upstream":
         run.fail_and_leak("shared-script-selftests", "selftest-wrong:select-git-remote-fork-origin")
-    missing = run_command(
-        [
-            sys.executable,
-            run.paths.select_git_remote,
-            "--expected-url",
-            "https://github.com/owner/other/pull/1",
-            "--cwd",
-            repo,
-        ]
-    )
-    if missing.returncode == 0:
+    try:
+        select("https://github.com/owner/other/pull/1", remotes)
+    except ValueError as error:
+        if str(error) != "no-matching-remote:github.com/owner/other":
+            raise
+    else:
         run.fail_and_leak("shared-script-selftests", "selftest-fail-open:select-git-remote")
 
 
@@ -3224,13 +3215,18 @@ def selftest_find_review_report(run: CalibrationRun, selftest_dir: Path) -> None
             '{"number": 321, "url": "https://github.com/example/repo/pull/321"}\n',
             encoding="utf-8",
         )
-    compatibility = run_command(cli_argv(run.paths.find_review_report, "--target", "#321"), cwd=compatibility_root)
-    if (
-        compatibility.returncode == 0
-        or compatibility.stdout.strip()
-        or "review-validation-failed" not in compatibility.stderr
-    ):
-        run.fail_and_leak("shared-script-selftests", "selftest-failed:find-review-report:legacy-metadata-only-intake")
+    for directory in (current.parent, legacy.parent):
+        compatibility = run_command(
+            cli_argv(run.paths.find_review_report, "--target", "#321", "--reports-dir", directory)
+        )
+        if (
+            compatibility.returncode == 0
+            or compatibility.stdout.strip()
+            or "review-validation-failed" not in compatibility.stderr
+        ):
+            run.fail_and_leak(
+                "shared-script-selftests", "selftest-failed:find-review-report:legacy-metadata-only-intake"
+            )
 
 
 def selftest_validate_artifacts(run: CalibrationRun, selftest_dir: Path) -> None:

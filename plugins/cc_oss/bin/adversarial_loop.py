@@ -49,7 +49,10 @@ warning. ``--append`` likewise warns, never refuses, when an open finding first 
 ``--plateau-kind`` prints ``stuck``, ``whack-a-mole``, ``mixed`` or ``none`` on stderr for a plateau or non-converging
 latest round without touching stdout or the exit status. ``--brief-arm`` prints ``full`` or ``lean`` (stable per run
 directory name, ``full`` while a ``brief-arm-pause`` file sits beside the run directory) for the reviewer-brief pilot
-and exits; it cannot be combined with another action.
+and exits; it cannot be combined with another action. ``--early-stop`` prints ``eligible`` or ``not-eligible`` with
+its reason on stderr: eligible means a current-schema ledger whose latest completed round, reviewed against the
+current snapshot, has no open security, critical, high or medium finding while some lower-tier finding remains. It
+never changes stdout, the summary reason or the exit status, and it is not a clean result.
 
 Use ``--require-clean`` when an acceptance gate must reject every valid non-clean outcome. Add ``--progress`` after each
 completed round to print its cumulative severity table on stderr, leaving machine-readable stdout unchanged. Add
@@ -103,6 +106,9 @@ _DISPOSITIONS = {"open", "fixed-pending-verification", "verified-fixed", "reject
 _TIERS = {"security": 20, "critical": 10, "high": 6, "medium": 4, "low": 2, "nit": 1}
 #: Dispositions that still count as open findings and contribute to the weighted score.
 _OPEN_DISPOSITIONS = {"open", "fixed-pending-verification"}
+
+#: Tiers whose open findings block an early stop; only low and nit findings may remain.
+_EARLY_STOP_BLOCKING_TIERS = ("security", "critical", "high", "medium")
 #: Pattern for a lowercase 64-character hex SHA-256 digest, used to validate snapshot diff digests.
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 #: Exact set of keys permitted at the top level of a loop ledger.
@@ -691,6 +697,43 @@ def summarize_ledger(payload: object) -> dict[str, object]:
     return _summary_from_valid(payload)
 
 
+def early_stop_eligibility(payload: dict[str, Any]) -> tuple[bool, str]:
+    """Say whether the latest completed round allows stopping reviews before a clean result.
+
+    Eligible means the ledger uses the current schema, the loop is still active, the latest round was independent and
+    reviewed the current snapshot, and no security, critical, high or medium finding is open or pending verification.
+    Any stop the summary already reports (clean, plateau, nonconverging, stale review, unavailable independence) is
+    returned as that reason, never eligible, and a historical schema is refused as ``--require-clean`` refuses it. The
+    caller must pass a ledger that already passed ``validate_ledger``.
+
+    Args:
+        payload: Validated ledger with its rounds merged in.
+
+    Returns:
+        ``(eligible, reason)``; the reason is ``no-medium-or-higher`` when eligible.
+
+    Examples:
+        >>> early_stop_eligibility({"schema_version": SCHEMA_VERSION, "rounds": []})
+        (False, 'independence-unavailable')
+    """
+    if payload["schema_version"] != SCHEMA_VERSION:
+        return False, "schema-not-current"
+    summary = _summary_from_valid(payload)
+    if summary["status"] == "stopped":
+        return False, str(summary["reason"])
+    latest = payload["rounds"][-1]
+    if latest["snapshot"] != payload["current_snapshot"]:
+        return False, "stale-review"
+    blocking = {
+        finding["tier"]
+        for finding in latest["findings"]
+        if finding["disposition"] in _OPEN_DISPOSITIONS and finding["tier"] in _EARLY_STOP_BLOCKING_TIERS
+    }
+    if blocking:
+        return False, "open-" + "+".join(tier for tier in _EARLY_STOP_BLOCKING_TIERS if tier in blocking)
+    return True, "no-medium-or-higher"
+
+
 def validate_actions(ledger: object, payload: object) -> list[str]:
     """Bind parent triage and resolution evidence to each open reviewed finding.
 
@@ -1099,6 +1142,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Print stuck, whack-a-mole, mixed or none on stderr for the latest round; informational only.",
     )
     parser.add_argument(
+        "--early-stop",
+        action="store_true",
+        help="Print eligible or not-eligible plus its reason on stderr for the latest round; informational only.",
+    )
+    parser.add_argument(
         "--brief-arm",
         action="store_true",
         help="Print the pilot reviewer-brief wording (full or lean) for this run and exit; the ledger need not exist.",
@@ -1111,6 +1159,7 @@ def main(argv: list[str] | None = None) -> int:
             or args.require_clean
             or args.progress
             or args.plateau_kind
+            or args.early_stop
             or args.actions
         ):
             parser.error("--brief-arm cannot be combined with another action")
@@ -1166,6 +1215,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.plateau_kind:
         stopped_on_score = summary["reason"] in ("plateau", "nonconverging")
         print(f"plateau-kind: {(stopped_on_score and plateau_kind(payload)) or 'none'}", file=sys.stderr)
+    if args.early_stop:
+        eligible, early_reason = early_stop_eligibility(payload)
+        print(f"early-stop: {'eligible' if eligible else 'not-eligible'} ({early_reason})", file=sys.stderr)
     print(json.dumps(summary, sort_keys=True))
     if args.require_clean and payload["schema_version"] != SCHEMA_VERSION:
         print("require-clean-schema-not-current", file=sys.stderr)

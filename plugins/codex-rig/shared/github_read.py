@@ -74,6 +74,18 @@ PUBLIC_GITHUB_API_HOST = "api.github.com"
 VIEW_RESOURCE_COMMANDS = frozenset({"gist", "issue", "pr", "project", "release", "repo", "ruleset", "run", "workflow"})
 #: Job logs are text; workflow-run log endpoints instead return binary ZIP archives.
 JOB_LOG_ENDPOINT = re.compile(r"/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/jobs/[1-9][0-9]*/logs")
+# Git pads each fetch status column independently according to the displayed refs.
+NON_FAST_FORWARD_LINE = r"^[ \t]*! \[rejected\][ \t]+\S+[ \t]+->[ \t]+(\S+)[ \t]+\(non-fast-forward\)\r?$"
+# Keep the native destination distinct from other branch names, worktree paths and lock diagnostics.
+BRANCH_EXISTS_LINE = r"^fatal: a branch named '(\S+)' already exists\r?$"
+BRANCH_IN_WORKTREE_LINE = r"^fatal: '(\S+)' is already (?:checked out at|used by worktree at) '[^\n]+'\r?$"
+REF_LOCK_LINE = r"^(?:fatal|error): cannot lock ref '([^:\n]+)':"
+CHECKOUT_REF_ERRORS = {
+    "local-branch-exists": BRANCH_EXISTS_LINE,
+    "local-branch-in-other-worktree": BRANCH_IN_WORKTREE_LINE,
+    "local-fetch-non-fast-forward": NON_FAST_FORWARD_LINE,
+    "local-ref-lock-failed": REF_LOCK_LINE,
+}
 #: Lowercase URL query keys that signal credentials; a URL carrying one is ineligible for the public fallback.
 SENSITIVE_QUERY_KEYS = frozenset({"access_token", "auth", "authorization", "client_secret", "password", "token"})
 #: Well-known system CA bundle locations searched for TLS verification, in priority order.
@@ -196,9 +208,7 @@ def _diagnostic_message_text(stderr: bytes) -> str:
     in_file_list = False
     for line in text.splitlines():
         # Complete Git messages delimit payloads even when names contain apostrophes.
-        if re.fullmatch(r"fatal: a branch named '[^\n]+' already exists", line) or re.fullmatch(
-            r"fatal: '[^\n]+' is already checked out at '[^\n]+'", line
-        ):
+        if re.fullmatch(BRANCH_EXISTS_LINE, line) or re.fullmatch(BRANCH_IN_WORKTREE_LINE, line):
             in_file_list = False
             continue
         # Git prints overwrite paths as tab-indented data after these exact headers.
@@ -211,10 +221,10 @@ def _diagnostic_message_text(stderr: bytes) -> str:
                 line,
             )
         )
-        if re.fullmatch(r"\s*! \[rejected\]\s+\S+ -> \S+ \(non-fast-forward\)", line):
+        if re.fullmatch(NON_FAST_FORWARD_LINE, line):
             continue
         # A valid ref cannot contain a colon; retain the suffix explaining lock failure.
-        line = re.sub(r"^(?:fatal|error): cannot lock ref '[^:\n]+':", "", line, count=1)
+        line = re.sub(REF_LOCK_LINE, "", line, count=1)
         messages.append(re.sub(r"'[^'\n]*'|\"[^\"\n]*\"", "", line))
     return "\n".join(messages)
 
@@ -225,6 +235,12 @@ def github_failure_class(stderr: bytes) -> str:
     # An explicit policy refusal outranks words in the organization name, such as "tls".
     if "forbids access via a personal access token (classic)" in text:
         return "github-permission"
+    # Git's HTTPS transport reports status codes in a different form after its quoted URL has been removed.
+    git_http = re.search(r"^fatal: unable to access : the requested url returned error: (401|403)$", text, re.MULTILINE)
+    if git_http:
+        return "github-auth" if git_http[1] == "401" else "github-permission"
+    if re.search(r"^remote: http basic: access denied\b", text, re.MULTILINE):
+        return "github-auth"
     if "graphql:" in text and "could not resolve to a " in text:
         return "github-not-found"
     if any(
@@ -302,8 +318,6 @@ def github_failure_reason(stderr: bytes, failure_class: str) -> str:
             return "terminal-escape-sequences-refused"
         # Match Git's local diagnostic grammar, never branch names or arbitrary prose alone.
         local_reasons = (
-            (r"^fatal: a branch named '[^\n]+' already exists$", "local-branch-exists"),
-            (r"^fatal: '[^\n]+' is already checked out at '[^\n]+'$", "local-branch-in-other-worktree"),
             (
                 r"^error: your local changes to the following files would be overwritten by (?:checkout|merge):$",
                 "local-changes-overwritten",
@@ -313,13 +327,29 @@ def github_failure_reason(stderr: bytes, failure_class: str) -> str:
                 "local-untracked-files-overwritten",
             ),
             (r"^fatal: not possible to fast-forward, aborting\.$", "local-fast-forward-unavailable"),
-            (r"^\s*! \[rejected\]\s+\S+ -> \S+ \(non-fast-forward\)$", "local-fetch-non-fast-forward"),
-            (r"^(?:fatal|error): cannot lock ref '[^\n]+':", "local-ref-lock-failed"),
         )
         for pattern, reason in local_reasons:
             if re.search(pattern, text, flags=re.MULTILINE):
                 return reason
+        for reason, pattern in CHECKOUT_REF_ERRORS.items():
+            if re.search(pattern, text, flags=re.MULTILINE):
+                return reason
     return "unclassified"
+
+
+def _checkout_error_branch(stderr: bytes, candidates: tuple[str, ...]) -> str:
+    """Identify the one candidate all named native errors implicate without retaining unrelated subjects or paths."""
+    mentioned: set[str] = set()
+    text = stderr.decode("utf-8", errors="replace")
+    for reason, pattern in CHECKOUT_REF_ERRORS.items():
+        for match in re.finditer(pattern, text, flags=re.MULTILINE | re.IGNORECASE):
+            subject = match[1]
+            if reason == "local-ref-lock-failed" and not subject.startswith("refs/heads/"):
+                return ""  # An unrelated namespace, including remote-tracking refs, cannot identify a local branch.
+            if reason in {"local-ref-lock-failed", "local-fetch-non-fast-forward"}:
+                subject = subject.removeprefix("refs/heads/")
+            mentioned.add(subject)
+    return next((name for name in candidates if mentioned == {name}), "")
 
 
 def _safe_job_log(payload: bytes) -> bytes:
@@ -461,7 +491,9 @@ def _run_default_gh_command(argv: list[str], timeout: int) -> subprocess.Complet
     return run_bounded_command(argv, timeout=timeout, max_output_bytes=MAX_OUTPUT_BYTES)
 
 
-def run_gh_read(run: RunCommand, argv: list[str], *, timeout: int, label: str) -> bytes:
+def run_gh_read(
+    run: RunCommand, argv: list[str], *, timeout: int, label: str, checkout_branches: tuple[str, ...] = ()
+) -> bytes:
     """Run one validated GitHub CLI read without exposing credential diagnostics."""
     require_read_only_gh_command(argv, label)
     try:
@@ -499,15 +531,15 @@ def run_gh_read(run: RunCommand, argv: list[str], *, timeout: int, label: str) -
         failure_reason = github_failure_reason(completed.stderr, failure_class)
         if job_log and failure_reason == "terminal-escape-sequences-refused" and "--allow-escape-sequences" not in argv:
             return run_gh_read(run, [*argv, "--allow-escape-sequences"], timeout=timeout, label=label)
-        raise GitHubReadError(
-            f"{failure_class}:{label}",
-            diagnostics={
-                "exit_code": completed.returncode,
-                "failure_class": failure_class,
-                "failure_reason": failure_reason,
-                "label": label,
-            },
-        )
+        diagnostics: dict[str, object] = {
+            "exit_code": completed.returncode,
+            "failure_class": failure_class,
+            "failure_reason": failure_reason,
+            "label": label,
+        }
+        if checkout_branches and failure_reason in CHECKOUT_REF_ERRORS:
+            diagnostics["checkout_branch"] = _checkout_error_branch(completed.stderr, checkout_branches)
+        raise GitHubReadError(f"{failure_class}:{label}", diagnostics=diagnostics)
     if job_log:
         try:
             return _safe_job_log(completed.stdout)

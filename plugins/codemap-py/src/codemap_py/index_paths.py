@@ -146,6 +146,58 @@ def _real(path: Path) -> Path:
         return Path(os.path.abspath(path))
 
 
+def without_extended_prefix(text: str) -> str:
+    """Return a Windows path string without its ``\\\\?\\`` extended-length prefix.
+
+    ``Path.resolve`` on Windows keeps the prefix when the confirming second lookup fails with another error than the
+    first one, which concurrent writers creating or replacing a directory can cause. Two resolutions of one tree then
+    differ only in the prefix.
+
+    Args:
+        text: A path as a string.
+
+    Returns:
+        The path spelled with a drive letter or ``\\\\server\\share`` form; any other string unchanged.
+
+    Examples:
+        >>> without_extended_prefix("\\\\\\\\?\\\\C:\\\\proj\\\\.cache")
+        'C:\\\\proj\\\\.cache'
+        >>> without_extended_prefix("\\\\\\\\?\\\\UNC\\\\host\\\\share\\\\p")
+        '\\\\\\\\host\\\\share\\\\p'
+        >>> without_extended_prefix("/srv/proj")
+        '/srv/proj'
+    """
+    if text.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + text[len("\\\\?\\UNC\\") :]
+    if text.startswith("\\\\?\\") and text[5:7] == ":\\":
+        return text[4:]
+    return text
+
+
+def is_within(path: Path, root: Path) -> bool:
+    """Return whether *path*, with symlinks resolved, lies inside *root*.
+
+    Args:
+        path: The path to test; it need not exist.
+        root: The directory it must stay inside.
+
+    Returns:
+        ``True`` when the resolved *path* equals or sits below the resolved *root*.
+
+    Examples:
+        >>> import tempfile
+        >>> base = Path(tempfile.mkdtemp())
+        >>> is_within(base / "a" / "b", base)
+        True
+        >>> is_within(base.parent, base)
+        False
+    """
+    resolved, anchor = path.resolve(), root.resolve()
+    if os.name == "nt":
+        resolved, anchor = Path(without_extended_prefix(str(resolved))), Path(without_extended_prefix(str(anchor)))
+    return resolved.is_relative_to(anchor)
+
+
 def canonical_root(cwd: Path | str | None = None) -> Path:
     """Return the canonical project root for *cwd*.
 

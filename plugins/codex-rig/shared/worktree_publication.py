@@ -7,13 +7,16 @@ and hooks out of publication.
 
 ## Scope
 
-Use an approved run's offer, reservation and existing Git objects. All transport setup happens in a new private
-temporary bare repository. The only remote write is one non-force update to the admitted GitHub HTTPS branch.
+Use an approved run's offer, reservation and existing checkout. The transport uses the checkout's Git directory with
+temporary common configuration, a copied index and a temporary object directory that reads the checkout's objects. The
+only remote write is one non-force update to the admitted GitHub HTTPS branch.
 
 ## Usage
 
 Issue a one-time runtime approval for this helper with the run path and the exact SHA-256 of its offer. User-question
-verification and worktree delivery are independently owned by Code Remediate. A matching record is not a grant.
+verification and worktree delivery are independently owned by Code Remediate. For a push requested by the user and
+approved after local promotion, pass the fixed publication-request directory inside the promoted run. Its attempt and
+outcome stay separate from local delivery.
 
 ## Outputs
 
@@ -47,6 +50,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import mmap
 import os
 import re
 import shutil
@@ -59,6 +63,8 @@ OFFER_FILE = "publication-offer.json"
 ATTEMPT_FILE = "publication-attempt.json"
 EXECUTED_FILE = "publication-executed"
 RESULT_FILE = "publication-execution-result.json"
+REQUEST_DIRECTORY = "publication-request"
+REPORT_LIMIT = 16 * 1024 * 1024  # Same output bound as the PR collector.
 # Either record closes the run: the gate's terminal publication disposition, or the promoted local result.
 TERMINAL_RECORDS = ("publication.json", "result.json")
 OFFER_FIELDS = {"checkout", "branch", "common_dir", "url", "ref", "source_oid", "expected_oid"}
@@ -86,19 +92,19 @@ if IFS= read -r extra; then reject; fi
 """
 
 
-def _read_record(run: Path, name: str) -> bytes:
-    """Require a small regular, non-symlink record inside the admitted run."""
+def _read_record(run: Path, name: str, *, limit: int = 16_384) -> bytes:
+    """Read a regular, non-symlink record, bounding transport records separately from complete remediation reports."""
     path = run / name
     if path.is_symlink() or not path.is_file():
         raise ValueError(f"publication-record-missing:{name}")
     with path.open("rb") as stream:
-        data = stream.read(16_385)
-    if len(data) > 16_384:
+        data = stream.read(limit + 1)
+    if len(data) > limit:
         raise ValueError(f"publication-record-too-large:{name}")
     return data
 
 
-def _read_offer(run: Path, digest: str) -> dict[str, str]:
+def read_offer(run: Path, digest: str) -> dict[str, str]:
     """Bind all transport inputs to the runtime-approved offer bytes."""
     raw = _read_record(run, OFFER_FILE)
     if not DIGEST.fullmatch(digest) or hashlib.sha256(raw).hexdigest() != digest:
@@ -167,9 +173,9 @@ def _source_identity(git: str, checkout: Path, env: dict[str, str], branch: str,
 
 
 def _require_ancestor(git: str, scratch: Path, env: dict[str, str], expected: str, source: str) -> None:
-    """Require the approved remote tip to be an ancestor of the delivered commit, read in the isolated repository.
+    """Require the approved remote tip to be an ancestor of the delivered commit using the checkout's objects.
 
-    The isolated repository borrows the checkout's objects but not its shallow boundary, so in a shallow clone the
+    The temporary common directory excludes the checkout's shallow boundary, so in a shallow clone the
     ancestry walk reaches a parent that is not on disk and Git fails (exit 128) instead of answering. That is the named
     refusal ``publication-source-history-incomplete``. A definite "not an ancestor" answer (exit 1) is left as Git's
     own error: the offer was required to prove ancestry before it was written.
@@ -182,8 +188,181 @@ def _require_ancestor(git: str, scratch: Path, env: dict[str, str], expected: st
         raise ValueError("publication-source-history-incomplete") from error
 
 
-def _require_open_run(run: Path) -> None:
-    """Refuse when a terminal record already closed the run; any entry at either path counts, even a damaged one."""
+def publication_decision_id(run: Path, offer_digest: str) -> str:
+    """Distinguish a new post-delivery question from the original question for identical offer bytes."""
+    prefix = "pr-worktree-publication-request" if run.name == REQUEST_DIRECTORY else "pr-worktree-publication"
+    return f"{prefix}-{offer_digest}"
+
+
+def _verify_requested_pr(original: Path, offer: dict[str, str]) -> None:
+    """Corroborate the prepared branch against the collected PR identity and its normalized GitHub repository."""
+    receipt_name = "remediation-branch-recovered.json"
+    if not os.path.lexists(original / receipt_name):
+        receipt_name = "remediation-branch.json"
+    receipt = json.loads(_read_record(original, receipt_name))
+    if (original / "pr").is_symlink():
+        raise ValueError("publication-pr-receipt-mismatch")
+    pr = json.loads(_read_record(original / "pr", "pr.json", limit=REPORT_LIMIT))
+    routing = json.loads(_read_record(original / "pr", "pr-routing.json", limit=REPORT_LIMIT))
+    try:
+        number, url = pr["number"], pr["url"]
+        # The collector normalizes both GitHub representations. Cross-check its original repository response here
+        # without loading the network-capable collector or any of its dependencies into the approved transport.
+        head_repo = pr["headRepository"]
+        if isinstance(head_repo, dict):
+            owner = head_repo.get("owner", pr.get("headRepositoryOwner"))
+            if isinstance(owner, dict):
+                owner = owner.get("login") or owner.get("name")
+            head_repo = (
+                head_repo.get("nameWithOwner")
+                or head_repo.get("name_with_owner")
+                or (f"{owner}/{head_repo['name']}" if isinstance(owner, str) else None)
+            )
+        matches = (
+            type(number) is int
+            and number > 0
+            and isinstance(url, str)
+            and re.fullmatch(rf"https://github[.]com/[a-zA-Z0-9-]+/[a-zA-Z0-9_.-]+/pull/{number}", url)
+            and receipt["schema_version"] == 2
+            and receipt["status"] == "prepared"
+            and receipt["pr_number"] == routing["pr_number"] == number
+            and receipt["pr_url"] == routing["pr_url"] == url
+            and receipt["initial_head"] == routing["head_oid"] == pr["headRefOid"] == offer["expected_oid"]
+            and receipt["branch"] == offer["branch"]
+            and receipt["head_ref"] == routing["head_ref"] == pr["headRefName"]
+            and offer["ref"] == f"refs/heads/{receipt['head_ref']}"
+            and receipt["head_repository"] == routing["head_repo"] == head_repo
+            and offer["url"] == f"https://github.com/{routing['head_repo']}.git"
+        )
+    except (TypeError, KeyError) as error:
+        raise ValueError("publication-pr-receipt-mismatch") from error
+    if not matches:
+        raise ValueError("publication-pr-receipt-mismatch")
+
+
+def _verify_recorded_destination(original: Path, offer: dict[str, str], artifacts: list[dict]) -> None:
+    """Match the delivered tuple, allowing the original source worktree to differ after return delivery."""
+    checkout, branch, head, common_dir = (offer[key] for key in ("checkout", "branch", "source_oid", "common_dir"))
+    if not any(
+        isinstance(item, dict)
+        and item.get("path") == checkout
+        and not str(item.get("label", "")).startswith("Source checkout:")
+        for item in artifacts
+    ):
+        raise ValueError("publication-delivery-mismatch")
+    if os.path.lexists(original / "worktree-delivery.json"):
+        recorded = json.loads(_read_record(original, "worktree-delivery.json", limit=REPORT_LIMIT))
+        if (
+            isinstance(recorded, dict)
+            and recorded.get("schema_version") == 1
+            and (
+                recorded.get("status") in ("delivered", "worktree-only")
+                and (recorded.get("checkout"), recorded.get("branch"), recorded.get("head"), recorded.get("common_dir"))
+                == (checkout, branch, head, common_dir)
+            )
+        ):
+            return
+        raise ValueError("publication-delivery-mismatch")
+
+    # Legacy deliveries record a labelled destination tuple or separate destination fields. An OID in a note, the
+    # historical source row or an invoking-checkout comparison cannot stand in for the delivered HEAD.
+    note = _read_record(original, "worktree-delivery.md", limit=REPORT_LIMIT).decode("utf-8")
+    fields: dict[str, list[str]] = {}
+    for line in note.splitlines():
+        label, sep, value = line.strip().removeprefix("- ").partition(": ")
+        if sep:
+            fields.setdefault(label.strip("*").casefold(), []).append(value.rstrip(".").strip("`"))
+    statuses = fields.get("status", [])
+    if len(statuses) != 1 or not re.match(r"(delivered|worktree-only)\b", statuses[0], re.I):
+        raise ValueError("publication-delivery-mismatch")
+    combined = fields.get("local destination")
+    if combined is not None:
+        matches = combined == [f"{checkout}, branch {branch}, head {head}"]
+    else:
+        matches = (
+            fields.get("checkout", fields.get("destination checkout")) == [checkout]
+            and fields.get("branch", fields.get("destination branch")) == [branch]
+            and fields.get("final authorized head", fields.get("final head")) == [head]
+        )
+    if not matches or fields.get("git common directory", [common_dir]) != [common_dir]:
+        raise ValueError("publication-delivery-mismatch")
+
+
+def requested_delivery(run: Path, offer: dict[str, str]) -> dict[str, str]:
+    """Bind a fresh follow-up offer to the retained PR, promoted handoff and delivered commit.
+
+    Only the original run owns the local delivery. An unanswered or unoffered publication can be requested later. A
+    denial, consumed attempt or started transport cannot be replayed in a child checkpoint.
+    """
+    original = run.parent
+    if any(
+        os.path.lexists(original / name)
+        for name in (ATTEMPT_FILE, EXECUTED_FILE, RESULT_FILE, "publication-readback.json")
+    ):
+        raise ValueError("publication-prior-decision")
+    if os.path.lexists(original / "publication-answer.json"):
+        earlier_answer = json.loads(_read_record(original, "publication-answer.json"))
+        if not isinstance(earlier_answer, dict) or earlier_answer.get("answer") != "Approve":
+            raise ValueError("publication-prior-decision")
+    if os.path.lexists(original / "publication.json"):
+        previous = json.loads(_read_record(original, "publication.json"))
+        if not isinstance(previous, dict) or previous.get("status") != "skipped":
+            raise ValueError("publication-prior-decision")
+
+    result = json.loads(_read_record(original, "result.json", limit=REPORT_LIMIT))
+    handoff_bytes = _read_record(original, "final-handoff.json", limit=REPORT_LIMIT)
+    handoff = json.loads(handoff_bytes)
+    try:
+        committed = (
+            result["status"] == "pass"
+            and result["metadata"]["mode"] == "pr"
+            and result["metadata"]["final_handoff"]["handoff_sha256"] == hashlib.sha256(handoff_bytes).hexdigest()
+            and handoff["skill"] == "code-remediate"
+            and handoff["commit_disposition"]["status"] == "committed"
+        )
+    except (KeyError, TypeError) as error:
+        raise ValueError("publication-promoted-delivery-required") from error
+    if not committed:
+        raise ValueError("publication-promoted-delivery-required")
+    prior_binding = result["metadata"].get("worktree_publication")
+    if prior_binding is not None and (
+        not isinstance(prior_binding, dict)
+        or prior_binding.get("status") != "skipped"
+        or not os.path.lexists(original / "publication.json")
+    ):
+        raise ValueError("publication-prior-decision")
+
+    _verify_requested_pr(original, offer)
+    _verify_recorded_destination(original, offer, handoff.get("artifacts") or [])
+    locators = [
+        name for name in ("remediation-worktree.json", "recovery-worktree.json") if os.path.lexists(original / name)
+    ]
+    if len(locators) > 1:
+        raise ValueError("publication-delivery-mismatch")
+    if locators:
+        locator = json.loads(_read_record(original, locators[0]))
+        if not isinstance(locator, dict) or (
+            locator.get("schema_version") != 1
+            or locator.get("worktree") != offer["checkout"]
+            or locator.get("git_common_dir") != offer["common_dir"]
+        ):
+            raise ValueError("publication-delivery-mismatch")
+    return {
+        "checkout": offer["checkout"],
+        "branch": offer["branch"],
+        "common_dir": offer["common_dir"],
+        "head": offer["source_oid"],
+    }
+
+
+def _require_open_run(run: Path, offer: dict[str, str], attempt: dict[str, str]) -> None:
+    """Require an open run eligible for publication, including at the final execution checkpoint."""
+    if run.name == REQUEST_DIRECTORY:
+        requested_delivery(run, offer)
+        if json.loads(_read_record(run, "publication-answer.json")) != attempt:
+            raise ValueError("publication-answer-mismatch")
+    if os.path.lexists(run / "recovery-worktree.json"):
+        raise ValueError("publication-ineligible-recovery-worktree")
     if any(os.path.lexists(run / name) for name in TERMINAL_RECORDS):
         raise ValueError("publication-run-already-closed")
 
@@ -215,41 +394,42 @@ def _ignore_rules(git: str, checkout: Path, common_dir: Path, user_env: dict[str
     return b"".join(rules)
 
 
+def _require_self_contained_index(index: Path) -> None:
+    """Refuse a copied index that makes Git open and refresh a shared index inside the source Git directory."""
+    if index.stat().st_size < 32:
+        raise ValueError("publication-source-index-invalid")
+    with index.open("rb") as stream, mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
+        # gitformat-index puts sized extensions before the final SHA-1 checksum. Check the whole suffix so a
+        # tracked path containing "link" or a leftover sharedindex file doesn't imply an active split index.
+        end = len(data) - 20
+        for link in re.finditer(b"link", data):
+            start = link.start()
+            size = int.from_bytes(data[start + 4 : start + 8], "big")
+            if size < 20 or not any(data[start + 8 : start + 28]):
+                continue
+            cursor = start + 8 + size
+            while cursor + 8 <= end:
+                cursor += 8 + int.from_bytes(data[cursor + 4 : cursor + 8], "big")
+            if cursor == end:
+                raise ValueError("publication-source-index-unverifiable")
+
+
 def _verify_clean_delivery(
     git: str,
     scratch: Path,
-    checkout: Path,
-    common_dir: Path,
     env: dict[str, str],
-    user_env: dict[str, str],
     source: str,
 ) -> None:
-    """Check working tree and index from isolated Git configuration without contributor filter execution."""
-    index = Path(_git(git, checkout, env, "rev-parse", "--path-format=absolute", "--git-path", "index"))
-    if not index.is_absolute() or not index.is_file() or index.is_symlink():
-        raise ValueError("publication-source-index-invalid")
-    shutil.copyfile(index, scratch / "index")
-    (scratch / "info").mkdir(exist_ok=True)
-    (scratch / "info" / "exclude").write_bytes(_ignore_rules(git, checkout, common_dir, user_env))
-    _git(git, scratch, env, "update-ref", "HEAD", source)
+    """Compare the copied index and working tree to the approved commit without following mutable refs."""
     git_entries = _git(git, scratch, env, "ls-files", "--stage", "-v", "-z").split("\0")
     if any(entry[:1] in {"S", "s"} or entry[:1].islower() or entry[2:9] == "160000 " for entry in git_entries):
         raise ValueError("publication-source-index-unverifiable")
-    status = _git(
-        git,
-        scratch,
-        env,
-        "-c",
-        "core.bare=false",
-        "-c",
-        "core.fsmonitor=false",
-        "--work-tree",
-        str(checkout),
-        "status",
-        "--porcelain",
-        "-uall",
-    )
-    if status:
+    # Check the index and working tree separately; a staged edit can be undone only in the working tree.
+    if (
+        _git(git, scratch, env, "diff", "--cached", "--name-only", "-z", source, "--")
+        or _git(git, scratch, env, "diff", "--name-only", "-z", "--")
+        or _git(git, scratch, env, "ls-files", "--others", "--exclude-standard", "-z")
+    ):
         raise ValueError("publication-source-dirty")
 
 
@@ -308,19 +488,41 @@ def _isolated_push(
     objects = Path(_git(git, checkout, env, "rev-parse", "--path-format=absolute", "--git-path", "objects"))
     if not objects.is_absolute() or not objects.is_dir() or "\n" in str(objects) or "\r" in str(objects):
         raise ValueError("publication-object-store-invalid")
+    git_dir = Path(_git(git, checkout, env, "rev-parse", "--absolute-git-dir")).resolve(strict=True)
+    index = Path(_git(git, checkout, env, "rev-parse", "--path-format=absolute", "--git-path", "index"))
+    if not index.is_absolute() or not index.is_file() or index.is_symlink():
+        raise ValueError("publication-source-index-invalid")
     # Removing the scratch directory runs after the real push; a failure there (a busy or locked file) must not turn
     # a push that happened into a reported failure, so cleanup errors are ignored and the push result is checked
     # inside the block.
     with tempfile.TemporaryDirectory(prefix="codex-pr-publication-", ignore_cleanup_errors=True) as directory:
         scratch = Path(directory)
-        _git(git, scratch, env, "init", "--bare", "--template=")
+        # GIT_DIR stays attached to the existing checkout. Git requires a refs directory under GIT_COMMON_DIR;
+        # leave it empty and use the approved object IDs directly. All transport writes use temporary files.
+        (scratch / "refs").mkdir()
+        (scratch / "objects" / "info").mkdir(parents=True)
         (scratch / "objects" / "info" / "alternates").write_bytes(os.fsencode(objects) + b"\n")
+        shutil.copyfile(index, scratch / "index")
+        _require_self_contained_index(scratch / "index")
+        (scratch / "info").mkdir()
+        (scratch / "info" / "exclude").write_bytes(_ignore_rules(git, checkout, common_dir, user_env))
         (scratch / "hooks").mkdir()
         hook = scratch / "hooks" / "pre-push"
         hook.write_text(PRE_PUSH, encoding="utf-8", newline="\n")
         hook.chmod(0o700)
-        _require_ancestor(git, scratch, env, expected, source)
-        _verify_clean_delivery(git, scratch, checkout, common_dir, env, user_env, source)
+        transport_env = dict(
+            env,
+            GIT_DIR=str(git_dir),
+            GIT_COMMON_DIR=str(scratch),
+            GIT_WORK_TREE=str(scratch),
+            GIT_INDEX_FILE=str(scratch / "index"),
+            GIT_OBJECT_DIRECTORY=str(scratch / "objects"),
+            GIT_OPTIONAL_LOCKS="0",
+        )
+        if _git(git, scratch, transport_env, "config", "--list", "-z"):
+            raise ValueError("publication-transport-config-unverifiable")
+        _require_ancestor(git, scratch, transport_env, expected, source)
+        _verify_clean_delivery(git, scratch, {**transport_env, "GIT_WORK_TREE": str(checkout)}, source)
         _source_identity(git, checkout, env, branch, common_dir, source)
         credential_config = _credential_config(credential_helpers)
         # A tip the PR author moved since the offer is the common refusal, so find it before the attempt is spent; the
@@ -331,7 +533,7 @@ def _isolated_push(
             advertised = _git(
                 git,
                 scratch,
-                env,
+                transport_env,
                 "-c",
                 "http.followRedirects=false",
                 *credential_config,
@@ -371,7 +573,7 @@ def _isolated_push(
         # no objects and updates no ref. Whatever the receiving side refuses at that stage (an expired sign-in, for
         # example) fails here, before the attempt is spent; which push rights a host checks there is the host's choice.
         try:
-            rehearsal = _git(git, scratch, env, *push, "--dry-run", *target)
+            rehearsal = _git(git, scratch, transport_env, *push, "--dry-run", *target)
         except subprocess.SubprocessError as error:
             # A timeout carries no stderr; it is a refusal to retry, never a moved tip.
             stderr = getattr(error, "stderr", None) or b""
@@ -381,7 +583,7 @@ def _isolated_push(
         _require_single_update(rehearsal, source, ref, "publication-push-precheck-failed")
         before_push()
         try:
-            output = _git(git, scratch, env, *push, *target)
+            output = _git(git, scratch, transport_env, *push, *target)
         except subprocess.TimeoutExpired as error:
             # The objects and the ref update may already have reached the receiver when the wait ran out.
             raise ValueError(OUTCOME_UNKNOWN) from error
@@ -473,23 +675,25 @@ def main(argv: list[str] | None = None) -> int:
     # Kept separately from ``run`` so a failure before the directory resolves still reports a status.
     run_dir: Path | None = None
     try:
+        if args.run.is_symlink():
+            raise ValueError("publication-checkpoint-symlink")
         run = args.run.resolve(strict=True)
         run_dir = run
         # Without a helper the isolated transport has no credentials at all; refuse instead of trying anonymously.
         if not args.credential_helpers:
             raise ValueError("publication-credential-helper-missing")
-        offer = _read_offer(run, args.offer_digest)
+        offer = read_offer(run, args.offer_digest)
         attempt = json.loads(_read_record(run, ATTEMPT_FILE))
         if attempt != {
             "offer_digest": args.offer_digest,
-            "decision_id": f"pr-worktree-publication-{args.offer_digest}",
+            "decision_id": publication_decision_id(run, args.offer_digest),
             "answer": "Approve",
         }:
             raise ValueError("publication-attempt-invalid")
         git = shutil.which("git")
         if git is None or not Path(git).is_absolute():
             raise ValueError("publication-git-unavailable")
-        _require_open_run(run)
+        _require_open_run(run, offer, attempt)
         if os.path.lexists(run / EXECUTED_FILE):
             raise ValueError("publication-attempt-already-started")
 
@@ -501,7 +705,7 @@ def main(argv: list[str] | None = None) -> int:
             directory holding its name are flushed to disk before returning: a marker lost to a power cut after a real
             push would let the run resolve as "nothing was sent" although the remote moved.
             """
-            _require_open_run(run)
+            _require_open_run(run, offer, attempt)
             try:
                 with (run / EXECUTED_FILE).open("xb") as stream:
                     stream.write((args.offer_digest + "\n").encode("ascii"))

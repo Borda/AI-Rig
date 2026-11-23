@@ -183,6 +183,12 @@ LATEST_BY_FAMILY: dict[str, str] = {
 
 #: Matches a ``<command-name>`` marker in a transcript line, capturing the slash command name.
 COMMAND_RE = re.compile(r"<command-name>([^<]+)</command-name>")
+#: Tool calls above which one agent is flagged ``long``; the repository's per-agent workload bound is about 55.
+LONG_AGENT_TOOL_CALLS = 60
+#: A chained continuation ends a spawn name (``impl-parser-link4``), unlike a domain named ``link``.
+CHAIN_LINK_RE = re.compile(r"-link\d+$", re.IGNORECASE)
+#: A single-item challenge retry name (``challenge-<domain>-retry-<id>``): ``retry`` follows a domain segment.
+CHALLENGE_RETRY_RE = re.compile(r"challenge-.+-retry-", re.IGNORECASE)
 #: Usage counters the cost and context paths sum; a non-integer value would crash that accounting.
 USAGE_COUNTERS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 #: Upper bound far beyond any real request; larger counters cannot be genuine and overflow float arithmetic.
@@ -440,6 +446,15 @@ class AgentSpend:
     description: str
     calls: int
     cost_usd: float
+    #: Sidecar ``name`` the spawner gave the agent (``challenge-alpha-retry-3``, ``impl-alpha``); empty when absent.
+    name: str = ""
+    #: Model that carried most of this agent's cost; empty when the transcript has no usage row.
+    model: str = ""
+    #: Distinct ``tool_use`` blocks, counted by block id across every row of the message; an API call can hold several.
+    tool_calls: int = 0
+    cache_read: int = 0
+    #: Effort level the spawn recorded in the sidecar (``high``); empty when the sidecar has none (the agent default).
+    effort: str = ""
 
 
 @dataclass
@@ -583,11 +598,22 @@ def _row_to_call(row: dict, existing: dict[str, Call]) -> Call | None:
     )
 
 
-def _parse_rows(path: Path) -> tuple[dict[str, Call], dict[str, int], float, float]:
+def _collect_tool_use_ids(row: dict, into: set[str]) -> None:
+    """Add the id of every ``tool_use`` block in *row* to *into*; a block without an id is not counted."""
+    for block in (row.get("message") or {}).get("content") or []:
+        if isinstance(block, dict) and block.get("type") == "tool_use" and isinstance(block.get("id"), str):
+            into.add(block["id"])
+
+
+def _parse_rows(
+    path: Path, tool_use_ids: set[str] | None = None
+) -> tuple[dict[str, Call], dict[str, int], float, float]:
     """Read one transcript file, deduplicating usage rows by message id.
 
     Shared by the main-loop file and every subagent file — both carry the identical row shape. ``isSidechain`` is
-    already ``true`` on subagent rows, so no caller-side tagging is needed.
+    already ``true`` on subagent rows, so no caller-side tagging is needed. When *tool_use_ids* is given it also
+    collects the id of every ``tool_use`` block in the file. A message written as one row per content block keeps only
+    its first row's tools in :class:`Call`, so the true tool-call count needs this separate pass.
     """
     calls: dict[str, Call] = {}
     commands: dict[str, int] = {}
@@ -608,29 +634,47 @@ def _parse_rows(path: Path) -> tuple[dict[str, Call], dict[str, int], float, flo
                 sys.stderr.write(f"warning: malformed row at {path}:{number}; skipped ({error})\n")
                 continue
             ts_first, ts_last = _extract_timestamp(row, ts_first, ts_last)
+            if tool_use_ids is not None:
+                _collect_tool_use_ids(row, tool_use_ids)
             call = _row_to_call(row, calls)
             if call is not None:
                 calls[call.message_id] = call
     return calls, commands, ts_first, ts_last
 
 
-def _load_agent_spend(jf: Path, sub_calls: dict[str, Call]) -> AgentSpend:
-    """Build one :class:`AgentSpend` from a subagent transcript's calls + sibling meta.json."""
+def _read_agent_meta(jf: Path) -> dict[str, str]:
+    """Read the string fields of a subagent's sibling meta.json; anything else keeps the caller's placeholders."""
     meta_path = jf.parent / f"{jf.stem}.meta.json"
-    agent_type, desc = "?", ""
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            # Sidecar metadata is optional evidence; anything but string fields keeps the placeholders.
-            if isinstance(meta, dict):
-                if isinstance(meta.get("agentType"), str) and meta["agentType"]:
-                    agent_type = meta["agentType"]
-                if isinstance(meta.get("description"), str):
-                    desc = meta["description"]
-        except (ValueError, RecursionError, OSError):
-            pass
-    spend = sum(cost(c.usage, c.model) for c in sub_calls.values())
-    return AgentSpend(agent_type, desc, len(sub_calls), spend)
+    if not meta_path.exists():
+        return {}
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (ValueError, RecursionError, OSError):
+        return {}
+    # Sidecar metadata is optional evidence; a non-object file or a non-string field is ignored.
+    if not isinstance(meta, dict):
+        return {}
+    return {key: value for key, value in meta.items() if isinstance(value, str)}
+
+
+def _load_agent_spend(jf: Path, sub_calls: dict[str, Call], tool_calls: int = 0) -> AgentSpend:
+    """Build one :class:`AgentSpend` from a subagent transcript's calls + sibling meta.json."""
+    meta = _read_agent_meta(jf)
+    cost_by_model: dict[str, float] = {}
+    for c in sub_calls.values():
+        cost_by_model[c.model] = cost_by_model.get(c.model, 0.0) + cost(c.usage, c.model)
+    return AgentSpend(
+        # A named teammate spawn records the teammate's name as ``agentType``; ``spawnedAgentType`` holds the real type.
+        agent_type=meta.get("spawnedAgentType") or meta.get("agentType") or "?",
+        description=meta.get("description", ""),
+        calls=len(sub_calls),
+        cost_usd=sum(cost_by_model.values()),
+        name=meta.get("name", ""),
+        model=max(cost_by_model, key=lambda m: cost_by_model[m]) if cost_by_model else "",
+        tool_calls=tool_calls,
+        cache_read=sum(c.cache_read for c in sub_calls.values()),
+        effort=meta.get("effort", ""),
+    )
 
 
 def load_session(main_path: Path) -> Session:
@@ -648,10 +692,11 @@ def load_session(main_path: Path) -> Session:
     subagents_dir = main_path.parent / main_path.stem / "subagents"
     if subagents_dir.is_dir():
         for jf in sorted(subagents_dir.glob("agent-*.jsonl")):
-            sub_calls, _, sub_first, sub_last = _parse_rows(jf)
+            tool_ids: set[str] = set()
+            sub_calls, _, sub_first, sub_last = _parse_rows(jf, tool_ids)
             calls.extend(sub_calls.values())
             ts_first, ts_last = min(ts_first, sub_first), max(ts_last, sub_last)
-            agent_spends.append(_load_agent_spend(jf, sub_calls))
+            agent_spends.append(_load_agent_spend(jf, sub_calls, len(tool_ids)))
 
     return Session(
         path=main_path,
@@ -815,6 +860,95 @@ def _find_session(root: Path, session_id: str) -> Path | None:
     return None
 
 
+def _cell(text: str) -> str:
+    r"""Make sidecar free text safe inside one markdown table cell: no bare pipe, no line break.
+
+    Examples:
+        >>> _cell("fix dead link 404 | pipes")
+        'fix dead link 404 \\| pipes'
+        >>> _cell("two\nlines")
+        'two lines'
+    """
+    return " ".join(text.replace("|", "\\|").split())
+
+
+def agent_flags(spend: AgentSpend) -> list[str]:
+    """Name the cost patterns one agent matches: ``long``, ``link``, and ``challenge`` or ``challenge-retry``.
+
+    Every flag but ``long`` follows the spawn *name* only, never the free-text description. ``link`` is a terminal
+    ``-link<k>`` suffix (the resolve chain names its continuations ``impl-<tag>-link<k>``). The challenge flags use the
+    ``challenge-`` prefix, and a single-item retry also has ``-retry-`` after at least one more segment (the resolve
+    challenge phase names its spawns ``challenge-<domain>`` and ``challenge-<domain>-retry-<id>``, with ``retry`` never
+    part of a domain). Other skills reuse the prefix, so the flag groups spawns by name, not by origin. An implementer
+    retry stays a plain ``link`` or unflagged agent, so the challenge retry fan-out is measured on its own.
+
+    Examples:
+        >>> agent_flags(AgentSpend("t", "five items", 1, 1.0, name="challenge-parser-retry-3", tool_calls=5))
+        ['challenge-retry']
+        >>> agent_flags(AgentSpend("t", "five items", 1, 1.0, name="challenge-retry-logic", tool_calls=5))
+        ['challenge']
+        >>> agent_flags(AgentSpend("t", "challenge the plan", 1, 1.0, name="plan-review", tool_calls=5))
+        []
+        >>> agent_flags(AgentSpend("t", "five items", 1, 1.0, name="impl-beta-link3", tool_calls=61))
+        ['long', 'link']
+        >>> agent_flags(AgentSpend("t", "fix dead link 404", 1, 1.0, name="impl-beta", tool_calls=5))
+        []
+    """
+    flags = []
+    if spend.tool_calls > LONG_AGENT_TOOL_CALLS:
+        flags.append("long")
+    if CHAIN_LINK_RE.search(spend.name):
+        flags.append("link")
+    if spend.name.lower().startswith("challenge-"):
+        flags.append("challenge-retry" if CHALLENGE_RETRY_RE.match(spend.name) else "challenge")
+    return flags
+
+
+def render_agent_detail(spends: list[AgentSpend], *, limit: int = 25) -> list[str]:
+    """Render the *limit* costliest agents, one row each, then a phase table over every agent.
+
+    The rows after *limit* collapse into one overflow row carrying their count and cost; the phase table separates
+    challenge retries and chain links and always aggregates all agents. Tool calls are distinct ``tool_use`` blocks; API
+    calls are deduplicated assistant messages, so the two differ.
+    """
+    if not spends:
+        return []
+    lines = [
+        "### Per-agent spend",
+        "",
+        "| agent | type | model | effort | api calls | tool calls | cache_read | cost | flags |",
+        "|---|---|---|---|---:|---:|---:|---:|---|",
+    ]
+    ranked = sorted(spends, key=lambda s: -s.cost_usd)
+    for a in ranked[:limit]:
+        label = _cell(a.name or a.description[:40] or "?")
+        model = _cell((a.model or "?").removeprefix("claude-"))
+        effort = _cell(a.effort or "-")
+        lines.append(
+            f"| {label} | `{_cell(a.agent_type)}` | `{model}` | {effort} | {a.calls} | {a.tool_calls} "
+            f"| {a.cache_read:,} | {_fmt_usd(a.cost_usd)} | {' '.join(agent_flags(a))} |"
+        )
+    if len(ranked) > limit:
+        rest = ranked[limit:]
+        lines.append(f"| … {len(rest)} more agents, {_fmt_usd(sum(s.cost_usd for s in rest))} | | | | | | | | |")
+    flagged = [(s, agent_flags(s)) for s in spends]
+    phases = [
+        ("challenge-* spawns", lambda f: "challenge" in f or "challenge-retry" in f),
+        ("challenge-* retries", lambda f: "challenge-retry" in f),
+        ("chain links", lambda f: "link" in f),
+        (f"long agents (>{LONG_AGENT_TOOL_CALLS} tool calls)", lambda f: "long" in f),
+    ]
+    rows = []
+    for label, matches in phases:
+        hit = [s for s, f in flagged if matches(f)]
+        if hit:
+            rows.append(f"| {label} | {len(hit)} | {_fmt_usd(sum(s.cost_usd for s in hit))} |")
+    if rows:
+        lines += ["", "### Agent phases", "", "| phase | agents | cost |", "|---|---:|---:|", *rows]
+    lines.append("")
+    return lines
+
+
 def render_session_detail(session: Session, *, top_n: int, every: int = 10) -> list[str]:
     """Render the ``--session-id`` deep-dive: cost buckets, cache rebuilds, agent roster."""
     lines = [
@@ -842,6 +976,7 @@ def render_session_detail(session: Session, *, top_n: int, every: int = 10) -> l
         for t, spends in sorted(by_type.items(), key=lambda kv: -sum(s.cost_usd for s in kv[1])):
             lines.append(f"| `{t}` | {len(spends)} | {_fmt_usd(sum(s.cost_usd for s in spends))} |")
         lines.append("")
+        lines += render_agent_detail(session.agent_spends)
 
     calls = session.calls
     if calls:

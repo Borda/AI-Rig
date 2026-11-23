@@ -253,7 +253,8 @@ def test_an_attempt_without_a_marker_is_reported_and_resumed_as_skipped() -> Non
     )
     assert "an approved attempt ended while no execution marker" in _sentence(completion, "Use `skipped`")
     assert "Use `failed` for a started attempt (execution marker present)" in completion
-    assert "is `skipped` while no execution marker exists and `unverified` once it does" in completion
+    assert "without an execution marker is `skipped`" in completion
+    assert "matching transport and exact audited ref readback" in completion
     order = _sentence(completion, "Write this record only after")
     assert "single retry after `publication-push-precheck-failed`" in order
     assert "the helper refuses to run once `publication.json` exists" in order
@@ -268,7 +269,7 @@ def test_an_attempt_without_a_marker_is_reported_and_resumed_as_skipped() -> Non
         ),
         pytest.param("It never runs the publication helper, not even the gate's single retry", id="no-retry-on-resume"),
         pytest.param(
-            "Acquire the checkout slot with this invocation's own ID before any durable write of this continuation",
+            "before any durable write of this continuation",
             id="slot-before-durable-write",
         ),
         pytest.param("through a temporary file in the run directory renamed into place", id="atomic-terminal-record"),
@@ -282,3 +283,28 @@ def test_an_attempt_without_a_marker_is_reported_and_resumed_as_skipped() -> Non
 def test_report_only_resume_writes_the_terminal_record_under_the_slot(fragment: str) -> None:
     """The resume route names the slot and the exact record fields, so the copied record is accepted."""
     assert fragment in INTAKE.read_text(encoding="utf-8")
+
+
+def test_report_only_delivery_recovers_only_proven_slot_ownership() -> None:
+    """An interrupted reacquisition can re-enter its claim while a released claim permits a fresh report owner."""
+    lines = INTAKE.read_text(encoding="utf-8").splitlines()
+    slot = next(line for line in lines if "`status --slot <retained locator>`" in line)
+    assert "retained acquisition evidence" in slot
+    assert "checkout-bound acquisition with the original owner ID" in slot
+    assert "new continuation ID" in slot
+    assert "Never take an owner ID from slot status alone" in slot
+
+
+def test_verified_in_place_delivery_can_finish_its_report_offline() -> None:
+    """Only an existing delivered in-place run with rechecked source and destination bypasses online preflight."""
+    lines = INTAKE.read_text(encoding="utf-8").splitlines()
+    admission = next(line for line in lines if "`delivered` in the original invoking checkout" in line)
+    assert "before remote preflight" in admission
+    assert "closed or merged" in admission
+    assert "offline" in admission
+    checks = next(line for line in lines if "ancestry from the original PR receipt" in line)
+    assert all(
+        phrase in checks
+        for phrase in ("common directory", "attached branch", "exact HEAD", "upstream", "owned", "unrelated")
+    )
+    assert "stop" in checks

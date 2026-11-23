@@ -27,10 +27,14 @@ values, and optional ``--pytest-args-json <array>``. This opt-in mode calls pyte
 each executing process, including xdist workers, and verifies that selected test files are tracked in the worktree;
 it cannot be combined with a free-form ``--tests`` command. Use ``--single-process-pytest`` only when that exact
 selection and its project configuration, plugins, fixtures and tests support execution without subprocesses or network.
-On supported macOS linked worktrees the runner confines eligible native Ruff checks and declared pytest. Each executed
-gate records its actual route; a standard route names why confinement did not apply. Declining confinement changes only
-the launcher, never the caller's contributor-execution decision. A failed sandboxed command is never repeated on the
-standard path.
+Ordinary gates use their configured environment. A retained contributor integrity interval enables the existing macOS
+worktree profiles for eligible native Ruff and declared pytest commands, within the caller's contributor-execution
+controls. Use ``--sandbox-gate <gate>`` for each command requiring confinement, or ``--sandbox`` for every gate.
+For an active protected interval, pass each parent-held baseline with ``--pr-integrity SNAPSHOT SHA256``. The runner
+verifies every supplied anchor on entry and immediately after each executed gate. Drift stops the remaining attempt
+before further Git inspections. A mixed confinement selection on an existing interval requires an anchor.
+An unsupported workload requiring confinement fails before launch. Each gate records its actual route. A failed
+sandboxed command is never repeated.
 Use ``--project-env <absolute-venv>`` to expose tools from a separately provisioned project environment to commands
 running in an isolated review worktree. It never creates an environment or installs a checker.
 Commands can come from the gate flags or matching environment variables such as ``LINT_CMD``. Each gate applies the
@@ -75,6 +79,7 @@ import argparse
 import configparser
 import hashlib
 import importlib
+import io
 import json
 import os
 import re
@@ -88,9 +93,10 @@ import sys
 import tempfile
 import threading
 import time
-from contextlib import ExitStack, contextmanager
+from collections.abc import Sequence
+from contextlib import ExitStack, contextmanager, redirect_stdout
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 # A source file cannot contain a bytecode cache directory.
 sys.pycache_prefix = str(Path(__file__).resolve())
@@ -121,6 +127,9 @@ SOURCE_GIT = ("git", "--no-pager", "-c", "core.fsmonitor=false", "-c", f"core.ho
 #: Pattern for a dotted Python module name accepted as a pytest import-origin argument.
 PYTHON_MODULE_PATTERN = re.compile(r"[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*")
 GIT_OBJECT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
+_SandboxPolicy = Literal["standard", "contributor", "required"]
 
 
 class PythonTestSpec(NamedTuple):
@@ -234,6 +243,32 @@ def skip_reason(value: str) -> str:
     return value
 
 
+def _verify_pr_integrity(anchors: Sequence[Sequence[str]], worktree: Path | None = None) -> None:
+    """Authenticate every parent-held interval and stop before source reads or subsequent commands on drift."""
+    if not anchors:
+        return
+    # The confined pytest child never needs the contributor verifier. Parent admission loads it before any workload.
+    import contributor_run_integrity
+
+    if worktree is not None:
+        try:
+            roots = {Path(str(contributor_run_integrity._load(path, digest)["repo"])) for path, digest in anchors}
+        except contributor_run_integrity.IntegrityError as error:
+            print(f"contributor-run-integrity: {error}", file=sys.stderr)
+            print(contributor_run_integrity._SLOT_HOLD, file=sys.stderr)
+            raise SystemExit(error.code) from error
+        if worktree.resolve() not in roots:
+            raise ValueError("--pr-integrity requires a snapshot for the actual execution checkout")
+    for path, digest in anchors:
+        # Successful verifier JSON is internal. Keep its exact failed observation and inspection advice for the parent.
+        with redirect_stdout(io.StringIO()) as observation:
+            status = contributor_run_integrity.main(["verify", "--snapshot", path, "--expect", digest])
+        if status:
+            sys.stdout.write(observation.getvalue())
+            print(f"gate integrity stopped at {path}", file=sys.stderr)
+            raise SystemExit(status)
+
+
 def parse_args() -> argparse.Namespace:
     """Parse the stable run-gates command-line contract."""
     parser = argparse.ArgumentParser(
@@ -248,6 +283,26 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--out", required=True, type=Path, help="Required artifact directory.")
+    parser.add_argument(
+        "--sandbox",
+        action="store_true",
+        help="Require a supported worktree sandbox for every executable gate. An unsupported workload fails before launch.",
+    )
+    parser.add_argument(
+        "--sandbox-gate",
+        action="append",
+        choices=GATE_IDS,
+        default=[],
+        help="Require confinement for this executable gate. Repeat for other affected commands.",
+    )
+    parser.add_argument(
+        "--pr-integrity",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("SNAPSHOT", "SHA256"),
+        help="Verify the active parent-held contributor integrity anchor around execution. Repeat for parallel drafts.",
+    )
     parser.add_argument("--test-skip-approval", type=Path, help="Retained user decision authorizing --skip-tests.")
     for gate_id in GATE_IDS:
         parser.add_argument(
@@ -291,9 +346,19 @@ def parse_args() -> argparse.Namespace:
         "--single-process-pytest",
         action="store_true",
         help="Declare that this exact import-bound selection, config, plugins and tests support confinement without "
-        "child processes or network. This permits automatic use of a supported profile and does not require isolation.",
+        "child processes or network. Used to select a compatible profile on protected or --sandbox runs.",
     )
     arguments = parser.parse_args()
+    # The interval reader is parent-only. Inspect it before any Git-based source validation can run.
+    from review_worktree_cleanup import has_integrity_interval
+
+    arguments.existing_interval = has_integrity_interval(arguments.out.resolve())
+    if arguments.sandbox_gate and not arguments.sandbox and arguments.existing_interval and not arguments.pr_integrity:
+        parser.error("mixed gates in an active interval require the parent-held --pr-integrity SNAPSHOT SHA256")
+    try:
+        _verify_pr_integrity(arguments.pr_integrity, arguments.worktree or Path.cwd())
+    except ValueError as error:
+        parser.error(str(error))
     arguments.local_snapshot = None
     if arguments.single_process_pytest and (not arguments.pytest_python or not arguments.expected_head):
         parser.error("--single-process-pytest requires clean import-bound pytest with --expected-head")
@@ -1567,27 +1632,36 @@ def _launch_gate(
     environment: dict[str, str] | None,
     scratch: Path | None,
     single_process: bool,
+    *,
+    sandbox_policy: _SandboxPolicy = "standard",
 ) -> tuple[int, float, dict[str, str]]:
     """Select the route before execution; a refused or failed launch has no replay path."""
     with ExitStack() as stack:
         try:
-            prepared = _prepare_gate_profile(
-                gate_id,
-                command,
-                out_dir / CHECKS_DIRNAME,
-                out_dir,
-                expected_head,
-                worktree,
-                environment,
-                scratch,
-                single_process,
-                stack,
-            )
+            prepared = "worktree sandbox not requested"
+            if sandbox_policy != "standard":
+                prepared = _prepare_gate_profile(
+                    gate_id,
+                    command,
+                    out_dir / CHECKS_DIRNAME,
+                    out_dir,
+                    expected_head,
+                    worktree,
+                    environment,
+                    scratch,
+                    single_process,
+                    stack,
+                )
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             paths["stdout"].write_bytes(b"")
             paths["stderr"].write_text(f"worktree-profile-preparation-failed:{error}\n", encoding="utf-8")
             return 1, 0.0, {"mode": "not-started", "reason": "worktree profile preparation refused or failed"}
         if isinstance(prepared, str):
+            if sandbox_policy == "required":
+                paths["stdout"].write_bytes(b"")
+                reason = f"sandbox required: {prepared}"
+                paths["stderr"].write_text(reason + "\n", encoding="utf-8")
+                return 1, 0.0, {"mode": "not-started", "reason": reason}
             outcome = execute_command(
                 command, timeout, paths["stdout"], paths["stderr"], worktree, environment, out_dir, scratch
             )
@@ -1665,6 +1739,8 @@ def run_check(
     *,
     run_root: Path | None = None,
     checkout: _StructuredCheckout | None = None,
+    pr_integrity: Sequence[Sequence[str]] = (),
+    sandbox_policy: _SandboxPolicy = "standard",
 ) -> dict[str, Any]:
     """Run one gate and bind local execution artifacts to the observed source and child proof."""
     run_root = run_root or out_dir
@@ -1832,7 +1908,10 @@ def run_check(
         environment,
         scratch if expected_head is not None else None,
         python_test.single_process if python_test is not None else False,
+        sandbox_policy=sandbox_policy,
     )
+    if route["mode"] != "not-started":
+        _verify_pr_integrity(pr_integrity)
     status = (
         "pass"
         if exit_code == 0
@@ -2588,6 +2667,10 @@ def _run_attempt(arguments: argparse.Namespace, output: Path) -> int:
         Path.cwd().resolve().as_posix() if arguments.worktree is None and arguments.expected_head is None else None
     )
     _require_undamaged_output(output)
+    required_gates = set(GATE_IDS if arguments.sandbox else arguments.sandbox_gate)
+    default_policy: _SandboxPolicy = (
+        "contributor" if arguments.existing_interval or arguments.pr_integrity else "standard"
+    )
     checks = [
         run_check(
             gate_id,
@@ -2602,6 +2685,8 @@ def _run_attempt(arguments: argparse.Namespace, output: Path) -> int:
             local_source,
             run_root=output,
             checkout=checkout,
+            pr_integrity=arguments.pr_integrity,
+            sandbox_policy="required" if gate_id in required_gates else default_policy,
         )
         for gate_id in GATE_IDS
     ]

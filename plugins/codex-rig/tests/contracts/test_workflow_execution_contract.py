@@ -1062,7 +1062,11 @@ def test_worktree_publication_requires_native_consent_and_single_runtime_attempt
         missing_phrases(
             gate,
             (
-                "successful PR-mode Code Remediate invocation explicitly using `--worktree`",
+                "after successful PR delivery in a linked worktree",
+                "Route a user request to push the PR changes by its meaning",
+                "before, during or after remediation",
+                "carry the request through local promotion without asking the user to request publication again",
+                "including when the original invocation omitted `--worktree`",
                 "Independently read the exact destination branch ref from the verified head repository",
                 "a strict ancestor of the delivered commit",
                 "Ask once through native User Questions with **Approve** and **Deny**",
@@ -1077,7 +1081,7 @@ def test_worktree_publication_requires_native_consent_and_single_runtime_attempt
         )
         == []
     )
-    assert "only to successful PR runs with the `remediation-worktree.json` locator" in _contract(_REMEDIATE_SKILL)
+    assert "open the standard **Approve** / **Deny** push question" in _contract(_REMEDIATE_SKILL)
 
 
 @pytest.mark.installed_plugin

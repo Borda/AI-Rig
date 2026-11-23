@@ -94,8 +94,10 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import ast
 import configparser
 import hashlib
+import io
 import json
 import os
 import re
@@ -103,6 +105,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tokenize
 from collections.abc import Iterable, Sequence
 from pathlib import Path, PurePosixPath
 from typing import cast
@@ -163,6 +166,13 @@ _KNOWN_NAMES = (
 )  # fmt: skip
 
 _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+#: Python install text is data only where it is a comment, a docstring, or a string handed straight to one of these
+#: message calls (``raise ImportError("pip install x")``, ``warnings.warn("…")``, ``print("…")``). Any other string
+#: counts: a variable that a runner receives later reads the same as the call that runs it. Shell, CI and build files
+#: carry the text as code. An exception class or logging handler that itself runs its message is not followed.
+_MESSAGE_FUNCTIONS = frozenset({"print", "warn", "exit"})
+_MESSAGE_METHODS = frozenset({"warn", "warning", "info", "debug", "error", "critical", "exception", "echo", "exit"})
+_COMMENT_MAGIC = re.compile(r"#\s*[!%]")
 #: (category, severity, pattern, suffix filter or None for every non-prose file).
 _RULES: tuple[tuple[str, str, re.Pattern[str], frozenset[str] | None], ...] = tuple(
     (cat, sev, re.compile(pat, re.IGNORECASE), exts)
@@ -349,17 +359,84 @@ def _finding(category: str, severity: str, path: str, excerpt: str, line: int = 
     return {"category": category, "severity": severity, "path": path, "line": line, "excerpt": _excerpt(excerpt)}
 
 
+def _is_message_call(node: ast.Call) -> bool:
+    """Whether a call only reports text: ``print``, ``warn``, ``exit`` or a logging-style method."""
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id in _MESSAGE_FUNCTIONS
+    return isinstance(func, ast.Attribute) and func.attr in _MESSAGE_METHODS
+
+
+def _message_spans(text: str) -> dict[int, list[tuple[int, int]]]:
+    """Map a line number to the column ranges of a Python file that hold message text, never code.
+
+    Message text is a comment (not a ``# !`` or ``# %`` notebook command), a docstring, and a string written directly as
+    an argument of ``raise``'s exception or of a message call. A file Python cannot parse has no message text.
+    """
+    spans: dict[int, list[tuple[int, int]]] = {}
+    lines = text.splitlines()
+
+    def add(first: int, first_col: int, last: int, last_col: int) -> None:
+        for number in range(first, last + 1):
+            if number > len(lines):
+                break
+            start = first_col if number == first else 0
+            end = last_col if number == last else len(lines[number - 1])
+            spans.setdefault(number, []).append((start, end))
+
+    def chars(number: int, offset: int) -> int:
+        """Convert a UTF-8 byte offset on one line to a character offset."""
+        return len(lines[number - 1].encode("utf-8")[:offset].decode("utf-8", "ignore"))
+
+    def add_string(node: ast.expr) -> None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.end_lineno is not None:
+            add(
+                node.lineno,
+                chars(node.lineno, node.col_offset),
+                node.end_lineno,
+                chars(node.end_lineno, node.end_col_offset or 0),
+            )
+        elif isinstance(node, ast.JoinedStr):
+            for part in node.values:
+                add_string(part)
+
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError):
+        return spans
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Expr):
+            add_string(node.value)
+        elif isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
+            for arg in node.exc.args:
+                add_string(arg)
+        elif isinstance(node, ast.Call) and _is_message_call(node):
+            for arg in node.args:
+                add_string(arg)
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(text).readline):
+            if token.type == tokenize.COMMENT and not _COMMENT_MAGIC.match(token.string):
+                add(token.start[0], token.start[1], token.start[0], token.end[1])
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        pass
+    return spans
+
+
 def _scan_text(path: str, text: str) -> list[dict[str, object]]:
     """Apply every content rule that covers this file and return one finding per hit; prose gets the prose rules."""
     suffix = PurePosixPath(path).suffix.lower()
     prose = suffix in _PROSE_SUFFIXES
     found: list[dict[str, object]] = []
     seen: set[tuple[str, str, int]] = set()
+    messages = _message_spans(text) if suffix == ".py" else {}
     for number, line in enumerate(text.splitlines(), start=1):
         for category, severity, pattern, exts in _RULES:
             if (exts is not None and suffix not in exts) or (prose and category not in _PROSE_CATEGORIES):
                 continue
-            if pattern.search(line) and (category, severity, number) not in seen:
+            hit = pattern.search(line)
+            if hit and category == "package_install" and any(a <= hit.start() < b for a, b in messages.get(number, ())):
+                continue
+            if hit and (category, severity, number) not in seen:
                 seen.add((category, severity, number))
                 found.append(_finding(category, severity, path, line, number))
     return found
@@ -740,12 +817,46 @@ def _malicious_shapes(findings: Sequence[dict[str, object]]) -> list[str]:
     return shapes
 
 
+#: One plain sentence per finding category, so a question can say why code is not treated as safe without jargon.
+_PLAIN_REASON = {
+    "credential_path": "it reads a place where passwords or keys are kept",
+    "secret_env": "it reads a secret environment variable such as a token",
+    "env_dump": "it reads or copies the whole environment, which can hold secrets",
+    "exfil_endpoint": "it names a site that is used to receive stolen data",
+    "pipe_to_shell": "it downloads a script and runs it at once",
+    "network_tool": "it calls a network download tool such as curl or wget",
+    "dynamic_exec": "it runs shell commands or code that is built or decoded while it runs",
+    "obfuscation": "it holds text that looks deliberately scrambled",
+    "persistence": "it sets something up that keeps running after the tests end",
+    "credential_use": "it uses the saved GitHub or git login",
+    "remote_write": "it pushes or changes something on GitHub or a package index",
+    "destructive": "it deletes files outside the project",
+    "hidden_unicode": "it hides invisible characters in text",
+    "prompt_injection_text": "it holds text written to steer an AI reviewer",
+    "lifecycle_script": "it changes a script that runs when packages are installed",
+    "structural": "it adds a file the scan could not read or an executable of unknown type",
+    "agent_instruction_change": "it changes a file that AI agents load as instructions",
+    "dependency_new": "it adds a new package that will be installed",
+    "dependency_non_index": "it installs a package from a web address or a path, not the package index",
+    "dependency_index_override": "it points package installs at a different source",
+    "dependency_include": "it includes another requirements file the scan does not follow",
+    "dependency_lookalike": "it adds a package whose name imitates a well-known one",
+    "dependency_unparsed": "the scan could not compare its package changes",
+    "dependency_source_unchecked": "it changes a lock or setup file whose sources were not checked",
+    "network_import": "it imports a library that can reach the network",
+    "package_install": "it installs packages while it runs",
+}
+
+
 def assess_risk(findings: Sequence[dict[str, object]]) -> dict[str, object]:
     """Turn findings into a risk level and a recommendation for the user's decision; it never changes isolation.
 
     Levels: ``none`` (no findings), ``borderline`` (low or medium only: unusual but not rejected, run it in the
-    sandbox), ``high`` (a high finding: decide on the evidence) and ``likely-malicious`` (an attack-shaped
-    combination: the recommendation is not to run it, and choosing to run is the user's explicit override).
+    sandbox; every low category is a capability such as a network import, a shell call or a package install, and the
+    scan is a text heuristic, so ``none`` means no known pattern matched, never proof that the code is safe), ``high``
+    (a high finding: decide on the evidence) and ``likely-malicious`` (an
+    attack-shaped combination: the recommendation is not to run it, and choosing to run is the user's explicit
+    override). ``reasons`` holds one plain sentence per cause, most severe first, shown beside the question.
     """
     severities = {f["severity"] for f in findings}
     shapes = _malicious_shapes(findings)
@@ -757,8 +868,12 @@ def assess_risk(findings: Sequence[dict[str, object]]) -> dict[str, object]:
         level, advice = "borderline", "run-in-sandbox"
     else:
         level, advice = "none", "run"
-    high = [f"{f['path']}: {f['category']}" for f in findings if f["severity"] == "high"]
-    return {"level": level, "recommendation": advice, "reasons": (shapes + high)[:5]}
+    causes: list[str] = []
+    for f in sorted(findings, key=lambda item: _SEVERITY_ORDER[str(item["severity"])]):
+        cause = f"{f['path']}: {_PLAIN_REASON.get(str(f['category']), str(f['category']))}"
+        if cause not in causes:
+            causes.append(cause)
+    return {"level": level, "recommendation": advice, "reasons": (shapes + causes)[:5]}
 
 
 def probe_isolation(repo: str) -> str:

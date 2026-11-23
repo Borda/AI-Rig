@@ -1596,11 +1596,222 @@ class TestPlateauKind:
         assert result.stderr.strip() == f"plateau-kind: {expected}"
 
 
+class TestEarlyStop:
+    """``early_stop_eligibility`` and the ``--early-stop`` flag."""
+
+    @pytest.mark.parametrize(
+        ("ledger", "expected"),
+        [
+            pytest.param(
+                _ledger(_round(1, [_finding("finding-a", "low"), _finding("finding-b", "nit")])),
+                (True, "no-medium-or-higher"),
+                id="baseline-with-only-low-and-nit",
+            ),
+            pytest.param(
+                _ledger(
+                    _round(1, [_finding("finding-a", "medium"), _finding("finding-b", "low")]),
+                    _round(
+                        2, [_finding("finding-a", "medium", disposition="verified-fixed"), _finding("finding-b", "low")]
+                    ),
+                ),
+                (True, "no-medium-or-higher"),
+                id="medium-verified-fixed-low-remains",
+            ),
+            pytest.param(
+                _ledger(_round(1, [_finding("finding-a", "medium"), _finding("finding-b", "low")])),
+                (False, "open-medium"),
+                id="open-medium",
+            ),
+            pytest.param(
+                _ledger(_round(1, [_finding("finding-a", "medium", "fixed-pending-verification")])),
+                (False, "open-medium"),
+                id="medium-pending-verification",
+            ),
+            pytest.param(
+                _ledger(_round(1, [_finding("finding-a", "medium"), _finding("finding-b", "high")])),
+                (False, "open-high+medium"),
+                id="high-and-medium-named-in-severity-order",
+            ),
+            pytest.param(
+                _ledger(_round(1, [_finding("finding-a", "security"), _finding("finding-b", "low")])),
+                (False, "open-security"),
+                id="open-security",
+            ),
+            pytest.param(
+                _ledger(_round(1, [_finding("finding-a", "low")]), digest=_DIGEST_B),
+                (False, "stale-review"),
+                id="low-only-but-older-snapshot",
+            ),
+            pytest.param(
+                _ledger(_round(1, [_finding("finding-a", "low")], independent=False)),
+                (False, "independence-unavailable"),
+                id="review-not-independent",
+            ),
+            pytest.param(
+                _ledger(_round(1, [_finding("finding-a", disposition="verified-fixed")])),
+                (False, "clean"),
+                id="clean-is-not-an-early-stop",
+            ),
+            pytest.param(
+                _ledger(_round(1, [_finding("finding-a", "low")]), _round(2, [_finding("finding-a", "low")])),
+                (False, "plateau"),
+                id="score-plateau-keeps-its-own-stop",
+            ),
+            pytest.param(
+                _ledger(
+                    _round(1, [_finding("finding-a", "low")]),
+                    _round(2, [_finding("finding-a", "low"), _finding("finding-b", "low")]),
+                ),
+                (False, "nonconverging"),
+                id="score-increase-keeps-its-own-stop",
+            ),
+            pytest.param(
+                _ledger(
+                    _round(1, [_finding("finding-a", "medium", disposition="rejected"), _finding("finding-b", "low")])
+                ),
+                (True, "no-medium-or-higher"),
+                id="rejected-medium-does-not-block",
+            ),
+        ],
+    )
+    def test_eligibility_follows_the_latest_independent_round(
+        self, loop: ModuleType, ledger: dict[str, Any], expected: tuple[bool, str]
+    ) -> None:
+        """Offer an early stop only when nothing at medium or above is open on the current snapshot.
+
+        Open and pending-verification findings both block it, while an existing stop reason (clean, plateau, stale
+        review, missing independence) is reported unchanged instead of being relabelled as eligible.
+        """
+        assert loop.early_stop_eligibility(ledger | {"schema_version": 2}) == expected
+
+    def test_historical_schema_is_not_eligible(self, loop: ModuleType) -> None:
+        """Refuse a schema-1 ledger the way ``--require-clean`` does, even when only low findings remain.
+
+        An eligibility signal must not accept a ledger whose own clean gate rejects it as historical.
+        """
+        ledger = _ledger(_round(1, [_finding("finding-a", "low")]))
+
+        assert loop.early_stop_eligibility(ledger) == (False, "schema-not-current")
+
+    def test_append_judges_the_freshly_appended_round(self, ledger_path: Path, rounds_rec: Path) -> None:
+        """Check eligibility after ``--append`` so the staged round, not an older log, decides.
+
+        The lifecycle owner runs one call per completed round; the early-stop line must describe that new round.
+        """
+        rounds_rec.write_text(json.dumps(_round(1, [_finding("finding-a", "low")])), encoding="utf-8")
+
+        result = _cli(ledger_path, "--append", "--early-stop")
+
+        assert result.returncode == 0
+        assert result.stderr.strip() == "early-stop: eligible (no-medium-or-higher)"
+
+    def test_invalid_ledger_prints_no_early_stop_line(self, ledger_path: Path) -> None:
+        """Fail closed: a ledger that does not validate yields no eligibility verdict at all."""
+        _seed_rounds(ledger_path, _round(2, [_finding("finding-a", "low")]))
+
+        result = _cli(ledger_path, "--early-stop")
+
+        assert result.returncode == 1
+        assert "early-stop:" not in result.stderr
+
+    def test_third_occurrence_hard_stop_wins_over_an_eligible_verdict(
+        self, loop: ModuleType, ledger_path: Path
+    ) -> None:
+        """A recurrence stop from ``--actions`` leaves no early-stop verdict, though the ledger alone looks eligible.
+
+        Low finding ``repeat`` stays open in three rounds while the score falls (6, 4, 2). Without the actions check the
+        ledger reads eligible; with it the third occurrence stops the route, so the early stop must not stand.
+        """
+        rounds = [
+            _round(1, [_finding("repeat", "low"), _finding("other", "medium")]),
+            _round(
+                2, [_finding("repeat", "low"), _finding("other", "medium", "verified-fixed"), _finding("extra", "low")]
+            ),
+            _round(
+                3,
+                [
+                    _finding("repeat", "low"),
+                    _finding("other", "medium", "verified-fixed"),
+                    _finding("extra", "low", "verified-fixed"),
+                ],
+            ),
+        ]
+        _seed_rounds(ledger_path, *rounds)
+        actions = {
+            "schema_version": 1,
+            "rounds": [
+                {
+                    "index": index,
+                    "actions": [
+                        _action(finding["signature"], "fix", ["Retained evidence"], "Seek verification", _ROOT_CAUSE)
+                        for finding in round_record["findings"]
+                        if finding["disposition"] == "open"
+                    ],
+                }
+                for index, round_record in enumerate(rounds, start=1)
+            ],
+        }
+        actions_path = ledger_path.with_name("loop-actions.json")
+        write_json(actions_path, actions)
+
+        result = _cli(ledger_path, "--early-stop", "--actions", str(actions_path))
+
+        assert loop.early_stop_eligibility(loop.load_ledger(ledger_path)) == (True, "no-medium-or-higher")
+        assert result.returncode == 1
+        assert "round-3-third-occurrence-must-stop:repeat" in result.stderr
+        assert "early-stop:" not in result.stderr
+
+    def test_unreadable_actions_print_no_early_stop_line(self, ledger_path: Path, tmp_path: Path) -> None:
+        """Fail closed: invalid parent actions block the verdict like any other validation error."""
+        _seed_rounds(ledger_path, _round(1, [_finding("finding-a", "low")]))
+
+        result = _cli(ledger_path, "--early-stop", "--actions", str(tmp_path / "missing-actions.json"))
+
+        assert result.returncode == 1
+        assert "early-stop:" not in result.stderr
+
+    def test_flag_prints_on_stderr_and_keeps_stdout_and_exit_unchanged(
+        self, loop: ModuleType, ledger_path: Path
+    ) -> None:
+        """Add the note only on request, so consumers of the JSON summary and its exit status see no difference."""
+        _seed_rounds(ledger_path, _round(1, [_finding("finding-a", "low")]))
+
+        plain = _cli(ledger_path)
+        flagged = _cli(ledger_path, "--early-stop")
+
+        assert flagged.stdout == plain.stdout
+        assert flagged.returncode == plain.returncode
+        assert plain.stderr == ""
+        assert flagged.stderr.strip() == "early-stop: eligible (no-medium-or-higher)"
+        assert json.loads(flagged.stdout)["reason"] == "baseline"
+
+    def test_eligible_ledger_still_fails_the_clean_gate(self, ledger_path: Path) -> None:
+        """An eligible early stop is not clean: ``--require-clean`` keeps rejecting it.
+
+        Callers that demand a clean result, such as the challenge-resolve acceptance gate, rely on this exit status.
+        """
+        _seed_rounds(ledger_path, _round(1, [_finding("finding-a", "low")]))
+
+        result = _cli(ledger_path, "--early-stop", "--require-clean")
+
+        assert result.returncode == 1
+        assert "early-stop: eligible" in result.stderr
+
+    def test_ineligible_ledger_names_its_blocking_tier(self, ledger_path: Path) -> None:
+        """Say which tier blocks the early stop so the parent knows what to resolve."""
+        _seed_rounds(ledger_path, _round(1, [_finding("finding-a", "high")]))
+
+        result = _cli(ledger_path, "--early-stop")
+
+        assert result.stderr.strip() == "early-stop: not-eligible (open-high)"
+
+
 class TestBriefArm:
     """``brief_arm`` and the ``--brief-arm`` pilot flag."""
 
     @pytest.mark.parametrize(
-        "other_flag", ["--append", "--append-metrics", "--progress", "--plateau-kind", "--require-clean"]
+        "other_flag",
+        ["--append", "--append-metrics", "--progress", "--plateau-kind", "--early-stop", "--require-clean"],
     )
     def test_refuses_to_swallow_another_action(self, ledger_path: Path, rounds_rec: Path, other_flag: str) -> None:
         """Fail loudly instead of silently skipping a staged append when both flags are given."""
@@ -2718,3 +2929,40 @@ class TestLoopRuleProse:
             )
             == []
         )
+
+    def test_loop_rule_defines_early_stop_without_calling_it_clean(self) -> None:
+        """The loop rule lets the parent stop once only low and nit findings remain, and never calls that clean.
+
+        The stop is bounded: filter or gate reviews, callers that demand a clean result and severity downgrades are
+        excluded in the same paragraph, so a reader cannot take the permission as a general shortcut.
+        """
+        loop_rule = _prose("adversarial-loop.md")
+
+        assert (
+            _missing(
+                loop_rule,
+                [
+                    "the parent may stop dispatching reviewers",
+                    "The outcome is `converged-no-medium`, never clean",
+                    "It does not apply to a filter or gate review",
+                    "acceptance demands `W_n == 0`",
+                    "`--require-clean`",
+                    "never as a new round or a moved `current_snapshot`",
+                    "not a merge or commit authorization",
+                    "Never lower a severity to reach eligibility.",
+                ],
+            )
+            == []
+        )
+
+    def test_challenge_resolve_keeps_requiring_a_clean_result(self) -> None:
+        """The challenge-resolve workflow states that early stop never applies to it.
+
+        Its acceptance gate runs ``--require-clean`` on a frozen context, so a ``converged-no-medium`` outcome would
+        otherwise look like a permitted stop in the shared loop rule.
+        """
+        skill = " ".join(
+            (PLUGIN_ROOT / "skills" / "challenge-resolve" / "SKILL.md").read_text(encoding="utf-8").split()
+        )
+
+        assert "Early stop (`converged-no-medium`) never applies here: this workflow requires a clean result." in skill

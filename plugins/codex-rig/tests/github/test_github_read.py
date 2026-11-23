@@ -480,6 +480,17 @@ class TestFailureClassification:
         [
             pytest.param(b"run gh auth login to authenticate", "github-auth", id="auth-login-prompt"),
             pytest.param(b"HTTP 401: authentication required", "github-auth", id="http-401"),
+            pytest.param(
+                b"fatal: unable to access 'https://github.com/example/project/': The requested URL returned error: 401",
+                "github-auth",
+                id="git-http-authentication",
+            ),
+            pytest.param(
+                b"fatal: unable to access 'https://github.com/example/project/': The requested URL returned error: 403",
+                "github-permission",
+                id="git-http-forbidden",
+            ),
+            pytest.param(b"remote: HTTP Basic: Access denied", "github-auth", id="git-http-basic-denied"),
             pytest.param(b"request requires authentication", "github-auth", id="requires-authentication"),
             pytest.param(b"oauth token has expired", "github-auth", id="expired-oauth-token"),
             pytest.param(b"context deadline exceeded", "github-network", id="context-deadline"),
@@ -558,6 +569,12 @@ class TestFailureClassification:
                 id="other-worktree",
             ),
             pytest.param(
+                b"fatal: 'feature' is already used by worktree at '/private/permission'",
+                "github-command-failed",
+                "local-branch-in-other-worktree",
+                id="occupied-worktree",
+            ),
+            pytest.param(
                 b"fatal: 'feature'tls' is already checked out at '/private/permission'checkout'",
                 "github-command-failed",
                 "local-branch-in-other-worktree",
@@ -616,6 +633,13 @@ class TestFailureClassification:
                 "github-command-failed",
                 "local-fetch-non-fast-forward",
                 id="fetch-rejected-tls-ref",
+            ),
+            pytest.param(
+                b" ! [rejected]        refs/pull/17/head -> fix/tls-image  (non-fast-forward)\n"
+                b"failed to run git: exit status 1\n",
+                "github-command-failed",
+                "local-fetch-non-fast-forward",
+                id="padded-native-fetch-rejection",
             ),
             pytest.param(
                 b"checkout failed for an unknown reason", "github-command-failed", "unclassified", id="unknown"

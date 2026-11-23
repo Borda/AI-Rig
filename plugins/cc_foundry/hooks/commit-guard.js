@@ -202,12 +202,14 @@ const { execFileSync } = require("child_process");
 let gitSubcommandArgs = null;
 let programInvocations = null;
 let coarseGitSubcommandArgs = null;
+let inspectionNow = Date.now;
 // Library unavailable: ask on every Bash command rather than guessing program names.
 let namesProgram = () => true;
 try {
   const lexer = require(path.join(__dirname, "lib", "shell-git.js"));
   ({ gitSubcommandArgs, programInvocations, coarseGitSubcommandArgs } = lexer);
   if (lexer.namesProgram) namesProgram = lexer.namesProgram;
+  if (lexer.inspectionNow) inspectionNow = lexer.inspectionNow;
 } catch {
   // gitSubcommandArgs stays null
 }
@@ -935,7 +937,7 @@ function pushVerdict(command, data, inspection) {
   if (session.reason) return { kind: "ask", reason: session.reason };
   // The checkout the push runs in: the session cwd, or the `-C` directory of a worktree push, which must itself be a
   // checkout of the session project. A target no approval can cover is reported by `uncoveredProblem` below.
-  const target = repositoryTarget(command, Date.now() + 1000, grants);
+  const target = repositoryTarget(command, inspectionNow() + 1000, grants);
   const home = target.dir ? grants.siblingCheckout(target.dir, data.cwd) : session;
   if (home.reason) return { kind: "byHand", reason: home.reason };
   const checkout = target.dir || data.cwd;
@@ -949,7 +951,7 @@ function pushVerdict(command, data, inspection) {
   const scoped =
     !target.dir && PLAIN_BRANCH.test(here.branch) ? command.replace(BRANCH_SUBSTITUTION, here.branch) : command;
   // Git discovery can outlast the text budget; substituted text gets its own bounded inspection phase.
-  const info = scoped === command ? inspection : { ...inspection, deadline: Date.now() + 1000 };
+  const info = scoped === command ? inspection : { ...inspection, deadline: inspectionNow() + 1000 };
   const all = scoped === command ? inspection.readings : gitSubcommandArgs(scoped, info);
   const readings = info.unreadable ? info.exactReadings || [] : all;
   const pushReadings = readings.filter((args) => asPush(args) !== null);
@@ -957,7 +959,7 @@ function pushVerdict(command, data, inspection) {
   if (repeated) return { kind: "ask", reason: repeated };
   const scope = { branch: here.branch, remotes: configuredRemotes(checkout, grants) };
   // Remote discovery is subprocess time, so scope inspection starts a fresh text-only budget.
-  const uncovered = uncoveredProblem(scoped, pushReadings, scope, Date.now() + 1000, target);
+  const uncovered = uncoveredProblem(scoped, pushReadings, scope, inspectionNow() + 1000, target);
   if (uncovered) {
     // A branch checked out in a sibling worktree is pushed through `-C`: a question can cover that, so ask, not by hand.
     const hint = target.dir ? "" : siblingWorktreeHint(uncovered, data.cwd, grants);
@@ -1061,7 +1063,7 @@ function handlePayload() {
 
   const command = (tool_input && tool_input.command) || "";
   if (typeof command !== "string") process.exit(0);
-  const info = { deadline: Date.now() + 1000 };
+  const info = { deadline: inspectionNow() + 1000 };
   try {
     if (gitSubcommandArgs === null) {
       askInspection(command, "cannot load hooks/lib/shell-git.js");

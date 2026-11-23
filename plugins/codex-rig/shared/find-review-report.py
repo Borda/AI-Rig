@@ -36,9 +36,11 @@ Only remediation invoked with the explicit +review argument may start or resume 
 
 ## Outputs
 
-It prints one matching assessed local review-artifact path. The current report root supersedes the legacy root for the
-same PR because run numbers are allocated independently in each root; within one root, the numerically highest
-PR-scoped run supersedes flat timestamped artifacts. Target lookup requires PR scope and a
+It prints one matching assessed local review-artifact path. With default roots, PR lookup compares the caller's review
+runs, reviews stored in its Git administration directory, and existing standalone review archives by allocation time.
+These take precedence over the historical review root.
+Within one root, the numerically highest PR-scoped run supersedes flat timestamped artifacts. Target lookup requires
+PR scope and a
 recognized ``metadata.review_decision.recommendation`` in addition to PR identity. Explicit intake accepts all four
 declared review scopes without requiring PR identity; current intake artifacts must be canonical schema-3
 ``result.json`` files that pass both validators. Existing ``--parent-thread-id`` and ``--codex-home`` options identify
@@ -70,7 +72,7 @@ import json
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -81,6 +83,15 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 
 from collect_diff import diff_sections, local_review_identity, review_file_digest  # noqa: E402
 from create_run import PR_URL_PATTERN, TIMESTAMP_RUN_ID, same_pr_url  # noqa: E402
+from review_workspace import (  # noqa: E402
+    _check_path,
+    _git_environment,
+    caller_root,
+    checkout_report_root,
+    historical_workspace,
+    report_root_caller,
+    workspace_caller,
+)
 
 #: Maximum bytes accepted from a previous run's resolution ledger.
 MAX_LEDGER_BYTES = 16 * 1024 * 1024
@@ -160,7 +171,11 @@ def review_result_kind(result_path: Path, *, allow_local: bool = False) -> str:
 
 
 def require_assessed_review_result(
-    result_path: Path, *, codex_home: Path | None = None, parent_thread_id: str | None = None
+    result_path: Path,
+    *,
+    codex_home: Path | None = None,
+    parent_thread_id: str | None = None,
+    reports_dir: Path | None = None,
 ) -> Path:
     """Validate assessed artifacts before explicit or discovered report intake.
 
@@ -189,14 +204,10 @@ def require_assessed_review_result(
         if identity is None or not identity[2]:
             raise LookupError("review-completion-missing-pr-identity")
         reports_root = run_dir.parent.parent if PR_DIRECTORY_PATTERN.fullmatch(run_dir.parent.name) else run_dir.parent
-        reports_dirs = [reports_root]
-        current_root = CURRENT_REPORTS_DIR.resolve()
-        legacy_root = LEGACY_REPORTS_DIR.resolve()
-        if reports_root == current_root:
-            reports_dirs.append(legacy_root)
-        elif reports_root == legacy_root:
-            reports_dirs.append(current_root)
-        selected = find_latest_review_report(identity[1] or identity[0], reports_dirs)
+        target, reports_dirs = _pr_roots_for_directory(identity[1] or identity[0], reports_root)
+        if reports_dir is not None and reports_dir.resolve() not in {root.resolve() for root in reports_dirs}:
+            raise LookupError("missing-matching-review-report")
+        selected = find_latest_review_report(target, reports_dirs)
         if selected.resolve() != result_path.resolve():
             raise LookupError(f"review-completion-not-current:{selected}")
     return result_path
@@ -232,12 +243,85 @@ PR_DIRECTORY_PATTERN = re.compile(r"pr-([1-9][0-9]*)")
 RUN_DIRECTORY_PATTERN = re.compile(r"run-([0-9]{3,})")
 
 
+def _default_pr_roots(target: str, caller: Path | None = None) -> tuple[str, list[Path]]:
+    """Locate the caller’s reviews and retained historical runs without creating report storage."""
+    caller = caller or Path.cwd()
+    # Legacy report-only directories need no Git checkout. A discovered Git checkout must resolve normally.
+    is_checkout = any((parent / ".git").exists() for parent in (caller, *caller.parents))
+    if is_checkout:
+        caller = caller_root(caller)
+    target = target.strip().rstrip("/")
+    if is_checkout and target.lstrip("#").isdecimal():
+        resolved = subprocess.run(  # noqa: S603 - packaged local Git identity reader
+            [
+                sys.executable,
+                str(Path(__file__).with_name("select-git-remote.py")),
+                "--canonical-pr-url",
+                target.lstrip("#"),
+                "--cwd",
+                str(caller),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+            env=_git_environment(),
+        )
+        if resolved.returncode == 0:
+            target = resolved.stdout.strip()
+        elif resolved.stderr.strip() not in {
+            "no-github-origin",
+            "ambiguous-github-origin",
+            "no-github-repository",
+            "ambiguous-github-repositories",
+            "invalid-pr-number",
+        }:
+            raise LookupError("review-pr-identity-lookup-failed")
+    canonical = PR_URL_PATTERN.fullmatch(target)
+    if canonical:
+        caller = workspace_caller(caller, target) or caller
+    roots = [caller / CURRENT_REPORTS_DIR, caller / LEGACY_REPORTS_DIR]
+    if is_checkout:
+        managed = checkout_report_root(caller)
+        if managed is not None and managed.exists():
+            _check_path(managed / "code-review", managed)
+            roots.insert(0, managed / "code-review")
+    if canonical:
+        workspace = historical_workspace(caller, target)
+        if workspace is not None:
+            if workspace_caller(workspace, target) != caller:
+                raise LookupError("private review workspace identity mismatch")
+            roots.insert(0, workspace / ".reports" / "codex" / "code-review")
+    return target, list(dict.fromkeys(roots))
+
+
+def _pr_roots_for_directory(target: str, root: Path) -> tuple[str, list[Path]]:
+    """Expand a managed report root to its peers and keep a custom archive in its own freshness domain."""
+    if root.parts[-3:] == ("codex-rig", "reports", "code-review"):
+        caller = report_root_caller(root.parent)
+        if caller is not None:
+            return _default_pr_roots(target, caller)
+    if root.parts[-3:] in {(".reports", "codex", "review"), (".reports", "codex", "code-review")}:
+        # A copied report hierarchy may be nested under an active checkout without belonging to its workflow.
+        if (root.parents[2] / ".git").exists():
+            return _default_pr_roots(target, root.parents[2])
+        return target, [root]
+    if root in {CURRENT_REPORTS_DIR.resolve(), LEGACY_REPORTS_DIR.resolve()}:
+        return _default_pr_roots(target)
+    return target, [root]
+
+
 class ReviewArtifact(NamedTuple):
     """Bind a review result path to its topology-aware ordering identity."""
 
     path: Path
     order: tuple[int, int, str | int]
     pull_number: str | None
+
+
+def _root_priority(root: Path) -> int:
+    """Let either current producer domain supersede the historical review namespace."""
+    return int(root.resolve() != LEGACY_REPORTS_DIR.resolve() and root.parts[-3:] != (".reports", "codex", "review"))
 
 
 def _review_artifacts(reports_dir: Path, *, root_priority: int = 0) -> list[ReviewArtifact]:
@@ -368,7 +452,7 @@ def _allocated_target_matches(artifact: ReviewArtifact, target: str) -> bool | N
 
 
 def _producer_allocation(artifact: ReviewArtifact) -> str:
-    """Recover the UTC allocation time across promotion, with collector time for historical numbered runs."""
+    """Read the UTC allocation time from a retained entry or its original staging directory."""
     run = artifact.path.parent
     entry = run / "review-entry.json"
     if entry.exists() or entry.is_symlink():
@@ -383,12 +467,25 @@ def _producer_allocation(artifact: ReviewArtifact) -> str:
             or (artifact.pull_number is None and run.name != name)
         ):
             raise LookupError(f"invalid-review-entry:{run}")
-        return name.split("Z", 1)[0]
-    if artifact.pull_number is None:
-        return run.name.split("Z", 1)[0]
-    # Older promotions did not retain the original directory name. Prefer the collector's first receipt.
-    source = next((run / n for n in ("pr-target.txt", "pr.json") if (run / n).is_file()), run)
-    return datetime.fromtimestamp(source.stat().st_mtime, timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%f")
+    elif artifact.pull_number is None:
+        name = run.name
+    else:
+        # A sequence orders historical siblings, but has no shared clock with other producers.
+        raise LookupError(f"ambiguous-review-allocation-time:{run}")
+
+    # Older flat runs used whole UTC seconds. Normalize both actual allocation formats to microseconds;
+    # arbitrary directory names, filesystem timestamps and impossible dates cannot establish chronology.
+    if TIMESTAMP_RUN_ID.fullmatch(name):
+        stamp = name.split("Z", 1)[0]
+    elif re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z", name):
+        stamp = name[:-1] + "-000000"
+    else:
+        raise LookupError(f"ambiguous-review-allocation-time:{run}")
+    try:
+        datetime.strptime(stamp, "%Y-%m-%dT%H-%M-%S-%f")
+    except ValueError as error:
+        raise LookupError(f"ambiguous-review-allocation-time:{run}") from error
+    return stamp
 
 
 def _latest_producer(matches: list[ReviewArtifact]) -> ReviewArtifact:
@@ -408,6 +505,27 @@ def _latest_producer(matches: list[ReviewArtifact]) -> ReviewArtifact:
         if _producer_allocation(pending) > _producer_allocation(latest):
             return pending
     return latest
+
+
+def _latest_across_roots(artifacts: list[ReviewArtifact], *, producer: bool = False) -> ReviewArtifact:
+    """Keep each root's own sequence, then compare independent producers by their retained allocation time."""
+    groups: dict[Path, list[ReviewArtifact]] = {}
+    priority = max(artifact.order[0] for artifact in artifacts)
+    for artifact in artifacts:
+        if artifact.order[0] == priority:
+            run = artifact.path.parent
+            root = run.parent.parent if artifact.pull_number else run.parent
+            groups.setdefault(root, []).append(artifact)
+    finalists = [
+        _latest_producer(group) if producer else max(group, key=lambda artifact: artifact.order)
+        for group in groups.values()
+    ]
+    if len(finalists) == 1:
+        return finalists[0]
+    ranked = sorted(((_producer_allocation(artifact), artifact) for artifact in finalists), reverse=True)
+    if ranked[0][0] == ranked[1][0]:
+        raise LookupError("ambiguous-review-allocation-time")
+    return ranked[0][1]
 
 
 def _frozen_local_match(run: Path, identity: dict, *, require_plan: bool) -> bool:
@@ -516,7 +634,7 @@ def find_latest_review_report(target: str, reports_dirs: list[Path], *, include_
 
     for reports_dir in reports_dirs:
         # Run numbers are allocated within each root; the current namespace supersedes legacy runs.
-        root_priority = int(reports_dir.resolve() == CURRENT_REPORTS_DIR.resolve())
+        root_priority = _root_priority(reports_dir)
         artifacts = _review_artifacts(reports_dir, root_priority=root_priority)
         for artifact in artifacts:
             result_path = artifact.path
@@ -562,7 +680,7 @@ def find_latest_review_report(target: str, reports_dirs: list[Path], *, include_
         # The producer may resume a pending run. Remediation still admits only validated results.
         all_matches = incomplete_matches + candidate_matches + unavailable_matches + promoted_matches
         if all_matches:
-            latest = _latest_producer(all_matches)
+            latest = _latest_across_roots(all_matches, producer=True)
             run = latest.path.parent
             name = TIMESTAMP_RUN_ID.fullmatch(run.name)
             metadata = run / "pr.json"
@@ -601,31 +719,23 @@ def find_latest_review_report(target: str, reports_dirs: list[Path], *, include_
                 return latest.path
             if latest in unavailable_matches:
                 raise LookupError(f"matching-review-unavailable-rerun-code-review:{latest.path}")
-    matches.sort(key=lambda artifact: artifact.order, reverse=True)
-    closed_matches.sort(key=lambda artifact: artifact.order, reverse=True)
-    candidate_matches.sort(key=lambda artifact: artifact.order, reverse=True)
-    promoted_matches.sort(key=lambda artifact: artifact.order, reverse=True)
-    incomplete_matches.sort(key=lambda artifact: artifact.order, reverse=True)
-    invalid_matches.sort(key=lambda artifact: artifact.order, reverse=True)
-    completed_or_candidate = promoted_matches + candidate_matches
-    if incomplete_matches and (
-        not completed_or_candidate
-        or incomplete_matches[0].order > max(artifact.order for artifact in completed_or_candidate)
-    ):
-        raise LookupError(f"matching-review-incomplete:{incomplete_matches[0].path.parent}")
-    # A candidate beside a promoted result in one run is still pending and blocks findings intake.
-    if candidate_matches and (not promoted_matches or candidate_matches[0].order >= promoted_matches[0].order):
-        raise LookupError(f"matching-review-candidate-unpromoted:{candidate_matches[0].path}")
-    if invalid_matches and invalid_matches[0] == promoted_matches[0]:
-        raise LookupError(f"invalid-review-report-rerun-code-review:{invalid_matches[0].path}")
-    if closed_matches and (not matches or closed_matches[0].order > matches[0].order):
-        raise LookupError(f"matching-review-closed-not-remediable:{closed_matches[0].path}")
-    if not matches:
+    # A candidate beside a promoted result still blocks intake. An unavailable collection cannot hide an assessment.
+    retained = candidate_matches + promoted_matches + incomplete_matches
+    if not retained:
         if unavailable_matches:
-            unavailable = max(unavailable_matches, key=lambda artifact: artifact.order)
+            unavailable = _latest_across_roots(unavailable_matches)
             raise LookupError(f"matching-review-unavailable-rerun-code-review:{unavailable.path}")
         raise LookupError("missing-matching-review-report")
-    return matches[0].path
+    latest = _latest_across_roots(retained)
+    if latest in candidate_matches:
+        raise LookupError(f"matching-review-candidate-unpromoted:{latest.path}")
+    if latest in incomplete_matches:
+        raise LookupError(f"matching-review-incomplete:{latest.path.parent}")
+    if latest in invalid_matches:
+        raise LookupError(f"invalid-review-report-rerun-code-review:{latest.path}")
+    if latest in closed_matches:
+        raise LookupError(f"matching-review-closed-not-remediable:{latest.path}")
+    return latest.path
 
 
 def validate_review_result(
@@ -834,27 +944,54 @@ def _finding_titles(run_dir: Path) -> dict[str, str]:
 def prior_resolutions(run_dir: Path) -> dict[str, Any]:
     """Summarize how remediation resolved the newest earlier review of the same pull request.
 
-    The current run must be a promoted ``pr-<number>/run-<NNN>`` directory. The newest lower-numbered sibling run that
-    holds ``resolution.jsonl`` is read; later lines supersede earlier ones for the same finding, and malformed lines are
-    counted rather than trusted. No ledger yields empty resolutions, which is the normal first-review case.
+    The current run must be promoted. Select prior siblings by sequence, and prior runs from other managed roots by PR
+    identity and allocation time. Only a promoted result with a resolution ledger supplies feedback. Later lines
+    supersede earlier ones for the same finding. Malformed lines are counted. A first review has no prior resolutions.
     """
     run_dir = run_dir.resolve()
     run_match = RUN_DIRECTORY_PATTERN.fullmatch(run_dir.name)
     if run_match is None or PR_DIRECTORY_PATTERN.fullmatch(run_dir.parent.name) is None:
         raise LookupError("prior-resolutions-requires-pr-run")
     current = int(run_match.group(1))
-    earlier = [
-        (int(match.group(1)), sibling)
-        for sibling in run_dir.parent.glob("run-*")
-        if (match := RUN_DIRECTORY_PATTERN.fullmatch(sibling.name)) is not None
-        and 0 < int(match.group(1)) < current
-        and (sibling / RESOLUTION_LEDGER).is_file()
-        # An unpromoted run never completed review, so its verdicts cannot tell reviewers to skip a finding.
-        and (sibling / "result.json").is_file()
-    ]
+    root = run_dir.parent.parent
+    identity = _read_pr_identity(run_dir / "pr.json")
+    url = identity[1] if identity and identity[2] else ""
+    roots = _pr_roots_for_directory(url, root)[1] if url else [root]
+    current_artifact = ReviewArtifact(
+        run_dir / "result.json", (_root_priority(root), 1, current), run_dir.parent.name[3:]
+    )
+    earlier: list[ReviewArtifact] = []
+    for directory in roots:
+        priority = _root_priority(directory)
+        if priority > current_artifact.order[0]:
+            continue
+        for sibling in (directory / run_dir.parent.name).glob("run-*"):
+            match = RUN_DIRECTORY_PATTERN.fullmatch(sibling.name)
+            if not match or int(match[1]) == 0:
+                continue
+            result = sibling / "result.json"
+            if not (sibling / RESOLUTION_LEDGER).is_file() or not result.is_file():
+                continue
+            artifact = ReviewArtifact(result, (priority, 1, int(match[1])), current_artifact.pull_number)
+            if directory == root:
+                if int(match[1]) < current:
+                    earlier.append(artifact)
+                continue
+            # Run numbers are unrelated across repositories. Require an independent PR identity before sharing feedback.
+            if not _artifact_matches_target(artifact, url):
+                continue
+            if any(
+                path.is_symlink()
+                for path in (sibling.parent, sibling, result, sibling / RESOLUTION_LEDGER, sibling / "pr.json")
+            ):
+                raise LookupError("redirected-review-run")
+            if priority < current_artifact.order[0] or _producer_allocation(artifact) < _producer_allocation(
+                current_artifact
+            ):
+                earlier.append(artifact)
     if not earlier:
         return {"review_run": None, "ledger": None, "resolutions": [], "invalid_lines": 0}
-    prior = max(earlier)[1]
+    prior = _latest_across_roots(earlier).path.parent
     ledger = prior / RESOLUTION_LEDGER
     latest: dict[str, dict[str, Any]] = {}
     invalid = 0
@@ -923,7 +1060,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--parent-thread-id", help="Completion or intake validator's producer thread identity.")
     parser.add_argument(
         "--reports-dir",
-        default=CURRENT_REPORTS_DIR,
         type=Path,
         help="Directory containing PR-scoped runs or legacy timestamped code-review reports.",
     )
@@ -962,25 +1098,31 @@ def main(argv: list[str] | None = None) -> int:
         if args.result is not None:
             print(
                 require_assessed_review_result(
-                    args.result, codex_home=args.codex_home, parent_thread_id=args.parent_thread_id
+                    args.result,
+                    codex_home=args.codex_home,
+                    parent_thread_id=args.parent_thread_id,
+                    reports_dir=args.reports_dir,
                 )
             )
             return 0
         if args.local_scope:
-            if not args.reports_dir.is_dir():
+            reports_dir = args.reports_dir or CURRENT_REPORTS_DIR
+            if not reports_dir.is_dir():
                 raise LookupError("missing-matching-review-report")
             local = local_review_identity(Path.cwd(), args.local_scope, args.local_target)
             run = latest_local_run(
-                args.reports_dir, local, codex_home=args.codex_home, parent_thread_id=args.parent_thread_id
+                reports_dir, local, codex_home=args.codex_home, parent_thread_id=args.parent_thread_id
             )
             if args.expect_run is not None and run.resolve() != args.expect_run.resolve():
                 raise LookupError("selected-review-run-changed")
             print(run.resolve())
             return 0
-        reports_dirs = [args.reports_dir]
-        if args.reports_dir == CURRENT_REPORTS_DIR:
-            reports_dirs.append(LEGACY_REPORTS_DIR)
-        selected = find_latest_review_report(args.target, reports_dirs, include_pending=args.latest_run)
+        target, reports_dirs = (
+            _pr_roots_for_directory(args.target, args.reports_dir.absolute())
+            if args.reports_dir is not None
+            else _default_pr_roots(args.target)
+        )
+        selected = find_latest_review_report(target, reports_dirs, include_pending=args.latest_run)
         if args.latest_run:
             # The next workflow step can write here. Reject redirected runs and retained identity files.
             root = next((directory for directory in reports_dirs if selected.is_relative_to(directory)), None)
@@ -997,7 +1139,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.expect_run is not None and selected.parent.resolve() != args.expect_run.resolve():
             raise LookupError("selected-review-run-changed")
         print(selected.parent.resolve() if args.latest_run else selected)
-    except (LookupError, OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+    except (LookupError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         if args.complete_run is not None:
             print(
                 f"Review handoff blocked: {exc}\nRetained evidence: {args.complete_run}. Review not complete.",

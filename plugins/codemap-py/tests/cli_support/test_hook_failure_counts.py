@@ -379,6 +379,22 @@ class TestConcurrentWriters:
         names = _record_files(_health_dir(in_project, "claude", "log-tool-use"))
         assert (len(names), {name.rsplit("-", 1)[1] for name in names}) == (50, {"ValueError"})
 
+    def test_trimming_keeps_the_newest_when_the_clock_does_not_advance(
+        self, hookutil: ModuleType, in_project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A clock that returns one value for every call still orders records by when they were written.
+
+        Windows before Python 3.13 reads a timer that advances every 15.6 ms, so a burst of failures shares one
+        timestamp; ordering such records by their random token trimmed the newest ones instead of the oldest.
+        """
+        monkeypatch.setattr(hookutil.time, "time_ns", lambda: 1_700_000_000_000_000_000)
+        _record_series(hookutil, [OSError] * 5 + [ValueError] * 50)
+
+        names = _record_files(_health_dir(in_project, "claude", "log-tool-use"))
+        assert (len(names), {name.rsplit("-", 1)[1] for name in names}) == (50, {"ValueError"})
+        health = runtime_log.hook_health("claude", root=in_project, override="")["log-tool-use"]
+        assert health["last_class"] == "ValueError"
+
 
 def _missing(_base: Path) -> None:
     """Leave the runtime log directory absent."""

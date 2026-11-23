@@ -314,7 +314,7 @@ Codex Rig can read GitHub evidence and prepare local changes when the runtime au
 **Push approval differs by host:**
 
 - Claude Code's foundry plugin asks a `git-push` question with only **Approve** and **Deny**; **Approve** records a single-use `push-once` token that allows one non-force push of the same branch at the same `HEAD` to a configured remote, remote and branch written out, within 15 minutes, and the allowed push spends it.
-- Codex uses no push token. After a verified and committed PR `code-remediate --worktree` run, the parent offers one push of the exact commit to the original PR branch. It requires a native user answer and separate one-time runtime approval.
+- Codex uses no push token. After a verified and committed PR `code-remediate --worktree` run, the parent offers one push of the exact commit to the original PR branch. If the user asks to publish before, during or after remediation, the same **Approve** / **Deny** question opens when delivery from the existing PR checkout is verified. Each push requires a native user answer and separate one-time runtime approval.
 - Force operations are forbidden on both hosts.
 - Both hosts agree on an explicit request such as "commit this": it authorizes that commit with no further question.
 

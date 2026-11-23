@@ -266,6 +266,57 @@ python() { printf '%s\\n' "$*" > "$TMPDIR/detected"; }
     assert "--arguments 7 --worktree" in (tmp_path / "detected").read_text()
 
 
+def test_review_sw_engineer_spawns_pass_effort_high() -> None:
+    """The read-only architecture and linked-issue reviewers and the sw-engineer consolidator spawn at high effort.
+
+    ``foundry:sw-engineer`` pins ``effort: xhigh`` in its frontmatter, so a spawn that omits ``effort`` runs a read-only
+    review at implementation depth (measured: no sidecar of recent runs carries an ``effort`` key). Other review roles
+    keep their own defaults.
+    """
+    prompts = " ".join((_REVIEW / "templates/agent-prompts.md").read_text(encoding="utf-8").split())
+    post_agent = " ".join((_REVIEW / "modes/post-agent.md").read_text(encoding="utf-8").split())
+
+    assert "**Effort slot" in prompts
+    slot = prompts.split("**Effort slot", 1)[1].split("**Prompt line 1", 1)[0]
+    assert "pins `effort: xhigh`" in slot
+    assert 'Pass `effort="high"` on the `review-arch` spawn' in slot
+    assert "and on the linked-issue analysis spawn" in slot
+    assert "every other Step 2 and Step 4 spawn passes no `effort` argument" in slot
+    scope = " ".join((_REVIEW / "modes/scope-context.md").read_text(encoding="utf-8").split())
+    assert 'spawn ONE **foundry:sw-engineer** at `effort="high"`' in scope
+    consolidator = post_agent.split("Spawn `$CONSOLIDATOR_AGENT` with this compact prompt", 1)[1][:1200]
+    assert (
+        'Pass `model="sonnet"` and `effort="high"` when `CONSOLIDATOR_AGENT` is `foundry:sw-engineer`' in consolidator
+    )
+
+
+def test_review_code_consolidator_runs_on_sonnet_and_escalates_once_on_any_respawn() -> None:
+    """The code-PR consolidator drops to sonnet and carries the readiness rule; its one shared re-spawn goes to opus.
+
+    Doc and test-PR consolidators (``foundry:doc-scribe``, ``foundry:qa-specialist``) pass neither ``model`` nor
+    ``effort``. The single re-spawn per run, whether a publication-gate failure or a fill-gaps carry-check failure
+    triggers it, keeps the effort and escalates ``foundry:sw-engineer`` to opus, the one-tier-up retry on a checkable
+    failure. The readiness rule scopes the two assessment fields the publication gate reads to a completed assessment
+    and names the missing-role case, so a sonnet consolidator cannot mark a no-judgment assessment ``complete`` nor a
+    missing role ``blocked``.
+    """
+    post_agent = " ".join((_REVIEW / "modes/post-agent.md").read_text(encoding="utf-8").split())
+    fill_gaps = " ".join((_REVIEW / "modes/fill-gaps.md").read_text(encoding="utf-8").split())
+
+    consolidator = post_agent.split("Spawn `$CONSOLIDATOR_AGENT` with this compact prompt", 1)[1][:1500]
+    assert "a `foundry:doc-scribe` or `foundry:qa-specialist` consolidator passes neither" in consolidator
+    assert "shared by the publication gate and the fill-gaps carry check" in consolidator
+    assert 'passes `model="opus"` and the same `effort="high"` for `foundry:sw-engineer`' in consolidator
+    rule = post_agent.split("Readiness rule for `review-validation.json`:", 1)[1].split("Return ONLY", 1)[0]
+    assert "a `presence: completed` assessment whose `source_outcome` and `source_rating` are null" in rule
+    assert "`readiness: blocked`, never `complete`" in rule
+    assert "a `presence: missing` assessment carries null judgment and `readiness: incomplete`" in rule
+    respawn = post_agent.split("Gate failure, re-spawn unused", 1)[1][:400]
+    assert '`model="opus"`, `effort="high"` for a `foundry:sw-engineer` consolidator' in respawn
+    carry = fill_gaps.split("Exit 1, re-spawn unused", 1)[1][:400]
+    assert '`model="opus"`, `effort="high"` for a `foundry:sw-engineer` consolidator' in carry
+
+
 def _preparation_fences(section: str) -> str:
     """Compose preparation recipes in source order, emulating the host's worktree entry after each call."""
     scripts = []
