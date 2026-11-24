@@ -16,7 +16,8 @@ IFS= read -r PUSH_STATUS < "${TMPDIR:-/tmp}/resolve-push-status-${CSID}" 2>/dev/
 _PRESERVE="pr=${_PR_NUMBER}, final-report=pending-write, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv, push-status=${PUSH_STATUS}, push-unblock=${_IMPL_DIR}/push-unblock.txt"
 python "$PLUGIN_ROOT/bin/write_skill_contract.py" --keep-sentinel resolve-keep-items "oss:resolve" "final-report (after push)" "$_IMPL_DIR" "${_PRESERVE}" "write final report → post-PR action gate"  # timeout: 5000
 echo "PUSH_STATUS=$PUSH_STATUS"
-case "$PUSH_STATUS" in blocked-guard|blocked-permission|blocked-needs-manual-push) echo "PUSH_UNBLOCK=$_IMPL_DIR/push-unblock.txt"; cat "$_IMPL_DIR/push-unblock.txt" 2>/dev/null || echo "⚠ push-unblock.txt missing" ;; esac
+case "$PUSH_STATUS" in blocked-guard|blocked-permission|blocked-needs-manual-push|rejected-remote) echo "PUSH_UNBLOCK=$_IMPL_DIR/push-unblock.txt"; cat "$_IMPL_DIR/push-unblock.txt" 2>/dev/null || echo "⚠ push-unblock.txt missing" ;; esac
+case "$PUSH_STATUS" in rejected-remote) echo "PUSH_ERROR:"; cat "$_IMPL_DIR/push-error.txt" 2>/dev/null || echo "⚠ push-error.txt missing" ;; esac
 IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_DEGRADED=""
 [ -z "$INTAKE_DEGRADED" ] || { echo "INTAKE=degraded $INTAKE_DEGRADED"; cat "${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}" 2>/dev/null || echo "⚠ intake gap list missing"; }
 IFS= read -r _C1_QUOTA < "$_IMPL_DIR/c1-quota-blocked.txt" 2>/dev/null && echo "C1 $_C1_QUOTA"
@@ -60,7 +61,14 @@ else
 fi
 ```
 
-**Unblock push — last actionable item.** Applies when `PUSH_STATUS` is `blocked-guard`, `blocked-permission` or `blocked-needs-manual-push`.
+**A push the user approved that did not land — flag it.** Applies when `PUSH_STATUS` is `rejected-remote` or `rejected-non-ff`: the push was asked and approved (Step 3d run approval or the Step 10 question) and then failed, so the PR on GitHub does not carry this run's commits.
+
+- The opening one-line summary names it (`… push failed`), never counting the run as done or leaving it to the `### Push` section alone.
+- `### Push` shows the template's line for the status, with the printed `PUSH_ERROR` line (`rejected-remote`) verbatim.
+- Under the Confidence `**Gaps**`, add `- (-0.NN) approved push did not land — the PR on GitHub does not carry these commits`.
+- Never claim the PR carries the local commits, and never describe a remote 5xx or a refused push as a missing upstream or a guard block.
+
+**Unblock push — last actionable item.** Applies when `PUSH_STATUS` is `blocked-guard`, `blocked-permission`, `blocked-needs-manual-push` or `rejected-remote`.
 
 - The block above `cat`s the `PUSH_UNBLOCK` file; end the report — after `**Next**`, the Challenge Log, Confidence, and every other section — with a `## Unblock push` section that repeats its lines verbatim in a fenced block.
 - The user returns to the bottom of the report and runs exactly those lines; never paraphrase, reorder, or regenerate them.

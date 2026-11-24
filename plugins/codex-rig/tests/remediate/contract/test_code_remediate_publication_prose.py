@@ -31,6 +31,32 @@ def _sentence(text: str, fragment: str) -> str:
     return next(sentence for sentence in text.split(". ") if fragment in sentence)
 
 
+def test_manual_publication_command_is_bound_to_verified_delivery_and_native_consent() -> None:
+    """Require one literal human-run command and keep holds and uncertain destinations out of the fallback."""
+    lines = CONTRACT.read_text(encoding="utf-8").splitlines()
+    section = lines[lines.index("#### Human-run publication command") : lines.index("### Local merge approval")]
+    command = next(line for line in section if line.startswith("git -C "))
+    assert command == (
+        "git -C '<absolute delivery checkout>' push --no-follow-tags --recurse-submodules=no "
+        "'https://github.com/<head owner>/<head repository>.git' '<full delivered OID>:refs/heads/<head branch>'"
+    )
+    assert any("replace every placeholder" in line and "active shell" in line for line in section)
+    assert any("available native gate" in line and "runtime approval" in line for line in section)
+    assert any("Deny" in line and "uncertain" in line and "hold" in line for line in section)
+    assert any("offer to run the push" in line and "prerequisite" in line for line in section)
+    assert "Codex runs the push from the verified checkout" in COMPLETION.read_text(encoding="utf-8")
+
+
+def test_blocked_commands_offer_agent_execution_across_workflows() -> None:
+    """A recoverable command keeps its executor even outside a remediation skill."""
+    contract = CONTRACT.read_text(encoding="utf-8").split("## Actionable Pauses\n", 1)[1].split("\n## ", 1)[0]
+    baseline = (PLUGIN_ROOT / "assets" / "AGENTS.md").read_text(encoding="utf-8")
+    assert 'For a blocked command, apply `shared/native-skill-contract.md` §"Actionable Pauses".' in baseline
+    assert "exact copy-ready command" in contract
+    assert "offer to run it" in contract
+    assert "request that approval now" in contract
+
+
 def test_push_permission_is_read_before_the_offer() -> None:
     """A fork without maintainer edits, or a user without push rights, is never asked a question that cannot push."""
     step = _gate_step(1)
@@ -234,6 +260,7 @@ def test_a_shallow_source_refusal_is_named_and_ends_without_a_retry() -> None:
         "shallow clone",
         "before the execution marker is written",
         "that reason allows no retry and publication ends `skipped`",
+        "Codex handles authorized history recovery",
         "`git fetch --unshallow`",
     ):
         assert fragment in shallow

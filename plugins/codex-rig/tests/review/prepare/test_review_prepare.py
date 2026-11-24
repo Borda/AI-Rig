@@ -116,6 +116,11 @@ def _relocate_review_inputs(template: Path, tmp_path: Path) -> Path:
     for receipt in sorted((target / "review/local-source").glob("*.json")):
         content = receipt.read_text(encoding="utf-8")
         receipt.write_text(content.replace(old_text, new_text), encoding="utf-8", newline="\n")
+    codemap_path = target / "review/codemap-context.json"
+    if codemap_path.is_file():
+        context = json.loads(codemap_path.read_bytes())
+        context["diff_file"] = str(target / "review/diff.patch")
+        write_json(codemap_path, context)
     # Git links a linked worktree to its administrative directory through two absolute "gitdir" files.
     administrative = target / "repository/.git/worktrees"
     for admin in sorted(administrative.iterdir()) if administrative.is_dir() else []:
@@ -220,6 +225,29 @@ def _build_review_inputs(
             capture_output=True,
         ).stdout
         (run / "files.txt").write_bytes(inventory)
+        if source_name.endswith(".py") or second_file:
+            # Exercise the real optional-provider fallback independent of the developer's Codemap installation.
+            empty_path = tmp_path / "empty-provider-path"
+            empty_path.mkdir()
+            env = {key: value for key, value in os.environ.items() if key != "CODEMAP_BIN"}
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(PLUGIN_ROOT / "shared/codemap_adapter.py"),
+                    "context",
+                    "--category",
+                    "review",
+                    "--root",
+                    str(_review_worktree(run)),
+                    "--diff-file",
+                    str(run / "diff.patch"),
+                    "--out",
+                    str(run / "codemap-context.json"),
+                ],
+                env={**env, "PATH": str(empty_path)},
+                check=True,
+                capture_output=True,
+            )
     if untracked:
         inventory = subprocess.run(
             ["git", "-C", str(repository), "ls-files", "--others", "--exclude-standard"],
@@ -460,6 +488,39 @@ def test_challenge_prepare_rejects_unusable_trigger_reasons_before_dispatch(
     assert not (run / "dispatch.json").exists()
     assert not (run / "inspection-plan.json").exists()
     assert not (run / "specialists").exists()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("paged", "batches"),
+    [
+        pytest.param(False, False, id="direct"),
+        pytest.param(True, False, id="paged"),
+        pytest.param(False, True, id="batched"),
+    ],
+)
+def test_python_review_requires_structural_context_before_dispatch(tmp_path: Path, paged: bool, batches: bool) -> None:
+    """Reject missing structural evidence before issuing tasks and resume with a recorded absent provider."""
+    run = _review_inputs(tmp_path)
+    context_path = run / "codemap-context.json"
+    context = context_path.read_bytes()
+    assert json.loads(context)["status"] == "absent"
+    context_path.unlink()
+
+    rejected = _prepare(run, paged=paged, batches=batches)
+
+    assert rejected.returncode != 0
+    assert "codemap-context-missing-for-python-diff" in rejected.stderr
+    assert not (run / "direct-plan.json").exists()
+    assert not (run / "inspection-plan.json").exists()
+    assert not (run / "batch-inventory.json").exists()
+    assert not (run / "dispatch.json").exists()
+    assert not (run / "batch-dispatch.json").exists()
+
+    context_path.write_bytes(context)
+    prepared = _prepare(run, paged=paged, batches=batches)
+    assert prepared.returncode == 0, prepared.stderr
+    assert json.loads(prepared.stdout)["roles"] == 3
 
 
 def test_prepare_rejects_missing_signals_without_rewriting_routing(tmp_path: Path) -> None:

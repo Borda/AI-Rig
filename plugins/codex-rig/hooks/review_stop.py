@@ -14,8 +14,8 @@ of enclosing Git markers to identify the session's checkout. Bind successful dir
 the current session and turn, including run promotion and same-run completion. Creation may precede a bounded literal
 read-only suffix batch; completion requires its own successful direct command. This is an advisory recovery prompt, not
 an authorization or security boundary. Unknown lifecycle shapes, visible controlling stops and already-continued turns
-produce no continuation. Known native continuation and review-entry answers resolve only outstanding questions with
-distinct host receipts and matching decision/scope identities. A successful integrity restart can reactivate an observed
+produce no continuation. Known native answers for continuation, review entry and remediation require an outstanding
+question and a distinct host receipt with matching decision and scope. An integrity restart can reactivate an observed
 inspection hold for its original exclusive slot and owner. Checkout-slot receipts can bind recovery before run
 creation and supersede an earlier observation at the same slot. Recovery ends for the turn on a terminal plain-text
 question before run creation, a user message after any validated slot receipt, or a helper error at a slot the turn
@@ -25,6 +25,7 @@ report storage to the requested PR. The same owner may release its PR claim befo
 A confirmed historical PR report lookup may bind its original checkout. A terminal fork checkout receipt permits
 reporting after the owner releases the matching claim. A collector-classified branch collision calls
 for showing the local and remote differences.
+Custom scope and free-text index answers stay outside recovery because the hook cannot verify the frozen inventory.
 Occurrence accounting does not prove exact outer JavaScript call correlation. Transcript compatibility is deliberately
 narrow because the host format is unstable.
 
@@ -91,16 +92,36 @@ DECISION_WAIT = re.compile(
     re.IGNORECASE,
 )
 REPLY_INSTRUCTION = re.compile(r"(?:^|[?!.]\s+)(?:please\s+)?(?:reply|choose|select|enter)\s+\S", re.IGNORECASE | re.M)
-ACTION_LABEL = r"approve|deny|continue|skip|stop|resume last(?: one)?|start fresh|new review"
-CHOICE_LINE = re.compile(rf"^\s*(?:[-*]|\d+[.)])\s+[`*]*({ACTION_LABEL})\b", re.IGNORECASE | re.M)
+ACTION_LABEL = r"approve(?: always)?|deny|hold|continue|skip|stop|resume last(?: one)?|start fresh|new review"
+CHOICE_LINE = re.compile(
+    rf"^\s*(?:(?:[-*]|\d+[.)])\s+|(?=[`* ]*(?:{ACTION_LABEL})[`* ]*=))[`*]*({ACTION_LABEL})\b", re.IGNORECASE | re.M
+)
 INLINE_CHOICES = re.compile(rf"^[`* ]*(?:{ACTION_LABEL})[`* ]*(?:/|\bor\b)[`* ]*(?:{ACTION_LABEL})\b", re.IGNORECASE)
+SCOPE_QUESTION = "Which findings should I remediate?"
+COMMIT_QUESTION = "How should verified remediation-owned changes be grouped into commits?"
+SCOPE_CHOICES = ["All", "Required", "Suggestions", "Custom selection"]
+COMMIT_MODES = (
+    "all at once",
+    "group findings by topic",
+    "each finding as a separate commit",
+    "decide after verification",
+    "leave unstaged",
+)
+REMEDIATION_LABEL = "|".join(re.escape(label) for label in (*SCOPE_CHOICES, *COMMIT_MODES))
+REMEDIATION_MENU_OPTION = re.compile(
+    rf"(?:^\s*(?:(?:[-*]|\d+[.)])\s+)?|/\s*)[`*]*({REMEDIATION_LABEL})[`*]*(?=\s*(?:$|[/=:—–-]))",
+    re.IGNORECASE | re.M,
+)
 QUESTION = re.compile(r"request_user_input|ask_user|interrupt_agent")
+# A bare ask_user is also used in ordinary prose. Qualified names, invocation and alias syntax remain visible.
+QUESTION_REFERENCE = re.compile(r"request_user_input|interrupt_agent|__ask_user|\bask_user\b(?=\s*(?:[^\w\s]|$))")
 NESTED_QUESTION = re.compile(
     r"\btools\s*\.\s*(\w*(?:request_user_input(?:_async)?|ask_user|interrupt_agent))\b(\s*\()?"
 )
 NATIVE_QUESTION = "mcp__codex_rig_input__ask_user"
 QUESTION_DISCOVERY = re.compile(
-    r"\s*text\(ALL_TOOLS\.filter\(([A-Za-z_]\w*)\s*=>\s*/[A-Za-z_|]+/\.test\(\1\.name\)\)\);?\s*"
+    r"(?:^|(?<=;))\s*text\(ALL_TOOLS\.filter\(([A-Za-z_]\w*)\s*=>\s*/[A-Za-z_|]+/\.test\(\1\.name\)\)\)"
+    r"(?=\s*(?:;|$))"
 )
 # Only literal tool calls with the known output projection can bind a still-running code-mode process.
 QUEUE_START = re.compile(
@@ -114,7 +135,11 @@ QUEUE_STDIN = re.compile(
 )
 # A confirmed finder receipt can bind a historical private report. New reviews use the invoking checkout.
 HISTORICAL_ROOT = re.compile(r"/codex-rig/review-workspaces/[a-f0-9]{64}$")
-PR_URL = re.compile(r"(?i:https://github\.com)/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*/pull/[1-9][0-9]*")
+GITHUB_REPOSITORY = r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*"
+PR_URL = re.compile(rf"(?i:https://github\.com)/{GITHUB_REPOSITORY}/pull/[1-9][0-9]*")
+PR_QUESTION_SUBJECT = re.compile(
+    rf"(?:(?:Review|Remediate) )?PR {GITHUB_REPOSITORY}#[1-9][0-9]*(?: — [^\s][^\r\n]*)?\r?\n\r?\n"
+)
 
 
 WRITER_SLOT = re.compile(r"(?P<common>.+)/codex-review-writers/[a-f0-9]{64}/codex-review-slot$")
@@ -164,7 +189,16 @@ class CheckoutSlotReceipt(NamedTuple):
     scope: str | None
 
 
-def _resolved_question(item: dict) -> bool:
+def _question_body(text: str) -> str | None:
+    """Separate one PR display subject from decision text, preserving older questions verbatim."""
+    prefix = PR_QUESTION_SUBJECT.match(text)
+    if prefix is None:
+        return text
+    body = text[prefix.end() :]
+    return body if body.strip() and not PR_QUESTION_SUBJECT.match(body) else None
+
+
+def _resolved_question(item: dict, remediation_active: bool) -> bool:
     """Recognize a bound workflow continuation answer or the known scope error raised before opening a form."""
     if (
         item.get("server") != "codex-rig-input"
@@ -205,10 +239,21 @@ def _resolved_question(item: dict) -> bool:
     if not isinstance(submitted, dict):
         return False
     answer = submitted.get("answer")
-    if not (
-        (answer == "Continue" and answer in options)
-        or (options == ["Resume last", "Start fresh"] and answer in options)
-    ):
+    if not isinstance(answer, str) or answer not in options:
+        return False
+    known = answer == "Continue" or options == ["Resume last", "Start fresh"]
+    question = arguments.get("question")
+    if isinstance(question, str):
+        question = _question_body(question)
+        if question is None:
+            return False
+    if remediation_active and isinstance(question, str):
+        if question.startswith(SCOPE_QUESTION):
+            known = options == SCOPE_CHOICES and answer != "Custom selection"
+        elif question.startswith(COMMIT_QUESTION):
+            # The recommended choice leads the menu and can change with the project's standing commit grant.
+            known = len(options) == len(COMMIT_MODES) and all(mode in options for mode in COMMIT_MODES)
+    if not known:
         return False
     return submitted == {
         "decision_id": identity,
@@ -548,6 +593,9 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
     message = payload.get("last_assistant_message")
     if not all(isinstance(value, str) and value for value in (session, turn, cwd, message, plugin_root)):
         return {}
+    message = _question_body(message)
+    if message is None:
+        return {}
     delivery_only = DECISION_WAIT.search(message) is not None
     stop_prose = DECISION_WAIT.sub("", message)
     # A typed fallback can end a turn independently of any wait-status wording.
@@ -800,10 +848,10 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                                 caller_interrupts[call_id] = process
                             elif process in queue_processes and match[4] == "session_id":
                                 queue_calls[call_id] = queue_processes[process], process
-                    # Only this known name filter is inert. Other question references may be calls.
-                    if name == "exec" and QUESTION_DISCOVERY.fullmatch(source):
-                        continue
-                    if QUESTION.search(NESTED_QUESTION.sub("", source)):
+                    # Remove just the literal discovery statement so adjacent invocations still count.
+                    if name == "exec" and kind == "custom_tool_call":
+                        source = QUESTION_DISCOVERY.sub("", source)
+                    if QUESTION_REFERENCE.search(NESTED_QUESTION.sub("", source)):
                         return {}
                     for question in NESTED_QUESTION.finditer(source):
                         if question[1] != NATIVE_QUESTION or not question[2] or name != "exec":
@@ -918,7 +966,7 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                 or not isinstance(receipt_id, str)
                 or not receipt_id
                 or receipt_id in question_receipts
-                or not _resolved_question(item)
+                or not _resolved_question(item, owner == "code-remediate" and owner in runs.values())
             ):
                 return {}
             question_receipts.add(receipt_id)
@@ -1316,6 +1364,13 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
     # A later helper invocation cannot transfer ownership of the original workflow.
     if not active or pending_questions:
         return {}
+    if owner == "code-remediate" and (
+        terminal_block.strip("`* ").startswith(
+            (SCOPE_QUESTION, COMMIT_QUESTION, "Which finding indexes should I remediate?")
+        )
+        or len(set(REMEDIATION_MENU_OPTION.findall(terminal_block.lower()))) >= 2
+    ):
+        return {}
     checkout_state = checkout.state if checkout is not None else ""
     if checkout_state == "stop" or (
         checkout_state not in {"peer", "available"} and CONTROLLING_STOP.search(stop_prose)
@@ -1438,8 +1493,17 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
         next_step = (
             "Continue remediation selection, selected fixes, verification and delivery under the user's existing scope. "
             "Only if the parent already has explicit +review authorization, finish its needed nested review and admit "
-            "the exact validated result before returning to remediation. A missing selection needs its normal question."
+            "the exact validated result before returning to remediation. Reuse the recorded scope and commit "
+            "preference. A missing selection needs its normal question."
         )
+        if PR_URL.fullmatch(review_scope):
+            next_step = (
+                "If a required claim was released before source work finished, inspect the retained locators and "
+                "restore ownership with the original invocation ID. Follow checkout scheduling to acquire the in-place "
+                "writer before the PR target. Before dependent writes, verify all required claims, reverify the "
+                "delivery checkout and apply PR State Preflight. For verified delivery needing only the handoff, "
+                "follow intake's report-only recovery. " + next_step
+            )
     else:
         next_step = (
             "Continue the read-only review. Prepare eligible dependencies and continue independent inspection despite "

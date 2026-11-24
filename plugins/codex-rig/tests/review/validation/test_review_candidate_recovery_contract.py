@@ -645,6 +645,7 @@ class TestRemediationRecovery:
                 "git worktree list --porcelain",
                 "git -C <verified-pr-worktree> pull --ff-only",
                 "Do not require fresh GitHub metadata or a preliminary PR-head fetch before this pull",
+                "When the configured upstream is the PR base, skip this pull",
                 "After the pull succeeds, obtain current PR metadata",
                 "If the pull fails or is denied, stop this recovery route and escalate to the user",
                 "a metadata-check approval timeout is not a pull failure",

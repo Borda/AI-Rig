@@ -470,6 +470,13 @@ def validate_plan_source(
         snapshot = plan["source_snapshot"]
         if snapshot.get("repository") != checkout["worktree"] or snapshot.get("revision") != checkout["expected_head"]:
             raise ValueError("review-cleanup-source-snapshot-mismatch")
+        if checkout.get("checkout_mode") == "local-review":
+            return (
+                snapshot,
+                review_routing.read_review_paths(out, "files.txt"),
+                arguments["expected_diff_base"] or checkout["expected_head"],
+                collect_diff.read_git_path_lines(out / "untracked.txt"),
+            )
         # Live PR validation requires a clean detached checkout, hence its actual untracked inventory was empty.
         return snapshot, review_routing.read_review_paths(out, "files.txt"), checkout["diff_base_oid"], set()
     if verified_source is None:
@@ -1193,6 +1200,8 @@ def prepare(
     out = out.resolve()
     if challenge_evidence is not None and (not challenge_only or batches or fixture_discovery):
         raise ValueError("review-challenge-evidence-route-invalid")
+    if not challenge_only and not fixture_discovery:
+        validator._validate_codemap_context(out, {})
     if not paged and not batches and not challenge_only and not (out / "inspection-plan.json").exists():
         return prepare_direct(
             out,

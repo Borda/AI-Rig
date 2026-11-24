@@ -592,6 +592,17 @@ class TestReviewAttribution:
 class TestValidation:
     """Structural and contract checks that reject a handoff before it is rendered."""
 
+    def test_lists_missing_and_unexpected_canonical_fields(self, finalizer: Any) -> None:
+        """Identify an accidentally renamed field and every other omitted field in a direct render."""
+        payload = handoff_payload()
+        payload["sources"] = payload.pop("source_records")
+        del payload["remaining"]
+
+        with pytest.raises(
+            finalizer.HandoffError, match="handoff-fields-mismatch:missing=remaining,source_records:unexpected=sources"
+        ):
+            finalizer.render_handoff(payload)
+
     def test_historical_unavailable_review_keeps_executed_gate_statuses(self, finalizer: Any) -> None:
         """Historical handoffs without `presentation_version` stay readable under their existing contract.
 
@@ -819,6 +830,33 @@ class TestRenderedBinding:
 
 class TestCommitDisposition:
     """The commit checkpoint every remediation handoff must record."""
+
+    def test_publication_action_keeps_finding_ownership(self, finalizer: Any) -> None:
+        """A commit can require a publication decision even when a finding uses the same ID."""
+        row_ids = {"pr-worktree-publication", "pr-worktree-publication-next"}
+        action = finalizer.pr_publication_action(row_ids)
+        assert action["row_id"] == "pr-worktree-publication-next-next"
+        payload = handoff_payload()
+        payload.update(
+            commit_disposition=_commit_disposition("committed"),
+            remaining=[action],
+            next_steps=[action["row_id"]],
+        )
+        finalizer._validate_remaining(payload, row_ids, "standard", owned_actions=True)
+
+        for status in ("pending", "declined"):
+            payload["commit_disposition"]["status"] = status
+            with pytest.raises(finalizer.HandoffError, match="remaining-row-id-unknown"):
+                finalizer._validate_remaining(payload, row_ids, "standard", owned_actions=True)
+
+        payload["commit_disposition"]["status"] = "committed"
+        action["next_action"] = (
+            "Verify the delivered commit and destination, then ask Approve / Deny to push from the worktree."
+        )
+        finalizer._validate_remaining(payload, row_ids, "standard", owned_actions=True)
+        action["next_action"] = "Push without asking."
+        with pytest.raises(finalizer.HandoffError, match="remaining-row-id-unknown"):
+            finalizer._validate_remaining(payload, row_ids, "standard", owned_actions=True)
 
     def test_new_render_requires_a_decision(self, finalizer: Any, tmp_path: Path) -> None:
         """Prevent a remediation summary from silently skipping the commit checkpoint.

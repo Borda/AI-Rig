@@ -34,7 +34,7 @@ _BIN_DIR = _TESTS_DIR.parent / "bin"
 _HOOKS_DIR = _TESTS_DIR.parent / "hooks"
 _APPROVAL_LIB = _HOOKS_DIR / "lib" / "approval-grants.js"
 #: Option labels of the single-use token questions (``git-push``, ``gh-write``).
-_TOKEN_OPTIONS = ("Approve", "Deny")
+_TOKEN_OPTIONS = ("Approve", "Hold")
 
 from _hook_env import _hook_state_base, _session_transcript  # noqa: E402  (sys.path set above)
 

@@ -93,6 +93,115 @@ def _snapshot(worktree: Path) -> tuple[str, str, str]:
 class TestNativeCheckout:
     """Receipts for a PR checked out natively with ``gh pr checkout``."""
 
+    def test_same_repository_branch_tracking_base_retains_verified_source(
+        self, tmp_path: Path, repository_template: RepositoryTemplate
+    ) -> None:
+        """Keep an original native branch through a local commit while its pull upstream remains the target."""
+        worktree = tmp_path / "worktree"
+        remote_ref = "refs/remotes/origin/topic"
+
+        def retain_base_tracking() -> None:
+            """Model a successful native checkout that leaves the existing base upstream in place."""
+            _git(worktree, "config", "branch.topic.merge", "refs/heads/main")
+            _git(worktree, "update-ref", remote_ref, repository_template.head)
+
+        c = _collected(
+            tmp_path, repository_template, cross_repository=False, after_native_checkout=retain_base_tracking
+        )
+        receipt = tmp_path / "branch.json"
+        before = _snapshot(worktree)
+        record = _prepared(c, receipt)
+        assert record["branch"] == record["head_ref"] == "topic"
+        assert record["initial_head"] == c.head
+        assert _snapshot(worktree) == before
+        _git(worktree, "commit", "--allow-empty", "-m", "local correction" + CO_AUTHOR)
+        committed = _git(worktree, "rev-parse", "HEAD")
+        before = _snapshot(worktree)
+        checked = _check(worktree, receipt, committed)
+        assert checked.returncode == 0, checked.stderr
+        assert json.loads(checked.stdout) == record
+        assert _snapshot(worktree) == before
+        # Explicit collector directories also work when the receipt has a separate destination.
+        separate = tmp_path / "collector-evidence"
+        c.pr_dir.rename(separate)
+        custom = _run_helper(
+            worktree, "check", "--receipt", str(receipt), "--expected-head", committed, "--pr-dir", str(separate)
+        )
+        assert custom.returncode == 0, custom.stderr
+        separate.rename(c.pr_dir)
+        # The local commit may advance; the independent PR ref must still prove the collected revision.
+        _git(worktree, "update-ref", remote_ref, committed)
+        before = _snapshot(worktree)
+        assert _check(worktree, receipt, committed).returncode == 2
+        assert _snapshot(worktree) == before
+
+    @pytest.mark.parametrize(
+        "drift",
+        [
+            "missing-source-ref",
+            "symbolic-source-ref",
+            "unrelated-merge",
+            "unselected-remote",
+            "wrong-fetch-url",
+            "wrong-selected-url",
+            "other-advertised-branch",
+            "other-pr",
+            "foreign-worktree",
+            "git-fallback",
+            "unknown-repository",
+        ],
+    )
+    def test_base_upstream_requires_independent_source_proof(
+        self, tmp_path: Path, repository_template: RepositoryTemplate, drift: str
+    ) -> None:
+        """A matching local name and commit cannot replace independent repository, ref and native checkout proof."""
+        c = _collected(tmp_path, repository_template, cross_repository=False, gh_checkout_fails=drift == "git-fallback")
+        if drift == "git-fallback":
+            _track_topic_on_origin(c.worktree)
+        receipt = tmp_path / "branch.json"
+        _prepared(c, receipt)
+        _git(c.worktree, "config", "branch.topic.merge", "refs/heads/main")
+        remote_ref = "refs/remotes/origin/topic"
+        if drift != "missing-source-ref":
+            _git(c.worktree, "update-ref", remote_ref, c.head)
+        if drift == "symbolic-source-ref":
+            _git(c.worktree, "symbolic-ref", remote_ref, "refs/heads/topic")
+        elif drift == "unrelated-merge":
+            _git(c.worktree, "config", "branch.topic.merge", "refs/heads/old-topic")
+        elif drift == "unselected-remote":
+            _git(c.worktree, "remote", "add", "mirror", SAME_REPO_REMOTE)
+            _git(c.worktree, "config", "branch.topic.remote", "mirror")
+        elif drift == "wrong-fetch-url":
+            _git(c.worktree, "remote", "set-url", "--add", "origin", FORK_REMOTE)
+        elif drift == "wrong-selected-url":
+            selected_path = c.pr_dir / "remote-selection.json"
+            selected = json.loads(selected_path.read_bytes())
+            selected["remote_url"] = FORK_REMOTE
+            selected_path.write_text(json.dumps(selected), encoding="utf-8")
+        elif drift == "other-advertised-branch":
+            fetch_path = c.pr_dir / "pr-head-fetch.json"
+            fetch = json.loads(fetch_path.read_bytes())
+            fetch["source_ref"] = "another-topic"
+            fetch_path.write_text(json.dumps(fetch), encoding="utf-8")
+        elif drift in {"other-pr", "foreign-worktree", "unknown-repository"}:
+            checkout_path = c.pr_dir / "local-checkout.json"
+            checkout = json.loads(checkout_path.read_bytes())
+            key, value = {
+                "other-pr": ("pr_number", 18),
+                "foreign-worktree": ("worktree", c.source.as_posix()),
+                "unknown-repository": ("verified_same_repository", False),
+            }[drift]
+            checkout[key] = value
+            checkout_path.write_text(json.dumps(checkout), encoding="utf-8")
+        before = _snapshot(c.worktree)
+        original = receipt.read_bytes()
+        fresh = tmp_path / "second-branch.json"
+        assert _prepare(c, fresh).returncode == 2
+        assert not fresh.exists()
+        assert _check(c.worktree, receipt, c.head).returncode == 2
+        assert receipt.read_bytes() == original
+        assert _snapshot(c.worktree) == before
+
     @pytest.mark.parametrize(
         "branch_available", [pytest.param(True, id="available"), pytest.param(False, id="held-by-invoker")]
     )

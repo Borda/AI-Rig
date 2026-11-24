@@ -4,7 +4,7 @@
 //   Claude must never commit or push autonomously.
 //
 //   COMMIT: prompt-discipline only, no hook enforcement. Claude asks the
-//   `git-approve` question (Approve / Approve always / Deny) before a plain
+//   `git-approve` question (Approve / Approve always / Hold) before a plain
 //   commit unless a skill workflow step, an explicit same-turn request or the
 //   user's recorded grant (<git common dir>/claude-git-approval.json, written
 //   only by approval-guard.js) covers it — a documented rule
@@ -90,7 +90,7 @@
 //
 //   Regular (non-force) push requires a single-use push token, recorded only
 //   from the user's own answer: `Approve` to the `git-push` question (options
-//   `Approve` / `Deny`) makes approval-guard.js write <git common
+//   `Approve` / `Hold`) makes approval-guard.js write <git common
 //   dir>/claude-push-approval.json, scope `push-once`, with the current
 //   branch, HEAD, the approving question's tool_use_id and a 15-minute expiry
 //   (lib/approval-grants.js PUSH TOKEN).
@@ -974,7 +974,7 @@ function pushVerdict(command, data, inspection) {
 const PUSH_ADVICE = {
   ask:
     "Pushes are never auto-armed: each push needs the user's own approval. Invoke one AskUserQuestion with header " +
-    "`git-push` and options exactly `Approve` / `Deny`, whose question shows the branch, the target and the command " +
+    "`git-push` and options exactly `Approve` / `Hold`, whose question shows the branch, the target and the command " +
     "you will run. The user's `Approve` records a single-use token (claude-push-approval.json in the git common dir, " +
     "15 min) for one push of this branch at this HEAD to a configured remote — `git push [-u] [<remote>] " +
     "[HEAD|<branch>][:<branch>]`, remote and branch written out — run from this checkout as the only push in its Bash " +

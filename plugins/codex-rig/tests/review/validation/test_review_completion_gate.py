@@ -54,6 +54,40 @@ def _assessed_pr(tmp_path: Path) -> Path:
     return _write_assessed_pr(tmp_path)
 
 
+@pytest.mark.parametrize(
+    "pr_cell",
+    [
+        pytest.param("[#12 — Fix](https://github.com/acme/widgets/pull/123)", id="number-mismatch"),
+        pytest.param("[#123 — Fix](https://example.org/acme/widgets/pull/123)", id="foreign-host"),
+        pytest.param("[#123 — <i>Fix</i>](https://github.com/acme/widgets/pull/123)", id="unescaped-html"),
+    ],
+)
+def test_review_subject_requires_canonical_pr_link(assessed_pr: Path, pr_cell: str) -> None:
+    """A current review cannot announce an identity that the canonical snapshot could never supply."""
+    handoff = json.loads((assessed_pr / "final-handoff.json").read_text(encoding="utf-8"))
+    handoff["presentation_version"] = 16
+    handoff["tables"][0]["rows"][0]["cells"][1] = pr_cell
+    renderer = _module(FINAL_HANDOFF)
+    with pytest.raises(renderer.HandoffError, match="review-pr-subject-invalid"):
+        renderer.validate_handoff(handoff)
+
+
+def test_review_subject_keeps_title_on_one_line_and_preserves_old_presentation(assessed_pr: Path) -> None:
+    """The PR title moves out of the table once, keeping escaped link text inert and older renderings intact."""
+    handoff = json.loads((assessed_pr / "final-handoff.json").read_text(encoding="utf-8"))
+    url = "https://github.com/acme/widgets/pull/123"
+    handoff["tables"][0]["rows"][0]["cells"][1] = f"[#123 — Fix &#91;tags&#93;\n\x1b injected]({url})"
+    renderer = _module(FINAL_HANDOFF)
+    historical = renderer.render_handoff({**handoff, "presentation_version": 15}, report_root=assessed_pr)
+    current = renderer.render_handoff({**handoff, "presentation_version": 16}, report_root=assessed_pr)
+
+    assert current.splitlines()[0] == "Review PR acme/widgets#123 — Fix &#91;tags&#93; injected"
+    assert current.count("Fix &#91;tags&#93;") == 1
+    assert f"[View pull request]({url})" in current
+    assert historical.startswith("This review")
+    assert "| PR |" in historical
+
+
 def _write_assessed_pr(tmp_path: Path, checkout: Path | None = None, *, run: Path | None = None) -> Path:
     """Use real commits and patch bytes when an integration test supplies its disposable checkout."""
     if run is None:

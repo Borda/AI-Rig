@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Remove a fresh detached PR checkout after successful review completion.
+"""Create owned local review checkouts and remove detached checkouts after successful review completion.
 
 ## Purpose
 
@@ -7,7 +7,8 @@ Reclaim the specific checkout created for a completed review while preserving it
 
 ## Scope
 
-The collector records a unique marker in the new Git worktree administration directory. The owning parent keeps the
+The collector records a unique marker in the new Git worktree administration directory. Local working-tree and path
+mirrors also retain hashes for each original entry so a partial removal can safely resume. The owning parent keeps the
 checkout path and receipt digest before contributed code runs. Reuse, uncertain ownership, incomplete assessment,
 integrity stops and additional files (including ignored files and empty directories) retain the checkout.
 
@@ -28,7 +29,8 @@ the archive and registration, then finalizes an interrupted journal or returns t
 ## Outputs
 
 A JSON disposition goes to stdout. One create-only private ref in the source repository retains a small validation
-blob. The run stores its matching replay receipt before Git removes the worktree without force. A private temporary
+blob. The run stores its matching replay receipt before the helper removes the worktree without force.
+A private temporary
 parent is removed only if empty. Completed-report lookup and remediation do not invoke cleanup.
 
 ## Failure
@@ -38,6 +40,7 @@ removal remains replayable if the final bookkeeping write fails. Integrity error
 
 ## Used by
 
+Local review creation uses --create-local with --repository, --run, --owner and --slot; commit scope also takes --head.
 PR collection records creation; the owning Code Review workflow invokes the terminal cleanup CLI.
 """
 
@@ -59,6 +62,7 @@ from typing import Any
 # Do not load helper bytecode left by a prior process before consulting any ownership evidence.
 sys.pycache_prefix = str(Path(__file__).resolve())
 
+import collect_diff  # noqa: E402
 import review_checkout_slot  # noqa: E402
 import review_worktree_replay  # noqa: E402
 from collect_diff import reject_executable_filters  # noqa: E402
@@ -97,7 +101,24 @@ def _admin_state(admin: Path) -> dict[str, str]:
     return records
 
 
-def filesystem_content_digest(root: Path, *, exclude: frozenset[Path] = frozenset()) -> str:
+def _entry_digest(path: Path, mode: int) -> bytes:
+    """Identify file or symlink bytes, leaving directories to their individually verified children."""
+    if stat.S_ISLNK(mode):
+        return hashlib.sha256(os.fsencode(os.readlink(path))).digest()
+    if stat.S_ISDIR(mode) and path == path.resolve():
+        return b""
+    if not stat.S_ISREG(mode):
+        raise ValueError("unsupported worktree entry")
+    contents = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            contents.update(chunk)
+    return contents.digest()
+
+
+def filesystem_content_digest(
+    root: Path, *, exclude: frozenset[Path] = frozenset(), entries: dict[str, list[Any]] | None = None
+) -> str:
     """Bind original bytes and permission bits, including changes that Git clean filters normalize away."""
     digest = hashlib.sha256()
     pending = [root]
@@ -107,21 +128,13 @@ def filesystem_content_digest(root: Path, *, exclude: frozenset[Path] = frozense
             if path in exclude:
                 continue
             mode = path.lstat().st_mode
-            digest.update(os.fsencode(path.relative_to(root).as_posix()) + b"\0" + str(mode).encode() + b"\0")
-            if stat.S_ISLNK(mode):
-                digest.update(hashlib.sha256(os.fsencode(os.readlink(path))).digest())
-            elif stat.S_ISDIR(mode):
-                if path != path.resolve():
-                    raise ValueError("redirected worktree directory")
+            name = path.relative_to(root).as_posix()
+            content = _entry_digest(path, mode)
+            digest.update(os.fsencode(name) + b"\0" + str(mode).encode() + b"\0" + content)
+            if entries is not None:
+                entries[name] = [mode, content.hex()]
+            if stat.S_ISDIR(mode):
                 pending.append(path)
-            elif stat.S_ISREG(mode):
-                contents = hashlib.sha256()
-                with path.open("rb") as stream:
-                    for chunk in iter(lambda: stream.read(1 << 20), b""):
-                        contents.update(chunk)
-                digest.update(contents.digest())
-            else:
-                raise ValueError("unsupported worktree entry")
     return digest.hexdigest()
 
 
@@ -142,9 +155,16 @@ def recorded_content_digest(checkout: dict[str, Any]) -> str | None:
     return digests[0] if digests else None
 
 
-def record_creation(worktree: Path, common: Path, target: str | None = None) -> dict[str, Any]:
+def record_creation(
+    worktree: Path,
+    common: Path,
+    target: str | None = None,
+    *,
+    local_slot: Path | None = None,
+    capture_entries: bool = False,
+) -> dict[str, Any]:
     """Tie a fresh checkout to its Git registration, so a later worktree at the same address is preserved."""
-    slot = common / review_checkout_slot.SLOT_NAME
+    slot = local_slot or common / review_checkout_slot.SLOT_NAME
     if target:
         scoped = review_checkout_slot._target_slot(common, target)
         if scoped.exists():
@@ -167,12 +187,15 @@ def record_creation(worktree: Path, common: Path, target: str | None = None) -> 
     token = secrets.token_hex(16)
     with (admin / MARKER).open("x", encoding="ascii") as stream:
         stream.write(token)
+    entries = {} if capture_entries else None
+    digest = filesystem_content_digest(worktree, entries=entries)
     return {
         "git_dir": admin.as_posix(),
         "owner": token,
         "slot_owner": invocation,
         "admin_state": _admin_state(admin),
-        "contents_sha256": filesystem_content_digest(worktree),
+        "contents_sha256": digest,
+        **({"entries": entries} if entries is not None else {}),
     }
 
 
@@ -190,6 +213,7 @@ def _git(root: Path, *args: str) -> bytes:
         *args,
     ]
     environment = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+    environment.update(GIT_NO_LAZY_FETCH="1", GIT_ALLOW_PROTOCOL="", GIT_NO_REPLACE_OBJECTS="1")
     return subprocess.run(command, env=environment, capture_output=True, check=True, timeout=60).stdout  # noqa: S603
 
 
@@ -248,8 +272,16 @@ def _require_clean(worktree: Path) -> None:
     flagged = _git(worktree, "ls-files", "-v", "-z").split(b"\0")
     if any(entry and not entry.startswith(b"H ") for entry in flagged):
         raise ValueError("worktree index masks local state")
+    _require_known_entries(worktree)
+
+
+def _require_known_entries(worktree: Path, *, copied: tuple[bytes, ...] = ()) -> None:
+    """Reject content outside the tracked checkout and the collector's verified untracked overlay."""
     indexed = _git(worktree, "ls-files", "--stage", "-z").split(b"\0")
     allowed = {Path(".git")}
+    for name in filter(None, copied):
+        path = Path(os.fsdecode(name))
+        allowed.update((path, *path.parents))
     for entry in filter(None, indexed):
         meta, name = entry.split(b"\t", 1)
         if not meta.startswith((b"100644 ", b"100755 ", b"120000 ")):
@@ -361,12 +393,86 @@ def _terminal_snapshot(args: argparse.Namespace, run: Path, source: Path) -> tup
     return active, args.inspected_sha256
 
 
+def _create_local(args: argparse.Namespace) -> dict[str, Any]:
+    """Create a fresh local mirror or commit checkout and bind its original bytes to the invoking owner."""
+    run = args.run.resolve(strict=True)
+    source = args.repository.resolve(strict=True)
+    if args.slot != review_checkout_slot._checkout_slot(source, local=True) or review_checkout_slot._observe(
+        args.slot
+    ) != ("busy", args.owner):
+        raise ValueError("local review slot is not owned by this invocation")
+    if run == source or source.is_relative_to(run) or args.run.absolute() != run:
+        raise ValueError("local review run overlaps caller or is redirected")
+    path = run / review_worktree_replay.LOCAL_OWNER
+    worktree = run / ("commit-review-worktree" if args.create_local == "commit" else "local-source-review-worktree")
+    if any(not _absent(item) for item in (path, worktree, run / "local-source", run / "local-checkout.json")):
+        raise ValueError("local review source or receipt already exists")
+    if args.create_local == "commit":
+        if not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", args.head or ""):
+            raise ValueError("commit checkout requires the frozen full head")
+        collect_diff._require_ignored_inside_repository(source, worktree)
+        reject_executable_filters(source)
+        _git(source, "worktree", "add", "--detach", str(worktree), args.head)
+        head = args.head
+    else:
+        if args.head is not None:
+            raise ValueError("only a commit checkout accepts a frozen head")
+        mirror = collect_diff.collect_review_worktree(source, run / "local-source")
+        head = mirror["revision"]
+    common = review_checkout_slot._common(args.slot)
+    created = record_creation(worktree, common, local_slot=args.slot, capture_entries=args.create_local != "commit")
+    directory = worktree.stat()
+    created["directory_identity"] = [directory.st_dev, directory.st_ino]
+    checkout = {
+        "schema_version": 1,
+        "checkout_mode": "local-review",
+        "scope": args.create_local,
+        "worktree": worktree.as_posix(),
+        "source_worktree": source.as_posix(),
+        "expected_head": head,
+        "created_worktree": created,
+        "index_sha256": hashlib.sha256(_git(worktree, "ls-files", "-v", "--stage", "-z")).hexdigest(),
+    }
+    with path.open("x", encoding="utf-8", newline="\n") as stream:
+        json.dump(checkout, stream, sort_keys=True)
+        stream.write("\n")
+    return {"worktree": worktree.as_posix(), "checkout_sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+
+def _remove_mirror_files(worktree: Path, created: dict[str, Any]) -> None:
+    """Reclaim only the authenticated original entries, including an interrupted removal's remaining subset."""
+    if _absent(worktree):
+        return
+    directory = worktree.stat()
+    if [directory.st_dev, directory.st_ino] != created["directory_identity"]:
+        raise ValueError("original local mirror directory was replaced")
+    expected = created["entries"]
+    observed: dict[str, list[Any]] = {}
+    filesystem_content_digest(worktree, entries=observed)
+    if any(expected.get(name) != entry for name, entry in observed.items()):
+        raise ValueError("local mirror contains changed or additional entries")
+    # Git refuses to remove this intentionally dirty checkout. Delete each original entry individually.
+    # New children survive rmdir, late edits fail the per-file test, and a retry can verify the remaining subset.
+    # Keep the gitfile until last so an interrupted checkout remains recognizable while its files are present.
+    for name in sorted(observed, key=lambda name: (name != ".git", len(Path(name).parts), name), reverse=True):
+        path = worktree / name
+        mode = path.lstat().st_mode
+        if path.parent.resolve(strict=True) != path.parent or [mode, _entry_digest(path, mode).hex()] != expected[name]:
+            raise ValueError("local mirror entry changed during cleanup")
+        if stat.S_ISDIR(mode):
+            path.rmdir()
+        else:
+            path.unlink()
+    worktree.rmdir()
+
+
 def _cleanup(args: argparse.Namespace) -> dict[str, Any]:
     """Validate the caller's retained identities before allowing one native Git removal."""
     if review_checkout_slot._observe(args.slot) != ("busy", args.owner):
         raise ValueError("review slot is held for inspection or not owned by this run")
     run, worktree = args.run.absolute(), args.worktree
-    path = run / "local-checkout.json"
+    local = os.path.lexists(run / review_worktree_replay.LOCAL_OWNER)
+    path = run / (review_worktree_replay.LOCAL_OWNER if local else "local-checkout.json")
     if run != run.resolve(strict=True) or not _regular(path):
         raise ValueError("redirected review run")
     original = path.read_bytes()
@@ -379,28 +485,46 @@ def _cleanup(args: argparse.Namespace) -> dict[str, Any]:
     if (
         not isinstance(created, dict)
         or created.get("slot_owner") != args.owner
-        or checkout.get("checkout_mode") != "review"
-        or checkout.get("checkout_method") != "git-detached-review-worktree"
-        or checkout.get("local_branch") != ""
-        or checkout.get("status") != "checked-out"
-        or checkout.get("local_head") != head
-        or not re.fullmatch("[0-9a-f]{40}", head)
-        or checkout.get("command") != f"git worktree add --detach {worktree} {head}"
+        or not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", head)
         or checkout.get("worktree") != worktree.as_posix()
         or not worktree.is_absolute()
         or worktree == source
         or source != source.resolve(strict=True)
         or worktree != worktree.resolve()
         or run.is_relative_to(worktree)
-        or run.parent.name != f"pr-{checkout.get('pr_number')}"
-        or not re.fullmatch(r"run-[0-9]{3,}", run.name)
     ):
         raise ValueError("missing fresh collector ownership or mismatched run/worktree")
     exclusive = review_checkout_slot._checkout_slot(source)
     common = exclusive.parent
-    target = checkout.get("pr_url")
-    if args.slot != exclusive and (not target or args.slot != review_checkout_slot._target_slot(common, target)):
-        raise ValueError("source checkout belongs to a different slot")
+    if local:
+        scope = checkout.get("scope")
+        name = "commit-review-worktree" if scope == "commit" else "local-source-review-worktree"
+        if (
+            scope not in {"working-tree", "path", "commit"}
+            or checkout.get("checkout_mode") != "local-review"
+            or worktree != run / name
+            or os.path.lexists(run / "local-checkout.json")
+            or args.slot != review_checkout_slot._checkout_slot(source, local=True)
+            or args.ordinary_execution
+            or args.no_contributor_execution
+            or has_integrity_interval(run)
+        ):
+            raise ValueError("local review checkout, scope or slot mismatch")
+    else:
+        if (
+            checkout.get("checkout_mode") != "review"
+            or checkout.get("checkout_method") != "git-detached-review-worktree"
+            or checkout.get("local_branch") != ""
+            or checkout.get("status") != "checked-out"
+            or checkout.get("local_head") != head
+            or checkout.get("command") != f"git worktree add --detach {worktree} {head}"
+            or run.parent.name != f"pr-{checkout.get('pr_number')}"
+            or not re.fullmatch(r"run-[0-9]{3,}", run.name)
+        ):
+            raise ValueError("missing fresh collector ownership or mismatched run/worktree")
+        target = checkout.get("pr_url")
+        if args.slot != exclusive and (not target or args.slot != review_checkout_slot._target_slot(common, target)):
+            raise ValueError("source checkout belongs to a different slot")
     result_path = run / "result.json"
     if not _regular(result_path) or os.path.lexists(run / "result.candidate.json"):
         raise ValueError("review has pending or missing results")
@@ -409,8 +533,13 @@ def _cleanup(args: argparse.Namespace) -> dict[str, Any]:
     if args.review_result_sha256 is not None and args.review_result_sha256 != result_digest:
         raise ValueError("review result differs from producer digest")
     payload = json.loads(result)
-    if payload.get("status") != "pass" or payload["metadata"].get("review_status") not in {None, "closed"}:
+    assessed = payload["metadata"].get("review_status")
+    if not (payload.get("status") == "pass" and assessed in {None, "closed"}) and not (
+        payload.get("status") == "fail" and assessed is None and payload["metadata"].get("review_decision")
+    ):
         raise ValueError("review did not complete successfully")
+    if local and payload["metadata"].get("scope") != checkout["scope"]:
+        raise ValueError("local review result belongs to a different scope")
     already_absent = _absent(worktree)
     if args.slot != exclusive and (args.integrity_sha256 or has_integrity_interval(run)):
         raise ValueError("protected cleanup requires the repository-wide review slot")
@@ -419,6 +548,7 @@ def _cleanup(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("ordinary execution requires the promoting finalizer's result digest")
     if (
         interval is None
+        and not local
         and not args.no_contributor_execution
         and not args.ordinary_execution
         and checkout.get("verified_same_repository") is not True
@@ -472,24 +602,46 @@ def _cleanup(args: argparse.Namespace) -> dict[str, Any]:
             receipt["schema_version"] = 1
             del receipt["producer_result_verified"]
     journal = run / RECEIPT
-    if already_absent:
+    mirror = local and checkout["scope"] != "commit"
+    retiring = mirror and os.path.lexists(journal) and _regular(journal)
+    if already_absent and (not retiring or _absent(admin)):
         return _finish_removed(args, run, source, common, admin, receipt)
-    _verify_completion(run, args.codex_home)
+    if retiring:
+        # Only the Git witness from the successful live validation can resume a partially deleted overlay.
+        if json.loads(journal.read_bytes()) != receipt:
+            raise ValueError("existing cleanup receipt belongs to different evidence")
+        review_worktree_replay.verify_source_witness(run, source, receipt)
+    else:
+        _verify_completion(run, args.codex_home)
     if (
         admin.parent != common / "worktrees"
         or admin != admin.resolve(strict=True)
         or not _regular(admin / MARKER)
         or (admin / MARKER).read_text(encoding="ascii") != created["owner"]
         or _admin_state(admin) != created.get("admin_state")
-        or Path(os.fsdecode(_git(worktree, "rev-parse", "--absolute-git-dir").rstrip(b"\r\n"))) != admin
-        or Path(os.fsdecode(_git(worktree, "rev-parse", "--show-toplevel").rstrip(b"\r\n"))) != worktree
-        or _git(worktree, "rev-parse", "HEAD").strip().decode() != head
-        or _git(worktree, "branch", "--show-current").strip()
+        or (
+            not retiring
+            and (
+                Path(os.fsdecode(_git(worktree, "rev-parse", "--absolute-git-dir").rstrip(b"\r\n"))) != admin
+                or Path(os.fsdecode(_git(worktree, "rev-parse", "--show-toplevel").rstrip(b"\r\n"))) != worktree
+                or _git(worktree, "rev-parse", "HEAD").strip().decode() != head
+                or _git(worktree, "branch", "--show-current").strip()
+            )
+        )
     ):
         raise ValueError("worktree registration, owner or detached head changed")
 
-    _require_clean(worktree)
-    if filesystem_content_digest(worktree) != created.get("contents_sha256"):
+    if mirror:
+        index = _git(source, f"--git-dir={admin}", "ls-files", "-v", "--stage", "-z")
+        if hashlib.sha256(index).hexdigest() != checkout["index_sha256"]:
+            raise ValueError("local mirror index differs from collection")
+        if not retiring:
+            collect_diff.verify_review_worktree(run / "local-source")
+            untracked = _git(worktree, "ls-files", "--others", "--exclude-standard", "-z")
+            _require_known_entries(worktree, copied=tuple(untracked.split(b"\0")))
+    else:
+        _require_clean(worktree)
+    if not retiring and filesystem_content_digest(worktree) != created.get("contents_sha256"):
         raise ValueError("worktree contents differ from the collected checkout")
     if (
         inputs != review_worktree_replay.verified_source_inputs(run)
@@ -511,12 +663,14 @@ def _cleanup(args: argparse.Namespace) -> dict[str, Any]:
         run, source, receipt, before_publish=keep_retry_identity if args.integrity_sha256 else None
     )
     _write_receipt(run, receipt)
+    if mirror:
+        _remove_mirror_files(worktree, created)
     _git(source, "worktree", "remove", "--", str(worktree))
     if os.path.lexists(worktree) or os.path.lexists(admin):
         raise ValueError("Git did not finish removing the recorded worktree")
     receipt["status"] = "removed"
     _write_receipt(run, receipt)
-    if checkout["worktree_location"] == "temporary-fallback" and worktree.name == "review-worktree":
+    if checkout.get("worktree_location") == "temporary-fallback" and worktree.name == "review-worktree":
         try:
             worktree.parent.rmdir()
         except OSError as error:
@@ -528,10 +682,13 @@ def main(argv: list[str] | None = None) -> int:
     """Run cleanup once and report retention when any prerequisite fails."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--run", type=Path, required=True)
-    parser.add_argument("--worktree", type=Path, required=True)
+    parser.add_argument("--worktree", type=Path)
+    parser.add_argument("--create-local", choices=("working-tree", "path", "commit"))
+    parser.add_argument("--repository", type=Path)
+    parser.add_argument("--head", help="Frozen commit for a new local commit checkout.")
     parser.add_argument("--slot", type=Path, required=True)
     parser.add_argument("--owner", required=True)
-    parser.add_argument("--checkout-sha256", required=True)
+    parser.add_argument("--checkout-sha256")
     parser.add_argument("--review-result-sha256", help="Digest retained from the trusted promoting review finalizer.")
     parser.add_argument(
         "--retry-witness", help="Exact witness OID kept by the parent immediately before an interrupted cleanup."
@@ -549,8 +706,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Parent confirms assessed execution outside a protected interval.",
     )
     args = parser.parse_args(argv)
+    if args.create_local and (not args.repository or args.worktree or args.checkout_sha256):
+        parser.error("local creation requires --repository and an unused run")
+    if not args.create_local and (not args.worktree or not args.checkout_sha256 or args.repository or args.head):
+        parser.error("cleanup requires --worktree and --checkout-sha256")
     try:
-        result = _cleanup(args)
+        result = _create_local(args) if args.create_local else _cleanup(args)
     except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as error:
         detail = (
             error.stderr.decode(errors="replace").strip() if isinstance(error, subprocess.CalledProcessError) else ""

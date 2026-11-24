@@ -52,7 +52,7 @@ echo "$REVIEW_SKILL_DIR" > "${TMPDIR:-/tmp}/review-skill-dir-${CSID}"  # cross-b
 
 # parses --reply/--no-challenge/--worktree/--full/--keep + --fill-gaps/--roles/--candidates values; codemap flags detected-only, re-derived independently below
 # shared flag/--keep parser (C5; also resolve/analyse SKILL.md); --keep-state: no eval, one oss-review-<flag>-${CSID} sentinel per flag + clean-args + keep-items (compaction-contract.md §keep: semantics), owner-safe clear of a crashed run's stale contract (§Lifecycle)
-python "$PLUGIN_ROOT/bin/parse-skill-flags.py" --flags reply,no-challenge,no-codemap,codemap,worktree,full --value-flags fill-gaps,roles,candidates --keep-state oss-review -- "$ARGUMENTS" >/dev/null  # timeout: 5000
+python "$PLUGIN_ROOT/bin/parse-skill-flags.py" --flags reply,no-challenge,no-codemap,codemap,worktree,full,sandbox --value-flags fill-gaps,roles,candidates --keep-state oss-review -- "$ARGUMENTS" >/dev/null  # timeout: 5000
 IFS= read -r FLAG_FULL < "${TMPDIR:-/tmp}/oss-review-full-${CSID}" 2>/dev/null || FLAG_FULL=false
 IFS= read -r REPLY_MODE < "${TMPDIR:-/tmp}/oss-review-reply-${CSID}" 2>/dev/null || REPLY_MODE=false
 IFS= read -r WT_ENABLED < "${TMPDIR:-/tmp}/oss-review-worktree-${CSID}" 2>/dev/null || WT_ENABLED=false

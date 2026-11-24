@@ -105,7 +105,7 @@ Structure in order:
 
    ```python
    # %% [markdown]
-   # *Drafted by [`/oss:release`](https://borda.github.io/AI-Rig/cc_oss/#oss-release), an AI skill in [AI Rig](https://github.com/Borda/AI-Rig).*
+   # *Drafted by [`/oss:release`](https://borda.github.io/AI-Rig/cc_oss/#oss-release), an AI skill in **[AI Rig](https://github.com/Borda/AI-Rig)**.*
    ```
 
    Both URLs are real and verified, so the placeholder rule below does not apply to them. Skip this cell when `printenv AI_RIG_FOOTER`, run bare (no redirect, no `|| true`), prints `off` (any case); empty output with exit 1 means unset, so keep it.

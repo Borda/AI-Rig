@@ -141,16 +141,19 @@ Full rule (trigger, decision table, one-bump-per-commit) in `plugins/CLAUDE.md` 
 
 Serialized artifact schemas are separate version families under the repository Version Continuity rule. For each changed schema, compare the current writer and template with the same family's value in committed `HEAD`; start a new family at 1 and advance a committed family by exactly one. Historical readers and uncommitted intermediate designs do not change that baseline. Record the comparison beside the affected verification.
 
+**Timing**: the checklist runs when the commit is made, not while editing. Step 2's on-disk-vs-HEAD check then only meets a value left on disk by an earlier attempt or another session, which step 5 verifies or resets. During the work the changelog entries live under `## Unreleased` (`plugins/CLAUDE.md` §Versioning); the commit flips that heading to the calculated version.
+
 **Example**: start `0.2.0`, session has both a wording fix and a feature add → commit as `0.3.0` (not `0.2.1`) — `X` absorbs any pending `Y`.
 
 **Pre-bump checklist** — all steps mandatory; skipping any step = violation:
 
 0. **Test-only guard**: run `git diff HEAD --name-only -- plugins/<name>/`, check if every changed path is under `plugins/<name>/tests/`. Yes → **STOP; no bump needed** — test-only commits never touch version.
 1. Read HEAD baseline: `git show HEAD:<plugin-path>/.claude-plugin/plugin.json | grep version`
-2. **Read on-disk version**: `grep version <plugin-path>/.claude-plugin/plugin.json` — on-disk ≠ HEAD → a session bump was already applied → **STOP; do not proceed**
+2. **Read on-disk version**: `grep version <plugin-path>/.claude-plugin/plugin.json` — on-disk ≠ HEAD → an earlier attempt or session already wrote a value; do not stop: calculate steps 3–4 from HEAD anyway, and step 5 requires the on-disk value to equal that result or resets it
 3. Classify the highest-magnitude change in the session (`X` or `Y`)
 4. Calculate the new version from the HEAD baseline: `X` → bump minor, reset patch to `0`; `Y` → bump patch only; max +1 on the bumped component
 5. Write the calculated version — must be exactly HEAD + a single bump; anything higher is a double-bump violation
+6. Confirm the flipped changelog heading equals the version in every shipped manifest; an entry-exempt change has no `## Unreleased` section, so no heading is flipped and the bump alone lands
 
 **One bump per commit — never per session.** Scope is the commit, not the working session. A session producing N commits that each touch a plugin bumps that plugin N times, once per commit. Step 2's on-disk-vs-HEAD check only suppresses a *second* bump for the *same* pending commit — once you commit, HEAD moves, that check clears, and the next commit touching the same plugin bumps again from the new HEAD. Never treat an on-disk bumped value as a new baseline to increment from *within* one commit's staging.
 

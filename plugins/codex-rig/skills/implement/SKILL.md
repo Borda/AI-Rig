@@ -186,7 +186,7 @@ Follow `../../shared/helper-cli-contract.md` and authoritative help. Write with 
 
 Only after all project-relevant gates pass, no critical findings remain, shared confidence policy passes, and result candidate validation passes, perform the completion commit below; otherwise record `commit skipped` in the handoff and do not commit.
 
-Completion commit: run the [Local Git approval grant](../../shared/native-skill-contract.md#local-git-approval-grant) check. `grant …` → commit the verified, owned changes with the shared commit template unless the user asked for no commit, leave unstaged or to wait; `no grant` → an explicit commit request commits after checks, otherwise ask that section's one question (Approve / Approve always / Deny) before committing, and **Deny** leaves the changes unstaged. Record the check result, any answer and the commit disposition in the handoff.
+Completion commit: run the [Local Git approval grant](../../shared/native-skill-contract.md#local-git-approval-grant) check. `grant …` → commit the verified, owned changes with the shared commit template unless the user asked for no commit, leave unstaged or to wait; `no grant` → an explicit commit request commits after checks, otherwise ask that section's one question (Approve / Approve always / Hold) before committing, and **Hold** leaves the changes unstaged. Record the check result, any answer and the commit disposition in the handoff.
 
 Revalidate any result candidate or final handoff changed to record the commit disposition, and promote only a validated candidate.
 

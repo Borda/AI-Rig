@@ -82,8 +82,11 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
+import tempfile
+from contextlib import ExitStack
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import ModuleType
 from typing import Any
@@ -113,14 +116,18 @@ GATE_IDS = ("lint", "format", "types", "tests", "review")
 #: Contract version for the separately derived PR worktree publication metadata.
 PUBLICATION_CONTRACT_VERSION = 1
 #: Run-local artifacts unique to the current publication workflow.
-PUBLICATION_EVIDENCE_FILES = (
-    "worktree-delivery.json",
+PUBLICATION_CHECKPOINT_FILES = (
     "publication.json",
     "publication-offer.json",
     "publication-attempt.json",
     "publication-executed",
     "publication-execution-result.json",
     "publication-readback.json",
+)
+PUBLICATION_EVIDENCE_FILES = (
+    "worktree-delivery.json",
+    worktree_publication.CANDIDATE_VALIDATION_FILE,
+    *PUBLICATION_CHECKPOINT_FILES,
 )
 #: Workplan section headings this helper regenerates; any other section is preserved as written.
 MANAGED_SECTIONS = ("Work Bucket Plan", "Parallel Approval", "Execution Order", "Ungrouped Items")
@@ -292,7 +299,7 @@ def _publication_state(run: Path, delivery: dict[str, Any], *, resume: bool = Fa
     if consumed or offer_path.exists() or offer_path.is_symlink():
         offer, offer_digest = _publication_record(run, offer_path.name)
         if (
-            set(offer) != {"checkout", "branch", "common_dir", "url", "ref", "source_oid", "expected_oid"}
+            not worktree_publication.valid_offer_fields(offer)
             or offer["checkout"] != delivery["checkout"]
             or offer["branch"] != delivery["branch"]
             or offer["common_dir"] != delivery["common_dir"]
@@ -306,8 +313,8 @@ def _publication_state(run: Path, delivery: dict[str, Any], *, resume: bool = Fa
         ):
             raise DeriveError("publication-offer-invalid")
     denied_answer = None
-    if run.name == worktree_publication.REQUEST_DIRECTORY and (
-        consumed or os.path.lexists(run / "publication-answer.json")
+    if (run.name == worktree_publication.REQUEST_DIRECTORY and consumed) or os.path.lexists(
+        run / "publication-answer.json"
     ):
         answer, answer_digest = _publication_record(run, "publication-answer.json")
         if (
@@ -384,7 +391,7 @@ def _publication_state(run: Path, delivery: dict[str, Any], *, resume: bool = Fa
 
     record, digest = _publication_record(run, evidence)
     allowed = {"verified", "failed", "unverified"} if started else {"skipped"} if consumed else {"declined", "skipped"}
-    if run.name == worktree_publication.REQUEST_DIRECTORY and not consumed:
+    if not consumed and (denied_answer or run.name == worktree_publication.REQUEST_DIRECTORY):
         allowed = {"declined"} if denied_answer else {"skipped"}
     if (
         set(record) != {"schema_version", "status", "reason", "observed_oid"}
@@ -459,6 +466,90 @@ def publication_artifact(publication: dict[str, Any], artifact_path: str) -> dic
     """Produce the machine-derived handoff link for the retained publication evidence."""
     evidence_path = PurePosixPath(artifact_path.replace("\\", "/")).with_name(publication["evidence"])
     return {"label": f"PR publication: {publication['status']}", "path": str(evidence_path)}
+
+
+def _committed_linked_delivery(run: Path, handoff: dict[str, Any]) -> bool:
+    """Locate a new PR commit at the recorded linked checkout before routing to the full publication gate."""
+    disposition = handoff.get("commit_disposition")
+    if not isinstance(disposition, dict) or disposition.get("status") != "committed":
+        return False
+    # Delivery evidence by itself is expected before the first question. Every offer, decision, or child
+    # checkpoint belongs to an existing publication lifecycle, even when interrupted or unreadable.
+    if any(
+        os.path.lexists(run / name)
+        for name in (*PUBLICATION_CHECKPOINT_FILES, "publication-answer.json", worktree_publication.REQUEST_DIRECTORY)
+    ):
+        return False
+    try:
+        delivery = worktree_publication.handoff_destination(run, handoff["artifacts"])
+        checkout = Path(delivery["checkout"])
+        if not checkout.is_absolute():
+            return False
+        routing = _load(run / "pr" / "pr-routing.json")
+        expected = routing["head_oid"]
+        if not _full_oid(expected) or not _full_oid(delivery["head"]) or expected == delivery["head"]:
+            return False
+        worktree_publication._verify_requested_pr(
+            run,
+            {
+                "expected_oid": expected,
+                "branch": delivery["branch"],
+                "ref": f"refs/heads/{routing['head_ref']}",
+                "url": f"https://github.com/{routing['head_repo']}.git",
+            },
+        )
+        # Only local plumbing, with repository overrides, lazy remote fetching and replace objects disabled.
+        env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+        env.update(GIT_NO_LAZY_FETCH="1", GIT_ALLOW_PROTOCOL="", GIT_NO_REPLACE_OBJECTS="1")
+        root, own, common, head, ref = worktree_publication._git(
+            "git",
+            checkout,
+            env,
+            "rev-parse",
+            "--path-format=absolute",
+            "--show-toplevel",
+            "--absolute-git-dir",
+            "--git-common-dir",
+            "HEAD",
+            "--symbolic-full-name",
+            "HEAD",
+        ).splitlines()
+        if (
+            Path(root).resolve(strict=True) != checkout.resolve(strict=True)
+            or Path(own).resolve(strict=True) == Path(common).resolve(strict=True)
+            or Path(delivery.get("common_dir", common)).resolve(strict=True) != Path(common).resolve(strict=True)
+            or head != delivery["head"]
+            or ref != f"refs/heads/{delivery['branch']}"
+        ):
+            return False
+        worktree_publication._git("git", checkout, env, "merge-base", "--is-ancestor", expected, head)
+    except (DeriveError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError):
+        # Missing or stale local evidence grants no automatic offer. Successful local report delivery remains valid.
+        return False
+    return True
+
+
+def _publication_next_step(run: Path, handoff: dict[str, Any], *, offer_eligible: bool) -> str | None:
+    """Derive the workflow's next action while preserving an exact caller contract and authored follow-ups."""
+    standard = handoff.get("branch") == "standard"
+    row_ids = {row["id"] for table in handoff["tables"] for row in table["rows"]} if standard else set()
+    action = final_handoff.pr_publication_action(row_ids)
+    if standard:
+        if not isinstance(handoff.get("remaining"), list) or not isinstance(handoff.get("next_steps"), list):
+            return None  # Preserve the handoff validator's diagnostic.
+        # A prior candidate may carry either wording. Recompute only its generated step after a decision or opt-out.
+        remaining = [item for item in handoff["remaining"] if not final_handoff.is_pr_publication_action(item, action)]
+        if len(remaining) != len(handoff["remaining"]):
+            handoff["remaining"] = remaining
+            handoff["next_steps"] = [row_id for row_id in handoff["next_steps"] if row_id != action["row_id"]]
+    if not offer_eligible or not _committed_linked_delivery(run, handoff):
+        return None
+    if standard:
+        handoff["remaining"].append(action)
+        handoff["next_steps"].append(action["row_id"])
+        if len(handoff["next_steps"]) > 1 and handoff["action_policy"] == "best-way-forward":
+            handoff["action_policy"] = "owned"
+    return action["next_action"]
 
 
 def _append_text(path: Path, text: str) -> None:
@@ -1235,6 +1326,58 @@ def _result_artifact(existing: list[Any], artifact_path: str) -> list[dict[str, 
     return [{"label": "Result", "path": artifact_path}, *kept]
 
 
+def _prepare_handoff_draft(
+    skill: str, metadata: dict[str, Any], handoff: dict[str, Any], errors: list[dict[str, str]]
+) -> None:
+    """Bind the invocation's identity and report incomplete assessed-review inputs before touching run evidence."""
+
+    def issue(field: str, hint: str) -> None:
+        problem = "invalid" if field in handoff else "missing"
+        errors.append({"step": "derive", "code": f"handoff-draft-{problem}:{field}", "hint": hint})
+
+    if handoff.setdefault("skill", skill) != skill:
+        issue("skill", f"The draft must match the selected --skill {skill}.")
+    version = handoff.setdefault("schema_version", final_handoff.SCHEMA_VERSION)
+    if type(version) is not int or version != final_handoff.SCHEMA_VERSION:
+        issue("schema_version", f"Use handoff schema {final_handoff.SCHEMA_VERSION} or omit the field.")
+    if handoff.get("branch") != "caller-contract":
+        handoff.setdefault("caller_contract", None)
+    if skill == "code-review":
+        status = metadata.get("review_status")
+        expected_branch = status if status in ("closed", "unavailable") else "assessed"
+        if handoff.get("branch") != expected_branch:
+            issue("branch", f"The recorded review status requires the {expected_branch} branch.")
+    if skill == "code-review" and handoff.get("branch") == "assessed":
+        decision = metadata.get("review_decision")
+        # An explicitly undecidable judgment is valid; an absent judgment cannot supply an outcome.
+        recommendation = decision.get("recommendation", "") if isinstance(decision, dict) else ""
+        if recommendation in (*final_handoff.REVIEW_RECOMMENDATIONS, None):
+            expected = {"title": "Review Decision", "summary": f"Recommendation: {recommendation}."}
+            if handoff.setdefault("outcome", expected) != expected:
+                issue("outcome", f"Use the recorded review decision {json.dumps(expected)} or omit this derived field.")
+        elif not isinstance(handoff.get("outcome"), dict):
+            issue(
+                "outcome", "Record the source judgment in metadata.review_decision and its canonical handoff outcome."
+            )
+        snapshot = "PR Snapshot" if metadata.get("scope") == "pr" else "Review Snapshot"
+        tables = handoff.get("tables")
+        if (
+            not isinstance(tables, list)
+            or any(not isinstance(table, dict) for table in tables)
+            or not any(table.get("heading") == snapshot for table in tables)
+        ):
+            issue("tables", f"Provide the evidence-backed {snapshot} with its authored rows and source bindings.")
+        for field, hint in (
+            ("source_records", "Bind each table row to its retained evidence using stable source IDs."),
+            ("remaining", "List each outstanding item with its owner and next action. Use [] when none remain."),
+            ("next_steps", "List the chosen next-step row IDs in order. Use [] when no actions remain."),
+        ):
+            if not isinstance(handoff.get(field), list):
+                issue(field, hint)
+    if errors:
+        raise DeriveError("handoff-draft-invalid")
+
+
 def _resolution_table(metadata: dict[str, Any], draft: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Generate remediation rows, detail notes, and source records from the resolution items."""
     rows, details, records = [], [], []
@@ -1287,6 +1430,19 @@ def _resolution_table(metadata: dict[str, Any], draft: dict[str, Any]) -> tuple[
     return table, records
 
 
+def _restore_authored_notes(path: Path, installed: bytes, prior: bytes | None, identity: os.stat_result) -> None:
+    """Undo only this failed attempt's notes installation, preserving a concurrent writer's replacement."""
+    try:
+        if not os.path.samestat(path.lstat(), identity) or path.read_bytes() != installed:
+            return
+        if prior is None:
+            path.unlink()
+        else:
+            path.write_bytes(prior)
+    except FileNotFoundError:
+        pass
+
+
 def derive_handoff(
     run: Path,
     metadata: dict[str, Any],
@@ -1295,6 +1451,8 @@ def derive_handoff(
     artifact_path: str,
     *,
     measured_code_safety: dict[str, Any] | None = None,
+    review_notes: Path | None = None,
+    notes_rollback: ExitStack | None = None,
 ) -> dict[str, Any]:
     """Fill every handoff field that copies gates, confidence metadata, artifacts, or resolution items."""
     gates = _load(run / "gates.json")
@@ -1310,12 +1468,19 @@ def derive_handoff(
     if handoff.get("skill") != "code-remediate":
         handoff["artifacts"] = _result_artifact(handoff.get("artifacts") or [], artifact_path)
         if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed":
+            if metadata.get("scope") == "pr":
+                handoff["presentation_version"] = 16
             commit = final_handoff.review_commit_sha(run, metadata.get("scope"))
             metadata["reviewed_commit_sha"] = commit
             value = f"{commit} (working-tree base)" if metadata["scope"] in {"working-tree", "path"} else commit
             for table in handoff.get("tables", []):
                 if table.get("heading") in {"PR Snapshot", "Review Snapshot"}:
-                    rows = table["rows"]
+                    rows = table.get("rows")
+                    if not isinstance(rows, list) or not all(
+                        isinstance(row, dict) and isinstance(row.get("cells"), list) and len(row["cells"]) == 2
+                        for row in rows
+                    ):
+                        raise DeriveError(f"review-snapshot-rows-invalid:{table['heading']}")
                     existing = [row for row in rows if row["cells"][0] == "Commit"]
                     if len(existing) > 1:
                         raise DeriveError("review-commit-row-duplicate")
@@ -1323,6 +1488,10 @@ def derive_handoff(
                         existing[0]["cells"][1] = value
                     else:
                         source_id = "reviewed-commit"
+                        if any(
+                            not isinstance(record, dict) or not record.get("id") for record in handoff["source_records"]
+                        ):
+                            raise DeriveError("source-record-id-missing")
                         if any(record["id"] == source_id for record in handoff["source_records"]):
                             raise DeriveError("review-commit-source-id-conflict")
                         receipt = (
@@ -1341,42 +1510,86 @@ def derive_handoff(
                             {"id": "reviewed-commit", "cells": ["Commit", value], "source_ids": [source_id]},
                         )
                         handoff["source_records"].append({"id": source_id, "evidence": receipt})
-                        handoff["source_coverage"]["source_records_total"] += 1
-                        handoff["source_coverage"]["represented_source_records_total"] += 1
+                        if "source_coverage" in handoff:
+                            coverage = handoff["source_coverage"]
+                            for key in ("source_records_total", "represented_source_records_total"):
+                                if not isinstance(coverage, dict) or type(coverage.get(key)) is not int:
+                                    raise DeriveError(f"source-coverage-count-invalid:{key}")
+                                coverage[key] += 1
                 if table.get("heading") == "Review Findings and Merge Blocks":
                     table.update(layout="concise", overview_only=True)
             report = run / "review-notes.md"
-            if report.is_symlink() or not report.is_file():
+            if report.is_symlink() or (report.exists() and not report.is_file()):
                 raise DeriveError("review-commit-report-invalid")
+            authored = report
+            if review_notes is not None:
+                authored = run / review_notes if review_notes.parent == Path(".") else review_notes
+                if authored.parent.resolve() != run.resolve():
+                    raise DeriveError("review-notes-input-outside-run")
+                authored = run / authored.name
+                if authored.is_symlink() or not authored.is_file():
+                    raise DeriveError("review-notes-input-invalid")
+            elif not report.is_file():
+                raise DeriveError("review-notes-missing:review-notes.md")
             try:
-                notes = report.read_text(encoding="utf-8")
+                original = authored.read_bytes()
+                notes = original.decode("utf-8")
+                if authored != report:
+                    validator = _load_module(
+                        "codex_rig_review_validator", "../skills/code-review/validate_artifacts.py"
+                    )
+                    validator._require_notes_sections(authored, text=notes)
                 source = f"## Reviewed Source\n\nReviewed commit: {value}"
-                if "## Reviewed Source" not in notes:
-                    # Append without rewriting authored bytes through universal-newline translation.
-                    with report.open("ab") as stream:
-                        stream.write(("\n\n" + source + "\n").encode("utf-8"))
-                elif source not in notes:
+                source_sections = re.findall(
+                    r"(?ms)^##[ \t]+Reviewed Source(?:[ \t]+#+)?[ \t]*\r?$(.*?)(?=^#{1,2}[ \t]+|\Z)", notes
+                )
+                commit_lines = [line for line in notes.splitlines() if line.startswith("Reviewed commit:")]
+                if not source_sections and not commit_lines:
+                    notes += "\n\n" + source + "\n"
+                elif (
+                    len(source_sections) != 1
+                    or commit_lines != [f"Reviewed commit: {value}"]
+                    or commit_lines[0] not in source_sections[0].splitlines()
+                ):
                     raise DeriveError("review-commit-report-mismatch")
                 if measured_code_safety is not None:
                     field = f"Code safety: {measured_code_safety['assessment']}"
                     if measured_code_safety.get("reason"):
                         field += "\nReason: " + measured_code_safety["reason"]
                     # Preserve the original report bytes, including CRLF, when refreshing the derived field on retry.
-                    content = report.read_bytes()
-                    marker = rb"(?m)^## Code Safety\r?\n\r?\n(Code safety: (?:safe|unsafe|unassessed)(?:\r?\nReason: [^\r\n]+)?)\r?$"
-                    matches = list(re.finditer(marker, content))
+                    marker = r"(?m)^## Code Safety\r?\n\r?\n(Code safety: (?:safe|unsafe|unassessed)(?:\r?\nReason: [^\r\n]+)?)\r?$"
+                    matches = list(re.finditer(marker, notes))
                     if "## Code Safety" not in notes.splitlines():
-                        with report.open("ab") as stream:
-                            stream.write(("\n## Code Safety\n\n" + field + "\n").encode("utf-8"))
+                        notes += "\n## Code Safety\n\n" + field + "\n"
                     elif len(matches) == 1 and notes.splitlines().count("## Code Safety") == 1:
                         start, end = matches[0].span(1)
-                        if content[start:end] != field.encode():
-                            report.write_bytes(content[:start] + field.encode() + content[end:])
+                        notes = notes[:start] + field + notes[end:]
                     else:
                         raise DeriveError("review-code-safety-report-mismatch")
+                notes = _derive_review_actions(notes, metadata, handoff)
+                # Validate normalized presentation rules and source identities before replacing either retained view.
+                final_handoff._validate_handoff(handoff, derive_source_counts=True)
+                encoded = notes.encode("utf-8")
+                if authored != report:
+                    prior = report.read_bytes() if report.exists() else None
+                    if prior is not None and prior not in (original, encoded):
+                        raise DeriveError("review-notes-input-conflict")
+                    if prior is None:
+                        with report.open("xb") as output:
+                            output.write(encoded)
+                    elif prior != encoded:
+                        # Replacing the directory entry also preserves a draft hard-linked to the canonical report.
+                        with tempfile.TemporaryDirectory(dir=run) as staging:
+                            temporary = Path(staging) / report.name
+                            temporary.write_bytes(encoded)
+                            temporary.chmod(report.stat().st_mode)
+                            temporary.replace(report)
+                    if notes_rollback is not None and prior != encoded:
+                        notes_rollback.callback(_restore_authored_notes, report, encoded, prior, report.lstat())
+                elif encoded != original:
+                    report.write_bytes(encoded)
             except (OSError, UnicodeError) as error:
                 raise DeriveError("review-commit-report-unavailable") from error
-            _derive_review_actions(run, metadata, handoff)
         return handoff
     handoff["artifacts"] = _artifacts(run, handoff.get("artifacts") or [], artifact_path)
     if handoff.get("branch") == "caller-contract":
@@ -1399,17 +1612,22 @@ def derive_handoff(
     return handoff
 
 
-def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[str, Any]) -> None:
+def _derive_review_actions(notes: str, metadata: dict[str, Any], handoff: dict[str, Any]) -> str:
     """Synchronize canonical action content without inventing status, identity, or source bindings.
 
     Only an unambiguous existing notes table is rewritten. Historical incomplete records remain with their reader;
     ambiguous identities or contradictory authored statuses need a decision before any presentation is changed.
     """
     records = metadata.get("review_findings", []) + metadata.get("operational_blockers", [])
+    heading = "Review Findings and Merge Blocks"
+    sections = list(re.finditer(rf"^## {heading}[^\S\r\n]*\r?$\n(?P<body>.*?)(?=^## |\Z)", notes, re.M | re.S))
+    if metadata.get("finding_records_version") == 2 and not records:
+        if any(len(re.findall(r"(?m)^[ \t]*\|[^\r\n]*\|[ \t]*\r?$", section["body"])) > 2 for section in sections):
+            raise DeriveError("review-action-identity-coverage-mismatch")
     if metadata.get("finding_records_version") not in {1, 2} or not records:
-        return
+        return notes
     if any(not isinstance(record, dict) or "required_change" not in record for record in records):
-        return
+        return notes
     by_id = {}
     for record in records:
         identity = record.get("id")
@@ -1426,7 +1644,6 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
         ):
             raise DeriveError(f"review-action-record-invalid:{identity}:evidence")
         by_id[identity] = record
-    heading = "Review Findings and Merge Blocks"
     tables = [table for table in handoff.get("tables", []) if table.get("heading") == heading]
     if len(tables) != 1:
         raise DeriveError("review-action-table-required")
@@ -1439,12 +1656,6 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
         identities.append(cells[0])
     if len(identities) != len(by_id) or set(identities) != set(by_id):
         raise DeriveError("review-action-identity-coverage-mismatch")
-    notes_path = run / "review-notes.md"
-    try:
-        notes = notes_path.read_bytes().decode("utf-8")
-    except (OSError, UnicodeError) as error:
-        raise DeriveError("review-action-notes-unreadable") from error
-    sections = list(re.finditer(rf"^## {heading}[^\S\r\n]*\r?$\n(?P<body>.*?)(?=^## |\Z)", notes, re.M | re.S))
     if len(sections) != 1:
         raise DeriveError("review-action-notes-section-ambiguous")
     section = sections[0]
@@ -1461,36 +1672,34 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
         raise DeriveError("review-action-notes-identity-mismatch")
     if any(len(cells) not in {4, 5} or authored_status.get(cells[0]) != cells[-1] for cells in parsed[2:]):
         raise DeriveError("review-action-notes-status-mismatch")
-    if handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12, 13, 14, 15}:
+    if handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12, 13, 14, 15, 16}:
         detail_sections = list(re.finditer(r"(?ms)^## Finding Details[^\S\r\n]*\r?\n.*?(?=^## |\Z)", notes))
         if len(detail_sections) > 1:
             raise DeriveError("review-report-details-ambiguous")
         if detail_sections and "<!-- codex-rig:review-details -->" not in detail_sections[0][0]:
             raise DeriveError("review-report-details-unowned")
-    _write_review_action_views(
-        notes_path,
+    notes = _render_review_action_views(
         notes,
         section.start("body") + block.start(),
         section.start("body") + block.end(),
         rows,
         by_id,
         metadata.get("reviewer_assessments") is not None,
-        role_only=handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12, 13, 14, 15},
+        role_only=handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
     )
-    if handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12, 13, 14, 15}:
+    if handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12, 13, 14, 15, 16}:
         # Keep authored prose byte-exact while owning one deterministic, complete detail section.
-        notes = notes_path.read_bytes().decode("utf-8")
         details = final_handoff.render_review_report_details(handoff) + "\n"
         sections = list(re.finditer(r"(?ms)^## Finding Details[^\S\r\n]*\r?\n.*?(?=^## |\Z)", notes))
         if sections:
             start, end = sections[0].span()
         else:
             start = end = notes.index(f"## {heading}")
-        notes_path.write_bytes((notes[:start] + details + notes[end:]).encode("utf-8"))
+        notes = notes[:start] + details + notes[end:]
+    return notes
 
 
-def _write_review_action_views(
-    path: Path,
+def _render_review_action_views(
     notes: str,
     start: int,
     end: int,
@@ -1499,7 +1708,7 @@ def _write_review_action_views(
     attributed: bool,
     *,
     role_only: bool = False,
-) -> None:
+) -> str:
     """Render both action views from checked identities while preserving surrounding notes bytes."""
     columns = ["Finding / area", *(["Author"] if attributed else []), "Required change", "Evidence", "Status"]
     rendered = ["| " + " | ".join(columns) + " |", "| " + " | ".join("---" for _ in columns) + " |"]
@@ -1524,7 +1733,7 @@ def _write_review_action_views(
             + " | ".join(cell.replace("\r\n", "\n").replace("\n", "<br>").replace("|", r"\|") for cell in cells)
             + " |"
         )
-    path.write_bytes((notes[:start] + "\n".join(rendered) + "\n" + notes[end:]).encode("utf-8"))
+    return notes[:start] + "\n".join(rendered) + "\n" + notes[end:]
 
 
 def _result_arguments(
@@ -1580,18 +1789,51 @@ def _step(summary: dict[str, Any], name: str, action: Any) -> bool:
         code = str(error.code) if isinstance(error, SystemExit) else str(error)
         summary["steps"].append({"step": name, "status": "fail", "code": code})
         summary["status"] = "fail"
+        if name == "derive" and isinstance(error, final_handoff.HandoffError):
+            summary["errors"].append(
+                {
+                    "step": name,
+                    "code": code,
+                    "hint": f"Correct {code} in the handoff draft using its retained evidence.",
+                }
+            )
         summary["next_action"]["action"] = (
-            f"Inspect the retained {name} diagnostic and canonical inputs; repair only evidenced bookkeeping drift. "
+            "Repair the listed handoff draft fields from the retained review evidence, then rerun finalization."
+            if code == "handoff-draft-invalid"
+            else f"Inspect the retained {name} diagnostic and canonical inputs; repair only evidenced bookkeeping drift. "
             "Keep source/provenance failures open, preserve rejected evidence, and continue independently authorized "
             "source-verified work. Do not retry unchanged or invent missing evidence."
         )
+        notes_hint = {
+            "review-notes-missing": "Write the authored report to review-notes.md or pass its run-local file with --review-notes.",
+            "review-notes-input-invalid": "Pass an existing regular authored notes file directly inside this run.",
+            "review-notes-input-outside-run": "Place the authored notes directly inside this run and pass that filename.",
+            "review-notes-input-conflict": "Reconcile the authored text with the existing review-notes.md, then finalize from that canonical report.",
+            "missing-review-note-sections": "Complete the listed report sections from retained evidence, then rerun with the authored notes.",
+        }.get(code.partition(":")[0])
+        if name == "derive" and notes_hint:
+            summary["errors"].append({"step": name, "code": code, "hint": notes_hint})
+            summary["next_action"]["action"] = notes_hint
         return False
     summary["steps"].append({"step": name, "status": "pass", **({"detail": detail} if detail else {})})
     return True
 
 
 def finalize(arguments: argparse.Namespace) -> dict[str, Any]:
+    """Keep separately authored review notes recoverable until the result passes both validators."""
+    with ExitStack() as notes_rollback:
+        summary = _finalize(arguments, notes_rollback)
+        if summary["status"] == "pass":
+            notes_rollback.pop_all()
+        return summary
+
+
+def _finalize(arguments: argparse.Namespace, notes_rollback: ExitStack) -> dict[str, Any]:
     """Derive, render, write, validate, and optionally promote one remediation result candidate."""
+    if arguments.no_publication_offer and (not arguments.promote or arguments.skill != "code-remediate"):
+        raise DeriveError("--no-publication-offer requires code-remediate final promotion (--promote)")
+    if arguments.review_notes is not None and arguments.skill != "code-review":
+        raise DeriveError("--review-notes requires an assessed code-review")
     run = arguments.run.resolve()
     summary: dict[str, Any] = {"status": "pass", "steps": [], "errors": [], "not_run": [], "promoted": False}
     summary["next_action"] = {
@@ -1602,20 +1844,21 @@ def finalize(arguments: argparse.Namespace) -> dict[str, Any]:
     state: dict[str, Any] = {}
 
     def derive() -> dict[str, str]:
+        if arguments.skill == "code-remediate" and not arguments.promote:
+            # Only the completed validation below can attest the candidate produced by this attempt.
+            try:
+                (run / worktree_publication.CANDIDATE_VALIDATION_FILE).unlink(missing_ok=True)
+            except OSError as error:
+                raise DeriveError("publication-candidate-validation-cannot-refresh") from error
         draft = _load(arguments.metadata)
+        handoff_draft = _load(arguments.handoff)
+        if arguments.review_notes is not None and handoff_draft.get("branch") != "assessed":
+            raise DeriveError("--review-notes requires an assessed code-review")
+        _prepare_handoff_draft(arguments.skill, draft, handoff_draft, summary["errors"])
         publication = None
         if arguments.skill == "code-remediate":
             draft.pop("worktree_publication", None)
             draft.pop("worktree_publication_contract_version", None)
-            locator = run / "remediation-worktree.json"
-            if (
-                arguments.promote
-                and arguments.status == "pass"
-                and (locator.exists() or locator.is_symlink() or publication_evidence_present(run))
-            ):
-                if draft.get("mode") != "pr":
-                    raise DeriveError("publication-requires-pr-mode")
-                publication = publication_binding(run)
             # Fold the final events into both machine and displayed counts before validating either consumer.
             render_ledger(run, draft)
         if arguments.skill == "code-review" and (
@@ -1633,15 +1876,47 @@ def finalize(arguments: argparse.Namespace) -> dict[str, Any]:
         handoff = derive_handoff(
             run,
             state["metadata"],
-            _load(arguments.handoff),
+            handoff_draft,
             arguments.confidence,
             arguments.artifact_path,
             measured_code_safety=draft.get("code_safety") if arguments.skill == "code-review" else None,
+            review_notes=arguments.review_notes,
+            notes_rollback=notes_rollback,
         )
+        if arguments.skill == "code-remediate":
+            # Eligibility depends on final selected outcomes folded from the ledger, even when hosted CI keeps
+            # the overall result failed. The artifact validator still checks the complete result before any offer.
+            eligible = worktree_publication.publication_result_eligible(
+                run,
+                {
+                    "status": arguments.status,
+                    "checks_failed": [item for item in arguments.extra_checks_failed.split(",") if item.strip()],
+                    "findings": {"critical": arguments.critical},
+                    "metadata": draft,
+                },
+            )
+            if (
+                arguments.promote
+                and eligible
+                and (
+                    arguments.status == "pass" or (handoff.get("commit_disposition") or {}).get("status") == "committed"
+                )
+                and (os.path.lexists(run / "remediation-worktree.json") or publication_evidence_present(run))
+            ):
+                if draft.get("mode") != "pr":
+                    raise DeriveError("publication-requires-pr-mode")
+                publication = publication_binding(run)
+            state["publication_action"] = _publication_next_step(
+                run,
+                handoff,
+                offer_eligible=eligible and draft.get("mode") == "pr" and not arguments.no_publication_offer,
+            )
         if publication is not None:
             draft["worktree_publication_contract_version"] = PUBLICATION_CONTRACT_VERSION
             draft["worktree_publication"] = publication
             handoff["artifacts"].append(publication_artifact(publication, arguments.artifact_path))
+        if arguments.skill == "code-review" and handoff.get("branch") != "assessed":
+            final_handoff.validate_handoff(handoff)
         _write(run / "final-handoff.json", handoff)
         state["handoff"] = handoff
         return {"handoff": str(run / "final-handoff.json")}
@@ -1655,6 +1930,16 @@ def finalize(arguments: argparse.Namespace) -> dict[str, Any]:
         encoded = _write(run / "result.candidate.json", payload)
         if arguments.skill == "code-review":
             state["review_result_sha256"] = hashlib.sha256(encoded).hexdigest()
+        if (
+            not arguments.promote
+            and state.get("publication_action")
+            and os.path.lexists(run / "remediation-worktree.json")
+        ):
+            state["publication_candidate_validation"] = {
+                "schema_version": 1,
+                "candidate_sha256": hashlib.sha256(encoded).hexdigest(),
+                "gates_sha256": hashlib.sha256((run / "gates.json").read_bytes()).hexdigest(),
+            }
         return {"candidate": str(run / "result.candidate.json"), "status": payload["status"]}
 
     steps = (
@@ -1688,9 +1973,46 @@ def finalize(arguments: argparse.Namespace) -> dict[str, Any]:
         if arguments.promote
         else "Promote the validated candidate before delivery."
     )
+    if report["status"] == "pass" and "publication_candidate_validation" in state:
+        # Exclusive creation prevents a concurrent writer or symlink from redirecting the attestation.
+        try:
+            with (run / worktree_publication.CANDIDATE_VALIDATION_FILE).open(
+                "x", encoding="utf-8", newline="\n"
+            ) as stream:
+                json.dump(state["publication_candidate_validation"], stream, indent=2)
+                stream.write("\n")
+        except OSError:
+            summary["status"] = "fail"
+            summary["steps"].append(
+                {
+                    "step": "attest-publication-candidate",
+                    "status": "fail",
+                    "code": "publication-candidate-validation-unavailable",
+                }
+            )
+            summary["next_action"]["action"] = (
+                "Inspect the candidate-validation receipt and checkout slot before retrying validation."
+            )
+            return summary
+    if report["status"] == "pass" and state.get("publication_action"):
+        prefix = (
+            "Deliver the validated final.md, then enter the post-delivery PR worktree publication gate."
+            if arguments.promote
+            else "Show the validated local handover, then enter the initial PR worktree publication gate before promotion."
+            if os.path.lexists(run / "remediation-worktree.json")
+            else "Promote the validated candidate, show the final handover, then enter the PR worktree publication gate."
+        )
+        summary["next_action"]["action"] = f"{prefix} {state['publication_action']}"
     if report["status"] == "pass" and arguments.promote:
         os.replace(run / "result.candidate.json", run / "result.json")
         summary["promoted"] = True
+        if arguments.skill == "code-remediate":
+            summary.update(_manual_push_command(run, state["metadata"].get("worktree_publication", {})))
+            if "manual_push_command" in summary:
+                summary["next_action"]["action"] = (
+                    "Deliver the validated local handoff. In Recommendations / next steps, show manual_push_command "
+                    "as an optional later push from the retained worktree."
+                )
         summary["result"] = str(run / "result.json")
         if arguments.skill == "code-review":
             summary["review_result_sha256"] = state["review_result_sha256"]
@@ -1748,6 +2070,37 @@ def _ledger_action(arguments: argparse.Namespace) -> dict[str, Any]:
     return {"status": "pass", "action_items": str(path)}
 
 
+def _manual_push_command(run: Path, publication: dict[str, Any]) -> dict[str, str]:
+    """Show the user how to publish a declined, verified offer without reopening its approval."""
+    if publication.get("status") != "declined":
+        return {}
+    try:
+        answer, _ = _publication_record(run, "publication-answer.json")
+        if answer.get("answer") != "Deny":
+            return {}
+        offer = worktree_publication.read_offer(run, answer["offer_digest"])
+        original = run.parent if run.name == worktree_publication.REQUEST_DIRECTORY else run
+        worktree_publication._verify_requested_pr(original, offer)
+    except (DeriveError, ValueError, OSError, KeyError, TypeError):
+        # A historical disposition alone cannot identify an executable command.
+        return {}
+    argv = [
+        "git",
+        "-C",
+        offer["checkout"],
+        "push",
+        "--no-follow-tags",
+        "--recurse-submodules=no",
+        offer["url"],
+        f"{offer['source_oid']}:{offer['ref']}",
+    ]
+    if os.name == "nt":
+        # PowerShell accepts typographic as well as ASCII single quotes as delimiters.
+        args = ["'" + re.sub(r"['\u2018\u2019\u201a\u201b]", lambda m: "'" + m[0], arg) + "'" for arg in argv[1:]]
+        return {"manual_push_command": "git " + " ".join(args)}
+    return {"manual_push_command": shlex.join(argv)}
+
+
 def _publication_resume_action(arguments: argparse.Namespace) -> dict[str, Any]:
     """Read retained evidence for report-only resume without contacting GitHub or writing run state."""
     if arguments.run.is_symlink():
@@ -1774,7 +2127,7 @@ def _publication_resume_action(arguments: argparse.Namespace) -> dict[str, Any]:
             original_result, digest = _publication_record(run.parent, "result.json")
             metadata = original_result.get("metadata")
             if (
-                original_result.get("status") != "pass"
+                not worktree_publication.publication_result_eligible(run.parent, original_result)
                 or not isinstance(metadata, dict)
                 or metadata.get("mode") != "pr"
             ):
@@ -1803,6 +2156,7 @@ def _publication_resume_action(arguments: argparse.Namespace) -> dict[str, Any]:
         "delivery": delivery,
         "evidence": publication["evidence"],
         "publication": publication,
+        **_manual_push_command(run, publication),
         "needs_terminal_record": publication["status"] in {"skipped", "verified", "declined"}
         and publication["evidence"] != "publication.json",
     }
@@ -2038,7 +2392,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     metadata.add_argument("--out", type=Path, required=True, help="Path for the merged metadata JSON.")
     workplan.add_argument("--ineligibility-reason", help="Concrete reason a parallel plan is not dispatched.")
-    final.add_argument("--handoff", type=Path, required=True, help="Agent-authored final-handoff draft JSON.")
+    final.add_argument(
+        "--handoff",
+        type=Path,
+        required=True,
+        help="Handoff draft JSON. For assessed reviews, author branch, snapshot and action tables, source_records, "
+        "remaining and next_steps. The selected skill, schema, source coverage counts and recorded outcome can be omitted.",
+    )
     final.add_argument(
         "--skill",
         choices=("code-remediate", "code-review", "audit"),
@@ -2052,6 +2412,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Code Review parent's explicit assessment, independently checked against the source.",
     )
     final.add_argument("--parent-thread-id", help="code-review: parent thread for review-validator provenance.")
+    final.add_argument(
+        "--review-notes",
+        type=Path,
+        metavar="FILE",
+        help="Assessed code-review: use a complete authored notes file directly inside --run. A bare filename is "
+        "relative to --run. Finalization validates the report headings and handoff before creating review-notes.md.",
+    )
     final.add_argument("--codex-home", type=Path, help="code-review: actual Codex home for the review validator.")
     final.add_argument("--status", required=True, choices=("pass", "fail", "timeout"))
     final.add_argument("--confidence", type=float, required=True)
@@ -2061,6 +2428,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         final.add_argument(f"--{severity}", type=int, default=0)
     final.add_argument("--recommendations", default="", help="JSON list or ||-separated recommendations.")
     final.add_argument("--follow-up", default="", help="JSON list or ||-separated follow-up items.")
+    final.add_argument(
+        "--no-publication-offer",
+        action="store_true",
+        help="At final promotion only, finish a report-only continuation or honor an explicit opt-out for the delivered commit.",
+    )
     final.add_argument("--promote", action="store_true", help="Rename a passing candidate to result.json.")
     return parser.parse_args(argv)
 

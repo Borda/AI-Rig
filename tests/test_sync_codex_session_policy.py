@@ -760,7 +760,7 @@ class TestExtraPolicy:
             pytest.param(
                 "the next paragraph approves no local Git operation, and a plain commit that no documented workflow "
                 "step defines and no explicit same-turn user request covers takes the per-operation question "
-                "(Approve, Approve always or Deny)",
+                "(Approve, Approve always or Hold)",
                 id="grant-absent-question",
             ),
             pytest.param(
@@ -801,7 +801,10 @@ class TestExtraPolicy:
                 extra_policy,
                 (
                     "The gate is excluded from recipe preapproval.",
-                    "For a successful PR-mode Code Remediate delivery",
+                    "For a verified PR-mode Code Remediate delivery",
+                    "only outstanding findings are hosted CI checks requiring publication of this commit",
+                    "automatic offer for a verified commit the run created in a linked PR worktree",
+                    "including an existing worktree selected without --worktree",
                     "user request to publish the verified delivered commit",
                     "whether made before, during or after remediation",
                     "publication-request",
@@ -925,7 +928,7 @@ class TestCodexReadme:
         [
             pytest.param("Local Git approval is interactive.", id="interactive"),
             pytest.param(
-                "**Approve** runs that operation only, **Deny** skips it and leaves changes as they are, and "
+                "**Approve** runs that operation only, **Hold** skips this commit and leaves the changes unstaged, and "
                 "**Approve always** also records the grant file `codex-git-approval.json` in the repository's common "
                 "Git directory",
                 id="three-answers",

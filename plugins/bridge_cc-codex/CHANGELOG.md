@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.17.0
+
+- `/bridge:review --partition-file PATH` reviews a Git range, the working tree against a commit, or a file list too large for one call without the caller naming scopes, so an oversized review no longer ends as `output-limit` with no verdict:
+  - The file holds a shared `task` and either an `A..B` range, an `against` commit whose working-tree changes (new untracked files included) are reviewed, or a `paths` list of whole files; commits are resolved at the start of every wave, and `.temp` and the partition file itself never count as changes. `bin/bridge_split.py` packs the files by lines into groups of at most `--max-weight` lines (default 600), `--max-files` files (default 40) and one child task's byte limit.
+  - Each call runs one `--wave` of three groups, with the wall time and Bash timeout of a single review; the number of waves is not capped. The envelope adds `wave`, `waves`, `groups`, `partition_digest` and `skipped`.
+  - A wave before the last reports `partial` and names the groups still to run. Later waves must pass `--expect-digest` and are refused before any child starts when the commits, working-tree diff or file contents changed.
+  - Each group's task lists its files as JSON data. A file larger than the budget gets a group of its own and can still stop at the output limit, shown in its row; binary (also untracked) and `-diff` files, submodules, untracked files that are not regular files, files git hides (assume-unchanged, skip-worktree) and unusable names are listed in `skipped` and reviewed by no group.
+
 ## 0.16.0
 
 - Workspace consent:

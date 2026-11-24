@@ -18,6 +18,8 @@ Usage:
     code_safety_status.py write --unscanned --head SHA --out FILE
     code_safety_status.py check --status FILE --scan SCAN_JSON --head SHA
     code_safety_status.py check-scan --scan SCAN_JSON --head SHA
+    code_safety_status.py check-rebind --scan SCAN_JSON --head SHA --prior APPROVAL_JSON
+    code_safety_status.py check-sandbox --scan SCAN_JSON --head SHA
 
 ``write`` prints nothing and exits 0; it exits 2 when ``--scan`` is unreadable or not a guard report.
 
@@ -31,6 +33,14 @@ head (40 or 64 lowercase hex digits) equals ``--head``. ``check`` needs all of:
 - the review's risk level and the fresh scan's risk level are both ``none``;
 - the fresh scan's ``isolation_available`` is exactly ``sandbox`` (this host can start the sandbox); anything else,
   ``host-sandbox`` and an absent value included, gives ``ask reason=no-sandbox``.
+
+``check-rebind`` renews a stale resolve approval without a question: the fresh scan of the commit is clean (risk
+``none``, named scope, head equal), this host has a usable sandbox, and the approval set aside as stale was a ``run``
+scope approval at the ``auto`` or ``sandbox`` tier without the ``unsandboxed`` decision, so the renewal never
+loosens what the user chose. ``check-sandbox`` serves ``--sandbox``: it prints ``sandbox`` when the scan's risk level
+is ``none`` or ``borderline`` and the host has a sandbox, ``deny reason=no-sandbox`` when it has none, and
+``ask reason=<token>`` for anything else, so an evidence-bearing level (``high``, ``likely-malicious``) is still
+decided by the user.
 
 Consumers: ``skills/resolve/modes/exec-approval.md`` (PR-code decision) and
 ``skills/review/templates/agent-prompts.md`` (PR-code decision and report-directory sidecar).
@@ -64,6 +74,10 @@ SCHEMA = 1
 CLEAN_LEVEL = "none"
 #: The guard's probed tier for a host that can start its sandbox; resolve keeps every run in it.
 SANDBOX_TIER = "sandbox"
+#: Approval tiers that run in the sandbox whenever the host has one; ``env-only`` never does.
+RENEWABLE_TIERS = frozenset({"auto", SANDBOX_TIER})
+#: Risk levels at which ``--sandbox`` skips the question; every other level carries evidence the user decides on.
+SANDBOX_SKIP_LEVELS = frozenset({CLEAN_LEVEL, "borderline"})
 #: A full commit id: SHA-1 (40) or SHA-256 (64) lowercase hex; an abbreviation never counts as the same head.
 _FULL_SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 
@@ -77,6 +91,16 @@ def _load(path: str) -> dict[str, object] | None:
     """Return the JSON object at ``path``, or ``None`` when it is missing, unreadable or not an object."""
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, RecursionError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _load_approval(path: str) -> dict[str, object] | None:
+    """Return the options record of a guard approval file (hash line, then one JSON line), or ``None`` when unusable."""
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+        data = json.loads(lines[1]) if len(lines) > 1 else None
     except (OSError, RecursionError, ValueError):
         return None
     return data if isinstance(data, dict) else None
@@ -120,6 +144,67 @@ def decide_scan(scan: dict[str, object] | None, head: str) -> str:
     if _risk_level(scan) != CLEAN_LEVEL:
         return "ask reason=findings-present"
     return "auto"
+
+
+def _scan_problem(scan: dict[str, object] | None, head: str) -> str | None:
+    """Return the reason a scan cannot support any skip (unusable scope or another head), or ``None``."""
+    if scan is None or not isinstance(scan.get("head"), str) or not _scan_scope_ok(scan):
+        return "no-fresh-scan"
+    if not _is_full_sha(head) or scan["head"] != head:
+        return "head-mismatch"
+    return None
+
+
+def decide_rebind(prior: dict[str, object] | None, scan: dict[str, object] | None, head: str) -> str:
+    """Return ``auto`` when a stale sandbox approval may be renewed at ``head`` without a question, else ``ask``.
+
+    Example:
+        >>> clean = {"head": "a" * 40, "risk": {"level": "none"}, "whole_tree": True, "digest": "d"}
+        >>> old = {"scope": "run", "tier": "auto", "decision": []}
+        >>> decide_rebind(old, {**clean, "isolation_available": "sandbox"}, "a" * 40)
+        'auto'
+        >>> decide_rebind({**old, "decision": ["unsandboxed"]}, {**clean, "isolation_available": "sandbox"}, "a" * 40)
+        'ask reason=no-sandbox-approval-to-renew'
+    """
+    problem = _scan_problem(scan, head)
+    if problem or scan is None:
+        return f"ask reason={problem}"
+    if _risk_level(scan) != CLEAN_LEVEL:
+        return "ask reason=findings-present"
+    if scan.get("isolation_available") != SANDBOX_TIER:
+        return "ask reason=no-sandbox"
+    decisions = prior.get("decision") if prior else None
+    if (
+        prior is None
+        or prior.get("scope") != "run"
+        or prior.get("tier") not in RENEWABLE_TIERS
+        or not isinstance(decisions, list)
+        or "unsandboxed" in decisions
+    ):
+        return "ask reason=no-sandbox-approval-to-renew"
+    return "auto"
+
+
+def decide_sandbox(scan: dict[str, object] | None, head: str) -> str:
+    """Return the ``--sandbox`` decision: ``sandbox``, ``deny reason=no-sandbox`` or ``ask reason=<token>``.
+
+    Example:
+        >>> scan = {"head": "a" * 40, "risk": {"level": "borderline"}, "whole_tree": True, "digest": "d"}
+        >>> decide_sandbox({**scan, "isolation_available": "sandbox"}, "a" * 40)
+        'sandbox'
+        >>> decide_sandbox({**scan, "isolation_available": "env-only"}, "a" * 40)
+        'deny reason=no-sandbox'
+        >>> decide_sandbox({**scan, "risk": {"level": "high"}, "isolation_available": "sandbox"}, "a" * 40)
+        'ask reason=findings-need-decision'
+    """
+    problem = _scan_problem(scan, head)
+    if problem or scan is None:
+        return f"ask reason={problem}"
+    if scan.get("isolation_available") != SANDBOX_TIER:
+        return "deny reason=no-sandbox"  # the flag forbids any run outside the sandbox, whatever the findings say
+    if _risk_level(scan) not in SANDBOX_SKIP_LEVELS:
+        return "ask reason=findings-need-decision"
+    return "sandbox"
 
 
 def decide(status: dict[str, object] | None, scan: dict[str, object] | None, head: str) -> str:
@@ -177,7 +262,9 @@ def main(argv: list[str] | None = None) -> int:
     write.add_argument("--out", required=True)
     check = sub.add_parser("check")
     check.add_argument("--status", required=True)
-    for parser_mode in (check, sub.add_parser("check-scan")):
+    rebind = sub.add_parser("check-rebind")
+    rebind.add_argument("--prior", required=True)
+    for parser_mode in (check, rebind, sub.add_parser("check-scan"), sub.add_parser("check-sandbox")):
         parser_mode.add_argument("--scan", required=True)
         parser_mode.add_argument("--head", required=True)
     args = parser.parse_args(argv)
@@ -188,6 +275,10 @@ def main(argv: list[str] | None = None) -> int:
     scan = _load(args.scan)
     if args.mode == "check-scan":
         print(decide_scan(scan, args.head))
+    elif args.mode == "check-sandbox":
+        print(decide_sandbox(scan, args.head))
+    elif args.mode == "check-rebind":
+        print(decide_rebind(_load_approval(args.prior), scan, args.head))
     else:
         print(decide(_load(args.status), scan, args.head))
     return 0

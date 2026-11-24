@@ -56,7 +56,9 @@ def decide() -> list[str]:
 
 def _auto_bind(decide: list[str]) -> str:
     """Return the only Decide bind line: the automatic approval for a clean scan."""
-    (bind,) = [line for line in decide if "untrusted_code_guard.py" in line and " bind " in line]
+    (bind,) = [
+        line for line in decide if "untrusted_code_guard.py" in line and " bind " in line and "--tier" not in line
+    ]
     return bind
 
 
@@ -143,9 +145,7 @@ def _answer_block(word: str) -> list[str]:
         for block in _bash_blocks("modes/exec-approval.md")
         if not any("exec-plan.txt" in line for line in block)
         and any(f'echo {word} > "$IMPL_DIR/pr-code-decision.txt"' in line for line in block)
-        and not (
-            word == "deny" and any("git rev-parse" in line for line in block)
-        )  # the stale block's final path denies too
+        and not any("git rev-parse" in line for line in block)  # the stale block denies and renews too
     ]
     assert len(found) == 1, f"expected one {word} block, found {len(found)}"
     return found[0]
@@ -332,3 +332,14 @@ def test_the_prelude_check_fence_blocks_on_a_missing_impl_dir() -> None:
     """An empty ``IMPL_DIR`` stops the check fence instead of reading and writing at the filesystem root."""
     fence = _block_with(_bash_blocks("modes/dispatch-prelude.md"), "hooks=ask-kept")
     assert _index(fence, "IMPL_DIR sentinel missing") < _index(fence, "exec-plan.txt")
+
+
+def test_the_sandbox_flag_binds_the_sandbox_tier_only_after_the_exact_check_word(decide: list[str]) -> None:
+    """Under ``--sandbox`` the bind names ``--tier sandbox`` and sits inside the ``sandbox`` arm of the check, never
+    beside an unsandboxed decision."""
+    (bind,) = [line for line in decide if " bind " in line and "--tier sandbox" in line]
+    assert "unsandboxed" not in bind
+    arm = _index(decide, "sandbox)")
+    assert "check-sandbox" in "\n".join(decide[:arm])
+    assert arm < decide.index(bind)
+    assert 'case "$_CHECK" in' in "\n".join(decide[:arm])

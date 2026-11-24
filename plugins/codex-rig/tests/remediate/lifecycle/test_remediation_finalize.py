@@ -12,6 +12,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from _git_fixtures import git_text
 from _modules import load_module
 from _platform import FILE_SYMLINKS_AVAILABLE
 from _skill_text import read_with_references
@@ -470,8 +471,97 @@ def _write_worktree_delivery(run: Path, *, recovery: bool = False) -> dict[str, 
     return delivery
 
 
+def _prepare_committed_delivery(run: Path, argv: list[str], repo: Path, kind: str) -> None:
+    """Bind a real primary or linked checkout and its remediation commit to the retained PR and delivery evidence."""
+    branch = "fix/guard"
+    git_text(repo, "init", "--initial-branch", branch if kind == "primary" else "main")
+    git_text(repo, "config", "user.email", "fixture@example.invalid")
+    git_text(repo, "config", "user.name", "Fixture")
+    git_text(repo, "config", "core.hooksPath", str(repo / "unused-hooks"))
+    git_text(repo, "commit", "--allow-empty", "-m", "Original PR head")
+    original = git_text(repo, "rev-parse", "HEAD")
+    checkout = repo
+    if kind != "primary":
+        checkout = repo.parent / (repo.name + " linked")
+        git_text(repo, "worktree", "add", "-b", branch, str(checkout))
+    if kind != "no-commit":
+        git_text(checkout, "commit", "--allow-empty", "-m", "Verified remediation")
+    head = git_text(checkout, "rev-parse", "HEAD")
+    common = (repo / ".git").as_posix()
+    pr_dir = run / "pr"
+    _write_pr_run_artifacts(pr_dir, original, original)
+    routing = json.loads((pr_dir / "pr-routing.json").read_bytes())
+    routing.update(head_repo="acme/widgets", head_ref=branch, base_ref="main")
+    (pr_dir / "pr-routing.json").write_text(json.dumps(routing), encoding="utf-8")
+    pr = json.loads((pr_dir / "pr.json").read_bytes())
+    pr.update(
+        number=routing["pr_number"], url=routing["pr_url"], headRepository=routing["head_repo"], headRefName=branch
+    )
+    pr["baseRefName"] = routing["base_ref"]
+    (pr_dir / "pr.json").write_text(json.dumps(pr), encoding="utf-8")
+    target_path = pr_dir / "target-branch.json"
+    target = json.loads(target_path.read_bytes())
+    target["base_ref"] = routing["base_ref"]
+    target_path.write_text(json.dumps(target), encoding="utf-8")
+    receipt = {
+        "schema_version": 2,
+        "status": "prepared",
+        "pr_url": routing["pr_url"],
+        "pr_number": routing["pr_number"],
+        "initial_head": original,
+        "worktree": checkout.as_posix(),
+        "branch": branch,
+        "head_ref": branch,
+        "head_repository": routing["head_repo"],
+    }
+    (run / "remediation-branch.json").write_text(json.dumps(receipt), encoding="utf-8")
+    (run / "worktree-delivery.md").write_text(
+        f"Status: delivered\nLocal destination: {checkout.as_posix()}, branch {branch}, head {head}\n"
+        f"Git common directory: {common}\n",
+        encoding="utf-8",
+    )
+    if kind in {"explicit", "explicit-skipped"}:
+        locator = {
+            "schema_version": 1,
+            "worktree": checkout.as_posix(),
+            "git_common_dir": common,
+            "initial_head": original,
+            "invoking_checkout": repo.as_posix(),
+        }
+        (run / "remediation-worktree.json").write_text(json.dumps(locator), encoding="utf-8")
+        delivery = {
+            "schema_version": 1,
+            "status": "worktree-only",
+            "checkout": checkout.as_posix(),
+            "branch": branch,
+            "head": head,
+            "common_dir": common,
+        }
+        (run / "worktree-delivery.json").write_text(json.dumps(delivery), encoding="utf-8")
+    if kind == "explicit-skipped":
+        terminal = {
+            "schema_version": 1,
+            "status": "skipped",
+            "reason": "User opted out for this commit.",
+            "observed_oid": None,
+        }
+        (run / "publication.json").write_text(json.dumps(terminal), encoding="utf-8")
+    if kind == "requested":
+        (run / "publication-request").mkdir()
+    if kind == "drifted":
+        git_text(checkout, "commit", "--allow-empty", "-m", "Later unrelated commit")
+    (run / "commit-plan.md").write_text(f"Delivered {original}..{head}", encoding="utf-8")
+    handoff_path = Path(argv[argv.index("--handoff") + 1])
+    handoff = json.loads(handoff_path.read_bytes())
+    handoff["commit_disposition"] = {"status": "committed", "reason": f"Delivered {head}", "evidence": "commit-plan.md"}
+    handoff["artifacts"] = [{"label": "Delivery checkout", "path": checkout.as_posix()}]
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+
+
 def _write_publication_offer(run: Path, delivery: dict[str, object], *, ref: str = "refs/heads/fix/guard") -> str:
     """Record the offer scoped to the delivered commit and exact remote tip."""
+    receipt = run / "remediation-branch.json"
+    initial = json.loads(receipt.read_bytes())["initial_head"] if receipt.is_file() else "a" * 40
     offer = {
         "checkout": delivery["checkout"],
         "branch": delivery["branch"],
@@ -479,7 +569,7 @@ def _write_publication_offer(run: Path, delivery: dict[str, object], *, ref: str
         "url": "https://github.com/acme/widgets.git",
         "ref": ref,
         "source_oid": delivery["head"],
-        "expected_oid": "a" * 40,
+        "expected_oid": initial,
     }
     body = json.dumps(offer).encode()
     (run / "publication-offer.json").write_bytes(body)
@@ -492,6 +582,28 @@ def _write_publication_attempt(run: Path, delivery: dict[str, object], *, ref: s
     attempt = {"offer_digest": digest, "decision_id": f"pr-worktree-publication-{digest}", "answer": "Approve"}
     (run / "publication-attempt.json").write_text(json.dumps(attempt), encoding="utf-8")
     return digest
+
+
+def test_initial_resume_preserves_the_recorded_denial(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Recover the original offer's Deny before its terminal record was written, without a transport attempt."""
+    delivery = _write_worktree_delivery(tmp_path)
+    digest = _write_publication_offer(tmp_path, delivery)
+    (tmp_path / "publication-answer.json").write_text(
+        json.dumps(
+            {
+                "offer_digest": digest,
+                "decision_id": f"pr-worktree-publication-{digest}",
+                "answer": "Deny",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert HELPER.main(["publication-resume", "--run", str(tmp_path)]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["publication"]["status"] == "declined"
+    assert summary["evidence"] == "publication-answer.json"
+    assert summary["needs_terminal_record"] is True
+    assert not (tmp_path / "publication-executed").exists()
 
 
 def test_resumes_local_delivery_without_a_publication_approval(
@@ -510,6 +622,28 @@ def test_resumes_local_delivery_without_a_publication_approval(
     assert result["evidence"] == "publication-offer.json"
     assert result["needs_terminal_record"] is True
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
+
+
+@pytest.mark.parametrize(
+    ("after_push", "status"),
+    [
+        pytest.param("remove-owned-worktree", "pass", id="disclosed-worktree-removal"),
+        pytest.param("remove-other-worktree", "fail", id="unknown-action"),
+    ],
+)
+def test_resume_recognizes_only_the_disclosed_cleanup_action(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], after_push: str, status: str
+) -> None:
+    """Read interrupted cleanup offers offline while rejecting unrecognized post-push actions."""
+    delivery = _write_worktree_delivery(tmp_path)
+    _write_publication_offer(tmp_path, delivery)
+    offer_path = tmp_path / "publication-offer.json"
+    offer = json.loads(offer_path.read_bytes())
+    offer["after_push"] = after_push
+    offer_path.write_text(json.dumps(offer), encoding="utf-8")
+
+    assert HELPER.main(["publication-resume", "--run", str(tmp_path)]) == int(status == "fail")
+    assert json.loads(capsys.readouterr().out)["status"] == status
 
 
 def test_recovery_without_worktree_option_cannot_resume_publication_with_conflicting_locator(
@@ -591,39 +725,6 @@ def test_the_execution_marker_decides_what_an_approved_attempt_can_report(
         assert result["needs_terminal_record"] is False
     else:
         assert result["code"] == "publication-disposition-invalid"
-
-
-def test_a_push_with_an_unknown_outcome_resolves_unverified_never_verified(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """The publication helper's ``unverified`` report is a terminal status the finalizer accepts once the marker exists.
-
-    The remote may hold the update, but without the transport's ``pushed`` receipt a ``verified`` claim is refused.
-    """
-    publication = load_module("codex_rig_worktree_publication", PLUGIN_ROOT / "shared" / "worktree_publication.py")
-    delivery = _write_worktree_delivery(tmp_path)
-    digest = _write_publication_attempt(tmp_path, delivery)
-
-    def start_then_lose_the_verdict(*args: object, **kwargs: object) -> None:
-        """Spend the attempt, then end like a push that timed out after sending."""
-        kwargs["before_push"]()
-        raise ValueError("publication-push-outcome-unknown")
-
-    monkeypatch.setattr(publication, "_isolated_push", start_then_lose_the_verdict)
-    argv = ["--run", str(tmp_path), "--offer-digest", digest, "--credential-helper", "osxkeychain"]
-    assert publication.main(argv) == 1
-    reported = json.loads(capsys.readouterr().out)
-    assert reported["status"] == "unverified"
-
-    terminal = {"schema_version": 1, "status": reported["status"], "reason": reported["reason"], "observed_oid": None}
-    (tmp_path / "publication.json").write_text(json.dumps(terminal), encoding="utf-8")
-    assert HELPER.main(["publication-resume", "--run", str(tmp_path)]) == 0
-    assert json.loads(capsys.readouterr().out)["publication"]["status"] == "unverified"
-
-    claimed = {**terminal, "status": "verified", "observed_oid": delivery["head"]}
-    (tmp_path / "publication.json").write_text(json.dumps(claimed), encoding="utf-8")
-    assert HELPER.main(["publication-resume", "--run", str(tmp_path)]) == 1
-    assert json.loads(capsys.readouterr().out)["code"] == "publication-verification-unproven"
 
 
 @pytest.mark.parametrize(
@@ -986,7 +1087,17 @@ class TestReviewFinalize:
         drafts.mkdir()
         metadata = {key: value for key, value in result["metadata"].items() if key != "final_handoff"}
         handoff = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
-        handoff = {k: v for k, v in handoff.items() if k not in ("verification", "confidence", "artifacts")}
+        derived = {
+            "verification",
+            "confidence",
+            "artifacts",
+            "schema_version",
+            "skill",
+            "caller_contract",
+            "source_coverage",
+            "outcome",
+        }
+        handoff = {k: v for k, v in handoff.items() if k not in derived}
         (drafts / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
         (drafts / "handoff.json").write_text(json.dumps(handoff), encoding="utf-8")
         argv = ["finalize", "--skill", "code-review", "--parent-thread-id", "thread", "--run", str(run)]
@@ -1009,7 +1120,10 @@ class TestReviewFinalize:
             "validate",
         ]
         assert finished.returncode == 0, finished.stderr.decode()
-        assert json.loads((run / "final-handoff.json").read_text())["presentation_version"] == 15
+        assert finished.stdout.splitlines()[0] == "Review PR acme/widgets#123 — Correct widget spelling".encode()
+        assert finished.stdout.count(b"Correct widget spelling") == 1
+        assert b"https://github.com/acme/widgets/pull/123" in finished.stdout
+        assert json.loads((run / "final-handoff.json").read_text())["presentation_version"] == 16
         assert (run / "review-notes.md").read_bytes().startswith(full_report)
         reviewed_head = json.loads((run / "pr-routing.json").read_text())["head_oid"]
         assert f"Reviewed commit: {reviewed_head}" in (run / "review-notes.md").read_text()
@@ -1018,6 +1132,60 @@ class TestReviewFinalize:
         finalized_report = report.read_bytes()
         assert HELPER.main(argv) == 0
         assert report.read_bytes() == finalized_report
+
+    @pytest.mark.parametrize(
+        ("draft", "expected"),
+        [
+            pytest.param(
+                {"branch": "assessed", "outcome": {"title": "Review Decision", "summary": "Accept."}, "tables": []},
+                {
+                    "handoff-draft-missing:source_records",
+                    "handoff-draft-missing:remaining",
+                    "handoff-draft-missing:next_steps",
+                    "handoff-draft-invalid:tables",
+                    "handoff-draft-invalid:outcome",
+                },
+                id="incomplete-assessment",
+            ),
+            pytest.param({"skill": "audit"}, {"handoff-draft-invalid:skill"}, id="contradictory-owner"),
+            pytest.param({"schema_version": True}, {"handoff-draft-invalid:schema_version"}, id="boolean-schema"),
+            pytest.param({}, {"handoff-draft-missing:branch"}, id="missing-branch"),
+            pytest.param({"branch": "closed"}, {"handoff-draft-invalid:branch"}, id="contradictory-branch"),
+            pytest.param(
+                {"source_coverage": {}}, {"source-coverage-count-mismatch:source_records_total"}, id="wrong-coverage"
+            ),
+        ],
+    )
+    def test_incomplete_draft_names_fields_and_preserves_evidence(
+        self, assessed_pr: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], draft: dict, expected: set[str]
+    ) -> None:
+        """Report missing and invalid draft fields together without overwriting retained evidence or promoting."""
+        run = assessed_pr
+        result_path = run / "result.json"
+        metadata = json.loads(result_path.read_bytes())["metadata"]
+        result_path.unlink()
+        metadata_path, draft_path = tmp_path / "metadata.json", tmp_path / "handoff.json"
+        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+        canonical = run / "final-handoff.json"
+        before = canonical.read_bytes()
+        base = {} if "tables" in draft else json.loads(before)
+        if not draft:
+            del base["branch"]
+        draft_path.write_text(json.dumps({**base, **draft}), encoding="utf-8")
+        notes = (run / "review-notes.md").read_bytes()
+        argv = ["finalize", "--skill", "code-review", "--parent-thread-id", "thread", "--run", str(run)]
+        argv += ["--metadata", str(metadata_path), "--handoff", str(draft_path)]
+        argv += ["--status", "pass", "--confidence", "0.95", "--artifact-path", str(result_path), "--promote"]
+
+        assert HELPER.main(argv) == 1
+        summary = json.loads(capsys.readouterr().out)
+        assert {entry["code"] for entry in summary["errors"]} == expected
+        assert all(entry["hint"] and entry["step"] == "derive" for entry in summary["errors"])
+        assert summary["promoted"] is False
+        assert canonical.read_bytes() == before
+        assert (run / "review-notes.md").read_bytes() == notes
+        assert not result_path.exists()
+        assert not (run / "result.candidate.json").exists()
 
     def test_stops_on_review_validator_failure(
         self, assessed_pr: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1066,6 +1234,7 @@ class TestReviewFinalize:
         )
         draft = run / "fallback-drafts/handoff.json"
         handoff = json.loads(draft.read_bytes())
+        del handoff["source_coverage"]
         row = handoff["tables"][-1]["rows"][0]
         row["title"] = "Stale title"
         row["cells"][1:3] = ["Stale proposal", "Stale evidence"]
@@ -1211,7 +1380,7 @@ class TestReviewActionDerivation:
         notes.write_bytes((prefix + notes.read_text().replace("Required |", "Verify |") + suffix).encode())
         original_metadata = copy.deepcopy(metadata)
 
-        HELPER._derive_review_actions(tmp_path, metadata, handoff)
+        notes.write_bytes(HELPER._derive_review_actions(notes.read_bytes().decode(), metadata, handoff).encode())
 
         text = notes.read_text()
         assert all(
@@ -1239,8 +1408,7 @@ class TestReviewActionDerivation:
             for field in ("title", "summary", "closure_evidence", "authors")
         )
         once = notes.read_bytes()
-        HELPER._derive_review_actions(tmp_path, metadata, handoff)
-        assert notes.read_bytes() == once
+        assert HELPER._derive_review_actions(once.decode(), metadata, handoff).encode() == once
 
     @pytest.mark.parametrize(
         "defect",
@@ -1270,7 +1438,7 @@ class TestReviewActionDerivation:
         before = notes.read_bytes()
 
         with pytest.raises(HELPER.DeriveError, match=r"review-(action-|report-details-unowned)"):
-            HELPER._derive_review_actions(tmp_path, metadata, handoff)
+            HELPER._derive_review_actions(before.decode(), metadata, handoff)
 
         assert notes.read_bytes() == before
 
@@ -1307,7 +1475,27 @@ class TestFinalizePromotion:
             VALIDATOR._validate_remediation_publication(result, [], tmp_path, candidate=False)
 
         VALIDATOR._validate_remediation_publication(result, [], tmp_path, candidate=True)
-        VALIDATOR._validate_remediation_publication({**result, "status": "fail"}, [], tmp_path, candidate=False)
+
+    @pytest.mark.parametrize(
+        "filename", ["publication-offer.json", "publication-attempt.json", "publication.json", "worktree-delivery.json"]
+    )
+    def test_failed_historical_report_accepts_unstarted_local_records(self, tmp_path: Path, filename: str) -> None:
+        """A failed report created before outcome binding may retain an unstarted local checkpoint."""
+        (tmp_path / filename).touch()
+        VALIDATOR._validate_remediation_publication(
+            {"status": "fail", "metadata": {"mode": "pr"}}, [], tmp_path, candidate=False
+        )
+
+    @pytest.mark.parametrize(
+        "filename", ["publication-executed", "publication-execution-result.json", "publication-readback.json"]
+    )
+    def test_failed_report_requires_binding_for_a_started_transport(self, tmp_path: Path, filename: str) -> None:
+        """Hosted CI can remain open after a push, whose execution still needs bound evidence."""
+        (tmp_path / filename).touch()
+        with pytest.raises(SystemExit, match="code-remediate-publication-binding-required"):
+            VALIDATOR._validate_remediation_publication(
+                {"status": "fail", "metadata": {"mode": "pr"}}, [], tmp_path, candidate=False
+            )
 
     def test_pr_worktree_cannot_promote_without_publication_disposition(
         self,
@@ -1329,9 +1517,12 @@ class TestFinalizePromotion:
         assert not (run / "result.json").exists()
 
     @pytest.fixture
-    def pr_delivery_argv(self, tmp_path: Path, tmp_path_factory: pytest.TempPathFactory) -> list[str]:
+    def pr_delivery_argv(
+        self, tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest
+    ) -> list[str]:
         """Create the complete inputs for finalizing a delivered PR remediation."""
-        result_path = _write_remediation_candidate(tmp_path, "code")
+        item_type, resolution = getattr(request, "param", ("code", None))
+        result_path = _write_remediation_candidate(tmp_path, item_type, resolution)
         result = json.loads(result_path.read_text(encoding="utf-8"))
         pr_dir = tmp_path / "pr"
         pr_dir.mkdir()
@@ -1389,6 +1580,255 @@ class TestFinalizePromotion:
             result["artifact_path"],
         ]
         return argv
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("delivery_kind", "options", "offers"),
+        [
+            pytest.param("linked", ["--promote"], True, id="existing-worktree"),
+            pytest.param("explicit", [], True, id="explicit-worktree-candidate"),
+            pytest.param("explicit-skipped", [], False, id="explicit-worktree-opt-out-recorded"),
+            pytest.param("primary", ["--promote"], False, id="primary-checkout"),
+            pytest.param("requested", ["--promote"], False, id="pending-post-delivery-request"),
+            pytest.param("linked", ["--promote", "--no-publication-offer"], False, id="explicit-opt-out"),
+            pytest.param("no-commit", ["--promote"], False, id="no-new-commit"),
+            pytest.param("drifted", ["--promote"], False, id="delivered-head-changed"),
+        ],
+    )
+    def test_routes_committed_worktree_delivery_to_push_question(
+        self,
+        tmp_path: Path,
+        pr_delivery_argv: list[str],
+        tmp_path_factory: pytest.TempPathFactory,
+        capsys: pytest.CaptureFixture[str],
+        delivery_kind: str,
+        options: list[str],
+        offers: bool,
+    ) -> None:
+        """Route from the validated local destination and commit, preserving pending decisions and opt-outs."""
+        repo = tmp_path_factory.mktemp("source")
+        _prepare_committed_delivery(tmp_path, pr_delivery_argv, repo, delivery_kind)
+        code = HELPER.main([*pr_delivery_argv, *options])
+        summary = json.loads(capsys.readouterr().out)
+        assert code == 0, summary
+        handoff = json.loads((tmp_path / "final-handoff.json").read_bytes())
+        rendered = (tmp_path / "final.md").read_text(encoding="utf-8")
+        assert ("Codex pushes the commit and verifies the remote branch" in rendered) is offers
+        assert ("Approve / Deny" in rendered) is offers
+        assert ("Approve / Deny" in summary["next_action"]["action"]) is offers
+        assert handoff["next_steps"].count("pr-worktree-publication") == int(offers)
+        assert ("No further action is required." in rendered) is not offers
+        assert "git push" not in rendered
+        assert "git push" not in summary["next_action"]["action"]
+        assert not (tmp_path / "publication-offer.json").exists()
+        assert not (tmp_path / "publication-attempt.json").exists()
+
+    @pytest.mark.integration
+    def test_caller_contract_keeps_exact_output_and_returns_publication_checkpoint(
+        self,
+        tmp_path: Path,
+        pr_delivery_argv: list[str],
+        tmp_path_factory: pytest.TempPathFactory,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Keep the prescribed caller output byte-exact and return the separate native question to the workflow."""
+        _prepare_committed_delivery(tmp_path, pr_delivery_argv, tmp_path_factory.mktemp("source"), "linked")
+        draft_path = Path(pr_delivery_argv[pr_delivery_argv.index("--handoff") + 1])
+        draft = json.loads(draft_path.read_bytes())
+        output = "Locally delivered.\n"
+        draft.update(
+            branch="caller-contract",
+            caller_contract={"format": "text", "evidence": "commit-plan.md", "output": output},
+            tables=[],
+            source_records=[],
+            source_coverage={
+                "source_records_total": 0,
+                "represented_source_records_total": 0,
+                "omitted_source_records_total": 0,
+            },
+        )
+        draft_path.write_text(json.dumps(draft), encoding="utf-8")
+        assert HELPER.main([*pr_delivery_argv, "--promote"]) == 0, capsys.readouterr().out
+        assert (tmp_path / "final.md").read_bytes() == output.encode()
+        assert "Approve / Deny" in json.loads(capsys.readouterr().out)["next_action"]["action"]
+
+    def test_candidate_cannot_silently_forget_a_publication_opt_out(
+        self, pr_delivery_argv: list[str], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Refuse a promotion-only option before writing a preliminary candidate or changing its handoff."""
+        handoff = tmp_path / "final-handoff.json"
+        before = handoff.read_bytes()
+        assert HELPER.main([*pr_delivery_argv, "--no-publication-offer"]) == 1
+        assert "requires code-remediate final promotion" in json.loads(capsys.readouterr().out)["code"]
+        assert handoff.read_bytes() == before
+
+    @pytest.mark.integration
+    def test_reusing_candidate_preserves_actions_and_removes_only_the_opted_out_offer(
+        self,
+        tmp_path: Path,
+        pr_delivery_argv: list[str],
+        tmp_path_factory: pytest.TempPathFactory,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Re-derive the same handoff without duplicating the gate or displacing an author's owned action."""
+        _prepare_committed_delivery(tmp_path, pr_delivery_argv, tmp_path_factory.mktemp("source"), "linked")
+        draft_path = Path(pr_delivery_argv[pr_delivery_argv.index("--handoff") + 1])
+        draft = json.loads(draft_path.read_bytes())
+        finding = json.loads((tmp_path / "selection.json").read_bytes())["items"][0]["input_item_id"]
+        retained = {
+            "row_id": finding,
+            "item": "Follow up on deployment.",
+            "owner": "operator",
+            "next_action": "Check the weekly deployment report.",
+        }
+        draft.update(action_policy="best-way-forward", remaining=[retained], next_steps=[retained["row_id"]])
+        draft_path.write_text(json.dumps(draft), encoding="utf-8")
+        assert HELPER.main(pr_delivery_argv) == 0, capsys.readouterr().out
+        candidate = tmp_path / "final-handoff.json"
+        first = candidate.read_bytes()
+        assert json.loads(first)["next_steps"] == [finding, "pr-worktree-publication"]
+        pr_delivery_argv[pr_delivery_argv.index("--handoff") + 1] = str(candidate)
+        assert HELPER.main(pr_delivery_argv) == 0, capsys.readouterr().out
+        assert candidate.read_bytes() == first
+        # A previously rendered candidate can still carry the original approval-only wording.
+        historical = json.loads(first)
+        historical["remaining"][-1]["next_action"] = (
+            "Verify the delivered commit and destination, then ask Approve / Deny to push from the worktree."
+        )
+        candidate.write_text(json.dumps(historical), encoding="utf-8")
+        assert HELPER.main([*pr_delivery_argv, "--promote", "--no-publication-offer"]) == 0, capsys.readouterr().out
+        handoff = json.loads(candidate.read_bytes())
+        assert handoff["remaining"] == [retained]
+        assert handoff["next_steps"] == [finding]
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "pr_delivery_argv",
+        [pytest.param(("ci", ("unresolved", "Blocked: Hosted checks need the published commit.")), id="external-ci")],
+        indirect=True,
+    )
+    def test_eligible_ci_failure_keeps_its_status_through_offer_and_decline(
+        self,
+        tmp_path: Path,
+        pr_delivery_argv: list[str],
+        tmp_path_factory: pytest.TempPathFactory,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Offer the locally verified commit and retain both the hosted blocker and an explicit decline."""
+        argv = pr_delivery_argv
+        _prepare_committed_delivery(tmp_path, argv, tmp_path_factory.mktemp("source"), "explicit")
+        argv[argv.index("--status") + 1] = "fail"
+        path = Path(argv[argv.index("--metadata") + 1])
+        metadata = json.loads(path.read_bytes())
+        metadata["unresolved_summary"].update(
+            selected_items_total=1,
+            selected_items_unresolved=1,
+            local_actionable_items_unresolved=1,
+            all_local_actionable_items_closed=False,
+            process_gate_items_unresolved=1,
+            external_owner_items=1,
+            unresolved_reason_groups=[
+                {
+                    "reason": "external-ci",
+                    "count": 1,
+                    "owner": "ci",
+                    "next_action": "Run the hosted job against the published commit.",
+                    "evidence_path": "unresolved.txt",
+                }
+            ],
+        )
+        path.write_text(json.dumps(metadata), encoding="utf-8")
+        (tmp_path / "unresolved.txt").write_text(
+            "## Unresolved Work Summary\n\nOne hosted check remains.\n\n## Why Selected Items Remain Unresolved\n\n"
+            "Closure class: external-ci. Next owner: ci. Attempted evidence: prior job logs.\n\n"
+            "## Next Action\n\nRun the hosted check after publication.\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "commit-plan.md").write_text(
+            "## Explicit Commit Request\n\nCommit the local changes.\n\n## Remaining Verification\n\n"
+            "Hosted CI requires the delivered commit.\n",
+            encoding="utf-8",
+        )
+        path = Path(argv[argv.index("--handoff") + 1])
+        handoff = json.loads(path.read_bytes())
+        handoff["artifacts"] = [{"label": "Delivery record", "path": (tmp_path / "worktree-delivery.md").as_posix()}]
+        path.write_text(json.dumps(handoff), encoding="utf-8")
+        assert HELPER.main(argv) == 0, capsys.readouterr().out
+        assert "Approve / Deny" in json.loads(capsys.readouterr().out)["next_action"]["action"]
+        candidate = json.loads((tmp_path / "result.candidate.json").read_bytes())
+        assert candidate["status"] == "fail"
+        assert HELPER.main([*argv, "--promote"]) == 1
+        assert json.loads(capsys.readouterr().out)["steps"][-1]["code"] == "publication-disposition-required"
+        delivery = json.loads((tmp_path / "worktree-delivery.json").read_bytes())
+        digest = _write_publication_offer(tmp_path, delivery)
+        (tmp_path / "publication-answer.json").write_text(
+            json.dumps({"offer_digest": digest, "decision_id": f"pr-worktree-publication-{digest}", "answer": "Deny"}),
+            encoding="utf-8",
+        )
+        (tmp_path / "publication.json").write_text(
+            json.dumps({"schema_version": 1, "status": "declined", "reason": "User declined.", "observed_oid": None}),
+            encoding="utf-8",
+        )
+        assert HELPER.main([*argv, "--promote"]) == 0, capsys.readouterr().out
+        summary = json.loads(capsys.readouterr().out)
+        assert "Approve / Deny" not in summary["next_action"]["action"]
+        command = summary["manual_push_command"]
+        offer = json.loads((tmp_path / "publication-offer.json").read_bytes())
+        assert offer["source_oid"] + ":" + offer["ref"] in command
+        assert offer["url"] in command
+        assert offer["checkout"] in command
+        result = json.loads((tmp_path / "result.json").read_bytes())
+        assert result["status"] == "fail"
+        assert result["metadata"]["worktree_publication"]["status"] == "declined"
+        assert result["metadata"]["unresolved_summary"]["selected_items_unresolved"] == 1
+        VALIDATOR.validate("code-remediate", tmp_path, tmp_path / "result.json")
+
+    @pytest.mark.integration
+    def test_a_push_with_an_unknown_outcome_resolves_unverified_never_verified(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        pr_delivery_argv: list[str],
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        """Accept the transport's unverified outcome once the execution marker exists.
+
+        The remote may hold the update, but without the transport's ``pushed`` receipt a ``verified`` claim is refused.
+        """
+        publication = load_module("codex_rig_worktree_publication", PLUGIN_ROOT / "shared" / "worktree_publication.py")
+        _prepare_committed_delivery(tmp_path, pr_delivery_argv, tmp_path_factory.mktemp("source"), "explicit")
+        assert HELPER.main(pr_delivery_argv) == 0, capsys.readouterr().out
+        assert "Approve / Deny" in json.loads(capsys.readouterr().out)["next_action"]["action"]
+        delivery = json.loads((tmp_path / "worktree-delivery.json").read_bytes())
+        digest = _write_publication_attempt(tmp_path, delivery)
+        (tmp_path / "publication-answer.json").write_bytes((tmp_path / "publication-attempt.json").read_bytes())
+
+        def start_then_lose_the_verdict(*args: object, **kwargs: object) -> None:
+            """Spend the attempt, then end like a push that timed out after sending."""
+            kwargs["before_push"]()
+            raise ValueError("publication-push-outcome-unknown")
+
+        monkeypatch.setattr(publication, "_isolated_push", start_then_lose_the_verdict)
+        argv = ["--run", str(tmp_path), "--offer-digest", digest, "--credential-helper", "osxkeychain"]
+        assert publication.main(argv) == 1
+        reported = json.loads(capsys.readouterr().out)
+        assert reported["status"] == "unverified"
+
+        terminal = {
+            "schema_version": 1,
+            "status": reported["status"],
+            "reason": reported["reason"],
+            "observed_oid": None,
+        }
+        (tmp_path / "publication.json").write_text(json.dumps(terminal), encoding="utf-8")
+        assert HELPER.main(["publication-resume", "--run", str(tmp_path)]) == 0
+        assert json.loads(capsys.readouterr().out)["publication"]["status"] == "unverified"
+
+        claimed = {**terminal, "status": "verified", "observed_oid": delivery["head"]}
+        (tmp_path / "publication.json").write_text(json.dumps(claimed), encoding="utf-8")
+        assert HELPER.main(["publication-resume", "--run", str(tmp_path)]) == 1
+        assert json.loads(capsys.readouterr().out)["code"] == "publication-verification-unproven"
 
     def test_independent_fork_recovery_without_worktree_option_promotes_without_publication(
         self,

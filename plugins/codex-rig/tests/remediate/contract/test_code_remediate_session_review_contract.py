@@ -185,6 +185,10 @@ class TestTerminalPresentation:
             missing_phrases(
                 scope_contract,
                 (
+                    "start the terminal scope context with the `pr_subject` returned by the selection helper",
+                    "as its own line before the heading",
+                    "Each new standalone PR question",
+                    "On replay of an outstanding native decision reuse its exact recorded question",
                     "Choose the delivery route before emitting the scope context",
                     "only the terminal scope context defined above",
                     "let the control own the question and complete accepted syntax",

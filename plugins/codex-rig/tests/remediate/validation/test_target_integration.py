@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any, NamedTuple
 
 import pytest
+from _remediation_cleanup import command, published_worktree
 from test_finding_presentation import _selection
 from test_remediation_finalize import HELPER
 from test_review_completion_gate import _module
@@ -125,6 +127,40 @@ def _write_receipt(
 @pytest.mark.installed_plugin
 class TestTargetIntegration:
     """Clean conflict evidence cannot substitute for the actual fetched target in remediation source."""
+
+    @pytest.mark.parametrize("followup", [False, True])
+    def test_removed_published_checkout_replays_against_the_delivered_commit(
+        self, validator: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, followup: bool
+    ) -> None:
+        """Initial and follow-up cleanup retain ancestry checks while live preflight still needs its checkout."""
+        caller, checkout, run, slot, owner = published_worktree(tmp_path, followup=followup)
+        checkpoint = run / "publication-request" if followup else run
+        pr_dir = run / "pr"
+        base = json.loads((pr_dir / "target-branch.json").read_bytes())["local_head"]
+        source = IntegrationRepository(checkout, pr_dir, base, base)
+        metadata, target = _write_receipt(source)
+        result_bytes = (run / "result.json").read_bytes()
+        cleanup = PLUGIN_ROOT / "shared" / "remediation_worktree_cleanup.py"
+        command(caller, sys.executable, str(cleanup), "--run", str(checkpoint), "--slot", str(slot), "--owner", owner)
+
+        assert not checkout.exists()
+        assert (run / "result.json").read_bytes() == result_bytes
+        monkeypatch.chdir(tmp_path)
+        validator._validate_code_remediate_merge_resolution(metadata, pr_dir.relative_to(tmp_path), target, base)
+        with pytest.raises(SystemExit, match="code-remediate-target-integration-git-unavailable"):
+            validator._validate_code_remediate_merge_resolution(metadata, pr_dir, target, base, require_integrated=True)
+
+        # A commit present in the surviving common repository can still be outside the published PR history.
+        command(caller, "git", "commit", "--allow-empty", "-m", "Unrelated local change")
+        unrelated = command(caller, "git", "rev-parse", "HEAD")
+        resolution = json.loads((pr_dir / "merge-resolution.json").read_bytes())
+        with pytest.raises(SystemExit, match="code-remediate-target-not-integrated"):
+            validator._validate_code_remediate_target_integration(
+                pr_dir, {**resolution, "post_merge_head": unrelated}, current_checkout=False
+            )
+        (checkpoint / "publication-readback.json").unlink()
+        with pytest.raises(SystemExit, match="code-remediate-target-integration-cleanup-unverified"):
+            validator._validate_code_remediate_merge_resolution(metadata, pr_dir, target, base)
 
     def test_rejects_clean_not_needed_when_target_is_missing(
         self, validator: ModuleType, integration_repository: IntegrationRepository

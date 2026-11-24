@@ -206,6 +206,7 @@ def _collect(
     after_native_checkout: Callable[[], None] | None = None,
     mutate_after_gh_failure: bool = False,
     move_source_after_head_fetch: bool = False,
+    default_remote_repository: Path | None = None,
 ) -> tuple[int, list[list[str]]]:
     """Run the collector against real Git while replacing only GitHub responses."""
     payload = _payload(base, head, cross_repository=cross_repository, state=state)
@@ -260,14 +261,15 @@ def _collect(
                 after_review_checkout(Path(arguments[-2]))
             return result
         assert arguments[0] != "gh", arguments
-        if arguments[:2] in (["git", "fetch"], ["git", "ls-remote"]):
+        if arguments[:2] == ["git", "fetch"] or arguments[:3] == ["git", "ls-remote", "--exit-code"]:
             is_same_repo_head_fetch = arguments[-1] == head and "--refmap=" in arguments
             assert arguments[-2] in {
                 "origin",
                 "git@github.com:example/project.git",
                 "https://github.com/example/project.git",
             }
-            arguments = [*arguments[:-2], str(source), arguments[-1]]
+            server = default_remote_repository if arguments[-2] == "origin" and default_remote_repository else source
+            arguments = [*arguments[:-2], str(server), arguments[-1]]
             result = subprocess.run(arguments, cwd=worktree, **kwargs)
             if move_source_after_head_fetch and is_same_repo_head_fetch:
                 (source / "module.py").write_text("value = 'source moved'\n", encoding="utf-8")
@@ -339,7 +341,7 @@ class TestReviewWorktree:
 
         code, calls = _collect(module, source, caller, output, base, head)
         assert code == 0, (output / "pr-error.txt").read_text(encoding="utf-8")
-        assert [call[-2:] for call in calls if call[:2] == ["git", "ls-remote"]] == [
+        assert [call[-2:] for call in calls if call[:3] == ["git", "ls-remote", "--exit-code"]] == [
             [ssh, "refs/heads/main"],
             [ssh, "refs/pull/17/head"],
         ]
@@ -2320,3 +2322,228 @@ def test_failed_fetch_does_not_accept_a_preexisting_commit(
 
     with pytest.raises(module.CollectionError, match="command-failed:probe"):
         module._fetch_exact_ref(run, 10, str(source), "topic", "probe")
+
+
+@pytest.fixture
+def integration_target(tmp_path: Path, repository_template: RepositoryTemplate) -> tuple:
+    """Collect real remediation evidence, retaining a stale local base and a separate advertised source repository."""
+    module = _load_collector()
+    source, worktree, base, old, head = _setup_repositories(tmp_path, repository_template)
+    output = tmp_path / "run" / "pr"
+    code, _ = _remediate(module, source, worktree, output, base, head, gh_checkout_fails=False)
+    assert code == 0
+    _git(worktree, "branch", "main", base)
+    _git(worktree, "update-ref", "refs/remotes/origin/main", base)
+
+    def run(arguments: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Run real Git against the test base repository only for the exact verified network transport."""
+        if arguments[:2] == ["git", "fetch"] or arguments[:3] == ["git", "ls-remote", "--exit-code"]:
+            assert arguments[-2] == "https://github.com/example/project.git"
+            arguments = [*arguments[:-2], str(source), arguments[-1]]
+        return subprocess.run(arguments, cwd=worktree, **kwargs)
+
+    return module, source, worktree, output, base, old, head, run
+
+
+@pytest.mark.integration
+def test_refresh_integration_target_adopts_live_fast_forward_and_keeps_previous_capture(integration_target) -> None:
+    """The advertised tip replaces stale integration input without changing the local base or its tracking ref."""
+    module, source, worktree, output, base, _, head, run = integration_target
+    target = output / "target-branch.json"
+    original = target.read_bytes()
+    _git(source, "switch", "main")
+    _git(source, "commit", "--allow-empty", "-m", "advance target")
+    advanced = _git(source, "rev-parse", "HEAD")
+    url = "https://github.com/example/project/pull/17"
+    checked = module.integration_target(output, url, 10, refresh=False, run=run)
+    assert (checked["status"], checked["target_oid"]) == ("advanced", advanced)
+    assert target.read_bytes() == original
+
+    refreshed = module.integration_target(output, url, 10, refresh=True, run=run)
+    assert (refreshed["status"], refreshed["previous_target_oid"], refreshed["target_oid"]) == (
+        "advanced",
+        base,
+        advanced,
+    )
+    assert json.loads(target.read_bytes())["local_head"] == advanced
+    assert (output / f"target-branch.{base}.json").read_bytes() == original
+    assert _git(worktree, "rev-parse", "main", "refs/remotes/origin/main", "HEAD").splitlines() == [base, base, head]
+    saved = target.read_bytes()
+    assert module.integration_target(output, url, 10, refresh=True, run=run)["status"] == "unchanged"
+    assert target.read_bytes() == saved
+
+
+@pytest.mark.integration
+def test_refresh_integration_target_rejects_diverged_live_branch(integration_target) -> None:
+    """A changed live target with no fast-forward proof cannot replace the retained capture."""
+    module, source, _, output, base, old, head, run = integration_target
+    url = "https://github.com/example/project/pull/17"
+    _git(source, "update-ref", "refs/heads/main", old, base)
+    module.integration_target(output, url, 10, refresh=True, run=run)
+    current = (output / "target-branch.json").read_bytes()
+    _git(source, "update-ref", "refs/heads/main", head, old)
+    with pytest.raises(module.CollectionError, match="target-branch-diverged"):
+        module.integration_target(output, url, 10, refresh=True, run=run)
+    assert (output / "target-branch.json").read_bytes() == current
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("status", [pytest.param("in-progress", id="active"), pytest.param("completed", id="finished")])
+def test_check_integration_target_observes_new_tip_without_rebinding_merge(integration_target, status: str) -> None:
+    """After a merge starts its target stays immutable while delivery can still fetch and observe a later base."""
+    module, source, _, output, base, old, _, run = integration_target
+    target = (output / "target-branch.json").read_bytes()
+    merge = json.dumps({"status": status, "target_oid": base}).encode()
+    (output / "merge-resolution.json").write_bytes(merge)
+    _git(source, "update-ref", "refs/heads/main", old, base)
+    url = "https://github.com/example/project/pull/17"
+    assert module.integration_target(output, url, 10, refresh=False, run=run)["target_oid"] == old
+    with pytest.raises(module.CollectionError, match="integration-target-pinned"):
+        module.integration_target(output, url, 10, refresh=True, run=run)
+    assert (output / "merge-resolution.json").read_bytes() == merge
+    assert (output / "target-branch.json").read_bytes() == target
+
+
+@pytest.mark.integration
+def test_integration_target_cli_reads_base_via_verified_transport(integration_target, tmp_path: Path) -> None:
+    """The shipped CLI fetches the PR base over its selected transport and prints the observed object as JSON."""
+    _, source, worktree, output, base, old, _, _ = integration_target
+    _git(source, "update-ref", "refs/heads/main", old, base)
+    # Only the SSH transport is replaced. Git advertises and transfers objects via the real upload-pack server.
+    server = tmp_path / "local_ssh.py"
+    server.write_text(
+        "import os, subprocess, sys\n"
+        "assert sys.argv[-2] == 'git@github.com' and 'example/project.git' in sys.argv[-1]\n"
+        "sys.exit(subprocess.call(['git', 'upload-pack', os.environ['TEST_BASE_REPOSITORY']]))\n",
+        encoding="utf-8",
+    )
+    environment = {
+        **os.environ,
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "url.ssh://git@github.com/example/project.git.insteadOf",
+        "GIT_CONFIG_VALUE_0": "https://github.com/example/project.git",
+        "GIT_SSH_COMMAND": f'"{Path(sys.executable).as_posix()}" "{server.as_posix()}"',
+        "GIT_SSH_VARIANT": "ssh",
+        "TEST_BASE_REPOSITORY": str(source),
+    }
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(COLLECTOR),
+            "--target",
+            "https://github.com/example/project/pull/17",
+            "--out",
+            str(output),
+            "--check-integration-target",
+        ],
+        cwd=worktree,
+        env=environment,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "status": "advanced",
+        "target_oid": old,
+        "previous_target_oid": base,
+        "pr_url": "https://github.com/example/project/pull/17",
+        "base_ref": "main",
+    }
+    assert json.loads((output / "target-branch.json").read_bytes())["remote_ref"] == base
+
+
+@pytest.mark.integration
+def test_refresh_integration_target_rejects_branch_move_during_fetch(integration_target) -> None:
+    """A second advertisement catches a moved ref before the fetched but superseded object can become a merge input."""
+    module, source, _, output, base, old, head, run = integration_target
+    _git(source, "update-ref", "refs/heads/main", old, base)
+    initial = (output / "target-branch.json").read_bytes()
+
+    def moving_remote(arguments: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Move only the remote branch after Git finished fetching its previously advertised immutable object."""
+        completed = run(arguments, **kwargs)
+        if arguments[:2] == ["git", "fetch"]:
+            _git(source, "update-ref", "refs/heads/main", head, old)
+        return completed
+
+    with pytest.raises(module.CollectionError, match=f"integration-target-moved-during-fetch:{old}:{head}"):
+        module.integration_target(
+            output, "https://github.com/example/project/pull/17", 10, refresh=True, run=moving_remote
+        )
+    assert (output / "target-branch.json").read_bytes() == initial
+
+
+@pytest.mark.integration
+def test_integration_target_rejects_rewrite_to_contributor_fork(integration_target) -> None:
+    """A local URL rewrite to a similarly named fork must never supply proof of the base branch."""
+    module, _, worktree, output, _, _, _, run = integration_target
+    _git(
+        worktree,
+        "config",
+        "url.https://github.com/contributor/project.git.insteadOf",
+        "https://github.com/example/project.git",
+    )
+    with pytest.raises(module.CollectionError, match="target-branch-transport-invalid"):
+        module.integration_target(output, "https://github.com/example/project/pull/17", 10, refresh=False, run=run)
+
+
+@pytest.mark.integration
+def test_initial_target_and_refresh_use_selected_secondary_base_url(tmp_path: Path, repository_template) -> None:
+    """Two URLs on origin advertise divergent target histories.
+
+    Only the one matching the base may supply either tip.
+    """
+    module = _load_collector()
+    source, worktree, base, old, head = _setup_repositories(tmp_path, repository_template)
+    fork = tmp_path / "fork"
+    shutil.copytree(source, fork, symlinks=True)
+    _git(fork, "update-ref", "refs/heads/main", head, base)
+    _git(source, "update-ref", "refs/heads/main", old, base)
+    _git(worktree, "remote", "set-url", "origin", "https://github.com/contributor/project.git")
+    _git(worktree, "remote", "set-url", "--add", "origin", "https://github.com/example/project.git")
+    output = tmp_path / "run" / "pr"
+    code, _ = _remediate(
+        module, source, worktree, output, base, head, gh_checkout_fails=False, default_remote_repository=fork
+    )
+    assert code == 0
+    captured = json.loads((output / "target-branch.json").read_bytes())
+    assert captured["local_head"] == old
+    assert captured["remote"] == "origin"
+    _git(source, "switch", "main")
+    _git(source, "commit", "--allow-empty", "-m", "next base tip")
+
+    def run(arguments: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Route the verified base URL to the upstream server, separately from the fork."""
+        if arguments[:2] == ["git", "fetch"] or arguments[:3] == ["git", "ls-remote", "--exit-code"]:
+            assert arguments[-2] == captured["remote_url"]
+            arguments = [*arguments[:-2], str(source), arguments[-1]]
+        return subprocess.run(arguments, cwd=worktree, **kwargs)
+
+    observed = module.integration_target(
+        output, "https://github.com/example/project/pull/17", 10, refresh=True, run=run
+    )
+    assert observed["target_oid"] == _git(source, "rev-parse", "main")
+    assert _git(worktree, "rev-parse", "HEAD") == head
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("mode", [pytest.param("review", id="review"), pytest.param("remediate", id="remediation")])
+def test_initial_target_rejects_rewritten_effective_base_url(tmp_path: Path, repository_template, mode: str) -> None:
+    """A selected URL can normalize to one subject to a different Git rewrite.
+
+    Reject before any network fetch.
+    """
+    module = _load_collector()
+    source, worktree, base, _, head = _setup_repositories(tmp_path, repository_template)
+    _git(worktree, "remote", "set-url", "origin", "https://github.com/Example/Project.git")
+    _git(
+        worktree,
+        "config",
+        "url.https://github.com/contributor/project.git.insteadOf",
+        "https://github.com/example/project.git",
+    )
+    output = tmp_path / "pr"
+    code, calls = _collect(module, source, worktree, output, base, head, checkout_mode=mode)
+    assert code == 2
+    assert (output / "pr-error.txt").read_text().strip() == "target-branch-transport-invalid"
+    assert not any(call[:2] == ["git", "fetch"] for call in calls)

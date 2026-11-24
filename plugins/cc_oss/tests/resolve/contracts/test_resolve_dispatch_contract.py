@@ -2281,7 +2281,7 @@ class TestPush:
         assert drift < confirmation
         assert "Q1 — push: header `git-push`, `multiSelect` false." in options
         assert "- **Approve** — this push, once" in options
-        assert "- **Deny** — skip the push" in options
+        assert "- **Hold** — skip this push" in options
         assert "Re-sync target first" not in options
         # A push approval covers only this branch written out, so the run-time-valued fallback is handed to the user.
         assert "no second push question, no agent push" in push_step
@@ -2313,7 +2313,7 @@ class TestPush:
     def test_step_3d_run_approval_is_the_git_push_run_question(self) -> None:
         """In ``pr`` modes the Step 3d push question is the ``git-push-run`` question, which is the push authorization.
 
-        The hook records a token only from the exact header, the exact ``Approve`` / ``Deny`` options, one push span and
+        The hook records a token only from the exact header, the exact ``Approve`` / ``Hold`` options, one push span and
         one full PR head id, so the question text must show all of them, and the answer must record ``push-run``. The
         post-PR browser action has no slot there and stays ``skip``.
         """
@@ -2321,11 +2321,11 @@ class TestPush:
         form = _between(selection, "Run approval form —", "Unanswered or dismissed →")
 
         assert "header `git-push-run`" in form
-        assert "options exactly `Approve` / `Deny`" in form
+        assert "options exactly `Approve` / `Hold`" in form
         assert "Push: `git push <FORK_REMOTE> <HEAD_REF>`" in form
         assert "PR head: `<PR_HEAD_OID>`" in form
         assert "| run approval: Approve | push-run | skip |" in selection
-        assert "| run approval: Deny | skip | skip |" in selection
+        assert "| run approval: Hold | skip | skip |" in selection
         assert 'echo push-run > "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}"' in selection
         assert "`PR_HEAD_OID`" in _resolve_text("modes/pr-intelligence.md")
         assert "headRefOid" in _resolve_text("modes/pr-intelligence.md")
@@ -2380,6 +2380,7 @@ class TestPush:
             "blocked-permission",
             "blocked-needs-manual-push",
             "rejected-non-ff",
+            "rejected-remote",
             "skipped-by-user",
             "not-attempted",
         ],
@@ -2411,10 +2412,83 @@ class TestPush:
 
     @_skip_no_bash
     @pytest.mark.parametrize(
+        ("worktree_run", "dirname", "names_checkout"),
+        [
+            pytest.param("false", "plain", None, id="no-worktree-run"),
+            pytest.param("true", "checkout", True, id="worktree-run-names-its-checkout"),
+            pytest.param("true", "with space", False, id="path-the-hook-cannot-carry"),
+        ],
+    )
+    def test_worktree_block_prints_the_checkout_the_push_is_written_from(
+        self, tmp_path: Path, worktree_run: str, dirname: str, names_checkout: bool | None
+    ) -> None:
+        """A ``--worktree`` run names its worktree for the push approval; an unusable path never reaches the hook.
+
+        The hook binds a push approval to the checkout it saw, so the Step 3d question and the Step 10 push need the
+        worktree's own path in the ``git -C`` form. A path with a space cannot be written that way and hands the push to
+        the user.
+        """
+        selection = _between(_resolve_text("SKILL.md"), "## Step 3d", "## Step 7b join")
+        block = _bash_block_containing(selection, "resolve-push-worktree-")
+        repo = tmp_path / dirname
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
+        top = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--show-toplevel"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        _put(tmp_path / f"oss-resolve-worktree-{_SESSION}", f"{worktree_run}\n")
+
+        result = _run_shell(block, repo, _shell_env(tmp_path))
+
+        assert result.returncode == 0, result.stderr
+        expected = {None: "none", True: top, False: "unusable"}[names_checkout]
+        assert f"WT_PUSH={expected}" in result.stdout.splitlines()
+
+    def test_worktree_push_is_asked_and_run_in_the_git_c_form(self) -> None:
+        """Step 3d names the worktree in its run approval and Step 10 pushes with the same spelling.
+
+        The Step 10 worktree block is the Step 3d block, so one rule decides which checkout the approval covers.
+        """
+        skill = _resolve_text("SKILL.md")
+        selection = _between(skill, "## Step 3d", "## Step 7b join")
+        push_step = _push_step(skill)
+        block = _bash_block_containing(selection, "resolve-push-worktree-")
+
+        assert "`git -C <WT_PUSH> push <FORK_REMOTE> <HEAD_REF>`" in selection
+        assert "(not this session's checkout)" in selection
+        assert "git -C <WT_PUSH> push <FORK_REMOTE> <HEAD_REF> # timeout: 30000" in push_step
+        push_lines = {line.split("  #")[0].strip() for line in push_step.splitlines()}
+        assert [line for line in block.splitlines() if line.split("  #")[0].strip() not in push_lines] == []
+        assert "`WT_PUSH=unusable`" in selection
+        assert "unusable" in push_step
+
+    def test_an_approved_push_the_remote_refused_is_flagged_in_the_report(self) -> None:
+        """A push asked, approved and then refused by the remote has its own status, never the hand-off one.
+
+        Reusing the hand-off status reported a GitHub server error as a missing upstream, and the report did not say the
+        PR lacked the commits.
+        """
+        skill = _resolve_text("SKILL.md")
+        push_step = _push_step(skill)
+        report = _between(skill, "## Step 11", "## Step 12")
+        template = _resolve_text("templates/resolve-report.md")
+
+        remote_bullet = next(line for line in push_step.splitlines() if line.startswith("- **Rejected by the remote"))
+        assert "record `rejected-remote`" in remote_bullet
+        assert "`$IMPL_DIR/push-error.txt`" in remote_bullet
+        assert "A push the user approved that did not land — flag it." in report
+        assert "`rejected-remote` or `rejected-non-ff`" in report
+        assert "push failed" in report
+        assert "| `rejected-remote` | `✗ Push approved but failed" in template
+        assert "`rejected-remote` only, and always" in template
+
+    @_skip_no_bash
+    @pytest.mark.parametrize(
         "status",
         [
             pytest.param("blocked-guard", id="guard-blocked"),
             pytest.param("blocked-needs-manual-push", id="handed-over-explicit-refspec"),
+            pytest.param("rejected-remote", id="approved-push-refused-by-the-remote"),
         ],
     )
     def test_step_11_surfaces_status_and_unblock_file(self, tmp_path: Path, status: str) -> None:

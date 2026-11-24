@@ -23,7 +23,7 @@
 //   approved branch's spellings. `Approve` writes the approving call's id (`question_id`), the
 //   current branch, HEAD and `expires_at` = `created_at` + 15 min; the question text, kept in
 //   `question`, is the only record of the command and must name the branch (else nothing records).
-//   A detached HEAD records nothing. One file: a later `Approve` replaces a pending token and `Deny`
+//   A detached HEAD records nothing. One file: a later `Approve` replaces a pending token and `Hold`
 //   removes it, so the latest push answer decides. commit-guard.js spends it (`spendToken`, claim +
 //   transcript proof): after its force ban and a dry-run pass, one push of this branch at this HEAD
 //   to a configured remote name — `git push [-u] [<remote>] [HEAD|<branch>][:<branch>]`, a
@@ -40,7 +40,7 @@
 //   any token lookup.
 //
 // PUSH RUN TOKEN — scope `push-run`: one non-force push of a named branch at any HEAD on a named PR head's line
-//   An `oss:resolve` run asks once at its start (header `git-push-run`, `Approve` / `Deny`), hours before it pushes, so
+//   An `oss:resolve` run asks once at its start (header `git-push-run`, `Approve` / `Hold`), hours before it pushes, so
 //   the exact-HEAD token cannot serve: the PR branch is not checked out yet, HEAD moves with every commit the run
 //   adds, and 15 minutes pass. The question shows one inline span `git push <remote> <branch>` (plain names, no
 //   option) and one span holding the PR head commit id; `Approve` writes the approving call's id, `remote`,
@@ -65,7 +65,7 @@
 //   outside single quotes (variable, substitution, `$'…'`), a glob, brace, tilde, `^`, `#` or
 //   word-leading `=` outside quotes, an unterminated quote, or a file operand reading stdin (`-`,
 //   `@-`). What passes has one reading in bash and zsh (`plainCommandWords`). Latest answer wins:
-//   a later `Approve` replaces a pending token, `Deny` removes it. gh-write-guard.js spends it
+//   a later `Approve` replaces a pending token, `Hold` removes it. gh-write-guard.js spends it
 //   (`spendToken`) only for a gh write whose whole Bash command, trimmed, equals `command` and whose
 //   files still digest to `files_sha256`.
 //
@@ -271,7 +271,7 @@ const SCOPES = Object.freeze([
   frozenRow({
     id: "local-git-non-destructive",
     header: "git-approve",
-    options: ["Approve", "Approve always", "Deny"],
+    options: ["Approve", "Approve always", "Hold"],
     recordAnswer: "Approve always",
     file: "claude-git-approval.json",
     // Every other local Git operation runs without a grant or question; only a plain commit needs authority.
@@ -286,7 +286,7 @@ const SCOPES = Object.freeze([
   frozenRow({
     id: "push-once",
     header: "git-push",
-    options: ["Approve", "Deny"],
+    options: ["Approve", "Hold"],
     recordAnswer: "Approve",
     file: "claude-push-approval.json",
     covers: ["one non-force push of the approved branch at the approved HEAD to a configured remote"],
@@ -299,7 +299,7 @@ const SCOPES = Object.freeze([
       "a push from another checkout than the approved branch's, or after cd/pushd",
       "a spawned agent's call",
     ],
-    revokeAnswer: "Deny",
+    revokeAnswer: "Hold",
     fields: ["question_id", "branch", "head", "expires_at"],
     singleUse: true,
     ttlMs: PUSH_TOKEN_TTL_MS,
@@ -308,7 +308,7 @@ const SCOPES = Object.freeze([
   frozenRow({
     id: "push-run",
     header: "git-push-run",
-    options: ["Approve", "Deny"],
+    options: ["Approve", "Hold"],
     recordAnswer: "Approve",
     file: "claude-push-run-approval.json",
     covers: [
@@ -325,7 +325,7 @@ const SCOPES = Object.freeze([
       "a push from another checkout or after cd/pushd",
       "a spawned agent's call",
     ],
-    revokeAnswer: "Deny",
+    revokeAnswer: "Hold",
     fields: ["question_id", "remote", "branch", "base_head", "expires_at"],
     singleUse: true,
     ttlMs: PUSH_RUN_TOKEN_TTL_MS,
@@ -334,7 +334,7 @@ const SCOPES = Object.freeze([
   frozenRow({
     id: "gh-write-once",
     header: "gh-write",
-    options: ["Approve", "Deny"],
+    options: ["Approve", "Hold"],
     recordAnswer: "Approve",
     file: "claude-gh-write-approval.json",
     covers: [
@@ -348,7 +348,7 @@ const SCOPES = Object.freeze([
       "a spawned agent's call",
       "another project",
     ],
-    revokeAnswer: "Deny",
+    revokeAnswer: "Hold",
     fields: ["question_id", "command", "files_sha256", "expires_at"],
     singleUse: true,
     ttlMs: GH_WRITE_TOKEN_TTL_MS,
@@ -1403,6 +1403,55 @@ function questionScope(question) {
 }
 
 /**
+ * The scope row whose header this question carries although its option set is not that row's, or null.
+ *
+ * Such a question is not recorded; the writer names the mismatch so a user whose loaded rule text predates an
+ * option change is told that the answer did nothing, instead of believing a grant exists.
+ *
+ * @param {object} question One entry of `tool_input.questions`.
+ * @returns {object|null}
+ */
+function driftedScope(question) {
+  if (!question || typeof question !== "object") return null;
+  const header = String(question.header || "").trim();
+  return SCOPES.find((candidate) => candidate.header === header) || null;
+}
+
+/**
+ * Why a question of a known scope header was not recorded: the options it offered against the ones the hook reads.
+ *
+ * @param {object} question The answered question.
+ * @param {object} row Scope row with the question's header.
+ * @param {boolean} revoked Whether the answer also removed the scope's pending token.
+ * @returns {string}
+ */
+function driftReason(question, row, revoked) {
+  const offered = (Array.isArray(question.options) ? question.options : [])
+    .map((o) => String((o && o.label) || "").trim())
+    .join(" / ");
+  return (
+    `the ${row.header} question ${question.multiSelect === true ? "was multi-select and " : ""}offered the options ` +
+    `${offered || "(none)"}, but the hook reads ${row.options.join(" / ")}; nothing was recorded` +
+    `${revoked ? " and removal of any pending token for it was attempted" : ""}. The loaded rule text is out of date: run ` +
+    "/foundry:setup, start a new session and ask again"
+  );
+}
+
+/**
+ * Why a typed answer that is no offered option was not recorded.
+ *
+ * @param {object} row Scope row of the answered question.
+ * @param {boolean} revoked Whether the answer also removes the scope's pending token.
+ * @returns {string}
+ */
+function freeTextReason(row, revoked) {
+  return (
+    `the ${row.header} answer was typed text, not ${row.options.join(" or ")}; nothing was recorded` +
+    `${revoked ? " and removal of any pending token for it was attempted" : ""}. Pick one of the options to approve`
+  );
+}
+
+/**
  * True when the recording option's description names the record file the user would delete to revoke.
  *
  * @param {object} question A question of `row`.
@@ -1627,7 +1676,7 @@ function answerProblem(data, question, row, lookup) {
 /**
  * Decide what a PostToolUse payload means for the records: one verdict per recording answer.
  *
- * A revoking answer (`revokeAnswer`, the push question's `Deny`) needs none of the recording checks: removing a
+ * A revoking answer (`revokeAnswer`, the push question's `Hold`) needs none of the recording checks: removing a
  * pending record only lowers authority.
  *
  * @param {object} data Parsed hook payload.
@@ -1643,9 +1692,33 @@ function evaluateAnswer(data, lookup = findToolUse) {
   const verdicts = [];
   for (const question of questions) {
     const row = questionScope(question);
-    if (!row || !RECORD_BUILDERS[row.id]) continue;
     const answer = String(answers[question.question] || "").trim();
+    if (!row) {
+      const drifted = driftedScope(question);
+      if (drifted && RECORD_BUILDERS[drifted.id] && answer !== "") {
+        // Whatever the old option was called, lowering authority is safe: an answer to a question this hook cannot
+        // read removes the scope's pending token, and every such answer is reported, never dropped.
+        const revokes = drifted.revokeAnswer !== null;
+        if (revokes) {
+          verdicts.push({
+            action: "revoke",
+            row: drifted,
+            cause: "the user answered a question whose options are out of date",
+          });
+        }
+        verdicts.push({ action: "refuse", row: drifted, reason: driftReason(question, drifted, revokes) });
+      }
+      continue;
+    }
+    if (!RECORD_BUILDERS[row.id]) continue;
     if (row.revokeAnswer !== null && answer === row.revokeAnswer) verdicts.push({ action: "revoke", row });
+    else if (answer !== "" && !row.options.includes(answer)) {
+      // Free text typed instead of an option is not an approval: it is reported, and where the scope has a pending
+      // token it lowers authority like a refusal.
+      const revokes = row.revokeAnswer !== null;
+      if (revokes) verdicts.push({ action: "revoke", row, cause: "the user typed text instead of picking an option" });
+      verdicts.push({ action: "refuse", row, reason: freeTextReason(row, revokes) });
+    }
     if (answer !== row.recordAnswer) continue;
     const reason = answerProblem(data, question, row, lookup);
     verdicts.push(
@@ -1713,9 +1786,10 @@ function recordedMessage(row, record, target) {
  * @param {object} row Scope row.
  * @param {object} data Parsed hook payload.
  * @param {object} env Environment.
+ * @param {string} [cause] What the user did, when it was not the revoking option.
  * @returns {string|null}
  */
-function revokeRecord(row, data, env) {
+function revokeRecord(row, data, env, cause = `the user answered ${row.revokeAnswer}`) {
   const where = recordDirectory(data.cwd, env);
   if (where.reason) return null;
   const target = path.join(where.dir, row.file);
@@ -1725,10 +1799,10 @@ function revokeRecord(row, data, env) {
     if (err.code === "ENOENT") return null;
     return (
       `pending approval record ${target} not removed (${err.code || err.message}); ` +
-      "retry Deny after active hooks finish, or remove the pending token manually."
+      "retry Hold after active hooks finish, or remove the pending token manually."
     );
   }
-  return `pending approval record ${target} removed: the user answered ${row.revokeAnswer} (scope ${row.id}).`;
+  return `pending approval record ${target} removed: ${cause} (scope ${row.id}).`;
 }
 
 /**
@@ -1825,7 +1899,7 @@ function applyVerdict(verdict, data, { now, env }) {
   const { row } = verdict;
   const refused = (reason) => `approval record ${row.file} not recorded: ${reason}.`;
   if (verdict.action === "refuse") return refused(verdict.reason);
-  if (verdict.action === "revoke") return revokeRecord(row, data, env);
+  if (verdict.action === "revoke") return revokeRecord(row, data, env, verdict.cause);
   const where = recordDirectory(data.cwd, env);
   if (where.reason) return refused(where.reason);
   const problem = locationProblem(where.dir, row, false);

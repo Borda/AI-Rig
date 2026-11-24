@@ -118,6 +118,59 @@ def _run_selection_cli(inventory: Path, output: Path, *extra: str) -> subprocess
     return subprocess.run([*command, *extra], capture_output=True, text=True, check=False)
 
 
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        pytest.param(
+            "Keep labels\nwith their IDs", "Remediate PR team/project#23 — Keep labels with their IDs", id="titled"
+        ),
+        pytest.param("", "Remediate PR team/project#23", id="title-unavailable"),
+    ],
+)
+def test_selection_exposes_collected_pr_subject_without_changing_scope(
+    tmp_path: Path, title: str, expected: str
+) -> None:
+    """An independently displayed prompt identifies its base PR while the frozen scope stays byte-exact."""
+    inventory = tmp_path / "selection.json"
+    inventory.write_text(json.dumps(_selection()), encoding="utf-8")
+    scope = tmp_path / "resolution-scope.md"
+    local = _run_selection_cli(inventory, scope)
+    assert local.returncode == 0, local.stderr
+    assert "pr_subject" not in json.loads(local.stdout)
+
+    pr = tmp_path / "pr"
+    pr.mkdir()
+    url = "https://github.com/team/project/pull/23"
+    metadata = {"number": 23, "url": url, "title": title, "headRepository": {"nameWithOwner": "fork/project"}}
+    (pr / "pr.json").write_text(json.dumps(metadata), encoding="utf-8")
+    stale = _run_selection_cli(inventory, scope)
+    assert stale.returncode == 0, stale.stderr
+    assert "pr_subject" not in json.loads(stale.stdout)
+
+    payload = _selection()
+    payload["pr_relevance"] = {
+        "connected_open_items_total": 1,
+        "connected_selectable_items_total": 1,
+        "connected_required_followup_total": 0,
+        "connected_items_marked_out_of_scope": 0,
+    }
+    inventory.write_text(json.dumps(payload), encoding="utf-8")
+    frozen = _load_finalizer().render_selection(payload).encode("utf-8")
+    routing = pr / "pr-routing.json"
+    routing.write_text(json.dumps({"pr_url": url}), encoding="utf-8")
+    rendered = _run_selection_cli(inventory, scope)
+
+    assert rendered.returncode == 0, rendered.stderr
+    assert json.loads(rendered.stdout)["pr_subject"] == expected
+    assert scope.read_bytes() == frozen
+    assert _run_selection_cli(inventory, scope, "--check").returncode == 0
+
+    routing.write_text(json.dumps({"pr_url": "https://github.com/other/project/pull/23"}), encoding="utf-8")
+    mismatch = _run_selection_cli(inventory, scope)
+    assert mismatch.returncode == 0, mismatch.stderr
+    assert "pr_subject" not in json.loads(mismatch.stdout)
+
+
 def _bind_final_handoff(handoff_path: Path, metadata: dict) -> dict:
     """Render the handoff beside itself and record its digests in ``metadata['final_handoff']``."""
     out = handoff_path.parent

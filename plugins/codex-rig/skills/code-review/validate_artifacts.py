@@ -160,7 +160,7 @@ from review_execution_validation import (  # noqa: E402
     validate_local_reviewer_evidence as validate_local_reviewer_evidence,
 )
 from review_routing import ROUTING_SIGNALS, derive_mechanical_risk, literal_patch_paths, read_review_paths  # noqa: E402
-from review_worktree_replay import CLOSED_REQUIRED_PR_ARTIFACTS  # noqa: E402
+from review_worktree_replay import CLOSED_REQUIRED_PR_ARTIFACTS, retained_local_gate  # noqa: E402
 from run_gates import (  # noqa: E402
     _aggregate_worker_proofs,
     _local_snapshot_bytes,
@@ -569,9 +569,10 @@ def _validate_routing(out_dir: Path, risk_tier: str) -> set[str]:
     return triggered
 
 
-def _require_notes_sections(notes_path: Path) -> None:
-    """Require each report section to appear as a standalone Markdown heading."""
-    text = notes_path.read_text(encoding="utf-8")
+def _require_notes_sections(notes_path: Path, *, text: str | None = None) -> None:
+    """Check required headings in the saved report or the exact text a producer is about to save."""
+    if text is None:
+        text = notes_path.read_text(encoding="utf-8")
     missing = []
     for section in REQUIRED_SECTIONS:
         if not re.search(r"^#{1,2}[ \t]+" + re.escape(section) + r"(?:[ \t]+#+)?[ \t]*\r?$", text, re.MULTILINE):
@@ -2090,7 +2091,7 @@ def _validate_ci_tests_skip(
 
 
 def _validate_pr_tests_import_proof(
-    checks: list[dict[str, Any]], worktree: str, local_snapshot: dict[str, Any] | None = None
+    checks: list[dict[str, Any]], worktree: str, local_snapshot: dict[str, Any] | None = None, *, archived: bool = False
 ) -> None:
     """Require actual test origins from clean tracked source or explicitly admitted local snapshot bytes."""
     tests_checks = [check for check in checks if check.get("id") == "tests"]
@@ -2213,8 +2214,14 @@ def _validate_pr_tests_import_proof(
                     or origin.get("status") != "pass"
                     or origin.get("reason") is not None
                     or origin.get("snapshot_member") != {key: record[key] for key in ("path", "kind", "sha256")}
-                    or origin.get("tracked") is not inspect_collected_test(path, source_root, local_snapshot)["tracked"]
-                    or _sha256(path) != record["sha256"]
+                    or (
+                        not archived
+                        and (
+                            origin.get("tracked")
+                            is not inspect_collected_test(path, source_root, local_snapshot)["tracked"]
+                            or _sha256(path) != record["sha256"]
+                        )
+                    )
                 ):
                     raise SystemExit("local-source-tests-snapshot-member-invalid")
         if workers:
@@ -2577,8 +2584,13 @@ def _consolidation_confidence_evidence(out_dir: Path, manifest: dict[str, Any]) 
         root = Path(source["worktree"])
         if inventory["source_arguments"]["source_root"] != root.as_posix():
             raise SystemExit("local-confidence-source-root-mismatch")
-        current = validate_local_gate_source(out_dir, root)
+        archived = retained_local_gate(out_dir, root)
         snapshot_path = _resolve_path(out_dir, source.get("snapshot_path"))
+        current = (
+            _load_json(out_dir / "checks/local-source-snapshot.json")
+            if archived
+            else validate_local_gate_source(out_dir, root)
+        )
         receipt_path = _resolve_path(out_dir, source.get("receipt_path"))
         if (
             source.get("snapshot_path") != "checks/local-source-snapshot.json"
@@ -2638,7 +2650,7 @@ def _consolidation_confidence_evidence(out_dir: Path, manifest: dict[str, Any]) 
             if key == "command_path":
                 current["transport"] = _local_test_snapshot_transport(content, out_dir, source)
             references.add(path.relative_to(out_dir).as_posix())
-        _validate_pr_tests_import_proof(gates["checks"], root.as_posix(), current)
+        _validate_pr_tests_import_proof(gates["checks"], root.as_posix(), current, archived=archived)
     return references
 
 

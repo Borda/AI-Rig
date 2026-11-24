@@ -441,6 +441,23 @@ class TestReviewWorktree:
         assert collected.returncode == 0, collected.stderr
         receipt = json.loads((run / "local-source" / "review-worktree.json").read_bytes())
         skill = PLUGIN_ROOT / "skills" / "code-review"
+        subprocess.run(
+            [
+                sys.executable,
+                str(PLUGIN_ROOT / "shared" / "codemap_adapter.py"),
+                "context",
+                "--category",
+                "review",
+                "--root",
+                receipt["review_worktree"],
+                "--diff-file",
+                str(run / "diff.patch"),
+                "--out",
+                str(run / "codemap-context.json"),
+            ],
+            capture_output=True,
+            check=True,
+        )
         signal_names = runpy.run_path(str(skill / "review_routing.py"))["ROUTING_SIGNALS"]
         roles = ["qa-specialist", "sw-engineer"]
         routing = {

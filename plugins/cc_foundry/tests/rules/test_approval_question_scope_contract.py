@@ -22,7 +22,7 @@ _INSTRUCTION_FRAGMENTS = (
     "at most 1,500 characters",
     "exempt from the 6-line target",
     "no table, no fence",
-    "one blank line after the first line, which states the ask",
+    "one blank line before the last line, which states the ask",
     "Option descriptions carry what each answer does, one line each",
 )
 _VARIANTS = pytest.mark.parametrize("variant", ["", "_full/"])
@@ -31,16 +31,16 @@ _QUESTION_CASES = [
         "git-commit.md",
         "git-approve",
         [
-            "Commit these changes to {branch}?",
             "Subject: {subject}",
             "Diff: {file count}, {insertions} insertions, {deletions} deletions; files: {file names}",
             "Scope: one plain local commit; never push.",
+            "Commit these changes to {branch}?",
         ],
         [
             "`Approve` = this commit only",
             "`Approve always` = the grant description required above, which must name "
             "`claude-git-approval.json` and its revocation command",
-            "`Deny` = skip, leave the changes",
+            "`Hold` = skip this commit.",
         ],
         id="local-commit",
     ),
@@ -48,15 +48,15 @@ _QUESTION_CASES = [
         "git-commit.md",
         "git-push",
         [
-            "Push {branch} to {configured remote name}?",
             "HEAD: {HEAD}",
             "Commits: {count}; subjects (up to 5): {subjects}",
             "Command: {exact command}",
             "Not covered: force, delete, tags, other refs, other remotes, URLs.",
+            "Push {branch} to {configured remote name}?",
         ],
         [
             "`Approve` = one push of this branch at this HEAD to this remote; token valid 15 minutes",
-            "`Deny` = skip this push",
+            "`Hold` = skip this push.",
         ],
         id="push",
     ),
@@ -64,14 +64,14 @@ _QUESTION_CASES = [
         "public-github.md",
         "gh-write",
         [
-            "Run this write on {owner/repo}?",
             "Writes: {action, such as create, comment, edit or close; target}",
             "Body summary: {one-line summary}",
             "Command: `gh {exact arguments}`",
+            "Run this write on {owner/repo}?",
         ],
         [
             "`Approve` = run exactly this command once; token valid 15 minutes; read files re-hashed",
-            "`Deny` = skip this write",
+            "`Hold` = skip this write.",
         ],
         id="github-write",
     ),
@@ -94,19 +94,20 @@ def _question(variant: str, rule: str, header: str) -> tuple[str, str, list[str]
 
 @_VARIANTS
 @pytest.mark.parametrize(("rule", "header", "expected", "descriptions"), _QUESTION_CASES)
-def test_approval_question_opens_with_ask_and_carries_scope(
+def test_approval_question_ends_with_ask_and_carries_scope(
     variant: str, rule: str, header: str, expected: list[str], descriptions: list[str]
 ) -> None:
-    """Both rule variants open with the ask, keep scope in option descriptions and preserve rendering limits.
+    """Both rule variants end with the ask, keep scope in option descriptions and preserve rendering limits.
 
-    The question reads as one sentence stating the ask followed by short fact lines; what each answer does lives in the
-    one-line option descriptions instead of repeating in the question body.
+    The question reads as short fact lines followed by one sentence stating the ask, so the decision is the last thing
+    read; what each answer does lives in the one-line option descriptions instead of repeating in the question body.
     """
     _, instructions, lines = _question(variant, rule, header)
     question = "\n".join(lines)
     assert missing(instructions, [*_INSTRUCTION_FRAGMENTS, *descriptions]) == []
     assert lines == expected
-    assert lines[0].endswith("?")
+    assert lines[-1].endswith("?")
+    assert not any(line.endswith("?") for line in lines[:-1])
     assert len(question) <= 1500
     assert "|" not in question
     assert "```" not in question
@@ -126,13 +127,13 @@ def test_github_write_question_has_one_command_span(variant: str) -> None:
 
 @_VARIANTS
 def test_push_question_names_the_current_branch(variant: str) -> None:
-    """The git-push question puts the current branch, verbatim, in its first line.
+    """The git-push question puts the current branch, verbatim, in its last line, the ask.
 
     The user approves one specific branch push, so the branch must be visible in the ask itself.
     """
     _, instructions, lines = _question(variant, "git-commit.md", "git-push")
     assert "the current branch must appear verbatim in it" in instructions
-    assert "{branch}" in lines[0]
+    assert "{branch}" in lines[-1]
 
 
 @_VARIANTS
@@ -166,14 +167,14 @@ def test_codex_local_commit_question_keeps_host_specific_grant() -> None:
             [
                 "**Local-commit question text**",
                 "- Commit these changes to {branch}?",
-                "one blank line after the first line, which states the ask",
+                "one blank line before the last line, which states the ask",
                 "Subject: {subject}",
                 "Diff: {file count}, {insertions} insertions, {deletions} deletions; files: {file names}",
                 "Scope: one plain local commit; never push.",
                 "Approve = this commit only.",
                 "every worktree of this project and in later sessions",
                 'revoke with rm "$(git rev-parse --git-common-dir)/codex-git-approval.json".',
-                "Deny = skip, leave the changes.",
+                "Hold = skip this commit and leave its changes unstaged. Future commits follow the usual approval rules.",
                 "at most 1,500 characters",
             ],
         )

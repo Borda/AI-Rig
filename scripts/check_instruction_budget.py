@@ -158,7 +158,8 @@ BUDGETS = (
     # push-on-request route, 77 for the final-handover publication gate (a worktree remediation that created a
     # commit asks once, with no request). Both bind before a Codex session's first git or gh command, so no lazily
     # loaded file can carry them.
-    Budget("plugins/codex-rig/assets/AGENTS.md", 44484),
+    # A blocked command can occur outside any skill. Budget its always-on pointer to the shared recovery rule.
+    Budget("plugins/codex-rig/assets/AGENTS.md", 44564),
 )
 
 

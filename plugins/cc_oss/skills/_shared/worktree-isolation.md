@@ -73,9 +73,9 @@ Composition facts (verified against `resolve/modes/dispatch-phase2.md`):
 - **Mutex path** derives from git-common-dir + branch. Worktrees share the common-dir, so the lock is identical inside the session worktree → a second concurrent resolve on the same PR branch is still blocked. No regression.
 - **Phase-2 specialist worktrees** register on the same common-dir (siblings, not nested) and pin to `phase2-base-sha` — the PR HEAD captured right before the first spawn wave, after C1's `each` commits — exactly as before; `resolve-base-sha` (the prelude fingerprint) stays the reset fence's anchor.
 - **Step 11 caller-branch restore** becomes a harmless no-op — the main tree was never switched.
-- **Push** targets the same remote fork; unaffected by CWD.
+- **Push** targets the same remote fork, but the push approval is bound to the checkout it was asked from: from the session worktree the push is written `git -C <worktree path> push <remote> <branch>` and the Step 3d `git-push-run` question names that worktree (`resolve/modes/push.md` §`WT_PUSH`). A plain `git push` there is refused by the guard.
 
-Enter is the only addition; do not alter checkout, mutex, fingerprint, or push logic.
+Enter is the only addition; do not alter checkout, mutex or fingerprint logic. The push logic changes only in how the push is spelled and named in the approval.
 
 ## §Exit
 

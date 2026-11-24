@@ -502,7 +502,15 @@ def test_inspected_ignored_worktree_output_is_retained(review, capsys: pytest.Ca
     "interval",
     [
         pytest.param(x, id=x)
-        for x in ("original", "inspected", "no-contributor-execution", "same-repository", "ordinary-fork", "private")
+        for x in (
+            "original",
+            "inspected",
+            "no-contributor-execution",
+            "same-repository",
+            "ordinary-fork",
+            "negative-verdict",
+            "private",
+        )
     ],
 )
 def test_terminal_cli_removes_collected_worktree_and_keeps_report_intake(
@@ -658,6 +666,14 @@ def test_terminal_cli_removes_collected_worktree_and_keeps_report_intake(
         )["sha256"]
         with pytest.raises(ValueError, match="integrity-surface-mismatch"):
             prepare._require_pr_dispatch_integrity(run, [str(wrong), digest], None)
+    if interval == "negative-verdict":
+        result, handoff = completion._fail_tests_gate(run)
+        failed_gates = json.loads((run / "gates.json").read_bytes())
+        routing._bind_gates_to_worktree(failed_gates, checkout["worktree"], checkout["local_head"])
+        completion._save_json(run / "gates.json", failed_gates)
+        completion._add_test_failure_merge_block(run, result, handoff)
+        completion._rerender(run, handoff, result)
+        completion._save_json(run / "result.json", result)
     finder = [sys.executable, str(SHARED / "find-review-report.py")]
     complete = [*finder, "--complete-run", str(run), "--codex-home", str(tmp_path)]
     original = subprocess.run(complete, capture_output=True, check=False)

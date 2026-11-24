@@ -65,6 +65,7 @@ SHARED_DIRECTORY = Path(__file__).resolve().parent
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
+import worktree_publication  # noqa: E402
 from adversarial_loop import load_ledger  # noqa: E402,F401 (loaders and tests read it from this module)
 from audit_consolidation import settle_consolidation  # noqa: E402,F401 (loaders and tests read it from this module)
 from collect_diff import canonical_diff_arguments  # noqa: E402
@@ -627,7 +628,12 @@ def _explicit_commit_with_incomplete_verification(
 
 
 def _validate_remediation_publication(
-    result: dict[str, Any], artifacts: list[Any], out_dir: Path, *, candidate: bool
+    result: dict[str, Any],
+    artifacts: list[Any],
+    out_dir: Path,
+    *,
+    candidate: bool,
+    committed: bool = False,
 ) -> None:
     """Reconcile a publication handoff with its retained receipts on direct validation."""
     metadata = result.get("metadata") or {}
@@ -641,15 +647,30 @@ def _validate_remediation_publication(
         if isinstance(artifact, dict) and str(artifact.get("label", "")).startswith("PR publication:")
     ]
     if "worktree_publication" not in metadata:
-        if has_marker or (
-            result["status"] == "pass"
-            and (publication_artifacts or (not candidate and publication_evidence_present(out_dir)))
+        # Older partial reports may retain a skip and a delivery receipt without an offer. A claimed or
+        # executed publication needs its binding even when a hosted check keeps the remediation open.
+        executed = any(
+            os.path.lexists(out_dir / name)
+            for name in (
+                worktree_publication.EXECUTED_FILE,
+                worktree_publication.RESULT_FILE,
+                "publication-readback.json",
+            )
+        )
+        if (
+            has_marker
+            or publication_artifacts
+            or (not candidate and (executed or (result["status"] == "pass" and publication_evidence_present(out_dir))))
         ):
             raise SystemExit("code-remediate-publication-binding-required")
         return
     if not has_marker:
         raise SystemExit("code-remediate-publication-contract-version-required")
-    if metadata.get("mode") != "pr" or result["status"] != "pass":
+    if metadata.get("mode") != "pr":
+        raise SystemExit("code-remediate-publication-binding-mismatch")
+    if result["status"] != "pass" and (
+        not committed or not worktree_publication.publication_result_eligible(out_dir, result)
+    ):
         raise SystemExit("code-remediate-publication-binding-mismatch")
     if result.get("schema_version", 1) == 1:
         raise SystemExit("code-remediate-publication-result-schema-invalid")
@@ -736,7 +757,7 @@ def _validate_final_handoff(
     if validation.get("rendered_sha256") != binding.get("rendered_sha256"):
         raise SystemExit("final-handoff-rendered-digest-mismatch")
     if (
-        handoff.get("presentation_version") in {12, 13, 14, 15}
+        handoff.get("presentation_version") in {12, 13, 14, 15, 16}
         and result["status"] in {"fail", "timeout"}
         and handoff.get("branch") not in {"closed", "caller-contract"}
         and not handoff.get("next_steps")
@@ -750,8 +771,14 @@ def _validate_final_handoff(
     }:
         raise SystemExit(f"{skill}-final-handoff-result-artifact-missing")
     if skill == "code-remediate":
-        _validate_remediation_publication(result, artifacts, out_dir, candidate=candidate)
         disposition = handoff.get("commit_disposition")
+        _validate_remediation_publication(
+            result,
+            artifacts,
+            out_dir,
+            candidate=candidate,
+            committed=isinstance(disposition, dict) and disposition.get("status") == "committed",
+        )
         if current_contract and disposition is None:
             raise SystemExit("remediation-commit-disposition-missing")
         grouped_disposition = _expected_grouped_commit_disposition(metadata, out_dir)
@@ -825,7 +852,7 @@ def _validate_final_handoff(
         _validate_code_review_final_handoff(
             result, handoff, candidate=current_contract, out_dir=out_dir, fresh_candidate=candidate
         )
-    if candidate and handoff.get("presentation_version") not in {8, 9, 10, 11, 12, 13, 14, 15}:
+    if candidate and handoff.get("presentation_version") not in {8, 9, 10, 11, 12, 13, 14, 15, 16}:
         raise SystemExit("current-handoff-presentation-v8-required")
 
 
@@ -3894,12 +3921,33 @@ def _validate_code_remediate_target_integration(
                 )
             ):
                 raise SystemExit("code-remediate-target-integration-source-mismatch")
-    # Use retained source coordinates, never the caller's unrelated current directory.
+    # A removed checkout has no current HEAD or index. Only historical report validation may use
+    # its verified publication, and the original merge must belong to the exact published commit.
+    archived = None
+    git_repository = ["-C", worktree]
+    if (
+        not current_checkout
+        and not os.path.lexists(worktree)
+        and os.path.lexists(pr_dir.parent / "remediation-worktree.json")
+    ):
+        # Ordinary artifact validation does not load the Git worktree lifecycle and its cleanup dependencies.
+        from remediation_worktree_cleanup import verified_removed_delivery
+
+        try:
+            archived = verified_removed_delivery(pr_dir.parent.absolute())
+        except (OSError, ValueError) as exc:
+            raise SystemExit("code-remediate-target-integration-cleanup-unverified") from exc
+        if archived["checkout"] != worktree or archived["branch"] != checkout.get("local_branch"):
+            raise SystemExit("code-remediate-target-integration-source-mismatch")
+        git_repository = ["--git-dir", archived["common_dir"]]
     commands = [("merge-base", "--is-ancestor", target, post), ("merge-base", "--is-ancestor", pre, post)]
+    if archived is not None:
+        commands.append(("merge-base", "--is-ancestor", post, archived["head"]))
     if delivery is not None:
         delivered_head, branch = delivery
-        commands.insert(0, ("rev-parse", "--show-toplevel"))
-        commands.append(("merge-base", "--is-ancestor", delivered_head, branch))
+        if archived is None:
+            commands.insert(0, ("rev-parse", "--show-toplevel"))
+        commands.append(("merge-base", "--is-ancestor", delivered_head, archived["head"] if archived else branch))
     if resolution["status"] == "completed":
         commands.append(("show", "--no-textconv", "-s", "--format=%P", post))
     if current_checkout:
@@ -3910,10 +3958,12 @@ def _validate_code_remediate_target_integration(
             for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply")
         )
     environment = _git_environment()
+    if archived is not None:
+        environment.update(GIT_NO_LAZY_FETCH="1", GIT_ALLOW_PROTOCOL="", GIT_NO_REPLACE_OBJECTS="1")
     for args in commands:
         try:
             result = subprocess.run(  # noqa: S603 - fixed Git operations and validated object IDs, no shell
-                ["git", "--no-pager", "-c", "core.fsmonitor=false", "-C", worktree, *args],  # noqa: S607 - declared prerequisite
+                ["git", "--no-pager", "-c", "core.fsmonitor=false", *git_repository, *args],  # noqa: S607 - declared prerequisite
                 env=environment,
                 capture_output=True,
                 text=True,

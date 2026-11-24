@@ -499,6 +499,8 @@ Use the loaded `codex-prepass.md` for the **skip/run criteria only** (formatting
 
 Dispatch — substitute `<TARGET>` with its resolved literal value before the call: `Skill(skill="bridge:review", args="--timeout-seconds 230 Read-only adversarial review of <TARGET>. Look for bugs, missed edge cases, incorrect logic, and inconsistencies with existing code patterns. Report findings with file:line locations; do not apply fixes.")` (requires `bridge@borda-ai-rig`).
 
+Oversized `<TARGET>` (optional): dispatch it as the `codex-prepass.md` §Oversized diff partition, with this brief as `task` and `"against": "HEAD"` for the working tree, or `"range": "HEAD~1..HEAD"` under `--committed`; write the merged findings and any `skipped` or failed group to `$RUN_DIR/codex.md` the same way.
+
 Note: with `--timeout-seconds 230`, `bridge:review` uses its synchronous foreground route and blocks until it returns. Its Write tool is limited to its own scratch task file; it returns findings inline in its response envelope and does not write `$RUN_DIR/codex.md`. No background health-monitoring/liveness-probe protocol applies. After `Skill(skill="bridge:review", ...)` returns, the orchestrator itself writes `$RUN_DIR/codex.md` from the returned envelope's `.findings`/`.verdict`/`.transcript_path` fields.
 
 Quota-blocked co-review (a `blocked` or `timeout` result):

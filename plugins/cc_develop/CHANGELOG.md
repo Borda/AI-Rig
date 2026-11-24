@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.52.0
+
+- `/develop:review` and the shared Codex pre-pass can send an oversized diff to Codex as a partitioned review through the bridge's `--partition-file`, wave by wave, instead of one call that stops at the output limit. Skipped files and failed groups are reported as unreviewed scope, and a bridge without the flag keeps the single call.
+
 ## 0.51.0
 
 - Shared rules:

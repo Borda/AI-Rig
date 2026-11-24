@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -281,6 +282,162 @@ class TestReviewCommitSha:
 
 class TestDisplayedCommit:
     """The header Commit row, the metadata and the full report must name the same retained commit."""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "stage",
+        [pytest.param(Path.rename, id="new-canonical"), pytest.param(shutil.copyfile, id="identical-canonical")],
+    )
+    def test_finalizes_authored_notes_and_preserves_the_draft(
+        self, assessed_run: Path, capsys: pytest.CaptureFixture, stage: Callable
+    ) -> None:
+        """Materialize a named notes input, then repeat the same CLI without changing either copy."""
+        run = assessed_run
+        report, draft = run / "review-notes.md", run / "authored.md"
+        stage(report, draft)
+        original = draft.read_bytes()
+        result, _ = _load_review(run)
+        metadata = run / "authored-metadata.json"
+        metadata.write_text(json.dumps(result["metadata"]), encoding="utf-8")
+        (run / "result.json").unlink()
+        argv = ["finalize", "--skill", "code-review", "--run", str(run), "--review-notes", draft.name]
+        argv += ["--metadata", str(metadata), "--handoff", str(run / "final-handoff.json")]
+        argv += ["--status", "pass", "--confidence", "0.95", "--artifact-path", str(run / "result.json")]
+        argv += ["--parent-thread-id", "thread", "--promote"]
+        helper = _load_helper()
+
+        before = report.read_bytes() if report.exists() else None
+        draft.write_bytes(original.replace(b"Online Review Triage", b"Omitted Online Section"))
+        assert helper.main(argv) == 1
+        assert json.loads(capsys.readouterr().out)["promoted"] is False
+        assert (report.read_bytes() if report.exists() else None) == before
+        draft.write_bytes(original)
+        assert helper.main(argv) == 0, capsys.readouterr().out
+        assert json.loads(capsys.readouterr().out)["promoted"] is True
+        materialized = report.read_bytes()
+        assert materialized.startswith(original)
+        assert read_json(run / "pr-routing.json")["head_oid"].encode() in materialized
+        assert helper.main(argv) == 0, capsys.readouterr().out
+        assert report.read_bytes() == materialized
+        assert draft.read_bytes() == original
+
+    @pytest.mark.parametrize(
+        ("addition", "code"),
+        [
+            pytest.param(
+                "## Reviewed Source\n\nReviewed commit: {sha}tail",
+                "review-commit-report-mismatch",
+                id="extra-oid-suffix",
+            ),
+            pytest.param(
+                "## Reviewed Source\n\nReviewed commit: {sha}\n\n## Reviewed Source\n\nReviewed commit: old",
+                "review-commit-report-mismatch",
+                id="duplicate-source",
+            ),
+            pytest.param(
+                "## Review Findings and Merge Blocks\n\n| Finding / area | Required change | Evidence | Status |\n| --- | --- | --- | --- |\n| F1 | Fix | file.py | Required |",
+                "review-action-identity-coverage-mismatch",
+                id="stale-action",
+            ),
+        ],
+    )
+    def test_refuses_contradictory_imported_evidence(self, assessed_run: Path, addition: str, code: str) -> None:
+        """Imported notes cannot add a conflicting commit identity or an action absent from the assessed record."""
+        run = assessed_run
+        report, draft = run / "review-notes.md", run / "authored.md"
+        report.rename(draft)
+        result, handoff = _load_review(run)
+        head = read_json(run / "pr-routing.json")["head_oid"]
+        with draft.open("ab") as stream:
+            stream.write(("\n\n" + addition.format(sha=head) + "\n").encode())
+        helper = _load_helper()
+        with pytest.raises(helper.DeriveError, match=code):
+            helper.derive_handoff(
+                run, result["metadata"], handoff, result["confidence"], result["artifact_path"], review_notes=draft
+            )
+        assert not report.exists()
+
+    @pytest.mark.parametrize(
+        ("filename", "code"),
+        [
+            pytest.param("../other.md", "review-notes-input-outside-run", id="outside-run"),
+            pytest.param("preliminary.md", "missing-review-note-sections:", id="incomplete-notes"),
+            pytest.param("missing.md", "review-notes-input-invalid", id="missing-input"),
+        ],
+    )
+    def test_refuses_ineligible_notes_without_creating_canonical_report(
+        self, assessed_run: Path, filename: str, code: str
+    ) -> None:
+        """Only a complete, regular, run-local authored report may supply canonical notes."""
+        run = assessed_run
+        report = run / "review-notes.md"
+        report.rename(run.parent / "other.md")
+        (run / "preliminary.md").write_bytes(b"# Preliminary evidence\n")
+        result, handoff = _load_review(run)
+        helper = _load_helper()
+
+        with pytest.raises((helper.DeriveError, SystemExit), match=code):
+            helper.derive_handoff(
+                run,
+                result["metadata"],
+                handoff,
+                result["confidence"],
+                result["artifact_path"],
+                review_notes=run / filename,
+            )
+
+        assert not report.exists()
+
+    def test_preserves_distinct_canonical_notes(self, assessed_run: Path) -> None:
+        """A named draft cannot replace independently authored canonical report bytes."""
+        run = assessed_run
+        report, draft = run / "review-notes.md", run / "authored.md"
+        report.rename(draft)
+        report.write_bytes(b"Independent canonical notes.\n")
+        result, handoff = _load_review(run)
+        helper = _load_helper()
+
+        with pytest.raises(helper.DeriveError, match="review-notes-input-conflict"):
+            helper.derive_handoff(
+                run, result["metadata"], handoff, result["confidence"], result["artifact_path"], review_notes=draft
+            )
+
+        assert report.read_bytes() == b"Independent canonical notes.\n"
+
+    def test_invalid_handoff_cannot_install_authored_notes(self, assessed_run: Path) -> None:
+        """A valid notes draft remains unpublished when the in-memory handoff fails validation."""
+        run = assessed_run
+        report, draft = run / "review-notes.md", run / "authored.md"
+        report.rename(draft)
+        result, handoff = _load_review(run)
+        handoff["source_coverage"]["source_records_total"] += 7
+        helper = _load_helper()
+
+        with pytest.raises(helper.final_handoff.HandoffError, match="source-coverage-count-mismatch"):
+            helper.derive_handoff(
+                run, result["metadata"], handoff, result["confidence"], result["artifact_path"], review_notes=draft
+            )
+
+        assert not report.exists()
+
+    @pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="filesystem cannot create file symlinks")
+    def test_rejects_symlinked_notes_input(self, assessed_run: Path) -> None:
+        """A linked notes input cannot materialize an external report or modify the link target."""
+        run = assessed_run
+        report, draft, target = run / "review-notes.md", run / "authored.md", run.parent / "external.md"
+        report.rename(target)
+        original = target.read_bytes()
+        draft.symlink_to(target)
+        result, handoff = _load_review(run)
+        helper = _load_helper()
+
+        with pytest.raises(helper.DeriveError, match="review-notes-input-invalid"):
+            helper.derive_handoff(
+                run, result["metadata"], handoff, result["confidence"], result["artifact_path"], review_notes=draft
+            )
+
+        assert not report.exists()
+        assert target.read_bytes() == original
 
     @pytest.mark.integration
     @pytest.mark.parametrize(

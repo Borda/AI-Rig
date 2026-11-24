@@ -13,25 +13,28 @@ from pathlib import Path
 import pytest
 from _modules import load_module
 from _platform import FILE_SYMLINKS_AVAILABLE
+from _remediation_cleanup import record_destination as _record_destination
+from _remediation_cleanup import record_pr_target as _record_pr_target
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 PUBLICATION = load_module("worktree_publication", PLUGIN_ROOT / "shared" / "worktree_publication.py")
 BRANCH = "refs/heads/change"
+TARGET = "refs/heads/main"
 #: The credential option every CLI call carries, as the publication gate always passes at least one helper.
 HELPER_ARGS = ["--credential-helper", "osxkeychain"]
 
 
 def _git(repo: Path, *args: str, input_text: str | None = None) -> str:
     """Run Git for a private fixture repository without inheriting user configuration."""
+    # Bytes in and out: text-mode stdin turns every line feed into CRLF on Windows and Git rejects the corrupt object.
     result = subprocess.run(
         ["git", "-C", str(repo), *args],
         env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"},
-        input=input_text,
-        text=True,
+        input=None if input_text is None else input_text.encode(),
         capture_output=True,
         check=True,
     )
-    return result.stdout.strip()
+    return result.stdout.decode().strip()
 
 
 @pytest.fixture(autouse=True)
@@ -66,6 +69,7 @@ def publication_repositories(tmp_path: Path) -> tuple[Path, Path, str, str, str]
     _git(source, "read-tree", "HEAD")
     (remote / "objects" / "info" / "alternates").write_bytes(os.fsencode(source / ".git" / "objects") + b"\n")
     _git(remote, "update-ref", BRANCH, old)
+    _git(remote, "update-ref", TARGET, first)
     return source, remote, first, old, new
 
 
@@ -92,9 +96,137 @@ def _push(
         options.pop("credential_helpers", ()),
         branch=branch,
         common_dir=common_dir or source / ".git",
+        base=(remote.as_uri(), TARGET, _git(remote, "rev-parse", TARGET)),
         protocol="file",
         **options,
     )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("topology", ["same-repository", "fork"])
+@pytest.mark.parametrize(
+    ("base_change", "expected"),
+    [
+        pytest.param("unseen", "publication-target-not-integrated", id="advanced-outside-source-history"),
+        pytest.param("diverged", "publication-target-not-integrated", id="known-but-unmerged-target"),
+        pytest.param("included", "pushed", id="advanced-to-included-commit"),
+        pytest.param("rewound", "publication-target-diverged", id="rewound-to-included-ancestor"),
+        pytest.param("deleted", "publication-target-unverifiable", id="target-disappeared"),
+    ],
+)
+def test_push_checks_live_base_after_rehearsal(
+    publication_repositories,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    topology: str,
+    base_change: str,
+    expected: str,
+) -> None:
+    """Check the real base after rehearsal, including when a fork carries a stale branch of that name."""
+    source, destination, first, old, new = publication_repositories
+    upstream = destination
+    if topology == "fork":
+        upstream = tmp_path / "upstream.git"
+        _git(tmp_path, "clone", "--bare", "--no-local", destination.as_uri(), str(upstream))
+    head_repository = "upstream/widgets" if topology == "same-repository" else "contributor/widgets"
+    head_url, base_url = f"https://github.com/{head_repository}.git", "https://github.com/upstream/widgets.git"
+    offer = {
+        "checkout": source.as_posix(),
+        "common_dir": (source / ".git").as_posix(),
+        "branch": "source",
+        "source_oid": new,
+        "expected_oid": old,
+        "ref": BRANCH,
+        "url": head_url,
+    }
+    run = tmp_path / "run"
+    run.mkdir()
+    captured = old if base_change == "rewound" else first
+    if base_change == "rewound":
+        _git(upstream, "update-ref", TARGET, old, first)
+    digest = _open_attempt(run, offer, captured=captured)
+    # Move the host's base only AFTER Git successfully rehearsed publication of this unchanged PR head.
+    tree = _git(upstream, "rev-parse", f"{first}^{{tree}}")
+    unseen = _git(
+        upstream,
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit-tree",
+        tree,
+        "-p",
+        first,
+        "-m",
+        "Concurrent target update",
+    )
+    if base_change == "diverged":
+        # A known local object still has to be an ancestor of the approved commit.
+        commit = _git(upstream, "cat-file", "commit", unseen) + "\n"
+        assert _git(source, "hash-object", "-w", "-t", "commit", "--stdin", input_text=commit) == unseen
+    if base_change == "deleted":
+        # ls-remote's pattern still returns this unrelated ref after the true target disappears.
+        _git(upstream, "update-ref", f"refs/heads/shadow/{TARGET}", first)
+    refs = {head_url: destination.as_uri(), base_url: upstream.as_uri()}
+    git = PUBLICATION._git
+
+    def local_transport(executable: str, cwd: Path, env: dict[str, str], *args: str) -> str:
+        """Route only the hosted transports to isolated bare repositories while running their actual Git commands."""
+        if "ls-remote" not in args and "push" not in args:
+            return git(executable, cwd, env, *args)
+        endpoint = args[args.index("--") + 1]
+        env = {**env, "GIT_ALLOW_PROTOCOL": "file", "RIG_PUBLICATION_URL": destination.as_uri()}
+        translated = tuple(refs[value] if value == endpoint else value for value in args)
+        output = git(executable, cwd, env, *translated)
+        if "--dry-run" in args:
+            if base_change == "deleted":
+                _git(upstream, "update-ref", "-d", TARGET, first)
+            elif base_change == "rewound":
+                _git(upstream, "update-ref", TARGET, first, old)
+            else:
+                _git(upstream, "update-ref", TARGET, old if base_change == "included" else unseen, first)
+        return output
+
+    monkeypatch.setattr(PUBLICATION, "_git", local_transport)
+    code = PUBLICATION.main(["--run", str(run), "--offer-digest", digest, *HELPER_ARGS])
+    result = json.loads(capsys.readouterr().out)
+    assert (code, result["status"], result.get("reason")) == (
+        (0, "pushed", None) if expected == "pushed" else (1, "not-sent", expected)
+    )
+    assert (run / PUBLICATION.EXECUTED_FILE).exists() is (expected == "pushed")
+    assert _git(destination, "rev-parse", BRANCH) == (new if expected == "pushed" else old)
+
+
+@pytest.mark.parametrize(
+    ("record", "field", "replacement"),
+    [
+        pytest.param("pr-routing", "base_repo", "different/project", id="unrelated-read-destination"),
+        pytest.param("pr-routing", "base_ref", "other", id="wrong-target-branch"),
+        pytest.param("pr-routing", "base_ref", None, id="missing-target"),
+        pytest.param("target-branch", "base_ref", "other", id="wrong-fetched-target-branch"),
+        pytest.param("target-branch", "remote_ref", None, id="missing-fetched-commit"),
+        pytest.param("target-branch", "expected_base_oid", "d" * 40, id="capture-from-different-base"),
+    ],
+)
+def test_refuses_conflicting_target_before_remote_transport(
+    tmp_path: Path,
+    record: str,
+    field: str,
+    replacement: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An uncorroborated routing record cannot redirect a check or open a different network endpoint."""
+    digest = _open_attempt(tmp_path, _placeholder_offer(tmp_path))
+    path = tmp_path / "pr" / f"{record}.json"
+    receipt = json.loads(path.read_bytes())
+    receipt[field] = replacement
+    path.write_text(json.dumps(receipt), encoding="utf-8")
+    monkeypatch.setattr(PUBLICATION, "_isolated_push", lambda *a, **kw: pytest.fail("transport reached"))
+    assert PUBLICATION.main(["--run", str(tmp_path), "--offer-digest", digest, *HELPER_ARGS]) == 1
+    assert json.loads(capsys.readouterr().out) == {"status": "not-sent", "reason": "publication-target-unverifiable"}
+    assert not (tmp_path / PUBLICATION.EXECUTED_FILE).exists()
 
 
 @pytest.mark.integration
@@ -121,13 +253,13 @@ def test_transport_moves_exact_ref_without_inheriting_url_rewrites(
 @pytest.mark.integration
 def test_transport_refuses_to_create_a_deleted_destination(publication_repositories) -> None:
     """An existing approved head is required during the push itself."""
-    source, remote, _, old, new = publication_repositories
+    source, remote, first, old, new = publication_repositories
     _git(remote, "update-ref", "-d", BRANCH, old)
 
     with pytest.raises(ValueError, match="publication-remote-tip-changed"):
         _push(source, remote, new, old)
 
-    assert _git(remote, "for-each-ref") == ""
+    assert _git(remote, "for-each-ref", "--format=%(objectname) %(refname)") == f"{first} {TARGET}"
 
 
 @pytest.mark.integration
@@ -544,18 +676,14 @@ def test_cli_keeps_the_attempt_after_a_refused_rehearsal(
         "source_oid": new,
         "expected_oid": old,
     }
-    raw = json.dumps(offer).encode()
-    digest = hashlib.sha256(raw).hexdigest()
-    (run / PUBLICATION.OFFER_FILE).write_bytes(raw)
-    (run / PUBLICATION.ATTEMPT_FILE).write_text(
-        json.dumps({"offer_digest": digest, "decision_id": f"pr-worktree-publication-{digest}", "answer": "Approve"}),
-        encoding="utf-8",
-    )
+    digest = _open_attempt(run, offer, captured=_git(remote, "rev-parse", TARGET))
     real_push = PUBLICATION._isolated_push
 
     def local_endpoint(git: str, checkout: Path, url: str, *args: object, **kwargs: object) -> None:
         """Send the offer's transport to the fixture remote instead of GitHub."""
         assert url == offer["url"]
+        assert kwargs["base"] == ("https://github.com/upstream/widgets.git", TARGET, _git(remote, "rev-parse", TARGET))
+        kwargs["base"] = (remote.as_uri(), *kwargs["base"][1:])
         real_push(git, checkout, remote.as_uri(), *args, protocol="file", **kwargs)
 
     monkeypatch.setattr(PUBLICATION, "_isolated_push", local_endpoint)
@@ -577,7 +705,7 @@ def test_cli_keeps_the_attempt_after_a_refused_rehearsal(
     assert json.loads(capsys.readouterr().out) == {"status": "failed", "reason": "publication-attempt-already-started"}
 
 
-def _open_attempt(run: Path, offer: dict[str, str]) -> str:
+def _open_attempt(run: Path, offer: dict[str, str], *, captured: str | None = None) -> str:
     """Write an offer and its approved attempt record into ``run`` and return the offer digest."""
     raw = json.dumps(offer).encode()
     digest = hashlib.sha256(raw).hexdigest()
@@ -587,7 +715,124 @@ def _open_attempt(run: Path, offer: dict[str, str]) -> str:
         json.dumps({"offer_digest": digest, "decision_id": f"{prefix}-{digest}", "answer": "Approve"}),
         encoding="utf-8",
     )
+    (run / "publication-answer.json").write_bytes((run / PUBLICATION.ATTEMPT_FILE).read_bytes())
+    if run.name != "publication-request":
+        _record_destination(run, offer, result_name="result.candidate.json")
+        _record_pr_target(run, offer, captured=captured)
+        (run / "remediation-worktree.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "worktree": offer["checkout"],
+                    "git_common_dir": offer["common_dir"],
+                    "invoking_checkout": str(run.parent),
+                }
+            )
+        )
+        _attest_candidate(run)
     return digest
+
+
+def _attest_candidate(run: Path) -> None:
+    """Freeze the candidate and gate bytes the standalone transport must see at both execution checkpoints."""
+    (run / "publication-candidate-validation.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "candidate_sha256": hashlib.sha256((run / "result.candidate.json").read_bytes()).hexdigest(),
+                "gates_sha256": hashlib.sha256((run / "gates.json").read_bytes()).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("entry", ["initial", "follow-up"])
+@pytest.mark.parametrize("defect", ["missing", "denied", "wrong-digest", "wrong-decision"])
+def test_transport_refuses_attempt_without_matching_native_answer(
+    delivered_request,
+    entry: str,
+    defect: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An attempt record cannot override a missing, negative, or differently scoped user answer."""
+    checkpoint, offer, _ = delivered_request
+    run = tmp_path if entry == "initial" else checkpoint
+    digest = _open_attempt(run, offer)
+    answer = run / "publication-answer.json"
+    changes = {
+        "denied": {"answer": "Deny"},
+        "wrong-digest": {"offer_digest": "0" * 64},
+        "wrong-decision": {"decision_id": "previous-offer"},
+    }
+    if defect == "missing":
+        answer.unlink()
+    else:
+        answer.write_text(json.dumps({**json.loads(answer.read_bytes()), **changes[defect]}), encoding="utf-8")
+    monkeypatch.setattr(PUBLICATION, "_isolated_push", lambda *a, **kw: pytest.fail("transport reached"))
+    assert PUBLICATION.main(["--run", str(run), "--offer-digest", digest, *HELPER_ARGS]) == 1
+    assert json.loads(capsys.readouterr().out)["status"] == "not-sent"
+    assert not (run / PUBLICATION.EXECUTED_FILE).exists()
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        pytest.param("result.candidate.json", None, id="candidate-missing"),
+        pytest.param("result.candidate.json", b'{"status":"pass"}', id="different-candidate"),
+        pytest.param("publication-candidate-validation.json", None, id="validation-incomplete"),
+        pytest.param("gates.json", b'{"status":"fail"}', id="local-evidence-changed"),
+        pytest.param("final-handoff.json", b"{}", id="committed-handoff-changed"),
+    ],
+)
+def test_initial_send_rechecks_validated_candidate_before_execution_marker(
+    tmp_path: Path,
+    name: str,
+    content: bytes | None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Changing evidence during the transport preflight cannot consume the attempt or send the commit."""
+    offer = _placeholder_offer(tmp_path)
+    digest = _open_attempt(tmp_path, offer)
+
+    def change_evidence(*args: object, **kwargs: object) -> None:
+        """Change a single retained input after the first eligibility check and before its final recheck."""
+        file = tmp_path / name
+        if content is None:
+            file.unlink()
+        else:
+            file.write_bytes(content)
+        kwargs["before_push"]()
+        pytest.fail("Send was authorized after evidence changed")
+
+    monkeypatch.setattr(PUBLICATION, "_isolated_push", change_evidence)
+    assert PUBLICATION.main(["--run", str(tmp_path), "--offer-digest", digest, *HELPER_ARGS]) == 1
+    assert json.loads(capsys.readouterr().out)["status"] == "not-sent"
+    assert not (tmp_path / PUBLICATION.EXECUTED_FILE).exists()
+
+
+def test_pass_claim_cannot_override_a_failed_local_gate_on_initial_send(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A claimed passing candidate and matching receipt cannot replace the local check on the actual gates."""
+    digest = _open_attempt(tmp_path, _placeholder_offer(tmp_path))
+    path = tmp_path / "gates.json"
+    gates = json.loads(path.read_bytes())
+    gates["checks"][0].update(status="fail", exit_code=1)
+    path.write_text(json.dumps(gates), encoding="utf-8")
+    _attest_candidate(tmp_path)
+    monkeypatch.setattr(PUBLICATION, "_isolated_push", lambda *a, **kw: pytest.fail("transport reached"))
+    assert PUBLICATION.main(["--run", str(tmp_path), "--offer-digest", digest, *HELPER_ARGS]) == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "not-sent",
+        "reason": "publication-validated-candidate-required",
+    }
+    assert not (tmp_path / PUBLICATION.EXECUTED_FILE).exists()
 
 
 @pytest.mark.integration
@@ -612,12 +857,14 @@ def test_a_scratch_cleanup_failure_after_the_push_still_reports_pushed(
         "source_oid": new,
         "expected_oid": old,
     }
-    digest = _open_attempt(run, offer)
+    digest = _open_attempt(run, offer, captured=_git(remote, "rev-parse", TARGET))
     real_push = PUBLICATION._isolated_push
 
     def local_endpoint(git: str, checkout: Path, offer_url: str, *args: object, **kwargs: object) -> None:
         """Send the offer's transport to the fixture remote instead of GitHub."""
         assert offer_url == url
+        assert kwargs["base"] == ("https://github.com/upstream/widgets.git", TARGET, _git(remote, "rev-parse", TARGET))
+        kwargs["base"] = (remote.as_uri(), *kwargs["base"][1:])
         real_push(git, checkout, remote.as_uri(), *args, protocol="file", **kwargs)
 
     scratch_parent = tmp_path / "scratch-parent"
@@ -711,13 +958,7 @@ def test_a_refusal_is_retryable_only_while_no_marker_entry_exists(
         "source_oid": "a" * 40,
         "expected_oid": "b" * 40,
     }
-    raw = json.dumps(offer).encode()
-    digest = hashlib.sha256(raw).hexdigest()
-    (tmp_path / PUBLICATION.OFFER_FILE).write_bytes(raw)
-    (tmp_path / PUBLICATION.ATTEMPT_FILE).write_text(
-        json.dumps({"offer_digest": digest, "decision_id": f"pr-worktree-publication-{digest}", "answer": "Approve"}),
-        encoding="utf-8",
-    )
+    digest = _open_attempt(tmp_path, offer)
     marker = tmp_path / PUBLICATION.EXECUTED_FILE
     if entry == "file":
         marker.write_text(f"{digest}\n", encoding="ascii")
@@ -752,13 +993,7 @@ def test_a_push_that_starts_and_then_fails_is_final(
         "source_oid": "a" * 40,
         "expected_oid": "b" * 40,
     }
-    raw = json.dumps(offer).encode()
-    digest = hashlib.sha256(raw).hexdigest()
-    (tmp_path / PUBLICATION.OFFER_FILE).write_bytes(raw)
-    (tmp_path / PUBLICATION.ATTEMPT_FILE).write_text(
-        json.dumps({"offer_digest": digest, "decision_id": f"pr-worktree-publication-{digest}", "answer": "Approve"}),
-        encoding="utf-8",
-    )
+    digest = _open_attempt(tmp_path, offer)
     launches = []
 
     def start_then_fail(*args: object, **kwargs: object) -> None:
@@ -821,13 +1056,7 @@ def test_cli_consumes_one_matching_attempt(
         "source_oid": "a" * 40,
         "expected_oid": "b" * 40,
     }
-    raw = json.dumps(offer).encode()
-    digest = hashlib.sha256(raw).hexdigest()
-    (tmp_path / PUBLICATION.OFFER_FILE).write_bytes(raw)
-    (tmp_path / PUBLICATION.ATTEMPT_FILE).write_text(
-        json.dumps({"offer_digest": digest, "decision_id": f"pr-worktree-publication-{digest}", "answer": "Approve"}),
-        encoding="utf-8",
-    )
+    digest = _open_attempt(tmp_path, offer)
     observed = []
     monkeypatch.setattr(
         PUBLICATION,
@@ -835,7 +1064,8 @@ def test_cli_consumes_one_matching_attempt(
         lambda *args, **kwargs: (kwargs["before_push"](), observed.append((args, kwargs))),
     )
     argv = ["--run", str(tmp_path), "--offer-digest", digest, *HELPER_ARGS]
-    (tmp_path / (terminal_record or "result.candidate.json")).write_text("{}", encoding="utf-8")
+    if terminal_record:
+        (tmp_path / terminal_record).write_text("{}", encoding="utf-8")
 
     assert PUBLICATION.main(argv) == first_exit
     assert PUBLICATION.main(argv) == 1
@@ -859,13 +1089,7 @@ def test_a_receipt_that_cannot_be_written_still_reports_the_completed_push(
         "source_oid": "a" * 40,
         "expected_oid": "b" * 40,
     }
-    raw = json.dumps(offer).encode()
-    digest = hashlib.sha256(raw).hexdigest()
-    (tmp_path / PUBLICATION.OFFER_FILE).write_bytes(raw)
-    (tmp_path / PUBLICATION.ATTEMPT_FILE).write_text(
-        json.dumps({"offer_digest": digest, "decision_id": f"pr-worktree-publication-{digest}", "answer": "Approve"}),
-        encoding="utf-8",
-    )
+    digest = _open_attempt(tmp_path, offer)
     (tmp_path / PUBLICATION.RESULT_FILE).write_text("leftover", encoding="utf-8")
     monkeypatch.setattr(PUBLICATION, "_isolated_push", lambda *args, **kwargs: kwargs["before_push"]())
 
@@ -889,6 +1113,30 @@ def _placeholder_offer(directory: Path) -> dict[str, str]:
     }
 
 
+def test_native_offer_distinguishes_push_from_push_and_cleanup(tmp_path: Path) -> None:
+    """Adding removal to a historical push offer requires a different scoped approval."""
+    offer = _placeholder_offer(tmp_path)
+    path = tmp_path / PUBLICATION.OFFER_FILE
+    path.write_bytes(json.dumps(offer).encode())
+    push_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert PUBLICATION.read_offer(tmp_path, push_digest) == offer
+
+    combined = {**offer, "after_push": "remove-owned-worktree"}
+    path.write_bytes(json.dumps(combined).encode())
+    combined_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="publication-offer-digest-mismatch"):
+        PUBLICATION.read_offer(tmp_path, push_digest)
+    assert PUBLICATION.read_offer(tmp_path, combined_digest) == combined
+    assert PUBLICATION.publication_decision_id(tmp_path, combined_digest) != PUBLICATION.publication_decision_id(
+        tmp_path, push_digest
+    )
+
+    for invalid in ({**combined, "after_push": "remove-branch"}, {**combined, "path": str(tmp_path.parent)}):
+        path.write_bytes(json.dumps(invalid).encode())
+        with pytest.raises(ValueError, match="publication-offer-invalid"):
+            PUBLICATION.read_offer(tmp_path, hashlib.sha256(path.read_bytes()).hexdigest())
+
+
 @pytest.mark.integration
 def test_every_remote_command_hands_git_the_whole_helper_chain_in_order(
     publication_repositories, monkeypatch: pytest.MonkeyPatch
@@ -907,7 +1155,12 @@ def test_every_remote_command_hands_git_the_whole_helper_chain_in_order(
 
     _push(source, remote, new, old, credential_helpers=("libsecret", "manager"))
 
-    assert len(calls) == 3
+    assert ["ls-remote" if "ls-remote" in args else "push" for args in calls] == [
+        "ls-remote",
+        "push",
+        "ls-remote",
+        "push",
+    ]
     for args in calls:
         command = args.index("ls-remote") if "ls-remote" in args else args.index("push")
         options = args[:command]
@@ -1214,32 +1467,13 @@ def test_a_push_with_an_unknown_outcome_is_reported_unverified_and_never_rerun(
     assert json.loads(capsys.readouterr().out) == {"status": "failed", "reason": "publication-attempt-already-started"}
 
 
-def _record_destination(original: Path, offer: dict[str, str]) -> None:
-    """Retain the published destination separately from the historical source checkout."""
-    original.joinpath("worktree-delivery.md").write_text(
-        f"Status: delivered.\n- Local destination: {offer['checkout']}, branch {offer['branch']}, head {offer['source_oid']}.\n"
-        f"- Git common directory: {offer['common_dir']}.\n"
-    )
-    handoff = json.dumps(
-        {
-            "skill": "code-remediate",
-            "commit_disposition": {"status": "committed"},
-            "artifacts": [{"label": "Delivery checkout", "path": offer["checkout"]}],
-        }
-    ).encode()
-    (original / "final-handoff.json").write_bytes(handoff)
-    metadata = {"mode": "pr", "final_handoff": {"handoff_sha256": hashlib.sha256(handoff).hexdigest()}}
-    (original / "result.json").write_text(json.dumps({"status": "pass", "metadata": metadata}))
-
-
 @pytest.fixture
 def delivered_request(publication_repositories, tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
     """Retain a completed in-place PR remediation with its original fork identity and an empty follow-up checkpoint."""
     source, remote, _, old, new = publication_repositories
     parent = tmp_path / "completed-run"
-    (parent / "pr").mkdir(parents=True)
     request = parent / "publication-request"
-    request.mkdir()
+    request.mkdir(parents=True)
     offer = {
         "checkout": source.as_posix(),
         "branch": "source",
@@ -1249,44 +1483,71 @@ def delivered_request(publication_repositories, tmp_path: Path) -> tuple[Path, d
         "source_oid": new,
         "expected_oid": old,
     }
-    receipt = {
-        "schema_version": 2,
-        "status": "prepared",
-        "worktree": offer["checkout"],
-        "branch": "source",
-        "head_repository": "contributor/widgets",
-        "head_ref": "change",
-        "pr_number": 123,
-        "pr_url": "https://github.com/upstream/widgets/pull/123",
-        "initial_head": old,
-    }
-    (parent / "remediation-branch.json").write_text(json.dumps(receipt))
-    pr = {
-        "url": receipt["pr_url"],
-        "number": 123,
-        "headRefOid": old,
-        "headRefName": "change",
-        "headRepository": {"nameWithOwner": "contributor/widgets"},
-    }
-    (parent / "pr" / "pr.json").write_text(json.dumps(pr))
-    routing = {
-        "pr_url": pr["url"],
-        "pr_number": 123,
-        "head_oid": old,
-        "head_ref": "change",
-        "head_repo": "contributor/widgets",
-    }
-    (parent / "pr" / "pr-routing.json").write_text(json.dumps(routing))
+    _record_pr_target(parent, offer, captured=_git(remote, "rev-parse", TARGET))
     _record_destination(parent, offer)
     return request, offer, remote
 
 
-@pytest.fixture(params=["in-place", "independent", "returned-to-invoking", "previously-skipped"])
+def _record_hosted_ci_result(original: Path) -> None:
+    """Retain a failed PR result whose only open selected item needs a hosted run on the delivered docs commit."""
+    path = original / "result.json"
+    result = json.loads(path.read_bytes())
+    result.update(status="fail", checks_failed=[], findings={"critical": 0})
+    result["metadata"].update(
+        resolution_scope={"selected_indexes": [1, 2]},
+        final_resolution_table={
+            "items": [
+                {"item_type": "docs", "selectable": True, "resolution_status": "implemented", "severity": "medium"},
+                {"item_type": "ci", "selectable": True, "resolution_status": "unresolved", "severity": "medium"},
+            ]
+        },
+        unresolved_summary={
+            "selected_items_total": 2,
+            "selected_items_unresolved": 1,
+            "local_actionable_items_unresolved": 1,
+            "unresolved_reason_groups": [{"reason": "external-ci", "count": 1}],
+        },
+    )
+    path.write_text(json.dumps(result), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("row_type", "group_reason", "gate_state", "failed_checks"),
+    [
+        pytest.param("code", "external-ci", "pass", [], id="open-source-row"),
+        pytest.param("ci", "environment-blocked", "pass", [], id="unrelated-blocker"),
+        pytest.param("ci", "external-ci", "fail", [], id="failed-local-gate"),
+        pytest.param("ci", "external-ci", "not-applicable", [], id="unapproved-test-skip"),
+        pytest.param("ci", "external-ci", "pass", ["source-integrity"], id="failed-nongate-check"),
+    ],
+)
+def test_requested_publication_refuses_unverified_local_work(
+    delivered_request, row_type, group_reason, gate_state, failed_checks
+) -> None:
+    """Reject misleading summaries, incomplete local checks and failed supplemental verification before transport."""
+    request, offer, _ = delivered_request
+    run = request.parent
+    _record_hosted_ci_result(run)
+    result = json.loads((run / "result.json").read_bytes())
+    result["checks_failed"] = failed_checks
+    result["metadata"]["final_resolution_table"]["items"][1]["item_type"] = row_type
+    result["metadata"]["unresolved_summary"]["unresolved_reason_groups"][0]["reason"] = group_reason
+    (run / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    gates = json.loads((run / "gates.json").read_bytes())
+    gates["checks"][3].update(status=gate_state, reason="Tests are unavailable.")
+    (run / "gates.json").write_text(json.dumps(gates), encoding="utf-8")
+    with pytest.raises(ValueError, match="publication-promoted-delivery-required"):
+        PUBLICATION.requested_delivery(request, offer)
+
+
+@pytest.fixture(params=["in-place", "independent", "returned-to-invoking", "previously-skipped", "awaiting-hosted-ci"])
 def offered_delivery(delivered_request, request: pytest.FixtureRequest) -> tuple[Path, dict[str, str], Path]:
     """Bind the offer to the actual destination retained from each supported delivery mode."""
     checkpoint, offer, remote = delivered_request
     original = checkpoint.parent
-    if request.param == "previously-skipped":
+    if request.param == "awaiting-hosted-ci":
+        _record_hosted_ci_result(original)
+    if request.param in {"previously-skipped", "awaiting-hosted-ci"}:
         skipped = {"schema_version": 1, "status": "skipped", "reason": "Question unavailable.", "observed_oid": None}
         (original / "publication.json").write_text(json.dumps(skipped))
     if request.param == "independent":
@@ -1332,6 +1593,8 @@ def test_later_request_publishes_delivered_branch_once(
     def local_endpoint(git: str, checkout: Path, url: str, *args: object, **kwargs: object) -> None:
         """Exercise real Git against the fixture remote only after the exact approved destination has matched."""
         assert url == offer["url"]
+        assert kwargs["base"] == ("https://github.com/upstream/widgets.git", TARGET, _git(remote, "rev-parse", TARGET))
+        kwargs["base"] = (remote.as_uri(), *kwargs["base"][1:])
         real_push(git, checkout, remote.as_uri(), *args, protocol="file", **kwargs)
 
     monkeypatch.setattr(PUBLICATION, "_isolated_push", local_endpoint)

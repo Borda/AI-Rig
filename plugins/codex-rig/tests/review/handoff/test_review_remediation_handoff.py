@@ -457,18 +457,6 @@ def _stage_finalization(tmp_path: Path, run: Path, home: Path, children: dict[st
     metadata_path, handoff_path = drafts / "metadata.json", drafts / "handoff.json"
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8", newline="\n")
     handoff_path.write_text(json.dumps(handoff), encoding="utf-8", newline="\n")
-    # An empty PATH hides any codemap binary, so finalization records the context as absent on every host.
-    empty_path = tmp_path / "empty-path"
-    empty_path.mkdir()
-    probe_env = {key: value for key, value in os.environ.items() if key != "CODEMAP_BIN"} | {"PATH": str(empty_path)}
-    probe = _script(
-        PLUGIN_ROOT / "shared/codemap_adapter.py",
-        *["context", "--category", "review", "--diff-file", run / "diff.patch"],
-        *["--out", run / "codemap-context.json"],
-        env=probe_env,
-    )
-    assert probe.returncode == 0, probe.stderr
-    assert json.loads((run / "codemap-context.json").read_bytes())["status"] == "absent"
     return _Finalization(tmp_path, run, home, children, manifest, metadata_path, handoff_path)
 
 

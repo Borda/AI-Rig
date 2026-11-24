@@ -13,6 +13,8 @@ It orchestrates one PR evidence recipe and writes its artifact bundle; every Git
 and remote mutation is forbidden. With ``--checkout``, it additionally selects the matching local remote, fetches the
 target/head evidence, and records checkout identity without using forced Git operations.
 Remediation overlaps the supplemental GraphQL request with verified Git preparation and joins both before returning.
+On an existing remediation bundle, --check-integration-target observes the live base at delivery, while
+--refresh-integration-target can adopt a proven fast-forward before the first merge. Both print the verified target OID.
 
 ## Usage
 
@@ -89,6 +91,7 @@ from github_read import (  # noqa: E402
     run_bounded_command,
     run_gh_read,
 )
+from review_checkout_slot import _admission_lock  # noqa: E402
 from review_workspace import _fetch_transport, workspace_namespace  # noqa: E402
 from review_worktree_cleanup import filesystem_content_digest, record_creation, recorded_content_digest  # noqa: E402
 
@@ -266,7 +269,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--out", required=True, type=Path, help="Artifact directory")
     parser.add_argument("--target", default="", help="PR number, canonical GitHub URL, or empty for current branch")
-    parser.add_argument("--checkout", action="store_true", help="Fetch and prepare verified local PR source")
+    operation = parser.add_mutually_exclusive_group()
+    operation.add_argument("--checkout", action="store_true", help="Fetch and prepare verified local PR source")
+    operation.add_argument(
+        "--check-integration-target", action="store_true", help="Observe the live base for a retained PR"
+    )
+    operation.add_argument(
+        "--refresh-integration-target",
+        action="store_true",
+        help="Adopt a verified base fast-forward before integration",
+    )
     parser.add_argument(
         "--checkout-mode",
         choices=sorted(CHECKOUT_MODES),
@@ -930,9 +942,11 @@ def _advertised_oid(run: RunCommand, timeout: int, remote_name: str, source_ref:
     return fields[0]
 
 
-def _fetch_exact_ref(run: RunCommand, timeout: int, remote_name: str, source_ref: str, label: str) -> str:
+def _fetch_exact_ref(
+    run: RunCommand, timeout: int, remote_name: str, source_ref: str, label: str, *, advertised_oid: str | None = None
+) -> str:
     """Resolve and fetch one immutable remote commit without shared FETCH_HEAD state."""
-    oid = _advertised_oid(run, timeout, remote_name, source_ref, label)
+    oid = advertised_oid or _advertised_oid(run, timeout, remote_name, source_ref, label)
     # FETCH_HEAD belongs to the shared repository. Resolve once, then fetch that immutable
     # advertised object so another collector cannot replace the identity between commands.
     _run(run, ["git", "fetch", "--no-tags", "--refmap=", "--no-write-fetch-head", remote_name, oid], timeout, label)
@@ -1560,6 +1574,18 @@ def _resolve_checkout_remote(
     return remote_name, remote_url
 
 
+def _verified_base_transport(run: RunCommand, timeout: int, remote_url: str, pr_url: str) -> str:
+    """Resolve the matched base URL and reject Git rewrites that redirect the fetch to another repository."""
+    # Address the base repository itself, even when the PR branch tracks a fork or a remote name was repointed.
+    try:
+        transport = _fetch_transport(remote_url, pr_url)
+        actual = _run(run, ["git", "ls-remote", "--get-url", transport], timeout, "target-branch-route").decode()
+        _fetch_transport(actual.strip(), pr_url)
+    except (ValueError, TypeError) as error:
+        raise CollectionError("target-branch-transport-invalid") from error
+    return transport
+
+
 def _fetch_and_verify_target_branch(
     run: RunCommand,
     timeout: int,
@@ -1571,7 +1597,8 @@ def _fetch_and_verify_target_branch(
     """Refresh the PR's target branch and reject a base that diverged from the PR metadata."""
     base_ref = routing.get("base_ref")
     base_oid = routing.get("base_oid")
-    base_local = _fetch_exact_ref(run, timeout, remote_name, base_ref, "target-branch-fetch")
+    transport = _verified_base_transport(run, timeout, remote_url, routing["pr_url"])
+    base_local = _fetch_exact_ref(run, timeout, transport, f"refs/heads/{base_ref}", "target-branch-fetch")
     base_matches = base_local == base_oid
     base_is_ancestor = base_matches or _git_is_ancestor(run, timeout, base_oid, base_local)
     base_relation = "matches-pr-metadata" if base_matches else "advanced" if base_is_ancestor else "diverged"
@@ -1586,7 +1613,7 @@ def _fetch_and_verify_target_branch(
         "base_matches_pr_metadata": base_matches,
         "expected_base_is_ancestor": base_is_ancestor,
         "base_relation": base_relation,
-        "command": f"git fetch --no-tags --refmap= --no-write-fetch-head {remote_name} {base_local}",
+        "command": f"git fetch --no-tags --refmap= --no-write-fetch-head {transport} {base_local}",
         "source_policy": "target branch is refreshed before review; advancement from the PR-recorded base is review context, while divergence fails an open-PR review",
     }
     _write_json(output / "target-branch.json", target)
@@ -2346,9 +2373,143 @@ def collect_pr(
         return 2
 
 
+def integration_target(
+    output: Path, target: str, timeout: int, *, refresh: bool, run: RunCommand = DEFAULT_RUN_COMMAND
+) -> dict[str, Any]:
+    """Observe the bound base branch and optionally adopt its fast-forward before remediation starts integrating."""
+    requested = _parse_pr_target(target)
+    if not requested or not requested.owner or output.is_symlink():
+        raise CollectionError("integration-target-requires-canonical-pr")
+
+    def receipt(name: str) -> bytes:
+        """Read bounded regular evidence from the retained PR directory."""
+        path = output / name
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_OUTPUT_BYTES:
+            raise CollectionError(f"integration-target-receipt-invalid:{name}")
+        return path.read_bytes()
+
+    pr = _json(receipt("pr.json"), "pr")
+    routing = _json(receipt("pr-routing.json"), "pr-routing")
+    path = output / "target-branch.json"
+    prior = receipt(path.name)
+    captured = _json(prior, "target-branch")
+    base, previous = routing.get("base_ref"), captured.get("remote_ref")
+    expected = pr.get("baseRefOid")
+    if (
+        not isinstance(pr.get("url"), str)
+        or requested.url.casefold() != pr["url"].casefold()
+        or routing.get("pr_url") != pr["url"]
+        or (pr.get("number"), routing.get("pr_number")) != (requested.number, requested.number)
+        or routing.get("checkout_mode") != "remediate"
+        or not isinstance(base, str)
+        or not base
+        or base != pr.get("baseRefName")
+        or base != captured.get("base_ref")
+        or not isinstance(expected, str)
+        or not GIT_OBJECT_ID_PATTERN.fullmatch(expected)
+        or expected != routing.get("base_oid")
+        or expected != captured.get("expected_base_oid")
+        or not isinstance(previous, str)
+        or not GIT_OBJECT_ID_PATTERN.fullmatch(previous)
+        or previous != captured.get("local_head")
+        or captured.get("status") != "fetched"
+        or captured.get("expected_base_is_ancestor") is not True
+    ):
+        raise CollectionError("integration-target-receipt-mismatch")
+    ref = f"refs/heads/{base}"
+    _run(run, ["git", "check-ref-format", ref], timeout, "integration-target-base-ref")
+    transport = _verified_base_transport(run, timeout, captured.get("remote_url"), requested.url)
+    label = "integration-target-fetch"
+    oid = _advertised_oid(run, timeout, transport, ref, label)
+    if oid != previous or _git_optional_ref(run, timeout, oid, "integration-target-object") != oid:
+        _fetch_exact_ref(run, timeout, transport, ref, label, advertised_oid=oid)
+        if not _git_is_ancestor(run, timeout, previous, oid):
+            raise CollectionError(f"target-branch-diverged:{oid}:{previous}")
+        latest = _advertised_oid(run, timeout, transport, ref, label)
+        if latest != oid:
+            raise CollectionError(f"integration-target-moved-during-fetch:{oid}:{latest}")
+    observation = {
+        "status": "unchanged" if previous == oid else "advanced",
+        "pr_url": requested.url,
+        "base_ref": base,
+        "previous_target_oid": previous,
+        "target_oid": oid,
+    }
+    if not refresh or previous == oid:
+        return observation
+    checkout = _json(receipt("local-checkout.json"), "local-checkout")
+    source, common = _checkout_source(run, timeout)
+    # Serialize competing refreshes only for the local compare-and-replace, after all network reads.
+    with _admission_lock(common):
+        # The first merge pins its target, even if the receipt is incomplete or the operation was interrupted.
+        merge_head = _run(
+            run,
+            ["git", "rev-parse", "--path-format=absolute", "--git-path", "MERGE_HEAD"],
+            timeout,
+            "integration-merge-head",
+        )
+        if (
+            os.path.lexists(output / "merge-resolution.json")
+            or os.path.lexists(output.parent / "result.json")
+            or os.path.lexists(os.fsdecode(merge_head).strip())
+        ):
+            raise CollectionError(f"integration-target-pinned:{previous}:{oid}")
+        if (
+            checkout.get("checkout_mode") != "remediate"
+            or checkout.get("pr_url") != pr["url"]
+            or checkout.get("worktree") != source.as_posix()
+            or not checkout.get("local_branch")
+            or checkout.get("local_branch")
+            != _run(run, ["git", "branch", "--show-current"], timeout, "integration-branch").decode().strip()
+            or checkout.get("local_head") != pr.get("headRefOid")
+            or checkout.get("local_head") != routing.get("head_oid")
+            or routing.get("head_oid") != _git_optional_ref(run, timeout, "HEAD", "integration-head")
+        ):
+            raise CollectionError("integration-target-checkout-mismatch")
+        if prior != receipt(path.name):
+            raise CollectionError("integration-target-capture-changed")
+        if expected != previous and not _git_is_ancestor(run, timeout, expected, previous):
+            raise CollectionError("integration-target-receipt-mismatch")
+        archive = output / f"target-branch.{previous}.json"
+        with tempfile.TemporaryDirectory(dir=output) as staging:
+            staged = Path(staging) / path.name
+            if os.path.lexists(archive):
+                if receipt(archive.name) != prior:
+                    raise CollectionError("integration-target-archive-mismatch")
+            else:
+                staged.write_bytes(prior)
+                staged.replace(archive)
+            _write_json(
+                staged,
+                {
+                    **captured,
+                    "remote_ref": oid,
+                    "local_head": oid,
+                    "base_matches_pr_metadata": False,
+                    "base_relation": "advanced",
+                    "command": f"git fetch --no-tags --refmap= --no-write-fetch-head {transport} {oid}",
+                },
+            )
+            staged.replace(path)
+    return observation
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line collector."""
     arguments = parse_args(argv)
+    if arguments.check_integration_target or arguments.refresh_integration_target:
+        try:
+            observed = integration_target(
+                arguments.out, arguments.target, arguments.timeout_seconds, refresh=arguments.refresh_integration_target
+            )
+        except CollectionError as error:
+            print(str(error), file=sys.stderr)
+            return 2
+        except (OSError, ValueError):
+            print("integration-target-local-state-invalid", file=sys.stderr)
+            return 2
+        print(json.dumps(observed))
+        return 0
     return collect_pr(
         target=arguments.target,
         output=arguments.out,

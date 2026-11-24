@@ -30,7 +30,7 @@
     },
     "027e6fd7e26670b53316506f81cf2d3c458651ff7afa8bf349f08a54d8dada7b": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:535"
+      "src": "skills/review/SKILL.md:537"
     },
     "029c103f0645d5642a79091d96c8aaeaacc4fff2e3468b3eae1b2a1dc700e757": {
       "kind": "command",
@@ -132,7 +132,7 @@
     },
     "09b8217b6c2bbc0a87927bbce2bb4fca2757717621c520bc199c6d944c8d5e35": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:739"
+      "src": "skills/review/SKILL.md:741"
     },
     "09bb04bdafcd8c3cc4e60653d41dc0df3bce98c43a9aa773dff88e3a7c901913": {
       "kind": "command",
@@ -418,7 +418,7 @@
     },
     "1ab1a958617092d26c698d55a93007d4c17341cebd9f7b4b42de22aa1553ad85": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:739"
+      "src": "skills/review/SKILL.md:741"
     },
     "1ac92bfe6135571fd0808d858323dd2b5299c4c497d094e14910ed1bc9936193": {
       "kind": "command",
@@ -430,7 +430,7 @@
     },
     "1b74eb14e63ad7f224df780617f02e5342cdf7f78f58137210b337761506d431": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:695"
+      "src": "skills/review/SKILL.md:697"
     },
     "1b8a5a785b8889e6e22759e806ff0d1d017f3d956b32c6e34bf0938d02a5301b": {
       "kind": "command",
@@ -504,7 +504,7 @@
     },
     "1e21c35b23a1e048524b0868d6b9b4346b48d8445803b00dd161ceeeca3b011b": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:587"
+      "src": "skills/review/SKILL.md:589"
     },
     "1e69029b5efbb7b7ba91a0ab96e2cc7620ba6665dcf92620f35486b0b6a8dd6f": {
       "kind": "command",
@@ -541,7 +541,7 @@
     },
     "209bdf0f89e98547fcb32ee0fc3fa34b951699bf790058b344aa6b6ae614fa83": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:739"
+      "src": "skills/review/SKILL.md:741"
     },
     "2138ea9b2b1032d1961b4b5f01926ab7f113aa5f449183adc010d9781e6c6a03": {
       "kind": "command",
@@ -549,7 +549,7 @@
     },
     "214d32e189bf1caa52e610509ef1949ea9f843a58d8cdbd5c79a5b56fe4a6f86": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:808"
+      "src": "skills/review/SKILL.md:810"
     },
     "2199d655a3976a4345bff2d93b921b434df68c243d44e5067cd01fa665195f29": {
       "kind": "command",
@@ -588,11 +588,11 @@
     },
     "24a02c1a74a00c93b6e90578eb03a7d449d93c459460d441ff67c62c687c4de2": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:749"
+      "src": "skills/review/SKILL.md:751"
     },
     "24e297832875300a2e20df66ce1fae113c5fe5583160748038ab23977ffa56f0": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:818",
+      "src": "skills/review/SKILL.md:820",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/dev_load_shared.py\" codex-delegation.md"
     },
     "251660b70c96ada9122dc1dcaff90bcb89cac75b0db45f6f69f6f02c4be21a1c": {
@@ -630,7 +630,7 @@
     },
     "28e726a263cf5d4a9a54dc7190df20383991f3d3c00d8a480ba080f4679a7719": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:535"
+      "src": "skills/review/SKILL.md:537"
     },
     "2907ff6f2674b2faa99f4636ec9ed87794c9eedceebfabaece0a31e7c25746bb": {
       "kind": "command",
@@ -690,7 +690,7 @@
     },
     "2cf4b11f4a2409f7b9e19ed334ae7e4d28736fe83873028f676727ab3b622e84": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:749"
+      "src": "skills/review/SKILL.md:751"
     },
     "2d676250aa11cd7408dcb8e3bd8b2bc8f3c17d529a610f9633ef33a7e5633b5e": {
       "kind": "command",
@@ -706,7 +706,7 @@
     },
     "2dd696689e63a1c7c4b064e5f4c92c6d2b2af7321fb9691425756be9a302fcb1": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:535"
+      "src": "skills/review/SKILL.md:537"
     },
     "2e5f769e7fb5826bd134a5cca63c9c772d58313f177dad18fb8bb0286155266d": {
       "kind": "command",
@@ -739,7 +739,7 @@
     },
     "30dcddf3b3b4ca0e996c5cf030b22094b7cf916c63acb85262df8ffe9c3375bf": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:587"
+      "src": "skills/review/SKILL.md:589"
     },
     "30fb019efe5ef81540f57b89fdc1953f6bb25e2922a3a45a1eac22e44e884860": {
       "kind": "command",
@@ -883,7 +883,7 @@
     },
     "39d76f7b0ac4b49e4349a41249f9e3b2956ab79d3d67465c77a3357e05ce5ffb": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:535"
+      "src": "skills/review/SKILL.md:537"
     },
     "39d78dd91fffd6f6e29d570802a1ec2267fd71285fc66ad1c6dbbd320ef18246": {
       "kind": "command",
@@ -899,7 +899,7 @@
     },
     "3aad925f327994f13a26a36c8c44776c6f91f7540f7351572e686db245c5b657": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:587"
+      "src": "skills/review/SKILL.md:589"
     },
     "3abf001fbc0728a2d645684ab2069edf25c016465901a44fef1e1861b97b4994": {
       "kind": "block",
@@ -1040,7 +1040,7 @@
     },
     "453fe06f773aa9c56601b8b5019912664afaaa03fc91281762aa6e8edcd1bfbf": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:695"
+      "src": "skills/review/SKILL.md:697"
     },
     "45417316c51c8c8bc2a73295dee4a5fd7c1807e3f751ff320242713539aa9e69": {
       "kind": "command",
@@ -1109,7 +1109,7 @@
     },
     "4828933047982fa8ced644a2fe6ea4fb4eec11c26c95b147893d618e25fd5b6b": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:695"
+      "src": "skills/review/SKILL.md:697"
     },
     "486ed6743db13c44ebc2ebe88dee82f55840eb2570865aa419760cd0c64dc399": {
       "kind": "command",
@@ -1117,7 +1117,7 @@
     },
     "48b6214f981bde24aaf1538bdb91bbca60c9caec4c8bc4ee01846cc72299c825": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:739"
+      "src": "skills/review/SKILL.md:741"
     },
     "4907b00ac6461495981c469444b2fc01e69d1095da843b0c8537bd7366edabd1": {
       "kind": "command",
@@ -1194,7 +1194,7 @@
     },
     "4bd46bfee59dd8dd89dadf7ffb1f1b33cc0558d419b7d9e99cc43edade0c7e8b": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:695"
+      "src": "skills/review/SKILL.md:697"
     },
     "4c40c70fe0024ac2bf8016477af56e7606dfe55d12f6bea28eaeb236614efad6": {
       "kind": "command",
@@ -1227,7 +1227,7 @@
     },
     "4e7b1af665bd314804142a4e6da2028af51edcf5e753c763e08b02e4af68099b": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:587",
+      "src": "skills/review/SKILL.md:589",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\npython \"$PLUGIN_ROOT/bin/dev_load_shared.py\" file-handoff-protocol.md\n\n_DIMENSION_BRIEFS=\"$PLUGIN_ROOT/skills/review/templates\"\nfor _B in brief-sw-engineer.md brief-qa-specialist.md brief-perf-optimizer.md brief-doc-scribe.md brief-linting-expert.md brief-security-augmentation.md brief-solution-architect.md brief-challenger.md; do\n    [ -f \"$_DIMENSION_BRIEFS/$_B\" ] || { echo \"! BLOCKED \u2014 dimension brief $_B missing; restore/reinstall this develop version before spawning review agents\"; exit 1; }\ndone\necho \"Dimension briefs: $_DIMENSION_BRIEFS\"\nREVIEW_CHECKLIST=\"$_DIMENSION_BRIEFS/review-checklist.md\"\nif [ -f \"$REVIEW_CHECKLIST\" ]; then\n    echo \"Checklist: $REVIEW_CHECKLIST\"\nelse\n    echo \"\u26a0 review checklist unavailable \u2014 review will proceed without severity anchors; restore/reinstall this develop version for full coverage\"\n    REVIEW_CHECKLIST=\"\"\nfi"
     },
     "4e874927b5eb933b0978839bbdfae50f0d93587677ba11e41a1dcdb847b81974": {
@@ -1399,7 +1399,7 @@
     },
     "5775f53d144eb3f9bf94695ad695fb8d8720584b3ef7d2d52a6655f6e3422ae6": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:808"
+      "src": "skills/review/SKILL.md:810"
     },
     "57ba3db80b816423029c4d23eddcc8f4837f6bffb46294914019eab122cb25a7": {
       "kind": "command",
@@ -1605,7 +1605,7 @@
     },
     "60e06a8f3f1a1fc9af0bdc4130b75d89025e68629919af6b42b53bec698300c1": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:739"
+      "src": "skills/review/SKILL.md:741"
     },
     "60fecc22c5735289aba837972e0f70f0a38d8c54db99a663dfe70aab494fd694": {
       "kind": "command",
@@ -1639,7 +1639,7 @@
     },
     "61d8b290e5e7cd06f4349a0f210f1861083f3657630563be2cfd3be2f13cfcbb": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:535"
+      "src": "skills/review/SKILL.md:537"
     },
     "6277db968a1ca8bab5631c581fddb2aa2ec5aad061af188b6949ef4309abbaa9": {
       "kind": "command",
@@ -1651,7 +1651,7 @@
     },
     "6290290aac469c281ae5d53e51dee86f227f59946a93551b16e9b5f970c2cb67": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:695"
+      "src": "skills/review/SKILL.md:697"
     },
     "62911107212c4157ce5b12612ee95b154a619457de6d4a04bb8530f10b883051": {
       "kind": "command",
@@ -1774,7 +1774,7 @@
     },
     "6bdea1155e2e5dfaa37b249e89188abd44548b65db00641912008d1f1a806e3b": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:695"
+      "src": "skills/review/SKILL.md:697"
     },
     "6c6a12a5d45c5ed3f3ad40da6049fa9747d3fecb8468bbc3f8573eb3003caefc": {
       "kind": "command",
@@ -2008,7 +2008,7 @@
     },
     "7e05e86dbebdee7603e7edd650da4eeb640ad996f18288158afcf0aa08a4d45d": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:695"
+      "src": "skills/review/SKILL.md:697"
     },
     "7e11860aa6af7643a87ef82071895583da9dea9a76a29583bbeb68ca441bf6c0": {
       "kind": "command",
@@ -2032,7 +2032,7 @@
     },
     "7fb0aee4ee6dfa933be31580abf5526490fa8c77e4a58dcf81034c57b10a11a3": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:535"
+      "src": "skills/review/SKILL.md:537"
     },
     "804b3f28475016775d2cecdf4df48d0f0292024aafdfbfc439a6554113fe35d3": {
       "kind": "block",
@@ -2223,7 +2223,7 @@
     },
     "8cd6b2ad3831ef7adf1f3c310926f134bcc9d70f9ef5d70c12e2c2d12031ca54": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:842",
+      "src": "skills/review/SKILL.md:844",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _RUN_DIR < \"${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}\" 2>/dev/null || _RUN_DIR=\"\"\nIFS= read -r _REPORT_DIR < \"${TMPDIR:-/tmp}/dev-review-report-dir-${CSID}\" 2>/dev/null || _REPORT_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" \"develop:review\" \"follow-up gate\" \"$_RUN_DIR\" \"final-report=$_REPORT_DIR/review-report.md\" \"resume: re-read report header, re-issue follow-up AskUserQuestion\""
     },
     "8d00100e904f1a87aa4b50d1215a1d728850c90d6d5bfb112d0031bc9611f4d5": {
@@ -2508,7 +2508,7 @@
     },
     "9a7f645047648663a3e6c6c8f8aaf774956a4b100b7fc5572048fff39d0d83fb": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:695"
+      "src": "skills/review/SKILL.md:697"
     },
     "9aa4e7731063f6740bb8c779cccad8cfbae7a25897beaeb124428f62f2596694": {
       "kind": "command",
@@ -2687,7 +2687,7 @@
     },
     "a50e1899f73d3db1cac49e8c8f47a8ffc08d0361a171b5c9c7cef4d29689d934": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:795",
+      "src": "skills/review/SKILL.md:797",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _RUN_DIR < \"${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}\" 2>/dev/null || _RUN_DIR=\"\"\nIFS= read -r _REPORT_DIR < \"${TMPDIR:-/tmp}/dev-review-report-dir-${CSID}\" 2>/dev/null || _REPORT_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" \"develop:review\" \"follow-up (after consolidation)\" \"$_RUN_DIR\" \"final-report=$_REPORT_DIR/review-report.md\" \"Step 6 only with Codex output \u2192 follow-up gate: re-read report header, re-issue follow-up AskUserQuestion\""
     },
     "a5d21244077e0e80077b634936b9069bdb2d447b1d126c616bf9062bc656888a": {
@@ -2993,7 +2993,7 @@
     },
     "bd57f5e65f7e6087ff35205b4878742b7003cf820fb98974b17537b7d9543059": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:695"
+      "src": "skills/review/SKILL.md:697"
     },
     "bda672e75903223607adc77c36fc1ffc7cb7e6a7d5f9582fba39116ef48db5ba": {
       "kind": "command",
@@ -3021,7 +3021,7 @@
     },
     "bf911a21242f678820d7871fa2063cf5c4cbdf47f3b57c49727ad740a241c613": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:535"
+      "src": "skills/review/SKILL.md:537"
     },
     "bfadc07e5c48bf5dcf121dcc18fb10f8b1f47c7016e00baaddf7e194738483c8": {
       "kind": "command",
@@ -3191,7 +3191,7 @@
     },
     "c8437e729cd8421702de6a05af43bfb9b8a57b6ebdda62e654385729360db20d": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:695",
+      "src": "skills/review/SKILL.md:697",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _RUN_DIR < \"${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}\" 2>/dev/null || _RUN_DIR=\"\"\nIFS= read -r _REPORT_DIR < \"${TMPDIR:-/tmp}/dev-review-report-dir-${CSID}\" 2>/dev/null || _REPORT_DIR=\"\"\nIFS= read -r _TARGET < \"${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}\" 2>/dev/null || _TARGET=\"working-tree diff\"\nIFS= read -r _CLASS < \"${TMPDIR:-/tmp}/dev-review-classification-${CSID}\" 2>/dev/null || _CLASS=\"\"\n_FINDING_FILES=$(ls \"$_RUN_DIR/\"*.md 2>/dev/null | tr '\\n' ' ' | sed 's/ *$//')\n_PRESERVE=\"run-dir=$_RUN_DIR, report-dir=$_REPORT_DIR, target=$_TARGET, classification=$_CLASS, finding-files=$_FINDING_FILES\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-sentinel dev-review-keep-items \"develop:review\" \"consolidation (after parallel review-agent fan-out)\" \"$_RUN_DIR\" \"$_PRESERVE\" \"resume: re-cat own agent-resolution.md, file-handoff-protocol.md and foundry--cross-validation-protocol.md; cross-validate critical findings (Step 4) \u2192 consolidate \u2192 final report\" -- calls_ahead=20 \"drop=expanded review findings\"\nIFS= read -r _DEV_SHARED < \"${TMPDIR:-/tmp}/dev-shared-${CSID}\" 2>/dev/null || _DEV_SHARED=\"\"\n[ -z \"$_DEV_SHARED\" ] && _DEV_SHARED=\"plugins/cc_develop/skills/_shared\"\npython \"$PLUGIN_ROOT/bin/compaction_boundary.py\" \"$_DEV_SHARED\"\nRUN_DIR=\"$_RUN_DIR\"\n[ -n \"$RUN_DIR\" ] || { echo \"! BLOCKED \u2014 run-dir sentinel empty; refusing to write cross-validation notes to a root-relative path\"; exit 1; }\nif [ ! -f \"$_DEV_SHARED/foundry--cross-validation-protocol.md\" ]; then\n    echo \"\u26a0 foundry--cross-validation-protocol.md not found at $_DEV_SHARED \u2014 Step 4 skipped; required validation is incomplete. It ships in this plugin \u2014 reinstall develop@borda-ai-rig.\"\n    echo \"## Cross-Validation: SKIPPED\" >> \"$RUN_DIR/cross-validation.md\"\n    echo \"**Reason**: _DEV_SHARED unavailable \u2014 cross-validation protocol not executed.\" >> \"$RUN_DIR/cross-validation.md\"\nelse\n    cat \"$_DEV_SHARED/foundry--cross-validation-protocol.md\"\nfi"
     },
     "c84ecfeff3b2f252949fd45d0e6fe3e0ab4b9400cfdbc91e181d3b4352afc543": {
@@ -3300,7 +3300,7 @@
     },
     "cd30bc0d8d1f69ad81e67f34d07b4ce021e8f16b6324285b39e03259500bca49": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:808"
+      "src": "skills/review/SKILL.md:810"
     },
     "cd3c76bfa8450ae0a4234a5d8619c222a421e1d86efd3537cbf7dc2917460639": {
       "kind": "command",
@@ -3340,7 +3340,7 @@
     },
     "d0037c9ed9f6c3d78d29f7f3e92d726a83331c4b461aebdbd2fffe46366e3e3f": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:587"
+      "src": "skills/review/SKILL.md:589"
     },
     "d00fd507caad8b111d189ce78a342ccf661aff1526f2f0058c59e776edf252dc": {
       "kind": "command",
@@ -3356,7 +3356,7 @@
     },
     "d02a483759ffa608138be81b2e6732593b1eb47551d1e1362b070d8a39cec8d5": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:587"
+      "src": "skills/review/SKILL.md:589"
     },
     "d02d6ad1be25735e02a8db7aeb4049b445a82b30c1d7ddbed91327f1b5f5bce2": {
       "kind": "command",
@@ -3381,7 +3381,7 @@
     },
     "d157f5336e2f60df14291e6a97ab4dfda5baf5378ff01f0210a561829b925a4c": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:587"
+      "src": "skills/review/SKILL.md:589"
     },
     "d1750884cfe64efc6581b7576a6b3199e4eb665f116c81be3112c2c4838060db": {
       "kind": "command",
@@ -3524,11 +3524,11 @@
     },
     "d8e3c575503f1c8cde6359cf80f8c7f108b4b9d827510e81734522d61060f91a": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:587"
+      "src": "skills/review/SKILL.md:589"
     },
     "d970b7f86499040cab8649a46bbf6b9bd765e8bb443fc06ad1976673ab21c5e3": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:749"
+      "src": "skills/review/SKILL.md:751"
     },
     "d982365ceb54aef2f632c7ab808d62818fdac70137b545b06e48ef62d6829a62": {
       "kind": "command",
@@ -3584,7 +3584,7 @@
     },
     "deb3ea4aa28566d0763a6b1c5c194f829b69cc973e189ec7b56f034ec49e2ae7": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:749"
+      "src": "skills/review/SKILL.md:751"
     },
     "df05c742d2fb5a8fd8966b0b410dfc41829ec4dae2ec25431c058338da0efe5b": {
       "kind": "command",
@@ -3651,7 +3651,7 @@
     },
     "e158dd9c9fbec88e0b5a40224297df47fe35abc389b150332783e2e625b0be03": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:535"
+      "src": "skills/review/SKILL.md:537"
     },
     "e196ff120276a842154157e877f782d0aeb9eb1191a34b849df6f965aef53d1e": {
       "kind": "command",
@@ -3690,7 +3690,7 @@
     },
     "e3fff810cae7091406414262c6f1fd5b2b0b66eac89dc7f75faaaf6fc73a6841": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:695"
+      "src": "skills/review/SKILL.md:697"
     },
     "e41f1095501ec5dac539cca47d065b45af6cddfe71213804e2cb2af64e2edf58": {
       "kind": "command",
@@ -3716,7 +3716,7 @@
     },
     "e4a0de41481c0d965dca7fd92fce64721b579d55affd0a653d8d2124806c5a12": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:695"
+      "src": "skills/review/SKILL.md:697"
     },
     "e4eec59303ca846692f7c21fa77e049ae0af690cf2cd2bcbdb062b15bfbc83cf": {
       "kind": "block",
@@ -3807,7 +3807,7 @@
     },
     "e9392d332d0f2ec6d97817b56933a62ba2e2909704668bd82a40064385127fac": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:749",
+      "src": "skills/review/SKILL.md:751",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name develop) || exit $?; export PLUGIN_ROOT\n_CONSOLIDATOR_INSTRUCTIONS=\"$PLUGIN_ROOT/skills/review/templates/consolidator-prompt.md\"\n_REVIEW_TEMPLATE=\"$PLUGIN_ROOT/skills/review/templates/review-report.md\"\n[ -f \"$_CONSOLIDATOR_INSTRUCTIONS\" ] && [ -f \"$_REVIEW_TEMPLATE\" ] || { echo \"! BLOCKED \u2014 consolidator instruction/report template missing; restore/reinstall this develop version before consolidation\"; exit 1; }\nprintf 'Consolidator instructions: %s\\nReport template: %s\\n' \"$_CONSOLIDATOR_INSTRUCTIONS\" \"$_REVIEW_TEMPLATE\""
     },
     "ead79947fd8556641c0e61c54b47bbe15d9f1151fb4eeec076de1f665449de3c": {
@@ -3820,7 +3820,7 @@
     },
     "eb6bf385ad23c914dd291d7518954a603d5f35f2e2a99b9b8cab915a2916ade1": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:695"
+      "src": "skills/review/SKILL.md:697"
     },
     "ebb0955dff2d05bbcbc56d66f4d97d3fd6a52c4c373475c074e588014315e7d4": {
       "kind": "command",
@@ -4173,6 +4173,6 @@
       "src": "skills/debug/SKILL.md:378"
     }
   },
-  "plugin": "cc_develop@0.51.0",
+  "plugin": "cc_develop@0.52.0",
   "schema": 2
 }

@@ -698,3 +698,27 @@ class TestFinalHandoff:
         the review validator may demand its table layout.
         """
         assert validator({"metadata": {}}, {"branch": "caller-contract"}) is None
+
+
+@pytest.mark.parametrize(
+    ("label", "execution"),
+    [
+        pytest.param("PR publication: verified", False, id="declared-publication"),
+        pytest.param("Result", True, id="retained-execution"),
+    ],
+)
+def test_failed_local_result_cannot_drop_publication_proof(tmp_path: Path, label: str, execution: bool) -> None:
+    """An unresolved hosted check cannot hide an actual publication after its metadata is removed."""
+    result = {"schema_version": 2, "status": "fail", "metadata": {"mode": "pr"}}
+    if execution:
+        (tmp_path / "publication-executed").touch()
+    artifacts = [{"label": label, "path": "publication.json"}]
+    with pytest.raises(SystemExit, match="code-remediate-publication-binding-required"):
+        VALIDATOR._validate_remediation_publication(result, artifacts, tmp_path, candidate=False)
+
+
+def test_historical_failed_report_with_unoffered_skip_is_readable(tmp_path: Path) -> None:
+    """A retained pre-offer skip made no push and predates publication bindings on partial remediation."""
+    (tmp_path / "publication.json").write_text('{"status":"skipped"}', encoding="utf-8")
+    result = {"schema_version": 2, "status": "fail", "metadata": {"mode": "pr"}}
+    VALIDATOR._validate_remediation_publication(result, [], tmp_path, candidate=False)

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.84.0
+
+- The commit, push and GitHub write questions now offer `Hold` where they offered `Deny`, and describe it alike: skip this commit, push or write and leave the changes, the branch or GitHub as they are:
+  - The approval hook treats `Hold` as it treated `Deny`: it records nothing and removes a pending push or gh-write token.
+  - The hook now requires the option set `Approve` / `Hold`. After the update, run `/foundry:setup` and start a new session: rule text loaded from an older release still offers `Deny`, and the hook now reports any answer to such a question as not recorded, still removing a pending push or gh write token, instead of staying silent.
+- The commit, push and GitHub write questions now list their facts first and end with the question itself as the last line, so the decision is the last thing read. Question text for other prompts follows the same order.
+- The pull request body footer, `Drafted with AI help from AI Rig`, is now an italic note with the AI Rig link in bold, placed under a `---` line so it reads as a footer. A body that already ends with another footer set off by a horizontal rule gets the note under that footer with no second rule, and a body that is not Markdown keeps the plain line.
+- The shared Codex pre-pass can send an oversized diff as a partitioned review through the bridge's `--partition-file`, wave by wave, instead of one call that stops at the output limit. Skipped files and failed groups are reported as unreviewed scope, and a bridge without the flag keeps the single call.
+
 ## 0.83.0
 
 - Shared rules:

@@ -150,7 +150,7 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <text x="356" y="1055" font-size="10.5" fill="#a86f00" font-weight="700" text-anchor="start" letter-spacing="0.6">WAVE ADMISSION · NATIVE</text>
 <text x="356" y="1073" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">review_prepare.py prepare</text>
 <g><path d="M578.0,1072.0 L584.0,1081.4 L596.0,1081.4 L602.0,1072.0 L602.0,1076.6 L596.0,1085.9 L584.0,1085.9 L578.0,1076.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="602.0,1072.0 596.0,1080.1 584.0,1080.1 578.0,1072.0 584.0,1063.9 596.0,1063.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M586.2,1072.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
-<text x="356" y="1093" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">validates <tspan font-style="italic">source hashes + routing</tspan></text>
+<text x="356" y="1093" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">checks <tspan font-style="italic">source, routing + Python context</tspan></text>
 <text x="356" y="1109.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">rejects sensitive material</tspan></text>
 <text x="356" y="1126.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">Protected check: <tspan font-weight="700" fill="#1c2150">snapshot first</tspan></text>
 <text x="356" y="1142.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">calls: <tspan font-weight="700" fill="#1c2150">dispatch.json</tspan> <tspan font-style="italic">unchanged</tspan></text>

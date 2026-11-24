@@ -1,7 +1,7 @@
 ---
 name: resolve
 description: "OSS maintainer fast-close workflow for GitHub PRs. Three phases: (1) PR intelligence — reads full thread, linked issues, PR body to synthesize contribution motivation and classify every comment into action items; (2) conflict resolution — checks out PR branch (fork-aware via gh pr checkout), merges BASE into it, resolves conflicts semantically using contributor's intent as priority lens; (3) implements each action item via specialist agents (Codex for eligible mechanical items) and commits per the chosen commit mode — one attributed commit per item by default — then pushes back to contributor's fork. Supports three source modes: pr (live GitHub comments only), report (latest /review report findings as action items, no GitHub re-fetch), and pr + report (both sources aggregated and deduplicated in one pass). Also accepts bare comment text for single-comment dispatch. NOT for reply drafting to /oss:analyse findings (use /oss:analyse --reply). NOT for code diff review of PR changes (use /oss:review). NOT for release preparation (use /oss:release). NOT for fixing local bugs unrelated to a PR (use /develop:fix; requires develop plugin). TRIGGER when: PR is ready to close and has open comments, conflicts, or review findings to address; user says 'close this PR', 'resolve comments on PR #N', or 'implement review findings'."
-argument-hint: <PR number or URL> [report] | report | <review comment text> [--no-challenge] [--agent <name>] [--codemap] [--no-codemap] [--worktree] [--keep "<items>"]
+argument-hint: <PR number or URL> [report] | report | <review comment text> [--no-challenge] [--sandbox] [--agent <name>] [--codemap] [--no-codemap] [--worktree] [--keep "<items>"]
 disable-model-invocation: true
 allowed-tools: Read, Edit, Write, Bash, Agent, Skill, TaskCreate, TaskUpdate, TaskList, AskUserQuestion, EnterWorktree, ExitWorktree
 effort: high
@@ -33,6 +33,7 @@ Bare comment text → skip to Codex dispatch (Step 12).
   - `42 report` or `<URL> report` (order-invariant: `report 42` is the same request) → **pr + report mode**: aggregate live GitHub comments + review report, deduplicated in one pass. The `report` word **adds** the report as a second source; it never suppresses the GitHub fetch — bare `report` (no PR number) is the no-GitHub mode
   - Bare review comment text → **comment dispatch mode** (jumps to Step 12)
 - **`--no-challenge`**: optional — skip challenge gate per item; all selected items treated as `VALID`
+- **`--sandbox`**: optional — enforce the sandbox for every run of fork-PR code: no **Run without sandbox** option, no question while the scan's risk level is `none` or `borderline`, and a host without a sandbox reports the tests as not run. Without it the question and its clean-scan skip behave as before (`modes/exec-approval.md`).
 - **`--no-codemap`**: optional — disable codemap structural context (on by default when codemap installed + index present)
 - **`--codemap`**: optional — strict mode: stop and report if codemap not installed or index missing
 - **`--agent <name>`**: optional — use `<name>` agent for implementation instead of Codex; must be an implementation agent or the `bridge:implement` Skill marker.

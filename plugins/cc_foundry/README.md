@@ -178,11 +178,11 @@ The blueprint hook matches exact command text from its manifest. For loader-rend
 
 ### Local Git operations
 
-Operations that need authorization (commit, staging owned changes, a local merge and its merge commit, cherry-pick, branch/worktree prep) ask one question:
+A plain commit needs authorization and asks one question (every other local Git operation, such as staging, a local merge with its merge commit, cherry-pick and branch/worktree prep, runs with no question):
 
 - **Approve** — this operation only
 - **Approve always** — this operation, plus a standing grant for this project
-- **Deny** — skip it and leave changes as they are
+- **Hold** — skip this commit; leave changes as they are
 
 How the standing grant works:
 
@@ -198,9 +198,9 @@ A grant never covers push (asked every time), force operations, history rewritin
 
 ### Push
 
-Every push asks its own question, `git-push`: **Approve** (this push, once) or **Deny**. The question shows the branch, the target and the command the agent will run.
+Every push asks its own question, `git-push`: **Approve** (this push, once) or **Hold**. The question shows the branch, the target and the command the agent will run.
 
-- Approve makes the hook record a single-use token, `claude-push-approval.json`, in the same common directory. It holds the current branch, HEAD and the id of the question you answered, and expires after 15 minutes. A later Approve replaces it; a later Deny removes it.
+- Approve makes the hook record a single-use token, `claude-push-approval.json`, in the same common directory. It holds the current branch, HEAD and the id of the question you answered, and expires after 15 minutes. A later Approve replaces it; a later Hold removes it.
 - `commit-guard.js` lets one push of that branch at that HEAD to a configured remote run (`git push`, `git push origin`, `-u`, `origin <branch>`, `origin HEAD:<branch>`, `git lfs push origin <branch>`), after checking that your Approve to that very question is in the session transcript, and consumes the token. Of parallel push calls only one runs; a spawned agent never spends it. Each shell-text inspection phase has a one-second budget that excludes Git discovery time, so slow Git subprocesses do not invalidate an otherwise readable push.
 - The push must run from the checkout itself (or as the worktree push below), be the only push in its command, and have no commit, reset or checkout beside it. A second push, a new commit or another branch needs a new Approve.
 - A worktree of the project that the session is not in is pushed without `cd`, as `git -C <absolute worktree path> push <remote> <branch>`:
@@ -208,20 +208,20 @@ Every push asks its own question, `git-push`: **Approve** (this push, once) or *
   - The question shows that command, and the token then holds that worktree's branch and HEAD; a current-branch substitution is not read there, so the branch is written out.
   - A worktree push needs your explicit selection: it runs only on an approval whose question showed that worktree (`git-push`, or the `git-push-run` push span), never on one that named no worktree or another.
 - No Approve covers deleting a remote branch, `--prune`, `--all`, `--tags`, another branch or ref, a URL, path or variable destination, `cd`, `env -C`, `sudo -D`, `chroot`, `--git-dir`, `--work-tree`, any other `-C` use, `send-pack`, `http-push` or `subtree push`: the agent gives you the command to run yourself.
-- One exception to a question per push: `/oss:resolve` asks once at its start, `git-push-run` (**Approve** / **Deny**), naming one `git push <remote> <branch>` and the PR head commit id. Approve records `claude-push-run-approval.json`, valid 12 hours; one push of that branch to that remote then runs while HEAD descends from that head, so the run does not ask again. Every other rule above still holds. A run approval may name a worktree in its push span, as `git -C <absolute worktree path> push <remote> <branch>`; `/oss:resolve` itself pushes from the lead's own checkout and names none.
+- One exception to a question per push: `/oss:resolve` asks once at its start, `git-push-run` (**Approve** / **Hold**), naming one `git push <remote> <branch>` and the PR head commit id. Approve records `claude-push-run-approval.json`, valid 12 hours; one push of that branch to that remote then runs while HEAD descends from that head, so the run does not ask again. Every other rule above still holds. A run approval may name a worktree in its push span, as `git -C <absolute worktree path> push <remote> <branch>`; `/oss:resolve` itself pushes from the lead's own checkout and names none.
 - A dry run (`--dry-run`) needs no approval. Force pushes stay forbidden even with a token.
 - A new session or `/clear` deletes a pending token — per project, so a second session in the same project clears the first one's. The former `! touch /tmp/claude-push-auth-…` sentinel no longer authorizes anything.
 
 ### GitHub writes through `gh`
 
-GitHub reads through `gh` run without a question. Every GitHub write through `gh`, on any repository, asks its own question, `gh-write`: **Approve** (this exact command, once) or **Deny**.
+GitHub reads through `gh` run without a question. Every GitHub write through `gh`, on any repository, asks its own question, `gh-write`: **Approve** (this exact command, once) or **Hold**.
 
 - The question names the command once in an inline code span. Approve makes the hook record a single-use token, `claude-gh-write-approval.json`, holding that command for 15 minutes.
 - `gh-write-guard.js` then lets exactly that text run once as the whole Bash command and spends the token; other text, a second run or a spawned agent's call stays blocked.
-- A later Approve replaces the token, a later Deny removes it, and a new session or `/clear` deletes it.
+- A later Approve replaces the token, a later Hold removes it, and a new session or `/clear` deletes it.
 - Outside a git repository nothing is recorded, so you run the command yourself.
 - Claude Code still applies a settings deny rule after a hook allows a call, so the plugins no longer ship gh write deny entries. Re-run `/foundry:setup` once to remove the ones an earlier setup merged.
-- Pull request bodies Claude drafts end with `🐰 Drafted with AI help from [AI Rig](https://github.com/Borda/AI-Rig), the open-source agent setup I use. If it saved you time, a ⭐ helps others find it.`, replacing the host's default Claude Code footer; the footer sits in the body you approve. Set `AI_RIG_FOOTER=off` in the `env` block of Claude Code settings to omit it.
+- Pull request bodies Claude drafts end with an italic note, `*🐰 Drafted with AI help from **[AI Rig](https://github.com/Borda/AI-Rig)**, the open-source agent setup I use. If it saved you time, a ⭐ helps others find it.*`, set off by a `---` line unless the body already ends with another footer, replacing the host's default Claude Code footer; the footer sits in the body you approve. Set `AI_RIG_FOOTER=off` in the `env` block of Claude Code settings to omit it.
 
 > Single-use approvals take an exclusive reservation in the git common directory while a token is validated, spent, replaced or revoked. Concurrent calls wait at most one second, then deny if it remains busy. If a hook crashes, stop active hooks before manually deleting `<token-file>.spent-lock` from the git common directory; Foundry also removes these reservations at SessionStart and `/clear`.
 

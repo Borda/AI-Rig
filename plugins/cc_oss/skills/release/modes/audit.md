@@ -146,19 +146,23 @@ if [ "$CODEX_STATUS" = "available" ]; then CODEX_AVAILABLE=1; echo "bridge@borda
 
 `CODEX_AVAILABLE=0` → skip this phase entirely, no finding added.
 
-`CODEX_AVAILABLE=1` →
+`CODEX_AVAILABLE=1` → the bridge partitions the range by changed lines, so the range is reviewed in bounded parts, however many it needs. Write `<PARTITION_FILE>` (`.temp/release-codex-partition-$BRANCH-$DATE.json`, expanded to a literal path) with the Write tool: one JSON object whose `range` is the literal `<RANGE>` (an `A..B` range; both ends must be plain revisions) and whose `task` is the brief below, with `<REPO_ROOT>` and `<TARGET>` expanded to literal values:
 
 ```text
-Skill(skill="bridge:review", args="Read-only adversarial release-readiness audit. Working directory: <REPO_ROOT>. Range: <RANGE>. Target version: <TARGET or 'next'>. Treat every user-facing claim as wrong until proven correct by reading the actual source at HEAD.
+Read-only adversarial release-readiness audit of one part of a release range. Working directory: <REPO_ROOT>. Target version: <TARGET or 'next'>. Treat every user-facing claim as wrong until proven correct by reading the actual source at HEAD.
 
-Check specifically: (1) do public docs/examples touched or implied by this range still match current default behavior — not just changed files, but examples elsewhere in docs/ that call the same code path; (2) does the migration guide (if any) place new behavior under the correct version step, not backported into an earlier historical entry; (3) does the changelog/PR narrative account for every commit in range, including ones bundled into another PR; (4) any new or changed optional dependency reaching a platform without a recorded review/disposition.
+Check specifically: (1) do public docs/examples touched or implied by this part still match current default behavior — not just changed files, but examples elsewhere in docs/ that call the same code path; (2) does the migration guide (if any) place new behavior under the correct version step, not backported into an earlier historical entry; (3) does the changelog/PR narrative account for every commit in range that touches this part's files, including ones bundled into another PR; (4) any new or changed optional dependency reaching a platform without a recorded review/disposition.
 
-You are read-only and must not create files: return every finding in your result with its severity (critical, high, medium, low) and exact file:line evidence, plus your confidence.")
+You are read-only and must not create files: return every finding in your result with its severity (critical, high, medium, low) and exact file:line evidence, plus your confidence.
 ```
 
-Expand `<REPO_ROOT>`, `<RANGE>`, `<TARGET>` to literal values before the call.
+```text
+Skill(skill="bridge:review", args="--partition-file <PARTITION_FILE> --wave 1 --effort high --timeout-seconds 230")
+```
 
-`bridge:review` cannot write files, so the orchestrator persists its result when the call returns: Write the returned findings (envelope findings, or the transcript at the bridge-reported artifact path) to `<ADVERSARIAL_AUDIT_FILE>` (`.temp/release-codex-audit-$BRANCH-$DATE.md`, expanded to a literal path) with the Write tool. A `status` other than `complete` → Write that status and its fault there instead and add no Codex finding; report the pass as not completed, never as clean.
+The first envelope's `waves` is the number of calls the audit takes. Run `--wave 2` through `--wave <waves>` as separate calls one after another, never together, with the same file and options plus `--expect-digest <partition_digest of wave 1>`. A call refused for a changed partition means the range moved: start again at wave 1 once; a second refusal ends the pass as not completed, with the unreviewed groups named. A wave before the last reports `partial` by design; judge every wave by its own group rows.
+
+`bridge:review` cannot write files, so the orchestrator persists the results: Write the returned findings of every wave (envelope findings, or the transcript at the bridge-reported artifact path), each with its group number, and the envelope's `skipped` paths as not line-reviewed (binary or `-diff` files such as lock files: check dependency changes in them with the static checklist), to `<ADVERSARIAL_AUDIT_FILE>` (`.temp/release-codex-audit-$BRANCH-$DATE.md`, expanded to a literal path) with the Write tool. The pass is complete only when every wave ran and every group of every wave has status `complete`. Any other outcome — a wave not run, a group that timed out, was blocked (including an output limit on an oversized file) or errored, or a `status=error` from the partition — → Write that status, its fault and the unreviewed groups (or the error text) there, keep the findings of groups that did complete, and report the pass as not completed, never as clean.
 
 From the returned findings: every `critical`/`high` finding → add a row to the Findings summary table above (`severity: critical` or `high`), quoting the finding text. `medium`/`low` → append as `> ⚠ Codex audit notes: <summary>` below the table, non-blocking.
 

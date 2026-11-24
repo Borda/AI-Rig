@@ -30,7 +30,7 @@ This checkout selects native automatic approval review for required plugin workf
 
 ### Local Git approval
 
-Local Git approval is interactive. A plain commit that needs authorization asks one question: **Approve** runs that operation only, **Deny** skips it and leaves changes as they are, and **Approve always** also records the grant file `codex-git-approval.json` in the repository's common Git directory (`git rev-parse --git-common-dir`, the main checkout's `.git/`).
+Local Git approval is interactive. A plain commit that needs authorization asks one question: **Approve** runs that operation only, **Hold** skips this commit and leaves the changes unstaged, and **Approve always** also records the grant file `codex-git-approval.json` in the repository's common Git directory (`git rev-parse --git-common-dir`, the main checkout's `.git/`).
 
 You give it once per project; it applies to every worktree and lasts until you delete it with `rm "$(git rev-parse --git-common-dir)/codex-git-approval.json"`. The grant's scope:
 
@@ -313,8 +313,8 @@ Codex Rig can read GitHub evidence and prepare local changes when the runtime au
 
 **Push approval differs by host:**
 
-- Claude Code's foundry plugin asks a `git-push` question with only **Approve** and **Deny**; **Approve** records a single-use `push-once` token that allows one non-force push of the same branch at the same `HEAD` to a configured remote, remote and branch written out, within 15 minutes, and the allowed push spends it.
-- Codex uses no push token. After a verified and committed PR `code-remediate --worktree` run, the parent offers one push of the exact commit to the original PR branch. If the user asks to publish before, during or after remediation, the same **Approve** / **Deny** question opens when delivery from the existing PR checkout is verified. Each push requires a native user answer and separate one-time runtime approval.
+- Claude Code's foundry plugin asks a `git-push` question with only **Approve** and **Hold**; **Approve** records a single-use `push-once` token that allows one non-force push of the same branch at the same `HEAD` to a configured remote, remote and branch written out, within 15 minutes, and the allowed push spends it.
+- Codex uses no push token. After a PR remediation creates and verifies a commit in a new or existing linked worktree, the parent offers one push of the exact commit to the original PR branch. If the user asks to publish before, during or after remediation, the same **Approve** / **Deny** question opens when delivery from the existing PR checkout is verified. Each push requires a native user answer and separate one-time runtime approval. A hosted CI check that needs this published commit can stay open when the local checks passed. After **Approve**, Codex runs the push under the one-time runtime approval and verifies the remote branch. If an agent capability is missing, Codex shares the exact command and offers to run it once the gate permits.
 - Force operations are forbidden on both hosts.
 - Both hosts agree on an explicit request such as "commit this": it authorizes that commit with no further question.
 

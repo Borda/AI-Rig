@@ -394,7 +394,7 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <text x="306.0" y="2377.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">missing sections, script, validator, band → <tspan font-weight="700" fill="#1c2150">fail</tspan></text>
 <line x1="52" y1="2389" x2="908" y2="2389" stroke="#dde0f4"/>
 <text x="56.0" y="2406.0" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">commit grant</text>
-<text x="306.0" y="2406.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">no grant or request → <tspan font-style="italic">ask once</tspan>; <tspan font-weight="700" fill="#1c2150">Deny</tspan> / no commit / wait → unstaged</text>
+<text x="306.0" y="2406.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">no grant or request → <tspan font-style="italic">ask once</tspan>; <tspan font-weight="700" fill="#1c2150">Hold</tspan> / no commit / wait → unstaged</text>
 <line x1="52" y1="2418" x2="908" y2="2418" stroke="#dde0f4"/>
 </g>
 <g class="fi" style="--d:2.54s"><rect x="40" y="2442" width="880" height="193" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/>

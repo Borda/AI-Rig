@@ -734,7 +734,7 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
             "- **Approve** — run this operation only.\n"
             "- **Approve always** — run this operation and record the grant, so later sessions in every worktree of "
             "this project skip the question while the grant exists.\n"
-            "- **Deny** — skip the operation and leave changes as they are.",
+            "- **Hold** — skip this commit and leave its changes unstaged. Record no grant or denial lock.",
             id="native-three-choices",
         ),
         pytest.param(
@@ -757,7 +757,7 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
         ),
         pytest.param(
             "shared/native-skill-contract.md",
-            "not after **Approve** or **Deny**, and never from a spawned child agent. A path the sandbox lets you "
+            "not after **Approve** or **Hold**, and never from a spawned child agent. A path the sandbox lets you "
             "write is not the user's answer. Deleting the file revokes the grant",
             id="native-no-self-write",
         ),
@@ -790,7 +790,7 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
         ),
         pytest.param(
             "shared/native-skill-contract.md",
-            "Without a grant, that completion commit asks the one question above, and **Deny** leaves the changes "
+            "Without a grant, that completion commit asks the one question above, and **Hold** leaves the changes "
             "unstaged",
             id="native-grant-absent-completion-asks",
         ),
@@ -867,7 +867,7 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
         pytest.param(
             "assets/AGENTS.md",
             "No grant: explicit request or defining workflow step → commit after checks; otherwise ask **Approve** / "
-            "**Approve always** / **Deny** (Deny: leave changes unstaged)",
+            "**Approve always** / **Hold** (leave changes unstaged)",
             id="assets-grant-absent-question",
         ),
         pytest.param(
@@ -892,7 +892,7 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
         ),
         pytest.param(
             "shared/commit-response-template.md",
-            "Without a grant, the contract's one Approve / Approve always / Deny question applies",
+            "Without a grant, the contract's one Approve / Approve always / Hold question applies",
             id="template-grant-absent-question",
         ),
         pytest.param(
@@ -1000,7 +1000,7 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
         ),
         pytest.param(
             "shared/native-skill-contract.md",
-            "| Push (`push-once`) | `git-push`: Approve, Deny | one non-force push of the approved branch at the "
+            "| Push (`push-once`) | `git-push`: Approve, Hold | one non-force push of the approved branch at the "
             "approved `HEAD` to a configured remote, remote and branch written out |",
             id="native-scope-table-push-row",
         ),
@@ -1169,6 +1169,7 @@ def test_retired_push_and_commit_authority_claims_are_gone(relative: str, retire
             id="grant-absent-commit-without-asking",
         ),
         pytest.param("manage-grant-absent-deny-respected", [], id="grant-absent-deny-is-clean"),
+        pytest.param("manage-hold-then-explicit-commit", [], id="hold-allows-later-commit"),
         pytest.param("manage-grant-present-completion-committed", [], id="grant-present-completion-commit-is-clean"),
         pytest.param(
             "manage-grant-present-completion-commit-withheld",

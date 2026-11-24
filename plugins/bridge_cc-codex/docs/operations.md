@@ -157,6 +157,7 @@ Output-limit recovery steps:
    - Treat the call as incomplete even if the transcript contains useful work.
    - For `implement`, inspect `workspace_delta`, changed files, and relevant tests before another request; the delta is advisory and an empty or unavailable-Git delta does not prove that no edits landed.
 2. For `advise` or `review`, divide the original scope into explicit, independently checkable packages by file, module, symbol, or question. Name the covered paths and expected output in each request so no part of the original scope is silently dropped. The follow-up brief must keep commands small with no inline scripts or data, passing small inputs as arguments, and ask for bounded output through focused searches or path-limited diffs.
+   - For a Git range, the working-tree changes against a commit or a file list, `review --partition-file` does this division itself by lines and runs it in waves of three groups, with no cap on the waves; see the review skill.
 3. Make fresh read-only calls for those packages and reconcile their results against the original scope. If any package still blocks, report its uncovered scope; do not promote partial transcript text to a verdict. For `implement`, request only verified remaining work as a separate bounded task after checking what already changed. Never replay the whole write-capable task automatically.
 
 ## Artifact inspection

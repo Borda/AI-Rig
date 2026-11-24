@@ -14,9 +14,10 @@ only remote write is one non-force update to the admitted GitHub HTTPS branch.
 ## Usage
 
 Issue a one-time runtime approval for this helper with the run path and the exact SHA-256 of its offer. User-question
-verification and worktree delivery are independently owned by Code Remediate. For a push requested by the user and
-approved after local promotion, pass the fixed publication-request directory inside the promoted run. Its attempt and
-outcome stay separate from local delivery.
+input and worktree delivery belong to Code Remediate. The initial transport requires the validated candidate's retained
+digest, its committed handoff, local gate evidence and the matching native approval. A promoted PR can retain a failed
+status when only hosted CI needs the delivered commit. For separately approved post-delivery publication, pass the fixed
+publication-request directory inside the promoted run. Its attempt and outcome stay separate from local delivery.
 
 ## Outputs
 
@@ -34,10 +35,12 @@ credential helper is refused (``publication-credential-helper-missing``), so not
 unsupported helper name is a usage error. A refusal found while checking (dirty or unverifiable source, a source history
 that does not reach the approved tip such as a shallow clone, hook present, a moved tip, a run closed by a terminal
 record, or an authenticated dry run of the exact push that Git refuses) happens before the marker, spends nothing and
-reports ``not-sent``. This helper leaves the approved attempt unspent then, but whether it may run again is the
-publication gate's decision: the gate allows one rerun only after ``publication-push-precheck-failed``. Once the marker
-exists, nothing runs again: a failed, interrupted or delayed run never retries publication. Removing the private
-transport directory never changes the reported result of a push that already happened.
+reports ``not-sent``. A missing or unreadable base ref reports ``publication-target-unverifiable``. A live target whose
+ancestry the local source cannot prove reports ``publication-target-not-integrated``. This helper leaves the approved
+attempt unspent then, but whether it may run again is the publication gate's decision: the gate allows one rerun only
+after ``publication-push-precheck-failed``. Once the marker exists, nothing runs again: a failed, interrupted or delayed
+run never retries publication. Removing the private transport directory never changes the reported result of a push that
+already happened.
 
 ## Used by
 
@@ -55,15 +58,24 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
+
+# Use the deployed plugin's tests-gate evidence reader for both script and file-path loading.
+sys.pycache_prefix = str(Path(__file__).resolve())
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gate_test_approval import validate_pass  # noqa: E402
 
 OFFER_FILE = "publication-offer.json"
 ATTEMPT_FILE = "publication-attempt.json"
 EXECUTED_FILE = "publication-executed"
 RESULT_FILE = "publication-execution-result.json"
 REQUEST_DIRECTORY = "publication-request"
+CANDIDATE_VALIDATION_FILE = "publication-candidate-validation.json"
 REPORT_LIMIT = 16 * 1024 * 1024  # Same output bound as the PR collector.
 # Either record closes the run: the gate's terminal publication disposition, or the promoted local result.
 TERMINAL_RECORDS = ("publication.json", "result.json")
@@ -104,6 +116,13 @@ def _read_record(run: Path, name: str, *, limit: int = 16_384) -> bytes:
     return data
 
 
+def valid_offer_fields(offer: dict) -> bool:
+    """Recognize the original push offer and the opt-in removal of its exact checkout after a verified push."""
+    return offer.keys() == OFFER_FIELDS or (
+        offer.keys() == OFFER_FIELDS | {"after_push"} and offer["after_push"] == "remove-owned-worktree"
+    )
+
+
 def read_offer(run: Path, digest: str) -> dict[str, str]:
     """Bind all transport inputs to the runtime-approved offer bytes."""
     raw = _read_record(run, OFFER_FILE)
@@ -112,7 +131,7 @@ def read_offer(run: Path, digest: str) -> dict[str, str]:
     offer = json.loads(raw)
     if (
         not isinstance(offer, dict)
-        or offer.keys() != OFFER_FIELDS
+        or not valid_offer_fields(offer)
         or any(not isinstance(value, str) or not value for value in offer.values())
     ):
         raise ValueError("publication-offer-invalid")
@@ -240,32 +259,21 @@ def _verify_requested_pr(original: Path, offer: dict[str, str]) -> None:
         raise ValueError("publication-pr-receipt-mismatch")
 
 
-def _verify_recorded_destination(original: Path, offer: dict[str, str], artifacts: list[dict]) -> None:
-    """Match the delivered tuple, allowing the original source worktree to differ after return delivery."""
-    checkout, branch, head, common_dir = (offer[key] for key in ("checkout", "branch", "source_oid", "common_dir"))
-    if not any(
-        isinstance(item, dict)
-        and item.get("path") == checkout
-        and not str(item.get("label", "")).startswith("Source checkout:")
-        for item in artifacts
-    ):
-        raise ValueError("publication-delivery-mismatch")
+def _recorded_destination(original: Path) -> tuple[dict[str, str], bool]:
+    """Read the delivered tuple and whether a machine receipt explicitly records worktree-only delivery."""
     if os.path.lexists(original / "worktree-delivery.json"):
         recorded = json.loads(_read_record(original, "worktree-delivery.json", limit=REPORT_LIMIT))
+        coordinates = ("checkout", "branch", "head", "common_dir")
         if (
             isinstance(recorded, dict)
             and recorded.get("schema_version") == 1
-            and (
-                recorded.get("status") in ("delivered", "worktree-only")
-                and (recorded.get("checkout"), recorded.get("branch"), recorded.get("head"), recorded.get("common_dir"))
-                == (checkout, branch, head, common_dir)
-            )
+            and recorded.get("status") in ("delivered", "worktree-only")
+            and all(isinstance(recorded.get(key), str) and recorded[key] for key in coordinates)
         ):
-            return
+            return {key: recorded[key] for key in coordinates}, recorded["status"] == "worktree-only"
         raise ValueError("publication-delivery-mismatch")
 
-    # Legacy deliveries record a labelled destination tuple or separate destination fields. An OID in a note, the
-    # historical source row or an invoking-checkout comparison cannot stand in for the delivered HEAD.
+    # Historical source and invoking-checkout comparisons cannot stand in for the delivered HEAD.
     note = _read_record(original, "worktree-delivery.md", limit=REPORT_LIMIT).decode("utf-8")
     fields: dict[str, list[str]] = {}
     for line in note.splitlines():
@@ -277,15 +285,169 @@ def _verify_recorded_destination(original: Path, offer: dict[str, str], artifact
         raise ValueError("publication-delivery-mismatch")
     combined = fields.get("local destination")
     if combined is not None:
-        matches = combined == [f"{checkout}, branch {branch}, head {head}"]
+        match = re.fullmatch(r"(.+), branch (\S+), head (\S+)", combined[0])
+        if len(combined) != 1 or match is None:
+            raise ValueError("publication-delivery-mismatch")
+        checkout, branch, head = match.groups()
     else:
-        matches = (
-            fields.get("checkout", fields.get("destination checkout")) == [checkout]
-            and fields.get("branch", fields.get("destination branch")) == [branch]
-            and fields.get("final authorized head", fields.get("final head")) == [head]
+        values = (
+            fields.get("checkout", fields.get("destination checkout", [])),
+            fields.get("branch", fields.get("destination branch", [])),
+            fields.get("final authorized head", fields.get("final head", [])),
         )
-    if not matches or fields.get("git common directory", [common_dir]) != [common_dir]:
+        if any(len(items) != 1 for items in values):
+            raise ValueError("publication-delivery-mismatch")
+        checkout, branch, head = (items[0] for items in values)
+    destination = {"checkout": checkout, "branch": branch, "head": head}
+    if "git common directory" in fields:
+        common = fields["git common directory"]
+        if len(common) != 1:
+            raise ValueError("publication-delivery-mismatch")
+        destination["common_dir"] = common[0]
+    return destination, False
+
+
+def handoff_destination(original: Path, artifacts: list[dict]) -> dict[str, str]:
+    """Bind the actual delivered tuple to the handoff or a source link corroborated by explicit delivery records."""
+    recorded, worktree_only = _recorded_destination(original)
+    matches = [item for item in artifacts if isinstance(item, dict) and item.get("path") == recorded["checkout"]]
+    if any(not str(item.get("label", "")).startswith("Source checkout:") for item in matches):
+        return recorded
+    # Older explicit-worktree handoffs retained only their source link. Require the independent locator AND
+    # the worktree-only machine receipt; a Markdown note about a historical source alone cannot identify delivery.
+    if matches and worktree_only and os.path.lexists(original / "remediation-worktree.json"):
+        locator = json.loads(_read_record(original, "remediation-worktree.json"))
+        if (
+            isinstance(locator, dict)
+            and type(locator.get("schema_version")) is int
+            and locator["schema_version"] == 1
+            and locator.get("worktree") == recorded["checkout"]
+            and locator.get("git_common_dir") == recorded.get("common_dir")
+            and isinstance(locator.get("invoking_checkout"), str)
+            and Path(locator["invoking_checkout"]).is_absolute()
+            and locator["invoking_checkout"] != recorded["checkout"]
+        ):
+            return recorded
+    raise ValueError("publication-delivery-mismatch")
+
+
+def publication_result_eligible(run: Path, result: dict[str, Any], *, recheck_passing_gates: bool = False) -> bool:
+    """Admit passing remediation or a verified local result whose only selected open work is hosted CI."""
+    if not isinstance(result, dict):
+        return False
+    if result.get("status") == "pass":
+        return not recheck_passing_gates or _local_checks_pass(run)
+    if result.get("status") != "fail" or result.get("checks_failed") != []:
+        return False
+    try:
+        if result["findings"]["critical"] != 0:
+            return False
+        metadata = result["metadata"]
+        summary = metadata["unresolved_summary"]
+        indexes = metadata["resolution_scope"]["selected_indexes"]
+        selectable = [item for item in metadata["final_resolution_table"]["items"] if item["selectable"] is True]
+        if not isinstance(indexes, list) or any(type(i) is not int or not 1 <= i <= len(selectable) for i in indexes):
+            return False
+        selected = [selectable[i - 1] for i in indexes]
+        opened = [item for item in selected if item["resolution_status"] in {"unresolved", "needs-clarification"}]
+        groups = summary["unresolved_reason_groups"]
+        if (
+            metadata["mode"] != "pr"
+            or not opened
+            or len(set(indexes)) != len(indexes)
+            or any(
+                item["item_type"] != "ci" or item["resolution_status"] != "unresolved" or item["severity"] == "critical"
+                for item in opened
+            )
+            or summary["selected_items_total"] != len(selected)
+            or summary["selected_items_unresolved"] != len(opened)
+            or not isinstance(groups, list)
+            or any(g["reason"] != "external-ci" or type(g["count"]) is not int or g["count"] <= 0 for g in groups)
+            or sum(g["count"] for g in groups) != len(opened)
+        ):
+            return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    return _local_checks_pass(run)
+
+
+def _local_checks_pass(run: Path) -> bool:
+    """Recheck each local gate and the skill's tests evidence immediately before the optional publication."""
+    try:
+        gates = json.loads(_read_record(run, "gates.json", limit=REPORT_LIMIT))
+        checks = gates["checks"]
+        if (
+            gates["status"] != "pass"
+            or gates["checks_failed"] != []
+            or [check["id"] for check in checks] != ["lint", "format", "types", "tests", "review"]
+            or any(check["status"] not in ("pass", "not-applicable") or check["exit_code"] != 0 for check in checks)
+        ):
+            return False
+        validate_pass(gates, run, skill="code-remediate")
+    except (KeyError, TypeError, ValueError, OSError, SystemExit):
+        return False
+    return True
+
+
+def _committed_result(original: Path, result_name: str) -> tuple[dict, dict]:
+    """Load an eligible PR result and the committed handoff bound to its exact bytes."""
+    invalid = (
+        "publication-validated-candidate-required"
+        if result_name == "result.candidate.json"
+        else "publication-promoted-delivery-required"
+    )
+    result_bytes = _read_record(original, result_name, limit=REPORT_LIMIT)
+    if result_name == "result.candidate.json":
+        validation = json.loads(_read_record(original, CANDIDATE_VALIDATION_FILE))
+        if validation != {
+            "schema_version": 1,
+            "candidate_sha256": hashlib.sha256(result_bytes).hexdigest(),
+            "gates_sha256": hashlib.sha256(_read_record(original, "gates.json", limit=REPORT_LIMIT)).hexdigest(),
+        }:
+            raise ValueError("publication-candidate-validation-mismatch")
+    result = json.loads(result_bytes)
+    handoff_bytes = _read_record(original, "final-handoff.json", limit=REPORT_LIMIT)
+    handoff = json.loads(handoff_bytes)
+    try:
+        committed = (
+            publication_result_eligible(original, result, recheck_passing_gates=True)
+            and result["metadata"]["mode"] == "pr"
+            and result["metadata"]["final_handoff"]["handoff_sha256"] == hashlib.sha256(handoff_bytes).hexdigest()
+            and handoff["skill"] == "code-remediate"
+            and handoff["commit_disposition"]["status"] == "committed"
+        )
+    except (KeyError, TypeError) as error:
+        raise ValueError(invalid) from error
+    if not committed:
+        raise ValueError(invalid)
+    return result, handoff
+
+
+def _offered_destination(original: Path, offer: dict[str, str], handoff: dict) -> dict[str, str]:
+    """Recheck the approved PR, delivery coordinates and any worktree locator against retained receipts."""
+    _verify_requested_pr(original, offer)
+    recorded = handoff_destination(original, handoff.get("artifacts") or [])
+    if any(value != offer["source_oid" if key == "head" else key] for key, value in recorded.items()):
         raise ValueError("publication-delivery-mismatch")
+    locators = [
+        name for name in ("remediation-worktree.json", "recovery-worktree.json") if os.path.lexists(original / name)
+    ]
+    if len(locators) > 1:
+        raise ValueError("publication-delivery-mismatch")
+    if locators:
+        locator = json.loads(_read_record(original, locators[0]))
+        if not isinstance(locator, dict) or (
+            locator.get("schema_version") != 1
+            or locator.get("worktree") != offer["checkout"]
+            or locator.get("git_common_dir") != offer["common_dir"]
+        ):
+            raise ValueError("publication-delivery-mismatch")
+    return {
+        "checkout": offer["checkout"],
+        "branch": offer["branch"],
+        "common_dir": offer["common_dir"],
+        "head": offer["source_oid"],
+    }
 
 
 def requested_delivery(run: Path, offer: dict[str, str]) -> dict[str, str]:
@@ -309,21 +471,7 @@ def requested_delivery(run: Path, offer: dict[str, str]) -> dict[str, str]:
         if not isinstance(previous, dict) or previous.get("status") != "skipped":
             raise ValueError("publication-prior-decision")
 
-    result = json.loads(_read_record(original, "result.json", limit=REPORT_LIMIT))
-    handoff_bytes = _read_record(original, "final-handoff.json", limit=REPORT_LIMIT)
-    handoff = json.loads(handoff_bytes)
-    try:
-        committed = (
-            result["status"] == "pass"
-            and result["metadata"]["mode"] == "pr"
-            and result["metadata"]["final_handoff"]["handoff_sha256"] == hashlib.sha256(handoff_bytes).hexdigest()
-            and handoff["skill"] == "code-remediate"
-            and handoff["commit_disposition"]["status"] == "committed"
-        )
-    except (KeyError, TypeError) as error:
-        raise ValueError("publication-promoted-delivery-required") from error
-    if not committed:
-        raise ValueError("publication-promoted-delivery-required")
+    result, handoff = _committed_result(original, "result.json")
     prior_binding = result["metadata"].get("worktree_publication")
     if prior_binding is not None and (
         not isinstance(prior_binding, dict)
@@ -332,39 +480,63 @@ def requested_delivery(run: Path, offer: dict[str, str]) -> dict[str, str]:
     ):
         raise ValueError("publication-prior-decision")
 
-    _verify_requested_pr(original, offer)
-    _verify_recorded_destination(original, offer, handoff.get("artifacts") or [])
-    locators = [
-        name for name in ("remediation-worktree.json", "recovery-worktree.json") if os.path.lexists(original / name)
-    ]
-    if len(locators) > 1:
-        raise ValueError("publication-delivery-mismatch")
-    if locators:
-        locator = json.loads(_read_record(original, locators[0]))
-        if not isinstance(locator, dict) or (
-            locator.get("schema_version") != 1
-            or locator.get("worktree") != offer["checkout"]
-            or locator.get("git_common_dir") != offer["common_dir"]
+    return _offered_destination(original, offer, handoff)
+
+
+def _publication_target(original: Path) -> tuple[str, str, str]:
+    """Bind the target repository, branch and last fetched commit to the admitted PR."""
+    try:
+        if (original / "pr").is_symlink():
+            raise ValueError("publication-target-unverifiable")
+        pr = json.loads(_read_record(original / "pr", "pr.json", limit=REPORT_LIMIT))
+        routing = json.loads(_read_record(original / "pr", "pr-routing.json", limit=REPORT_LIMIT))
+        fetched = json.loads(_read_record(original / "pr", "target-branch.json", limit=REPORT_LIMIT))
+        repo = routing["base_repo"]
+        target = f"https://github.com/{repo}.git"
+        branch = routing["base_ref"]
+        captured = fetched["local_head"]
+        if (
+            not GITHUB_URL.fullmatch(target)
+            or routing.get("base_host", "github.com") != "github.com"
+            or pr["url"] != routing["pr_url"]
+            or pr["url"] != f"https://github.com/{repo}/pull/{pr['number']}"
+            or not isinstance(branch, str)
+            or not branch
+            or "\x00" in branch
+            or branch != pr["baseRefName"]
+            or branch != fetched["base_ref"]
+            or not GIT_OID.fullmatch(pr["baseRefOid"])
+            or pr["baseRefOid"] != routing["base_oid"]
+            or pr["baseRefOid"] != fetched["expected_base_oid"]
+            or fetched["status"] != "fetched"
+            or fetched["expected_base_is_ancestor"] is not True
+            or not GIT_OID.fullmatch(captured)
+            or captured != fetched["remote_ref"]
         ):
-            raise ValueError("publication-delivery-mismatch")
-    return {
-        "checkout": offer["checkout"],
-        "branch": offer["branch"],
-        "common_dir": offer["common_dir"],
-        "head": offer["source_oid"],
-    }
+            raise ValueError("publication-target-unverifiable")
+    except (KeyError, TypeError, ValueError, OSError) as error:
+        raise ValueError("publication-target-unverifiable") from error
+    return target, f"refs/heads/{branch}", captured
 
 
-def _require_open_run(run: Path, offer: dict[str, str], attempt: dict[str, str]) -> None:
+def _require_open_run(run: Path, offer: dict[str, str], attempt: dict[str, str]) -> tuple[str, str, str]:
     """Require an open run eligible for publication, including at the final execution checkpoint."""
-    if run.name == REQUEST_DIRECTORY:
-        requested_delivery(run, offer)
-        if json.loads(_read_record(run, "publication-answer.json")) != attempt:
-            raise ValueError("publication-answer-mismatch")
     if os.path.lexists(run / "recovery-worktree.json"):
         raise ValueError("publication-ineligible-recovery-worktree")
     if any(os.path.lexists(run / name) for name in TERMINAL_RECORDS):
         raise ValueError("publication-run-already-closed")
+    if json.loads(_read_record(run, ATTEMPT_FILE)) != attempt:
+        raise ValueError("publication-attempt-invalid")
+    if json.loads(_read_record(run, "publication-answer.json")) != attempt:
+        raise ValueError("publication-answer-mismatch")
+    if run.name == REQUEST_DIRECTORY:
+        requested_delivery(run, offer)
+    else:
+        _, handoff = _committed_result(run, "result.candidate.json")
+        if not os.path.lexists(run / "remediation-worktree.json"):
+            raise ValueError("publication-delivery-mismatch")
+        _offered_destination(run, offer, handoff)
+    return _publication_target(run.parent if run.name == REQUEST_DIRECTORY else run)
 
 
 def _ignore_rules(git: str, checkout: Path, common_dir: Path, user_env: dict[str, str]) -> bytes:
@@ -444,18 +616,21 @@ def _isolated_push(
     *,
     branch: str,
     common_dir: Path,
+    base: tuple[str, str, str],
     protocol: str = "https",
     before_push: Callable[[], None] = lambda: None,
 ) -> None:
     """Fast-forward only the approved advertised tip, using fresh local Git configuration.
 
     ``before_push`` runs after every check and immediately before the first byte is sent, so a refusal found while
-    checking never uses up the single attempt. The checks end with an authenticated ``git push --dry-run`` of the
-    exact update: a remote read or rehearsal that the remote refuses or that times out (for example for missing or
+    checking never uses up the single attempt. The destination checks include an authenticated ``git push --dry-run``
+    of the exact update: a head read or rehearsal that the remote refuses or that times out (for example for missing or
     expired credentials, which a private repository already refuses at the read) fails as
     ``publication-push-precheck-failed``, and a moved tip as ``publication-remote-tip-changed``, before the callback.
-    A successful rehearsal does not prove the receiver will accept the update: rules a server applies on receipt can
-    still refuse the real push.
+    After the rehearsal, read the admitted target branch from its own repository and require that exact advertised
+    commit in the source history and descended from the validated capture before spending the attempt.
+    The target can still move after the last observation.
+    A successful rehearsal does not prove the receiver will accept the update.
 
     ``credential_helpers`` is the ordered helper chain for every remote command; Git asks the helpers in that order,
     as it does for a configured list. The command line requires at least one; an empty chain sends no credentials and
@@ -484,6 +659,11 @@ def _isolated_push(
         RIG_PUBLICATION_EXPECTED=expected,
     )
     _git(git, checkout, env, "check-ref-format", ref)
+    base_url, base_ref, captured = base
+    try:
+        _git(git, checkout, env, "check-ref-format", base_ref)
+    except subprocess.SubprocessError as error:
+        raise ValueError("publication-target-unverifiable") from error
     _source_identity(git, checkout, env, branch, common_dir, source)
     objects = Path(_git(git, checkout, env, "rev-parse", "--path-format=absolute", "--git-path", "objects"))
     if not objects.is_absolute() or not objects.is_dir() or "\n" in str(objects) or "\r" in str(objects):
@@ -518,48 +698,36 @@ def _isolated_push(
             GIT_INDEX_FILE=str(scratch / "index"),
             GIT_OBJECT_DIRECTORY=str(scratch / "objects"),
             GIT_OPTIONAL_LOCKS="0",
+            GIT_NO_LAZY_FETCH="1",
         )
         if _git(git, scratch, transport_env, "config", "--list", "-z"):
             raise ValueError("publication-transport-config-unverifiable")
         _require_ancestor(git, scratch, transport_env, expected, source)
         _verify_clean_delivery(git, scratch, {**transport_env, "GIT_WORK_TREE": str(checkout)}, source)
         _source_identity(git, checkout, env, branch, common_dir, source)
-        credential_config = _credential_config(credential_helpers)
-        # A tip the PR author moved since the offer is the common refusal, so find it before the attempt is spent; the
-        # pre-push hook stays the final check against a move between this read and the push.
-        # A private repository refuses this read itself when sign-in is missing or expired, so a refused or timed-out
-        # read is the same recoverable sign-in refusal as a refused rehearsal, not an unexplained Git error.
-        try:
-            advertised = _git(
-                git,
-                scratch,
-                transport_env,
-                "-c",
-                "http.followRedirects=false",
-                *credential_config,
-                "-c",
-                "credential.interactive=false",
-                "ls-remote",
-                "--refs",
-                "--",
-                url,
-                ref,
-            )
-        except subprocess.SubprocessError as error:
-            raise ValueError("publication-push-precheck-failed") from error
-        # ``ls-remote`` matches the pattern against each ref name's tail, so a branch such as ``x/refs/heads/<name>``
-        # is listed too; only the row naming exactly the approved ref is the destination.
-        destination = [line for line in advertised.split("\n") if line.partition("\t")[2] == ref]
-        if destination != [f"{expected}\t{ref}"]:
-            raise ValueError("publication-remote-tip-changed")
-        # One argument list for the rehearsal and the push, so their transport, credential and hook handling cannot
-        # drift apart; only ``--dry-run`` differs.
-        push = (
+        remote_options = (
             "-c",
             "http.followRedirects=false",
-            *credential_config,
+            *_credential_config(credential_helpers),
             "-c",
             "credential.interactive=false",
+        )
+
+        def advertised_tip(repo_url: str, full_ref: str) -> str | None:
+            """Select exactly one full ref; ls-remote's pattern also matches another ref ending in the same name."""
+            output = _git(git, scratch, transport_env, *remote_options, "ls-remote", "--refs", "--", repo_url, full_ref)
+            matches = [line.partition("\t")[0] for line in output.split("\n") if line.partition("\t")[2] == full_ref]
+            return matches[0] if len(matches) == 1 and GIT_OID.fullmatch(matches[0]) else None
+
+        # The pre-push hook also binds the destination advertisement if its author moves it after this read.
+        try:
+            destination = advertised_tip(url, ref)
+        except subprocess.SubprocessError as error:
+            raise ValueError("publication-push-precheck-failed") from error
+        if destination != expected:
+            raise ValueError("publication-remote-tip-changed")
+        push = (
+            *remote_options,
             "push",
             "--porcelain",
             "--no-force",
@@ -581,6 +749,30 @@ def _isolated_push(
                 raise ValueError("publication-remote-tip-changed") from error
             raise ValueError("publication-push-precheck-failed") from error
         _require_single_update(rehearsal, source, ref, "publication-push-precheck-failed")
+        # The target may have advanced during consent or rehearsal, especially when the push goes to a fork.
+        # Inspect the authoritative base after rehearsal. Nothing is fetched and the execution marker is still absent.
+        try:
+            live_base = advertised_tip(base_url, base_ref)
+        except subprocess.SubprocessError as error:
+            raise ValueError("publication-target-unverifiable") from error
+        if live_base is None:
+            raise ValueError("publication-target-unverifiable")
+        try:
+            _git(git, scratch, transport_env, "merge-base", "--is-ancestor", live_base, source)
+        except subprocess.CalledProcessError as error:
+            # A fresh target absent from local objects also needs the normal refresh and verification workflow.
+            raise ValueError("publication-target-not-integrated") from error
+        except subprocess.TimeoutExpired as error:
+            raise ValueError("publication-target-unverifiable") from error
+        if captured != live_base:
+            try:
+                _git(git, scratch, transport_env, "merge-base", "--is-ancestor", captured, live_base)
+            except subprocess.CalledProcessError as error:
+                if error.returncode == 1:
+                    raise ValueError("publication-target-diverged") from error
+                raise ValueError("publication-target-unverifiable") from error
+            except subprocess.TimeoutExpired as error:
+                raise ValueError("publication-target-unverifiable") from error
         before_push()
         try:
             output = _git(git, scratch, transport_env, *push, *target)
@@ -693,7 +885,7 @@ def main(argv: list[str] | None = None) -> int:
         git = shutil.which("git")
         if git is None or not Path(git).is_absolute():
             raise ValueError("publication-git-unavailable")
-        _require_open_run(run, offer, attempt)
+        base = _require_open_run(run, offer, attempt)
         if os.path.lexists(run / EXECUTED_FILE):
             raise ValueError("publication-attempt-already-started")
 
@@ -705,7 +897,8 @@ def main(argv: list[str] | None = None) -> int:
             directory holding its name are flushed to disk before returning: a marker lost to a power cut after a real
             push would let the run resolve as "nothing was sent" although the remote moved.
             """
-            _require_open_run(run, offer, attempt)
+            if _require_open_run(run, offer, attempt) != base:
+                raise ValueError("publication-target-unverifiable")
             try:
                 with (run / EXECUTED_FILE).open("xb") as stream:
                     stream.write((args.offer_digest + "\n").encode("ascii"))
@@ -725,6 +918,7 @@ def main(argv: list[str] | None = None) -> int:
             tuple(args.credential_helpers),
             branch=offer["branch"],
             common_dir=Path(offer["common_dir"]),
+            base=base,
             before_push=mark_executed,
         )
         result = {"status": "pushed", "offer_digest": args.offer_digest}

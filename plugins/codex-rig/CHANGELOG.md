@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.51.0
+
+- Completed local reviews remove their workflow-created worktrees while retaining the source evidence for report validation.
+- An explicit remediation worktree can be removed after its push is verified, with one approval covering both actions. Declining keeps the worktree and shows how to push its exact commit later.
+- Code Remediate refreshes the PR target before integration and verifies that the delivered revision includes the live base branch. The push helper checks again after approval so it can catch a base update during the prompt.
+- PR review and remediation updates, selection prompts and newly issued approval questions begin with `Review PR` or `Remediate PR`, followed by the base repository, number and title.
+- A verified PR worktree commit can be offered for push when its only open finding needs hosted CI on the published revision. The remediation report keeps the finding open. After approval, Codex runs the push and verifies the remote branch. Across workflows, a blocked command handoff gives the exact command and offers agent execution once the prerequisite is met.
+- Code Review identifies missing handoff fields and can finish an assessed review from a complete report saved under another name in the run. Recovery reuses the original findings and reviewer assessments. Python review preparation checks the structural-query record before issuing reviewer tasks.
+- A successful remediation in an existing PR worktree now carries the push approval into its validated handover. Codex asks after showing the new commit and can publish it from that worktree after approval.
+- Code Remediate carries confirmed scope and commit choices into implementation. Its Stop hook can request continuation if the workflow ends at planning with selected findings still open.
+- Choose **Hold** at the local commit prompt to leave changes unstaged for a later commit. The choice applies only to the current request.
+- The local commit question lists its facts and choices first and ends with the question itself as the last line, so the decision is the last thing read.
+- Code Remediate can verify a same-repository PR branch that native checkout left tracking the base. Local fixes can proceed when the named PR-head ref matches the collected commit. Publication still targets the original PR head.
+
 ## 0.50.0
 
 - Code Review

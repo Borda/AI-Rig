@@ -159,7 +159,7 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - Codex Rig ships no standing Git approval, and no instruction file can declare one.
 - Only a plain commit needs authorization.
 - Inside an authorized task, staging owned changes, a task-owned non-destructive local merge and its merge commit, a cherry-pick that preserves existing work, branch and worktree preparation, a fast-forward and inspection never stop for a question or a grant check, and a documented workflow step that defines a commit authorizes it.
-- Any other commit asks one question: **Approve** runs that operation only, **Deny** skips it and leaves changes as they are, and **Approve always** also records the grant file `codex-git-approval.json` in the repository's common Git directory (`git rev-parse --git-common-dir`, the main checkout's `.git/`).
+- Any other commit asks one question: **Approve** runs that operation only, **Hold** skips this commit and leaves the changes unstaged, and **Approve always** also records the grant file `codex-git-approval.json` in the repository's common Git directory (`git rev-parse --git-common-dir`, the main checkout's `.git/`).
 - You give it once per project; it applies to every worktree, so later sessions in any of them skip the question until you delete the file with `rm "$(git rev-parse --git-common-dir)/codex-git-approval.json"`.
 - Codex counts the grant only when it is a regular file, not a symlink, directly inside that common Git directory, which Git never tracks, and the operation runs in a repository you maintain, never one under review.
 - The check resolves that directory with Git's environment overrides removed and bare repositories refused, so a bare-repository-shaped fixture, a planted `.git` file or a steered `GIT_DIR` never supplies a grant, and a record whose `version` or `scope` Codex does not know counts as no grant.
@@ -555,7 +555,7 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - Review coverage and confidence gaps remain explicit limitations, not recursive review findings or automatic remediation tasks.
 - Additional review beyond authorized scope needs one decision with a specific question, expected evidence and stop condition; a declined or dismissed request is omitted from final actions.
 - Remediation retains exact report context separately from actionable source findings, with historical intake still readable.
-- PR reviews retain their exact detached worktree.
+- Completed PR reviews remove their clean, collector-owned detached worktree after recording the evidence needed to validate the review offline.
 - Local working-tree/path reviews now create an isolated mirror of changed source, preserving the invoking branch/index/files, and recheck it before acceptance.
 - Captured changed-file bytes are restored after Git patch application so LF/CRLF conversion cannot alter the review source.
 - Worktrees separate caller edits but do not enforce immutability.
@@ -1001,7 +1001,7 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - Local completion retains current runtime defaults.
 - Same-directory retries prepare the new result in private and archive the complete previous result under `gate-attempts/<NNN>` during publication. Recoverable damaged inputs or logs go to `gate-diagnostics/<NNN>`. A failed, timed-out, or missing-command check cannot become skipped; re-execute it through the canonical runner. Unreadable or incomplete prior evidence blocks overwrite and requires diagnosis.
 - Review and remediation check current PR state before report lookup, run allocation, checkout or specialist work, including resumed and `+review` requests. Closed or merged PRs are reported immediately and stop intake; local report-only work stays local. The early read validates repository identity and uses the existing GitHub reader permission boundary.
-- New final handoffs use `presentation_version=15`; remediation with findings includes a compact per-item table—even for one item—with Finding, Selected, Outcome and How resolved, preserving each concrete resolution reason; an empty result states that there are no findings to remediate.
+- New assessed PR reviews use `presentation_version=16` for the action and subject opening. Other new final handoffs use `presentation_version=15`. Remediation with findings includes a compact per-item table—even for one item—with Finding, Selected, Outcome and How resolved, preserving each concrete resolution reason; an empty result states that there are no findings to remediate.
 - Terminal review outcomes include a compact status table; remediation retains its resolution explanations, with compact tables and evidence paths in separate `- Item: file-path` lists; every workflow renders separate confidence bullets, coalescing only identical limit/gap labels while retaining closure details.
 - Handoffs lead with a plain-English explanation, no empty Results section, one concise line for checks not run, and each recovery action shown once in an Owner / Issue / Action table; machine row IDs stay in JSON.
 - Historical handoff versions retain their original bytes during validation.
@@ -1221,7 +1221,7 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - Implementation style corrections recover automatically; release headings and contributor credit accept equivalent Markdown while preserving identity and content checks.
 - Ambiguous path expressions move verbatim into item-labelled detail lists; presentation 15 keeps ordinary slash prose, version numbers and non-path code readable in cells.
 - Explicit Markdown links and quoted paths retain adjacent prose in the table.
-- This automatic fallback preserves complete instructions and directory names without guessing path boundaries; new writers use presentation version 15, supported version-8/9/10/11/12/13/14 candidates remain admissible, and archived results retain their original rendering.
+- This automatic fallback preserves complete instructions and directory names without guessing path boundaries; new writers use presentation 15 or, for assessed PR reviews, 16. Supported earlier candidates remain admissible and archived results retain their original rendering.
 - Cosmetic handoff failures use automatic presentation recovery: regenerate owned display fields from retained evidence and rerun the affected check without another user decision.
 - Reader defects are reproduced and fixed in authorized package source; genuine evidence, verification and authority failures retain their gates.
 - Canonical PR remediation lifecycle roots accept the promoted PR/run layout while preserving legacy flat runs and rejecting malformed or foreign identities.

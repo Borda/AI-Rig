@@ -1,17 +1,17 @@
-"""Bind completed PR review source evidence to the checkout removed by terminal cleanup.
+"""Bind completed review source evidence to the checkout removed by terminal cleanup.
 
 ## Purpose
 
-Keep direct and batched reviews verifiable after their clean, detached worktree has been reclaimed. Their plans already
+Keep direct and batched reviews verifiable after their owned detached worktree has been reclaimed. Their plans already
 contain the exact reviewed file records. The cleanup receipt fingerprints those plans and the source inventories used by
 the live validators before removal. Terminal closes bind their collection evidence. A create-only local Git ref seals
 the hashes outside the report.
 
 ## Scope
 
-Only the exact promoted result can select retained source. Preparation, candidate checks, local reviews, and any
-remaining checkout continue to use live source. Role assignments, rollout provenance, coverage, and gates still go
-through their respective ordinary validators.
+Only the exact promoted result can select retained source. Preparation, candidate checks, and any remaining checkout
+continue to use live source. Role assignments, rollout provenance, coverage, and gates still go through their respective
+ordinary validators.
 
 ## Usage
 
@@ -49,6 +49,8 @@ from typing import Any
 
 from create_run import PR_URL_PATTERN, PROMOTED_RUN_ID, same_pr_url
 from review_workspace import _check_path, report_root_caller, workspace_caller, workspace_namespace
+
+LOCAL_OWNER = "local-worktree-owner.json"
 
 #: PR artifact files that must be present for a closed-PR review.
 CLOSED_REQUIRED_PR_ARTIFACTS = {
@@ -94,6 +96,22 @@ def verified_source_inputs(run: Path) -> dict[str, str]:
     for name in ("files.txt", "untracked.txt", "direct-plan.json", "batch-inventory.json", "inspection-plan.json"):
         if os.path.lexists(run / name):
             names.append(name)
+    if os.path.lexists(run / LOCAL_OWNER):
+        # Live local consolidation can read the entire mirror and Python import proof. Seal every source
+        # input used by its offline counterpart, including the exact recorded working-tree overlay.
+        for name in (
+            "review-entry.json",
+            "local-source/review-worktree.json",
+            "local-source/source-snapshot.json",
+            "local-source/diff.patch",
+            "local-source/staged.patch",
+            "local-source/status.txt",
+            "checks/local-source-snapshot.json",
+            "checks/tests.python-imports.json",
+            "gates.json",
+        ):
+            if os.path.lexists(run / name):
+                names.append(name)
     return {name: _digest(run / name) for name in names}
 
 
@@ -127,6 +145,10 @@ def _git(source: Path, *args: str, data: bytes | None = None, check: bool = True
 
 def _report_repository(run: Path) -> Path | None:
     """Locate the repository ancestor independently of paths supplied by a canonical report."""
+    if len(run.parents) >= 4 and run.parent.parts[-3:] == (".reports", "codex", "code-review"):
+        return run.parents[3]
+    if run.parent.name == "code-review":
+        return report_root_caller(run.parents[1])
     if len(run.parents) >= 5 and run.parents[1].parts[-3:] == (".reports", "codex", "code-review"):
         return run.parents[4]
     if len(run.parents) >= 3 and run.parents[1].name == "code-review":
@@ -280,14 +302,22 @@ def seal_source_witness(
     _witness(run.resolve(), source, receipt, seal=True, before_publish=before_publish)
 
 
+def verify_source_witness(run: Path, source: Path, receipt: dict[str, Any]) -> None:
+    """Authenticate the previously published live-validation witness before continuing interrupted removal."""
+    _witness(run.resolve(), source, receipt, seal=False)
+
+
 def verified_archive(
     run: Path, result_path: Path, *, producer_result_sha256: str | None = None
 ) -> tuple[Path, dict[str, Any], dict[str, str]] | None:
-    """Admit exact retained evidence only for a completed removal of a freshly collected detached PR worktree."""
+    """Admit the sealed source only for a completed removal of an owned local or PR review worktree."""
     receipt_path = run / "review-worktree-cleanup.json"
     if result_path != run / "result.json":
         return None
-    checkout_path = run / "local-checkout.json"
+    local = os.path.lexists(run / LOCAL_OWNER)
+    if local and os.path.lexists(run / "local-checkout.json"):
+        raise ValueError("review-cleanup-checkout-mismatch")
+    checkout_path = run / (LOCAL_OWNER if local else "local-checkout.json")
     journal = os.path.lexists(receipt_path)
     checkout = json.loads(checkout_path.read_bytes()) if checkout_path.is_file() else {}
     live = isinstance(checkout.get("worktree"), str) and os.path.lexists(checkout["worktree"])
@@ -311,8 +341,20 @@ def verified_archive(
     ):
         raise ValueError("review-cleanup-receipt-invalid")
     if (
-        checkout.get("checkout_mode") != "review"
-        or checkout.get("checkout_method") != "git-detached-review-worktree"
+        (
+            local
+            and (
+                checkout.get("checkout_mode") != "local-review"
+                or checkout.get("scope") not in {"working-tree", "path", "commit"}
+            )
+        )
+        or (
+            not local
+            and (
+                checkout.get("checkout_mode") != "review"
+                or checkout.get("checkout_method") != "git-detached-review-worktree"
+            )
+        )
         or not checkout.get("created_worktree")
         or receipt.get("worktree") != checkout["worktree"]
         or receipt.get("source_worktree") != checkout["source_worktree"]
@@ -323,7 +365,7 @@ def verified_archive(
     if inputs != receipt.get("source_inputs"):
         raise ValueError("review-cleanup-source-evidence-changed")
     worktree = Path(checkout["worktree"])
-    _witness(run, Path(checkout["source_worktree"]), receipt, seal=False)
+    verify_source_witness(run, Path(checkout["source_worktree"]), receipt)
     # An interruption after native removal may leave the earlier receipt. Missing files alone cannot prove removal.
     registered = _git(Path(checkout["source_worktree"]), "worktree", "list", "--porcelain", "-z").stdout
     if any(
@@ -332,7 +374,8 @@ def verified_archive(
         raise ValueError("review-cleanup-worktree-still-registered")
     # A schema-one witness binds historical source but made no claim about which bytes the producer selected.
     if producer_result_sha256 is not None and (
-        receipt["schema_version"] != 2
+        local
+        or receipt["schema_version"] != 2
         or not receipt["producer_result_verified"]
         or receipt["result_sha256"] != producer_result_sha256
     ):
@@ -364,3 +407,17 @@ def retained_checkout(run: Path, plan_path: Path, source_root: Path) -> dict[str
     ):
         raise ValueError("review-cleanup-source-plan-mismatch")
     return checkout
+
+
+def retained_local_gate(run: Path, worktree: Path) -> bool:
+    """Select source-bound local gate receipts only inside validation of the sealed promoted result."""
+    archive = _ARCHIVE.get()
+    if archive is None:
+        return False
+    directory, checkout, inputs = archive
+    return (
+        run.resolve() == directory
+        and checkout.get("checkout_mode") == "local-review"
+        and checkout.get("worktree") == worktree.as_posix()
+        and "checks/local-source-snapshot.json" in inputs
+    )

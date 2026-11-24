@@ -1,5 +1,9 @@
 {
   "entries": {
+    "000683bd1b85e915d1c259e17eb35e54067315df10174336cf71d89b6bd306fa": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:30"
+    },
     "003f777362a9ccd200105589032b2d023fac499bf05a956f2c047bc87ca458c6": {
       "kind": "block",
       "src": "skills/review/modes/post-agent.md:75"
@@ -14,7 +18,7 @@
     },
     "007dcfaf426f9b44400044e728bf68728022815a2a7ae24bb764c027ca7d2729": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:229",
+      "src": "skills/resolve/SKILL.md:230",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\n_OSS_RESOLVE=\"$PLUGIN_ROOT/skills/resolve\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/exec-approval.md\""
     },
     "00cb2e895064c67d6223d032c1b28044738cd908d83000ca3cbaa15b93518896": {
@@ -75,11 +79,6 @@
       "src": "skills/release/modes/audit.md:59",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r TARGET < \"${TMPDIR:-/tmp}/release-audit-target-${CSID}\" 2>/dev/null || TARGET=\"\"\npython \"$PLUGIN_ROOT/bin/compare_removal_version.py\" \"<remove_in_value>\" \"${TARGET:-0}\""
     },
-    "01d0c0baa57947cf142e193ddfc868b171358f5553ae8d688148e8a0cb20f6b8": {
-      "kind": "block",
-      "src": "skills/resolve/modes/exec-approval.md:28",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r IMPL_DIR < \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" 2>/dev/null || IMPL_DIR=\"\"\nIFS= read -r PR_NUMBER < \"${TMPDIR:-/tmp}/resolve-pr-number-${CSID}\" 2>/dev/null || PR_NUMBER=\"\"\nIFS= read -r PR_HEAD_OID < \"${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}\" 2>/dev/null || PR_HEAD_OID=\"\"\nIFS= read -r BASE_REF < \"${TMPDIR:-/tmp}/resolve-base-ref-${CSID}\" 2>/dev/null || BASE_REF=\"\"\nIFS= read -r _XREPO < \"${TMPDIR:-/tmp}/resolve-is-cross-repo-${CSID}\" 2>/dev/null || _XREPO=true\nIFS= read -r REPORT_FILE < \"${TMPDIR:-/tmp}/resolve-report-file-${CSID}\" 2>/dev/null || REPORT_FILE=\"\"\n[ -n \"$IMPL_DIR\" ] || { echo \"! BLOCKED \u2014 IMPL_DIR sentinel missing; Step 3a/3b did not finish\"; exit 1; }\ncase \"$PR_NUMBER\" in ''|*[!0-9]*) _NO_PR=true ;; *) _NO_PR=false ;; esac\nIFS= read -r _PREV < \"$IMPL_DIR/exec-plan.txt\" 2>/dev/null || _PREV=\"\"\nif [ \"$_NO_PR\" = true ] || [ -z \"$PR_HEAD_OID\" ] || [ -z \"$BASE_REF\" ]; then\n    _KEEP=deferred; [ -s \"$IMPL_DIR/hooks-inspection.json\" ] && [ \"${_PREV#*hooks=ask}\" != \"$_PREV\" ] && _KEEP=ask\n    echo \"pr-code=deferred hooks=$_KEEP\" > \"$IMPL_DIR/exec-plan.txt\"; cat \"$IMPL_DIR/exec-plan.txt\"; exit 0\nfi\nif [ -e \"$IMPL_DIR/approved-hooks.txt\" ]; then\n    _HOOKS=recorded\n    IFS= read -r _HD < \"$IMPL_DIR/hooks-decision.txt\" 2>/dev/null || _HD=\"\"\n    [ \"$_HD\" != run ] || python \"$PLUGIN_ROOT/bin/resolve_commit_hooks.py\" --refresh-approval --base \"origin/$BASE_REF\" --head \"$PR_HEAD_OID\" --approved-file \"$IMPL_DIR/approved-hooks.txt\" --decision-file \"$IMPL_DIR/hooks-decision.txt\" || { : > \"$IMPL_DIR/approved-hooks.txt\"; printf 'stale\\n' > \"$IMPL_DIR/hooks-decision.txt\"; }\nelif [ -s \"$IMPL_DIR/hooks-inspection.json\" ] && [ \"${_PREV#*hooks=ask}\" != \"$_PREV\" ]; then\n    _HOOKS=ask; _RD=\"\"\n    echo \"the digest below was taken before the base merge was staged (re-inspection failed: $IMPL_DIR/hooks-refresh.err); if the merge changes the hooks, an approval of it no longer matches at the merge commit and hooks then stay disabled\" > \"$IMPL_DIR/hooks-inspection-note.txt\"\n    if python \"$PLUGIN_ROOT/bin/resolve_commit_hooks.py\" --decide --base \"origin/$BASE_REF\" --head \"$PR_HEAD_OID\" > \"$IMPL_DIR/hooks-refresh.json\" 2> \"$IMPL_DIR/hooks-refresh.err\"; then\n        jq -b -r '.decision // empty' \"$IMPL_DIR/hooks-refresh.json\" > \"$IMPL_DIR/hooks-refresh-decision.txt\" 2> /dev/null\n        IFS= read -r _RD < \"$IMPL_DIR/hooks-refresh-decision.txt\" 2>/dev/null || _RD=\"\"\n    fi\n    case \"$_RD\" in\n        ask|run) jq -b . \"$IMPL_DIR/hooks-refresh.json\" > \"$IMPL_DIR/hooks-inspection.json\" && : > \"$IMPL_DIR/hooks-inspection-note.txt\" ;;\n        none|disabled)\n            jq -b . \"$IMPL_DIR/hooks-refresh.json\" > \"$IMPL_DIR/hooks-inspection.json\"; : > \"$IMPL_DIR/hooks-inspection-note.txt\"\n            : > \"$IMPL_DIR/approved-hooks.txt\"; echo \"$_RD\" > \"$IMPL_DIR/hooks-decision.txt\"; _HOOKS=$_RD\n            jq -b -r '\"\u2192 repository hooks: \" + .decision + \" \u2014 \" + (.reason // \"\") + \"; the earlier hook question is dropped\"' \"$IMPL_DIR/hooks-inspection.json\" ;;\n    esac\nelse\n    _HOOKS=\"\"\n    if python \"$PLUGIN_ROOT/bin/resolve_commit_hooks.py\" --decide --base \"origin/$BASE_REF\" --head \"$PR_HEAD_OID\" --approved-file \"$IMPL_DIR/approved-hooks.txt\" > \"$IMPL_DIR/hooks-inspection.json\" 2> \"$IMPL_DIR/hooks-inspection.err\"; then\n        jq -b -r '.decision // empty' \"$IMPL_DIR/hooks-inspection.json\" > \"$IMPL_DIR/hooks-decision.txt\" 2>/dev/null\n        IFS= read -r _HOOKS < \"$IMPL_DIR/hooks-decision.txt\" 2>/dev/null || _HOOKS=\"\"\n    fi\n    case \"$_HOOKS\" in\n        ask) ;;\n        none|run|disabled) jq -b -r '\"\u2192 repository hooks: \" + .decision + \" \u2014 \" + (.reason // \"\")' \"$IMPL_DIR/hooks-inspection.json\" ;;\n        *) : > \"$IMPL_DIR/approved-hooks.txt\"; _HOOKS=disabled; echo \"\u26a0 hook inspection failed \u2014 hooks stay disabled for this run ($IMPL_DIR/hooks-inspection.err)\" ;;\n    esac\nfi\n_DEC=\"\"\nif [ -e \"$IMPL_DIR/pr-code-decision.txt\" ]; then\n    IFS= read -r _DEC < \"$IMPL_DIR/pr-code-decision.txt\" || [ -n \"$_DEC\" ] || _DEC=deny\nfi\nif [ \"$_XREPO\" = false ]; then\n    _PRCODE=same-repo\nelif [ \"$_DEC\" = deny ] || { { [ \"$_DEC\" = auto ] || [ \"$_DEC\" = sandbox ] || [ \"$_DEC\" = unsandboxed ]; } && [ -e \"$IMPL_DIR/code-approval.txt\" ]; }; then\n    _PRCODE=recorded\nelif [ -s \"$IMPL_DIR/code-scan.txt\" ] && [ \"${_PREV#*pr-code=ask}\" != \"$_PREV\" ]; then\n    _PRCODE=ask\nelse\n    _PRCODE=ask\n    if python -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" scan --head \"$PR_HEAD_OID\" --base \"origin/$BASE_REF\" --out \"$IMPL_DIR/code-scan.json\" --text > \"$IMPL_DIR/code-scan.txt\" 2> \"$IMPL_DIR/code-scan.err\"; then\n        case \"$REPORT_FILE\" in\n            */*) python \"$PLUGIN_ROOT/bin/code_safety_status.py\" check --status \"${REPORT_FILE%/*}/code-safety.json\" --scan \"$IMPL_DIR/code-scan.json\" --head \"$PR_HEAD_OID\" > \"$IMPL_DIR/code-safety-check.txt\" ;;\n            *) echo \"ask reason=no-review-status\" > \"$IMPL_DIR/code-safety-check.txt\" ;;\n        esac\n        IFS= read -r _CHECK < \"$IMPL_DIR/code-safety-check.txt\" 2>/dev/null || _CHECK=\"ask reason=check-failed\"\n        [ \"$_DEC\" != stale ] || _CHECK=\"ask reason=stale-approval\"\n        if [ \"$_CHECK\" = auto ] && python -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" bind --head \"$PR_HEAD_OID\" --base \"origin/$BASE_REF\" --scope run --out \"$IMPL_DIR/code-approval.txt\" > /dev/null; then\n            echo auto > \"$IMPL_DIR/pr-code-decision.txt\"; _PRCODE=auto\n            echo \"\u2192 PR code: review and this scan both found nothing at head ${PR_HEAD_OID:0:12}; runs in the sandbox, no question\"\n            cat \"$IMPL_DIR/code-scan.txt\"\n        fi\n    else\n        echo \"scan unavailable (see $IMPL_DIR/code-scan.err): no verdict or risk level to show; decide without it\" > \"$IMPL_DIR/code-scan.txt\"\n    fi\nfi\necho \"pr-code=$_PRCODE hooks=$_HOOKS\" > \"$IMPL_DIR/exec-plan.txt\"; cat \"$IMPL_DIR/exec-plan.txt\""
-    },
     "023e3c88767dbdd00b4deec579f8544206ef1e09014b5008fd40114eb3c21252": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:299"
@@ -110,15 +109,19 @@
     },
     "0395f7e429df979054590f397913d07036f928834a2d0303e6f0d2299a86d5ee": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:61"
+      "src": "skills/review/templates/agent-prompts.md:88"
     },
     "03b085e3d364fca898560b4f8e0caa5c7ca6327fff66ba5957d3b947999ad2d9": {
       "kind": "command",
       "src": "skills/resolve/modes/checkout.md:30"
     },
+    "03b59dbf96a457f276ea53d3dbda3fc0d9fc83ad000c97b9e0398f6408084f9f": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:178"
+    },
     "03c5d1705c9f8dfeda8f9e93072c114dec8db2ae98bc34b08f05aba92d57fec5": {
       "kind": "command",
-      "src": "skills/resolve/modes/item-selection.md:338"
+      "src": "skills/resolve/modes/item-selection.md:358"
     },
     "0442d7c9c7b92aa93fa1b4a5d35cf2dda8d905e5711cb2a1f32006d33dab7c7a": {
       "kind": "block",
@@ -176,7 +179,7 @@
     },
     "062e7fa51e2301908206fe317fbe25643fb991379c4af98f63e6f6fcbeae419a": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:159"
+      "src": "skills/resolve/modes/exec-approval.md:178"
     },
     "063625197d90d563f0fee0fe89d92de5081602582581f73404bba3e226dd98da": {
       "kind": "command",
@@ -192,7 +195,7 @@
     },
     "066d57d7d4180ba757898d3ad5c37a5ecfde861de39a7f186cd8e9fd5d9d249d": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "0695d44b0ce6fd96a0bfecab56365fa96a7adeb0395690f13920401f3bf9a9ed": {
       "kind": "command",
@@ -200,7 +203,7 @@
     },
     "06b21ac260d56af47e1d720ec44788c8dbdb1025513ec2a0538bf1e1d246342d": {
       "kind": "block",
-      "src": "skills/resolve/modes/item-selection.md:331"
+      "src": "skills/resolve/modes/item-selection.md:351"
     },
     "06bf43fb0ac45b88bc5e4641f8299712ee90b150b7497d4bf4bb20bab10f6d91": {
       "kind": "block",
@@ -216,7 +219,7 @@
     },
     "070974d3ff56cce112e7d590404ede4d0d857b821309756acb7bc0af1d7ab560": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "073a43d93826e147d19fea3e25da76177d04beeb57661379a6e2e6dcd25af6e3": {
       "kind": "command",
@@ -301,7 +304,7 @@
     },
     "08d58af721d25f1d7c43d6f4e4a74f3955a6ee09956e26bec0b938cb04795b0f": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:61"
+      "src": "skills/review/templates/agent-prompts.md:88"
     },
     "08dab5b89ce66718b74c09ab76869d1fe3044af5543595afb949108c6d685f8b": {
       "kind": "command",
@@ -309,7 +312,7 @@
     },
     "09062194fc727f7eab3263616ef7d8dfe9313c1cf7d3614cf2fa67cfe779f3d4": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:159"
+      "src": "skills/resolve/modes/exec-approval.md:178"
     },
     "0926946ed3a24d34db031d55536d4f5b7fc6dce9456a7278f9614ebd171b5111": {
       "kind": "block",
@@ -368,7 +371,7 @@
     },
     "0ad7de30bd1daf37f749912a523e787afaa0108f4983b76904c841eb9528adb4": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:314",
+      "src": "skills/resolve/SKILL.md:315",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _OSS_RESOLVE < \"${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}\" 2>/dev/null || _OSS_RESOLVE=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/final-report.md\""
     },
     "0ae376b1d4a2462a3d8696068777b646a48dd8379e1910fc62999495ac355e65": {
@@ -387,6 +390,10 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-prelude.md:497"
     },
+    "0b4c8f8fabe2f21f42a6da24a2717dc64f4368c9289ca4f14a2b1fa082f1d8f2": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:178"
+    },
     "0b74aa2fbc6482417b0f7529ceb47188b2994545e5317b791bb67609d4e5f736": {
       "kind": "command",
       "src": "skills/review/modes/codemap-context.md:15"
@@ -397,11 +404,20 @@
     },
     "0ba50e3274523a325ab95d3627a0e12e2a01625f1453aabe097a5cf14f72d6c6": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
+    },
+    "0bd8d31e290035a620276ab3a5b78145280aa34b0c4f02080844c380f664578c": {
+      "kind": "block",
+      "src": "skills/resolve/modes/push.md:88"
     },
     "0be15e75d98210467f8b828f56a191db5b3e48fb365a27d36067e0d577fda6d1": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase2.md:372"
+    },
+    "0c3a419508d041d438cba4a60fe03dd6706d8d63f5acea1770695c2232d28520": {
+      "kind": "block",
+      "src": "skills/review/templates/agent-prompts.md:7",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r SNAP_DIR < \"${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}\" 2>/dev/null || SNAP_DIR=\"\"\nIFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\" 2>/dev/null || RUN_DIR=\"\"\n[ -n \"$SNAP_DIR\" ] && [ -n \"$RUN_DIR\" ] || { echo \"ask reason=no-scan\"; exit 0; }\nPR_HEAD_SHA=$(jq -er '.headRefOid' \"$SNAP_DIR/pr-meta.json\") || { echo \"ask reason=no-scan\"; exit 0; }\nBASE_SHA=$(jq -er '.baseRefOid' \"$SNAP_DIR/pr-meta.json\") || BASE_SHA=\"\"\nif [ -n \"$BASE_SHA\" ] && git cat-file -e \"$BASE_SHA^{commit}\" 2>/dev/null; then _SCOPE=(--base \"$BASE_SHA\"); else _SCOPE=(--whole-tree); fi\npython -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" scan --repo . --head \"$PR_HEAD_SHA\" \"${_SCOPE[@]}\" --out \"$RUN_DIR/code-scan.json\" --text > \"$RUN_DIR/code-scan.txt\" || { echo \"ask reason=no-scan\"; exit 0; }\nIFS= read -r _SANDBOX < \"${TMPDIR:-/tmp}/oss-review-sandbox-${CSID}\" 2>/dev/null || _SANDBOX=false\nif [ \"$_SANDBOX\" = true ]; then _CHECK_MODE=check-sandbox; else _CHECK_MODE=check-scan; fi\npython \"$PLUGIN_ROOT/bin/code_safety_status.py\" \"$_CHECK_MODE\" --scan \"$RUN_DIR/code-scan.json\" --head \"$PR_HEAD_SHA\" || echo \"ask reason=check-failed\""
     },
     "0c3ea76ca95fd2a4c322559a4cbbabf2ba9e4c05a71ee484db3e449b5b0f039f": {
       "kind": "command",
@@ -458,7 +474,7 @@
     },
     "0d96678fe0b49c2ce0fcd7464802ac007ceecb7ecac2927d0e0087056f0b5708": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:165"
+      "src": "skills/review/SKILL.md:166"
     },
     "0db25338bc835b7bcea958e91b4453fb6d606083a473db43df79e8f0356bc259": {
       "kind": "command",
@@ -541,9 +557,17 @@
       "kind": "command",
       "src": "skills/review/modes/preflight.md:191"
     },
+    "0f4133c61b377d0a26e78d67e5c7440b6cdb2adbaa5c5fef2529169eaca98a40": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:30"
+    },
     "0fb339c1ff2034131c1aacb09b3d7f9335383c7e00e19ed86389af614626c279": {
       "kind": "command",
       "src": "skills/review/modes/reply.md:21"
+    },
+    "1023aca54b70188183942b36b282e6392f67f16c54562b6f66444793dc9293e9": {
+      "kind": "command",
+      "src": "skills/resolve/modes/item-selection.md:289"
     },
     "10587a216c0c5550ea37a10a49485c84f8ff867efc2f8cb54e3b51a86f14812c": {
       "kind": "command",
@@ -557,14 +581,9 @@
       "kind": "command",
       "src": "skills/review/modes/codemap-context.md:15"
     },
-    "108c2192bdf8333520dd06abbabc60f4f740d2ddba6614e2fb1893e31ef12b6c": {
-      "kind": "block",
-      "src": "skills/resolve/modes/push.md:11",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r PUSH_AUTH < \"${TMPDIR:-/tmp}/resolve-push-auth-${CSID}\" 2>/dev/null || PUSH_AUTH=\"unset\"\necho \"PUSH_AUTH=$PUSH_AUTH\"\n\nIFS= read -r FORK_REMOTE < \"${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}\" 2>/dev/null || FORK_REMOTE=\"\"\nIFS= read -r HEAD_REF < \"${TMPDIR:-/tmp}/resolve-remote-head-ref-${CSID}\" 2>/dev/null || HEAD_REF=\"\"\nIFS= read -r BASE_REF < \"${TMPDIR:-/tmp}/resolve-base-ref-${CSID}\" 2>/dev/null || BASE_REF=\"\"\n\nIFS= read -r FORK_REPO < \"${TMPDIR:-/tmp}/resolve-head-repo-name-${CSID}\" 2>/dev/null || FORK_REPO=\"\"\n\npython \"$PLUGIN_ROOT/bin/check_base_fresh.py\" --base-ref \"$BASE_REF\"\npython \"$PLUGIN_ROOT/bin/derive_fork_remote.py\" --fork-remote \"$FORK_REMOTE\" --head-ref \"$HEAD_REF\" --base-ref \"$BASE_REF\" --fork-repo \"$FORK_REPO\""
-    },
     "10ade2cda81a7bd88ec980dcb41d274388d80057153133c8145e8a523e935f8d": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:50"
+      "src": "skills/resolve/modes/final-report.md:51"
     },
     "10cd759315bd9b4ad5f10220ecec8bd5e65f0e56731dc95da42de8f1335a48d6": {
       "kind": "command",
@@ -629,7 +648,7 @@
     },
     "13a7e82bb011113bbd96a3d160e5e7df548073c7d7b0782cdcac5fbebce2539e": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:211",
+      "src": "skills/resolve/SKILL.md:212",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\n_OSS_RESOLVE=\"$PLUGIN_ROOT/skills/resolve\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/dispatch-coordination.md\""
     },
     "13cf79facb6260cbff66c506050649d10f418d157c79fd594f1cf36641bd116b": {
@@ -720,7 +739,7 @@
     },
     "16359a0a2654e55672c104d9c44352fa68bdc86da0825327971ac7a71e7528be": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "1657667c317532927394e32cacaa0bdf2f687496426422e0499164a5300c53ba": {
       "kind": "command",
@@ -761,7 +780,7 @@
     },
     "17401b9f08640d7644152d3ccbbadb4cf04669051e48691d528b63f3b243c782": {
       "kind": "command",
-      "src": "skills/resolve/modes/item-selection.md:338"
+      "src": "skills/resolve/modes/item-selection.md:358"
     },
     "1748b300ce78d19c9f1dd4abb03e10be3ccf9fc34b3771f955005ffbf97388a9": {
       "kind": "command",
@@ -770,6 +789,10 @@
     "174e805ce709a588eb8c8aee27ca96af0a323d37d7f5194787152263eb04793e": {
       "kind": "command",
       "src": "skills/review/modes/preflight.md:117"
+    },
+    "1780454e355b62e309b2a3c2e2e933b087e47b40f9cfddf70d09acf807c7f4e7": {
+      "kind": "command",
+      "src": "skills/resolve/modes/item-selection.md:289"
     },
     "1798ca1380ebf36d607f7386c4cf2a4765ed31de4594cba498cda2c41e47b044": {
       "kind": "command",
@@ -781,7 +804,7 @@
     },
     "17ccba4e8bb8157a172d6295b5a434a7209d89a2548f5071c68d6998f8fdd245": {
       "kind": "command",
-      "src": "skills/resolve/modes/item-selection.md:331"
+      "src": "skills/resolve/modes/item-selection.md:351"
     },
     "1800b1fe52ff08f77395a31c35fdca652d397aa7a2f6fb97a2bc22709af3ec48": {
       "kind": "command",
@@ -855,7 +878,7 @@
     },
     "1a2369c12a255d4469c33ae499096ff3163e62d6cfb39b486d7285964f5fc1d3": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:119",
+      "src": "skills/resolve/SKILL.md:120",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\n_OSS_RESOLVE=\"$PLUGIN_ROOT/skills/resolve\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/preflight.md\""
     },
     "1a262ce3b0b16d5e2cbd6b7180302d242e286a244eb14e20938122349639fb22": {
@@ -874,6 +897,10 @@
       "kind": "command",
       "src": "skills/release/modes/delegation-strategy.md:58"
     },
+    "1a6d97b18bb973a576a1be7c85b2d289feee6186d0d74b3b10040c1af81f3354": {
+      "kind": "command",
+      "src": "skills/resolve/modes/final-report.md:9"
+    },
     "1a8066ff50232051820338f59ad26cea293d9891ebc8181c7a2980e7765166ac": {
       "kind": "block",
       "src": "skills/review/modes/post-agent.md:225",
@@ -889,7 +916,7 @@
     },
     "1b3a02f7097279aea36dc535a720f929de95b409ead0da14edd21d5680e9bda5": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:22"
+      "src": "skills/review/templates/agent-prompts.md:24"
     },
     "1b63c7c6a2178bfce14fc8bd80f7fa3592f2117f5d38c4046a04e1ffa58195df": {
       "kind": "block",
@@ -938,7 +965,12 @@
     },
     "1cc67d58ba6f79427e9dd913ab1c9a2ccf0b0fdde13c9a403dc3fb6bfadedbbb": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
+    },
+    "1ccd30b82e428e89fd401ce3df0577e392e0404f2a010c8f044b7ebb1760e2ee": {
+      "kind": "command",
+      "src": "skills/resolve/modes/preflight.md:80",
+      "template": "python \"${CLAUDE_PLUGIN_ROOT}/bin/parse-skill-flags.py\" --flags no-codemap,codemap,worktree,no-challenge,sandbox --value-flags agent --preserve-whitespace --keep-state resolve -- \"$ARGUMENTS\" >/dev/null || exit 1"
     },
     "1cd2117df93df1aa15bdcb669d25da669ef8e9f28c99e099f33c82de14ee8d3a": {
       "kind": "command",
@@ -1021,6 +1053,10 @@
       "kind": "command",
       "src": "skills/review/modes/reply.md:36"
     },
+    "1f1215dd7eb48cd943f241021361193475a4dc2425d0d6a4f98b7a9f582f35c8": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:30"
+    },
     "1f34251afd6844d475a0e49f7138fcf3e49afef8f4d9b7db8b7e5ca4b54f2dae": {
       "kind": "command",
       "src": "skills/resolve/modes/final-report.md:9"
@@ -1036,6 +1072,10 @@
     "1f812e613dd5beeef1cd852b2513b720e8912c9a7e82989089c173a4faa9bb4a": {
       "kind": "block",
       "src": "skills/release/modes/audit.md:69"
+    },
+    "1f84c99e77ac2bd05002d5b9d8b95e7edf4608b01c6b5cbcde06f4b58f38befa": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "1fa53a288d981ad250441f692225545cba20a4b89bc5c8b33f3178d978fe0132": {
       "kind": "command",
@@ -1063,7 +1103,7 @@
     },
     "20a9c4dc735794c652f4790608da61cce5d60ad36fcb68ecdc473dcede2cd308": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:98",
+      "src": "skills/resolve/SKILL.md:99",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\n_OSS_RESOLVE=\"$PLUGIN_ROOT/skills/resolve\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/run-coordination.md\""
     },
     "20d8fecec733fa06a567d261c49fe0033d1a5cfc6ca18c7276da95813aeef25e": {
@@ -1100,7 +1140,7 @@
     },
     "228472ea584280663e88af7bc68954f417fe67b458ddff4c146f39da716896e6": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:104"
+      "src": "skills/resolve/modes/push.md:131"
     },
     "22a6086ac9dcef0b08d36ae6d409823eed2dae9aa35176625ab821bdff7bad54": {
       "kind": "command",
@@ -1141,7 +1181,7 @@
     },
     "23c70df8ac892a12a36fb33a1aca127a2af078fdaf239bcc871c4f16cad7f0a7": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:109"
+      "src": "skills/resolve/modes/final-report.md:117"
     },
     "23f35b8145a05a973f6a6de1af4aa0c80149f0ead117ea7dc2012381edcb6e09": {
       "kind": "command",
@@ -1169,7 +1209,7 @@
     },
     "245d2c96eaa60781d4c699afada8b4b48b13fbeb04aefbae3584282e0a09d830": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:149",
+      "src": "skills/review/SKILL.md:150",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\n_OSS_REVIEW=\"$PLUGIN_ROOT/skills/review\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_REVIEW/modes/agent-launch.md\""
     },
     "24676b4cc3f614cd4fc548901e8e0fc3c5e70ee60db9e044a5a941ccd7979aae": {
@@ -1221,7 +1261,7 @@
     },
     "271fb35b7a1aadb98ebd35af5cb666b171d87cc4d42639068bba4b1199fc810e": {
       "kind": "block",
-      "src": "skills/review/templates/agent-prompts.md:22",
+      "src": "skills/review/templates/agent-prompts.md:24",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r SNAP_DIR < \"${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}\" 2>/dev/null || SNAP_DIR=\"\"\nIFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\" 2>/dev/null || RUN_DIR=\"\"\n[ -n \"$SNAP_DIR\" ] && [ -n \"$RUN_DIR\" ] || { echo \"! BLOCKED \u2014 snapshot or run-dir sentinel missing\"; exit 1; }\nPR_HEAD_SHA=$(jq -er '.headRefOid' \"$SNAP_DIR/pr-meta.json\") || exit 1\npython \"$PLUGIN_ROOT/bin/code_safety_status.py\" check-scan --scan \"$RUN_DIR/code-scan.json\" --head \"$PR_HEAD_SHA\" > \"$RUN_DIR/code-safety-check.txt\" || { echo \"! BLOCKED \u2014 scan check failed; no automatic approval\"; exit 1; }\nIFS= read -r _CHECK < \"$RUN_DIR/code-safety-check.txt\" 2>/dev/null || _CHECK=\"\"\n[ \"$_CHECK\" = auto ] || { echo \"! BLOCKED \u2014 scan of $PR_HEAD_SHA is not clean ($_CHECK); no automatic approval\"; exit 1; }\ncase \"$(jq -r '.whole_tree' \"$RUN_DIR/code-scan.json\")\" in\n    true) _BASE=(--whole-tree) ;;\n    false)\n        SCAN_BASE=$(jq -er '.base' \"$RUN_DIR/code-scan.json\") || exit 1\n        _BASE=(--base \"$SCAN_BASE\") ;;\n    *) echo \"! BLOCKED \u2014 scan scope unavailable\"; exit 1 ;;\nesac\njq -je 'if type == \"array\" and length > 0 and all(.[]; type == \"string\" and index(\"\\u0000\") == null) and .[0] != \"\" then .[] + \"\\u0000\" else error(\"invalid command argument array\") end' \"$RUN_DIR/code-command.json\" > \"$RUN_DIR/code-command.argv\" || exit 1\nPR_CODE_COMMAND=()\nwhile IFS= read -r -d '' _ARG; do PR_CODE_COMMAND+=(\"$_ARG\"); done < \"$RUN_DIR/code-command.argv\"\npython -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" bind --repo . --head \"$PR_HEAD_SHA\" \"${_BASE[@]}\" --tier env-only --decision unsandboxed --decision exact-head --out \"$RUN_DIR/code-approval.txt\" -- \"${PR_CODE_COMMAND[@]}\" && { echo auto > \"$RUN_DIR/pr-code-decision.txt\"; exit 0; }\n_BIND_RC=$?\n[ \"$_BIND_RC\" != 3 ] || { echo \"ask reason=tree-differs\"; exit 0; }\nexit \"$_BIND_RC\""
     },
     "272d80a801393b6eb2e1d6ebcbfdfac14e1eb91809b0c3ee10d81d94406a0a57": {
@@ -1311,7 +1351,7 @@
     },
     "2947ced1e1cb7e88043301fea45f458317c11bb605fccf69f1dd45782065879c": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:127"
+      "src": "skills/resolve/modes/push.md:154"
     },
     "2980f5c3c29962518ef94ae70cdbe71fcd89158de73817bec8ad58e9dceab329": {
       "kind": "command",
@@ -1344,7 +1384,7 @@
     },
     "2a9f49696b18a4994a4e814f572e3fef2a5bd2b880ba32f9644d6d647254b851": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:104"
+      "src": "skills/resolve/modes/push.md:131"
     },
     "2ac998e2bd5cfa6fe4d59460a1294bc84216c6736a9a32277633a8b21ae6cdaf": {
       "kind": "command",
@@ -1373,15 +1413,11 @@
     },
     "2b0b79c0d0a9adc7837ccfa2f6c51b1b1fde7125f64482af1fa2991cd2ddb056": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:141"
+      "src": "skills/resolve/modes/push.md:168"
     },
     "2b1684573cb2659ec55dd4b9aa21172a1d6b0b93f5590e4bb40367e75c6866f8": {
       "kind": "command",
       "src": "skills/analyse/modes/thread.md:102"
-    },
-    "2b4d279693e02acfb7c95382353fd081ff112987e761320fd5508ab5ee4f2e82": {
-      "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:9"
     },
     "2b55e8164fc2b2c3ad4bda3692600d9cfc8535db013323b58c17d7b01b57e1ca": {
       "kind": "command",
@@ -1389,11 +1425,11 @@
     },
     "2b72109c249f053380ebc0e48d1cde89c1f622d3b844a5e2520a0f0f8243d5e9": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:135"
+      "src": "skills/resolve/modes/final-report.md:143"
     },
     "2b865f66c29ded666ddd646e0e95bc33d43c162d6cd0f3822de3c1425b7d8d35": {
       "kind": "block",
-      "src": "skills/resolve/modes/exec-approval.md:135",
+      "src": "skills/resolve/modes/exec-approval.md:154",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r IMPL_DIR < \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" 2>/dev/null || IMPL_DIR=\"\"\nIFS= read -r PR_HEAD_OID < \"${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}\" 2>/dev/null || PR_HEAD_OID=\"\"\nIFS= read -r BASE_REF < \"${TMPDIR:-/tmp}/resolve-base-ref-${CSID}\" 2>/dev/null || BASE_REF=\"\"\n[ -n \"$IMPL_DIR\" ] && [ -n \"$PR_HEAD_OID\" ] && [ -n \"$BASE_REF\" ] || { echo \"! BLOCKED \u2014 IMPL_DIR, PR head or base ref sentinel missing\"; exit 1; }\nIFS= read -r _BIND_HEAD < \"$IMPL_DIR/pr-code-rebind-head.txt\" 2>/dev/null || _BIND_HEAD=\"\"; [ -n \"$_BIND_HEAD\" ] || _BIND_HEAD=\"$PR_HEAD_OID\"\npython -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" bind --head \"$_BIND_HEAD\" --base \"origin/$BASE_REF\" --scope run --tier env-only --decision unsandboxed --out \"$IMPL_DIR/code-approval.txt\" > /dev/null || { echo \"! BLOCKED \u2014 guard bind failed; PR code stays unapproved\"; exit 1; }\necho unsandboxed > \"$IMPL_DIR/pr-code-decision.txt\""
     },
     "2ba1c57677139e047a1ccfc8d8ffd404cfa85fb442139c29f2a33c9b09e07d0e": {
@@ -1430,11 +1466,15 @@
     },
     "2d6e2f8b6121c4ec67504501f7aa4bc3489016a5ea791f1a57b56373f5dbdc03": {
       "kind": "command",
-      "src": "skills/resolve/SKILL.md:98"
+      "src": "skills/resolve/SKILL.md:99"
     },
     "2d9a3ebd594c290eccf49d0f7220b96ccfa9f37fcdf9be29b378460c14ac8e0d": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-prelude.md:197"
+    },
+    "2d9bfb1716c1e037d396676ca4fcfce8b704465fe76fe0fed5fcbbedd16b8792": {
+      "kind": "command",
+      "src": "skills/resolve/modes/push.md:182"
     },
     "2da8231b708d04fab40732869ddc16609b410c85d0e713fe8a7c8fdbc0f292db": {
       "kind": "command",
@@ -1471,12 +1511,12 @@
     },
     "2ea10f5402aa0c57e83f6f03161180346beb51a9143f1fe3ab2c2090c3be0dd2": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:170",
+      "src": "skills/resolve/SKILL.md:171",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _OSS_RESOLVE < \"${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}\" 2>/dev/null || _OSS_RESOLVE=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/report-merge.md\""
     },
     "2ebd5efdd4ddee895759b3f875c487c28681338a0d8530509a872d7d110412c5": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:22"
+      "src": "skills/review/templates/agent-prompts.md:24"
     },
     "2ecb0f0cf53de793507f7d7f85ed250fbec9eb391a4b465329ed7ddbddef1e98": {
       "kind": "command",
@@ -1496,7 +1536,7 @@
     },
     "2f40376401d17e29d6ad01848df2f9293f26108454f182a11154de74ba22847e": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:212",
+      "src": "skills/review/SKILL.md:213",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r REVIEW_SKILL_DIR < \"${TMPDIR:-/tmp}/review-skill-dir-${CSID}\" 2>/dev/null || REVIEW_SKILL_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$REVIEW_SKILL_DIR/modes/reply.md\""
     },
     "2f497ee55a6e39fc21e696bb5dfc07d5e0fb1aed6c6acfc3ad836712dc423c58": {
@@ -1574,7 +1614,7 @@
     },
     "329c0fcd1883e8325f2a492a99b3d7d9f16e87f5dafae04506e315593d61b1c8": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "32ba01df249e53ab2d76e6659063d7d0157b99c4b0e79605ff8f333c046c87af": {
       "kind": "command",
@@ -1587,7 +1627,7 @@
     },
     "33b9d28d508799829d80c9cda9b6201f4e8a7f429b120308127135577376f1ec": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:50"
+      "src": "skills/resolve/modes/final-report.md:51"
     },
     "33bc75409c89f4de3cc1db56d9bec24e7d4db82f8358b0785fc1b71dba3c63ee": {
       "kind": "command",
@@ -1625,7 +1665,7 @@
     },
     "343229cab89f8c4cdc01a0d2ebbb5675f322a73cfc787391446be97742a98265": {
       "kind": "command",
-      "src": "skills/resolve/modes/item-selection.md:303"
+      "src": "skills/resolve/modes/item-selection.md:323"
     },
     "3442f2cd30257cd5d51d247b21b8aea7c408997c4d44938fd9f6febaf93b6373": {
       "kind": "command",
@@ -1637,7 +1677,7 @@
     },
     "344ae6912a2e20f0f1f2c2473d5c34d42c2db88317396e8e4938e62f4fa77acc": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:299",
+      "src": "skills/resolve/SKILL.md:300",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _OSS_RESOLVE < \"${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}\" 2>/dev/null || _OSS_RESOLVE=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/push.md\""
     },
     "345a5fe9d30728a41b8fb90fccfc49fd5148a57a81ff74528b623e4e83587706": {
@@ -1747,7 +1787,7 @@
     },
     "37be19a94a2e252c97fefb0a66fad4d50c875c30e7da950e24ba51456c12f4bf": {
       "kind": "command",
-      "src": "skills/resolve/SKILL.md:268"
+      "src": "skills/resolve/SKILL.md:269"
     },
     "37c0ed2f5295b210ffca8ca80c1660c71e8dd80a37f1c9f8da6d4a9ad2fd2488": {
       "kind": "command",
@@ -1771,7 +1811,7 @@
     },
     "381b90c5f4e2cb8b3082e02a4ab347b5011c8319527fbabdf8e848d553055c18": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:120"
+      "src": "skills/resolve/modes/push.md:147"
     },
     "383247fc0f2e4e7886d99a39e5220bd47a7e058bf2b04acd73ec9d91397ee0fc": {
       "kind": "command",
@@ -1800,7 +1840,7 @@
     },
     "3983800cfc463f270b77662d03d3626441ab3fdefc13c909fa8b3ad62b78a9b8": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "39cd5e36f9c19377f55376302c79f15df94aa70bfc22fc2d32678e348cab0049": {
       "kind": "command",
@@ -1813,7 +1853,7 @@
     },
     "3a158c8f49584bf9f02ca78bf24a1fe3e181a5fb0527b1983770132d39d2d4fc": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "3a22d042422324a41d6a127f19eab571c87dfe5028e39569a7a8b57018313b1d": {
       "kind": "block",
@@ -1850,7 +1890,7 @@
     },
     "3b482c48f4e959e711c856fb7de72b55711e2a4d77beab02f3ff92f053c103ea": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:109"
+      "src": "skills/resolve/modes/final-report.md:117"
     },
     "3b491cca146b3b69c159ab4cc48e594c95091823bd4fb1002b085d4b46298a90": {
       "kind": "command",
@@ -1862,11 +1902,11 @@
     },
     "3b8d6451e6e79a539cc68a57b89c166ee47512e3f788aded0d3381e70f53cdb6": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "3b921dc1452df7c4533148ba994d87514c1fb3570f3ff4c6f89448fd0236a2d4": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:133",
+      "src": "skills/resolve/SKILL.md:134",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _OSS_RESOLVE < \"${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}\" 2>/dev/null || _OSS_RESOLVE=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/report-intelligence.md\""
     },
     "3ba927f56e74dd06edf68eb1f970b86042dc79e605b2e555052e3a2be33f2630": {
@@ -1991,12 +2031,7 @@
     },
     "4046b68cf76afe310632bfbd1294c2434de1c583d14502a23361fad17c5a2a9f": {
       "kind": "command",
-      "src": "skills/resolve/modes/item-selection.md:338"
-    },
-    "4049e97b82c06a66706abe45b2241a8456651890679c7c1f32fde2704c6fb9d3": {
-      "kind": "block",
-      "src": "skills/resolve/modes/final-report.md:9",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r _PR_NUMBER < \"${TMPDIR:-/tmp}/resolve-pr-number-${CSID}\" 2>/dev/null || _PR_NUMBER=\"n/a\"\nIFS= read -r _IMPL_DIR < \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" 2>/dev/null || _IMPL_DIR=\"n/a\"\nIFS= read -r PUSH_STATUS < \"${TMPDIR:-/tmp}/resolve-push-status-${CSID}\" 2>/dev/null || PUSH_STATUS=\"none\"\n_PRESERVE=\"pr=${_PR_NUMBER}, final-report=pending-write, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv, push-status=${PUSH_STATUS}, push-unblock=${_IMPL_DIR}/push-unblock.txt\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-sentinel resolve-keep-items \"oss:resolve\" \"final-report (after push)\" \"$_IMPL_DIR\" \"${_PRESERVE}\" \"write final report \u2192 post-PR action gate\"\necho \"PUSH_STATUS=$PUSH_STATUS\"\ncase \"$PUSH_STATUS\" in blocked-guard|blocked-permission|blocked-needs-manual-push) echo \"PUSH_UNBLOCK=$_IMPL_DIR/push-unblock.txt\"; cat \"$_IMPL_DIR/push-unblock.txt\" 2>/dev/null || echo \"\u26a0 push-unblock.txt missing\" ;; esac\nIFS= read -r INTAKE_DEGRADED < \"${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}\" 2>/dev/null || INTAKE_DEGRADED=\"\"\n[ -z \"$INTAKE_DEGRADED\" ] || { echo \"INTAKE=degraded $INTAKE_DEGRADED\"; cat \"${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}\" 2>/dev/null || echo \"\u26a0 intake gap list missing\"; }\nIFS= read -r _C1_QUOTA < \"$_IMPL_DIR/c1-quota-blocked.txt\" 2>/dev/null && echo \"C1 $_C1_QUOTA\"\nfind \"$_IMPL_DIR\" -maxdepth 1 -name 'c1-quota-partial-*.patch' 2>/dev/null | sed 's/^/C1_PARTIAL_PATCH=/'\nIFS= read -r _OSS_RESOLVE < \"${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}\" 2>/dev/null || _OSS_RESOLVE=\"\"\ncat \"$_OSS_RESOLVE/templates/resolve-report.md\""
+      "src": "skills/resolve/modes/item-selection.md:358"
     },
     "406d125b1fb5f652e07f548c9e02afd00843f6f6a0f3240a7b92f2e9389b4e4a": {
       "kind": "command",
@@ -2108,17 +2143,13 @@
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:107"
     },
-    "4445a929ac5257dc8fbe341a830e590bfd512b5056a7c2af67c71d6ac3d382f8": {
-      "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
-    },
     "447312f2d0da0207197ad61febd7a6586015a53f16539142e8063d9c343cf02f": {
       "kind": "block",
-      "src": "skills/resolve/modes/item-selection.md:310"
+      "src": "skills/resolve/modes/item-selection.md:330"
     },
     "44745fef950f674a36fe4cb64464299794980dce06be30a90bb5d8e0382d5542": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:134"
+      "src": "skills/resolve/modes/push.md:161"
     },
     "44780d97662c0f6901493f4e4d33093146c0f98531afc4c80bf09f3a1a16ca83": {
       "kind": "command",
@@ -2158,11 +2189,11 @@
     },
     "45fcc37ab04d340857ce2f0268fdf1ddd2ce6de927f62b505d2fad693d930d1d": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:61"
+      "src": "skills/review/templates/agent-prompts.md:88"
     },
     "462f34efc92d3297ae3353c55d392677a53f5e2fb2afa3f55d8efd1bfb9f3591": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "46535351dd12d7d746656accc935fd0486405ac66bfe05fb3621c3625f2b5e92": {
       "kind": "command",
@@ -2192,11 +2223,15 @@
     },
     "46ecc5b65faae9c56779fc9cb696498867863ad86601f9fa66f6af07866b69ac": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:109"
+      "src": "skills/resolve/modes/final-report.md:117"
     },
     "471d117b470dc8cdf3762416150bda4bfee53bce11d87c4f6aa3dc4a36188e0b": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-closeout.md:106"
+    },
+    "475458872328502f3a4de406722016e385aded116e8dd71c59b0047ce55c08ac": {
+      "kind": "command",
+      "src": "skills/resolve/modes/item-selection.md:289"
     },
     "47548802530d1360a5c759ecbb1c805a357ee4d0a9ac64c1e2f756ce5bad077e": {
       "kind": "command",
@@ -2212,7 +2247,7 @@
     },
     "47ac42d6399439f7b3e6ec9c9eb2097c0f765db97c39cdf7273508cab20fd74d": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:149"
+      "src": "skills/resolve/modes/exec-approval.md:168"
     },
     "47af6ea91d046113dc0a696cce184ec4fc1be03ef6e0ffc08188b0fe00f1ef44": {
       "kind": "command",
@@ -2228,7 +2263,7 @@
     },
     "484af9a02c69909501d2bf928f895597c640dcfad2f63a2aea332faaae5a171d": {
       "kind": "command",
-      "src": "skills/resolve/modes/item-selection.md:338"
+      "src": "skills/resolve/modes/item-selection.md:358"
     },
     "486ed6743db13c44ebc2ebe88dee82f55840eb2570865aa419760cd0c64dc399": {
       "kind": "command",
@@ -2391,6 +2426,10 @@
       "kind": "command",
       "src": "skills/resolve/modes/preflight.md:80"
     },
+    "4cef74e2ba1b60e8cc5b0124b3a08704168c3537ef95c2ceb997e5fd4f5219b1": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:30"
+    },
     "4d16d27414a5754ccec98f62c249f4ff982bc8b21659f5087e35ad886d7bab83": {
       "kind": "block",
       "src": "skills/release/modes/release-draft-template.md:245"
@@ -2399,6 +2438,10 @@
       "kind": "block",
       "src": "skills/analyse/modes/vitality.md:173",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r GH_OWNER < \"${TMPDIR:-/tmp}/vitality-gh-owner-${CSID}\" 2>/dev/null || GH_OWNER=\"\"\nIFS= read -r GH_REPO < \"${TMPDIR:-/tmp}/vitality-gh-repo-${CSID}\" 2>/dev/null || GH_REPO=\"\"\n\nIFS= read -r QUICK_MODE < \"${TMPDIR:-/tmp}/analyse-quick-mode-${CSID}\" 2>/dev/null || QUICK_MODE=\"false\"\npython \"$PLUGIN_ROOT/bin/build_vitality_paths.py\" --owner \"$GH_OWNER\" --repo \"$GH_REPO\" --quick \"$QUICK_MODE\""
+    },
+    "4d5c13d1fc274c0572481021142785f7c44b43bfd641168c6d6681a625d03f23": {
+      "kind": "command",
+      "src": "skills/resolve/modes/item-selection.md:289"
     },
     "4d5fbcebd80ce14fd2b46622e2b6f2487566f60d65b3a77f3b59193bf334e957": {
       "kind": "command",
@@ -2418,7 +2461,7 @@
     },
     "4e3d3527be2eeaa2bce70735326426a2f949edc712c8cc2eec27bb7a95199ccf": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:121"
+      "src": "skills/review/SKILL.md:122"
     },
     "4e44fb45faaaacb5f216256bb2abd2dfd8fa27005c24d49f41542dfba76ca32d": {
       "kind": "block",
@@ -2434,7 +2477,7 @@
     },
     "4e610d43ef6a5358503b63bcca2f38d80104157c7df98ed41f52353e44e4d76e": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:109"
+      "src": "skills/resolve/modes/final-report.md:117"
     },
     "4e6d1974e0e8f5b42cfa1a58bc2fadf777ea077dd189a1104f55dad531544a52": {
       "kind": "command",
@@ -2450,7 +2493,7 @@
     },
     "4edd35e8f645f557a893b3ab57e5fc8891164f3591ad5d76193d52107181ac06": {
       "kind": "command",
-      "src": "skills/resolve/modes/item-selection.md:338"
+      "src": "skills/resolve/modes/item-selection.md:358"
     },
     "4ef826ea6c89b69685d512dc6e00a7aeb91f15db7ccafdab8ef6ed07eafd31c5": {
       "kind": "command",
@@ -2510,7 +2553,7 @@
     },
     "50e5599c2f3b04e6b37968d846f2ae6a13e67ce5ac592736df693a2276431b7b": {
       "kind": "command",
-      "src": "skills/resolve/modes/item-selection.md:324"
+      "src": "skills/resolve/modes/item-selection.md:344"
     },
     "511147a92bc05256f295393565e96281268d38013a5fb87f84a934127085863b": {
       "kind": "command",
@@ -2532,6 +2575,10 @@
       "kind": "command",
       "src": "skills/review/modes/reply.md:21"
     },
+    "519de71788cc57f14f059165abbf31b2980f793c44014efef0beab35ab5ec196": {
+      "kind": "command",
+      "src": "skills/review/templates/agent-prompts.md:7"
+    },
     "51a15346736a450b1b5a0065ec5dad7046c489ed4f0d9bf1885201e8382d9fce": {
       "kind": "command",
       "src": "skills/review/modes/post-agent.md:52"
@@ -2542,7 +2589,7 @@
     },
     "51d4f9fcce39bf3dd7ac86ef89d1a5de357c068eadd20e7a4fdf41bf10909104": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:22"
+      "src": "skills/review/templates/agent-prompts.md:24"
     },
     "51f1e88be10ec883b92074cefd2f2b90653f8c149090a2028c29f67070c4a6f8": {
       "kind": "command",
@@ -2559,7 +2606,7 @@
     },
     "5220eeb7c3c7df2ddeecf081a4f4c1af76049cc3f3d3195e2ebe694d77fe033c": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:148"
+      "src": "skills/resolve/modes/push.md:175"
     },
     "52336badb2cb8478e41a5e7c936321a054666bc0e6333bfdd7e5b382e016c0ac": {
       "kind": "command",
@@ -2603,7 +2650,7 @@
     },
     "53a22e3427b8d21d66c0d6e9692ab1a94a32b3ecd6e614868f60bf055e0f74ad": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "53a940a8a35ebbb6af0c3617019341102f90fe577472356f15d204c944efd489": {
       "kind": "command",
@@ -2620,7 +2667,7 @@
     },
     "53ea3a057e96562997b1632f4c8bb32bd0eab78d353c89de523a10b81f3844c9": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:165"
+      "src": "skills/review/SKILL.md:166"
     },
     "53f6c99e5d76a87f357112788852c46acf471f1f32787d315b685510f7811243": {
       "kind": "command",
@@ -2628,7 +2675,7 @@
     },
     "53fad3843b8cdfc1c90e21c8eae245530d30a8f9325111d03aaa98f0b1f26452": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:104"
+      "src": "skills/resolve/modes/push.md:131"
     },
     "5465796862103ee972073852cff42e247ee0e461174b2e758cb524ad7032b486": {
       "kind": "block",
@@ -2714,7 +2761,7 @@
     },
     "56c3d59f753cb4dc23c7a35d38f68b19b38b86990f7e95bf30a7d581dc179664": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:162"
+      "src": "skills/resolve/modes/push.md:196"
     },
     "56e199c3703e177a91b8246ac449f86f257645f734607cb8df132efddb90f9fd": {
       "kind": "block",
@@ -2730,7 +2777,7 @@
     },
     "57485b461aaa5dfb676811a7b8d5137e3ae1e7352ce79ff1c67e448b555b07db": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "576c5cd867f53010a1ba57c711f6da5a1b43e3a5f77c6d2f9ca199d0065605e8": {
       "kind": "command",
@@ -2775,7 +2822,7 @@
     },
     "5918f7dd39ba3f23b4d1906d321469020355891efe6c68b134834ccb98c8bbb2": {
       "kind": "command",
-      "src": "skills/resolve/SKILL.md:133"
+      "src": "skills/resolve/SKILL.md:134"
     },
     "5942d2385bc15cc8c283794a76532c2df5348587d9713f613199daff087906be": {
       "kind": "command",
@@ -2837,7 +2884,7 @@
     },
     "5b2df051e4c9c2d098474f2a1dd3bcf751399d6a3b9fb697d4e9b2d37769cf9b": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:197"
+      "src": "skills/review/SKILL.md:198"
     },
     "5b34aa8c0a75aac934b138fade2b944b70c40e60da05ed7068b5c8cceca7371a": {
       "kind": "command",
@@ -2957,7 +3004,7 @@
     },
     "5e1db38b8030582dfa1deba88dda43d4ed767912aaa59ea8e44262e6ad1aa014": {
       "kind": "block",
-      "src": "skills/resolve/modes/item-selection.md:317"
+      "src": "skills/resolve/modes/item-selection.md:337"
     },
     "5e304b1c895681403d55fd7e3736e6835454a97f5bc9551029687e1f81c749dc": {
       "kind": "command",
@@ -2993,10 +3040,6 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
-    "5fb51e60d6114ffe481328b5853000efc61bc500b08f706dd96ca228f49b8fc2": {
-      "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
-    },
     "5fb6de083341d4648f14a6a9960a3313d247173166ff1d979ca075589b113cc1": {
       "kind": "command",
       "src": "skills/_shared/codemap-gates.md:5",
@@ -3012,7 +3055,7 @@
     },
     "603f8ec018d543ee59742a5bdd528a0bf1446324bbd05d92a2bd840e0abd3d4e": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:141"
+      "src": "skills/resolve/modes/push.md:168"
     },
     "60427ef538942c1b60126230635580e30c59a8a599f4a72169dd0ad07183e058": {
       "kind": "command",
@@ -3040,7 +3083,7 @@
     },
     "60d44ba87c4f718e16cd2b4698d091d181f8b1173b3b510ed21e3b98ff0b07e3": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:121",
+      "src": "skills/review/SKILL.md:122",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\n_OSS_REVIEW=\"$PLUGIN_ROOT/skills/review\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_REVIEW/modes/preflight.md\""
     },
     "60e78d9e6d82827fd1d3488eed4dc2ff617f81aae7974a2697e1d302f6363aea": {
@@ -3079,7 +3122,7 @@
     },
     "62194062a6a7d71f2cbe6491c231393a37562bff19a8a0f6e00a50fec6e29dbc": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:243",
+      "src": "skills/resolve/SKILL.md:244",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _OSS_RESOLVE < \"${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}\" 2>/dev/null || _OSS_RESOLVE=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/conflict-resolution.md\""
     },
     "621c49b5b272374d557faab028d425e27f91f497218786f8f08611f36691d401": {
@@ -3092,7 +3135,7 @@
     },
     "623945a35891550a9478624874264017009dbcc0ab833153beea604b7be6c31d": {
       "kind": "block",
-      "src": "skills/resolve/modes/item-selection.md:324"
+      "src": "skills/resolve/modes/item-selection.md:344"
     },
     "6267d553381ccecbca75dfb328924db1eeb7584737e3cb114c0ae292fa547b2f": {
       "kind": "command",
@@ -3136,7 +3179,7 @@
     },
     "63b576813c645ba79cf2c73e3993a9d6a78dd55e18860e6217d4aa5c4b6e4e2e": {
       "kind": "command",
-      "src": "skills/resolve/modes/item-selection.md:317"
+      "src": "skills/resolve/modes/item-selection.md:337"
     },
     "63d4d0b96752987dd1c6643ec90770c2767603f1d35dfacf3fabf0f44c798f18": {
       "kind": "command",
@@ -3269,7 +3312,7 @@
     },
     "67f8c455c0f259725fe5a4c072ffe8f6214c1920027cc4efa6b7da8281ceec48": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:121"
+      "src": "skills/resolve/modes/exec-approval.md:140"
     },
     "682c34b668ea6e8bb4c871c6ee023926f13e4ee5421ff99744c42dc0aba764a2": {
       "kind": "command",
@@ -3281,7 +3324,7 @@
     },
     "686b99583638a45d6c5812fe4e885e43bfb4b12d368295eaaa2459a163ea4baf": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "68843ebbaeb747bb81de0568aa233ff04a049977d2c0da546c0fe5cf7d7eb160": {
       "kind": "block",
@@ -3375,7 +3418,11 @@
     },
     "6b5643b9e6d3b096d2f0611387a2a75082afeeaf07fb4fc780c34a4058bc1ab4": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
+    },
+    "6b60f41789abc28fa3fd7066c4e4fb5d7660b79636470356dc02cdf4afe8f029": {
+      "kind": "command",
+      "src": "skills/resolve/modes/item-selection.md:289"
     },
     "6b911e1b6332d09703df5467bce9a06d330772d4140d09ce18b06f39586fd00d": {
       "kind": "command",
@@ -3480,7 +3527,7 @@
     },
     "6f4399ddf7a50e278002280f9b06189d504c95e191010770172c2b7551504e93": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:165"
+      "src": "skills/review/SKILL.md:166"
     },
     "6f79ac4c0c5861d994823b16b06d3570a0bc7f21b645f7822a45680addd338b9": {
       "kind": "block",
@@ -3504,11 +3551,11 @@
     },
     "6fa76261fbb22d843f9521917ba36627699c83103402ead9c27fe14aee56d03a": {
       "kind": "block",
-      "src": "skills/resolve/modes/final-report.md:135"
+      "src": "skills/resolve/modes/final-report.md:143"
     },
     "6fb8db122f8788f0234fcf3b7f8be015712f547f402ee9190c0a4364899785aa": {
       "kind": "command",
-      "src": "skills/resolve/SKILL.md:268"
+      "src": "skills/resolve/SKILL.md:269"
     },
     "6fc7285cc48953848c77855721ca4410b00e0bbefe6df56161b97a13e59a570d": {
       "kind": "command",
@@ -3534,17 +3581,13 @@
       "kind": "command",
       "src": "agents/gh-scraper.md:36"
     },
-    "70ba2470c1e3ec07d2da862ddf0ba9be6b34194c8d45954969f378251ade7725": {
-      "kind": "block",
-      "src": "skills/resolve/modes/exec-approval.md:159"
-    },
     "70bb10a97d022f97f7b83ff4acb2fd0bc497a8fa3446f530aa0e46296498ac98": {
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:107"
     },
     "70d3d963aa2bdf2da349c5251020c216d41ed9004f13fec2fb0a04fde53e7a30": {
       "kind": "block",
-      "src": "skills/resolve/modes/exec-approval.md:149"
+      "src": "skills/resolve/modes/exec-approval.md:168"
     },
     "70dd7fc57941db875c8ffa7cce32d292e911ee6f07a219ddcd4edd09fc7b0984": {
       "kind": "command",
@@ -3596,7 +3639,7 @@
     },
     "7264beca05d39bd496d7e610674654c7af12f3a826ce8d127ff94a89a495500e": {
       "kind": "command",
-      "src": "skills/resolve/SKILL.md:268"
+      "src": "skills/resolve/SKILL.md:269"
     },
     "7285295f1a989344fc8b98120e59d00b6f159c52efbb0c0cc573cd48447d6fe0": {
       "kind": "command",
@@ -3672,7 +3715,7 @@
     },
     "73b5e2477ab180e00e201dd73810d97f0d1dada7e42d4fa182e7b29550e0bddd": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:91"
+      "src": "skills/resolve/modes/push.md:118"
     },
     "73f86b457cbb899b65fd283bd2d9c5bfb8b17c6ec6f2a12a1f1d9992ac4bca39": {
       "kind": "command",
@@ -3733,7 +3776,7 @@
     },
     "74be27dba4917bb61dde31e9d66e87f4798b43d7f3997739f885f4e1031666ba": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:109"
+      "src": "skills/resolve/modes/final-report.md:117"
     },
     "74c6ca05cd5133224d171d3c4fab11a5b0dec36664eb5b806e82f88e961c2ded": {
       "kind": "command",
@@ -3765,7 +3808,7 @@
     },
     "75afc3a76097049112310a91fc1b4755686390d0496a8178bd16b5a04e810ece": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:135"
+      "src": "skills/resolve/modes/exec-approval.md:154"
     },
     "75c8027dd0752bb52c6c6b15ec1997b971b013f9e655ff6d1fe65c9159f97b31": {
       "kind": "command",
@@ -3836,7 +3879,7 @@
     },
     "78f5bd0a0e07ea65882b7cc2945bcbfc6d8314a4a3070fde6d9450a79af0060f": {
       "kind": "command",
-      "src": "skills/resolve/modes/item-selection.md:310"
+      "src": "skills/resolve/modes/item-selection.md:330"
     },
     "792bc742a606ec1b8f6b65a1b2f76ccdbeee9bb0d12003c44cee7ce3a79194f7": {
       "kind": "command",
@@ -3954,7 +3997,7 @@
     },
     "7bcb8b5f94ebac3bfb740779d5c928792dfaa36859404815a88103d0bccbfc05": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:22"
+      "src": "skills/review/templates/agent-prompts.md:24"
     },
     "7bd570c04c8f309e6d7178cae645e4bc6bfdf759df14bce784cfbdbd70ff79c0": {
       "kind": "command",
@@ -3962,7 +4005,7 @@
     },
     "7c29746ff70c6cfe46ce64d7edc2619a4f597f7a330534857f7b253a001f79af": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "7c2ce1b943a5d6383b86be83754c746008766418bcdd8940010a1ca96963f43a": {
       "kind": "block",
@@ -3987,6 +4030,10 @@
     "7ce3435b66e31f4e021534ae0caf5646a2c41ce1bd4a15832a46527ec1b4cc9e": {
       "kind": "command",
       "src": "skills/review/modes/scope-detection.md:9"
+    },
+    "7d2f571da0db73e88234de5be2a61a33936a64081c1d194d34104049beecc2a9": {
+      "kind": "command",
+      "src": "skills/resolve/modes/item-selection.md:289"
     },
     "7d9f75d5e25be2b82857bb60f4c5b51af7fdd94c470710d51fe0982726654d2a": {
       "kind": "command",
@@ -4063,7 +4110,7 @@
     },
     "8012e20db2a363f5b2b26561599e337339fa85703678e0412fceaa5087ad093a": {
       "kind": "block",
-      "src": "skills/resolve/modes/item-selection.md:303"
+      "src": "skills/resolve/modes/item-selection.md:323"
     },
     "803aa9f578974c8e552edb0b705c5cf6fb7b126f3547f146c6521f7eb373da9e": {
       "kind": "command",
@@ -4087,7 +4134,7 @@
     },
     "8108f7bfcca989b1a38c59b335fbc6d1437196122ba698932994c118d7c91659": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:146",
+      "src": "skills/resolve/SKILL.md:147",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _OSS_RESOLVE < \"${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}\" 2>/dev/null || _OSS_RESOLVE=\"\"\nIFS= read -r _OSS_SHARED < \"${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}\" 2>/dev/null || _OSS_SHARED=\"\"\necho \"_OSS_SHARED=$_OSS_SHARED\"\n\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/pr-intelligence.md\""
     },
     "811a3742f4121fad318d97e22692a089cf5e9a715941cfa28633e9d3e71d4dc0": {
@@ -4104,7 +4151,7 @@
     },
     "8148daa5e42e0b17f72de2af8f6e5c4b8c72f663699436f2b09d2f80b4f71c43": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:256",
+      "src": "skills/resolve/SKILL.md:257",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\n_OSS_RESOLVE=\"$PLUGIN_ROOT/skills/resolve\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/dispatch-closeout.md\""
     },
     "814c0619fcde76c7d14914af9af07c4bb2f81f86efc950d77f1f36f466317cb5": {
@@ -4125,7 +4172,7 @@
     },
     "81f14428772ab0fea85b29fa0db4fcdd52a24840790f0e3272f0ce2d819db602": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "820669b6959aad16ad3e0ced21c36033602368463796ac143f29a75a858d8508": {
       "kind": "block",
@@ -4206,7 +4253,7 @@
     },
     "84a3bcb6ea7a8d1bb9b46eb799e619ca82a198ac6a6458d3a5be3d6e857b2d6c": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:22"
+      "src": "skills/review/templates/agent-prompts.md:24"
     },
     "84c19b275e8bd0ef2323735ed03b8672187a7f10b73f6f01c2f2742195f079f7": {
       "kind": "command",
@@ -4274,7 +4321,7 @@
     },
     "869a70b4e030f4b8bd5e799bf238ddfa6cf84afdfeecc65d23ec7ac78236514e": {
       "kind": "block",
-      "src": "skills/resolve/modes/final-report.md:50",
+      "src": "skills/resolve/modes/final-report.md:51",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r REPORT_FILE < \"${TMPDIR:-/tmp}/resolve-report-file-${CSID}\" 2>/dev/null || REPORT_FILE=\"\"\nIFS= read -r IMPL_DIR < \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" 2>/dev/null || IMPL_DIR=\"\"\nIFS= read -r BASE_SHA < \"${TMPDIR:-/tmp}/resolve-base-sha-${CSID}\" 2>/dev/null || BASE_SHA=\"\"\nif [ -n \"$REPORT_FILE\" ] && [ -f \"$REPORT_FILE\" ] && [ -f \"$IMPL_DIR/action-items.jsonl\" ]; then\n    python \"$PLUGIN_ROOT/bin/append_resolution.py\" --impl-dir \"$IMPL_DIR\" --review-dir \"$(dirname \"$REPORT_FILE\")\" --base-sha \"$BASE_SHA\"\nelse\n    echo \"\u2192 no review report consumed \u2014 resolution ledger skipped\"\nfi"
     },
     "86a85a902f1b0d0387d215277ee24be8fdcdcbd13db5245e8734854c27f54e03": {
@@ -4291,7 +4338,7 @@
     },
     "8704c54232afff95c735a15d3db909ae70b9d453e3128dac47cd15c15dcf30f4": {
       "kind": "block",
-      "src": "skills/resolve/modes/final-report.md:109"
+      "src": "skills/resolve/modes/final-report.md:117"
     },
     "872170c085d5d48ccb1fb6971f4984b456fa0920990654a78a41515220e9293b": {
       "kind": "command",
@@ -4343,7 +4390,7 @@
     },
     "881b4902b97245b356b1ad2540abcc7dd6d5748f0edecc4de9f3492ca96dd8b9": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:148"
+      "src": "skills/resolve/modes/push.md:175"
     },
     "8831af9bd38caf066623b323b763669ecab1567519e86f08d9dd924f3435b009": {
       "kind": "command",
@@ -4421,7 +4468,7 @@
     },
     "89a193573d5792e9f78b2b209faf348e2bcb6b631954351fdcf06b12cea65a95": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "89b5dbf79453e2061341de60a0f450b2716c5c83246926373827937c3cf7dda0": {
       "kind": "command",
@@ -4480,7 +4527,7 @@
     },
     "8a851e0b5c99e45151d2d5573ff2a0cd7acd96e3b4de46fbe5b5fa6071e7167b": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:91"
+      "src": "skills/resolve/modes/push.md:118"
     },
     "8a89c8121d4b42aa5f792609a6aa4931fbc00f1cb4bf97ced6752113ecbdcf6d": {
       "kind": "command",
@@ -4524,6 +4571,10 @@
     "8bfa823b59acbda230d553b32a3242160bed1f78c4d17944d31d6e1b35114593": {
       "kind": "command",
       "src": "skills/release/SKILL.md:264"
+    },
+    "8c3d7e7ab6c90387efc9380dec4ffa694ebc356cae7d817eebb0c6bedf91c332": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "8c42600c669d37de59f5ec1a0a3adcc9ef2cf7423a67de07bfaa8b04f8d57af8": {
       "kind": "command",
@@ -4571,7 +4622,7 @@
     },
     "8db1d529964a198a61e6cf0df9505caa45edafc27aa2093cc8ac5d27267e3421": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:159"
+      "src": "skills/resolve/modes/exec-approval.md:178"
     },
     "8dc3754d8e58cf6d41e30f75eaef54114325ca6f6915791e04bd80592288c9bf": {
       "kind": "command",
@@ -4591,7 +4642,7 @@
     },
     "8e36624de263350cdce4514f7f95703826ec05872a7c0b5f2d61e91e4c8606e7": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:180"
+      "src": "skills/review/SKILL.md:181"
     },
     "8e37042b9290e4fc0d54e3d0d62273dabd877b848804540716dcbd8bbf2f0edb": {
       "kind": "command",
@@ -4748,7 +4799,7 @@
     },
     "93fa580bf89700babc6877011d9fa4b1f65744a8fadd52f9908624cc65421bb0": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:133",
+      "src": "skills/review/SKILL.md:134",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\n_OSS_REVIEW=\"$PLUGIN_ROOT/skills/review\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_REVIEW/modes/scope-context.md\""
     },
     "940084f76a5c91b7b8d31251894a50c3ada9594f28b78e454edeb9f6ec778ee4": {
@@ -4767,6 +4818,10 @@
       "kind": "command",
       "src": "skills/review/modes/scope-context.md:111"
     },
+    "947bf64921a7111781d313f7991369167fca9a2d7ba543f6f962c97eacdf556f": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:30"
+    },
     "948bf9298989ba70258df23b1d5945577ef164ad71b9f67bdb227bac21159857": {
       "kind": "block",
       "src": "skills/release/modes/notes-draft.md:73"
@@ -4781,7 +4836,7 @@
     },
     "94d85b228d41485d335b34b00a27f0b92cc251bb3171cfe33e1144bc639fd2d2": {
       "kind": "command",
-      "src": "skills/resolve/SKILL.md:268"
+      "src": "skills/resolve/SKILL.md:269"
     },
     "951451dca152119cbd9c9aeda66253220b60affa6addd1eec8cd6f3b05b809e4": {
       "kind": "block",
@@ -4836,6 +4891,10 @@
       "kind": "command",
       "src": "skills/release/modes/delegation.md:116"
     },
+    "96c7269a61801a60afc551ab8fd0afda7c74c91a2d6066d64e6166af7889a8b8": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:178"
+    },
     "96f5ff502737386d5500d301a0350d53da5eb17b128c7d053b636396686edbe3": {
       "kind": "command",
       "src": "skills/review/templates/agent-prompts.md:7"
@@ -4850,7 +4909,7 @@
     },
     "977540f4ce5bedf04c33f1223fa9cc16f05ce8c01a86c4a6ecc93343f8c263de": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:221",
+      "src": "skills/resolve/SKILL.md:222",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\n_OSS_RESOLVE=\"$PLUGIN_ROOT/skills/resolve\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/checkout.md\""
     },
     "97b34e5382288b318517c99397e30cf0ae5a203c9c6f995584132072f6cfd025": {
@@ -4859,7 +4918,7 @@
     },
     "97b8de6734af3938f36493203fcf1f446938f2458d5e87cee652b71b95471a0f": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:134"
+      "src": "skills/resolve/modes/push.md:161"
     },
     "97c4536ace50d21c9bbb232c172cd249f4722dd51dc5c8ccd45d24080aa79ae6": {
       "kind": "block",
@@ -4897,6 +4956,11 @@
     "982f9b4f645e5fb9f97e24e68c3c4ece3a87ed8c079658bf98dfb5aecd7d7fc0": {
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:16"
+    },
+    "98344980ff4276262c7eb56e691325f5b5a52d7241d7b6b77d5c076869c2422b": {
+      "kind": "block",
+      "src": "skills/resolve/modes/exec-approval.md:178",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r IMPL_DIR < \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" 2>/dev/null || IMPL_DIR=\"\"\nIFS= read -r BASE_REF < \"${TMPDIR:-/tmp}/resolve-base-ref-${CSID}\" 2>/dev/null || BASE_REF=\"\"\nIFS= read -r _SANDBOX < \"${TMPDIR:-/tmp}/resolve-sandbox-${CSID}\" 2>/dev/null || _SANDBOX=false\n[ -n \"$IMPL_DIR\" ] && [ -n \"$BASE_REF\" ] || { echo \"! BLOCKED \u2014 IMPL_DIR or base ref sentinel missing\"; exit 1; }\n[ ! -e \"$IMPL_DIR/code-approval.txt\" ] || mv -f \"$IMPL_DIR/code-approval.txt\" \"$IMPL_DIR/code-approval.set-aside\" || { echo \"! BLOCKED \u2014 could not set the stale approval file aside; the runners would still accept it\"; exit 1; }\ngit rev-parse HEAD > \"$IMPL_DIR/pr-code-head-now.txt\" || { echo \"! BLOCKED \u2014 could not read the current HEAD for the new approval\"; exit 1; }\nIFS= read -r _NOW < \"$IMPL_DIR/pr-code-head-now.txt\" || [ -n \"$_NOW\" ] || _NOW=\"\"\nIFS= read -r _SAVED < \"$IMPL_DIR/pr-code-rebind-head.txt\" 2>/dev/null || [ -n \"$_SAVED\" ] || _SAVED=\"\"\nif [ -n \"$_SAVED\" ] && [ \"$_SAVED\" = \"$_NOW\" ]; then echo deny > \"$IMPL_DIR/pr-code-decision.txt\"; echo \"\u26a0 the approval went stale again at the commit it was re-asked for (an uncommitted dependency or high-finding change?); no more questions this run: tests not run \u2014 PR-code execution not approved\"; exit 0; fi\necho \"$_NOW\" > \"$IMPL_DIR/pr-code-rebind-head.txt\"\necho stale > \"$IMPL_DIR/pr-code-decision.txt\"\nif python -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" scan --head \"$_NOW\" --base \"origin/$BASE_REF\" --out \"$IMPL_DIR/code-scan.json\" --text > \"$IMPL_DIR/code-scan.txt\" 2> \"$IMPL_DIR/code-scan.err\"; then\n    if [ \"$_SANDBOX\" = true ]; then\n        python \"$PLUGIN_ROOT/bin/code_safety_status.py\" check-sandbox --scan \"$IMPL_DIR/code-scan.json\" --head \"$_NOW\" > \"$IMPL_DIR/code-rebind-check.txt\"\n    else\n        python \"$PLUGIN_ROOT/bin/code_safety_status.py\" check-rebind --scan \"$IMPL_DIR/code-scan.json\" --head \"$_NOW\" --prior \"$IMPL_DIR/code-approval.set-aside\" > \"$IMPL_DIR/code-rebind-check.txt\"\n    fi\n    IFS= read -r _CHECK < \"$IMPL_DIR/code-rebind-check.txt\" 2>/dev/null || _CHECK=\"ask reason=check-failed\"\n    case \"$_CHECK\" in\n        auto|sandbox)\n            if python -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" bind --head \"$_NOW\" --base \"origin/$BASE_REF\" --scope run --tier sandbox --out \"$IMPL_DIR/code-approval.txt\" > /dev/null; then\n                echo sandbox > \"$IMPL_DIR/pr-code-decision.txt\"\n                echo \"\u2192 PR code: the base merge changed the approval's inputs; the rescan of ${_NOW:0:12} shows no objection, so the sandbox approval is renewed, no question\"\n                cat \"$IMPL_DIR/code-scan.txt\"\n            fi ;;\n    esac\nfi"
     },
     "984223ad55f7405fd11d74c15d70f80e04e65965552a012482c79db5bf839fe5": {
       "kind": "command",
@@ -5035,7 +5099,7 @@
     },
     "9ccdc2d15209ac08ba2d9ace3a549ecae409eeaebd9f03942350634d29e7c25a": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:159"
+      "src": "skills/resolve/modes/exec-approval.md:178"
     },
     "9cd3e35a8aa0ce87c48977fce60df0ab7e5f2042913a63a1b19bb4781604068b": {
       "kind": "command",
@@ -5071,7 +5135,7 @@
     },
     "9d9f0d1bde4d2623fc9df79856e6610d31efb2ed5b4feb99a556c2c28a0b094f": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:22"
+      "src": "skills/review/templates/agent-prompts.md:24"
     },
     "9dc95abb7d875df8917a5e46fc5af6452bd9c7afdf6d4bcd5b2cb155b5cdd9c1": {
       "kind": "command",
@@ -5101,7 +5165,7 @@
     },
     "9e50ace6b468a47e63a3751daee6f1112ae4ae9fde9570a7b66296857a27fc8e": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:22"
+      "src": "skills/review/templates/agent-prompts.md:24"
     },
     "9ec55cd2d81cbc282fa279f65e525f16f414893622d97d4acc395038f9e15cd2": {
       "kind": "command",
@@ -5115,9 +5179,14 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:29"
     },
+    "9f116e5685653883e3807b6be0de51ccc5ec989607063e95dcd8ee6a6d73f2b2": {
+      "kind": "block",
+      "src": "skills/resolve/modes/final-report.md:9",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r _PR_NUMBER < \"${TMPDIR:-/tmp}/resolve-pr-number-${CSID}\" 2>/dev/null || _PR_NUMBER=\"n/a\"\nIFS= read -r _IMPL_DIR < \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" 2>/dev/null || _IMPL_DIR=\"n/a\"\nIFS= read -r PUSH_STATUS < \"${TMPDIR:-/tmp}/resolve-push-status-${CSID}\" 2>/dev/null || PUSH_STATUS=\"none\"\n_PRESERVE=\"pr=${_PR_NUMBER}, final-report=pending-write, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv, push-status=${PUSH_STATUS}, push-unblock=${_IMPL_DIR}/push-unblock.txt\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-sentinel resolve-keep-items \"oss:resolve\" \"final-report (after push)\" \"$_IMPL_DIR\" \"${_PRESERVE}\" \"write final report \u2192 post-PR action gate\"\necho \"PUSH_STATUS=$PUSH_STATUS\"\ncase \"$PUSH_STATUS\" in blocked-guard|blocked-permission|blocked-needs-manual-push|rejected-remote) echo \"PUSH_UNBLOCK=$_IMPL_DIR/push-unblock.txt\"; cat \"$_IMPL_DIR/push-unblock.txt\" 2>/dev/null || echo \"\u26a0 push-unblock.txt missing\" ;; esac\ncase \"$PUSH_STATUS\" in rejected-remote) echo \"PUSH_ERROR:\"; cat \"$_IMPL_DIR/push-error.txt\" 2>/dev/null || echo \"\u26a0 push-error.txt missing\" ;; esac\nIFS= read -r INTAKE_DEGRADED < \"${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}\" 2>/dev/null || INTAKE_DEGRADED=\"\"\n[ -z \"$INTAKE_DEGRADED\" ] || { echo \"INTAKE=degraded $INTAKE_DEGRADED\"; cat \"${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}\" 2>/dev/null || echo \"\u26a0 intake gap list missing\"; }\nIFS= read -r _C1_QUOTA < \"$_IMPL_DIR/c1-quota-blocked.txt\" 2>/dev/null && echo \"C1 $_C1_QUOTA\"\nfind \"$_IMPL_DIR\" -maxdepth 1 -name 'c1-quota-partial-*.patch' 2>/dev/null | sed 's/^/C1_PARTIAL_PATCH=/'\nIFS= read -r _OSS_RESOLVE < \"${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}\" 2>/dev/null || _OSS_RESOLVE=\"\"\ncat \"$_OSS_RESOLVE/templates/resolve-report.md\""
+    },
     "9f12a7a6a54e5ea80c7ebaa14619eaceaf549820275e15395a13e4386a3f9c2e": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:22"
+      "src": "skills/review/templates/agent-prompts.md:24"
     },
     "9f39866c8c7dbb61c011f418937d34ab4bc8d8cd880bb2274bbb78bc8f2daae1": {
       "kind": "command",
@@ -5151,6 +5220,10 @@
     "a09cbb23ffc5bb63f764fbd93ca9b288d024fae45f57206eb56a60437ad09056": {
       "kind": "command",
       "src": "skills/release/modes/delegation.md:67"
+    },
+    "a0d973729f2f08fd668e47dd457515a5e19a413a8a061885ec30f61218fd9614": {
+      "kind": "block",
+      "src": "skills/resolve/modes/push.md:182"
     },
     "a129dae110d3f44d9bb0c77d75655ac459d34773ab9dd9f075f9f2070382ee9e": {
       "kind": "command",
@@ -5243,7 +5316,7 @@
     },
     "a3d06091bb98f634e8e230f9a33fdcb2c6ec1cdb7d9470cab37dbb1bee903911": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:22"
+      "src": "skills/review/templates/agent-prompts.md:24"
     },
     "a3df42f5bf6d40913112afc424211fbfe5db1ff1d474db009cc4376b6f9815ad": {
       "kind": "command",
@@ -5267,7 +5340,7 @@
     },
     "a45be94fc6006b6be806072249583cbf9028199412a17f66ae405b8c4e61050b": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:108",
+      "src": "skills/resolve/SKILL.md:109",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r BASE_REF < \"${TMPDIR:-/tmp}/resolve-base-ref-${CSID}\" 2>/dev/null || BASE_REF=\"\"\npython \"$PLUGIN_ROOT/bin/git_state_snapshot.py\" --base-ref \"$BASE_REF\""
     },
     "a462ad0b2db4f52fbeeaa0cb5a7879790600d801e5e27b284cdf33d1305f0ad0": {
@@ -5276,7 +5349,7 @@
     },
     "a46fe6d59e81483dae51faa39e662db7a1b05391e187ce773ffe490ab2a2b905": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:159"
+      "src": "skills/resolve/modes/exec-approval.md:178"
     },
     "a4928e9c05b1898c7892859fd95b519ff3ed25424024e193060b081a771ffc14": {
       "kind": "block",
@@ -5328,7 +5401,7 @@
     },
     "a5c1130e0370a889992a4dc4525cb9cddb3d9757eae0178a0a712648171c00e9": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:197",
+      "src": "skills/review/SKILL.md:198",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r REVIEW_SKILL_DIR < \"${TMPDIR:-/tmp}/review-skill-dir-${CSID}\" 2>/dev/null || REVIEW_SKILL_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$REVIEW_SKILL_DIR/modes/post-agent.md\""
     },
     "a5deebbb62e27735d9740f044fdfbeb4a4efdf7e121009482555004faacf7d0f": {
@@ -5398,7 +5471,7 @@
     },
     "a8c50cdd1df12ab2897703cb326ee4430ef353f3f7d5f35eb70e6ed08afc470a": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:22"
+      "src": "skills/review/templates/agent-prompts.md:24"
     },
     "a8cd8756319f11e4d31f87e38b63ef2e1898ac234d9d6527f19ea9e4852d9562": {
       "kind": "command",
@@ -5433,6 +5506,10 @@
       "kind": "command",
       "src": "skills/analyse/SKILL.md:439"
     },
+    "a983e2e6f06fd825c42b6b3447a966c7978a7e274a06fe67427defa7afb5d03b": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:30"
+    },
     "a9a8514f3bdebfde07637c59ea9d9f62338bcb4db2b0c204b20fd3c6338645e9": {
       "kind": "command",
       "src": "skills/review/modes/agent-launch.md:68"
@@ -5464,7 +5541,7 @@
     },
     "ab025803b76e162a2db10d96fa7b782a480b04963d45bf4687e38783a97421ad": {
       "kind": "command",
-      "src": "skills/resolve/modes/item-selection.md:338"
+      "src": "skills/resolve/modes/item-selection.md:358"
     },
     "ab09e5d5adbe6c05ea83b63b8f8627267e51d052924ec11a77424058f4177fe4": {
       "kind": "command",
@@ -5550,7 +5627,7 @@
     },
     "ac48d3c2fbff199d39166a9f178a4dec68c88f98eb9ffb6635ee823c54fb7111": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:180"
+      "src": "skills/review/SKILL.md:181"
     },
     "ac8a8128d8929030b4b9a93761ea9a81f8737362e5d80798c54c88453d3b68a5": {
       "kind": "command",
@@ -5587,7 +5664,7 @@
     },
     "ada9a384e86c0ff4a0773dcb56c33e0c3524907ef73faf0d33bcdc0d7e25e381": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "adee64e56942572b714ba75ed1b360be005a8bfe9489b94ab4c40304dfdc3795": {
       "kind": "command",
@@ -5603,7 +5680,7 @@
     },
     "ae1ac96a74edfa69895d70778854afac5841872fb143bf3904493369d7fe6367": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:180",
+      "src": "skills/review/SKILL.md:181",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CLEAN_ARGS < \"${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}\" 2>/dev/null || CLEAN_ARGS=\"\"\nIFS= read -r SNAP_DIR < \"${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}\" 2>/dev/null || SNAP_DIR=\"\"\nOSS_SIGNALS=\"${TMPDIR:-/tmp}/oss-review-signals-${CLEAN_ARGS}-${CSID}.json\"\nLATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || echo \"\")\npython \"$PLUGIN_ROOT/bin/check_oss_pr_signals.py\" --clean-args \"$CLEAN_ARGS\" --latest-tag \"$LATEST_TAG\" --diff-file \"$SNAP_DIR/pr.diff\" --output-file \"$OSS_SIGNALS\"\ncat \"$OSS_SIGNALS\" 2>/dev/null"
     },
     "ae5c4e4c096587962c6cf637d2f877bcaa4d832e11bbfb345bda746bea94ddb8": {
@@ -5651,11 +5728,6 @@
       "kind": "command",
       "src": "skills/analyse/SKILL.md:68"
     },
-    "aff2a1a22d044078568ae98d4d2dd2a35de23b3d70ea15d95bd9c05e8b4d8877": {
-      "kind": "block",
-      "src": "skills/review/templates/agent-prompts.md:7",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r SNAP_DIR < \"${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}\" 2>/dev/null || SNAP_DIR=\"\"\nIFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\" 2>/dev/null || RUN_DIR=\"\"\n[ -n \"$SNAP_DIR\" ] && [ -n \"$RUN_DIR\" ] || { echo \"ask reason=no-scan\"; exit 0; }\nPR_HEAD_SHA=$(jq -er '.headRefOid' \"$SNAP_DIR/pr-meta.json\") || { echo \"ask reason=no-scan\"; exit 0; }\nBASE_SHA=$(jq -er '.baseRefOid' \"$SNAP_DIR/pr-meta.json\") || BASE_SHA=\"\"\nif [ -n \"$BASE_SHA\" ] && git cat-file -e \"$BASE_SHA^{commit}\" 2>/dev/null; then _SCOPE=(--base \"$BASE_SHA\"); else _SCOPE=(--whole-tree); fi\npython -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" scan --repo . --head \"$PR_HEAD_SHA\" \"${_SCOPE[@]}\" --out \"$RUN_DIR/code-scan.json\" --text > \"$RUN_DIR/code-scan.txt\" || { echo \"ask reason=no-scan\"; exit 0; }\npython \"$PLUGIN_ROOT/bin/code_safety_status.py\" check-scan --scan \"$RUN_DIR/code-scan.json\" --head \"$PR_HEAD_SHA\" || echo \"ask reason=check-failed\""
-    },
     "b069915cc3aadc42e576daf0a68023dcb3c43e895bcbbf3a6b3b6b53aae53647": {
       "kind": "block",
       "src": "agents/shepherd.md:70"
@@ -5671,10 +5743,6 @@
     "b0a36c11342d9d8ea04b57012a4b5c13300507ad5a487658a35b81bb6eaf4164": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-prelude.md:108"
-    },
-    "b0a86a0fd6246f6f966532dc2f38862bf14a6c87daae7574a59d7efd605c2165": {
-      "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
     },
     "b0a88bc3c0e42304084efa1d73ef1df59cbdc85f4198c0f7f3d781725471c9f2": {
       "kind": "command",
@@ -5715,6 +5783,10 @@
     "b20706c4fb8c7ca905ac132642eb761daf7abcc8336d0302305728926e98fd09": {
       "kind": "block",
       "src": "skills/release/modes/changelog-contributors.md:11"
+    },
+    "b2165a70565a4ce6a29cc55cd5fcc0db28497f0f2fc2b5e1507aa1549acc7dd1": {
+      "kind": "command",
+      "src": "skills/resolve/modes/final-report.md:9"
     },
     "b223babd8fd6b8b12842f3080919f964339e03d1ebf995650378b12ac4f0bdd0": {
       "kind": "command",
@@ -5849,7 +5921,7 @@
     },
     "b5b36d069ab449537caf3e3b6ba8f3335b83bb1d89c7f7046324c0832d38b75f": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:127"
+      "src": "skills/resolve/modes/push.md:154"
     },
     "b5c4c957e0b1b97f5e7790ef3eb9dfbe55d224c418d0f9f39ba1e456adc6c859": {
       "kind": "command",
@@ -5939,7 +6011,7 @@
     },
     "b82a4426975b366914ac2dafd096a73d64da486a541d12450c392a5142c7f7ab": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:165"
+      "src": "skills/review/SKILL.md:166"
     },
     "b82f6eebbe34d229ffab855370afb05219458230d99d9de192cefb2f5b6b1b2a": {
       "kind": "command",
@@ -5976,7 +6048,7 @@
     },
     "b8b4955e1af39962a52400df448f39f3610547f1939ef928dd5025e8571e5f1f": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:155"
+      "src": "skills/resolve/modes/push.md:189"
     },
     "b8e9e46e547e7fd8f3e6ef651525702c5a75ac9189f81a26f89ad997b9dad181": {
       "kind": "block",
@@ -6048,7 +6120,7 @@
     },
     "baff6c4a3fa53289e74f68de169dde64788edbc55fcdca79089415cce8703bd4": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:159"
+      "src": "skills/resolve/modes/exec-approval.md:178"
     },
     "bb083704af2b8803bd1d5b4cc66154e7f897603b12e2e21e8d35d4c931e474f4": {
       "kind": "command",
@@ -6064,7 +6136,7 @@
     },
     "bb42d19ef280d05840bdc32116c28a22be9fc810e565bc8de8cb66ffd368d448": {
       "kind": "command",
-      "src": "skills/resolve/SKILL.md:108"
+      "src": "skills/resolve/SKILL.md:109"
     },
     "bb4583fae030da7947aa26847788d88dd89f508a8b84cc82d558b9120f6fe84c": {
       "kind": "command",
@@ -6146,7 +6218,7 @@
     },
     "bd42a4926fc01996507141e826afc5737a998b4c00679013ad60ce652aea6299": {
       "kind": "block",
-      "src": "skills/review/templates/agent-prompts.md:61",
+      "src": "skills/review/templates/agent-prompts.md:88",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r SNAP_DIR < \"${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}\" 2>/dev/null || SNAP_DIR=\"\"\nIFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\" 2>/dev/null || RUN_DIR=\"\"\nIFS= read -r REPORT_DIR < \"${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}\" 2>/dev/null || REPORT_DIR=\"\"\n[ -d \"$REPORT_DIR\" ] || { echo \"! BLOCKED \u2014 report-dir sentinel missing; code-safety record not written\"; exit 1; }\njq -r '.headRefOid // empty' \"$SNAP_DIR/pr-meta.json\" > \"$RUN_DIR/pr-head-oid.txt\" 2>/dev/null\nIFS= read -r _OID < \"$RUN_DIR/pr-head-oid.txt\" 2>/dev/null || _OID=\"\"\nif jq -e '.isCrossRepository == false' \"$SNAP_DIR/pr-meta.json\" >/dev/null 2>&1; then\n    python \"$PLUGIN_ROOT/bin/code_safety_status.py\" write --same-repo --head \"$_OID\" --out \"$REPORT_DIR/code-safety.json\"\nelif [ -s \"$RUN_DIR/code-scan.json\" ]; then\n    IFS= read -r _DEC < \"$RUN_DIR/pr-code-decision.txt\" 2>/dev/null || _DEC=\"\"\n    if [ \"$_DEC\" = auto ]; then _DECISION=(--run-decision auto); else _DECISION=(); fi\n    python \"$PLUGIN_ROOT/bin/code_safety_status.py\" write --scan \"$RUN_DIR/code-scan.json\" \"${_DECISION[@]}\" --out \"$REPORT_DIR/code-safety.json\"\nelse\n    python \"$PLUGIN_ROOT/bin/code_safety_status.py\" write --unscanned --head \"$_OID\" --out \"$REPORT_DIR/code-safety.json\"\nfi || echo \"\u26a0 code-safety record not written \u2014 resolve will ask its own PR-code question\""
     },
     "bd4791ddea9591c3bc8a17c45aad3ef930df7e28843549915c55520ccb5d3fa9": {
@@ -6163,7 +6235,7 @@
     },
     "bda41d5e2f6abd8f5b8fb488d3a3dad3d5b2b16f48aeeb215033484bc7698315": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:104"
+      "src": "skills/resolve/modes/push.md:131"
     },
     "be38505e16b18094e0832d9ec2b242a4cb22d81260b75cd91e6934376f47e1e4": {
       "kind": "command",
@@ -6179,7 +6251,7 @@
     },
     "be89be0c01fa4b916a8b700394e095271dd3ba273efe1690e55c8f27b5db6a44": {
       "kind": "block",
-      "src": "skills/review/templates/agent-prompts.md:52"
+      "src": "skills/review/templates/agent-prompts.md:79"
     },
     "be8b4367b92dd4426c7a7a90099e4787340181c62c3cff8ea101981c180554cf": {
       "kind": "command",
@@ -6198,13 +6270,17 @@
       "kind": "command",
       "src": "skills/resolve/modes/report-intake.md:13"
     },
+    "be9127fd3752e70415de79e111827b5f7a4901a6621048311dd8706cedcb1432": {
+      "kind": "command",
+      "src": "skills/resolve/modes/item-selection.md:289"
+    },
     "bea1c6c7365567e64b112b24efdab3bc1555dc95c1a98c1ec22deefc2514527f": {
       "kind": "block",
       "src": "skills/release/modes/gather-changes.md:153"
     },
     "beda4dcbc41f832197504fcbc313015d140592e2f71b4a6ed149fcd50c7ca2f2": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:109"
+      "src": "skills/resolve/modes/final-report.md:117"
     },
     "bef7d92c2dc203c853422af459cd48ecaaaac60495cb09ab34e05dde0cf12b0d": {
       "kind": "command",
@@ -6247,6 +6323,10 @@
       "kind": "command",
       "src": "skills/release/modes/delegation.md:116"
     },
+    "c003e52f597fe7f614306d232a37964a1347d1bac9a411719cd7e59890436daf": {
+      "kind": "command",
+      "src": "skills/review/templates/agent-prompts.md:52"
+    },
     "c011a306aebe328b8ece9eadff26888318fd137edfb5ac3828f530966bae9e8a": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase2.md:151"
@@ -6263,11 +6343,6 @@
     "c023d303695f050252a21ca30bb23fe5f14be686aedf00a70fabc0ebcb96f326": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase2.md:372"
-    },
-    "c0262f950e7155c2fa596d7ebae2d3a016ee58fc61e54453072ab0f941b484dc": {
-      "kind": "command",
-      "src": "skills/resolve/modes/preflight.md:80",
-      "template": "python \"${CLAUDE_PLUGIN_ROOT}/bin/parse-skill-flags.py\" --flags no-codemap,codemap,worktree,no-challenge --value-flags agent --preserve-whitespace --keep-state resolve -- \"$ARGUMENTS\" >/dev/null || exit 1"
     },
     "c03e5f01ccc740a2822dad366ae1a66b9dfa01e25211dbc663769bdcf58c863d": {
       "kind": "command",
@@ -6405,7 +6480,7 @@
     },
     "c4207049c5a09f2f67008a0fa466d905c3005f35acfd574f6a4a29513c80129d": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:268",
+      "src": "skills/resolve/SKILL.md:269",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r _PR_NUMBER < \"${TMPDIR:-/tmp}/resolve-pr-number-${CSID}\" 2>/dev/null || _PR_NUMBER=\"n/a\"\nIFS= read -r _IMPL_DIR < \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" 2>/dev/null || _IMPL_DIR=\"n/a\"\nIFS= read -r _PUSH_AUTH < \"${TMPDIR:-/tmp}/resolve-push-auth-${CSID}\" 2>/dev/null || _PUSH_AUTH=\"unset\"\nIFS= read -r _POST_PR < \"${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}\" 2>/dev/null || _POST_PR=\"skip\"\nIFS= read -r _PUSH_STATUS < \"${TMPDIR:-/tmp}/resolve-push-status-${CSID}\" 2>/dev/null || _PUSH_STATUS=\"none\"\n_PRESERVE=\"pr=${_PR_NUMBER}, items-implemented, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv, push-auth=${_PUSH_AUTH} (Step 3d answer), post-pr=${_POST_PR}, push-status=${_PUSH_STATUS} (file resolve-push-status, Step 10 overwrites); next: lint/push/report\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-sentinel resolve-keep-items \"oss:resolve\" \"lint-qa (after implementation loop)\" \"$_IMPL_DIR\" \"${_PRESERVE}; phase-reports=${_IMPL_DIR}/phase2-envelope-*.json, commits=${_IMPL_DIR}/phase2-commits.jsonl, c1-summaries=${_IMPL_DIR}/c1-item-summary.tsv\" \"resume: re-cat own agent-resolution.md and modes/lint-qa-gate.md; lint/QA gate (Step 9) \u2192 push intent recorded at Step 3d; Step 10 still asks the git-push confirmation (modes/push.md), unless the recorded intent is don't push \u2192 final report (Step 11)\" -- calls_ahead=30 \"drop=implementation summaries\"\nIFS= read -r _OSS_SHARED < \"${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}\" 2>/dev/null || _OSS_SHARED=\"\"\npython \"$PLUGIN_ROOT/bin/compaction_boundary.py\" \"$_OSS_SHARED\"\nIFS= read -r _OSS_RESOLVE < \"${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}\" 2>/dev/null || _OSS_RESOLVE=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/lint-qa-gate.md\""
     },
     "c421d5f3249ea0c2724ac552a37a3550c0e7eb49abe200f6fe9d5122c61c3385": {
@@ -6490,7 +6565,7 @@
     },
     "c69bbbf90a7b907259102f527ad7113be9aaacc943e214687f36d0b7fbcb9376": {
       "kind": "command",
-      "src": "skills/resolve/SKILL.md:146"
+      "src": "skills/resolve/SKILL.md:147"
     },
     "c71cdaec3665a174cbe286d29a2212fd5847bea7bab5cce363462ce355568446": {
       "kind": "command",
@@ -6551,7 +6626,7 @@
     },
     "c8808b9cdc1b59a2d9ffb68ac7cb9336c6ab094f1fee0b4fbfe3bee5fda4b763": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:200",
+      "src": "skills/resolve/SKILL.md:201",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _OSS_RESOLVE < \"${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}\" 2>/dev/null || _OSS_RESOLVE=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/exec-approval.md\""
     },
     "c884e05afeb6ba368a65ebff4fa3c5d8fd78a4c4dc2e05a3b2989bf93a80c6b9": {
@@ -6660,7 +6735,7 @@
     },
     "cca7742a956758c0e1e4bf3d5b19519bbc149165616469bb9f5874221baf5b3b": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:162"
+      "src": "skills/resolve/modes/push.md:196"
     },
     "ccb85ee044e5c25de4b13909d85e8086d9fa587cd3f7ddad767e3124cbf15459": {
       "kind": "block",
@@ -6845,7 +6920,7 @@
     },
     "d238463e9e0859e11b14634aa4e81b05294b7730d0382a443e35f8de33ee829c": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "d24a3961fd6c0627fee7a84a1b315f8c8fe748518dbabd3e5f9dac0494a4c1d2": {
       "kind": "block",
@@ -6853,7 +6928,7 @@
     },
     "d253e10191a575ea47bf5acd0c9d6c34875b73c637b7836d451b5019d0f381dc": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:109"
+      "src": "skills/resolve/modes/final-report.md:117"
     },
     "d25685cbe169469379bae319efa493bc494a25602ff10f3a872e3f0fa4116433": {
       "kind": "command",
@@ -6877,7 +6952,7 @@
     },
     "d3b130e5fdd04e3b2acef447e06915dd08da45fb08b62d75d3e8b8d9e485e8a4": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:120"
+      "src": "skills/resolve/modes/push.md:147"
     },
     "d3b2f6e901f7ae8097e1a7ae43bc2091029176fe327da992396ad1c2c498a884": {
       "kind": "command",
@@ -6889,7 +6964,7 @@
     },
     "d41405dc8f8ddd5c55684560c0631ceab19cfadf8cca823296c8d938fa35d844": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:104"
+      "src": "skills/resolve/modes/push.md:131"
     },
     "d416cc7aded90b72bf0cf62ea65e32dee0e79ccb37957eac8051f1e573c3ecbc": {
       "kind": "command",
@@ -6897,7 +6972,7 @@
     },
     "d479e313124d51b30aeccc9b8a8d77e48b2e685ac30870bb42621b47f791878b": {
       "kind": "block",
-      "src": "skills/resolve/modes/item-selection.md:338"
+      "src": "skills/resolve/modes/item-selection.md:358"
     },
     "d48a94eae3a3f623684ef00027da28e1bea79cf44f9cad2b4fefa5f1fd3167b3": {
       "kind": "command",
@@ -6990,7 +7065,11 @@
     },
     "d7e32ba2962c89a0c3689433c70aab282c4ea359c6d154715b3e8b6ba4831a0a": {
       "kind": "command",
-      "src": "skills/resolve/SKILL.md:268"
+      "src": "skills/resolve/SKILL.md:269"
+    },
+    "d7fac6d9dc2a6087c505aff554c6d468ded098f85a91625bb38393433eaad500": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:178"
     },
     "d810b831031b2fb0cfb65e09d6b68c6b7e03e1273054d89cf2065e4bb9f14aa1": {
       "kind": "command",
@@ -7027,7 +7106,7 @@
     },
     "d8c23230a469f41d54b81a0c85bf6ed90f494850c7d5ab1860ec2ab97a2f8f21": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:165"
+      "src": "skills/review/SKILL.md:166"
     },
     "d8cb3918acf7410458d503a72954a13a81fc40825c8bcd54ae3537d9fd63d914": {
       "kind": "command",
@@ -7060,6 +7139,10 @@
     "d988133de7bc6ab4c518bfa8e83c87da13544003fae251f256ea50d7d70321e2": {
       "kind": "command",
       "src": "skills/review/modes/preflight.md:253"
+    },
+    "d997fc1c6b98c9f88f4de9ce7469a8a44ae572c277177c80c6f6e435c4b3ef48": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "d9d3e1d0c72fa04d9e561691c8efb73a4c411a5e2468dd2df74d1920eeae28c8": {
       "kind": "command",
@@ -7166,7 +7249,7 @@
     },
     "dc7d3122ef84a96328167f92c9ab3680d8aa860ce30376e6002a077acb3fb33a": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:61"
+      "src": "skills/review/templates/agent-prompts.md:88"
     },
     "dc8e319cdd98319eb54e39184728ef562ac176902c238a96aee8552a5da06eb0": {
       "kind": "command",
@@ -7202,7 +7285,7 @@
     },
     "ddb8702c8af4a865fe73b13e688adcbb4e292aaafa2751cb4ec5431c0d472c3f": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:325",
+      "src": "skills/resolve/SKILL.md:326",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _OSS_RESOLVE < \"${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}\" 2>/dev/null || _OSS_RESOLVE=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/comment-dispatch.md\""
     },
     "ddf5f879e93f66d98ee1cf6d5fd83aa4c062a45b8a508537e155a5dcf908ef2b": {
@@ -7215,7 +7298,7 @@
     },
     "de1cfb4696ea51d6b405a6f7a8184e7bf580c0dbeaa76aa9cbd30cfc931e3757": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:22"
+      "src": "skills/review/templates/agent-prompts.md:24"
     },
     "de1e375564cd717a045a81070a96d72bd28ab830cf1543457166980611161e09": {
       "kind": "command",
@@ -7273,7 +7356,7 @@
     },
     "df6d3c613b0565ffca7b93e5c61ddd129a4c5fa57b5c2f4f19cac69e93a993b2": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:135"
+      "src": "skills/resolve/modes/final-report.md:143"
     },
     "df9a814cdcc137852670fd9b9b21dd72e74d2e352778e0d1611bbd38bd387d32": {
       "kind": "command",
@@ -7447,7 +7530,7 @@
     },
     "e55f3d748309f49bf7a9a7f45369939cc6f6a20687bade734eae449142077c09": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:180"
+      "src": "skills/review/SKILL.md:181"
     },
     "e59b4c2c120ea94eff52e95f302fa9188550a31eeef3f5ac0bf5167392f8ea5e": {
       "kind": "command",
@@ -7501,6 +7584,10 @@
     "e697a7a9d11d30dfcd4aa09a67d14e15d83cbb3997f02af2c6c73edf46357d60": {
       "kind": "command",
       "src": "skills/release/modes/scope-validation.md:102"
+    },
+    "e70102c33f343e94c5366ac805accfb295c2e3b782f02fbdf76fcce639d01fbe": {
+      "kind": "command",
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "e756c414d4903238414bd8ffee30502bf6450a958919fe38f4d05ce8f56c8860": {
       "kind": "command",
@@ -7581,6 +7668,11 @@
       "src": "skills/review/modes/fill-gaps.md:70",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _REPORT_DIR < \"${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}\" 2>/dev/null || _REPORT_DIR=\"\"\n[ -n \"$_REPORT_DIR\" ] || { echo \"! BLOCKED \u2014 report-dir sentinel missing; cannot check fill-gaps carry-over\"; exit 1; }\npython \"$PLUGIN_ROOT/bin/fill_gaps_scope.py\" verify --report \"$_REPORT_DIR/review-report.md\""
     },
+    "e9a0abd11477a4e5d554b7c5dcc529b81e65f53650939ebbf787568a68038bfa": {
+      "kind": "block",
+      "src": "skills/resolve/modes/exec-approval.md:30",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r IMPL_DIR < \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" 2>/dev/null || IMPL_DIR=\"\"\nIFS= read -r PR_NUMBER < \"${TMPDIR:-/tmp}/resolve-pr-number-${CSID}\" 2>/dev/null || PR_NUMBER=\"\"\nIFS= read -r PR_HEAD_OID < \"${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}\" 2>/dev/null || PR_HEAD_OID=\"\"\nIFS= read -r BASE_REF < \"${TMPDIR:-/tmp}/resolve-base-ref-${CSID}\" 2>/dev/null || BASE_REF=\"\"\nIFS= read -r _XREPO < \"${TMPDIR:-/tmp}/resolve-is-cross-repo-${CSID}\" 2>/dev/null || _XREPO=true\nIFS= read -r REPORT_FILE < \"${TMPDIR:-/tmp}/resolve-report-file-${CSID}\" 2>/dev/null || REPORT_FILE=\"\"\nIFS= read -r _SANDBOX < \"${TMPDIR:-/tmp}/resolve-sandbox-${CSID}\" 2>/dev/null || _SANDBOX=false\n[ -n \"$IMPL_DIR\" ] || { echo \"! BLOCKED \u2014 IMPL_DIR sentinel missing; Step 3a/3b did not finish\"; exit 1; }\ncase \"$PR_NUMBER\" in ''|*[!0-9]*) _NO_PR=true ;; *) _NO_PR=false ;; esac\nIFS= read -r _PREV < \"$IMPL_DIR/exec-plan.txt\" 2>/dev/null || _PREV=\"\"\nif [ \"$_NO_PR\" = true ] || [ -z \"$PR_HEAD_OID\" ] || [ -z \"$BASE_REF\" ]; then\n    _KEEP=deferred; [ -s \"$IMPL_DIR/hooks-inspection.json\" ] && [ \"${_PREV#*hooks=ask}\" != \"$_PREV\" ] && _KEEP=ask\n    echo \"pr-code=deferred hooks=$_KEEP\" > \"$IMPL_DIR/exec-plan.txt\"; cat \"$IMPL_DIR/exec-plan.txt\"; exit 0\nfi\nif [ -e \"$IMPL_DIR/approved-hooks.txt\" ]; then\n    _HOOKS=recorded\n    IFS= read -r _HD < \"$IMPL_DIR/hooks-decision.txt\" 2>/dev/null || _HD=\"\"\n    [ \"$_HD\" != run ] || python \"$PLUGIN_ROOT/bin/resolve_commit_hooks.py\" --refresh-approval --base \"origin/$BASE_REF\" --head \"$PR_HEAD_OID\" --approved-file \"$IMPL_DIR/approved-hooks.txt\" --decision-file \"$IMPL_DIR/hooks-decision.txt\" || { : > \"$IMPL_DIR/approved-hooks.txt\"; printf 'stale\\n' > \"$IMPL_DIR/hooks-decision.txt\"; }\nelif [ -s \"$IMPL_DIR/hooks-inspection.json\" ] && [ \"${_PREV#*hooks=ask}\" != \"$_PREV\" ]; then\n    _HOOKS=ask; _RD=\"\"\n    echo \"the digest below was taken before the base merge was staged (re-inspection failed: $IMPL_DIR/hooks-refresh.err); if the merge changes the hooks, an approval of it no longer matches at the merge commit and hooks then stay disabled\" > \"$IMPL_DIR/hooks-inspection-note.txt\"\n    if python \"$PLUGIN_ROOT/bin/resolve_commit_hooks.py\" --decide --base \"origin/$BASE_REF\" --head \"$PR_HEAD_OID\" > \"$IMPL_DIR/hooks-refresh.json\" 2> \"$IMPL_DIR/hooks-refresh.err\"; then\n        jq -b -r '.decision // empty' \"$IMPL_DIR/hooks-refresh.json\" > \"$IMPL_DIR/hooks-refresh-decision.txt\" 2> /dev/null\n        IFS= read -r _RD < \"$IMPL_DIR/hooks-refresh-decision.txt\" 2>/dev/null || _RD=\"\"\n    fi\n    case \"$_RD\" in\n        ask|run) jq -b . \"$IMPL_DIR/hooks-refresh.json\" > \"$IMPL_DIR/hooks-inspection.json\" && : > \"$IMPL_DIR/hooks-inspection-note.txt\" ;;\n        none|disabled)\n            jq -b . \"$IMPL_DIR/hooks-refresh.json\" > \"$IMPL_DIR/hooks-inspection.json\"; : > \"$IMPL_DIR/hooks-inspection-note.txt\"\n            : > \"$IMPL_DIR/approved-hooks.txt\"; echo \"$_RD\" > \"$IMPL_DIR/hooks-decision.txt\"; _HOOKS=$_RD\n            jq -b -r '\"\u2192 repository hooks: \" + .decision + \" \u2014 \" + (.reason // \"\") + \"; the earlier hook question is dropped\"' \"$IMPL_DIR/hooks-inspection.json\" ;;\n    esac\nelse\n    _HOOKS=\"\"\n    if python \"$PLUGIN_ROOT/bin/resolve_commit_hooks.py\" --decide --base \"origin/$BASE_REF\" --head \"$PR_HEAD_OID\" --approved-file \"$IMPL_DIR/approved-hooks.txt\" > \"$IMPL_DIR/hooks-inspection.json\" 2> \"$IMPL_DIR/hooks-inspection.err\"; then\n        jq -b -r '.decision // empty' \"$IMPL_DIR/hooks-inspection.json\" > \"$IMPL_DIR/hooks-decision.txt\" 2>/dev/null\n        IFS= read -r _HOOKS < \"$IMPL_DIR/hooks-decision.txt\" 2>/dev/null || _HOOKS=\"\"\n    fi\n    case \"$_HOOKS\" in\n        ask) ;;\n        none|run|disabled) jq -b -r '\"\u2192 repository hooks: \" + .decision + \" \u2014 \" + (.reason // \"\")' \"$IMPL_DIR/hooks-inspection.json\" ;;\n        *) : > \"$IMPL_DIR/approved-hooks.txt\"; _HOOKS=disabled; echo \"\u26a0 hook inspection failed \u2014 hooks stay disabled for this run ($IMPL_DIR/hooks-inspection.err)\" ;;\n    esac\nfi\n_DEC=\"\"\nif [ -e \"$IMPL_DIR/pr-code-decision.txt\" ]; then\n    IFS= read -r _DEC < \"$IMPL_DIR/pr-code-decision.txt\" || [ -n \"$_DEC\" ] || _DEC=deny\nfi\nif [ \"$_XREPO\" = false ]; then\n    _PRCODE=same-repo\nelif [ \"$_DEC\" = deny ] || { { [ \"$_DEC\" = auto ] || [ \"$_DEC\" = sandbox ] || [ \"$_DEC\" = unsandboxed ]; } && [ -e \"$IMPL_DIR/code-approval.txt\" ]; }; then\n    _PRCODE=recorded\nelif [ -s \"$IMPL_DIR/code-scan.txt\" ] && [ \"${_PREV#*pr-code=ask}\" != \"$_PREV\" ]; then\n    _PRCODE=ask\nelse\n    _PRCODE=ask\n    if python -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" scan --head \"$PR_HEAD_OID\" --base \"origin/$BASE_REF\" --out \"$IMPL_DIR/code-scan.json\" --text > \"$IMPL_DIR/code-scan.txt\" 2> \"$IMPL_DIR/code-scan.err\"; then\n        if [ \"$_SANDBOX\" = true ]; then\n            python \"$PLUGIN_ROOT/bin/code_safety_status.py\" check-sandbox --scan \"$IMPL_DIR/code-scan.json\" --head \"$PR_HEAD_OID\" > \"$IMPL_DIR/code-safety-check.txt\"\n            IFS= read -r _CHECK < \"$IMPL_DIR/code-safety-check.txt\" 2>/dev/null || _CHECK=\"ask reason=check-failed\"\n            case \"$_CHECK\" in\n                sandbox)\n                    if python -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" bind --head \"$PR_HEAD_OID\" --base \"origin/$BASE_REF\" --scope run --tier sandbox --out \"$IMPL_DIR/code-approval.txt\" > /dev/null; then\n                        echo sandbox > \"$IMPL_DIR/pr-code-decision.txt\"; _PRCODE=recorded\n                        echo \"\u2192 PR code: --sandbox given; every run stays in the sandbox at head ${PR_HEAD_OID:0:12}, no question\"\n                        cat \"$IMPL_DIR/code-scan.txt\"\n                    fi ;;\n                deny*)\n                    echo deny > \"$IMPL_DIR/pr-code-decision.txt\"; _PRCODE=recorded\n                    echo \"\u26a0 --sandbox given but this host has no usable sandbox: PR code is not run, tests not run \u2014 PR-code execution not approved\" ;;\n            esac\n        else\n            case \"$REPORT_FILE\" in\n                */*) python \"$PLUGIN_ROOT/bin/code_safety_status.py\" check --status \"${REPORT_FILE%/*}/code-safety.json\" --scan \"$IMPL_DIR/code-scan.json\" --head \"$PR_HEAD_OID\" > \"$IMPL_DIR/code-safety-check.txt\" ;;\n                *) echo \"ask reason=no-review-status\" > \"$IMPL_DIR/code-safety-check.txt\" ;;\n            esac\n            IFS= read -r _CHECK < \"$IMPL_DIR/code-safety-check.txt\" 2>/dev/null || _CHECK=\"ask reason=check-failed\"\n            [ \"$_DEC\" != stale ] || _CHECK=\"ask reason=stale-approval\"\n            if [ \"$_CHECK\" = auto ] && python -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" bind --head \"$PR_HEAD_OID\" --base \"origin/$BASE_REF\" --scope run --out \"$IMPL_DIR/code-approval.txt\" > /dev/null; then\n                echo auto > \"$IMPL_DIR/pr-code-decision.txt\"; _PRCODE=auto\n                echo \"\u2192 PR code: review and this scan both found nothing at head ${PR_HEAD_OID:0:12}; runs in the sandbox, no question\"\n                cat \"$IMPL_DIR/code-scan.txt\"\n            fi\n        fi\n    else\n        echo \"scan unavailable (see $IMPL_DIR/code-scan.err): no verdict or risk level to show; decide without it\" > \"$IMPL_DIR/code-scan.txt\"\n    fi\nfi\necho \"pr-code=$_PRCODE hooks=$_HOOKS\" > \"$IMPL_DIR/exec-plan.txt\"; cat \"$IMPL_DIR/exec-plan.txt\""
+    },
     "e9b78e862b785192bd8601a035fbba00e49674a6f77d738086ad54e87e13ca55": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:117"
@@ -7596,7 +7688,7 @@
     },
     "ea539530a105d1d769c92e88b3ce888d9c39f671c31e9fedbbcb9e84820319d9": {
       "kind": "block",
-      "src": "skills/resolve/modes/exec-approval.md:121",
+      "src": "skills/resolve/modes/exec-approval.md:140",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r IMPL_DIR < \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" 2>/dev/null || IMPL_DIR=\"\"\nIFS= read -r PR_HEAD_OID < \"${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}\" 2>/dev/null || PR_HEAD_OID=\"\"\nIFS= read -r BASE_REF < \"${TMPDIR:-/tmp}/resolve-base-ref-${CSID}\" 2>/dev/null || BASE_REF=\"\"\n[ -n \"$IMPL_DIR\" ] && [ -n \"$PR_HEAD_OID\" ] && [ -n \"$BASE_REF\" ] || { echo \"! BLOCKED \u2014 IMPL_DIR, PR head or base ref sentinel missing\"; exit 1; }\nIFS= read -r _BIND_HEAD < \"$IMPL_DIR/pr-code-rebind-head.txt\" 2>/dev/null || _BIND_HEAD=\"\"; [ -n \"$_BIND_HEAD\" ] || _BIND_HEAD=\"$PR_HEAD_OID\"\npython -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" bind --head \"$_BIND_HEAD\" --base \"origin/$BASE_REF\" --scope run --out \"$IMPL_DIR/code-approval.txt\" > /dev/null || { echo \"! BLOCKED \u2014 guard bind failed; PR code stays unapproved\"; exit 1; }\necho sandbox > \"$IMPL_DIR/pr-code-decision.txt\""
     },
     "ea71cbd91575f04dbb0f123f8b28f873f9f52dd18395ba98fa6c819ac4da8891": {
@@ -7656,10 +7748,6 @@
       "kind": "command",
       "src": "skills/release/SKILL.md:147"
     },
-    "ebf5331ce61c5f605bf7a8c8f52748097c834b737685d854fd3cf65146cbd4d9": {
-      "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
-    },
     "ec1daf023c3bb76fff27dca67fde4ff6eb0565a7409446e16a276fb274eb538a": {
       "kind": "command",
       "src": "skills/analyse/SKILL.md:135"
@@ -7670,7 +7758,7 @@
     },
     "ec2ecff06f6cc5d51eff5b1e720c247921799013bec9bbb2450b2340dd864a47": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:121"
+      "src": "skills/resolve/modes/exec-approval.md:140"
     },
     "ec747e97686b129035e984ed39627610e3fc54720df35a035c2af285bed3a0fc": {
       "kind": "command",
@@ -7686,7 +7774,7 @@
     },
     "ecc08b3a904674997f13269babea953ac9bd4902afc8d80b928cfef566e92907": {
       "kind": "command",
-      "src": "skills/resolve/SKILL.md:146"
+      "src": "skills/resolve/SKILL.md:147"
     },
     "ece01f9c843e03cf5e0d36f75c6c2b3dfc24758ba075e18a8046e059895e8dcf": {
       "kind": "command",
@@ -7698,7 +7786,7 @@
     },
     "ed08de65b2b8475ae74b7804b48625b4af2ad20d03f2d7872449545b827d56aa": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:52"
+      "src": "skills/review/templates/agent-prompts.md:79"
     },
     "ed68636a5510e5652ec3569b2ed60290cd7e573fd39c4b97144ab10495fe76ac": {
       "kind": "block",
@@ -7725,12 +7813,12 @@
     },
     "ee17b5319fbb29cd489704b8a93652ca8f043d8e91ba1d3fe33708e82533be81": {
       "kind": "block",
-      "src": "skills/resolve/SKILL.md:189",
+      "src": "skills/resolve/SKILL.md:190",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _OSS_RESOLVE < \"${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}\" 2>/dev/null || _OSS_RESOLVE=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/item-selection.md\""
     },
     "ee26cbaf666ecca131ad3848b8dcd0b15fb7ad9126806bf587a72db52d1dd1a7": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:180"
+      "src": "skills/review/SKILL.md:181"
     },
     "ee48706ae40890014668a16c26ab2a753e3a362961368fd8419004c3892da8f0": {
       "kind": "command",
@@ -7763,7 +7851,7 @@
     },
     "ef280fbf74b1dc2b156bc3b7716df9cfe99883201e4085df669d60702c209ebd": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:135"
+      "src": "skills/resolve/modes/final-report.md:143"
     },
     "ef598ab555ef67fd102b35292f4629a9aae7481445af6c3fcd0ad6dd38860a7d": {
       "kind": "command",
@@ -7783,7 +7871,7 @@
     },
     "f05e67a9bbc0c29d665f275f67008a8d094c3795aac438fcfbba80cca3a62af5": {
       "kind": "command",
-      "src": "skills/resolve/SKILL.md:268"
+      "src": "skills/resolve/SKILL.md:269"
     },
     "f07a14a58013d3ff469a77daae789692748e7a28c96ac9ecfab30a8ddbbcf4e1": {
       "kind": "command",
@@ -7843,13 +7931,9 @@
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:244"
     },
-    "f23b0b083cf22d8eae3c01de1c6e412a5fddfb712f47cd1da1b725077db613ac": {
-      "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
-    },
     "f260f1c515913402b92df986caacd347050b23c91aa47b18ad1904b772aeacca": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:165"
+      "src": "skills/review/SKILL.md:166"
     },
     "f261069f2df97c7857bc4e17e608e3f1cc2b51275961b07d7bca8df639319ec8": {
       "kind": "command",
@@ -7861,7 +7945,7 @@
     },
     "f330a531b652b754de19e16ac1d2f2708ea8ceba2d05b68bc5510ef4cb61e517": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:91"
+      "src": "skills/resolve/modes/push.md:118"
     },
     "f3689ee17562b7f13048427170cfb350d615859f6936f7c0379a9df3a0696261": {
       "kind": "command",
@@ -7902,7 +7986,7 @@
     },
     "f4db486e109930d898102d1007d99010577a263a18a1a2b76b93405d4c22da3c": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:155"
+      "src": "skills/resolve/modes/push.md:189"
     },
     "f5070db5a28fc11307c4c83808abd942d7e3740291e1d8ae62ee2bfb46b366a0": {
       "kind": "command",
@@ -7942,7 +8026,7 @@
     },
     "f62d79d18e3f3645a5341019d62fe76960bf2b82a70daa9666f94949733a536f": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "f63a5a48ea66b31ea03e8384b97832743d275e5d151ecb2c43884e4c0923d014": {
       "kind": "command",
@@ -8010,11 +8094,11 @@
     },
     "f87fb8ab9eafb60d822cd78bb6dc7e83014367026f37b1752bab47c711405000": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:104"
+      "src": "skills/resolve/modes/push.md:131"
     },
     "f8b6efa13cd8fdc79ba9e0f0dac08c6d2711f0bf7eb54fafe315b73a8caf03c5": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "f8bcdf6fa9cc2cc3ebad9ef970ba268bd581bc3976288d8a9bdda461cf25b9dd": {
       "kind": "command",
@@ -8136,7 +8220,7 @@
     },
     "fb4771936bba7ae327ca5ac21cff6826dad1398c2e19043582a5935774475995": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:28"
+      "src": "skills/resolve/modes/exec-approval.md:30"
     },
     "fb47eb43ce9ac658f4677a2c232c52ede3a931ed9dd30480d42e98de2fc9ac82": {
       "kind": "command",
@@ -8188,7 +8272,7 @@
     },
     "fc0d3c9c64455e70f3fb7b9e47de135672fca18686ca36f6ae7dea47934a0116": {
       "kind": "command",
-      "src": "skills/review/templates/agent-prompts.md:61"
+      "src": "skills/review/templates/agent-prompts.md:88"
     },
     "fc1d2bfe02a184682f69d5d28b099c3d7cd150d5dd4583c749a219565ada9b9a": {
       "kind": "command",
@@ -8285,11 +8369,15 @@
     },
     "fe67a93529ab1cfdb3c506285d1eeb8d4ed3603f8096aed53f48edffd3e7f616": {
       "kind": "command",
-      "src": "skills/resolve/modes/exec-approval.md:121"
+      "src": "skills/resolve/modes/exec-approval.md:140"
     },
     "fe787fd6a23acfad792e740d17afa0b17806879b8cc364d1e9ead8eb9df32391": {
       "kind": "command",
       "src": "skills/analyse/SKILL.md:202"
+    },
+    "fe8cb23f6166b613c0c560806c1f5a08d945211f2c36a5adcce050e0d376181a": {
+      "kind": "command",
+      "src": "skills/review/templates/agent-prompts.md:7"
     },
     "fe9b78b05079fb386560fb4cd40b6bc4c668abe2a6b2976d7e39ef8656b1c7e4": {
       "kind": "command",
@@ -8323,6 +8411,11 @@
       "kind": "command",
       "src": "skills/resolve/modes/preflight.md:80"
     },
+    "ff6d2dc34e9429aa26b487f9bb3f839ac0a71d7cb325a28145c27d188832effe": {
+      "kind": "block",
+      "src": "skills/review/templates/agent-prompts.md:52",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r SNAP_DIR < \"${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}\" 2>/dev/null || SNAP_DIR=\"\"\nIFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\" 2>/dev/null || RUN_DIR=\"\"\n[ -n \"$SNAP_DIR\" ] && [ -n \"$RUN_DIR\" ] || { echo \"! BLOCKED \u2014 snapshot or run-dir sentinel missing\"; exit 1; }\nPR_HEAD_SHA=$(jq -er '.headRefOid' \"$SNAP_DIR/pr-meta.json\") || exit 1\npython \"$PLUGIN_ROOT/bin/code_safety_status.py\" check-sandbox --scan \"$RUN_DIR/code-scan.json\" --head \"$PR_HEAD_SHA\" > \"$RUN_DIR/code-safety-check.txt\" || { echo \"! BLOCKED \u2014 scan check failed; no sandbox approval\"; exit 1; }\nIFS= read -r _CHECK < \"$RUN_DIR/code-safety-check.txt\" 2>/dev/null || _CHECK=\"\"\n[ \"$_CHECK\" = sandbox ] || { echo \"! BLOCKED \u2014 sandbox decision is ($_CHECK); no approval\"; exit 1; }\ncase \"$(jq -r '.whole_tree' \"$RUN_DIR/code-scan.json\")\" in\n    true) _BASE=(--whole-tree) ;;\n    false)\n        SCAN_BASE=$(jq -er '.base' \"$RUN_DIR/code-scan.json\") || exit 1\n        _BASE=(--base \"$SCAN_BASE\") ;;\n    *) echo \"! BLOCKED \u2014 scan scope unavailable\"; exit 1 ;;\nesac\njq -je 'if type == \"array\" and length > 0 and all(.[]; type == \"string\" and index(\"\\u0000\") == null) and .[0] != \"\" then .[] + \"\\u0000\" else error(\"invalid command argument array\") end' \"$RUN_DIR/code-command.json\" > \"$RUN_DIR/code-command.argv\" || exit 1\nPR_CODE_COMMAND=()\nwhile IFS= read -r -d '' _ARG; do PR_CODE_COMMAND+=(\"$_ARG\"); done < \"$RUN_DIR/code-command.argv\"\npython -I \"$PLUGIN_ROOT/bin/untrusted_code_guard.py\" bind --repo . --head \"$PR_HEAD_SHA\" \"${_BASE[@]}\" --tier sandbox --out \"$RUN_DIR/code-approval.txt\" -- \"${PR_CODE_COMMAND[@]}\" && { echo sandbox > \"$RUN_DIR/pr-code-decision.txt\"; exit 0; }"
+    },
     "ff7c2f8599e8f9d476c1cf4d3e3cbeae8c5324a626ee750d23b0327c9e6d102d": {
       "kind": "command",
       "src": "skills/analyse/SKILL.md:202"
@@ -8350,6 +8443,6 @@
       "src": "skills/resolve/modes/preflight.md:14"
     }
   },
-  "plugin": "cc_oss@0.67.0",
+  "plugin": "cc_oss@0.68.0",
   "schema": 2
 }

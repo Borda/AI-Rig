@@ -13,8 +13,9 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 
 ## Usage
 
-New handoffs set ``presentation_version=15`` for substantive outcome judgments, closing recommendations, readable
-prose, confidence tables, linked artifacts, and verification evidence in rows with other paths outside tables.
+New assessed PR reviews use presentation 16 to open with the source-bound PR subject. Other new handoffs use
+presentation 15. Both include substantive outcome judgments, closing recommendations, readable prose, confidence
+tables, linked artifacts, and verification evidence in rows with other paths outside tables.
 New writers set ``action_policy=owned`` for concrete follow-ups or ``best-way-forward`` for one unblocking option.
 Unmarked handoffs retain their exact presentation.
 Run ``render`` after gates and handoff creation, then run ``check``
@@ -551,8 +552,10 @@ def challenge_report_path(report_root: Path, report: str) -> Path:
     return target
 
 
-def _validate_source_coverage(payload: dict[str, Any], branch: str, represented_source_ids: set[str]) -> set[str]:
-    """Require declared source records to match table representation exactly."""
+def _validate_source_coverage(
+    payload: dict[str, Any], branch: str, represented_source_ids: set[str], *, derive_counts: bool = False
+) -> set[str]:
+    """Check source identity coverage and optionally fill omitted draft counts from those identities."""
     raw_records = payload.get("source_records")
     if not isinstance(raw_records, list):
         raise HandoffError("source-records-not-list")
@@ -565,12 +568,14 @@ def _validate_source_coverage(payload: dict[str, Any], branch: str, represented_
             raise HandoffError(f"source-record-id-duplicate:{source_id}")
         source_ids.add(source_id)
 
-    coverage = _require_object(payload.get("source_coverage"), "source-coverage")
     expected_counts = {
         "source_records_total": len(source_ids),
         "represented_source_records_total": len(represented_source_ids),
         "omitted_source_records_total": len(source_ids - represented_source_ids),
     }
+    if derive_counts:
+        payload.setdefault("source_coverage", expected_counts)
+    coverage = _require_object(payload.get("source_coverage"), "source-coverage")
     for key, expected in expected_counts.items():
         if coverage.get(key) != expected:
             raise HandoffError(f"source-coverage-count-mismatch:{key}")
@@ -614,6 +619,30 @@ def _validate_unavailable_review_verification(
         raise HandoffError("unavailable-review-verification-must-be-not-applicable")
 
 
+def pr_publication_action(row_ids: set[str]) -> dict[str, str]:
+    """Allocate the post-delivery approval step independently of user-supplied finding IDs."""
+    row_id = "pr-worktree-publication"
+    while row_id in row_ids:
+        row_id += "-next"
+    return {
+        "row_id": row_id,
+        "owner": "code-remediate",
+        "item": "Local PR commit is ready for publication review.",
+        "next_action": (
+            "Verify the commit and destination from the delivery worktree, then ask Approve / Deny. "
+            "On approval and runtime authorization, Codex pushes the commit and verifies the remote branch."
+        ),
+    }
+
+
+def is_pr_publication_action(item: object, action: dict[str, str]) -> bool:
+    """Recognize a generated publication step, including its earlier wording in retained handoffs."""
+    return item == action or item == {
+        **action,
+        "next_action": "Verify the delivered commit and destination, then ask Approve / Deny to push from the worktree.",
+    }
+
+
 def _validate_remaining(payload: dict[str, Any], row_ids: set[str], branch: str, *, owned_actions: bool) -> None:
     """Bind every compact unresolved item to a unique owner and next action."""
     remaining = payload.get("remaining")
@@ -632,7 +661,14 @@ def _validate_remaining(payload: dict[str, Any], row_ids: set[str], branch: str,
             _source_rating_version(table) is not None for table in payload["tables"]
         )
         if row_ids and row_id not in row_ids and not current_review:
-            raise HandoffError(f"remaining-row-id-unknown:{row_id}")
+            if not (
+                owned_actions
+                and branch == "standard"
+                and payload["skill"] == "code-remediate"
+                and payload.get("commit_disposition", {}).get("status") == "committed"
+                and is_pr_publication_action(item, pr_publication_action(row_ids))
+            ):
+                raise HandoffError(f"remaining-row-id-unknown:{row_id}")
         remaining_ids.add(row_id)
     next_steps = set(_require_string_list(payload.get("next_steps"), "next-steps"))
     if branch == "closed" and next_steps:
@@ -768,40 +804,79 @@ def validate_handoff(payload: object) -> dict[str, Any]:
     return _validate_handoff(payload)
 
 
+def _review_pr_subject(handoff: dict[str, Any]) -> tuple[str, str]:
+    """Read the base repository, number and display-safe title from the source-bound PR snapshot link."""
+    values = [
+        row["cells"][1]
+        for table in handoff["tables"]
+        if table["heading"] == "PR Snapshot"
+        for row in table["rows"]
+        if row["cells"][0] == "PR"
+    ]
+    # The canonical snapshot escapes brackets and HTML in the collected title. Keep those escapes as text.
+    label = re.fullmatch(
+        r"\[#(?P<number>[1-9][0-9]*) — (?P<title>[^<>\[\]]+)\]\("
+        r"(?P<url>(?i:https://github[.]com)/(?P<repo>[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*)"
+        r"/pull/(?P=number))\)",
+        values[0] if len(values) == 1 else "",
+    )
+    if not label:
+        raise HandoffError("review-pr-subject-invalid")
+    title = " ".join(re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", label["title"]).split())
+    if not title:
+        raise HandoffError("review-pr-subject-invalid")
+    return f"Review PR {label['repo']}#{label['number']} — {title}", label["url"]
+
+
 def _validate_handoff(
-    payload: object, *, allow_empty_remediation: bool = False, owned_actions: bool = False
+    payload: object,
+    *,
+    allow_empty_remediation: bool = False,
+    owned_actions: bool = False,
+    derive_source_counts: bool = False,
 ) -> dict[str, Any]:
     """Validate a handoff while preserving the original presentation's empty-result rule."""
     handoff = _require_object(payload, "handoff")
     presentation_version = handoff.get("presentation_version")
-    if type(presentation_version) is int and presentation_version in {8, 9, 10, 11, 12, 13, 14, 15}:
+    if type(presentation_version) is int and presentation_version in {8, 9, 10, 11, 12, 13, 14, 15, 16}:
         # Only terminal layout changes; use the existing branch's complete factual contract.
         previous = 7 if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed" else 3
         if handoff.get("skill") == "code-remediate":
             previous = 6
         base = {**handoff, "presentation_version": previous}
         if "action_policy" in base:
-            if presentation_version != 15 or base.pop("action_policy") not in ("owned", "best-way-forward"):
+            if presentation_version not in {15, 16} or base.pop("action_policy") not in ("owned", "best-way-forward"):
                 raise HandoffError("handoff-action-policy-invalid")
             owned_actions = True
         _validate_handoff(
             base,
             owned_actions=owned_actions,
+            derive_source_counts=derive_source_counts,
             allow_empty_remediation=handoff.get("skill") == "code-remediate"
             and presentation_version in {11, 12, 13, 14, 15},
         )
+        if presentation_version == 16:
+            if handoff["skill"] != "code-review" or handoff["branch"] != "assessed":
+                raise HandoffError("handoff-presentation-version-invalid")
+            _review_pr_subject(handoff)
         if handoff.get("action_policy") == "best-way-forward" and (
             handoff["branch"] in {"closed", "caller-contract"} or len(handoff["next_steps"]) != 1
         ):
             raise HandoffError("best-way-forward-requires-one-step")
+        if derive_source_counts:
+            handoff.setdefault("source_coverage", base["source_coverage"])
         return handoff
     expected_fields = HANDOFF_FIELDS if presentation_version is None else HANDOFF_FIELDS | {"presentation_version"}
     if "commit_disposition" in handoff:
         expected_fields = expected_fields | {"commit_disposition"}
+    if derive_source_counts and "source_coverage" not in handoff:
+        expected_fields = expected_fields - {"source_coverage"}
     if "child_runs" in handoff and handoff.get("skill") == "challenge-resolve" and presentation_version == 3:
         expected_fields = expected_fields | {"child_runs"}
     if set(handoff) != expected_fields:
-        raise HandoffError("handoff-fields-mismatch")
+        missing = ",".join(sorted(expected_fields - handoff.keys()))
+        unexpected = ",".join(sorted(handoff.keys() - expected_fields))
+        raise HandoffError(f"handoff-fields-mismatch:missing={missing}:unexpected={unexpected}")
     presentation_versions = {2, 3}
     if handoff.get("skill") == "code-remediate":
         presentation_versions.update({4, 5, 6})
@@ -811,7 +886,7 @@ def _validate_handoff(
         type(presentation_version) is not int or presentation_version not in presentation_versions
     ):
         raise HandoffError("handoff-presentation-version-invalid")
-    if handoff.get("schema_version") != SCHEMA_VERSION:
+    if type(handoff.get("schema_version")) is not int or handoff["schema_version"] != SCHEMA_VERSION:
         raise HandoffError("handoff-schema-version-invalid")
     skill = _require_string(handoff.get("skill"), "skill")
     if skill not in SUPPORTED_SKILLS:
@@ -853,7 +928,7 @@ def _validate_handoff(
         ["not-run", *(["N/A"] * 7), "chunk-only", "chunks/results.json"]
     ]:
         raise HandoffError("challenge-child-runs-scope-invalid")
-    _validate_source_coverage(handoff, branch, represented_sources)
+    _validate_source_coverage(handoff, branch, represented_sources, derive_counts=derive_source_counts)
     _validate_verification(handoff)
     _validate_commit_disposition(handoff)
     _validate_unavailable_review_verification(handoff, skill, branch, presentation_version)
@@ -1215,6 +1290,36 @@ def _validate_selection(payload: object) -> tuple[dict[str, Any], list[dict[str,
     return inventory, selectable, counts
 
 
+def _selection_pr_subject(run: Path) -> str | None:
+    """Identify the base PR for chat from this run's collector metadata."""
+    path = run / "pr" / "pr.json"
+    if path.parent.is_symlink() or path.is_symlink() or not path.is_file():
+        return None
+    # Only the selection CLI needs the collector's URL grammar. Renderers are also loaded as standalone files.
+    from create_run import PR_URL_PATTERN, same_pr_url
+
+    try:
+        pr = _load_json(path)
+        routing = path.with_name("pr-routing.json")
+        if (routing.exists() or routing.is_symlink()) and not same_pr_url(
+            _load_json(routing).get("pr_url"), pr.get("url")
+        ):
+            return None
+    except HandoffError:
+        return None
+    url = pr.get("url")
+    target = PR_URL_PATTERN.fullmatch(url) if isinstance(url, str) else None
+    if not target or type(pr.get("number")) is not int or str(pr["number"]) != target["number"]:
+        return None
+    identity = f"Remediate PR {target['owner']}/{target['repository']}#{target['number']}"
+    title = pr.get("title")
+    if isinstance(title, str):
+        title = " ".join(re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", title).split())
+        if title:
+            return f"{identity} — {title}"
+    return identity
+
+
 def render_selection(payload: object) -> str:
     """Render a validated inventory as a short overview with named evidence groups."""
     if isinstance(payload, dict) and payload.get("presentation_version") == 5:
@@ -1511,6 +1616,11 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
     if handoff["branch"] == "caller-contract":
         return handoff["caller_contract"]["output"]
 
+    review_subject = None
+    if handoff.get("presentation_version") == 16:
+        review_subject = _review_pr_subject(handoff)
+        layout_version = 15  # version 16 renders through the version 15 layout, with the PR subject added
+        handoff = {**handoff, "presentation_version": layout_version}
     if handoff.get("presentation_version") in {8, 9, 10, 11, 12, 13, 14, 15}:
         previous = 7 if handoff["skill"] == "code-review" and handoff["branch"] == "assessed" else 3
         if handoff["skill"] == "code-remediate":
@@ -1528,6 +1638,7 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
                 confidence_table=handoff["presentation_version"] in {14, 15},
                 actionable_summary=handoff["presentation_version"] == 15,
                 owned_actions="action_policy" in handoff,
+                review_subject=review_subject,
             ),
             readable_breaks=handoff["presentation_version"] in {13, 14, 15},
             keep_verification_table=handoff["presentation_version"] in {13, 14, 15},
@@ -1621,6 +1732,7 @@ def _render_v2_handoff(
     confidence_table: bool = False,
     actionable_summary: bool = False,
     owned_actions: bool = False,
+    review_subject: tuple[str, str] | None = None,
 ) -> str:
     """Render a plain-English-first report while retaining the validated machine fields."""
     outcome = handoff["outcome"]
@@ -1655,12 +1767,18 @@ def _render_v2_handoff(
                 raise HandoffError("review-report-details-mismatch")
     # The authored judgment is the opening; a label-only title adds no decision for the reader.
     lines = [plain_summary] if actionable_summary else [plain_summary, "", "**Outcome**", "", outcome["title"]]
+    if review_subject:
+        subject, url = review_subject
+        lines = [subject, "", f"{plain_summary} [View pull request]({url})"]
     table_actions: dict[str, dict[str, str]] = {}
     if technical_summary:
         lines.extend(("", technical_summary))
     if handoff["tables"]:
         lines.extend(("", "**Results**"))
         for table in handoff["tables"]:
+            if review_subject and table["heading"] == "PR Snapshot":
+                # Its source-bound identity and URL have moved to the opening; preserve the original machine rows.
+                table = {**table, "rows": [row for row in table["rows"] if row["cells"][0] != "PR"]}
             if actionable_summary and "Next action" in table["columns"]:
                 # Move authored recommendations, not inferred tasks. Canonical machine rows remain untouched.
                 action_index = table["columns"].index("Next action")
@@ -1852,7 +1970,7 @@ def render_files(handoff_path: Path, final_path: Path, validation_path: Path) ->
     """Render and bind a new handoff, preserving the bytes of a previously validated historical presentation."""
     _require_siblings(handoff_path, final_path, validation_path)
     handoff = _load_json(handoff_path)
-    default_policy = handoff.get("presentation_version") == 15 and "action_policy" not in handoff
+    default_policy = handoff.get("presentation_version") in {15, 16} and "action_policy" not in handoff
     if default_policy:
         if validation_path.exists():
             return check_files(handoff_path, final_path, validation_path)
@@ -1943,7 +2061,8 @@ def main() -> int:
                 and arguments.input.samefile(arguments.out_scope)
             ):
                 raise HandoffError("selection-output-aliases-input-or-symlink")
-            rendered = render_selection(_load_json(arguments.input)).encode("utf-8")
+            inventory = _load_json(arguments.input)
+            rendered = render_selection(inventory).encode("utf-8")
             if arguments.check:
                 if not arguments.out_scope.is_file() or arguments.out_scope.read_bytes() != rendered:
                     raise HandoffError("selection-render-mismatch")
@@ -1954,6 +2073,10 @@ def main() -> int:
                 "input_sha256": _sha256(arguments.input.read_bytes()),
                 "rendered_sha256": _sha256(rendered),
             }
+            if not arguments.check and "pr_relevance" in inventory:
+                subject = _selection_pr_subject(arguments.input.parent)
+                if subject:
+                    result["pr_subject"] = subject
         else:
             result = check_files(arguments.handoff, arguments.final, arguments.validation)
     except HandoffError as error:

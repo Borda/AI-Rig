@@ -101,6 +101,19 @@ def _decide_block() -> str:
     return "\n".join(found[0]) + "\n"
 
 
+def _bash(
+    world: Path, script: str, environ: dict[str, str], cwd: Path | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run ``script`` under bash from a file, never through ``-c``.
+
+    Windows caps a command line near 8191 characters and cuts a longer one mid-string, so a block that grew past that
+    stops with an unmatched quote there while passing on Linux and macOS.
+    """
+    path = world / "run-script.sh"
+    path.write_text(script, encoding="utf-8", newline="\n")
+    return subprocess.run([_BASH, path.as_posix()], env=environ, capture_output=True, text=True, check=False, cwd=cwd)
+
+
 @dataclass
 class Run:
     """The files a Decide run left in the implementation directory, plus the helper calls it made."""
@@ -153,13 +166,7 @@ def _run(world: Path, **env: str) -> Run:
         "CLAUDE_CODE_SESSION_ID": "t1",
         **env,
     }
-    done = subprocess.run(
-        [_BASH, "-c", _PYTHON_FUNCTION + _JQ_CRLF + _decide_block()],
-        env=environ,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    done = _bash(world, _PYTHON_FUNCTION + _JQ_CRLF + _decide_block(), environ)
     assert done.returncode == 0, done.stdout + done.stderr
     decision_file = impl / "pr-code-decision.txt"
     log_file = world / "stub.log"
@@ -543,7 +550,14 @@ def _answer_block(marker: str) -> str:
             current = None
         else:
             current.append(line)
-    (found,) = [block for block in blocks if any(marker in line for line in block)]
+    # the stale block also writes the ``sandbox`` word when a clean rescan renews an approval: answers never read HEAD
+    (found,) = [
+        block
+        for block in blocks
+        if any(marker in line for line in block)
+        and (marker == "echo stale >" or not any("git rev-parse" in line for line in block))
+        and not any("exec-plan.txt" in line for line in block)  # the Decide block records words too
+    ]
     return "\n".join(found) + "\n"
 
 
@@ -570,17 +584,23 @@ def _head(repo: Path) -> str:
     ).stdout.strip()
 
 
-def _stale_block(world: Path) -> subprocess.CompletedProcess[str]:
+def _block_env(world: Path, **env: str) -> dict[str, str]:
+    """Return the environment an answer block runs in: stub plugin root and helpers, session and temp sentinels."""
+    return {
+        "PATH": os.environ["PATH"],
+        "CLAUDE_PLUGIN_ROOT": str(world / "plugin"),
+        "STUB_PLUGIN_ROOT": str(world / "plugin"),
+        "STUB_LOG": str(world / "stub.log"),
+        "TMPDIR": str(world / "tmp"),
+        "CLAUDE_CODE_SESSION_ID": "t1",
+        **env,
+    }
+
+
+def _stale_block(world: Path, **env: str) -> subprocess.CompletedProcess[str]:
     """Run the ``PR code = stale`` block once in the throw-away checkout."""
-    environ = {"PATH": os.environ["PATH"], "TMPDIR": str(world / "tmp"), "CLAUDE_CODE_SESSION_ID": "t1"}
-    return subprocess.run(
-        [_BASH, "-c", _answer_block("echo stale >")],
-        env=environ,
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=_checkout(world),
-    )
+    environ = _block_env(world, **env)
+    return _bash(world, _PYTHON_FUNCTION + _JQ_CRLF + _answer_block("echo stale >"), environ, cwd=_checkout(world))
 
 
 def test_the_first_stale_refusal_saves_the_current_commit_and_asks_again(world: Path) -> None:
@@ -628,15 +648,8 @@ def test_declining_or_staling_an_approval_sets_the_approval_file_aside(world: Pa
     """A decision word that is not an approval never sits beside a usable ``code-approval.txt``."""
     impl = world / "impl"
     (impl / "code-approval.txt").write_text("approval\n", encoding="utf-8", newline="\n")
-    environ = {"PATH": os.environ["PATH"], "TMPDIR": str(world / "tmp"), "CLAUDE_CODE_SESSION_ID": "t1"}
-    done = subprocess.run(
-        [_BASH, "-c", _answer_block(marker)],
-        env=environ,
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=_checkout(world),
-    )
+    environ = _block_env(world)
+    done = _bash(world, _PYTHON_FUNCTION + _answer_block(marker), environ, cwd=_checkout(world))
     assert done.returncode == 0, done.stdout + done.stderr
     assert not (impl / "code-approval.txt").exists()
     assert (impl / "code-approval.set-aside").read_text(encoding="utf-8") == "approval\n"
@@ -659,15 +672,8 @@ def test_a_failed_set_aside_blocks_instead_of_leaving_a_usable_approval(world: P
     (impl / "code-approval.set-aside" / "code-approval.txt" / "occupied").write_text(
         "x", encoding="utf-8", newline="\n"
     )
-    environ = {"PATH": os.environ["PATH"], "TMPDIR": str(world / "tmp"), "CLAUDE_CODE_SESSION_ID": "t1"}
-    done = subprocess.run(
-        [_BASH, "-c", _answer_block(marker)],
-        env=environ,
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=_checkout(world),
-    )
+    environ = _block_env(world)
+    done = _bash(world, _PYTHON_FUNCTION + _answer_block(marker), environ, cwd=_checkout(world))
     assert done.returncode == 1
     assert "BLOCKED" in done.stdout
     assert (impl / "code-approval.txt").exists()
@@ -703,13 +709,7 @@ def test_an_answer_binds_the_commit_a_stale_refusal_saved(
         "TMPDIR": str(world / "tmp"),
         "CLAUDE_CODE_SESSION_ID": "t1",
     }
-    done = subprocess.run(
-        [_BASH, "-c", _PYTHON_FUNCTION + _answer_block(marker)],
-        env=environ,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    done = _bash(world, _PYTHON_FUNCTION + _answer_block(marker), environ)
     assert done.returncode == 0, done.stdout + done.stderr
     (bind,) = [
         line for line in (world / "stub.log").read_text(encoding="utf-8").splitlines() if line.startswith("guard bind")
@@ -736,3 +736,126 @@ def test_a_stale_refusal_from_any_consumer_runs_the_stale_block() -> None:
     assert "the parent runs the `PR code = stale` block of `exec-approval.md`" in prelude
     assert "run the `PR code = do not run` block of `exec-approval.md`" in prelude
     assert "write the word `stale` as the sole line" not in gate
+
+
+def _flag(world: Path, value: str = "true") -> None:
+    """Record the ``--sandbox`` flag sentinel the way the argument parser leaves it."""
+    (world / "tmp" / "resolve-sandbox-t1").write_text(value + "\n", encoding="utf-8", newline="\n")
+
+
+def test_the_sandbox_flag_binds_the_sandbox_tier_and_asks_nothing(world: Path) -> None:
+    """With ``--sandbox`` a scan the helper calls skippable records ``sandbox`` at the sandbox tier, review record or
+    not."""
+    _flag(world)
+    run = _run(world, STUB_CHECK="sandbox")
+    assert run.plan == "pr-code=recorded hooks=run"
+    assert run.decision == "sandbox\n"
+    (check,) = run.called("check")
+    assert "check-sandbox" in check
+    assert "--status" not in check
+    (bind,) = [line for line in run.called("guard") if line.startswith("guard bind")]
+    assert "--tier sandbox" in bind
+    assert "unsandboxed" not in bind
+
+
+def test_the_sandbox_flag_reports_tests_not_run_on_a_host_without_a_sandbox(world: Path) -> None:
+    """A host that cannot start the sandbox never runs PR code under the flag: the decision is ``deny``, nothing is
+    bound."""
+    _flag(world)
+    run = _run(world, STUB_CHECK="deny reason=no-sandbox")
+    assert run.plan == "pr-code=recorded hooks=run"
+    assert run.decision == "deny\n"
+    assert not [line for line in run.called("guard") if line.startswith("guard bind")]
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        pytest.param("ask reason=findings-need-decision", id="evidence-to-decide-on"),
+        pytest.param("sandbox extra", id="check-adds-words"),
+        pytest.param("auto", id="the-review-skip-word-is-not-a-sandbox-decision"),
+        pytest.param("", id="check-prints-nothing"),
+    ],
+)
+def test_the_sandbox_flag_asks_unless_the_check_says_exactly_sandbox(world: Path, check: str) -> None:
+    """Only the exact word ``sandbox`` skips the question under the flag; everything else asks and binds nothing."""
+    _flag(world)
+    run = _run(world, STUB_CHECK=check)
+    assert run.plan == "pr-code=ask hooks=run"
+    assert run.decision is None
+    assert not [line for line in run.called("guard") if line.startswith("guard bind")]
+
+
+def test_a_flag_that_is_not_true_leaves_the_default_rules(world: Path) -> None:
+    """Anything but the word ``true`` in the sentinel keeps the review-record rule, so a stray value never enforces."""
+    _flag(world, "false")
+    run = _run(world, STUB_CHECK="sandbox")
+    assert run.plan == "pr-code=ask hooks=run"
+    (check,) = run.called("check")
+    assert "--status" in check
+
+
+def _prior_approval(world: Path) -> None:
+    """Leave the approval and the ``stale`` word a guard refusal would have left behind."""
+    (world / "impl" / "code-approval.txt").write_text("{}\n", encoding="utf-8", newline="\n")
+    (world / "impl" / "pr-code-decision.txt").write_text("stale\n", encoding="utf-8", newline="\n")
+
+
+def test_a_clean_rescan_renews_a_stale_approval_without_a_question(world: Path) -> None:
+    """The merged tree is rescanned; a clean result binds the sandbox tier at the current commit and records
+    ``sandbox``."""
+    _prior_approval(world)
+    done = _stale_block(world, STUB_CHECK="auto")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert (world / "impl" / "pr-code-decision.txt").read_text(encoding="utf-8") == "sandbox\n"
+    log = (world / "stub.log").read_text(encoding="utf-8").splitlines()
+    (check,) = [line for line in log if line.startswith("check")]
+    assert "check-rebind" in check
+    assert "code-approval.set-aside" in check
+    (bind,) = [line for line in log if line.startswith("guard bind")]
+    assert f"--head {_head(_checkout(world))} " in bind
+    assert "--tier sandbox" in bind
+    assert "no question" in done.stdout
+
+
+def test_a_rescan_with_anything_to_decide_keeps_the_stale_word_and_binds_nothing(world: Path) -> None:
+    """Any answer but ``auto`` leaves the decision ``stale``, so the question is asked as before."""
+    _prior_approval(world)
+    done = _stale_block(world, STUB_CHECK="ask reason=findings-present")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert (world / "impl" / "pr-code-decision.txt").read_text(encoding="utf-8") == "stale\n"
+    log = (world / "stub.log").read_text(encoding="utf-8").splitlines()
+    assert not [line for line in log if line.startswith("guard bind")]
+
+
+def test_a_failed_rescan_keeps_the_stale_word(world: Path) -> None:
+    """Without a fresh scan nothing is judged clean, so the question is asked as before."""
+    _prior_approval(world)
+    done = _stale_block(world, STUB_SCAN_RC="1", STUB_CHECK="auto")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert (world / "impl" / "pr-code-decision.txt").read_text(encoding="utf-8") == "stale\n"
+    assert not [line for line in (world / "stub.log").read_text(encoding="utf-8").splitlines() if "check" in line[:6]]
+
+
+def test_the_sandbox_flag_renews_through_the_sandbox_check(world: Path) -> None:
+    """Under ``--sandbox`` the renewal asks the ``check-sandbox`` rule, not the prior-approval rule."""
+    _flag(world)
+    _prior_approval(world)
+    done = _stale_block(world, STUB_CHECK="sandbox")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert (world / "impl" / "pr-code-decision.txt").read_text(encoding="utf-8") == "sandbox\n"
+    log = (world / "stub.log").read_text(encoding="utf-8").splitlines()
+    (check,) = [line for line in log if line.startswith("check")]
+    assert "check-sandbox" in check
+    assert "--prior" not in check
+
+
+def test_a_second_refusal_at_the_same_commit_rescans_nothing(world: Path) -> None:
+    """Uncommitted work cannot be covered by a committed approval: the final refusal denies before any rescan."""
+    impl = world / "impl"
+    (impl / "pr-code-rebind-head.txt").write_text(_head(_checkout(world)) + "\n", encoding="utf-8", newline="\n")
+    (impl / "code-approval.txt").write_text("approval\n", encoding="utf-8", newline="\n")
+    done = _stale_block(world, STUB_CHECK="auto")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert (impl / "pr-code-decision.txt").read_text(encoding="utf-8") == "deny\n"
+    assert not (world / "stub.log").exists()

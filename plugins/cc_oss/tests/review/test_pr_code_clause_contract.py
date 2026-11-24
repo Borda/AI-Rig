@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+import untrusted_code_guard as guard
 
 _SKILLS = Path(__file__).resolve().parents[2] / "skills"
 _REVIEW = _SKILLS / "review"
@@ -104,8 +105,9 @@ class TestReviewClause:
         scan = next(line for line in block if 'untrusted_code_guard.py" scan' in line)
         assert '--head "$PR_HEAD_SHA" "${_SCOPE[@]}" --out "$RUN_DIR/code-scan.json"' in scan
         assert block[-1].startswith(
-            'python "$PLUGIN_ROOT/bin/code_safety_status.py" check-scan --scan "$RUN_DIR/code-scan.json"'
+            'python "$PLUGIN_ROOT/bin/code_safety_status.py" "$_CHECK_MODE" --scan "$RUN_DIR/code-scan.json"'
         )
+        assert any(line.endswith("_CHECK_MODE=check-sandbox; else _CHECK_MODE=check-scan; fi") for line in block)
         assert block.index(scan) < len(block) - 1
 
     def test_auto_path_shows_evidence_and_binds_without_asking(self) -> None:
@@ -153,7 +155,10 @@ class TestReviewClause:
         """Findings and unavailable scans still ask with sandbox first and preserve the malicious warning."""
         ask = _line_starting(_REVIEW / "templates/agent-prompts.md", "**Ask")
         assert "asks with `AskUserQuestion`" in ask
-        assert "**Run in sandbox** / **Do not run**, plus **Run without sandbox**, always offered" in ask
+        assert (
+            "**Run in sandbox** / **Do not run**, plus **Run without sandbox**, offered on every question "
+            "unless `--sandbox` was given"
+        ) in ask
         assert '`likely-malicious` risk leads the question with "do not run"' in ask
         assert "choosing to run is the user's explicit override" in ask
 
@@ -851,3 +856,70 @@ class TestCheckoutCodeLoadsAreGated:
         assert "tests, probes or overlay runs" not in line
         assert "a run of PR code" not in line
         assert "a run that executes PR code" not in line.lower()
+
+    def test_the_sandbox_flag_binds_the_sandbox_tier_after_the_exact_check_word(self) -> None:
+        """Under ``--sandbox`` the bind block repeats ``check-sandbox``, stops unless it prints ``sandbox``, and never
+        binds the unsandboxed decision."""
+        path = _REVIEW / "templates/agent-prompts.md"
+        sandbox = _line_starting(path, "**Sandbox")
+        block = _block_after(path, sandbox)
+        check = next(i for i, line in enumerate(block) if 'code_safety_status.py" check-sandbox' in line)
+        gate = next(i for i, line in enumerate(block) if line.startswith('[ "$_CHECK" = sandbox ] ||'))
+        bind = next(i for i, line in enumerate(block) if 'untrusted_code_guard.py" bind' in line)
+        assert check < gate < bind
+        assert "exit 1" in block[gate]
+        assert "--tier sandbox" in block[bind]
+        assert "unsandboxed" not in block[bind]
+        # The guard refuses a bind with no command unless it is run-scoped, so the planned command is read and passed.
+        read = next(i for i, line in enumerate(block) if "code-command.json" in line)
+        assert read < bind
+        assert ' -- "${PR_CODE_COMMAND[@]}" && ' in block[bind]
+        assert block[bind].endswith('&& { echo sandbox > "$RUN_DIR/pr-code-decision.txt"; exit 0; }')
+
+    @pytest.mark.skipif(_BASH is None or shutil.which("jq") is None, reason="the block needs bash and jq")
+    @pytest.mark.skipif(guard.probe_isolation(".") != "sandbox", reason="this host cannot start the sandbox")
+    def test_the_sandbox_bind_block_writes_an_approval_the_guard_accepts(self, tmp_path: Path) -> None:
+        """Run the shipped block against a real repository and scan: it binds the sandbox tier and records ``sandbox``.
+
+        A bind the guard refuses would leave every ``--sandbox`` review without an approval, so this runs the block
+        rather than reading it. A host that cannot start the sandbox skips it.
+        """
+        plugin = _REVIEW.parents[1]
+        guard = plugin / "bin" / "untrusted_code_guard.py"
+        repo, snap, run = tmp_path / "repo", tmp_path / "snap", tmp_path / "run"
+        for folder in (repo, snap, run):
+            folder.mkdir()
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]
+        (repo / "a.py").write_text("x = 1\n", encoding="utf-8")
+        for command in ([*git, "init", "-q"], [*git, "add", "a.py"], [*git, "commit", "-q", "-m", "one"]):
+            subprocess.run(command, cwd=repo, check=True, capture_output=True)
+        head = subprocess.run([*git, "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True)
+        sha = head.stdout.strip()
+        (snap / "pr-meta.json").write_text(json.dumps({"headRefOid": sha, "baseRefOid": ""}), encoding="utf-8")
+        (run / "code-command.json").write_text(json.dumps(["python", "-c", "pass"]), encoding="utf-8")
+        scan = subprocess.run(
+            ["python", "-I", str(guard), "scan", "--repo", ".", "--head", sha, "--whole-tree", "--out", "scan.json"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert scan.returncode == 0, scan.stderr
+        (run / "code-scan.json").write_text((repo / "scan.json").read_text(encoding="utf-8"), encoding="utf-8")
+        session = "sandbox-bind-test"
+        (tmp_path / f"oss-review-snap-dir-{session}").write_text(f"{snap}\n", encoding="utf-8")
+        (tmp_path / f"oss-review-run-dir-{session}").write_text(f"{run}\n", encoding="utf-8")
+        block = _block_after(
+            _REVIEW / "templates/agent-prompts.md", _line_starting(_REVIEW / "templates/agent-prompts.md", "**Sandbox")
+        )
+        # The first line resolves an installed copy of the plugin; the test binds the source tree's own helpers instead.
+        script = "\n".join(block[1:])
+        env = {**os.environ, "PLUGIN_ROOT": str(plugin), "TMPDIR": str(tmp_path), "CLAUDE_CODE_SESSION_ID": session}
+        done = subprocess.run(
+            [_BASH, "-c", script], cwd=repo, env=env, capture_output=True, text=True, check=False, timeout=120
+        )
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert (run / "pr-code-decision.txt").read_text(encoding="utf-8").strip() == "sandbox"
+        record = json.loads((run / "code-approval.txt").read_text(encoding="utf-8").splitlines()[1])
+        assert record["tier"] == "sandbox"
+        assert "unsandboxed" not in record["decision"]

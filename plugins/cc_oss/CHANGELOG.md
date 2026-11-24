@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.68.0
+
+- `/oss:review` and `/oss:resolve` take `--sandbox` to enforce the sandbox for fork-PR code, as Codex Rig's `--sandbox` does for its checks; without it nothing changes:
+  - Every run of PR code stays in the sandbox and **Run without sandbox** is not offered; the question appears only when the scan's risk level is `high` or `likely-malicious`, or the scan is unusable.
+  - A host without a usable sandbox runs no PR code: review reports an execution gap and resolve reports the tests as not run.
+- `/oss:resolve` no longer asks the PR-code question again when a base merge made the earlier sandbox approval stale and a rescan of the merged commit is clean: the approval is renewed in the sandbox and the run continues. An earlier unsandboxed answer, any finding or a host without a sandbox still asks.
+- `/oss:release` audit no longer reports the Codex adversarial pass as not completed with a bridge output limit on a large release range:
+  - The bridge resolves the range to commits and partitions it by changed lines, and the audit runs the parts three at a time with no cap on how many calls that takes.
+  - The pass counts as complete only when every part completed. An unfinished part is named as unreviewed scope, the findings of finished parts are kept, and binary or `-diff` files such as lock files are listed as not line-reviewed.
+  - Needs a bridge plugin whose review accepts `--partition-file`; an older bridge rejects the flag and the pass is reported as not completed.
+- `/oss:resolve` asks its one up-front push question with `Approve` / `Hold` instead of `Approve` / `Deny`; `Hold` skips the push and leaves the branch for you to push, as `Deny` did. This needs a foundry release whose approval hook reads the new option set, with `/foundry:setup` run again so the loaded rule text matches.
+- `/oss:resolve --worktree` now pushes on the one up-front `git-push-run` approval instead of being refused by the push guard and asking a second `git-push` question:
+  - The approval is bound to the checkout it was asked from, so a run in the session worktree names that worktree in the question and pushes with `git -C <worktree> push <remote> <branch>`. A worktree path the guard cannot carry (a space or special character) hands the push to you instead.
+  - A push you approved that the remote then refuses (a GitHub server error, 403, expired credentials) is now reported as `rejected-remote`, not as a missing upstream: the summary says the push failed, the Push section quotes git's error line, the Confidence gaps note that the PR does not carry the commits, and the report ends with the command to retry.
+- The drafted-by line that ends `/oss:release` drafts and the demo notebook now shows AI Rig in bold inside the italic note, matching the pull request footer.
+
 ## 0.67.0
 
 - `/oss:analyse` no longer asks a follow-up question after its report. It ends with the report and a plain-text `Next:` list of suggested commands (for a PR: `/oss:review`, `/oss:resolve`, a reply draft) that you run yourself, where every thread, vitality, ecosystem and evolution run used to stop on a menu. The `Stop` hook still requires the matching header table in the final reply.

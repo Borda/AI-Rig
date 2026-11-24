@@ -1,7 +1,7 @@
 """Pin the commit-authority contract in foundry's git-commit rule stub, its full counterpart and the eager hard bans.
 
 Local Git operations that need authorization ask one ``git-approve`` question: ``Approve`` (this operation), ``Approve
-always`` (this operation plus a standing grant for the project, shared by every worktree) or ``Deny``. The grant lives
+always`` (this operation plus a standing grant for the project, shared by every worktree) or ``Hold``. The grant lives
 in ``<git-common-dir>/claude-git-approval.json``, written only by the ``approval-guard.js`` hook from the user's answer
 and validated by ``commit-guard.js --check-grant``. With a valid grant the question is skipped for task-scoped non-
 destructive local operations; without one it is asked. Push, force, history rewriting and destructive recovery are never
@@ -92,7 +92,7 @@ _SHELLS = [
         pytest.param(
             "git-commit.md",
             "header `git-approve`, options exactly `Approve` (this operation only) / `Approve always` (this operation "
-            "plus a standing grant) / `Deny` (skip, leave changes as they are)",
+            "plus a standing grant) / `Hold` (skip this commit)",
             id="ask-stub-question-shape",
         ),
         pytest.param(
@@ -111,7 +111,7 @@ _SHELLS = [
         ),
         pytest.param(
             "_full/git-commit.md",
-            "header `git-approve`, options exactly `Approve` / `Approve always` / `Deny`, `multiSelect` false",
+            "header `git-approve`, options exactly `Approve` / `Approve always` / `Hold`, `multiSelect` false",
             id="ask-full-question-shape",
         ),
         pytest.param(
@@ -205,7 +205,7 @@ _SHELLS = [
             "_full/git-commit.md",
             "**Writer**: only foundry's `approval-guard.js` hook, on "
             "`PostToolUse(AskUserQuestion)`, when the user's actual answer to the `git-approve` question is `Approve "
-            f"always` and that option's description names `{_GRANT}`. `Approve` and `Deny` write nothing",
+            f"always` and that option's description names `{_GRANT}`. `Approve` and `Hold` write nothing",
             id="writer-full-answer-recorded",
         ),
         pytest.param(

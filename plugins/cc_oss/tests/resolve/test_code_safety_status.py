@@ -5,6 +5,7 @@ They cover when review may skip its PR-code question after one scan and when res
 
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
@@ -12,6 +13,7 @@ from pathlib import Path
 
 import code_safety_status as css
 import pytest
+import untrusted_code_guard as guard
 
 _HEAD = "a" * 40
 _OTHER = "b" * 40
@@ -289,3 +291,96 @@ def test_write_records_an_automatic_run_decision(tmp_path: Path) -> None:
     assert json.loads(out.read_text(encoding="utf-8"))["run_decision"] == "auto"
     assert css.main(["write", "--scan", str(scan_file), "--out", str(out)]) == 0
     assert "run_decision" not in json.loads(out.read_text(encoding="utf-8"))
+
+
+_PRIOR = {"scope": "run", "tier": "auto", "decision": [], "head": _OTHER}
+
+
+@pytest.mark.parametrize(
+    ("prior", "scan", "head", "expected"),
+    [
+        pytest.param(_PRIOR, _scan(), _HEAD, "auto", id="clean-rescan-renews-a-default-tier-approval"),
+        pytest.param({**_PRIOR, "tier": "sandbox"}, _scan(), _HEAD, "auto", id="sandbox-tier-renews"),
+        pytest.param(
+            {**_PRIOR, "tier": "env-only", "decision": ["unsandboxed"]},
+            _scan(),
+            _HEAD,
+            "ask reason=no-sandbox-approval-to-renew",
+            id="an-unsandboxed-answer-is-never-renewed",
+        ),
+        pytest.param(
+            {**_PRIOR, "decision": ["unsandboxed"]},
+            _scan(),
+            _HEAD,
+            "ask reason=no-sandbox-approval-to-renew",
+            id="the-unsandboxed-decision-alone-blocks-renewal",
+        ),
+        pytest.param(
+            {**_PRIOR, "scope": "command"},
+            _scan(),
+            _HEAD,
+            "ask reason=no-sandbox-approval-to-renew",
+            id="command-scope",
+        ),
+        pytest.param(None, _scan(), _HEAD, "ask reason=no-sandbox-approval-to-renew", id="no-prior-approval"),
+        pytest.param(_PRIOR, _scan(risk={"level": "borderline"}), _HEAD, "ask reason=findings-present", id="a-finding"),
+        pytest.param(_PRIOR, _scan(isolation_available="env-only"), _HEAD, "ask reason=no-sandbox", id="no-sandbox"),
+        pytest.param(_PRIOR, _scan(), _OTHER, "ask reason=head-mismatch", id="scan-of-another-commit"),
+        pytest.param(_PRIOR, None, _HEAD, "ask reason=no-fresh-scan", id="no-scan"),
+    ],
+)
+def test_decide_rebind(
+    prior: dict[str, object] | None, scan: dict[str, object] | None, head: str, expected: str
+) -> None:
+    """A stale approval is renewed only when the rescan is clean, a sandbox exists and the user never chose to leave
+    it."""
+    assert css.decide_rebind(prior, scan, head) == expected
+
+
+@pytest.mark.parametrize(
+    ("scan", "head", "expected"),
+    [
+        pytest.param(_scan(), _HEAD, "sandbox", id="clean"),
+        pytest.param(_scan(risk={"level": "borderline"}), _HEAD, "sandbox", id="borderline"),
+        pytest.param(_scan(risk={"level": "high"}), _HEAD, "ask reason=findings-need-decision", id="high"),
+        pytest.param(
+            _scan(risk={"level": "likely-malicious"}), _HEAD, "ask reason=findings-need-decision", id="malicious"
+        ),
+        pytest.param(
+            _scan(risk={"level": "unheard-of"}), _HEAD, "ask reason=findings-need-decision", id="unknown-level"
+        ),
+        pytest.param(_scan(isolation_available="env-only"), _HEAD, "deny reason=no-sandbox", id="no-sandbox"),
+        pytest.param(
+            _scan(risk={"level": "high"}, isolation_available="host-sandbox"),
+            _HEAD,
+            "deny reason=no-sandbox",
+            id="no-sandbox-beats-a-finding",
+        ),
+        pytest.param(_scan(), _OTHER, "ask reason=head-mismatch", id="other-head"),
+        pytest.param(None, _HEAD, "ask reason=no-fresh-scan", id="no-scan"),
+    ],
+)
+def test_decide_sandbox(scan: dict[str, object] | None, head: str, expected: str) -> None:
+    """``--sandbox`` skips the question only for a scan level that carries no evidence, and never outside a sandbox."""
+    assert css.decide_sandbox(scan, head) == expected
+
+
+def test_new_checks_print_their_decision_with_a_bare_line_feed(tmp_path: Path) -> None:
+    """Both new subcommands print one word line ending in a line feed, so bash can compare the line exactly."""
+    scan = tmp_path / "scan.json"
+    scan.write_text(json.dumps(_scan()), encoding="utf-8")
+    # The file the guard itself writes: a hash line, then the options record.
+    options = argparse.Namespace(**{key: _PRIOR.get(key) for key in guard._RECORD_KEYS})
+    prior = tmp_path / "prior.txt"
+    prior.write_text(guard.approval_record("c" * 64, options), encoding="utf-8")
+    helper = Path(css.__file__)
+    for arguments, word in (
+        (["check-sandbox", "--scan", str(scan), "--head", _HEAD], "sandbox"),
+        (["check-rebind", "--scan", str(scan), "--head", _HEAD, "--prior", str(prior)], "auto"),
+        (["check-rebind", "--scan", str(scan), "--head", _HEAD, "--prior", str(tmp_path / "missing.json")], "ask"),
+    ):
+        done = subprocess.run([sys.executable, str(helper), *arguments], capture_output=True, check=False)
+        assert done.returncode == 0
+        assert done.stdout.startswith(word.encode())
+        assert done.stdout.endswith(b"\n")
+        assert not done.stdout.endswith(b"\r\n")

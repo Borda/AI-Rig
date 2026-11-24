@@ -19,12 +19,27 @@ IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-remote-head-ref-${CSID}" 2>/dev
 IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
 # renamed fork: remote URL needs headRepository.name; empty → upstream name
 IFS= read -r FORK_REPO < "${TMPDIR:-/tmp}/resolve-head-repo-name-${CSID}" 2>/dev/null || FORK_REPO=""
+# --worktree: an approval is bound to the checkout it was asked from, so the push must name the worktree (`git -C <path> push …`)
+IFS= read -r _WTON < "${TMPDIR:-/tmp}/oss-resolve-worktree-${CSID}" 2>/dev/null || _WTON=false
+_WTF="${TMPDIR:-/tmp}/resolve-push-worktree-${CSID}"
+echo none > "$_WTF"
+if [ "$_WTON" = true ]; then
+    git rev-parse --show-toplevel > "$_WTF.top"
+    IFS= read -r _WT < "$_WTF.top" 2>/dev/null || _WT=""
+    case "$_WT" in ''|*[!A-Za-z0-9_./:-]*) _WT=unusable ;; /*|[A-Za-z]:/*) ;; *) _WT=unusable ;; esac
+    echo "$_WT" > "$_WTF"
+fi
+printf 'WT_PUSH='; cat "$_WTF"
 # target may have moved since Step 9 (push question idles for hours); runs first so derive_fork_remote's exit stays the block's
 python "$PLUGIN_ROOT/bin/check_base_fresh.py" --base-ref "$BASE_REF"  # timeout: 90000
 python "$PLUGIN_ROOT/bin/derive_fork_remote.py" --fork-remote "$FORK_REMOTE" --head-ref "$HEAD_REF" --base-ref "$BASE_REF" --fork-repo "$FORK_REPO"  # timeout: 10000
 ```
 
-The block exits non-zero (`! BLOCKED` — fork remote or head ref unresolved, push scope not computable) → never push and never ask about an unknown scope; record `not-attempted` (**Record the push outcome** below) and continue to Step 11. If the current local branch differs from the remote `HEAD_REF`, use the explicit-refspec manual-push hand-off below without attempting plain `git push`; the alias must never become a new remote branch. Otherwise note the printed `BASE_FRESH` for the push confirmation, then branch on the printed `PUSH_AUTH`:
+The block exits non-zero (`! BLOCKED` — fork remote or head ref unresolved, push scope not computable) → never push and never ask about an unknown scope; record `not-attempted` (**Record the push outcome** below) and continue to Step 11. If the current local branch differs from the remote `HEAD_REF`, use the explicit-refspec manual-push hand-off below without attempting plain `git push`; the alias must never become a new remote branch. Otherwise note the printed `BASE_FRESH` for the push confirmation and the printed `WT_PUSH`, then branch on the printed `PUSH_AUTH`.
+
+**`WT_PUSH`** — the push spelling for the rest of this step. `none` → `git push …` as written below. A path → the run works in the session worktree, so every push, push question and guard-refusal retry below is written `git -C <WT_PUSH> push <remote> <branch>` (the path as literal words, unquoted) and each question's first line reads `Push <branch> from worktree <WT_PUSH> (not this session's checkout) to <remote>?`; a plain `git push` there is refused by the guard, and the approval from Step 3d covers only that spelling. `unusable` → never push and never ask, since no approval can cover that path: use the explicit-refspec manual-push hand-off below and record `blocked-needs-manual-push`, unless `PUSH_AUTH` is `skip`.
+
+Branch on the printed `PUSH_AUTH`:
 
 - `skip` → the user explicitly chose "don't push" at Step 3d: print `` → Push skipped (Step 3d answer) — run `git push` manually when ready. ``, record `skipped-by-user`, and jump to Step 11; the post-PR answer still applies there. No question.
 - `push-run` → the user approved this push at Step 3d with the `git-push-run` question, so no push question here — never ask the user again to push. Print the scope that question could not show, `→ Pushing $PUSH_COUNT commits ($PUSH_STAT) to $FORK_REMOTE/$HEAD_REF — last: "$LAST_SUBJECT"`, with the drift line beside it when `BASE_FRESH` is not `yes`; with `BASE_FRESH=no` ask the **drift question** below first (an unanswered one means no push), then run the **run push** below. Q1 is asked only if the guard refuses that push (**Blocked by a push guard**).
@@ -48,24 +63,30 @@ Q1 — push: header `git-push`, `multiSelect` false. Its question text must surf
 - Diff stat: `$PUSH_STAT` (e.g. `3 files changed, 47 insertions(+), 12 deletions(-)`)
 - Commit count and last subject: `$PUSH_COUNT commits — last: "$LAST_SUBJECT"`
 - Target drift, only when `BASE_FRESH` is not `yes`: `no` → `⚠ origin/<BASE_REF> advanced <BASE_BEHIND> commits since the last merge — newest: "<first listed subject>"`; `unknown` → `⚠ could not verify origin/<BASE_REF> is merged`
-- The command it approves: `` `git push` ``
+- The command it approves: `` `git push` ``, or with a `WT_PUSH` path `` `git -C <WT_PUSH> push <FORK_REMOTE> <HEAD_REF>` `` (its branch, HEAD and commits read with `git -C <WT_PUSH>`)
 - Last line: `` Long wait? `/compact` now — commits landed, challenge log + item map in <IMPL_DIR>, resume lossless. ``
 
 Options: exactly these two labels.
 
 - **Approve** — this push, once: proceed with `git push` below
-- **Deny** — skip the push; the user pushes manually later
+- **Hold** — skip this push; leave the branch as it is, the user pushes manually later
 
 `PUSH_AUTH=skip` with `BASE_FRESH=no` → still print the drift line beside the skip message, so the manual push is not made blind.
 
 Q2 — `unset` intent only — after the final report: (a) **Open PR in browser** (`gh pr view <PR_NUMBER> --web`) · (b) **Skip**. Run the matching Step 3d post-PR block (`open` or `skip`) — never edit a block's value.
 
-Only proceed to the `git push` below on Q1 `Approve`. On `Deny`: print `` → Push skipped — run `git push` manually when ready. ``, record `skipped-by-user`, and jump to Step 11 (the post-PR answer still applies there). Unanswered Q1 is never authorization: treat it as `Deny`. Never create, copy or edit the push token yourself.
+Only proceed to the `git push` below on Q1 `Approve`. On `Hold`: print `` → Push skipped — run `git push` manually when ready. ``, record `skipped-by-user`, and jump to Step 11 (the post-PR answer still applies there). Unanswered Q1 is never authorization: treat it as `Hold`. Never create, copy or edit the push token yourself.
 
 <!-- policy-sibling: plugins/CLAUDE.md §Blueprint Blocks (canonical), plugins/cc_foundry/agents/challenger.md, plugins/cc_oss/skills/resolve/modes/item-selection.md (Step 3d), plugins/cc_oss/skills/resolve/modes/push.md (Step 10), plugins/cc_oss/skills/review/modes/acceptance-gate.md (reject gate) -->
 
 ```bash
 git push # timeout: 30000
+```
+
+With a `WT_PUSH` path, the push after the Q1 `Approve` is exactly the span the question showed, the printed values as literal words:
+
+```bash
+git -C <WT_PUSH> push <FORK_REMOTE> <HEAD_REF> # timeout: 30000
 ```
 
 **Run push** (`PUSH_AUTH=push-run`) — the guard covers a push that writes its remote and branch out, so the command carries the printed `$FORK_REMOTE` and `$HEAD_REF` as literal words, never as shell variables; the question named exactly this push:
@@ -74,15 +95,21 @@ git push # timeout: 30000
 git push <FORK_REMOTE> <HEAD_REF> # timeout: 30000
 ```
 
+With a `WT_PUSH` path (the Step 3d question named the worktree):
+
+```bash
+git -C <WT_PUSH> push <FORK_REMOTE> <HEAD_REF> # timeout: 30000
+```
+
 Any other spelling is refused by the guard. Unsubstituted `<…>` text is a redirection the guard refuses as well; never run it.
 
 An authorized push still stops on its own failures — never retried in a loop, never forced, never re-asked. The push guard and the absent `git push` allow rule are deliberate user safety controls: never weaken, bypass, or work around either, and never create, touch, or edit a guard's authorization file yourself.
 
-- **Blocked by a push guard on the run push** (`PUSH_AUTH=push-run`: the token expired, the session restarted, or HEAD is not on the line of the PR head the question named) → print the guard's reason verbatim and ask the **push confirmation** (Q1, `git-push`) once; on `Approve` push with plain `git push`; any further guard refusal follows the next bullet. This is the only path where a `push-run` run asks about pushing at Step 10.
+- **Blocked by a push guard on the run push** (`PUSH_AUTH=push-run`: the token expired, the session restarted, or HEAD is not on the line of the PR head the question named) → print the guard's reason verbatim and ask the **push confirmation** (Q1, `git-push`) once; on `Approve` push with plain `git push`, or the `git -C <WT_PUSH>` spelling when `WT_PUSH` is a path; any further guard refusal follows the next bullet. This is the only path where a `push-run` run asks about pushing at Step 10.
 - **Blocked by a push guard** (a hook rejects the call and asks for the `git-push` question: no `Approve` on record, the token expired, or HEAD moved since the answer) → print the guard's reason verbatim, do not retry, record `blocked-guard`, and write the push command it refused — copied character for character, no paraphrase — with the Write tool to `$IMPL_DIR/push-unblock.txt`, so the user can run it from their own shell or approve a new `git-push` question in a later run. Continue to Step 11.
 - **Blocked by a denied permission** (the harness permission prompt for `git push` was refused) → do not retry, record `blocked-permission`, and write the exact push command that was denied (`git push`) with the Write tool to `$IMPL_DIR/push-unblock.txt`. Continue to Step 11.
 - **Rejected as non-fast-forward** (the PR branch moved on the remote) → no force and no retry. Print `! BLOCKED — Push rejected (non-fast-forward) — the PR branch moved; merge the remote branch, then push manually.`, record `rejected-non-ff`, and continue to Step 11.
-- **Rejected by the remote or transport** (403, permission denied, expired authentication, network failure, or another remote error) → print the error, do not retry, record `blocked-needs-manual-push`, and use the explicit-refspec manual hand-off below. Continue to Step 11.
+- **Rejected by the remote or transport** (403, permission denied, expired authentication, network failure, a server error such as HTTP 500, or another remote error) → the push was asked and approved, so this is a failed push, never a hand-off. Print the error, do not retry, record `rejected-remote`, write git's decisive error line (the `remote:` or `error:` line, verbatim) to `$IMPL_DIR/push-error.txt` and the exact push command that failed, copied character for character, to `$IMPL_DIR/push-unblock.txt`, both with the Write tool. Continue to Step 11, whose report flags it.
 - **No upstream or wrong tracking** (plain `git push` cannot resolve its destination) → the manual-push hand-off below; the agent never runs a second push.
 - **Push lands** → record `pushed` after the verification block below.
 
@@ -148,6 +175,13 @@ echo blocked-needs-manual-push > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 echo rejected-non-ff > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  # timeout: 3000
+```
+
+`rejected-remote`:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo rejected-remote > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  # timeout: 3000
 ```
 
 `skipped-by-user`:

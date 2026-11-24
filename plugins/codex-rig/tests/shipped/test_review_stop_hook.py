@@ -1318,6 +1318,51 @@ def test_writer_release_is_required_after_terminal_remediation(standalone_receip
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("released", ["both", "writer", "target"])
+def test_released_remediation_claims_require_reacquisition_before_edits(standalone_receipts, released: str) -> None:
+    """A premature release of remediation claims resumes through checkout recovery before using saved scope."""
+    payload, start, prepare, caller, reports, target, command, root = standalone_receipts
+    common = caller / ".git"
+    writer = str(common / "codex-review-writers" / ("1" * 64) / "codex-review-slot")
+    slot = str(common / "codex-review-targets" / hashlib.sha256(target.encode()).hexdigest() / "codex-review-slot")
+    stage = reports / "code-remediate/staging"
+    records = [
+        *start,
+        command(
+            caller,
+            "review_checkout_slot",
+            f'acquire --checkout "{caller}" --writer --owner me',
+            json.dumps({"status": "acquired", "slot": writer, "owner": "me"}),
+        ),
+        command(
+            caller,
+            "review_checkout_slot",
+            f'acquire --checkout "{caller}" --target {target} --owner me',
+            json.dumps({"status": "acquired", "slot": slot, "owner": "me"}),
+        ),
+        prepare,
+        command(caller, "create_run", f'--skill code-remediate --pr-number 12 --root "{reports}"', str(stage)),
+    ]
+    locators = {"both": (slot, writer), "writer": (writer,), "target": (slot,)}[released]
+    records.extend(
+        command(
+            caller,
+            "review_checkout_slot",
+            f'release --slot "{locator}" --owner me',
+            json.dumps({"status": "released", "slot": locator, "owner": None}),
+        )
+        for locator in locators
+    )
+    response = HOOK.evaluate(payload, records, root)
+    assert response["decision"] == "block"
+    assert "original invocation ID" in response["reason"]
+    assert "report-only recovery" in response["reason"]
+    assert "PR State Preflight" in response["reason"]
+    assert "writer before the PR target" in response["reason"]
+    assert "reverify" in response["reason"]
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize("use_root", [True, False])
 def test_original_remediation_from_checkout_subdirectory(standalone_receipts, use_root: bool) -> None:
     """Original-checkout remediation keeps its acquired claim through finalization from either session directory."""
@@ -2628,27 +2673,220 @@ def answered_question() -> list[dict]:
     ]
 
 
-def test_question_discovery_does_not_pause_review(review_state) -> None:
-    """Looking up available question tools must not suppress unfinished-work recovery."""
+@pytest.mark.parametrize(
+    "source",
+    [
+        "text(ALL_TOOLS.filter(x=>/ask_user/.test(x.name)));",
+        "text(42);text(ALL_TOOLS.filter(x=>/ask_user|request_user_input/.test(x.name)));",
+        "const note=String.raw`The native ask_user control is available.`;text(note);",
+    ],
+)
+def test_question_mentions_do_not_pause_review(review_state, source: str) -> None:
+    """Discovery and descriptive tool mentions in a batch leave the active run eligible for recovery."""
     payload, records = review_state
-    records.append(
-        {
-            "type": "response_item",
-            "payload": {
-                "type": "custom_tool_call",
-                "name": "exec",
-                "input": "text(ALL_TOOLS.filter(x=>/ask_user/.test(x.name)));",
-            },
-        }
-    )
+    records.append({"type": "response_item", "payload": {"type": "custom_tool_call", "name": "exec", "input": source}})
     assert HOOK.evaluate(payload, records, "/plugin")["decision"] == "block"
 
 
-def test_answered_continue_restores_review_recovery(review_state, answered_question) -> None:
-    """A completed native Continue answer leaves unfinished review work eligible for recovery."""
+@pytest.mark.parametrize(
+    ("question", "options", "answer", "skill", "recover"),
+    [
+        pytest.param(
+            "Which findings should I remediate? All selects both items.",
+            ["All", "Required", "Suggestions", "Custom selection"],
+            "All",
+            "code-remediate",
+            True,
+            id="scope",
+        ),
+        pytest.param(
+            "How should verified remediation-owned changes be grouped into commits? A standing grant exists.",
+            [
+                "all at once",
+                "group findings by topic",
+                "each finding as a separate commit",
+                "decide after verification",
+                "leave unstaged",
+            ],
+            "all at once",
+            "code-remediate",
+            True,
+            id="commit-grouping",
+        ),
+        pytest.param(
+            "Which findings should I remediate?",
+            ["All", "Required", "Suggestions", "Custom selection"],
+            "All",
+            "code-review",
+            False,
+            id="read-only-owner",
+        ),
+        pytest.param(
+            "Which findings should I remediate?",
+            ["All", "Required", "Suggestions", "Custom selection"],
+            "Custom selection",
+            "code-remediate",
+            False,
+            id="indexes-still-needed",
+        ),
+        pytest.param(
+            "Which findings should I remediate?",
+            ["All", "Skip"],
+            "All",
+            "code-remediate",
+            False,
+            id="unknown-menu",
+        ),
+        pytest.param(
+            "Approve all changes?",
+            ["All", "Required", "Suggestions", "Custom selection"],
+            "All",
+            "code-remediate",
+            False,
+            id="different-purpose",
+        ),
+    ],
+)
+def test_remediation_answers_restore_only_their_own_workflow(
+    review_state, answered_question, question: str, options: list[str], answer: str, skill: str, recover: bool
+) -> None:
+    """Only a completed native decision from an active remediation form permits continued work within its scope."""
     payload, records = review_state
+    records[2] = create_run_record(skill)
+    item = answered_question[1]["payload"]["item"]
+    item["arguments"].update(question=question, options=options)
+    item["result"]["structuredContent"]["answer"] = answer
     records.extend(answered_question)
-    assert HOOK.evaluate(payload, records, "/plugin")["decision"] == "block"
+    response = HOOK.evaluate(payload, records, "/plugin")
+    assert response.get("decision") == ("block" if recover else None)
+
+
+@pytest.mark.parametrize(
+    ("text", "accepted"),
+    [
+        pytest.param(
+            "PR acme/widgets#12 — Keep fractional positions\n\nWhich findings should I remediate?",
+            True,
+            id="with-title",
+        ),
+        pytest.param("PR acme/widgets#12\n\nWhich findings should I remediate?", True, id="before-collection"),
+        pytest.param(
+            "Remediate PR acme/widgets#12 — Keep labels\n\nWhich findings should I remediate?",
+            True,
+            id="remediation-action",
+        ),
+        pytest.param(
+            "PR acme/widgets#12 — Which findings should I remediate?\n\nWork is pending.", False, id="question-in-title"
+        ),
+        pytest.param(
+            "A previous question was recorded.\n\nWhich findings should I remediate?", False, id="unrelated-preamble"
+        ),
+        pytest.param(
+            "PR acme/widgets#12\n\nPR acme/widgets#12 — Again\n\nWhich findings should I remediate?",
+            False,
+            id="duplicate-prefix",
+        ),
+        pytest.param("PR acme/widgets#12 — Title\nWhich findings should I remediate?", False, id="missing-separator"),
+    ],
+)
+def test_native_scope_recognizes_only_one_pr_subject(
+    review_state, answered_question, text: str, accepted: bool
+) -> None:
+    """A display subject can precede the existing question while the answer stays bound to its native receipt."""
+    payload, records = review_state
+    records[2] = create_run_record("code-remediate")
+    item = answered_question[1]["payload"]["item"]
+    item["arguments"].update(question=text, options=["All", "Required", "Suggestions", "Custom selection"])
+    item["result"]["structuredContent"]["answer"] = "Required"
+    assert HOOK.evaluate(payload, [*records, *answered_question], "/plugin").get("decision") == (
+        "block" if accepted else None
+    )
+
+
+@pytest.mark.parametrize(
+    ("subject", "body", "expected"),
+    [
+        pytest.param(
+            "PR acme/widgets#12 — Awaiting your decision",
+            "Implementation remains unfinished.",
+            "block",
+            id="title-is-data",
+        ),
+        pytest.param(
+            "PR acme/widgets#12 — Which findings should I remediate?",
+            "Implementation remains unfinished.",
+            "block",
+            id="question-only-in-title",
+        ),
+        pytest.param(
+            "PR acme/widgets#12 — Save widget state", "Which findings should I remediate?", None, id="pending-question"
+        ),
+        pytest.param(
+            "Remediate PR acme/widgets#12 — Handle denied requests",
+            "Implementation remains unfinished.",
+            "block",
+            id="action-title-with-denial",
+        ),
+        pytest.param("PR acme/widgets#12", "The user denied the operation.", None, id="body-denial"),
+    ],
+)
+def test_terminal_pr_subject_preserves_question_and_pause_semantics(
+    review_state, subject: str, body: str, expected: str | None
+) -> None:
+    """Only the terminal message body indicates a decision or controls further remediation."""
+    payload, records = review_state
+    records[2] = create_run_record("code-remediate")
+    payload["last_assistant_message"] = f"{subject}\n\n{body}"
+    result = HOOK.evaluate(payload, records, "/plugin")
+    assert result.get("decision") == expected
+    assert ("question delivery only" in result.get("reason", "")) is False
+
+
+@pytest.mark.parametrize(
+    "menu",
+    [
+        pytest.param(
+            "Which findings should I remediate?\n\n- All\n- Required\n- Suggestions\n- Custom selection", id="scope"
+        ),
+        pytest.param(
+            "How should verified remediation-owned changes be grouped into commits?\n\n"
+            "- all at once\n- group findings by topic\n- each finding as a separate commit\n"
+            "- decide after verification\n- leave unstaged",
+            id="grouping",
+        ),
+        pytest.param("All / Required / Suggestions / Custom selection", id="inline-scope"),
+        pytest.param("Which finding indexes should I remediate?", id="custom-scope-question"),
+        pytest.param(
+            "Approve = this commit only.\nApprove always = standing grant.\nHold = leave unstaged.", id="plain-commit"
+        ),
+    ],
+)
+def test_new_terminal_menu_after_answer_keeps_remediation_paused(review_state, answered_question, menu: str) -> None:
+    """An earlier answered native decision does not settle a later plain-chat menu."""
+    payload, records = review_state
+    payload["last_assistant_message"] = menu
+    records[2] = create_run_record("code-remediate")
+    records.extend(answered_question)
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        pytest.param("Continue this review?", "block", id="historical-question"),
+        pytest.param("Review PR acme/widgets#12 — Keep labels\n\nContinue this review?", "block", id="review-action"),
+        pytest.param("PR acme/widgets#12 — Triage workflow\n\nContinue this review?", "block", id="display-subject"),
+        pytest.param("PR acme/widgets#12\n\nPR acme/widgets#12\n\nContinue this review?", None, id="duplicate-subject"),
+    ],
+)
+def test_answered_continue_restores_review_recovery(
+    review_state, answered_question, question: str, expected: str | None
+) -> None:
+    """A completed native Continue answer with a single optional PR subject allows unfinished review recovery."""
+    payload, records = review_state
+    answered_question[1]["payload"]["item"]["arguments"]["question"] = question
+    records.extend(answered_question)
+    assert HOOK.evaluate(payload, records, "/plugin").get("decision") == expected
 
 
 @pytest.mark.parametrize("answer", ["Skip", "Stop", "Deny", "", "continue"])
@@ -2741,6 +2979,10 @@ def test_unknown_question_receipt_preserves_pause(review_state, answered_questio
         "await tools?.mcp__codex_rig_input__ask_user({});",
         "const {mcp__codex_rig_input__ask_user: ask} = tools; await ask({});",
         "const ask = tools . mcp__codex_rig_input__ask_user; ask({});",
+        "text(ALL_TOOLS.filter(x=>/ask_user/.test(x.name)));await tools.mcp__codex_rig_input__ask_user({});",
+        'text(ALL_TOOLS.filter(x=>/ask_user/.test(x.name)));await tools["ask_user"]({});',
+        "const lookup = ask_user; await lookup({});",
+        "await ask_user({});",
     ],
 )
 def test_unknown_nested_question_routes_preserve_pause(review_state, source: str) -> None:

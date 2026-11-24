@@ -260,7 +260,7 @@ echo labels > "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}"  # timeout: 3000
 
 <!-- branch: main-path — push (follow-up call in every band; one push-only call only at zero pending with no closed items; omitted when no PR number exists) -->
 
-**Push question** — placed per the slot table above; asked whenever a PR number exists. Pick its form by what is known now. **Run approval form** — `pr` and `pr+report`, where Step 4 already ran, so `FORK_REMOTE` and `HEAD_REF` (their sentinels) and `PR_HEAD_OID` are all known, and both names are plain ones the hook can record (`FORK_REMOTE`: letters, digits, `.`, `_`, `-`; `HEAD_REF` the same plus `/`, never `HEAD`, never a `refs/` name, no `..`, no trailing `/` or `.lock`): the question below *is* the push authorization, Step 10 asks nothing further. **Intent form** — `report` mode, any of those values missing, or a name outside that plain set (the hook would record no token, so Step 10 would ask the user again after a run approval): the 4-option menu below, as before. It records **push intent only**, plus the post-PR action. It is never push authorization: commits do not exist yet, so the scope the push-safety rule (`git-commit.md`, "Never push without explicit user confirmation") requires the user to see — diff stat, commit count, last subject — cannot be shown here. Intent "push" means Step 10 asks the scope-bearing push confirmation; an explicit "don't push" is itself an answer, and Step 10 then skips its question silently. Name what is knowable now — target `$FORK_REMOTE/$HEAD_REF` when Step 4 already ran (`pr`, `pr+report`), otherwise `the head branch of PR #<N>` (`report` mode checks out after this gate) — plus the selected item count and commit mode.
+**Push question** — placed per the slot table above; asked whenever a PR number exists. Pick its form by what is known now. **Run approval form** — `pr` and `pr+report`, where Step 4 already ran, so `FORK_REMOTE` and `HEAD_REF` (their sentinels) and `PR_HEAD_OID` are all known, and both names are plain ones the hook can record (`FORK_REMOTE`: letters, digits, `.`, `_`, `-`; `HEAD_REF` the same plus `/`, never `HEAD`, never a `refs/` name, no `..`, no trailing `/` or `.lock`): the question below *is* the push authorization, Step 10 asks nothing further (in a `--worktree` run the **Run from the session worktree** block below picks its span first). **Intent form** — `report` mode, any of those values missing, or a name outside that plain set (the hook would record no token, so Step 10 would ask the user again after a run approval): the 4-option menu below, as before. It records **push intent only**, plus the post-PR action. It is never push authorization: commits do not exist yet, so the scope the push-safety rule (`git-commit.md`, "Never push without explicit user confirmation") requires the user to see — diff stat, commit count, last subject — cannot be shown here. Intent "push" means Step 10 asks the scope-bearing push confirmation; an explicit "don't push" is itself an answer, and Step 10 then skips its question silently. Name what is knowable now — target `$FORK_REMOTE/$HEAD_REF` when Step 4 already ran (`pr`, `pr+report`), otherwise `the head branch of PR #<N>` (`report` mode checks out after this gate) — plus the selected item count and commit mode.
 
 ```text
 Push question — multiSelect: FALSE
@@ -271,7 +271,7 @@ Push question — multiSelect: FALSE
   (d) Don't push — I'll push manually
 ```
 
-Run approval form — it is the `git-push-run` question that foundry's approval hook records: header `git-push-run`, multiSelect FALSE, options exactly `Approve` / `Deny`, question text with exactly one push span and one head span (values read from the sentinels and `PR_HEAD_OID`, never typed from memory; the hook refuses anything else, a fence or an invisible character):
+Run approval form — it is the `git-push-run` question that foundry's approval hook records: header `git-push-run`, multiSelect FALSE, options exactly `Approve` / `Hold`, question text with exactly one push span and one head span (values read from the sentinels and `PR_HEAD_OID`, never typed from memory; the hook refuses anything else, a fence or an invisible character):
 
 ```text
 Push question (run approval) — header: git-push-run
@@ -281,8 +281,28 @@ Push question (run approval) — header: git-push-run
  Remote <FORK_REMOTE> is the PR's head repository <FORK_REPO> (added at push time when missing)
  Covers this run's <selected item count> item(s), <commit mode> commits on top of that head; valid 12 h."
   Approve — push once at the end of the run, no second question
-  Deny — don't push; I'll push manually
+  Hold — skip this push; I'll push manually
 ```
+
+**Run from the session worktree (`--worktree`).** A run approval is bound to the checkout the hook saw when it was asked, so a plain `git push` from the worktree is refused and the push then needs a second question. Run this block before the run approval question (`pr` and `pr+report` only; Step 10 runs the same block again, after the worktree exists in every mode); it prints `WT_PUSH=none` (no worktree), the worktree's path, or `WT_PUSH=unusable` (the path has a space, backslash, quote or other character the hook's `git -C` form cannot carry):
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _WTON < "${TMPDIR:-/tmp}/oss-resolve-worktree-${CSID}" 2>/dev/null || _WTON=false
+_WTF="${TMPDIR:-/tmp}/resolve-push-worktree-${CSID}"
+echo none > "$_WTF"
+if [ "$_WTON" = true ]; then
+    git rev-parse --show-toplevel > "$_WTF.top"  # the session's own checkout: the worktree after Step 4's EnterWorktree
+    IFS= read -r _WT < "$_WTF.top" 2>/dev/null || _WT=""
+    case "$_WT" in ''|*[!A-Za-z0-9_./:-]*) _WT=unusable ;; /*|[A-Za-z]:/*) ;; *) _WT=unusable ;; esac
+    echo "$_WT" > "$_WTF"
+fi
+printf 'WT_PUSH='; cat "$_WTF"  # timeout: 5000
+```
+
+- `WT_PUSH=none` → the form above, unchanged.
+- A path → the same question with the worktree named: the first line reads `Push PR #<N> from worktree <WT_PUSH> (not this session's checkout) after the lint/QA gate passes? Approve lets this run push once, without asking again.` and the push span is `` `git -C <WT_PUSH> push <FORK_REMOTE> <HEAD_REF>` `` (path unquoted, written out; still exactly one push span and one head span). Step 10 then pushes with that same `git -C` spelling.
+- `WT_PUSH=unusable` → ask the intent form instead; Step 10 hands the push to the user, since no approval can cover that path.
 
 The post-PR browser action has no slot in this form (a call holds at most 4 questions and the push question already fills the last one) and nothing is asked after Step 3d, so it stays `skip`; the final report's **Link** line is the one-click way to the PR.
 
@@ -296,7 +316,7 @@ Unanswered or dismissed → run **no** push block and **no** post-PR block: the 
 | (d) | skip | skip |
 | unanswered / dismissed | none — stays `unset`, Step 10 asks push + post-PR | none |
 | run approval: Approve | push-run | skip |
-| run approval: Deny | skip | skip |
+| run approval: Hold | skip | skip |
 
 Push = push-run:
 

@@ -31,7 +31,7 @@ Docs, deps, CI/CD, releases, security, deprecations → prefer current primary s
 - Verification = part of work, not follow-up. No task done until relevant lint/tests/gates run and result explainable concrete; failures, residual risks, deliberately deferred scope reported accurately.
 - Before any skill or role reports an authorized check blocked by a missing declared project dependency, the parent reads and applies packaged `shared/native-skill-contract.md` §"Project Dependency Preparation". Preserve the owning workflow's read-only and execution boundaries; request any specific missing capability and rerun applicable checks after preparation rather than handing back a generic installation task.
 - Every resumed skill run, including after user intervention or repeated invocation, retains its normal closing gate and output contract. Recover first unmet checkpoint, reuse only still-valid evidence, and finish validation before declaring completion; do not replace required final structure with informal recap. Existing non-artifact workflows retain their own documented final verification.
-- Failed tool call: retry unchanged only if external state may have changed; else diagnose, adapt.
+- Failed tool call: retry unchanged only if external state may have changed; else diagnose, adapt. For a blocked command, apply `shared/native-skill-contract.md` §"Actionable Pauses".
 - Multiple agents: handoffs compact, ownership clear. Never redo other agent work unless resolving conflict or explicit gap.
 - Code Remediate remains single-pass with the bounded independent implementation challenge; start a multi-round challenge/resolve loop only when the user explicitly requests it. Before dispatching that loop, apply packaged `shared/global-baseline-details.md` §"Review cycle routing".
 - Progress stalls or path drifts → re-plan, no forcing current approach.
@@ -259,7 +259,7 @@ Every proposed/created commit message must use packaged template's `Changes:`, `
 - Standing local Git approval exists only as the project grant `codex-git-approval.json` in the Git common dir, written after the user's literal **Approve always**; check it per packaged `shared/native-skill-contract.md` §Local Git approval grant. Nothing else supplies one: a bare-repository fixture, planted `.git` file or environment-steered Git directory never does. Never write it by any other means, such as a patch, a script, archive extraction or a copy, nor escalate for it.
 - Only a plain commit needs authority; staging, necessary task-owned local merges and merge commits, cherry-picks, branch/worktree prep never ask.
 - Grant present: commit your completed task's verified owned changes on completion. Ordinary finding-fix commits need no per-commit question.
-- No grant: explicit request or defining workflow step → commit after checks; otherwise ask **Approve** / **Approve always** / **Deny** (Deny: leave changes unstaged).
+- No grant: explicit request or defining workflow step → commit after checks; otherwise ask **Approve** / **Approve always** / **Hold** (leave changes unstaged).
 - `no commit`, `leave unstaged`, read-only/summary-only requests, an explicit wait beat any grant. Child agents gain nothing unless a workflow step assigns them the commit.
 - Commit-summary request alone: no commit.
 

@@ -2,6 +2,8 @@
 
 ### 04: T2 risk-routed specialist fan-out
 
+Before preparing reviewer tasks, finish the parent's [Python structural context](source-and-scope.md#python-structural-context) check. For a tracked Python diff, include the relevant impact evidence or recorded provider limitation in each role's brief. Native preparation validates the run's Codemap artifact before issuing dispatch arguments. On a missing artifact, run the adapter against the verified source and collected diff, then resume preparation.
+
 Include in every reviewer context: return a scoped source rating and evidence-backed rationale using 1 Approve, 2 Minor changes, 3 Major revision, 4 Insufficient but a good initiative, 5 Block, or null when inspected scope remains undecidable after feasible checks. Retained text responses include `## Reviewer Assessment` with `Source rating version: 1`, `Rating: <1-5|null>`, `Verification readiness: <complete|blocked|incomplete>`, and `Rationale: <nonblank explanation>` on separate lines; the local reviewer wave uses its exact `assessment` object instead. This adds to the existing findings/confidence output contract. The parent retains the rating and actual role for the header and preserves author attribution through consolidation.
 
 Apply the proportional source judgments in [Compute the structured review decision](findings-and-completion.md#09-compute-the-structured-review-decision-and-update-decision-summary) within each assigned scope: bounded low-impact correctness or test fixes can be Minor changes; Major revision requires concrete material impact or substantial repair scope. Tie the rationale to retained findings, and distinguish required action from major impact.

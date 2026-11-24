@@ -1358,7 +1358,7 @@ class TestOneTimeApproval:
             pytest.param({"expires_at": "2026-01-01T00:00:00.000Z"}, "has expired", id="expired"),
             pytest.param({"version": 2}, "unknown record version", id="unknown-version"),
             pytest.param({"scope": "push-once"}, "unknown scope", id="other-scope"),
-            pytest.param({"answer": "Deny"}, "does not hold answer Approve", id="other-answer"),
+            pytest.param({"answer": "Hold"}, "does not hold answer Approve", id="other-answer"),
             pytest.param({"command": None}, "lacks command", id="no-command"),
             pytest.param({"command": ""}, "no command text", id="empty-command"),
         ],
@@ -1450,7 +1450,7 @@ class TestOneTimeApproval:
         Scenario: a write with no approval on disk is blocked, and the message carries the whole recipe the model needs
         to get one: the tool, header, option labels, command span rule and the no-git fallback.
         """
-        needles = ("AskUserQuestion", "`gh-write`", "`Approve` / `Deny`", "inline code span", "Outside a git")
+        needles = ("AskUserQuestion", "`gh-write`", "`Approve` / `Hold`", "inline code span", "Outside a git")
         result = guard(_call(APPROVED, checkout))
         assert result.returncode == 2
         assert [needle for needle in needles if needle not in result.stderr] == []
@@ -1570,7 +1570,7 @@ class TestTranscriptProof:
     @pytest.mark.parametrize(
         ("shape", "reason"),
         [
-            pytest.param({"answer": "Deny"}, "no Approve answer", id="answered-deny"),
+            pytest.param({"answer": "Hold"}, "no Approve answer", id="answered-deny"),
             pytest.param({"prefilled": True}, "pre-filled", id="prefilled-answer"),
             pytest.param({"is_error": True}, "no Approve answer", id="error-result"),
             pytest.param({"age_minutes": 20}, "older than", id="stale-answer"),

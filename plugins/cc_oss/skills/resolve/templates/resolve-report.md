@@ -90,7 +90,8 @@
 > | `blocked-permission` | `⚠ Push blocked — git push permission not granted; run the command under Unblock push` |
 > | `blocked-needs-manual-push` | `⚠ Push needs your shell — no upstream tracking, and no approval covers the explicit-refspec push; run the line under Unblock push` |
 > | `rejected-non-ff` | `✗ Push rejected (non-fast-forward) — merge the remote branch, then push manually` |
-> | `skipped-by-user` | `⊘ Push skipped by you (Step 3d "don't push" or Step 10 "Deny") — run git push when ready` |
+> | `rejected-remote` | `✗ Push approved but failed — the remote refused it: [git's error line, verbatim from push-error.txt]. The PR on GitHub does not carry these commits; run the line under Unblock push` |
+> | `skipped-by-user` | `⊘ Push skipped by you (Step 3d "don't push" or Step 10 "Hold") — run git push when ready` |
 > | `not-attempted` | `✗ Push not attempted — push scope could not be computed` |
 > | `none` | `⊘ No push this run (no PR number, or all items skipped)` |
 
@@ -114,4 +115,4 @@
 
 ## Unblock push
 
-> `blocked-guard` / `blocked-permission` / `blocked-needs-manual-push` only, and always the last section of the report — after **Next**, the Challenge Log and Confidence. Repeat the lines of `push-unblock.txt` verbatim in one fenced block; omit the section for every other status.
+> `blocked-guard` / `blocked-permission` / `blocked-needs-manual-push` / `rejected-remote` only, and always the last section of the report — after **Next**, the Challenge Log and Confidence. Repeat the lines of `push-unblock.txt` verbatim in one fenced block; omit the section for every other status.

@@ -83,8 +83,8 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${CLAUDE_PLUGIN_ROOT}/bin/parse-resolve-args.py" ] || { echo "Error: parse-resolve-args.py not found — verify oss plugin installation"; exit 1; }  # timeout: 5000
 # parse-resolve-args.py anchors on "<PR#> [report]" alone — ANY surviving flag token routes to
 # comment-dispatch and drops PR_NUMBER. Every supported flag must be stripped here, not just codemap/keep.
-# --keep-state also writes resolve-no-challenge-${CSID}, read by Step 8 Phase 1; no stale contract yet (first write: Step 3d), so the second clear is a no-op
-python "${CLAUDE_PLUGIN_ROOT}/bin/parse-skill-flags.py" --flags no-codemap,codemap,worktree,no-challenge --value-flags agent --preserve-whitespace --keep-state resolve -- "$ARGUMENTS" >/dev/null || exit 1  # timeout: 5000
+# --keep-state also writes resolve-no-challenge-${CSID}, read by Step 8 Phase 1, and resolve-sandbox-${CSID}, read by the Step 3d PR-code decision; no stale contract yet (first write: Step 3d), so the second clear is a no-op
+python "${CLAUDE_PLUGIN_ROOT}/bin/parse-skill-flags.py" --flags no-codemap,codemap,worktree,no-challenge,sandbox --value-flags agent --preserve-whitespace --keep-state resolve -- "$ARGUMENTS" >/dev/null || exit 1  # timeout: 5000
 ARGUMENTS=""
 IFS= read -r -d '' ARGUMENTS < "${TMPDIR:-/tmp}/resolve-clean-args-${CSID}" 2>/dev/null || :
 ARGUMENTS=${ARGUMENTS%$'\n'}

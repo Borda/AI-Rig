@@ -25,6 +25,8 @@ The hook decision passes `--head "$PR_HEAD_OID"`. The helper uses it only while 
 
 The approval is bound with the default tier, exactly like the **Run PR code in sandbox** answer (never `--decision unsandboxed`), and recorded as `auto`; the Step 11 final report states it with the head (`PR code:` line, from `pr-code-decision.txt`), because Bash output is not reliably shown. The scan is a static heuristic, never a safety claim, so any finding, a different head, or a missing or unscanned review record gives `ask`, with the sandbox as the first option. `Run PR code in sandbox` stays available on every question.
 
+**`--sandbox` — every run in the sandbox, no question unless the scan carries evidence.** The flag (sentinel `resolve-sandbox-<session>`, `true` or `false`) replaces the review-record rule: `code_safety_status.py check-sandbox` on the fresh scan prints `sandbox` when its risk level is `none` or `borderline` and the host has a sandbox; the block then binds `--tier sandbox`, records `sandbox` and asks nothing, so a run that has no review record is still unattended. A host without a usable sandbox prints `deny reason=no-sandbox`: the block records `deny` and the tests are reported as not run, never run with less protection. Any other level (`high`, `likely-malicious`) or an unusable scan keeps the question, which then offers only **Run PR code in sandbox** and **Do not run PR code**. Without the flag nothing changes.
+
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -34,6 +36,7 @@ IFS= read -r PR_HEAD_OID < "${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}" 2>/dev/
 IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
 IFS= read -r _XREPO < "${TMPDIR:-/tmp}/resolve-is-cross-repo-${CSID}" 2>/dev/null || _XREPO=true
 IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
+IFS= read -r _SANDBOX < "${TMPDIR:-/tmp}/resolve-sandbox-${CSID}" 2>/dev/null || _SANDBOX=false
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; Step 3a/3b did not finish"; exit 1; }
 case "$PR_NUMBER" in ''|*[!0-9]*) _NO_PR=true ;; *) _NO_PR=false ;; esac
 IFS= read -r _PREV < "$IMPL_DIR/exec-plan.txt" 2>/dev/null || _PREV=""
@@ -84,16 +87,32 @@ elif [ -s "$IMPL_DIR/code-scan.txt" ] && [ "${_PREV#*pr-code=ask}" != "$_PREV" ]
 else
     _PRCODE=ask
     if python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" scan --head "$PR_HEAD_OID" --base "origin/$BASE_REF" --out "$IMPL_DIR/code-scan.json" --text > "$IMPL_DIR/code-scan.txt" 2> "$IMPL_DIR/code-scan.err"; then  # timeout: 60000
-        case "$REPORT_FILE" in
-            */*) python "$PLUGIN_ROOT/bin/code_safety_status.py" check --status "${REPORT_FILE%/*}/code-safety.json" --scan "$IMPL_DIR/code-scan.json" --head "$PR_HEAD_OID" > "$IMPL_DIR/code-safety-check.txt" ;;
-            *) echo "ask reason=no-review-status" > "$IMPL_DIR/code-safety-check.txt" ;;
-        esac
-        IFS= read -r _CHECK < "$IMPL_DIR/code-safety-check.txt" 2>/dev/null || _CHECK="ask reason=check-failed"
-        [ "$_DEC" != stale ] || _CHECK="ask reason=stale-approval"  # a refused approval is never re-bound without asking
-        if [ "$_CHECK" = auto ] && python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" bind --head "$PR_HEAD_OID" --base "origin/$BASE_REF" --scope run --out "$IMPL_DIR/code-approval.txt" > /dev/null; then
-            echo auto > "$IMPL_DIR/pr-code-decision.txt"; _PRCODE=auto
-            echo "→ PR code: review and this scan both found nothing at head ${PR_HEAD_OID:0:12}; runs in the sandbox, no question"
-            cat "$IMPL_DIR/code-scan.txt"
+        if [ "$_SANDBOX" = true ]; then
+            python "$PLUGIN_ROOT/bin/code_safety_status.py" check-sandbox --scan "$IMPL_DIR/code-scan.json" --head "$PR_HEAD_OID" > "$IMPL_DIR/code-safety-check.txt"
+            IFS= read -r _CHECK < "$IMPL_DIR/code-safety-check.txt" 2>/dev/null || _CHECK="ask reason=check-failed"
+            case "$_CHECK" in
+                sandbox)
+                    if python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" bind --head "$PR_HEAD_OID" --base "origin/$BASE_REF" --scope run --tier sandbox --out "$IMPL_DIR/code-approval.txt" > /dev/null; then
+                        echo sandbox > "$IMPL_DIR/pr-code-decision.txt"; _PRCODE=recorded
+                        echo "→ PR code: --sandbox given; every run stays in the sandbox at head ${PR_HEAD_OID:0:12}, no question"
+                        cat "$IMPL_DIR/code-scan.txt"
+                    fi ;;
+                deny*)
+                    echo deny > "$IMPL_DIR/pr-code-decision.txt"; _PRCODE=recorded
+                    echo "⚠ --sandbox given but this host has no usable sandbox: PR code is not run, tests not run — PR-code execution not approved" ;;
+            esac
+        else
+            case "$REPORT_FILE" in
+                */*) python "$PLUGIN_ROOT/bin/code_safety_status.py" check --status "${REPORT_FILE%/*}/code-safety.json" --scan "$IMPL_DIR/code-scan.json" --head "$PR_HEAD_OID" > "$IMPL_DIR/code-safety-check.txt" ;;
+                *) echo "ask reason=no-review-status" > "$IMPL_DIR/code-safety-check.txt" ;;
+            esac
+            IFS= read -r _CHECK < "$IMPL_DIR/code-safety-check.txt" 2>/dev/null || _CHECK="ask reason=check-failed"
+            [ "$_DEC" != stale ] || _CHECK="ask reason=stale-approval"  # a refusal the renewal in the stale block could not clear is never re-bound without asking
+            if [ "$_CHECK" = auto ] && python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" bind --head "$PR_HEAD_OID" --base "origin/$BASE_REF" --scope run --out "$IMPL_DIR/code-approval.txt" > /dev/null; then
+                echo auto > "$IMPL_DIR/pr-code-decision.txt"; _PRCODE=auto
+                echo "→ PR code: review and this scan both found nothing at head ${PR_HEAD_OID:0:12}; runs in the sandbox, no question"
+                cat "$IMPL_DIR/code-scan.txt"
+            fi
         fi
     else
         echo "scan unavailable (see $IMPL_DIR/code-scan.err): no verdict or risk level to show; decide without it" > "$IMPL_DIR/code-scan.txt"
@@ -102,7 +121,7 @@ fi
 echo "pr-code=$_PRCODE hooks=$_HOOKS" > "$IMPL_DIR/exec-plan.txt"; cat "$IMPL_DIR/exec-plan.txt"
 ```
 
-**Stale approvals.** The approval is bound to the PR head, but Step 5 has already merged the base: when that merge changes a dependency manifest, or later work adds a high finding or touches one, the guard refuses the first test as stale (exit 3) and the question is asked once more, at the committed `HEAD` saved by the `PR code = stale` block. A second refusal at the same commit (uncommitted work the committed approval cannot cover) is final: the tests are reported as not run.
+**Stale approvals.** The approval is bound to the PR head, but Step 5 has already merged the base: when that merge changes a dependency manifest, or later work adds a high finding or touches one, the guard refuses the first test as stale (exit 3). The `PR code = stale` block then rescans the committed `HEAD`: when that scan is clean (risk `none`), the host has a sandbox and the approval set aside was a sandbox-tier one the user or a clean scan gave, `check-rebind` renews it at that commit without a question and the run continues; with `--sandbox` the `check-sandbox` rule applies instead, the same one that decided the first question: a rescan of risk `none` or `borderline` on a host with a sandbox renews the approval, whatever the earlier one was, since under the flag every approval is a sandbox one. An earlier unsandboxed answer, any finding or a host without a sandbox keeps the old behaviour: the question is asked once more, at that commit. A second refusal at the same commit (uncommitted work the committed approval cannot cover) is final: the tests are reported as not run.
 
 **Placement — last, never first.** Each value `ask` adds one question. They take the last free slots of the last Step 3d call, after push and topic-group. Where that call already holds 4 questions, they go together in one extra call straight after it, still before Run 2 starts. A bulk answer that stops the run (skip-all) never reaches them. Unanswered or dismissed: record nothing; the Step 8 prelude then asks as its recovery path, never a silent skip.
 
@@ -110,7 +129,7 @@ echo "pr-code=$_PRCODE hooks=$_HOOKS" > "$IMPL_DIR/exec-plan.txt"; cat "$IMPL_DI
 
 - **Run PR code in sandbox** — disposable copy, network denied, home hidden.
 - **Do not run PR code** — tests are reported as not run.
-- **Run without sandbox** — always offered. Still a disposable copy and a cleared environment, but no containment: the network, `~/.ssh`, the keychain and the gh token file stay reachable, and that code can rewrite this run's recorded answers.
+- **Run without sandbox** — offered on every question unless `--sandbox` was given. Still a disposable copy and a cleared environment, but no containment: the network, `~/.ssh`, the keychain and the gh token file stay reachable, and that code can rewrite this run's recorded answers.
 
 **Hook question** (`hooks` is `ask`; single-select, header `repo-hooks`). Show the exact hook commands, file contents and configuration from `$IMPL_DIR/hooks-inspection.json`, naming the PR-changed inputs in `changed` (or the `reason` when the base could not be compared). When `$IMPL_DIR/hooks-inspection-note.txt` is not empty, the question quotes its line. Approving commits or tests never approves PR-supplied hooks. Options: **Run these hooks** / **Keep hooks disabled** / **Run and remember for this repo** / **Never run hooks in this repo**.
 
@@ -154,12 +173,15 @@ IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null |
 echo deny > "$IMPL_DIR/pr-code-decision.txt"
 ```
 
-PR code = stale (a guard refusal said the approval is stale, from the full suite, a QA run or an item agent; run from the checkout root; the question is then asked again at the saved current commit):
+PR code = stale (a guard refusal said the approval is stale, from the full suite, a QA run or an item agent; run from the checkout root; a clean rescan renews a sandbox approval without a question, otherwise the question is asked again at the saved current commit):
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
-[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing"; exit 1; }
+IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
+IFS= read -r _SANDBOX < "${TMPDIR:-/tmp}/resolve-sandbox-${CSID}" 2>/dev/null || _SANDBOX=false
+[ -n "$IMPL_DIR" ] && [ -n "$BASE_REF" ] || { echo "! BLOCKED — IMPL_DIR or base ref sentinel missing"; exit 1; }
 [ ! -e "$IMPL_DIR/code-approval.txt" ] || mv -f "$IMPL_DIR/code-approval.txt" "$IMPL_DIR/code-approval.set-aside" || { echo "! BLOCKED — could not set the stale approval file aside; the runners would still accept it"; exit 1; }  # a stale approval must not stay beside a later Do-not-run answer
 git rev-parse HEAD > "$IMPL_DIR/pr-code-head-now.txt" || { echo "! BLOCKED — could not read the current HEAD for the new approval"; exit 1; }
 IFS= read -r _NOW < "$IMPL_DIR/pr-code-head-now.txt" || [ -n "$_NOW" ] || _NOW=""
@@ -167,6 +189,22 @@ IFS= read -r _SAVED < "$IMPL_DIR/pr-code-rebind-head.txt" 2>/dev/null || [ -n "$
 if [ -n "$_SAVED" ] && [ "$_SAVED" = "$_NOW" ]; then echo deny > "$IMPL_DIR/pr-code-decision.txt"; echo "⚠ the approval went stale again at the commit it was re-asked for (an uncommitted dependency or high-finding change?); no more questions this run: tests not run — PR-code execution not approved"; exit 0; fi  # a committed rebind cannot cover uncommitted work, so a second refusal at the same commit is final
 echo "$_NOW" > "$IMPL_DIR/pr-code-rebind-head.txt"  # the stale refusal is about work since the PR head, so the new scan and bind use this commit
 echo stale > "$IMPL_DIR/pr-code-decision.txt"
+if python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" scan --head "$_NOW" --base "origin/$BASE_REF" --out "$IMPL_DIR/code-scan.json" --text > "$IMPL_DIR/code-scan.txt" 2> "$IMPL_DIR/code-scan.err"; then  # timeout: 60000 — the rescan covers the merged tree, so a clean result is the validation the user would have been asked to make
+    if [ "$_SANDBOX" = true ]; then
+        python "$PLUGIN_ROOT/bin/code_safety_status.py" check-sandbox --scan "$IMPL_DIR/code-scan.json" --head "$_NOW" > "$IMPL_DIR/code-rebind-check.txt"
+    else
+        python "$PLUGIN_ROOT/bin/code_safety_status.py" check-rebind --scan "$IMPL_DIR/code-scan.json" --head "$_NOW" --prior "$IMPL_DIR/code-approval.set-aside" > "$IMPL_DIR/code-rebind-check.txt"
+    fi
+    IFS= read -r _CHECK < "$IMPL_DIR/code-rebind-check.txt" 2>/dev/null || _CHECK="ask reason=check-failed"
+    case "$_CHECK" in
+        auto|sandbox)
+            if python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" bind --head "$_NOW" --base "origin/$BASE_REF" --scope run --tier sandbox --out "$IMPL_DIR/code-approval.txt" > /dev/null; then
+                echo sandbox > "$IMPL_DIR/pr-code-decision.txt"
+                echo "→ PR code: the base merge changed the approval's inputs; the rescan of ${_NOW:0:12} shows no objection, so the sandbox approval is renewed, no question"
+                cat "$IMPL_DIR/code-scan.txt"
+            fi ;;
+    esac
+fi
 ```
 
 Hooks: **Run these hooks** and **Run and remember for this repo** save the `sha256` shown in `hooks-inspection.json` as the sole line of `$IMPL_DIR/approved-hooks.txt` with the Write tool; **Run and remember** also runs `python "$PLUGIN_ROOT/bin/resolve_commit_hooks.py" --remember approved --sha <the displayed sha256>` (the saved policy binds the digest the user was shown, never a later inspection), and **Never run hooks in this repo** runs `--remember never`. Every other answer writes an empty `approved-hooks.txt` (hooks disabled). The file existing, even empty, means this run already decided; never inherit it from an earlier run.

@@ -296,7 +296,7 @@ Apply review findings to codebase. Reads live PR comments, saved review report, 
   - The ordinary count-based layout asks at most 3 times at the gate, plus that one confirmation. Typed grouping labels may need their own question.
   - A push you did not authorize never happens; an authorized push that is rejected (non-fast-forward) or blocked by a push guard or permission prompt is not retried or forced.
   - When the branch has no upstream tracking, resolve does not push to an explicit refspec itself — no approval covers that spelling — and hands you the exact command instead.
-  - Resolve still writes the final report, shows the push status there (`pushed`, `blocked-guard`, `blocked-permission`, `blocked-needs-manual-push`, `rejected-non-ff`, `skipped-by-user`), and when the push was blocked or handed to you ends the report with the exact lines to run.
+  - Resolve still writes the final report, shows the push status there (`pushed`, `blocked-guard`, `blocked-permission`, `blocked-needs-manual-push`, `rejected-non-ff`, `rejected-remote`, `skipped-by-user`), and when the push was blocked, refused by the remote or handed to you ends the report with the exact lines to run.
   - Resolve switches back to the branch you started on only after a successful push; when nothing was pushed (you declined, or the push was blocked or rejected), it stays on the PR branch holding the commits so you can review or push them yourself.
 
 ### Dispatch granularity

@@ -10,7 +10,8 @@
 
     The optional worktree action creates a separate linked checkout for the collector.
     All other actions use local Git queries only. Preparation records the existing branch and verifies
-    its source tracking; it never creates or switches branches, sets tracking,
+    its PR source from tracking or, for a same-repository native checkout tracking the target,
+    from the selected remote's PR branch ref. It never creates or switches branches, sets tracking,
     or repairs a changed revision. Only the explicitly requested receipt is written.
 ## Usage
 
@@ -20,7 +21,8 @@
     Run ``python remediation_branch.py prepare --pr-dir <collected-pr-directory>
     --receipt <branch.json>`` immediately after collection. Run ``check`` with that
     receipt and ``--expected-head <recorded-revision>`` before integration or each
-    optional commit, and after a commit using its independently observed revision.
+    optional commit, and after a commit using its independently observed revision. If the native branch
+    tracks the target, check reads the collector's sibling ``pr/`` directory or an explicit ``--pr-dir``.
     For a legacy run already on its original PR branch, use ``recover --legacy-receipt
     <old.json> --pr-dir <retained-pr-directory> --receipt <new.json> --expected-head
     <last-authorized-revision>`` before continuing with ordinary checks.
@@ -50,6 +52,7 @@ import argparse
 import hashlib
 import json
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -98,7 +101,8 @@ def create_worktree(receipt: Path) -> dict[str, Any]:
             raise ValueError("no-isolated-remediation-worktree-location")
     if receipt.is_symlink():
         raise ValueError("invalid-remediation-worktree-locator")
-    if receipt.exists():
+    fresh = not receipt.exists()
+    if not fresh:
         record = _read(receipt)
         destination = record.get("worktree")
         if (
@@ -163,6 +167,24 @@ def create_worktree(receipt: Path) -> dict[str, Any]:
         raise ValueError("remediation-worktree-head-mismatch")
     if registered and not pr_worktree_is_clean(directory):
         raise ValueError("remediation-worktree-has-local-changes")
+    # Only this successful, fresh add may mint cleanup authority. Never upgrade a retained locator or registration.
+    if fresh and receipt.name == "remediation-worktree.json":
+        admin = Path(_git("-C", str(directory), "rev-parse", "--absolute-git-dir")).resolve(strict=True)
+        if admin.parent != common / "worktrees":
+            raise ValueError("remediation-worktree-registration-unavailable")
+        run_identity = receipt.parent.stat()
+        ownership = {
+            "schema_version": 1,
+            "git_dir": admin.as_posix(),
+            "token": secrets.token_hex(16),
+            "locator_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+            # The provisional run may be renamed as one directory into its canonical PR sequence.
+            "run_directory_id": [run_identity.st_dev, run_identity.st_ino],
+        }
+        encoded = json.dumps(ownership, sort_keys=True).encode() + b"\n"
+        for path in (admin / "codex-remediation-owner", receipt.with_name("remediation-worktree-owner.json")):
+            with path.open("xb") as stream:
+                stream.write(encoded)
     return record
 
 
@@ -180,6 +202,26 @@ def _head(expected: str) -> None:
         raise ValueError("head-mismatch")
 
 
+def _collected_revision(pr: dict[str, Any], checkout: dict[str, Any]) -> tuple[int, str, str]:
+    """Require the collector's verified local checkout to agree with the PR identity and revision."""
+    number, head, url = pr.get("number"), pr.get("headRefOid"), pr.get("url")
+    if (
+        type(number) is not int
+        or number <= 0
+        or not isinstance(head, str)
+        or not isinstance(url, str)
+        or not url.endswith(f"/pull/{number}")
+        or checkout.get("pr_number") != number
+        or checkout.get("pr_url") != url
+        or checkout.get("local_head") != head
+        or checkout.get("expected_head") != head
+        or checkout.get("head_matches_pr") is not True
+        or checkout.get("diff_source") != "verified-local-checkout"
+    ):
+        raise ValueError("unverified-pr-source")
+    return number, head, url
+
+
 def _destination(
     branch: str,
     head_ref: str,
@@ -188,19 +230,84 @@ def _destination(
     pr_number: int,
     *,
     allow_pull_ref: bool = False,
+    pr_dir: Path | None = None,
+    initial_head: str = "",
 ) -> None:
-    """Verify branch or native fork pull-ref tracking identifies the recorded PR source."""
-    verify_pr_tracking(_git, branch, head_ref, head_repository, pr_url, pr_number, allow_pull_ref=allow_pull_ref)
+    """Verify source tracking or the exact original native branch on its selected same-repository remote."""
+    try:
+        verify_pr_tracking(_git, branch, head_ref, head_repository, pr_url, pr_number, allow_pull_ref=allow_pull_ref)
+        return
+    except ValueError as error:
+        if (
+            str(error) != "pr-upstream-mismatch:stop-without-changing-tracking"
+            or pr_dir is None
+            or branch != head_ref
+            or "/".join(_github_remote_identity(pr_url.rsplit("/pull/", 1)[0]) or ()).casefold()
+            != head_repository.casefold()
+        ):
+            raise
+
+    # Native checkout can leave an existing branch tracking the target. Rebuild the source proof
+    # from the collector on every check, including after local commits advance the attached branch.
+    pr = _read(pr_dir / "pr.json")
+    checkout = _read(pr_dir / "local-checkout.json")
+    base_ref = pr.get("baseRefName")
+    if (
+        _collected_revision(pr, checkout) != (pr_number, initial_head, pr_url)
+        or pr.get("headRefName") != head_ref
+        or _head_repository(pr).casefold() != head_repository.casefold()
+        or pr.get("isCrossRepository") is not False
+        or not isinstance(base_ref, str)
+        or not base_ref
+        or checkout.get("status") != "checked-out"
+        or checkout.get("checkout_mode") != "remediate"
+        or checkout.get("checkout_method") != "gh-pr-checkout"
+        or checkout.get("command") != f"gh pr checkout {pr_url}"
+        or checkout.get("gh_checkout_failure") is not None
+        or checkout.get("verified_same_repository") is not True
+        or checkout.get("pr_head_fetch_artifact") != "pr-head-fetch.json"
+        or checkout.get("local_branch") != branch
+        or checkout.get("worktree") != Path(_git("rev-parse", "--show-toplevel")).resolve().as_posix()
+    ):
+        raise ValueError("unverified-native-same-repository-source")
+    selection = _read(pr_dir / "remote-selection.json")
+    remote, selected_url = selection.get("remote"), selection.get("remote_url")
+    if (
+        not remote
+        or not isinstance(selected_url, str)
+        or "/".join(_github_remote_identity(selected_url) or ()).casefold() != head_repository.casefold()
+        or remote not in _git("remote").splitlines()
+        or remote != _git("config", "--get", f"branch.{branch}.remote")
+    ):
+        raise ValueError("pr-remote-mismatch:stop-without-changing-tracking")
+    verify_pr_tracking(_git, branch, base_ref, head_repository, pr_url, pr_number)
+    fetched = _read(pr_dir / "pr-head-fetch.json")
+    if (
+        fetched.get("status") != "fetched"
+        or fetched.get("remote") != remote
+        or fetched.get("source_ref") != head_ref
+        or fetched.get("head_ref") != head_ref
+        or fetched.get("remote_ref") != initial_head
+        or fetched.get("local_head") != initial_head
+        or fetched.get("expected_head_oid") != initial_head
+        or fetched.get("head_matches_pr_metadata") is not True
+    ):
+        raise ValueError("unverified-native-pr-head-fetch")
+    # A symbolic remote-tracking ref could point back to the local branch, making the proof circular.
+    source_ref = f"refs/remotes/{remote}/{head_ref}"
+    direct_ref = _git("for-each-ref", "--format=%(refname) %(objectname) %(symref)", "--", source_ref)
+    if direct_ref != f"{source_ref} {initial_head}":
+        raise ValueError("unverified-native-pr-remote-tracking-ref")
 
 
-def check(receipt: Path, expected_head: str) -> dict[str, Any]:
+def check(receipt: Path, expected_head: str, pr_dir: Path | None = None) -> dict[str, Any]:
     """Verify the recorded worktree and destination without switching or repairing it."""
     record = _read(receipt)
-    _verify_record(record, expected_head)
+    _verify_record(record, expected_head, pr_dir or receipt.parent / "pr")
     return record
 
 
-def _verify_record(record: dict[str, Any], expected_head: str) -> None:
+def _verify_record(record: dict[str, Any], expected_head: str, pr_dir: Path | None = None) -> None:
     """Check live branch identity and ancestry for prepared or recovered evidence."""
     if record.get("schema_version") != 2 or record.get("status") != "prepared":
         raise ValueError("invalid-branch-receipt:preserve-local-work-and-use-recover-for-schema-1")
@@ -227,6 +334,8 @@ def _verify_record(record: dict[str, Any], expected_head: str) -> None:
         record.get("pr_url"),
         record.get("pr_number"),
         allow_pull_ref="recovery" not in record,
+        pr_dir=pr_dir if "recovery" not in record else None,
+        initial_head=initial,
     )
 
 
@@ -303,21 +412,7 @@ def prepare(pr_dir: Path, receipt: Path) -> dict[str, Any]:
         raise ValueError("receipt-already-exists:check-recorded-branch-before-resuming")
     pr = _read(pr_dir / "pr.json")
     checkout = _read(pr_dir / "local-checkout.json")
-    number, head, url = pr.get("number"), pr.get("headRefOid"), pr.get("url")
-    if (
-        type(number) is not int
-        or number <= 0
-        or not isinstance(head, str)
-        or not isinstance(url, str)
-        or not url.endswith(f"/pull/{number}")
-        or checkout.get("pr_number") != number
-        or checkout.get("pr_url") != url
-        or checkout.get("local_head") != head
-        or checkout.get("expected_head") != head
-        or checkout.get("head_matches_pr") is not True
-        or checkout.get("diff_source") != "verified-local-checkout"
-    ):
-        raise ValueError("unverified-pr-source")
+    number, head, url = _collected_revision(pr, checkout)
     head_ref, head_repository = pr.get("headRefName"), _head_repository(pr)
     if not isinstance(head_ref, str):
         raise ValueError("invalid-pr-destination")
@@ -394,6 +489,8 @@ def prepare(pr_dir: Path, receipt: Path) -> dict[str, Any]:
         url,
         number,
         allow_pull_ref=checkout.get("checkout_method") == "gh-pr-checkout",
+        pr_dir=pr_dir if checkout.get("checkout_method") == "gh-pr-checkout" else None,
+        initial_head=head,
     )
     record = {
         "schema_version": 2,
@@ -417,7 +514,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0], allow_abbrev=False)
     parser.add_argument("action", choices=("prepare", "check", "recover", "worktree"))
     parser.add_argument("--receipt", required=True, type=Path)
-    parser.add_argument("--pr-dir", type=Path)
+    parser.add_argument(
+        "--pr-dir", type=Path, help="Collector evidence directory (check defaults to the receipt's sibling pr/)."
+    )
     parser.add_argument("--expected-head")
     parser.add_argument("--legacy-receipt", type=Path)
     args = parser.parse_args()
@@ -435,9 +534,9 @@ def main() -> int:
                 raise ValueError("recover-requires-pr-dir-legacy-receipt-and-expected-head")
             record = recover(args.legacy_receipt, args.pr_dir, args.receipt, args.expected_head)
         else:
-            if args.expected_head is None or args.pr_dir is not None or args.legacy_receipt is not None:
-                raise ValueError("check-requires-expected-head-only")
-            record = check(args.receipt, args.expected_head)
+            if args.expected_head is None or args.legacy_receipt is not None:
+                raise ValueError("check-requires-expected-head")
+            record = check(args.receipt, args.expected_head, args.pr_dir)
     except (CollectionError, OSError, ValueError, subprocess.TimeoutExpired) as error:
         print(f"remediation-branch: {error}", file=sys.stderr)
         return 2

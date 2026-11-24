@@ -110,9 +110,9 @@ def _validate_code_review_final_handoff(
     if handoff.get("branch") != expected_branch:
         raise SystemExit("code-review-final-handoff-branch-mismatch")
     if result.get("schema_version") == 3 and expected_branch == "assessed":
-        if fresh_candidate and handoff.get("presentation_version") not in {8, 9, 10, 11, 12, 13, 14, 15}:
+        if fresh_candidate and handoff.get("presentation_version") not in {8, 9, 10, 11, 12, 13, 14, 15, 16}:
             raise SystemExit("review-current-handoff-presentation-v8-required")
-        if handoff.get("presentation_version") not in {3, 7, 8, 9, 10, 11, 12, 13, 14, 15}:
+        if handoff.get("presentation_version") not in {3, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}:
             raise SystemExit("review-current-handoff-presentation-invalid")
     if expected_branch == "assessed":
         decision = metadata.get("review_decision")

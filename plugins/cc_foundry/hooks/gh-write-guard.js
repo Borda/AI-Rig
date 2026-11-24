@@ -607,7 +607,7 @@ function block(reason, approvalProblem) {
     `gh write blocked — ${reason}.\n` +
       `No gh-write approval covers this call: ${approvalProblem}.\n` +
       "Every gh write needs the user's explicit approval of that exact command. Draft it, then invoke one " +
-      "AskUserQuestion with header `gh-write` and options exactly `Approve` / `Deny`, whose question names the " +
+      "AskUserQuestion with header `gh-write` and options exactly `Approve` / `Hold`, whose question names the " +
       "exact command once as an inline code span (`gh …`; wrap it in double backticks when it holds a backtick; no " +
       "fenced block, one line, one plain gh command: no `;`, `&&`, `|`, redirection, `$`, backtick or glob outside " +
       "quotes — pass long text with --body-file and show that text in the question). The user's `Approve` records a " +

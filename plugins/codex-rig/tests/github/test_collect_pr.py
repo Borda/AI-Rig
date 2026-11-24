@@ -371,6 +371,8 @@ class FakeRunner:
                 stdout = b'{"repository":"Borda/AI-Rig","host":"github.com"}\n'
             else:
                 stdout = b'{"remote":"origin","remote_url":"https://github.com/Borda/AI-Rig.git"}\n'
+        elif argv[:3] == ["git", "ls-remote", "--get-url"]:
+            stdout = f"{argv[-1]}\n".encode()
         elif argv[:2] == ["git", "ls-remote"]:
             if self.named_head_ref_missing and "portable-pr" in argv[-1]:
                 return subprocess.CompletedProcess(argv, 2, stdout=b"", stderr=b"missing branch")
