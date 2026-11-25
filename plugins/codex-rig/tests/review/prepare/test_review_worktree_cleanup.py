@@ -509,6 +509,7 @@ def test_inspected_ignored_worktree_output_is_retained(review, capsys: pytest.Ca
             "same-repository",
             "ordinary-fork",
             "negative-verdict",
+            "failed-hosted-ci",
             "private",
         )
     ],
@@ -666,11 +667,35 @@ def test_terminal_cli_removes_collected_worktree_and_keeps_report_intake(
         )["sha256"]
         with pytest.raises(ValueError, match="integrity-surface-mismatch"):
             prepare._require_pr_dispatch_integrity(run, [str(wrong), digest], None)
-    if interval == "negative-verdict":
-        result, handoff = completion._fail_tests_gate(run)
-        failed_gates = json.loads((run / "gates.json").read_bytes())
-        routing._bind_gates_to_worktree(failed_gates, checkout["worktree"], checkout["local_head"])
-        completion._save_json(run / "gates.json", failed_gates)
+    if interval in {"negative-verdict", "failed-hosted-ci"}:
+        if interval == "negative-verdict":
+            result, handoff = completion._fail_tests_gate(run)
+            failed_gates = json.loads((run / "gates.json").read_bytes())
+            routing._bind_gates_to_worktree(failed_gates, checkout["worktree"], checkout["local_head"])
+            completion._save_json(run / "gates.json", failed_gates)
+        else:
+            pr = json.loads((run / "pr.json").read_bytes())
+            pr["statusCheckRollup"][0]["conclusion"] = "FAILURE"
+            completion._save_json(run / "pr.json", pr)
+            tests = next(check for check in gates["checks"] if check["id"] == "tests")
+            tests["reason"] = f"ci-failed: tests at {pr['headRefOid'][:12]}"
+            (run / tests["command_path"]).write_text(f"not-applicable: {tests['reason']}\n", encoding="utf-8")
+            completion._save_json(run / "gates.json", gates)
+            result = json.loads((run / "result.json").read_bytes())
+            handoff = json.loads((run / "final-handoff.json").read_bytes())
+            result["status"] = "fail"
+            result["metadata"]["review_validation"]["verification_readiness"] = "blocked"
+            snapshot = handoff["tables"][0]
+            snapshot["verification_readiness"] = "blocked"
+            next(row for row in snapshot["rows"] if row["cells"][0] == "CI")["cells"][1] = "failing — tests"
+            notes = run / "review-notes.md"
+            notes.write_text(
+                notes.read_text(encoding="utf-8")
+                .replace("CI tests passed", "CI tests failed")
+                .replace('"passed": 7', '"failure": "pytest returned 1"')
+                .replace("Verification readiness: complete", "Verification readiness: blocked"),
+                encoding="utf-8",
+            )
         completion._add_test_failure_merge_block(run, result, handoff)
         completion._rerender(run, handoff, result)
         completion._save_json(run / "result.json", result)

@@ -1,6 +1,6 @@
 # opencode-rig
 
-Current version: `0.13.0`
+Current version: `0.14.0`
 
 Evidence-first delivery workflows for [OpenCode](https://opencode.ai): frozen plans, recorded gates, independent review, adversarial convergence, and Git guardrails that keep publication human-owned.
 
@@ -83,9 +83,15 @@ Every workflow follows the same envelope: classify the request, collect authorit
 
 A review verdict is a source judgment on one five-level scale: `APPROVE`, `MINOR_EDITS`, `MAJOR_REVISION`, `INSUFFICIENT_BUT_PROMISING` or `REJECT`, or `null` when no defensible judgment exists. A missing check or unavailable reviewer lowers confidence instead of producing a rejection. `investigated` and `blocked` report diagnostic and blocked runs.
 
+The opening Verdict cell names the reason and decisive evidence for a rejection, including a disproved premise (`FALSE_GOAL`) or a fully shipped outcome (`DUPLICATE`). A duplicate handoff links to the original change or resolved issue, describes the behavior it delivered, and explains any remaining difference.
+
 `rig-research` covers docs, state-of-the-art comparisons, papers, experiment methodology, and paper-versus-code fidelity, and maps the recommendation onto the current code without editing it. `rig-distill` reads exact preselected run artifacts, instruction files, or an inventory record inside the project; external source identifiers, digests, and access limits are recorded as decisions and limits. It proposes new or extended assets and quoted instruction consolidation or pruning, but never installs, edits, or deletes anything. `rig-health` offers stale-run cleanup only in a separate workflow after explicit confirmation. `rig-optimize` only uses a benchmark that is already a configured gate, so a performance claim always has a reproducible command behind it. It refreshes each edited candidate's scope before measurement and preserves the baseline receipts.
 
 `rig-implement` accepts a structured mini-plan for a trivial change: `{goal, owned_paths, acceptance_check, feasibility}` with at most two files. A free-text, directory-valued, VCS-internal, or scope-widening plan is rejected; paths are normalized, the run is scoped to its owned files, and a declared new file may not exist yet. The run reports the change it measured as a line-hash diff from its own start bytes, and a change above the 50-line or 2-file guideline is recorded as a limit that points later work at `rig-plan`; it is not a failure. The measurement is independent of Git's index, attributes, filters and config. A recorded output must stay inside the declared paths: `rig_evidence` refuses an undeclared one. An edit outside the recorded evidence is outside the run's certificate, and the handoff says so. Larger, ambiguous, or high-risk work requires a completed independently reviewed `rig-plan` run. An implementation-to-review handoff supplies the implementation run ID, recorded output paths and digests, its bound plan, and acceptance criteria. Review scope uses those outputs instead of unrelated working-tree changes. PR review inspects the verified head commit only; earlier commits are an explicit coverage gap, and a merge head requires separate parent-range review before starting.
+
+PR reviews record hosted CI for the reviewed SHA at intake and refresh it once after the reviewers return. The report names pending or failing checks and any change since intake. A failed CI read, empty check list or changed PR head is recorded as a coverage limit with its reason. Review proceeds while checks run.
+
+A PR-backed remediation handoff links the PR number to the original review target and states whether fixes are local or verified on the PR. Publication stays with the maintainer.
 
 ## Tools
 

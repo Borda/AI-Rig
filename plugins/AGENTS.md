@@ -135,8 +135,8 @@ A plugin may ship animated SVG diagrams of its runs, blocking gates, agent fan-o
 - Each touched plugin is evaluated independently, and one commit applies at most one bump per plugin.
 - Before changing a version, run `git diff HEAD --name-only -- plugins/<name>/` and stop with no bump when every changed path is under `tests/`, or the only additional path is the generated package manifest updated for those tests.
 - Otherwise read the baseline with `git show HEAD:plugins/<name>/.claude-plugin/plugin.json | grep version` and the on-disk version with `grep version plugins/<name>/.claude-plugin/plugin.json`; when disk already differs from HEAD, still calculate the bump from HEAD and require the on-disk value to equal it, else reset it to the result.
-- Classify patch (`Y`) for a fix, wording change, refactor, cleanup, or restoration of intended behavior.
-- Classify minor (`X`) for a new capability, agent, skill, or designed behavior, resetting patch to zero.
+- Classify the bump from the plugin's `## Unreleased` changelog section, the running record of its notable changes, not from a fresh read of the diff. Minor (`X`) when an entry describes a new capability, agent, skill, or designed behavior, resetting patch to zero. Patch (`Y`) when every entry is a fix, wording change, refinement, or restoration of intended behavior, and also when a non-test file changed with no `## Unreleased` section (refactor, cleanup, internal restructuring).
+- Only entries for changes this commit lands count. A change that deserves an entry but has none is a changelog defect: add the entry, then classify. The commit step reads file names only (`git diff HEAD --name-only`), never the full diff, to classify.
 - Test-only changes need no bump.
 - Calculate from HEAD and write exactly that single bump; never increment from a previously bumped on-disk value.
 - After calculating the bump, update every shipped runtime manifest, including `.codex-plugin/plugin.json` when present, so it shares the bumped version with `.claude-plugin/plugin.json`.

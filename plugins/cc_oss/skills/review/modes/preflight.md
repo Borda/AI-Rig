@@ -77,7 +77,8 @@ fi
 # that died between Step 2 and Step 5 makes enforce-review-header.js deny every AskUserQuestion (Gate A,
 # the existing-report guard) for its 2h staleness window — this run has not reached Step 2, so it is stale.
 # run-dir sentinel likewise: Agent 0's gather reads it, a stale one points at a previous review's run dir
-rm -f "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}"  # timeout: 5000
+# CI dir, held CI gate and initial-observation grant likewise: a previous review's failure must never block this run's report
+rm -f "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" "${TMPDIR:-/tmp}/oss-review-ci-dir-${CSID}" "${TMPDIR:-/tmp}/oss-review-ci-gate-${CSID}" "${TMPDIR:-/tmp}/oss-review-ci-initial-${CSID}"  # timeout: 5000
 
 # flags sentinel; CHALLENGE_ENABLED kept in its own sentinel so the challenge-skip fence can rewrite it alone
 {
@@ -112,7 +113,7 @@ fi
 
 Classify PR from changed file patterns. Default `PR_TYPE=CODE`; override only when unambiguous.
 
-**PR snapshot — fetch once, reuse everywhere.** All later steps (pre-classification, Step 1 scope/CI, acceptance gate, codemap battery, Step 3 checks, signals script) read these files instead of re-calling `gh` — one consistent PR snapshot per run, ~10+ fewer network round-trips:
+**PR snapshot.** All later steps reuse the frozen metadata, diff and files. Check runs can change on the same commit, so Step 5 refreshes CI before consolidation.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -122,7 +123,7 @@ if [ "$DIRECT_PATH_MODE" = "false" ] && [[ "$CLEAN_ARGS" =~ ^[0-9]+$ ]]; then
     SNAP_DIR="${TMPDIR:-/tmp}/oss-review-snap-${CLEAN_ARGS}-${CSID}"
     mkdir -p "$SNAP_DIR"
     gh pr view "$CLEAN_ARGS" --json number,title,body,url,labels,milestone,reviews,headRefOid,baseRefName,baseRefOid,isCrossRepository > "$SNAP_DIR/pr-meta.json" || { echo "! BLOCKED — gh pr view failed for PR #$CLEAN_ARGS; check network/auth, PR number, cwd repository and gh repo set-default"; exit 1; }  # timeout: 6000
-    PR_HEAD_SHA=$(jq -er '.headRefOid | select(test("^[0-9a-f]{40}$"))' "$SNAP_DIR/pr-meta.json") || { echo "! BLOCKED — snapshot has no full PR head SHA"; exit 1; }
+    PR_HEAD_SHA=$(jq -er '.headRefOid | select(test("^([0-9a-f]{40}|[0-9a-f]{64})$"))' "$SNAP_DIR/pr-meta.json") || { echo "! BLOCKED — snapshot has no full PR head SHA"; exit 1; }
     _PR_URL=$(jq -er '.url' "$SNAP_DIR/pr-meta.json") || { echo "! BLOCKED — PR repository URL unavailable"; exit 1; }
     _PR_REPO_URL="${_PR_URL%/pull/*}.git"
     _PR_REPO_PATH="${_PR_URL#*://}"; _PR_REPO_PATH="${_PR_REPO_PATH#*/}"; _PR_REPO_PATH="${_PR_REPO_PATH%/pull/*}"
@@ -146,27 +147,17 @@ if [ "$DIRECT_PATH_MODE" = "false" ] && [[ "$CLEAN_ARGS" =~ ^[0-9]+$ ]]; then
     [ -s "$SNAP_DIR/pr.diff" ] && [ -s "$SNAP_DIR/files.txt" ] || { echo "! BLOCKED — PR diff or changed-file snapshot empty"; exit 1; }
     _REMOTE_HEAD=$(git ls-remote "$_PR_SOURCE" "refs/pull/$CLEAN_ARGS/head") || { echo "! BLOCKED — PR head recheck failed for $_PR_REPO_URL"; exit 1; }  # timeout: 15000
     [ "${_REMOTE_HEAD%%[[:space:]]*}" = "$PR_HEAD_SHA" ] || { echo "! BLOCKED — PR head moved while collecting diff and files; restart Step 0"; exit 1; }
-    # Explicit no-checks diagnostics are different from failed reads; retain errors for diagnosis.
-    for _CHECK_SET in checks checks-required; do
-        _CHECK_FLAGS=(); [ "$_CHECK_SET" != "checks-required" ] || _CHECK_FLAGS=(--required)
-        gh pr checks "$CLEAN_ARGS" "${_CHECK_FLAGS[@]}" --json name,bucket > "$SNAP_DIR/$_CHECK_SET.json" 2> "$SNAP_DIR/$_CHECK_SET.err"  # timeout: 15000
-        _CHECK_RC=$?
-        case "$_CHECK_RC" in
-            0) ;;
-            1|8)
-                if jq -e 'type == "array"' "$SNAP_DIR/$_CHECK_SET.json" >/dev/null 2>&1; then
-                    :  # Status exits with complete JSON still carry usable check evidence.
-                elif grep -qE '^no (required )?checks reported on ' "$SNAP_DIR/$_CHECK_SET.err"; then
-                    printf '[]\n' > "$SNAP_DIR/$_CHECK_SET.json"
-                else
-                    cat "$SNAP_DIR/$_CHECK_SET.err"; echo "! BLOCKED — CI $_CHECK_SET read failed"; exit 1
-                fi ;;
-            *) cat "$SNAP_DIR/$_CHECK_SET.err"; echo "! BLOCKED — CI $_CHECK_SET read failed"; exit 1 ;;
-        esac
-    done
-    jq -se 'length == 2 and all(.[]; type == "array")' "$SNAP_DIR/checks.json" "$SNAP_DIR/checks-required.json" >/dev/null || { echo "! BLOCKED — invalid CI checks snapshot"; exit 1; }
     echo "$SNAP_DIR" > "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}"
+    echo "$SNAP_DIR" > "${TMPDIR:-/tmp}/oss-review-ci-dir-${CSID}"
+    echo granted > "${TMPDIR:-/tmp}/oss-review-ci-initial-${CSID}"
 fi
+```
+
+In PR mode, load and execute `modes/ci-status.md` once for the initial check observation. Continue immediately with the frozen source, including when CI is pending, failing, or unavailable.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$PLUGIN_ROOT/skills/review/modes/ci-status.md"  # timeout: 5000
 ```
 
 ### Fill-gaps gate — `--fill-gaps` only, before the existing-report guard
@@ -211,7 +202,7 @@ if [ -n "$_PRIOR" ]; then
     _HEAD_SHA=$(jq -r '.headRefOid // empty' "$SNAP_DIR/pr-meta.json" 2>/dev/null)
     echo "PRIOR_DATE=$(grep -m1 '^Date:' "$_PRIOR" 2>/dev/null | cut -d: -f2- | tr -d ' ')"
     echo "PRIOR_SHA=${_PRIOR_SHA:-unknown} HEAD_SHA=${_HEAD_SHA:-unknown}"
-    # a Gate: line may carry a short SHA — prefix match, never string equality
+    # a Gate: line may carry a short SHA, and a 64-hex id reads as its 40-hex prefix — prefix match, never string equality
     case "${_HEAD_SHA:-x}" in "${_PRIOR_SHA:-y}"*) echo "SHA_MATCH=true" ;; *) echo "SHA_MATCH=false" ;; esac
 fi
 # /oss:resolve appends what it fixed/rejected to resolution.jsonl beside the report it consumed; a re-run carries it forward
@@ -299,4 +290,4 @@ Agent lineup — `PR_TYPE != CODE` overrides scope-based rules in Step 1:
 | `TESTS_CI` | `foundry:qa-specialist` + `foundry:linting-expert` | skip | `foundry:qa-specialist` |
 | `CODE` | full scope-based lineup | per `--no-challenge` | `foundry:sw-engineer` |
 
-When `DOCS_TYPING_MODE=true` or `TESTS_CI_MODE=true`: skip Step 1's File scope detection, Scope pre-check, SCOPE classification and codemap sections; every other Step 1 block still runs — notably CI STATUS and the acceptance gate, since a red required check that never reaches Stage 2 leaves Step 5 defaulting to `Gate: REVIEW_V1_PASS`. Then proceed to Step 2 agent launch.
+When `DOCS_TYPING_MODE=true` or `TESTS_CI_MODE=true`: skip Step 1's File scope detection, Scope pre-check, SCOPE classification and codemap sections; every other Step 1 section still runs — notably the CI STATUS note on the Step 0 observation and the acceptance gate; Step 5 observes CI again before consolidation. Then proceed to Step 2 agent launch.

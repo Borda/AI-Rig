@@ -27,7 +27,7 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficie
 > - PR Type: `fix`, `feat`, `refactor`, `perf`, `docs`, `ci`, `chore`, `test`, or `mixed`, chosen by change intent rather than file count or title.
 > - Focus: one-line description of the change, labeled with its scope.
 > - Reviewers: readable role names only with square-bracketed scores, such as `Software engineer [3], QA specialist [2]`; omit execution-origin labels.
-> - CI: `passing (N/N)`, `failing — check-name, check-name`, or `pending`.
+> - CI: Final same-head observation, including pending, failed, cancelled or skipped checks, no reported checks, or the reason current status is unavailable.
 > - Gate: `REVIEW_V1_PASS`, `REVIEW_V1_BLOCK`, or `REVIEW_V1_REJECT_<GROUND> @<sha>`, where GROUND is `GOAL`, `CONDUCT`, `SCOPE`, `LICENSE`, `DUPLICATE`, `REVERTED`, `SPAM`, or `PHILOSOPHY` (review SKILL.md Stage 1). PASS/BLOCK continue to full review. The `@<sha>` suffix on a `REJECT_<GROUND>` gate carries the reviewed commit SHA so `/oss:resolve` can detect whether the PR changed.
 > - Outcome: `APPROVE`, `MINOR_EDITS`, `MAJOR_REVISION`, `INSUFFICIENT_BUT_PROMISING`, `REJECT`, or literal `null`. Write the verdict token alone, optionally after its `✓`/`⚠`/`✗` symbol; severity counts and other detail belong in Summary.
 > - Summary: opens `Intended behavior: <yes/partly/no/undetermined>`, then 1–2 sentences describing key findings. Next steps are comma-separated actionable items, blockers first.

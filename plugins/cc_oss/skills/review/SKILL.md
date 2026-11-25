@@ -97,6 +97,8 @@ AGENT_DEADLINE_S=1800  # per spawned agent, from its spawn; covers the former 90
 > - Read the summary and overview after the header rather than treating the header alone as the complete review.
 > - Terminal gate rejections preserve existing behavior and use `Reviewers: Not assessed` when no source reviewer ran.
 
+Every confirmed terminal ground gives the delivered table `Outcome: REJECT`, including a false goal (`REJECT_GOAL`) and a duplicate (`REJECT_DUPLICATE`). Name the specific ground in `Summary:`. Use `Reviewers: Not assessed` only for the reviewer row when no source reviewer ran.
+
 Agents: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:perf-optimizer`, `foundry:doc-scribe`, `foundry:linting-expert`, `foundry:solution-architect`, `foundry:challenger`, `oss:cicd-steward`. <!-- Inline fallback (if unreadable): all → general-purpose. -->
 
 **`REVIEW_SKILL_DIR`** (resolved above) — substitute into every Agent spawn prompt and every `cat "$REVIEW_SKILL_DIR/..."` call below.
@@ -230,7 +232,7 @@ Scenarios:
 5. TESTS_CI scope: PR with only test files (plus `tox.ini`/`Makefile`) → Step 0 sets PR_TYPE=TESTS_CI, CHALLENGE_ENABLED=false, CONSOLIDATOR_AGENT=foundry:qa-specialist; qa-specialist + linting-expert spawned; Step 5 uses qa-specialist consolidator. Contrast: a PR touching only `.github/workflows/*.yml` stays PR_TYPE=CODE → File scope detection sets CICD_ONLY_MODE → `oss:cicd-steward` + Agent 1 + pinned qa-specialist + challenger + Codex, CI status and acceptance gate run; a `requirements.txt`- or `.ipynb`-only PR stays CODE → CHORE with qa-specialist kept for OWASP/CVE.
 6. REJECT_GOAL: PR body states "make recall exceed 1.0" as the goal → gate finds the metric bounded [0,1] by spec, contradicts stated goal regardless of diff quality → skip Step 2–4, orchestrator writes report with `Gate: REVIEW_V1_REJECT_GOAL`, no agents spawned.
 7. REJECT_CONDUCT: PR diff silently exfiltrates env vars to an external URL, body claims unrelated bugfix → gate spawns foundry:challenger, confirms `conduct.verdict=BY_DESIGN` at confidence ≥0.7 → skip Step 2–4, `Gate: REVIEW_V1_REJECT_CONDUCT`. Contrast: same diff pattern but challenger returns `ACCIDENTAL` (e.g. leftover debug logging) → treat as normal `[critical]` finding, proceed to full fanout.
-8. REJECT_DUPLICATE: PR body says "Closes #40", the GraphQL issue query shows `state=CLOSED` with a different, already-merged closing PR → `DUPLICATE_HIT=true` → skip Step 2–4, `Gate: REVIEW_V1_REJECT_DUPLICATE`, no agents spawned, no challenger needed (mechanical evidence, orchestrator judgment only).
+8. REJECT_DUPLICATE: the linked issue has a different, already-merged closing PR and a comparison of the changes confirms it already delivers the proposed behavior → skip Steps 2–4, publish `Gate: REVIEW_V1_REJECT_DUPLICATE` and `Outcome: REJECT` without a challenger. The maintainer receives the linked comparison and a drafted close recommendation.
 9. Fill-gaps: `/oss:review 8 --fill-gaps .reports/review/pr-8/run-002/review-report.md --roles "QA specialist" --candidates V13` at an unchanged head → existing-report guard and Stage 1 skipped; new `run-003` allocated with run-002's `head-sha.txt` string; one spawn `review-qa` + consolidator (cost per Step 2 Spawn-count gate); parent re-validates V13 plus the new QA claims only; every other assessment, candidate, open concern and finding row carried verbatim, proven by the carry check, then the publication gate. Same call after a push, or naming role `Security auditor` absent from run-002 → `! BLOCKED`, nothing allocated or spawned.
 
 </calibration>
@@ -241,7 +243,7 @@ Scenarios:
 - **Block-tier catalogue** — per-category default for the `[blocking]` tag, applied by full-review agents once fanout runs (not automatic, judgment still required per row):
   | Category | Default | Nuance |
   | -- | -- | -- |
-  | CI red / failing check | `[blocking]` | only for a **major** failure (real required-check failure); a single flaky-looking rerun blip stays noted, not auto-blocking — see `modes/acceptance-gate.md` Stage 2 |
+  | CI red / failing check | `[blocking]` | a failing **required** check, or any failing check when the project marks none required — the same rule `modes/ci-status.md` applies when it decides the CI merge gate at Step 5; a failure only in a non-required check stays noted, not blocking; a flaky-looking failure still counts until a user-triggered rerun on the reviewed head replaces it |
   | Missing test coverage for new/changed logic | `[blocking]` | — |
   | Accidental security bug (careless, not by-design) | `[blocking]` | by-design version is Stage 1 `REJECT_CONDUCT`, not this |
   | Breaking API change, no deprecation/migration path | `[blocking]` | — |
@@ -253,7 +255,7 @@ Scenarios:
 - Critical issues always surfaced regardless of scope
 - Skip sections with no issues — no padding. Isolated code without git context → skip OSS Checks and Performance Concerns unless evidence of perf issues (nested loops, I/O in tight loops) or OSS concerns (hardcoded secrets, new deps).
 - **Signal-to-noise gate**: Function/class ≤50 lines with 1–2 critical/high issues → max 2 additional medium/low findings. Rest as `[nit]` in "Minor Observations". First 3 findings reader sees = most impactful.
-- PR mode: CI red sets `Gate: REVIEW_V1_BLOCK` (Step 1) — review still proceeds through full fanout, the block is surfaced up front in the header, never a reason to skip review
+- PR mode: start full fanout with any CI status. Step 5 refreshes the reviewed head’s checks once and reports CI and the merge gate separately from source findings.
 - Blocking issues need explicit `[blocking]` prefix
 - Follow-up chains:
   - `[blocking]` bugs or regressions → `/develop:fix` (requires `develop` plugin) to reproduce with test, apply targeted fix

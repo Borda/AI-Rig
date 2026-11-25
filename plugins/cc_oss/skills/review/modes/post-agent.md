@@ -47,24 +47,31 @@ Before consolidation, persist the parent's all-severity candidate validation and
 
 ## Step 5: Consolidate findings
 
-Before output path, extract `BRANCH` and `DATE` and reload the Stage-2 gate verdict (Check 41: fresh shell — set by the acceptance gate in Step 1, must survive to here):
+In PR mode, select a separate destination for the final CI observation. Run the loaded `modes/ci-status.md` block once, even when the initial observation was green. Bind its printed `CI_STATUS` and `CI_GATE` to the report. A user-triggered rerun on the reviewed head supersedes the previous observation. An unavailable refresh is reported as unavailable and keeps a failure the initial observation established (`CI_GATE=BLOCK`). It also blocks when the initial observation left no complete gate record, including when the destination switch below fails: the block first withdraws the initial-observation grant. With a recorded pass it prints `PASS`. Continue with validated source findings in every case. A direct report path skips the CI block and uses `CI_STATUS=not applicable` and `GATE=PASS` if consolidation is needed.
 
 ```bash
 BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')  # timeout: 3000
 DATE=$(date -u +%Y-%m-%d)  # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-[ -f "${TMPDIR:-/tmp}/oss-review-gate-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in GATE) GATE=$_SV ;; GATE_SHA) GATE_SHA=$_SV ;; GATE_REASON) GATE_REASON=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-gate-${CSID}"
-GATE="${GATE:-PASS}"; GATE_REASON="${GATE_REASON:-}"
-echo "Gate: $GATE ${GATE_REASON:+($GATE_REASON)}"
 IFS= read -r _PR_TAG < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || _PR_TAG=""
+# final observation never starts without a record: withdraw any initial-observation grant Step 0 left unconsumed
+printf 'consumed\n' > "${TMPDIR:-/tmp}/oss-review-ci-initial-${CSID}"
+if [[ "$_PR_TAG" =~ ^[0-9]+$ ]] && IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}"; then
+    echo "$SNAP_DIR/ci-final" > "${TMPDIR:-/tmp}/oss-review-ci-dir-${CSID}"
+fi
 IFS= read -r IMPACT_LINE < "${TMPDIR:-/tmp}/oss-review-impact-${_PR_TAG}-${CSID}" 2>/dev/null || IMPACT_LINE="FULL · impact unknown"
 echo "IMPACT=$IMPACT_LINE"
 echo "BRANCH=$BRANCH DATE=$DATE"
 ```
 
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$PLUGIN_ROOT/skills/review/modes/ci-status.md"  # timeout: 5000
+```
+
 Resolve `REVIEWED_COMMIT_SHA` from the frozen Step 0 `pr-meta.json` `headRefOid` (or its full `head-sha.txt` sidecar), never the invoking checkout's HEAD or a fresh network query. Pass the full value as a literal binding below and show it in the report header for every PASS/BLOCK review. Missing full provenance renders `unavailable (reviewed commit not captured)`. For fill-gaps, use the selected run's exact plan `head_sha` instead: a full SHA remains unchanged; a legacy abbreviated value renders `unavailable (legacy abbreviated reviewed identity: <head_sha>)`. Never expand that abbreviation using the current PR head, and never alter carried sidecar revisions. Retain this binding through compaction and publication retries.
 
-**IMPORTANT**: expand `$RUN_DIR`, `$REPORT_DIR`, `$REVIEW_SKILL_DIR`, `$BRANCH`, `$DATE`, `$CI_RED`, `$CI_FAILING_CHECKS`, and `$CI_COUNTS` to literal values before inserting into spawn prompt. Un-expanded variables create wrong paths. `## Source Files` footnote `Glob(... path="<EXPANDED_RUN_DIR>")` path must also expand to literal `$RUN_DIR` value.
+**IMPORTANT**: expand `$RUN_DIR`, `$REPORT_DIR`, `$REVIEW_SKILL_DIR`, `$BRANCH`, `$DATE`, `$CI_STATUS`, and `$CI_GATE` to literal values before inserting into spawn prompt. Un-expanded variables create wrong paths. `## Source Files` footnote `Glob(... path="<EXPANDED_RUN_DIR>")` path must also expand to literal `$RUN_DIR` value.
 
 **Late terminal conflict:** Before consolidation, if parent validation establishes source REJECT, return to Stage 1's existing confirmed-ground block and terminal publisher (`modes/acceptance-gate.md`; load it first if this run has not). Reuse already applicable evidence and any required conduct/license confirmation; never spawn duplicate checks. Retain the original reviewed SHA, exact ground/reason and provenance, all completed assessments/candidates and open concerns; do not replace full-review evidence with an empty premise-only record. Publish `REVIEW_V1_REJECT_<GROUND> @<PR_HEAD_SHA>` and source REJECT together, then follow Stage 1's Step 5b/Step 7 route. No matching evidenced terminal ground → `MINOR_EDITS` or `MAJOR_REVISION` for fixable defects according to evidenced impact and repair scope; unfinished validation independently keeps readiness incomplete/blocked. A reject-gate run bypasses consolidation — `GATE` here is always `PASS` or `BLOCK`.
 
@@ -104,9 +111,8 @@ PR_URL=<frozen pr-meta.json `url`, or empty>
 CHANGED_FILES=<resolved changed-file list>
 SCOPE=<resolved scope label>
 IMPACT=<resolved IMPACT line>
-CI_FAILING_CHECKS=<resolved CI failing-check names or empty>
-CI_COUNTS=<resolved CI counts or empty>
-GATE=<resolved PASS or BLOCK>
+CI_STATUS=<final same-head CI observation or unavailable reason>
+GATE=<final CI_GATE, PASS or BLOCK>
 PR_NUMBER=<resolved PR number or empty>
 DOCS_ONLY_MODE=<resolved true or false>
 FILL_GAPS_PLAN=<resolved $REPORT_DIR/fill-gaps.json — fill-gaps runs only; omit this line otherwise>
@@ -117,7 +123,7 @@ Late terminal conflict instead: terminal-ground=<GROUND> | evidence=<path>; publ
 
 <!-- policy-sibling: plugins/cc_oss/skills/review/templates/consolidator-prompt.md (null-judgment sentence), plugins/cc_foundry/skills/_shared/cross-validation-protocol.md (readiness fields; canonical source, edit there and propagate to cc_oss/skills/_shared/foundry--cross-validation-protocol.md), plugins/cc_oss/bin/find_review_report.py (_check_assessment and its grader mirror _assess_assessment, the gate that enforces the readiness rule) -->
 
-`CONSOLIDATOR_INSTRUCTIONS_LITERAL` is the printed `_CONSOLIDATOR_INSTRUCTIONS` path; `VALIDATION_PROTOCOL_LITERAL` is `<resolved _OSS_SHARED>/foundry--cross-validation-protocol.md`. Resolve every listed binding, including `<GATE>` from the gate-reload block and `<IMPACT>` from its printed `IMPACT=` line. When the `oss-review-prior-resolution-${CSID}` sentinel is non-empty, append the same `Prior resolution ledger:` line Step 2 gave dimension agents. Pass only the file reference, bindings, readiness rule, preamble and return contract; never cat or inline `consolidator-prompt.md` into the parent context or Agent prompt.
+`CONSOLIDATOR_INSTRUCTIONS_LITERAL` is the printed `_CONSOLIDATOR_INSTRUCTIONS` path; `VALIDATION_PROTOCOL_LITERAL` is `<resolved _OSS_SHARED>/foundry--cross-validation-protocol.md`. Resolve every listed binding, including `<GATE>` from the final CI observation and `<IMPACT>` from its printed `IMPACT=` line. When the `oss-review-prior-resolution-${CSID}` sentinel is non-empty, append the same `Prior resolution ledger:` line Step 2 gave dimension agents. Pass only the file reference, bindings, readiness rule, preamble and return contract; never cat or inline `consolidator-prompt.md` into the parent context or Agent prompt.
 
 If the consolidator returns `terminal-ground=<GROUND> | evidence=<path>` instead of a publication, inspect that referenced evidence, validate the ground under Stage 1 (including its conduct/license confirmation safeguards), and use the late terminal-conflict route above before Step 5b. The consolidator must not publish conflicting PASS/BLOCK and source REJECT. Main context otherwise receives only the one-liner verdict. **Consolidator unavailable fallback** — `Agent` tool deferred/not loaded: Print: `! BLOCKED — Agent tool not loaded; consolidator cannot run. Re-invoke /oss:review to retry. If persistent, run /foundry:setup (requires foundry plugin) to verify session config.` Do NOT read agent finding files inline — floods main context (~16–32K tokens per run), produces unreliable synthesis.
 
@@ -243,9 +249,12 @@ python "$PLUGIN_ROOT/bin/write_skill_contract.py" "oss:review" "follow-up gate (
 - (e) label: `skip` — description: no action
 - every option: label and one-line description only, no `preview` (header table placement: Step 5b item 4).
 
+For any `REVIEW_V1_REJECT_<GROUND>` gate, replace the three resolve choices with `draft close reply` — description: print the report's close recommendation as a draft for you to post. Resolve refuses every rejected head, whichever ground fired (its reject-gate check), so those choices cannot be honored. Keep `walk through findings` to explain the ground's evidence (for `REVIEW_V1_REJECT_DUPLICATE`, the comparison and any material difference), and `skip` to finish.
+
 `oss:resolve` has `disable-model-invocation: true` — `Skill()` invocation blocked. After AskUserQuestion returns:
 
-- Resolve variant chosen (a/b/c when available): present chosen label as command user must run manually (e.g. `Run: /oss:resolve $CLEAN_ARGS`); no `Skill()` call
+- Resolve variant chosen (a/b/c, offered only for a PASS or BLOCK gate): present chosen label as command user must run manually (e.g. `Run: /oss:resolve $CLEAN_ARGS`); no `Skill()` call
+- `draft close reply`: print the report's `Next steps:` close recommendation (for a duplicate, the linked maintainer reply) as a draft for the user to post; never post a comment or close the PR — that needs the user's `gh-write` approval (public-github.md)
 - `walk through findings` / `skip`: handle inline or stop
 
 ### 7b — Confidence block

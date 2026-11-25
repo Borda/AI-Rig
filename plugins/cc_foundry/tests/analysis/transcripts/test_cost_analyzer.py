@@ -534,6 +534,109 @@ def projects_root(tmp_path: Path) -> Path:
     return tmp_path / "projects"
 
 
+class TestWindowClipping:
+    """A session older than the window prices only its in-window calls."""
+
+    def _tree(self, tmp_path: Path) -> Path:
+        """Write a session with one old and one recent main call, plus an old-only and a recent subagent."""
+        project = tmp_path / "projects" / "-slug-a"
+        main = _write_jsonl(
+            project / "sid1.jsonl",
+            [
+                _usage_row("old", ts="2020-01-01T00:00:00Z", output_tokens=1_000_000),
+                _usage_row("new", ts="2030-01-01T00:00:00Z", output_tokens=1_000_000),
+            ],
+        )
+        for key, ts in (("old", "2020-01-01T00:00:00Z"), ("new", "2030-01-01T00:00:00Z")):
+            _write_jsonl(
+                project / "sid1" / "subagents" / f"agent-{key}.jsonl",
+                [_usage_row(f"sub-{key}", ts=ts, sidechain=True, output_tokens=1_000_000)],
+            )
+        return main
+
+    def test_cutoff_drops_older_main_and_subagent_calls(self, tmp_path: Path):
+        """Only calls at or after the cutoff are priced; an agent with none left leaves the roster."""
+        cutoff = ca.parse_ts("2025-01-01T00:00:00Z")
+        session = ca.load_session(self._tree(tmp_path), cutoff)
+        assert sorted(c.message_id for c in session.calls) == ["new", "sub-new"]
+        assert len(session.agent_spends) == 1
+
+    def test_no_cutoff_keeps_the_whole_session(self, tmp_path: Path):
+        """Without a cutoff every call is kept, as the ``--session-id`` deep-dive needs."""
+        session = ca.load_session(self._tree(tmp_path))
+        assert len(session.calls) == 4
+        assert len(session.agent_spends) == 2
+
+    def test_row_without_timestamp_is_kept(self, tmp_path: Path):
+        """A call with no valid timestamp cannot be placed outside the window, so it stays."""
+        row = _usage_row("m1", output_tokens=5)
+        del row["timestamp"]
+        path = _write_jsonl(tmp_path / "s.jsonl", [row])
+        assert [c.message_id for c in ca.load_session(path, 1e12).calls] == ["m1"]
+
+    def test_window_report_prices_only_in_window_spend(self, tmp_path: Path, projects_root: Path):
+        """Window mode reports the in-window total, not the whole session's."""
+        self._tree(tmp_path)
+        out = tmp_path / "cost.md"
+        # 2020 calls fall outside any relative window; the 2030 pair must be priced alone.
+        rc = ca.main(["--projects-root", str(projects_root), "--since", "1h", "--output", str(out)])
+        assert rc == 0
+        assert "**Window total: $50.00**" in out.read_text(encoding="utf-8")
+
+
+class TestCostByClass:
+    """Dollars split by token class, main loop versus subagents."""
+
+    def test_parts_sum_to_cost(self):
+        """The class split is a partition of ``cost()``."""
+        usage = {
+            "input_tokens": 1000,
+            "output_tokens": 2000,
+            "cache_read_input_tokens": 30_000,
+            "cache_creation_input_tokens": 9000,
+            "cache_creation": {"ephemeral_5m_input_tokens": 4000, "ephemeral_1h_input_tokens": 5000},
+        }
+        parts = ca.cost_parts(usage, "claude-opus-5-5")
+        assert sum(parts.values()) == pytest.approx(ca.cost(usage, "claude-opus-5-5"))
+        assert parts["write_5m"] > 0
+        assert parts["write_1h"] > parts["write_5m"] * 5 / 4 * 0.99
+
+    def test_report_lists_every_class_with_scope_split(self, tmp_path: Path, projects_root: Path):
+        """The section names each token class and keeps main and subagent dollars apart."""
+        _write_jsonl(projects_root / "-slug-a" / "sid1.jsonl", [_usage_row("m1", output_tokens=1_000_000)])
+        out = tmp_path / "cost.md"
+        assert ca.main(["--projects-root", str(projects_root), "--session-id", "sid1", "--output", str(out)]) == 0
+        body = out.read_text(encoding="utf-8")
+        assert "### Cost by token class" in body
+        rows = {line.split("|")[1].strip(): line for line in body.splitlines() if line.startswith("| ")}
+        assert all(name in rows for name in ca.COST_CLASSES)
+        assert rows["output"].split("|")[2].strip() == "$25.00"
+        assert rows["output"].split("|")[3].strip() == "$0.00"
+
+
+class TestSubagentWriteSplit:
+    """5-minute cache-write dollars, first-call prefix versus later rewrites, per agent type."""
+
+    def test_first_call_prefix_is_separated_from_rewrites(self, tmp_path: Path):
+        """An agent's first call is its prefix; its second call's write counts as a rewrite."""
+        project = tmp_path / "projects" / "-slug-a"
+        main = _write_jsonl(project / "sid1.jsonl", [_usage_row("main1", output_tokens=1)])
+        rows = [
+            _usage_row("a1", sidechain=True, cache_creation_input_tokens=1_000_000),
+            _usage_row("a2", sidechain=True, cache_creation_input_tokens=3_000_000),
+        ]
+        _write_jsonl(project / "sid1" / "subagents" / "agent-x.jsonl", rows)
+        (project / "sid1" / "subagents" / "agent-x.meta.json").write_text(json.dumps({"agentType": "t"}), "utf-8")
+        spend = ca.load_session(main).agent_spends[0]
+        assert spend.write_5m_usd == pytest.approx(4 * spend.first_write_5m_usd)
+        table = "\n".join(ca.render_subagent_writes([spend]))
+        assert "| `t` | 1 |" in table
+
+    def test_no_5m_writes_renders_nothing(self):
+        """Agents that wrote no 5-minute cache add no table."""
+        assert ca.render_subagent_writes([ca.AgentSpend("t", "d", 1, 1.0)]) == []
+
+
 class TestMainCli:
     """The CLI entry point: session-id drill-down and window ranking."""
 

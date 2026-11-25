@@ -85,6 +85,8 @@ from release_evidence import release_sections, validate_release_evidence  # noqa
 from remediation_finalize import (  # noqa: E402
     PUBLICATION_CONTRACT_VERSION,
     DeriveError,
+    check_authored_outcome,
+    pr_handoff_summary,
     publication_artifact,
     publication_binding,
     publication_evidence_present,
@@ -781,6 +783,30 @@ def _validate_final_handoff(
         )
         if current_contract and disposition is None:
             raise SystemExit("remediation-commit-disposition-missing")
+        pr_handoff = (
+            metadata.get("mode") == "pr"
+            and handoff.get("presentation_version") == 15
+            and handoff["branch"] != "caller-contract"
+        )
+        if "pr_handoff_summary" in metadata and not pr_handoff:
+            raise SystemExit("remediation-handoff-pr-summary-mismatch")
+        if pr_handoff and (candidate or "pr_handoff_summary" in metadata):
+            # Retained v15 handoffs predate this opening. New candidates and their promoted reports bind it to receipts.
+            try:
+                expected = pr_handoff_summary(
+                    out_dir, (disposition or {}).get("status"), metadata.get("worktree_publication")
+                )
+            except DeriveError as error:
+                raise SystemExit(str(error)) from error
+            summary = handoff["outcome"]["summary"]
+            if metadata.get("pr_handoff_summary") != expected or not summary.startswith(expected + "\n\n"):
+                raise SystemExit("remediation-handoff-pr-summary-mismatch")
+            try:
+                # The fixed slot above holds exactly the derived push status. Authored text below it must be plain
+                # paragraphs and is never read for a push status.
+                check_authored_outcome(summary[len(expected) + 2 :])
+            except DeriveError as error:
+                raise SystemExit(str(error)) from error
         grouped_disposition = _expected_grouped_commit_disposition(metadata, out_dir)
         if grouped_disposition is not None and disposition != grouped_disposition:
             raise SystemExit("remediation-grouped-commit-disposition-mismatch")
@@ -852,7 +878,7 @@ def _validate_final_handoff(
         _validate_code_review_final_handoff(
             result, handoff, candidate=current_contract, out_dir=out_dir, fresh_candidate=candidate
         )
-    if candidate and handoff.get("presentation_version") not in {8, 9, 10, 11, 12, 13, 14, 15, 16}:
+    if candidate and handoff.get("presentation_version") not in {8, 9, 10, 11, 12, 13, 14, 15, 16, 17}:
         raise SystemExit("current-handoff-presentation-v8-required")
 
 

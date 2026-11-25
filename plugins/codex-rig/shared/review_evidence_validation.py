@@ -43,7 +43,22 @@ from typing import Any
 from adversarial_loop import SCHEMA_VERSION as LOOP_LEDGER_SCHEMA_VERSION
 from adversarial_loop import load_ledger
 from audit_consolidation import settle_consolidation
-from final_handoff import HandoffError, challenge_report_path, review_commit_sha
+from create_run import PR_URL_PATTERN, same_pr_url
+from final_handoff import (
+    CLOSE_CODES,
+    CLOSED_REVIEW_PRESENTATION,
+    HandoffError,
+    challenge_report_path,
+    inline_text,
+    literal_code_span,
+    review_commit_sha,
+)
+
+#: Failure for a duplicate decision written before duplicates named their target, with the repair that resumes it.
+DUPLICATE_SCHEMA_REPAIR = (
+    "duplicate-decision-schema-v2-required: set close_decision.schema_version to 2 and close_decision.duplicate_of "
+    "to the canonical GitHub URL of the earlier change already cited as an evidence source, then finalize again"
+)
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -91,6 +106,229 @@ def _code_review_pr_ci_snapshot(rollup: object) -> str:
     return "passing"
 
 
+def _usable_refreshed_check(check: object) -> bool:
+    """Require the GitHub fields needed to distinguish a finished check from one still running."""
+    if not isinstance(check, dict):
+        return False
+    if check.get("__typename") == "CheckRun":
+        status, conclusion = check.get("status"), check.get("conclusion")
+        fields = [check.get("name"), status]
+        if status == "COMPLETED":
+            fields.append(conclusion)
+        elif conclusion is not None and not isinstance(conclusion, str):
+            return False
+    elif check.get("__typename") == "StatusContext":
+        fields = [check.get("context"), check.get("state")]
+    else:
+        return False
+    return all(isinstance(field, str) and field.strip() for field in fields)
+
+
+def reviewed_pr_ci_rollup(out_dir: Path, pr: dict[str, Any], reviewed_head: str | None) -> object:
+    """Select the latest usable rollup for the collected and reviewed head, preserving the original collection."""
+    collected = pr.get("statusCheckRollup")
+    refresh_path = out_dir / "pr-ci-refresh.json"
+    if not reviewed_head or pr.get("headRefOid") != reviewed_head or refresh_path.is_symlink():
+        return collected
+    try:
+        if not refresh_path.is_file():
+            return collected
+        refresh = json.loads(refresh_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        # A partial response cannot displace the collector's retained observation.
+        return collected
+    if isinstance(refresh, dict) and refresh.get("headRefOid") == reviewed_head:
+        rollup = refresh.get("statusCheckRollup")
+        if isinstance(rollup, list) and rollup and all(_usable_refreshed_check(check) for check in rollup):
+            return rollup
+    return collected
+
+
+def _display_value(value: object) -> object:
+    """Normalize every string inside a decision value to inline Markdown, keeping its shape and non-string leaves."""
+    if isinstance(value, str):
+        return inline_text(value)
+    if isinstance(value, list):
+        return [_display_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _display_value(item) for key, item in value.items()}
+    return value
+
+
+def _display_decision(decision: dict[str, Any]) -> dict[str, Any]:
+    """Return the only view of a close decision that may be rendered into review notes or a final response.
+
+    Every model- or contributor-supplied string, including fields added later, becomes one inline paragraph line that
+    cannot open a heading, list, quote, table, fence or HTML block. Identity comparisons keep using the raw decision.
+    """
+    return {key: _display_value(value) for key, value in decision.items()}
+
+
+def closed_review_handoff(out_dir: Path, decision: dict[str, Any]) -> dict[str, Any]:
+    """Derive the rejection, its reason and any duplicate's maintainer action from the verified PR and decision.
+
+    Every close code recommends Reject with the close reason and reviewed commit. A duplicate also gets one maintainer
+    action linking the declared earlier change, followed by the target's evidence of the overlap. Decision free text is
+    taken from the normalized display view, so the writer, both validators and the renderer compare the same values, and
+    a value that displays as nothing cannot stand in for required evidence.
+    """
+    code = decision.get("code")
+    if not isinstance(code, str) or code not in CLOSE_CODES:
+        raise SystemExit("closed-review-invalid-code")
+    duplicate = code == "DUPLICATE"
+    if type(decision.get("schema_version")) is not int or decision["schema_version"] != (2 if duplicate else 1):
+        raise SystemExit(DUPLICATE_SCHEMA_REPAIR if duplicate else "closed-review-invalid-decision-policy")
+    if decision.get("advisory_only") is not True:
+        raise SystemExit("closed-review-invalid-decision-policy")
+    view = _display_decision(decision)
+    for field in ("summary", "rationale"):
+        if not isinstance(view.get(field), str) or not view[field]:
+            raise SystemExit(f"closed-review-missing-{field}")
+    try:
+        pr = _load_json(out_dir / "pr.json")
+        routing = _load_json(out_dir / "pr-routing.json")
+    except (OSError, ValueError) as error:
+        raise SystemExit("closed-review-current-pr-invalid") from error
+    current_url = pr.get("url")
+    current = PR_URL_PATTERN.fullmatch(current_url) if isinstance(current_url, str) else None
+    if (
+        not current
+        or type(pr.get("number")) is not int
+        or str(pr["number"]) != current["number"]
+        or not same_pr_url(current_url, routing.get("pr_url"))
+        or type(routing.get("pr_number")) is not int
+        or routing["pr_number"] != pr["number"]
+    ):
+        raise SystemExit("closed-review-current-pr-invalid")
+    head_sha = decision.get("head_sha")
+    if not isinstance(head_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+        raise SystemExit("closed-review-invalid-head-sha")
+    if head_sha != pr.get("headRefOid") or head_sha != routing.get("head_oid"):
+        raise SystemExit("closed-review-head-sha-mismatch")
+    handoff: dict[str, Any] = {
+        "presentation_version": CLOSED_REVIEW_PRESENTATION,
+        "outcome": {"title": "Review Decision", "summary": "Recommendation: Reject."},
+        "close_reason": {
+            "code": code,
+            "summary": view["summary"],
+            "rationale": view["rationale"],
+            "pr_url": current_url,
+            "head_sha": head_sha,
+        },
+        "remaining": [],
+        "next_steps": [],
+    }
+    evidence, shown_evidence = decision.get("evidence"), view.get("evidence")
+    if not isinstance(evidence, list) or any(
+        not isinstance(item, dict)
+        or not all(isinstance(item.get(key), str) and item[key] for key in ("claim", "source"))
+        for item in shown_evidence
+    ):
+        # The notes cite every entry; a value that displays as nothing cannot stand in for one.
+        raise SystemExit("closed-review-empty-evidence")
+    shown_counterevidence = view.get("counterevidence_checked")
+    if (
+        not isinstance(shown_counterevidence, list)
+        or not shown_counterevidence
+        or not all(isinstance(item, str) and item for item in shown_counterevidence)
+    ):
+        raise SystemExit("closed-review-counterevidence-required")
+    if not duplicate:
+        return handoff
+    target = decision.get("duplicate_of")
+    upstream = re.fullmatch(
+        r"https://github[.]com/(?P<repo>[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*)/"
+        r"(?:(?P<kind>pull|issues)/(?P<number>[1-9][0-9]*)|commit/(?P<sha>[0-9a-f]{40}))",
+        target if isinstance(target, str) else "",
+    )
+    if not upstream:
+        raise SystemExit("duplicate-target-invalid")
+    current_repo = f"{current['owner']}/{current['repository']}"
+    if upstream["number"] == current["number"] and upstream["repo"].casefold() == current_repo.casefold():
+        # GitHub shares issue and pull request numbers and redirects /issues/<PR number> to the same PR.
+        raise SystemExit("duplicate-target-self")
+    # Identity compares raw sources; the displayed claims come from the normalized view.
+    claims = [shown["claim"] for item, shown in zip(evidence, shown_evidence) if item["source"] == target]
+    if not claims or any(not re.sub(r"https?://\S+", "", claim).strip() for claim in claims):
+        raise SystemExit("duplicate-target-evidence-missing")
+    if not any(item["source"] != target for item in evidence):
+        # The target's own claims move into the maintainer action, so the notes need independent evidence to cite.
+        raise SystemExit("closed-review-distinct-evidence-required")
+    repo_label = "" if upstream["repo"].casefold() == current_repo.casefold() else upstream["repo"]
+    # The decision proves the overlap, not the target's merge or resolution state, so the label names only its kind.
+    if upstream["number"]:
+        kind = "PR" if upstream["kind"] == "pull" else "issue"
+        reference = f"{kind} {repo_label}#{upstream['number']}"
+    else:
+        sha = upstream["sha"][:12]
+        reference = f"commit {repo_label}@{sha}" if repo_label else f"commit {sha}"
+    action = f"Close [PR #{current['number']}]({current_url}) as a duplicate of [{reference}]({target})."
+    # The rationale already follows the rejection; the action carries only the target's evidence of the overlap.
+    overlap = inline_text(" ".join(dict.fromkeys(claims)))
+    handoff["remaining"] = [{"row_id": "duplicate", "owner": "Maintainer", "item": overlap, "next_action": action}]
+    handoff["next_steps"] = ["duplicate"]
+    return handoff
+
+
+def validate_closed_review_handoff(expected: dict[str, Any], handoff: dict[str, Any]) -> None:
+    """Bind the chosen action, recommendation, evidence and owner to the retained proposal decision."""
+    if handoff.get("branch") != "closed" or any(handoff.get(key) != value for key, value in expected.items()):
+        raise SystemExit("closed-review-final-handoff-mismatch")
+
+
+def closed_review_notes(decision: dict[str, Any], *, current_handoff: dict[str, Any] | None = None) -> str:
+    """Render canonical close-only notes with the reviewed evidence and, for a duplicate, the maintainer action.
+
+    Without ``current_handoff`` this reproduces the historical close notes byte for byte, so earlier promoted runs
+    replay and canonical earlier notes can be upgraded. The current form opens with the rejection table and reads every
+    free-text value from the normalized display view, so no field can open a Markdown block. Each evidence source is a
+    literal code span; the close code, PR URL, head and duplicate action come from the validated handoff.
+    """
+    if not current_handoff:
+        evidence = "\n".join(f"- `{item['source']}`: {item['claim']}" for item in decision["evidence"])
+        counterevidence = "\n".join(f"- {item}" for item in decision["counterevidence_checked"])
+        return (
+            "# Review Decision: close\n\n"
+            "Source findings: not assessed\n\n"
+            "Detailed review: skipped\n\n"
+            f"Close reason: `{decision['code']}`\n\n"
+            f"Summary: {decision['summary']}\n\n"
+            f"Rationale: {decision['rationale']}\n\n"
+            f"Evidence:\n\n{evidence}\n\n"
+            f"Counterevidence checked:\n\n{counterevidence}\n\n"
+            "GitHub mutation: not performed."
+        )
+    reason = current_handoff["close_reason"]
+    view = _display_decision(decision)
+    duplicate_action = current_handoff["remaining"][0] if reason["code"] == "DUPLICATE" else None
+    # A duplicate's target evidence appears once, in its maintainer action; identity compares the raw source.
+    evidence = "\n".join(
+        f"- {literal_code_span(shown['source'])}: {shown['claim']}"
+        for item, shown in zip(decision["evidence"], view["evidence"])
+        if not duplicate_action or item["source"] != decision["duplicate_of"]
+    )
+    counterevidence = "\n".join(f"- {item}" for item in view["counterevidence_checked"])
+    next_steps = ""
+    if duplicate_action:
+        next_steps = f"\n\n## Next steps\n\n- Maintainer: {duplicate_action['next_action']} {duplicate_action['item']}"
+    return (
+        "# Review Decision\n\n"
+        "| Field | Value |\n"
+        "| --- | --- |\n"
+        "| Recommendation | Reject |\n"
+        f"| Close reason | `{reason['code']}` |\n"
+        f"| PR | [View pull request]({reason['pr_url']}) |\n"
+        f"| Head | `{reason['head_sha']}` |\n\n"
+        "Source findings: not assessed\n\n"
+        "Detailed review: skipped\n\n"
+        f"Summary: {view['summary']}\n\n"
+        f"Rationale: {view['rationale']}\n\n"
+        f"Evidence:\n\n{evidence}\n\n"
+        f"Counterevidence checked:\n\n{counterevidence}\n\n"
+        f"GitHub mutation: not performed.{next_steps}"
+    )
+
+
 def _validate_code_review_final_handoff(
     result: dict[str, Any],
     handoff: dict[str, Any],
@@ -105,6 +343,17 @@ def _validate_code_review_final_handoff(
         raise SystemExit("code-review-final-handoff-metadata-invalid")
     review_status = metadata.get("review_status")
     expected_branch = review_status if review_status in {"unavailable", "closed"} else "assessed"
+    close_decision = metadata.get("close_decision")
+    if handoff.get("presentation_version") == 17 and expected_branch != "closed":
+        raise SystemExit("closed-review-final-handoff-decision-required")
+    if expected_branch == "closed" and (
+        fresh_candidate
+        or handoff.get("presentation_version") == 17
+        or (isinstance(close_decision, dict) and close_decision.get("schema_version") == 2)
+    ):
+        if not isinstance(close_decision, dict) or out_dir is None:
+            raise SystemExit("closed-review-final-handoff-decision-required")
+        validate_closed_review_handoff(closed_review_handoff(out_dir, close_decision), handoff)
     if handoff.get("branch") == "caller-contract" and result.get("schema_version") != 3:
         return
     if handoff.get("branch") != expected_branch:
@@ -291,7 +540,7 @@ def _validate_code_review_final_handoff(
             expected_values = (
                 f"[#{number} — {escape(title, quote=False).replace('[', '&#91;').replace(']', '&#93;')}]({url})",
                 f"@{login}",
-                _code_review_pr_ci_snapshot(pr.get("statusCheckRollup")),
+                _code_review_pr_ci_snapshot(reviewed_pr_ci_rollup(out_dir, pr, reviewed_commit)),
             )
             types = {"fix", "feat", "refactor", "perf", "docs", "ci", "chore", "test", "mixed"}
             if tuple(row["cells"][1] for row in rows[:3]) != expected_values or rows[3]["cells"][1] not in types:

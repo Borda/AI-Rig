@@ -27,6 +27,8 @@ Group per capable specialist/domain when it reduces duplicated context or preser
 
 Group by coherent fix and capable role; do not manufacture a second task or spawn one specialist per finding merely to claim parallelism. A work bucket contains at most five selected items and each selected item appears in exactly one bucket. Parallel buckets may name the same exact repo-relative file when their roles have independent work in isolated worktrees. Reject absolute paths, globs, `..`, duplicate aliases, and ancestor/descendant path overlap. Identify every shared file and the parent reconciliation owner before dispatch. A collision discovered after join stays in the integration worktree until the parent reconciles it and verifies the final postimage; never silently choose a child's version.
 
+Check the retained run directory against the production helper’s evidence boundary before choosing isolated workers. The helper requires plan, approval and state under the source checkout’s `.reports/codex/code-remediate/`. When intake placed the authoritative run under the Git directory or outside that checkout, retain it there, record this concrete parallel-ineligibility reason, and execute the selected work through the parent-owned or sequential route.
+
 Plan parallel dispatch by default after selection:
 
 - Create the fewest coherent role/domain buckets that cover selected items, whether the selection has fewer or more than five items; never split one coherent fix only to reach two buckets.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.85.0
+
+- The shared cross-validation protocol now weighs a review verdict against the PR's own purpose and size: a required resolution that reverses the PR's central change or rewrites most of its diff is a direction conflict, never Minor changes.
+- `/foundry:profile` cost figures now count only calls inside the `--since` window: a session that began before the window contributes its in-window spend instead of its whole cost, so the window total, session ranking and per-command rollup no longer overstate recent spend (a measured 24h window read $534 before and $422 after). `--session-id` still reports the whole session and now says so with its start and end time. The section also gains a dollars-by-token-class table (input, output, cache read, 5-minute and 1-hour cache write, main loop against subagents) and a table of subagent 5-minute cache writes by agent type, split into each agent's first-call prefix and later rewrites.
+- The pre-run scan of contributed code now says when a flagged line is unchanged from the base branch: in a file the pull request edits, the reason for a hit on a line it kept carries "on a line unchanged from the base branch", so a maintainer can tell an existing setting from a new one. The verdict is unchanged, because an edit elsewhere in the file can still change what a kept line does. `--env` now also refuses every variable name the scan reports as a secret read.
+
 ## 0.84.0
 
 - The commit, push and GitHub write questions now offer `Hold` where they offered `Deny`, and describe it alike: skip this commit, push or write and leave the changes, the branch or GitHub as they are:

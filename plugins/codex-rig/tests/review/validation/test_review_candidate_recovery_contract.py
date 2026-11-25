@@ -1085,6 +1085,29 @@ def test_review_entry_requires_table_delivery_before_any_exit() -> None:
     assert "consult presentation only when needed" not in flat(_read(CODE_REVIEW_SKILL))
 
 
+def test_maintainer_policy_question_delivers_snapshot_and_bypasses_process_recovery() -> None:
+    """A missing product decision must retain PR metadata without sending the operator to the restart menu."""
+    link = "findings-and-completion.md#maintainer-decision-needed"
+    assert link in _read(CODE_REVIEW_SKILL)
+    assert link in _section(_read(REVIEW_REPORT_RECOVERY), "## Incomplete review decision")
+    findings = _read(CODE_REVIEW_SKILL.parent / "references" / "findings-and-completion.md")
+    decision = _section(findings, "#### Maintainer decision needed", "### ")
+    assert "PR Snapshot" in decision
+    assert "reviewer rating legend" in decision
+    assert "outcome of each choice" in decision
+    assert "independent checks" in decision
+    routing = _first_paragraph(_after(decision, "3. "))
+    assert "[User Questions]" in routing
+    assert "root owns the question" in routing
+    assert "before opening it" in routing
+    resolution = _first_paragraph(_after(decision, "4. "))
+    assert "confirm the finding" in resolution
+    assert "close the policy concern" in resolution
+    assert "unanswered" in resolution.casefold()
+    assert "`unverified`" in resolution
+    assert "recheck affected evidence if the revision or scope changes" in resolution
+
+
 def test_ordering_recovery_routes_to_preliminary_table_delivery() -> None:
     """Keep Continue and Skip from becoming prose-only exits after a missed checkpoint."""
     interrupted = flat(_section(_read(REVIEW_REPORT_RECOVERY), "## Interrupted checks and missed ordering"))

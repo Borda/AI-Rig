@@ -1616,7 +1616,13 @@ def test_later_request_publishes_delivered_branch_once(
     }
     (request / "publication-readback.json").write_text(json.dumps(readback))
     assert finalize.main(["publication-resume", "--run", str(request)]) == 0
-    assert json.loads(capsys.readouterr().out)["publication"]["status"] == "verified"
+    disposition = json.loads(capsys.readouterr().out)
+    assert disposition["publication"]["status"] == "verified"
+    # The collected PR has no title, so the derived subject is exactly the linked base repository and number.
+    assert disposition["pr_handoff_summary"].split("\n\n") == [
+        "Remediate PR [upstream/widgets#123](https://github.com/upstream/widgets/pull/123)",
+        f"**Delivery** — Pushed commit `{offer['source_oid'][:12]}` and verified it on the remote PR branch.",
+    ]
 
 
 @pytest.mark.parametrize(

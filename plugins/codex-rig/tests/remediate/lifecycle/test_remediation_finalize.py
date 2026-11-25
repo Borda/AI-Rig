@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -32,6 +33,8 @@ from test_review_completion_gate import (
 from test_review_finding_identity import _load_validator, _metadata, _notes, _result
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
+#: Exact derived opening subject for the collected fixture PR, which carries no title.
+PR_SUBJECT = "Remediate PR [acme/widgets#123](https://github.com/acme/widgets/pull/123)"
 DERIVED_HANDOFF_FIELDS = ("verification", "confidence", "artifacts", "tables", "source_records", "source_coverage")
 
 
@@ -584,8 +587,43 @@ def _write_publication_attempt(run: Path, delivery: dict[str, object], *, ref: s
     return digest
 
 
+@pytest.mark.parametrize(
+    ("title", "shown"),
+    [
+        pytest.param(
+            "See https://evil.example/x www.evil.example a@evil.example \u202e[x](y)\u2066 <b>*e*</b>\nReason: z",
+            "`See https://evil.example/x www.evil.example a@evil.example [x](y) <b>*e*</b> Reason:\u00a0z`",
+            id="links-markup-and-direction-controls",
+        ),
+        pytest.param("Use `code` and ``more`` now", "```Use `code` and ``more`` now```", id="backtick-runs"),
+        pytest.param("`leading` tick", "`` `leading` tick ``", id="edge-backtick"),
+    ],
+)
+def test_pr_handoff_subject_keeps_a_collected_title_inert(tmp_path: Path, title: str, shown: str) -> None:
+    """A contributor-controlled title is one code span, so no renderer adds a link, markup or reordered text.
+
+    Code span content is literal in CommonMark and GitHub-flavored Markdown, including for bare URLs, ``www.`` hosts and
+    email addresses. Direction controls and line breaks are removed, the fence outlasts every backtick run in the title,
+    and a title ``Reason:`` cannot split off the summary's technical detail.
+    """
+    (tmp_path / "pr").mkdir()
+    _write_pr_run_artifacts(tmp_path / "pr", "a" * 40, "b" * 40)
+    pr_path = tmp_path / "pr" / "pr.json"
+    pr = json.loads(pr_path.read_bytes())
+    pr["title"] = title
+    pr_path.write_text(json.dumps(pr), encoding="utf-8")
+
+    subject = HELPER.pr_handoff_summary(tmp_path, "committed", None).split("\n\n")[0]
+
+    assert subject == f"Remediate PR [acme/widgets#123](https://github.com/acme/widgets/pull/123) — {shown}"
+    assert not re.search(r"[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]", subject)
+    assert " Reason: " not in subject
+
+
 def test_initial_resume_preserves_the_recorded_denial(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Recover the original offer's Deny before its terminal record was written, without a transport attempt."""
+    (tmp_path / "pr").mkdir()
+    _write_pr_run_artifacts(tmp_path / "pr", "a" * 40, "b" * 40)
     delivery = _write_worktree_delivery(tmp_path)
     digest = _write_publication_offer(tmp_path, delivery)
     (tmp_path / "publication-answer.json").write_text(
@@ -601,6 +639,10 @@ def test_initial_resume_preserves_the_recorded_denial(tmp_path: Path, capsys: py
     assert HELPER.main(["publication-resume", "--run", str(tmp_path)]) == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary["publication"]["status"] == "declined"
+    assert summary["pr_handoff_summary"].split("\n\n") == [
+        PR_SUBJECT,
+        "**Delivery** — Local delivery was recorded. The push was declined.",
+    ]
     assert summary["evidence"] == "publication-answer.json"
     assert summary["needs_terminal_record"] is True
     assert not (tmp_path / "publication-executed").exists()
@@ -707,6 +749,8 @@ def test_the_execution_marker_decides_what_an_approved_attempt_can_report(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], marker: str | None, status: str, accepted: bool
 ) -> None:
     """Without a marker nothing was sent, so only ``skipped`` is true; any marker entry means the attempt started."""
+    (tmp_path / "pr").mkdir()
+    _write_pr_run_artifacts(tmp_path / "pr", "a" * 40, "b" * 40)
     delivery = _write_worktree_delivery(tmp_path)
     digest = _write_publication_attempt(tmp_path, delivery)
     if marker == "file":
@@ -723,6 +767,15 @@ def test_the_execution_marker_decides_what_an_approved_attempt_can_report(
     if accepted:
         assert result["publication"]["status"] == status
         assert result["needs_terminal_record"] is False
+        push = {
+            "skipped": "No push was attempted.",
+            "failed": "The push failed.",
+            "unverified": "A push was attempted, but remote delivery is unverified.",
+        }[status]
+        assert result["pr_handoff_summary"].split("\n\n") == [
+            PR_SUBJECT,
+            f"**Delivery** — Local delivery was recorded. {push}",
+        ]
     else:
         assert result["code"] == "publication-disposition-invalid"
 
@@ -1605,7 +1658,11 @@ class TestFinalizePromotion:
         options: list[str],
         offers: bool,
     ) -> None:
-        """Route from the validated local destination and commit, preserving pending decisions and opt-outs."""
+        """Route from the validated local destination and commit, preserving pending decisions and opt-outs.
+
+        None of these routes has verified remote delivery, so the opening reports the committed disposition and that no
+        push has been verified, whether or not a push question follows.
+        """
         repo = tmp_path_factory.mktemp("source")
         _prepare_committed_delivery(tmp_path, pr_delivery_argv, repo, delivery_kind)
         code = HELPER.main([*pr_delivery_argv, *options])
@@ -1614,6 +1671,10 @@ class TestFinalizePromotion:
         handoff = json.loads((tmp_path / "final-handoff.json").read_bytes())
         rendered = (tmp_path / "final.md").read_text(encoding="utf-8")
         assert ("Codex pushes the commit and verifies the remote branch" in rendered) is offers
+        assert rendered.split("\n\n", 2)[:2] == [
+            PR_SUBJECT,
+            "**Delivery** — Committed locally. No push has been verified.",
+        ]
         assert ("Approve / Deny" in rendered) is offers
         assert ("Approve / Deny" in summary["next_action"]["action"]) is offers
         assert handoff["next_steps"].count("pr-worktree-publication") == int(offers)
@@ -1622,6 +1683,330 @@ class TestFinalizePromotion:
         assert "git push" not in summary["next_action"]["action"]
         assert not (tmp_path / "publication-offer.json").exists()
         assert not (tmp_path / "publication-attempt.json").exists()
+
+    @pytest.mark.integration
+    def test_pr_handoff_binds_the_pending_commit_and_reuses_its_linked_subject(
+        self, tmp_path: Path, pr_delivery_argv: list[str], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Derive a pending local disposition and reject a digest-consistent but unsupported push claim."""
+        pr_path = tmp_path / "pr" / "pr.json"
+        pr = json.loads(pr_path.read_bytes())
+        pr.update(title="Repair [loader]\nchecks", number=123, url="https://github.com/acme/widgets/pull/123")
+        pr_path.write_text(json.dumps(pr), encoding="utf-8")
+        draft_path = Path(pr_delivery_argv[pr_delivery_argv.index("--handoff") + 1])
+        handoff = json.loads(draft_path.read_bytes())
+        subject = "Remediate PR [acme/widgets#123](https://github.com/acme/widgets/pull/123) — `Repair [loader] checks`"
+        handoff["outcome"].update(
+            summary=r"Remediate PR [acme/widgets#123 — Repair \[loader\] checks](https://github.com/acme/widgets/pull/123). Already closed."
+        )
+        handoff["commit_disposition"] = {
+            "status": "pending",
+            "reason": "Awaiting commit.",
+            "evidence": "commit-plan.md",
+        }
+        (tmp_path / "commit-plan.md").write_text("Awaiting commit.", encoding="utf-8")
+        draft_path.write_text(json.dumps(handoff), encoding="utf-8")
+
+        assert HELPER.main(pr_delivery_argv) == 0, capsys.readouterr().out
+        final = (tmp_path / "final.md").read_text(encoding="utf-8")
+        assert final.split("\n\n")[:3] == [
+            subject,
+            "**Delivery** — The local commit is pending. No push has been verified.",
+            "Already closed.",
+        ]
+        assert final.count(subject) == 1
+        draft_path.write_bytes((tmp_path / "final-handoff.json").read_bytes())
+        assert HELPER.main(pr_delivery_argv) == 0, capsys.readouterr().out
+        assert (tmp_path / "final.md").read_text(encoding="utf-8") == final
+
+        result_path = tmp_path / "result.candidate.json"
+        result = json.loads(result_path.read_bytes())
+        handoff_path = tmp_path / "final-handoff.json"
+        handoff = json.loads(handoff_path.read_bytes())
+        handoff["outcome"]["summary"] = subject + "\n\nPushed and verified."
+        handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+        HELPER._bind_handoff(tmp_path, result["metadata"], handoff)
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+        with pytest.raises(SystemExit, match="remediation-handoff-pr-summary-mismatch"):
+            VALIDATOR.validate("code-remediate", tmp_path, result_path)
+
+        # A historical author could already name the PR in the title without claiming this machine binding.
+        handoff["outcome"] = {"title": subject, "summary": "Already closed."}
+        handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+        result["metadata"].pop("pr_handoff_summary")
+        HELPER._bind_handoff(tmp_path, result["metadata"], handoff)
+        archived = tmp_path / "result.json"
+        archived.write_text(json.dumps(result), encoding="utf-8")
+        VALIDATOR.validate("code-remediate", tmp_path, archived)
+
+    @pytest.mark.integration
+    def test_pr_handoff_replaces_its_own_earlier_opening_after_a_title_change(
+        self, tmp_path: Path, pr_delivery_argv: list[str], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A re-finalize swaps the earlier derived opening, title change included, and keeps one fixed status slot.
+
+        The rendered opening keeps a punctuation-heavy title literal and whole, and the authored outcome below it stays.
+        """
+        pr_path = tmp_path / "pr" / "pr.json"
+        pr = json.loads(pr_path.read_bytes())
+        old_title = "Old *title* https://x.example Reason: <b>[y](z)</b>"
+        pr.update(title=old_title, number=123, url="https://github.com/acme/widgets/pull/123")
+        pr_path.write_text(json.dumps(pr), encoding="utf-8")
+        draft_path = Path(pr_delivery_argv[pr_delivery_argv.index("--handoff") + 1])
+        handoff = json.loads(draft_path.read_bytes())
+        handoff["outcome"].update(summary="Fixed X.")
+        handoff["commit_disposition"] = {
+            "status": "pending",
+            "reason": "Awaiting commit.",
+            "evidence": "commit-plan.md",
+        }
+        (tmp_path / "commit-plan.md").write_text("Awaiting commit.", encoding="utf-8")
+        draft_path.write_text(json.dumps(handoff), encoding="utf-8")
+        identity = "Remediate PR [acme/widgets#123](https://github.com/acme/widgets/pull/123)"
+        delivery = "**Delivery** — The local commit is pending. No push has been verified."
+
+        assert HELPER.main(pr_delivery_argv) == 0, capsys.readouterr().out
+        final = (tmp_path / "final.md").read_text(encoding="utf-8")
+        assert final.split("\n\n")[:3] == [
+            f"{identity} — `Old *title* https://x.example Reason:\u00a0<b>[y](z)</b>`",
+            delivery,
+            "Fixed X.",
+        ]
+        assert final.count("**Delivery**") == 1
+
+        pr.update(title="New title")
+        pr_path.write_text(json.dumps(pr), encoding="utf-8")
+        draft_path.write_bytes((tmp_path / "final-handoff.json").read_bytes())
+        assert HELPER.main(pr_delivery_argv) == 0, capsys.readouterr().out
+        final = (tmp_path / "final.md").read_text(encoding="utf-8")
+        assert final.split("\n\n")[:3] == [f"{identity} — `New title`", delivery, "Fixed X."]
+        assert "Old *title*" not in final
+        assert final.count("**Delivery**") == 1
+
+        result_path = tmp_path / "result.candidate.json"
+        result = json.loads(result_path.read_bytes())
+        handoff_path = tmp_path / "final-handoff.json"
+        handoff = json.loads(handoff_path.read_bytes())
+        opening = result["metadata"]["pr_handoff_summary"]
+        claimed = opening.replace(delivery, "**Delivery** — Pushed commit `abc` and verified it.")
+        handoff["outcome"]["summary"] = f"{claimed}\n\nFixed X."
+        handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+        HELPER._bind_handoff(tmp_path, result["metadata"], handoff)
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+        # The fixed slot must hold exactly the status derived from the commit disposition and publication evidence.
+        with pytest.raises(SystemExit, match="remediation-handoff-pr-summary-mismatch"):
+            VALIDATOR.validate("code-remediate", tmp_path, result_path)
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("authored", "shown"),
+        [
+            pytest.param(
+                "## Delivery\nPushed and verified upstream.",
+                "\\## Delivery Pushed and verified upstream.",
+                id="atx-heading",
+            ),
+            pytest.param(
+                "Delivery: Pushed and verified upstream.\n========",
+                "Delivery: Pushed and verified upstream. ========",
+                id="setext-heading",
+            ),
+            pytest.param(
+                "- **Delivery** — Pushed and verified upstream.",
+                "\\- **Delivery** — Pushed and verified upstream.",
+                id="bullet-item",
+            ),
+            pytest.param(
+                "1. Delivery — Pushed and verified upstream.",
+                "1\\. Delivery — Pushed and verified upstream.",
+                id="ordered-item",
+            ),
+            pytest.param(
+                "> **Delivery** — Pushed and verified upstream.",
+                "\\> **Delivery** — Pushed and verified upstream.",
+                id="blockquote",
+            ),
+            pytest.param(
+                "| Delivery | Pushed and verified upstream. |\n| -- | -- |",
+                "\\| Delivery | Pushed and verified upstream. | | -- | -- |",
+                id="table-row",
+            ),
+            pytest.param(
+                "<h2>Delivery</h2> Pushed and verified upstream.",
+                "\\<h2>Delivery\\</h2> Pushed and verified upstream.",
+                id="html-heading",
+            ),
+            pytest.param(
+                "**Delivery status**: Pushed and verified upstream.",
+                "**Delivery status**: Pushed and verified upstream.",
+                id="emphasis-label",
+            ),
+            pytest.param(
+                "**Deli**very — Pushed and verified upstream.",
+                "**Deli**very — Pushed and verified upstream.",
+                id="split-emphasis-label",
+            ),
+            pytest.param(
+                "Delivery\uff1aPushed and verified upstream.",
+                "Delivery\uff1aPushed and verified upstream.",
+                id="fullwidth-colon",
+            ),
+            pytest.param(
+                "\uff24elivery — Pushed and verified upstream.",
+                "\uff24elivery — Pushed and verified upstream.",
+                id="fullwidth-letter",
+            ),
+            pytest.param(
+                "&#68;elivery — Pushed and verified upstream.",
+                "&#68;elivery — Pushed and verified upstream.",
+                id="character-reference",
+            ),
+            pytest.param(
+                "<Delivery> — Pushed and verified upstream.",
+                "\\<Delivery> — Pushed and verified upstream.",
+                id="angle-bracketed-label",
+            ),
+            pytest.param(
+                "\u00a0- **Delivery** — Pushed and verified upstream.",
+                "\\- **Delivery** — Pushed and verified upstream.",
+                id="no-break-space-before-dash",
+            ),
+            pytest.param(
+                "&lt;Delivery&gt; — Pushed and verified upstream.",
+                "&lt;Delivery&gt; — Pushed and verified upstream.",
+                id="referenced-angle-brackets",
+            ),
+            pytest.param(
+                "Fixed X.\n- **Delivery** — Pushed and verified upstream.",
+                "Fixed X. - **Delivery** — Pushed and verified upstream.",
+                id="later-list-item",
+            ),
+            pytest.param("Fixed X.\n## Delivery", "Fixed X. ## Delivery", id="later-heading"),
+            pytest.param(
+                "| Field | Value |\n| -- | -- |\n| Delivery | Pushed and verified upstream. |",
+                "\\| Field | Value | | -- | -- | | Delivery | Pushed and verified upstream. |",
+                id="table-body",
+            ),
+            pytest.param(
+                "Fixed X | Delivery | Pushed and verified upstream.",
+                "Fixed X | Delivery | Pushed and verified upstream.",
+                id="table-cell",
+            ),
+            pytest.param(
+                "`delivery`: pushed and verified upstream.",
+                "`delivery`: pushed and verified upstream.",
+                id="code-span-label",
+            ),
+            pytest.param(
+                "<b>Delivery</b> pushed and verified upstream.",
+                "\\<b>Delivery\\</b> pushed and verified upstream.",
+                id="html-bold-label",
+            ),
+            pytest.param("Draft | Delivery | Closed.", "Draft | Delivery | Closed.", id="pipe-separated-prose"),
+            pytest.param(
+                "Delivery pipeline retries now back off.",
+                "Delivery pipeline retries now back off.",
+                id="word-before-prose",
+            ),
+            pytest.param("`delivery_queue.py` now retries.", "`delivery_queue.py` now retries.", id="code-span-name"),
+            pytest.param("DeliveryService now retries.", "DeliveryService now retries.", id="compound-identifier"),
+            pytest.param(
+                "**Fixed** the loader; see [PR](https://x.example/1) and `List<int>`.",
+                "**Fixed** the loader; see [PR](https://x.example/1) and `List<int>`.",
+                id="inline-markup",
+            ),
+        ],
+    )
+    def test_pr_handoff_keeps_authored_text_below_the_status_slot_without_parsing_it(
+        self,
+        tmp_path: Path,
+        pr_delivery_argv: list[str],
+        capsys: pytest.CaptureFixture[str],
+        authored: str,
+        shown: str,
+    ) -> None:
+        """Authored outcome text is never read for a push status: it stays, block-normalized, below the derived slot.
+
+        A push status written inside authored text is a documented limit, not a refusal. Block markers and raw HTML lose
+        their structure, inline markup keeps its text, and the promoted candidate passes the independent validator.
+        """
+        draft_path = Path(pr_delivery_argv[pr_delivery_argv.index("--handoff") + 1])
+        handoff = json.loads(draft_path.read_bytes())
+        handoff["outcome"].update(summary=f"{authored}\n\nFixed X.")
+        handoff["commit_disposition"] = {
+            "status": "pending",
+            "reason": "Awaiting commit.",
+            "evidence": "commit-plan.md",
+        }
+        (tmp_path / "commit-plan.md").write_text("Awaiting commit.", encoding="utf-8")
+        draft_path.write_text(json.dumps(handoff), encoding="utf-8")
+
+        assert HELPER.main(pr_delivery_argv) == 0, capsys.readouterr().out
+        final = (tmp_path / "final.md").read_text(encoding="utf-8")
+        assert final.split("\n\n")[:4] == [
+            PR_SUBJECT,
+            "**Delivery** — The local commit is pending. No push has been verified.",
+            shown,
+            "Fixed X.",
+        ]
+        VALIDATOR.validate("code-remediate", tmp_path, tmp_path / "result.candidate.json")
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "tail",
+        [
+            pytest.param("## Delivery — Pushed.\n\nFixed X.", id="heading-block"),
+            pytest.param("> Delivery: Pushed.\n\nFixed X.", id="quote-block"),
+            pytest.param("Fixed X.\n\n| Delivery | Pushed. |", id="table-row-block"),
+            pytest.param("Fixed X.\n\n- Fixed Y.", id="authored-list"),
+            pytest.param("Fixed X <h1>Done</h1>", id="inline-html"),
+            pytest.param("<b>Delivery</b> pushed upstream.", id="raw-html-label"),
+        ],
+    )
+    def test_validator_requires_a_plain_authored_outcome_after_the_derived_opening(
+        self, tmp_path: Path, pr_delivery_argv: list[str], capsys: pytest.CaptureFixture[str], tail: str
+    ) -> None:
+        """A bound handoff whose authored outcome adds Markdown block structure or raw HTML fails validation."""
+        assert HELPER.main(pr_delivery_argv) == 0, capsys.readouterr().out
+        result_path = tmp_path / "result.candidate.json"
+        result = json.loads(result_path.read_bytes())
+        handoff_path = tmp_path / "final-handoff.json"
+        handoff = json.loads(handoff_path.read_bytes())
+        handoff["outcome"]["summary"] = f"{result['metadata']['pr_handoff_summary']}\n\n{tail}"
+        handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+        HELPER._bind_handoff(tmp_path, result["metadata"], handoff)
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+
+        with pytest.raises(SystemExit, match="remediation-handoff-outcome-not-inline"):
+            VALIDATOR.validate("code-remediate", tmp_path, result_path)
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "tail",
+        [
+            pytest.param("\\- **Delivery** — Pushed.\n\nFixed X.", id="escaped-bullet-status"),
+            pytest.param("**Delivery** — Pushed commit `abc` and verified it.\n\nFixed X.", id="delivery-field-prose"),
+            pytest.param("`delivery`: pushed upstream.", id="code-span-label"),
+            pytest.param("\\<b>Delivery\\</b> pushed upstream.", id="escaped-html-label"),
+            pytest.param("Draft | Delivery | Closed.", id="pipe-separated-prose"),
+            pytest.param("**Fixed** the loader; see [PR](https://x.example/1) and `List<int>`.", id="inline-markup"),
+        ],
+    )
+    def test_validator_accepts_plain_authored_text_without_parsing_it_for_a_push_status(
+        self, tmp_path: Path, pr_delivery_argv: list[str], capsys: pytest.CaptureFixture[str], tail: str
+    ) -> None:
+        """Plain paragraphs after the derived slot pass whatever they say: authored text is not read for a status."""
+        assert HELPER.main(pr_delivery_argv) == 0, capsys.readouterr().out
+        result_path = tmp_path / "result.candidate.json"
+        result = json.loads(result_path.read_bytes())
+        handoff_path = tmp_path / "final-handoff.json"
+        handoff = json.loads(handoff_path.read_bytes())
+        handoff["outcome"]["summary"] = f"{result['metadata']['pr_handoff_summary']}\n\n{tail}"
+        handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+        HELPER._bind_handoff(tmp_path, result["metadata"], handoff)
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+
+        VALIDATOR.validate("code-remediate", tmp_path, result_path)
 
     @pytest.mark.integration
     def test_caller_contract_keeps_exact_output_and_returns_publication_checkpoint(
@@ -1911,6 +2296,10 @@ class TestFinalizePromotion:
         }
         rendered = (tmp_path / "final.md").read_text(encoding="utf-8")
         assert f"[PR publication: skipped](<{tmp_path.as_posix()}/publication.json>)" in rendered
+        assert rendered.split("\n\n", 2)[:2] == [
+            PR_SUBJECT,
+            "**Delivery** — No remediation commit was required. No push was attempted.",
+        ]
         VALIDATOR.validate("code-remediate", tmp_path, tmp_path / "result.json")
         (tmp_path / "publication.json").write_bytes(evidence + b"\n")
         with pytest.raises(SystemExit, match="code-remediate-publication-binding-mismatch"):

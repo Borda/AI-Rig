@@ -8,8 +8,104 @@ from typing import Any
 
 import pytest
 from _final_handoff_support import handoff_payload
+from markdown_it import MarkdownIt
 
 FINALIZER = Path(__file__).resolve().parents[3] / "shared" / "final_handoff.py"
+#: CommonMark with raw HTML enabled, plus the table and strikethrough extensions GitHub also renders.
+COMMONMARK = MarkdownIt("commonmark").enable(["table", "strikethrough"])
+#: Inline Markdown that normalization keeps byte for byte, with the inline token proving the construct renders.
+INLINE_FORMS = [
+    pytest.param("**Bold** opens the outcome.", "strong_open", id="leading-strong"),
+    pytest.param("*Emphasis* opens the outcome.", "em_open", id="leading-emphasis"),
+    pytest.param("_Emphasis_ opens the outcome.", "em_open", id="leading-underscore-emphasis"),
+    pytest.param("***Both*** open the outcome.", "strong_open", id="leading-strong-emphasis"),
+    pytest.param("[Linked PR](https://github.com/acme/widgets/pull/1) was merged.", "link_open", id="leading-link"),
+    pytest.param("![Diagram](https://x.example/a.png) shows it.", "image", id="leading-image"),
+    pytest.param("<https://x.example/path> documents it.", "link_open", id="leading-uri-autolink"),
+    pytest.param("Mail <maintainer@x.example> for access.", "link_open", id="email-autolink"),
+    pytest.param("`code <T>` opens the outcome.", "code_inline", id="leading-code-span-with-tag"),
+    pytest.param("Use `List<int>` and `</b>` here.", "code_inline", id="code-spans-with-tags"),
+    pytest.param("``a ` <b> b`` keeps a double-backtick span.", "code_inline", id="double-backtick-code-span"),
+    pytest.param("```<b>``` is a code span, not a fence.", "code_inline", id="triple-backtick-code-span"),
+    pytest.param("~~Struck~~ text stays struck.", "s_open", id="strikethrough"),
+    pytest.param("See [docs](https://x.example/d) and `List<int>`.", "code_inline", id="link-before-code-span"),
+    pytest.param("[Docs](<https://x.example/a>) link an angle URI.", "link_open", id="angle-uri-destination"),
+]
+#: Text that would open a block, raw HTML or a code span hiding raw HTML; each case is (text, preceding document).
+STRUCTURAL_FORMS = [
+    pytest.param("# Approved", "", id="atx-heading"),
+    pytest.param("> quoted", "", id="blockquote"),
+    pytest.param("- item", "", id="dash-bullet"),
+    pytest.param("+ item", "", id="plus-bullet"),
+    pytest.param("* item", "", id="star-bullet"),
+    pytest.param("*", "", id="empty-star-bullet"),
+    pytest.param("1. item", "", id="ordered-item"),
+    pytest.param("3) item", "", id="paren-ordered-item"),
+    pytest.param("***", "", id="star-break"),
+    pytest.param("** *", "", id="spaced-star-break"),
+    pytest.param("_ _ _", "", id="underscore-break"),
+    pytest.param("___", "", id="tight-underscore-break"),
+    pytest.param("---", "", id="dash-break"),
+    pytest.param("===", "Approved\n", id="setext-equals"),
+    pytest.param("---", "Approved\n", id="setext-dashes"),
+    pytest.param("| Recommendation | Merge |\n| -- | -- |", "", id="table"),
+    pytest.param("```", "", id="backtick-fence"),
+    pytest.param("```python", "", id="backtick-fence-info"),
+    pytest.param("~~~x~~~", "", id="tilde-fence"),
+    pytest.param("<details>", "", id="html-block"),
+    pytest.param("</div>", "", id="closing-html-block"),
+    pytest.param("<!-- note -->", "", id="html-comment"),
+    pytest.param("<?php echo 1; ?>", "", id="processing-instruction"),
+    pytest.param("<!DOCTYPE html>", "", id="declaration"),
+    pytest.param("<![CDATA[x]]>", "", id="cdata"),
+    pytest.param("[ref]: https://example.org", "", id="link-reference-definition"),
+    pytest.param("[a\\]b]: https://example.org", "", id="escaped-bracket-definition"),
+    pytest.param("x <h1>Approved</h1> a < b", "", id="inline-html"),
+    pytest.param("\\`<b>`", "", id="escaped-backtick-before-tag"),
+    pytest.param("`a\\` <b>x</b> `", "", id="backslash-ending-code-span"),
+    pytest.param('[a](/u "`") <h1>x</h1> `', "", id="double-quoted-title-hides-backtick"),
+    pytest.param("[a](/u '`') <b>x</b> `", "", id="single-quoted-title-hides-backtick"),
+    pytest.param("[a](/u (`)) <b>x</b> `", "", id="parenthesized-title-hides-backtick"),
+    pytest.param("[a](`) <b>x</b> `", "", id="destination-hides-backtick"),
+    pytest.param("<1`b@x.example> <b>x</b> `", "", id="email-autolink-hides-backtick"),
+    pytest.param("<https://x.example/`> <b>x</b> `", "", id="uri-autolink-hides-backtick"),
+    pytest.param("[a](<b>) and <i>x</i>", "", id="tag-like-angle-destination"),
+    pytest.param("Plain` words\n\n# Approved\n\n`x", "", id="code-span-breakout"),
+    pytest.param("[a`b]`<h1>``<b>`` `", "", id="failed-label-lookahead-unpairs-later-span"),
+]
+#: Text hostile only to markdown-it-py up to 4.2, which caches a backtick scan made during a failed link lookahead and
+#: then reads raw HTML inside what the CommonMark specification pairs as a code span; 4.3 follows the specification, so
+#: the "hostile as written" check skips it while normalization must still neutralize it for older renderers.
+RENDERER_QUIRK_FORMS = [
+    pytest.param("[a](u``` ][<b>```", "[x]: /u\n\n", id="failed-link-tail-lookahead-inside-span"),
+]
+#: Text this renderer shows safely as written, kept for what normalization could break: an escape that changes how
+#: later backticks pair, or a reference label the CommonMark specification (unlike markdown-it) reads raw.
+ESCAPE_INTERPLAY_FORMS = [
+    pytest.param("[a][x`y] <b>x</b> `", "[x`y]: /u\n\n", id="reference-label-hides-backtick"),
+    pytest.param("[a](<p `q>) `<h1>`", "", id="escaped-angle-destination-reopens-backtick"),
+    pytest.param('[Docs](/u "t `x`") precede `<T>` code.', "", id="link-title-backticks-before-code"),
+]
+#: Outputs of the earlier normalization, which escaped every leading marker and every tag opening, still retained in
+#: promoted handoffs; they must stay valid normalized text.
+EARLIER_NORMALIZED = [
+    pytest.param("\\**Bold** opens the outcome.", id="escaped-strong"),
+    pytest.param("\\*Emphasis* opens.", id="escaped-emphasis"),
+    pytest.param("\\_Emphasis_ opens.", id="escaped-underscore"),
+    pytest.param("\\[Linked PR](https://github.com/acme/widgets/pull/1) was merged.", id="escaped-link"),
+    pytest.param("\\<https://x.example/path> documents it.", id="escaped-autolink"),
+    pytest.param("\\<maintainer@x.example> confirmed.", id="escaped-email-autolink"),
+    pytest.param("`code \\<T>` opens the outcome.", id="escaped-tag-in-code-span"),
+    pytest.param("\\```\\<b>``` x", id="escaped-fence-and-tag"),
+    pytest.param('\\[a](/u "`") \\<h1>x\\</h1> `', id="escaped-link-and-tags"),
+]
+
+
+def _paragraph_children(text: str, preamble: str = "") -> list[Any]:
+    """Render text after an optional preceding document and return its inline tokens, requiring one paragraph."""
+    tokens = COMMONMARK.parse(preamble + text)
+    assert [token.type for token in tokens] == ["paragraph_open", "inline", "paragraph_close"], tokens
+    return tokens[1].children or []
 
 
 def _standard_payload(finalizer: Any, skill: str, version: int) -> dict:
@@ -372,6 +468,188 @@ class TestHandoffActionOrder:
         assert "**Next steps**" not in rendered
         assert "**Recommendations / next steps**" not in rendered
 
+    @pytest.fixture
+    def duplicate_review(self) -> dict:
+        """Build a tableless duplicate rejection with a maintainer-owned follow-up."""
+        payload = handoff_payload()
+        payload.update(
+            skill="code-review",
+            branch="closed",
+            presentation_version=17,
+            outcome={"title": "Review Decision", "summary": "Recommendation: Reject."},
+            close_reason={
+                "code": "DUPLICATE",
+                "pr_url": "https://github.com/org/repo/pull/5",
+                "head_sha": "a" * 40,
+                "summary": "The existing PR already ships this change.",
+                "rationale": "Only a comment differs, so closing loses no behavior.",
+            },
+            tables=[],
+            source_records=[],
+            source_coverage=dict.fromkeys(payload["source_coverage"], 0),
+            remaining=[
+                {
+                    "row_id": "duplicate",
+                    "item": "The existing proposal covers this change.",
+                    "owner": "Maintainer",
+                    "next_action": "Close [this PR](https://github.com/org/repo/pull/5) as a duplicate of "
+                    "[the existing PR](https://github.com/org/repo/pull/2).",
+                }
+            ],
+            next_steps=["duplicate"],
+        )
+        return payload
+
+    def test_duplicate_review_rejects_and_ends_with_maintainer_action(
+        self, finalizer: Any, duplicate_review: dict
+    ) -> None:
+        """A duplicate is a rejection with its reason, and its maintainer action stays visible after the evidence."""
+        rendered = finalizer.render_handoff(duplicate_review)
+
+        assert rendered.splitlines()[0] == "Recommendation: Reject."
+        assert "| Recommendation | Reject |" in rendered.splitlines()
+        assert "| Reason | DUPLICATE |" in rendered.splitlines()
+        assert f"| Reviewed commit | `{'a' * 40}` |" in rendered.splitlines()
+        assert "| Recommendation | Duplicate |" not in rendered
+        assert "| Status | closed |" not in rendered
+        assert "| Merge decision | Not made |" not in rendered
+        assert rendered.count("Only a comment differs, so closing loses no behavior.") == 1
+        assert rendered.endswith(
+            "**Next steps**\n\n**Maintainer** — Close [this PR](https://github.com/org/repo/pull/5) as a duplicate "
+            "of [the existing PR](https://github.com/org/repo/pull/2).\n\nThe existing proposal covers this change.\n"
+        )
+        assert rendered.index("**Artifact**") < rendered.index("**Next steps**")
+
+    def test_conclusive_close_renders_reject_with_its_reason(self, finalizer: Any, duplicate_review: dict) -> None:
+        """A disproved proposal receives an explicit rejection while the pull request remains open."""
+        duplicate_review.update(
+            close_reason={
+                "code": "FALSE_GOAL",
+                "pr_url": "https://github.com/org/repo/pull/5",
+                "head_sha": "a" * 40,
+                "summary": "The target already guarantees this invariant.",
+                "rationale": "The proposal depends on an unsupported input.",
+            },
+            remaining=[],
+            next_steps=[],
+        )
+        rendered = finalizer.render_handoff(duplicate_review)
+
+        assert rendered.startswith("Recommendation: Reject.")
+        assert "| Recommendation | Reject |" in rendered
+        assert "| Reason | FALSE_GOAL |" in rendered
+        assert "[PR #5](https://github.com/org/repo/pull/5)" in rendered
+        assert "The proposal depends on an unsupported input." in rendered
+        assert "**Next steps**" not in rendered
+        assert "Not made" not in rendered
+        assert "| Status | closed |" not in rendered
+
+    @pytest.mark.parametrize(
+        ("changes", "reason"),
+        [
+            pytest.param({"branch": "assessed"}, "presentation-version-invalid", id="assessed-review"),
+            pytest.param({"skill": "implement"}, "presentation-version-invalid", id="other-workflow"),
+            pytest.param(
+                {"outcome": {"title": "Review Decision", "summary": "Recommendation: Duplicate."}},
+                "review-outcome-not-canonical",
+                id="separate-duplicate-decision",
+            ),
+            pytest.param({"remaining": []}, "duplicate-review-action-invalid", id="missing-action"),
+            pytest.param({"next_steps": []}, "duplicate-review-action-invalid", id="unselected-action"),
+            pytest.param(
+                {"next_steps": ["duplicate", "duplicate"]}, "duplicate-review-action-invalid", id="extra-step"
+            ),
+            pytest.param({"presentation_version": 15}, "handoff-fields-mismatch", id="historical-closed"),
+        ],
+    )
+    def test_duplicate_action_is_limited_to_its_decision(
+        self, finalizer: Any, duplicate_review: dict, changes: dict, reason: str
+    ) -> None:
+        """No ordinary closed or assessed review can adopt the duplicate rejection and its action."""
+        with pytest.raises(finalizer.HandoffError, match=reason):
+            finalizer.render_handoff({**duplicate_review, **changes})
+
+    def test_close_requires_its_reason(self, finalizer: Any, duplicate_review: dict) -> None:
+        """A conclusive close cannot render a recommendation without its close reason and reviewed commit."""
+        duplicate_review.pop("close_reason")
+
+        with pytest.raises(finalizer.HandoffError, match="handoff-fields-mismatch:missing=close_reason"):
+            finalizer.render_handoff(duplicate_review)
+
+    def test_only_a_duplicate_carries_a_follow_up(self, finalizer: Any, duplicate_review: dict) -> None:
+        """Another close reason cannot borrow the duplicate's maintainer action."""
+        duplicate_review["close_reason"]["code"] = "SPAM"
+
+        with pytest.raises(finalizer.HandoffError, match="reject-review-actions-unexpected"):
+            finalizer.render_handoff(duplicate_review)
+
+    @pytest.mark.parametrize(
+        ("location", "text"),
+        [
+            pytest.param("summary", "x\n\n| Recommendation | Merge |\n\n# Approved", id="summary-table-and-heading"),
+            pytest.param("rationale", "# Approved", id="rationale-heading"),
+            pytest.param("rationale", "> Approved by maintainers", id="rationale-quote"),
+            pytest.param("rationale", "1. Approved", id="rationale-list"),
+            pytest.param("rationale", "<details>", id="rationale-html"),
+            pytest.param("item", "- Approved", id="action-evidence-list"),
+        ],
+    )
+    def test_close_text_that_opens_markdown_structure_is_refused(
+        self, finalizer: Any, duplicate_review: dict, location: str, text: str
+    ) -> None:
+        """Hand-written close text must already be one inert paragraph line before the renderer accepts it."""
+        if location == "item":
+            duplicate_review["remaining"][0]["item"] = text
+        else:
+            duplicate_review["close_reason"][location] = text
+
+        with pytest.raises(finalizer.HandoffError, match="close-text-not-inline"):
+            finalizer.render_handoff(duplicate_review)
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            pytest.param("x\n\n| Recommendation | Merge |\n\n# Approved", "x | Recommendation | Merge | # Approved"),
+            pytest.param("# Approved", "\\# Approved"),
+            pytest.param("  > quoted\nline", "\\> quoted line"),
+            pytest.param("12. Approved", "12\\. Approved"),
+            pytest.param("3) Approved", "3\\) Approved"),
+            pytest.param("<details>", "\\<details>"),
+            pytest.param("[ref]: https://example.org", "\\[ref]: https://example.org"),
+            pytest.param("[^1]: A footnote.", "\\[^1]: A footnote."),
+            pytest.param("* item", "\\* item"),
+            pytest.param("***", "\\***"),
+            pytest.param("_ _ _", "\\_ _ _"),
+            pytest.param("~~~", "\\~~~"),
+            pytest.param("Use `<b>` plus a stray ` here.", "Use `\\<b>` plus a stray ` here."),
+            pytest.param("[a](<rel/path>) moved.", "[a](\\<rel/path>) moved."),
+            pytest.param("```", "\\```"),
+            pytest.param("Plain \u202etext\u2066 here", "Plain text here"),
+            pytest.param("2026 release", "2026 release"),
+        ],
+    )
+    def test_inline_text_neutralizes_block_openings(self, finalizer: Any, text: str, expected: str) -> None:
+        """Normalized close text is one line whose first character cannot open a Markdown block."""
+        assert finalizer.inline_text(text) == expected
+        assert finalizer.inline_text(expected) == expected
+
+    @pytest.mark.parametrize(
+        ("field", "value", "reason"),
+        [
+            pytest.param("row_id", "external", "duplicate-review-action-invalid", id="other-row"),
+            pytest.param("owner", "Contributor", "duplicate-review-action-invalid", id="other-owner"),
+            pytest.param("next_action", "None", "remaining-next_action-placeholder", id="placeholder-action"),
+        ],
+    )
+    def test_duplicate_requires_identifiable_maintainer_follow_up(
+        self, finalizer: Any, duplicate_review: dict, field: str, value: str, reason: str
+    ) -> None:
+        """An unrelated row, different owner, or absent action cannot satisfy the duplicate contract."""
+        duplicate_review["remaining"][0][field] = value
+
+        with pytest.raises(finalizer.HandoffError, match=reason):
+            finalizer.render_handoff(duplicate_review)
+
     @pytest.mark.parametrize("version", [8, 9, 10, 11])
     def test_historical_versions_keep_next_steps_before_artifact(self, finalizer: Any, version: int) -> None:
         """Presentation v8 to v11 still place Next steps before Artifact.
@@ -454,3 +732,37 @@ class TestHandoffActionOrder:
 
         assert finalizer.render_files(handoff, final, validation) == proof
         assert (handoff.read_bytes(), final.read_bytes(), validation.read_bytes()) == (source, rendered, receipt)
+
+
+class TestInlineTextRendering:
+    """Normalized free text removes block structure and raw HTML only, judged by a CommonMark renderer."""
+
+    @pytest.mark.parametrize(("text", "construct"), INLINE_FORMS)
+    def test_inline_markup_passes_through_unchanged(self, finalizer: Any, text: str, construct: str) -> None:
+        """Bold, emphasis, links, autolinks, strikethrough and code spans keep their exact text and rendering."""
+        assert finalizer.inline_text(text) == text
+        kinds = [token.type for token in _paragraph_children(text)]
+        assert construct in kinds
+        assert "html_inline" not in kinds
+
+    @pytest.mark.parametrize(("text", "preamble"), STRUCTURAL_FORMS)
+    def test_structural_text_opens_a_block_or_raw_html_when_rendered_raw(self, text: str, preamble: str) -> None:
+        """Each structural case is hostile as written, so its normalized rendering proves a real neutralization."""
+        tokens = COMMONMARK.parse(preamble + text)
+        one_paragraph = [token.type for token in tokens] == ["paragraph_open", "inline", "paragraph_close"]
+        assert not one_paragraph or "html_inline" in [child.type for child in tokens[1].children or []]
+
+    @pytest.mark.parametrize(("text", "preamble"), [*STRUCTURAL_FORMS, *RENDERER_QUIRK_FORMS, *ESCAPE_INTERPLAY_FORMS])
+    def test_structure_and_raw_html_render_as_one_plain_paragraph(
+        self, finalizer: Any, text: str, preamble: str
+    ) -> None:
+        """Hostile text renders as one paragraph with no raw HTML, even after a document that defines a link label."""
+        normalized = finalizer.inline_text(text)
+        assert "\n" not in normalized
+        assert finalizer.inline_text(normalized) == normalized
+        assert "html_inline" not in [token.type for token in _paragraph_children(normalized, preamble)]
+
+    @pytest.mark.parametrize("text", EARLIER_NORMALIZED)
+    def test_text_normalized_by_the_earlier_rules_stays_normalized(self, finalizer: Any, text: str) -> None:
+        """Retained handoffs whose text the earlier, stricter escaping produced still pass the normalized-text check."""
+        assert finalizer.inline_text(text) == text

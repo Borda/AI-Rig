@@ -13,7 +13,9 @@
 
 ## Scope
 
-    Trust model: files the base ref already contains are the maintainer's and are listed, not pattern-scanned.
+    Trust model: files the base ref already contains are the maintainer's and are listed, not pattern-scanned. A file
+    the contribution modifies is scanned whole and every hit counts, since an edit with no hit of its own can redirect
+    or unguard the lines it keeps; a hit on a kept line is only labelled as unchanged from the base branch.
     Packages the base ref already declares and the official index supplies are trusted by declared name; their
     contents are never scanned, and a changed lockfile, ``setup.py`` or requirements include is reported because a
     name does not prove where the installed copy came from. A dependency the contribution adds, a direct URL, VCS or
@@ -157,6 +159,13 @@ _ENV_KEYS = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "VIRTUAL_ENV", "PYTHO
 _ENV_WINDOWS_KEYS = ("SystemRoot", "SYSTEMROOT", "COMSPEC", "PATHEXT", "SYSTEMDRIVE", "WINDIR")
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSW|CREDENTIAL|PRIVATE|API_?KEY|AUTH|SESSION|COOKIE", re.IGNORECASE)
+#: Environment names the scan reports as secret reads; ``--env`` refuses each of them too, so no name the scan
+#: flags can reach contributor code through the run's allowlist.
+_FLAGGED_ENV_NAMES = (
+    r"GH_TOKEN|GITHUB_TOKEN|GITHUB_PAT|ANTHROPIC_API_KEY|OPENAI_API_KEY|AWS_SECRET_ACCESS_KEY"
+    r"|AWS_ACCESS_KEY_ID|AWS_SESSION_TOKEN|PYPI_(?:API_)?TOKEN|TWINE_PASSWORD|NPM_TOKEN|HF_TOKEN"
+    r"|CLAUDE_CODE_OAUTH_TOKEN|SSH_AUTH_SOCK"
+)
 _LIFECYCLE_SCRIPTS = ("preinstall", "install", "postinstall", "prepare", "prepack", "pretest", "test", "posttest")
 #: Popular package names a new dependency is compared against for lookalikes, beside the base ref's own names.
 _KNOWN_NAMES = (
@@ -182,10 +191,7 @@ _RULES: tuple[tuple[str, str, re.Pattern[str], frozenset[str] | None], ...] = tu
          r"|\bhosts\.yml\b|Library[/\\]Keychains|\bid_(?:rsa|ed25519|ecdsa)\b|\.docker[/\\]config\.json"
          r"|/etc/(?:passwd|shadow)\b|\.claude\.json|\.codex[/\\]auth\.json|\.claude[/\\](?:settings|\.credentials)",
          None),
-        ("secret_env", "medium",
-         r"\b(?:GH_TOKEN|GITHUB_TOKEN|GITHUB_PAT|ANTHROPIC_API_KEY|OPENAI_API_KEY|AWS_SECRET_ACCESS_KEY"
-         r"|AWS_ACCESS_KEY_ID|AWS_SESSION_TOKEN|PYPI_(?:API_)?TOKEN|TWINE_PASSWORD|NPM_TOKEN|HF_TOKEN"
-         r"|CLAUDE_CODE_OAUTH_TOKEN|SSH_AUTH_SOCK)\b", None),
+        ("secret_env", "medium", rf"\b(?:{_FLAGGED_ENV_NAMES})\b", None),
         ("env_dump", "medium",
          r"/proc/(?:self|\d+)/environ|\bprintenv\b|(?<![\w.])env\s*\|\s*\w", None),
         ("env_dump", "low", r"dict\(\s*os\.environ\s*\)|os\.environ\.(?:copy|items)\(|\bos\.environb\b", None),
@@ -291,6 +297,45 @@ def _is_ancestor(repo: str, ancestor: str, descendant: str) -> bool:
     except (OSError, subprocess.SubprocessError) as exc:
         raise GuardError(f"git merge-base failed: {exc}") from exc
     return done.returncode == 0
+
+
+#: A unified-diff hunk header; group 1 and 2 are the head-side start line and line count (count 1 when omitted).
+_HUNK = re.compile(rb"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
+
+
+def _added_lines(repo: str, base: str, head: str, path: str) -> set[int] | None:
+    """Return the head line numbers of ``path`` the contribution added or edited, numbered as git counts (``\\n``).
+
+    The diff is forced to text (``--text``) with textconv and external drivers off, so an attribute or config in the
+    checkout cannot hide a hunk. ``None`` means the diff could not be read: the caller then treats every line as
+    contributed.
+    """
+    try:
+        raw = _git(
+            repo, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--text",
+            base, head, "--", f":(literal){path}",
+        )  # fmt: skip
+    except GuardError:
+        return None
+    lines: set[int] = set()
+    for match in _HUNK.finditer(raw):
+        start, count = int(match.group(1)), 1 if match.group(2) is None else int(match.group(2))
+        lines.update(range(start, start + count))
+    return lines
+
+
+def _git_line_numbers(text: str) -> list[int]:
+    """Map each ``str.splitlines`` line (1-based index) to the git line holding it, which splits on ``\\n`` only.
+
+    ``splitlines`` also breaks on ``\\r``, form feeds and Unicode separators, so without this map a separator on an
+    edited line would shift every later finding onto the wrong git line. Index 0 is unused.
+    """
+    numbers = [0]
+    git_line = 1
+    for line in text.splitlines(keepends=True):
+        numbers.append(git_line)
+        git_line += line.count("\n")
+    return numbers
 
 
 def _changed_paths(repo: str, base: str, head: str) -> dict[str, str]:
@@ -469,8 +514,31 @@ def _structural(path: str, mode: str, why: str) -> dict[str, object] | None:
     return None
 
 
+def _file_findings(
+    repo: str, base: str | None, head: str, path: str, status: str, text: str
+) -> list[dict[str, object]]:
+    """Return every finding of one changed file, labelling hits on lines the contribution kept from the base ref.
+
+    The whole file is always scanned and every hit counts toward the verdict: an edit with no hit of its own can
+    redirect, unguard or move the lines it keeps. In a modified file whose diff names the contributed lines, a hit on
+    any other line gets ``base_line: true`` so the report can say the line is unchanged from the base branch. The label
+    never changes the verdict.
+    """
+    found = _scan_text(path, text)
+    if base is None or status != "M" or not found:
+        return found
+    added = _added_lines(repo, base, head, path)
+    if not added:
+        return found
+    git_line = _git_line_numbers(text)
+    for f in found:
+        if git_line[int(f["line"])] not in added:  # type: ignore[call-overload]
+            f["base_line"] = True
+    return found
+
+
 def _scan_files(
-    repo: str, head: str, changed: dict[str, str], entries: dict[str, tuple[str, str]]
+    repo: str, base: str | None, head: str, changed: dict[str, str], entries: dict[str, tuple[str, str]]
 ) -> tuple[list[dict[str, object]], list[dict[str, str]], int]:
     """Read every changed file once and return its findings, the unread files, and the count scanned."""
     findings: list[dict[str, object]] = []
@@ -490,7 +558,7 @@ def _scan_files(
             skipped.append({"path": path, "reason": why})
             continue
         scanned += 1
-        findings.extend(_scan_text(path, data.decode("utf-8", "replace")))
+        findings.extend(_file_findings(repo, base, head, path, changed[path], data.decode("utf-8", "replace")))
     return findings, skipped, scanned
 
 
@@ -871,6 +939,8 @@ def assess_risk(findings: Sequence[dict[str, object]]) -> dict[str, object]:
     causes: list[str] = []
     for f in sorted(findings, key=lambda item: _SEVERITY_ORDER[str(item["severity"])]):
         cause = f"{f['path']}: {_PLAIN_REASON.get(str(f['category']), str(f['category']))}"
+        if f.get("base_line"):
+            cause += " (on a line unchanged from the base branch)"
         if cause not in causes:
             causes.append(cause)
     return {"level": level, "recommendation": advice, "reasons": (shapes + causes)[:5]}
@@ -929,7 +999,7 @@ def build_report(
     tree = list(entries)
     changed = {p: "A" for p in tree} if base is None else _changed_paths(repo, base, head)
     surface = {p: _sha256(_blob(repo, head, p) or b"") for p in tree if is_surface(p)}
-    findings, skipped, scanned = _scan_files(repo, head, changed, entries)
+    findings, skipped, scanned = _scan_files(repo, base, head, changed, entries)
     deps, dep_findings = _dependency_report(repo, base, head, tree, changed)
     bound_findings, bound_hashes = _bound_findings(bound)
     ranked = _rank(findings + dep_findings + _lifecycle_findings(repo, base, head, tree) + bound_findings)
@@ -1319,7 +1389,7 @@ def _validate_extra_env(names: Sequence[str]) -> None:
     for name in names:
         if not _ENV_NAME.match(name):
             raise GuardError(f"invalid --env name {name!r}", 2)
-        if _SECRET_NAME.search(name):
+        if _SECRET_NAME.search(name) or re.fullmatch(_FLAGGED_ENV_NAMES, name, re.IGNORECASE):
             raise GuardError(f"--env {name} looks like a credential and is never passed to contributor code", 2)
 
 

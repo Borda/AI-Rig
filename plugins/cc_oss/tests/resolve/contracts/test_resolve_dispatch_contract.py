@@ -2462,6 +2462,78 @@ class TestPush:
         assert "`WT_PUSH=unusable`" in selection
         assert "unusable" in push_step
 
+    @_skip_no_bash
+    @pytest.mark.parametrize(
+        ("local", "remote", "status", "expected"),
+        [
+            pytest.param("a" * 40, "a" * 40, "pushed", "verified at " + "a" * 40, id="confirmed-on-pr"),
+            pytest.param("c" * 64, "c" * 64, "pushed", "verified at " + "c" * 64, id="confirmed-sha256-on-pr"),
+            pytest.param("a" * 41, "a" * 41, "pushed", "unverified", id="malformed-head-oid"),
+            pytest.param("a" * 40, "b" * 40, "pushed", "unverified", id="different-pr-tip"),
+            pytest.param("", "", "pushed", "unverified", id="missing-head-evidence"),
+            pytest.param("a" * 40, "a" * 40, "skipped-by-user", "skipped-by-user", id="old-heads-after-decline"),
+        ],
+    )
+    def test_final_report_names_pr_and_confirms_only_matching_pushed_head(
+        self, tmp_path: Path, local: str, remote: str, status: str, expected: str
+    ) -> None:
+        """The closing handoff distinguishes a verified PR update from an unconfirmed push or local work."""
+        block = _bash_block_containing(_resolve_text("SKILL.md"), "boundary3: pre-final-report write")
+        _make_impl_dir(tmp_path)
+        url = "https://github.com/upstream/repo/pull/42"
+        _seed(
+            tmp_path,
+            {
+                "pr-number": "42",
+                "pr-html-url": url,
+                "local-head": local,
+                "pr-head": remote,
+                "push-status": status,
+                "oss-resolve": bash_path(_RESOLVE),
+            },
+        )
+        result = _run_shell(block, tmp_path, _shell_env(tmp_path))
+        assert result.returncode == 0, result.stderr
+        assert f"PR_HANDOFF=PR #42 {url} — {expected}" in result.stdout.splitlines()
+
+    @_skip_no_bash
+    def test_post_push_lookup_discards_partial_head_on_failure(self, tmp_path: Path) -> None:
+        """A failed canonical PR lookup cannot verify a push using output written before the error."""
+        url = "https://github.com/upstream/repo/pull/42"
+        _seed(tmp_path, {"pr-number": "42", "pr-html-url": url})
+        verification = bash_block_after(_resolve_text("SKILL.md"), "Verify push reached GitHub")
+        script = """
+gh() { echo "$3" > "$TMPDIR/target"; echo "$SHA"; return 1; }
+git() { echo "$SHA"; }
+"""
+        result = _run_shell(script + verification, tmp_path, _shell_env(tmp_path, SHA="a" * 40))
+        assert result.returncode == 0, result.stderr
+        assert (tmp_path / "target").read_text().strip() == url
+        assert "push unverified" in result.stdout
+        assert (tmp_path / f"resolve-pr-head-{_SESSION}").read_bytes() == b""
+
+    @_skip_no_bash
+    @pytest.mark.parametrize(
+        ("sha", "verified"),
+        [
+            pytest.param("a" * 40, True, id="sha1-head"),
+            pytest.param("c" * 64, True, id="sha256-head"),
+            pytest.param("a" * 41, False, id="malformed-head"),
+        ],
+    )
+    def test_post_push_lookup_verifies_matching_object_id(self, tmp_path: Path, sha: str, verified: bool) -> None:
+        """A PR head equal to local HEAD verifies the push for SHA-1 and SHA-256 object ids, never a malformed id."""
+        _seed(tmp_path, {"pr-number": "42", "pr-html-url": "https://github.com/upstream/repo/pull/42"})
+        verification = bash_block_after(_resolve_text("SKILL.md"), "Verify push reached GitHub")
+        script = """
+gh() { echo "$SHA"; echo "Fix lint"; }
+git() { echo "$SHA"; }
+"""
+        result = _run_shell(script + verification, tmp_path, _shell_env(tmp_path, SHA=sha))
+        assert result.returncode == 0, result.stderr
+        assert ("push verified: PR head equals local HEAD" in result.stdout) is verified
+        assert ("push unverified" in result.stdout) is not verified
+
     def test_an_approved_push_the_remote_refused_is_flagged_in_the_report(self) -> None:
         """A push asked, approved and then refused by the remote has its own status, never the hand-off one.
 

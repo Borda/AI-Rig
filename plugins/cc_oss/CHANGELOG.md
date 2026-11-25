@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.69.0
+
+- `/oss:review` verdicts weigh the remaining required work against the PR's own purpose and size. A finding whose fix reverses the PR's central change or rewrites most of its diff now yields Major revision (or Insufficient, but a good initiative) instead of Minor changes.
+- `/oss:review` continues while checks are pending or failing and refreshes CI once before consolidation. Its report reflects user reruns on the reviewed commit and marks unavailable checks explicitly; a failure seen on the reviewed commit still blocks when the refresh cannot read its checks. A CI gate record that cannot be written is named in the CI status, and a refresh that cannot read the checks then blocks rather than reporting a pass, also when the record was lost or the refresh could not switch to its own output directory. Reviewers tag a failing check `[blocking]` by the rule the CI gate applies: a failing required check, or any failing check when the project marks none required. A flaky-looking failure now counts until a rerun replaces it, where it used to be noted without blocking.
+- `/oss:review` compares a proposed change with the PR that already closed its issue before recommending closure as a duplicate. The report and maintainer reply link the earlier work, explain the overlap, and identify useful follow-up work when present. After any rejection, the follow-up offers the drafted close reply instead of `/oss:resolve`, which refuses a rejected head.
+- `/oss:resolve` repeats the PR number and link beside the delivery outcome. The final reply distinguishes a verified PR update from an unverified push, a failed or skipped push, and work held locally.
+- `/oss:review` and `/oss:resolve` accept SHA-256 as well as SHA-1 commit ids for the reviewed PR head: the review snapshot no longer stops on a SHA-256 head, `--fill-gaps` can rerun such a review, and resolve reads its rejection gate and head-moved check and verifies its push.
+- The pre-run scan of PR code now says when a flagged line is unchanged from the base branch: in a file the PR edits, the reason for a hit on a line it kept carries "on a line unchanged from the base branch", so you can tell an existing setting from a new one. The verdict is unchanged, because an edit elsewhere in the file can still change what a kept line does. `--env` now also refuses every variable name the scan reports as a secret read.
+
 ## 0.68.0
 
 - `/oss:review` and `/oss:resolve` take `--sandbox` to enforce the sandbox for fork-PR code, as Codex Rig's `--sandbox` does for its checks; without it nothing changes:

@@ -452,6 +452,12 @@ class TestPublicationIntake:
         report = _publication(tmp_path, outcome, readiness)
         assert frr.gate_line(report) == expected
 
+    def test_rejection_recorded_against_a_sha256_head_is_read(self, tmp_path: Path) -> None:
+        """A rejection gate carrying the full 64-hex head of a SHA-256 repository reads like a SHA-1 one."""
+        report = _publication(tmp_path, "REJECT")
+        write_lf(report, report.read_text(encoding="utf-8").replace("@abcdef1234567", "@" + "c" * 64))
+        assert frr.gate_line(report) == "Gate: REJECT_SCOPE @" + "c" * 64
+
     def test_missing_reviewer_is_not_completed_null(self, tmp_path: Path) -> None:
         """A missing response cannot satisfy a completed-but-undecidable assessment.
 
@@ -1459,6 +1465,7 @@ class TestAssess:
         [
             pytest.param("head-sha.txt", _HEAD, _HEAD + "0" * 27, False, ["7"], id="same-head-abbreviated"),
             pytest.param("head-sha.txt", _HEAD, "1234567abcdef" + "0" * 27, True, ["7"], id="head-moved"),
+            pytest.param("head-sha.txt", "c" * 64, "c" * 64, False, ["7"], id="same-sha256-head"),
             pytest.param("head-sha.txt", _HEAD, "", None, ["7"], id="head-unfetchable"),
             pytest.param("unrelated.txt", _HEAD, _HEAD, None, [], id="no-head-file-no-gh-call"),
             pytest.param("head-sha.txt", "not-a-sha", _HEAD, None, [], id="garbage-head-file-no-gh-call"),

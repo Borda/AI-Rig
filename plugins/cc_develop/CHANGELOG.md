@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.52.1
+
+- `/develop:review` verdicts weigh the remaining required work against the change's own purpose and size. A finding whose fix reverses the change's central intent or rewrites most of its diff now yields Major revision (or Insufficient, but a good initiative) instead of Minor changes.
+
 ## 0.52.0
 
 - `/develop:review` and the shared Codex pre-pass can send an oversized diff to Codex as a partitioned review through the bridge's `--partition-file`, wave by wave, instead of one call that stops at the output limit. Skipped files and failed groups are reported as unreviewed scope, and a bridge without the flag keeps the single call.

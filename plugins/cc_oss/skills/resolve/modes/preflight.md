@@ -105,6 +105,9 @@ echo skip > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # Step 3d push que
 # `unset`, not `skip`/`push`: a run that never records a Step 3d push answer must neither push nor inherit last run's `push` — Step 10 asks instead
 echo unset > "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}"
 echo none > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  # Step 10 overwrites with what happened; `none` = Step 10 never ran (no PR#, skip-all)
+: > "${TMPDIR:-/tmp}/resolve-pr-html-url-${CSID}"  # a run that skips checkout must not name a previous PR
+: > "${TMPDIR:-/tmp}/resolve-pr-head-${CSID}"
+: > "${TMPDIR:-/tmp}/resolve-local-head-${CSID}"
 # same reason: a run that never reaches Step 3d (zero pending with no closed items, bulk skip-all) must not inherit last run's `stage`/`grouped`.
 # `unset`, not `each`: Step 8's merge fence aborts on it, so a skipped Step 3d block fails loud instead of landing per-item commits
 echo unset > "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}"

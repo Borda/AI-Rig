@@ -2,6 +2,13 @@
 
 All notable changes to this package are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.14.0
+
+- The code-review skill weighs its verdict against the change's own purpose and size: a required resolution that reverses the central change or rewrites most of the diff now yields Major revision (or Insufficient, but a good initiative) instead of Minor changes.
+- The opening review verdict gives the reason and evidence for each rejection, including a disproved premise. A duplicate PR recommendation links to the original change or resolved issue and explains the shipped behavior and any remaining difference.
+- PR-backed remediation handoffs link the reviewed PR number and identify local fixes or publication verified on that PR.
+- PR reviews record hosted CI at intake and at consolidation, so readers can see which checks changed while reviewers worked. A pending or failed check leaves the review running. A failed CI read, empty check list or changed PR head at either point is recorded as a coverage limit for the reviewed commit, with its reason.
+
 ## 0.13.0
 
 - Install and upgrade:

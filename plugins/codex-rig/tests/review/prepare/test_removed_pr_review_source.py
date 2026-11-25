@@ -96,6 +96,13 @@ def test_removed_pr_plan_replays_only_during_bound_completed_validation(
     manifest = read_json(run / "specialist-manifest.json")
     producer, _ = _batch_producer()
     write_json(run / "result.json", {"status": "pass", "metadata": {}})
+    write_json(run / "pr.json", {"headRefOid": head, "statusCheckRollup": []})
+    refresh_path = run / "pr-ci-refresh.json"
+    refreshed = {
+        "headRefOid": head,
+        "statusCheckRollup": [{"__typename": "StatusContext", "context": "tests", "state": "SUCCESS"}],
+    }
+    write_json(refresh_path, refreshed)
     from review_worktree_replay import completed_source_validation, seal_source_witness, verified_source_inputs
 
     receipt = {
@@ -128,6 +135,13 @@ def test_removed_pr_plan_replays_only_during_bound_completed_validation(
         validate()
     receipt["status"] = "removed"
     write_json(run / "review-worktree-cleanup.json", receipt)
+    write_json(refresh_path, {"headRefOid": head, "statusCheckRollup": []})
+    with (
+        pytest.raises(ValueError, match="review-cleanup-source-evidence-changed"),
+        completed_source_validation(run, run / "result.json"),
+    ):
+        validate()
+    write_json(refresh_path, refreshed)
     changed_paths = (run / "files.txt").read_bytes()
     (run / "files.txt").write_text("altered-inventory.py\n", encoding="utf-8")
     with (

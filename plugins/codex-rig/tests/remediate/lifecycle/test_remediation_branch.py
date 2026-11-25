@@ -1183,3 +1183,117 @@ class TestLegacyRecovery:
         assert _snapshot(s.worktree) == before
         assert (s.worktree / "user.txt").read_text(encoding="utf-8") == "preserved user work\n"
         assert (s.receipt.read_text(encoding="utf-8") if s.receipt.exists() else None) == receipt_text
+
+
+def _occupied_checkout(c: _Collected, tmp_path: Path, *, fork: bool = True) -> tuple[Path, Path]:
+    """Run the real collector from a separate checkout whose PR branch belongs to the fixture worktree."""
+    caller = tmp_path / "separate checkout"
+    _git(c.worktree, "worktree", "add", "--detach", str(caller), c.base)
+    failed = tmp_path / "failed"
+    code, _ = _collect(
+        _load_collector(),
+        c.source,
+        caller,
+        failed,
+        c.base,
+        c.head,
+        checkout_mode="remediate",
+        gh_checkout_fails=False,
+        cross_repository=fork,
+    )
+    assert code != 0
+    return caller, failed
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("local_tip", ["exact", "behind"])
+@pytest.mark.parametrize("fork", [pytest.param(True, id="fork"), pytest.param(False, id="same-repository")])
+def test_locate_attached_pr_owner(
+    tmp_path: Path, repository_template: RepositoryTemplate, local_tip: str, fork: bool
+) -> None:
+    """Reuse the attached owner after checkout fails and deliver the fresh collector receipt there."""
+    c = _collected(tmp_path, repository_template, cross_repository=fork)
+    initial_head = c.head
+    (c.source / "later").write_text("remote advance", encoding="utf-8")
+    _git(c.source, "add", "later")
+    _git(c.source, "commit", "-m", "advance")
+    c.head = _git(c.source, "rev-parse", "HEAD")
+    _git(c.source, "update-ref", "refs/pull/17/head", c.head)
+    _git(c.worktree, "fetch", str(c.source), "topic")
+    _git(c.worktree, "merge", "--ff-only", c.head if local_tip == "exact" else initial_head)
+    caller, failed = _occupied_checkout(c, tmp_path, fork=fork)
+    locator = tmp_path / "fresh" / "remediation-worktree.json"
+    locator.parent.mkdir()
+    result = _run_helper(caller, "locate-owner", "--pr-dir", str(failed), "--receipt", str(locator))
+    assert result.returncode == 0, result.stderr
+    selected = json.loads(result.stdout)
+    assert selected["worktree"] == c.worktree.resolve().as_posix()
+    assert selected["needs_update"] is (local_tip == "behind")
+    _git(
+        c.worktree,
+        "-c",
+        f"url.{c.source.as_uri()}.insteadOf={FORK_REMOTE if fork else SAME_REPO_REMOTE}",
+        "pull",
+        "--ff-only",
+    )
+    fresh = locator.parent / "pr"
+    code, _ = _collect(
+        _load_collector(),
+        c.source,
+        c.worktree,
+        fresh,
+        c.base,
+        c.head,
+        cross_repository=fork,
+        checkout_mode="remediate",
+        gh_checkout_fails=False,
+    )
+    assert code == 0
+    receipt = locator.parent / "remediation-branch.json"
+    prepared = _run_helper(c.worktree, "prepare", "--pr-dir", str(fresh), "--receipt", str(receipt))
+    assert prepared.returncode == 0, prepared.stderr
+    assert json.loads(receipt.read_text(encoding="utf-8"))["initial_head"] == c.head
+    assert not (locator.parent / "remediation-worktree-owner.json").exists()
+    assert _git(caller, "rev-parse", "HEAD") == c.base
+    assert _git(caller, "branch", "--show-current") == ""
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("git_args", "reason"),
+    [
+        pytest.param(("add", "notes.txt"), "local-changes", id="staged-edit"),
+        pytest.param(("commit", "-am", "local only"), "local-only-commits", id="unpublished-commit"),
+    ],
+)
+def test_locate_pr_owner_preserves_local_work(
+    tmp_path: Path, repository_template: RepositoryTemplate, git_args: tuple[str, ...], reason: str
+) -> None:
+    """Preserve local work in an occupied checkout when the PR source cannot be reused."""
+    c = _collected(tmp_path, repository_template)
+    caller, failed = _occupied_checkout(c, tmp_path)
+    (c.worktree / "notes.txt").write_text("in progress", encoding="utf-8")
+    _git(c.worktree, *git_args)
+    before = _snapshot(c.worktree)
+    locator = tmp_path / "borrowed.json"
+    result = _run_helper(caller, "locate-owner", "--pr-dir", str(failed), "--receipt", str(locator))
+    assert result.returncode == 2
+    assert reason in result.stderr
+    assert not locator.exists()
+    assert _snapshot(c.worktree) == before
+
+
+@pytest.mark.integration
+def test_locate_pr_owner_preserves_transport_failure(tmp_path: Path, repository_template: RepositoryTemplate) -> None:
+    """An occupied branch cannot turn an independent transport failure into checkout recovery."""
+    c = _collected(tmp_path, repository_template)
+    caller = tmp_path / "caller"
+    _git(c.worktree, "worktree", "add", "--detach", str(caller), c.base)
+    failed = tmp_path / "failed"
+    code, _ = _collect(_load_collector(), c.source, caller, failed, c.base, c.head, checkout_mode="remediate")
+    assert code != 0
+    locator = tmp_path / "borrowed.json"
+    result = _run_helper(caller, "locate-owner", "--pr-dir", str(failed), "--receipt", str(locator))
+    assert result.returncode == 2
+    assert "requires-fetched-head-and-checkout-failure" in result.stderr
+    assert not locator.exists()

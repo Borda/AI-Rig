@@ -1219,6 +1219,241 @@ def test_external_remediation_evidence_keeps_original_claim_and_parent(
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize(
+    ("target_matches", "root_matches", "lookups", "recover"),
+    [
+        pytest.param(True, True, "single", True, id="matching-target-and-storage"),
+        pytest.param(False, True, "single", False, id="same-number-in-different-repository"),
+        pytest.param(True, False, "single", False, id="different-storage"),
+        pytest.param(True, True, "steered", False, id="user-intervened-before-claim"),
+        pytest.param(True, True, "repeated", True, id="repeated-matching-lookup"),
+        pytest.param(True, True, "conflicting", False, id="conflicting-earlier-lookup"),
+    ],
+)
+def test_remediation_binds_early_report_root_only_to_matching_target(
+    standalone_receipts, target_matches: bool, root_matches: bool, lookups: str, recover: bool
+) -> None:
+    """An earlier storage lookup must match the later admission even when the turn releases its claim."""
+    payload, start, prepare, caller, reports, target, command, root = standalone_receipts
+    requested_target = target if target_matches else "https://github.com/other/widgets/pull/12"
+    slot = (
+        caller
+        / ".git/codex-review-targets"
+        / hashlib.sha256(requested_target.encode()).hexdigest()
+        / "codex-review-slot"
+    )
+    claim = command(
+        caller,
+        "review_checkout_slot",
+        f'acquire --checkout "{caller}" --target {requested_target} --owner own',
+        json.dumps({"status": "acquired", "owner": "own", "slot": str(slot)}),
+    )
+    requested_root = reports if root_matches else caller / "other"
+    stage = requested_root / "code-remediate/staging"
+    run = requested_root / "code-remediate/pr-12/run-001"
+    create = command(
+        caller, "create_run", f'--skill code-remediate --pr-number 12 --root "{requested_root}"', str(stage)
+    )
+    promote = command(
+        caller, "create_run", f'--skill code-remediate --root "{requested_root}" --promote-pr-run "{stage}"', str(run)
+    )
+    release = command(
+        caller,
+        "review_checkout_slot",
+        f'release --slot "{slot}" --owner own',
+        json.dumps({"status": "released", "owner": None, "slot": str(slot)}),
+    )
+    steering = {"type": "response_item", "payload": {"type": "message", "role": "user"}}
+    other_lookup = command(
+        caller, "review_code_safety", f'report-root --checkout "{caller}" --pr-url {target}', f"{caller / 'other'}\n"
+    )
+    early = {
+        "single": [prepare],
+        "steered": [prepare, steering],
+        "repeated": [prepare, prepare],
+        "conflicting": [other_lookup, prepare],
+    }[lookups]
+    response = HOOK.evaluate(payload, [*start, *early, claim, create, promote, release], root)
+    assert response.get("decision") == ("block" if recover else None)
+    assert ("Continue remediation selection" in response.get("reason", "")) is recover
+
+
+#: Revision the retained run's original branch receipt was prepared at and is checked against.
+RESUMED_HEAD = "c" * 40
+#: Digest the pending selection render reports for the frozen selection inventory.
+RENDERED_DIGEST = "a" * 64
+
+
+@dataclass
+class ResumedRemediation:
+    """Receipts of an in-place resumed PR remediation turn around its branch check, selection render and answer."""
+
+    payload: dict
+    start: list[dict]
+    claim: dict
+    release: dict
+    answer: list[dict]
+    caller: Path
+    reports: Path
+    target: str
+    command: Callable[..., dict]
+    plugin_root: str
+
+    def check(
+        self, run: Path, *, extra: str = "", exit_code: int = 0, status: str = "completed", **fields: object
+    ) -> dict:
+        """Record the original-branch check of one retained run; ``fields`` override the returned receipt."""
+        receipt = {
+            "schema_version": 2,
+            "status": "prepared",
+            "pr_number": 12,
+            "pr_url": self.target,
+            "worktree": str(self.caller),
+            "initial_head": RESUMED_HEAD,
+            "branch": "topic",
+            "head_ref": "topic",
+            "head_repository": "acme/widgets",
+            **fields,
+        }
+        record = self.command(
+            self.caller,
+            "remediation_branch",
+            f'check --receipt "{run / "remediation-branch.json"}" --expected-head {RESUMED_HEAD}{extra}',
+            json.dumps(receipt) if exit_code == 0 else "check failed: branch moved",
+            exit_code,
+        )
+        record["payload"]["item"]["status"] = status
+        return record
+
+    def render(self, run: Path, exit_code: int = 0) -> dict:
+        """Record the pending selection render of one retained run."""
+        receipt = {"status": "pass", "input_sha256": RENDERED_DIGEST, "rendered_sha256": "b" * 64}
+        return self.command(
+            self.caller,
+            "final_handoff",
+            f'selection --input "{run / "selection.json"}" --out-scope "{run / "resolution-scope.md"}"',
+            json.dumps(receipt) if exit_code == 0 else "selection failed: inventory changed",
+            exit_code,
+        )
+
+    def evaluate(self, *receipts: dict) -> dict:
+        """Run the hook over the claim, the given receipts, the release and the submitted scope answer."""
+        records = [*self.start, self.claim, *receipts, self.release, *self.answer]
+        return HOOK.evaluate(self.payload, records, self.plugin_root)
+
+
+@pytest.fixture
+def resumed_remediation(standalone_receipts, answered_question) -> ResumedRemediation:
+    """Provide a resumed PR run in the invoking checkout whose scope answer carries the rendered digest."""
+    payload, start, _, caller, reports, target, command, root = standalone_receipts
+    slot = caller / ".git/codex-review-targets" / hashlib.sha256(target.encode()).hexdigest() / "codex-review-slot"
+    claim = command(
+        caller,
+        "review_checkout_slot",
+        f'acquire --checkout "{caller}" --target {target} --owner own',
+        json.dumps({"status": "acquired", "owner": "own", "slot": str(slot)}),
+    )
+    release = command(
+        caller,
+        "review_checkout_slot",
+        f'release --slot "{slot}" --owner own',
+        json.dumps({"status": "released", "owner": None, "slot": str(slot)}),
+    )
+    item = answered_question[1]["payload"]["item"]
+    item["arguments"].update(
+        question="Which findings should I remediate?",
+        options=["All", "Required", "Suggestions", "Custom selection"],
+        scope_digest=RENDERED_DIGEST,
+    )
+    item["result"]["structuredContent"].update(answer="All", scope_digest=RENDERED_DIGEST)
+    return ResumedRemediation(payload, start, claim, release, answered_question, caller, reports, target, command, root)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "matching",
+        "wrong-pr",
+        "wrong-worktree",
+        "wrong-head",
+        "outside-storage",
+        "different-render",
+        "wrong-digest",
+        "failed-check",
+    ],
+)
+def test_resumed_remediation_requires_same_checkout_run_and_rendered_scope(
+    resumed_remediation: ResumedRemediation, variant: str
+) -> None:
+    """A resumed scope answer belongs to the verified branch, admitted target, retained run and rendered inventory."""
+    flow = resumed_remediation
+    run = (flow.caller if variant == "outside-storage" else flow.reports) / "code-remediate/pr-12/run-003"
+    fields = {
+        "wrong-pr": {"pr_url": flow.target.replace("acme", "other")},
+        "wrong-worktree": {"worktree": str(flow.reports)},
+        "wrong-head": {"initial_head": "d" * 40},
+    }.get(variant, {})
+    checked = flow.check(run, exit_code=2 if variant == "failed-check" else 0, **fields)
+    rendered = flow.render(run.with_name("run-004") if variant == "different-render" else run)
+    if variant == "wrong-digest":
+        item = flow.answer[1]["payload"]["item"]
+        item["arguments"]["scope_digest"] = item["result"]["structuredContent"]["scope_digest"] = "e" * 64
+    result = flow.evaluate(checked, rendered)
+    assert result.get("decision") == ("block" if variant == "matching" else None)
+    assert ("commit-grouping question" in result.get("reason", "")) is (variant == "matching")
+    assert ("Before dependent writes" in result.get("reason", "")) is (variant == "matching")
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("receipts", "recover"),
+    [
+        pytest.param(
+            lambda flow, run: [flow.check(run), flow.render(run), flow.check(run)],
+            True,
+            id="repeated-check-of-the-same-run",
+        ),
+        pytest.param(
+            lambda flow, run: [flow.check(run), flow.render(run), flow.check(run.with_name("run-004"))],
+            False,
+            id="second-check-names-another-run",
+        ),
+        pytest.param(
+            lambda flow, run: [flow.check(run), flow.render(run), flow.check(run, exit_code=1)],
+            False,
+            id="failed-recheck-after-passing-render",
+        ),
+        pytest.param(
+            lambda flow, run: [flow.check(run), flow.render(run), flow.render(run, exit_code=1)],
+            False,
+            id="failed-rerender-after-passing-render",
+        ),
+        pytest.param(
+            lambda flow, run: [flow.check(run, status="failed"), flow.render(run)],
+            False,
+            id="failed-check-status-with-zero-exit",
+        ),
+        pytest.param(
+            lambda flow, run: [flow.check(run, extra=" --verbose"), flow.render(run)],
+            False,
+            id="check-with-unrecognized-argument",
+        ),
+    ],
+)
+def test_resumed_remediation_yields_to_failed_or_conflicting_receipts(
+    resumed_remediation: ResumedRemediation,
+    receipts: Callable[[ResumedRemediation, Path], list[dict]],
+    recover: bool,
+) -> None:
+    """Only an exact completed check and render, never contradicted later in the turn, restore the resumed run."""
+    flow = resumed_remediation
+    result = flow.evaluate(*receipts(flow, flow.reports / "code-remediate/pr-12/run-003"))
+    assert result.get("decision") == ("block" if recover else None)
+    assert ("commit-grouping question" in result.get("reason", "")) is recover
+
+
+@pytest.mark.integration
 def test_branch_collision_ends_after_release_without_changing_repositories(standalone_receipts) -> None:
     """Report the local and remote divergence and leave the next branch decision to the user."""
     payload, start, _, caller, _, target, command, root = standalone_receipts
@@ -2138,6 +2373,115 @@ def test_question_in_a_finding_cannot_suppress_normal_recovery(review_state) -> 
     assert "first unmet checkpoint" in HOOK.evaluate(payload, records, "/plugin")["reason"]
 
 
+def test_combined_selection_and_decision_status_preserves_pending_decision_delivery(review_state) -> None:
+    """A generic pending decision retains its own eligibility checks when the findings also lack a selection."""
+    payload, records = review_state
+    payload["last_assistant_message"] = "Findings are awaiting selection. Waiting for your decision."
+    records[2] = create_run_record("code-remediate")
+    result = HOOK.evaluate(payload, records, "/plugin")
+    assert "question delivery only" in result.get("reason", "")
+    assert "Runtime permission remains with its dedicated host control." in result["reason"]
+
+
+@pytest.mark.parametrize(
+    ("skill", "ending", "native_pending", "recover"),
+    [
+        pytest.param("code-remediate", "The inventory still needs reconciliation.", False, True, id="status-only"),
+        pytest.param("code-remediate", "Which findings should I remediate?", False, False, id="typed-question"),
+        pytest.param(
+            "code-remediate", "All / Required / Suggestions / Custom selection", False, False, id="scope-menu"
+        ),
+        pytest.param("code-remediate", "The inventory still needs reconciliation.", True, False, id="native-question"),
+        pytest.param("code-remediate", "The user denied access.", False, False, id="denial"),
+        pytest.param("code-review", "The inventory still needs reconciliation.", False, False, id="other-workflow"),
+    ],
+)
+def test_awaiting_selection_status_recovers_only_the_missing_remediation_question(
+    review_state, answered_question, skill: str, ending: str, native_pending: bool, recover: bool
+) -> None:
+    """Selection status can recover the inventory and question without selecting or implementing any finding."""
+    payload, records = review_state
+    payload["last_assistant_message"] = f"The findings are awaiting selection.\n\n{ending}"
+    records[2:] = [create_run_record(skill), *(answered_question[:1] if native_pending else [])]
+    response = HOOK.evaluate(payload, records, "/plugin")
+    assert response.get("decision") == ("block" if recover else None)
+    assert ("question delivery only" in response.get("reason", "")) is recover
+    assert ("inventory" in response.get("reason", "")) is recover
+    assert "selected fixes" not in response.get("reason", "")
+
+
+@pytest.mark.parametrize(
+    ("question", "options", "answer", "recover"),
+    [
+        pytest.param("Continue this review?", ["Continue", "Skip"], "Continue", True, id="unrelated-entry-answer"),
+        pytest.param(
+            "Which findings should I remediate?",
+            ["All", "Required", "Suggestions", "Custom selection"],
+            "Required",
+            False,
+            id="scope-already-selected",
+        ),
+    ],
+)
+def test_missing_selection_question_respects_what_prior_control_resolved(
+    review_state, answered_question, question: str, options: list[str], answer: str, recover: bool
+) -> None:
+    """Distinguish a submitted selection from an unrelated completed decision."""
+    payload, records = review_state
+    payload["last_assistant_message"] = "The findings are awaiting selection."
+    records[2] = create_run_record("code-remediate")
+    item = answered_question[1]["payload"]["item"]
+    item["arguments"].update(question=question, options=options)
+    item["result"]["structuredContent"]["answer"] = answer
+    response = HOOK.evaluate(payload, [*records, *answered_question], "/plugin")
+    assert ("question delivery only" in response.get("reason", "")) is recover
+    assert response.get("decision") == ("block" if recover else None)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        pytest.param(
+            "Remediation remains incomplete; zero implemented. First unmet checkpoint: hosted PR metadata fetch timed "
+            "out. 3 confirmed findings awaiting selection.",
+            id="documented-blocked-handoff",
+        ),
+        pytest.param(
+            "Stopped before selection. Remediation remains incomplete; zero implemented. "
+            "3 confirmed findings awaiting selection.",
+            id="documented-handoff-without-blocker-words",
+        ),
+        pytest.param(
+            "First unmet checkpoint: PR metadata fetch. 3 confirmed findings awaiting selection.",
+            id="named-unmet-checkpoint",
+        ),
+        pytest.param(
+            "Stopped at your request before selection. 3 confirmed findings awaiting selection.",
+            id="user-requested-stop",
+        ),
+        pytest.param(
+            "Awaiting selection.\n\nWhich findings should I remediate?\n\nThe inventory is ready.",
+            id="question-before-final-paragraph",
+        ),
+        pytest.param(
+            "Awaiting selection.\n\nWhich findings should I remediate? All / Required / Suggestions / Custom selection"
+            "\n\nThe inventory is ready.",
+            id="inline-menu-before-final-paragraph",
+        ),
+        pytest.param(
+            "Awaiting selection.\n\n- All\n- Required\n- Suggestions\n- Custom selection\n\nThe inventory is ready.",
+            id="menu-before-final-paragraph",
+        ),
+    ],
+)
+def test_selection_status_stops_on_incomplete_handoff_or_delivered_question(review_state, message: str) -> None:
+    """A mandated stop handoff or an already-delivered scope question keeps the turn stopped."""
+    payload, records = review_state
+    payload["last_assistant_message"] = message
+    records[2] = create_run_record("code-remediate")
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
 @pytest.mark.parametrize("completed", [False, True])
 @pytest.mark.parametrize(
     "status",
@@ -2677,6 +3021,8 @@ def answered_question() -> list[dict]:
     "source",
     [
         "text(ALL_TOOLS.filter(x=>/ask_user/.test(x.name)));",
+        'text(ALL_TOOLS.filter(x=>x.name.includes("ask_user")))',
+        'const r = await tools.exec_command({cmd:"record ask_user, pending"}); text(r.output)',
         "text(42);text(ALL_TOOLS.filter(x=>/ask_user|request_user_input/.test(x.name)));",
         "const note=String.raw`The native ask_user control is available.`;text(note);",
     ],
@@ -2949,6 +3295,11 @@ def test_scope_error_is_recoverable_only_before_form_creation(review_state, answ
     item["arguments"]["scope_digest"] = scope
     records.extend(answered_question)
     assert (HOOK.evaluate(payload, records, "/plugin").get("decision") == "block") is (scope == "invalid")
+    records[2] = create_run_record("code-remediate")
+    payload["last_assistant_message"] = "Findings are awaiting selection."
+    assert ("question delivery only" in HOOK.evaluate(payload, records, "/plugin").get("reason", "")) is (
+        scope == "invalid"
+    )
 
 
 @pytest.mark.parametrize(
@@ -2981,6 +3332,9 @@ def test_unknown_question_receipt_preserves_pause(review_state, answered_questio
         "const ask = tools . mcp__codex_rig_input__ask_user; ask({});",
         "text(ALL_TOOLS.filter(x=>/ask_user/.test(x.name)));await tools.mcp__codex_rig_input__ask_user({});",
         'text(ALL_TOOLS.filter(x=>/ask_user/.test(x.name)));await tools["ask_user"]({});',
+        'text(ALL_TOOLS.filter(x=>x.name.includes("ask_user")));await tools.mcp__codex_rig_input__ask_user({});',
+        'const r = await tools.exec_command({cmd:"record ask_user, pending"}); text(r.output);await ask_user({});',
+        "const r = await tools.exec_command({cmd:`record ${await ask_user({})}`}); text(r.output);",
         "const lookup = ask_user; await lookup({});",
         "await ask_user({});",
     ],

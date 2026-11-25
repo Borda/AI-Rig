@@ -101,14 +101,15 @@ Tier 0  git diff --stat
         Scope detection — exits only if no Python or doc files changed
 
         Acceptance gate — Stage 1 (reject, terminal) then Stage 2 (block,
-        non-terminal); reads PR description + known CI status before any
-        agent spawns. Full criteria: "Review stages" below.
+        non-terminal); reads the PR description before any agent spawns;
+        CI never stops the fanout. Full criteria: "Review stages" below.
 
 Optional Codex co-review
         Runs when `bridge@borda-ai-rig` is installed and enabled; otherwise skipped
 
 Tier 2  Parallel review dimensions
-        PR metadata/diff/checks fetched once at Step 0 (per-run snapshot) and reused by every stage
+        PR metadata/diff fetched once at Step 0 (per-run snapshot) and reused by every stage
+        Checks observed on the reviewed head at Step 0 (for reviewers) and again at Step 5 (for the report)
         Scope selects spawn units — paired dimensions share one agent
         (perf+architecture in one opus spawn, docs+lint in one sonnet spawn),
         each writing its own per-dimension finding file + confidence block
@@ -126,6 +127,8 @@ Tier 2  Parallel review dimensions
         If `/oss:resolve` for this same PR is already running in the session,
         the gate is skipped (its own contract is left alone) and the
         suggestion is printed as plain text instead
+        After a rejection the gate offers the report's drafted close reply
+        instead of `/oss:resolve`, which refuses a rejected head
         Without foundry, requested agents use general-purpose fallbacks
 
         Scope examples:
@@ -136,7 +139,9 @@ Tier 2  Parallel review dimensions
           notebook, manifest or config only → code lineup (qa-specialist kept)
           code PR      → pinned qa-specialist + top-ranked units from code, perf+architecture, docs+lint, challenge
 
-        CI status: failing CI noted in report header — review always proceeds
+        CI status: Step 5 observation in report header — review always proceeds;
+        an unavailable Step 5 refresh keeps an earlier same-head failure (Gate BLOCK)
+        and blocks when the Step 0 gate record is missing or partial (fail closed)
         codemap integration: rdep_count > 20 flags as high-risk change
 
         Consolidation: the selected consolidator merges findings into a ranked report
@@ -296,7 +301,7 @@ Apply review findings to codebase. Reads live PR comments, saved review report, 
   - The ordinary count-based layout asks at most 3 times at the gate, plus that one confirmation. Typed grouping labels may need their own question.
   - A push you did not authorize never happens; an authorized push that is rejected (non-fast-forward) or blocked by a push guard or permission prompt is not retried or forced.
   - When the branch has no upstream tracking, resolve does not push to an explicit refspec itself — no approval covers that spelling — and hands you the exact command instead.
-  - Resolve still writes the final report, shows the push status there (`pushed`, `blocked-guard`, `blocked-permission`, `blocked-needs-manual-push`, `rejected-non-ff`, `rejected-remote`, `skipped-by-user`), and when the push was blocked, refused by the remote or handed to you ends the report with the exact lines to run.
+  - Resolve names the PR number and canonical link beside the push outcome in its final reply. A matching GitHub and local commit verifies the update. Missing or different heads leave a successful push unverified. A blocked, refused or manual push ends the report with the exact lines to run.
   - Resolve switches back to the branch you started on only after a successful push; when nothing was pushed (you declined, or the push was blocked or rejected), it stays on the PR branch holding the commits so you can review or push them yourself.
 
 ### Dispatch granularity
@@ -734,7 +739,7 @@ Aligned with close-without-merge practice in K8s/CPython/Rust/Django contributin
 | `REJECT_CONDUCT` | By-design adversarial/malicious contribution or Code of Conduct violation. Confirmed via a shared `foundry:challenger` check before rejecting — accidental (or confidence \<0.7) falls through as a normal finding. |
 | `REJECT_SCOPE` | Out of project scope / against roadmap, maintainers already decided against this direction. Evidence: a `wontfix`/`invalid`/`declined`/`out-of-scope` label already applied, or an explicit "out of scope" statement in `CONTRIBUTING.md`/an ADR the PR directly matches. |
 | `REJECT_LICENSE` | Incompatible license copied in, or plagiarized/copied source with no right to submit it. Not the same as a missing CLA/DCO signature (that's Stage 2, fixable). Confirmed via the same shared `foundry:challenger` check as conduct. |
-| `REJECT_DUPLICATE` | Another PR already merged solving this, or the linked issue already fixed upstream. Evidence: the linked issue is closed by a different, already-merged PR. |
+| `REJECT_DUPLICATE` | The merged closer already delivers the proposed behavior. The report links the issue and earlier PR, explains the overlap and any material difference, and drafts a close recommendation. |
 | `REJECT_REVERTED` | Reintroduces a previously reverted change without addressing why it was reverted. Evidence: a matching revert commit exists **and** the PR body doesn't reference or address it. |
 | `REJECT_SPAM` | Spam/low-effort/AI-slop — no real change, hacktoberfest-farming pattern. Evidence needs both a trivially low-value diff **and** a generic/templated description — either alone isn't enough (a genuine one-line fix looks low-value too). |
 | `REJECT_PHILOSOPHY` | Contradicts a documented design principle, not just a style preference — e.g. adding a GUI to a project whose docs state "CLI-only by design". Requires a citable doc line. |
@@ -745,7 +750,7 @@ Default `[blocking]` tag per finding category — judgment still required, not a
 
 | Category | Default | Nuance |
 | -- | -- | -- |
-| CI red / failing check | blocking | Only a **major**/required-check failure. A single flaky-looking rerun blip is noted, not auto-blocking. |
+| CI red / failing check | blocking | A failing required check, or any failing check when the project marks none required: the rule the Step 5 CI gate applies. A failure only in a non-required check is noted, not blocking. A flaky-looking failure still counts until a user-triggered rerun on the reviewed commit replaces it. |
 | Missing test coverage for new/changed logic | blocking | — |
 | Accidental security bug (careless, not by-design) | blocking | By-design version is Stage 1 `REJECT_CONDUCT`, not this. |
 | Breaking API change, no deprecation/migration path | blocking | — |

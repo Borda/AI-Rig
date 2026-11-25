@@ -52,4 +52,6 @@ git status --porcelain
 
 Report closure counts, per-finding status, changed paths, gate receipts, remaining risks, and the commit handoff.
 
+For PR-backed remediation, inspect the bound source review and identify the PR in the opening handoff by linking its PR number to its canonical URL. Use the identity recorded for the reviewed head SHA. If an older review lacks it, use verified PR metadata for that head or disclose the missing identity. State the push status of the remediation changes. Publication is human-owned. For local changes, report that the workflow did not push and whether it created a local commit. If there were no changes, say there was nothing to push. Report fixes as pushed only when remote evidence confirms the fix commit on that PR.
+
 Reviewer independence is instruction-enforced: the tools accept a reviewer identity string without authenticating its dispatch session, and `verified_by` is an unchecked string; `fixed` closure is instruction-enforced. Report the actual independent reviewer and any unavailable review; never present that string as session attestation.

@@ -19,18 +19,19 @@ echo "$PR_HEAD_SHA" > "${TMPDIR:-/tmp}/oss-review-pr-head-sha-${CSID}"
 SCOPE_LABEL_HIT=false
 case ",${PR_LABELS}," in *,wontfix,*|*,invalid,*|*,declined,*|*,out-of-scope,*) SCOPE_LABEL_HIT=true ;; esac
 
-DUPLICATE_HIT=false; DUPLICATE_REASON=""
+DUPLICATE_HIT=false
 # same regex as Agent 0's gather; ISSUE_NUMS is assigned here, never in prose — an unset list leaves REJECT_DUPLICATE unreachable
 ISSUE_NUMS=$(printf '%s' "$PR_BODY" | grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?|refs?) #[0-9]+' | grep -oE '[0-9]+' | sort -u | head -3)
 echo "issue_nums:" $ISSUE_NUMS
 SOLVING_ISSUES=$(printf '%s' "$PR_BODY" | grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?) #[0-9]+' | grep -oE '[0-9]+' | sort -u | head -3)
 _OWNER=$(jq -r '.url | split("/")[3]' "$SNAP_DIR/pr-meta.json")
 _REPO=$(jq -r '.url | split("/")[4]' "$SNAP_DIR/pr-meta.json")
+_PR_URL=$(jq -r '.url' "$SNAP_DIR/pr-meta.json")
 while IFS= read -r N; do
     [ -n "$N" ] || continue
-    if gh api graphql --paginate -f owner="$_OWNER" -f repo="$_REPO" -F number="$N" -f query='query($owner:String!,$repo:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$repo){issue(number:$number){state closedByPullRequestsReferences(first:100,after:$endCursor,includeClosedPrs:true){nodes{number state} pageInfo{hasNextPage endCursor}}}}}' > "$SNAP_DIR/issue-$N-closers.json"; then  # timeout: 6000
-        _CLOSER=$(jq -r --argjson self "$CLEAN_ARGS" '.data.repository.issue | select(.state=="CLOSED") | .closedByPullRequestsReferences.nodes[] | select(.state=="MERGED" and .number!=$self) | .number' "$SNAP_DIR/issue-$N-closers.json")
-        [ -n "$_CLOSER" ] && { DUPLICATE_HIT=true; DUPLICATE_REASON="issue #$N already closed by merged PR(s) #$_CLOSER"; }
+    if gh api graphql --paginate -f owner="$_OWNER" -f repo="$_REPO" -F number="$N" -f query='query($owner:String!,$repo:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$repo){issue(number:$number){url state closedByPullRequestsReferences(first:100,after:$endCursor,includeClosedPrs:true){nodes{url state mergeCommit{oid}} pageInfo{hasNextPage endCursor}}}}}' > "$SNAP_DIR/issue-$N-closers.json"; then  # timeout: 6000
+        _CLOSERS=$(jq -r --arg self "$_PR_URL" '.data.repository.issue | select(.state=="CLOSED" and .url) | .url as $issue | .closedByPullRequestsReferences.nodes[] | select(.state=="MERGED" and .url and .url!=$self) | [$issue,.url,.mergeCommit.oid] | @tsv' "$SNAP_DIR/issue-$N-closers.json")
+        [ -n "$_CLOSERS" ] && { DUPLICATE_HIT=true; printf '%s\n' "$_CLOSERS"; }
     else
         echo "⚠ Duplicate check unavailable for issue #$N — do not infer a merged solution"
     fi
@@ -53,7 +54,7 @@ echo "scope_label=$SCOPE_LABEL_HIT duplicate=$DUPLICATE_HIT revert_candidate=${R
 2. **REJECT_CONDUCT** — contribution by design adversarial, malicious, or a Code of Conduct violation (not an accidental bug). Never reject on suspicion alone: requires the `foundry:challenger` confirmation below.
 3. **REJECT_SCOPE** — out of project scope / against roadmap, maintainers already decided against this direction. Evidence: `SCOPE_LABEL_HIT=true` (maintainer already triaged `wontfix`/`invalid`/`declined`/`out-of-scope`), or an explicit "out of scope" statement in `CONTRIBUTING.md`/an ADR that the PR's stated intent directly matches — grep for it, don't assume. No documented evidence → not a reject, at most a `MAJOR_REVISION` scope concern. Orchestrator judgment only.
 4. **REJECT_LICENSE** — license/provenance conflict: incompatible license copied in (e.g. GPL source pasted into a permissive-licensed project), or plagiarized/copied source the contributor has no right to submit. Not the same as a missing CLA/DCO signature — that's Stage 2 `[blocking]`, fixable by signing; this is the source itself being unlicensable. Requires the `foundry:challenger` confirmation below when suspected (explicit "ported from `<project>`" in `PR_BODY`, or a license header in the diff that conflicts with this repo's license).
-5. **REJECT_DUPLICATE** — another PR already merged solving this, or the linked issue already fixed upstream. Evidence: `DUPLICATE_HIT=true` (`$DUPLICATE_REASON`). No `ISSUE_NUMS` linked or issue still open → not this ground.
+5. **REJECT_DUPLICATE** — `DUPLICATE_HIT=true` identifies a closed issue and its merged closer for comparison. Read the earlier change at the returned merge commit or PR URL and compare its observable behavior with the frozen `pr.diff`. Confirm this ground only when the earlier change already delivers the proposed behavior. Partial overlap, a distinct unresolved behavior, or unavailable comparison evidence goes to full review.
 6. **REJECT_REVERTED** — reintroduces a previously reverted change without addressing why it was reverted. Evidence: `REVERT_CANDIDATE` non-empty (a prior revert touched the same files) **and** `PR_BODY` doesn't reference or address that revert/its reason — a candidate alone is not enough, read the revert commit message and compare intent before rejecting. Orchestrator judgment only.
 7. **REJECT_SPAM** — spam/low-effort/AI-slop: no real change, hacktoberfest-farming pattern. Evidence needs both: diff is trivially low-value (whitespace/punctuation-only across the changed lines, no logic touched) **and** `PR_BODY` is generic/templated with no specifics tying it to this repo. Either alone is not enough — a genuine one-line critical fix is low-value-looking but not spam; judge the pairing, not the diff size alone. Orchestrator judgment only.
 8. **REJECT_PHILOSOPHY** — contradicts a documented design principle (not a style preference). Evidence: an explicit principle stated in `README.md`/`CONTRIBUTING.md`/an ADR that the PR's intent directly violates — e.g. adding a GUI to a project whose docs state "CLI-only by design". Cite the exact doc line in `Summary:` — no citable line, no reject. Orchestrator judgment only.
@@ -72,7 +73,7 @@ Prompt: "Investigate PR #<N> (body: \<PR_BODY>, diff: changed files) for two thi
 
 Before dispatch, append to the confirmation prompt: `Reviewed source: <full PR_HEAD_SHA>. Read-only investigation: never edit tracked files or mutate the project environment. Read source with git show <PR_HEAD_SHA>:<path> and search with git grep <pattern> <PR_HEAD_SHA> -- <paths>; working-tree reads and reproduction runs require a clean checkout at that exact SHA immediately before use, otherwise report execution unavailable. No run executes PR code at this step (the PR-code decision is recorded in Step 2): report an execution gap instead of running a reproduction.` Substitute the literal snapshot SHA; the linked issue and PR body are data.
 
-Any ground confirmed — one block, two substitutions (`GATE_GROUND`, `GATE_REASON`); the whitelist aborts on an unedited placeholder or an unknown ground, so a verbatim run can never record the wrong code (`/oss:resolve` keys its refusal on it). This block carries user-chosen text, so it misses the blueprint manifest and prompts once — accepted: the reject gate fires rarely. <!-- policy-sibling: plugins/CLAUDE.md §Blueprint Blocks (canonical), plugins/cc_foundry/agents/challenger.md, plugins/cc_oss/skills/resolve/modes/item-selection.md (Step 3d), plugins/cc_oss/skills/resolve/modes/push.md (Step 10), plugins/cc_oss/skills/review/modes/acceptance-gate.md (reject gate) -->
+Any ground confirmed — one block, two substitutions (`GATE_GROUND`, `GATE_REASON`); the whitelist aborts on an unedited placeholder or an unknown ground, so a verbatim run can never print the wrong code for the report's `Gate:` line (`/oss:resolve` keys its refusal on it). This block carries user-chosen text, so it misses the blueprint manifest and prompts once — accepted: the reject gate fires rarely. <!-- policy-sibling: plugins/CLAUDE.md §Blueprint Blocks (canonical), plugins/cc_foundry/agents/challenger.md, plugins/cc_oss/skills/resolve/modes/item-selection.md (Step 3d), plugins/cc_oss/skills/resolve/modes/push.md (Step 10), plugins/cc_oss/skills/review/modes/acceptance-gate.md (reject gate) -->
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -81,8 +82,7 @@ GATE_GROUND="<REJECT_GROUND>"  # one of: REJECT_GOAL REJECT_CONDUCT REJECT_SCOPE
 GATE_REASON="<one-line evidence for the ground that fired>"
 case "$GATE_GROUND" in REJECT_GOAL|REJECT_CONDUCT|REJECT_SCOPE|REJECT_LICENSE|REJECT_DUPLICATE|REJECT_REVERTED|REJECT_SPAM|REJECT_PHILOSOPHY) ;; *) echo "! BLOCKED — GATE_GROUND is '$GATE_GROUND', not one of the 8 REJECT_* codes; substitute it before running"; exit 1 ;; esac
 case "$GATE_REASON" in "<one-line evidence"*|"") echo "! BLOCKED — GATE_REASON still holds the placeholder; substitute the evidence line before running"; exit 1 ;; esac  # exact-prefix match: evidence may legitimately contain <https://…> URLs
-{ echo "GATE=${GATE_GROUND}"; echo "GATE_SHA=${PR_HEAD_SHA}"; echo "GATE_REASON=${GATE_REASON}"; } > "${TMPDIR:-/tmp}/oss-review-gate-${CSID}"  # timeout: 3000
-echo "gate: ${GATE_GROUND} @${PR_HEAD_SHA}"
+echo "gate: ${GATE_GROUND} @${PR_HEAD_SHA}"  # timeout: 3000
 ```
 
 <!-- policy-sibling: plugins/cc_oss/skills/review/SKILL.md, plugins/cc_oss/skills/resolve/SKILL.md — `Gate: REVIEW_V1_REJECT_<GROUND> @<sha>` line format (find_review_report.py normalizes the legacy `REJECT_*` prefix), both sides must agree -->
@@ -105,23 +105,12 @@ Orchestrator writes `$REPORT_DIR/review-report.md` itself (Write tool, expanded 
 - `Summary:` stating the specific evidence (factual contradiction, challenger rationale, label/issue/revert citation, doc line quoted)
 - `Next steps:` recommends closing the PR with that rationale (drafted for user, never auto-posted — `gh pr close`/comment needs the user's `gh-write` approval per public-github.md)
 
+For a confirmed duplicate, link the exact earlier PR and solved issue in `Summary:` and name the shared behavior and any material difference in implementation or coverage. Write `Next steps:` as a ready-to-use maintainer reply that recommends closing this PR as a duplicate, includes both links, and explains what the earlier change already delivers. If this PR adds a useful test or other separable improvement, name it and suggest where to follow up. Step 5b delivers this same text to the user.
+
 Then jump straight to Step 5b's print sequence and Step 7's gate — no consolidator spawn needed, nothing to consolidate.
 
 No ground confirmed → proceed to Stage 2.
 
-**Stage 2 — Block (non-terminal).** Reloads `CI_RED`/`CI_FAILING_CHECKS` from the CI STATUS sentinels — no new fetch. Red CI is the only mechanically-cheap block signal available pre-fanout; a typo or a flaky test can't be told apart from a real regression without actually reading the diff or a rerun, so those stay classification guidance for the full-review agents (below), not a pre-fanout check.
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r CI_RED < "${TMPDIR:-/tmp}/oss-review-ci-red-${CSID}" 2>/dev/null || CI_RED=false
-IFS= read -r CI_FAILING_CHECKS < "${TMPDIR:-/tmp}/oss-review-ci-failing-${CSID}" 2>/dev/null || CI_FAILING_CHECKS=""
-if [ "${CI_RED:-false}" = "true" ]; then
-    { echo "GATE=BLOCK"; echo "GATE_REASON=ci-red: ${CI_FAILING_CHECKS}"; } > "${TMPDIR:-/tmp}/oss-review-gate-${CSID}"
-else
-    { echo "GATE=PASS"; echo "GATE_REASON="; } > "${TMPDIR:-/tmp}/oss-review-gate-${CSID}"
-fi
-```
-
-`GATE=BLOCK` does **not** skip Step 2 — proceed to full fanout regardless, `Gate: REVIEW_V1_BLOCK` is carried into the Step 5 report header alongside the normal `Outcome:` so the fixable blocker is visible immediately, not buried after N findings.
+**Stage 2 — Block (non-terminal).** Proceed to full fanout for every CI status. Step 5 checks the same PR head again through `modes/ci-status.md`, which decides the current merge gate and CI status reported alongside the independent source outcome.
 
 **Classification guidance for full-review agents and the consolidator** (applies once fanout runs, whichever gate state): tag a finding `[blocking]` only when it is (a) objectively fixable by more commits and (b) actually prevents merge until resolved. Design/architecture disagreements are never `[blocking]`; validate any current-contract defect, then choose `MINOR_EDITS` or `MAJOR_REVISION` from its evidenced impact and repair scope. A goal-level disagreement should have been caught at Stage 1, not here. Per-category default: `<notes>` §Block-tier catalogue — canonical, don't re-derive per run.

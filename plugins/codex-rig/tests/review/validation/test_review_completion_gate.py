@@ -734,7 +734,7 @@ def _historical_unavailable_terminal(root: Path) -> Path:
 def _historical_closed_terminal(root: Path) -> Path:
     """Write a historical closed result and return its path."""
     fixture = _module(Path(__file__).with_name("test_code_review_close_contract.py"))
-    return fixture._write_closed_artifact(root)
+    return fixture._write_closed_artifact(root, historical=True)
 
 
 def _add_newer_candidate(run: Path) -> None:
@@ -909,6 +909,86 @@ def _alter_card(card: Path) -> None:
 
 class TestCompleteRun:
     """Completion CLI: emits the bound final text only for validated, promoted results."""
+
+    def test_same_head_ci_refresh_supplies_test_gate_and_final_snapshot(self, assessed_pr: Path) -> None:
+        """Promotion validates the completed job from the refresh while preserving the original pending snapshot."""
+        pr_path = assessed_pr / "pr.json"
+        pr = _load_json(pr_path)
+        refreshed = {"headRefOid": pr["headRefOid"], "statusCheckRollup": pr["statusCheckRollup"]}
+        _save_json(assessed_pr / "pr-ci-refresh.json", refreshed)
+        pr["statusCheckRollup"][0].update(status="IN_PROGRESS", conclusion="")
+        _save_json(pr_path, pr)
+        original = pr_path.read_bytes()
+        result = _load_json(assessed_pr / "result.json")
+        _promote_through_writer(
+            assessed_pr,
+            assessed_pr / "result.json",
+            status="pass",
+            checks_run="lint,format,types,tests,review",
+            confidence=0.95,
+            metadata=result["metadata"],
+        )
+
+        completed = _complete_run(assessed_pr, text=False)
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout == (assessed_pr / "final.md").read_bytes()
+        assert pr_path.read_bytes() == original
+
+    @pytest.mark.parametrize(
+        "refresh",
+        [
+            pytest.param(
+                {
+                    "headRefOid": "0" * 40,
+                    "statusCheckRollup": [{"__typename": "StatusContext", "context": "tests", "state": "FAILURE"}],
+                },
+                id="another-head",
+            ),
+            pytest.param({"statusCheckRollup": None}, id="rollup-unavailable"),
+            pytest.param({"statusCheckRollup": []}, id="empty-rollup"),
+            pytest.param({"statusCheckRollup": ["malformed"]}, id="malformed-check"),
+            pytest.param(
+                {"statusCheckRollup": [{"__typename": "StatusContext", "context": "tests", "state": []}]},
+                id="malformed-state",
+            ),
+            pytest.param(
+                {"statusCheckRollup": [{"__typename": "StatusContext", "context": "tests", "state": ""}]},
+                id="blank-state",
+            ),
+            pytest.param(
+                {"statusCheckRollup": [{"__typename": "CheckRun", "name": "tests", "status": " ", "conclusion": ""}]},
+                id="blank-status",
+            ),
+            pytest.param(
+                {"statusCheckRollup": [{"__typename": "CheckRun", "name": "tests", "status": "COMPLETED"}]},
+                id="missing-completed-conclusion",
+            ),
+            pytest.param(
+                {
+                    "statusCheckRollup": [
+                        {"__typename": "CheckRun", "name": "tests", "status": "COMPLETED", "conclusion": ""}
+                    ]
+                },
+                id="blank-completed-conclusion",
+            ),
+        ],
+    )
+    def test_unusable_ci_refresh_preserves_verified_collection(self, assessed_pr: Path, refresh: dict) -> None:
+        """Incomplete or unrelated refreshes cannot displace the original observed passing job."""
+        pr = _load_json(assessed_pr / "pr.json")
+        _save_json(assessed_pr / "pr-ci-refresh.json", {"headRefOid": pr["headRefOid"], **refresh})
+        completed = _complete_run(assessed_pr)
+        assert completed.returncode == 0, completed.stderr
+
+    @pytest.mark.parametrize("conclusion", [None, ""])
+    def test_pending_ci_refresh_invalidates_prior_passing_job(self, assessed_pr: Path, conclusion: str | None) -> None:
+        """An in-progress rerun has no conclusion yet and supersedes the prior successful test evidence."""
+        pr = _load_json(assessed_pr / "pr.json")
+        check = {**pr["statusCheckRollup"][0], "status": "IN_PROGRESS", "conclusion": conclusion}
+        _save_json(assessed_pr / "pr-ci-refresh.json", {"headRefOid": pr["headRefOid"], "statusCheckRollup": [check]})
+        completed = _complete_run(assessed_pr)
+        assert completed.returncode != 0
+        assert "pr-source-review-ci-covered-check-not-successful" in completed.stderr
 
     def test_missing_job_observation_blocks_legacy_checkout_completion(self, assessed_pr: Path) -> None:
         """An assessed PR cannot claim CI coverage when its job evidence is missing from historical checkout notes."""

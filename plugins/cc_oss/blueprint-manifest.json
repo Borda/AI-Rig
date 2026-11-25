@@ -6,11 +6,15 @@
     },
     "003f777362a9ccd200105589032b2d023fac499bf05a956f2c047bc87ca458c6": {
       "kind": "block",
-      "src": "skills/review/modes/post-agent.md:75"
+      "src": "skills/review/modes/post-agent.md:82"
     },
     "0047bed28d04d518bdee3a015e040d89eb2da3515ad01a7c4ede29b9ea39e475": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-closeout.md:106"
+    },
+    "0069efb7d23af035bbff3c96b01b2b1e60ec07dc0a915fd38483f38f16e35b21": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "007a24470d0ac2b67cc805776181ef9f11ee6fed5fb6fc9630994f6ee084ab1b": {
       "kind": "command",
@@ -60,7 +64,7 @@
     },
     "0183b204cd5906d4f0ae33ef7c0e7241b9a0948c1c61473aa184a51d0f9b3733": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "019e27ad903e4a3610d16e837d3c102a110878e6edeb0272c7144ab9d441a4d4": {
       "kind": "command",
@@ -101,7 +105,7 @@
     },
     "031f6b4fb64082ebb0375d10732d2ea53affd6686bceece1c871cd90d25091d0": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:141"
+      "src": "skills/review/modes/scope-context.md:127"
     },
     "0380f8cef25d03c77490baddd626d00f68b9a73ee8db2a2977fa77234ddcbce9": {
       "kind": "command",
@@ -163,7 +167,7 @@
     },
     "05b991894868e9263a49008ffc66e8caf683923dc4a77d4c04beb8939e6424ac": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "05bdcbf6d0334303fc6b71f9816b92c6a949c5ded6543b902de6e2df9567e275": {
       "kind": "command",
@@ -172,6 +176,10 @@
     "05ca5edab2859e30a195bc73947f571eabd9c1d2abb53ea6d2a32348c3bf99f2": {
       "kind": "command",
       "src": "skills/resolve/modes/item-selection.md:234"
+    },
+    "060168781c8f8d6ab01383cf431b74aa7b68d8bff1667799ccbc75494877bff6": {
+      "kind": "command",
+      "src": "skills/resolve/modes/final-report.md:9"
     },
     "060b98202c6b8185c2afa06084debe80f08aacbcf6106a8ab935a67a90227c29": {
       "kind": "command",
@@ -187,7 +195,7 @@
     },
     "064bddef79c56da92f2bd170058228b3c7fd345e043a305d15ac8773e24c5940": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "06611bf9f769407cbf445b1a6622f370689fa38a74afa6ab10cc2ece0a593abd": {
       "kind": "command",
@@ -204,6 +212,10 @@
     "06b21ac260d56af47e1d720ec44788c8dbdb1025513ec2a0538bf1e1d246342d": {
       "kind": "block",
       "src": "skills/resolve/modes/item-selection.md:351"
+    },
+    "06b9de5cd105ef5d68d814b10f5a647b6fc0aa6d72f19497a2c8d2afffa71873": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "06bf43fb0ac45b88bc5e4641f8299712ee90b150b7497d4bf4bb20bab10f6d91": {
       "kind": "block",
@@ -319,10 +331,6 @@
       "src": "skills/analyse/SKILL.md:183",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r CLEAN_ARGS < \"${TMPDIR:-/tmp}/analyse-clean-args-${CSID}\" 2>/dev/null || CLEAN_ARGS=\"\"\nIFS= read -r TODAY < \"${TMPDIR:-/tmp}/analyse-today-${CSID}\" 2>/dev/null || TODAY=$(date +%Y-%m-%d)\npython \"$PLUGIN_ROOT/bin/build_analyse_paths.py\" --mode cache --clean-args \"$CLEAN_ARGS\" --today \"$TODAY\"\nprintf '%s\\n' false > \"${TMPDIR:-/tmp}/analyse-cache-valid-${CSID}\"\nprintf '%s\\n' false > \"${TMPDIR:-/tmp}/analyse-drift-${CSID}\""
     },
-    "09281b800540de1c580dd50debb4f234d8181b6bd5df616bfeccacf4a6cc5dc6": {
-      "kind": "command",
-      "src": "skills/review/modes/scope-context.md:67"
-    },
     "092c0dab1f4cadb273861555070a06c5307c3404b7b1c6e891d63f125ae7787c": {
       "kind": "command",
       "src": "skills/resolve/modes/comment-dispatch.md:62"
@@ -352,6 +360,10 @@
       "kind": "block",
       "src": "skills/release/SKILL.md:147",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n_OSS_SHARED=$(python \"$PLUGIN_ROOT/bin/resolve_shared_path.py\" oss skills/_shared 2>/dev/null)\n\necho \"${_OSS_SHARED:-}\" > \"${TMPDIR:-/tmp}/release-oss-shared-${CSID}\"\n\n[ -d \"$_OSS_SHARED\" ] && cat \"$_OSS_SHARED/agent-resolution.md\"\npython \"$PLUGIN_ROOT/bin/release_setup.py\" || exit 1\nIFS= read -r SKILL_DIR < \"${TMPDIR:-/tmp}/release-setup-${CSID}/SKILL_DIR\" 2>/dev/null || SKILL_DIR=\"\"\nIFS= read -r REPO_ROOT < \"${TMPDIR:-/tmp}/release-setup-${CSID}/REPO_ROOT\" 2>/dev/null || REPO_ROOT=\"\"\nIFS= read -r BRANCH < \"${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH\" 2>/dev/null || BRANCH=\"\"\nIFS= read -r BRANCH_REF < \"${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH_REF\" 2>/dev/null || BRANCH_REF=\"\"\nIFS= read -r BRANCH_KEY < \"${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH_KEY\" 2>/dev/null || BRANCH_KEY=\"\"\nIFS= read -r RELEASE_MODE < \"${TMPDIR:-/tmp}/release-mode-${CSID}\" 2>/dev/null || RELEASE_MODE=\"\"\nIFS= read -r DATE < \"${TMPDIR:-/tmp}/release-setup-${CSID}/DATE\" 2>/dev/null || DATE=\"\"\nIFS= read -r LAST_TAG < \"${TMPDIR:-/tmp}/release-setup-${CSID}/LAST_TAG\" 2>/dev/null || LAST_TAG=\"\"\nIFS= read -r CHERRY_PICK_SUBJECTS < \"${TMPDIR:-/tmp}/release-setup-${CSID}/CHERRY_PICK_SUBJECTS\" 2>/dev/null || CHERRY_PICK_SUBJECTS=\"\"\nIFS= read -r SOURCE_TAG_REF < \"${TMPDIR:-/tmp}/release-setup-${CSID}/SOURCE_TAG_REF\" 2>/dev/null || SOURCE_TAG_REF=\"\"\n[ -z \"$REPO_ROOT\" ] && { echo \"Error: release_setup.py failed \u2014 REPO_ROOT empty; verify oss plugin installation\"; exit 1; }\n[ -n \"$BRANCH_REF\" ] && [ -n \"$BRANCH_KEY\" ] && [ -n \"$RELEASE_MODE\" ] || { echo \"Error: release branch identity or mode missing\" >&2; exit 1; }\nif [ \"$RELEASE_MODE\" = notes ]; then\n    IFS= read -r DO_APPEND < \"${TMPDIR:-/tmp}/release-do-append-${CSID}\" 2>/dev/null || DO_APPEND=\"false\"\n    if [ -f \".temp/release-state-v2/$BRANCH_KEY/journal.json\" ]; then\n        python \"$PLUGIN_ROOT/bin/release_append_publish.py\" recover --branch \"$BRANCH\" || exit 1\n        echo \"Reconciled interrupted append publication; inspect marker and artifacts, then stop this invocation before gathering again.\"\n        exit 0\n    fi\n    python \"$PLUGIN_ROOT/bin/release_append_marker.py\" guard --branch \"$BRANCH_REF\" || exit 1\nfi"
+    },
+    "0a2175cf51b7c23a117eff7c35be0b5ffed74ef0cc2c075f26f513493aa0625a": {
+      "kind": "command",
+      "src": "skills/resolve/modes/push.md:131"
     },
     "0a228cbaba99d5f3a9a1e260182f38364723ccc3bae50e55bec21a1a32aeefa6": {
       "kind": "command",
@@ -474,7 +486,7 @@
     },
     "0d96678fe0b49c2ce0fcd7464802ac007ceecb7ecac2927d0e0087056f0b5708": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:166"
+      "src": "skills/review/SKILL.md:168"
     },
     "0db25338bc835b7bcea958e91b4453fb6d606083a473db43df79e8f0356bc259": {
       "kind": "command",
@@ -486,7 +498,7 @@
     },
     "0de7a6b403e50eef609bace545160f73f4b097668aa493a8c04804ae9191fadf": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
     },
     "0e0fd8ac55ec07b0c002de83d962feff758cd3163f0e98259460c0a1ad13ba6b": {
       "kind": "command",
@@ -555,7 +567,7 @@
     },
     "0f31f4d139406809423b7cf298ae12fd07b1c7a20bca6581908e23c5fe4dfa49": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:191"
+      "src": "skills/review/modes/preflight.md:182"
     },
     "0f4133c61b377d0a26e78d67e5c7440b6cdb2adbaa5c5fef2529169eaca98a40": {
       "kind": "command",
@@ -569,13 +581,13 @@
       "kind": "command",
       "src": "skills/resolve/modes/item-selection.md:289"
     },
+    "10254ed5c8acf91d604814ec57ae1471bae0d94a691c31ad9df57dcff76a3d10": {
+      "kind": "command",
+      "src": "skills/resolve/modes/final-report.md:9"
+    },
     "10587a216c0c5550ea37a10a49485c84f8ff867efc2f8cb54e3b51a86f14812c": {
       "kind": "command",
       "src": "skills/resolve/modes/report-intelligence.md:21"
-    },
-    "105a39f8bfd8997bd890581436f02ce3a6f22eb23eaee57c9f31ab4d3119d3eb": {
-      "kind": "block",
-      "src": "skills/review/modes/post-agent.md:52"
     },
     "106602fe56c2e8dc18074786fd689a57ed93d313e8875396be4a34f9992ceea1": {
       "kind": "command",
@@ -583,7 +595,7 @@
     },
     "10ade2cda81a7bd88ec980dcb41d274388d80057153133c8145e8a523e935f8d": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:51"
+      "src": "skills/resolve/modes/final-report.md:66"
     },
     "10cd759315bd9b4ad5f10220ecec8bd5e65f0e56731dc95da42de8f1335a48d6": {
       "kind": "command",
@@ -591,7 +603,7 @@
     },
     "10d076516b86373c26b4692ee19c58c9b27762a22e62e4433f965d87ef712ffd": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "10dcca446e01bb06cd877fc6445fdde85493df4d3c5f9a6e0e86f008046a44ac": {
       "kind": "command",
@@ -619,7 +631,7 @@
     },
     "120e53fa744d4b8b11d9af0b7e6cc1d7881e43987b4a6cdf75fc318781639390": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:240"
+      "src": "skills/review/modes/preflight.md:231"
     },
     "120f4cfd3048386752bda28011ec92f394d6cc3e681e229bbbd230f3f62b612a": {
       "kind": "command",
@@ -635,11 +647,11 @@
     },
     "1280eef13dc67a3508845cdaca5519d7199c7198787ab73a085a076396a22308": {
       "kind": "command",
-      "src": "skills/review/modes/acceptance-gate.md:77"
+      "src": "skills/review/modes/acceptance-gate.md:78"
     },
-    "12f69587c5ee15079fe1d87ce582edfc1241bce0715a9246468f8e9fc2557d51": {
+    "13223d5548babf56f02fee7a913be35d1f95ec755a3bb6c9c2471c5e6b9bf398": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:67"
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "134b0a1a9e2c3b3e16e7745d65a31bf939338cb7a7d6646a957c5ef68ed13e87": {
       "kind": "block",
@@ -659,6 +671,10 @@
       "kind": "block",
       "src": "agents/repo-warden.md:155"
     },
+    "13ec9685a86615e8be4da1474d3b0aeb60d5dd02a4d421c160350425eab6f8ee": {
+      "kind": "block",
+      "src": "skills/review/modes/acceptance-gate.md:7"
+    },
     "13f14bf3f8b0af2a6978367ad8f2506212e4845bad52c360cc3efa361cef522b": {
       "kind": "block",
       "src": "skills/resolve/modes/item-selection.md:256"
@@ -670,10 +686,6 @@
     "14a9e45f15836905f0d126a140288462089edc65c0c715f7284ef4e3863f4332": {
       "kind": "command",
       "src": "agents/repo-warden.md:62"
-    },
-    "14bed9cf692929771f7a381c343c189183103c5a75865aa6d85246724e897424": {
-      "kind": "command",
-      "src": "skills/review/modes/acceptance-gate.md:114"
     },
     "14d9a0ca3ed976d2f8a1c51cf12a1ca05f3968d629b7624259d5a92717faff71": {
       "kind": "command",
@@ -693,11 +705,11 @@
     },
     "14f7db76c3d8b1547ad2f6c0dd17f77a28a198491e3e0bb7dcad9e2b97e86b71": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:75"
+      "src": "skills/review/modes/post-agent.md:82"
     },
     "1512a48e5429269078d9b3440eb0292de6879fda70c0db470a1d62b93dbf2643": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:191"
+      "src": "skills/review/modes/preflight.md:182"
     },
     "154ec52cf175ddde6a75eba2eefb20c7b5fb67d986a9cf4fe6804de4c38b55b7": {
       "kind": "block",
@@ -788,7 +800,7 @@
     },
     "174e805ce709a588eb8c8aee27ca96af0a323d37d7f5194787152263eb04793e": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "1780454e355b62e309b2a3c2e2e933b087e47b40f9cfddf70d09acf807c7f4e7": {
       "kind": "command",
@@ -797,6 +809,10 @@
     "1798ca1380ebf36d607f7386c4cf2a4765ed31de4594cba498cda2c41e47b044": {
       "kind": "command",
       "src": "agents/gh-scraper.md:36"
+    },
+    "17aa88cebaa32ca817947a32afcdb4fce184039616512df2bf70ec640f843071": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "17b03a0248b5c18b30b1f51e60a398b2f4926676f2f077aef63770069ec5012b": {
       "kind": "command",
@@ -903,7 +919,7 @@
     },
     "1a8066ff50232051820338f59ad26cea293d9891ebc8181c7a2980e7765166ac": {
       "kind": "block",
-      "src": "skills/review/modes/post-agent.md:225",
+      "src": "skills/review/modes/post-agent.md:231",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _RUN_DIR < \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\" 2>/dev/null || _RUN_DIR=\"\"\nIFS= read -r _REPORT_DIR < \"${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}\" 2>/dev/null || _REPORT_DIR=\"\"\nIFS= read -r _PR_TAG < \"${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}\" 2>/dev/null || _PR_TAG=\"n/a\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" \"oss:review\" \"follow-up gate (Step 7a)\" \"$_RUN_DIR\" \"final-report=$_REPORT_DIR/review-report.md, pr=$_PR_TAG\" \"resume: re-read report header, re-issue Step 7a AskUserQuestion; /oss:resolve reads the report file directly\""
     },
     "1ac92bfe6135571fd0808d858323dd2b5299c4c497d094e14910ed1bc9936193": {
@@ -967,6 +983,10 @@
       "kind": "command",
       "src": "skills/resolve/modes/exec-approval.md:30"
     },
+    "1ccced38984362383a131aa3edd600de361ef6614c099a462422712b5a8607a9": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
     "1ccd30b82e428e89fd401ce3df0577e392e0404f2a010c8f044b7ebb1760e2ee": {
       "kind": "command",
       "src": "skills/resolve/modes/preflight.md:80",
@@ -1027,7 +1047,7 @@
     },
     "1e5d563ad96960b2a1412395bf8bd20ec9dec3fa58fa969efb685ad84c2cd148": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:191"
+      "src": "skills/review/modes/preflight.md:182"
     },
     "1e5df9b32a55099dbed2213b2199f38c4a8c671a0b0eff1f054cd7162e2e46de": {
       "kind": "command",
@@ -1035,7 +1055,7 @@
     },
     "1e5f480be794e7d09953e48963200b96fe715bcefc63b5c6a6a52db10a2b9807": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
     },
     "1e81cefbe10b5bfd76058f92e58d3da579c8371bace1670da732162aee5cebe1": {
       "kind": "command",
@@ -1085,6 +1105,10 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:348"
     },
+    "200b2be16917b4c80aef9a08b480a12f66837fa1f65205e129b889096b1926a1": {
+      "kind": "block",
+      "src": "skills/resolve/modes/push.md:131"
+    },
     "205dbec10f6a72f2478ce03331887efd00682ce44aa748ff34391a9b713bff40": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-closeout.md:106"
@@ -1128,7 +1152,7 @@
     },
     "2173775c3ef8d17ccad3b41e6ee2fcb8ce474c792db61b3520f24aa9fadafcc1": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:153"
+      "src": "skills/review/modes/post-agent.md:159"
     },
     "21a05c797693c799c71241e34eb079159c69f580e0b339e34236ff885e00d01d": {
       "kind": "command",
@@ -1137,10 +1161,6 @@
     "22580d522612d9414b2356c047b861c68c36ef271e0da08ae0332a00ea61393f": {
       "kind": "command",
       "src": "skills/release/modes/gather-changes.md:11"
-    },
-    "228472ea584280663e88af7bc68954f417fe67b458ddff4c146f39da716896e6": {
-      "kind": "command",
-      "src": "skills/resolve/modes/push.md:131"
     },
     "22a6086ac9dcef0b08d36ae6d409823eed2dae9aa35176625ab821bdff7bad54": {
       "kind": "command",
@@ -1181,7 +1201,7 @@
     },
     "23c70df8ac892a12a36fb33a1aca127a2af078fdaf239bcc871c4f16cad7f0a7": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:117"
+      "src": "skills/resolve/modes/final-report.md:132"
     },
     "23f35b8145a05a973f6a6de1af4aa0c80149f0ead117ea7dc2012381edcb6e09": {
       "kind": "command",
@@ -1209,7 +1229,7 @@
     },
     "245d2c96eaa60781d4c699afada8b4b48b13fbeb04aefbae3584282e0a09d830": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:150",
+      "src": "skills/review/SKILL.md:152",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\n_OSS_REVIEW=\"$PLUGIN_ROOT/skills/review\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_REVIEW/modes/agent-launch.md\""
     },
     "24676b4cc3f614cd4fc548901e8e0fc3c5e70ee60db9e044a5a941ccd7979aae": {
@@ -1257,7 +1277,7 @@
     },
     "2718b0b9ad6714add404b3a7ea0a0d9f2654a170045fa9efd622e4b05ac29a91": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
     },
     "271fb35b7a1aadb98ebd35af5cb666b171d87cc4d42639068bba4b1199fc810e": {
       "kind": "block",
@@ -1274,7 +1294,7 @@
     },
     "2769cab677aa910f2a547b302684b8c9b3bd6e46e07aefbc50b519120e8b7962": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:141"
+      "src": "skills/review/modes/scope-context.md:127"
     },
     "27b06d16302580892d0ee649aa5d2e619121b0ef0e88d4d59e9773f51b118564": {
       "kind": "command",
@@ -1298,7 +1318,7 @@
     },
     "286d13edda4c8008df1eb2416e12ab53d864a3a0f1ba2db26caadba7245be615": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "2873fe351224a5b5063e8aa5a73fe140dc37989ddfe69696d76b0f0e3f548031": {
       "kind": "command",
@@ -1351,7 +1371,7 @@
     },
     "2947ced1e1cb7e88043301fea45f458317c11bb605fccf69f1dd45782065879c": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:154"
+      "src": "skills/resolve/modes/push.md:160"
     },
     "2980f5c3c29962518ef94ae70cdbe71fcd89158de73817bec8ad58e9dceab329": {
       "kind": "command",
@@ -1382,9 +1402,9 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:117"
     },
-    "2a9f49696b18a4994a4e814f572e3fef2a5bd2b880ba32f9644d6d647254b851": {
+    "2a7e10808f927ff732169143c9b7aa8079ae5477579a84d6281f2237cf36d914": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:131"
+      "src": "skills/resolve/modes/preflight.md:80"
     },
     "2ac998e2bd5cfa6fe4d59460a1294bc84216c6736a9a32277633a8b21ae6cdaf": {
       "kind": "command",
@@ -1413,7 +1433,7 @@
     },
     "2b0b79c0d0a9adc7837ccfa2f6c51b1b1fde7125f64482af1fa2991cd2ddb056": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:168"
+      "src": "skills/resolve/modes/push.md:174"
     },
     "2b1684573cb2659ec55dd4b9aa21172a1d6b0b93f5590e4bb40367e75c6866f8": {
       "kind": "command",
@@ -1425,7 +1445,7 @@
     },
     "2b72109c249f053380ebc0e48d1cde89c1f622d3b844a5e2520a0f0f8243d5e9": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:143"
+      "src": "skills/resolve/modes/final-report.md:158"
     },
     "2b865f66c29ded666ddd646e0e95bc33d43c162d6cd0f3822de3c1425b7d8d35": {
       "kind": "block",
@@ -1474,7 +1494,7 @@
     },
     "2d9bfb1716c1e037d396676ca4fcfce8b704465fe76fe0fed5fcbbedd16b8792": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:182"
+      "src": "skills/resolve/modes/push.md:188"
     },
     "2da8231b708d04fab40732869ddc16609b410c85d0e713fe8a7c8fdbc0f292db": {
       "kind": "command",
@@ -1482,7 +1502,7 @@
     },
     "2dcbb4b5d094c25b1a83ceb01da87a924bc42c406cf2e76de9503a0e86d3d999": {
       "kind": "command",
-      "src": "skills/resolve/modes/preflight.md:150"
+      "src": "skills/resolve/modes/preflight.md:153"
     },
     "2e1c6d2660d4b86b5e733372986d74f3e835a0947c0fc66e233f0f3a90f94d3a": {
       "kind": "command",
@@ -1536,7 +1556,7 @@
     },
     "2f40376401d17e29d6ad01848df2f9293f26108454f182a11154de74ba22847e": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:213",
+      "src": "skills/review/SKILL.md:215",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r REVIEW_SKILL_DIR < \"${TMPDIR:-/tmp}/review-skill-dir-${CSID}\" 2>/dev/null || REVIEW_SKILL_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$REVIEW_SKILL_DIR/modes/reply.md\""
     },
     "2f497ee55a6e39fc21e696bb5dfc07d5e0fb1aed6c6acfc3ad836712dc423c58": {
@@ -1576,17 +1596,25 @@
       "kind": "command",
       "src": "skills/review/modes/scope-context.md:67"
     },
+    "30535061af72f5d564345dc2708ac4505abcb351c9a02a28b6b868bbae8c0c3c": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
     "3057cb04607296e9003b630cc050dfc1a40da93a3931b8c05cce9678943eb01f": {
       "kind": "command",
       "src": "skills/review/modes/preflight.md:28"
     },
+    "30e97de42696fa2ef39a38bccc0fa0a5ebefeef58d3b9ae3ab09d474ef437511": {
+      "kind": "command",
+      "src": "skills/resolve/modes/final-report.md:9"
+    },
     "31048a3428e7869d26e087186e52f4b395a88dc1a2f10b3913dd0cde173a1e51": {
       "kind": "command",
-      "src": "skills/review/modes/acceptance-gate.md:77"
+      "src": "skills/review/modes/acceptance-gate.md:78"
     },
     "311403b1e6c0453c7580cafc8e02d41c9ca4beeceeefaf44bea68b534764a9f9": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "3158d65f75a26c489c731090396423b1188c45aae36ace5171da8e85bd68f362": {
       "kind": "command",
@@ -1608,6 +1636,10 @@
       "kind": "command",
       "src": "skills/resolve/modes/conflict-resolution.md:15"
     },
+    "325d6f79f7c709bf86d4f7ed3d7c2cb423e9df2b46bf731e5c7ae33c7b8bd5e3": {
+      "kind": "command",
+      "src": "skills/review/modes/post-agent.md:52"
+    },
     "3297d77a82db8f87df0257db20cded6d0fd1b97b1d0df1fb914f108886387ef5": {
       "kind": "command",
       "src": "skills/resolve/modes/checkout.md:30"
@@ -1627,11 +1659,15 @@
     },
     "33b9d28d508799829d80c9cda9b6201f4e8a7f429b120308127135577376f1ec": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:51"
+      "src": "skills/resolve/modes/final-report.md:66"
     },
     "33bc75409c89f4de3cc1db56d9bec24e7d4db82f8358b0785fc1b71dba3c63ee": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:447"
+    },
+    "33c5ea429a9ce7cca3156477ac4d68bbd1f4233bef1e235f6ec0f036daf775b3": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "33d3b4f66d53ce3c9aed5438a7dc362bb23d6cb58af9a3df5796d721e51272dc": {
       "kind": "block",
@@ -1702,7 +1738,7 @@
     },
     "34abde2bb175e9136712a332a50ba6f62e604f24670ad1e67bda14814ed6cf86": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:9"
+      "src": "skills/resolve/modes/final-report.md:132"
     },
     "34b11de754eb0cf2960a848fb6b1fcea96589712f9aba08b718871a13390d0d7": {
       "kind": "command",
@@ -1740,13 +1776,17 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase2.md:69"
     },
+    "363e46fed6528a912c0f07888b6830e6c8bb2be09e6195bc2615e8d1ac246fc0": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
     "364b3ea319bf006b1f68a798abbcf768ffb7ea4f0fb353f443b86b97057ab488": {
       "kind": "command",
       "src": "skills/analyse/SKILL.md:68"
     },
     "365848330039969a91232d9de2ae2373974bdabac1ea4f9fc3c1522afedee737": {
       "kind": "block",
-      "src": "skills/review/modes/preflight.md:178",
+      "src": "skills/review/modes/preflight.md:169",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n[ -f \"${TMPDIR:-/tmp}/oss-review-flags-${CSID}\" ] && while IFS='=' read -r _SK _SV; do case \"$_SK\" in REPLY_MODE) REPLY_MODE=$_SV ;; WT_ENABLED) WT_ENABLED=$_SV ;; FILL_GAPS_MODE) FILL_GAPS_MODE=$_SV ;; DIRECT_PATH_MODE) DIRECT_PATH_MODE=$_SV ;; REVIEW_FILE) REVIEW_FILE=$_SV ;; esac; done < \"${TMPDIR:-/tmp}/oss-review-flags-${CSID}\"\n[ \"${FILL_GAPS_MODE:-false}\" = \"true\" ] || exit 0\nIFS= read -r REVIEW_SKILL_DIR < \"${TMPDIR:-/tmp}/review-skill-dir-${CSID}\" 2>/dev/null || REVIEW_SKILL_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$REVIEW_SKILL_DIR/modes/fill-gaps.md\""
     },
     "365b5f5070fb556fe7fc3a5f0dbb2e199de38db892c89b5182a4a57b34137572": {
@@ -1781,10 +1821,6 @@
       "kind": "command",
       "src": "skills/release/SKILL.md:109"
     },
-    "37bcf2a89895bf3c5b3c6a2381c6310c454fa8a4f31f5891768c97d6aed9e4d9": {
-      "kind": "command",
-      "src": "skills/review/modes/post-agent.md:52"
-    },
     "37be19a94a2e252c97fefb0a66fad4d50c875c30e7da950e24ba51456c12f4bf": {
       "kind": "command",
       "src": "skills/resolve/SKILL.md:269"
@@ -1811,7 +1847,7 @@
     },
     "381b90c5f4e2cb8b3082e02a4ab347b5011c8319527fbabdf8e848d553055c18": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:147"
+      "src": "skills/resolve/modes/push.md:153"
     },
     "383247fc0f2e4e7886d99a39e5220bd47a7e058bf2b04acd73ec9d91397ee0fc": {
       "kind": "command",
@@ -1832,7 +1868,7 @@
     },
     "397866c89b1f76f1b8508837e351ae3aa60a65df0539e71c887646c4f3efdac8": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:141"
+      "src": "skills/review/modes/scope-context.md:127"
     },
     "3978f48049073efa42dbceaf2fee6ebe2df53a6b1927276d1cb66f462a42e72c": {
       "kind": "command",
@@ -1863,6 +1899,10 @@
       "kind": "command",
       "src": "skills/resolve/modes/conflict-resolution.md:23"
     },
+    "3a46886e4177c0c32523e227f48b8363757188f5ce558c6558b4074ebb958f5d": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
     "3a7d6e7c6e4ff36d3635e510b11e241fd0d664862cf3ab82d7fc2eb6f428955f": {
       "kind": "block",
       "src": "skills/analyse/modes/evolution.md:72",
@@ -1882,7 +1922,7 @@
     },
     "3b31fb81c9d42be6d72901934b3a50e46b4e086b8dc4d85241007e0ec39fdf08": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
     },
     "3b44ba545cda34f7a9ab2fa75f2a1eb60e6ac436eaf6cdac5e38146668de92ea": {
       "kind": "command",
@@ -1890,7 +1930,7 @@
     },
     "3b482c48f4e959e711c856fb7de72b55711e2a4d77beab02f3ff92f053c103ea": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:117"
+      "src": "skills/resolve/modes/final-report.md:132"
     },
     "3b491cca146b3b69c159ab4cc48e594c95091823bd4fb1002b085d4b46298a90": {
       "kind": "command",
@@ -1920,10 +1960,6 @@
     "3bcce0d5a8a1db33d6162a1d8c91b96fcc3b6e0000802095d41c7c8994f068b8": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:328"
-    },
-    "3bd6de7e2328490c9591d2445b29a6459f720b91c49f9b59a4a1eede68bf9076": {
-      "kind": "command",
-      "src": "skills/review/modes/scope-context.md:67"
     },
     "3bec61e8bc2a79bdee472e1badee881f9ee50cc73ac4b9578646eec58496004d": {
       "kind": "command",
@@ -1982,6 +2018,10 @@
       "kind": "block",
       "src": "skills/review/modes/post-agent.md:5"
     },
+    "3e9f2340b47b4b712a5d7472dc43755d44d7fb20f1a154b063192bfe7372d09d": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
     "3ea62c56ad133a9ef963f7e56d2876ef6ce0f9868a0a68cb57e63eef1ebd1458": {
       "kind": "command",
       "src": "skills/release/modes/changelog-contributors.md:25"
@@ -1996,7 +2036,7 @@
     },
     "3ee94348ba106126fd1df393a6544ee2db0f751b29885a54faa174cfde6347a5": {
       "kind": "block",
-      "src": "skills/resolve/modes/preflight.md:179",
+      "src": "skills/resolve/modes/preflight.md:182",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _OSS_RESOLVE < \"${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}\" 2>/dev/null || _OSS_RESOLVE=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_RESOLVE/modes/report-intake.md\""
     },
     "3ef5527884a506bba3b7b4108fe440b1d391881a61d67f1a40f003ed2c767a95": {
@@ -2025,6 +2065,10 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
+    "400a33dea3423a9067b26f8a74b99f17f9207f63db861b64b99497f90a090785": {
+      "kind": "command",
+      "src": "skills/resolve/modes/final-report.md:9"
+    },
     "402ba91cf07ebd4bde48bd96bfc811179c682a06b3b449d39044da1af7f6eaec": {
       "kind": "command",
       "src": "skills/release/modes/gather-changes.md:11"
@@ -2040,6 +2084,10 @@
     "409efc18c474a874df4240c554ed4830b605b4597332a75a0abb0b1071dad51b": {
       "kind": "command",
       "src": "skills/analyse/modes/vitality-adversarial-rework.md:60"
+    },
+    "40a58c33f229866cd9425b4f48ae6100572e1c30ff68668a66be76c93d8721b5": {
+      "kind": "block",
+      "src": "skills/review/modes/preflight.md:118"
     },
     "40ae6004b2750ad7ba449c4aa127ce1a96aa8f721f898d09c1b4afa43f8dac51": {
       "kind": "command",
@@ -2059,7 +2107,7 @@
     },
     "40faceba18a26b806ff4bd73cc3f50fa6f57f80356b7008d554d619e681b0e02": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
     },
     "40fdf687ecba1150f10bb7dfd45097a60f38614a9b2763b863e83f9e1929101f": {
       "kind": "command",
@@ -2149,7 +2197,7 @@
     },
     "44745fef950f674a36fe4cb64464299794980dce06be30a90bb5d8e0382d5542": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:161"
+      "src": "skills/resolve/modes/push.md:167"
     },
     "44780d97662c0f6901493f4e4d33093146c0f98531afc4c80bf09f3a1a16ca83": {
       "kind": "command",
@@ -2223,11 +2271,15 @@
     },
     "46ecc5b65faae9c56779fc9cb696498867863ad86601f9fa66f6af07866b69ac": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:117"
+      "src": "skills/resolve/modes/final-report.md:132"
     },
     "471d117b470dc8cdf3762416150bda4bfee53bce11d87c4f6aa3dc4a36188e0b": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-closeout.md:106"
+    },
+    "4730e6a233de033287bb5e3e5a3a979fb6b84739519d58e541cc36bd3b976de9": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "475458872328502f3a4de406722016e385aded116e8dd71c59b0047ce55c08ac": {
       "kind": "command",
@@ -2244,6 +2296,10 @@
     "478600129cc99b90e528a76d0aae3caf15c136792852147e345166cae03da299": {
       "kind": "command",
       "src": "skills/review/templates/agent-prompts.md:7"
+    },
+    "47a88159a178d923c09915652bfddf32485a5359d52877a8d2963f5f88966ea6": {
+      "kind": "command",
+      "src": "skills/resolve/modes/preflight.md:80"
     },
     "47ac42d6399439f7b3e6ec9c9eb2097c0f765db97c39cdf7273508cab20fd74d": {
       "kind": "command",
@@ -2335,7 +2391,7 @@
     },
     "4a6238a66fed8258cab00b6cdf984700b34eda3935c7dd3bdabe5ee96f172a4f": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:141"
+      "src": "skills/review/modes/scope-context.md:127"
     },
     "4a8597cc54ee0f2d1b39e0f89c4dc6a9fea28403d26711f327198b295a892818": {
       "kind": "command",
@@ -2400,7 +2456,7 @@
     },
     "4c38dca7f1b86b0b9d34bc4538d243bd438ff16747627653f50dbffbc59eb5fc": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:191"
+      "src": "skills/review/modes/preflight.md:182"
     },
     "4c45c60d415caddb7b410a228e60a38b42a2b247ce180473d47562da6b8928c4": {
       "kind": "command",
@@ -2416,7 +2472,7 @@
     },
     "4c86a8b589353e6710fa39183f4770e4b5ae8d301b577e6d0b39b3b1146cc469": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:75"
+      "src": "skills/review/modes/post-agent.md:82"
     },
     "4c93b66c85dddc4ef9ba7afec99ab550bcff1b6a25340fe734b5e5a161d3e89d": {
       "kind": "command",
@@ -2455,13 +2511,17 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase2.md:151"
     },
+    "4e0b94a142ce3f3666ba1175d12d18ed1bf45d3674fd0b8cd29dbc83faa0c054": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
     "4e1f0545f32acd41a0345ee05950e36f63f7e289407464f0e6b6570d1b92fe73": {
       "kind": "block",
       "src": "skills/resolve/modes/dispatch-prelude.md:497"
     },
     "4e3d3527be2eeaa2bce70735326426a2f949edc712c8cc2eec27bb7a95199ccf": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:122"
+      "src": "skills/review/SKILL.md:124"
     },
     "4e44fb45faaaacb5f216256bb2abd2dfd8fa27005c24d49f41542dfba76ca32d": {
       "kind": "block",
@@ -2477,7 +2537,7 @@
     },
     "4e610d43ef6a5358503b63bcca2f38d80104157c7df98ed41f52353e44e4d76e": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:117"
+      "src": "skills/resolve/modes/final-report.md:132"
     },
     "4e6d1974e0e8f5b42cfa1a58bc2fadf777ea077dd189a1104f55dad531544a52": {
       "kind": "command",
@@ -2509,7 +2569,7 @@
     },
     "4f2b771b3f90a6d01eb7afbc616455392644499df2b2830f7c28f5576b61c0b7": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:240"
+      "src": "skills/review/modes/preflight.md:231"
     },
     "4f964d9d7bfe81435be38ca73d7d3b262c85eae76eb33e41fa546062b7a0649d": {
       "kind": "command",
@@ -2526,6 +2586,10 @@
     "4ff0de257f1bb2b8088c7c8c5ab9a7cebbcfa3c915b298154eb56fdc0a8fc13a": {
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:107"
+    },
+    "501f3f2aeb38e12d1051fdc06b8b15711adb878cdec9b5a3a8e30b8f1828a5f0": {
+      "kind": "command",
+      "src": "skills/resolve/modes/final-report.md:9"
     },
     "5060c155bf85b37db5a773a2944a4b6d385e87288bbdcb502afa3a88294e5343": {
       "kind": "block",
@@ -2579,10 +2643,6 @@
       "kind": "command",
       "src": "skills/review/templates/agent-prompts.md:7"
     },
-    "51a15346736a450b1b5a0065ec5dad7046c489ed4f0d9bf1885201e8382d9fce": {
-      "kind": "command",
-      "src": "skills/review/modes/post-agent.md:52"
-    },
     "51a69ff35d52065146267e7401ce6fa50451468ddfb8dbbf08b7351526ceaab3": {
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:107"
@@ -2606,7 +2666,7 @@
     },
     "5220eeb7c3c7df2ddeecf081a4f4c1af76049cc3f3d3195e2ebe694d77fe033c": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:175"
+      "src": "skills/resolve/modes/push.md:181"
     },
     "52336badb2cb8478e41a5e7c936321a054666bc0e6333bfdd7e5b382e016c0ac": {
       "kind": "command",
@@ -2634,7 +2694,7 @@
     },
     "5318b0af33f527856e1c17a1ec86759c8811add58d725efa9b04d2da40c8f71b": {
       "kind": "block",
-      "src": "skills/resolve/modes/preflight.md:150"
+      "src": "skills/resolve/modes/preflight.md:153"
     },
     "5367f50643081075a0e0d88cf35de443275dc2235845cec0b93625bdda510f7a": {
       "kind": "command",
@@ -2667,15 +2727,11 @@
     },
     "53ea3a057e96562997b1632f4c8bb32bd0eab78d353c89de523a10b81f3844c9": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:166"
+      "src": "skills/review/SKILL.md:168"
     },
     "53f6c99e5d76a87f357112788852c46acf471f1f32787d315b685510f7811243": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase2.md:311"
-    },
-    "53fad3843b8cdfc1c90e21c8eae245530d30a8f9325111d03aaa98f0b1f26452": {
-      "kind": "command",
-      "src": "skills/resolve/modes/push.md:131"
     },
     "5465796862103ee972073852cff42e247ee0e461174b2e758cb524ad7032b486": {
       "kind": "block",
@@ -2743,10 +2799,6 @@
       "kind": "block",
       "src": "skills/resolve/modes/item-selection.md:220"
     },
-    "569c28dd8f9990939f1f501aaddc3fc99e68946893713c672c39f37e66cd9e15": {
-      "kind": "command",
-      "src": "skills/review/modes/scope-context.md:67"
-    },
     "56a941ecd45637954a82bb156b2b36076cdbe90da67f501988a3a8033b976089": {
       "kind": "command",
       "src": "skills/_shared/worktree-isolation.md:26"
@@ -2761,7 +2813,7 @@
     },
     "56c3d59f753cb4dc23c7a35d38f68b19b38b86990f7e95bf30a7d581dc179664": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:196"
+      "src": "skills/resolve/modes/push.md:202"
     },
     "56e199c3703e177a91b8246ac449f86f257645f734607cb8df132efddb90f9fd": {
       "kind": "block",
@@ -2793,7 +2845,7 @@
     },
     "58005deda13e6125c7e1dac1f21b8fca8544cabec36b7ead38140a3bfeff700f": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "5818cbf1327e48a5c207635611d3f7538716f92372dd1d425eb638947d10b914": {
       "kind": "command",
@@ -2816,10 +2868,6 @@
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:107"
     },
-    "5915a53e821bfba33b7d7bd0e02b723d177d6452a433816adea13e157edf3fa2": {
-      "kind": "command",
-      "src": "skills/review/modes/scope-context.md:67"
-    },
     "5918f7dd39ba3f23b4d1906d321469020355891efe6c68b134834ccb98c8bbb2": {
       "kind": "command",
       "src": "skills/resolve/SKILL.md:134"
@@ -2830,7 +2878,7 @@
     },
     "596931351e0a070c02e515a478e9c4dca9e20ab50ee024d1f6f4b0af95b1b4f9": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:144"
+      "src": "skills/review/modes/post-agent.md:150"
     },
     "597e0ea052bda524394cd952f0c121894f6bdd0e26f1af9321a4e6c684e59a75": {
       "kind": "command",
@@ -2843,6 +2891,10 @@
     "5a1c84a6400c0e62466fe7ae88ad03f8d8978acf186d55a1038179059ad53b9d": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:117"
+    },
+    "5a1e4079ae68062899a3bb4e1832fb23bff53fcbda1a10a617ec3f138d6c38fd": {
+      "kind": "command",
+      "src": "skills/resolve/modes/push.md:131"
     },
     "5a29c77a5782a24c4524c2c4d226ceb37b5ad56df0a26d8bca8720170a5e6779": {
       "kind": "command",
@@ -2884,7 +2936,7 @@
     },
     "5b2df051e4c9c2d098474f2a1dd3bcf751399d6a3b9fb697d4e9b2d37769cf9b": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:198"
+      "src": "skills/review/SKILL.md:200"
     },
     "5b34aa8c0a75aac934b138fade2b944b70c40e60da05ed7068b5c8cceca7371a": {
       "kind": "command",
@@ -2905,6 +2957,10 @@
     "5bed195b6321237f7127efa71d0f2e7015365466cf23e581edb1a69ca6c5a198": {
       "kind": "command",
       "src": "skills/resolve/modes/item-selection.md:179"
+    },
+    "5bf47b98b0d0bfcbb9404993abe5611aed48bd47dbeac407208707cdbad6d09e": {
+      "kind": "command",
+      "src": "skills/resolve/modes/final-report.md:9"
     },
     "5bfa5649a0735e1aa9fbf563536fd4f4acf634270b4d0214597ddf2868c0bcf8": {
       "kind": "command",
@@ -2933,7 +2989,7 @@
     },
     "5cb7951c987514c84ec957c27a99b3d861a52622e7586672eaffbdd3378f0ec7": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
     },
     "5cc53c05c7a651a17bd92d0923f159b09c0ad7512e06181ed1717298f6483ef5": {
       "kind": "block",
@@ -3020,7 +3076,7 @@
     },
     "5efa625e0a68b422d33a1cd10e681fd4957ecd396c3662043b15251c24e5cfa2": {
       "kind": "block",
-      "src": "skills/review/modes/scope-context.md:201",
+      "src": "skills/review/modes/scope-context.md:187",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r REVIEW_SKILL_DIR < \"${TMPDIR:-/tmp}/review-skill-dir-${CSID}\" 2>/dev/null || REVIEW_SKILL_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$REVIEW_SKILL_DIR/modes/codemap-context.md\""
     },
     "5f0ee5071c35fde4cda30ed5cf519d4c1ab70c915af7e5f5086591d9784bdbac": {
@@ -3051,11 +3107,11 @@
     },
     "602942da29f6c5bd4fa0a47e948666b5479899e5bd25d6d4a05a7a27ac84217b": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "603f8ec018d543ee59742a5bdd528a0bf1446324bbd05d92a2bd840e0abd3d4e": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:168"
+      "src": "skills/resolve/modes/push.md:174"
     },
     "60427ef538942c1b60126230635580e30c59a8a599f4a72169dd0ad07183e058": {
       "kind": "command",
@@ -3083,7 +3139,7 @@
     },
     "60d44ba87c4f718e16cd2b4698d091d181f8b1173b3b510ed21e3b98ff0b07e3": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:122",
+      "src": "skills/review/SKILL.md:124",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\n_OSS_REVIEW=\"$PLUGIN_ROOT/skills/review\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_REVIEW/modes/preflight.md\""
     },
     "60e78d9e6d82827fd1d3488eed4dc2ff617f81aae7974a2697e1d302f6363aea": {
@@ -3149,10 +3205,6 @@
       "kind": "command",
       "src": "skills/resolve/modes/final-report.md:9"
     },
-    "62dee041e14acc44ab8b33e4a4112bc0bea069aa8f8bd208fd2286bae3d32bb9": {
-      "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
-    },
     "62ef44c7061f445ea0d07bd2ee50ec0baacf548fb773a72fcf4ed0205fe7a808": {
       "kind": "command",
       "src": "skills/release/modes/delegation.md:67"
@@ -3177,6 +3229,10 @@
       "kind": "command",
       "src": "skills/review/modes/acceptance-gate.md:92"
     },
+    "63afa54aad1a68c6f7bf418504824a140ed44166db0b08172b21ef7e80865cc1": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
     "63b576813c645ba79cf2c73e3993a9d6a78dd55e18860e6217d4aa5c4b6e4e2e": {
       "kind": "command",
       "src": "skills/resolve/modes/item-selection.md:337"
@@ -3195,7 +3251,7 @@
     },
     "640559b11ca9d69673e9c0ef8f6fae2a85381be55e9d244a7e9ca085c9adb3c1": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "64137096e0a43a2a9a3b34b04fb06d08fdbe7b5316acd8d9d4b74a0eeb7519c1": {
       "kind": "command",
@@ -3278,6 +3334,10 @@
       "kind": "command",
       "src": "skills/release/modes/demo.md:9"
     },
+    "66a884d6031649062ceb22bc2f88e5819f95beb2b226de967bb3cb60c1ba82ff": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
     "66cf64b7df075ba8b9a26a695abc5647294243c106df5bb01f5b3619cea8ca08": {
       "kind": "command",
       "src": "skills/resolve/modes/preflight.md:80"
@@ -3288,7 +3348,7 @@
     },
     "67235e84681e65862b6286a0dd2c9039a130f2b701a6b67259e2cc892527e1c3": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
     },
     "6730d0758d0cee22ae59e2d70f34328b352385375d7e47b554f0260cb894b157": {
       "kind": "command",
@@ -3331,6 +3391,10 @@
       "src": "agents/shepherd.md:169",
       "template": "export CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r DIFF_RANGE < \"${TMPDIR:-/tmp}/shepherd-diff-range-${CSID}\" 2>/dev/null || DIFF_RANGE=\"\"\n[ -n \"${DIFF_RANGE:-}\" ] || { echo \"[shepherd] ERROR: explicit DIFF_RANGE required\"; exit 1; }\ncase \"$DIFF_RANGE\" in\n    *...*|..*|*..|-*|*..-*) echo \"[shepherd] ERROR: DIFF_RANGE must be explicit base..head commits\"; exit 1 ;;\n    *..*) ;;\n    *) echo \"[shepherd] ERROR: DIFF_RANGE must be explicit base..head commits\"; exit 1 ;;\nesac\ngit rev-parse --verify --end-of-options \"${DIFF_RANGE%%..*}^{commit}\" >/dev/null 2>&1 &&\n    git rev-parse --verify --end-of-options \"${DIFF_RANGE#*..}^{commit}\" >/dev/null 2>&1 || { echo \"[shepherd] ERROR: DIFF_RANGE endpoint unavailable\"; exit 1; }\ngit diff --name-only \"$DIFF_RANGE\" -- >/dev/null || { echo \"[shepherd] ERROR: cannot read DIFF_RANGE\"; exit 1; }\n\nPACKAGE=$(gh repo view --json name --jq .name 2>/dev/null || echo \"mypackage\")\nPACKAGE=$(python -c \"\ntry: import tomllib\nexcept ImportError: import tomli as tomllib  # tomllib is 3.11+; tomli backport on 3.10\nprint(tomllib.load(open('pyproject.toml','rb'))['project']['name'])\" 2>/dev/null || echo \"$PACKAGE\")\n\n_EXTRACT_SCRIPT=\"${CLAUDE_PLUGIN_ROOT}/bin/extract_changed_symbols.py\"\n[ -f \"$_EXTRACT_SCRIPT\" ] || { echo \"\u26a0 extract_changed_symbols.py not found \u2014 verify oss plugin installation\"; exit 1; }\n[ -f \"${CLAUDE_PLUGIN_ROOT}/bin/search_downstream_consumers.py\" ] || { echo \"\u26a0 search_downstream_consumers.py not found \u2014 verify oss plugin installation\"; exit 1; }\nCHANGED_SYMBOLS=$(python \"$_EXTRACT_SCRIPT\" \"$DIFF_RANGE\") || { echo \"[shepherd] ERROR: symbol extraction failed\"; exit 1; }\n\nif [ -z \"$CHANGED_SYMBOLS\" ]; then\n    echo \"[shepherd] INCOMPLETE: bounded extractor returned no symbols \u2014 downstream impact unverified; manual assessment required\"\n    exit 1\nelse\n\n    echo \"$CHANGED_SYMBOLS\" | python \"${CLAUDE_PLUGIN_ROOT}/bin/search_downstream_consumers.py\" --package \"$PACKAGE\"\nfi"
     },
+    "68943b94476c06d538f358e1b687436a34a8b18390108d83d2c39978c5dcabaf": {
+      "kind": "command",
+      "src": "skills/resolve/modes/push.md:131"
+    },
     "68a424c5501aeff13eafcf23d0b500db15ecece06540938389aaa556c13d8085": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:117"
@@ -3341,7 +3405,7 @@
     },
     "68b30de8c6d883c51e9b40cb57cac7afab5e837865538972dc2aef9b792da6a9": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "68c72c1d99c7cda11b0ddee455c7d7b4b0cc95a7d22a04a96e80598c9abd6354": {
       "kind": "command",
@@ -3361,7 +3425,7 @@
     },
     "69210b147c6096af212fd79bcea7454441d0883e41d778456fc7f84448fa89db": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:191"
+      "src": "skills/review/modes/preflight.md:182"
     },
     "6945b4ef951be4dc7bcdc66e08f7158ebc7a0817ae214ce6ec773fb9014ad724": {
       "kind": "command",
@@ -3379,6 +3443,10 @@
     "6999b7a3dcf5088cdeb62ce1e2c9aba8bc110ef7077fb62a56e5bfd31d9b44a0": {
       "kind": "command",
       "src": "skills/_shared/worktree-isolation.md:15"
+    },
+    "69ed33638947796f028092ee31d5b249d41e2c53af31715dc2fde8104558d225": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "69fdc22ec394116018ee9ab722fa6d15a700259fcbc44a44d2001bc53b12dcc3": {
       "kind": "command",
@@ -3414,7 +3482,7 @@
     },
     "6b3611d80125ebc6202b573ca55b454348fac88d8ca65de9403f47f1b335e02e": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:191"
+      "src": "skills/review/modes/preflight.md:182"
     },
     "6b5643b9e6d3b096d2f0611387a2a75082afeeaf07fb4fc780c34a4058bc1ab4": {
       "kind": "command",
@@ -3469,10 +3537,6 @@
       "kind": "command",
       "src": "agents/repo-warden.md:40"
     },
-    "6d505386ea20ff41e59ba7c4b63671a3a4dbf6afac8ca26bf1dc2ebf4aa3f14a": {
-      "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
-    },
     "6d6f3d659a8618daa2a6455314feb89e60ed58651d486490c40f2666c0dc1b54": {
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:107"
@@ -3480,6 +3544,10 @@
     "6d7a74a646383f638de57c6db4bb71bf095356fc483fbe09ddf9a56d789b6b17": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:117"
+    },
+    "6d97f558a4425f5717be771c026f00251c6f24cd61000877ff63516648597178": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "6d9a5bcafbcf00eafc7ef315415b32441e5fc3b1558ac03b2e99a085dee13010": {
       "kind": "command",
@@ -3527,7 +3595,7 @@
     },
     "6f4399ddf7a50e278002280f9b06189d504c95e191010770172c2b7551504e93": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:166"
+      "src": "skills/review/SKILL.md:168"
     },
     "6f79ac4c0c5861d994823b16b06d3570a0bc7f21b645f7822a45680addd338b9": {
       "kind": "block",
@@ -3551,7 +3619,7 @@
     },
     "6fa76261fbb22d843f9521917ba36627699c83103402ead9c27fe14aee56d03a": {
       "kind": "block",
-      "src": "skills/resolve/modes/final-report.md:143"
+      "src": "skills/resolve/modes/final-report.md:158"
     },
     "6fb8db122f8788f0234fcf3b7f8be015712f547f402ee9190c0a4364899785aa": {
       "kind": "command",
@@ -3575,7 +3643,7 @@
     },
     "70ab4aa8e86cb8393d7cca532c41272bd6c12dc0645a5483cd9dce12fb0b3372": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "70b989c9d0034bfd9663cbf7e995758c3e2cec112c0ca26f30c8469c94c6dab0": {
       "kind": "command",
@@ -3663,15 +3731,11 @@
     },
     "72c4a36011c581ef70790a5113efe57e4c3ebb92b827307198040c9c670807c9": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:141"
+      "src": "skills/review/modes/scope-context.md:127"
     },
     "72d27c49c5d5690eceace74907f0a1f779956900c525ebf8fa978c64c58afd1e": {
       "kind": "block",
       "src": "skills/release/modes/delegation-strategy.md:27"
-    },
-    "72dccc9e7f40fb7ddfa05c041e739d68c05bdae027b6c5f4e9b633bdf1b8651b": {
-      "kind": "command",
-      "src": "skills/review/modes/scope-context.md:67"
     },
     "72e327eda6d5194e1386ad63611c60e39f99f81381bd7bd96e8e2d40bcc12ac5": {
       "kind": "command",
@@ -3691,7 +3755,7 @@
     },
     "730f037f11f6f6b74ad163ffe607b087ed95fbdc7986af4f6009f5c3995fc2eb": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:191"
+      "src": "skills/review/modes/preflight.md:182"
     },
     "73334d72db7d5f490bf8542c8386acac3f1188351b43c50424ff2e3151a89d4c": {
       "kind": "command",
@@ -3743,7 +3807,7 @@
     },
     "7451103b14751c936495755738a28eb5356f392dd7be735f3de052007565eb58": {
       "kind": "command",
-      "src": "skills/review/modes/acceptance-gate.md:77"
+      "src": "skills/review/modes/acceptance-gate.md:78"
     },
     "745ac27ea3fccef5ab428826b2acd1e66535deee7fb77387893e353082eb4b2a": {
       "kind": "block",
@@ -3759,7 +3823,7 @@
     },
     "748fd6939c384cdf938b6101f4b6f00921b5fbe378b113fd59da6edc009b89b2": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "749a54c0b92d623fc737eb19479c7fb8751880ee30387b4a7e5e616e5cda7a98": {
       "kind": "command",
@@ -3776,7 +3840,7 @@
     },
     "74be27dba4917bb61dde31e9d66e87f4798b43d7f3997739f885f4e1031666ba": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:117"
+      "src": "skills/resolve/modes/final-report.md:132"
     },
     "74c6ca05cd5133224d171d3c4fab11a5b0dec36664eb5b806e82f88e961c2ded": {
       "kind": "command",
@@ -3796,7 +3860,11 @@
     },
     "7531ff71fcc615866809e504826240b799aaf4eeab02ee1abc2a219753592209": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:205"
+      "src": "skills/review/modes/post-agent.md:211"
+    },
+    "7554f46927e68c39129835d85c42c845751146b88a25bca6c6092b21325e54e0": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "7589cae078692f1fb5824365afa8c416311dc97a946929689e3c7fb23f46a07c": {
       "kind": "command",
@@ -3817,7 +3885,7 @@
     },
     "75edfb363ef968f209dbfe5e553a14e31020150c3a1e391677981a4dfc79b87a": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:191"
+      "src": "skills/review/modes/preflight.md:182"
     },
     "765ea53b01e3d5e8c3d801745fd1622342134dc3a184f521742361a2f366b318": {
       "kind": "command",
@@ -3833,11 +3901,11 @@
     },
     "76f725f132e3cacb5472f9edfa199b3022055ffbd40f82219cf28f3bc6afc1df": {
       "kind": "block",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
     },
     "76f80b4461153dc0cac2ef62c1b672d98bd42890bb587eb9b872b6b08ad31ee5": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
     },
     "773d31ae7c59ab1421a9fb283ea008a1892fe27b8c0e8fa7df1a3b477fb29e90": {
       "kind": "command",
@@ -3857,7 +3925,7 @@
     },
     "7789350b71ec320efd42c6941781331d00d950e569e7bd69c2c9caff6b6d0145": {
       "kind": "block",
-      "src": "skills/review/modes/post-agent.md:128",
+      "src": "skills/review/modes/post-agent.md:134",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r _REPORT_DIR < \"${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}\" 2>/dev/null || _REPORT_DIR=\"\"\n[ -n \"$_REPORT_DIR\" ] || { echo \"! BLOCKED \u2014 report-dir sentinel missing; cannot validate publication\"; exit 1; }\npython \"$PLUGIN_ROOT/bin/find_review_report.py\" --report \"$_REPORT_DIR/review-report.md\" --producer"
     },
     "77ebd6c061cc7f47ed92275d5491fc7a0069afae2be704c5b2264ddb1b6de0bc": {
@@ -3889,13 +3957,9 @@
       "kind": "command",
       "src": "skills/review/modes/preflight.md:28"
     },
-    "797d51b0b7ad80d79f34ca967eacdd1ce0c8b25562d881013d894cd1bc1ee043": {
-      "kind": "command",
-      "src": "skills/review/modes/acceptance-gate.md:114"
-    },
     "79bf2f76a688225af3218dcc80cd77373cd45e1bc087335cfbf35a5d94ad9315": {
       "kind": "block",
-      "src": "skills/review/modes/post-agent.md:180",
+      "src": "skills/review/modes/post-agent.md:186",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r _PR_TAG < \"${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}\" 2>/dev/null || _PR_TAG=\"unknown\"\nIFS= read -r _REPORT_DIR < \"${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}\" 2>/dev/null || _REPORT_DIR=\"\"\nIFS= read -r _RUN_DIR < \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\" 2>/dev/null || _RUN_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" \"oss:review\" \"reply (after consolidation)\" \"$_RUN_DIR\" \"final-report=$_REPORT_DIR/review-report.md, pr=$_PR_TAG\" \"draft contributor reply (--reply) or stop at Step 7\"\n[ -s \"$_REPORT_DIR/findings.jsonl\" ] && jq -r 'select(.codex_eligible == true) | \"\\(.id)\\t\\(.title)\"' \"$_REPORT_DIR/findings.jsonl\""
     },
     "7a02645b61157802a847cef3ac1d2ed199fd1ced822fa7448674206727c45686": {
@@ -4007,10 +4071,6 @@
       "kind": "command",
       "src": "skills/resolve/modes/exec-approval.md:30"
     },
-    "7c2ce1b943a5d6383b86be83754c746008766418bcdd8940010a1ca96963f43a": {
-      "kind": "block",
-      "src": "skills/review/modes/scope-context.md:67"
-    },
     "7c337e8fb1ba305a02d738f50f72d904408431c01af689674a5894ea3d3e5f71": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:29"
@@ -4025,7 +4085,7 @@
     },
     "7cd14fb1ca03cd4240c61f2c57cddd8fee639bd0f54b6655f5cbfac198913e08": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:75"
+      "src": "skills/review/modes/post-agent.md:82"
     },
     "7ce3435b66e31f4e021534ae0caf5646a2c41ce1bd4a15832a46527ec1b4cc9e": {
       "kind": "command",
@@ -4047,10 +4107,6 @@
       "kind": "command",
       "src": "skills/release/modes/audit.md:43"
     },
-    "7de7c39af52724244bdaab668a32d0fe6516782a785adc78a99538f219b1c93f": {
-      "kind": "block",
-      "src": "skills/review/modes/acceptance-gate.md:114"
-    },
     "7e0286a7dadf00224525926865d8d71d0e9eb3da0f69c8ac89c9fce84619435a": {
       "kind": "command",
       "src": "skills/review/modes/scope-detection.md:9"
@@ -4058,6 +4114,10 @@
     "7e0b4722df9a701e9514d2b781b1aa6b8090fb44fa72426ce6f4a4ebd8ad4790": {
       "kind": "command",
       "src": "skills/analyse/SKILL.md:135"
+    },
+    "7e5eea09f783bc7c6bcf35674f5e1e67425cf180d7f4f9e61380f7795a9fb091": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "7e77430e2ce3061a961d30e0b102e3d803b6e9cd23236e64080a8bcdcb23d418": {
       "kind": "command",
@@ -4079,6 +4139,10 @@
     "7e98771503a13d7c0350542ea6bd919bb473961a53adc664a9290936f3508ebe": {
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:107"
+    },
+    "7f56ed49b365520fa164b11df09e96a066fed3e3ca4216175391888a03517f40": {
+      "kind": "command",
+      "src": "skills/resolve/modes/push.md:131"
     },
     "7f6471cc9c28d93d32e4abf304fe7ebe82e4585e033715ea94542bddb6374b19": {
       "kind": "command",
@@ -4120,17 +4184,13 @@
       "kind": "command",
       "src": "agents/gh-scraper.md:36"
     },
-    "80a7a60d82c163b76f49814e74ae6563e1d13f14d0c7b06e60e738ee7987dece": {
-      "kind": "command",
-      "src": "skills/review/modes/scope-context.md:67"
-    },
     "80b5f76e7667bf8e917ecd67e65c90806d3d7e74e1560e35fd33ca7d199bb6de": {
       "kind": "command",
       "src": "skills/release/modes/adversarial-review.md:9"
     },
     "80ce9d329b4a81b7b7f833ba260027f56b8b1147109415f19a8384a4a0986aa3": {
       "kind": "command",
-      "src": "skills/resolve/modes/preflight.md:150"
+      "src": "skills/resolve/modes/preflight.md:153"
     },
     "8108f7bfcca989b1a38c59b335fbc6d1437196122ba698932994c118d7c91659": {
       "kind": "block",
@@ -4158,10 +4218,6 @@
       "kind": "command",
       "src": "skills/review/modes/codemap-context.md:15"
     },
-    "81505f9f4da0bef639d7f24cfbf5cbc48038d96435fbc5ceb4c318e33d42f5be": {
-      "kind": "command",
-      "src": "skills/review/modes/post-agent.md:52"
-    },
     "8179bc6301ce3f3e4978b58acccb670354335c20eb116deaa9d0b585268e510b": {
       "kind": "command",
       "src": "skills/_shared/worktree-isolation.md:26"
@@ -4176,12 +4232,16 @@
     },
     "820669b6959aad16ad3e0ced21c36033602368463796ac143f29a75a858d8508": {
       "kind": "block",
-      "src": "skills/review/modes/preflight.md:191",
+      "src": "skills/review/modes/preflight.md:182",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r CLEAN_ARGS < \"${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}\" 2>/dev/null || CLEAN_ARGS=\"\"\n[ -f \"${TMPDIR:-/tmp}/oss-review-flags-${CSID}\" ] && while IFS='=' read -r _SK _SV; do case \"$_SK\" in REPLY_MODE) REPLY_MODE=$_SV ;; WT_ENABLED) WT_ENABLED=$_SV ;; FILL_GAPS_MODE) FILL_GAPS_MODE=$_SV ;; DIRECT_PATH_MODE) DIRECT_PATH_MODE=$_SV ;; REVIEW_FILE) REVIEW_FILE=$_SV ;; esac; done < \"${TMPDIR:-/tmp}/oss-review-flags-${CSID}\"\nIFS= read -r SNAP_DIR < \"${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}\" 2>/dev/null || SNAP_DIR=\"\"\n\n[ \"${FILL_GAPS_MODE:-false}\" = \"false\" ] || { echo \"PRIOR_REPORT=\"; exit 0; }\n_PRIOR=\"\"\nif [ \"$DIRECT_PATH_MODE\" = \"false\" ] && [[ \"$CLEAN_ARGS\" =~ ^[0-9]+$ ]]; then\n    python \"$PLUGIN_ROOT/bin/find_review_report.py\" --pr \"$CLEAN_ARGS\" \\\n        --path-out \"${TMPDIR:-/tmp}/oss-review-prior-report-${CSID}\" >/dev/null\n    IFS= read -r _PRIOR < \"${TMPDIR:-/tmp}/oss-review-prior-report-${CSID}\" 2>/dev/null || _PRIOR=\"\"\nfi\nif [ -n \"$_PRIOR\" ]; then\n\n    IFS= read -r _PRIOR_SHA < \"$(dirname \"$_PRIOR\")/head-sha.txt\" 2>/dev/null || _PRIOR_SHA=\"\"\n    [ -n \"$_PRIOR_SHA\" ] || _PRIOR_SHA=$(grep -m1 '^Gate:' \"$_PRIOR\" 2>/dev/null | grep -oE '@[0-9a-f]{7,40}' | tr -d @)\n    _HEAD_SHA=$(jq -r '.headRefOid // empty' \"$SNAP_DIR/pr-meta.json\" 2>/dev/null)\n    echo \"PRIOR_DATE=$(grep -m1 '^Date:' \"$_PRIOR\" 2>/dev/null | cut -d: -f2- | tr -d ' ')\"\n    echo \"PRIOR_SHA=${_PRIOR_SHA:-unknown} HEAD_SHA=${_HEAD_SHA:-unknown}\"\n\n    case \"${_HEAD_SHA:-x}\" in \"${_PRIOR_SHA:-y}\"*) echo \"SHA_MATCH=true\" ;; *) echo \"SHA_MATCH=false\" ;; esac\nfi\n\n_PRIOR_RES=\"\"\n[ -n \"$_PRIOR\" ] && [ -s \"$(dirname \"$_PRIOR\")/resolution.jsonl\" ] && _PRIOR_RES=\"$(dirname \"$_PRIOR\")/resolution.jsonl\"\nprintf '%s\\n' \"$_PRIOR_RES\" > \"${TMPDIR:-/tmp}/oss-review-prior-resolution-${CSID}\"\necho \"PRIOR_REPORT=$_PRIOR\"\n[ -z \"$_PRIOR_RES\" ] || echo \"PRIOR_RESOLUTION=$_PRIOR_RES ($(grep -c . \"$_PRIOR_RES\") records)\""
     },
     "8230b141b393e61ec2def31984ae6ab950bbb677d5658c9cdf53d4cb154d21be": {
       "kind": "command",
       "src": "skills/review/modes/preflight.md:28"
+    },
+    "823c60bab466206e11b811c9dc4c1b52c951dbda6da769e54442b6c420181b25": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "825769eed1c7cd6531f7d329eba635d64140a7ee9d8c6363ff00a953d7e071f9": {
       "kind": "command",
@@ -4190,6 +4250,10 @@
     "8266fb5e682369d2fbae1d0ecda8460e811e9c9b6c90c12479e45ae7d30d1520": {
       "kind": "command",
       "src": "skills/resolve/modes/preflight.md:14"
+    },
+    "8281a110c71383cbac39fe65bb42621946a71aaa4a34ba0dd0f106e42f9c9e27": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "83299e5c4098d891fe9de83fca4630af88cabd36f0bce54e6881e8d6d47d4e3c": {
       "kind": "command",
@@ -4297,11 +4361,11 @@
     },
     "85f5aa9b11d86c4e887f286b8ab05b7f1aa632b71c01b1285ef64997c5f3013b": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
     },
     "85fb74f10c9f6ff6748f1f63d4fb6e7bebf5b849869ac1dc0ecd4a60970e14b8": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:205"
+      "src": "skills/review/modes/post-agent.md:211"
     },
     "86006195620836c8b23cc367f23ab7cd304ac4bab6ab455790a8d42abae73286": {
       "kind": "command",
@@ -4321,7 +4385,7 @@
     },
     "869a70b4e030f4b8bd5e799bf238ddfa6cf84afdfeecc65d23ec7ac78236514e": {
       "kind": "block",
-      "src": "skills/resolve/modes/final-report.md:51",
+      "src": "skills/resolve/modes/final-report.md:66",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r REPORT_FILE < \"${TMPDIR:-/tmp}/resolve-report-file-${CSID}\" 2>/dev/null || REPORT_FILE=\"\"\nIFS= read -r IMPL_DIR < \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" 2>/dev/null || IMPL_DIR=\"\"\nIFS= read -r BASE_SHA < \"${TMPDIR:-/tmp}/resolve-base-sha-${CSID}\" 2>/dev/null || BASE_SHA=\"\"\nif [ -n \"$REPORT_FILE\" ] && [ -f \"$REPORT_FILE\" ] && [ -f \"$IMPL_DIR/action-items.jsonl\" ]; then\n    python \"$PLUGIN_ROOT/bin/append_resolution.py\" --impl-dir \"$IMPL_DIR\" --review-dir \"$(dirname \"$REPORT_FILE\")\" --base-sha \"$BASE_SHA\"\nelse\n    echo \"\u2192 no review report consumed \u2014 resolution ledger skipped\"\nfi"
     },
     "86a85a902f1b0d0387d215277ee24be8fdcdcbd13db5245e8734854c27f54e03": {
@@ -4338,7 +4402,7 @@
     },
     "8704c54232afff95c735a15d3db909ae70b9d453e3128dac47cd15c15dcf30f4": {
       "kind": "block",
-      "src": "skills/resolve/modes/final-report.md:117"
+      "src": "skills/resolve/modes/final-report.md:132"
     },
     "872170c085d5d48ccb1fb6971f4984b456fa0920990654a78a41515220e9293b": {
       "kind": "command",
@@ -4376,10 +4440,6 @@
       "kind": "command",
       "src": "skills/analyse/modes/codemap-signals.md:11"
     },
-    "87eda59cb3fcca64e60d0ecb6531808e4872dbf7384aa205ae0d9862d476aeeb": {
-      "kind": "block",
-      "src": "skills/review/modes/acceptance-gate.md:77"
-    },
     "87fdc8cf678a77376d6754dda958a440dcd6e1b4209abb4769981c8c117e2835": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:576"
@@ -4390,7 +4450,7 @@
     },
     "881b4902b97245b356b1ad2540abcc7dd6d5748f0edecc4de9f3492ca96dd8b9": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:175"
+      "src": "skills/resolve/modes/push.md:181"
     },
     "8831af9bd38caf066623b323b763669ecab1567519e86f08d9dd924f3435b009": {
       "kind": "command",
@@ -4403,6 +4463,10 @@
     "88543e2a56f2b50e78551fc0f03a55eb2163873e56d3be70e8d8c9b01c47fa43": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-prelude.md:108"
+    },
+    "886440f455ed35d5cc763c059ccd481219d8f3c025036fd68f10fffaf3a2047d": {
+      "kind": "command",
+      "src": "skills/resolve/modes/push.md:131"
     },
     "8865a1fd8b0e2fa67216547f0d34ebac85ddc9fed118261cae9a91a9e22f1eb4": {
       "kind": "command",
@@ -4537,6 +4601,10 @@
       "kind": "command",
       "src": "skills/review/modes/agent-launch.md:15"
     },
+    "8aa601b137e63ff88c5e4fbdf4e52b6ec1ccbb3a89306d76511e61a0309fe3e8": {
+      "kind": "command",
+      "src": "skills/resolve/modes/push.md:131"
+    },
     "8ada1a1399dfd611c20b825ab9101a50467472c1473dfe6713a80fcb15f50734": {
       "kind": "block",
       "src": "skills/setup/SKILL.md:123",
@@ -4553,7 +4621,7 @@
     },
     "8b4f5e82435ee7413718ca4c7270f3e8eb0dab6e24f19843aac78b9529449d57": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:141"
+      "src": "skills/review/modes/scope-context.md:127"
     },
     "8b654923b048a097a6e568abb95febf10e0cfb313683e1a772c6e1e897984760": {
       "kind": "command",
@@ -4588,25 +4656,29 @@
       "kind": "command",
       "src": "skills/review/modes/blind-solve.md:9"
     },
-    "8c6b5431ef6d03a1fe78c05f9c675517dda52204e4d9c0c9cfcfcf3377739cc8": {
-      "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
-    },
     "8c7f92f883353c11cae535446bf8164e866e5a4cce34cc0f3ddc80eb4149e597": {
       "kind": "command",
       "src": "skills/analyse/SKILL.md:360"
     },
     "8c951964b8aa0b420b03817297b38b317143308dab72bfb94f942fff102816c5": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:225"
+      "src": "skills/review/modes/post-agent.md:231"
     },
     "8cb55986e2d1da1061e334529e96516aae9e3a427ecf2e9a0899171336f3c21e": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:348"
     },
+    "8cf71db34dc8dc0d305f05beb1bfac538af9ef2c0d72ba65e7940b34f7e04d95": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
     "8d074cbc345df825570183f2f84199e561b44ecd0e9ce7a98c1df4a3eae8ac94": {
       "kind": "command",
       "src": "skills/release/modes/scope-validation.md:54"
+    },
+    "8d11b3cfe73337639a05c81dbf4c32305f10948c60fdc78542d3a051eabce7fd": {
+      "kind": "command",
+      "src": "skills/resolve/modes/push.md:131"
     },
     "8d31e4613c61c2aad14ca3e00655ac6091ffb9380bfd68ffcc7c5a4ef2e0238c": {
       "kind": "command",
@@ -4642,7 +4714,7 @@
     },
     "8e36624de263350cdce4514f7f95703826ec05872a7c0b5f2d61e91e4c8606e7": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:181"
+      "src": "skills/review/SKILL.md:183"
     },
     "8e37042b9290e4fc0d54e3d0d62273dabd877b848804540716dcbd8bbf2f0edb": {
       "kind": "command",
@@ -4651,10 +4723,6 @@
     "8e3f8b8e10c1c1e7f38651180c6e07c5b5fa0958874d3a7f14e07955033a702c": {
       "kind": "command",
       "src": "skills/resolve/modes/checkout.md:30"
-    },
-    "8e41723f77f4007111109f35eda257427b3e5472c3aa8414588c28c0126e962a": {
-      "kind": "command",
-      "src": "skills/review/modes/acceptance-gate.md:114"
     },
     "8ef7baefc034c9d1f466f07320c5dd0951792c51aefc2668b61fcdd6171c2bea": {
       "kind": "command",
@@ -4687,6 +4755,10 @@
     "8fdf3aad007aa581182901f687d35044a2b7ff443998b6c82960103288ab8183": {
       "kind": "command",
       "src": "skills/resolve/modes/report-intake.md:13"
+    },
+    "900b5996fc07f33e16b60ebad61c3d1875642473a1143713de89b9d42f2376ae": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "9068f09aaf061002e5bc17ee037f3e28aded2f21d8188ede0982241a029eecf1": {
       "kind": "command",
@@ -4724,9 +4796,13 @@
       "kind": "command",
       "src": "skills/resolve/modes/pr-intelligence.md:78"
     },
+    "91667bf5d04d4b9dd3b059b165337bd0097fd67efca8a9eca5ce4273da28d4c4": {
+      "kind": "block",
+      "src": "skills/review/modes/acceptance-gate.md:78"
+    },
     "91a09570f82aec35de13a5e89e1b2fe83995c9e133a09424aaacc667d9a34054": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "91acaa27ba35171620e3e3f7f5496f792245ad3931ab61e5445c74ec5b2d730f": {
       "kind": "command",
@@ -4799,7 +4875,7 @@
     },
     "93fa580bf89700babc6877011d9fa4b1f65744a8fadd52f9908624cc65421bb0": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:134",
+      "src": "skills/review/SKILL.md:136",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\n_OSS_REVIEW=\"$PLUGIN_ROOT/skills/review\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_REVIEW/modes/scope-context.md\""
     },
     "940084f76a5c91b7b8d31251894a50c3ada9594f28b78e454edeb9f6ec778ee4": {
@@ -4816,7 +4892,7 @@
     },
     "946c83ef328a09e30ab368b3305a33f3b9a46422ced29cae1440bed1a0c4e05f": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:111"
+      "src": "skills/review/modes/scope-context.md:97"
     },
     "947bf64921a7111781d313f7991369167fca9a2d7ba543f6f962c97eacdf556f": {
       "kind": "command",
@@ -4883,6 +4959,10 @@
       "kind": "command",
       "src": "skills/resolve/modes/conflict-resolution.md:147"
     },
+    "965c51eb4e579b87037d596c7c93316cec2c75a7abf4ac2e39d227c29456ade5": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
     "968d0dd26f42e62da1a94dcf4bf83a9453338cdbf3286070db9e0674d0459aa6": {
       "kind": "block",
       "src": "skills/release/modes/audit.md:9"
@@ -4918,7 +4998,7 @@
     },
     "97b8de6734af3938f36493203fcf1f446938f2458d5e87cee652b71b95471a0f": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:161"
+      "src": "skills/resolve/modes/push.md:167"
     },
     "97c4536ace50d21c9bbb232c172cd249f4722dd51dc5c8ccd45d24080aa79ae6": {
       "kind": "block",
@@ -4972,7 +5052,7 @@
     },
     "989ebf8a922537031adf2d5cb7b32b83fa0a7ea5b404b5af13900f839df9437e": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:178"
+      "src": "skills/review/modes/preflight.md:169"
     },
     "98b2049f933ac37fe1075e0e0aff53368536f700790597fcdd0d357ba1050c2e": {
       "kind": "command",
@@ -4990,13 +5070,9 @@
       "kind": "block",
       "src": "skills/release/modes/release-draft-template.md:395"
     },
-    "992791814c792e552109754234fbba503db949243c3de3e69fb6410ae30ae3d4": {
-      "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
-    },
     "9932cf4121e8c5c186d6a1d88626ca7a49bfec9e1af55603b4aaccf8d87b723f": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:240"
+      "src": "skills/review/modes/preflight.md:231"
     },
     "999954fec044b67d1c578292bbdf26576fc812877eec1b901a181ce3f6c6d47f": {
       "kind": "block",
@@ -5019,6 +5095,10 @@
     "9aa5f8b563e30ad42f21b1f1cce09ee3d30bf6189fe61a6399b7091da292863c": {
       "kind": "command",
       "src": "skills/release/modes/delegation.md:88"
+    },
+    "9ad245a3200ab485fe36c16d42b77f9909a9da422b8c4562981059395122bd31": {
+      "kind": "command",
+      "src": "skills/resolve/modes/final-report.md:9"
     },
     "9aea29411c3d6f4d9c3b16178ccd0e8ed4784d852abd07c1e65fbb2d3fd53da7": {
       "kind": "command",
@@ -5052,6 +5132,11 @@
       "kind": "block",
       "src": "skills/release/modes/scope-validation.md:54"
     },
+    "9bdb24f103a6f8e7bf73c7cadf0fc55d54b21d3bc1faa812fa6ac2fe7346a2e9": {
+      "kind": "block",
+      "src": "skills/resolve/modes/final-report.md:9",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r _PR_NUMBER < \"${TMPDIR:-/tmp}/resolve-pr-number-${CSID}\" 2>/dev/null || _PR_NUMBER=\"n/a\"\nIFS= read -r _IMPL_DIR < \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" 2>/dev/null || _IMPL_DIR=\"n/a\"\nIFS= read -r PUSH_STATUS < \"${TMPDIR:-/tmp}/resolve-push-status-${CSID}\" 2>/dev/null || PUSH_STATUS=\"unknown\"\n_PRESERVE=\"pr=${_PR_NUMBER}, final-report=pending-write, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv, push-status=${PUSH_STATUS}, push-unblock=${_IMPL_DIR}/push-unblock.txt\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-sentinel resolve-keep-items \"oss:resolve\" \"final-report (after push)\" \"$_IMPL_DIR\" \"${_PRESERVE}\" \"write final report \u2192 post-PR action gate\"\necho \"PUSH_STATUS=$PUSH_STATUS\"\nif [[ \"$_PR_NUMBER\" =~ ^[1-9][0-9]*$ ]]; then\n    IFS= read -r _URL < \"${TMPDIR:-/tmp}/resolve-pr-html-url-${CSID}\" 2>/dev/null || _URL=\"\"\n    [[ \"$_URL\" =~ ^https://[^/]+/[^/]+/[^/]+/pull/${_PR_NUMBER}$ ]] || _URL=\"link unavailable\"\n    _DELIVERY=\"$PUSH_STATUS\"\n    if [ \"$PUSH_STATUS\" = pushed ]; then\n        IFS= read -r _LOCAL_HEAD < \"${TMPDIR:-/tmp}/resolve-local-head-${CSID}\" 2>/dev/null || _LOCAL_HEAD=\"\"\n        IFS= read -r _PR_HEAD < \"${TMPDIR:-/tmp}/resolve-pr-head-${CSID}\" 2>/dev/null || _PR_HEAD=\"\"\n        _DELIVERY=unverified\n        _OID_RE='^([0-9a-f]{40}|[0-9a-f]{64})$'\n        [[ \"$_LOCAL_HEAD\" =~ $_OID_RE ]] && [ \"$_PR_HEAD\" = \"$_LOCAL_HEAD\" ] && _DELIVERY=\"verified at $_PR_HEAD\"\n    fi\n    printf 'PR_HANDOFF=PR #%s %s \u2014 %s\\n' \"$_PR_NUMBER\" \"$_URL\" \"$_DELIVERY\"\nfi\ncase \"$PUSH_STATUS\" in blocked-guard|blocked-permission|blocked-needs-manual-push|rejected-remote) echo \"PUSH_UNBLOCK=$_IMPL_DIR/push-unblock.txt\"; cat \"$_IMPL_DIR/push-unblock.txt\" 2>/dev/null || echo \"\u26a0 push-unblock.txt missing\" ;; esac\ncase \"$PUSH_STATUS\" in rejected-remote) echo \"PUSH_ERROR:\"; cat \"$_IMPL_DIR/push-error.txt\" 2>/dev/null || echo \"\u26a0 push-error.txt missing\" ;; esac\nIFS= read -r INTAKE_DEGRADED < \"${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}\" 2>/dev/null || INTAKE_DEGRADED=\"\"\n[ -z \"$INTAKE_DEGRADED\" ] || { echo \"INTAKE=degraded $INTAKE_DEGRADED\"; cat \"${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}\" 2>/dev/null || echo \"\u26a0 intake gap list missing\"; }\nIFS= read -r _C1_QUOTA < \"$_IMPL_DIR/c1-quota-blocked.txt\" 2>/dev/null && echo \"C1 $_C1_QUOTA\"\nfind \"$_IMPL_DIR\" -maxdepth 1 -name 'c1-quota-partial-*.patch' 2>/dev/null | sed 's/^/C1_PARTIAL_PATCH=/'\nIFS= read -r _OSS_RESOLVE < \"${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}\" 2>/dev/null || _OSS_RESOLVE=\"\"\ncat \"$_OSS_RESOLVE/templates/resolve-report.md\""
+    },
     "9c020484c7e4e1d0f8ac745c03350f610a061d53d780c6d4ef82fcf9b87f06d9": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:576"
@@ -5074,11 +5159,11 @@
     },
     "9c803df592d78b5ac0c907259bdd1d1d882db4602613c915292d94b1ba692b1b": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:205"
+      "src": "skills/review/modes/post-agent.md:211"
     },
     "9c815fb61a2a343b7361ab57b6b71b8b0d7b5a9e60ef681cd245d37969182248": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:128"
+      "src": "skills/review/modes/post-agent.md:134"
     },
     "9c82e2829eb3953bde0f5286154fe8bf4145f169b7f3695b152f48493a3be1ae": {
       "kind": "command",
@@ -5125,9 +5210,13 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase2.md:69"
     },
+    "9d7ccba8b48200f5b4814c8e84f7b4f86bf4a64030aebf4e67e70a29cf720540": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
     "9d958f14926f21a126585906cbf83b3aa9527ec527d2419089a269160faa9331": {
       "kind": "command",
-      "src": "skills/resolve/modes/preflight.md:150"
+      "src": "skills/resolve/modes/preflight.md:153"
     },
     "9d9969f03d0340ab809a1547e9b3c90ced28e4d3d2cca74415a4e72a8c634943": {
       "kind": "block",
@@ -5161,7 +5250,7 @@
     },
     "9e4dbff496e28c2af3521be07b34abcbcff0fe13900adc5ac72f065bac19c72e": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:141"
+      "src": "skills/review/modes/scope-context.md:127"
     },
     "9e50ace6b468a47e63a3751daee6f1112ae4ae9fde9570a7b66296857a27fc8e": {
       "kind": "command",
@@ -5178,11 +5267,6 @@
     "9f1154350d3d3e457c8cc9e56cd4420f22bd2e196c440f560ad0ec983967b310": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:29"
-    },
-    "9f116e5685653883e3807b6be0de51ccc5ec989607063e95dcd8ee6a6d73f2b2": {
-      "kind": "block",
-      "src": "skills/resolve/modes/final-report.md:9",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r _PR_NUMBER < \"${TMPDIR:-/tmp}/resolve-pr-number-${CSID}\" 2>/dev/null || _PR_NUMBER=\"n/a\"\nIFS= read -r _IMPL_DIR < \"${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}\" 2>/dev/null || _IMPL_DIR=\"n/a\"\nIFS= read -r PUSH_STATUS < \"${TMPDIR:-/tmp}/resolve-push-status-${CSID}\" 2>/dev/null || PUSH_STATUS=\"none\"\n_PRESERVE=\"pr=${_PR_NUMBER}, final-report=pending-write, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv, push-status=${PUSH_STATUS}, push-unblock=${_IMPL_DIR}/push-unblock.txt\"\npython \"$PLUGIN_ROOT/bin/write_skill_contract.py\" --keep-sentinel resolve-keep-items \"oss:resolve\" \"final-report (after push)\" \"$_IMPL_DIR\" \"${_PRESERVE}\" \"write final report \u2192 post-PR action gate\"\necho \"PUSH_STATUS=$PUSH_STATUS\"\ncase \"$PUSH_STATUS\" in blocked-guard|blocked-permission|blocked-needs-manual-push|rejected-remote) echo \"PUSH_UNBLOCK=$_IMPL_DIR/push-unblock.txt\"; cat \"$_IMPL_DIR/push-unblock.txt\" 2>/dev/null || echo \"\u26a0 push-unblock.txt missing\" ;; esac\ncase \"$PUSH_STATUS\" in rejected-remote) echo \"PUSH_ERROR:\"; cat \"$_IMPL_DIR/push-error.txt\" 2>/dev/null || echo \"\u26a0 push-error.txt missing\" ;; esac\nIFS= read -r INTAKE_DEGRADED < \"${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}\" 2>/dev/null || INTAKE_DEGRADED=\"\"\n[ -z \"$INTAKE_DEGRADED\" ] || { echo \"INTAKE=degraded $INTAKE_DEGRADED\"; cat \"${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}\" 2>/dev/null || echo \"\u26a0 intake gap list missing\"; }\nIFS= read -r _C1_QUOTA < \"$_IMPL_DIR/c1-quota-blocked.txt\" 2>/dev/null && echo \"C1 $_C1_QUOTA\"\nfind \"$_IMPL_DIR\" -maxdepth 1 -name 'c1-quota-partial-*.patch' 2>/dev/null | sed 's/^/C1_PARTIAL_PATCH=/'\nIFS= read -r _OSS_RESOLVE < \"${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}\" 2>/dev/null || _OSS_RESOLVE=\"\"\ncat \"$_OSS_RESOLVE/templates/resolve-report.md\""
     },
     "9f12a7a6a54e5ea80c7ebaa14619eaceaf549820275e15395a13e4386a3f9c2e": {
       "kind": "command",
@@ -5223,7 +5307,11 @@
     },
     "a0d973729f2f08fd668e47dd457515a5e19a413a8a061885ec30f61218fd9614": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:182"
+      "src": "skills/resolve/modes/push.md:188"
+    },
+    "a1077bb2ebd727d3ce4fef2f79d574004132b4b714f56152a02bf77fa39444a5": {
+      "kind": "command",
+      "src": "skills/review/modes/preflight.md:118"
     },
     "a129dae110d3f44d9bb0c77d75655ac459d34773ab9dd9f075f9f2070382ee9e": {
       "kind": "command",
@@ -5237,17 +5325,13 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase2.md:311"
     },
-    "a19dca5e52cd1d525944ee881db5c3354b972d184078f07907cc7cf18e8b7c65": {
-      "kind": "command",
-      "src": "skills/review/modes/scope-context.md:67"
-    },
     "a1bb5ca04d7514546166022d2670489b40c36ded7753cc700ba7aa42b92e592a": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-prelude.md:71"
     },
     "a20fedae040ae509c7ff57412b12380d5f140879bc3a5a531c7d6db889eda226": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "a219b464223d286dc329d1db9ac11945b0d9bc116ffd2de67904f9f9a6df6fc7": {
       "kind": "command",
@@ -5275,7 +5359,7 @@
     },
     "a30acaff5fcadee45d1bbe740cae6a49d7cbec69fcd1e06d923debd8dfc88ccf": {
       "kind": "command",
-      "src": "skills/resolve/modes/preflight.md:150"
+      "src": "skills/resolve/modes/preflight.md:153"
     },
     "a30afb2cedf8bfb37a7ef11d60643c8c3d55e5d70e4dea108107c6f50785e853": {
       "kind": "command",
@@ -5296,7 +5380,7 @@
     },
     "a33236d0ca685eee6fad3e89247540d3bde47c2a7edd0922e47164b4a452f8ca": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:205"
+      "src": "skills/review/modes/post-agent.md:211"
     },
     "a39f6093a72333224384fda434a5aed1564b80063b08b0e9fcb5a412c073a5cb": {
       "kind": "block",
@@ -5320,7 +5404,7 @@
     },
     "a3df42f5bf6d40913112afc424211fbfe5db1ff1d474db009cc4376b6f9815ad": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:75"
+      "src": "skills/review/modes/post-agent.md:82"
     },
     "a3f665cef0a978dd27accce93579cccdd06c4362f6e5c83c2ad89c75ddc5b02e": {
       "kind": "command",
@@ -5401,7 +5485,7 @@
     },
     "a5c1130e0370a889992a4dc4525cb9cddb3d9757eae0178a0a712648171c00e9": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:198",
+      "src": "skills/review/SKILL.md:200",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r REVIEW_SKILL_DIR < \"${TMPDIR:-/tmp}/review-skill-dir-${CSID}\" 2>/dev/null || REVIEW_SKILL_DIR=\"\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$REVIEW_SKILL_DIR/modes/post-agent.md\""
     },
     "a5deebbb62e27735d9740f044fdfbeb4a4efdf7e121009482555004faacf7d0f": {
@@ -5410,7 +5494,7 @@
     },
     "a5e89c5516f6bb7202bfb575350dfe72d0923142e4c122ea7cbbec45b8a3aa9b": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
     },
     "a5efb1e6e0f6e00b6d601e18ca2bfdc9e1b4b1dbb3ccb3a1ce6a7bb6e4317f18": {
       "kind": "command",
@@ -5459,7 +5543,7 @@
     },
     "a83cd06441e5d8eb21288b98bcacc6cbf8aa92e74f915caca4a553a1291d26a6": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:191"
+      "src": "skills/review/modes/preflight.md:182"
     },
     "a8498aebde48623400166dcb9bc02b96f986a86de1ecb639e24f959f4ca50c74": {
       "kind": "command",
@@ -5479,7 +5563,7 @@
     },
     "a8f33b68a7c183b640fc8320bb2db112fd93fe3e3554dbd547a9a9b1d57c893b": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:191"
+      "src": "skills/review/modes/preflight.md:182"
     },
     "a90dff37f555f095fe866c94436373b3ea9f7025f931aef136e384c219ed7f7e": {
       "kind": "command",
@@ -5500,7 +5584,7 @@
     },
     "a95b0b58c305af10e4a18b7e5b33f21ff6074f56609e504c85a1ca899f2b27e2": {
       "kind": "command",
-      "src": "skills/review/modes/acceptance-gate.md:77"
+      "src": "skills/review/modes/acceptance-gate.md:78"
     },
     "a9773ff7a563f91d50e4e2a8c7bcd96f2a38743484761284c6f8a4e74f762aa2": {
       "kind": "command",
@@ -5524,7 +5608,7 @@
     },
     "aa6f40d5929913d6be777513f968ab45663d6a4e9bd94af65a3621eceefe0257": {
       "kind": "block",
-      "src": "skills/review/modes/scope-context.md:141",
+      "src": "skills/review/modes/scope-context.md:127",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CLEAN_ARGS < \"${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}\" 2>/dev/null || CLEAN_ARGS=\"\"\n\nCHANGED_FILES=$(cat \"${TMPDIR:-/tmp}/oss-review-changed-files-${CSID}\" 2>/dev/null)\nPY_FILES=$(echo \"$CHANGED_FILES\" | grep '\\.py$' || true)\nIFS= read -r PR_LABELS < \"${TMPDIR:-/tmp}/oss-review-pr-labels-${CSID}\" 2>/dev/null || PR_LABELS=\"\"\nIFS= read -r PR_TITLE < \"${TMPDIR:-/tmp}/oss-review-pr-title-${CSID}\" 2>/dev/null || PR_TITLE=\"\"\nPY_FILE_COUNT=$(echo \"$PY_FILES\" | grep -c . 2>/dev/null)\nIFS= read -r SNAP_DIR < \"${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}\" 2>/dev/null || SNAP_DIR=\"\"\n\nPY_LOC_DELTA=$(awk '/^diff --git /{f=($0 ~ /\\.py(\\\"?)$/); h=0; next} /^@@ /{h=1; next} f && h && /^[+-]/{c++} END{print c+0}' \"$SNAP_DIR/pr.diff\")\n\nNEW_API_LINES=$(awk '/^diff --git /{f=($0 ~ /\\/__init__\\.py(\\\"?)$/ && $0 !~ /\\/(tests?|test_[^\\/]*)\\//); h=0; next} /^@@ /{h=1; next} f && h && /^\\+/{c++} END{print c+0}' \"$SNAP_DIR/pr.diff\")\n\nNON_CONFIG_PY=$(echo \"$PY_FILES\" | grep -vE '(pyproject\\.toml|setup\\.cfg|setup\\.py|requirements.*\\.txt|conftest\\.py)' || true)\n\nSCOPE=$(python \"$PLUGIN_ROOT/bin/classify_pr_scope.py\" --py-files \"$PY_FILE_COUNT\" --loc-delta \"$PY_LOC_DELTA\" --new-api-lines \"$NEW_API_LINES\" --labels \"$PR_LABELS\" --title \"$PR_TITLE\" 2>/dev/null)\necho \"\u2192 SCOPE=$SCOPE (py_files=$PY_FILE_COUNT, py_loc=$PY_LOC_DELTA, new_api=$NEW_API_LINES)\"\n\necho \"$CHANGED_FILES\" | grep -qE '(^|/)(requirements.*\\.txt|pyproject\\.toml|package.*\\.json|Pipfile|poetry\\.lock|setup\\.cfg|.*\\.lock|.*\\.ipynb)$' && CHORE_DEPS=true || CHORE_DEPS=false\n_REVIEW_SCOPE_FILE=\"${TMPDIR:-/tmp}/oss-review-scope-${CLEAN_ARGS}-${CSID}\"\n{\n    echo \"SCOPE=$SCOPE\"\n    echo \"CHORE_DEPS=$CHORE_DEPS\"\n} > \"$_REVIEW_SCOPE_FILE\"\n\necho \"FULL \u00b7 impact unknown: codemap unavailable\" > \"${TMPDIR:-/tmp}/oss-review-impact-${CLEAN_ARGS}-${CSID}\""
     },
     "aaa8e2197c309b4eb3fbcc7fbf37b796e9c1018792397605b2ec52e8889576af": {
@@ -5563,10 +5647,6 @@
     "ab2f532d0a125ebac21f57d977f0638cf5d3bd49be43d17fedcd8d0eb99565f7": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase2.md:151"
-    },
-    "ab4eeade980c9a37bee51bf9b3bb961ec3e45bc5cd76e4da220f2a6c9a24adfb": {
-      "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
     },
     "ab954cf3c94315ae3cda2e8203e62ed4bb0b2b50b8884c345ee1ea808b679eac": {
       "kind": "command",
@@ -5627,11 +5707,11 @@
     },
     "ac48d3c2fbff199d39166a9f178a4dec68c88f98eb9ffb6635ee823c54fb7111": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:181"
+      "src": "skills/review/SKILL.md:183"
     },
     "ac8a8128d8929030b4b9a93761ea9a81f8737362e5d80798c54c88453d3b68a5": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "acf3424a2f0d5f670d9c185fdca98484a9a6b82a1024fa221ad7159df191e7ad": {
       "kind": "command",
@@ -5680,7 +5760,7 @@
     },
     "ae1ac96a74edfa69895d70778854afac5841872fb143bf3904493369d7fe6367": {
       "kind": "block",
-      "src": "skills/review/SKILL.md:181",
+      "src": "skills/review/SKILL.md:183",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CLEAN_ARGS < \"${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}\" 2>/dev/null || CLEAN_ARGS=\"\"\nIFS= read -r SNAP_DIR < \"${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}\" 2>/dev/null || SNAP_DIR=\"\"\nOSS_SIGNALS=\"${TMPDIR:-/tmp}/oss-review-signals-${CLEAN_ARGS}-${CSID}.json\"\nLATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || echo \"\")\npython \"$PLUGIN_ROOT/bin/check_oss_pr_signals.py\" --clean-args \"$CLEAN_ARGS\" --latest-tag \"$LATEST_TAG\" --diff-file \"$SNAP_DIR/pr.diff\" --output-file \"$OSS_SIGNALS\"\ncat \"$OSS_SIGNALS\" 2>/dev/null"
     },
     "ae5c4e4c096587962c6cf637d2f877bcaa4d832e11bbfb345bda746bea94ddb8": {
@@ -5707,13 +5787,17 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:117"
     },
+    "aecc03518ceb54395a298eb723f609f7a50f52aca34bbd80784f420f0b1c119f": {
+      "kind": "command",
+      "src": "skills/review/modes/post-agent.md:52"
+    },
     "aed39a284e33cbaae6770a00ae98e186eaba9f6ad723e9939279453f3ee0de29": {
       "kind": "block",
-      "src": "skills/review/modes/post-agent.md:205"
+      "src": "skills/review/modes/post-agent.md:211"
     },
     "aeee9a666b2d29d8e3cb86b1f89597914d5a32e23179966f7e62b56a2f93c20d": {
       "kind": "command",
-      "src": "skills/review/modes/acceptance-gate.md:77"
+      "src": "skills/review/modes/acceptance-gate.md:78"
     },
     "af07c3387d555f0d91a531b4023ffb4b84f0b7d768aa591dad7a0ad981388f4d": {
       "kind": "command",
@@ -5728,6 +5812,10 @@
       "kind": "command",
       "src": "skills/analyse/SKILL.md:68"
     },
+    "b0025762e1962997c21cac2736d943e7f2c2e37e4044ed863446c31642ec7c70": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
     "b069915cc3aadc42e576daf0a68023dcb3c43e895bcbbf3a6b3b6b53aae53647": {
       "kind": "block",
       "src": "agents/shepherd.md:70"
@@ -5739,6 +5827,10 @@
     "b098be3388959a046404992459d9493675db48886b010556613b21e63745ab8b": {
       "kind": "command",
       "src": "skills/review/templates/agent-prompts.md:7"
+    },
+    "b0a20b39edc5ac5eecc88abe57deee081e998809feb303bf165427a0fc8a7895": {
+      "kind": "command",
+      "src": "skills/review/modes/preflight.md:118"
     },
     "b0a36c11342d9d8ea04b57012a4b5c13300507ad5a487658a35b81bb6eaf4164": {
       "kind": "command",
@@ -5764,10 +5856,6 @@
       "kind": "command",
       "src": "skills/resolve/modes/preflight.md:80"
     },
-    "b15da68365d89a090aa0f5d0aea69c025c8161535bb1c367aa76f8f41ea530f7": {
-      "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
-    },
     "b16b4a02419c8a1522e8291d32a7b17c9cee52fb8bbdc3c8847b2bda0adfa6fd": {
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:107"
@@ -5778,11 +5866,15 @@
     },
     "b1881b0e9f87eb8a90719bb2cbdd15f52fa0235fdff689a13acda129dcdd1d69": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:75"
+      "src": "skills/review/modes/post-agent.md:82"
     },
     "b20706c4fb8c7ca905ac132642eb761daf7abcc8336d0302305728926e98fd09": {
       "kind": "block",
       "src": "skills/release/modes/changelog-contributors.md:11"
+    },
+    "b20a4892505ed2d847ef797528a88d9f5ab1c8669bc8ae476fbdd295154c5523": {
+      "kind": "command",
+      "src": "skills/review/modes/preflight.md:118"
     },
     "b2165a70565a4ce6a29cc55cd5fcc0db28497f0f2fc2b5e1507aa1549acc7dd1": {
       "kind": "command",
@@ -5802,11 +5894,7 @@
     },
     "b27dedb29d93cb2e580891f2298fbd0f6502e26952d3ebf5420ac3334ce08e40": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:180"
-    },
-    "b28308b5c2b1f57bc679b2a2c7f7516fdce28d608d406e75451f004228f21597": {
-      "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/post-agent.md:186"
     },
     "b2895ee9fc7228277fb829a7fe3f1f45bd08fa46bac8463d0765aafac2dd93eb": {
       "kind": "command",
@@ -5847,15 +5935,11 @@
     },
     "b34d087089cb359bad718b3f7e21d5bae3ca5da21fa140159a1fca789215fa38": {
       "kind": "block",
-      "src": "skills/review/modes/scope-context.md:111"
+      "src": "skills/review/modes/scope-context.md:97"
     },
     "b355b22def67d18dfc00bc35d66d643d1daeaf3666b43c5f62adca4616f41a01": {
       "kind": "block",
       "src": "skills/resolve/modes/item-selection.md:179"
-    },
-    "b3a2e012c60b977011f51405e428596be7086614c301dfa10ca0424063a7b855": {
-      "kind": "command",
-      "src": "skills/review/modes/scope-context.md:67"
     },
     "b3b4d9157c206bdad705ca6249d2eedbe0ccbe7bb2b5772d6b1a2cbd8687965f": {
       "kind": "command",
@@ -5876,7 +5960,7 @@
     },
     "b3de79feb4175eab297492d6647b746794096db505db3c1693fca2bf54658923": {
       "kind": "command",
-      "src": "skills/review/modes/acceptance-gate.md:77"
+      "src": "skills/review/modes/acceptance-gate.md:78"
     },
     "b3e79f6eb9725a4103f7081630acf46a41fcb41b481530de5243bbfd065346c4": {
       "kind": "command",
@@ -5909,7 +5993,7 @@
     },
     "b4f26d9b7265543c76e92a0e785db72f169b8cce16d562c83548dccb2ae2152a": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:141"
+      "src": "skills/review/modes/scope-context.md:127"
     },
     "b51f4210a181acb0e6ed2a5af2b065bc8ed46f0dcdb426b0bb95849084510c50": {
       "kind": "command",
@@ -5921,7 +6005,7 @@
     },
     "b5b36d069ab449537caf3e3b6ba8f3335b83bb1d89c7f7046324c0832d38b75f": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:154"
+      "src": "skills/resolve/modes/push.md:160"
     },
     "b5c4c957e0b1b97f5e7790ef3eb9dfbe55d224c418d0f9f39ba1e456adc6c859": {
       "kind": "command",
@@ -5933,7 +6017,7 @@
     },
     "b60f4b751cadad4f9a11e68246584c599649f9237858d8546b9238fd3e8f96fd": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:141"
+      "src": "skills/review/modes/scope-context.md:127"
     },
     "b612c67240257601efd1d037135d48e704837bce71cda49a553893c9fba4bf1c": {
       "kind": "command",
@@ -5982,7 +6066,7 @@
     },
     "b756af58916ada969bd4ad2b27b5c0ab0a2ab835008c597d24a4ab4e12cf940c": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "b761c0c3e8f414375539ecb286852c3effbb6a4a70460fa652518881b9f65ea7": {
       "kind": "block",
@@ -6011,7 +6095,7 @@
     },
     "b82a4426975b366914ac2dafd096a73d64da486a541d12450c392a5142c7f7ab": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:166"
+      "src": "skills/review/SKILL.md:168"
     },
     "b82f6eebbe34d229ffab855370afb05219458230d99d9de192cefb2f5b6b1b2a": {
       "kind": "command",
@@ -6048,7 +6132,7 @@
     },
     "b8b4955e1af39962a52400df448f39f3610547f1939ef928dd5025e8571e5f1f": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:189"
+      "src": "skills/resolve/modes/push.md:195"
     },
     "b8e9e46e547e7fd8f3e6ef651525702c5a75ac9189f81a26f89ad997b9dad181": {
       "kind": "block",
@@ -6078,7 +6162,7 @@
     },
     "b9a83a6a8ed707b89c1d919e23103358db7a0ab75dc0103c4460e06c8818571b": {
       "kind": "command",
-      "src": "skills/review/modes/post-agent.md:75"
+      "src": "skills/review/modes/post-agent.md:82"
     },
     "b9b64176c16ae2116a76299bc74b2e4bb3dc5ae6915a8387ec50c66ae8680bf3": {
       "kind": "block",
@@ -6107,7 +6191,7 @@
     },
     "ba9793af14139d1e68c7132b0747417123a2b1a0bd041e7738f5d1fa739adaab": {
       "kind": "block",
-      "src": "skills/review/modes/scope-context.md:253"
+      "src": "skills/review/modes/scope-context.md:239"
     },
     "bac95875c1cacd9a1d801baf27d90e6a5747d7f122c7ed0c37c444dc9b8dc1fb": {
       "kind": "block",
@@ -6156,7 +6240,7 @@
     },
     "bb8f5469d8e7e727e7e81c6950fb880abb3dfe5d6fcffcf94a628f751bf1768e": {
       "kind": "block",
-      "src": "skills/resolve/modes/preflight.md:162",
+      "src": "skills/resolve/modes/preflight.md:165",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r PR_NUMBER < \"${TMPDIR:-/tmp}/resolve-pr-number-${CSID}\" 2>/dev/null || PR_NUMBER=\"\"\n\npython \"$PLUGIN_ROOT/bin/find_review_report.py\" --pr \"$PR_NUMBER\" \\\n    --path-out \"${TMPDIR:-/tmp}/resolve-report-file-${CSID}\""
     },
     "bb8f736c4cf3fa9a3e1ebca019b13362550ee96bf18dddcd5faf22e0a8266327": {
@@ -6280,7 +6364,7 @@
     },
     "beda4dcbc41f832197504fcbc313015d140592e2f71b4a6ed149fcd50c7ca2f2": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:117"
+      "src": "skills/resolve/modes/final-report.md:132"
     },
     "bef7d92c2dc203c853422af459cd48ecaaaac60495cb09ab34e05dde0cf12b0d": {
       "kind": "command",
@@ -6367,6 +6451,10 @@
     "c0c0b18f84395b23940f3c0f974c9562ad8d4ac6c29489c8d70dc327d044818e": {
       "kind": "command",
       "src": "skills/release/modes/changelog-contributors.md:82"
+    },
+    "c120ed5cc00d8a9f5a916bd5a14fce1e4db7d524f8231c95c2bc1f889d9934c6": {
+      "kind": "block",
+      "src": "skills/review/modes/post-agent.md:52"
     },
     "c15f0b532ef051796d34999282fbc71e631a103137da03806b99867b6868836a": {
       "kind": "block",
@@ -6559,9 +6647,17 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-closeout.md:106"
     },
+    "c5ddfe9cc3db7249382dfba650b03bde78758810a31b29faae49f1c7f1ce9fee": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
     "c6553e72d6218b2effe0d305ea10750bb4bafb36ff2b28aec8bb9910a6fb7854": {
       "kind": "command",
       "src": "skills/review/modes/codemap-context.md:15"
+    },
+    "c6949f6f88b6ee7f433f175b883b2dab4f3ac42053c97eadb3249cda0cf227d8": {
+      "kind": "command",
+      "src": "skills/resolve/modes/push.md:131"
     },
     "c69bbbf90a7b907259102f527ad7113be9aaacc943e214687f36d0b7fbcb9376": {
       "kind": "command",
@@ -6581,7 +6677,7 @@
     },
     "c73faeb6bd402d42ca77619019effc4c7af78932c2929e1eaca843cf89bce753": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
     },
     "c74fcc1c2fc8f6e03dda9ff05b26e4b14a8e15e2d4bb0610f0b77443fb0ff063": {
       "kind": "command",
@@ -6597,7 +6693,7 @@
     },
     "c7e4ca0bc7926264f9eaa53d7cab6584655e5c48628b382c07511a1838c6bb2c": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:240"
+      "src": "skills/review/modes/preflight.md:231"
     },
     "c81c8e77d2dd26d77b25746fce4932a041f1d645999c8276408b399331cf6454": {
       "kind": "command",
@@ -6606,6 +6702,10 @@
     "c82410f56ecce1a33bf47dece75df2c2bdb06af5124a530f7a73aa3533f6645f": {
       "kind": "command",
       "src": "skills/review/modes/preflight.md:28"
+    },
+    "c838984c588d6a05a1df60142575d066e0594c0f3f6b7a72a02e280bd28c8e14": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "c83cfd4bcb738dd30f2fb083aa16407ad333a88a530611046db8713444d16e2b": {
       "kind": "command",
@@ -6639,15 +6739,15 @@
     },
     "c91d4b3749485cb25f2fd65ae80a513bb4444283144c1de3731973cb5656ad35": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
-    },
-    "c950eba575cf0aab22c337fa2986384b8c534d4f464e02e5754604ac80bad3d4": {
-      "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "c9936943398cc56da8820442d62247c2eb070ecc9b37228aa04169ad6be4277f": {
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:107"
+    },
+    "c9c99d04c31bef1e9e1fc994d635fb23ac50e0021e780ff3a66686dacdd46d10": {
+      "kind": "command",
+      "src": "skills/resolve/modes/push.md:131"
     },
     "c9e87c9039090440e7c9072ec42652122cd11aba10dfbcea5a2bbfac76ba2f28": {
       "kind": "command",
@@ -6663,7 +6763,7 @@
     },
     "ca653a391d526e2888ac2a02d8907662eb96deca3949e9f83a7eb596528a0dbf": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "ca7c8f3f0d7906691a53e25ff015eb819adaed415a909b242feb8c1f62434805": {
       "kind": "command",
@@ -6683,7 +6783,7 @@
     },
     "caf5890c4ad6925c6e7307b3da8035276f51fb9776169810104666ca8be36d46": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
     },
     "cb1414011836e4ef3aed4ded2e50d8c991318bd27e51a6bfa7e4c7fe044cae8f": {
       "kind": "command",
@@ -6735,7 +6835,7 @@
     },
     "cca7742a956758c0e1e4bf3d5b19519bbc149165616469bb9f5874221baf5b3b": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:196"
+      "src": "skills/resolve/modes/push.md:202"
     },
     "ccb85ee044e5c25de4b13909d85e8086d9fa587cd3f7ddad767e3124cbf15459": {
       "kind": "block",
@@ -6749,6 +6849,11 @@
       "kind": "command",
       "src": "skills/analyse/SKILL.md:360"
     },
+    "cd15c4369357c66fbba1b7ab20c75ef1f822376f4413531fae54ee7fa2c307f8": {
+      "kind": "block",
+      "src": "skills/review/modes/post-agent.md:67",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$PLUGIN_ROOT/skills/review/modes/ci-status.md\""
+    },
     "cd32ecadba69271e8e70c164f54042f28380af4a0659ce68ab2f7a6968a419e9": {
       "kind": "command",
       "src": "skills/review/modes/codemap-context.md:15"
@@ -6760,6 +6865,10 @@
     "cd77d7dfd7d57f68e3bfc5690f5cb66aa8bb54a445eccab9ce4b9d85271124a1": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase2.md:372"
+    },
+    "cd8fc8ad62e75f23aa9ee3de72edfd6fdda56c9617f3bdd6931f32e6ac6802b8": {
+      "kind": "command",
+      "src": "skills/resolve/modes/final-report.md:9"
     },
     "cdc749a4dc6ef9e2a24e216d95c35a6997a896830a321d8049d8a62cc6eaa5c0": {
       "kind": "command",
@@ -6797,17 +6906,9 @@
       "kind": "command",
       "src": "skills/release/modes/delegation.md:88"
     },
-    "ceac07944b38f5827c263f85bd6b603858654a5cbfd8e1943e04dc5a88a4aa9f": {
-      "kind": "block",
-      "src": "skills/review/modes/acceptance-gate.md:7"
-    },
     "cf017c15120b508bee755b29fd41d8412d1339c1935825d98da5429d74bfac13": {
       "kind": "block",
       "src": "skills/resolve/modes/report-intelligence.md:121"
-    },
-    "cf14c8e58f6b334eb3c1093854184962792b765db1d3508818abd4313963609c": {
-      "kind": "command",
-      "src": "skills/review/modes/acceptance-gate.md:77"
     },
     "cf15192583e52155983d8c83909709ddfd19961b83b9c64ff70ae58ca8781231": {
       "kind": "command",
@@ -6824,6 +6925,10 @@
     "cfa44aeb28234841ab9913a034a68901aca6fb06bffebebf57313443246937e2": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:447"
+    },
+    "cfc394caf355a0f7adb2abe61de8b45d78df6955ae2328679308e981d3923c6e": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "cfe3b2cb9d9cd5a75b5245d4900bd6275ac8c1a0bf1b9436237a798d75eee62e": {
       "kind": "command",
@@ -6866,6 +6971,10 @@
       "kind": "command",
       "src": "skills/review/modes/agent-launch.md:15"
     },
+    "d0cdb3ca02b2a82099f74d4a956eb73f869aa7343d3c84df3649c2ecea8899d2": {
+      "kind": "command",
+      "src": "skills/resolve/modes/push.md:131"
+    },
     "d0fafbe3f464f2a3916e97b5d157ce238eb6d4ec9559c1d74461b815eaac003c": {
       "kind": "command",
       "src": "skills/resolve/modes/report-intake.md:13"
@@ -6884,7 +6993,7 @@
     },
     "d12ad900d136d1f186a3a3dca5d06e9ad2631029a68cb53210e8125bf686f0f1": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:141"
+      "src": "skills/review/modes/scope-context.md:127"
     },
     "d148e9e20b968d026f1ee8e6e3f1d81330e19c3d0173e6d49f3b80d83a4ea0c5": {
       "kind": "block",
@@ -6916,7 +7025,11 @@
     },
     "d201c6d996d902cc9a46503d4d7f84f1b72f7657f1b9a93b8278078f881e9bc3": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
+    },
+    "d20a47e0604e5fbd35d0a5ad56f1b794462ea82afa9d8dd7aecea67758451add": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "d238463e9e0859e11b14634aa4e81b05294b7730d0382a443e35f8de33ee829c": {
       "kind": "command",
@@ -6924,11 +7037,11 @@
     },
     "d24a3961fd6c0627fee7a84a1b315f8c8fe748518dbabd3e5f9dac0494a4c1d2": {
       "kind": "block",
-      "src": "skills/review/modes/post-agent.md:153"
+      "src": "skills/review/modes/post-agent.md:159"
     },
     "d253e10191a575ea47bf5acd0c9d6c34875b73c637b7836d451b5019d0f381dc": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:117"
+      "src": "skills/resolve/modes/final-report.md:132"
     },
     "d25685cbe169469379bae319efa493bc494a25602ff10f3a872e3f0fa4116433": {
       "kind": "command",
@@ -6937,10 +7050,6 @@
     "d27a5a26dccd4af6ae43b902c14def00ba39011e41ac59c0231192dbb36137f0": {
       "kind": "block",
       "src": "skills/review/modes/reply.md:36"
-    },
-    "d2f97003c3952faae14866a332b7484ede677b717325179c7c49501486389c59": {
-      "kind": "command",
-      "src": "skills/review/modes/acceptance-gate.md:114"
     },
     "d3244a04bd8125c54c233c180c9ab95272c74d47d4acc0a5e1d5250f395408d4": {
       "kind": "command",
@@ -6952,7 +7061,7 @@
     },
     "d3b130e5fdd04e3b2acef447e06915dd08da45fb08b62d75d3e8b8d9e485e8a4": {
       "kind": "command",
-      "src": "skills/resolve/modes/push.md:147"
+      "src": "skills/resolve/modes/push.md:153"
     },
     "d3b2f6e901f7ae8097e1a7ae43bc2091029176fe327da992396ad1c2c498a884": {
       "kind": "command",
@@ -6961,10 +7070,6 @@
     "d3b602460e25c95ebc228ba987590841936c356e4b5305b5dc5b917a1f63bc87": {
       "kind": "command",
       "src": "skills/analyse/modes/thread.md:72"
-    },
-    "d41405dc8f8ddd5c55684560c0631ceab19cfadf8cca823296c8d938fa35d844": {
-      "kind": "block",
-      "src": "skills/resolve/modes/push.md:131"
     },
     "d416cc7aded90b72bf0cf62ea65e32dee0e79ccb37957eac8051f1e573c3ecbc": {
       "kind": "command",
@@ -7022,6 +7127,10 @@
       "kind": "command",
       "src": "skills/analyse/SKILL.md:439"
     },
+    "d6946cfe880d4321cc039176f51e2b52b3463b71f7ee73a17c2b4a38fcbd273e": {
+      "kind": "block",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
     "d6bb887649089dbd1b95bae5d81a8b47f31ad3d83ccf95a74274d7849b1f3855": {
       "kind": "command",
       "src": "skills/resolve/modes/preflight.md:80"
@@ -7049,7 +7158,7 @@
     },
     "d7361ddd633a959d6dc3beb17d3df2fb3a5f0df258e0e1e582349121ac718601": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:141"
+      "src": "skills/review/modes/scope-context.md:127"
     },
     "d74fed1b5e55b8334edc493af62f8e81a2f4f05dd97c62caf8c800fb2876e534": {
       "kind": "command",
@@ -7061,7 +7170,7 @@
     },
     "d7e0247d3e217bc078b61931ff6c84ae6dfe3e49dd3fad333a982161f7bc07a2": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:141"
+      "src": "skills/review/modes/scope-context.md:127"
     },
     "d7e32ba2962c89a0c3689433c70aab282c4ea359c6d154715b3e8b6ba4831a0a": {
       "kind": "command",
@@ -7106,7 +7215,7 @@
     },
     "d8c23230a469f41d54b81a0c85bf6ed90f494850c7d5ab1860ec2ab97a2f8f21": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:166"
+      "src": "skills/review/SKILL.md:168"
     },
     "d8cb3918acf7410458d503a72954a13a81fc40825c8bcd54ae3537d9fd63d914": {
       "kind": "command",
@@ -7119,6 +7228,10 @@
     "d8d65f2d6b850481a8987f39736a6d6526d00f663656df71c558a066d1da0a73": {
       "kind": "command",
       "src": "skills/resolve/modes/preflight.md:14"
+    },
+    "d8e4affcc5614fce0854f96b4cd723d411e7cb83d8ab73997ac4c01c2700fff8": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "d90063363d657dfe34aa6394e40aa1c9722ac1e648e96b9791211b273106d92f": {
       "kind": "command",
@@ -7138,7 +7251,7 @@
     },
     "d988133de7bc6ab4c518bfa8e83c87da13544003fae251f256ea50d7d70321e2": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
     },
     "d997fc1c6b98c9f88f4de9ce7469a8a44ae572c277177c80c6f6e435c4b3ef48": {
       "kind": "command",
@@ -7161,13 +7274,9 @@
       "kind": "command",
       "src": "skills/resolve/modes/report-merge.md:45"
     },
-    "da70c424298f3c3c69cbf6678870da6cc4d73a9e93958b5ed3f961d754a11761": {
-      "kind": "command",
-      "src": "skills/review/modes/scope-context.md:67"
-    },
     "da72027f9246d75c8f286db1fc30f5d9a594d2689c7fbd523dd692bb80ff0a10": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:191"
+      "src": "skills/review/modes/preflight.md:182"
     },
     "da8b882d5e04e54042a5717ed8eb8a87218761b41dc3f4b447a0b9d35a0311c0": {
       "kind": "command",
@@ -7275,6 +7384,14 @@
       "kind": "command",
       "src": "skills/review/modes/preflight.md:28"
     },
+    "dd0b11221fc41fed3a5582f721da4d875e8b9d4ca015b45a8815228fd0d0b610": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
+    "dd42e6d09896c5ba9e5f391842ffb4fc9936667c9bf237d448a9cfe5b9514edc": {
+      "kind": "command",
+      "src": "skills/resolve/modes/preflight.md:80"
+    },
     "dd5e42861585a6527844fcb3f7768001a29d1d6916dd6c59624f8baa2938a0e6": {
       "kind": "command",
       "src": "skills/release/modes/changelog-contributors.md:25"
@@ -7325,6 +7442,10 @@
       "kind": "command",
       "src": "skills/release/SKILL.md:147"
     },
+    "dea631fed329f934f2f5e5c54ebb0131cbd6628f6589a8cbcf938e4e4bea5426": {
+      "kind": "command",
+      "src": "skills/resolve/modes/final-report.md:9"
+    },
     "deb87da3dc7dd38b491b126e29375cfd995a56f42ceb974cc993b6d22cfa236e": {
       "kind": "block",
       "src": "skills/analyse/SKILL.md:351",
@@ -7356,7 +7477,7 @@
     },
     "df6d3c613b0565ffca7b93e5c61ddd129a4c5fa57b5c2f4f19cac69e93a993b2": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:143"
+      "src": "skills/resolve/modes/final-report.md:158"
     },
     "df9a814cdcc137852670fd9b9b21dd72e74d2e352778e0d1611bbd38bd387d32": {
       "kind": "command",
@@ -7398,7 +7519,7 @@
     },
     "e040ac7db66f80831cb3ad011e33b83ec5b6975b67bb983f4f333e0437daa4f6": {
       "kind": "command",
-      "src": "skills/resolve/modes/preflight.md:150"
+      "src": "skills/resolve/modes/preflight.md:153"
     },
     "e0ade00025bf3f986d0982c3aa3e664e1a838a29dd51402ae7609d8aaeeea43d": {
       "kind": "command",
@@ -7450,7 +7571,7 @@
     },
     "e244df334d5d296e67effb2ec68c83b5ad9a81dee8c141d5c4f20bbd1efa69d0": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:191"
+      "src": "skills/review/modes/preflight.md:182"
     },
     "e249e5b7db3b2d06b8f207dda0b1b9597c8daa49c1af443634a54b3799b76057": {
       "kind": "command",
@@ -7462,7 +7583,7 @@
     },
     "e292e3ca33e5675faa4fa0572700d1d00d2ea66449c307bcc84361113fed45c9": {
       "kind": "block",
-      "src": "skills/review/modes/preflight.md:240"
+      "src": "skills/review/modes/preflight.md:231"
     },
     "e298d68231c7a15a801c436eddf8318d581fb8da9138181c0d1e28ad634dfc92": {
       "kind": "command",
@@ -7486,7 +7607,7 @@
     },
     "e2efe786bab085fe456c2f11863da6082f6f860b452480e9a13b214ad18c0d27": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:141"
+      "src": "skills/review/modes/scope-context.md:127"
     },
     "e311109f62bd343a50039d916163f2a5e30771a0d077bd55d0c80d7311f2f8b3": {
       "kind": "command",
@@ -7526,11 +7647,11 @@
     },
     "e52bbd24f3b43d543e309f8e36e42015e60bf7e0049632bc7d429f7f86b9ffc4": {
       "kind": "block",
-      "src": "skills/review/modes/post-agent.md:144"
+      "src": "skills/review/modes/post-agent.md:150"
     },
     "e55f3d748309f49bf7a9a7f45369939cc6f6a20687bade734eae449142077c09": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:181"
+      "src": "skills/review/SKILL.md:183"
     },
     "e59b4c2c120ea94eff52e95f302fa9188550a31eeef3f5ac0bf5167392f8ea5e": {
       "kind": "command",
@@ -7538,11 +7659,15 @@
     },
     "e5a5352d9f1af92ce0ed0bfe237efb62d13555b0cf9f514c106343ab85a46cf7": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:253"
+      "src": "skills/review/modes/scope-context.md:239"
     },
     "e5b7103c8a5cdce89855bbaa4e6b1350abebc0b5280eaeb69c3fe9ebd425a11a": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-prelude.md:386"
+    },
+    "e5d62e70d77013b8081c30968e54d5ff4f07658cdc6ee8481f99618ed0a64628": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "e5d644fd77dc5f0683e867be88c56fe0a2261cb9927381f8ba173949ab4af0b5": {
       "kind": "command",
@@ -7635,7 +7760,7 @@
     },
     "e8d5b804e12332c4c99d2aa9a20ba2fb640d940f85852affcacd0e6d0f76451e": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "e8f0eece9d9e12d7e90f0ec3d1ffe4fbe4bc822694bc485e6a1802d06024698c": {
       "kind": "command",
@@ -7654,10 +7779,6 @@
       "kind": "block",
       "src": "skills/review/modes/fill-gaps.md:13",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\nIFS= read -r CLEAN_ARGS < \"${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}\" 2>/dev/null || CLEAN_ARGS=\"\"\nIFS= read -r SNAP_DIR < \"${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}\" 2>/dev/null || SNAP_DIR=\"\"\nIFS= read -r FILL_REPORT < \"${TMPDIR:-/tmp}/oss-review-fill-report-${CSID}\" 2>/dev/null || FILL_REPORT=\"\"\nIFS= read -r FILL_ROLES < \"${TMPDIR:-/tmp}/oss-review-fill-roles-${CSID}\" 2>/dev/null || FILL_ROLES=\"\"\nIFS= read -r FILL_CANDIDATES < \"${TMPDIR:-/tmp}/oss-review-fill-candidates-${CSID}\" 2>/dev/null || FILL_CANDIDATES=\"\"\n\npython \"$PLUGIN_ROOT/bin/fill_gaps_scope.py\" plan --pr=\"$CLEAN_ARGS\" --report=\"$FILL_REPORT\" --roles=\"$FILL_ROLES\" --candidates=\"$FILL_CANDIDATES\" --snapshot=\"$SNAP_DIR/pr-meta.json\" --plan-out=\"${TMPDIR:-/tmp}/oss-review-fill-plan-${CSID}\" --head-out=\"${TMPDIR:-/tmp}/oss-review-fill-head-${CSID}\" || exit 1\n\n_PRIOR_RES=\"${FILL_REPORT%/*}/resolution.jsonl\"\n[ -s \"$_PRIOR_RES\" ] || _PRIOR_RES=\"\"\nprintf '%s\\n' \"$_PRIOR_RES\" > \"${TMPDIR:-/tmp}/oss-review-prior-resolution-${CSID}\""
-    },
-    "e94b514d272a1f70d576bb83687bca1ce7f1a9945780c9dc4a71d95a2b13efd0": {
-      "kind": "block",
-      "src": "skills/review/modes/preflight.md:117"
     },
     "e973fce4ca579ef39a4b330ff3e0e837a7fca77ef674780757efca1f00a542e2": {
       "kind": "command",
@@ -7703,6 +7824,10 @@
       "kind": "command",
       "src": "skills/analyse/modes/vitality.md:244"
     },
+    "eb1e8d86950a7ca58cc0e14fd6315dc1dc4a971ea1ed2c7298881c658ea3be6a": {
+      "kind": "command",
+      "src": "skills/resolve/modes/final-report.md:9"
+    },
     "eb3bb735cd7c63124d9ec63ed1035c3c683d70c63d191e703e725d4e67979568": {
       "kind": "block",
       "src": "skills/review/modes/blind-solve.md:9"
@@ -7735,6 +7860,10 @@
       "kind": "block",
       "src": "skills/analyse/modes/thread.md:282",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name oss) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nIFS= read -r _OSS_ANALYSE < \"${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}\" 2>/dev/null || _OSS_ANALYSE=\"\"\n[ -z \"$_OSS_ANALYSE\" ] && _OSS_ANALYSE=\"plugins/cc_oss/skills/analyse\"\npython \"$PLUGIN_ROOT/bin/render_plugin_root.py\" \"$_OSS_ANALYSE/modes/codemap-signals.md\""
+    },
+    "ebdf308d8132909265349d46a3d3499f59f09c2d4d012a6a3be7fa2d306b6595": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "ebe30a31e3dc1eeab3d5e5bc06484cd34581a1c693fd18d77b60cd34d60c6d02": {
       "kind": "command",
@@ -7818,7 +7947,7 @@
     },
     "ee26cbaf666ecca131ad3848b8dcd0b15fb7ad9126806bf587a72db52d1dd1a7": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:181"
+      "src": "skills/review/SKILL.md:183"
     },
     "ee48706ae40890014668a16c26ab2a753e3a362961368fd8419004c3892da8f0": {
       "kind": "command",
@@ -7851,7 +7980,7 @@
     },
     "ef280fbf74b1dc2b156bc3b7716df9cfe99883201e4085df669d60702c209ebd": {
       "kind": "command",
-      "src": "skills/resolve/modes/final-report.md:143"
+      "src": "skills/resolve/modes/final-report.md:158"
     },
     "ef598ab555ef67fd102b35292f4629a9aae7481445af6c3fcd0ad6dd38860a7d": {
       "kind": "command",
@@ -7875,7 +8004,7 @@
     },
     "f07a14a58013d3ff469a77daae789692748e7a28c96ac9ecfab30a8ddbbcf4e1": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:253"
+      "src": "skills/review/modes/preflight.md:244"
     },
     "f0c44cd05a7290cd51f251d8579f6365be8362dce42195f1b0b0a33de3244d0d": {
       "kind": "block",
@@ -7933,7 +8062,7 @@
     },
     "f260f1c515913402b92df986caacd347050b23c91aa47b18ad1904b772aeacca": {
       "kind": "command",
-      "src": "skills/review/SKILL.md:166"
+      "src": "skills/review/SKILL.md:168"
     },
     "f261069f2df97c7857bc4e17e608e3f1cc2b51275961b07d7bca8df639319ec8": {
       "kind": "command",
@@ -7958,6 +8087,10 @@
     "f37bf0a83cdca747ab5e78e959bb53cd620f134bc0814f5988d2758d9f6dcdbe": {
       "kind": "command",
       "src": "skills/review/modes/codemap-context.md:88"
+    },
+    "f3989e68d8b2a63a1889ccf5aadb28ac89bf0d755bd4f67f7acc73ff7de33364": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
     },
     "f39d913bc6d53df9d0358473af5876865f38caafac1db2a60b188ce32989f2fc": {
       "kind": "command",
@@ -7986,7 +8119,7 @@
     },
     "f4db486e109930d898102d1007d99010577a263a18a1a2b76b93405d4c22da3c": {
       "kind": "block",
-      "src": "skills/resolve/modes/push.md:189"
+      "src": "skills/resolve/modes/push.md:195"
     },
     "f5070db5a28fc11307c4c83808abd942d7e3740291e1d8ae62ee2bfb46b366a0": {
       "kind": "command",
@@ -8000,17 +8133,21 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-prelude.md:386"
     },
+    "f53c60685627fbb2dac201ae5524866719318f5d99c39d5658b09bbc84ae3600": {
+      "kind": "command",
+      "src": "skills/review/modes/ci-status.md:7"
+    },
     "f540660faf5c08a9c93b77393267ef26d766ab450c05b358337575b9293496bd": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "f57da79e2860db44a1919502b305c59e94f682128b81c62d6e253cd9862a72a7": {
       "kind": "block",
-      "src": "skills/review/modes/scope-context.md:229"
+      "src": "skills/review/modes/scope-context.md:215"
     },
     "f5ad288ab2d5a3e84f0bbc65e2e5507a85d5ea9d0286235f8e65bd850db8e451": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "f5adef83c22e85db1e461f8b73fe93246ec7cb8133be88e8dec6fa061b7f57c8": {
       "kind": "command",
@@ -8052,13 +8189,17 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-closeout.md:17"
     },
+    "f6dfd2ef45e73ecdad7658cf40ec872a80874522ec74518a12c6b68751323fa0": {
+      "kind": "block",
+      "src": "skills/review/modes/scope-context.md:67"
+    },
     "f6f223f8b4a29b89cb33cfb0ba49a9192e0949b263c49c0597a9e8387659be9c": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:117"
     },
     "f6f2bc0a2a319a3ad42af492b37feb7f7a0d929863324f42d715d4060d6eb064": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:191"
+      "src": "skills/review/modes/preflight.md:182"
     },
     "f708801bf867c56211283a5c02b579e3784bcafc63708f0cc735fd4fec7061ec": {
       "kind": "command",
@@ -8074,7 +8215,7 @@
     },
     "f7805794e9942f955376d820d4e69f4cfb0ae1f2eb16241676d8991888084adb": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:141"
+      "src": "skills/review/modes/scope-context.md:127"
     },
     "f781a05b4f05873de4cf84f90b637376d10288ff4a80a624b5ab1380c07192ae": {
       "kind": "command",
@@ -8091,10 +8232,6 @@
     "f87348669f7385a056b141a334f3eddcc613476f99b07618b2a744234a52ce61": {
       "kind": "command",
       "src": "skills/resolve/modes/conflict-resolution.md:43"
-    },
-    "f87fb8ab9eafb60d822cd78bb6dc7e83014367026f37b1752bab47c711405000": {
-      "kind": "command",
-      "src": "skills/resolve/modes/push.md:131"
     },
     "f8b6efa13cd8fdc79ba9e0f0dac08c6d2711f0bf7eb54fafe315b73a8caf03c5": {
       "kind": "command",
@@ -8114,7 +8251,7 @@
     },
     "f8dabd3fcd90eca843b93434feffa0d206dfc6e0728426738424d97289be52e5": {
       "kind": "command",
-      "src": "skills/review/modes/preflight.md:117"
+      "src": "skills/review/modes/preflight.md:118"
     },
     "f907e7f7edde06139504ac9c17c9027773a4ebd1cde31ec6ce23379846a7cacd": {
       "kind": "command",
@@ -8146,7 +8283,7 @@
     },
     "f9c923583ea33e1d25962cc4a4bceaf452c4e52dd105ba3b2f4c3dd540b8e4ac": {
       "kind": "command",
-      "src": "skills/review/modes/scope-context.md:229"
+      "src": "skills/review/modes/scope-context.md:215"
     },
     "f9d18e2a9ab8ffb0edcf20a1b44a8c0f99d096b2301ba01d699583d81798f920": {
       "kind": "block",
@@ -8443,6 +8580,6 @@
       "src": "skills/resolve/modes/preflight.md:14"
     }
   },
-  "plugin": "cc_oss@0.68.0",
+  "plugin": "cc_oss@0.69.0",
   "schema": 2
 }

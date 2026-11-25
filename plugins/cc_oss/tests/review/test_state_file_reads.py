@@ -1,7 +1,7 @@
 """Tests that review and resolve read their ``KEY=value`` state files as data, never as shell code.
 
-The flags, gate and mode-flag sentinels and resolve's ``pr-vars.sh`` carry values that can hold outside text: a PR's
-failing CI check names, a report path, an agent-written motivation line. These files used to be sourced with ``.``, so a
+The flags, held CI gate and mode-flag sentinels and resolve's ``pr-vars.sh`` carry values that can hold outside text: a
+PR's CI check names, a report path, an agent-written motivation line. These files used to be sourced with ``.``, so a
 value with a space ran its second word as a command and a value with ``;`` or ``$(…)`` ran arbitrary code, all inside
 blocks the blueprint manifest auto-allows. Each shipped consumer line now parses the file with ``while IFS='=' read``
 and a closed ``case`` of known keys; these tests run that exact line in Bash and check that the value comes back
@@ -44,7 +44,7 @@ def _read_back(tmp_path: Path, line: str, prelude: str, variable: str) -> tuple[
         cwd=tmp_path,
         env=environment,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         check=False,
     )
     return completed, mark
@@ -65,14 +65,14 @@ def _read_back(tmp_path: Path, line: str, prelude: str, variable: str) -> tuple[
             id="review-flags-report-path",
         ),
         pytest.param(
-            _REVIEW_SKILL.parent / "modes" / "post-agent.md",
-            'oss-review-gate-${CSID}" ] && while',
-            "oss-review-gate-test",
-            f"GATE=BLOCK\nGATE_REASON=ci-red: lint, {_PAYLOAD}\n",
-            "",
-            "GATE_REASON",
-            f"ci-red: lint, {_PAYLOAD}",
-            id="review-gate-ci-check-names",
+            _REVIEW_SKILL.parent / "modes" / "ci-status.md",
+            '[ -f "$CI_GATE_FILE" ] && while',
+            "oss-review-ci-gate-test",
+            f"CI_GATE=BLOCK\nCI_STATUS=failing — lint, {_PAYLOAD}\n",
+            'CI_GATE_FILE="$TMPDIR/oss-review-ci-gate-test"',
+            "HELD_STATUS",
+            f"failing — lint, {_PAYLOAD}",
+            id="review-held-ci-check-names",
         ),
         pytest.param(
             _REVIEW_SKILL.parent / "modes" / "post-agent.md",

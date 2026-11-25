@@ -132,10 +132,16 @@ Verify push reached GitHub — the PR head oid must equal local HEAD (headlines 
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
 case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "! BLOCKED — Step 10 PR number sentinel missing or invalid; cannot verify push"; exit 1 ;; esac
-gh pr view "$PR_NUMBER" --json headRefOid,commits --jq '.headRefOid, (.commits[-3:] | .[].messageHeadline)' > "${TMPDIR:-/tmp}/resolve-pr-head-${CSID}"  # timeout: 6000
-git rev-parse HEAD > "${TMPDIR:-/tmp}/resolve-local-head-${CSID}"  # timeout: 3000
-head -1 "${TMPDIR:-/tmp}/resolve-pr-head-${CSID}" | cmp -s - "${TMPDIR:-/tmp}/resolve-local-head-${CSID}" && echo "→ push verified: PR head equals local HEAD" || echo "⚠ push unverified: PR head differs from local HEAD (GitHub lag, or the push landed on another ref)"
-tail -n +2 "${TMPDIR:-/tmp}/resolve-pr-head-${CSID}"
+IFS= read -r PR_HTML_URL < "${TMPDIR:-/tmp}/resolve-pr-html-url-${CSID}" 2>/dev/null || PR_HTML_URL=""
+_PR_HEAD_FILE="${TMPDIR:-/tmp}/resolve-pr-head-${CSID}"
+_LOCAL_HEAD_FILE="${TMPDIR:-/tmp}/resolve-local-head-${CSID}"
+gh pr view "${PR_HTML_URL:-$PR_NUMBER}" --json headRefOid,commits --jq '.headRefOid, (.commits[-3:] | .[].messageHeadline)' > "$_PR_HEAD_FILE" || : > "$_PR_HEAD_FILE"  # timeout: 6000
+git rev-parse HEAD > "$_LOCAL_HEAD_FILE" || : > "$_LOCAL_HEAD_FILE"  # timeout: 3000
+IFS= read -r _LOCAL_HEAD < "$_LOCAL_HEAD_FILE" || _LOCAL_HEAD=""
+IFS= read -r _PR_HEAD < "$_PR_HEAD_FILE" || _PR_HEAD=""
+_OID_RE='^([0-9a-f]{40}|[0-9a-f]{64})$'  # SHA-1 or SHA-256 object id; a variable keeps ( | ) out of the =~ word
+[[ "$_LOCAL_HEAD" =~ $_OID_RE ]] && [ "$_PR_HEAD" = "$_LOCAL_HEAD" ] && echo "→ push verified: PR head equals local HEAD" || echo "⚠ push unverified: PR head differs or a head read was unavailable"
+tail -n +2 "$_PR_HEAD_FILE"
 ```
 
 Unverified → re-run the block once (GitHub lags a few seconds); still unverified → record the outcome below as usual (git exit 0 stands) but name `PR head <oid> ≠ local HEAD` under the final report's Confidence Gaps, and never claim the PR carries the local commits.

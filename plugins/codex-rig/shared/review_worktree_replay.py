@@ -93,6 +93,9 @@ def verified_source_inputs(run: Path) -> dict[str, str]:
         names = sorted(CLOSED_REQUIRED_PR_ARTIFACTS | {"pr-head-fetch.json", "worktree-preflight.json", "gates.json"})
     else:
         names = ["diff.patch", "specialist-manifest.json"]
+    if os.path.lexists(run / "local-checkout.json") and os.path.lexists(run / "pr-ci-refresh.json"):
+        # The collection binds the refresh to the reviewed head. Receipts without a refresh keep their original inputs.
+        names.extend(name for name in ("pr.json", "pr-ci-refresh.json") if name not in names)
     for name in ("files.txt", "untracked.txt", "direct-plan.json", "batch-inventory.json", "inspection-plan.json"):
         if os.path.lexists(run / name):
             names.append(name)

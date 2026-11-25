@@ -6,6 +6,8 @@
 
 **Link**: [PR_HTML_URL, bare https URL; omit this line when the run has no PR]
 
+[One-line delivery summary with the linked PR number and whether this run's pushed commit was verified on that PR. For other outcomes, state the push status and where the work is available.]
+
 ### Contribution
 
 [Contribution summary]
@@ -79,13 +81,13 @@
 
 ### Push
 
-✓ Pushed to [Remote]/[Branch] — N new commits
+[Push status and PR-head verification]
 
 > Exactly one status line, chosen by the recorded `PUSH_STATUS`, with the key shown in backticks after it:
 >
 > | `PUSH_STATUS` | Line |
 > | -- | -- |
-> | `pushed` | `✓ Pushed to [Remote]/[Branch] — N new commits` |
+> | `pushed` | Pushed to [Remote]/[Branch]. State the verified PR head when it matches, or “PR update unverified” when the heads differ or evidence is missing. |
 > | `blocked-guard` | `⚠ Push blocked by push guard — run the lines under Unblock push at the end of this report` |
 > | `blocked-permission` | `⚠ Push blocked — git push permission not granted; run the command under Unblock push` |
 > | `blocked-needs-manual-push` | `⚠ Push needs your shell — no upstream tracking, and no approval covers the explicit-refspec push; run the line under Unblock push` |
@@ -94,10 +96,11 @@
 > | `skipped-by-user` | `⊘ Push skipped by you (Step 3d "don't push" or Step 10 "Hold") — run git push when ready` |
 > | `not-attempted` | `✗ Push not attempted — push scope could not be computed` |
 > | `none` | `⊘ No push this run (no PR number, or all items skipped)` |
+> | `unknown` | Push status unavailable. |
 
 **Next**:
 
-- Maintainer reviews, clicks Merge in GitHub UI — merge commit keeps per-item commits; squash collapses them
+- [For a verified push, review the linked PR for merge. Otherwise give the action appropriate to the recorded status.]
 
 ## Confidence
 

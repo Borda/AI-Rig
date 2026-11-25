@@ -64,7 +64,8 @@ from _sentinel_io import write_private_text
 
 #: Label that prefixes the gate text in the one-line report summary.
 _GATE_PREFIX: Final = "Gate:"
-#: Extracts the abbreviated or full commit SHA recorded after ``@`` in a report field.
+#: Extracts the abbreviated or full commit SHA recorded after ``@`` in a report field. A 64-hex SHA-256 id yields its
+#: 40-hex prefix, which is intentional: every caller compares the result as a prefix of the current head.
 _SHA_RE: Final = re.compile(r"@([0-9a-f]{7,40})")
 #: Matches review run directory names of the form ``run-<N>``.
 _RUN_RE: Final = re.compile(r"^run-(\d+)$")
@@ -83,8 +84,9 @@ _OUTCOME_VERDICT_RE: Final = re.compile(
 #: A gate line resolve can act on (full match): PASS or BLOCK, or a ``REJECT_<GROUND>`` it re-checks against the PR
 #: head. Anything else (``Gate: REJECTED``, a lowercase ``reject_scope``) is an ambiguous verdict, never a pass.
 _ACTIONABLE_GATE_RE: Final = re.compile(r"Gate: (?:PASS|BLOCK)(?:\s+.*)?|Gate: REJECT_[A-Z]+(?:\s+.*)?")
-#: A recorded commit id (full match): the abbreviated or full lowercase hex SHA a review run writes to ``head-sha.txt``.
-COMMIT_ID_RE: Final = re.compile(r"[0-9a-f]{7,40}")
+#: A recorded commit id (full match): the abbreviated or full lowercase hex SHA a review run writes to ``head-sha.txt``,
+#: a full SHA-256 id included.
+COMMIT_ID_RE: Final = re.compile(r"[0-9a-f]{7,40}|[0-9a-f]{64}")
 #: Fields every ``findings.jsonl`` row must carry as non-empty text before ``oss:resolve`` can merge it into an action
 #: item. ``merge_action_items`` imports this list and ``finding_row_problem``, so the producer gate and the merge can
 #: never disagree on what a mergeable row is.
@@ -657,7 +659,7 @@ def _check_envelope_header(data: object, fields: dict[str, str]) -> str:
     if not gate.startswith("REVIEW_V1_"):
         raise _GateRejected("versioned header Gate lacks REVIEW_V1_ prefix")
     gate = gate.removeprefix("REVIEW_V1_")
-    if re.fullmatch(r"(?:PASS|BLOCK)|REJECT_[A-Z]+ @[0-9a-f]{7,40}", gate) is None:
+    if re.fullmatch(r"(?:PASS|BLOCK)|REJECT_[A-Z]+ @(?:[0-9a-f]{7,40}|[0-9a-f]{64})", gate) is None:
         raise _GateRejected(f"unrecognized Gate value {fields['Gate']!r}")
     if (data["source_outcome"] == "REJECT") != gate.startswith("REJECT_"):
         raise _GateRejected("REJECT outcome and REJECT_ gate must appear together")

@@ -29,8 +29,19 @@ from pathlib import Path
 args = sys.argv[1:]
 task = Path(args[args.index("--task-file") + 1]).read_text(encoding="utf-8")
 log = Path(args[args.index("--workspace") + 1]) / "calls.jsonl"
-with log.open("a", encoding="utf-8") as stream:
-    stream.write(json.dumps({"argv": args, "task": task}) + "\n")
+# Windows append is not atomic across processes: sibling children started together overwrite each other's line.
+lock = log.with_name("calls.lock")
+while True:
+    try:
+        os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        break
+    except FileExistsError:
+        time.sleep(0.01)
+try:
+    with log.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"argv": args, "task": task}) + "\n")
+finally:
+    os.unlink(lock)
 if "HANG" in task:
     (Path(args[args.index("--workspace") + 1]) / "hang.pid").write_text(str(os.getpid()))
     time.sleep(600)

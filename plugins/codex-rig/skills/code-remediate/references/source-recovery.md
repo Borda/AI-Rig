@@ -12,6 +12,16 @@ If the native error identifies a different ref, or multiple local branch names c
 
 A successful native fork checkout with the verified PR head and base-repository `refs/pull/<PR number>/head` tracking is not a checkout failure. Prepare its source receipt and continue under the main skill’s source-tracking checks; do not ask for fork setup or rerun checkout solely to obtain contributor tracking. Publication configuration is not required for local remediation.
 
+### Reuse the attached PR worktree
+
+When checkout fails after fetching the verified PR head, check for an existing branch owner before suggesting branch cleanup. This applies to same-repository and fork PRs, including an unclassified native checkout failure. Respect an explicit original-checkout-only request and recorded permission, access, or transport failures. From the original invoking checkout run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/remediation_branch.py locate-owner --pr-dir <failed-run>/pr`. This read checks the Git registration, attached branch, PR tracking, clean index and working tree, operation state and ancestry. A matching tip or a clean branch behind the fetched head can continue. Local-only commits still require the comparison below.
+
+When the returned checkout differs from the failed collector's working directory, continue in the same invocation. Retain the failed evidence, release its claims after quiescence, and acquire the writer claim on the returned checkout before the canonical PR target claim. Repeat the owner check under those claims. Bind the fresh attempt to the same canonical PR and announce its delivery path. For default delivery, use the selected owner as the new in-place checkout through delivery and resume. For explicit `--worktree`, preserve the original invoking path and use the separate owner as the worktree-only destination. Pass `--receipt <fresh-run>/remediation-worktree.json` on the checked selection for that delivery. This borrowed locator grants no cleanup ownership.
+
+If `needs_update` is true, apply the guarded `git pull --ff-only` procedure under Source drift recovery in the owner, preserving ignored files that overlap incoming changes. At an equal tip proceed directly. Run the normal remediation collector in the verified owner with the canonical PR URL and a fresh output directory. A successful native checkout, exact fresh head, source receipt and normal contribution checks are required before editing. Continue from the successful run. If the changed directory does not resolve checkout, diagnose the new failure without repeating the same attempt.
+
+### Other checkout failures
+
 After remediation's initial `gh pr checkout` failure, apply these route-specific gates before any source edits:
 
 - **Same-repository original branch:** continue only when retained PR identity proves `head_repository == base_repository`. Directly check out the actual `headRefName` branch; an authorized checkout may create that original branch and establish native tracking. Verify local branch name equals `headRefName`, `HEAD` equals the verified PR head SHA, `branch.<name>.merge` equals `refs/heads/<headRefName>`, and the fetch remote identifies the original PR repository through a named remote or fork URL. Do not manually set or repair tracking, use a generated branch, or accept equal SHA without branch/destination proof.

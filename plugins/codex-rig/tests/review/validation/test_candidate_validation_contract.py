@@ -1314,6 +1314,17 @@ def test_review_verdict_is_proportional_to_remaining_source_work() -> None:
     assert "Documentation-only corrections and additional or missing tests normally warrant Minor changes" in impact
     assert "missing tests alone do not prove a runtime defect" in impact
     assert "File type, test count and hypothetical harm alone never justify Major" in impact
+    proportion = next(
+        line
+        for line in lines
+        if line.startswith("Judge the remaining required work against the PR's own purpose and size")
+    )
+    assert "direction conflict" in proportion
+    assert "reverses or removes the PR's central change" in proportion
+    assert "A direction conflict is never Minor changes" in proportion
+    assert "never from reviewer preference" in proportion
+    assert "a bounded fix to a small part of a large diff stays Minor" in proportion
+    assert "line counts alone never establish a direction conflict" in proportion
     aggregation = next(line for line in lines if line.startswith("Use the strongest confirmed consequence"))
     assert "only unresolved confirmed required findings" in aggregation
     assert "joint consequence" in aggregation

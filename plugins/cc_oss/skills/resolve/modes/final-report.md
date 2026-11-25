@@ -12,10 +12,23 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # boundary3: pre-final-report write (compaction-contract.md §Lifecycle)
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
 IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR="n/a"
-IFS= read -r PUSH_STATUS < "${TMPDIR:-/tmp}/resolve-push-status-${CSID}" 2>/dev/null || PUSH_STATUS="none"
+IFS= read -r PUSH_STATUS < "${TMPDIR:-/tmp}/resolve-push-status-${CSID}" 2>/dev/null || PUSH_STATUS="unknown"
 _PRESERVE="pr=${_PR_NUMBER}, final-report=pending-write, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv, push-status=${PUSH_STATUS}, push-unblock=${_IMPL_DIR}/push-unblock.txt"
 python "$PLUGIN_ROOT/bin/write_skill_contract.py" --keep-sentinel resolve-keep-items "oss:resolve" "final-report (after push)" "$_IMPL_DIR" "${_PRESERVE}" "write final report → post-PR action gate"  # timeout: 5000
 echo "PUSH_STATUS=$PUSH_STATUS"
+if [[ "$_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+    IFS= read -r _URL < "${TMPDIR:-/tmp}/resolve-pr-html-url-${CSID}" 2>/dev/null || _URL=""
+    [[ "$_URL" =~ ^https://[^/]+/[^/]+/[^/]+/pull/${_PR_NUMBER}$ ]] || _URL="link unavailable"
+    _DELIVERY="$PUSH_STATUS"
+    if [ "$PUSH_STATUS" = pushed ]; then
+        IFS= read -r _LOCAL_HEAD < "${TMPDIR:-/tmp}/resolve-local-head-${CSID}" 2>/dev/null || _LOCAL_HEAD=""
+        IFS= read -r _PR_HEAD < "${TMPDIR:-/tmp}/resolve-pr-head-${CSID}" 2>/dev/null || _PR_HEAD=""
+        _DELIVERY=unverified
+        _OID_RE='^([0-9a-f]{40}|[0-9a-f]{64})$'  # SHA-1 or SHA-256 object id; a variable keeps ( | ) out of the =~ word
+        [[ "$_LOCAL_HEAD" =~ $_OID_RE ]] && [ "$_PR_HEAD" = "$_LOCAL_HEAD" ] && _DELIVERY="verified at $_PR_HEAD"
+    fi
+    printf 'PR_HANDOFF=PR #%s %s — %s\n' "$_PR_NUMBER" "$_URL" "$_DELIVERY"
+fi
 case "$PUSH_STATUS" in blocked-guard|blocked-permission|blocked-needs-manual-push|rejected-remote) echo "PUSH_UNBLOCK=$_IMPL_DIR/push-unblock.txt"; cat "$_IMPL_DIR/push-unblock.txt" 2>/dev/null || echo "⚠ push-unblock.txt missing" ;; esac
 case "$PUSH_STATUS" in rejected-remote) echo "PUSH_ERROR:"; cat "$_IMPL_DIR/push-error.txt" 2>/dev/null || echo "⚠ push-error.txt missing" ;; esac
 IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_DEGRADED=""
@@ -27,6 +40,8 @@ cat "$_OSS_RESOLVE/templates/resolve-report.md"  # timeout: 5000
 ```
 
 Report template (loaded above) — use for section structure. Its `### Push` section shows the printed `PUSH_STATUS` through the template's status table, never a prose recollection of Step 10. Its `### Review Intake` section appears only when the block printed `INTAKE=degraded`, built from the gap JSON printed beside it, never from recollection of the triage. More than 50 items selected → the report's summary carries Step 3d's large-selection line.
+
+In the final user-facing reply, repeat the PR number and canonical link beside the delivery outcome from `PR_HANDOFF`. For a missing link, reuse this PR's observed metadata URL or validated report link when available. Name a successful push with missing or different head evidence as pushed, PR update unverified. Give the recorded reason for a failed, blocked, declined or unattempted push. Identify staged changes as local even when a separate merge commit was pushed. Missing push evidence means status unknown. For runs without a PR, identify the local checkout and result.
 
 Codex quota stop: a printed `C1 codex-blocked:quota item=<id>` → the summary carries one `codex-blocked:quota` line:
 
@@ -136,7 +151,7 @@ fi
 
 **Branch after the run** — the block above returns to `SAVED_BRANCH` only when `PUSH_STATUS=pushed`. Any unpushed outcome (push declined, blocked, rejected or never attempted) leaves the session on the PR branch that holds the commits, so the user can inspect them or push by hand; the block prints how to switch back.
 
-**Worktree exit** — if `WT_ENABLED=true` and a worktree was entered at Step 4: when pushed, the commits are on the fork (the deliverable is remote); when not pushed, they exist only in that worktree, so keep it. Follow `worktree-isolation.md` §Exit — `git branch --show-current`, then `ExitWorktree(action="keep")` to return the session to the main tree, and append the `Worktree` block noting the local worktree is disposable (`git worktree remove` when done). The `SAVED_BRANCH` restore above was a no-op — the main tree was never switched. Never auto-merge.
+**Worktree exit** — if `WT_ENABLED=true` and a worktree was entered at Step 4, follow `worktree-isolation.md` §Exit — `git branch --show-current`, then `ExitWorktree(action="keep")` to return the session to the main tree. Append the `Worktree` block with the path to any local work. Describe the worktree as disposable only when the push was verified and all changes were committed. The `SAVED_BRANCH` restore above was a no-op — the main tree was never switched. Never auto-merge.
 
 Post-PR action — already answered by the Step 3d push question; no new `AskUserQuestion` here (after a run approval it stays `skip`; the report's **Link** line is the way to the PR):
 

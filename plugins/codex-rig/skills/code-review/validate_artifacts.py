@@ -90,6 +90,7 @@ from codemap_adapter import reduce_status as codemap_reduce_status  # noqa: E402
 from codemap_adapter import unquote_git_path as codemap_unquote_git_path  # noqa: E402
 from collect_diff import canonical_diff_arguments, diff_sections  # noqa: E402
 from collect_pr import dirty_path_record_is_consistent  # noqa: E402
+from final_handoff import CLOSE_CODES  # noqa: E402
 from local_reviewer_wave import ReviewRouteError as ReviewRouteError  # noqa: E402
 from parallel_execution import _SECRET_PATTERNS as _SECRET_PATTERNS  # noqa: E402
 from parallel_execution import review_input_has_sensitive_material as review_input_has_sensitive_material  # noqa: E402
@@ -99,6 +100,13 @@ from review_context import context_pages as context_pages  # noqa: E402
 from review_context import dispatch_message as dispatch_message  # noqa: E402
 from review_context import render_read_call as render_read_call  # noqa: E402
 from review_context import render_read_output as render_read_output  # noqa: E402
+from review_evidence_validation import (  # noqa: E402
+    DUPLICATE_SCHEMA_REPAIR,
+    closed_review_handoff,
+    closed_review_notes,
+    reviewed_pr_ci_rollup,
+    validate_closed_review_handoff,
+)
 from review_execution_validation import FINDING_SEVERITIES as FINDING_SEVERITIES  # noqa: E402
 from review_execution_validation import LEGACY_ALL_PAGE_READER_SHA256 as LEGACY_ALL_PAGE_READER_SHA256  # noqa: E402
 from review_execution_validation import (  # noqa: E402
@@ -203,17 +211,6 @@ CANONICAL_SOURCE_VERDICTS = {
     spelling: SOURCE_VERDICTS[max(SOURCE_VERDICTS)][level]
     for spellings in SOURCE_VERDICTS.values()
     for level, spelling in enumerate(spellings)
-}
-#: Reason codes that justify closing a PR at the close gate.
-CLOSE_CODES = {
-    "FALSE_GOAL",
-    "BREAKING_CONDUCT",
-    "WRONG_SCOPE",
-    "WRONG_PROVENANCE",
-    "DUPLICATE",
-    "UNADDRESSED_REVERT",
-    "SPAM",
-    "ARCHITECTURE_VIOLATION",
 }
 #: Heading of the report section that holds the findings and merge-blocks action table.
 ACTION_TABLE_SECTION = "Review Findings and Merge Blocks"
@@ -2012,7 +2009,7 @@ def _validate_ci_tests_skip(
         names_required_ci = re.search(r"\brequired\s+ci\b|^\s*ci\s+failed\s*:", lowered)
         failure_word = re.search(r"\bfail(?:ed|ure|ing)\b", lowered)  # codespell:ignore ure
         if readiness == "complete" and names_required_ci and failure_word:
-            rollup = _load_json(out_dir / "pr.json").get("statusCheckRollup")
+            rollup = reviewed_pr_ci_rollup(out_dir, _load_json(out_dir / "pr.json"), head_oid)
             for entry in rollup if isinstance(rollup, list) else ():
                 if isinstance(entry, dict) and _ci_check_outcome(entry) in failed_outcomes:
                     name = entry.get("name") or entry.get("context")
@@ -2030,7 +2027,7 @@ def _validate_ci_tests_skip(
     if not head_oid.startswith(match["head"]):
         raise SystemExit(f"{error}-head-mismatch")
     pr_payload = _load_json(out_dir / "pr.json")
-    rollup = pr_payload.get("statusCheckRollup")
+    rollup = reviewed_pr_ci_rollup(out_dir, pr_payload, head_oid)
     if pr_payload.get("headRefOid") != head_oid or not isinstance(rollup, list):
         raise SystemExit(f"{error}-rollup-unavailable")
     cited = [name.strip() for name in match["names"].split("|") if name.strip()]
@@ -2230,7 +2227,9 @@ def _validate_pr_tests_import_proof(
                 raise SystemExit("local-source-tests-worker-union-invalid")
 
 
-def _validate_closed_result(out_dir: Path, result: dict[str, Any], metadata: dict[str, Any], scope: str) -> None:
+def _validate_closed_result(
+    out_dir: Path, result: dict[str, Any], metadata: dict[str, Any], scope: str, *, candidate: bool = False
+) -> None:
     """Validate a conclusive proposal-level PR close decision that precedes source review."""
     if scope != "pr":
         raise SystemExit("closed-review-non-pr-scope")
@@ -2277,13 +2276,25 @@ def _validate_closed_result(out_dir: Path, result: dict[str, Any], metadata: dic
         "evidence",
         "counterevidence_checked",
     }
-    if not isinstance(decision, dict) or set(decision) != expected_decision_keys:
+    if not isinstance(decision, dict):
         raise SystemExit("closed-review-invalid-decision-shape")
-    if decision.get("schema_version") != 1 or decision.get("advisory_only") is not True:
-        raise SystemExit("closed-review-invalid-decision-policy")
     code = decision.get("code")
-    if code not in CLOSE_CODES:
+    if not isinstance(code, str) or code not in CLOSE_CODES:
         raise SystemExit(f"closed-review-invalid-code:{code!r}")
+    version = decision.get("schema_version")
+    current_duplicate = code == "DUPLICATE" and (candidate or version != 1)
+    if current_duplicate:
+        if type(version) is not int or version != 2:
+            raise SystemExit(DUPLICATE_SCHEMA_REPAIR)
+        expected_decision_keys.add("duplicate_of")
+    if set(decision) != expected_decision_keys:
+        raise SystemExit("closed-review-invalid-decision-shape")
+    if (
+        type(version) is not int
+        or version != (2 if current_duplicate else 1)
+        or decision.get("advisory_only") is not True
+    ):
+        raise SystemExit("closed-review-invalid-decision-policy")
     head_sha = decision.get("head_sha")
     if not isinstance(head_sha, str) or re.fullmatch(r"[0-9a-f]{40}", head_sha) is None:
         raise SystemExit("closed-review-invalid-head-sha")
@@ -2344,23 +2355,23 @@ def _validate_closed_result(out_dir: Path, result: dict[str, Any], metadata: dic
         raise SystemExit("closed-review-local-checkout-invalid")
 
     notes = (out_dir / "review-notes.md").read_text(encoding="utf-8")
-    if any(line.strip().startswith("|") for line in notes.splitlines()):
+    handoff_path = out_dir / "final-handoff.json"
+    retained_handoff = _load_json(handoff_path) if "final_handoff" in metadata and handoff_path.is_file() else {}
+    current_notes = candidate or current_duplicate or retained_handoff.get("presentation_version") == 17
+    handoff = closed_review_handoff(out_dir, decision) if current_notes else None
+    expected_notes = closed_review_notes(decision, current_handoff=handoff)
+    if [line for line in notes.splitlines() if line.strip().startswith("|")] != [
+        line
+        for line in expected_notes.partition("\n\nSource findings:")[0].splitlines()
+        if line.strip().startswith("|")
+    ]:
         raise SystemExit("closed-review-table-forbidden")
-    evidence_notes = "\n".join(f"- `{item['source']}`: {item['claim']}" for item in evidence)
-    counterevidence_notes = "\n".join(f"- {item}" for item in counterevidence)
-    expected_notes = (
-        "# Review Decision: close\n\n"
-        "Source findings: not assessed\n\n"
-        "Detailed review: skipped\n\n"
-        f"Close reason: `{code}`\n\n"
-        f"Summary: {decision['summary']}\n\n"
-        f"Rationale: {decision['rationale']}\n\n"
-        f"Evidence:\n\n{evidence_notes}\n\n"
-        f"Counterevidence checked:\n\n{counterevidence_notes}\n\n"
-        "GitHub mutation: not performed."
-    )
     if notes.strip() != expected_notes:
         raise SystemExit("closed-review-notes-must-be-close-only")
+    if candidate and result.get("schema_version") != 3:
+        raise SystemExit("closed-review-candidate-schema-v3-required")
+    if handoff is not None and result.get("schema_version") == 3:
+        validate_closed_review_handoff(handoff, retained_handoff)
     confidence_gaps = metadata.get("confidence_gaps")
     if not isinstance(confidence_gaps, list) or CLOSED_CONFIDENCE_GAP not in confidence_gaps:
         raise SystemExit("closed-review-confidence-gap-missing")
@@ -4138,7 +4149,9 @@ def _terminal_review_steps(out_dir: Path, result_path: Path, context: dict[str, 
                 require_deductions=_is_fresh_candidate(out_dir, result_path),
             )
         else:
-            _validate_closed_result(out_dir, result, metadata, scope)
+            _validate_closed_result(
+                out_dir, result, metadata, scope, candidate=_is_fresh_candidate(out_dir, result_path)
+            )
 
     return [
         _ReviewStep(str(context["review_status"]), terminal),

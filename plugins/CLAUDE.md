@@ -280,7 +280,8 @@ Per-plugin version in `.claude-plugin/plugin.json`, space `0.X.Y`:
 > - Yes + it didn't → `Y` (fix).
 > - No, new intent → `X` (feature).
 > - Internal restructuring always `Y`, regardless of size or visibility.
-> - Bump once per commit at the highest-magnitude change: both `Y`- and `X`-class changes → bump `X` only, reset `Y` to `0`.
+> - Classify from the plugin's `## Unreleased` changelog section, the running record of its notable changes, not from a fresh diff read: an entry describing a new capability, agent, skill or designed behaviour → `X`; only fix, wording or refinement entries → `Y`; a non-test change with no `## Unreleased` section → `Y`. Only entries for changes this commit lands count. A change that deserves an entry but has none is a changelog defect: add the entry, then classify. The commit step reads file names only (`git diff HEAD --name-only`), never the full diff.
+> - Bump once per commit at the highest-magnitude entry: both `Y`- and `X`-class changes → bump `X` only, reset `Y` to `0`.
 > - Read baseline via `git show HEAD:<plugin-path>/.claude-plugin/plugin.json | grep version`, never from disk. If on-disk differs from HEAD, still calculate the bump from HEAD: an on-disk value equal to the result already landed **for this pending commit** (do not bump again), any other value is reset to the result.
 > - Scope is the commit, never the session: splitting one session's work into N commits means N bumps for every plugin each commit touches, each derived from the preceding commit.
 

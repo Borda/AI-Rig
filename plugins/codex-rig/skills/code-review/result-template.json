@@ -25,10 +25,11 @@
       "counterevidence_checked": [
         "falsification check performed before closing"
       ],
+      "duplicate_of": "DUPLICATE only, with schema_version 2; omit for other codes, which keep schema_version 1: canonical https://github.com/OWNER/REPO/pull|issues/NUMBER or commit/SHA URL of the earlier change, also cited as an evidence source",
       "evidence": [
         {
-          "claim": "observed fact supporting the close code",
-          "source": "artifact, repository path, or authoritative URL"
+          "claim": "observed fact supporting the close code; for DUPLICATE, the behavior the duplicate_of target already delivers",
+          "source": "artifact, repository path, or authoritative URL; for DUPLICATE, the exact duplicate_of URL"
         },
         {
           "claim": "independent observed fact supporting the same close code",
@@ -36,7 +37,7 @@
         }
       ],
       "head_sha": "verified current PR head",
-      "rationale": "why the close code follows from the evidence",
+      "rationale": "why the close code follows from the evidence; for DUPLICATE, why the target already meets the goal and any material difference",
       "schema_version": 1,
       "summary": "1-3 sentence close outcome"
     },

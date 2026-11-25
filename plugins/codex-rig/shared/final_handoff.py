@@ -13,8 +13,10 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 
 ## Usage
 
-New assessed PR reviews use presentation 16 to open with the source-bound PR subject. Other new handoffs use
-presentation 15. Both include substantive outcome judgments, closing recommendations, readable prose, confidence
+Conclusive PR reviews use presentation 17 to show Reject with the close reason and reviewed commit; a duplicate adds
+the maintainer's linked action. Assessed PR reviews use presentation 16 to open with the source-bound PR subject.
+Other new handoffs use presentation 15.
+These layouts include substantive outcome judgments, closing recommendations, readable prose, confidence
 tables, linked artifacts, and verification evidence in rows with other paths outside tables.
 New writers set ``action_policy=owned`` for concrete follow-ups or ``best-way-forward`` for one unblocking option.
 Unmarked handoffs retain their exact presentation.
@@ -45,18 +47,61 @@ deliberately outside the artifact lifecycle.
 from __future__ import annotations
 
 import argparse
+import bisect
 import hashlib
 import json
 import re
 import shutil
+import string
 import sys
 import tempfile
+import unicodedata
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 from urllib.parse import quote
 
 #: Schema revision of the final-handoff JSON document.
 SCHEMA_VERSION = 1
+#: Evidence-backed reasons for recommending closure of an open pull request.
+CLOSE_CODES = frozenset(
+    {
+        "FALSE_GOAL",
+        "BREAKING_CONDUCT",
+        "WRONG_SCOPE",
+        "WRONG_PROVENANCE",
+        "DUPLICATE",
+        "UNADDRESSED_REVERT",
+        "SPAM",
+        "ARCHITECTURE_VIOLATION",
+    }
+)
+#: Presentation of every new terminal PR close handoff, one step after the assessed PR review presentation (16).
+CLOSED_REVIEW_PRESENTATION = 17
+#: Line openings that start a Markdown block instead of continuing a paragraph. Characters with no inline meaning are
+#: matched outright: an ATX heading, quote, plus or dash bullet, dash thematic break or setext underline, table row and
+#: ordered item delimiter. Characters that also open inline markup match only in their block form: a star bullet (a
+#: star before a space or the end), a star or underscore thematic break, a backtick fence (no later backtick on the
+#: line, otherwise it is a code span), a tilde fence, a link reference or footnote definition, and a comment,
+#: declaration or processing-instruction HTML block, which a line opens even where the text would be an email autolink.
+_BLOCK_OPENING = re.compile(
+    r"[#>+\-=|]|[0-9]{1,9}[.)]|\*(?= |$)|(?:\* *){3,}$|(?:_ *){3,}$|`{3,}(?=[^`]*$)|~{3}"
+    r"|\[(?:[^\[\]\\]|\\.)*\]:|<[!?]"
+)
+#: Characters that may follow ``<`` when it opens raw HTML: a tag name, closing tag, comment, declaration or
+#: processing instruction.
+_RAW_HTML_START = frozenset(string.ascii_letters + "/!?")
+#: A CommonMark URI or email autolink, which a renderer reads before raw HTML at the same ``<``.
+_AUTOLINK = re.compile(
+    r"<(?:[A-Za-z][A-Za-z0-9+.\-]{1,31}:[^\x00-\x20\x7f<>]*"
+    r"|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~\-]+@[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)*)>"
+)
+#: A maximal run of backticks, which opens a code span closed by the next run of the same length.
+_BACKTICK_RUN = re.compile(r"`+")
+#: ASCII punctuation, the only characters a CommonMark backslash escapes.
+_ASCII_PUNCTUATION = frozenset(string.punctuation)
+#: Open-parenthesis nesting at which markdown-it stops reading a link destination; deeper text counts as consumed.
+_MAX_DESTINATION_PARENS = 32
 #: Identifiers of the verification gates, in the order a handoff must report them.
 GATE_IDS = ("lint", "format", "types", "tests", "review")
 #: Allowed result statuses for a verification gate.
@@ -671,7 +716,21 @@ def _validate_remaining(payload: dict[str, Any], row_ids: set[str], branch: str,
                 raise HandoffError(f"remaining-row-id-unknown:{row_id}")
         remaining_ids.add(row_id)
     next_steps = set(_require_string_list(payload.get("next_steps"), "next-steps"))
-    if branch == "closed" and next_steps:
+    if payload.get("presentation_version") == 17 and payload["close_reason"]["code"] != "DUPLICATE":
+        if remaining or next_steps:
+            raise HandoffError("reject-review-actions-unexpected")
+    elif payload.get("presentation_version") == 17:
+        # A duplicate is rejected like every other close, plus one maintainer action linking the earlier change.
+        if (
+            remaining_ids != {"duplicate"}
+            or remaining[0]["owner"] != "Maintainer"
+            or payload["next_steps"] != ["duplicate"]
+        ):
+            raise HandoffError("duplicate-review-action-invalid")
+        _validate_owned_actions(payload, remaining_ids)
+        if any(inline_text(remaining[0][field]) != remaining[0][field] for field in ("item", "next_action")):
+            raise HandoffError("close-text-not-inline")
+    elif branch == "closed" and next_steps:
         raise HandoffError("closed-branch-next-steps-forbidden")
     if owned_actions and branch not in {"closed", "caller-contract"}:
         if not next_steps <= remaining_ids or bool(next_steps) != bool(remaining_ids):
@@ -804,6 +863,250 @@ def validate_handoff(payload: object) -> dict[str, Any]:
     return _validate_handoff(payload)
 
 
+def _visible_line(text: str) -> str:
+    """Collapse text to one line, turning control characters into spaces and dropping invisible format characters.
+
+    Format characters (Unicode category ``Cf``) include bidirectional overrides and isolates, which can reorder how the
+    surrounding text displays without appearing themselves.
+    """
+    kept = "".join(
+        " " if unicodedata.category(char) == "Cc" else "" if unicodedata.category(char) == "Cf" else char
+        for char in text
+    )
+    return " ".join(kept.split())
+
+
+def _escape_block_opening(line: str) -> str:
+    """Backslash-escape the marker that would make a paragraph line open a Markdown block; keep other lines as is."""
+    opening = _BLOCK_OPENING.match(line)
+    if not opening:
+        return line
+    # An ordered item needs its delimiter escaped, never its number; every other marker needs its first character.
+    marker = opening.end() - 1 if opening[0][-1] in ".)" else opening.start()
+    return f"{line[:marker]}\\{line[marker:]}"
+
+
+def _backtick_runs(line: str) -> dict[int, list[tuple[int, int]]]:
+    """Group the spans of every maximal backtick run in a line by run length, in line order."""
+    runs: dict[int, list[tuple[int, int]]] = {}
+    for run in _BACKTICK_RUN.finditer(line):
+        runs.setdefault(len(run[0]), []).append(run.span())
+    return runs
+
+
+def _code_span_end(line: str, start: int, runs: dict[int, list[tuple[int, int]]]) -> int | None:
+    """Return where the code span opened by the backtick run at ``start`` ends, or None when no run closes it.
+
+    The closing run is the next maximal run of the same length in the raw text, ignoring backslashes and every other
+    construct, as CommonMark does. ``runs`` is the line's ``_backtick_runs``, so each lookup is a binary search.
+    """
+    opening = _BACKTICK_RUN.match(line, start)
+    candidates = runs.get(opening.end() - start, [])
+    position = bisect.bisect_left(candidates, (opening.end(), 0))
+    return candidates[position][1] if position < len(candidates) else None
+
+
+def _skip_spaces(line: str, index: int) -> int:
+    """Return the first position at or after ``index`` that is not a space."""
+    while index < len(line) and line[index] == " ":
+        index += 1
+    return index
+
+
+def _delimited_end(line: str, start: int, closer: str, forbidden: str) -> int | None:
+    """Return the index just past ``closer`` for text opened at ``start``, or None at a forbidden character.
+
+    A backslash makes the next character literal, so an escaped closer or forbidden character does not count.
+    """
+    index = start + 1
+    while index < len(line):
+        if line[index] == "\\":
+            index += 2
+        elif line[index] == closer:
+            return index + 1
+        elif line[index] in forbidden:
+            return None
+        else:
+            index += 1
+    return None
+
+
+def _raw_destination_end(line: str, start: int) -> int | None:
+    """Return where a link destination without angle brackets ends: at a space or an unbalanced ``)``.
+
+    Returns None for unbalanced parentheses at the end of the line. Past ``_MAX_DESTINATION_PARENS`` open parentheses it
+    returns the end of the line, which treats the rest as consumed and keeps the scan of a line linear.
+    """
+    depth, index = 0, start
+    while index < len(line) and line[index] != " ":
+        if line[index] == "\\" and line[index + 1 : index + 2] in _ASCII_PUNCTUATION:
+            index += 1
+        elif line[index] == "(":
+            depth += 1
+            if depth > _MAX_DESTINATION_PARENS:
+                return len(line)
+        elif line[index] == ")":
+            if depth == 0:
+                break
+            depth -= 1
+        index += 1
+    return index if depth == 0 else None
+
+
+def _link_tail(line: str, start: int) -> tuple[int, int]:
+    """Return where a link tail after ``]`` at ``start`` ends if a link consumes it, and where its raw reading ends.
+
+    The tail is a link destination and title in parentheses or a reference label in brackets. A renderer consumes it
+    whole when a link forms, so a backtick inside opens no code span. The first value is ``start`` when the text cannot
+    be such a tail; the parse follows CommonMark and accepts a tail whether or not an opening bracket or link definition
+    exists, which only ever treats more text as consumed. The second value is one past the last character a renderer
+    reads raw while trying the destination and title, link formed or not: markdown-it, for example, resumes there with a
+    reference-label lookahead after a failed inline link.
+    """
+    if line.startswith("[", start):
+        end = _delimited_end(line, start, "]", "[")
+        return (start if end is None else end), start
+    if not line.startswith("(", start):
+        return start, start
+    index = _skip_spaces(line, start + 1)
+    if line.startswith("<", index):
+        destination = _delimited_end(line, index, ">", "<")
+    else:
+        destination = _raw_destination_end(line, index)
+    if destination is None:
+        return start, index + 1
+    if destination == len(line):
+        # A destination that may run to the end of the line could still be consumed by a link.
+        return destination, destination
+    index = _skip_spaces(line, destination)
+    if index > destination and index < len(line) and line[index] in "\"'(":
+        parenthesized = line[index] == "("
+        title = _delimited_end(line, index, ")" if parenthesized else line[index], "(" if parenthesized else "")
+        if title is None:
+            return start, index + 1
+        index = _skip_spaces(line, title)
+    return (index + 1 if line.startswith(")", index) else start), index + 1
+
+
+def _escape_raw_html(line: str, *, trust_code_spans: bool) -> tuple[str, bool]:
+    """Backslash-escape every ``<`` that could open raw HTML, reading the line from left to right as CommonMark does.
+
+    Backslash escapes and URI or email autolinks are copied unchanged, because a renderer reads no raw HTML inside them;
+    so are code spans when ``trust_code_spans`` is set. A link destination, title or reference label after ``]`` is
+    treated as consumed by a link, so a backtick there opens no code span; when no link forms, this only leaves more
+    text exposed to escaping. Returns the escaped line and whether its code spans can be trusted: every backtick belongs
+    to a copied code span and none lies where a renderer reads a link tail raw.
+    """
+    pieces: list[str] = []
+    runs = _backtick_runs(line)
+    index, consumed_until, paired, read_raw = 0, 0, 0, False
+    while index < len(line):
+        char, piece = line[index], None
+        if char == "\\" and line[index + 1 : index + 2] in _ASCII_PUNCTUATION:
+            end = index + 2
+        elif char == "`" and trust_code_spans and index >= consumed_until:
+            span_end = _code_span_end(line, index, runs)
+            end = _BACKTICK_RUN.match(line, index).end() if span_end is None else span_end
+            paired += 0 if span_end is None else line.count("`", index, end)
+        elif char == "<" and (autolink := _AUTOLINK.match(line, index)):
+            end = autolink.end()
+        else:
+            end = index + 1
+            if char == "<" and line[index + 1 : index + 2] in _RAW_HTML_START:
+                piece = "\\<"
+            elif char == "]":
+                consumed, read_end = _link_tail(line, end)
+                consumed_until = max(consumed_until, consumed)
+                # A lookahead resuming after a raw read can start inside a code span opened by a backtick read there.
+                read_raw = read_raw or "`" in line[end:read_end]
+        pieces.append(piece or line[index:end])
+        index = end
+    return "".join(pieces), paired == line.count("`") and not read_raw
+
+
+def _escape_line_html(line: str) -> str:
+    """Escape raw HTML openings, keeping code spans as written only when the line pairs its backticks unambiguously.
+
+    A backtick left unpaired, or read raw inside a link tail, lets renderers disagree about which runs pair: markdown-
+    it, for example, caches a backtick scan made during a link-label lookahead, which can start after a failed link
+    tail, and then misses a closer the specification would find. Such a line therefore does not trust its code spans,
+    and a tag-like ``<`` inside them is escaped too, at the cost of a visible backslash.
+    """
+    escaped, all_paired = _escape_raw_html(line, trust_code_spans=True)
+    return escaped if all_paired else _escape_raw_html(line, trust_code_spans=False)[0]
+
+
+def inline_text(text: str) -> str:
+    """Return free text as one Markdown paragraph line that cannot open a block or raw HTML, keeping inline markup.
+
+    Whitespace and line breaks collapse to single spaces and invisible format characters are dropped. A leading block
+    marker is backslash-escaped so it displays literally. A leading star, underscore, bracket or backtick run is
+    escaped only in its block form, so bold, emphasis, links and code spans opening the text still render.
+
+    Every ``<`` that could open raw HTML is escaped too, because renderers such as GitHub pass inline tags like ``<h1>``
+    through and display them as blocks. URI and email autolinks keep their ``<``, and so do code spans on a line whose
+    every backtick pairs into a code span outside any link destination or title. On any other line a tag-like ``<``
+    inside a code span is escaped as well and shows a backslash. A link destination in angle brackets that is not an
+    absolute URI is escaped too, so such a link may change target.
+
+    Escaping repeats until the line is stable, so the result is unchanged when normalized again, which lets a validator
+    require already-normalized text.
+
+    Examples:
+        >>> inline_text("x\\n\\n| Recommendation | Merge |\\n\\n# Approved")
+        'x | Recommendation | Merge | # Approved'
+        >>> print(inline_text("# Approved"), inline_text("12. Listed"), inline_text("2026 release"))
+        \\# Approved 12\\. Listed 2026 release
+        >>> print(inline_text("x <h1>Approved</h1> a < b"), inline_text("\\\\\\\\<b>"))
+        x \\<h1>Approved\\</h1> a < b \\\\\\<b>
+        >>> print(inline_text("**Fixed** `List<int>` per <https://x.example>"), inline_text("* item"))
+        **Fixed** `List<int>` per <https://x.example> \\* item
+    """
+    line = _visible_line(text)
+    # Each escape can change how later text pairs (an escaped angle destination may stop being a link), so repeat
+    # until the scan of the final text itself adds nothing.
+    while (normalized := _escape_line_html(_escape_block_opening(line))) != line:
+        line = normalized
+    return line
+
+
+def _closed_review_view(handoff: dict[str, Any]) -> dict[str, Any]:
+    """Return a close handoff's reason and maintainer actions with every string normalized to inline text.
+
+    The close presentation renders only from this view, so a free-text field the validator does not name still cannot
+    open a Markdown block. Pattern-validated identifiers such as the close code, PR URL and commit are unchanged by it.
+    """
+    return {
+        "close_reason": {key: inline_text(value) for key, value in handoff["close_reason"].items()},
+        "remaining": [{key: inline_text(value) for key, value in item.items()} for item in handoff["remaining"]],
+    }
+
+
+def literal_code_span(text: str) -> str:
+    """Return untrusted text as one inline code span, which Markdown renderers display literally.
+
+    Code span content is never parsed for links, automatic links, emphasis or HTML, including by renderers that find
+    bare URLs after parsing. Control and invisible format characters such as bidirectional overrides are removed first.
+    The fence is one backtick longer than the longest backtick run in the text, and text that starts or ends with a
+    backtick is padded with a space on both sides, which renderers strip again. ``Reason:`` keeps a no-break space so
+    the text cannot start the technical detail that a summary's first `` Reason: `` introduces. Empty text stays empty.
+
+    Examples:
+        >>> print(literal_code_span("Fix https://x.example *now*"))
+        `Fix https://x.example *now*`
+        >>> print(literal_code_span("Use `code` here"))
+        ``Use `code` here``
+        >>> literal_code_span("\\u202e")
+        ''
+    """
+    line = _visible_line(text).replace("Reason: ", "Reason:\u00a0")
+    if not line:
+        return ""
+    fence = "`" * (max((len(run) for run in re.findall(r"`+", line)), default=0) + 1)
+    pad = " " if line.startswith("`") or line.endswith("`") else ""
+    return f"{fence}{pad}{line}{pad}{fence}"
+
+
 def _review_pr_subject(handoff: dict[str, Any]) -> tuple[str, str]:
     """Read the base repository, number and display-safe title from the source-bound PR snapshot link."""
     values = [
@@ -867,6 +1170,12 @@ def _validate_handoff(
             handoff.setdefault("source_coverage", base["source_coverage"])
         return handoff
     expected_fields = HANDOFF_FIELDS if presentation_version is None else HANDOFF_FIELDS | {"presentation_version"}
+    if presentation_version == 17:
+        expected_fields = expected_fields | {"close_reason"}
+    if presentation_version == 17 and "action_policy" in handoff:
+        expected_fields = expected_fields | {"action_policy"}
+        if handoff["action_policy"] != "owned":
+            raise HandoffError("handoff-action-policy-invalid")
     if "commit_disposition" in handoff:
         expected_fields = expected_fields | {"commit_disposition"}
     if derive_source_counts and "source_coverage" not in handoff:
@@ -882,6 +1191,8 @@ def _validate_handoff(
         presentation_versions.update({4, 5, 6})
     elif handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed":
         presentation_versions.add(7)
+    elif handoff.get("skill") == "code-review" and handoff.get("branch") == "closed":
+        presentation_versions.add(17)
     if presentation_version is not None and (
         type(presentation_version) is not int or presentation_version not in presentation_versions
     ):
@@ -903,6 +1214,27 @@ def _validate_handoff(
         }:
             raise HandoffError("review-outcome-not-canonical")
         _require_source_vocabulary(outcome_summary, handoff.get("tables"))
+    elif presentation_version == 17:
+        # Every conclusive close, a duplicate included, is a rejection with its reason and reviewed commit.
+        reason = _require_object(handoff["close_reason"], "close-reason")
+        if set(reason) != {"code", "pr_url", "head_sha", "summary", "rationale"}:
+            raise HandoffError("close-reason-fields-invalid")
+        for field, value in reason.items():
+            _require_string(value, f"close-reason-{field}")
+        if (
+            reason["code"] not in CLOSE_CODES
+            or not re.fullmatch(
+                r"(?i:https://github[.]com)/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*/pull/[1-9][0-9]*",
+                reason["pr_url"],
+            )
+            or not re.fullmatch(r"[0-9a-f]{40}", reason["head_sha"])
+        ):
+            raise HandoffError("close-reason-invalid")
+        if outcome_title != "Review Decision" or outcome_summary != "Recommendation: Reject.":
+            raise HandoffError("review-outcome-not-canonical")
+        # Free text renders inline, so it must already be one line that cannot open a Markdown block.
+        if any(inline_text(reason[field]) != reason[field] for field in ("summary", "rationale")):
+            raise HandoffError("close-text-not-inline")
     if "child_runs" in handoff:
         runs = handoff["child_runs"]
         if not isinstance(runs, list) or not runs:
@@ -1617,21 +1949,26 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
         return handoff["caller_contract"]["output"]
 
     review_subject = None
-    if handoff.get("presentation_version") == 16:
-        review_subject = _review_pr_subject(handoff)
-        layout_version = 15  # version 16 renders through the version 15 layout, with the PR subject added
+    closed_review = handoff.get("presentation_version") == CLOSED_REVIEW_PRESENTATION
+    if handoff.get("presentation_version") in {16, CLOSED_REVIEW_PRESENTATION}:
+        if not closed_review:
+            review_subject = _review_pr_subject(handoff)
+        layout_version = (
+            15  # versions 16 and 17 render through the version 15 layout, adding a PR subject or close reason
+        )
         handoff = {**handoff, "presentation_version": layout_version}
     if handoff.get("presentation_version") in {8, 9, 10, 11, 12, 13, 14, 15}:
         previous = 7 if handoff["skill"] == "code-review" and handoff["branch"] == "assessed" else 3
         if handoff["skill"] == "code-remediate":
             previous = 6
-        return _externalize_table_paths(
+        rendered = _externalize_table_paths(
             _render_v2_handoff(
                 {**handoff, "presentation_version": previous},
                 report_root=report_root,
                 readable=handoff["presentation_version"] in {9, 10, 11, 12, 13, 14, 15},
                 show_resolution=handoff["presentation_version"] in {10, 11, 12, 13, 14, 15},
                 status_table=handoff["presentation_version"] in {11, 12, 13, 14, 15},
+                closed_review=closed_review,
                 actions_last=handoff["presentation_version"] in {12, 13, 14, 15},
                 current_review_summary=handoff["presentation_version"] in {12, 13, 14, 15},
                 field_tables=handoff["presentation_version"] in {13, 14, 15},
@@ -1645,6 +1982,11 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
             confidence_table=handoff["presentation_version"] in {14, 15},
             actionable_summary=handoff["presentation_version"] == 15,
         )
+        if closed_review and handoff["close_reason"]["code"] == "DUPLICATE":
+            # Prose keeps the links to both PRs clickable and follows them with the target's evidence of the overlap.
+            item = _closed_review_view(handoff)["remaining"][0]
+            rendered += f"\n**Next steps**\n\n**{item['owner']}** — {item['next_action']}\n\n{item['item']}\n"
+        return rendered
 
     if handoff.get("presentation_version") in {2, 3, 4, 5, 6, 7}:
         return _render_v2_handoff(handoff, report_root=report_root)
@@ -1726,6 +2068,7 @@ def _render_v2_handoff(
     readable: bool = False,
     show_resolution: bool = False,
     status_table: bool = False,
+    closed_review: bool = False,
     actions_last: bool = False,
     current_review_summary: bool = False,
     field_tables: bool = False,
@@ -1810,6 +2153,30 @@ def _render_v2_handoff(
                     ),
                 )
             )
+    elif closed_review:
+        # Pattern-validated identifiers render as recorded; free text comes from the normalized close view.
+        reason = _closed_review_view(handoff)["close_reason"]
+        url = reason["pr_url"]
+        lines.extend(
+            (
+                "",
+                "**Results**",
+                "",
+                "| Field | Value |",
+                "| -- | -- |",
+                "| Recommendation | Reject |",
+                f"| Reason | {reason['code']} |",
+                f"| Reviewed commit | `{reason['head_sha']}` |",
+                # A close is terminal: it assesses no source finding, runs no detailed review and changes nothing.
+                "| Source findings | Not assessed |",
+                "| Detailed review | Skipped |",
+                "| GitHub mutation | Not performed |",
+                "",
+                f"[PR #{url.rsplit('/', 1)[-1]}]({url}) — {reason['summary']}",
+                "",
+                reason["rationale"],
+            )
+        )
     elif status_table:
         # Terminal branches have no assessed records; derive a display-only anchor from their actual disposition.
         lines.extend(("", "**Results**", "", "| Field | Value |", "| -- | -- |"))
@@ -1970,7 +2337,7 @@ def render_files(handoff_path: Path, final_path: Path, validation_path: Path) ->
     """Render and bind a new handoff, preserving the bytes of a previously validated historical presentation."""
     _require_siblings(handoff_path, final_path, validation_path)
     handoff = _load_json(handoff_path)
-    default_policy = handoff.get("presentation_version") in {15, 16} and "action_policy" not in handoff
+    default_policy = handoff.get("presentation_version") in {15, 16, 17} and "action_policy" not in handoff
     if default_policy:
         if validation_path.exists():
             return check_files(handoff_path, final_path, validation_path)

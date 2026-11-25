@@ -15,6 +15,8 @@
     or repairs a changed revision. Only the explicitly requested receipt is written.
 ## Usage
 
+    After an occupied-branch checkout failure, use ``locate-owner --pr-dir <collector-directory>``
+    to locate the clean registered PR worktree. An optional receipt records the borrowed delivery location.
     For an explicitly requested separate PR checkout, run ``python remediation_branch.py
     worktree --receipt <run>/remediation-worktree.json`` from the invoking checkout,
     then execute the remediation-mode collector from the returned worktree.
@@ -56,6 +58,7 @@ import secrets
 import subprocess
 import sys
 import tempfile
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -70,17 +73,114 @@ from collect_pr import (  # noqa: E402
     pr_worktree_is_clean,
     verify_pr_tracking,
 )
-from review_workspace import workspace_namespace  # noqa: E402
+from review_workspace import _checkout_directories, workspace_namespace  # noqa: E402
 
 
-def _git(*arguments: str, optional: bool = False) -> str:
+def _git(*arguments: str, optional: bool = False, cwd: Path | None = None) -> str:
     """Run a local Git command and distinguish ordinary negative lookups from errors."""
-    result = subprocess.run(["git", *arguments], capture_output=True, text=True, check=False, timeout=30)  # noqa: S603, S607 - argv list, no shell; tool resolved via PATH on purpose
+    result = subprocess.run(["git", *arguments], cwd=cwd, capture_output=True, text=True, check=False, timeout=30)  # noqa: S603, S607 - argv list, no shell; tool resolved via PATH on purpose
     if optional and result.returncode == 1 and (arguments[:2] == ("config", "--get") or arguments[0] == "check-ignore"):
         return ""
     if result.returncode:
         raise ValueError(f"git-command-failed:{arguments[0]}:exit-{result.returncode}")
     return result.stdout.strip()
+
+
+def locate_owner(pr_dir: Path, receipt: Path | None) -> dict[str, Any]:
+    """Locate a clean attached checkout of the fetched PR branch before retrying collection there."""
+    pr = _read(pr_dir / "pr.json")
+    branch, head, repository = pr["headRefName"], pr["headRefOid"], _head_repository(pr)
+    if pr.get("state") != "OPEN" or not re.fullmatch(r"[0-9a-f]{40}", head):
+        raise ValueError("invalid-pr-source")
+    fetched = _read(pr_dir / "pr-head-fetch.json")
+    state = _read(pr_dir / "checkout-state.json")
+    failure = state.get("gh_checkout_failure") or {}
+    diagnostic = failure.get("diagnostics") if isinstance(failure, dict) else None
+    terminal_error = (pr_dir / "pr-error.txt").read_text(encoding="utf-8").strip()
+    if (
+        terminal_error
+        not in {
+            "remediation-gh-checkout-recovery-required",
+            "remediation-existing-branch-not-at-pr-head",
+            "command-failed:remediation-original-branch-checkout",
+        }
+        or fetched.get("status") != "fetched"
+        or fetched.get("head_matches_pr_metadata") is not True
+        or any(fetched.get(key) != head for key in ("expected_head_oid", "local_head", "remote_ref"))
+        or not isinstance(diagnostic, dict)
+        or failure.get("command") != f"gh pr checkout {pr['url']}"
+        or diagnostic.get("label") != "local-pr-checkout"
+        or diagnostic.get("failure_class") != "github-command-failed"
+        or diagnostic.get("failure_reason")
+        not in {"unclassified", "local-branch-in-other-worktree", "local-branch-exists"}
+    ):
+        raise ValueError("pr-owner-requires-fetched-head-and-checkout-failure")
+    caller = Path(_git("rev-parse", "--show-toplevel")).resolve()
+    _, common = _checkout_directories(caller)
+    branches = {f"branch refs/heads/{branch}"}
+    if pr.get("isCrossRepository") is True:
+        branches.add(f"branch refs/heads/{repository.partition('/')[0]}/{branch}")
+    owners = []
+    for entry in _git("worktree", "list", "--porcelain", "-z").split("\0\0"):
+        location, *fields = entry.split("\0")
+        if branches.intersection(fields):
+            if any(field.partition(" ")[0] in {"locked", "prunable"} for field in fields):
+                raise ValueError("pr-owner-registration-unavailable")
+            owners.append(Path(location.removeprefix("worktree ")))
+    if len(owners) != 1:
+        raise ValueError("no-unique-pr-worktree-owner")
+    owner = owners[0].resolve(strict=True)
+    admin, owner_common = _checkout_directories(owner)
+    if owner == caller or owner_common != common or workspace_namespace(owner) or workspace_namespace(common):
+        raise ValueError("no-separate-pr-worktree-owner")
+    git = partial(_git, cwd=owner)
+    local_branch = git("branch", "--show-current")
+    if (
+        f"branch refs/heads/{local_branch}" not in branches
+        or diagnostic.get("checkout_branch", local_branch) != local_branch
+    ):
+        raise ValueError("pr-owner-branch-changed")
+    verify_pr_tracking(git, local_branch, branch, repository, pr["url"], pr["number"], allow_pull_ref=True)
+    if git(
+        "--no-optional-locks",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.untrackedCache=false",
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--ignore-submodules=none",
+    ) or not pr_worktree_index_unmasked(owner):
+        raise ValueError("pr-owner-has-local-changes")
+    if any(
+        (admin / operation).exists()
+        for operation in (
+            "MERGE_HEAD",
+            "CHERRY_PICK_HEAD",
+            "REVERT_HEAD",
+            "rebase-merge",
+            "rebase-apply",
+            "sequencer",
+            "BISECT_START",
+        )
+    ):
+        raise ValueError("pr-owner-has-active-operation")
+    local_head = git("rev-parse", "HEAD")
+    if git("merge-base", local_head, head) != local_head:
+        raise ValueError("pr-owner-has-local-only-commits")
+    record = {
+        "schema_version": 1,
+        "invoking_checkout": caller.as_posix(),
+        "git_common_dir": common.as_posix(),
+        "initial_head": _git("rev-parse", "HEAD"),
+        "worktree": owner.as_posix(),
+    }
+    if receipt is not None:
+        # Borrow the delivery checkout. Only the allocator can issue a cleanup ownership marker.
+        with receipt.open("x", encoding="utf-8") as stream:
+            stream.write(json.dumps(record, indent=2) + "\n")
+    return {**record, "branch": local_branch, "local_head": local_head, "needs_update": local_head != head}
 
 
 def create_worktree(receipt: Path) -> dict[str, Any]:
@@ -512,8 +612,8 @@ def prepare(pr_dir: Path, receipt: Path) -> dict[str, Any]:
 def main() -> int:
     """Prepare, recover, or check a remediation branch with explicit failure diagnostics."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0], allow_abbrev=False)
-    parser.add_argument("action", choices=("prepare", "check", "recover", "worktree"))
-    parser.add_argument("--receipt", required=True, type=Path)
+    parser.add_argument("action", choices=("prepare", "check", "recover", "worktree", "locate-owner"))
+    parser.add_argument("--receipt", type=Path)
     parser.add_argument(
         "--pr-dir", type=Path, help="Collector evidence directory (check defaults to the receipt's sibling pr/)."
     )
@@ -521,7 +621,13 @@ def main() -> int:
     parser.add_argument("--legacy-receipt", type=Path)
     args = parser.parse_args()
     try:
-        if args.action == "worktree":
+        if args.action == "locate-owner":
+            if args.pr_dir is None or args.expected_head is not None or args.legacy_receipt is not None:
+                raise ValueError("locate-owner-requires-pr-dir")
+            record = locate_owner(args.pr_dir, args.receipt)
+        elif args.receipt is None:
+            raise ValueError("receipt-required")
+        elif args.action == "worktree":
             if args.pr_dir is not None or args.expected_head is not None or args.legacy_receipt is not None:
                 raise ValueError("worktree-requires-receipt-only")
             record = create_worktree(args.receipt)
@@ -537,7 +643,7 @@ def main() -> int:
             if args.expected_head is None or args.legacy_receipt is not None:
                 raise ValueError("check-requires-expected-head")
             record = check(args.receipt, args.expected_head, args.pr_dir)
-    except (CollectionError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+    except (CollectionError, KeyError, OSError, TypeError, ValueError, subprocess.TimeoutExpired) as error:
         print(f"remediation-branch: {error}", file=sys.stderr)
         return 2
     print(json.dumps(record, indent=2))

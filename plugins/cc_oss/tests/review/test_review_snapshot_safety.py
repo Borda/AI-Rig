@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -37,16 +38,23 @@ def _block(relative: str, marker: str) -> str:
 
 
 def _run(tmp_path: Path, script: str, shell: str | None = _BASH, **values: str) -> subprocess.CompletedProcess[str]:
-    """Execute a shipped recipe with isolated sentinel storage and external command doubles."""
-    return subprocess.run(
-        [shell, "-c", render_shell(script, _PLUGIN, "oss")],
-        cwd=tmp_path,
-        env=os.environ
-        | {"TMPDIR": bash_path(tmp_path), "CLAUDE_CODE_SESSION_ID": "safety", "CSID": "safety", **values},
-        capture_output=True,
-        encoding="utf-8",
-        check=False,
-    )
+    """Execute a shipped recipe with isolated sentinel storage and external command doubles.
+
+    The recipe runs from a script file kept outside ``tmp_path``: Git Bash on Windows cuts a ``-c`` argument near 8191
+    characters, which truncates the longest recipes mid-statement.
+    """
+    with tempfile.TemporaryDirectory() as scripts:
+        file = Path(scripts) / "recipe.sh"
+        file.write_text(render_shell(script, _PLUGIN, "oss"), encoding="utf-8", newline="\n")
+        return subprocess.run(
+            [shell, bash_path(file)],
+            cwd=tmp_path,
+            env=os.environ
+            | {"TMPDIR": bash_path(tmp_path), "CLAUDE_CODE_SESSION_ID": "safety", "CSID": "safety", **values},
+            capture_output=True,
+            encoding="utf-8",
+            check=False,
+        )
 
 
 @pytest.fixture
@@ -79,9 +87,7 @@ def snapshot(tmp_path: Path) -> Path:
 
 
 @_skip_no_bash
-@pytest.mark.parametrize(
-    "failure", ["diff", "names", "checks", "required", "head", "empty-diff", "empty-names", "moved-head"]
-)
+@pytest.mark.parametrize("failure", ["diff", "names", "head", "empty-diff", "empty-names", "moved-head"])
 def test_snapshot_read_failure_blocks(snapshot: Path, tmp_path: Path, failure: str) -> None:
     """A failed external read cannot become an empty successful snapshot."""
     stub = """
@@ -90,8 +96,6 @@ gh() {
     *'pr view'*) printf '%s' "$META" ;;
     *'pr diff'*--name-only*) [ "$FAILURE" != names ] || return 1; [ "$FAILURE" != empty-names ] || return 0; echo package/a.py ;;
     *'pr diff'*) [ "$FAILURE" != diff ] || return 1; [ "$FAILURE" != empty-diff ] || return 0; echo 'diff --git a/package/a.py b/package/a.py' ;;
-    *'pr checks'*--required*) [ "$FAILURE" != required ] || return 1; echo '[]' ;;
-    *'pr checks'*) [ "$FAILURE" != checks ] || return 1; echo '[]' ;;
     *) return 91 ;;
   esac
 }
@@ -110,28 +114,6 @@ git() {
     )
     assert result.returncode == 1, result.stdout + result.stderr
     assert "! BLOCKED" in result.stdout
-
-
-@_skip_no_bash
-@pytest.mark.parametrize(
-    ("required", "all_checks", "expected"),
-    [
-        pytest.param([], [{"name": "lint", "bucket": "fail"}], "true", id="no-required-red-ci"),
-        pytest.param(
-            [{"name": "test", "bucket": "pass"}], [{"name": "lint", "bucket": "fail"}], "false", id="optional-failure"
-        ),
-    ],
-)
-def test_ci_uses_full_checks_only_without_required_set(
-    snapshot: Path, tmp_path: Path, required: list[dict], all_checks: list[dict], expected: str
-) -> None:
-    """Only an absent required set falls back to all reported checks."""
-    (snapshot / "checks-required.json").write_text(json.dumps(required), encoding="utf-8", newline="\n")
-    (snapshot / "checks.json").write_text(json.dumps(all_checks), encoding="utf-8", newline="\n")
-    script = _block("SKILL.md", "CI_FAILING_CHECKS=")
-    result = _run(tmp_path, script)
-    assert result.returncode == 0, result.stderr
-    assert f"CI_RED={expected}" in result.stdout
 
 
 @_skip_no_bash
@@ -192,6 +174,12 @@ def test_reply_gate_reads_frozen_output_path(tmp_path: Path) -> None:
         pytest.param("Closes #40", [{"number": 7, "state": "MERGED"}], "false", id="self"),
         pytest.param(
             "Closes #40",
+            [{"number": 7, "state": "MERGED", "url": "https://github.com/owner/upstream/pull/7"}],
+            "true",
+            id="same-number-other-repository",
+        ),
+        pytest.param(
+            "Closes #40",
             [{"number": 8, "state": "OPEN"}, {"number": 9, "state": "MERGED"}],
             "true",
             id="later-merged-closer",
@@ -202,11 +190,14 @@ def test_reply_gate_reads_frozen_output_path(tmp_path: Path) -> None:
 def test_duplicate_gate_requires_a_merged_other_solution(
     snapshot: Path, tmp_path: Path, body: str, nodes: list[dict], expected: str
 ) -> None:
-    """Only a solving link to a closed issue with another merged closer rejects a PR."""
+    """Only another merged closer supplies linked comparison evidence for a solving issue."""
     meta = json.loads((snapshot / "pr-meta.json").read_text())
     meta["body"] = body
     meta["url"] = "https://github.com/owner/project/pull/7"
     (snapshot / "pr-meta.json").write_text(json.dumps(meta), encoding="utf-8", newline="\n")
+    issue_url = "https://github.com/owner/project/issues/40"
+    closers = [{"url": f"https://github.com/owner/project/pull/{node['number']}", **node} for node in nodes]
+    issue = {"url": issue_url, "state": "CLOSED", "closedByPullRequestsReferences": {"nodes": closers}}
     stub = """
 gh() {
   case "$*" in
@@ -221,12 +212,12 @@ git() { return 0; }
     result = _run(
         tmp_path,
         stub + _block("modes/acceptance-gate.md", "DUPLICATE_HIT=false"),
-        CLOSERS=json.dumps(
-            {"data": {"repository": {"issue": {"state": "CLOSED", "closedByPullRequestsReferences": {"nodes": nodes}}}}}
-        ),
+        CLOSERS=json.dumps({"data": {"repository": {"issue": issue}}}),
     )
     assert result.returncode == 0, result.stderr
     assert f"duplicate={expected}" in result.stdout
+    assert (issue_url in result.stdout) == (expected == "true")
+    assert (closers[-1]["url"] in result.stdout) == (expected == "true")
 
 
 @_skip_no_bash
@@ -290,6 +281,7 @@ def test_snapshot_accepts_status_exit_with_valid_checks(
     stub = """
 gh() {
   case "$*" in
+    *'--jq .headRefOid'*) echo "$HEAD_SHA" ;;
     *'pr view'*) cat "$META_FILE" ;;
     *'pr diff'*--name-only*) echo package/a.py ;;
     *'pr diff'*) echo 'diff --git a/package/a.py b/package/a.py' ;;
@@ -301,7 +293,10 @@ git() { printf '%s\\n' "$HEAD_SHA"; }
 """
     result = _run(
         tmp_path,
-        stub + _block("SKILL.md", 'SNAP_DIR="${TMPDIR:-/tmp}/oss-review-snap-'),
+        stub
+        + _block("SKILL.md", 'SNAP_DIR="${TMPDIR:-/tmp}/oss-review-snap-')
+        + "\n"
+        + _block("modes/ci-status.md", "for _CHECK_SET"),
         META_FILE=bash_path(snapshot / "pr-meta.json"),
         CHECKS=json.dumps([{"name": "test", "bucket": bucket}]),
         CHECK_EXIT=exit_code,
@@ -309,6 +304,352 @@ git() { printf '%s\\n' "$HEAD_SHA"; }
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads((tmp_path / "oss-review-snap-7-safety/checks.json").read_text())[0]["bucket"] == bucket
+
+
+_CI_STUB = """
+gh() {
+  case "$*" in
+    'pr view https://github.com/owner/project/pull/7 --json headRefOid'*)
+      if [ -f "$TMPDIR/read-head" ]; then echo "$LAST_HEAD"; else echo "$FIRST_HEAD"; touch "$TMPDIR/read-head"; fi ;;
+    'pr checks https://github.com/owner/project/pull/7 --required'*) echo "$REQUIRED" ;;
+    'pr checks https://github.com/owner/project/pull/7 --json'*) echo "$CHECKS"; return 8 ;;
+    *) return 90 ;;
+  esac
+}
+"""
+_HELD_FAILURE = "gate held from earlier same-head observation: failing — unit"
+#: Step 0 outcomes: the checks GitHub reports and the head read after collecting them (a moved head is unavailable).
+_INITIAL_CI = {
+    "failing": ([{"name": "unit", "bucket": "fail"}], _SHA),
+    "passing": ([{"name": "unit", "bucket": "pass"}], _SHA),
+    "unavailable": ([{"name": "unit", "bucket": "fail"}], "b" * 40),
+}
+
+
+def _observe_ci(
+    tmp_path: Path, prefix: str, checks: object, required: object, last_head: str
+) -> subprocess.CompletedProcess[str]:
+    """Run the shipped CI observation after ``prefix`` against a GitHub double reporting the given checks."""
+    (tmp_path / "read-head").unlink(missing_ok=True)
+    return _run(
+        tmp_path,
+        _CI_STUB + prefix + "\n" + _block("modes/ci-status.md", "for _CHECK_SET in checks checks-required"),
+        FIRST_HEAD=_SHA,
+        LAST_HEAD=last_head,
+        CHECKS=json.dumps(checks),
+        REQUIRED=json.dumps(required),
+    )
+
+
+def _grant_initial_ci(tmp_path: Path) -> None:
+    """Leave the initial-observation grant unconsumed, as the preflight snapshot block writes it."""
+    (tmp_path / "oss-review-ci-initial-safety").write_text("granted\n", encoding="utf-8", newline="\n")
+
+
+def _point_ci_at_snapshot(snapshot: Path, tmp_path: Path) -> None:
+    """Point the CI observation into the snapshot directory and grant it, as the preflight snapshot block does."""
+    (tmp_path / "oss-review-ci-dir-safety").write_text(bash_path(snapshot) + "\n", encoding="utf-8", newline="\n")
+    _grant_initial_ci(tmp_path)
+
+
+def _observe_initial_ci(snapshot: Path, tmp_path: Path, outcome: str) -> subprocess.CompletedProcess[str]:
+    """Run the Step 0 observation into the snapshot directory, as the preflight snapshot block points it."""
+    _point_ci_at_snapshot(snapshot, tmp_path)
+    checks, last_head = _INITIAL_CI[outcome]
+    result = _observe_ci(tmp_path, "", checks, [], last_head)
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    ("checks", "required", "last_head", "status", "gate"),
+    [
+        pytest.param([{"name": "unit", "bucket": "pass"}], [], _SHA, "passing (1/1)", "PASS", id="rerun-green"),
+        pytest.param([{"name": "unit", "bucket": "pending"}], [], _SHA, "pending", "PASS", id="rerun-running"),
+        pytest.param([{"name": "unit", "bucket": "fail"}], [], _SHA, "failing", "BLOCK", id="still-red"),
+        pytest.param([{"name": "unit", "bucket": "pass"}], [], "b" * 40, "unavailable", "BLOCK", id="head-changed"),
+        pytest.param([], [], _SHA, "no checks reported", "PASS", id="no-checks"),
+        pytest.param({}, [], _SHA, "unavailable", "BLOCK", id="malformed-full-valid-required"),
+        pytest.param([], {}, _SHA, "unavailable", "BLOCK", id="malformed-required-valid-full"),
+        pytest.param(
+            [{"name": "optional", "bucket": "fail"}, {"name": "required", "bucket": "pass"}],
+            [{"name": "required", "bucket": "pass"}],
+            _SHA,
+            "failing",
+            "PASS",
+            id="only-optional-failure",
+        ),
+        pytest.param(
+            [{"name": "unit", "bucket": "fail"}],
+            [{"name": "unit", "bucket": "pass"}],
+            _SHA,
+            "unavailable",
+            "BLOCK",
+            id="rerun-during-refresh",
+        ),
+    ],
+)
+def test_consolidation_refreshes_ci(
+    snapshot: Path, tmp_path: Path, checks: object, required: object, last_head: str, status: str, gate: str
+) -> None:
+    """A readable rerun supersedes the initial failure, while an unreadable refresh keeps it blocking."""
+    _observe_initial_ci(snapshot, tmp_path, "failing")
+    result = _observe_ci(tmp_path, _block("modes/post-agent.md", "BRANCH=$(git branch"), checks, required, last_head)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"CI_STATUS={status}" in result.stdout
+    assert f"CI_GATE={gate}" in result.stdout
+    assert (_HELD_FAILURE in result.stdout) == (status == "unavailable")
+    assert json.loads((snapshot / "checks.json").read_text()) == [{"name": "unit", "bucket": "fail"}]
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    ("initial", "refresh", "gate"),
+    [
+        pytest.param("failing", "head-changed", "BLOCK", id="failure-then-moved-head"),
+        pytest.param("failing", "snapshot-lost", "BLOCK", id="failure-then-lost-snapshot"),
+        pytest.param("passing", "head-changed", "PASS", id="green-then-moved-head"),
+        pytest.param("unavailable", "head-changed", "PASS", id="unavailable-then-moved-head"),
+        pytest.param("unavailable", "snapshot-lost", "PASS", id="unavailable-then-lost-snapshot"),
+    ],
+)
+def test_unavailable_refresh_keeps_only_an_established_failure(
+    snapshot: Path, tmp_path: Path, initial: str, refresh: str, gate: str
+) -> None:
+    """An unreadable final observation blocks only when the reviewed head already failed earlier in the run."""
+    _observe_initial_ci(snapshot, tmp_path, initial)
+    if refresh == "snapshot-lost":
+        (tmp_path / "oss-review-snap-dir-safety").unlink()
+        prefix, reason = "", "unavailable (check snapshot unavailable)"
+    else:
+        prefix, reason = _block("modes/post-agent.md", "BRANCH=$(git branch"), "unavailable (PR head changed)"
+    result = _observe_ci(tmp_path, prefix, [{"name": "unit", "bucket": "pass"}], [], "b" * 40)
+    assert result.returncode == 0, result.stdout + result.stderr
+    held = f" · {_HELD_FAILURE}" if gate == "BLOCK" else ""
+    assert f"CI_STATUS={reason}{held}\nCI_GATE={gate}\n" in result.stdout
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    ("head", "expected"),
+    [
+        pytest.param("a" * 40, "CI_STATUS=failing — unit\nCI_GATE=BLOCK\n", id="sha1-head"),
+        pytest.param("c" * 64, "CI_STATUS=failing — unit\nCI_GATE=BLOCK\n", id="sha256-head"),
+        pytest.param(
+            "a" * 12, "CI_STATUS=unavailable (check snapshot unavailable)\nCI_GATE=PASS\n", id="abbreviated-head"
+        ),
+    ],
+)
+def test_ci_observation_accepts_the_full_head_ids_resolve_accepts(
+    snapshot: Path, tmp_path: Path, head: str, expected: str
+) -> None:
+    """The CI observation binds a full SHA-1 or SHA-256 head, the ids resolve's push check takes, never a prefix."""
+    meta = json.loads((snapshot / "pr-meta.json").read_text(encoding="utf-8"))
+    (snapshot / "pr-meta.json").write_text(json.dumps(meta | {"headRefOid": head}), encoding="utf-8", newline="\n")
+    _point_ci_at_snapshot(snapshot, tmp_path)
+    result = _run(
+        tmp_path,
+        _CI_STUB + _block("modes/ci-status.md", "for _CHECK_SET in checks checks-required"),
+        FIRST_HEAD=head,
+        LAST_HEAD=head,
+        CHECKS=json.dumps([{"name": "unit", "bucket": "fail"}]),
+        REQUIRED="[]",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert expected in result.stdout
+
+
+_MISSING_RECORD = "gate held: no complete gate record from the earlier observation"
+
+
+@_skip_no_bash
+@pytest.mark.parametrize("initial", ["failing", "passing"])
+@pytest.mark.parametrize(
+    "still_unwritable",
+    [pytest.param(True, id="record-path-still-unwritable"), pytest.param(False, id="record-path-left-empty")],
+)
+def test_unwritten_gate_record_is_reported_and_blocks_an_unavailable_refresh(
+    snapshot: Path, tmp_path: Path, initial: str, still_unwritable: bool
+) -> None:
+    """A gate record that cannot be written is named at once, and a later unreadable refresh never reports PASS."""
+    record = tmp_path / "oss-review-ci-gate-safety"
+    record.mkdir()  # a directory in its place makes the write fail without root-dependent permissions
+    observed = _observe_initial_ci(snapshot, tmp_path, initial)
+    gate = "BLOCK" if initial == "failing" else "PASS"
+    assert f" · gate record not written\nCI_GATE={gate}\n" in observed.stdout
+    if not still_unwritable:
+        record.rmdir()
+    result = _observe_ci(
+        tmp_path,
+        _block("modes/post-agent.md", "BRANCH=$(git branch"),
+        [{"name": "unit", "bucket": "pass"}],
+        [],
+        "b" * 40,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    unwritten = " · gate record not written" if still_unwritable else ""
+    expected = f"CI_STATUS=unavailable (PR head changed) · {_MISSING_RECORD}{unwritten}\nCI_GATE=BLOCK\n"
+    assert expected in result.stdout
+
+
+@_skip_no_bash
+def test_unavailable_observation_that_cannot_record_blocks_without_a_separate_destination(
+    snapshot: Path, tmp_path: Path
+) -> None:
+    """An unreadable observation whose own record write fails blocks, even when it still points at the snapshot."""
+    (tmp_path / "oss-review-ci-gate-safety").mkdir()
+    _observe_initial_ci(snapshot, tmp_path, "failing")
+    result = _observe_ci(tmp_path, "", [{"name": "unit", "bucket": "pass"}], [], "b" * 40)
+    assert result.returncode == 0, result.stdout + result.stderr
+    expected = f"CI_STATUS=unavailable (PR head changed) · {_MISSING_RECORD} · gate record not written\nCI_GATE=BLOCK\n"
+    assert expected in result.stdout
+
+
+@_skip_no_bash
+@pytest.mark.parametrize("initial", ["failing", "passing"])
+@pytest.mark.parametrize(
+    "route",
+    [
+        pytest.param("final-block-not-run", id="final-block-not-run"),
+        pytest.param("destination-switch-lost", id="destination-switch-lost"),
+        pytest.param("grant-left-unconsumed", id="grant-left-unconsumed-and-destination-switch-lost"),
+    ],
+)
+def test_lost_gate_record_blocks_a_final_observation_left_on_the_snapshot(
+    snapshot: Path, tmp_path: Path, initial: str, route: str
+) -> None:
+    """A lost gate record blocks an unreadable final observation even when it still writes into the snapshot.
+
+    A failed Step 5 destination switch leaves the CI sentinel where Step 0 put it, so only the initial-observation
+    grant, consumed by Step 0 and withdrawn again by the Step 5 block, tells the final observation from the first.
+    """
+    _observe_initial_ci(snapshot, tmp_path, initial)
+    (tmp_path / "oss-review-ci-gate-safety").unlink()
+    prefix = ""
+    if route != "final-block-not-run":
+        restore = f'printf "%s\\n" "{bash_path(snapshot)}" > "$TMPDIR/oss-review-ci-dir-safety"'
+        prefix = _block("modes/post-agent.md", "BRANCH=$(git branch") + "\n" + restore
+    if route == "grant-left-unconsumed":
+        _grant_initial_ci(tmp_path)
+    result = _observe_ci(tmp_path, prefix, [{"name": "unit", "bucket": "pass"}], [], "b" * 40)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"CI_STATUS=unavailable (PR head changed) · {_MISSING_RECORD}\nCI_GATE=BLOCK\n" in result.stdout
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    "grant", [pytest.param(None, id="grant-missing"), pytest.param("consumed\n", id="grant-already-consumed")]
+)
+@pytest.mark.parametrize(
+    ("last_head", "expected"),
+    [
+        pytest.param(
+            "b" * 40, f"CI_STATUS=unavailable (PR head changed) · {_MISSING_RECORD}\nCI_GATE=BLOCK\n", id="unavailable"
+        ),
+        pytest.param(_SHA, "CI_STATUS=passing (1/1)\nCI_GATE=PASS\n", id="readable"),
+    ],
+)
+def test_observation_without_an_unconsumed_grant_cannot_pass_unread(
+    snapshot: Path, tmp_path: Path, grant: str | None, last_head: str, expected: str
+) -> None:
+    """Without preflight's unconsumed grant an unreadable observation blocks, while a readable one sets its own gate."""
+    (tmp_path / "oss-review-ci-dir-safety").write_text(bash_path(snapshot) + "\n", encoding="utf-8", newline="\n")
+    if grant is not None:
+        (tmp_path / "oss-review-ci-initial-safety").write_text(grant, encoding="utf-8", newline="\n")
+    result = _observe_ci(tmp_path, "", [{"name": "unit", "bucket": "pass"}], [], last_head)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert expected in result.stdout
+
+
+_SNAPSHOT_CI_STUB = """
+gh() {
+  case "$*" in
+    *'--jq .headRefOid'*) echo "$CI_HEAD" ;;
+    *'pr view'*) cat "$META_FILE" ;;
+    *'pr diff'*--name-only*) echo package/a.py ;;
+    *'pr diff'*) echo 'diff --git a/package/a.py b/package/a.py' ;;
+    *'pr checks'*--required*) echo '[]' ;;
+    *'pr checks'*) echo '[{"name":"unit","bucket":"fail"}]' ;;
+    *) return 91 ;;
+  esac
+}
+git() { printf '%s\\n' "$HEAD_SHA"; }
+"""
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    ("head", "ci_head", "expected"),
+    [
+        pytest.param(
+            _SHA, "b" * 40, "CI_STATUS=unavailable (PR head changed)\nCI_GATE=PASS\n", id="sha1-ci-unavailable"
+        ),
+        pytest.param(
+            "c" * 64, "b" * 40, "CI_STATUS=unavailable (PR head changed)\nCI_GATE=PASS\n", id="sha256-ci-unavailable"
+        ),
+        pytest.param("c" * 64, "c" * 64, "CI_STATUS=failing — unit\nCI_GATE=BLOCK\n", id="sha256-ci-failing"),
+    ],
+)
+def test_snapshot_block_starts_the_initial_ci_observation(
+    snapshot: Path, tmp_path: Path, head: str, ci_head: str, expected: str
+) -> None:
+    """The preflight snapshot takes a full SHA-1 or SHA-256 head and lets its first CI observation start unrecorded.
+
+    An unreadable initial observation has no earlier failure to keep, so it passes and says why CI is unavailable.
+    """
+    meta = json.loads((snapshot / "pr-meta.json").read_text(encoding="utf-8"))
+    (snapshot / "pr-meta.json").write_text(json.dumps(meta | {"headRefOid": head}), encoding="utf-8", newline="\n")
+    result = _run(
+        tmp_path,
+        _SNAPSHOT_CI_STUB
+        + _block("SKILL.md", 'SNAP_DIR="${TMPDIR:-/tmp}/oss-review-snap-')
+        + "\n"
+        + _block("modes/ci-status.md", "for _CHECK_SET"),
+        META_FILE=bash_path(snapshot / "pr-meta.json"),
+        HEAD_SHA=head,
+        CI_HEAD=ci_head,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert expected in result.stdout
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    "partial",
+    [
+        pytest.param("", id="empty"),
+        pytest.param("CI_GATE=BL", id="cut-inside-gate"),
+        pytest.param("CI_GATE=BLOCK", id="block-without-line-end"),
+        pytest.param("CI_GATE=PASS", id="pass-without-line-end"),
+    ],
+)
+def test_partial_gate_record_blocks_an_unavailable_refresh(snapshot: Path, tmp_path: Path, partial: str) -> None:
+    """A gate record cut short by a failed write reads as missing, so it can never turn into PASS."""
+    _observe_initial_ci(snapshot, tmp_path, "failing")
+    (tmp_path / "oss-review-ci-gate-safety").write_text(partial, encoding="utf-8", newline="\n")
+    result = _observe_ci(
+        tmp_path,
+        _block("modes/post-agent.md", "BRANCH=$(git branch"),
+        [{"name": "unit", "bucket": "pass"}],
+        [],
+        "b" * 40,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"CI_STATUS=unavailable (PR head changed) · {_MISSING_RECORD}\nCI_GATE=BLOCK\n" in result.stdout
+
+
+@_skip_no_bash
+def test_direct_path_consolidation_skips_ci(tmp_path: Path) -> None:
+    """A saved report needs neither a network read nor a PR snapshot to consolidate."""
+    (tmp_path / "oss-review-pr-tag-safety").write_text("review-report.md\n", encoding="utf-8")
+    script = (
+        _block("modes/post-agent.md", "BRANCH=$(git branch") + "\n" + _block("modes/ci-status.md", "for _CHECK_SET")
+    )
+    result = _run(tmp_path, 'gh() { touch "$TMPDIR/unexpected-read"; return 1; }\n' + script)
+    assert result.returncode == 0, result.stderr
+    assert "CI_STATUS=not applicable\nCI_GATE=PASS" in result.stdout
+    assert not (tmp_path / "unexpected-read").exists()
 
 
 @_skip_no_bash
@@ -347,32 +688,6 @@ def test_reply_spawn_recovers_report_path_from_flags(tmp_path: Path) -> None:
     result = _run(tmp_path, script + _block("modes/reply.md", "REPLY_OUT="))
     assert result.returncode == 0, result.stdout + result.stderr
     assert "/output-reply-7-" in (tmp_path / "oss-review-reply-out-safety").read_text()
-
-
-@_skip_no_bash
-def test_malformed_full_checks_cannot_hide_behind_valid_required(snapshot: Path, tmp_path: Path) -> None:
-    """A valid required response cannot override an invalid full response's validation result."""
-    stub = """
-gh() {
-  case "$*" in
-    *'pr view'*) cat "$META_FILE" ;;
-    *'pr diff'*--name-only*) echo package/a.py ;;
-    *'pr diff'*) echo 'diff --git a/package/a.py b/package/a.py' ;;
-    *'pr checks'*--required*) echo '[]' ;;
-    *'pr checks'*) echo '{}' ;;
-    *) return 91 ;;
-  esac
-}
-git() { printf '%s\\n' "$HEAD_SHA"; }
-"""
-    result = _run(
-        tmp_path,
-        stub + _block("SKILL.md", 'SNAP_DIR="${TMPDIR:-/tmp}/oss-review-snap-'),
-        META_FILE=bash_path(snapshot / "pr-meta.json"),
-        HEAD_SHA=_SHA,
-    )
-    assert result.returncode == 1
-    assert "invalid CI checks snapshot" in result.stdout
 
 
 @_skip_no_bash
@@ -563,22 +878,20 @@ def test_direct_report_skips_ci_snapshot_reads(tmp_path: Path, direct: str, expe
     """A snapshot is mandatory in PR mode and is never read when replying from a report."""
     (tmp_path / "oss-review-flags-safety").write_text(f"DIRECT_PATH_MODE={direct}\n", encoding="utf-8", newline="\n")
     (tmp_path / "oss-review-pr-tag-safety").write_text("7\n", encoding="utf-8", newline="\n")
-    result = _run(
-        tmp_path, "jq() { echo unexpected-ci-read >&2; return 99; }\n" + _block("SKILL.md", "CI_FAILING_CHECKS=")
-    )
+    result = _run(tmp_path, "jq() { echo unexpected-ci-read >&2; return 99; }\n" + _block("SKILL.md", "PR_LABELS=$(jq"))
     assert result.returncode == expected, result.stdout + result.stderr
     assert ("! BLOCKED" in result.stdout) == (expected != 0)
     assert "unexpected-ci-read" not in result.stderr
-    assert not (tmp_path / "oss-review-ci-red-safety").exists()
 
 
 @_skip_no_bash
 def test_flag_parse_clears_prior_snapshot(tmp_path: Path) -> None:
-    """Starting a report reply removes a crashed PR run's snapshot pointer."""
+    """Starting a report reply removes a crashed PR run's snapshot, CI directory and held CI gate."""
     report = tmp_path / "report.md"
     report.write_text("Outcome: APPROVE\n", encoding="utf-8", newline="\n")
-    sentinel = tmp_path / "oss-review-snap-dir-safety"
-    sentinel.write_text("old-pr\n", encoding="utf-8", newline="\n")
+    sentinels = [tmp_path / f"oss-review-{name}-safety" for name in ("snap-dir", "ci-dir", "ci-gate")]
+    for sentinel in sentinels:
+        sentinel.write_text("old-pr\n", encoding="utf-8", newline="\n")
     result = _run(
         tmp_path,
         _block("SKILL.md", "DIRECT_PATH_MODE=false\nif [["),
@@ -586,7 +899,7 @@ def test_flag_parse_clears_prior_snapshot(tmp_path: Path) -> None:
         CLAUDE_PLUGIN_ROOT=bash_path(_REVIEW.parents[1]),
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert not sentinel.exists()
+    assert [sentinel.name for sentinel in sentinels if sentinel.exists()] == []
 
 
 @_skip_no_bash
@@ -625,7 +938,7 @@ gh() {
   done
   case "$_ISSUE" in
     40) printf '%s' '{"data":{"repository":{"issue":{"state":"OPEN","closedByPullRequestsReferences":{"nodes":[]}}}}}' ;;
-    41) printf '%s' '{"data":{"repository":{"issue":{"state":"CLOSED","closedByPullRequestsReferences":{"nodes":[{"number":9,"state":"MERGED"}]}}}}}' ;;
+    41) printf '%s' '{"data":{"repository":{"issue":{"state":"CLOSED","url":"https://github.com/owner/project/issues/41","closedByPullRequestsReferences":{"nodes":[{"number":9,"state":"MERGED","url":"https://github.com/owner/project/pull/9"}]}}}}}' ;;
     *) echo invalid-issue-number >&2; return 92 ;;
   esac
 }

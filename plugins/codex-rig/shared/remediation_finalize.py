@@ -102,6 +102,8 @@ if str(SHARED_DIRECTORY) not in sys.path:
 
 import final_handoff  # noqa: E402
 import worktree_publication  # noqa: E402
+from create_run import PR_URL_PATTERN, same_pr_url  # noqa: E402
+from review_evidence_validation import closed_review_handoff, closed_review_notes  # noqa: E402
 
 #: Maximum bytes accepted from the append-only remediation event ledger.
 MAX_LEDGER_BYTES = 16 * 1024 * 1024
@@ -115,6 +117,9 @@ APPROVAL_STATUS = {"approve": "approved", "parent-only": "parent-only", "not-req
 GATE_IDS = ("lint", "format", "types", "tests", "review")
 #: Contract version for the separately derived PR worktree publication metadata.
 PUBLICATION_CONTRACT_VERSION = 1
+#: The field label of the derived PR opening's push status, its fixed first slot. Only the finalizer writes it, from
+#: publication evidence; authored outcome text is never read for a push status.
+DELIVERY_FIELD = "**Delivery** — "
 #: Run-local artifacts unique to the current publication workflow.
 PUBLICATION_CHECKPOINT_FILES = (
     "publication.json",
@@ -466,6 +471,104 @@ def publication_artifact(publication: dict[str, Any], artifact_path: str) -> dic
     """Produce the machine-derived handoff link for the retained publication evidence."""
     evidence_path = PurePosixPath(artifact_path.replace("\\", "/")).with_name(publication["evidence"])
     return {"label": f"PR publication: {publication['status']}", "path": str(evidence_path)}
+
+
+def pr_handoff_summary(run: Path, commit_status: str | None, publication: dict[str, Any] | None) -> str:
+    """Name the collected base PR and distinguish the recorded local disposition from verified publication."""
+    directory = run / "pr"
+    if directory.is_symlink():
+        raise DeriveError("remediation-handoff-pr-identity-invalid")
+    pr, _ = _publication_record(directory, "pr.json")
+    routing, _ = _publication_record(directory, "pr-routing.json")
+    url = routing.get("pr_url")
+    target = PR_URL_PATTERN.fullmatch(url) if isinstance(url, str) else None
+    number = routing.get("pr_number")
+    if (
+        not target
+        or type(number) is not int
+        or str(number) != target["number"]
+        or ("base_repo" in routing and not same_pr_url(f"https://github.com/{routing['base_repo']}/pull/{number}", url))
+        or ("url" in pr and not same_pr_url(pr["url"], url))
+        or ("number" in pr and (type(pr["number"]) is not int or pr["number"] != number))
+    ):
+        raise DeriveError("remediation-handoff-pr-identity-invalid")
+    subject = f"Remediate PR [{target['owner']}/{target['repository']}#{number}]({url})"
+    if isinstance(pr.get("title"), str):
+        # A contributor controls the title: show it on one line as a code span, without links, markup or bidi controls.
+        title = final_handoff.literal_code_span(pr["title"])
+        if title:
+            subject += f" — {title}"
+
+    if publication is not None and publication["status"] == "verified":
+        state = f"Pushed commit `{publication['observed_oid'][:12]}` and verified it on the remote PR branch."
+    else:
+        local = {
+            "committed": "Committed locally.",
+            "pending": "The local commit is pending.",
+            "blocked": "The local commit is blocked.",
+            "declined": "The local commit was declined.",
+            "not-applicable": "No remediation commit was required.",
+        }.get(commit_status)
+        if commit_status is None and publication is not None:
+            # A historical resume may prove delivery of a Git head without recording a new remediation commit.
+            local = "Local delivery was recorded."
+        if local is None:
+            raise DeriveError("remediation-commit-disposition-missing")
+        push = {
+            None: "No push has been verified.",
+            "skipped": "No push was attempted.",
+            "declined": "The push was declined.",
+            "failed": "The push failed.",
+            "unverified": "A push was attempted, but remote delivery is unverified.",
+        }[publication["status"] if publication is not None else None]
+        state = f"{local} {push}"
+    return f"{subject}\n\n{DELIVERY_FIELD}{state}"
+
+
+def check_authored_outcome(outcome: str) -> None:
+    """Require the authored outcome below the derived PR opening to be plain paragraphs.
+
+    Each paragraph must already be what ``final_handoff.inline_text`` returns, so no authored text can open a heading,
+    list, quote, table, fence or HTML block. The text is not read for a push status: the derived opening's fixed slot
+    holds the only one the finalizer writes, and a status an author states inside their own text is a documented limit.
+
+    Raises:
+        DeriveError: ``remediation-handoff-outcome-not-inline`` for text that is not one plain paragraph line per
+            paragraph.
+    """
+    if any(not text or final_handoff.inline_text(text) != text for text in outcome.split("\n\n")):
+        raise DeriveError("remediation-handoff-outcome-not-inline")
+
+
+def _authored_pr_outcome(opening: str, authored: str) -> str:
+    """Return the author's outcome as plain paragraphs, without any PR opening the finalizer derived earlier.
+
+    A draft may be an earlier final handoff for the same PR, possibly under a since-changed title, or an older draft
+    that put the title inside the PR link; either opening is consumed by matching this PR's link and, for an earlier
+    handoff, the exact generated Delivery field. Each remaining block, separated by blank lines, becomes one inline
+    paragraph line, so authored text cannot open a heading, list, quote, table, fence or HTML block. Authored text is
+    never parsed for a push status, so a status written there stays as the author wrote it, below the derived slot.
+    """
+    subject = opening.split("\n\n", 1)[0]
+    identity = subject.partition(" — ")[0]
+    label, url_suffix = identity.split("](", 1)
+    authored = authored.replace("\r\n", "\n").replace("\r", "\n")
+    stale_opening = re.match(
+        rf"{re.escape(identity)}(?: — [^\n]*)?\n\n{re.escape(DELIVERY_FIELD)}[^\n]*"
+        rf"|{re.escape(subject)}"
+        rf"|{re.escape(label)}(?: — (?:\\[^\n]|[^\]\\\n])*)?{re.escape('](' + url_suffix)}",
+        authored,
+    )
+    if stale_opening:
+        authored = re.sub(r"^[.:]?(?:\s+|$)", "", authored[stale_opening.end() :], count=1)
+    paragraphs = [
+        text for block in re.split(r"\n\s*\n", authored.strip()) if (text := final_handoff.inline_text(block))
+    ]
+    if not paragraphs:
+        raise DeriveError("remediation-handoff-outcome-summary-missing")
+    outcome = "\n\n".join(paragraphs)
+    check_authored_outcome(outcome)
+    return outcome
 
 
 def _committed_linked_delivery(run: Path, handoff: dict[str, Any]) -> bool:
@@ -1467,6 +1570,39 @@ def derive_handoff(
     handoff.setdefault("action_policy", "owned")
     if handoff.get("skill") != "code-remediate":
         handoff["artifacts"] = _result_artifact(handoff.get("artifacts") or [], artifact_path)
+        decision = metadata.get("close_decision")
+        if handoff.get("skill") == "code-review" and handoff.get("branch") == "closed":
+            if not isinstance(decision, dict):
+                raise DeriveError("closed-review-invalid-decision-shape")
+            handoff.update(closed_review_handoff(run, decision))
+            report = run / "review-notes.md"
+            if report.is_symlink() or (report.exists() and not report.is_file()):
+                raise DeriveError("closed-review-notes-invalid")
+            try:
+                # Only the canonical earlier close notes for this decision can be upgraded in place.
+                expected = closed_review_notes(decision, current_handoff=handoff)
+                old = closed_review_notes(decision)
+                prior = report.read_bytes() if report.exists() else None
+                actual = prior.decode().replace("\r\n", "\n").strip() if prior is not None else None
+                if actual != expected:
+                    if actual is not None and actual != old:
+                        raise DeriveError("closed-review-notes-conflict")
+                    encoded = (expected + "\n").encode()
+                    if prior is None:
+                        with report.open("xb") as output:
+                            output.write(encoded)
+                    else:
+                        with tempfile.TemporaryDirectory(dir=run) as staging:
+                            temporary = Path(staging) / report.name
+                            temporary.write_bytes(encoded)
+                            temporary.chmod(report.stat().st_mode)
+                            temporary.replace(report)
+                    if notes_rollback is not None:
+                        notes_rollback.callback(_restore_authored_notes, report, encoded, prior, report.lstat())
+            except (KeyError, TypeError) as error:
+                raise DeriveError("closed-review-invalid-decision-shape") from error
+            except (OSError, UnicodeError) as error:
+                raise DeriveError("closed-review-notes-unavailable") from error
         if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed":
             if metadata.get("scope") == "pr":
                 handoff["presentation_version"] = 16
@@ -1859,6 +1995,7 @@ def _finalize(arguments: argparse.Namespace, notes_rollback: ExitStack) -> dict[
         if arguments.skill == "code-remediate":
             draft.pop("worktree_publication", None)
             draft.pop("worktree_publication_contract_version", None)
+            draft.pop("pr_handoff_summary", None)
             # Fold the final events into both machine and displayed counts before validating either consumer.
             render_ledger(run, draft)
         if arguments.skill == "code-review" and (
@@ -1915,6 +2052,21 @@ def _finalize(arguments: argparse.Namespace, notes_rollback: ExitStack) -> dict[
             draft["worktree_publication_contract_version"] = PUBLICATION_CONTRACT_VERSION
             draft["worktree_publication"] = publication
             handoff["artifacts"].append(publication_artifact(publication, arguments.artifact_path))
+        if (
+            arguments.skill == "code-remediate"
+            and draft.get("mode") == "pr"
+            and handoff.get("branch") != "caller-contract"
+        ):
+            outcome = handoff.get("outcome")
+            if (
+                not isinstance(outcome, dict)
+                or not isinstance(outcome.get("summary"), str)
+                or not outcome["summary"].strip()
+            ):
+                raise DeriveError("remediation-handoff-outcome-summary-missing")
+            opening = pr_handoff_summary(run, (handoff.get("commit_disposition") or {}).get("status"), publication)
+            outcome["summary"] = f"{opening}\n\n{_authored_pr_outcome(opening, outcome['summary'])}"
+            draft["pr_handoff_summary"] = opening
         if arguments.skill == "code-review" and handoff.get("branch") != "assessed":
             final_handoff.validate_handoff(handoff)
         _write(run / "final-handoff.json", handoff)
@@ -2151,7 +2303,8 @@ def _publication_resume_action(arguments: argparse.Namespace) -> dict[str, Any]:
         else:
             delivery = _publication_delivery(run)
         publication = _publication_state(run, delivery, resume=True)
-    return {
+    original = run.parent if run.name == worktree_publication.REQUEST_DIRECTORY else run
+    summary = {
         "status": "pass",
         "delivery": delivery,
         "evidence": publication["evidence"],
@@ -2160,6 +2313,15 @@ def _publication_resume_action(arguments: argparse.Namespace) -> dict[str, Any]:
         "needs_terminal_record": publication["status"] in {"skipped", "verified", "declined"}
         and publication["evidence"] != "publication.json",
     }
+    if os.path.lexists(original / "pr" / "pr-routing.json"):
+        commit_status = None
+        if os.path.lexists(original / "final-handoff.json"):
+            handoff, _ = _publication_record(original, "final-handoff.json")
+            disposition = handoff.get("commit_disposition")
+            if isinstance(disposition, dict):
+                commit_status = disposition.get("status")
+        summary["pr_handoff_summary"] = pr_handoff_summary(original, commit_status, publication)
+    return summary
 
 
 def _obligations_action(arguments: argparse.Namespace) -> dict[str, Any]:

@@ -5,6 +5,7 @@ a recipe edit that breaks the resolve-liveness contract fails here.
 """
 
 import os
+import re
 import shutil
 import subprocess
 from functools import cache
@@ -141,3 +142,45 @@ def test_7b_does_not_trust_7a_snapshot_across_the_idle_window(tmp_path: Path) ->
     _run(_bash_block_after("### 7b — Confidence block"), tmp_path, session)
 
     assert (before.stdout, contract.exists()) == ("", True)
+
+
+def _followup_gate() -> tuple[list[str], list[str]]:
+    """Split the Step 7a section into the lines that offer options and the after-answer handler bullets."""
+    lines = (_REVIEW / "modes/post-agent.md").read_text(encoding="utf-8").splitlines()
+    gate = lines[lines.index("### 7a — Follow-up gate") : lines.index("### 7b — Confidence block")]
+    split = next(index for index, line in enumerate(gate) if line.endswith("After AskUserQuestion returns:"))
+    return gate[:split], [line for line in gate[split + 1 :] if line.startswith("- ")]
+
+
+def test_every_followup_option_carries_a_description() -> None:
+    """Every option the follow-up gate offers, the rejection-only reply included, has a one-line description."""
+    offers, _ = _followup_gate()
+    options = [
+        match.groups()
+        for line in offers
+        for match in re.finditer(r"(?:label: |choices with )`([^`]+)`(?: — description: (\S[^|]*))?", line)
+    ]
+    assert len(options) == 6
+    assert [label for label, description in options if description is None] == []
+
+
+def test_every_followup_option_has_a_handler() -> None:
+    """Every label the follow-up gate can offer, the rejection-only reply included, has an after-answer handler.
+
+    Resolve refuses a rejected head whatever the ground, so the swap from resolve choices to the close reply applies to
+    every ``REVIEW_V1_REJECT_<GROUND>`` gate rather than one ground.
+    """
+    offers, handlers = _followup_gate()
+    swap = next(line for line in offers if "replace the three resolve choices" in line)
+    offered = [label for line in offers for label in re.findall(r"label: `([^`]+)`", line)]
+    offered += re.findall(r"choices with `([^`]+)`", swap)
+    assert "`REVIEW_V1_REJECT_<GROUND>`" in swap
+    unhandled = [
+        label
+        for label in offered
+        if not any(
+            line.startswith("- Resolve variant chosen") if label.startswith("/oss:resolve") else f"`{label}`" in line
+            for line in handlers
+        )
+    ]
+    assert (len(offered), unhandled) == (6, [])

@@ -990,7 +990,7 @@ def _triage_no_pr(report: Path) -> Path:
         pytest.param(_triage_header_reject, "8", "prior run is a terminal REJECT", "8", id="reject-run"),
         pytest.param(_triage_no_head, "8", "prior run has no head-sha.txt", "8", id="no-recorded-head"),
         pytest.param(
-            _triage_non_hex_head, "8", "prior head-sha.txt is not a 7-40 hex commit id", "8", id="non-hex-head"
+            _triage_non_hex_head, "8", "prior head-sha.txt is not a 7-40 or 64 hex commit id", "8", id="non-hex-head"
         ),
         pytest.param(
             _triage_unreadable_sidecar, "8", "prior run has no readable review-validation.json", "8", id="bad-sidecar"
@@ -1259,14 +1259,20 @@ def test_triage_cli_without_a_source_is_a_usage_error(capsys: pytest.CaptureFixt
     assert "one of the arguments --report --assessment is required" in output
 
 
-@pytest.mark.parametrize("head", ["abc", "not-a-commit-id", "ABCDEF1234567"])
+def test_prior_head_reads_a_full_sha256_commit_id(prior: Path) -> None:
+    """A run reviewed in a SHA-256 repository records its full 64-hex head, which fill-gaps reads back unchanged."""
+    (prior.parent / "head-sha.txt").write_text("c" * 64 + "\n", encoding="utf-8", newline="\n")
+    assert fgs._read_prior(prior, "8").head == "c" * 64
+
+
+@pytest.mark.parametrize("head", ["abc", "not-a-commit-id", "ABCDEF1234567", "c" * 41, "c" * 65])
 def test_prior_head_must_be_a_commit_id(prior: Path, head: str) -> None:
-    """A head-sha.txt that is not a 7-40 hex commit id cannot prove the PR head unchanged.
+    """A head-sha.txt that is not a 7-40 or 64 hex commit id cannot prove the PR head unchanged.
 
     The head check is a prefix match, so a one-character or empty-ish stray string would match almost any PR head.
     """
     (prior.parent / "head-sha.txt").write_text(head + "\n", encoding="utf-8", newline="\n")
-    with pytest.raises(fgs.FillGapsBlocked, match=re.escape("prior head-sha.txt is not a 7-40 hex commit id")):
+    with pytest.raises(fgs.FillGapsBlocked, match=re.escape("prior head-sha.txt is not a 7-40 or 64 hex commit id")):
         fgs.build_plan(fgs.PlanRequest("8", prior, ["QA specialist"], ["V1b"], _FULL_HEAD))
 
 

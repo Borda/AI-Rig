@@ -107,10 +107,9 @@ class TestStepFiveWording:
     def test_fallback_retains_owning_workflow_boundary(self) -> None:
         """Unavailable-agent guidance preserves this plugin's established fallback rather than granting new execution.
 
-        The fallback must still forbid reading finding files inline, carry the prior resolution ledger, and pass the CI
-        failing-check names to the consolidator.
+        The fallback preserves the resolution ledger and final CI observation, and forbids inline findings reads.
         """
         text, _ = _dispatch()
         assert "Do NOT read agent finding files inline" in text
         assert "Prior resolution ledger:" in text
-        assert "CI_FAILING_CHECKS=<resolved CI failing-check names or empty>" in text
+        assert "CI_STATUS=<final same-head CI observation or unavailable reason>" in text

@@ -18,7 +18,7 @@ path.
 
 Sentinels written to ``${TMPDIR:-/tmp}/<name>-${CSID}``, each created fresh with mode 0600 (``_sentinel_io.py``):
     resolve-head-ref, resolve-base-ref, resolve-is-cross-repo, resolve-head-repo-owner, resolve-head-repo-name,
-    resolve-saved-branch, resolve-pr-head-oid, resolve-local-sha
+    resolve-saved-branch, resolve-pr-head-oid, resolve-local-sha, resolve-pr-html-url
 
 Exit codes:
     0 — metadata resolved and persisted
@@ -401,7 +401,7 @@ def _collect_ref_metadata(args: argparse.Namespace) -> dict[str, str] | None:
         args: Parsed CLI namespace (``pr``, ``timeout``).
 
     Returns:
-        The 8-key sentinel-name-to-value mapping, or ``None`` when the default branch could not be
+        The sentinel-name-to-value mapping, or ``None`` when the default branch could not be
         determined, the PR head or base ref is not a valid branch name, or the PR head ref equals the
         default branch, or the PR state, fork editability or origin/base identity checks fail — every case already
         printed its own failure message.
@@ -439,6 +439,7 @@ def _collect_ref_metadata(args: argparse.Namespace) -> dict[str, str] | None:
     saved_branch = _run(["git", "branch", "--show-current"], args.timeout)
     local_sha = _run(["git", "rev-parse", "HEAD"], args.timeout)
     return {
+        "resolve-pr-html-url": str(meta["url"]),
         "resolve-head-ref": head_ref,
         "resolve-remote-head-ref": remote_head_ref,
         "resolve-base-ref": base_ref,

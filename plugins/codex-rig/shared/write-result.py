@@ -51,6 +51,7 @@ from typing import Any
 sys.pycache_prefix = str(Path(__file__).resolve())
 
 from gate_test_approval import validate_pass  # noqa: E402
+from review_evidence_validation import closed_review_handoff, validate_closed_review_handoff  # noqa: E402
 
 #: Schema revision stamped into a standard result.json; current-format review results use revision 3 instead.
 RESULT_SCHEMA_VERSION = 2
@@ -364,6 +365,17 @@ def build_payload(args: argparse.Namespace, *, measured_code_safety: dict[str, A
     validate_final_handoff_metadata(metadata)
 
     review_status = metadata.get("review_status")
+    close_decision = metadata.get("close_decision")
+    if review_status == "closed":
+        if not isinstance(close_decision, dict):
+            raise SystemExit("closed-review-invalid-decision-shape")
+        try:
+            handoff = json.loads((args.out.parent / "final-handoff.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise SystemExit("closed-review-handoff-unavailable") from error
+        if not isinstance(handoff, dict):
+            raise SystemExit("closed-review-final-handoff-mismatch")
+        validate_closed_review_handoff(closed_review_handoff(args.out.parent, close_decision), handoff)
     current_review = ("review_decision" in metadata and review_status is None) or review_status in {
         "unavailable",
         "closed",

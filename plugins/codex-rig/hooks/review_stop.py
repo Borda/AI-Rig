@@ -18,10 +18,15 @@ produce no continuation. Known native answers for continuation, review entry and
 question and a distinct host receipt with matching decision and scope. An integrity restart can reactivate an observed
 inspection hold for its original exclusive slot and owner. Checkout-slot receipts can bind recovery before run
 creation and supersede an earlier observation at the same slot. Recovery ends for the turn on a terminal plain-text
-question before run creation, a user message after any validated slot receipt, or a helper error at a slot the turn
-already admitted. Receipt routing reads receipt fields; pause words inside owner IDs or slot paths are data. Every
-command receipt accepts the same host output endings. Standalone PR review and remediation bind the invoking checkout's
-report storage to the requested PR. The same owner may release its PR claim before taking repository-wide exclusivity.
+question before run creation, a user message after an observed report lookup or validated slot receipt, or a helper
+error at an admitted slot. Pause words inside receipt owner IDs or slot paths are data. Every command receipt accepts
+the same host output endings. Standalone PR review and remediation bind the invoking checkout's
+report storage to the requested PR. Remediation can resolve storage before admission and bind it at allocation.
+An undelivered scope question can recover inventory preparation and question delivery only. The documented incomplete
+handoff, or a scope question or menu anywhere in the message, keeps that status controlling.
+On an in-place resumed PR, a checked original branch receipt plus the same retained run's selection render can restore
+the active workflow. A submitted scope answer then needs the matching rendered inventory digest.
+The same owner may release its PR claim before taking repository-wide exclusivity.
 A confirmed historical PR report lookup may bind its original checkout. A terminal fork checkout receipt permits
 reporting after the owner releases the matching claim. A collector-classified branch collision calls
 for showing the local and remote differences.
@@ -91,6 +96,11 @@ DECISION_WAIT = re.compile(
     r"waiting for your approval before running the command|pending user decision)\b",
     re.IGNORECASE,
 )
+SELECTION_STATUS = re.compile(r"\bawaiting selection(?=[.,;:*\n]|$)", re.IGNORECASE)
+# The documented blocked or user-stopped remediation handoff also reports findings awaiting selection.
+INCOMPLETE_HANDOFF = re.compile(
+    r"\bremediation remains incomplete\b|\bfirst unmet checkpoint\b|\bat your request\b", re.IGNORECASE
+)
 REPLY_INSTRUCTION = re.compile(r"(?:^|[?!.]\s+)(?:please\s+)?(?:reply|choose|select|enter)\s+\S", re.IGNORECASE | re.M)
 ACTION_LABEL = r"approve(?: always)?|deny|hold|continue|skip|stop|resume last(?: one)?|start fresh|new review"
 CHOICE_LINE = re.compile(
@@ -99,6 +109,7 @@ CHOICE_LINE = re.compile(
 INLINE_CHOICES = re.compile(rf"^[`* ]*(?:{ACTION_LABEL})[`* ]*(?:/|\bor\b)[`* ]*(?:{ACTION_LABEL})\b", re.IGNORECASE)
 SCOPE_QUESTION = "Which findings should I remediate?"
 COMMIT_QUESTION = "How should verified remediation-owned changes be grouped into commits?"
+REMEDIATION_QUESTIONS = (SCOPE_QUESTION, COMMIT_QUESTION, "Which finding indexes should I remediate?")
 SCOPE_CHOICES = ["All", "Required", "Suggestions", "Custom selection"]
 COMMIT_MODES = (
     "all at once",
@@ -120,8 +131,13 @@ NESTED_QUESTION = re.compile(
 )
 NATIVE_QUESTION = "mcp__codex_rig_input__ask_user"
 QUESTION_DISCOVERY = re.compile(
-    r"(?:^|(?<=;))\s*text\(ALL_TOOLS\.filter\(([A-Za-z_]\w*)\s*=>\s*/[A-Za-z_|]+/\.test\(\1\.name\)\)\)"
+    r"(?:^|(?<=;))\s*text\(ALL_TOOLS\.filter\(([A-Za-z_]\w*)\s*=>\s*"
+    r'(?:/[A-Za-z_|]+/\.test\(\1\.name\)|\1\.name\.includes\("ask_user"\))\)\)'
     r"(?=\s*(?:;|$))"
+)
+# A literal shell command is data in code mode. Exclude only this complete, non-interpolating call and projection.
+LITERAL_SHELL_CALL = re.compile(
+    r'\s*const (\w+)\s*=\s*await tools\.exec_command\(\{cmd:"(?:[^"\\]|\\.)*"\}\);\s*text\(\1\.output\);?\s*'
 )
 # Only literal tool calls with the known output projection can bind a still-running code-mode process.
 QUEUE_START = re.compile(
@@ -155,6 +171,45 @@ def _slot_common(slot: str) -> str:
     """Identify the repository common directory from a validated target, writer or exclusive locator."""
     scoped = TARGET_SLOT.fullmatch(slot) or WRITER_SLOT.fullmatch(slot)
     return scoped["common"] if scoped else slot.rsplit("/", 1)[0]
+
+
+def _report_root_matches(root: str, checkout: str, slot: str) -> bool:
+    """Bind the report-root helper's storage receipt to the admitted checkout or its Git directory."""
+    common = _slot_common(slot)
+    return (
+        root == checkout + "/.reports/codex"
+        or root == common + "/codex-rig/reports"
+        or re.fullmatch(re.escape(common) + r"/worktrees/[^/]+/codex-rig/reports", root) is not None
+    )
+
+
+def _checked_remediation_run(arguments: list[str], output: str, cwd: str, slot: str, target: str) -> str:
+    """Recognize an in-place retained PR run checked against its original branch and exact current revision."""
+    if len(arguments) != 5 or arguments[:2] != ["check", "--receipt"] or arguments[3] != "--expected-head":
+        return ""
+    receipt = json.loads(_host_output(output))
+    number = target.rsplit("/", 1)[-1]
+    path = _coordinate(arguments[2], cwd)
+    # Only this retained storage layout has independent evidence on resume.
+    root = _slot_common(slot) + "/codex-rig/reports/code-remediate/"
+    if (
+        not re.fullmatch(re.escape(root) + rf"pr-{number}/run-[0-9]{{3,}}/remediation-branch\.json", path)
+        or not isinstance(receipt, dict)
+        or type(receipt.get("schema_version")) is not int
+        or receipt["schema_version"] != 2
+        or receipt.get("status") != "prepared"
+        or type(receipt.get("pr_number")) is not int
+        or str(receipt["pr_number"]) != number
+        or not isinstance(receipt.get("pr_url"), str)
+        or receipt["pr_url"].lower() != target
+        or not isinstance(receipt.get("worktree"), str)
+        or _coordinate(receipt["worktree"], cwd) != cwd
+        or not (PureWindowsPath if PureWindowsPath(cwd).drive else PurePosixPath)(receipt["worktree"]).is_absolute()
+        or not re.fullmatch(r"[0-9a-f]{40}", arguments[4])
+        or receipt.get("initial_head") != arguments[4]
+    ):
+        return ""
+    return path.rsplit("/", 1)[0]
 
 
 SLOT_OWNER = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}")
@@ -598,6 +653,10 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
         return {}
     delivery_only = DECISION_WAIT.search(message) is not None
     stop_prose = DECISION_WAIT.sub("", message)
+    selection_status = 0
+    # A stop handoff keeps its status wording, so the wait stays controlling as before selection recovery existed.
+    if not INCOMPLETE_HANDOFF.search(message):
+        stop_prose, selection_status = SELECTION_STATUS.subn("", stop_prose)
     # A typed fallback can end a turn independently of any wait-status wording.
     # Inspect the terminal block so earlier evidence and ordinary lists of checks do not become a menu.
     terminal_block = message.rstrip().rsplit("\n\n", 1)[-1]
@@ -615,6 +674,8 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
     review_cwd = checkout_root
     historical_pr = ""
     pr_reports: tuple[str, str] | None = None
+    early_pr_reports: tuple[str, str] | None = None
+    checked_run = checked_scope_digest = ""
     active = False
     runs: dict[str, str] = {}
     owner = ""
@@ -623,6 +684,7 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
     terminal_checkout = ""
     ordinary_slot = released_slot = review_scope = ""
     pending_questions = 0
+    scope_answered = False
     question_receipts: set[str] = set()
     async_call = ""
     async_state = ""
@@ -763,12 +825,15 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             review_cwd = checkout_root
             historical_pr = ""
             pr_reports = None
+            early_pr_reports = None
+            checked_run = checked_scope_digest = ""
             remediation_pr = None
             remediation_source = checkout_root
             terminal_checkout = ""
             ordinary_slot = released_slot = review_scope = ""
             owner = ""
             pending_questions = 0
+            scope_answered = False
             question_receipts.clear()
             queue_calls.clear()
             queue_processes.clear()
@@ -851,6 +916,8 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                     # Remove just the literal discovery statement so adjacent invocations still count.
                     if name == "exec" and kind == "custom_tool_call":
                         source = QUESTION_DISCOVERY.sub("", source)
+                        if LITERAL_SHELL_CALL.fullmatch(source):
+                            source = ""
                     if QUESTION_REFERENCE.search(NESTED_QUESTION.sub("", source)):
                         return {}
                     for question in NESTED_QUESTION.finditer(source):
@@ -903,7 +970,7 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             elif (
                 kind == "message"
                 and data.get("role") == "user"
-                and (runs or historical_pr or slot_receipt_seen or queue_calls or queue_processes)
+                and (runs or historical_pr or early_pr_reports or slot_receipt_seen or queue_calls or queue_processes)
             ):
                 return {}
             elif kind not in {"message", "reasoning", "additional_tools", "agent_message"}:
@@ -922,7 +989,7 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
         item = data.get("item", {})
         item_type = item.get("type")
         if item_type == "UserMessage":
-            if runs or historical_pr or slot_receipt_seen or queue_calls or queue_processes:
+            if runs or historical_pr or early_pr_reports or slot_receipt_seen or queue_calls or queue_processes:
                 return {}
             continue
         if item_type in {"Reasoning", "AgentMessage"}:
@@ -971,6 +1038,10 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                 return {}
             question_receipts.add(receipt_id)
             pending_questions -= 1
+            if item["status"] == "completed" and item["arguments"]["options"] == SCOPE_CHOICES:
+                if checked_run and item["arguments"]["scope_digest"] != checked_scope_digest:
+                    return {}
+                scope_answered = True
             continue
         if item_type != "CommandExecution":
             return {}
@@ -991,6 +1062,13 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             "shared/review_checkout_slot.py", plugin_root
         )
         slot_receipt = slot_result(args[2:], output, exit_code) if slot_helper else None
+        if checked_run and args and exit_code != 0:
+            failed_action = (_coordinate(args[1], plugin_root), args[2] if len(args) > 2 else "")
+            if failed_action in {
+                (_coordinate("shared/remediation_branch.py", plugin_root), "check"),
+                (_coordinate("shared/final_handoff.py", plugin_root), "selection"),
+            }:
+                return {}
         if slot_helper and args[-1] == "--queue" and exit_code == 130:
             # Only an assistant-issued interrupt for this process can recover from its last peer observation.
             # A user or host cancellation, including an uncorrelated signal, remains controlling.
@@ -1040,6 +1118,52 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                 and checkout_binding is not None
             )
         ):
+            continue
+        admitted_pr = (
+            checkout is not None
+            and checkout.state == "acquired"
+            and checkout.via_checkout
+            and checkout.slot == ordinary_slot
+            and PR_URL.fullmatch(review_scope)
+            and command_cwd == review_cwd == checkout_root
+        )
+        if (
+            admitted_pr
+            and helper == _coordinate("shared/remediation_branch.py", plugin_root)
+            and args[2:3] == ["check"]
+            and (not owner or checked_run)
+        ):
+            if item["status"] != "completed":
+                return {}
+            checked = _checked_remediation_run(args[2:], output, command_cwd, ordinary_slot, review_scope)
+            if checked_run and checked != checked_run:
+                return {}
+            checked_run = checked
+            continue
+        if (
+            admitted_pr
+            and checked_run
+            and helper == _coordinate("shared/final_handoff.py", plugin_root)
+            and args[2:4] == ["selection", "--input"]
+            and len(args) == 7
+            and args[5] == "--out-scope"
+        ):
+            receipt = json.loads(_host_output(output))
+            if (
+                item["status"] != "completed"
+                or _coordinate(args[4], command_cwd) != checked_run + "/selection.json"
+                or _coordinate(args[6], command_cwd) != checked_run + "/resolution-scope.md"
+                or not isinstance(receipt, dict)
+                or receipt.get("status") != "pass"
+                or not all(
+                    isinstance(receipt.get(k), str) and re.fullmatch(r"[0-9a-f]{64}", receipt[k])
+                    for k in ("input_sha256", "rendered_sha256")
+                )
+                or (owner and (owner != "code-remediate" or runs.get(checked_run) != owner))
+            ):
+                return {}
+            checked_scope_digest = receipt["input_sha256"]
+            runs[checked_run] = owner = "code-remediate"
             continue
         if helper == _coordinate("shared/contributor_run_integrity.py", plugin_root):
             if (
@@ -1140,9 +1264,6 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                 exit_code == 0
                 and owner in {"", "code-review", "code-remediate"}
                 and command_checkout == review_cwd
-                and checkout is not None
-                and checkout.state == "acquired"
-                and checkout.via_checkout
                 and len(args) == 7
                 and args[2:4] == ["report-root", "--checkout"]
                 and args[5] == "--pr-url"
@@ -1156,12 +1277,16 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                 path_type = PureWindowsPath if PureWindowsPath(cwd).drive else PurePosixPath
                 if path_type(report_base).is_absolute() and not re.search(r"[\r\n]", report_base):
                     coordinate = _coordinate(report_base, cwd)
-                    common = _slot_common(checkout.slot)
                     binding = (coordinate, args[6].lower())
-                    if (
-                        coordinate == review_cwd + "/.reports/codex"
-                        or coordinate == common + "/codex-rig/reports"
-                        or re.fullmatch(re.escape(common) + r"/worktrees/[^/]+/codex-rig/reports", coordinate)
+                    if not slot_receipt_seen and not historical_pr:
+                        if early_pr_reports is not None and early_pr_reports != binding:
+                            return {}
+                        early_pr_reports = binding
+                    elif (
+                        checkout
+                        and checkout.state == "acquired"
+                        and checkout.via_checkout
+                        and _report_root_matches(coordinate, review_cwd, checkout.slot)
                     ):
                         if pr_reports is not None and pr_reports != binding:
                             return {}
@@ -1235,16 +1360,29 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             if "--root" in creation:
                 promoting = "--promote-pr-run" in creation
                 if (
-                    pr_reports is None
-                    or command_checkout != review_cwd
+                    command_checkout != review_cwd
                     or checkout is None
                     or checkout.state != "acquired"
                     or not checkout.via_checkout
-                    or _coordinate(creation["--root"], command_cwd) != pr_reports[0]
                     or (skill == "code-review" and not ordinary_slot and owner != "code-remediate")
                 ):
                     continue
-                base, url = pr_reports
+                # Remediation can resolve storage before queueing. Bind it only at allocation under its acquired PR.
+                binding = pr_reports
+                if (
+                    not binding
+                    and early_pr_reports
+                    and skill == "code-remediate"
+                    and not promoting
+                    and not historical_pr
+                    and checkout.slot == ordinary_slot
+                    and review_scope == early_pr_reports[1]
+                    and _report_root_matches(early_pr_reports[0], review_cwd, checkout.slot)
+                ):
+                    binding = early_pr_reports
+                if not binding or _coordinate(creation["--root"], command_cwd) != binding[0]:
+                    continue
+                base, url = binding
                 number = url.rsplit("/", 1)[1]
                 if not promoting and (
                     creation.get("--pr-number") != number or creation.get("--pr-url", url).lower() != url
@@ -1256,6 +1394,8 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                     return {}
                 if not promoting and (not relative_run or "/" in relative_run):
                     return {}
+                pr_reports = binding
+                early_pr_reports = None
             if not run.startswith(root):
                 return {}
             if batched_creation:
@@ -1365,9 +1505,7 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
     if not active or pending_questions:
         return {}
     if owner == "code-remediate" and (
-        terminal_block.strip("`* ").startswith(
-            (SCOPE_QUESTION, COMMIT_QUESTION, "Which finding indexes should I remediate?")
-        )
+        terminal_block.strip("`* ").startswith(REMEDIATION_QUESTIONS)
         or len(set(REMEDIATION_MENU_OPTION.findall(terminal_block.lower()))) >= 2
     ):
         return {}
@@ -1376,6 +1514,28 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
         checkout_state not in {"peer", "available"} and CONTROLLING_STOP.search(stop_prose)
     ):
         return {}
+    if selection_status and (
+        owner != "code-remediate"
+        or owner not in runs.values()
+        or terminal_checkout
+        or checkout_state in {"peer", "available"}
+        or scope_answered
+        or TERMINAL_QUESTION.search(terminal_block)
+        # Selection status claims an omitted question, so a question or menu delivered anywhere ends the turn.
+        or any(question.lower() in message.lower() for question in REMEDIATION_QUESTIONS)
+        or len(set(REMEDIATION_MENU_OPTION.findall(message.lower()))) >= 2
+    ):
+        return {}
+    if selection_status and not delivery_only:
+        return {
+            "decision": "block",
+            "reason": (
+                f"Recover remediation scope question delivery only. {CONTROLLING_PAUSE} "
+                "Follow intake's checkout and PR state requirements before dependent work. Finish reconciling the "
+                "authorized findings inventory and present the scope question with its actionable choices. "
+                "Keep selection and implementation pending until an explicit answer."
+            ),
+        }
     writer_held = (
         owner == "code-remediate"
         and checkout_binding is not None
@@ -1494,7 +1654,8 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             "Continue remediation selection, selected fixes, verification and delivery under the user's existing scope. "
             "Only if the parent already has explicit +review authorization, finish its needed nested review and admit "
             "the exact validated result before returning to remediation. Reuse the recorded scope and commit "
-            "preference. A missing selection needs its normal question."
+            "preference. Resolve any missing scope through its normal question. Apply the selected-item count rule "
+            "and ask any required commit-grouping question before dependent work."
         )
         if PR_URL.fullmatch(review_scope):
             next_step = (

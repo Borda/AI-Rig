@@ -256,7 +256,8 @@ class TestSkillRoutingText:
         _assert_states(
             skill,
             "`PR Snapshot` for every assessed `scope=pr` review",
-            "`pr.json`, `pr-routing.json`, and `gates.json`",
+            "`pr-ci-refresh.json` when usable",
+            "`pr-routing.json`, and `gates.json`",
             "`pr.json.statusCheckRollup`",
             "An absent or empty rollup is `unavailable`, never `passing`",
             "`fix`, `feat`, `refactor`, `perf`, `docs`, `ci`, `chore`, `test`, or `mixed`",

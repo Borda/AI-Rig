@@ -85,24 +85,10 @@ if [ "$DIRECT_PATH_MODE" = "false" ]; then
     printf '%s\n' "$CHANGED_FILES" > "${TMPDIR:-/tmp}/oss-review-changed-files-${CSID}"
     printf '%s\n' "$PR_LABELS" > "${TMPDIR:-/tmp}/oss-review-pr-labels-${CSID}"
     printf '%s\n' "$PR_TITLE" > "${TMPDIR:-/tmp}/oss-review-pr-title-${CSID}"
-# CI STATUS: jq over the snapshot — no tab-literal quoting, no `grep -P` (absent on BSD/macOS); `bucket` is gh's own pass/fail/pending classification
-IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || SNAP_DIR=""
-# checks-required.json = merge-blocking set; without required checks, use the full set.
-CI_CHECKS_FILE="$SNAP_DIR/checks-required.json"
-_REQUIRED_COUNT=$(jq -er 'if type == "array" then length else error("expected checks array") end' "$CI_CHECKS_FILE") || { echo "! BLOCKED — required CI snapshot unavailable"; exit 1; }
-[ "$_REQUIRED_COUNT" -gt 0 ] || CI_CHECKS_FILE="$SNAP_DIR/checks.json"
-CI_FAILING_CHECKS=$(jq -r '[.[]|select(.bucket=="fail")|.name]|join(", ")' "$CI_CHECKS_FILE") || { echo "! BLOCKED — CI snapshot unavailable"; exit 1; }  # timeout: 5000
-CI_COUNTS=$(jq -r '"\([.[]|select(.bucket=="pass")]|length)/\(length)"' "$SNAP_DIR/checks.json") || { echo "! BLOCKED — CI counts unavailable"; exit 1; }  # timeout: 5000
-if [ -n "$CI_FAILING_CHECKS" ]; then CI_RED=true; else CI_RED=false; fi
-# Stage-2 gate + consolidator run in fresh shells — w/o sentinels CI_RED reads unset, red CI never blocks
-printf '%s\n' "$CI_RED" > "${TMPDIR:-/tmp}/oss-review-ci-red-${CSID}"
-printf '%s\n' "$CI_FAILING_CHECKS" > "${TMPDIR:-/tmp}/oss-review-ci-failing-${CSID}"
-printf '%s\n' "$CI_COUNTS" > "${TMPDIR:-/tmp}/oss-review-ci-counts-${CSID}"
-echo "CI_RED=$CI_RED FAILING=[$CI_FAILING_CHECKS] COUNTS=$CI_COUNTS"
 fi
 ```
 
-**CI STATUS** (PR mode only): the block's last stdout line is the result — run the block verbatim, never hand-compose a checks parse. `CI_RED=true`: print `⚠ CI is red: [list failing check names] — review proceeds; status noted in report header.` Continue to Steps 2–8 regardless. Expand `$CI_RED`, `$CI_FAILING_CHECKS` and `$CI_COUNTS` to literal values in the consolidator spawn prompt (Step 5).
+**CI STATUS** (PR mode only). For a failed initial check, print `⚠ CI is red: [list failing check names] — review proceeds; status noted in report header.` Start the selected reviewers with the frozen source regardless of CI. The Step 5 observation supplies the report header.
 
 ### File scope detection
 
@@ -222,7 +208,7 @@ The issue-agent prompt must also bind `Reviewed source: <full PR_HEAD_SHA>` and 
 
 <!-- loads: modes/acceptance-gate.md -->
 
-Skip if `DIRECT_PATH_MODE=true`. `FILL_GAPS_MODE=true` → skip Stage 1 only (the prior run judged the premise at this same head; the fill-gaps gate refuses a REJECT run); Stage 2 still runs. Two ordered stages, cheap, before Step 2's expensive fanout. **Reject is terminal** — no code change fixes the premise, pipeline stops. **Block is not** — premise is sound, current diff state has a fixable gap (red CI, a typo, a flaky test) — full fanout still runs, report just surfaces the fixable gap up front instead of burying it in consolidator output. Test to pick the stage: *"could revising the code, not the goal, resolve this?"* Yes → block. No → reject.
+Skip if `DIRECT_PATH_MODE=true`. `FILL_GAPS_MODE=true` → skip Stage 1 only (the prior run judged the premise at this same head; the fill-gaps gate refuses a REJECT run); Stage 2 still runs. Two ordered stages, cheap, before Step 2's expensive fanout. **Reject is terminal** — no code change fixes the premise, pipeline stops. **Block is not** — premise is sound, current diff state has a fixable gap (a typo, a flaky test, red CI) — full fanout still runs, report just surfaces the fixable gap up front instead of burying it in consolidator output. Stage 2 sets no gate before fanout: Step 5's CI observation (`modes/ci-status.md`) decides the CI merge gate. Test to pick the stage: *"could revising the code, not the goal, resolve this?"* Yes → block. No → reject.
 
 PR mode → load and follow `modes/acceptance-gate.md`; its terminal jump loads `modes/post-agent.md` at Step 5b and Step 7.
 

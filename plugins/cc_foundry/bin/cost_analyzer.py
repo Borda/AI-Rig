@@ -388,6 +388,35 @@ def cache_write_split(usage: dict) -> tuple[int, int]:
     return total - one_hour, one_hour
 
 
+#: Token classes a call's cost splits into, in report order.
+COST_CLASSES = ("input", "output", "cache_read", "write_5m", "write_1h")
+
+
+def cost_parts(usage: dict, model: str) -> dict[str, float]:
+    """Split one usage object's USD cost by token class (see :data:`COST_CLASSES`).
+
+    The parts sum to :func:`cost`; each is already in dollars.
+
+    Examples:
+        >>> usage = {"input_tokens": 1_000_000, "output_tokens": 1_000_000}
+        >>> parts = cost_parts(usage, "claude-opus-5-5")
+        >>> sorted(parts) == sorted(COST_CLASSES)
+        True
+        >>> parts["input"] + parts["output"] == cost(usage, "claude-opus-5-5")
+        True
+    """
+    rate = rate_for(model, prompt_tokens(usage))
+    write_5m, write_1h = cache_write_split(usage)
+    terms = {
+        "input": usage.get("input_tokens", 0) * rate.input,
+        "output": usage.get("output_tokens", 0) * rate.output,
+        "write_5m": write_5m * rate.input * CACHE_WRITE_5M_MULTIPLIER,
+        "write_1h": write_1h * rate.input * CACHE_WRITE_1H_MULTIPLIER,
+        "cache_read": usage.get("cache_read_input_tokens", 0) * rate.cache_read,
+    }
+    return {name: terms[name] / 1_000_000 for name in COST_CLASSES}
+
+
 def cost(usage: dict, model: str) -> float:
     """Price one usage object of ``model`` in USD — missing keys count as zero.
 
@@ -424,6 +453,8 @@ class Call:
     usage: dict
     tools: list[str] = field(default_factory=list)
     sidechain: bool = False
+    #: Epoch seconds of the row that first carried this message; ``0.0`` when the row has no valid timestamp.
+    ts: float = 0.0
 
     @property
     def cache_read(self) -> int:
@@ -455,6 +486,9 @@ class AgentSpend:
     cache_read: int = 0
     #: Effort level the spawn recorded in the sidecar (``high``); empty when the sidecar has none (the agent default).
     effort: str = ""
+    #: Cost of this agent's 5-minute cache writes, and the part its first call wrote (the start-up prefix).
+    write_5m_usd: float = 0.0
+    first_write_5m_usd: float = 0.0
 
 
 @dataclass
@@ -589,12 +623,17 @@ def _row_to_call(row: dict, existing: dict[str, Call]) -> Call | None:
     if message_id in existing:
         return None
     blocks = [b for b in (message.get("content") or []) if isinstance(b, dict)]
+    try:
+        ts = parse_ts(row["timestamp"]) if row.get("timestamp") else 0.0
+    except ValueError:
+        ts = 0.0
     return Call(
         message_id=message_id,
         model=message.get("model") or "unknown",
         usage=usage,
         tools=[b.get("name", "?") for b in blocks if b.get("type") == "tool_use"],
         sidechain=bool(row.get("isSidechain")),
+        ts=ts,
     )
 
 
@@ -661,8 +700,13 @@ def _load_agent_spend(jf: Path, sub_calls: dict[str, Call], tool_calls: int = 0)
     """Build one :class:`AgentSpend` from a subagent transcript's calls + sibling meta.json."""
     meta = _read_agent_meta(jf)
     cost_by_model: dict[str, float] = {}
-    for c in sub_calls.values():
+    write_5m_usd = first_write_5m_usd = 0.0
+    for index, c in enumerate(sub_calls.values()):
         cost_by_model[c.model] = cost_by_model.get(c.model, 0.0) + cost(c.usage, c.model)
+        write_5m = cost_parts(c.usage, c.model)["write_5m"]
+        write_5m_usd += write_5m
+        if index == 0:
+            first_write_5m_usd = write_5m
     return AgentSpend(
         # A named teammate spawn records the teammate's name as ``agentType``; ``spawnedAgentType`` holds the real type.
         agent_type=meta.get("spawnedAgentType") or meta.get("agentType") or "?",
@@ -674,19 +718,38 @@ def _load_agent_spend(jf: Path, sub_calls: dict[str, Call], tool_calls: int = 0)
         tool_calls=tool_calls,
         cache_read=sum(c.cache_read for c in sub_calls.values()),
         effort=meta.get("effort", ""),
+        write_5m_usd=write_5m_usd,
+        first_write_5m_usd=first_write_5m_usd,
     )
 
 
-def load_session(main_path: Path) -> Session:
+def _in_window(calls: dict[str, Call], cutoff: float) -> dict[str, Call]:
+    """Keep calls at or after *cutoff*; a call with no timestamp stays, as nothing places it outside the window.
+
+    Examples:
+        >>> calls = {"a": Call("a", "m", {}, ts=10.0), "b": Call("b", "m", {}, ts=30.0), "c": Call("c", "m", {})}
+        >>> sorted(_in_window(calls, 20.0))
+        ['b', 'c']
+        >>> sorted(_in_window(calls, 0.0))
+        ['a', 'b', 'c']
+    """
+    return {key: c for key, c in calls.items() if c.ts == 0.0 or c.ts >= cutoff}
+
+
+def load_session(main_path: Path, cutoff: float = 0.0) -> Session:
     """Parse one session: its main-loop file plus every subagent transcript.
 
     Subagent files live at ``<main_path stem>/subagents/agent-*.jsonl``, sibling to the flat ``<session-id>.jsonl``.
     Each has a matching ``agent-*.meta.json`` carrying ``agentType`` and ``description``, used for the per-agent cost
     rollup — more reliable than scanning the main transcript for ``Agent`` tool_use blocks, which misses agents spawned
     through the ``Workflow`` tool.
+
+    With *cutoff* (epoch seconds) only calls at or after it are kept, so a session that began before a report window
+    contributes just its in-window spend. ``ts_first`` and ``ts_last`` still span the whole transcript, and an agent
+    with no call left in the window drops out of the roster.
     """
     calls_by_id, commands, ts_first, ts_last = _parse_rows(main_path)
-    calls = list(calls_by_id.values())
+    calls = list(_in_window(calls_by_id, cutoff).values())
 
     agent_spends: list[AgentSpend] = []
     subagents_dir = main_path.parent / main_path.stem / "subagents"
@@ -694,8 +757,11 @@ def load_session(main_path: Path) -> Session:
         for jf in sorted(subagents_dir.glob("agent-*.jsonl")):
             tool_ids: set[str] = set()
             sub_calls, _, sub_first, sub_last = _parse_rows(jf, tool_ids)
-            calls.extend(sub_calls.values())
             ts_first, ts_last = min(ts_first, sub_first), max(ts_last, sub_last)
+            sub_calls = _in_window(sub_calls, cutoff)
+            if cutoff and not sub_calls:
+                continue
+            calls.extend(sub_calls.values())
             agent_spends.append(_load_agent_spend(jf, sub_calls, len(tool_ids)))
 
     return Session(
@@ -809,6 +875,74 @@ def bucket(calls: list[Call]) -> dict[tuple[str, str], Bucket]:
         key = ("sidechain" if call.sidechain else "main", tier(call.model))
         buckets.setdefault(key, Bucket()).add(call)
     return buckets
+
+
+def cost_by_class(calls: list[Call]) -> dict[str, dict[str, float]]:
+    """Sum dollars per token class, split into ``main`` and ``sidechain`` scopes.
+
+    Examples:
+        >>> calls = [Call("m1", "claude-opus-5-5", {"output_tokens": 1_000_000}),
+        ...          Call("m2", "claude-opus-5-5", {"output_tokens": 1_000_000}, sidechain=True)]
+        >>> got = cost_by_class(calls)
+        >>> got["main"]["output"], got["sidechain"]["output"]
+        (20.0, 20.0)
+        >>> cost_by_class([])["main"]["input"]
+        0.0
+    """
+    out = {scope: dict.fromkeys(COST_CLASSES, 0.0) for scope in ("main", "sidechain")}
+    for call in calls:
+        row = out["sidechain" if call.sidechain else "main"]
+        for name, value in cost_parts(call.usage, call.model).items():
+            row[name] += value
+    return out
+
+
+def render_cost_classes(calls: list[Call]) -> list[str]:
+    """Render dollars per token class (input, output, cache read, 5m and 1h cache write), main versus subagent."""
+    by_class = cost_by_class(calls)
+    grand = sum(sum(row.values()) for row in by_class.values()) or 1.0
+    lines = [
+        "### Cost by token class",
+        "",
+        "| token class | main $ | subagent $ | total $ | share |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for name in COST_CLASSES:
+        main, side = by_class["main"][name], by_class["sidechain"][name]
+        lines.append(
+            f"| {name} | {_fmt_usd(main)} | {_fmt_usd(side)} | {_fmt_usd(main + side)} | {(main + side) / grand:.0%} |"
+        )
+    lines.append("")
+    return lines
+
+
+def render_subagent_writes(spends: list[AgentSpend]) -> list[str]:
+    """Render 5-minute cache-write dollars per agent type: first-call prefix versus later rewrites.
+
+    The first call writes the agent's start-up prefix once; spend beyond it is context re-cached after the 5-minute
+    window lapsed or the context grew.
+    """
+    by_type: dict[str, list[AgentSpend]] = {}
+    for spend in spends:
+        by_type.setdefault(spend.agent_type, []).append(spend)
+    rows = []
+    for agent_type, group in sorted(by_type.items(), key=lambda kv: -sum(s.write_5m_usd for s in kv[1])):
+        total = sum(s.write_5m_usd for s in group)
+        if not total:
+            continue
+        prefix = sum(s.first_write_5m_usd for s in group)
+        rows.append(
+            f"| `{_cell(agent_type)}` | {len(group)} | {_fmt_usd(total)} | {_fmt_usd(prefix)} | {_fmt_usd(total - prefix)} |"
+        )
+    if not rows:
+        return []
+    header = [
+        "### Subagent 5-minute cache writes by type",
+        "",
+        "| agent type | agents | 5m write $ | first-call prefix $ | later rewrites $ |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    return [*header, *rows, ""]
 
 
 def aggregate_commands(sessions: list[Session]) -> dict[str, dict[str, float]]:
@@ -957,6 +1091,10 @@ def render_session_detail(session: Session, *, top_n: int, every: int = 10) -> l
         f"### Session `{session.path.stem}` — {session.project}",
         "",
     ]
+    if session.ts_last:
+        first = datetime.fromtimestamp(session.ts_first, timezone.utc).strftime("%Y-%m-%d %H:%MZ")
+        last = datetime.fromtimestamp(session.ts_last, timezone.utc).strftime("%Y-%m-%d %H:%MZ")
+        lines += [f"Whole session, {first} to {last} — not clipped to a window.", ""]
     buckets = bucket(session.calls)
     lines += ["| scope | tier | in | out | cache_w | cache_r | cost |", "|---|---|---:|---:|---:|---:|---:|"]
     total = 0.0
@@ -967,6 +1105,7 @@ def render_session_detail(session: Session, *, top_n: int, every: int = 10) -> l
             f"| {_fmt_usd(b.cost_usd)} |"
         )
     lines += [f"| **total** | | | | | | **{_fmt_usd(total)}** |", ""]
+    lines += render_cost_classes(session.calls)
 
     if session.agent_spends:
         lines += ["### Agent roster", "", "| agent type | files | cost |", "|---|---:|---:|"]
@@ -976,6 +1115,7 @@ def render_session_detail(session: Session, *, top_n: int, every: int = 10) -> l
         for t, spends in sorted(by_type.items(), key=lambda kv: -sum(s.cost_usd for s in kv[1])):
             lines.append(f"| `{t}` | {len(spends)} | {_fmt_usd(sum(s.cost_usd for s in spends))} |")
         lines.append("")
+        lines += render_subagent_writes(session.agent_spends)
         lines += render_agent_detail(session.agent_spends)
 
     calls = session.calls
@@ -1019,7 +1159,10 @@ def render_window(sessions: list[Session], *, top_n: int, since_spec: str) -> li
             f"{_fmt_usd(main_cost)} | {_fmt_usd(s.subagent_cost)} | {_fmt_usd(s.total_cost)} |"
         )
     grand_total = sum(s.total_cost for s in sessions)
-    lines += ["", f"**Window total: {_fmt_usd(grand_total)}** across all {len(sessions)} session(s) above."]
+    lines += ["", f"**Window total: {_fmt_usd(grand_total)}** across all {len(sessions)} session(s) above.", ""]
+    all_calls = [call for s in sessions for call in s.calls]
+    lines += render_cost_classes(all_calls)
+    lines += render_subagent_writes([a for s in sessions for a in s.agent_spends])
 
     cmd_totals = aggregate_commands(sessions)
     if cmd_totals:
@@ -1038,6 +1181,7 @@ def render_window(sessions: list[Session], *, top_n: int, since_spec: str) -> li
         "### Notes",
         "",
         "- Prices are public list rates — dollar figures are proportional truth, not a billing statement.",
+        "- Only calls inside the window are priced: a session that began earlier counts its in-window spend, not its whole cost.",
         "- Per-command `session $` attributes a session's *entire* cost to every command it ran — ranks, never sums.",
         "- Subagent spend is included via each session's `subagents/agent-*.jsonl` transcripts.",
         "",
@@ -1099,7 +1243,7 @@ def _collect_window_sessions(root: Path, cutoff: float) -> list[Session]:
                 continue
         except OSError:
             continue
-        session = load_session(candidate)
+        session = load_session(candidate, cutoff)
         if session.calls and session.ts_last >= cutoff:
             sessions.append(session)
     return sessions

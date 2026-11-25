@@ -261,6 +261,7 @@ class TestMain:
         _wire(run, default_ref="refs/remotes/origin/main", pr_meta=_meta())
         rc = rpr.main(["--pr", "42"])
         names = [
+            "resolve-pr-html-url",
             "resolve-head-ref",
             "resolve-base-ref",
             "resolve-is-cross-repo",
@@ -272,6 +273,7 @@ class TestMain:
         ]
         assert rc == 0
         assert {name: read_shared_sentinel(tmp_sentinels, name) for name in names} == {
+            "resolve-pr-html-url": "https://github.com/upstream/repo/pull/42",
             "resolve-head-ref": "feature-branch",
             "resolve-base-ref": "main",
             "resolve-is-cross-repo": "true",

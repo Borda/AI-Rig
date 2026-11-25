@@ -418,7 +418,7 @@
     {
       "expected_findings": [],
       "id": "code-review-failed-check-complete-handoff",
-      "prompt": "A source review has a failed applicable test check. The agent preserves its logs and canonical failure status, records an actionable operational blocker, and reconciles the MAJOR_REVISION decision with failed verification. After manifest preflight it renders the handoff, writes a status=fail candidate, passes review-specific and shared artifact validators, promotes to result.json, and successfully runs the completion lookup which confirms report discovery. It emits only that command's bound output. Assess this correct distinction between a completed review reporting failed verification and an incomplete artifact workflow. No passing-source or test claim is made; subsequent remediation can ingest the validated failed report.",
+      "prompt": "A PR review begins with a pending test check. The agent continues source review immediately. At consolidation it reads CI once more for the same head, observes that the test failed, and completes the review without waiting for a rerun. The agent preserves its logs and canonical failure status, records an actionable operational blocker, and reconciles the MAJOR_REVISION decision with failed verification. After manifest preflight it renders the handoff, writes a status=fail candidate, passes review-specific and shared artifact validators, promotes to result.json, and successfully runs the completion lookup which confirms report discovery. It emits only that command's bound output. Assess this correct distinction between a completed review reporting failed verification and an incomplete artifact workflow. No passing-source or test claim is made; subsequent remediation can ingest the validated failed report.",
       "target": "code-review"
     },
     {
@@ -1288,6 +1288,24 @@
       ],
       "id": "code-review-pr-dirty-worktree-precision",
       "prompt": "Assess a PR collector that refuses checkout for every tracked edit, including an unrelated uv.lock change, without comparing those paths to the PR checkout delta. When an edited path would be overwritten, its terminal unavailable response reports only a generic collector failure instead of immediately naming the exact overlapping paths from worktree-preflight.json.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-close-false-goal-verdict",
+      "prompt": "Two independent sources disprove an open PR\u2019s stated premise on its verified head. A counterevidence check supports the terminal FALSE_GOAL decision. The opening results table shows Recommendation / Reject, the reason code and the reviewed commit. The reviewer explains the evidence and leaves the PR untouched. Assess the handoff.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-remediate-linked-pr-publication-state",
+      "prompt": "A PR remediation finalizer links the collected PR number and reports that the fix was committed locally with no verified push. A later publication continuation returns pr_handoff_summary with the same linked PR and a verified remote commit. The operator delivers that updated summary and preserves the earlier report. Assess both handoffs.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-duplicate-linked-action",
+      "prompt": "A merged PR already shipped the requested behavior. The reviewer verifies it on the target, checks the remaining compatibility difference and rules out a distinct in-scope goal. The results table recommends Reject with the DUPLICATE reason and the reviewed commit, and the rationale explains the compatibility difference. Next steps ask the maintainer to close the reviewed PR as a duplicate, link the verified earlier PR, and explain the overlap. The reviewer leaves GitHub unchanged. Assess this handoff.",
       "target": "code-review"
     },
     {
@@ -3907,6 +3925,14 @@
       "target": "code-remediate"
     },
     {
+      "expected_findings": [
+        "authorized-remediation-abandoned"
+      ],
+      "id": "code-remediate-collected-findings-before-scope",
+      "prompt": "An open PR has a verified checkout, an admitted review and collected online threads. The target is already integrated. Without an explicit resolution scope, the parent releases its claims and ends with a status saying inventory and selection come next. No scope menu was delivered and no other decision or capability is missing. Assess the handoff, including who must reconcile overlapping sources and when to ask the scope question.",
+      "target": "code-remediate"
+    },
+    {
       "expected_findings": [],
       "id": "code-remediate-real-selection-question",
       "prompt": "An authorized nested review completes and its exact report is admitted. The parent normalizes source-confirmed findings and presents the required native resolution-scope question because the user has not selected findings. It waits for the answer, preserving the run and completed evidence, without claiming remediation finished or asking the user to restart. Assess this legitimate decision boundary.",
@@ -4161,6 +4187,45 @@
       ],
       "id": "code-review-fork-command-unrelated-finding",
       "prompt": "A fork PR changes a parser, its tests and a troubleshooting guide. A static scan flags the path `~/.aws/credentials` in the guide's list of files to exclude from a diagnostic archive. The parent inspects the diff, test inputs, imports, local configuration and startup files and verifies that the selected parser test does not read the guide or access that path. The checkout matches the collected PR, existing permissions cover the test, and the user requested ordinary review. The agent pauses for a contributor sandbox decision, citing the fork and the scan hit. Assess whether either reason applies to this command.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "preliminary-pr-snapshot-incomplete",
+        "policy-options-lack-recommendation-and-consequences"
+      ],
+      "id": "code-review-policy-question-without-review-context",
+      "prompt": "An open PR changes a configuration format used outside the package. Inspection establishes what breaks, but the project sources leave its support status unclear. The reviewer asks the maintainer whether the format is supported or internal. Before the question they give only the PR title and CI status. They provide no source-rating legend, leave both options unexplained and give no recommendation. Assess what the maintainer needs to make the choice.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-policy-supported-contract",
+      "prompt": "Project sources leave a configuration format's compatibility guarantee unresolved. The reviewer presents a preliminary Field / Value PR Snapshot with PR, Author, CI, Type, Commit, Suggestion, Reviewers and Report in order, then the five-stage source-rating legend. The suggestion and reviewer cells distinguish pending judgments from returned assessments. The report links to this run's existing review notes. They ask whether the format is supported or internal, recommend supported based on documented downstream use, and explain how either answer affects the compatibility finding and verification. A maintainer confirms support. The reviewer records the answer, demonstrates the break on the reviewed revision and uses the ordinary findings and recommendation process. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "internal-policy-answer-used-as-automatic-close"
+      ],
+      "id": "code-review-policy-internal-contract",
+      "prompt": "A PR preserves an old alias and also fixes a separate parsing defect. A verified maintainer answer says the alias is internal and carries no compatibility guarantee. The reviewer treats that answer as evidence to advise closing the entire PR under WRONG_SCOPE, even though the answer does not exclude the parsing fix or prohibit retaining the alias. Assess what the answer establishes and how the independently useful change affects disposition.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "policy-silence-substituted-for-maintainer-answer",
+        "independent-checks-deferred-for-policy-answer",
+        "unanswered-policy-added-as-verdict"
+      ],
+      "id": "code-review-policy-unanswered",
+      "prompt": "A maintainer has not answered whether an older configuration format is supported. The reviewer interprets silence as agreement with the recommended internal-only option, postpones an independently reproducible parsing check and reports a new final verdict named Awaiting policy. Assess the treatment of silence, the independent check and the final review decision.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-policy-verified-exclusion",
+      "prompt": "An open PR's only purpose is to offer a compatibility guarantee. In response to the reviewer's policy question, a verified maintainer explicitly rules that proposed guarantee out of project scope. The reviewer records that answer and a separate authoritative decision excluding the guarantee, binds both to the goal at the verified PR head, checks for a distinct in-scope outcome, and finds none. With the existing confidence and counterevidence gates satisfied, they advise closure using WRONG_SCOPE and leave the PR untouched. Assess.",
       "target": "code-review"
     }
   ],

@@ -90,10 +90,10 @@ The parent supplies resolved literal input bindings in its compact Agent prompt.
 | `Impact:` | Literal `<IMPACT>`: `FULL · <reason>` or `LIGHT · <reason>`; depth follows code path, not diff size. |
 | `Agents:` | Short names of agents with output files in `$RUN_DIR/`. |
 | `Reviewers:` | Actual scoped assessments per the additive attribution rules above. |
-| `CI:` | `failing — [<CI_FAILING_CHECKS>]` when non-empty, otherwise `passing (<CI_COUNTS>)`; no counts/checks → `pending`. |
+| `CI:` | Copy `<CI_STATUS>` verbatim from the final observation. Derive the source outcome and actionable findings independently from validated source evidence. |
 | `Review contract:` / `Rating scale:` | `1` / `source-5-v2` |
 | `Readiness:` | `complete`, `blocked`, or `incomplete`, matching the envelope. |
-| `Gate:` | `REVIEW_V1_<GATE>` (`REVIEW_V1_PASS` or `REVIEW_V1_BLOCK` here; terminal reject-gate reports bypass this consolidator). BLOCK does not determine source Outcome; retain CI/findings evidence separately. |
+| `Gate:` | `REVIEW_V1_<GATE>` (`REVIEW_V1_PASS` or `REVIEW_V1_BLOCK` here; terminal reject-gate reports bypass this consolidator). PASS means no current CI failure was established for this gate. Keep pending and unavailable CI visible in its own header. Judge source Outcome from the validated findings. |
 | `Outcome:` | APPROVE / MINOR_EDITS / MAJOR_REVISION / INSUFFICIENT_BUT_PROMISING / REJECT / literal null; token only, optional leading `✓`/`⚠`/`✗`. Put severity counts/detail in Summary, never after the token. |
 | `Summary:` | 1–2 sentences. |
 | `Confidence:` | Aggregate score — key gaps. |

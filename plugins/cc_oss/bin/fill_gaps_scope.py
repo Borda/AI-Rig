@@ -12,7 +12,7 @@ the prior run unchanged. The prior run directory is only read, never written.
   and is not a terminal REJECT;
 - every requested role is an ``assessments[].role`` and every requested candidate a ``candidates[].id`` of that
   run; every role maps to a review dimension (Codex roles also need the bridge plugin available);
-- the prior ``head-sha.txt`` holds a 7-40 hex commit id, and the current PR head (``headRefOid`` in the review
+- the prior ``head-sha.txt`` holds a 7-40 or 64 hex commit id, and the current PR head (``headRefOid`` in the review
   snapshot) starts with it;
 - the prior run has no gap that concerns no record a rerun could replace: an unreadable or malformed sidecar, an
   unsupported contract, an open concern naming no candidate of the run, or a findings row naming none;
@@ -432,7 +432,7 @@ def _load_prior(run_dir: Path) -> tuple[dict, list, str]:
         raise FillGapsBlocked("prior run has no head-sha.txt, so an unchanged head cannot be proven")
     # Same shape the reject gate accepts; a stray short string would prefix-match almost any PR head.
     if not COMMIT_ID_RE.fullmatch(head):
-        raise FillGapsBlocked("prior head-sha.txt is not a 7-40 hex commit id")
+        raise FillGapsBlocked("prior head-sha.txt is not a 7-40 or 64 hex commit id")
     return data, findings, head
 
 

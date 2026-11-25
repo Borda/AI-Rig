@@ -150,7 +150,7 @@ Serialized artifact schemas are separate version families under the repository V
 0. **Test-only guard**: run `git diff HEAD --name-only -- plugins/<name>/`, check if every changed path is under `plugins/<name>/tests/`. Yes → **STOP; no bump needed** — test-only commits never touch version.
 1. Read HEAD baseline: `git show HEAD:<plugin-path>/.claude-plugin/plugin.json | grep version`
 2. **Read on-disk version**: `grep version <plugin-path>/.claude-plugin/plugin.json` — on-disk ≠ HEAD → an earlier attempt or session already wrote a value; do not stop: calculate steps 3–4 from HEAD anyway, and step 5 requires the on-disk value to equal that result or resets it
-3. Classify the highest-magnitude change in the session (`X` or `Y`)
+3. Classify from the plugin's `## Unreleased` changelog section, not a fresh diff read (`plugins/CLAUDE.md` §Versioning): any entry describing a new capability, agent, skill or designed behaviour → `X`; only fix, wording or refinement entries → `Y`; no `## Unreleased` section but a non-test change → `Y`. A change that deserves an entry but has none is a changelog defect: add the entry first
 4. Calculate the new version from the HEAD baseline: `X` → bump minor, reset patch to `0`; `Y` → bump patch only; max +1 on the bumped component
 5. Write the calculated version — must be exactly HEAD + a single bump; anything higher is a double-bump violation
 6. Confirm the flipped changelog heading equals the version in every shipped manifest; an entry-exempt change has no `## Unreleased` section, so no heading is flipped and the bump alone lands
